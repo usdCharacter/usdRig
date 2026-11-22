@@ -43,14 +43,15 @@ PXR_NAMESPACE_USING_DIRECTIVE
 static int failures = 0;
 static int comparedFixtures = 0;
 static int comparedFrames = 0;
-static bool checkedRefreshRecords=false,checkedRefreshCarries=false,checkedRefreshGuards=false;
+static bool checkedRefreshRecords = false, checkedRefreshCarries = false,
+            checkedRefreshGuards = false;
 
-#define CHECK(cond)                                                     \
-    do {                                                                \
-        if (!(cond)) {                                                  \
-            ++failures;                                                 \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);  \
-        }                                                               \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 #include "rigExecFileEdit.h"
@@ -74,9 +75,8 @@ _ParseFrames(const std::string &text)
     size_t begin = 0;
     while (begin <= text.size()) {
         const size_t end = text.find(",", begin);
-        const std::string piece =
-            text.substr(begin, end == std::string::npos
-                        ? std::string::npos : end - begin);
+        const std::string piece = text.substr(
+            begin, end == std::string::npos ? std::string::npos : end - begin);
         if (!piece.empty()) {
             frames.push_back(std::stod(piece));
         }
@@ -139,8 +139,7 @@ _SameBits(const RrPropertyValue &a, const RrPropertyValue &b)
         }
         return true;
     case Tag::Vec3f:
-        return std::memcmp(a.vec.data(), b.vec.data(), sizeof(float) * 3) ==
-               0;
+        return std::memcmp(a.vec.data(), b.vec.data(), sizeof(float) * 3) == 0;
     }
     return false;
 }
@@ -210,132 +209,324 @@ _CheckFramesDiffer(const char *name, const std::vector<_PlayedFrame> &rows)
 // the diagnostics, bit for bit. A `static` stage holds an animated source
 // in static data at the bake time, so it plays that time alone. \p played,
 // when given, receives each frame's outputs.
-static bool checkedSolverSemanticRequirements=false;
-static void _TestSolverSemanticRefusals(const std::vector<uint8_t> &bytes)
+static bool checkedSolverSemanticRequirements = false;
+static void
+_TestSolverSemanticRefusals(const std::vector<uint8_t> &bytes)
 {
-    if(checkedSolverSemanticRequirements)return;
-    auto baseline=RigExecTestUnpack(bytes);if(!baseline)return;
-    size_t owner=baseline->steps.size();
-    for(size_t i=0;i<baseline->steps.size();++i)
-        if(baseline->steps[i].kind==fb::StepKind::Solve && !baseline->steps[i].semanticPredecessorKeys.empty()){owner=i;break;}
-    if(owner==baseline->steps.size())return;
-    CHECK(!baseline->pose->solvers[size_t(baseline->steps[owner].object)].relationshipRequirements.empty());
-    std::vector<uint8_t> valid;std::string error;
-    CHECK(RigExecFormatWrite(*baseline,&valid,&error));
+    if (checkedSolverSemanticRequirements)
+        return;
+    auto baseline = RigExecTestUnpack(bytes);
+    if (!baseline)
+        return;
+    size_t owner = baseline->steps.size();
+    for (size_t i = 0; i < baseline->steps.size(); ++i)
+        if (baseline->steps[i].kind == fb::StepKind::Solve &&
+            !baseline->steps[i].semanticPredecessorKeys.empty()) {
+            owner = i;
+            break;
+        }
+    if (owner == baseline->steps.size())
+        return;
+    CHECK(!baseline->pose->solvers[size_t(baseline->steps[owner].object)]
+               .relationshipRequirements.empty());
+    std::vector<uint8_t> valid;
+    std::string error;
+    CHECK(RigExecFormatWrite(*baseline, &valid, &error));
     std::unique_ptr<fb::RigExecWireFile> opened;
-    CHECK(RigExecFormatOpen(valid.data(),valid.size(),&opened,&error));
-    const auto reject=[&](fb::RigExecWireFile bad,const char *reason){
-        std::vector<uint8_t> rejected;std::string writeError,openError;
-        CHECK(!RigExecFormatWrite(bad,&rejected,&writeError));
-        const auto malformed=RigExecTestPackUnchecked(bad);
-        CHECK(!RigExecFormatOpen(malformed.data(),malformed.size(),&opened,&openError));
-        CHECK(writeError.find(reason)!=std::string::npos);CHECK(openError.find(reason)!=std::string::npos);
+    CHECK(RigExecFormatOpen(valid.data(), valid.size(), &opened, &error));
+    const auto reject = [&](fb::RigExecWireFile bad, const char *reason) {
+        std::vector<uint8_t> rejected;
+        std::string writeError, openError;
+        CHECK(!RigExecFormatWrite(bad, &rejected, &writeError));
+        const auto malformed = RigExecTestPackUnchecked(bad);
+        CHECK(!RigExecFormatOpen(malformed.data(), malformed.size(), &opened,
+                                 &openError));
+        CHECK(writeError.find(reason) != std::string::npos);
+        CHECK(openError.find(reason) != std::string::npos);
     };
-    auto missing=*baseline;missing.steps[owner].semanticPredecessorKeys.clear();
-    reject(std::move(missing),"semantic prerequisites differ from supported solver relationships");
-    size_t after=baseline->commonGraph->ops.size();
-    for(size_t i=0;i<baseline->commonGraph->ops.size();++i)
-        if(baseline->commonGraph->ops[i].key==baseline->steps[owner].descriptorKey)after=i;
-    CHECK(after<baseline->commonGraph->ops.size());
-    if(after>=baseline->commonGraph->ops.size())return;
-    auto omitted=*baseline;
-    const auto requiredKey=omitted.steps[owner].semanticPredecessorKeys.front();
-    size_t requiredOp=omitted.commonGraph->ops.size(),requiredBody=omitted.steps.size();
-    for(size_t i=0;i<omitted.commonGraph->ops.size();++i)if(omitted.commonGraph->ops[i].key==requiredKey)requiredOp=i;
-    for(size_t i=0;i<omitted.steps.size();++i)if(omitted.steps[i].descriptorKey==requiredKey)requiredBody=i;
-    CHECK(requiredOp<omitted.commonGraph->ops.size() && requiredBody<omitted.steps.size());
-    if(requiredOp>=omitted.commonGraph->ops.size() || requiredBody>=omitted.steps.size())return;
-    const auto erase=[](auto &values,auto value){values.erase(std::remove(values.begin(),values.end(),value),values.end());};
-    erase(omitted.steps[owner].preds,int32_t(requiredBody));erase(omitted.steps[requiredBody].succs,int32_t(owner));
-    erase(omitted.commonGraph->ops[after].predecessors,uint32_t(requiredOp));erase(omitted.commonGraph->ops[requiredOp].successors,uint32_t(after));
-    reject(std::move(omitted),"generated graph omitted semantic solver prerequisite");
-    size_t before=baseline->commonGraph->ops.size();
-    for(size_t i=0;i<after;++i) {
-        size_t candidateBody=baseline->steps.size();
-        for(size_t b=0;b<baseline->steps.size();++b)if(baseline->steps[b].descriptorKey==baseline->commonGraph->ops[i].key)candidateBody=b;
-        if(candidateBody>=owner)continue;
-        const auto from=baseline->clustering->clusterOf[candidateBody],to=baseline->clustering->clusterOf[owner];
+    auto missing = *baseline;
+    missing.steps[owner].semanticPredecessorKeys.clear();
+    reject(std::move(missing),
+           "semantic prerequisites differ from supported solver relationships");
+    size_t after = baseline->commonGraph->ops.size();
+    for (size_t i = 0; i < baseline->commonGraph->ops.size(); ++i)
+        if (baseline->commonGraph->ops[i].key ==
+            baseline->steps[owner].descriptorKey)
+            after = i;
+    CHECK(after < baseline->commonGraph->ops.size());
+    if (after >= baseline->commonGraph->ops.size())
+        return;
+    auto omitted = *baseline;
+    const auto requiredKey =
+        omitted.steps[owner].semanticPredecessorKeys.front();
+    size_t requiredOp = omitted.commonGraph->ops.size(),
+           requiredBody = omitted.steps.size();
+    for (size_t i = 0; i < omitted.commonGraph->ops.size(); ++i)
+        if (omitted.commonGraph->ops[i].key == requiredKey)
+            requiredOp = i;
+    for (size_t i = 0; i < omitted.steps.size(); ++i)
+        if (omitted.steps[i].descriptorKey == requiredKey)
+            requiredBody = i;
+    CHECK(requiredOp < omitted.commonGraph->ops.size() &&
+          requiredBody < omitted.steps.size());
+    if (requiredOp >= omitted.commonGraph->ops.size() ||
+        requiredBody >= omitted.steps.size())
+        return;
+    const auto erase = [](auto &values, auto value) {
+        values.erase(std::remove(values.begin(), values.end(), value),
+                     values.end());
+    };
+    erase(omitted.steps[owner].preds, int32_t(requiredBody));
+    erase(omitted.steps[requiredBody].succs, int32_t(owner));
+    erase(omitted.commonGraph->ops[after].predecessors, uint32_t(requiredOp));
+    erase(omitted.commonGraph->ops[requiredOp].successors, uint32_t(after));
+    reject(std::move(omitted),
+           "generated graph omitted semantic solver prerequisite");
+    size_t before = baseline->commonGraph->ops.size();
+    for (size_t i = 0; i < after; ++i) {
+        size_t candidateBody = baseline->steps.size();
+        for (size_t b = 0; b < baseline->steps.size(); ++b)
+            if (baseline->steps[b].descriptorKey ==
+                baseline->commonGraph->ops[i].key)
+                candidateBody = b;
+        if (candidateBody >= owner)
+            continue;
+        const auto from = baseline->clustering->clusterOf[candidateBody],
+                   to = baseline->clustering->clusterOf[owner];
         // The extra edge must preserve cluster order; it need not exist yet.
         // The mutation below inserts both reciprocal cluster endpoints.
-        if(from>to)continue;
-        if(std::find(baseline->commonGraph->ops[after].predecessors.begin(),baseline->commonGraph->ops[after].predecessors.end(),uint32_t(i))==baseline->commonGraph->ops[after].predecessors.end()){before=i;break;}
+        if (from > to)
+            continue;
+        if (std::find(baseline->commonGraph->ops[after].predecessors.begin(),
+                      baseline->commonGraph->ops[after].predecessors.end(),
+                      uint32_t(i)) ==
+            baseline->commonGraph->ops[after].predecessors.end()) {
+            before = i;
+            break;
+        }
     }
-    CHECK(before<after);if(before>=after)return;
-    size_t beforeBody=baseline->steps.size();
-    for(size_t i=0;i<baseline->steps.size();++i)
-        if(baseline->steps[i].descriptorKey==baseline->commonGraph->ops[before].key)beforeBody=i;
-    CHECK(beforeBody<baseline->steps.size());if(beforeBody>=baseline->steps.size())return;
-    auto extra=*baseline;
-    extra.steps[owner].preds.push_back(int32_t(beforeBody));std::sort(extra.steps[owner].preds.begin(),extra.steps[owner].preds.end());
-    extra.steps[beforeBody].succs.push_back(int32_t(owner));std::sort(extra.steps[beforeBody].succs.begin(),extra.steps[beforeBody].succs.end());
-    const auto fromCluster=extra.clustering->clusterOf[beforeBody],toCluster=extra.clustering->clusterOf[owner];
-    if(fromCluster!=toCluster) {
-        auto &preds=extra.clustering->clusters[size_t(toCluster)].preds;
-        auto &succs=extra.clustering->clusters[size_t(fromCluster)].succs;
-        if(std::find(preds.begin(),preds.end(),fromCluster)==preds.end())preds.push_back(fromCluster);
-        if(std::find(succs.begin(),succs.end(),toCluster)==succs.end())succs.push_back(toCluster);
-        std::sort(preds.begin(),preds.end());std::sort(succs.begin(),succs.end());
+    CHECK(before < after);
+    if (before >= after)
+        return;
+    size_t beforeBody = baseline->steps.size();
+    for (size_t i = 0; i < baseline->steps.size(); ++i)
+        if (baseline->steps[i].descriptorKey ==
+            baseline->commonGraph->ops[before].key)
+            beforeBody = i;
+    CHECK(beforeBody < baseline->steps.size());
+    if (beforeBody >= baseline->steps.size())
+        return;
+    auto extra = *baseline;
+    extra.steps[owner].preds.push_back(int32_t(beforeBody));
+    std::sort(extra.steps[owner].preds.begin(), extra.steps[owner].preds.end());
+    extra.steps[beforeBody].succs.push_back(int32_t(owner));
+    std::sort(extra.steps[beforeBody].succs.begin(),
+              extra.steps[beforeBody].succs.end());
+    const auto fromCluster = extra.clustering->clusterOf[beforeBody],
+               toCluster = extra.clustering->clusterOf[owner];
+    if (fromCluster != toCluster) {
+        auto &preds = extra.clustering->clusters[size_t(toCluster)].preds;
+        auto &succs = extra.clustering->clusters[size_t(fromCluster)].succs;
+        if (std::find(preds.begin(), preds.end(), fromCluster) == preds.end())
+            preds.push_back(fromCluster);
+        if (std::find(succs.begin(), succs.end(), toCluster) == succs.end())
+            succs.push_back(toCluster);
+        std::sort(preds.begin(), preds.end());
+        std::sort(succs.begin(), succs.end());
     }
     extra.commonGraph->ops[after].predecessors.push_back(uint32_t(before));
-    std::sort(extra.commonGraph->ops[after].predecessors.begin(),extra.commonGraph->ops[after].predecessors.end());
+    std::sort(extra.commonGraph->ops[after].predecessors.begin(),
+              extra.commonGraph->ops[after].predecessors.end());
     extra.commonGraph->ops[before].successors.push_back(uint32_t(after));
-    std::sort(extra.commonGraph->ops[before].successors.begin(),extra.commonGraph->ops[before].successors.end());
-    reject(std::move(extra),"predecessors differ from typed and semantic producers");
-    auto imported=*baseline;imported.commonGraph->ops[after].descriptorPredecessors.push_back(uint32_t(before));
-    reject(std::move(imported),"imported predecessor is not a typed or semantic requirement");
-    checkedSolverSemanticRequirements=true;
+    std::sort(extra.commonGraph->ops[before].successors.begin(),
+              extra.commonGraph->ops[before].successors.end());
+    reject(std::move(extra),
+           "predecessors differ from typed and semantic producers");
+    auto imported = *baseline;
+    imported.commonGraph->ops[after].descriptorPredecessors.push_back(
+        uint32_t(before));
+    reject(std::move(imported),
+           "imported predecessor is not a typed or semantic requirement");
+    checkedSolverSemanticRequirements = true;
 }
-static void _TestProviderRefreshRefusals(const std::vector<uint8_t> &bytes)
+static void
+_TestProviderRefreshRefusals(const std::vector<uint8_t> &bytes)
 {
-    auto baseline=RigExecTestUnpack(bytes);
-    if(!baseline || !baseline->pose || baseline->pose->providerRefreshes.empty())return;
-    const auto expect=[&](const char *name,const std::function<void(fb::RigExecWireFile&)> &edit,const char *reason) {
-        auto file=RigExecTestUnpack(bytes);if(!file)return;
-        edit(*file);std::vector<uint8_t> rejected;std::string writeError,openError;
-        CHECK(!RigExecFormatWrite(*file,&rejected,&writeError));
-        const auto malformed=RigExecTestPackUnchecked(*file);
-        std::unique_ptr<fb::RigExecWireFile> opened;
-        CHECK(!RigExecFormatOpen(malformed.data(),malformed.size(),&opened,&openError));
-        if(writeError.find(reason)==std::string::npos || openError.find(reason)==std::string::npos) {
-            std::printf("ProviderRefresh %s: write '%s', open '%s'; wanted '%s'\n",name,writeError.c_str(),openError.c_str(),reason);CHECK(false);
-        }
-    };
-    if(!checkedRefreshRecords) {
-        std::vector<uint8_t> valid;std::string error;CHECK(RigExecFormatWrite(*baseline,&valid,&error));
-        expect("checkpoint",[](auto &f){f.pose->providerRefreshes[0].checkpoint=f.pose->walkSteps.size()+1;},"invalid or duplicate provider refresh context");
-        expect("canonical key",[](auto &f){f.pose->providerRefreshes[0].key+="wrong";},"key or reader differs from canonical context");
-        expect("entering bound",[](auto &f){f.pose->providerRefreshes[0].finRead=UINT32_MAX;},"entering frame belongs to another provider");
-        expect("fresh write",[](auto &f){auto &r=f.pose->providerRefreshes[0];r.baseWrite=r.baseRead;},"lacks fresh owned frame versions");
-        expect("body read",[](auto &f){const auto value=f.pose->providerRefreshes[0].baseRead;for(auto &s:f.steps)if(s.kind==fb::StepKind::ProviderRefresh && s.object==0)s.reads.erase(std::remove_if(s.reads.begin(),s.reads.end(),[&](const auto &r){return r.domain()==fb::SlotDomain::PoseBase && r.begin()<=value && value<r.end();}),s.reads.end());},"body SSA missing read PoseBase");
-        expect("body write",[](auto &f){for(auto &s:f.steps)if(s.kind==fb::StepKind::ProviderRefresh && s.object==0)s.writes.clear();},"refresh write ownership differs");
-        checkedRefreshRecords=true;
+    auto baseline = RigExecTestUnpack(bytes);
+    if (!baseline || !baseline->pose ||
+        baseline->pose->providerRefreshes.empty())
+        return;
+    const auto expect =
+        [&](const char *name,
+            const std::function<void(fb::RigExecWireFile &)> &edit,
+            const char *reason) {
+            auto file = RigExecTestUnpack(bytes);
+            if (!file)
+                return;
+            edit(*file);
+            std::vector<uint8_t> rejected;
+            std::string writeError, openError;
+            CHECK(!RigExecFormatWrite(*file, &rejected, &writeError));
+            const auto malformed = RigExecTestPackUnchecked(*file);
+            std::unique_ptr<fb::RigExecWireFile> opened;
+            CHECK(!RigExecFormatOpen(malformed.data(), malformed.size(),
+                                     &opened, &openError));
+            if (writeError.find(reason) == std::string::npos ||
+                openError.find(reason) == std::string::npos) {
+                std::printf(
+                    "ProviderRefresh %s: write '%s', open '%s'; wanted '%s'\n",
+                    name, writeError.c_str(), openError.c_str(), reason);
+                CHECK(false);
+            }
+        };
+    if (!checkedRefreshRecords) {
+        std::vector<uint8_t> valid;
+        std::string error;
+        CHECK(RigExecFormatWrite(*baseline, &valid, &error));
+        expect(
+            "checkpoint",
+            [](auto &f) {
+                f.pose->providerRefreshes[0].checkpoint =
+                    f.pose->walkSteps.size() + 1;
+            },
+            "invalid or duplicate provider refresh context");
+        expect(
+            "canonical key",
+            [](auto &f) { f.pose->providerRefreshes[0].key += "wrong"; },
+            "key or reader differs from canonical context");
+        expect(
+            "entering bound",
+            [](auto &f) { f.pose->providerRefreshes[0].finRead = UINT32_MAX; },
+            "entering frame belongs to another provider");
+        expect(
+            "fresh write",
+            [](auto &f) {
+                auto &r = f.pose->providerRefreshes[0];
+                r.baseWrite = r.baseRead;
+            },
+            "lacks fresh owned frame versions");
+        expect(
+            "body read",
+            [](auto &f) {
+                const auto value = f.pose->providerRefreshes[0].baseRead;
+                for (auto &s : f.steps)
+                    if (s.kind == fb::StepKind::ProviderRefresh &&
+                        s.object == 0)
+                        s.reads.erase(
+                            std::remove_if(
+                                s.reads.begin(), s.reads.end(),
+                                [&](const auto &r) {
+                                    return r.domain() ==
+                                               fb::SlotDomain::PoseBase &&
+                                           r.begin() <= value &&
+                                           value < r.end();
+                                }),
+                            s.reads.end());
+            },
+            "body SSA missing read PoseBase");
+        expect(
+            "body write",
+            [](auto &f) {
+                for (auto &s : f.steps)
+                    if (s.kind == fb::StepKind::ProviderRefresh &&
+                        s.object == 0)
+                        s.writes.clear();
+            },
+            "refresh write ownership differs");
+        checkedRefreshRecords = true;
     }
-    for(size_t i=0;i<baseline->pose->providerRefreshes.size();++i) {
-        const auto &record=baseline->pose->providerRefreshes[i];
-        if(!checkedRefreshCarries && !record.carries.empty()) {
-            expect("carry target",[i](auto &f){f.pose->providerRefreshes[i].carries[0].slot=-1;},"invalid or duplicate refresh carry");
-            expect("carry blocker",[i](auto &f){f.pose->providerRefreshes[i].carries[0].blockingSlots.push_back(-1);},"invalid or duplicate carry blocker");
-            expect("carry ancestry",[i](auto &f){f.pose->providerRefreshes[i].carries[0].blockingSlots.clear();},"carry blocker ancestry differs");
-            const auto &blockers=record.carries[0].blockingSlots;
+    for (size_t i = 0; i < baseline->pose->providerRefreshes.size(); ++i) {
+        const auto &record = baseline->pose->providerRefreshes[i];
+        if (!checkedRefreshCarries && !record.carries.empty()) {
+            expect(
+                "carry target",
+                [i](auto &f) {
+                    f.pose->providerRefreshes[i].carries[0].slot = -1;
+                },
+                "invalid or duplicate refresh carry");
+            expect(
+                "carry blocker",
+                [i](auto &f) {
+                    f.pose->providerRefreshes[i]
+                        .carries[0]
+                        .blockingSlots.push_back(-1);
+                },
+                "invalid or duplicate carry blocker");
+            expect(
+                "carry ancestry",
+                [i](auto &f) {
+                    f.pose->providerRefreshes[i]
+                        .carries[0]
+                        .blockingSlots.clear();
+                },
+                "carry blocker ancestry differs");
+            const auto &blockers = record.carries[0].blockingSlots;
             CHECK(!blockers.empty());
-            if(!blockers.empty()) {
-                const std::string path=RigExecFormatPathText(*baseline,baseline->slotMeta->paths[size_t(blockers[0])])+".parent:space";
-                size_t rawRow=baseline->providerProgram->sampled.size();
-                for(size_t row=0;row<baseline->providerProgram->sampled.size();++row)
-                    if(baseline->providerProgram->sampled[row].path==path)rawRow=row;
-                CHECK(rawRow<baseline->providerProgram->sampled.size());
-                if(rawRow<baseline->providerProgram->sampled.size()) {
-                    expect("blocker raw declaration",[i,rawRow](auto &f){for(auto &s:f.steps)if(s.kind==fb::StepKind::ProviderRefresh && s.object==int(i))s.reads.erase(std::remove_if(s.reads.begin(),s.reads.end(),[&](const auto &r){return r.domain()==fb::SlotDomain::SpaceLeaf && r.begin()<=rawRow && rawRow<r.end();}),s.reads.end());},"body SSA missing read SpaceLeaf");
-                    expect("blocker raw identity",[rawRow](auto &f){f.providerProgram->sampled[rawRow].inputSlot=-1;},"blocker raw source type or identity differs");
-                    expect("blocker produced promotion",[rawRow](auto &f){f.providerProgram->sampled[rawRow].propertyVersion=0;},"raw provider source cannot select a property version");
+            if (!blockers.empty()) {
+                const std::string path =
+                    RigExecFormatPathText(
+                        *baseline,
+                        baseline->slotMeta->paths[size_t(blockers[0])]) +
+                    ".parent:space";
+                size_t rawRow = baseline->providerProgram->sampled.size();
+                for (size_t row = 0;
+                     row < baseline->providerProgram->sampled.size(); ++row)
+                    if (baseline->providerProgram->sampled[row].path == path)
+                        rawRow = row;
+                CHECK(rawRow < baseline->providerProgram->sampled.size());
+                if (rawRow < baseline->providerProgram->sampled.size()) {
+                    expect(
+                        "blocker raw declaration",
+                        [i, rawRow](auto &f) {
+                            for (auto &s : f.steps)
+                                if (s.kind == fb::StepKind::ProviderRefresh &&
+                                    s.object == int(i))
+                                    s.reads.erase(
+                                        std::remove_if(
+                                            s.reads.begin(), s.reads.end(),
+                                            [&](const auto &r) {
+                                                return r.domain() ==
+                                                           fb::SlotDomain::
+                                                               SpaceLeaf &&
+                                                       r.begin() <= rawRow &&
+                                                       rawRow < r.end();
+                                            }),
+                                        s.reads.end());
+                        },
+                        "body SSA missing read SpaceLeaf");
+                    expect(
+                        "blocker raw identity",
+                        [rawRow](auto &f) {
+                            f.providerProgram->sampled[rawRow].inputSlot = -1;
+                        },
+                        "blocker raw source type or identity differs");
+                    expect(
+                        "blocker produced promotion",
+                        [rawRow](auto &f) {
+                            f.providerProgram->sampled[rawRow].propertyVersion =
+                                0;
+                        },
+                        "raw provider source cannot select a property version");
                 }
             }
-            checkedRefreshCarries=true;
+            checkedRefreshCarries = true;
         }
-        if(!checkedRefreshGuards && !record.priorConstraints.empty()) {
-            expect("guard commit",[i](auto &f){f.pose->providerRefreshes[i].priorConstraints[0].first=UINT32_MAX;},"invalid or duplicate prior constraint guard");
-            expect("guard candidate",[i](auto &f){f.pose->providerRefreshes[i].priorConstraints[0].second=UINT32_MAX;},"invalid or duplicate prior constraint guard");
-            checkedRefreshGuards=true;
+        if (!checkedRefreshGuards && !record.priorConstraints.empty()) {
+            expect(
+                "guard commit",
+                [i](auto &f) {
+                    f.pose->providerRefreshes[i].priorConstraints[0].first =
+                        UINT32_MAX;
+                },
+                "invalid or duplicate prior constraint guard");
+            expect(
+                "guard candidate",
+                [i](auto &f) {
+                    f.pose->providerRefreshes[i].priorConstraints[0].second =
+                        UINT32_MAX;
+                },
+                "invalid or duplicate prior constraint guard");
+            checkedRefreshGuards = true;
         }
     }
 }
@@ -358,8 +549,7 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
     {
         RigExecRigEvaluator evaluator(stage, rigPath);
         if (!RigExecTestBakeAt(evaluator, frames.front(), &bytes, &error)) {
-            std::printf("%s: FAILED (bake: %s)\n", name.c_str(),
-                        error.c_str());
+            std::printf("%s: FAILED (bake: %s)\n", name.c_str(), error.c_str());
             CHECK(false);
             return;
         }
@@ -379,20 +569,18 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
     bool failed = false;
     int compared = 0;
     for (double frame : times) {
-        const RigExecRigPose pose =
-            measured.Evaluate(UsdTimeCode(frame));
+        const RigExecRigPose pose = measured.Evaluate(UsdTimeCode(frame));
         if (!pose.valid) {
-            std::printf("%s frame %.17g: baked pose invalid\n",
-                        name.c_str(), frame);
+            std::printf("%s frame %.17g: baked pose invalid\n", name.c_str(),
+                        frame);
             CHECK(false);
             failed = true;
             break;
         }
-        const RigExecBakedProgram *program =
-            measured.GetBakedProgram();
+        const RigExecBakedProgram *program = measured.GetBakedProgram();
         if (!program) {
-            std::printf("%s frame %.17g: no baked program\n",
-                        name.c_str(), frame);
+            std::printf("%s frame %.17g: no baked program\n", name.c_str(),
+                        frame);
             CHECK(false);
             failed = true;
             break;
@@ -416,9 +604,9 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
             finalM.size() != graph.finalMatrix.size() ||
             baseM.size() != graph.baseMatrix.size()) {
             std::printf("%s frame %.17g: pool sizes %zu/%zu/%zu/%zu vs "
-                        "%zu/%zu/%zu/%zu\n", name.c_str(), frame,
-                        fin.size(), base.size(), finalM.size(),
-                        baseM.size(), graph.fin.size(),
+                        "%zu/%zu/%zu/%zu\n",
+                        name.c_str(), frame, fin.size(), base.size(),
+                        finalM.size(), baseM.size(), graph.fin.size(),
                         graph.base.size(), graph.finalMatrix.size(),
                         graph.baseMatrix.size());
             CHECK(false);
@@ -428,8 +616,9 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
         for (size_t i = 0; i < fin.size(); ++i) {
             if (!_FramesEqual(graph.fin[i], fin[i])) {
                 std::printf("%s frame %.17g: fin[%zu] differs "
-                            "(flags %u vs %u)\n", name.c_str(), frame, i,
-                            graph.fin[i].flags, fin[i].flags);
+                            "(flags %u vs %u)\n",
+                            name.c_str(), frame, i, graph.fin[i].flags,
+                            fin[i].flags);
                 CHECK(false);
                 failed = true;
                 break;
@@ -438,8 +627,9 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
         for (size_t i = 0; i < base.size(); ++i) {
             if (!_FramesEqual(graph.base[i], base[i])) {
                 std::printf("%s frame %.17g: base[%zu] differs "
-                            "(flags %u vs %u)\n", name.c_str(), frame, i,
-                            graph.base[i].flags, base[i].flags);
+                            "(flags %u vs %u)\n",
+                            name.c_str(), frame, i, graph.base[i].flags,
+                            base[i].flags);
                 CHECK(false);
                 failed = true;
                 break;
@@ -472,9 +662,8 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
         const std::vector<RigExecRuntimeJointMatrix> &gotJoints =
             reader.GetJointMatrices();
         if (gotJoints.size() != wantJoints.size()) {
-            std::printf("%s frame %.17g: %zu joints vs %zu\n",
-                        name.c_str(), frame, gotJoints.size(),
-                        wantJoints.size());
+            std::printf("%s frame %.17g: %zu joints vs %zu\n", name.c_str(),
+                        frame, gotJoints.size(), wantJoints.size());
             CHECK(false);
             failed = true;
         } else {
@@ -495,8 +684,9 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
         const std::vector<std::string> &diagnostics = reader.GetDiagnostics();
         if (diagnostics != pose.diagnostics) {
             std::printf("%s frame %.17g: diagnostics differ "
-                        "(%zu vs %zu)\n", name.c_str(), frame,
-                        diagnostics.size(), pose.diagnostics.size());
+                        "(%zu vs %zu)\n",
+                        name.c_str(), frame, diagnostics.size(),
+                        pose.diagnostics.size());
             const size_t common =
                 std::min(diagnostics.size(), pose.diagnostics.size());
             for (size_t i = 0; i < common; ++i) {
@@ -524,8 +714,7 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
         std::printf("%s: compared %d frame(s) of a bake at %.17g%s (%zu "
                     "input(s), %zu sampled per frame)\n",
                     name.c_str(), compared, frames.front(),
-                    staticClass ? ", static" : "",
-                    player->GetInputCount(),
+                    staticClass ? ", static" : "", player->GetInputCount(),
                     player.Sampler().GetAnimatedCount());
     }
 }
@@ -576,17 +765,17 @@ _EnvelopeStage(double lastDriver = 0.8)
     xform("/Asset/TargetB", GfVec3d(0));
     xform("/Asset/Source", GfVec3d(10, 0, 0));
     const UsdPrim dial = xform("/Asset/Dial", GfVec3d(0));
-    const UsdAttribute amount = dial.CreateAttribute(
-        TfToken("avars:amount"), SdfValueTypeNames->Double);
+    const UsdAttribute amount = dial.CreateAttribute(TfToken("avars:amount"),
+                                                     SdfValueTypeNames->Double);
     amount.Set(0.2, UsdTimeCode(1.0));
     amount.Set(lastDriver, UsdTimeCode(10.0));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
     const auto constraint = [&](const char *name, const char *target,
                                 const SdfPath &weightPath) {
-        const UsdPrim prim = stage->DefinePrim(
-            SdfPath(std::string("/Asset/Rig/Movers/") + name),
-            TfToken("RigExecPositionConstraint"));
+        const UsdPrim prim =
+            stage->DefinePrim(SdfPath(std::string("/Asset/Rig/Movers/") + name),
+                              TfToken("RigExecPositionConstraint"));
         CHECK(prim.ApplyAPI(TfToken("RigExecMoverAPI")));
         prim.CreateRelationship(TfToken("rigExec:moves"))
             .SetTargets({SdfPath(target)});
@@ -595,19 +784,21 @@ _EnvelopeStage(double lastDriver = 0.8)
         prim.CreateRelationship(TfToken("rigExec:weightObject"))
             .SetTargets({weightPath});
     };
-    const UsdPrim fixed = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/Fixed"), TfToken("RigExecStaticWeight"));
+    const UsdPrim fixed = stage->DefinePrim(SdfPath("/Asset/Rig/Weights/Fixed"),
+                                            TfToken("RigExecStaticWeight"));
     fixed.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({SdfPath("/Asset/TargetA")});
-    fixed.CreateAttribute(TfToken("rigExec:defaultWeight"),
-                          SdfValueTypeNames->Float)
+    fixed
+        .CreateAttribute(TfToken("rigExec:defaultWeight"),
+                         SdfValueTypeNames->Float)
         .Set(0.5f);
     const UsdPrim driven = stage->DefinePrim(
         SdfPath("/Asset/Rig/Weights/Driven"), TfToken("RigExecDynamicWeight"));
     driven.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({SdfPath("/Asset/TargetB")});
-    driven.CreateAttribute(TfToken("rigExec:representation"),
-                           SdfValueTypeNames->Token)
+    driven
+        .CreateAttribute(TfToken("rigExec:representation"),
+                         SdfValueTypeNames->Token)
         .Set(TfToken("constant"));
     driven.CreateAttribute(TfToken("inputs:driver"), SdfValueTypeNames->Float)
         .AddConnection(amount.GetPath());
@@ -706,11 +897,12 @@ _FindProviderXform(const RigExecRuntimeReader &reader, const char *path)
 // the weight arithmetic. The optional clamped fixture reads the raw avar
 // so a missing control fails here.
 static bool
-_EnvelopesMatchOriginalReference(const std::string &name, const UsdStageRefPtr &stage,
-                       const std::vector<double> &frames,
-                       const std::vector<_EnvelopeProbe> &probes,
-                       std::vector<std::vector<float>> *envelopes,
-                       bool clampDial=false)
+_EnvelopesMatchOriginalReference(const std::string &name,
+                                 const UsdStageRefPtr &stage,
+                                 const std::vector<double> &frames,
+                                 const std::vector<_EnvelopeProbe> &probes,
+                                 std::vector<std::vector<float>> *envelopes,
+                                 bool clampDial = false)
 {
     const SdfPath rigPath = _FindRig(stage);
     RigExecRigEvaluator baked(stage, rigPath);
@@ -726,13 +918,11 @@ _EnvelopesMatchOriginalReference(const std::string &name, const UsdStageRefPtr &
         return false;
     }
 
-
     bool same = true;
     for (double frame : frames) {
         const RigExecRigPose want = baked.Evaluate(UsdTimeCode(frame));
         if (!want.valid) {
-            std::printf("%s frame %g: no native pose\n",
-                        name.c_str(), frame);
+            std::printf("%s frame %g: no native pose\n", name.c_str(), frame);
             return false;
         }
         if (!player.Play(frame, &error)) {
@@ -741,10 +931,11 @@ _EnvelopesMatchOriginalReference(const std::string &name, const UsdStageRefPtr &
             return false;
         }
         std::vector<float> row;
-        if(clampDial) {
+        if (clampDial) {
             const SdfPath path("/Asset/Rig/Controls/Dial.avars:tx");
-            double raw=0.0;
-            CHECK(stage->GetAttributeAtPath(path).Get(&raw,UsdTimeCode(frame)));
+            double raw = 0.0;
+            CHECK(
+                stage->GetAttributeAtPath(path).Get(&raw, UsdTimeCode(frame)));
         }
         for (const _EnvelopeProbe &probe : probes) {
             const auto expected =
@@ -753,8 +944,8 @@ _EnvelopesMatchOriginalReference(const std::string &name, const UsdStageRefPtr &
                 _FindProviderXform(player.Reader(), probe.target);
             if (expected == want.providerXforms.end() || !got) {
                 std::printf("%s frame %g: %s has no revised transform "
-                            "(dynamic %d, runtime %d)\n", name.c_str(),
-                            frame, probe.target,
+                            "(dynamic %d, runtime %d)\n",
+                            name.c_str(), frame, probe.target,
                             int(expected != want.providerXforms.end()),
                             int(got != nullptr));
                 same = false;
@@ -762,12 +953,13 @@ _EnvelopesMatchOriginalReference(const std::string &name, const UsdStageRefPtr &
             }
             if (!_MatricesEqual(expected->second, got->matrix)) {
                 std::printf("%s frame %g: %s differs from the dynamic "
-                            "evaluator (x %.17g vs %.17g)\n", name.c_str(),
-                            frame, probe.target, got->matrix[3][0],
-                            expected->second[3][0]);
+                            "evaluator (x %.17g vs %.17g)\n",
+                            name.c_str(), frame, probe.target,
+                            got->matrix[3][0], expected->second[3][0]);
                 same = false;
             }
-            row.push_back(static_cast<float>(got->matrix[3][0] / probe.sourceX));
+            row.push_back(
+                static_cast<float>(got->matrix[3][0] / probe.sourceX));
         }
         envelopes->push_back(std::move(row));
     }
@@ -785,8 +977,8 @@ _StaticWeightConstraintStage()
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     const auto xform = [&](const char *path, const GfVec3d &translation) {
         const UsdGeomXform x = UsdGeomXform::Define(stage, SdfPath(path));
-        x.MakeMatrixXform().Set(GfMatrix4d(
-            GfRotation(GfVec3d(0, 0, 1), 0.0), translation));
+        x.MakeMatrixXform().Set(
+            GfMatrix4d(GfRotation(GfVec3d(0, 0, 1), 0.0), translation));
     };
     xform("/Asset", GfVec3d(0));
     xform("/Asset/Target", GfVec3d(0));
@@ -801,15 +993,17 @@ _StaticWeightConstraintStage()
     pos.CreateRelationship(TfToken("rigExec:sources"))
         .SetTargets({SdfPath("/Asset/Source")});
     pos.GetAttribute(TfToken("inputs:defaultWeight")).Set(0.25f);
-    const UsdPrim weight = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/W"), TfToken("RigExecStaticWeight"));
+    const UsdPrim weight = stage->DefinePrim(SdfPath("/Asset/Rig/Weights/W"),
+                                             TfToken("RigExecStaticWeight"));
     weight.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({SdfPath("/Asset/Target")});
-    weight.CreateAttribute(TfToken("rigExec:representation"),
-                           SdfValueTypeNames->Token)
+    weight
+        .CreateAttribute(TfToken("rigExec:representation"),
+                         SdfValueTypeNames->Token)
         .Set(TfToken("constant"));
-    weight.CreateAttribute(TfToken("rigExec:defaultWeight"),
-                           SdfValueTypeNames->Float)
+    weight
+        .CreateAttribute(TfToken("rigExec:defaultWeight"),
+                         SdfValueTypeNames->Float)
         .Set(0.5f);
     pos.CreateRelationship(TfToken("rigExec:weightObject"))
         .SetTargets({weight.GetPath()});
@@ -831,8 +1025,8 @@ TestStaticWeightEnvelope()
     for (const std::vector<float> &row : envelopes) {
         CHECK(row == std::vector<float>{0.5f});
     }
-    std::printf("%s: %zu frame(s) applied the weight object's envelope\n",
-                name, envelopes.size());
+    std::printf("%s: %zu frame(s) applied the weight object's envelope\n", name,
+                envelopes.size());
 }
 
 // A DynamicWeight driven by a rig control's animated avar. The Dial
@@ -865,8 +1059,8 @@ _AvarDrivenStage(bool clampDial = false)
     xform("/Asset/Source", GfVec3d(10, 0, 0));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
-    const UsdPrim dial = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Controls/Dial"), TfToken("RigExecControl"));
+    const UsdPrim dial = stage->DefinePrim(SdfPath("/Asset/Rig/Controls/Dial"),
+                                           TfToken("RigExecControl"));
     const UsdAttribute tx =
         dial.CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double);
     tx.Set(0.0, UsdTimeCode(1.0));
@@ -881,8 +1075,8 @@ _AvarDrivenStage(bool clampDial = false)
         w.CreateAttribute(TfToken("rigExec:representation"),
                           SdfValueTypeNames->Token)
             .Set(TfToken("constant"));
-        const UsdAttribute driver = w.CreateAttribute(
-            TfToken("inputs:driver"), SdfValueTypeNames->Float);
+        const UsdAttribute driver = w.CreateAttribute(TfToken("inputs:driver"),
+                                                      SdfValueTypeNames->Float);
         driver.AddConnection(tx.GetPath());
         if (clampDial) {
             driver.SetMetadata(TfToken("rigExecReadPhase"),
@@ -891,15 +1085,16 @@ _AvarDrivenStage(bool clampDial = false)
         return w;
     };
     const UsdPrim driven = dynamicWeight("Driven", "/Asset/TargetA");
-    driven.CreateAttribute(TfToken("rigExec:rangePolicy"),
-                           SdfValueTypeNames->Token)
+    driven
+        .CreateAttribute(TfToken("rigExec:rangePolicy"),
+                         SdfValueTypeNames->Token)
         .Set(TfToken("clamp"));
     driven.CreateAttribute(TfToken("inputs:scale"), SdfValueTypeNames->Float)
         .Set(0.625f);
     driven.CreateAttribute(TfToken("inputs:bias"), SdfValueTypeNames->Float)
         .Set(0.125f);
-    const UsdPrim half = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/Half"), TfToken("RigExecStaticWeight"));
+    const UsdPrim half = stage->DefinePrim(SdfPath("/Asset/Rig/Weights/Half"),
+                                           TfToken("RigExecStaticWeight"));
     half.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({SdfPath("/Asset/TargetB")});
     half.CreateAttribute(TfToken("rigExec:representation"),
@@ -919,21 +1114,24 @@ _AvarDrivenStage(bool clampDial = false)
         SdfPath("/Asset/Rig/Weights/Quarter"), TfToken("RigExecStaticWeight"));
     quarter.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({SdfPath("/Asset/TargetC")});
-    quarter.CreateAttribute(TfToken("rigExec:representation"),
-                            SdfValueTypeNames->Token)
+    quarter
+        .CreateAttribute(TfToken("rigExec:representation"),
+                         SdfValueTypeNames->Token)
         .Set(TfToken("constant"));
-    quarter.CreateAttribute(TfToken("rigExec:defaultWeight"),
-                            SdfValueTypeNames->Float)
+    quarter
+        .CreateAttribute(TfToken("rigExec:defaultWeight"),
+                         SdfValueTypeNames->Float)
         .Set(0.25f);
     const UsdPrim ramp = dynamicWeight("Ramp", "/Asset/TargetC");
     ramp.CreateAttribute(TfToken("inputs:scale"), SdfValueTypeNames->Float)
         .Set(0.5f);
-    const UsdPrim blend = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/Blend"), TfToken("RigExecCombineWeight"));
+    const UsdPrim blend = stage->DefinePrim(SdfPath("/Asset/Rig/Weights/Blend"),
+                                            TfToken("RigExecCombineWeight"));
     blend.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({SdfPath("/Asset/TargetC")});
-    blend.CreateAttribute(TfToken("rigExec:combineMode"),
-                          SdfValueTypeNames->Token)
+    blend
+        .CreateAttribute(TfToken("rigExec:combineMode"),
+                         SdfValueTypeNames->Token)
         .Set(TfToken("max"));
     blend.CreateRelationship(TfToken("rigExec:inputWeights"))
         .SetTargets({quarter.GetPath(), ramp.GetPath()});
@@ -942,12 +1140,13 @@ _AvarDrivenStage(bool clampDial = false)
     blend.CreateAttribute(TfToken("inputs:strength"), SdfValueTypeNames->Float)
         .Set(0.75f);
     if (clampDial) {
-        const UsdPrim clamp = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/ClampDial"),
-            TfToken("RigExecFloatMathMover"));
+        const UsdPrim clamp =
+            stage->DefinePrim(SdfPath("/Asset/Rig/Movers/ClampDial"),
+                              TfToken("RigExecFloatMathMover"));
         CHECK(clamp.ApplyAPI(TfToken("RigExecMoverAPI")));
-        clamp.CreateAttribute(TfToken("rigExec:operation"),
-                              SdfValueTypeNames->Token)
+        clamp
+            .CreateAttribute(TfToken("rigExec:operation"),
+                             SdfValueTypeNames->Token)
             .Set(TfToken("clamp"));
         clamp.CreateAttribute(TfToken("inputs:min"), SdfValueTypeNames->Float)
             .Set(0.0f);
@@ -959,9 +1158,9 @@ _AvarDrivenStage(bool clampDial = false)
 
     const auto constraint = [&](const char *name, const char *target,
                                 const UsdPrim &weight) {
-        const UsdPrim prim = stage->DefinePrim(
-            SdfPath(std::string("/Asset/Rig/Movers/") + name),
-            TfToken("RigExecPositionConstraint"));
+        const UsdPrim prim =
+            stage->DefinePrim(SdfPath(std::string("/Asset/Rig/Movers/") + name),
+                              TfToken("RigExecPositionConstraint"));
         CHECK(prim.ApplyAPI(TfToken("RigExecMoverAPI")));
         prim.CreateRelationship(TfToken("rigExec:moves"))
             .SetTargets({SdfPath(target)});
@@ -1012,8 +1211,8 @@ _TestAvarInputMatchesSessionEdit()
         _FindProviderXform(player.Reader(), "/Asset/TargetA");
     CHECK(defaults && moved);
     if (moved) {
-        const float driven = (1.0f * static_cast<float>(value)) * 0.625f +
-                             0.125f;
+        const float driven =
+            (1.0f * static_cast<float>(value)) * 0.625f + 0.125f;
         CHECK(moved->matrix[3][0] == 10.0 * double(driven));
         CHECK(moved->matrix[3][0] != defaultX);
     }
@@ -1057,8 +1256,8 @@ TestAvarDrivenDynamicEnvelope()
     // m = max(max(0, 0.25), (1 * d) * 0.5 + 0), then (m + (1 - 2m) * 0.25)
     // * 0.75, strict.
     const UsdStageRefPtr stage = _AvarDrivenStage();
-    const UsdAttribute tx = stage->GetAttributeAtPath(
-        SdfPath("/Asset/Rig/Controls/Dial.avars:tx"));
+    const UsdAttribute tx =
+        stage->GetAttributeAtPath(SdfPath("/Asset/Rig/Controls/Dial.avars:tx"));
     CHECK(envelopes.size() == frames.size());
     size_t clamped = 0;
     size_t reassociated = 0;
@@ -1074,11 +1273,10 @@ TestAvarDrivenDynamicEnvelope()
         const float modulated = (0.7f * d) * 0.625f + 0.0f;
         const float other = 0.7f * (d * 0.625f) + 0.0f;
         reassociated += std::memcmp(&other, &modulated, sizeof(float)) != 0;
-        const float m = std::max(std::max(0.0f, 0.25f),
-                                 (1.0f * d) * 0.5f + 0.0f);
+        const float m =
+            std::max(std::max(0.0f, 0.25f), (1.0f * d) * 0.5f + 0.0f);
         const float blend = (m + (1.0f - 2.0f * m) * 0.25f) * 0.75f;
-        CHECK(envelopes[f] ==
-              (std::vector<float>{driven, modulated, blend}));
+        CHECK(envelopes[f] == (std::vector<float>{driven, modulated, blend}));
     }
     // Frames 9 and 10 exercise the clamp; the operation order shows.
     CHECK(clamped == 2);
@@ -1110,10 +1308,10 @@ TestChainDrivenEnvelope()
         {{"/Asset/TargetA", "/Asset/Rig/Weights/Driven", 10.0},
          {"/Asset/TargetB", "/Asset/Rig/Weights/Modulated", 10.0},
          {"/Asset/TargetC", "/Asset/Rig/Weights/Blend", 10.0}},
-        &envelopes,true));
+        &envelopes, true));
     const UsdStageRefPtr stage = _AvarDrivenStage(true);
-    const UsdAttribute tx = stage->GetAttributeAtPath(
-        SdfPath("/Asset/Rig/Controls/Dial.avars:tx"));
+    const UsdAttribute tx =
+        stage->GetAttributeAtPath(SdfPath("/Asset/Rig/Controls/Dial.avars:tx"));
     CHECK(envelopes.size() == frames.size());
     size_t chained = 0;
     for (size_t f = 0; f < envelopes.size() && f < frames.size(); ++f) {
@@ -1123,14 +1321,12 @@ TestChainDrivenEnvelope()
         // The chain computes a double target in float and publishes the
         // double; the oracle narrows it back.
         const float d = std::min(std::max(authored, 0.0f), 1.0f);
-        const float driven =
-            std::min((1.0f * d) * 0.625f + 0.125f, 1.0f);
+        const float driven = std::min((1.0f * d) * 0.625f + 0.125f, 1.0f);
         const float modulated = (0.7f * d) * 0.625f + 0.0f;
-        const float m = std::max(std::max(0.0f, 0.25f),
-                                 (1.0f * d) * 0.5f + 0.0f);
+        const float m =
+            std::max(std::max(0.0f, 0.25f), (1.0f * d) * 0.5f + 0.0f);
         const float blend = (m + (1.0f - 2.0f * m) * 0.25f) * 0.75f;
-        CHECK(envelopes[f] ==
-              (std::vector<float>{driven, modulated, blend}));
+        CHECK(envelopes[f] == (std::vector<float>{driven, modulated, blend}));
         chained += d != authored;
     }
     CHECK(chained == 4);
@@ -1167,8 +1363,7 @@ TestComputedOpenRefusals()
     if (!file) {
         return;
     }
-    const auto expect = [&](const char *what,
-                            const std::vector<uint8_t> &bytes,
+    const auto expect = [&](const char *what, const std::vector<uint8_t> &bytes,
                             const std::string &text) {
         const std::string want = "invalid .rigexec: " + text;
         const std::string got = _OpenError(bytes);
@@ -1184,21 +1379,21 @@ TestComputedOpenRefusals()
     CHECK(constraints.size() == 2);
     if (constraints.size() == 2) {
         expect("swapped envelope indices",
-               RigExecTestEdited(result.bytes,
-                                 [](fb::RigExecWireFile *edited) {
-                                     std::swap(edited->pose->constraints[0]
-                                                   .weightObjectIndex,
-                                               edited->pose->constraints[1]
-                                                   .weightObjectIndex);
-                                 }),
+               RigExecTestEdited(
+                   result.bytes,
+                   [](fb::RigExecWireFile *edited) {
+                       std::swap(
+                           edited->pose->constraints[0].weightObjectIndex,
+                           edited->pose->constraints[1].weightObjectIndex);
+                   }),
                "pose.constraints[0]: weight_object_index does not name the "
                "envelope of its weight object");
         expect("missing envelope index",
-               RigExecTestEdited(result.bytes,
-                                 [](fb::RigExecWireFile *edited) {
-                                     edited->pose->constraints[0]
-                                         .weightObjectIndex = -1;
-                                 }),
+               RigExecTestEdited(
+                   result.bytes,
+                   [](fb::RigExecWireFile *edited) {
+                       edited->pose->constraints[0].weightObjectIndex = -1;
+                   }),
                "pose.constraints[0]: weight_object_index does not name the "
                "envelope of its weight object");
     }
@@ -1302,8 +1497,8 @@ struct _ChainFrame {
 // False on any difference.
 static bool
 _ChainsMatchLive(const std::string &name, const UsdStageRefPtr &stage,
-                    const std::vector<double> &frames,
-                    std::vector<_ChainFrame> *rows)
+                 const std::vector<double> &frames,
+                 std::vector<_ChainFrame> *rows)
 {
     const SdfPath rigPath = _FindRig(stage);
     RigExecRigEvaluator baked(stage, rigPath);
@@ -1319,13 +1514,11 @@ _ChainsMatchLive(const std::string &name, const UsdStageRefPtr &stage,
         return false;
     }
 
-
     bool same = true;
     for (double frame : frames) {
         const RigExecRigPose want = baked.Evaluate(UsdTimeCode(frame));
         if (!want.valid) {
-            std::printf("%s frame %g: no live pose\n", name.c_str(),
-                        frame);
+            std::printf("%s frame %g: no live pose\n", name.c_str(), frame);
             return false;
         }
         if (!player.Play(frame, &error)) {
@@ -1341,8 +1534,8 @@ _ChainsMatchLive(const std::string &name, const UsdStageRefPtr &stage,
             if (found == want.movedProperties.end() ||
                 !_SamePropertyValue(found->second, got.value)) {
                 std::printf("%s frame %g: %s differs from the dynamic "
-                            "evaluator (%s)\n", name.c_str(), frame,
-                            got.path.c_str(),
+                            "evaluator (%s)\n",
+                            name.c_str(), frame, got.path.c_str(),
                             found == want.movedProperties.end()
                                 ? "not published there"
                                 : "value");
@@ -1353,20 +1546,18 @@ _ChainsMatchLive(const std::string &name, const UsdStageRefPtr &stage,
             if (_IsPropertyResult(value) &&
                 !row.values.count(path.GetString())) {
                 std::printf("%s frame %g: the runtime publishes nothing at "
-                            "%s\n", name.c_str(), frame,
-                            path.GetText());
+                            "%s\n",
+                            name.c_str(), frame, path.GetText());
                 same = false;
             }
         }
         const std::vector<std::string> got =
             _ChainLines(player->GetDiagnostics());
-        const std::vector<std::string> expected =
-            _ChainLines(want.diagnostics);
+        const std::vector<std::string> expected = _ChainLines(want.diagnostics);
         if (got != expected) {
             std::printf("%s frame %g: chain lines differ (%zu vs %zu)\n",
                         name.c_str(), frame, got.size(), expected.size());
-            for (size_t i = 0; i < std::max(got.size(), expected.size());
-                 ++i) {
+            for (size_t i = 0; i < std::max(got.size(), expected.size()); ++i) {
                 std::printf("  got:  %s\n  want: %s\n",
                             i < got.size() ? got[i].c_str() : "",
                             i < expected.size() ? expected[i].c_str() : "");
@@ -1399,8 +1590,7 @@ _Channel(const UsdStageRefPtr &stage, const char *scope, const char *name,
          const SdfValueTypeName &type)
 {
     const UsdPrim prim = stage->DefinePrim(
-        SdfPath(std::string("/Asset/Rig/Channels/") + scope),
-        TfToken("Scope"));
+        SdfPath(std::string("/Asset/Rig/Channels/") + scope), TfToken("Scope"));
     return prim.CreateAttribute(TfToken(name), type);
 }
 
@@ -1408,14 +1598,12 @@ _Channel(const UsdStageRefPtr &stage, const char *scope, const char *name,
 // mover revises before its parent, which is how a case fixes the order.
 static UsdPrim
 _MathMover(const UsdStageRefPtr &stage, const std::string &path,
-           const char *type, const char *operation,
-           const UsdAttribute &target)
+           const char *type, const char *operation, const UsdAttribute &target)
 {
     const UsdPrim prim =
         stage->DefinePrim(SdfPath("/Asset/Rig/Movers/" + path), TfToken(type));
     CHECK(prim.ApplyAPI(TfToken("RigExecMoverAPI")));
-    prim.CreateAttribute(TfToken("rigExec:operation"),
-                         SdfValueTypeNames->Token)
+    prim.CreateAttribute(TfToken("rigExec:operation"), SdfValueTypeNames->Token)
         .Set(TfToken(operation));
     prim.CreateRelationship(TfToken("rigExec:moves"))
         .SetTargets({target.GetPath()});
@@ -1430,8 +1618,8 @@ _SetInput(const UsdPrim &prim, const char *name, const SdfValueTypeName &type,
     prim.CreateAttribute(TfToken(name), type).Set(value);
 }
 
-static const GfVec2f kShapeKeys[] = {
-    GfVec2f(0.0f, 0.0f), GfVec2f(0.5f, 0.8f), GfVec2f(2.0f, 1.2f)};
+static const GfVec2f kShapeKeys[] = {GfVec2f(0.0f, 0.0f), GfVec2f(0.5f, 0.8f),
+                                     GfVec2f(2.0f, 1.2f)};
 static const GfVec2f kShapeTangents[] = {
     GfVec2f(1.5f, 1.5f), GfVec2f(0.6f, 0.6f), GfVec2f(0.1f, 0.1f)};
 
@@ -1449,17 +1637,17 @@ _FloatCurveClampStage()
     amount.Set(0.75f, UsdTimeCode(4.0));
     amount.Set(1.5f, UsdTimeCode(7.0));
     amount.Set(3.0f, UsdTimeCode(10.0));
-    const UsdPrim limit = _MathMover(stage, "Limit", "RigExecFloatMathMover",
-                                     "clamp", amount);
+    const UsdPrim limit =
+        _MathMover(stage, "Limit", "RigExecFloatMathMover", "clamp", amount);
     _SetInput(limit, "inputs:min", SdfValueTypeNames->Float, 0.1f);
     _SetInput(limit, "inputs:max", SdfValueTypeNames->Float, 1.0f);
     const UsdPrim shape = _MathMover(stage, "Limit/Shape",
                                      "RigExecFloatMathMover", "curve", amount);
     _SetInput(shape, "inputs:keys", SdfValueTypeNames->Float2Array,
               VtArray<GfVec2f>(std::begin(kShapeKeys), std::end(kShapeKeys)));
-    _SetInput(shape, "inputs:tangents", SdfValueTypeNames->Float2Array,
-              VtArray<GfVec2f>(std::begin(kShapeTangents),
-                               std::end(kShapeTangents)));
+    _SetInput(
+        shape, "inputs:tangents", SdfValueTypeNames->Float2Array,
+        VtArray<GfVec2f>(std::begin(kShapeTangents), std::end(kShapeTangents)));
 
     const UsdAttribute ramp =
         _Channel(stage, "Ramp", "rigExec:amount", SdfValueTypeNames->Float);
@@ -1469,10 +1657,9 @@ _FloatCurveClampStage()
     for (int i = 0; i < 12; ++i) {
         steps.push_back(GfVec2f(float(i), float(i * i) * 0.125f));
     }
-    const UsdPrim staircase = _MathMover(
-        stage, "Staircase", "RigExecFloatMathMover", "curve", ramp);
-    _SetInput(staircase, "inputs:keys", SdfValueTypeNames->Float2Array,
-              steps);
+    const UsdPrim staircase =
+        _MathMover(stage, "Staircase", "RigExecFloatMathMover", "curve", ramp);
+    _SetInput(staircase, "inputs:keys", SdfValueTypeNames->Float2Array, steps);
     return stage;
 }
 
@@ -1486,8 +1673,8 @@ _DoubleChainStage()
         _Channel(stage, "Wide", "rigExec:level", SdfValueTypeNames->Double);
     level.Set(0.1, UsdTimeCode(1.0));
     level.Set(1.0 / 3.0, UsdTimeCode(10.0));
-    const UsdPrim scale = _MathMover(stage, "Scale", "RigExecFloatMathMover",
-                                     "multiply", level);
+    const UsdPrim scale =
+        _MathMover(stage, "Scale", "RigExecFloatMathMover", "multiply", level);
     _SetInput(scale, "inputs:value", SdfValueTypeNames->Float, 1.1f);
     return stage;
 }
@@ -1501,28 +1688,27 @@ _MatrixChainStage()
     const UsdStageRefPtr stage = _ChainBaseStage();
     const UsdAttribute local =
         _Channel(stage, "Space", "rigExec:local", SdfValueTypeNames->Matrix4d);
-    local.Set(GfMatrix4d(GfRotation(GfVec3d(0, 1, 0), 10.0),
-                         GfVec3d(1.0, 2.0, 3.0)),
-              UsdTimeCode(1.0));
-    local.Set(GfMatrix4d(GfRotation(GfVec3d(0, 1, 0), 70.0),
-                         GfVec3d(4.0, -2.0, 0.5)),
-              UsdTimeCode(10.0));
-    const UsdPrim bad = _MathMover(stage, "Bad", "RigExecMatrixMathMover",
-                                   "multiply", local);
+    local.Set(
+        GfMatrix4d(GfRotation(GfVec3d(0, 1, 0), 10.0), GfVec3d(1.0, 2.0, 3.0)),
+        UsdTimeCode(1.0));
+    local.Set(
+        GfMatrix4d(GfRotation(GfVec3d(0, 1, 0), 70.0), GfVec3d(4.0, -2.0, 0.5)),
+        UsdTimeCode(10.0));
+    const UsdPrim bad =
+        _MathMover(stage, "Bad", "RigExecMatrixMathMover", "multiply", local);
     GfMatrix4d infinite(1.0);
     infinite[3][0] = std::numeric_limits<double>::infinity();
     _SetInput(bad, "inputs:value", SdfValueTypeNames->Matrix4d, infinite);
-    const UsdPrim snap = _MathMover(stage, "Bad/Snap",
-                                    "RigExecMatrixMathMover", "blend", local);
+    const UsdPrim snap =
+        _MathMover(stage, "Bad/Snap", "RigExecMatrixMathMover", "blend", local);
     _SetInput(snap, "inputs:value", SdfValueTypeNames->Matrix4d,
               GfMatrix4d(1.0).SetTranslate(GfVec3d(2.0, 2.0, 2.0)));
     _SetInput(snap, "inputs:defaultWeight", SdfValueTypeNames->Float, 0.25f);
-    const UsdPrim offset = _MathMover(stage, "Bad/Snap/Offset",
-                                      "RigExecMatrixMathMover", "multiply",
-                                      local);
-    _SetInput(offset, "inputs:value", SdfValueTypeNames->Matrix4d,
-              GfMatrix4d(GfRotation(GfVec3d(0, 0, 1), 30.0),
-                         GfVec3d(0.0, 5.0, 0.0)));
+    const UsdPrim offset = _MathMover(
+        stage, "Bad/Snap/Offset", "RigExecMatrixMathMover", "multiply", local);
+    _SetInput(
+        offset, "inputs:value", SdfValueTypeNames->Matrix4d,
+        GfMatrix4d(GfRotation(GfVec3d(0, 0, 1), 30.0), GfVec3d(0.0, 5.0, 0.0)));
     _SetInput(offset, "inputs:defaultWeight", SdfValueTypeNames->Float, 0.5f);
     return stage;
 }
@@ -1536,8 +1722,8 @@ _Vec3fChainStage()
         _Channel(stage, "Vec", "rigExec:offset", SdfValueTypeNames->Float3);
     offset.Set(GfVec3f(0.0f, 0.0f, 0.0f), UsdTimeCode(1.0));
     offset.Set(GfVec3f(2.0f, 5.0f, -3.0f), UsdTimeCode(10.0));
-    const UsdPrim spread = _MathMover(stage, "Spread",
-                                      "RigExecVec3fMathMover", "remap", offset);
+    const UsdPrim spread =
+        _MathMover(stage, "Spread", "RigExecVec3fMathMover", "remap", offset);
     _SetInput(spread, "inputs:min", SdfValueTypeNames->Float3,
               GfVec3f(-2.0f, -2.0f, -2.0f));
     _SetInput(spread, "inputs:max", SdfValueTypeNames->Float3,
@@ -1566,13 +1752,12 @@ _DisabledStage()
         _Channel(stage, "Dial", "rigExec:amount", SdfValueTypeNames->Float);
     amount.Set(0.2f, UsdTimeCode(1.0));
     amount.Set(0.8f, UsdTimeCode(10.0));
-    const UsdPrim off = _MathMover(stage, "Off", "RigExecFloatMathMover",
-                                   "add", amount);
+    const UsdPrim off =
+        _MathMover(stage, "Off", "RigExecFloatMathMover", "add", amount);
     _SetInput(off, "inputs:value", SdfValueTypeNames->Float, 100.0f);
     _SetInput(off, "inputs:enabled", SdfValueTypeNames->Bool, false);
-    const UsdPrim toggle = _MathMover(stage, "Off/Toggle",
-                                      "RigExecFloatMathMover", "multiply",
-                                      amount);
+    const UsdPrim toggle = _MathMover(
+        stage, "Off/Toggle", "RigExecFloatMathMover", "multiply", amount);
     _SetInput(toggle, "inputs:value", SdfValueTypeNames->Float, 2.0f);
     const UsdAttribute enabled = toggle.CreateAttribute(
         TfToken("inputs:enabled"), SdfValueTypeNames->Bool);
@@ -1591,8 +1776,8 @@ static UsdStageRefPtr
 _EnvelopeChainStage()
 {
     const UsdStageRefPtr stage = _ChainBaseStage();
-    const UsdPrim dial = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Controls/Dial"), TfToken("RigExecControl"));
+    const UsdPrim dial = stage->DefinePrim(SdfPath("/Asset/Rig/Controls/Dial"),
+                                           TfToken("RigExecControl"));
     const UsdAttribute ty =
         dial.CreateAttribute(TfToken("avars:ty"), SdfValueTypeNames->Double);
     ty.Set(0.0, UsdTimeCode(1.0));
@@ -1635,12 +1820,12 @@ _EnvelopeChainStage()
     const UsdPrim ramp = dynamicWeight("Ramp", 0.5f, "clamp");
     const UsdPrim steep = dynamicWeight("Steep", 0.45f, "strict");
 
-    const UsdPrim over = _MathMover(stage, "Over", "RigExecFloatMathMover",
-                                    "add", amount);
+    const UsdPrim over =
+        _MathMover(stage, "Over", "RigExecFloatMathMover", "add", amount);
     _SetInput(over, "inputs:value", SdfValueTypeNames->Float, 100.0f);
     _SetInput(over, "inputs:defaultWeight", SdfValueTypeNames->Float, 1.5f);
-    const UsdPrim soft = _MathMover(stage, "Over/Soft",
-                                    "RigExecFloatMathMover", "add", amount);
+    const UsdPrim soft =
+        _MathMover(stage, "Over/Soft", "RigExecFloatMathMover", "add", amount);
     _SetInput(soft, "inputs:value", SdfValueTypeNames->Float, 0.5f);
     _SetInput(soft, "inputs:defaultWeight", SdfValueTypeNames->Float, 0.25f);
     const UsdPrim kick = _MathMover(stage, "Over/Soft/Kick",
@@ -1687,26 +1872,25 @@ _PhasedStage()
         _Channel(stage, "Dial", "rigExec:amount", SdfValueTypeNames->Float);
     amount.Set(0.1f, UsdTimeCode(1.0));
     amount.Set(0.7f, UsdTimeCode(10.0));
-    const UsdPrim bias = _MathMover(stage, "Bias", "RigExecFloatMathMover",
-                                    "add", amount);
+    const UsdPrim bias =
+        _MathMover(stage, "Bias", "RigExecFloatMathMover", "add", amount);
     _SetInput(bias, "inputs:value", SdfValueTypeNames->Float, 0.25f);
-    const UsdPrim gain = _MathMover(stage, "Bias/Gain",
-                                    "RigExecFloatMathMover", "multiply",
-                                    amount);
+    const UsdPrim gain = _MathMover(stage, "Bias/Gain", "RigExecFloatMathMover",
+                                    "multiply", amount);
     _SetInput(gain, "inputs:value", SdfValueTypeNames->Float, 2.0f);
     const UsdAttribute level =
         _Channel(stage, "Wide", "rigExec:level", SdfValueTypeNames->Double);
     level.Set(0.1, UsdTimeCode(1.0));
     level.Set(1.0 / 3.0, UsdTimeCode(10.0));
-    const UsdPrim scale = _MathMover(stage, "Scale", "RigExecFloatMathMover",
-                                     "multiply", level);
+    const UsdPrim scale =
+        _MathMover(stage, "Scale", "RigExecFloatMathMover", "multiply", level);
     _SetInput(scale, "inputs:value", SdfValueTypeNames->Float, 1.25f);
 
     const auto readout = [&](const char *name, const UsdAttribute &source,
                              const char *phase) {
-        const UsdAttribute target =
-            _Channel(stage, "Readouts", (std::string("rigExec:") + name).c_str(),
-                     SdfValueTypeNames->Float);
+        const UsdAttribute target = _Channel(
+            stage, "Readouts", (std::string("rigExec:") + name).c_str(),
+            SdfValueTypeNames->Float);
         target.Set(0.0f);
         const UsdPrim mover =
             _MathMover(stage, std::string("Readouts/") + name,
@@ -1736,20 +1920,19 @@ _DefaultPhaseStage()
         _Channel(stage, "Dial", "rigExec:amount", SdfValueTypeNames->Float);
     amount.Set(0.1f, UsdTimeCode(1.0));
     amount.Set(0.45f, UsdTimeCode(10.0));
-    const UsdPrim limit = _MathMover(stage, "Limit", "RigExecFloatMathMover",
-                                     "clamp", amount);
+    const UsdPrim limit =
+        _MathMover(stage, "Limit", "RigExecFloatMathMover", "clamp", amount);
     _SetInput(limit, "inputs:min", SdfValueTypeNames->Float, 0.0f);
     _SetInput(limit, "inputs:max", SdfValueTypeNames->Float, 0.6f);
-    const UsdPrim gain = _MathMover(stage, "Limit/Gain",
-                                    "RigExecFloatMathMover", "multiply",
-                                    amount);
+    const UsdPrim gain = _MathMover(
+        stage, "Limit/Gain", "RigExecFloatMathMover", "multiply", amount);
     _SetInput(gain, "inputs:value", SdfValueTypeNames->Float, 2.0f);
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Readouts"), TfToken("Scope"));
     const auto readout = [&](const char *name, const SdfPath &source,
                              const char *phase) {
-        const UsdAttribute target =
-            _Channel(stage, "Readouts", (std::string("rigExec:") + name).c_str(),
-                     SdfValueTypeNames->Float);
+        const UsdAttribute target = _Channel(
+            stage, "Readouts", (std::string("rigExec:") + name).c_str(),
+            SdfValueTypeNames->Float);
         target.Set(0.0f);
         const UsdPrim mover =
             _MathMover(stage, std::string("Readouts/") + name,
@@ -1787,28 +1970,27 @@ _NonFiniteStage()
     bad.Set(std::numeric_limits<float>::infinity(), UsdTimeCode(3.0));
     bad.Set(std::numeric_limits<float>::quiet_NaN(), UsdTimeCode(5.0));
     bad.Set(0.25f, UsdTimeCode(7.0));
-    const UsdPrim plus = _MathMover(stage, "Plus", "RigExecFloatMathMover",
-                                    "add", bad);
+    const UsdPrim plus =
+        _MathMover(stage, "Plus", "RigExecFloatMathMover", "add", bad);
     _SetInput(plus, "inputs:value", SdfValueTypeNames->Float, 1.0f);
 
     const UsdAttribute huge =
         _Channel(stage, "Huge", "rigExec:level", SdfValueTypeNames->Double);
     huge.Set(1e300);
-    const UsdPrim keep = _MathMover(stage, "Keep", "RigExecFloatMathMover",
-                                    "multiply", huge);
+    const UsdPrim keep =
+        _MathMover(stage, "Keep", "RigExecFloatMathMover", "multiply", huge);
     _SetInput(keep, "inputs:value", SdfValueTypeNames->Float, 1.0f);
 
     const UsdAttribute blow =
         _Channel(stage, "Blow", "rigExec:amount", SdfValueTypeNames->Float);
     blow.Set(0.5f, UsdTimeCode(1.0));
     blow.Set(2.0f, UsdTimeCode(7.0));
-    const UsdPrim inf = _MathMover(stage, "Inf", "RigExecFloatMathMover",
-                                   "add", blow);
+    const UsdPrim inf =
+        _MathMover(stage, "Inf", "RigExecFloatMathMover", "add", blow);
     _SetInput(inf, "inputs:value", SdfValueTypeNames->Float,
               std::numeric_limits<float>::infinity());
-    const UsdPrim overflow = _MathMover(stage, "Inf/Overflow",
-                                        "RigExecFloatMathMover", "multiply",
-                                        blow);
+    const UsdPrim overflow = _MathMover(
+        stage, "Inf/Overflow", "RigExecFloatMathMover", "multiply", blow);
     _SetInput(overflow, "inputs:value", SdfValueTypeNames->Float, 3e38f);
     return stage;
 }
@@ -1817,8 +1999,8 @@ static float
 _Float(const _ChainFrame &row, const std::string &path, bool *found)
 {
     const auto it = row.values.find(path);
-    *found = it != row.values.end() &&
-             it->second.tag == RrPropertyValue::Tag::Float;
+    *found =
+        it != row.values.end() && it->second.tag == RrPropertyValue::Tag::Float;
     return *found ? it->second.f32 : 0.0f;
 }
 
@@ -1841,17 +2023,26 @@ _OraclePublicationStage(bool prior)
     const auto blend = _MathMover(stage, "M_Receiver", "RigExecFloatMathMover",
                                   "add", receiver);
     _SetInput(blend, "inputs:value", SdfValueTypeNames->Float, 1.0f);
-    const auto envelope = stage->DefinePrim(SdfPath("/Asset/Rig/Weights/Envelope"),
-                                           TfToken("RigExecDynamicWeight"));
-    envelope.CreateRelationship(TfToken("rigExec:weightTarget")).SetTargets({receiver.GetPath()});
-    envelope.CreateAttribute(TfToken("rigExec:representation"), SdfValueTypeNames->Token)
+    const auto envelope =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Weights/Envelope"),
+                          TfToken("RigExecDynamicWeight"));
+    envelope.CreateRelationship(TfToken("rigExec:weightTarget"))
+        .SetTargets({receiver.GetPath()});
+    envelope
+        .CreateAttribute(TfToken("rigExec:representation"),
+                         SdfValueTypeNames->Token)
         .Set(TfToken("constant"));
-    envelope.CreateAttribute(TfToken("rigExec:rangePolicy"), SdfValueTypeNames->Token)
+    envelope
+        .CreateAttribute(TfToken("rigExec:rangePolicy"),
+                         SdfValueTypeNames->Token)
         .Set(TfToken("clamp"));
-    const auto envelopeDriver = envelope.CreateAttribute(TfToken("inputs:driver"), SdfValueTypeNames->Float);
+    const auto envelopeDriver = envelope.CreateAttribute(
+        TfToken("inputs:driver"), SdfValueTypeNames->Float);
     envelopeDriver.AddConnection(driver.GetPath());
-    envelopeDriver.SetMetadata(TfToken("rigExecReadPhase"), std::string("final"));
-    blend.CreateRelationship(TfToken("rigExec:weightObject")).SetTargets({envelope.GetPath()});
+    envelopeDriver.SetMetadata(TfToken("rigExecReadPhase"),
+                               std::string("final"));
+    blend.CreateRelationship(TfToken("rigExec:weightObject"))
+        .SetTargets({envelope.GetPath()});
     return stage;
 }
 
@@ -1862,30 +2053,39 @@ TestOraclePublicationGeneration()
     std::vector<std::vector<_ChainFrame>> variants;
     for (const bool prior : {true, false}) {
         const auto stage = _OraclePublicationStage(prior);
-        const std::string label = prior ? "oracle prior finished chain" : "oracle later cached chain";
+        const std::string label =
+            prior ? "oracle prior finished chain" : "oracle later cached chain";
         std::vector<uint8_t> bytes;
         std::string error;
         RigExecRigEvaluator bake(stage, SdfPath("/Asset/Rig"));
         CHECK(RigExecTestBakeAt(bake, 1, &bytes, &error));
         const auto file = RigExecTestUnpack(bytes);
         CHECK(file);
-        if (!file) continue;
+        if (!file)
+            continue;
         const std::string driver = std::string("/Asset/Rig/Channels/") +
-            (prior ? "A_Driver" : "Z_Driver") + ".rigExec:amount";
-        const std::string receiver = "/Asset/Rig/Channels/M_Receiver.rigExec:amount";
+                                   (prior ? "A_Driver" : "Z_Driver") +
+                                   ".rigExec:amount";
+        const std::string receiver =
+            "/Asset/Rig/Channels/M_Receiver.rigExec:amount";
         int driverFinal = -1, receiverRevision = -1;
         for (size_t s = 0; s < file->steps.size(); ++s) {
             const auto &step = file->steps[s];
-            if (!step.isHead || step.kind != fb::StepKind::PropertyRevision) continue;
+            if (!step.isHead || step.kind != fb::StepKind::PropertyRevision)
+                continue;
             const auto &chain = file->propertyChains[size_t(step.object)];
-            const auto target = RigExecFormatPathText(*file, file->inputs[chain.target].name());
-            if (target == driver && size_t(step.part) == chain.revisions.size()) driverFinal = int(s);
-            if (target == receiver && step.part == 1) receiverRevision = int(s);
+            const auto target =
+                RigExecFormatPathText(*file, file->inputs[chain.target].name());
+            if (target == driver && size_t(step.part) == chain.revisions.size())
+                driverFinal = int(s);
+            if (target == receiver && step.part == 1)
+                receiverRevision = int(s);
         }
         CHECK(driverFinal >= 0 && receiverRevision >= 0);
         // Only chains available to the original receiver oracle contribute
         // producer dependencies. Later chains retain the raw-source answer.
-        if (prior) CHECK(driverFinal < receiverRevision);
+        if (prior)
+            CHECK(driverFinal < receiverRevision);
         _TestStage(label, stage, frames);
         std::vector<_ChainFrame> rows;
         CHECK(_ChainsMatchLive(label, stage, frames, &rows));
@@ -1897,22 +2097,28 @@ TestOraclePublicationGeneration()
             const float actual = _Float(rows[f], receiver, &found);
             const float expected = 0.25f + (prior ? raw + 0.5f : raw);
             if (!found || actual != expected)
-                std::printf("%s frame %g: raw %.9g driver %.9g receiver %.9g expected %.9g\n",
+                std::printf("%s frame %g: raw %.9g driver %.9g receiver %.9g "
+                            "expected %.9g\n",
                             label.c_str(), frames[f], raw,
                             _Float(rows[f], driver, &found), actual, expected);
             CHECK(actual == expected && found);
         }
         if (rows.size() == frames.size()) {
-            CHECK(_SameBits(rows[0].values.at(receiver), rows[3].values.at(receiver)));
-            CHECK(_SameBits(rows[1].values.at(receiver), rows[2].values.at(receiver)));
-            CHECK(!_SameBits(rows[0].values.at(receiver), rows[1].values.at(receiver)));
+            CHECK(_SameBits(rows[0].values.at(receiver),
+                            rows[3].values.at(receiver)));
+            CHECK(_SameBits(rows[1].values.at(receiver),
+                            rows[2].values.at(receiver)));
+            CHECK(!_SameBits(rows[0].values.at(receiver),
+                             rows[1].values.at(receiver)));
         }
         variants.push_back(std::move(rows));
     }
     CHECK(variants.size() == 2);
     if (variants.size() == 2 && !variants[0].empty() && !variants[1].empty())
-        CHECK(!_SameBits(variants[0][0].values.at("/Asset/Rig/Channels/M_Receiver.rigExec:amount"),
-                         variants[1][0].values.at("/Asset/Rig/Channels/M_Receiver.rigExec:amount")));
+        CHECK(!_SameBits(variants[0][0].values.at(
+                             "/Asset/Rig/Channels/M_Receiver.rigExec:amount"),
+                         variants[1][0].values.at(
+                             "/Asset/Rig/Channels/M_Receiver.rigExec:amount")));
 }
 
 static void
@@ -1920,8 +2126,10 @@ TestDoubleTailCycle()
 {
     const auto stage = _ChainBaseStage();
     stage->SetEndTimeCode(4.0);
-    const auto a = _Channel(stage, "CycleA", "rigExec:amount", SdfValueTypeNames->Float);
-    const auto b = _Channel(stage, "CycleB", "rigExec:amount", SdfValueTypeNames->Double);
+    const auto a =
+        _Channel(stage, "CycleA", "rigExec:amount", SdfValueTypeNames->Float);
+    const auto b =
+        _Channel(stage, "CycleB", "rigExec:amount", SdfValueTypeNames->Double);
     a.Set(0.125f);
     b.Set(0.375);
     b.Set(0.375, UsdTimeCode(1));
@@ -1930,10 +2138,13 @@ TestDoubleTailCycle()
     b.Set(0.375, UsdTimeCode(4));
     a.AddConnection(b.GetPath());
     b.AddConnection(a.GetPath());
-    const auto target = _Channel(stage, "CycleResult", "rigExec:amount", SdfValueTypeNames->Float);
+    const auto target = _Channel(stage, "CycleResult", "rigExec:amount",
+                                 SdfValueTypeNames->Float);
     target.Set(0.25f);
-    const auto mover = _MathMover(stage, "CycleResult", "RigExecFloatMathMover", "add", target);
-    const auto value = mover.CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float);
+    const auto mover = _MathMover(stage, "CycleResult", "RigExecFloatMathMover",
+                                  "add", target);
+    const auto value = mover.CreateAttribute(TfToken("inputs:value"),
+                                             SdfValueTypeNames->Float);
     value.AddConnection(a.GetPath());
     const std::vector<double> frames{1, 2, 3, 4, 2};
     _TestStage("double tail fresh cycle", stage, frames);
@@ -1961,15 +2172,19 @@ TestScalarRawKindPreservesRecords()
     std::vector<uint8_t> bytes;
     std::string error;
     CHECK(RigExecTestBakeAt(baked, 1, &bytes, &error));
-    auto reader = RigExecRuntimeReader::Open(bytes.data(), bytes.size(), &error);
+    auto reader =
+        RigExecRuntimeReader::Open(bytes.data(), bytes.size(), &error);
     const auto file = RigExecTestUnpack(bytes);
     CHECK(reader && file);
-    if (!reader || !file) return;
+    if (!reader || !file)
+        return;
     size_t slot = 0;
     CHECK(reader->FindInput(path, &slot));
     bool recorded = false;
     for (const auto &record : file->phasedConsumers)
-        recorded = recorded || RigExecFormatPathText(*file, file->inputs[record.consumer].name()) == path;
+        recorded = recorded ||
+                   RigExecFormatPathText(
+                       *file, file->inputs[record.consumer].name()) == path;
     CHECK(recorded);
     const auto raw = reader->GetInputValue(slot);
     CHECK(raw.tag == RrInputTag::Float && raw.f32 == 0.0f);
@@ -1980,7 +2195,8 @@ TestScalarRawKindPreservesRecords()
         for (const auto &value : row.properties)
             if (value.path == path) {
                 present = true;
-                CHECK(value.value.tag == RrPropertyValue::Tag::Float && value.value.f32 == 0.2f);
+                CHECK(value.value.tag == RrPropertyValue::Tag::Float &&
+                      value.value.f32 == 0.2f);
             }
         CHECK(present);
     };
@@ -2003,7 +2219,8 @@ TestScalarRawKindPreservesRecords()
     // as a session-layer edit: it does not suppress or replace the record.
     CHECK(stage->GetAttributeAtPath(SdfPath(path)).Set(0.75f));
     std::vector<_ChainFrame> rows;
-    CHECK(_ChainsMatchLive("raw authored scalar retains phased record", stage, {1}, &rows));
+    CHECK(_ChainsMatchLive("raw authored scalar retains phased record", stage,
+                           {1}, &rows));
     CHECK(rows.size() == 1);
     if (!rows.empty()) {
         bool found = false;
@@ -2056,9 +2273,8 @@ TestFloatChainCurveClamp()
     const std::vector<double> frames = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
     std::vector<_ChainFrame> rows;
     // Two chains, each published at every frame.
-    if (!_RunChainCase("float chain, curve then clamp",
-                       _FloatCurveClampStage, frames, 2 * frames.size(),
-                       &rows)) {
+    if (!_RunChainCase("float chain, curve then clamp", _FloatCurveClampStage,
+                       frames, 2 * frames.size(), &rows)) {
         return;
     }
     // The evaluator's own kernels over the authored base: the Hermite
@@ -2086,8 +2302,8 @@ TestFloatChainCurveClamp()
         clamp.op = RigExecPropertyOp::Clamp;
         clamp.min = 0.1f;
         clamp.max = 1.0f;
-        const float expected = RigExecApplyFloatMath(
-            RigExecApplyFloatMath(base, curve), clamp);
+        const float expected =
+            RigExecApplyFloatMath(RigExecApplyFloatMath(base, curve), clamp);
         bool found = false;
         const float got =
             _Float(rows[f], "/Asset/Rig/Channels/Dial.rigExec:amount", &found);
@@ -2098,8 +2314,8 @@ TestFloatChainCurveClamp()
 
         float x = 0.0f;
         CHECK(ramp.Get(&x, UsdTimeCode(frames[f])));
-        const float linear = RigExecEvaluateLinearKeys(
-            staircase.cdata(), staircase.size(), x);
+        const float linear =
+            RigExecEvaluateLinearKeys(staircase.cdata(), staircase.size(), x);
         const float gotLinear =
             _Float(rows[f], "/Asset/Rig/Channels/Ramp.rigExec:amount", &found);
         CHECK(found && std::memcmp(&gotLinear, &linear, sizeof(float)) == 0);
@@ -2131,8 +2347,8 @@ TestDoubleChainInFloat()
         CHECK(it != rows[f].values.end() &&
               it->second.tag == RrPropertyValue::Tag::Double &&
               std::memcmp(&it->second.f64, &expected, sizeof(double)) == 0);
-        narrowed += it != rows[f].values.end() &&
-                    it->second.f64 != base * double(1.1f);
+        narrowed +=
+            it != rows[f].values.end() && it->second.f64 != base * double(1.1f);
     }
     // Computing in double would have given other bits at some frames.
     CHECK(narrowed > 0);
@@ -2146,8 +2362,8 @@ TestMatrixChain()
 {
     const std::vector<double> frames = {1, 4, 7, 10};
     std::vector<_ChainFrame> rows;
-    if (!_RunChainCase("matrix chain", _MatrixChainStage, frames,
-                       frames.size(), &rows)) {
+    if (!_RunChainCase("matrix chain", _MatrixChainStage, frames, frames.size(),
+                       &rows)) {
         return;
     }
     // The evaluator's kernels over the authored base: multiply under 0.5,
@@ -2165,8 +2381,8 @@ TestMatrixChain()
         GfMatrix4d base;
         CHECK(local.Get(&base, UsdTimeCode(frames[f])));
         GfMatrix4d once, twice;
-        CHECK(RigExecApplyMatrixMath(base, RigExecPropertyOp::Multiply,
-                                     offset, 0.5f, &once));
+        CHECK(RigExecApplyMatrixMath(base, RigExecPropertyOp::Multiply, offset,
+                                     0.5f, &once));
         CHECK(RigExecApplyMatrixMath(once, RigExecPropertyOp::Blend, snap,
                                      0.25f, &twice));
         const auto it =
@@ -2182,8 +2398,8 @@ TestVec3fChain()
 {
     const std::vector<double> frames = {1, 4, 7, 10};
     std::vector<_ChainFrame> rows;
-    if (!_RunChainCase("vec3f chain", _Vec3fChainStage, frames,
-                       frames.size(), &rows)) {
+    if (!_RunChainCase("vec3f chain", _Vec3fChainStage, frames, frames.size(),
+                       &rows)) {
         return;
     }
     // Add, clamp, then remap under 0.5, component by component.
@@ -2310,13 +2526,11 @@ TestPhasedConsumers()
         CHECK(_Float(rows[f], "/Asset/Rig/Movers/Readouts/base.inputs:value",
                      &found) == base &&
               found);
-        CHECK(_Float(rows[f],
-                     "/Asset/Rig/Movers/Readouts/early.inputs:value",
+        CHECK(_Float(rows[f], "/Asset/Rig/Movers/Readouts/early.inputs:value",
                      &found) == base * 2.0f &&
               found);
         // The double chain's base, narrowed into the float input.
-        CHECK(_Float(rows[f],
-                     "/Asset/Rig/Movers/Readouts/narrow.inputs:value",
+        CHECK(_Float(rows[f], "/Asset/Rig/Movers/Readouts/narrow.inputs:value",
                      &found) == float(wide) &&
               found);
         CHECK(_Float(rows[f], "/Asset/Rig/Channels/Dial.rigExec:amount",
@@ -2397,13 +2611,11 @@ TestDefaultReadPhaseRoundTrip()
         return;
     }
     std::map<std::string, uint32_t> applied;
-    for (const fb::RigExecWirePhasedConsumer &record :
-         file->phasedConsumers) {
+    for (const fb::RigExecWirePhasedConsumer &record : file->phasedConsumers) {
         CHECK(record.consumer < file->inputs.size());
         if (record.consumer < file->inputs.size()) {
             applied[RigExecFormatPathText(
-                *file, file->inputs[record.consumer].name())] =
-                record.applied;
+                *file, file->inputs[record.consumer].name())] = record.applied;
         }
     }
     const std::string readers = "/Asset/Rig/Movers/Readouts/";
@@ -2451,9 +2663,8 @@ TestNonFiniteBase()
         RigExecTestPlayer player;
         CHECK(player.Open(bytes, stage, &error));
         error.clear();
-        CHECK(!player->SetInput(badPath,
-                                double(std::numeric_limits<float>::infinity()),
-                                &error));
+        CHECK(!player->SetInput(
+            badPath, double(std::numeric_limits<float>::infinity()), &error));
         CHECK(error == badPath + " takes finite values only");
         CHECK(player.Play(3.0, &error));
         size_t index = 0;
@@ -2463,9 +2674,8 @@ TestNonFiniteBase()
     }
     const std::string hugePath = "/Asset/Rig/Channels/Huge.rigExec:level";
     const std::string blowPath = "/Asset/Rig/Channels/Blow.rigExec:amount";
-    const std::string hugeLine =
-        "property chain " + hugePath +
-        ": authored base is not finite; chain skipped";
+    const std::string hugeLine = "property chain " + hugePath +
+                                 ": authored base is not finite; chain skipped";
     const std::string infLine =
         "diag /Asset/Rig/Movers/Inf: inputs unusable; revision passed through";
     bool found = false;
@@ -2639,18 +2849,19 @@ _TwistReadStage(const std::string &examplesDir, bool final)
     }
     stage->SetEditTarget(stage->GetSessionLayer());
     const UsdAttribute degrees =
-        stage->DefinePrim(SdfPath("/ScIkAsset/Rig/Channels/Twist"),
-                          TfToken("Scope"))
+        stage
+            ->DefinePrim(SdfPath("/ScIkAsset/Rig/Channels/Twist"),
+                         TfToken("Scope"))
             .CreateAttribute(TfToken("rigExec:degrees"),
                              SdfValueTypeNames->Double);
     degrees.Set(10.0, UsdTimeCode(1001.0));
     degrees.Set(30.0, UsdTimeCode(1024.0));
-    const UsdPrim twice = stage->DefinePrim(
-        SdfPath("/ScIkAsset/Rig/Movers/TwistTwice"),
-        TfToken("RigExecFloatMathMover"));
+    const UsdPrim twice =
+        stage->DefinePrim(SdfPath("/ScIkAsset/Rig/Movers/TwistTwice"),
+                          TfToken("RigExecFloatMathMover"));
     CHECK(twice.ApplyAPI(TfToken("RigExecMoverAPI")));
-    twice.CreateAttribute(TfToken("rigExec:operation"),
-                          SdfValueTypeNames->Token)
+    twice
+        .CreateAttribute(TfToken("rigExec:operation"), SdfValueTypeNames->Token)
         .Set(TfToken("multiply"));
     twice.CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float)
         .Set(2.0f);
@@ -2673,13 +2884,12 @@ _LiftReadStage(bool final, bool floatChannel = false)
     stage->SetEndTimeCode(10.0);
     UsdGeomXform::Define(stage, SdfPath("/Asset"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const UsdPrim lift = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Controls/Lift"), TfToken("RigExecControl"));
+    const UsdPrim lift = stage->DefinePrim(SdfPath("/Asset/Rig/Controls/Lift"),
+                                           TfToken("RigExecControl"));
     lift.CreateAttribute(TfToken("rest:space"), SdfValueTypeNames->Matrix4d)
         .Set(GfMatrix4d(1.0));
     const UsdAttribute height =
-        stage->DefinePrim(SdfPath("/Asset/Rig/Channels/Lift"),
-                          TfToken("Scope"))
+        stage->DefinePrim(SdfPath("/Asset/Rig/Channels/Lift"), TfToken("Scope"))
             .CreateAttribute(TfToken("rigExec:height"),
                              floatChannel ? SdfValueTypeNames->Float
                                           : SdfValueTypeNames->Double);
@@ -2690,11 +2900,11 @@ _LiftReadStage(bool final, bool floatChannel = false)
         height.Set(2.0, UsdTimeCode(1.0));
         height.Set(4.0, UsdTimeCode(10.0));
     }
-    const UsdPrim raise = _MathMover(stage, "Raise", "RigExecFloatMathMover",
-                                     "multiply", height);
+    const UsdPrim raise =
+        _MathMover(stage, "Raise", "RigExecFloatMathMover", "multiply", height);
     _SetInput(raise, "inputs:value", SdfValueTypeNames->Float, 1.5f);
-    const UsdAttribute ty = lift.CreateAttribute(TfToken("avars:ty"),
-                                                 SdfValueTypeNames->Double);
+    const UsdAttribute ty =
+        lift.CreateAttribute(TfToken("avars:ty"), SdfValueTypeNames->Double);
     ty.SetConnections({height.GetPath()});
     if (final) {
         ty.SetMetadata(TfToken("rigExecReadPhase"), std::string("final"));
@@ -2713,25 +2923,24 @@ _OutsideSpaceStage(const std::string &examplesDir, bool final)
     }
     stage->SetEditTarget(stage->GetSessionLayer());
     const UsdAttribute pick =
-        stage->DefinePrim(SdfPath("/SpaceSwitchAsset/Rig/Channels"),
-                          TfToken("Scope"))
+        stage
+            ->DefinePrim(SdfPath("/SpaceSwitchAsset/Rig/Channels"),
+                         TfToken("Scope"))
             .CreateAttribute(TfToken("rigExec:pick"),
                              SdfValueTypeNames->Double);
     pick.Set(0.0);
-    const UsdPrim next = stage->DefinePrim(
-        SdfPath("/SpaceSwitchAsset/Rig/Movers/NextSpace"),
-        TfToken("RigExecFloatMathMover"));
+    const UsdPrim next =
+        stage->DefinePrim(SdfPath("/SpaceSwitchAsset/Rig/Movers/NextSpace"),
+                          TfToken("RigExecFloatMathMover"));
     CHECK(next.ApplyAPI(TfToken("RigExecMoverAPI")));
-    next.CreateAttribute(TfToken("rigExec:operation"),
-                         SdfValueTypeNames->Token)
+    next.CreateAttribute(TfToken("rigExec:operation"), SdfValueTypeNames->Token)
         .Set(TfToken("add"));
     next.CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float)
         .Set(1.0f);
     next.CreateRelationship(TfToken("rigExec:moves"))
         .SetTargets({pick.GetPath()});
     const UsdAttribute space =
-        stage->DefinePrim(SdfPath("/SpaceSwitchAsset/Dials"),
-                          TfToken("Scope"))
+        stage->DefinePrim(SdfPath("/SpaceSwitchAsset/Dials"), TfToken("Scope"))
             .CreateAttribute(TfToken("rigExec:space"),
                              SdfValueTypeNames->Double);
     space.SetConnections({pick.GetPath()});
@@ -2795,11 +3004,10 @@ TestConstraintArrayDiagnostics(const std::string &examplesDir)
     const int failuresBefore = failures;
     {
         const UsdStageRefPtr stage = UsdStage::CreateInMemory();
-        const auto xform = [&](const char *path,
-                               const GfVec3d &translation) {
+        const auto xform = [&](const char *path, const GfVec3d &translation) {
             const UsdGeomXform x = UsdGeomXform::Define(stage, SdfPath(path));
-            x.MakeMatrixXform().Set(GfMatrix4d(
-                GfRotation(GfVec3d(0, 0, 1), 0.0), translation));
+            x.MakeMatrixXform().Set(
+                GfMatrix4d(GfRotation(GfVec3d(0, 0, 1), 0.0), translation));
         };
         xform("/Asset", GfVec3d(0));
         xform("/Asset/Target", GfVec3d(0));
@@ -2818,8 +3026,8 @@ TestConstraintArrayDiagnostics(const std::string &examplesDir)
                             SdfValueTypeNames->FloatArray)
             .Set(VtFloatArray{1, 2});
         std::vector<_PlayedFrame> played;
-        _TestStage("constraint source weights cardinality", stage,
-                   {1.0, 2.0}, &played);
+        _TestStage("constraint source weights cardinality", stage, {1.0, 2.0},
+                   &played);
         const bool said = _EveryFrameSays(
             played,
             "/Asset/Rig/Movers/Pos inputs:sourceWeights has 2 entries for "
@@ -2876,15 +3084,13 @@ struct _Reference {
 static std::vector<_Reference>
 _References(const UsdStageRefPtr &stage, const SdfPath &rigPath,
             const std::vector<RigExecTestEdit> &edits,
-            const std::vector<double> &frames,
-            bool compileAfterEdits = false)
+            const std::vector<double> &frames, bool compileAfterEdits = false)
 {
     std::vector<RigExecRigPose> poses;
     std::vector<_Reference> out(frames.size());
     std::string error;
     const bool ok = RigExecTestEditedPoses(
-        stage, rigPath, edits,
-        frames, &poses, &error,
+        stage, rigPath, edits, frames, &poses, &error,
         [&](const RigExecRigEvaluator &evaluator, size_t i) {
             const RigExecBakedProgram *program = evaluator.GetBakedProgram();
             if (program) {
@@ -2907,9 +3113,9 @@ _References(const UsdStageRefPtr &stage, const SdfPath &rigPath,
 static RigExecTestEdit
 _Edit(const UsdStageRefPtr &stage, const std::string &path, double value)
 {
-    return {SdfPath(path),
-            RigExecTestTypedValue(stage->GetAttributeAtPath(SdfPath(path)),
-                                  value)};
+    return {
+        SdfPath(path),
+        RigExecTestTypedValue(stage->GetAttributeAtPath(SdfPath(path)), value)};
 }
 
 // Whether the runtime's version pools equal \p fin and \p base bit for
@@ -2922,21 +3128,19 @@ _SamePools(const char *what, double frame, const RigExecRuntimeReader &reader,
     const std::vector<RrPointFrame> &fin = reader.GetFinFrames();
     const std::vector<RrPointFrame> &base = reader.GetBaseFrames();
     if (fin.size() != wantFin.size() || base.size() != wantBase.size()) {
-        std::printf("%s frame %.17g: the version pools differ in size\n",
-                    what, frame);
+        std::printf("%s frame %.17g: the version pools differ in size\n", what,
+                    frame);
         return false;
     }
     for (size_t i = 0; i < fin.size(); ++i) {
         if (!_FramesEqual(wantFin[i], fin[i])) {
-            std::printf("%s frame %.17g: fin[%zu] differs\n", what, frame,
-                        i);
+            std::printf("%s frame %.17g: fin[%zu] differs\n", what, frame, i);
             return false;
         }
     }
     for (size_t i = 0; i < base.size(); ++i) {
         if (!_FramesEqual(wantBase[i], base[i])) {
-            std::printf("%s frame %.17g: base[%zu] differs\n", what, frame,
-                        i);
+            std::printf("%s frame %.17g: base[%zu] differs\n", what, frame, i);
             return false;
         }
     }
@@ -3037,8 +3241,7 @@ TestSetInputOnHop()
     const auto control = [&](const char *path) {
         const UsdPrim prim =
             stage->DefinePrim(SdfPath(path), TfToken("RigExecControl"));
-        prim.CreateAttribute(TfToken("rest:space"),
-                             SdfValueTypeNames->Matrix4d)
+        prim.CreateAttribute(TfToken("rest:space"), SdfValueTypeNames->Matrix4d)
             .Set(GfMatrix4d(1.0));
         return prim;
     };
@@ -3087,18 +3290,17 @@ TestSetInputOnHop()
     const auto pass = [&](const char *what, bool dragging,
                           const std::vector<_Reference> &references) {
         bool same = references.size() == frames.size();
-        for (size_t f = 0; f < frames.size() && f < references.size();
-             ++f) {
+        for (size_t f = 0; f < frames.size() && f < references.size(); ++f) {
             const RigExecRigPose &pose = references[f].pose;
             if (!player.Play(frames[f], &error)) {
-                std::printf("%s, %s frame %.17g: %s\n", name, what,
-                            frames[f], error.c_str());
+                std::printf("%s, %s frame %.17g: %s\n", name, what, frames[f],
+                            error.c_str());
                 CHECK(false);
                 return false;
             }
-            same = _SamePools(what, frames[f], player.Reader(),
-                              references[f]) &&
-                   same;
+            same =
+                _SamePools(what, frames[f], player.Reader(), references[f]) &&
+                same;
             // The set on the hop is shadowed upstream; the set on the
             // unrevised avar reaches its reader.
             CHECK(_ControlAt(pose, lift.GetPath(), 1) != 5.5 &&
@@ -3116,11 +3318,11 @@ TestSetInputOnHop()
     CHECK(pass("undragged", false, undragged));
     CHECK(player.Hold(hopPath, 5.5, &error));
     CHECK(player.Hold(pinPath, -0.75, &error));
-    CHECK(pass("dragged", true,
-               _References(stage, rigPath,
-                           {_Edit(stage, hopPath, 5.5),
-                            _Edit(stage, pinPath, -0.75)},
-                           frames)));
+    CHECK(pass(
+        "dragged", true,
+        _References(stage, rigPath,
+                    {_Edit(stage, hopPath, 5.5), _Edit(stage, pinPath, -0.75)},
+                    frames)));
     player.ReleaseAll();
     CHECK(pass("released", false, undragged));
     std::printf("%s: checked\n", name);
@@ -3145,8 +3347,7 @@ TestSetInputOnLadderInput()
     const auto control = [&](const char *path) {
         const UsdPrim prim =
             stage->DefinePrim(SdfPath(path), TfToken("RigExecControl"));
-        prim.CreateAttribute(TfToken("rest:space"),
-                             SdfValueTypeNames->Matrix4d)
+        prim.CreateAttribute(TfToken("rest:space"), SdfValueTypeNames->Matrix4d)
             .Set(GfMatrix4d(1.0));
         return prim;
     };
@@ -3187,8 +3388,7 @@ TestSetInputOnLadderInput()
                           const std::vector<_Reference> &references,
                           std::vector<std::vector<RrPointFrame>> *fin) {
         bool same = references.size() == frames.size();
-        for (size_t f = 0; f < frames.size() && f < references.size();
-             ++f) {
+        for (size_t f = 0; f < frames.size() && f < references.size(); ++f) {
             same = run(what, frames[f], references[f], fin) && same;
         }
         return same;
@@ -3207,8 +3407,7 @@ TestSetInputOnLadderInput()
                _References(stage, rigPath, {_Edit(stage, pinPath, -0.75)},
                            frames, true),
                &dragged));
-    CHECK(dragged.size() == frames.size() &&
-          undragged.size() == frames.size());
+    CHECK(dragged.size() == frames.size() && undragged.size() == frames.size());
     for (size_t f = 0; f < dragged.size() && f < undragged.size(); ++f) {
         CHECK(dragged[f] != undragged[f]);
     }
@@ -3284,8 +3483,8 @@ _SetChainInput(const std::string &name, const UsdStageRefPtr &stage,
                          const _Reference &reference, float *chainValue,
                          RrMat4d *target) {
         if (!player.Play(frame, &error)) {
-            std::printf("%s, %s frame %.17g: %s\n", name.c_str(), what,
-                        frame, error.c_str());
+            std::printf("%s, %s frame %.17g: %s\n", name.c_str(), what, frame,
+                        error.c_str());
             CHECK(false);
             return false;
         }
@@ -3308,8 +3507,7 @@ _SetChainInput(const std::string &name, const UsdStageRefPtr &stage,
         const std::string label = name + ", " + what;
         const bool properties = _SamePropertyResults(
             label.c_str(), reference.pose, player.Reader());
-        return _SamePools(label.c_str(), frame, player.Reader(),
-                          reference) &&
+        return _SamePools(label.c_str(), frame, player.Reader(), reference) &&
                properties;
     };
     const std::string tx = control.GetString() + ".avars:tx";
@@ -3330,8 +3528,8 @@ _SetChainInput(const std::string &name, const UsdStageRefPtr &stage,
     CHECK(run("unset", frames.back(), unset.back(), &undraggedChain,
               &undraggedTarget));
     CHECK(player.Hold(tx, 2.0, &error));
-    CHECK(run("set", frames.back(), set.front(), &draggedChain,
-              &draggedTarget));
+    CHECK(
+        run("set", frames.back(), set.front(), &draggedChain, &draggedTarget));
     CHECK(draggedChain != undraggedChain);
     CHECK(draggedTarget != undraggedTarget);
     player.ReleaseAll();
@@ -3355,8 +3553,8 @@ _RevisedWeightStage()
     UsdGeomXform::Define(stage, SdfPath("/Asset/Source"))
         .AddTransformOp()
         .Set(GfMatrix4d(1.0).SetTranslate(GfVec3d(10.0, 0.0, 0.0)));
-    const UsdPrim knob = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Controls/Knob"), TfToken("RigExecControl"));
+    const UsdPrim knob = stage->DefinePrim(SdfPath("/Asset/Rig/Controls/Knob"),
+                                           TfToken("RigExecControl"));
     knob.CreateAttribute(TfToken("rest:space"), SdfValueTypeNames->Matrix4d)
         .Set(GfMatrix4d(1.0));
     const UsdAttribute tx =
@@ -3416,8 +3614,7 @@ _DialTargetStage(double authored)
         const UsdPrim prim = stage->DefinePrim(
             SdfPath(std::string("/Asset/Rig/Controls/") + name),
             TfToken("RigExecControl"));
-        prim.CreateAttribute(TfToken("rest:space"),
-                             SdfValueTypeNames->Matrix4d)
+        prim.CreateAttribute(TfToken("rest:space"), SdfValueTypeNames->Matrix4d)
             .Set(GfMatrix4d(1.0));
         return prim;
     };
@@ -3428,14 +3625,13 @@ _DialTargetStage(double authored)
         _MathMover(stage, "Clamp", "RigExecFloatMathMover", "clamp", tx);
     _SetInput(clamp, "inputs:min", SdfValueTypeNames->Float, 0.0f);
     _SetInput(clamp, "inputs:max", SdfValueTypeNames->Float, 1.0f);
-    const UsdPrim offset = _MathMover(stage, "Clamp/Offset",
-                                      "RigExecFloatMathMover", "add", tx);
+    const UsdPrim offset =
+        _MathMover(stage, "Clamp/Offset", "RigExecFloatMathMover", "add", tx);
     _SetInput(offset, "inputs:value", SdfValueTypeNames->Float, 0.1f);
     const auto read = [&](const UsdAttribute &input, const char *phase) {
         input.SetConnections({tx.GetPath()});
         if (phase) {
-            input.SetMetadata(TfToken("rigExecReadPhase"),
-                              std::string(phase));
+            input.SetMetadata(TfToken("rigExecReadPhase"), std::string(phase));
         }
     };
     read(control("BaseReader")
@@ -3581,11 +3777,10 @@ TestSetInputOnChainTarget()
         {drag, 1.0, 1.5}, {1.5, 1.0, 1.6}, {0.5, 0.6, 0.6}};
     for (const HeldDrag &h : held) {
         char what[64];
-        std::snprintf(what, sizeof(what), "chain target set to %.9g",
-                      h.drag);
+        std::snprintf(what, sizeof(what), "chain target set to %.9g", h.drag);
         CHECK(player.Hold(dialTx, h.drag, &error));
-        const std::vector<_Reference> references = _References(
-            stage, rigPath, {_Edit(stage, dialTx, h.drag)}, frames);
+        const std::vector<_Reference> references =
+            _References(stage, rigPath, {_Edit(stage, dialTx, h.drag)}, frames);
         if (references.size() != frames.size()) {
             CHECK(false);
             return;
@@ -3597,14 +3792,12 @@ TestSetInputOnChainTarget()
                 CHECK(false);
                 return;
             }
-            CHECK(_SamePools(what, frames[f], player.Reader(),
-                             references[f]));
+            CHECK(_SamePools(what, frames[f], player.Reader(), references[f]));
             CHECK(!_PlayedDiffer(undragged[f], dragged[f]).empty());
             const auto ty = [&](const char *control) {
                 return _ControlAt(
                     pose,
-                    SdfPath(std::string("/Asset/Rig/Controls/") + control),
-                    1);
+                    SdfPath(std::string("/Asset/Rig/Controls/") + control), 1);
             };
             const double dial =
                 _ControlAt(pose, SdfPath("/Asset/Rig/Controls/Dial"), 0);
@@ -3683,21 +3876,20 @@ TestRegisteredReadRefusals()
     if (!file) {
         return;
     }
-    const auto expect = [&](const char *what,
-                            const std::vector<uint8_t> &bytes,
+    const auto expect = [&](const char *what, const std::vector<uint8_t> &bytes,
                             const std::string &text) {
         const std::string got = _OpenError(bytes);
         if (got != text) {
-            std::printf("%s, %s: open said '%s', expected '%s'\n", name,
-                        what, got.c_str(), text.c_str());
+            std::printf("%s, %s: open said '%s', expected '%s'\n", name, what,
+                        got.c_str(), text.c_str());
             CHECK(false);
         }
     };
     const std::vector<fb::RigExecWireAvarBinding> &bindings =
         file->pose->avarBindings;
     const auto varying = [](const fb::RigExecWireAvarBinding &binding) {
-        return (binding.read->flags &
-                uint8_t(fb::InputReadFlags::Varying)) != 0;
+        return (binding.read->flags & uint8_t(fb::InputReadFlags::Varying)) !=
+               0;
     };
     // A constant avar binding with an override number and a walk, and a
     // binding of another avar the runtime binds before it (a varying one,
@@ -3710,8 +3902,7 @@ TestRegisteredReadRefusals()
             constant = k;
         }
     }
-    for (size_t k = 0; k < bindings.size() && constant < bindings.size();
-         ++k) {
+    for (size_t k = 0; k < bindings.size() && constant < bindings.size(); ++k) {
         if (k != constant && !bindings[k].read->walk.empty() &&
             bindings[k].flat != bindings[constant].flat &&
             (varying(bindings[k]) || k < constant) &&
@@ -3728,20 +3919,20 @@ TestRegisteredReadRefusals()
         "pose.avar_bindings[" + std::to_string(constant) + "]";
     const std::string invalid = "invalid .rigexec: ";
     expect("two avars at one head",
-           RigExecTestEdited(result.bytes,
-                             [&](fb::RigExecWireFile *edited) {
-                                 edited->pose->avarBindings[constant]
-                                     .read->walk[0] =
-                                     bindings[other].read->walk[0];
-                             }),
+           RigExecTestEdited(
+               result.bytes,
+               [&](fb::RigExecWireFile *edited) {
+                   edited->pose->avarBindings[constant].read->walk[0] =
+                       bindings[other].read->walk[0];
+               }),
            field + " heads two avars");
     expect("a walk past the slots",
-           RigExecTestEdited(result.bytes,
-                             [&](fb::RigExecWireFile *edited) {
-                                 edited->pose->avarBindings[constant]
-                                     .read->walk[0] =
-                                     uint32_t(file->inputs.size());
-                             }),
+           RigExecTestEdited(
+               result.bytes,
+               [&](fb::RigExecWireFile *edited) {
+                   edited->pose->avarBindings[constant].read->walk[0] =
+                       uint32_t(file->inputs.size());
+               }),
            invalid + field + ".read.walk[0]: slot " +
                std::to_string(file->inputs.size()) + " out of range (" +
                std::to_string(file->inputs.size()) + " slots)");
@@ -3756,13 +3947,13 @@ TestRegisteredReadRefusals()
         }
         CHECK(another < file->values.size());
         expect("a constant of another type",
-               RigExecTestEdited(result.bytes,
-                                 [&](fb::RigExecWireFile *edited) {
-                                     edited->pose->avarBindings[constant]
-                                         .read->constant = uint32_t(another);
-                                 }),
-               invalid + field + ".read: constant " +
-                   std::to_string(another) +
+               RigExecTestEdited(
+                   result.bytes,
+                   [&](fb::RigExecWireFile *edited) {
+                       edited->pose->avarBindings[constant].read->constant =
+                           uint32_t(another);
+                   }),
+               invalid + field + ".read: constant " + std::to_string(another) +
                    " is not a value of the read's tag");
     }
     {
@@ -3790,13 +3981,14 @@ TestRegisteredReadRefusals()
                    " but " + std::to_string(count - 1) +
                    " reads carry override numbers");
     }
-    expect("a read of another mode",
-           RigExecTestEdited(result.bytes,
-                             [&](fb::RigExecWireFile *edited) {
-                                 edited->pose->avarBindings[constant]
-                                     .read->mode = fb::ReadMode::Resolved;
-                             }),
-           invalid + field + ".read: read mode 1 is not admitted here");
+    expect(
+        "a read of another mode",
+        RigExecTestEdited(result.bytes,
+                          [&](fb::RigExecWireFile *edited) {
+                              edited->pose->avarBindings[constant].read->mode =
+                                  fb::ReadMode::Resolved;
+                          }),
+        invalid + field + ".read: read mode 1 is not admitted here");
     CHECK(!file->pose->ladders.empty());
     if (!file->pose->ladders.empty()) {
         expect("a required read left out",
@@ -3826,8 +4018,8 @@ TestRegisteredReadRefusals()
                std::memcmp(&now.f32, &before.f32, sizeof(float)) == 0;
     };
     error.clear();
-    CHECK(!player->SetInput("/Asset/Rig/Controls/Dial.avars:none", 1.0,
-                            &error));
+    CHECK(
+        !player->SetInput("/Asset/Rig/Controls/Dial.avars:none", 1.0, &error));
     CHECK(error == "no input named /Asset/Rig/Controls/Dial.avars:none");
     RrInputValue wrong = before;
     wrong.tag = RrInputTag::Bool;
@@ -3839,10 +4031,9 @@ TestRegisteredReadRefusals()
     CHECK(error == amount + " takes finite values only");
     error.clear();
     CHECK(!player->SetInputAt(player->GetInputCount(), before, &error));
-    CHECK(error == "no input at index " +
-                       std::to_string(player->GetInputCount()) +
-                       "; the file lists " +
-                       std::to_string(player->GetInputCount()));
+    CHECK(error ==
+          "no input at index " + std::to_string(player->GetInputCount()) +
+              "; the file lists " + std::to_string(player->GetInputCount()));
     CHECK(unchanged());
 
     // What only an avar override refused is an authored value now: the
@@ -3886,17 +4077,21 @@ static bool
 _SameVersion(const fb::RigExecWireFrameVersion &read, int anchor,
              const std::vector<int32_t> &recompose)
 {
-    return read.context == -1 && read.anchor == anchor && read.recompose == recompose;
+    return read.context == -1 && read.anchor == anchor &&
+           read.recompose == recompose;
 }
 
 static bool
-_SameCheckpoint(const fb::RigExecWireFile &file,const fb::RigExecWireFrameVersion &read,
-                int anchor,const std::vector<int32_t> &recompose)
+_SameCheckpoint(const fb::RigExecWireFile &file,
+                const fb::RigExecWireFrameVersion &read, int anchor,
+                const std::vector<int32_t> &recompose)
 {
-    if(read.context<0 || size_t(read.context)>=file.pose->spaceCheckpoints.size() ||
-       read.anchor!=-1 || !read.recompose.empty())return false;
-    const auto &checkpoint=file.pose->spaceCheckpoints[size_t(read.context)];
-    return checkpoint.anchor==anchor && checkpoint.recompose==recompose;
+    if (read.context < 0 ||
+        size_t(read.context) >= file.pose->spaceCheckpoints.size() ||
+        read.anchor != -1 || !read.recompose.empty())
+        return false;
+    const auto &checkpoint = file.pose->spaceCheckpoints[size_t(read.context)];
+    return checkpoint.anchor == anchor && checkpoint.recompose == recompose;
 }
 
 // Space switches nested under switched controls, read at the versions the
@@ -3910,48 +4105,89 @@ _SameCheckpoint(const fb::RigExecWireFile &file,const fb::RigExecWireFrameVersio
 // Animated input whose default is its key at the bake time, which its
 // switch reads per run.
 #include "rigExecConnectedBridgeFixture.h"
-static void TestConnectedBridgeRefreshExport()
+static void
+TestConnectedBridgeRefreshExport()
 {
-    const auto fixture=RigExecMakeConnectedBridgeFixture(
-        [](const UsdStageRefPtr &stage,const SdfPath &path,const GfMatrix4d &matrix) {
-            const auto x=UsdGeomXform::Define(stage,path);x.MakeMatrixXform().Set(matrix);return x.GetPrim();
+    const auto fixture = RigExecMakeConnectedBridgeFixture(
+        [](const UsdStageRefPtr &stage, const SdfPath &path,
+           const GfMatrix4d &matrix) {
+            const auto x = UsdGeomXform::Define(stage, path);
+            x.MakeMatrixXform().Set(matrix);
+            return x.GetPrim();
         },
-        [](const UsdStageRefPtr &stage,const char *name,const char *type,const SdfPathVector &targets) {
-            const auto p=stage->DefinePrim(SdfPath(std::string("/Asset/Rig/Movers/")+name),TfToken(type));
-            CHECK(p.ApplyAPI(TfToken("RigExecMoverAPI")));CHECK(p.CreateRelationship(TfToken("rigExec:moves")).SetTargets(targets));return p;
+        [](const UsdStageRefPtr &stage, const char *name, const char *type,
+           const SdfPathVector &targets) {
+            const auto p = stage->DefinePrim(
+                SdfPath(std::string("/Asset/Rig/Movers/") + name),
+                TfToken(type));
+            CHECK(p.ApplyAPI(TfToken("RigExecMoverAPI")));
+            CHECK(p.CreateRelationship(TfToken("rigExec:moves"))
+                      .SetTargets(targets));
+            return p;
         });
-    const auto value=fixture.stage->DefinePrim(SdfPath("/Asset/Rig/Channels/Independent"),TfToken("Scope"))
-        .CreateAttribute(TfToken("value"),SdfValueTypeNames->Float);
+    const auto value =
+        fixture.stage
+            ->DefinePrim(SdfPath("/Asset/Rig/Channels/Independent"),
+                         TfToken("Scope"))
+            .CreateAttribute(TfToken("value"), SdfValueTypeNames->Float);
     CHECK(value.Set(2.0f));
-    const auto add=_MathMover(fixture.stage,"IndependentAdd","RigExecFloatMathMover","add",value);
-    CHECK(add.CreateAttribute(TfToken("inputs:value"),SdfValueTypeNames->Float).Set(3.0f));
-    _TestStage("connected Bridge refresh",fixture.stage,{1.0,1.0});
-    RigExecRigEvaluator evaluator(fixture.stage,SdfPath("/Asset/Rig"));
-    RigExecTestPlayer player;std::vector<uint8_t> bytes;std::string error;
-    CHECK(RigExecTestBakeAt(evaluator,1,&bytes,&error));
-    const bool opened=player.Open(bytes,fixture.stage,&error);CHECK(opened);
-    if(!opened)return;
-    CHECK(player.Play(1,&error));
-    bool sawIndependent=false;
-    for(const auto &published:player.Reader().GetPropertyValues())if(published.path==value.GetPath().GetString()) {
-        sawIndependent=true;CHECK(published.value.tag==RrPropertyValue::Tag::Float && published.value.f32==5.0f);
-    }
+    const auto add = _MathMover(fixture.stage, "IndependentAdd",
+                                "RigExecFloatMathMover", "add", value);
+    CHECK(add.CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float)
+              .Set(3.0f));
+    _TestStage("connected Bridge refresh", fixture.stage, {1.0, 1.0});
+    RigExecRigEvaluator evaluator(fixture.stage, SdfPath("/Asset/Rig"));
+    RigExecTestPlayer player;
+    std::vector<uint8_t> bytes;
+    std::string error;
+    CHECK(RigExecTestBakeAt(evaluator, 1, &bytes, &error));
+    const bool opened = player.Open(bytes, fixture.stage, &error);
+    CHECK(opened);
+    if (!opened)
+        return;
+    CHECK(player.Play(1, &error));
+    bool sawIndependent = false;
+    for (const auto &published : player.Reader().GetPropertyValues())
+        if (published.path == value.GetPath().GetString()) {
+            sawIndependent = true;
+            CHECK(published.value.tag == RrPropertyValue::Tag::Float &&
+                  published.value.f32 == 5.0f);
+        }
     CHECK(sawIndependent);
-    const auto file=RigExecTestUnpack(bytes);CHECK(file);
-    if(!file)return;
-    const auto literal=[&](const UsdPrim &prim,double base,double final) {
-        int slot=-1;for(size_t i=0;i<file->slotMeta->paths.size();++i)if(RigExecFormatPathText(*file,file->slotMeta->paths[i])==prim.GetPath().GetString())slot=int(i);
-        CHECK(slot>=0);if(slot<0)return;
+    const auto file = RigExecTestUnpack(bytes);
+    CHECK(file);
+    if (!file)
+        return;
+    const auto literal = [&](const UsdPrim &prim, double base, double final) {
+        int slot = -1;
+        for (size_t i = 0; i < file->slotMeta->paths.size(); ++i)
+            if (RigExecFormatPathText(*file, file->slotMeta->paths[i]) ==
+                prim.GetPath().GetString())
+                slot = int(i);
+        CHECK(slot >= 0);
+        if (slot < 0)
+            return;
         // Every checked provider has a writer in both domains; the final
         // canonical SSA version is distinct from its initial slot seed.
-        const size_t version=file->slotMeta->paths.size()+size_t(slot);
-        CHECK(version<player.Reader().GetBaseFrames().size() && version<player.Reader().GetFinFrames().size());
-        if(version>=player.Reader().GetBaseFrames().size() || version>=player.Reader().GetFinFrames().size())return;
-        const auto &b=player.Reader().GetBaseFrames()[version],&f=player.Reader().GetFinFrames()[version];
-        CHECK(std::abs(b.points[0][0]-base)<1e-9 && std::abs(b.points[0][1])<1e-9 && std::abs(b.points[0][2])<1e-9);
-        CHECK(std::abs(f.points[0][0]-final)<1e-9 && std::abs(f.points[0][1])<1e-9 && std::abs(f.points[0][2])<1e-9);
+        const size_t version = file->slotMeta->paths.size() + size_t(slot);
+        CHECK(version < player.Reader().GetBaseFrames().size() &&
+              version < player.Reader().GetFinFrames().size());
+        if (version >= player.Reader().GetBaseFrames().size() ||
+            version >= player.Reader().GetFinFrames().size())
+            return;
+        const auto &b = player.Reader().GetBaseFrames()[version],
+                   &f = player.Reader().GetFinFrames()[version];
+        CHECK(std::abs(b.points[0][0] - base) < 1e-9 &&
+              std::abs(b.points[0][1]) < 1e-9 &&
+              std::abs(b.points[0][2]) < 1e-9);
+        CHECK(std::abs(f.points[0][0] - final) < 1e-9 &&
+              std::abs(f.points[0][1]) < 1e-9 &&
+              std::abs(f.points[0][2]) < 1e-9);
     };
-    literal(fixture.source,4,5);literal(fixture.rider,5,6);literal(fixture.held,6,9);literal(fixture.owner,7,7);
+    literal(fixture.source, 4, 5);
+    literal(fixture.rider, 5, 6);
+    literal(fixture.held, 6, 9);
+    literal(fixture.owner, 7, 7);
 }
 
 static void
@@ -3995,7 +4231,7 @@ TestSpaceSwitchVersionFixtures()
         for (const fb::RigExecWireSpaceSwitch &sw : switches) {
             if (sw.slot == s) {
                 // P resolves after S: S reads it before its switch.
-                CHECK(_SameCheckpoint(*nestedFile,*sw.parentRead,-1,{p}));
+                CHECK(_SameCheckpoint(*nestedFile, *sw.parentRead, -1, {p}));
             } else {
                 // C, under S, resolves before P: its last version.
                 CHECK(sw.slot == p && sw.sourceReads.size() == 2 &&
@@ -4006,9 +4242,8 @@ TestSpaceSwitchVersionFixtures()
 
     RigExecBakeResult carry;
     const std::unique_ptr<fb::RigExecWireFile> carryFile =
-        bake("space_switch_carry.usda", &carry)
-            ? RigExecTestUnpack(carry.bytes)
-            : nullptr;
+        bake("space_switch_carry.usda", &carry) ? RigExecTestUnpack(carry.bytes)
+                                                : nullptr;
     if (carryFile) {
         const auto slot = [&](const char *path) {
             return _SlotOfPath(*carryFile, path);
@@ -4021,8 +4256,7 @@ TestSpaceSwitchVersionFixtures()
         const int c = slot("/Rig/Controls/G/P/S/C");
         const std::vector<fb::RigExecWireSpaceSwitch> &switches =
             carryFile->pose->spaceSwitches;
-        CHECK(other >= 0 && g >= 0 && p >= 0 && q >= 0 && s >= 0 &&
-              c >= 0);
+        CHECK(other >= 0 && g >= 0 && p >= 0 && q >= 0 && s >= 0 && c >= 0);
         CHECK(switches.size() == 2);
         for (const fb::RigExecWireSpaceSwitch &sw : switches) {
             CHECK(sw.sourceReads.size() == 2);
@@ -4031,9 +4265,9 @@ TestSpaceSwitchVersionFixtures()
             }
             if (sw.slot == s) {
                 // P resolves after S: P recomposed on G, then Q on that.
-                CHECK(_SameCheckpoint(*carryFile,*sw.parentRead,g,{p}));
+                CHECK(_SameCheckpoint(*carryFile, *sw.parentRead, g, {p}));
                 CHECK(sw.spaceSlot == q &&
-                      _SameCheckpoint(*carryFile,*sw.spaceRead,g,{p,q}));
+                      _SameCheckpoint(*carryFile, *sw.spaceRead, g, {p, q}));
                 CHECK(_SameVersion(sw.sourceReads[0], other, {}));
                 CHECK(_SameVersion(sw.sourceReads[1], -1, {}));
             } else {
@@ -4079,11 +4313,10 @@ TestSpaceSwitchVersionFixtures()
         for (const fb::RigExecWireSpaceSwitch &sw :
              dialFile->pose->spaceSwitches) {
             const fb::RigExecWireInput &read = *sw.active;
-            if (std::find(read.walk.begin(), read.walk.end(),
-                          uint32_t(slot)) != read.walk.end()) {
+            if (std::find(read.walk.begin(), read.walk.end(), uint32_t(slot)) !=
+                read.walk.end()) {
                 ++readers;
-                CHECK((read.flags & uint8_t(fb::InputReadFlags::Varying)) !=
-                      0);
+                CHECK((read.flags & uint8_t(fb::InputReadFlags::Varying)) != 0);
             }
         }
         CHECK(readers == 1);
@@ -4110,21 +4343,19 @@ TestHandBuiltSwitchReads()
         GfMatrix4d rest(1.0);
         rest.SetRotate(GfRotation(GfVec3d(0, 0, 1), degrees));
         rest.SetTranslateOnly(offset);
-        prim.CreateAttribute(TfToken("rest:space"),
-                             SdfValueTypeNames->Matrix4d)
+        prim.CreateAttribute(TfToken("rest:space"), SdfValueTypeNames->Matrix4d)
             .Set(rest);
         return prim;
     };
     const auto key = [](const UsdPrim &prim, const char *avar,
                         const std::array<double, 3> &values) {
-        const UsdAttribute attribute = prim.CreateAttribute(
-            TfToken(avar), SdfValueTypeNames->Double);
+        const UsdAttribute attribute =
+            prim.CreateAttribute(TfToken(avar), SdfValueTypeNames->Double);
         for (size_t f = 0; f < values.size(); ++f) {
             attribute.Set(values[f], UsdTimeCode(double(f + 1)));
         }
     };
-    const UsdPrim g =
-        control("/Asset/Rig/Controls/G", 0.0, GfVec3d(0, 100, 0));
+    const UsdPrim g = control("/Asset/Rig/Controls/G", 0.0, GfVec3d(0, 100, 0));
     const UsdPrim arm =
         control("/Asset/Rig/Controls/G/Arm", 0.0, GfVec3d(-20, 0.5, 0));
     const UsdPrim p =
@@ -4139,8 +4370,8 @@ TestHandBuiltSwitchReads()
     key(p, "avars:rz", {5.0, -20.0, 30.0});
     key(target, "avars:rz", {7.0, -13.0, 21.0});
     key(target, "avars:ty", {0.3, -0.7, 1.1});
-    const UsdPrim sw = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/sSpaces"), TfToken("RigExecSpaceSwitch"));
+    const UsdPrim sw = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/sSpaces"),
+                                         TfToken("RigExecSpaceSwitch"));
     sw.CreateRelationship(TfToken("rigExec:target"))
         .SetTargets({target.GetPath()});
     sw.CreateRelationship(TfToken("rigExec:sources"))
@@ -4170,8 +4401,8 @@ TestHandBuiltSwitchReads()
     CHECK(pSlot >= 0 && sSlot >= 0 && armSlot >= 0 && gSlot >= 0);
     CHECK(switches.size() == 1);
     if (pSlot < 0 || sSlot < 0 || armSlot < 0 || gSlot < 0 ||
-        switches.size() != 1 ||
-        switches[0].slot != sSlot || switches[0].sourceReads.size() != 2) {
+        switches.size() != 1 || switches[0].slot != sSlot ||
+        switches[0].sourceReads.size() != 2) {
         std::printf("%s: FAILED (no switch on S)\n", name);
         CHECK(false);
         return;
@@ -4180,27 +4411,32 @@ TestHandBuiltSwitchReads()
     CHECK(_SameVersion(*switches[0].parentRead, pSlot, {}));
     CHECK(_SameVersion(switches[0].sourceReads[0], armSlot, {}));
 
-    _TestStage(name,stage,frames);
+    _TestStage(name, stage, frames);
     enum class Rewrite { Parent, Source, AnchoredParent };
-    for(const Rewrite rewrite:{Rewrite::Parent,Rewrite::Source,Rewrite::AnchoredParent}) {
-        const bool source=rewrite==Rewrite::Source;
-        const int anchor=rewrite==Rewrite::AnchoredParent?gSlot:-1;
-        const auto bytes=RigExecTestEdited(result.bytes,[&](fb::RigExecWireFile *edited) {
-            auto &sw=edited->pose->spaceSwitches[0];
-            if(source) {
-                sw.sourceReads[0].anchor=-1;
-                sw.sourceReads[0].recompose={armSlot};
-            } else {
-                sw.parentRead->anchor=anchor;
-                sw.parentRead->recompose={pSlot};
-            }
-        });
-        const std::string where=source?"source_reads[0]":"parent_read";
-        const std::string expected="invalid .rigexec: pose.space_switches[0]."+where+
+    for (const Rewrite rewrite :
+         {Rewrite::Parent, Rewrite::Source, Rewrite::AnchoredParent}) {
+        const bool source = rewrite == Rewrite::Source;
+        const int anchor = rewrite == Rewrite::AnchoredParent ? gSlot : -1;
+        const auto bytes =
+            RigExecTestEdited(result.bytes, [&](fb::RigExecWireFile *edited) {
+                auto &sw = edited->pose->spaceSwitches[0];
+                if (source) {
+                    sw.sourceReads[0].anchor = -1;
+                    sw.sourceReads[0].recompose = {armSlot};
+                } else {
+                    sw.parentRead->anchor = anchor;
+                    sw.parentRead->recompose = {pSlot};
+                }
+            });
+        const std::string where = source ? "source_reads[0]" : "parent_read";
+        const std::string expected =
+            "invalid .rigexec: pose.space_switches[0]." + where +
             ": inline recomposition requires a checkpoint operation";
-        const std::string actual=_OpenError(bytes);
-        if(actual!=expected)std::printf("%s: %s expected %s\n",name,actual.c_str(),expected.c_str());
-        CHECK(actual==expected);
+        const std::string actual = _OpenError(bytes);
+        if (actual != expected)
+            std::printf("%s: %s expected %s\n", name, actual.c_str(),
+                        expected.c_str());
+        CHECK(actual == expected);
     }
     std::printf("%s: checked\n", name);
 }
@@ -4253,8 +4489,7 @@ TestSpaceSwitchIndexDrag()
                           const std::vector<_Reference> &references,
                           std::vector<std::vector<RrPointFrame>> *fin) {
         bool same = references.size() == frames.size();
-        for (size_t f = 0; f < frames.size() && f < references.size();
-             ++f) {
+        for (size_t f = 0; f < frames.size() && f < references.size(); ++f) {
             same = run(what, frames[f], references[f], fin) && same;
         }
         return same;
@@ -4267,14 +4502,13 @@ TestSpaceSwitchIndexDrag()
     CHECK(pass("undragged", unset, &undragged));
     CHECK(player.Hold(pIndex, 0.25, &error));
     CHECK(player.Hold(sIndex, 0.75, &error));
-    CHECK(pass("indices held",
-               _References(stage, rigPath,
-                           {_Edit(stage, pIndex, 0.25),
-                            _Edit(stage, sIndex, 0.75)},
-                           frames),
-               &dragged));
-    CHECK(dragged.size() == frames.size() &&
-          undragged.size() == frames.size());
+    CHECK(pass(
+        "indices held",
+        _References(stage, rigPath,
+                    {_Edit(stage, pIndex, 0.25), _Edit(stage, sIndex, 0.75)},
+                    frames),
+        &dragged));
+    CHECK(dragged.size() == frames.size() && undragged.size() == frames.size());
     // At frame 0 every control rests, where a switch holds its target in
     // place whatever its index; from frame 1 on the held indices move the
     // pools.
@@ -4327,15 +4561,21 @@ TestSpaceSwitchOpenRefusals()
     }
     // A real native Xform source supplies an otherwise-valid non-provider
     // slot for the checkpoint wrong-kind negative below.
-    const auto checkpointSource=UsdGeomXform::Define(stage,SdfPath("/CheckpointSource"));
+    const auto checkpointSource =
+        UsdGeomXform::Define(stage, SdfPath("/CheckpointSource"));
     CHECK(checkpointSource.MakeMatrixXform().Set(GfMatrix4d(1.0)));
-    const auto checkpointTargetXform=UsdGeomXform::Define(stage,SdfPath("/Rig/Controls/CheckpointTarget"));
+    const auto checkpointTargetXform =
+        UsdGeomXform::Define(stage, SdfPath("/Rig/Controls/CheckpointTarget"));
     CHECK(checkpointTargetXform.MakeMatrixXform().Set(GfMatrix4d(1.0)));
-    const auto checkpointTarget=checkpointTargetXform.GetPrim();
-    const auto checkpointProbe=stage->DefinePrim(SdfPath("/Rig/Movers/CheckpointProbe"),TfToken("RigExecPositionConstraint"));
+    const auto checkpointTarget = checkpointTargetXform.GetPrim();
+    const auto checkpointProbe =
+        stage->DefinePrim(SdfPath("/Rig/Movers/CheckpointProbe"),
+                          TfToken("RigExecPositionConstraint"));
     CHECK(checkpointProbe.ApplyAPI(TfToken("RigExecMoverAPI")));
-    CHECK(checkpointProbe.CreateRelationship(TfToken("rigExec:moves")).SetTargets({checkpointTarget.GetPath()}));
-    CHECK(checkpointProbe.GetRelationship(TfToken("rigExec:sources")).SetTargets({checkpointSource.GetPath()}));
+    CHECK(checkpointProbe.CreateRelationship(TfToken("rigExec:moves"))
+              .SetTargets({checkpointTarget.GetPath()}));
+    CHECK(checkpointProbe.GetRelationship(TfToken("rigExec:sources"))
+              .SetTargets({checkpointSource.GetPath()}));
     RigExecRigEvaluator evaluator(stage, SdfPath("/Rig"));
     RigExecBakeOpts opts;
     opts.time = 0.0;
@@ -4370,14 +4610,13 @@ TestSpaceSwitchOpenRefusals()
         return;
     }
     const int32_t slots = int32_t(file->slotMeta->paths.size());
-    const auto expect = [&](const char *what,
-                            const std::vector<uint8_t> &bytes,
+    const auto expect = [&](const char *what, const std::vector<uint8_t> &bytes,
                             const std::string &text) {
         const std::string want = "invalid .rigexec: " + text;
         const std::string got = _OpenError(bytes);
         if (got != want) {
-            std::printf("%s, %s: open said '%s', expected '%s'\n", name,
-                        what, got.c_str(), want.c_str());
+            std::printf("%s, %s: open said '%s', expected '%s'\n", name, what,
+                        got.c_str(), want.c_str());
             CHECK(false);
         }
     };
@@ -4389,16 +4628,15 @@ TestSpaceSwitchOpenRefusals()
                                      });
         };
     const std::string row = "pose.space_switches[" + std::to_string(at) + "]";
-    const std::string range =
-        " out of range (" + std::to_string(slots) + ")";
+    const std::string range = " out of range (" + std::to_string(slots) + ")";
     const std::string unread = ": reads no slot, so its version is {-1, []}";
-    const int32_t contextCount=int32_t(file->pose->spaceCheckpoints.size());
+    const int32_t contextCount = int32_t(file->pose->spaceCheckpoints.size());
     expect("parent checkpoint past the contexts",
            withSwitch([&](fb::RigExecWireSpaceSwitch &sw) {
-               sw.parentRead->context=contextCount;
+               sw.parentRead->context = contextCount;
            }),
-           row+".parent_read.context: "+std::to_string(contextCount)+
-               " out of range ("+std::to_string(contextCount)+")");
+           row + ".parent_read.context: " + std::to_string(contextCount) +
+               " out of range (" + std::to_string(contextCount) + ")");
     expect("source anchor past the slots",
            withSwitch([&](fb::RigExecWireSpaceSwitch &sw) {
                sw.sourceReads[0].anchor = slots;
@@ -4406,14 +4644,13 @@ TestSpaceSwitchOpenRefusals()
            row + ".source_reads[0].anchor: " + std::to_string(slots) + range);
     expect("space checkpoint past the contexts",
            withSwitch([&](fb::RigExecWireSpaceSwitch &sw) {
-               sw.spaceRead->context=contextCount;
+               sw.spaceRead->context = contextCount;
            }),
-           row+".space_read.context: "+std::to_string(contextCount)+
-               " out of range ("+std::to_string(contextCount)+")");
+           row + ".space_read.context: " + std::to_string(contextCount) +
+               " out of range (" + std::to_string(contextCount) + ")");
     expect("space slot past the slots",
-           withSwitch([&](fb::RigExecWireSpaceSwitch &sw) {
-               sw.spaceSlot = slots;
-           }),
+           withSwitch(
+               [&](fb::RigExecWireSpaceSwitch &sw) { sw.spaceSlot = slots; }),
            row + ".space_slot: " + std::to_string(slots) + range);
     expect("world source with a version",
            withSwitch([&](fb::RigExecWireSpaceSwitch &sw) {
@@ -4426,34 +4663,49 @@ TestSpaceSwitchOpenRefusals()
                sw.sourceReads[1].anchor = -1;
                sw.sourceReads[1].recompose = {p};
            }),
-           row+".source_reads[1]: inline recomposition requires a checkpoint operation");
-    expect("missing space with a version",
-           withSwitch([&](fb::RigExecWireSpaceSwitch &sw) {
-               sw.spaceSlot = -1;
-           }),
-           row + ".space_read" + unread);
-    const int32_t parentContext=switches[at].parentRead->context;
-    CHECK(parentContext>=0 && parentContext<contextCount);
-    if(parentContext<0 || parentContext>=contextCount)return;
+           row + ".source_reads[1]: inline recomposition requires a checkpoint "
+                 "operation");
+    expect(
+        "missing space with a version",
+        withSwitch([&](fb::RigExecWireSpaceSwitch &sw) { sw.spaceSlot = -1; }),
+        row + ".space_read" + unread);
+    const int32_t parentContext = switches[at].parentRead->context;
+    CHECK(parentContext >= 0 && parentContext < contextCount);
+    if (parentContext < 0 || parentContext >= contextCount)
+        return;
     expect("checkpoint recompose past the slots",
-           RigExecTestEdited(result.bytes,[&](fb::RigExecWireFile *edited) {
-               edited->pose->spaceCheckpoints[size_t(parentContext)].recompose={slots};
-           }),
-           "pose.space_checkpoints["+std::to_string(parentContext)+"].recompose[0]: "+
-               std::to_string(slots)+range);
-    expect("checkpoint anchor past the slots",
-           RigExecTestEdited(result.bytes,[&](fb::RigExecWireFile *edited) {
-               edited->pose->spaceCheckpoints[size_t(parentContext)].anchor=slots;
-           }),
-           "pose.space_checkpoints["+std::to_string(parentContext)+"].anchor: "+
-               std::to_string(slots)+range);
-    const auto nonProvider=std::find(file->slotMeta->slotKind.begin(),file->slotMeta->slotKind.end(),fb::SlotKind::XformDerived);
-    CHECK(nonProvider!=file->slotMeta->slotKind.end());
+           RigExecTestEdited(result.bytes,
+                             [&](fb::RigExecWireFile *edited) {
+                                 edited->pose
+                                     ->spaceCheckpoints[size_t(parentContext)]
+                                     .recompose = {slots};
+                             }),
+           "pose.space_checkpoints[" + std::to_string(parentContext) +
+               "].recompose[0]: " + std::to_string(slots) + range);
+    expect(
+        "checkpoint anchor past the slots",
+        RigExecTestEdited(
+            result.bytes,
+            [&](fb::RigExecWireFile *edited) {
+                edited->pose->spaceCheckpoints[size_t(parentContext)].anchor =
+                    slots;
+            }),
+        "pose.space_checkpoints[" + std::to_string(parentContext) +
+            "].anchor: " + std::to_string(slots) + range);
+    const auto nonProvider =
+        std::find(file->slotMeta->slotKind.begin(),
+                  file->slotMeta->slotKind.end(), fb::SlotKind::XformDerived);
+    CHECK(nonProvider != file->slotMeta->slotKind.end());
     expect("recompose of a slot that is not FirstFramePose",
-           RigExecTestEdited(result.bytes,[&](fb::RigExecWireFile *edited) {
-               edited->pose->spaceCheckpoints[size_t(parentContext)].recompose={int32_t(nonProvider-file->slotMeta->slotKind.begin())};
-           }),
-           "pose.space_checkpoints["+std::to_string(parentContext)+"]: recompose is not a provider");
+           RigExecTestEdited(
+               result.bytes,
+               [&](fb::RigExecWireFile *edited) {
+                   edited->pose->spaceCheckpoints[size_t(parentContext)]
+                       .recompose = {
+                       int32_t(nonProvider - file->slotMeta->slotKind.begin())};
+               }),
+           "pose.space_checkpoints[" + std::to_string(parentContext) +
+               "]: recompose is not a provider");
     const int32_t clusters = int32_t(file->clustering->clusters.size());
     for (const int32_t cluster : {int32_t(-1), clusters}) {
         expect(cluster < 0 ? "avar cluster -1" : "avar cluster past the end",
@@ -4462,10 +4714,12 @@ TestSpaceSwitchOpenRefusals()
                                      edited->cones->avarCluster[size_t(s)] =
                                          cluster;
                                  }),
-               cluster<0?"cones.avar_cluster["+std::to_string(s)+
-                   "]: missing active Avars producer without an excluded value":
-                   "cones.avar_cluster["+std::to_string(s)+"]: "+
-                   std::to_string(cluster)+" out of range ("+std::to_string(clusters)+")");
+               cluster < 0 ? "cones.avar_cluster[" + std::to_string(s) +
+                                 "]: missing active Avars producer without an "
+                                 "excluded value"
+                           : "cones.avar_cluster[" + std::to_string(s) + "]: " +
+                                 std::to_string(cluster) + " out of range (" +
+                                 std::to_string(clusters) + ")");
     }
     std::printf("%s: checked\n", name);
 }
@@ -4506,8 +4760,8 @@ TestSpaceSwitchCarryDrag()
                          const _Reference &reference,
                          std::vector<std::vector<RrPointFrame>> *fin) {
         if (!player.Play(frame, &error)) {
-            std::printf("%s, %s frame %.17g: %s\n", name, what.c_str(),
-                        frame, error.c_str());
+            std::printf("%s, %s frame %.17g: %s\n", name, what.c_str(), frame,
+                        error.c_str());
             CHECK(false);
             return false;
         }
@@ -4531,8 +4785,7 @@ TestSpaceSwitchCarryDrag()
             continue;
         }
         for (const Drag &drag : drags) {
-            const std::string what =
-                std::string(drag.prim) + "." + drag.avar;
+            const std::string what = std::string(drag.prim) + "." + drag.avar;
             const std::vector<_Reference> set = _References(
                 stage, rigPath, {_Edit(stage, what, drag.value)}, {frame});
             std::vector<std::vector<RrPointFrame>> still, turned, back;
@@ -4544,11 +4797,9 @@ TestSpaceSwitchCarryDrag()
             }
             player.ReleaseAll();
             CHECK(run(what + " released", frame, unset[0], &back));
-            CHECK(still.size() == 2 && turned.size() == 1 &&
-                  back.size() == 1);
-            if (still.size() != 2 || turned.size() != 1 ||
-                back.size() != 1 || size_t(s) >= still[1].size() ||
-                size_t(s) >= turned[0].size()) {
+            CHECK(still.size() == 2 && turned.size() == 1 && back.size() == 1);
+            if (still.size() != 2 || turned.size() != 1 || back.size() != 1 ||
+                size_t(s) >= still[1].size() || size_t(s) >= turned[0].size()) {
                 continue;
             }
             double moved = 0.0;
@@ -4625,8 +4876,7 @@ TestPhasedRigsRunCones(const std::string &examplesDir)
         }
         std::unique_ptr<fb::RigExecWireFile> file;
         if (!RigExecFormatOpen(bytes.data(), bytes.size(), &file, &error)) {
-            std::printf("%s: FAILED (open: %s)\n", name.c_str(),
-                        error.c_str());
+            std::printf("%s: FAILED (open: %s)\n", name.c_str(), error.c_str());
             CHECK(false);
             continue;
         }
@@ -4646,9 +4896,8 @@ TestPhasedRigsRunCones(const std::string &examplesDir)
         CHECK(records + bindings > 0);
 
         std::vector<RigExecRigPose> still;
-        if (!RigExecTestEditedPoses(stage, rigPath,
-                                    {},
-                                    {row.time}, &still, &error) ||
+        if (!RigExecTestEditedPoses(stage, rigPath, {}, {row.time}, &still,
+                                    &error) ||
             still.size() != 1) {
             std::printf("%s: FAILED (reference: %s)\n", name.c_str(),
                         error.c_str());
@@ -4657,8 +4906,7 @@ TestPhasedRigsRunCones(const std::string &examplesDir)
         }
         RigExecTestPlayer player;
         if (!player.Open(bytes, stage, &error)) {
-            std::printf("%s: FAILED (open: %s)\n", name.c_str(),
-                        error.c_str());
+            std::printf("%s: FAILED (open: %s)\n", name.c_str(), error.c_str());
             CHECK(false);
             continue;
         }
@@ -4669,8 +4917,7 @@ TestPhasedRigsRunCones(const std::string &examplesDir)
                 RigExecCompareRuntimeOutputs(pose, player.Reader(), &diffs);
             if (!same) {
                 std::printf("%s, %s: %s\n", name.c_str(), what.c_str(),
-                            diffs.empty() ? "differs"
-                                          : diffs.front().c_str());
+                            diffs.empty() ? "differs" : diffs.front().c_str());
             }
             return same;
         };
@@ -4683,19 +4930,17 @@ TestPhasedRigsRunCones(const std::string &examplesDir)
         CHECK(matches(still[0], "repeat run"));
         std::printf("%s: %zu frame record(s), %zu point binding(s); closed "
                     "%zu, then %zu at unchanged inputs, of %zu cluster(s)\n",
-                    name.c_str(), records, bindings, first, repeat,
-                    clusters);
+                    name.c_str(), records, bindings, first, repeat, clusters);
 
         for (const auto &[path, value] : row.drags) {
-            const std::string what =
-                path + " = " + std::to_string(value);
+            const std::string what = path + " = " + std::to_string(value);
             std::vector<RigExecRigPose> dragged;
             if (!RigExecTestEditedPoses(stage, rigPath,
-                                        {_Edit(stage, path, value)},
-                                        {row.time}, &dragged, &error) ||
+                                        {_Edit(stage, path, value)}, {row.time},
+                                        &dragged, &error) ||
                 dragged.size() != 1) {
-                std::printf("%s, %s: FAILED (reference: %s)\n",
-                            name.c_str(), what.c_str(), error.c_str());
+                std::printf("%s, %s: FAILED (reference: %s)\n", name.c_str(),
+                            what.c_str(), error.c_str());
                 CHECK(false);
                 continue;
             }
@@ -4708,11 +4953,10 @@ TestPhasedRigsRunCones(const std::string &examplesDir)
                                                 &moved));
             player.ReleaseAll();
             CHECK(player.Play(row.time, &error));
-            const size_t released =
-                player->GetClosedClusterCountForTesting();
+            const size_t released = player->GetClosedClusterCountForTesting();
             CHECK(matches(still[0], what + ", released"));
-            std::printf("%s, %s: closed %zu, then %zu released\n",
-                        name.c_str(), what.c_str(), held, released);
+            std::printf("%s, %s: closed %zu, then %zu released\n", name.c_str(),
+                        what.c_str(), held, released);
         }
     }
 }
@@ -4840,8 +5084,7 @@ TestFrameMatrixGates()
         const bool ran = RrRunPoseStep(&program, r, &error);
         CHECK(ran);
         GfMatrix4d expected(0.0);
-        const bool valid =
-            RigExecBakedEvalFrameRecord(B, baked[r], &expected);
+        const bool valid = RigExecBakedEvalFrameRecord(B, baked[r], &expected);
         const RrMat4d &actual = store.frameMatrix[r];
         bool same = ran && store.frameMatrixValid[r] == (valid ? 1 : 0);
         for (size_t row = 0; row < 4; ++row) {
@@ -4931,18 +5174,16 @@ TestUnusableComposedRestUsesLocalMatrixFallback()
     const SdfPath restTx = joint.AppendProperty(TfToken("rest:tx"));
     {
         const UsdEditContext session(stage, stage->GetSessionLayer());
-        const UsdPrim prim =
-            stage->DefinePrim(joint, TfToken("RigExecJoint"));
+        const UsdPrim prim = stage->DefinePrim(joint, TfToken("RigExecJoint"));
         GfMatrix4d space(1.0);
         space.SetTranslateOnly(GfVec3d(2.0, 0.0, 0.0));
-        prim.CreateAttribute(TfToken("rest:space"),
-                             SdfValueTypeNames->Matrix4d)
+        prim.CreateAttribute(TfToken("rest:space"), SdfValueTypeNames->Matrix4d)
             .Set(space);
         prim.CreateAttribute(TfToken("default:space"),
                              SdfValueTypeNames->Matrix4d)
             .Set(space);
-        const UsdAttribute tx = prim.CreateAttribute(
-            TfToken("rest:tx"), SdfValueTypeNames->Double);
+        const UsdAttribute tx =
+            prim.CreateAttribute(TfToken("rest:tx"), SdfValueTypeNames->Double);
         tx.Set(0.0, UsdTimeCode(1.0));
         tx.Set(std::numeric_limits<double>::quiet_NaN(), UsdTimeCode(2.0));
     }
@@ -4964,66 +5205,88 @@ TestUnusableComposedRestUsesLocalMatrixFallback()
 
     // Captured independently from ORIGINAL's baked fallback and reference
     // evaluator for this exact 1 -> NaN 2 -> held 2 -> recovery 1 history.
-    const std::array<std::array<uint64_t,16>,2> targetBits{{
-        {{0x3ff0000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x3ff0000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x3ff0000000000000ULL,0x0000000000000000ULL,0xc000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x3ff0000000000000ULL}},
-        {{0x3fefffffffffffffULL,0x0000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x3fefffffffffffffULL,0x0000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x3ff0000000000000ULL,0x0000000000000000ULL,0x3cb0000000000000ULL,0x3c70000000000000ULL,0x0000000000000000ULL,0x3ff0000000000000ULL}}
-    }};
-    const std::array<std::array<uint64_t,16>,2> unrelatedBits{{
-        {{0x3fefd7583bc82e2aULL,0x3fb9791363068af7ULL,0x0000000000000000ULL,0x0000000000000000ULL,0xbfb9791363068af7ULL,0x3fefd7583bc82e2aULL,0x0000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x3ff0000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x3ff0000000000000ULL}},
-        {{0x3fee588e2d6fa817ULL,0x3fd44f639083e0d2ULL,0x0000000000000000ULL,0x0000000000000000ULL,0xbfd44f639083e0d3ULL,0x3fee588e2d6fa817ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x3ff0000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x0000000000000000ULL,0x3ff0000000000000ULL}}
-    }};
+    const std::array<std::array<uint64_t, 16>, 2> targetBits{
+        {{{0x3ff0000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
+           0x0000000000000000ULL, 0x0000000000000000ULL, 0x3ff0000000000000ULL,
+           0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
+           0x0000000000000000ULL, 0x3ff0000000000000ULL, 0x0000000000000000ULL,
+           0xc000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
+           0x3ff0000000000000ULL}},
+         {{0x3fefffffffffffffULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
+           0x0000000000000000ULL, 0x0000000000000000ULL, 0x3fefffffffffffffULL,
+           0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
+           0x0000000000000000ULL, 0x3ff0000000000000ULL, 0x0000000000000000ULL,
+           0x3cb0000000000000ULL, 0x3c70000000000000ULL, 0x0000000000000000ULL,
+           0x3ff0000000000000ULL}}}};
+    const std::array<std::array<uint64_t, 16>, 2> unrelatedBits{
+        {{{0x3fefd7583bc82e2aULL, 0x3fb9791363068af7ULL, 0x0000000000000000ULL,
+           0x0000000000000000ULL, 0xbfb9791363068af7ULL, 0x3fefd7583bc82e2aULL,
+           0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
+           0x0000000000000000ULL, 0x3ff0000000000000ULL, 0x0000000000000000ULL,
+           0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
+           0x3ff0000000000000ULL}},
+         {{0x3fee588e2d6fa817ULL, 0x3fd44f639083e0d2ULL, 0x0000000000000000ULL,
+           0x0000000000000000ULL, 0xbfd44f639083e0d3ULL, 0x3fee588e2d6fa817ULL,
+           0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
+           0x0000000000000000ULL, 0x3ff0000000000000ULL, 0x0000000000000000ULL,
+           0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL,
+           0x3ff0000000000000ULL}}}};
 
     const SdfPath unrelated("/LimbsAsset/Rig/Joints/LimbB0");
     const auto checkBits = [&](const GfMatrix4d &matrix,
-                               const std::array<uint64_t,16> &expected) {
-        for (size_t r=0;r<4;++r) for (size_t c=0;c<4;++c) {
-            uint64_t bits=0;
-            const double value=matrix[r][c];
-            std::memcpy(&bits,&value,sizeof(bits));
-            CHECK(bits==expected[r*4+c]);
-        }
+                               const std::array<uint64_t, 16> &expected) {
+        for (size_t r = 0; r < 4; ++r)
+            for (size_t c = 0; c < 4; ++c) {
+                uint64_t bits = 0;
+                const double value = matrix[r][c];
+                std::memcpy(&bits, &value, sizeof(bits));
+                CHECK(bits == expected[r * 4 + c]);
+            }
     };
     const auto publishes = [&](double frame) {
-        const size_t generations=evaluator.GetBakedGenerationCount();
-        const RigExecRigPose live=evaluator.Evaluate(UsdTimeCode(frame));
+        const size_t generations = evaluator.GetBakedGenerationCount();
+        const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
         CHECK(live.valid);
-        CHECK(evaluator.GetBakedGenerationCount()==generations+1);
-        CHECK(live.jointMatricesFinal.size()==6);
+        CHECK(evaluator.GetBakedGenerationCount() == generations + 1);
+        CHECK(live.jointMatricesFinal.size() == 6);
         CHECK(live.diagnostics.empty());
-        const auto final=live.jointFramesFinal.find(joint);
-        CHECK(final!=live.jointFramesFinal.end() &&
+        const auto final = live.jointFramesFinal.find(joint);
+        CHECK(final != live.jointFramesFinal.end() &&
               RigExecBakedUsable(final->second));
-        const auto target=live.jointMatricesFinal.find(joint);
-        const auto other=live.jointMatricesFinal.find(unrelated);
-        CHECK(target!=live.jointMatricesFinal.end());
-        CHECK(other!=live.jointMatricesFinal.end());
-        const size_t expected=frame==2.0?1:0;
-        if(target!=live.jointMatricesFinal.end())checkBits(target->second,targetBits[expected]);
-        if(other!=live.jointMatricesFinal.end())checkBits(other->second,unrelatedBits[expected]);
+        const auto target = live.jointMatricesFinal.find(joint);
+        const auto other = live.jointMatricesFinal.find(unrelated);
+        CHECK(target != live.jointMatricesFinal.end());
+        CHECK(other != live.jointMatricesFinal.end());
+        const size_t expected = frame == 2.0 ? 1 : 0;
+        if (target != live.jointMatricesFinal.end())
+            checkBits(target->second, targetBits[expected]);
+        if (other != live.jointMatricesFinal.end())
+            checkBits(other->second, unrelatedBits[expected]);
 
-        double raw=0.0;
-        CHECK(stage->GetAttributeAtPath(restTx).Get(&raw,UsdTimeCode(frame)));
-        CHECK(frame==2.0?std::isnan(raw):raw==0.0);
-        const auto *program=evaluator.GetBakedProgram();
+        double raw = 0.0;
+        CHECK(stage->GetAttributeAtPath(restTx).Get(&raw, UsdTimeCode(frame)));
+        CHECK(frame == 2.0 ? std::isnan(raw) : raw == 0.0);
+        const auto *program = evaluator.GetBakedProgram();
         CHECK(program);
-        if(program) {
-            const auto &graph=program->GetStepGraph();
-            const auto slot=graph.index.find(joint);
-            CHECK(slot!=graph.index.end());
-            if(slot!=graph.index.end()) {
-                const auto &rest=graph.restFrames[size_t(slot->second)];
-                CHECK(frame==2.0?!RigExecBakedUsable(rest):RigExecBakedUsable(rest));
+        if (program) {
+            const auto &graph = program->GetStepGraph();
+            const auto slot = graph.index.find(joint);
+            CHECK(slot != graph.index.end());
+            if (slot != graph.index.end()) {
+                const auto &rest = graph.restFrames[size_t(slot->second)];
+                CHECK(frame == 2.0 ? !RigExecBakedUsable(rest)
+                                   : RigExecBakedUsable(rest));
             }
         }
         std::string why;
-        CHECK(player.Play(frame,&why));
+        CHECK(player.Play(frame, &why));
         CHECK(why.empty());
-        CHECK(frame==2.0?std::isnan(player->GetInputValue(index).f64):
-                          player->GetInputValue(index).f64==0.0);
+        CHECK(frame == 2.0 ? std::isnan(player->GetInputValue(index).f64)
+                           : player->GetInputValue(index).f64 == 0.0);
         std::vector<std::string> diffs;
-        CHECK(RigExecCompareRuntimeOutputs(live,player.Reader(),&diffs));
-        for(const std::string &diff:diffs)
-            std::printf("  %s frame %g: %s\n",name,frame,diff.c_str());
+        CHECK(RigExecCompareRuntimeOutputs(live, player.Reader(), &diffs));
+        for (const std::string &diff : diffs)
+            std::printf("  %s frame %g: %s\n", name, frame, diff.c_str());
     };
     publishes(1.0);
     publishes(2.0);
@@ -5087,12 +5350,10 @@ TestSpaceRestMovesWithItsRests()
     const auto same = [&](const RigExecRigPose &live, const char *what,
                           double frame) {
         std::vector<std::string> diffs;
-        const bool equal =
-            RigExecCompareRuntimeOutputs(live, *reader, &diffs);
+        const bool equal = RigExecCompareRuntimeOutputs(live, *reader, &diffs);
         CHECK(equal);
         for (const std::string &diff : diffs) {
-            std::printf("  %s, %s %g: %s\n", name, what, frame,
-                        diff.c_str());
+            std::printf("  %s, %s %g: %s\n", name, what, frame, diff.c_str());
         }
         ++compared;
     };
@@ -5128,16 +5389,14 @@ TestSpaceRestMovesWithItsRests()
 // tables; false, with a FAILED line naming \p what, when either fails.
 static bool
 _BakeAndOpen(const std::string &what, const UsdStageRefPtr &stage,
-             const SdfPath &rigPath, double time,
-             std::vector<uint8_t> *bytes,
+             const SdfPath &rigPath, double time, std::vector<uint8_t> *bytes,
              std::unique_ptr<fb::RigExecWireFile> *file)
 {
     std::string error;
     {
         RigExecRigEvaluator evaluator(stage, rigPath);
         if (!RigExecTestBakeAt(evaluator, time, bytes, &error)) {
-            std::printf("FAILED: %s: bake: %s\n", what.c_str(),
-                        error.c_str());
+            std::printf("FAILED: %s: bake: %s\n", what.c_str(), error.c_str());
             ++failures;
             return false;
         }
@@ -5243,13 +5502,14 @@ TestAvarReadsInAnyFileOrder()
             info.name.find(".avars:r") == std::string::npos) {
             continue;
         }
-        const double value = info.defaultValue.f64 + 0.25 * double(held % 3 + 1);
+        const double value =
+            info.defaultValue.f64 + 0.25 * double(held % 3 + 1);
         CHECK(baked.Hold(info.name, value, &error));
         CHECK(edited.Hold(info.name, value, &error));
         CHECK(baked.Play(10.0, &error));
         CHECK(edited.Play(10.0, &error));
-        CHECK(_SamePlayed(_Snapshot(baked.Reader()),
-                          _Snapshot(edited.Reader())));
+        CHECK(
+            _SamePlayed(_Snapshot(baked.Reader()), _Snapshot(edited.Reader())));
         CHECK(baked->GetCounters().executedOpCount ==
               edited->GetCounters().executedOpCount);
         ++held;
@@ -5305,18 +5565,21 @@ TestRepeatedSetRunsNothing()
         if (!_BakeAndOpen(what, stage, rigPath, frame, &bytes, &file)) {
             continue;
         }
-        GfMatrix4d matrix(1.0); matrix.SetTranslateOnly(GfVec3d(1,0,10));
-        const VtValue inputValue = row.matrix ? VtValue(matrix) :
-            RigExecTestTypedValue(stage->GetAttributeAtPath(SdfPath(row.input)),row.value);
+        GfMatrix4d matrix(1.0);
+        matrix.SetTranslateOnly(GfVec3d(1, 0, 10));
+        const VtValue inputValue =
+            row.matrix
+                ? VtValue(matrix)
+                : RigExecTestTypedValue(
+                      stage->GetAttributeAtPath(SdfPath(row.input)), row.value);
         std::string error;
         std::vector<RigExecRigPose> still;
         std::vector<RigExecRigPose> dragged;
-        if (!RigExecTestEditedPoses(stage, rigPath,
-                                    {},
-                                    {frame}, &still, &error) ||
+        if (!RigExecTestEditedPoses(stage, rigPath, {}, {frame}, &still,
+                                    &error) ||
             !RigExecTestEditedPoses(stage, rigPath,
-                                    {{SdfPath(row.input),inputValue}},
-                                    {frame}, &dragged, &error) ||
+                                    {{SdfPath(row.input), inputValue}}, {frame},
+                                    &dragged, &error) ||
             still.size() != 1 || dragged.size() != 1) {
             std::printf("FAILED: %s: reference: %s\n", what.c_str(),
                         error.c_str());
@@ -5325,8 +5588,7 @@ TestRepeatedSetRunsNothing()
         }
         RigExecTestPlayer player;
         if (!player.Open(bytes, stage, &error)) {
-            std::printf("FAILED: %s: open: %s\n", what.c_str(),
-                        error.c_str());
+            std::printf("FAILED: %s: open: %s\n", what.c_str(), error.c_str());
             ++failures;
             continue;
         }
@@ -5335,37 +5597,38 @@ TestRepeatedSetRunsNothing()
               player->GetInputInfo(index).animated == row.animated);
         CHECK(player.Play(frame, &error));
         RrInputValue runtimeValue;
-        CHECK(RigExecInputValueFrom(inputValue,player->GetInputInfo(index).type,&runtimeValue));
+        CHECK(RigExecInputValueFrom(
+            inputValue, player->GetInputInfo(index).type, &runtimeValue));
 
         // An unchanged supported fixture executes literally zero op bodies.
         const auto idle = [&](const char *leg) {
             const std::vector<int32_t> trace =
                 player->GetLastRunTraceForTesting();
-            const auto operations=player->GetCounters().executedOpCount;
-            std::printf("%s, %s: %zu traced, %llu executed op bodies\n",what.c_str(),leg,
-                trace.size(),static_cast<unsigned long long>(operations));
-            CHECK(operations==trace.size());
-            return trace.empty() && operations==0;
+            const auto operations = player->GetCounters().executedOpCount;
+            std::printf("%s, %s: %zu traced, %llu executed op bodies\n",
+                        what.c_str(), leg, trace.size(),
+                        static_cast<unsigned long long>(operations));
+            CHECK(operations == trace.size());
+            return trace.empty() && operations == 0;
         };
         const auto ranReader = [&] {
             for (const int32_t step : player->GetLastRunTraceForTesting()) {
                 if (step >= 0 && size_t(step) < file->steps.size() &&
                     file->steps[size_t(step)].kind == row.readerKind &&
-                    player->GetStepLabelForTesting(size_t(step)) == row.reader) {
+                    player->GetStepLabelForTesting(size_t(step)) ==
+                        row.reader) {
                     return true;
                 }
             }
             return false;
         };
-        const auto matches = [&](const RigExecRigPose &pose,
-                                 const char *leg) {
+        const auto matches = [&](const RigExecRigPose &pose, const char *leg) {
             std::vector<std::string> diffs;
             const bool same =
                 RigExecCompareRuntimeOutputs(pose, player.Reader(), &diffs);
             if (!same) {
                 std::printf("%s, %s: %s\n", what.c_str(), leg,
-                            diffs.empty() ? "differs"
-                                          : diffs.front().c_str());
+                            diffs.empty() ? "differs" : diffs.front().c_str());
             }
             return same;
         };
@@ -5375,8 +5638,7 @@ TestRepeatedSetRunsNothing()
         CHECK(!idle("set") && ranReader());
         CHECK(matches(dragged[0], "set"));
         std::vector<std::string> moved;
-        CHECK(!RigExecCompareRuntimeOutputs(still[0], player.Reader(),
-                                            &moved));
+        CHECK(!RigExecCompareRuntimeOutputs(still[0], player.Reader(), &moved));
 
         CHECK(player->SetInput(row.input, runtimeValue, &error) &&
               player->Execute(&error));
@@ -5387,8 +5649,7 @@ TestRepeatedSetRunsNothing()
         CHECK(idle("nothing set"));
         CHECK(matches(dragged[0], "nothing set"));
 
-        CHECK(player->ResetInput(row.input, &error) &&
-              player->Execute(&error));
+        CHECK(player->ResetInput(row.input, &error) && player->Execute(&error));
         CHECK(!idle("reset") && ranReader());
         CHECK(matches(still[0], "reset"));
 
@@ -5449,20 +5710,17 @@ TestHeldDragCountsValueEditWork()
         // generations its program had answered.
         std::vector<std::pair<size_t, size_t>> bakedRuns;
         std::vector<size_t> liveOps;
-        const auto each = [&](const RigExecRigEvaluator &evaluator,
-                              size_t) {
-            const RigExecBakedProgram *program =
-                evaluator.GetBakedProgram();
+        const auto each = [&](const RigExecRigEvaluator &evaluator, size_t) {
+            const RigExecBakedProgram *program = evaluator.GetBakedProgram();
             bakedRuns.emplace_back(
                 program ? program->GetStepGraph().lastClosedClusters
                         : size_t(0),
                 evaluator.GetBakedGenerationCount());
             liveOps.push_back(evaluator.GetLastOpTrace().size());
         };
-        if (!RigExecTestEditedPoses(stage, rigPath,
-                                    {_Edit(stage, row.input, row.value)},
-                                    {row.time, row.time}, &poses, &error,
-                                    each) ||
+        if (!RigExecTestEditedPoses(
+                stage, rigPath, {_Edit(stage, row.input, row.value)},
+                {row.time, row.time}, &poses, &error, each) ||
             poses.size() != 2 || bakedRuns.size() != 2) {
             std::printf("FAILED: %s: reference: %s\n", what.c_str(),
                         error.c_str());
@@ -5471,8 +5729,7 @@ TestHeldDragCountsValueEditWork()
         }
         RigExecTestPlayer player;
         if (!player.Open(bytes, stage, &error)) {
-            std::printf("FAILED: %s: open: %s\n", what.c_str(),
-                        error.c_str());
+            std::printf("FAILED: %s: open: %s\n", what.c_str(), error.c_str());
             ++failures;
             continue;
         }
@@ -5480,29 +5737,27 @@ TestHeldDragCountsValueEditWork()
         for (size_t g = 0; g < poses.size(); ++g) {
             const RigExecRigPose &pose = poses[g];
             CHECK(player.Play(row.time, &error));
-            const auto runtimeOps=player->GetLastRunTraceForTesting().size();
-            std::printf("%s, run %zu: operations %zu/%zu, clusters %zu/%zu, generations "
-                        "%zu (baked/binary)\n",
-                        what.c_str(), g + 1,
-                        liveOps[g],runtimeOps,
-                        bakedRuns[g].first,
-                        player->GetClosedClusterCountForTesting(),
-                        bakedRuns[g].second);
-            CHECK(liveOps[g]==runtimeOps);
+            const auto runtimeOps = player->GetLastRunTraceForTesting().size();
+            std::printf(
+                "%s, run %zu: operations %zu/%zu, clusters %zu/%zu, "
+                "generations "
+                "%zu (baked/binary)\n",
+                what.c_str(), g + 1, liveOps[g], runtimeOps, bakedRuns[g].first,
+                player->GetClosedClusterCountForTesting(), bakedRuns[g].second);
+            CHECK(liveOps[g] == runtimeOps);
             CHECK(bakedRuns[g].second == g + 1 &&
                   bakedRuns[g].first ==
                       player->GetClosedClusterCountForTesting());
             std::vector<std::string> diffs;
-            CHECK(RigExecCompareRuntimeOutputs(pose, player.Reader(),
-                                               &diffs));
+            CHECK(RigExecCompareRuntimeOutputs(pose, player.Reader(), &diffs));
             for (const std::string &diff : diffs) {
                 std::printf("  %s, run %zu: %s\n", what.c_str(), g + 1,
                             diff.c_str());
             }
         }
         // The first run executes the revisions; the second executes none.
-        CHECK(liveOps[0]>0);
-        CHECK(liveOps[1]==0);
+        CHECK(liveOps[0] > 0);
+        CHECK(liveOps[1] == 0);
     }
     std::printf("%s: checked\n", name);
 }
@@ -5531,8 +5786,7 @@ TestRunTraceOrder()
         }
         std::vector<uint8_t> bytes;
         std::unique_ptr<fb::RigExecWireFile> file;
-        if (!_BakeAndOpen(what, stage, SdfPath(row.rig), 1.0, &bytes,
-                          &file)) {
+        if (!_BakeAndOpen(what, stage, SdfPath(row.rig), 1.0, &bytes, &file)) {
             continue;
         }
         std::string error;
@@ -5544,16 +5798,14 @@ TestRunTraceOrder()
         }
         CHECK(reader->GetLastRunTraceForTesting().empty());
         CHECK(reader->Execute(&error));
-        const std::vector<int32_t> trace =
-            reader->GetLastRunTraceForTesting();
+        const std::vector<int32_t> trace = reader->GetLastRunTraceForTesting();
         const size_t steps = file->steps.size();
         // Each step's place in the trace, or -1.
         std::vector<int64_t> place(steps, -1);
         bool once = true;
         for (size_t k = 0; k < trace.size(); ++k) {
             const int32_t step = trace[k];
-            if (step < 0 || size_t(step) >= steps ||
-                place[size_t(step)] >= 0) {
+            if (step < 0 || size_t(step) >= steps || place[size_t(step)] >= 0) {
                 once = false;
                 continue;
             }
@@ -5590,14 +5842,16 @@ _PublishSmallBothWays(const RrProgram &program, RigExecOpValueState *typed,
                       RigExecOpValueState *keyed, bool changed)
 {
     const bool small = RrPublishSmallValue(&program, typed);
-    RigExecOpPublishValue(keyed, [&](uint32_t d, uint32_t slot, std::string *key) {
-        RrOpValueKey(&program, d, slot, key);
-    });
+    RigExecOpPublishValue(keyed,
+                          [&](uint32_t d, uint32_t slot, std::string *key) {
+                              RrOpValueKey(&program, d, slot, key);
+                          });
     std::string now;
     RrOpValueKey(&program, typed->domain, typed->slot, &now);
     return small && typed->initialized && typed->changed == char(changed) &&
-           keyed->changed == char(changed) && typed->revision == keyed->revision &&
-           typed->key == keyed->key && typed->key == now;
+           keyed->changed == char(changed) &&
+           typed->revision == keyed->revision && typed->key == keyed->key &&
+           typed->key == now;
 }
 
 // \p set writes case k (a value, +0, -0, two NaN payloads) into one
@@ -5612,8 +5866,9 @@ _CheckSmallValue(const RrProgram &program, RigExecWireSlotDomain domain,
     RigExecOpValueState typed, keyed;
     typed.domain = keyed.domain = uint32_t(domain);
     typed.slot = keyed.slot = slot;
-    const std::pair<int, bool> steps[] = {{0, true}, {0, false}, {1, true},
-        {2, true}, {2, false}, {3, true}, {3, false}, {4, true}, {0, true}};
+    const std::pair<int, bool> steps[] = {{0, true},  {0, false}, {1, true},
+                                          {2, true},  {2, false}, {3, true},
+                                          {3, false}, {4, true},  {0, true}};
     int step = 0;
     for (const auto &entry : steps) {
         set(entry.first);
@@ -5684,17 +5939,19 @@ TestSmallValuePublication()
 
     s.base.resize(2);
     s.fin.resize(2);
-    _CheckSmallValue(program, D::PoseBase, 1,
+    _CheckSmallValue(
+        program, D::PoseBase, 1,
         [&](int k) { s.base[1].points[2][1] = doubles[k]; },
         [&] { s.base[1].flags ^= 0x10u; }, "PoseBase");
-    _CheckSmallValue(program, D::PoseFin, 1,
+    _CheckSmallValue(
+        program, D::PoseFin, 1,
         [&](int k) { s.fin[1].points[0][0] = doubles[k]; },
         [&] { s.fin[1].flags ^= 0x10u; }, "PoseFin");
     const auto matrices = [&](D domain, std::vector<RrMat4d> *values,
                               const char *what) {
         values->assign(2, RrMat4d(1.0));
-        _CheckSmallValue(program, domain, 1,
-            [&](int k) { (*values)[1][3][1] = doubles[k]; },
+        _CheckSmallValue(
+            program, domain, 1, [&](int k) { (*values)[1][3][1] = doubles[k]; },
             [&] { (*values)[1][0][0] = 2.0; }, what);
     };
     matrices(D::PosedM, &s.posedM, "PosedM");
@@ -5702,19 +5959,21 @@ TestSmallValuePublication()
     matrices(D::BaseMatrix, &s.baseMatrix, "BaseMatrix");
     matrices(D::SwitchFrame, &s.switchFrames, "SwitchFrame");
     s.poseWeights.assign(2, 0.5f);
-    _CheckSmallValue(program, D::PoseWeight, 1,
-        [&](int k) { s.poseWeights[1] = floats[k]; },
+    _CheckSmallValue(
+        program, D::PoseWeight, 1, [&](int k) { s.poseWeights[1] = floats[k]; },
         [&] { s.poseWeights[1] = 3.0f; }, "PoseWeight");
     const auto flagged = [&](D domain, std::vector<char> *flags,
                              std::vector<RrMat4d> *values, const char *what) {
         flags->assign(2, 1);
         values->assign(2, RrMat4d(1.0));
-        _CheckSmallValue(program, domain, 1,
-            [&](int k) { (*values)[1][2][0] = doubles[k]; },
+        _CheckSmallValue(
+            program, domain, 1, [&](int k) { (*values)[1][2][0] = doubles[k]; },
             [&] { (*flags)[1] = 0; }, what);
     };
-    flagged(D::ConstraintDelta, &s.deltaPresent, &s.deltaValues, "ConstraintDelta");
-    flagged(D::WeightFrames, &s.volumePlaced, &s.volumePlacement, "WeightFrames");
+    flagged(D::ConstraintDelta, &s.deltaPresent, &s.deltaValues,
+            "ConstraintDelta");
+    flagged(D::WeightFrames, &s.volumePlaced, &s.volumePlacement,
+            "WeightFrames");
     flagged(D::WeightFramesBase, &s.volumePlacedBase, &s.volumePlacementBase,
             "WeightFramesBase");
     flagged(D::FrameMatrix, &s.frameMatrixValid, &s.frameMatrix, "FrameMatrix");
@@ -5723,7 +5982,8 @@ TestSmallValuePublication()
     s.commits[0].outcome.assign(8, 0);
     s.commits[1].staged.resize(2);
     s.commits[1].outcome.assign(2, 0);
-    _CheckSmallValue(program, D::CommitStaging, 4,
+    _CheckSmallValue(
+        program, D::CommitStaging, 4,
         [&](int k) { s.commits[1].staged[1].points[3][2] = doubles[k]; },
         [&] { s.commits[1].outcome[1] = 2; }, "CommitStaging");
 
@@ -5732,30 +5992,47 @@ TestSmallValuePublication()
     RigExecProviderPlainState &space = s.providerValues[1];
     space.initialized = true;
     space.count = 1;
-    _CheckSmallValue(program, D::SpaceValue, 1, [&](int k) {
-        space.value.emplace<std::array<double, 16>>();
-        std::get<std::array<double, 16>>(space.value)[7] = doubles[k];
-    }, [&] { space.blocked = !space.blocked; }, "SpaceValue matrix");
-    _CheckSmallValue(program, D::SpaceValue, 1,
+    _CheckSmallValue(
+        program, D::SpaceValue, 1,
+        [&](int k) {
+            space.value.emplace<std::array<double, 16>>();
+            std::get<std::array<double, 16>>(space.value)[7] = doubles[k];
+        },
+        [&] { space.blocked = !space.blocked; }, "SpaceValue matrix");
+    _CheckSmallValue(
+        program, D::SpaceValue, 1,
         [&](int k) { space.value.emplace<double>(doubles[k]); },
-        [&] { space.authoritative = !space.authoritative; }, "SpaceValue double");
-    _CheckSmallValue(program, D::SpaceValue, 1,
+        [&] { space.authoritative = !space.authoritative; },
+        "SpaceValue double");
+    _CheckSmallValue(
+        program, D::SpaceValue, 1,
         [&](int k) { space.value.emplace<float>(floats[k]); },
         [&] { space.count = 3; }, "SpaceValue float");
-    _CheckSmallValue(program, D::SpaceValue, 1, [&](int k) {
-        space.value.emplace<std::array<double, 3>>(
-            std::array<double, 3>{{1.0, doubles[k], -2.0}});
-    }, [&] { space.initialized = !space.initialized; }, "SpaceValue vector");
-    _CheckSmallValue(program, D::SpaceValue, 1, [&](int k) {
-        space.value.emplace<std::array<float, 3>>(
-            std::array<float, 3>{{floats[k], 1.0f, 2.0f}});
-    }, [&] { space.count = 4; }, "SpaceValue float vector");
-    _CheckSmallValue(program, D::SpaceValue, 1, [&](int k) {
-        RigExecProviderPlainFrame frame{};
-        frame.points[3][0] = doubles[k];
-        space.value.emplace<RigExecProviderPlainFrame>(frame);
-    }, [&] { std::get<RigExecProviderPlainFrame>(space.value).flags ^= 0x10u; },
-       "SpaceValue frame");
+    _CheckSmallValue(
+        program, D::SpaceValue, 1,
+        [&](int k) {
+            space.value.emplace<std::array<double, 3>>(
+                std::array<double, 3>{{1.0, doubles[k], -2.0}});
+        },
+        [&] { space.initialized = !space.initialized; }, "SpaceValue vector");
+    _CheckSmallValue(
+        program, D::SpaceValue, 1,
+        [&](int k) {
+            space.value.emplace<std::array<float, 3>>(
+                std::array<float, 3>{{floats[k], 1.0f, 2.0f}});
+        },
+        [&] { space.count = 4; }, "SpaceValue float vector");
+    _CheckSmallValue(
+        program, D::SpaceValue, 1,
+        [&](int k) {
+            RigExecProviderPlainFrame frame{};
+            frame.points[3][0] = doubles[k];
+            space.value.emplace<RigExecProviderPlainFrame>(frame);
+        },
+        [&] {
+            std::get<RigExecProviderPlainFrame>(space.value).flags ^= 0x10u;
+        },
+        "SpaceValue frame");
     {
         // An empty value keys its flags and index alone.
         space.value.emplace<std::monostate>();
@@ -5891,8 +6168,7 @@ def Xform "Asset"
     RigExecRigEvaluator evaluator(stage, rigPath);
     std::vector<std::string> notices;
     CHECK(evaluator.Compile(&notices));
-    const auto evaluate =
-        [&](double frame) -> const RigExecBakedProgramImpl * {
+    const auto evaluate = [&](double frame) -> const RigExecBakedProgramImpl * {
         const size_t generations = evaluator.GetBakedGenerationCount();
         evaluator.Evaluate(UsdTimeCode(frame));
         CHECK(evaluator.GetBakedGenerationCount() == generations + 1);
@@ -5940,7 +6216,8 @@ def Xform "Asset"
     };
     const auto ran = [&](int step) {
         for (size_t c = 0; c < B->opGraph.ops.size(); ++c) {
-            if (step >= 0 && B->opGraph.ops[c].originalIndex == uint32_t(step)) {
+            if (step >= 0 &&
+                B->opGraph.ops[c].originalIndex == uint32_t(step)) {
                 return c < B->opExecution.ran.size() &&
                        B->opExecution.ran[c] != 0;
             }
@@ -6084,38 +6361,42 @@ def Xform "Asset"
 static void
 TestAnimatedAutoClavicle(const std::string &examplesDir)
 {
-    const auto stage=UsdStage::Open(examplesDir+"/biped/Biped_stack.usda");
+    const auto stage = UsdStage::Open(examplesDir + "/biped/Biped_stack.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     stage->SetEditTarget(stage->GetSessionLayer());
-    const std::string controls="/Biped/Rig/Main/Shot/Aux/Controls";
-    const std::string shoulder=controls+"/M_Body/M_Torso/M_Chest/M_ChestTop/L_Shldr";
-    const auto key=[&](const std::string &path,const std::array<double,4> &values) {
-        const auto attribute=stage->GetAttributeAtPath(SdfPath(path));
+    const std::string controls = "/Biped/Rig/Main/Shot/Aux/Controls";
+    const std::string shoulder =
+        controls + "/M_Body/M_Torso/M_Chest/M_ChestTop/L_Shldr";
+    const auto key = [&](const std::string &path,
+                         const std::array<double, 4> &values) {
+        const auto attribute = stage->GetAttributeAtPath(SdfPath(path));
         CHECK(attribute);
-        for (size_t k=0; attribute && k<values.size(); ++k) {
-            const auto time=UsdTimeCode(double(k+1));
-            CHECK(attribute.GetTypeName()==SdfValueTypeNames->Float
-                ? attribute.Set(float(values[k]),time) : attribute.Set(values[k],time));
+        for (size_t k = 0; attribute && k < values.size(); ++k) {
+            const auto time = UsdTimeCode(double(k + 1));
+            CHECK(attribute.GetTypeName() == SdfValueTypeNames->Float
+                      ? attribute.Set(float(values[k]), time)
+                      : attribute.Set(values[k], time));
         }
     };
-    key(shoulder+"/L_UpArmSwing/L_UpArm.avars:ry",{0,-80,-60,0});
-    key(shoulder+".avars:autoClav",{1,1,0.5,1});
-    key(controls+"/L_Arm.avars:ikfk",{0,0,0.5,1});
-    key(controls+"/L_ArmIK.avars:ty",{0,0,30,40});
-    key(controls+"/L_Arm.avars:stretchTop",{1,1.2,1.1,1});
-    key(controls+"/L_Arm.avars:twist",{0,0,15,30});
-    _TestStage("animated auto clavicle FK/IK and limb inputs",stage,{1,2,3,4,2,1});
+    key(shoulder + "/L_UpArmSwing/L_UpArm.avars:ry", {0, -80, -60, 0});
+    key(shoulder + ".avars:autoClav", {1, 1, 0.5, 1});
+    key(controls + "/L_Arm.avars:ikfk", {0, 0, 0.5, 1});
+    key(controls + "/L_ArmIK.avars:ty", {0, 0, 30, 40});
+    key(controls + "/L_Arm.avars:stretchTop", {1, 1.2, 1.1, 1});
+    key(controls + "/L_Arm.avars:twist", {0, 0, 15, 30});
+    _TestStage("animated auto clavicle FK/IK and limb inputs", stage,
+               {1, 2, 3, 4, 2, 1});
 }
 
 int
 main(int argc, char **argv)
 {
-    PlugRegistry::GetInstance().RegisterPlugins(
-        RIGEXEC_SCHEMA_RESOURCE_DIR);
-    if (argc>1 && std::string(argv[1])=="--auto-clavicle") {
-        TestAnimatedAutoClavicle(argc>2?argv[2]:RIGEXEC_EXAMPLES_DIR);
-        return failures?1:0;
+    PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
+    if (argc > 1 && std::string(argv[1]) == "--auto-clavicle") {
+        TestAnimatedAutoClavicle(argc > 2 ? argv[2] : RIGEXEC_EXAMPLES_DIR);
+        return failures ? 1 : 0;
     }
     TestComputedEnvelopes();
     TestStaticWeightEnvelope();
@@ -6172,8 +6453,7 @@ main(int argc, char **argv)
             continue;
         }
         sawBaking = true;
-        const std::string stagePath =
-            examplesDir + "/" + fixture.stage;
+        const std::string stagePath = examplesDir + "/" + fixture.stage;
         const std::vector<double> frames = _ParseFrames(fixture.frames);
         CHECK(!frames.empty());
         if (frames.empty()) {
@@ -6186,7 +6466,8 @@ main(int argc, char **argv)
     }
     CHECK(sawBaking);
     CHECK(checkedSolverSemanticRequirements);
-    CHECK(checkedRefreshRecords && checkedRefreshCarries && checkedRefreshGuards);
+    CHECK(checkedRefreshRecords && checkedRefreshCarries &&
+          checkedRefreshGuards);
 
     if (failures == 0) {
         std::printf("testRigExecRuntimePose: all tests passed "
@@ -6195,7 +6476,7 @@ main(int argc, char **argv)
         return 0;
     }
     std::printf("testRigExecRuntimePose: %d failures "
-                "(%d stage(s) compared over %d frame(s))\n", failures,
-                comparedFixtures, comparedFrames);
+                "(%d stage(s) compared over %d frame(s))\n",
+                failures, comparedFixtures, comparedFrames);
     return 1;
 }

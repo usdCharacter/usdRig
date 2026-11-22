@@ -46,17 +46,32 @@ struct _FloatControl {
     // record what happened and change no result; each thread keeps its own.
     static constexpr unsigned kStatus = 0x3Fu;
     unsigned csr = _mm_getcsr() & ~kStatus;
-    bool operator!=(const _FloatControl &o) const { return csr != o.csr; }
-    void Apply() const { _mm_setcsr(csr | (_mm_getcsr() & kStatus)); }
+    bool operator!=(const _FloatControl &o) const
+    {
+        return csr != o.csr;
+    }
+    void Apply() const
+    {
+        _mm_setcsr(csr | (_mm_getcsr() & kStatus));
+    }
 #else
     std::fenv_t env;
-    _FloatControl() { std::fegetenv(&env); }
-    bool operator!=(const _FloatControl &) const { return true; }
-    void Apply() const { std::fesetenv(&env); }
+    _FloatControl()
+    {
+        std::fegetenv(&env);
+    }
+    bool operator!=(const _FloatControl &) const
+    {
+        return true;
+    }
+    void Apply() const
+    {
+        std::fesetenv(&env);
+    }
 #endif
 };
 
-}  // namespace
+} // namespace
 
 bool
 RigExecFloatEnvironmentIsDefault()
@@ -79,19 +94,26 @@ RigExecParallelForInCallerEnvironment(size_t n, size_t grain,
                                       const RigExecRangeBody &body)
 {
     const _FloatControl caller;
-    WorkParallelForN(n, [&caller, &body](size_t begin, size_t end) {
-        const _FloatControl own;
-        const bool differs = own != caller;
-        if (differs) {
-            caller.Apply();
-        }
-        struct Restore {
-            const _FloatControl &own;
-            bool differs;
-            ~Restore() { if (differs) own.Apply(); }
-        } restore{own, differs};
-        body(begin, end);
-    }, grain);
+    WorkParallelForN(
+        n,
+        [&caller, &body](size_t begin, size_t end) {
+            const _FloatControl own;
+            const bool differs = own != caller;
+            if (differs) {
+                caller.Apply();
+            }
+            struct Restore {
+                const _FloatControl &own;
+                bool differs;
+                ~Restore()
+                {
+                    if (differs)
+                        own.Apply();
+                }
+            } restore{own, differs};
+            body(begin, end);
+        },
+        grain);
 }
 
 namespace {
@@ -99,8 +121,7 @@ namespace {
 void
 _RunGeometryRanges(size_t count, size_t grain, const RigExecRangeBody &body)
 {
-    if (RigExecParallelEvaluationEnabled() &&
-        !RigExecFrozenSerialActive() &&
+    if (RigExecParallelEvaluationEnabled() && !RigExecFrozenSerialActive() &&
         count >= RigExecGeometryParallelThreshold && count > grain) {
         RigExecParallelForInCallerEnvironment(count, grain, body);
     } else {
@@ -112,7 +133,7 @@ _RunGeometryRanges(size_t count, size_t grain, const RigExecRangeBody &body)
 // function-local static would run its initialization guard on every call.
 const RigExecRangeRunner _geometryRanges(&_RunGeometryRanges);
 
-}  // namespace
+} // namespace
 
 const RigExecRangeRunner *
 RigExecGeometryRanges()
@@ -120,4 +141,4 @@ RigExecGeometryRanges()
     return &_geometryRanges;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

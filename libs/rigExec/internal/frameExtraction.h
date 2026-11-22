@@ -74,7 +74,7 @@ RigExecElementOutSpace(const RigExecPointFrameArray *source, size_t index)
         GfVec3d direction = posed[a + 1] - origin;
         const double posedLength = direction.GetLength();
         if (posedLength < 1e-12) {
-            return m;  // degenerate axis: identity
+            return m; // degenerate axis: identity
         }
         direction /= posedLength;
         double ratio = 1.0;
@@ -102,8 +102,7 @@ RigExecElementOutSpace(const RigExecPointFrameArray *source, size_t index)
 /// downstream computeMatrix/consumers see the failure. An out-of-range element
 /// is likewise degenerate rather than silently following the parent.
 inline RigExecPointFrame
-RigExecExtractElementFrame(
-    const RigExecPointFrameArray *source, size_t index)
+RigExecExtractElementFrame(const RigExecPointFrameArray *source, size_t index)
 {
     if (source && index < source->GetSize()) {
         const RigExecPointFrame &f = source->frames[index];
@@ -117,6 +116,6 @@ RigExecExtractElementFrame(
     return degenerate;
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_FRAME_EXTRACTION_H
+#endif // RIGEXEC_FRAME_EXTRACTION_H

@@ -37,39 +37,58 @@ RigExecExternalPlaybackInputs(const RigExecExternalInputValue *inputs,
         const size_t n = input.count;
         switch (Type(input.type)) {
         case Type::Double: {
-            double v; std::memcpy(&v, input.data, sizeof(v)); values[k] = VtValue(v); break;
+            double v;
+            std::memcpy(&v, input.data, sizeof(v));
+            values[k] = VtValue(v);
+            break;
         }
         case Type::Float: {
-            float v; std::memcpy(&v, input.data, sizeof(v)); values[k] = VtValue(v); break;
+            float v;
+            std::memcpy(&v, input.data, sizeof(v));
+            values[k] = VtValue(v);
+            break;
         }
         case Type::Bool:
-            values[k] = VtValue(*static_cast<const uint8_t *>(input.data) != 0); break;
+            values[k] = VtValue(*static_cast<const uint8_t *>(input.data) != 0);
+            break;
         case Type::Int: {
-            int32_t v; std::memcpy(&v, input.data, sizeof(v)); values[k] = VtValue(int(v)); break;
+            int32_t v;
+            std::memcpy(&v, input.data, sizeof(v));
+            values[k] = VtValue(int(v));
+            break;
         }
         case Type::Token:
-            values[k] = VtValue(std::string(static_cast<const char *>(input.data))); break;
+            values[k] =
+                VtValue(std::string(static_cast<const char *>(input.data)));
+            break;
         case Type::Matrix4d: {
-            double m[4][4]; std::memcpy(m, input.data, sizeof(m));
-            values[k] = VtValue(GfMatrix4d(m)); break;
+            double m[4][4];
+            std::memcpy(m, input.data, sizeof(m));
+            values[k] = VtValue(GfMatrix4d(m));
+            break;
         }
         case Type::IntArray: {
             const auto *v = static_cast<const int32_t *>(input.data);
-            values[k] = VtValue(VtIntArray(v, v + n)); break;
+            values[k] = VtValue(VtIntArray(v, v + n));
+            break;
         }
         case Type::FloatArray: {
             const auto *v = static_cast<const float *>(input.data);
-            values[k] = VtValue(VtFloatArray(v, v + n)); break;
+            values[k] = VtValue(VtFloatArray(v, v + n));
+            break;
         }
         case Type::DoubleArray: {
             const auto *v = static_cast<const double *>(input.data);
-            values[k] = VtValue(VtDoubleArray(v, v + n)); break;
+            values[k] = VtValue(VtDoubleArray(v, v + n));
+            break;
         }
         case Type::Vec3fArray: {
             const auto *v = static_cast<const float *>(input.data);
             VtVec3fArray points(n);
-            for (size_t i = 0; i < n; ++i) points[i] = GfVec3f(v[i * 3], v[i * 3 + 1], v[i * 3 + 2]);
-            values[k] = VtValue(points); break;
+            for (size_t i = 0; i < n; ++i)
+                points[i] = GfVec3f(v[i * 3], v[i * 3 + 1], v[i * 3 + 2]);
+            values[k] = VtValue(points);
+            break;
         }
         default:
             break;
@@ -85,7 +104,8 @@ struct RigExecExternalPlaybackProviders {
         const RigExecExternalProviders &providers)
     {
         if (providers.transform) {
-            double m[4][4]; std::memcpy(m, providers.transform, sizeof(m));
+            double m[4][4];
+            std::memcpy(m, providers.transform, sizeof(m));
             transform = GfMatrix4d(m);
             values.transform = &transform;
         }
@@ -113,8 +133,9 @@ struct RigExecExternalPlaybackProviders {
 /// changes the point count.
 inline bool
 RigExecExternalPlaybackApply(const VtValue &data,
-    bool (*apply)(const VtValue &, std::vector<GfVec3f> *),
-    float *xyz, size_t count)
+                             bool (*apply)(const VtValue &,
+                                           std::vector<GfVec3f> *),
+                             float *xyz, size_t count)
 {
     std::vector<GfVec3f> points(count);
     for (size_t i = 0; i < count; ++i) {
@@ -131,6 +152,6 @@ RigExecExternalPlaybackApply(const VtValue &data,
     return true;
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
 #endif

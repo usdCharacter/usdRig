@@ -9,8 +9,7 @@ namespace rigExec {
 
 // Bound property inputs and cached chain results. Notices mark affected chains
 // stale; a new compiled rig drops the bindings wholesale.
-struct RigExecPropertyChainBindings
-{
+struct RigExecPropertyChainBindings {
     /// One input the revision loop reads by value.
     struct Input {
         UsdAttribute attribute;
@@ -29,7 +28,10 @@ struct RigExecPropertyChainBindings
         /// attribute rebinds the chain.
         bool constant = false;
         VtValue constantValue;
-        explicit operator bool() const { return bool(attribute); }
+        explicit operator bool() const
+        {
+            return bool(attribute);
+        }
     };
 
     /// One revision of one chain, in the chain's own order.

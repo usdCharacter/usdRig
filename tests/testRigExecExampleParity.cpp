@@ -27,12 +27,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -136,8 +136,7 @@ TestOneFixture(const std::string &examplesDir,
                const RigExecExampleFixture &fixture)
 {
     const std::string where = fixture.stage;
-    const UsdStageRefPtr stage =
-        UsdStage::Open(examplesDir + "/" + where);
+    const UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/" + where);
     CHECK(stage);
     if (!stage) {
         return;
@@ -172,8 +171,7 @@ TestOneFixture(const std::string &examplesDir,
     std::vector<std::string> reasons;
     if (!rig.IsBakeable(&reasons)) {
         ++failures;
-        std::printf("FAIL %s: graph admission declined\n",
-                    where.c_str());
+        std::printf("FAIL %s: graph admission declined\n", where.c_str());
         for (const std::string &reason : reasons) {
             std::printf("    %s\n", reason.c_str());
         }
@@ -200,8 +198,8 @@ TestOneFixture(const std::string &examplesDir,
     if (rig.GetBakedGenerationCount() != generations) {
         ++failures;
         std::printf("FAIL %s: %zu of %zu authored generation(s) came from "
-                    "the program\n", where.c_str(),
-                    rig.GetBakedGenerationCount(), generations);
+                    "the program\n",
+                    where.c_str(), rig.GetBakedGenerationCount(), generations);
     }
 
     // The animator's drag: a control avar. Skipped where the example authors
@@ -215,8 +213,8 @@ TestOneFixture(const std::string &examplesDir,
         VtValue dragged;
         if (!prim || !BumpedValue(prim.GetAttribute(avar), 0.5, &dragged)) {
             ++failures;
-            std::printf("FAIL %s: no double or float %s on %s\n",
-                        where.c_str(), avar.GetText(), control.GetText());
+            std::printf("FAIL %s: no double or float %s on %s\n", where.c_str(),
+                        avar.GetText(), control.GetText());
         } else {
             DragOne(where + " (control avar)", &rig,
                     {RigExecValueOverride{control, TfToken(), avar, dragged}},
@@ -237,8 +235,8 @@ TestOneFixture(const std::string &examplesDir,
         VtValue dragged;
         if (!prim || !BumpedValue(prim.GetAttribute(input), 0.25, &dragged)) {
             ++failures;
-            std::printf("FAIL %s: no double or float %s on %s\n",
-                        where.c_str(), input.GetText(), op.GetText());
+            std::printf("FAIL %s: no double or float %s on %s\n", where.c_str(),
+                        input.GetText(), op.GetText());
         } else {
             DragOne(where + " (operator input)", &rig,
                     {RigExecValueOverride{op, TfToken(), input, dragged}},
@@ -254,8 +252,7 @@ TestOneFixture(const std::string &examplesDir,
     CHECK(released.comparisonMismatches == 0);
     CHECK(rig.GetBakedGenerationCount() == generations);
     std::printf("  %-34s %2zu frame(s), %zu generation(s) from the program\n",
-                where.c_str(), frames.size(),
-                rig.GetBakedGenerationCount());
+                where.c_str(), frames.size(), rig.GetBakedGenerationCount());
 }
 
 std::string
@@ -269,7 +266,7 @@ SchemaResourceDir(const std::string &examplesDir)
 #endif
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
@@ -281,8 +278,7 @@ main(int argc, char **argv)
     const std::string examplesDir = argv[1];
     const std::string resources = SchemaResourceDir(examplesDir);
     if (PlugRegistry::GetInstance().RegisterPlugins(resources).empty()) {
-        std::printf("FATAL: no schema plugin found at %s\n",
-                    resources.c_str());
+        std::printf("FATAL: no schema plugin found at %s\n", resources.c_str());
         return 2;
     }
 
@@ -294,8 +290,8 @@ main(int argc, char **argv)
     // An empty sweep passes silently and proves nothing, and the table
     // shrinking to no bakeable fixture is a regression rather than a rest.
     CHECK(baked > 0);
-    CHECK(baked == sizeof(kRigExecExampleFixtures) /
-                   sizeof(kRigExecExampleFixtures[0]));
+    CHECK(baked ==
+          sizeof(kRigExecExampleFixtures) / sizeof(kRigExecExampleFixtures[0]));
 
     std::printf("%s: %zu registered fixture(s) of %zu, %d failure(s)\n",
                 failures ? "FAILED" : "ok", baked,

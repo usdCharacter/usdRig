@@ -21,11 +21,13 @@ struct RigExecRigPose;
 /// contain the capture.
 class RigExecGoldenSuiteObserver {
 public:
-    static std::unique_ptr<RigExecGoldenSuiteObserver> Create(const SdfPath &rigPath);
+    static std::unique_ptr<RigExecGoldenSuiteObserver>
+    Create(const SdfPath &rigPath);
     virtual ~RigExecGoldenSuiteObserver() = default;
     virtual void Record(const RigExecRigPose &pose) = 0;
+
 protected:
     RigExecGoldenSuiteObserver() = default;
 };
-}
+} // namespace rigExec
 #endif

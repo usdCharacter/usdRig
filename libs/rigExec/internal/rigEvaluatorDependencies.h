@@ -15,21 +15,19 @@ std::vector<SdfPath>
 _DiscoverJointOutputs(const UsdStageRefPtr &stage, const SdfPath &rigPath,
                       const std::map<SdfPath, std::string> &skipped = {});
 
-std::vector<SdfPath>
-_DiscoverPoseInterpolators(const UsdStageRefPtr &stage, const SdfPath &rigPath);
+std::vector<SdfPath> _DiscoverPoseInterpolators(const UsdStageRefPtr &stage,
+                                                const SdfPath &rigPath);
 
-std::vector<SdfPath>
-_DiscoverControls(const UsdStageRefPtr &stage, const SdfPath &rigPath);
+std::vector<SdfPath> _DiscoverControls(const UsdStageRefPtr &stage,
+                                       const SdfPath &rigPath);
 
-std::vector<SdfPath>
-_DiscoverVolumeWeights(const UsdStageRefPtr &stage, const SdfPath &rigPath);
+std::vector<SdfPath> _DiscoverVolumeWeights(const UsdStageRefPtr &stage,
+                                            const SdfPath &rigPath);
 
-bool
-_IsAggregateSolverType(const TfToken &typeName);
+bool _IsAggregateSolverType(const TfToken &typeName);
 
-std::vector<UsdPrim>
-_DiscoverAggregateSolvers(
-    const UsdStageRefPtr &stage, const SdfPath &rigPath);
+std::vector<UsdPrim> _DiscoverAggregateSolvers(const UsdStageRefPtr &stage,
+                                               const SdfPath &rigPath);
 
 using _PathDependencies = std::map<SdfPath, std::set<SdfPath>>;
 
@@ -51,29 +49,25 @@ struct _PoseInputInfo {
     int32_t graphPrim = -1;
 };
 
-UsdPrim
-_NamespaceFrameProvider(UsdPrim prim);
+UsdPrim _NamespaceFrameProvider(UsdPrim prim);
 
-_PoseInputInfo
-_CollectPoseInputInfo(const UsdPrim &prim);
+_PoseInputInfo _CollectPoseInputInfo(const UsdPrim &prim);
 
 // Shared pose-input closure graph. Stage reads discover nodes in parallel;
 // a serial Tarjan pass folds reachability over strongly connected components.
 // Attribute sets are materialized only when the solver-input index needs them.
-class _PoseInputGraph
-{
+class _PoseInputGraph {
 public:
     // Asks for the closures of `seeds` -- except an empty path and one that
     // `skip` names, which the closure walks do not read either -- and of
     // every prim they ask for in turn. Adds one entry to `*infos` per prim
     // newly asked for: its providers and connectedPose, with attributes left
     // to MaterializeAttributes. A prim already asked for is not asked again.
-    void Extend(const UsdStageRefPtr &stage,
-                const std::vector<SdfPath> &seeds,
-                const std::function<bool(const SdfPath &)> &skip,
-                bool parallel, RigExecProfiler &profiler,
-                std::unordered_map<SdfPath, _PoseInputInfo, SdfPath::Hash>
-                    *infos);
+    void
+    Extend(const UsdStageRefPtr &stage, const std::vector<SdfPath> &seeds,
+           const std::function<bool(const SdfPath &)> &skip, bool parallel,
+           RigExecProfiler &profiler,
+           std::unordered_map<SdfPath, _PoseInputInfo, SdfPath::Hash> *infos);
 
     // Fills the attributes of every entry that still names a prim of this
     // graph, and clears that name. Entries it did not compute are left as
@@ -87,22 +81,22 @@ private:
     struct _Prim {
         SdfPath path;
         bool read = false;
-        bool asked = false;         // asked for, or skipped, already
-        bool providerType = false;  // a joint, control or volume weight
+        bool asked = false;        // asked for, or skipped, already
+        bool providerType = false; // a joint, control or volume weight
         uint32_t nsProvider = _None;
         std::vector<uint32_t> frameInputs;
-        uint32_t rootsBegin = 0;    // its attributes, in _roots
+        uint32_t rootsBegin = 0; // its attributes, in _roots
         uint32_t rootsEnd = 0;
-        std::vector<uint32_t> pendingAttrs;  // reached, not yet read
+        std::vector<uint32_t> pendingAttrs; // reached, not yet read
     };
     struct _Attr {
         SdfPath path;
-        uint32_t prim = _None;  // owner; _None when the path names no
-                                // prim property, which no stage resolves
+        uint32_t prim = _None; // owner; _None when the path names no
+                               // prim property, which no stage resolves
         bool read = false;
         bool exists = false;
         bool pending = false;
-        uint8_t created = 0;    // bit c: node (this, c) exists
+        uint8_t created = 0; // bit c: node (this, c) exists
         SdfPathVector sources;
     };
     // One task of phase A.
@@ -143,14 +137,14 @@ private:
     std::vector<_Attr> _attrs;
     pxr_tsl::robin_map<SdfPath, uint32_t, SdfPath::Hash> _attrIndex;
     std::vector<uint32_t> _roots;
-    std::vector<uint32_t> _askQueue;  // asked for, not yet read
-    std::vector<uint32_t> _waiting;   // prims with pendingAttrs
-    std::vector<uint32_t> _expand;    // nodes read but not yet expanded
+    std::vector<uint32_t> _askQueue; // asked for, not yet read
+    std::vector<uint32_t> _waiting;  // prims with pendingAttrs
+    std::vector<uint32_t> _expand;   // nodes read but not yet expanded
 
     // Per node, 2 * attribute + connected.
     std::vector<uint32_t> _edgeBegin;
     std::vector<uint32_t> _edgeCount;
-    std::vector<uint32_t> _nodeProvider;  // a parent:space node's provider
+    std::vector<uint32_t> _nodeProvider; // a parent:space node's provider
     std::vector<uint32_t> _nodeComp;
     std::vector<uint32_t> _edges;
 
@@ -159,7 +153,7 @@ private:
     std::vector<uint32_t> _compNodes;
     std::vector<uint32_t> _compSuccsBegin{0};
     std::vector<uint32_t> _compSuccs;
-    std::vector<uint32_t> _compProviders;  // into _providerSets
+    std::vector<uint32_t> _compProviders; // into _providerSets
     std::vector<uint8_t> _compConnected;
     std::vector<uint32_t> _compMark;
     // Sorted prim indices; [0] is the empty set every provider-less
@@ -167,8 +161,7 @@ private:
     std::vector<std::vector<uint32_t>> _providerSets{{}};
 };
 
-std::map<SdfPath, std::set<size_t>>
-_BuildSolverInputIndex(
+std::map<SdfPath, std::set<size_t>> _BuildSolverInputIndex(
     const UsdStageRefPtr &stage,
     const std::vector<std::vector<SdfPath>> &batchSolvers,
     const std::map<SdfPath, std::vector<std::pair<SdfPath, int>>> &jointBinding,

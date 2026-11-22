@@ -7,5 +7,5 @@ namespace rigExec {
 /// Golden completion throws std::runtime_error when enabled without rigExecOracle.
 void RigExecFinalizeGoldenSuite();
 void RigExecFinalizeInputReplay();
-}
+} // namespace rigExec
 #endif

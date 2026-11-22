@@ -42,7 +42,8 @@ RigExecBakedRunHarmonics(RigExecBakedProgramImpl &B, RigExecBakedStep *step,
         space = B.posedM[size_t(c.spaceSlot)];
         const double det = space.GetDeterminant();
         spaceUsable = std::isfinite(det) && det != 0.0;
-        if (spaceUsable) toSpace = space.GetInverse();
+        if (spaceUsable)
+            toSpace = space.GetInverse();
     }
     // This tick's packet: the incoming origin in the measuring space. An
     // unusable input captures nothing, which ends the history before it.
@@ -59,13 +60,16 @@ RigExecBakedRunHarmonics(RigExecBakedProgramImpl &B, RigExecBakedStep *step,
     RigExecWindowPacketPtr &held = B.windowCaptures[size_t(c.window)];
     // Keep the held packet's identity when its bits did not move, so the
     // memo and the readers compare pointers first.
-    if (!RigExecWindowPacketsEqual(held, captured)) held = std::move(captured);
+    if (!RigExecWindowPacketsEqual(held, captured))
+        held = std::move(captured);
     const RigExecBakedProgramImpl::WindowedOp &window =
         B.windowedOps[size_t(c.window)];
     // A history tick needs this op's capture; its result only when another
     // windowed op reads it.
-    if (B.historyTick && !window.feedsWindow) return;
-    if (!rd(c.enabled)) return;
+    if (B.historyTick && !window.feedsWindow)
+        return;
+    if (!rd(c.enabled))
+        return;
     double weight = 1.0;
     if (!c.weightObject.IsEmpty()) {
         const auto &field = B.weightFields[size_t(c.weightField)];
@@ -79,13 +83,13 @@ RigExecBakedRunHarmonics(RigExecBakedProgramImpl &B, RigExecBakedStep *step,
         weight = rd(c.defaultWeight);
         if (!std::isfinite(weight) || weight < 0.0 || weight > 1.0) {
             step->diagnostics.push_back(
-                c.pathText +
-                " has inputs:defaultWeight outside finite [0, 1]; "
-                "constraint passed through");
+                c.pathText + " has inputs:defaultWeight outside finite [0, 1]; "
+                             "constraint passed through");
             return;
         }
     }
-    if (weight <= 0.0) return;
+    if (weight <= 0.0)
+        return;
     if (!held) {
         step->diagnostics.push_back(
             c.pathText + " could not measure " +
@@ -138,10 +142,12 @@ RigExecBakedRunHarmonics(RigExecBakedProgramImpl &B, RigExecBakedStep *step,
         return;
     }
     GfVec3d offset(ring3[0], ring3[1], ring3[2]);
-    if (c.spaceSlot >= 0) offset = space.TransformDir(offset);
+    if (c.spaceSlot >= 0)
+        offset = space.TransformDir(offset);
     offset *= weight;
     RigExecPointFrame candidate = input;
-    for (GfVec3d &q : candidate.points) q += offset;
+    for (GfVec3d &q : candidate.points)
+        q += offset;
     if (!RigExecBakedUsable(candidate)) {
         step->diagnostics.push_back(
             c.pathText + " produced an invalid or degenerate frame for " +
@@ -165,7 +171,8 @@ RigExecBakedSettleWindowedOps(RigExecBakedProgramImpl *program,
     B.windowRingSerial.assign(B.windowedOps.size(), 0);
     B.windowOfOp.assign(B.opGraph.ops.size(), -1);
     B.historyTick = false;
-    if (B.windowedOps.empty()) return true;
+    if (B.windowedOps.empty())
+        return true;
     // Each windowed constraint's step.
     for (size_t i = 0; i < B.steps.size(); ++i) {
         const RigExecBakedStep &s = B.steps[i];
@@ -190,24 +197,28 @@ RigExecBakedSettleWindowedOps(RigExecBakedProgramImpl *program,
             s.object < 0 || size_t(s.object) >= B.revisionIndex.size()) {
             continue;
         }
-        const auto &[chainIndex, revisionIndex] = B.revisionIndex[size_t(s.object)];
+        const auto &[chainIndex, revisionIndex] =
+            B.revisionIndex[size_t(s.object)];
         const auto &revision =
             B.chains[size_t(chainIndex)].revisions[size_t(revisionIndex)];
-        if (revision.window >= 0 && size_t(revision.window) < B.windowedOps.size())
+        if (revision.window >= 0 &&
+            size_t(revision.window) < B.windowedOps.size())
             B.windowedOps[size_t(revision.window)].step = int(i);
     }
     const size_t opCount = B.opGraph.ops.size();
     std::vector<uint32_t> opOfStep(B.steps.size(), UINT32_MAX);
     for (uint32_t c = 0; c < opCount; ++c) {
         const uint32_t original = B.opGraph.ops[c].originalIndex;
-        if (original < opOfStep.size()) opOfStep[original] = c;
+        if (original < opOfStep.size())
+            opOfStep[original] = c;
     }
     std::vector<uint32_t> ops(B.windowedOps.size(), UINT32_MAX);
     for (size_t w = 0; w < B.windowedOps.size(); ++w) {
         auto &op = B.windowedOps[w];
         op.op = op.step >= 0 ? opOfStep[size_t(op.step)] : UINT32_MAX;
         ops[w] = op.op;
-        if (op.op < opCount) B.windowOfOp[op.op] = int32_t(w);
+        if (op.op < opCount)
+            B.windowOfOp[op.op] = int32_t(w);
     }
     // Every op a windowed op depends on, through the compiled predecessors
     // (shared with the runtime).
@@ -234,9 +245,10 @@ RigExecBakedPlaceWindowRings(RigExecBakedProgramImpl *program,
         if (!RigExecWindowRingsEqual(B.windowRings[w], next)) {
             B.windowRings[w] = next;
             B.windowRingChanged[w] = 1;
-            if (w < B.windowRingSerial.size()) ++B.windowRingSerial[w];
+            if (w < B.windowRingSerial.size())
+                ++B.windowRingSerial[w];
         }
     }
 }
 
-}  // namespace rigExec
+} // namespace rigExec

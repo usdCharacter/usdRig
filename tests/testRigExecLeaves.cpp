@@ -63,12 +63,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -77,7 +77,6 @@ struct Fixture {
     const char *name;
     std::string stage;
     SdfPath rig;
-
 };
 
 std::vector<Fixture>
@@ -99,21 +98,28 @@ Fixtures(const std::string &examples)
     };
 }
 
-void TestLayeredSourceOverlay() {
+void
+TestLayeredSourceOverlay()
+{
     const SdfPath a("/Source.a"), b("/Source.b");
     RigExecResolvedInputs source, consumer;
-    source.SetProperty(a,VtValue(1)); source.SetProperty(b,VtValue(VtFloatArray{2.0f}));
+    source.SetProperty(a, VtValue(1));
+    source.SetProperty(b, VtValue(VtFloatArray{2.0f}));
     consumer.SetChainedBase(&source);
-    CHECK(consumer.GetSize()==2);
-    int value=0;CHECK(consumer.Get(a,&value) && value==1);
-    consumer.SetProperty(a,VtValue(3));
-    CHECK(consumer.Get(a,&value) && value==3);
-    CHECK(source.Get(a,&value) && value==1);
-    consumer.ClearProperty(b);CHECK(!consumer.Find(b));
-    const RigExecResolvedInputs detached=consumer.DetachedCopy();
-    source.Clear();consumer.Clear();
-    CHECK(detached.Get(a,&value) && value==3);
-    CHECK(!detached.Find(b));CHECK(detached.GetSize()==1);
+    CHECK(consumer.GetSize() == 2);
+    int value = 0;
+    CHECK(consumer.Get(a, &value) && value == 1);
+    consumer.SetProperty(a, VtValue(3));
+    CHECK(consumer.Get(a, &value) && value == 3);
+    CHECK(source.Get(a, &value) && value == 1);
+    consumer.ClearProperty(b);
+    CHECK(!consumer.Find(b));
+    const RigExecResolvedInputs detached = consumer.DetachedCopy();
+    source.Clear();
+    consumer.Clear();
+    CHECK(detached.Get(a, &value) && value == 3);
+    CHECK(!detached.Find(b));
+    CHECK(detached.GetSize() == 1);
 }
 
 const Fixture &
@@ -211,8 +217,7 @@ LeafMismatches(const RigExecRigEvaluator &evaluator,
             if (mismatches < 6) {
                 std::printf("FAIL %s: leaf %s, read %s at %s\n", what.c_str(),
                             Text(leaf).c_str(), Text(read).c_str(),
-                            input.head ? input.head.GetPath().GetText()
-                                       : "-");
+                            input.head ? input.head.GetPath().GetText() : "-");
             }
             ++mismatches;
         }
@@ -237,11 +242,11 @@ MakeEvaluator(const UsdStageRefPtr &stage, const SdfPath &rig)
 
 // A freshly compiled rig at \p time under \p overrides.
 RigExecRigPose
-FreshOverridePose(const UsdStageRefPtr &stage, const SdfPath &rig, UsdTimeCode time,
-          const std::vector<RigExecValueOverride> &overrides)
+FreshOverridePose(const UsdStageRefPtr &stage, const SdfPath &rig,
+                  UsdTimeCode time,
+                  const std::vector<RigExecValueOverride> &overrides)
 {
-    auto reference =
-        MakeEvaluator(stage, rig);
+    auto reference = MakeEvaluator(stage, rig);
     reference->SetInteractiveOverrides(overrides);
     return reference->Evaluate(time);
 }
@@ -296,8 +301,8 @@ PoseMismatches(const RigExecRigPose &reference, RigExecRigPose pose,
 // silent, and every leaf equal to the read it replaced.
 RigExecRigPose
 RunChecked(RigExecRigEvaluator *evaluator,
-           const std::vector<RigExecValueOverride> &overrides,
-           UsdTimeCode time, const std::string &what)
+           const std::vector<RigExecValueOverride> &overrides, UsdTimeCode time,
+           const std::string &what)
 {
     evaluator->SetInteractiveOverrides(overrides);
     const size_t generations = evaluator->GetBakedGenerationCount();
@@ -305,8 +310,7 @@ RunChecked(RigExecRigEvaluator *evaluator,
     CHECK(pose.valid);
     CHECK(pose.comparisonMismatches == 0);
     CHECK(evaluator->GetBakedGenerationCount() == generations + 1);
-    const size_t mismatches = LeafMismatches(*evaluator, overrides, time,
-                                             what);
+    const size_t mismatches = LeafMismatches(*evaluator, overrides, time, what);
     if (mismatches) {
         std::printf("FAIL %s: %zu leaf/read mismatch(es)\n", what.c_str(),
                     mismatches);
@@ -356,8 +360,7 @@ SolverInputs(const RigExecBakedProgramImpl &B)
     const auto consider = [&out](const auto &input) {
         using T = std::decay_t<decltype(input.constant)>;
         if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
-            if (input.head && !input.resolvedAttr &&
-                input.overrideIndex >= 0 &&
+            if (input.head && !input.resolvedAttr && input.overrideIndex >= 0 &&
                 input.head.GetTypeName().GetType() == TfType::Find<T>()) {
                 out.push_back(input.head.GetPath());
             }
@@ -414,8 +417,7 @@ FamilyInputs(const RigExecBakedProgramImpl &B)
                           std::is_same_v<T, float>) {
                 if (found.IsEmpty() && input.head && !input.resolvedAttr &&
                     input.overrideIndex >= 0 &&
-                    input.head.GetTypeName().GetType() ==
-                        TfType::Find<T>() &&
+                    input.head.GetTypeName().GetType() == TfType::Find<T>() &&
                     !B.folded.count(input.head.GetPath())) {
                     found = input.head.GetPath();
                 }
@@ -576,8 +578,7 @@ ReaderWalkMismatch(const RigExecBakedProgramImpl &B,
 size_t
 ReaderWalkMismatches(const RigExecRigEvaluator &evaluator,
                      const std::vector<RigExecValueOverride> &overrides,
-                     UsdTimeCode time, const std::string &what,
-                     size_t *checked)
+                     UsdTimeCode time, const std::string &what, size_t *checked)
 {
     const RigExecBakedProgramImpl *program = Program(evaluator);
     if (!program) {
@@ -677,7 +678,8 @@ TestProviderMatrixFallbackAdmission()
         return program.finalMatrix[0];
     };
     RigExecPointFrame translated = identity;
-    for (auto &point : translated.points) point += GfVec3d(2.0, 0.0, 0.0);
+    for (auto &point : translated.points)
+        point += GfVec3d(2.0, 0.0, 0.0);
     GfMatrix4d expected(1.0);
     expected.SetTranslateOnly(GfVec3d(2.0, 0.0, 0.0));
     CHECK(run(translated) == expected);
@@ -717,7 +719,8 @@ TestWalkResolverEqualsGetAttribute(const std::string &examples)
     }
     {
         UsdStageRefPtr stage = UsdStage::CreateInMemory();
-        CHECK(rigExec::RigExecInputReplayImportFromString(stage->GetRootLayer(), kFloatAtDouble));
+        CHECK(rigExec::RigExecInputReplayImportFromString(stage->GetRootLayer(),
+                                                          kFloatAtDouble));
         stages.emplace_back("float at double", stage);
         rigs.push_back(SdfPath("/Asset/Rig"));
     }
@@ -725,8 +728,7 @@ TestWalkResolverEqualsGetAttribute(const std::string &examples)
     for (size_t i = 0; i < stages.size(); ++i) {
         const std::string &name = stages[i].first;
         const UsdStageRefPtr &stage = stages[i].second;
-        auto evaluator =
-            MakeEvaluator(stage, rigs[i]);
+        auto evaluator = MakeEvaluator(stage, rigs[i]);
         const RigExecBakedProgramImpl *program = Program(*evaluator);
         CHECK(program != nullptr);
         if (!program) {
@@ -740,8 +742,8 @@ TestWalkResolverEqualsGetAttribute(const std::string &examples)
                  {&reader.walk.hops, &reader.walk.doubleHops}) {
                 for (const RigExecBakedWalkHop &hop : *hops) {
                     if (hop.chain >= 0 && target.IsEmpty()) {
-                        target = program->propertyChains[size_t(hop.chain)]
-                                     .target;
+                        target =
+                            program->propertyChains[size_t(hop.chain)].target;
                     }
                 }
             }
@@ -788,7 +790,7 @@ TestWalkResolverEqualsGetAttribute(const std::string &examples)
 // that reads its leaf only because the override stood on the run before.
 void
 CheckBodyLeavesEqualTheFunnel(const Fixture &f, const UsdStageRefPtr &stage,
-                             RigExecRigEvaluator *evaluator)
+                              RigExecRigEvaluator *evaluator)
 {
     const std::vector<UsdTimeCode> frames = Frames(stage);
     const std::string name = f.name;
@@ -813,8 +815,8 @@ CheckBodyLeavesEqualTheFunnel(const Fixture &f, const UsdStageRefPtr &stage,
                 return;
             }
             RunChecked(evaluator, drag, t,
-                       name + " " + kind + " " + path.GetString() +
-                           " at " + Text(t.GetValue()));
+                       name + " " + kind + " " + path.GetString() + " at " +
+                           Text(t.GetValue()));
         }
         RunChecked(evaluator, {}, frames.back(),
                    name + " lifted " + kind + " " + path.GetString());
@@ -833,8 +835,8 @@ CheckBodyLeavesEqualTheFunnel(const Fixture &f, const UsdStageRefPtr &stage,
     }
     std::printf("funnel %s: %zu solver input(s), %zu chain hop(s),%s "
                 "%zu drag case(s)\n",
-                f.name, solverInputs.size(), hops.size(),
-                families.c_str(), cases);
+                f.name, solverInputs.size(), hops.size(), families.c_str(),
+                cases);
 }
 
 // The first solver or constraint input of \p f whose two drag values pose
@@ -889,8 +891,8 @@ TestADragScrubbedAtAHeldFrameReachesTheBody(const std::string &examples)
         const std::string what =
             "held frame, drag " + Text(delta) + " on " + input.GetString();
         const RigExecRigPose pose = RunChecked(evaluator.get(), drag, t, what);
-        CHECK(PoseMismatches(FreshOverridePose(stage, f.rig, t, drag), pose, what) ==
-              0);
+        CHECK(PoseMismatches(FreshOverridePose(stage, f.rig, t, drag), pose,
+                             what) == 0);
     }
     std::printf("scrubbed drag: %s\n", input.GetText());
 }
@@ -922,7 +924,8 @@ TestAnotherChainsDragReachesAChainRoutedReader(const std::string &examples)
         }
         const auto candidate = DragBy(stage, value.GetPath(), t, 0.2);
         if (PoseMismatches(FreshOverridePose(stage, f.rig, t, {}),
-                           FreshOverridePose(stage, f.rig, t, candidate), "probe",
+                           FreshOverridePose(stage, f.rig, t, candidate),
+                           "probe",
                            /* quiet = */ true) > 0) {
             mover = value.GetPath();
             drag = candidate;
@@ -934,20 +937,26 @@ TestAnotherChainsDragReachesAChainRoutedReader(const std::string &examples)
         return;
     }
     auto evaluator = MakeEvaluator(stage, f.rig);
-    const RigExecRigPose before = RunChecked(evaluator.get(), {}, t, "chain drag, before");
+    const RigExecRigPose before =
+        RunChecked(evaluator.get(), {}, t, "chain drag, before");
     const auto *beforeProgram = Program(*evaluator);
     CHECK(beforeProgram);
-    if (!beforeProgram) return;
+    if (!beforeProgram)
+        return;
     int follow = -1;
     for (size_t i = 0; i < beforeProgram->constraints.size(); ++i)
-        if (beforeProgram->constraints[i].path.GetName() == "Follow") follow = int(i);
+        if (beforeProgram->constraints[i].path.GetName() == "Follow")
+            follow = int(i);
     CHECK(follow >= 0);
-    if (follow < 0) return;
-    const float originalWeight = RigExecBakedLeafRead(*beforeProgram,
+    if (follow < 0)
+        return;
+    const float originalWeight = RigExecBakedLeafRead(
+        *beforeProgram,
         beforeProgram->constraints[size_t(follow)].defaultWeight);
     const std::string what = "chain drag on " + mover.GetString();
     const RigExecRigPose pose = RunChecked(evaluator.get(), drag, t, what);
-    CHECK(PoseMismatches(FreshOverridePose(stage, f.rig, t, drag), pose, what) == 0);
+    CHECK(PoseMismatches(FreshOverridePose(stage, f.rig, t, drag), pose,
+                         what) == 0);
     // The raw sample stays raw. The consumer resolves the changed typed
     // producer through its declared walk at execution time.
     const RigExecBakedProgramImpl *B = Program(*evaluator);
@@ -958,27 +967,34 @@ TestAnotherChainsDragReachesAChainRoutedReader(const std::string &examples)
     bool declaredRoute = false, consumerRan = false;
     for (size_t i = 0; i < B->steps.size(); ++i) {
         const auto &step = B->steps[i];
-        if (std::find(step.readerWalks.begin(), step.readerWalks.end(), input.walk) ==
-            step.readerWalks.end()) continue;
+        if (std::find(step.readerWalks.begin(), step.readerWalks.end(),
+                      input.walk) == step.readerWalks.end())
+            continue;
         if (step.label.find(B->constraints[size_t(follow)].path.GetString()) ==
-            std::string::npos) continue;
+            std::string::npos)
+            continue;
         for (const auto &read : step.reads)
-            declaredRoute = declaredRoute ||
-                (read.domain == RigExecBakedSlotDomain::PropertyResult && read.end > read.begin);
+            declaredRoute =
+                declaredRoute ||
+                (read.domain == RigExecBakedSlotDomain::PropertyResult &&
+                 read.end > read.begin);
         consumerRan = consumerRan ||
-            (i < B->opExecution.ran.size() && B->opExecution.ran[i]);
+                      (i < B->opExecution.ran.size() && B->opExecution.ran[i]);
     }
     CHECK(declaredRoute && consumerRan);
     CHECK(B->overridableInputs.count(mover) == 0);
-    std::printf("another chain's drag: %s changed effective Follow weight %.9g -> %.9g\n",
+    std::printf("another chain's drag: %s changed effective Follow weight %.9g "
+                "-> %.9g\n",
                 mover.GetText(), double(originalWeight), double(draggedWeight));
-    const RigExecRigPose released = RunChecked(evaluator.get(), {}, t, "chain drag, lifted");
+    const RigExecRigPose released =
+        RunChecked(evaluator.get(), {}, t, "chain drag, lifted");
     CHECK(PoseMismatches(FreshOverridePose(stage, f.rig, t, {}), released,
                          "chain drag, lifted") == 0);
     const auto *releasedProgram = Program(*evaluator);
-    CHECK(RigExecBakedLeafRead(*releasedProgram,
-        releasedProgram->constraints[size_t(follow)].defaultWeight) == originalWeight);
-
+    CHECK(RigExecBakedLeafRead(
+              *releasedProgram,
+              releasedProgram->constraints[size_t(follow)].defaultWeight) ==
+          originalWeight);
 }
 
 // Values that carry no override number: a drag, its release and then an
@@ -1013,7 +1029,7 @@ RoutedCase(const Fixture &f, const SdfPath &property, const VtValue &dragged,
     const size_t builds = evaluator->GetBakedProgramBuildCount();
     CHECK(attribute.Set(dragged));
     pose = RunChecked(evaluator.get(), {}, t, name + ", edited");
-    if (std::string(what)=="wire dropoff")
+    if (std::string(what) == "wire dropoff")
         CHECK(before.movedProperties.at(SdfPath("/Asset/WireMesh.points")) !=
               pose.movedProperties.at(SdfPath("/Asset/WireMesh.points")));
     CHECK(evaluator->GetBakedProgramBuildCount() == builds);
@@ -1047,13 +1063,11 @@ RoutedChainCases(const std::string &examples)
         UsdAttribute attribute = stage->GetAttributeAtPath(keys);
         CHECK(attribute);
         const UsdTimeCode t(stage->GetStartTimeCode() + 2.0);
-        auto evaluator =
-            MakeEvaluator(stage, f.rig);
+        auto evaluator = MakeEvaluator(stage, f.rig);
         RunChecked(evaluator.get(), {}, t, "curve keys, before");
         const size_t builds = evaluator->GetBakedProgramBuildCount();
-        CHECK(attribute.Set(VtArray<GfVec2f>{GfVec2f(0.0f, 0.0f),
-                                             GfVec2f(0.5f, 0.4f),
-                                             GfVec2f(2.0f, 1.6f)}));
+        CHECK(attribute.Set(VtArray<GfVec2f>{
+            GfVec2f(0.0f, 0.0f), GfVec2f(0.5f, 0.4f), GfVec2f(2.0f, 1.6f)}));
         RigExecRigPose pose =
             RunChecked(evaluator.get(), {}, t, "curve keys, edited");
         CHECK(evaluator->GetBakedProgramBuildCount() == builds);
@@ -1061,8 +1075,7 @@ RoutedChainCases(const std::string &examples)
                              "curve keys, edited") == 0);
         const std::vector<RigExecValueOverride> drag = {RigExecValueOverride{
             keys.GetPrimPath(), TfToken(), keys.GetNameToken(),
-            VtValue(VtArray<GfVec2f>{GfVec2f(0.0f, 0.0f),
-                                     GfVec2f(0.5f, 1.0f),
+            VtValue(VtArray<GfVec2f>{GfVec2f(0.0f, 0.0f), GfVec2f(0.5f, 1.0f),
                                      GfVec2f(2.0f, 1.1f)})}};
         pose = RunChecked(evaluator.get(), drag, t, "curve keys, dragged");
         CHECK(PoseMismatches(FreshOverridePose(stage, f.rig, t, drag), pose,
@@ -1083,8 +1096,7 @@ RoutedChainCases(const std::string &examples)
         CHECK(attribute);
         const UsdTimeCode t1(stage->GetStartTimeCode());
         const UsdTimeCode t3(stage->GetStartTimeCode() + 2.0);
-        auto evaluator =
-            MakeEvaluator(stage, f.rig);
+        auto evaluator = MakeEvaluator(stage, f.rig);
         const std::string name = std::string("animated ") + what;
         RunChecked(evaluator.get(), {}, t1, name + ", before");
         const size_t builds = evaluator->GetBakedProgramBuildCount();
@@ -1102,8 +1114,8 @@ RoutedChainCases(const std::string &examples)
             RunChecked(evaluator.get(), {}, t3, name + " at 3");
         const RigExecRigPose freshThree = FreshPose(stage, f.rig, t3);
         CHECK(PoseMismatches(freshThree, three, name + " at 3") == 0);
-        CHECK(PoseMismatches(freshThree, three,
-                             name + " at 3, reference") == 0);
+        CHECK(PoseMismatches(freshThree, three, name + " at 3, reference") ==
+              0);
         // The time now moves the chain.
         CHECK(PoseMismatches(one, three, name + " 1 against 3",
                              /*quiet=*/true) != 0);
@@ -1124,15 +1136,14 @@ TestRoutedValuesReachTheirLeaves(const std::string &examples)
 {
     const Fixture f = FixtureNamed(Fixtures(examples), "09");
     // A chain mover's constant input, and a chain target's own default.
-    RoutedCase(f,
-               SdfPath("/PropMathAsset/Rig/Movers/OffsetLift.inputs:value"),
+    RoutedCase(f, SdfPath("/PropMathAsset/Rig/Movers/OffsetLift.inputs:value"),
                VtValue(GfVec3f(0.0f, 2.5f, 0.0f)), "chain mover input");
-    RoutedCase(f,
-               SdfPath("/PropMathAsset/Rig/Channels/Dials.rigExec:gain"),
+    RoutedCase(f, SdfPath("/PropMathAsset/Rig/Channels/Dials.rigExec:gain"),
                VtValue(0.5f), "chain target default");
     // A chain mover's envelope, edited at the held frame.
     RoutedCase(
-        f, SdfPath("/PropMathAsset/Rig/Movers/OffsetSpace.inputs:defaultWeight"),
+        f,
+        SdfPath("/PropMathAsset/Rig/Movers/OffsetSpace.inputs:defaultWeight"),
         VtValue(0.5f), "chain mover defaultWeight");
     RoutedChainCases(examples);
 
@@ -1171,7 +1182,7 @@ TestRoutedValuesReachTheirLeaves(const std::string &examples)
 // the second run re-reads no leaf.
 void
 CheckAHeldLeafIsNotResampled(const Fixture &f, RigExecRigEvaluator *evaluator,
-                           UsdTimeCode t)
+                             UsdTimeCode t)
 {
     const RigExecBakedProgramImpl *B = Program(*evaluator);
     CHECK(B);
@@ -1195,7 +1206,7 @@ CheckAHeldLeafIsNotResampled(const Fixture &f, RigExecRigEvaluator *evaluator,
 // table's; and the visitor's count is the parent's.
 void
 CheckLeafNumberingFollowsThePatchableOrder(const Fixture &f,
-                                        RigExecRigEvaluator *evaluator)
+                                           RigExecRigEvaluator *evaluator)
 {
     const RigExecBakedProgramImpl *program = Program(*evaluator);
     CHECK(program);
@@ -1210,12 +1221,12 @@ CheckLeafNumberingFollowsThePatchableOrder(const Fixture &f,
         using T = std::decay_t<decltype(input.constant)>;
         const RigExecBakedLeafType type = RigExecBakedLeafTraits<T>::type;
         const auto &pool = B.leaves.template Of<T>();
-        const bool numbered =
-            input.leaf == next[type] && id < B.leafRefs.size() &&
-            B.leafRefs[id].type == type &&
-            B.leafRefs[id].index == uint32_t(input.leaf) &&
-            size_t(input.leaf) < pool.id.size() &&
-            pool.id[size_t(input.leaf)] == id;
+        const bool numbered = input.leaf == next[type] &&
+                              id < B.leafRefs.size() &&
+                              B.leafRefs[id].type == type &&
+                              B.leafRefs[id].index == uint32_t(input.leaf) &&
+                              size_t(input.leaf) < pool.id.size() &&
+                              pool.id[size_t(input.leaf)] == id;
         if (!numbered) {
             ++broken;
         }
@@ -1225,16 +1236,16 @@ CheckLeafNumberingFollowsThePatchableOrder(const Fixture &f,
             UsdAttribute selected;
             SdfPathVector walk;
             RigExecBakedClassifyInput<T>(input.head, UsdTimeCode::Default(),
-                                         B.chainTargets, &viaChain,
-                                         &varying, &selected, &walk);
+                                         B.chainTargets, &viaChain, &varying,
+                                         &selected, &walk);
             if (walk.empty()) {
                 walk.push_back(input.head.GetPath());
             }
             for (const SdfPath &hop : walk) {
                 const auto found = B.leafByPath.find(hop);
                 if (found == B.leafByPath.end() ||
-                    std::find(found->second.begin(), found->second.end(),
-                              id) == found->second.end()) {
+                    std::find(found->second.begin(), found->second.end(), id) ==
+                        found->second.end()) {
                     if (unfiled < 4) {
                         std::printf("FAIL %s: %s not filed under leaf "
                                     "%u\n",
@@ -1262,8 +1273,7 @@ CheckLeafNumberingFollowsThePatchableOrder(const Fixture &f,
     size_t pathUnfiled = 0;
     for (size_t i = 0; i < B.pathLeafRefs.size(); ++i) {
         const RigExecBakedPathLeafRef &ref = B.pathLeafRefs[i];
-        const RigExecBakedPathLeaves *leaves =
-            RigExecBakedPathLeavesOf(B, ref);
+        const RigExecBakedPathLeaves *leaves = RigExecBakedPathLeavesOf(B, ref);
         CHECK(leaves && ref.key < leaves->hops.size());
         if (!leaves || ref.key >= leaves->hops.size()) {
             continue;
@@ -1272,8 +1282,8 @@ CheckLeafNumberingFollowsThePatchableOrder(const Fixture &f,
         for (const SdfPath &hop : leaves->hops[ref.key]) {
             const auto found = B.leafByPath.find(hop);
             if (found == B.leafByPath.end() ||
-                std::find(found->second.begin(), found->second.end(),
-                          leafId) == found->second.end()) {
+                std::find(found->second.begin(), found->second.end(), leafId) ==
+                    found->second.end()) {
                 ++pathUnfiled;
             }
         }
@@ -1298,11 +1308,12 @@ TestBindingFixtureInputs(const std::string &examples)
     for (const Fixture &f : Fixtures(examples)) {
         UsdStageRefPtr stage = UsdStage::Open(f.stage);
         CHECK(stage);
-        if (!stage) continue;
+        if (!stage)
+            continue;
         auto evaluator = MakeEvaluator(stage, f.rig);
         const UsdTimeCode t(stage->GetStartTimeCode());
-        const RigExecRigPose cold = RunChecked(
-            evaluator.get(), {}, t, std::string(f.name) + " first");
+        const RigExecRigPose cold =
+            RunChecked(evaluator.get(), {}, t, std::string(f.name) + " first");
         CHECK(cold.valid);
         CheckLeafNumberingFollowsThePatchableOrder(f, evaluator.get());
         CheckAHeldLeafIsNotResampled(f, evaluator.get(), t);
@@ -1341,8 +1352,7 @@ TestAnAvarPatchExportsThePatchedBinding(const std::string &examples)
         const UsdTimeCode t(stage->GetStartTimeCode() + 2.0);
         SdfPath path;
         {
-            auto probe =
-                MakeEvaluator(stage, f.rig);
+            auto probe = MakeEvaluator(stage, f.rig);
             CHECK(probe->Evaluate(t).valid);
             const RigExecBakedProgramImpl *P = Program(*probe);
             CHECK(P && !P->patchableAvars.empty());
@@ -1357,8 +1367,7 @@ TestAnAvarPatchExportsThePatchedBinding(const std::string &examples)
         // The root layer's own spec first, so each edit below is a
         // changed-info notice rather than a spec's arrival.
         CHECK(attribute.Set(value));
-        auto evaluator =
-            MakeEvaluator(stage, f.rig);
+        auto evaluator = MakeEvaluator(stage, f.rig);
         RunChecked(evaluator.get(), {}, t, std::string(name) + " patch");
         const RigExecBakedProgram *program = evaluator->GetBakedProgram();
         const RigExecBakedProgramImpl &B = program->GetStepGraph();
@@ -1518,8 +1527,8 @@ MakeWrinkleStage()
         mover.GetAttribute(TfToken("inputs:iterations"));
     iterations.Set(4, UsdTimeCode(1.0));
     iterations.Set(12, UsdTimeCode(5.0));
-    const UsdAttribute driver = mesh.CreateAttribute(
-        TfToken("deformAmount"), SdfValueTypeNames->Float);
+    const UsdAttribute driver =
+        mesh.CreateAttribute(TfToken("deformAmount"), SdfValueTypeNames->Float);
     driver.Set(0.0f, UsdTimeCode(1.0));
     driver.Set(1.0f, UsdTimeCode(5.0));
     mover.GetAttribute(TfToken("inputs:wrinkleScale"))
@@ -1572,8 +1581,8 @@ ShadowChecked(const RigExecRigEvaluator &evaluator,
     size_t compared = 0;
     const std::vector<std::string> report =
         RigExecBakedProgramTesting::ShadowAssembly(
-            *program, PrologueInputs(program->GetStepGraph(), overrides),
-            time, {}, &compared);
+            *program, PrologueInputs(program->GetStepGraph(), overrides), time,
+            {}, &compared);
     for (size_t i = 0; i < report.size() && i < 6; ++i) {
         std::printf("FAIL %s: %s\n", what.c_str(), report[i].c_str());
     }
@@ -1648,11 +1657,11 @@ UpstreamNumberedHop(const RigExecBakedProgramImpl &B)
 // input (a defaultWeight, and a blend channel's weight where there is one).
 void
 CheckPureAssemblyEqualsTheStageAssembler(const GeometryFixture &f,
-                                       const UsdStageRefPtr &stage,
-                                       const SdfPath &rig,
-                                       RigExecRigEvaluator *evaluator,
-                                       size_t coldCompared,
-                                       std::set<RigExecRevisionOp> &reached)
+                                         const UsdStageRefPtr &stage,
+                                         const SdfPath &rig,
+                                         RigExecRigEvaluator *evaluator,
+                                         size_t coldCompared,
+                                         std::set<RigExecRevisionOp> &reached)
 {
     const double start = stage->GetStartTimeCode();
     const std::string name = f.name;
@@ -1661,8 +1670,7 @@ CheckPureAssemblyEqualsTheStageAssembler(const GeometryFixture &f,
         const UsdTimeCode t(start + offset);
         const std::string what = name + " at " + Text(t.GetValue());
         RunChecked(evaluator, {}, t, what);
-        compared = std::max(compared,
-                            ShadowChecked(*evaluator, {}, t, what));
+        compared = std::max(compared, ShadowChecked(*evaluator, {}, t, what));
     }
     const RigExecBakedProgramImpl *B = Program(*evaluator);
     CHECK(B);
@@ -1696,13 +1704,12 @@ CheckPureAssemblyEqualsTheStageAssembler(const GeometryFixture &f,
     }
     const SdfPath weight = LeafDefaultWeight(stage, *B);
     if (!weight.IsEmpty()) {
-        cases.push_back({"override " + weight.GetString(),
-                         DragTo(stage, weight, 0.37)});
+        cases.push_back(
+            {"override " + weight.GetString(), DragTo(stage, weight, 0.37)});
     }
     for (const auto &chain : B->chains) {
         for (const auto &revision : chain.revisions) {
-            if (!revision.blendChannels.empty() &&
-                cases.size() < 6) {
+            if (!revision.blendChannels.empty() && cases.size() < 6) {
                 const SdfPath channel =
                     revision.blendChannels.front().weightPath;
                 cases.push_back({"override " + channel.GetString(),
@@ -1715,11 +1722,10 @@ CheckPureAssemblyEqualsTheStageAssembler(const GeometryFixture &f,
             continue;
         }
         const std::string what = name + " " + c.label;
-        const RigExecRigPose pose =
-            RunChecked(evaluator, c.overrides, t, what);
+        const RigExecRigPose pose = RunChecked(evaluator, c.overrides, t, what);
         ShadowChecked(*evaluator, c.overrides, t, what);
-        CHECK(PoseMismatches(FreshOverridePose(stage, rig, t, c.overrides), pose,
-                             what) == 0);
+        CHECK(PoseMismatches(FreshOverridePose(stage, rig, t, c.overrides),
+                             pose, what) == 0);
         if (c.lift) {
             RunChecked(evaluator, {}, t, what + ", lifted");
             ShadowChecked(*evaluator, {}, t, what + ", lifted");
@@ -1790,8 +1796,8 @@ TestADragUpstreamOfAMoverInputReachesItsLeaf(const std::string &examples)
             const RigExecRigPose pose =
                 RunChecked(evaluator.get(), drag, t, what);
             CHECK(ShadowChecked(*evaluator, drag, t, what) > 0);
-            CHECK(PoseMismatches(FreshOverridePose(stage, rig, t, drag), pose, what) ==
-                  0);
+            CHECK(PoseMismatches(FreshOverridePose(stage, rig, t, drag), pose,
+                                 what) == 0);
         }
         RunChecked(evaluator.get(), {}, t, "upstream, lifted");
         ShadowChecked(*evaluator, {}, t, "upstream, lifted");
@@ -1843,8 +1849,8 @@ TestAnUndeclaredReadIsNamed(const std::string &examples)
         named = named || (line.find(mover.GetString()) != std::string::npos &&
                           line.find("undeclared read inputs:defaultWeight") !=
                               std::string::npos);
-        differs = differs || line.find("packets differ (weights") !=
-                                 std::string::npos;
+        differs = differs ||
+                  line.find("packets differ (weights") != std::string::npos;
     }
     CHECK(named);
     CHECK(differs);
@@ -1864,15 +1870,26 @@ TestRevisionLeavesCoverTheExporterEnumeration(const std::string &examples)
     std::map<RigExecRevisionOp, size_t> ops;
     // Enumeration read-site representatives; full asset conformance stays
     // in its registered suites, and geometry shadow keeps its all-op floor.
-    const std::set<std::string> representatives = {
-        "01", "04", "05", "06", "07", "11", "computed_path_reads",
-        "oneloop_cross_domain", "phased_blend_samples",
-        "preceding_own_chain", "compact_wire", "wrinkle"};
+    const std::set<std::string> representatives = {"01",
+                                                   "04",
+                                                   "05",
+                                                   "06",
+                                                   "07",
+                                                   "11",
+                                                   "computed_path_reads",
+                                                   "oneloop_cross_domain",
+                                                   "phased_blend_samples",
+                                                   "preceding_own_chain",
+                                                   "compact_wire",
+                                                   "wrinkle"};
     size_t selectedFixtures = 0;
     std::vector<GeometryFixture> fixtures = GeometryFixtures(examples);
-    fixtures.push_back({"compact_wire", examples + "/../tests/fixtures/leaves_routed_geometry.usda"});
+    fixtures.push_back(
+        {"compact_wire",
+         examples + "/../tests/fixtures/leaves_routed_geometry.usda"});
     for (const GeometryFixture &f : fixtures) {
-        if (!representatives.count(f.name)) continue;
+        if (!representatives.count(f.name))
+            continue;
         ++selectedFixtures;
         UsdStageRefPtr stage = Open(f);
         CHECK(stage);
@@ -1899,9 +1916,9 @@ TestRevisionLeavesCoverTheExporterEnumeration(const std::string &examples)
                     found = true;
                     const bool rest =
                         key.time == RigExecRevisionLeafTime::AtDefault;
-                    const bool missing =
-                        read.value.IsEmpty() && !read.resolved &&
-                        !stage->GetAttributeAtPath(read.path);
+                    const bool missing = read.value.IsEmpty() &&
+                                         !read.resolved &&
+                                         !stage->GetAttributeAtPath(read.path);
                     timed = timed || rest == read.rest || missing;
                 }
                 if (!found || !timed) {
@@ -1992,8 +2009,7 @@ TestRevisionLeavesCoverTheExporterEnumeration(const std::string &examples)
             CHECK(paths(a.targetPoints) == paths(b.targetPoints));
             CHECK(paths(a.samplePoints) == paths(b.samplePoints));
             CHECK(paths(a.curvePoints) == paths(b.curvePoints));
-            CHECK(paths(a.combineTargetPoints) ==
-                  paths(b.combineTargetPoints));
+            CHECK(paths(a.combineTargetPoints) == paths(b.combineTargetPoints));
         }
 
         // The Resolved scalar leaves against a bake's listed inputs.
@@ -2007,8 +2023,8 @@ TestRevisionLeavesCoverTheExporterEnumeration(const std::string &examples)
             continue;
         }
         std::unique_ptr<fb::RigExecWireFile> file;
-        CHECK(RigExecFormatOpen(result.bytes.data(), result.bytes.size(),
-                                &file, &error));
+        CHECK(RigExecFormatOpen(result.bytes.data(), result.bytes.size(), &file,
+                                &error));
         if (!file) {
             continue;
         }
@@ -2033,8 +2049,7 @@ TestRevisionLeavesCoverTheExporterEnumeration(const std::string &examples)
                     key.type == RigExecRevisionLeafType::Token;
                 // An authored rest value (the wrinkle's topology token) is
                 // read at Default, and the exporter lists no slot for one.
-                const bool atTime =
-                    key.time == RigExecRevisionLeafTime::AtTime;
+                const bool atTime = key.time == RigExecRevisionLeafTime::AtTime;
                 if (!resolved || !scalar || !atTime ||
                     !stage->GetAttributeAtPath(key.path)) {
                     continue;
@@ -2042,8 +2057,8 @@ TestRevisionLeavesCoverTheExporterEnumeration(const std::string &examples)
                 ++scalars;
                 if (!listed.count(key.path)) {
                     if (unlisted < 6) {
-                        std::printf("FAIL %s: %s is no listed input\n",
-                                    f.name, key.path.GetText());
+                        std::printf("FAIL %s: %s is no listed input\n", f.name,
+                                    key.path.GetText());
                     }
                     ++unlisted;
                 }
@@ -2082,9 +2097,8 @@ RoutedSmoothScrubCase(const std::string &examples)
         return;
     }
     const SdfPath rig = RootOf(stage);
-    const SdfPath input(
-        "/LatticeAsset/Rig/Movers/Geometry/VolumeCorrect/Smooth"
-        ".inputs:defaultWeight");
+    const SdfPath input("/LatticeAsset/Rig/Movers/Geometry/VolumeCorrect/Smooth"
+                        ".inputs:defaultWeight");
     CHECK(stage->GetAttributeAtPath(input));
     const UsdTimeCode t(stage->GetStartTimeCode() + 12.0);
     auto evaluator = MakeEvaluator(stage, rig);
@@ -2094,7 +2108,8 @@ RoutedSmoothScrubCase(const std::string &examples)
         const std::string what = "smooth scrub " + Text(value);
         const RigExecRigPose pose = RunChecked(evaluator.get(), drag, t, what);
         ShadowChecked(*evaluator, drag, t, what);
-        CHECK(PoseMismatches(FreshOverridePose(stage, rig, t, drag), pose, what) == 0);
+        CHECK(PoseMismatches(FreshOverridePose(stage, rig, t, drag), pose,
+                             what) == 0);
     }
 }
 
@@ -2106,14 +2121,16 @@ void
 RoutedPathLeafCases(const std::string &examples)
 {
     {
-        const std::string path = examples + "/../tests/fixtures/leaves_routed_geometry.usda";
+        const std::string path =
+            examples + "/../tests/fixtures/leaves_routed_geometry.usda";
         UsdStageRefPtr stage = UsdStage::Open(path);
         CHECK(stage);
         const SdfPath rig = RootOf(stage);
         SdfPath property;
         {
             auto probe = MakeEvaluator(stage, rig);
-            CHECK(probe->Evaluate(UsdTimeCode(stage->GetStartTimeCode())).valid);
+            CHECK(
+                probe->Evaluate(UsdTimeCode(stage->GetStartTimeCode())).valid);
             for (const auto &chain : Program(*probe)->chains) {
                 for (const auto &revision : chain.revisions) {
                     const SdfPath candidate = revision.moverPath.AppendProperty(
@@ -2135,15 +2152,16 @@ RoutedPathLeafCases(const std::string &examples)
             attribute.Get(&value);
             CHECK(attribute.Set(value));
             const UsdTimeCode t(stage->GetStartTimeCode() + 2.0);
-            auto evaluator =
-                MakeEvaluator(stage, rig);
-            const auto before = RunChecked(evaluator.get(), {}, t, "skin weight, before");
+            auto evaluator = MakeEvaluator(stage, rig);
+            const auto before =
+                RunChecked(evaluator.get(), {}, t, "skin weight, before");
             const auto drag = DragTo(stage, property, 0.5);
             RigExecRigPose pose =
                 RunChecked(evaluator.get(), drag, t, "skin weight, drag");
             ShadowChecked(*evaluator, drag, t, "skin weight, drag");
-            CHECK(before.movedProperties.at(SdfPath("/Asset/SkinMesh.points")) !=
-                  pose.movedProperties.at(SdfPath("/Asset/SkinMesh.points")));
+            CHECK(
+                before.movedProperties.at(SdfPath("/Asset/SkinMesh.points")) !=
+                pose.movedProperties.at(SdfPath("/Asset/SkinMesh.points")));
             CHECK(PoseMismatches(FreshOverridePose(stage, rig, t, drag), pose,
                                  "skin weight, drag") == 0);
             pose = RunChecked(evaluator.get(), {}, t, "skin weight, released");
@@ -2215,15 +2233,18 @@ RoutedDeformerCases(const std::string &examples)
 {
     {
         const Fixture f{"computed_path_reads",
-                        examples + "/../tests/fixtures/computed_path_reads.usda",
+                        examples +
+                            "/../tests/fixtures/computed_path_reads.usda",
                         SdfPath("/PathReadAsset/Rig")};
-        RoutedCase(f, SdfPath("/PathReadAsset/Rig/Movers/Mush.inputs:iterations"),
+        RoutedCase(f,
+                   SdfPath("/PathReadAsset/Rig/Movers/Mush.inputs:iterations"),
                    VtValue(5), "deltaMush iterations");
-        RoutedCase(f, SdfPath("/PathReadAsset/Rig/Movers/Mush.inputs:restPoints"),
-                   VtValue(VtVec3fArray{GfVec3f(1.1f, 0, 0), GfVec3f(0, 1.3f, 0),
-                                        GfVec3f(-1.1f, 0, 0), GfVec3f(0, -1, 0),
-                                        GfVec3f(0, 0, 1.2f), GfVec3f(0, 0, -1)}),
-                   "deltaMush rest points");
+        RoutedCase(
+            f, SdfPath("/PathReadAsset/Rig/Movers/Mush.inputs:restPoints"),
+            VtValue(VtVec3fArray{GfVec3f(1.1f, 0, 0), GfVec3f(0, 1.3f, 0),
+                                 GfVec3f(-1.1f, 0, 0), GfVec3f(0, -1, 0),
+                                 GfVec3f(0, 0, 1.2f), GfVec3f(0, 0, -1)}),
+            "deltaMush rest points");
         // A shader dial on a prim nothing else in the program reads: only
         // the projector's leaf files its path, and an edit reaches it.
         UsdStageRefPtr stage = UsdStage::Open(f.stage);
@@ -2233,10 +2254,10 @@ RoutedDeformerCases(const std::string &examples)
             stage->DefinePrim(SdfPath("/PathReadAsset/Extra"))
                 .CreateAttribute(TfToken("dial"), SdfValueTypeNames->Double);
         CHECK(dial.Set(0.25));
-        CHECK(stage
-                  ->GetPrimAtPath(SdfPath("/PathReadAsset/Rig/Movers/Projector"))
-                  .GetRelationship(TfToken("rigExec:shaderDialSources"))
-                  .AddTarget(dial.GetPath()));
+        CHECK(
+            stage->GetPrimAtPath(SdfPath("/PathReadAsset/Rig/Movers/Projector"))
+                .GetRelationship(TfToken("rigExec:shaderDialSources"))
+                .AddTarget(dial.GetPath()));
         const UsdTimeCode t(stage->GetStartTimeCode() + 2.0);
         auto evaluator = MakeEvaluator(stage, f.rig);
         RunChecked(evaluator.get(), {}, t, "unread dial, before");
@@ -2274,8 +2295,7 @@ RoutedDeformerCases(const std::string &examples)
             projector.CreateRelationship(TfToken("rigExec:shaderDialSources"))
                 .SetTargets({avar.GetPath()});
             const UsdTimeCode t(stage->GetStartTimeCode() + 2.0);
-            auto evaluator =
-                MakeEvaluator(stage, rig);
+            auto evaluator = MakeEvaluator(stage, rig);
             RunChecked(evaluator.get(), {}, t, "avar dial, before");
             const size_t builds = evaluator->GetBakedProgramBuildCount();
             CHECK(avar.Set(0.45));
@@ -2290,14 +2310,16 @@ RoutedDeformerCases(const std::string &examples)
         }
     }
     {
-        const std::string path = examples + "/../tests/fixtures/leaves_routed_geometry.usda";
+        const std::string path =
+            examples + "/../tests/fixtures/leaves_routed_geometry.usda";
         UsdStageRefPtr stage = UsdStage::Open(path);
         CHECK(stage);
         const SdfPath rig = RootOf(stage);
         SdfPath dropoff;
         {
             auto probe = MakeEvaluator(stage, rig);
-            CHECK(probe->Evaluate(UsdTimeCode(stage->GetStartTimeCode())).valid);
+            CHECK(
+                probe->Evaluate(UsdTimeCode(stage->GetStartTimeCode())).valid);
             for (const auto &chain : Program(*probe)->chains) {
                 for (const auto &revision : chain.revisions) {
                     const SdfPath candidate = revision.moverPath.AppendProperty(
@@ -2317,18 +2339,26 @@ RoutedDeformerCases(const std::string &examples)
         }
         // A shader dial's authored value (a control's avar), edited.
         // Keep the independent owner and original reference/history assertions.
-        stage = UsdStage::Open(examples + "/../tests/fixtures/projector_spaces.usda");
+        stage = UsdStage::Open(examples +
+                               "/../tests/fixtures/projector_spaces.usda");
         CHECK(stage);
         const SdfPath dialRig("/ProjectorAsset/Rig");
-        const auto dialProjector=stage->GetPrimAtPath(SdfPath("/ProjectorAsset/Rig/Movers/InSpace"));
+        const auto dialProjector =
+            stage->GetPrimAtPath(SdfPath("/ProjectorAsset/Rig/Movers/InSpace"));
         CHECK(dialProjector);
-        CHECK(dialProjector.CreateAttribute(TfToken("rigExec:shaderDialPrimvar"),
-            SdfValueTypeNames->Token,false,SdfVariabilityUniform).Set(TfToken("routedDials")));
-        CHECK(dialProjector.CreateRelationship(TfToken("rigExec:shaderDialSources")).SetTargets(
-            {SdfPath("/ProjectorAsset/Rig/Controls/Space.avars:tx")}));
+        CHECK(dialProjector
+                  .CreateAttribute(TfToken("rigExec:shaderDialPrimvar"),
+                                   SdfValueTypeNames->Token, false,
+                                   SdfVariabilityUniform)
+                  .Set(TfToken("routedDials")));
+        CHECK(dialProjector
+                  .CreateRelationship(TfToken("rigExec:shaderDialSources"))
+                  .SetTargets({SdfPath(
+                      "/ProjectorAsset/Rig/Controls/Space.avars:tx")}));
         auto evaluator = MakeEvaluator(stage, dialRig);
         const UsdTimeCode t(stage->GetStartTimeCode() + 2.0);
-        const auto before = RunChecked(evaluator.get(), {}, t, "shader dial, before");
+        const auto before =
+            RunChecked(evaluator.get(), {}, t, "shader dial, before");
         UsdAttribute dial;
         for (const auto &chain : Program(*evaluator)->chains) {
             for (const auto &derived : chain.derived) {
@@ -2345,9 +2375,8 @@ RoutedDeformerCases(const std::string &examples)
         if (dial) {
             const size_t builds = evaluator->GetBakedProgramBuildCount();
             const VtValue edited =
-                dial.GetTypeName() == SdfValueTypeNames->Float
-                    ? VtValue(0.625f)
-                    : VtValue(0.625);
+                dial.GetTypeName() == SdfValueTypeNames->Float ? VtValue(0.625f)
+                                                               : VtValue(0.625);
             CHECK(dial.Set(edited));
             const RigExecRigPose pose =
                 RunChecked(evaluator.get(), {}, t, "shader dial, edited");
@@ -2424,8 +2453,7 @@ RoutedDeformerCases(const std::string &examples)
 // Frame 1 twice with nothing moved: no path leaf is re-read either.
 void
 CheckAHeldPathLeafIsNotResampled(const GeometryFixture &f,
-                               RigExecRigEvaluator *evaluator,
-                               UsdTimeCode t)
+                                 RigExecRigEvaluator *evaluator, UsdTimeCode t)
 {
     const RigExecBakedProgramImpl *B = Program(*evaluator);
     CHECK(B);
@@ -2443,9 +2471,8 @@ CheckAHeldPathLeafIsNotResampled(const GeometryFixture &f,
                     f.name, static_cast<unsigned long long>(again));
     }
     CHECK(again == 0);
-    std::printf("path leaves %s: %zu, %llu read on the first run\n",
-                f.name, B->pathLeafRefs.size(),
-                static_cast<unsigned long long>(first));
+    std::printf("path leaves %s: %zu, %llu read on the first run\n", f.name,
+                B->pathLeafRefs.size(), static_cast<unsigned long long>(first));
 }
 
 // Preserve the cold assembly check before measuring the held sample decision.
@@ -2455,30 +2482,44 @@ TestGeometryFixtureInputs(const std::string &examples)
     std::set<RigExecRevisionOp> reached;
     // Finite assembly/read-site representatives. Each selected fixture keeps
     // its complete cold, held, sampled and override/fresh-reference history.
-    const std::set<std::string> representatives = {
-        "01", "04", "05", "06", "07", "11", "computed_path_reads",
-        "oneloop_cross_domain", "phased_blend_samples",
-        "preceding_own_chain", "projector_spaces", "bust", "wrinkle",
-        "compact_wire"};
+    const std::set<std::string> representatives = {"01",
+                                                   "04",
+                                                   "05",
+                                                   "06",
+                                                   "07",
+                                                   "11",
+                                                   "computed_path_reads",
+                                                   "oneloop_cross_domain",
+                                                   "phased_blend_samples",
+                                                   "preceding_own_chain",
+                                                   "projector_spaces",
+                                                   "bust",
+                                                   "wrinkle",
+                                                   "compact_wire"};
     size_t selectedFixtures = 0;
     std::vector<GeometryFixture> fixtures = GeometryFixtures(examples);
-    fixtures.push_back({"compact_wire", examples + "/../tests/fixtures/leaves_routed_geometry.usda"});
+    fixtures.push_back(
+        {"compact_wire",
+         examples + "/../tests/fixtures/leaves_routed_geometry.usda"});
     for (const GeometryFixture &f : fixtures) {
-        if (!representatives.count(f.name)) continue;
+        if (!representatives.count(f.name))
+            continue;
         ++selectedFixtures;
         UsdStageRefPtr stage = Open(f);
         CHECK(stage);
-        if (!stage) continue;
+        if (!stage)
+            continue;
         const SdfPath rig = RootOf(stage);
         CHECK(!rig.IsEmpty());
         auto evaluator = MakeEvaluator(stage, rig);
         const UsdTimeCode t(stage->GetStartTimeCode());
         RunChecked(evaluator.get(), {}, t, std::string(f.name) + " first");
-        const size_t coldCompared = ShadowChecked(
-            *evaluator, {}, t, std::string(f.name) + " at " + Text(t.GetValue()));
+        const size_t coldCompared =
+            ShadowChecked(*evaluator, {}, t,
+                          std::string(f.name) + " at " + Text(t.GetValue()));
         CheckAHeldPathLeafIsNotResampled(f, evaluator.get(), t);
-        CheckPureAssemblyEqualsTheStageAssembler(
-            f, stage, rig, evaluator.get(), coldCompared, reached);
+        CheckPureAssemblyEqualsTheStageAssembler(f, stage, rig, evaluator.get(),
+                                                 coldCompared, reached);
     }
     CHECK(selectedFixtures == representatives.size());
     // Every operation the leaves assemble is held to the stage assembler on
@@ -2531,7 +2572,8 @@ TestAFrozenCloneKeepsTheBuildSettings(const std::string &examples)
     ArchRemoveEnv("RIGEXEC_BAKED_CHUNK_VERTS");
     ArchRemoveEnv("RIGEXEC_BAKED_MAX_CHUNKS");
     ArchRemoveEnv("RIGEXEC_PURITY_AUDIT");
-    const RigExecBakedProgramImpl *B = evaluator ? Program(*evaluator) : nullptr;
+    const RigExecBakedProgramImpl *B =
+        evaluator ? Program(*evaluator) : nullptr;
     CHECK(B);
     if (!B) {
         return;
@@ -2698,20 +2740,16 @@ PurityFixtures(const std::string &examples)
     // Unit purity covers body/read-funnel branches; unchanged final gates
     // retain every asset's numerical and composition histories.
     const std::set<std::string> bodyExamples = {
-        "04_BlendShapeFace.usda",
-        "05_TwistRibbonSpine.usda",
-        "06_LatticeBulge.usda",
-        "07_SurfaceDrape.usda",
-        "09_PropertyMathMovers.usda",
-        "11_VolumeWeights.usda",
-        "13_ReadPhases.usda",
-        "14_VolumeConstrainedSweep.usda",
-        "16_ConnectionReadPhases.usda",
-        "aimtest_points.usda",
+        "04_BlendShapeFace.usda",       "05_TwistRibbonSpine.usda",
+        "06_LatticeBulge.usda",         "07_SurfaceDrape.usda",
+        "09_PropertyMathMovers.usda",   "11_VolumeWeights.usda",
+        "13_ReadPhases.usda",           "14_VolumeConstrainedSweep.usda",
+        "16_ConnectionReadPhases.usda", "aimtest_points.usda",
         "par_rot_aim_redorder.usd",
     };
     for (const RigExecExampleFixture &row : kRigExecExampleFixtures) {
-        if (!bodyExamples.count(row.stage)) continue;
+        if (!bodyExamples.count(row.stage))
+            continue;
         PurityFixture f;
         f.name = row.stage;
         f.stage = examples + "/" + row.stage;
@@ -2724,7 +2762,8 @@ PurityFixtures(const std::string &examples)
         out.push_back(std::move(f));
     }
     for (const Fixture &leaf : Fixtures(examples)) {
-        if (std::string(leaf.name)!="computed_chains") continue;
+        if (std::string(leaf.name) != "computed_chains")
+            continue;
         if (seen.insert(key(leaf.stage)).second) {
             PurityFixture f;
             f.name = leaf.name;
@@ -2750,7 +2789,8 @@ PurityFixtures(const std::string &examples)
         "wrinkle",
     };
     for (const GeometryFixture &geometry : GeometryFixtures(examples)) {
-        if (!bodyGeometry.count(geometry.name)) continue;
+        if (!bodyGeometry.count(geometry.name))
+            continue;
         if (geometry.make || seen.insert(key(geometry.stage)).second) {
             PurityFixture f;
             f.name = geometry.name;
@@ -2792,8 +2832,7 @@ TestNoBodyReadsTheStage(const std::string &examples)
     size_t fixtures = 0, runs = 0, baked = 0;
     std::vector<std::string> volatileRigs;
     for (const PurityFixture &f : PurityFixtures(examples)) {
-        UsdStageRefPtr stage =
-            f.make ? f.make() : UsdStage::Open(f.stage);
+        UsdStageRefPtr stage = f.make ? f.make() : UsdStage::Open(f.stage);
         CHECK(stage);
         if (!stage) {
             continue;
@@ -2803,8 +2842,7 @@ TestNoBodyReadsTheStage(const std::string &examples)
         if (rig.IsEmpty()) {
             continue;
         }
-        auto evaluator =
-            MakeEvaluator(stage, rig);
+        auto evaluator = MakeEvaluator(stage, rig);
         const std::vector<UsdTimeCode> frames = PurityFrames(f, stage);
         size_t fixtureRuns = 0, fixtureBaked = 0;
         bool reported = false;
@@ -2855,9 +2893,9 @@ TestNoBodyReadsTheStage(const std::string &examples)
             }
         };
         if (!f.controlPrim.empty()) {
-            dragAndLift(SdfPath(f.controlPrim)
-                            .AppendProperty(TfToken(f.controlAvar)),
-                        "control");
+            dragAndLift(
+                SdfPath(f.controlPrim).AppendProperty(TfToken(f.controlAvar)),
+                "control");
         }
         if (!f.operatorPrim.empty()) {
             dragAndLift(SdfPath(f.operatorPrim)
@@ -2945,8 +2983,8 @@ TestTheWireBasisMemoIsOwned()
     const RigExecMoverParameters p = SparseWirePacket();
     CHECK(RigExecWireTakesSparseEnvelope(p.weights));
     std::vector<GfVec3f> reference = WireMesh();
-    CHECK(RigExecRunRevisionKernel(RigExecRevisionOp::Wire, p, &reference,
-                                   true, nullptr));
+    CHECK(RigExecRunRevisionKernel(RigExecRevisionOp::Wire, p, &reference, true,
+                                   nullptr));
     CHECK(reference != WireMesh());
 
     RigExecWireBasisCache cache;
@@ -2976,8 +3014,8 @@ TestTheWireBasisMemoIsOwned()
     CHECK(movedReference != reference);
     {
         std::vector<GfVec3f> points = WireMesh();
-        CHECK(RigExecRunRevisionKernel(RigExecRevisionOp::Wire, moved,
-                                       &points, true, &cache));
+        CHECK(RigExecRunRevisionKernel(RigExecRevisionOp::Wire, moved, &points,
+                                       true, &cache));
         CHECK(points == movedReference);
         CHECK(cache.BuildCount() == 2);
     }
@@ -2989,8 +3027,8 @@ TestTheWireBasisMemoIsOwned()
         RigExecMoverParameters edited = p;
         edited.dropoffDistance = 2.0 + 0.01 * double(k + 1);
         std::vector<GfVec3f> points = WireMesh();
-        CHECK(RigExecRunRevisionKernel(RigExecRevisionOp::Wire, edited,
-                                       &points, true, &cache));
+        CHECK(RigExecRunRevisionKernel(RigExecRevisionOp::Wire, edited, &points,
+                                       true, &cache));
         CHECK(cache.Size() <= RigExecWireBasisCache::kCapacity);
     }
     {
@@ -3024,7 +3062,7 @@ TestTheWireBasisMemoIsOwned()
     CHECK(mismatches.load() == 0);
 }
 
-}  // namespace
+} // namespace
 
 // Provider leaves a run will skip, whose key a full publication would
 // change now: every leaf no kRigExecSpaceLeaf* reason marks must still hold
@@ -3047,9 +3085,10 @@ StaleProviderLeaves(const RigExecBakedProgramImpl &B, const std::string &what)
         const bool exact = RigExecBakedSpaceLeafKey(B, uint32_t(k), &key);
         if (!value.initialized || !exact || key != value.key) {
             if (stale < 4) {
-                std::printf("FAIL %s: provider leaf %s kept a stale key\n",
-                            what.c_str(),
-                            B.GetProviderProgram().sampled[k].attribute.GetText());
+                std::printf(
+                    "FAIL %s: provider leaf %s kept a stale key\n",
+                    what.c_str(),
+                    B.GetProviderProgram().sampled[k].attribute.GetText());
             }
             ++stale;
         }
@@ -3125,7 +3164,8 @@ TestSparseProviderLeaves(const std::string &examples)
     CHECK(step(2, "upstream lifted") == upstream);
     CHECK(step(2, "held after upstream") == held);
     std::printf("sparse provider leaves: %zu, re-keyed held %zu, dragged %zu, "
-                "upstream %zu\n", all, held, drag, upstream);
+                "upstream %zu\n",
+                all, held, drag, upstream);
     // An authored value edit, patched in place at the held frame.
     CHECK(!B->patchableAvars.empty());
     if (!B->patchableAvars.empty()) {
@@ -3357,7 +3397,8 @@ TestConstraintArraysAreCompiledRigState()
     };
     // A freshly compiled program's generation under the same inputs.
     const auto reference =
-        [&](UsdTimeCode time, const std::vector<RigExecValueOverride> &overrides,
+        [&](UsdTimeCode time,
+            const std::vector<RigExecValueOverride> &overrides,
             const std::vector<RigExecValueOverride> &upstream) {
             auto fresh = MakeEvaluator(stage, rig);
             if (!overrides.empty()) {
@@ -3454,7 +3495,8 @@ TestConstraintArraysAreCompiledRigState()
                     sample->valueBlocked != blocked ||
                     !(sample->value == value)) {
                     std::printf("FAIL %s: the frozen sample of %s differs "
-                                "from a read\n", what.c_str(), key.GetText());
+                                "from a read\n",
+                                what.c_str(), key.GetText());
                     ++failures;
                 }
                 ++checked;
@@ -3476,7 +3518,8 @@ TestConstraintArraysAreCompiledRigState()
     if (const RigExecBakedProgramImpl *B = Program(*evaluator)) {
         CHECK(B->frozenArraySamples.size() == B->constraintArrays.size());
         for (size_t row = 0; row < B->constraintArrays.size() &&
-                             row < B->frozenArraySamples.size(); ++row) {
+                             row < B->frozenArraySamples.size();
+             ++row) {
             const auto &memo = B->frozenArraySamples[row];
             if (B->constraintArrays[row].path == parent) {
                 CHECK(memo[1].variance == Arrays::kFixed && memo[1].present);
@@ -3489,8 +3532,8 @@ TestConstraintArraysAreCompiledRigState()
 
     // A property first authored on a channel the program does not fold:
     // a PositionConstraint consumes no offsets, but the prologue reads them.
-    const SdfPath unread = position.AppendProperty(
-        TfToken("inputs:translationOffsets"));
+    const SdfPath unread =
+        position.AppendProperty(TfToken("inputs:translationOffsets"));
     const uint64_t beforeAuthoring = evaluator->GetStageEditSerial();
     CHECK(stage->GetPrimAtPath(position)
               .CreateAttribute(unread.GetNameToken(),
@@ -3545,8 +3588,8 @@ TestConstraintArraysAreCompiledRigState()
     uint64_t memo = memoSerial();
     const uint64_t stamp = stampOf();
     // A default value on the unfolded channel, at a held frame.
-    CHECK(stage->GetAttributeAtPath(unread).Set(
-        VtVec3dArray{GfVec3d(4, 5, 6)}));
+    CHECK(
+        stage->GetAttributeAtPath(unread).Set(VtVec3dArray{GfVec3d(4, 5, 6)}));
     CHECK(evaluator->GetLastNoticeDisposition() ==
           RigExecNoticeDisposition::Edited);
     read = step(UsdTimeCode(4), "unfolded channel edited");
@@ -3564,8 +3607,8 @@ TestConstraintArraysAreCompiledRigState()
     CHECK(varianceOf(position, 1) == Arrays::kFixed);
     // A time sample on the same channel: the full read the serial forces
     // forgets kFixed, so the next time move reads it as varying.
-    CHECK(stage->GetAttributeAtPath(unread).Set(
-        VtVec3dArray{GfVec3d(7, 8, 9)}, UsdTimeCode(6)));
+    CHECK(stage->GetAttributeAtPath(unread).Set(VtVec3dArray{GfVec3d(7, 8, 9)},
+                                                UsdTimeCode(6)));
     CHECK(evaluator->GetLastNoticeDisposition() ==
           RigExecNoticeDisposition::Edited);
     read = step(UsdTimeCode(5), "unfolded time sample added");
@@ -3580,14 +3623,14 @@ TestConstraintArraysAreCompiledRigState()
     // A value edit.
     const SdfPath offsets =
         parent.AppendProperty(TfToken("inputs:translationOffsets"));
-    CHECK(stage->GetAttributeAtPath(offsets).Set(
-        VtVec3dArray{GfVec3d(0, 2, 0)}));
+    CHECK(
+        stage->GetAttributeAtPath(offsets).Set(VtVec3dArray{GfVec3d(0, 2, 0)}));
     CHECK(reread(step(UsdTimeCode(4), "value edit")));
     checkFrozen(UsdTimeCode(4), "frozen, value edit");
 
     // Time samples added, then removed.
-    CHECK(stage->GetAttributeAtPath(offsets).Set(
-        VtVec3dArray{GfVec3d(3, 0, 0)}, UsdTimeCode(6)));
+    CHECK(stage->GetAttributeAtPath(offsets).Set(VtVec3dArray{GfVec3d(3, 0, 0)},
+                                                 UsdTimeCode(6)));
     CHECK(reread(step(UsdTimeCode(4), "time sample added")));
     step(UsdTimeCode(6), "time sample added, at it");
     step(UsdTimeCode(7), "time sample added, past it");
@@ -3623,12 +3666,14 @@ TestConstraintArraysAreCompiledRigState()
     checkFrozen(UsdTimeCode(7), "frozen, sublayer removed");
 
     // A variant switched, and back.
-    CHECK(stage->GetPrimAtPath(parent).GetVariantSet("turn")
-              .SetVariantSelection("quarter"));
+    CHECK(
+        stage->GetPrimAtPath(parent).GetVariantSet("turn").SetVariantSelection(
+            "quarter"));
     CHECK(reread(step(UsdTimeCode(7), "variant switched")));
     checkFrozen(UsdTimeCode(7), "frozen, variant switched");
-    CHECK(stage->GetPrimAtPath(parent).GetVariantSet("turn")
-              .SetVariantSelection("none"));
+    CHECK(
+        stage->GetPrimAtPath(parent).GetVariantSet("turn").SetVariantSelection(
+            "none"));
     CHECK(reread(step(UsdTimeCode(7), "variant switched back")));
 
     // An interactive override and an upstream value: neither is a stage
@@ -3932,8 +3977,8 @@ TestSparseSourceKeys(const std::string &examples)
             return size_t(0);
         }
         if (P->sourceKeyMismatches) {
-            std::printf("FAIL %s: %zu kept source key(s) moved\n",
-                        what.c_str(), P->sourceKeyMismatches);
+            std::printf("FAIL %s: %zu kept source key(s) moved\n", what.c_str(),
+                        P->sourceKeyMismatches);
         }
         CHECK(P->sourceKeyMismatches == 0);
         return P->sourceKeysBuilt;
@@ -3966,7 +4011,8 @@ TestSparseSourceKeys(const std::string &examples)
     CHECK(step(2, "upstream lifted") > held);
     CHECK(step(2, "held after upstream") == held);
     std::printf("sparse source keys: %zu keyed, built held %zu, dragged %zu, "
-                "upstream %zu\n", keyed, held, drag, upstream);
+                "upstream %zu\n",
+                keyed, held, drag, upstream);
 
     // The routes that rebuild every key.
     if (RigExecBakedProgramImpl *M = mutableProgram()) {
@@ -4087,52 +4133,51 @@ TestAFrozenCloneKeepsSparseSourceKeys(const std::string &examples)
     TfErrorMark mark;
     // One job at \p time on \p lane, a workspace of \p snapshot: the keys
     // its worker built.
-    const auto job = [&](const std::shared_ptr<const RigExecFrozenProgram>
-                             &snapshot,
-                         RigExecFrozenWorkspace *lane, double time,
-                         const std::string &what) {
-        RigExecFrameInputs inputs;
-        const bool sampled = RigExecSampleFrameInputs(
-            *evaluator, UsdTimeCode(time), {}, &inputs, &error);
-        const RigExecBakedProgram *program = evaluator->GetBakedProgram();
-        CHECK(sampled && program);
-        if (!sampled || !program) {
-            std::printf("FAIL %s: not sampled: %s\n", what.c_str(),
-                        error.c_str());
-            return keyed;
-        }
-        RigExecFrozenEvalContext context;
-        context.compiledRigSignature = evaluator->GetCompiledRigSignature();
-        context.slotCount = program->GetProviderCount();
-        context.varyingInputCount = inputs.values.size();
-        if (evaluator->GetPublishWeightFields()) {
-            context.flags |= kRigExecFrozenPublishWeightFields;
-        }
-        if (evaluator->GetSolverGuidesEnabled()) {
-            context.flags |= kRigExecFrozenSolverGuidesEnabled;
-        }
-        context.frozen = snapshot.get();
-        context.workspace = lane;
-        RigExecFrozenRunReport report;
-        const RigExecRigPose pose = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(), nullptr,
-            f.rig, &report);
-        CHECK(pose.valid && report.ran);
-        if (report.sourceKeyMismatches) {
-            std::printf("FAIL %s: %zu kept source key(s) moved\n",
-                        what.c_str(), report.sourceKeyMismatches);
-        }
-        CHECK(report.sourceKeyMismatches == 0);
-        return report.sourceKeysBuilt;
-    };
+    const auto job =
+        [&](const std::shared_ptr<const RigExecFrozenProgram> &snapshot,
+            RigExecFrozenWorkspace *lane, double time,
+            const std::string &what) {
+            RigExecFrameInputs inputs;
+            const bool sampled = RigExecSampleFrameInputs(
+                *evaluator, UsdTimeCode(time), {}, &inputs, &error);
+            const RigExecBakedProgram *program = evaluator->GetBakedProgram();
+            CHECK(sampled && program);
+            if (!sampled || !program) {
+                std::printf("FAIL %s: not sampled: %s\n", what.c_str(),
+                            error.c_str());
+                return keyed;
+            }
+            RigExecFrozenEvalContext context;
+            context.compiledRigSignature = evaluator->GetCompiledRigSignature();
+            context.slotCount = program->GetProviderCount();
+            context.varyingInputCount = inputs.values.size();
+            if (evaluator->GetPublishWeightFields()) {
+                context.flags |= kRigExecFrozenPublishWeightFields;
+            }
+            if (evaluator->GetSolverGuidesEnabled()) {
+                context.flags |= kRigExecFrozenSolverGuidesEnabled;
+            }
+            context.frozen = snapshot.get();
+            context.workspace = lane;
+            RigExecFrozenRunReport report;
+            const RigExecRigPose pose = RigExecEvaluateFrozen(
+                context, inputs, RigExecMakeProductionStepRunner(), nullptr,
+                f.rig, &report);
+            CHECK(pose.valid && report.ran);
+            if (report.sourceKeyMismatches) {
+                std::printf("FAIL %s: %zu kept source key(s) moved\n",
+                            what.c_str(), report.sourceKeyMismatches);
+            }
+            CHECK(report.sourceKeyMismatches == 0);
+            return report.sourceKeysBuilt;
+        };
     auto workspace = RigExecCreateFrozenWorkspace(frozen);
     CHECK(workspace);
     if (!workspace) {
         return;
     }
     const size_t held = job(frozen, workspace.get(), 1, "frozen, held");
-    std::printf("frozen source keys: %zu keyed, built held %zu\n", keyed,
-                held);
+    std::printf("frozen source keys: %zu keyed, built held %zu\n", keyed, held);
     CHECK(held < keyed);
     job(frozen, workspace.get(), 2, "frozen, moved");
     CHECK(job(frozen, workspace.get(), 2, "frozen, held after time") < keyed);
@@ -4149,8 +4194,8 @@ TestAFrozenCloneKeepsSparseSourceKeys(const std::string &examples)
     CHECK(attribute.Set(value + 0.5));
     const RigExecBakedProgram *live = evaluator->GetBakedProgram();
     std::shared_ptr<const RigExecFrozenProgram> patched;
-    CHECK(live && RigExecPatchFrozenAvarConstants(*frozen, *live, &patched,
-                                                  &error));
+    CHECK(live &&
+          RigExecPatchFrozenAvarConstants(*frozen, *live, &patched, &error));
     if (!patched) {
         std::printf("FAIL frozen source keys: patch refused: %s\n",
                     error.c_str());
@@ -4211,8 +4256,8 @@ WatchFrozenJob(const RigExecRigEvaluator &evaluator,
     RigExecFrameInputs inputs;
     std::string error;
     const RigExecBakedProgram *program = evaluator.GetBakedProgram();
-    if (!program || !RigExecSampleFrameInputs(evaluator, UsdTimeCode(time),
-                                              {}, &inputs, &error)) {
+    if (!program || !RigExecSampleFrameInputs(evaluator, UsdTimeCode(time), {},
+                                              &inputs, &error)) {
         std::printf("FAIL frozen job at %g: not sampled: %s\n", time,
                     error.c_str());
         ++failures;
@@ -4280,8 +4325,7 @@ TestTheSparseWatchVisitsWhatMoved(const std::string &examples)
     // it fills a head override slot, so the lift compares an emptied slot.
     const SdfPath toe = WatchAvar(stage, "L_Leg", "avars:toePlantAngle");
     CHECK(!body.IsEmpty() && !shoulder.IsEmpty() && !toe.IsEmpty());
-    RigExecRigEvaluator *const all[] = {sparse.get(), full.get(),
-                                        verify.get()};
+    RigExecRigEvaluator *const all[] = {sparse.get(), full.get(), verify.get()};
     TfErrorMark mark;
     size_t dragSteps = 0;
     enum class Expect { Any, AvarsCompared, AvarsSkipped };
@@ -4296,34 +4340,32 @@ TestTheSparseWatchVisitsWhatMoved(const std::string &examples)
         const RigExecBakedProgramImpl *F = Program(*full);
         const RigExecBakedProgramImpl *V = Program(*verify);
         CHECK(S && F && V);
-        if (!S || !F || !V || !S->sourceWatch.index ||
-            !F->sourceWatch.index) {
+        if (!S || !F || !V || !S->sourceWatch.index || !F->sourceWatch.index) {
             return;
         }
         CHECK(PoseMismatches(poses[1], poses[0], what + ", sparse") == 0);
         CHECK(PoseMismatches(poses[1], poses[2], what + ", verified") == 0);
         const auto &sw = S->sourceWatch;
         const auto &fw = F->sourceWatch;
-        const bool same = sw.dirtyList == fw.dirtyList &&
-                          S->opAdapter.seeds == F->opAdapter.seeds &&
-                          S->opAdapter.candidateOps ==
-                              F->opAdapter.candidateOps &&
-                          S->sourceKeysBuilt == F->sourceKeysBuilt;
+        const bool same =
+            sw.dirtyList == fw.dirtyList &&
+            S->opAdapter.seeds == F->opAdapter.seeds &&
+            S->opAdapter.candidateOps == F->opAdapter.candidateOps &&
+            S->sourceKeysBuilt == F->sourceKeysBuilt;
         if (!same) {
             std::printf("FAIL %s: sparse and full watch disagree: dirty "
                         "%zu/%zu, seeds %zu/%zu, candidates %zu/%zu, keys "
                         "%zu/%zu\n",
-                        what.c_str(), sw.dirtyList.size(),
-                        fw.dirtyList.size(), S->opAdapter.seeds.size(),
-                        F->opAdapter.seeds.size(),
+                        what.c_str(), sw.dirtyList.size(), fw.dirtyList.size(),
+                        S->opAdapter.seeds.size(), F->opAdapter.seeds.size(),
                         S->opAdapter.candidateOps.size(),
                         F->opAdapter.candidateOps.size(), S->sourceKeysBuilt,
                         F->sourceKeysBuilt);
         }
         CHECK(same);
         if (V->sourceKeyMismatches) {
-            std::printf("FAIL %s: %zu kept source key(s) moved\n",
-                        what.c_str(), V->sourceKeyMismatches);
+            std::printf("FAIL %s: %zu kept source key(s) moved\n", what.c_str(),
+                        V->sourceKeyMismatches);
         }
         CHECK(V->sourceKeyMismatches == 0);
         if (drag) {
@@ -4333,8 +4375,7 @@ TestTheSparseWatchVisitsWhatMoved(const std::string &examples)
             std::printf("%s: the sparse watch compared %zu of %zu entries "
                         "(%.3f), %zu always compared\n",
                         what.c_str(), S->sourceWatchVisits, entries,
-                        entries ? double(S->sourceWatchVisits) /
-                                      double(entries)
+                        entries ? double(S->sourceWatchVisits) / double(entries)
                                 : 0.0,
                         always);
             CHECK(always <= S->sourceWatchVisits);
@@ -4539,14 +4580,22 @@ WatchEntryReplaced(const RigExecBakedSourceLeafIndex &index, size_t w,
     switch (entry.kind) {
     case Kind::Typed:
         switch (RigExecBakedLeafType(entry.type)) {
-        case RigExecBakedLeafType::Double: return typed(double());
-        case RigExecBakedLeafType::Float: return typed(float());
-        case RigExecBakedLeafType::Int: return typed(int());
-        case RigExecBakedLeafType::Bool: return typed(bool());
-        case RigExecBakedLeafType::Token: return typed(TfToken());
-        case RigExecBakedLeafType::Matrix4d: return typed(GfMatrix4d());
-        case RigExecBakedLeafType::Vec3d: return typed(GfVec3d());
-        case RigExecBakedLeafType::Vec3f: return typed(GfVec3f());
+        case RigExecBakedLeafType::Double:
+            return typed(double());
+        case RigExecBakedLeafType::Float:
+            return typed(float());
+        case RigExecBakedLeafType::Int:
+            return typed(int());
+        case RigExecBakedLeafType::Bool:
+            return typed(bool());
+        case RigExecBakedLeafType::Token:
+            return typed(TfToken());
+        case RigExecBakedLeafType::Matrix4d:
+            return typed(GfMatrix4d());
+        case RigExecBakedLeafType::Vec3d:
+            return typed(GfVec3d());
+        case RigExecBakedLeafType::Vec3f:
+            return typed(GfVec3f());
         }
         return true;
     case Kind::PathVersion:
@@ -4554,8 +4603,7 @@ WatchEntryReplaced(const RigExecBakedSourceLeafIndex &index, size_t w,
         return before.words[w] != after.words[w];
     default:
         return before.words[w] != after.words[w] ||
-               !RigExecExactSourceValueEqual(before.values[w],
-                                             after.values[w]);
+               !RigExecExactSourceValueEqual(before.values[w], after.values[w]);
     }
 }
 
@@ -4641,8 +4689,7 @@ TestATrackedConstraintKeepsItsKey(const std::string &examples)
                 if (!WatchEntryReplaced(index, w, before, D->sourceWatch)) {
                     continue;
                 }
-                for (uint32_t i = index.begin[w]; i < index.begin[w + 1];
-                     ++i) {
+                for (uint32_t i = index.begin[w]; i < index.begin[w + 1]; ++i) {
                     if (index.ops[i] < readsMoved.size()) {
                         readsMoved[index.ops[i]] = 1;
                     }
@@ -4740,8 +4787,7 @@ TestATrackedConstraintKeepsItsKey(const std::string &examples)
     const auto now = moved.controlFrames.find(target.GetPath());
     CHECK(was != placed.controlFrames.end() &&
           now != moved.controlFrames.end());
-    if (was != placed.controlFrames.end() &&
-        now != moved.controlFrames.end()) {
+    if (was != placed.controlFrames.end() && now != moved.controlFrames.end()) {
         CHECK(was->second.Origin() != now->second.Origin());
     }
     CHECK(PoseMismatches(FreshPose(stage, rig, UsdTimeCode(1)), moved,
@@ -4758,7 +4804,10 @@ struct ScopedKnob {
     {
         ArchSetEnv(name, value, /*overwrite=*/true);
     }
-    ~ScopedKnob() { ArchRemoveEnv(name); }
+    ~ScopedKnob()
+    {
+        ArchRemoveEnv(name);
+    }
 };
 
 // The value the path leaf keyed at \p path holds, empty when no key reads it.
@@ -4811,7 +4860,7 @@ PathLeafRun(RigExecRigEvaluator *evaluator,
     return after && !rebuilt ? after->pathLeafSamples - samples : 0;
 }
 
-}  // namespace
+} // namespace
 
 // RIGEXEC_PATH_LEAF_GATING. Under a standing override a path-leaf key is
 // re-read only when an override stands on one of its hops, now or at its
@@ -4825,7 +4874,8 @@ TestADragResamplesOnlyReachedPathLeaves(const std::string &examples)
 {
     TfErrorMark mark;
     {
-        UsdStageRefPtr stage = UsdStage::Open(examples + "/01_FkChainTail.usda");
+        UsdStageRefPtr stage =
+            UsdStage::Open(examples + "/01_FkChainTail.usda");
         CHECK(stage);
         if (!stage) {
             return;
@@ -4887,7 +4937,8 @@ TestADragResamplesOnlyReachedPathLeaves(const std::string &examples)
             return;
         }
         const SdfPath rig = RootOf(stage);
-        const SdfPath input("/LatticeAsset/Rig/Movers/Geometry/VolumeCorrect/Smooth.inputs:defaultWeight");
+        const SdfPath input("/LatticeAsset/Rig/Movers/Geometry/VolumeCorrect/"
+                            "Smooth.inputs:defaultWeight");
         CHECK(stage->GetAttributeAtPath(input));
         const UsdTimeCode t(stage->GetStartTimeCode() + 12.0);
         std::unique_ptr<RigExecRigEvaluator> gated, ungated;
@@ -4936,7 +4987,8 @@ TestADragResamplesOnlyReachedPathLeaves(const std::string &examples)
               0);
         G = Program(*gated);
         CHECK(G && G->pathLeafGateMismatches == 0);
-        std::printf("path-leaf gate, mover input: %zu key(s) reach it, %llu re-read dragged (%llu ungated), %llu lifted\n",
+        std::printf("path-leaf gate, mover input: %zu key(s) reach it, %llu "
+                    "re-read dragged (%llu ungated), %llu lifted\n",
                     reaching, static_cast<unsigned long long>(dragged),
                     static_cast<unsigned long long>(ungatedDragged),
                     static_cast<unsigned long long>(lifted));
@@ -5030,10 +5082,10 @@ TestASparsePassVisitsOnlyCandidates(const std::string &examples)
     const auto both = [&](const std::vector<RigExecValueOverride> &drag,
                           UsdTimeCode time, bool checked,
                           const std::string &what) {
-        const Counts s = run(sparse.get(), false, drag, time, checked,
-                             what + ", sparse");
-        const Counts w = run(swept.get(), true, drag, time, checked,
-                             what + ", swept");
+        const Counts s =
+            run(sparse.get(), false, drag, time, checked, what + ", sparse");
+        const Counts w =
+            run(swept.get(), true, drag, time, checked, what + ", swept");
         CHECK(s.rebuilt == w.rebuilt);
         if (!s.rebuilt && !w.rebuilt && s.samples != w.samples) {
             std::printf("FAIL %s: %llu leaf read(s) sparse, %llu swept\n",
@@ -5045,11 +5097,12 @@ TestASparsePassVisitsOnlyCandidates(const std::string &examples)
         CHECK(PoseMismatches(w.pose, s.pose, what) == 0);
         const RigExecBakedProgramImpl *P = Program(*sparse);
         CHECK(P && P->sparseSamplingMismatches == 0);
-        std::printf("sparse sampling, %s: %llu read, %llu visited (%llu swept)%s\n",
-                    what.c_str(), static_cast<unsigned long long>(s.samples),
-                    static_cast<unsigned long long>(s.visits),
-                    static_cast<unsigned long long>(w.visits),
-                    s.rebuilt ? ", rebuilt" : "");
+        std::printf(
+            "sparse sampling, %s: %llu read, %llu visited (%llu swept)%s\n",
+            what.c_str(), static_cast<unsigned long long>(s.samples),
+            static_cast<unsigned long long>(s.visits),
+            static_cast<unsigned long long>(w.visits),
+            s.rebuilt ? ", rebuilt" : "");
         return std::make_pair(s, w);
     };
     both({}, t1, true, "first");
@@ -5184,8 +5237,7 @@ TestTheChangedListsClearTheFlags(const std::string &examples)
     CHECK(B->leafSamples == samples);
     CHECK(unlisted(B, &flagged) == 0);
     CHECK(flagged == 0);
-    B->leaves.ForEach(
-        [](auto &pool) { CHECK(pool.changedList.empty()); });
+    B->leaves.ForEach([](auto &pool) { CHECK(pool.changedList.empty()); });
 
     // A forced run (a failed run's reset) under a placed upstream value,
     // then a sparse run under a moved one.

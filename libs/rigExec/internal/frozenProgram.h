@@ -20,8 +20,12 @@ namespace rigExec {
 
 /// Detached edit payload relative to one immutable frozen snapshot.
 struct RigExecFrozenAvarPatch {
-    const RigExecFrozenProgram *basis = nullptr; ///< identity only; caller pins the base
-    struct Avar { double constant, value; bool varying; };
+    const RigExecFrozenProgram *basis =
+        nullptr; ///< identity only; caller pins the base
+    struct Avar {
+        double constant, value;
+        bool varying;
+    };
     std::vector<Avar> avars;
     std::vector<double> constants;
     std::vector<size_t> promoted;
@@ -48,7 +52,8 @@ struct RigExecFrozenBindings {
     /// (empty when the head is invalid; the worker declines a varying input
     /// it cannot key).
     std::vector<SdfPath> inputHeadPaths;
-    std::vector<VtValue> inputConstants; ///< typed fallbacks, parallel to inputHeadPaths
+    std::vector<VtValue>
+        inputConstants; ///< typed fallbacks, parallel to inputHeadPaths
     /// Per constraintArrays entry, the four operator-array keys (source
     /// weights, translation offsets, rotation offsets, pole weights); empty
     /// where the entry reads no such array.
@@ -97,6 +102,6 @@ struct RigExecFrozenProgram {
     }
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_FROZEN_PROGRAM_H
+#endif // RIGEXEC_FROZEN_PROGRAM_H

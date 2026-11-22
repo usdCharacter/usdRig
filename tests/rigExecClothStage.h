@@ -35,13 +35,15 @@ inline constexpr int kColumns = 7, kRows = 7;
 inline constexpr float kSpacing = 4.0f;
 
 // Root's avars:tx keys: a swing out from frame 1 to 9, a hold, a swing back.
-inline constexpr double kKeys[][2] = {{1, 0}, {9, 24}, {18, 24}, {26, -10}, {40, -10}};
+inline constexpr double kKeys[][2] = {
+    {1, 0}, {9, 24}, {18, 24}, {26, -10}, {40, -10}};
 
 inline std::string
 Join(const std::vector<std::string> &items)
 {
     std::string out;
-    for (size_t k = 0; k < items.size(); ++k) out += (k ? ", " : "") + items[k];
+    for (size_t k = 0; k < items.size(); ++k)
+        out += (k ? ", " : "") + items[k];
     return out;
 }
 
@@ -87,7 +89,8 @@ StageText(bool clothEnabled, const std::string &clothBody)
 {
     std::string samples;
     for (const auto &key : kKeys)
-        samples += std::to_string(int(key[0])) + ": " + std::to_string(key[1]) + ", ";
+        samples +=
+            std::to_string(int(key[0])) + ": " + std::to_string(key[1]) + ", ";
     const std::string curtain = CurtainText();
     const size_t bar = curtain.find('|');
     const std::string mesh = curtain.substr(0, bar);
@@ -112,7 +115,8 @@ def Xform "Asset"
             )
             {
                 double avars:tx = 0
-                double avars:tx.timeSamples = { )" + samples + R"( }
+                double avars:tx.timeSamples = { )" +
+           samples + R"( }
                 matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
             }
         }
@@ -141,12 +145,15 @@ def Xform "Asset"
             )
             {
                 rel rigExec:moves = </Asset/Geom/Curtain.points>
-                bool inputs:enabled = )" + std::string(clothEnabled ? "true" : "false") + R"(
+                bool inputs:enabled = )" +
+           std::string(clothEnabled ? "true" : "false") + R"(
                 rel rigExec:colliders = </Asset/Geom/Box> (
                     rigExecReadPhase = "final"
                 )
-                uniform float[] rigExec:pinWeights = [)" + pins + R"(]
-)" + clothBody + R"(
+                uniform float[] rigExec:pinWeights = [)" +
+           pins + R"(]
+)" + clothBody +
+           R"(
             }
             def RigExecMatrixMover "CurtainFollow" (
                 prepend apiSchemas = ["RigExecMoverAPI"]
@@ -188,10 +195,12 @@ def Xform "Asset"
 }
 
 inline UsdStageRefPtr
-MakeStage(bool clothEnabled = true, const std::string &clothBody = std::string())
+MakeStage(bool clothEnabled = true,
+          const std::string &clothBody = std::string())
 {
     UsdStageRefPtr stage = UsdStage::CreateInMemory();
-    if (!stage->GetRootLayer()->ImportFromString(StageText(clothEnabled, clothBody))) {
+    if (!stage->GetRootLayer()->ImportFromString(
+            StageText(clothEnabled, clothBody))) {
         std::printf("the cloth stage did not parse\n");
         return nullptr;
     }
@@ -216,7 +225,8 @@ inline bool
 SameBits(const Points &a, const Points &b)
 {
     return a.size() == b.size() &&
-           (a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(GfVec3f)) == 0);
+           (a.empty() ||
+            std::memcmp(a.data(), b.data(), a.size() * sizeof(GfVec3f)) == 0);
 }
 
 inline float
@@ -228,6 +238,6 @@ Furthest(const Points &a, const Points &b)
     return most;
 }
 
-}  // namespace rigExecClothStage
+} // namespace rigExecClothStage
 
-#endif  // RIGEXEC_TEST_CLOTH_STAGE_H
+#endif // RIGEXEC_TEST_CLOTH_STAGE_H

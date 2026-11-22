@@ -48,12 +48,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -83,8 +83,7 @@ RestTx(const UsdStageRefPtr &stage)
     if (const UsdAttribute existing = joint.GetAttribute(TfToken("rest:tx"))) {
         return existing;
     }
-    return joint.CreateAttribute(TfToken("rest:tx"),
-                                 SdfValueTypeNames->Double);
+    return joint.CreateAttribute(TfToken("rest:tx"), SdfValueTypeNames->Double);
 }
 
 UsdAttribute
@@ -128,8 +127,8 @@ ComparePoses(const std::string &where, const RigExecRigPose &reference,
                             path.GetText());
             } else if (!equal(value, found->second)) {
                 ++failures;
-                std::printf("FAIL %s: %s differs at %s\n", where.c_str(),
-                            what, path.GetText());
+                std::printf("FAIL %s: %s differs at %s\n", where.c_str(), what,
+                            path.GetText());
             }
         }
         if (referenceMap.size() != subjectMap.size()) {
@@ -152,13 +151,16 @@ ComparePoses(const std::string &where, const RigExecRigPose &reference,
 
 // Opens the tail, applies \p edit, compiles, and evaluates \p kFrames.
 std::vector<RigExecRigPose>
-Run(const std::string &examplesDir, const _Edit &edit, size_t *compiledRigRestCount)
+Run(const std::string &examplesDir, const _Edit &edit,
+    size_t *compiledRigRestCount)
 {
     std::vector<RigExecRigPose> poses;
     UsdStageRefPtr stage = UsdStage::Open(StagePath(examplesDir));
     CHECK(stage);
-    if (!stage) return poses;
-    if (edit) edit(stage);
+    if (!stage)
+        return poses;
+    if (edit)
+        edit(stage);
     RigExecRigEvaluator rig(stage, kRig);
     std::vector<std::string> errors;
     if (!rig.Compile(&errors)) {
@@ -172,7 +174,8 @@ Run(const std::string &examplesDir, const _Edit &edit, size_t *compiledRigRestCo
         poses.push_back(rig.Evaluate(UsdTimeCode(frame)));
         CHECK(poses.back().valid);
     }
-    if (compiledRigRestCount) *compiledRigRestCount = rig.GetCompiledRigRestFrameCount();
+    if (compiledRigRestCount)
+        *compiledRigRestCount = rig.GetCompiledRigRestFrameCount();
     return poses;
 }
 
@@ -182,12 +185,13 @@ std::vector<RigExecRigPose>
 RunWithConstantRestTx(const std::string &examplesDir, double value,
                       size_t *compiledRigRestCount)
 {
-    return Run(examplesDir,
-               [value](const UsdStageRefPtr &stage) {
-                   EditInSession(stage);
-                   RestTx(stage).Set(value);
-               },
-               compiledRigRestCount);
+    return Run(
+        examplesDir,
+        [value](const UsdStageRefPtr &stage) {
+            EditInSession(stage);
+            RestTx(stage).Set(value);
+        },
+        compiledRigRestCount);
 }
 
 // The same reference for rest:space, which the tail already authors on this
@@ -198,14 +202,14 @@ std::vector<RigExecRigPose>
 RunWithConstantRestSpace(const std::string &examplesDir,
                          const GfMatrix4d &value, size_t *compiledRigRestCount)
 {
-    return Run(examplesDir,
-               [&value](const UsdStageRefPtr &stage) {
-                   EditInSession(stage);
-                   RestSpace(stage).Set(value);
-               },
-               compiledRigRestCount);
+    return Run(
+        examplesDir,
+        [&value](const UsdStageRefPtr &stage) {
+            EditInSession(stage);
+            RestSpace(stage).Set(value);
+        },
+        compiledRigRestCount);
 }
-
 
 // The ordinary rig: no rest channel can move, so the compiled rig holds them all.
 // Everything below is a departure from this, and without it they could all
@@ -217,7 +221,8 @@ TestAnOrdinaryRigHoldsItsRests(const std::string &examplesDir)
     const std::vector<RigExecRigPose> poses =
         Run(examplesDir, nullptr, &compiledRigRests);
     CHECK(!poses.empty());
-    if (poses.empty()) return;
+    if (poses.empty())
+        return;
     CHECK(compiledRigRests > 0);
     // Providers, not joints: controls seed the same request.
     CHECK(compiledRigRests >= poses.front().jointFramesBase.size());
@@ -243,7 +248,8 @@ TestATimeSampledRestIsPulledPerFrame(const std::string &examplesDir)
         &compiledRigRests);
     // Seg2 and its two joint descendants vary; four controls and Seg1 stay static.
     CHECK(compiledRigRests == 5);
-    if (subject.size() != kFrames.size()) return;
+    if (subject.size() != kFrames.size())
+        return;
 
     const double sampled[] = {0.0, 3.0, 6.0};
     for (size_t i = 0; i < kFrames.size(); ++i) {
@@ -254,7 +260,8 @@ TestATimeSampledRestIsPulledPerFrame(const std::string &examplesDir)
         // compiled rig path -- otherwise the comparison is between two copies of
         // the same fallback.
         CHECK(referenceRests > 0);
-        if (reference.size() != kFrames.size()) return;
+        if (reference.size() != kFrames.size())
+            return;
         ComparePoses("a time-sampled rest at frame " +
                          std::to_string(int(kFrames[i])),
                      reference[i], subject[i]);
@@ -269,7 +276,8 @@ TestARestThatBecomesTimeSampledAfterCompile(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(StagePath(examplesDir));
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecRigEvaluator rig(stage, kRig);
     std::vector<std::string> errors;
     CHECK(rig.Compile(&errors));
@@ -292,7 +300,8 @@ TestARestThatBecomesTimeSampledAfterCompile(const std::string &examplesDir)
         const std::vector<RigExecRigPose> reference =
             RunWithConstantRestTx(examplesDir, sampled[i], &referenceRests);
         CHECK(referenceRests > 0);
-        if (reference.size() != kFrames.size()) return;
+        if (reference.size() != kFrames.size())
+            return;
         ComparePoses("a rest sampled after Compile, frame " +
                          std::to_string(int(kFrames[i])),
                      reference[i], subject);
@@ -324,13 +333,15 @@ TestAConnectedRestIsPulledPerFrame(const std::string &examplesDir)
         },
         &compiledRigRests);
     CHECK(compiledRigRests == 8);
-    if (subject.size() != kFrames.size()) return;
+    if (subject.size() != kFrames.size())
+        return;
 
     size_t referenceRests = 0;
     const std::vector<RigExecRigPose> reference =
         RunWithConstantRestTx(examplesDir, 3.0, &referenceRests);
     CHECK(referenceRests > 0);
-    if (reference.size() != kFrames.size()) return;
+    if (reference.size() != kFrames.size())
+        return;
     for (size_t i = 0; i < kFrames.size(); ++i) {
         ComparePoses("a connected rest at frame " +
                          std::to_string(int(kFrames[i])),
@@ -356,8 +367,7 @@ TestAConnectedRestSpaceIsPulledPerFrame(const std::string &examplesDir)
             EditInSession(stage);
             const UsdPrim joint = stage->GetPrimAtPath(kJoint);
             const UsdAttribute driver = joint.CreateAttribute(
-                TfToken("inputs:restSpaceDriver"),
-                SdfValueTypeNames->Matrix4d);
+                TfToken("inputs:restSpaceDriver"), SdfValueTypeNames->Matrix4d);
             driver.Set(Translation(5.0));
             const UsdAttribute restSpace = RestSpace(stage);
             restSpace.SetConnections({driver.GetPath()});
@@ -365,14 +375,15 @@ TestAConnectedRestSpaceIsPulledPerFrame(const std::string &examplesDir)
         },
         &compiledRigRests);
     CHECK(compiledRigRests == 8);
-    if (subject.size() != kFrames.size()) return;
+    if (subject.size() != kFrames.size())
+        return;
 
     size_t referenceRests = 0;
-    const std::vector<RigExecRigPose> reference =
-        RunWithConstantRestSpace(examplesDir, Translation(5.0),
-                                 &referenceRests);
+    const std::vector<RigExecRigPose> reference = RunWithConstantRestSpace(
+        examplesDir, Translation(5.0), &referenceRests);
     CHECK(referenceRests > 0);
-    if (reference.size() != kFrames.size()) return;
+    if (reference.size() != kFrames.size())
+        return;
     for (size_t i = 0; i < kFrames.size(); ++i) {
         ComparePoses("a connected rest space at frame " +
                          std::to_string(int(kFrames[i])),
@@ -401,69 +412,105 @@ TestAConnectedRestSpaceIsPulledPerFrame(const std::string &examplesDir)
 // ORIGINAL's reference evaluator agrees with an independently authored matrix
 // for this identity -> translation -> held translation -> identity history.
 void
-TestARestSpaceConnectedToAComputedSpaceHasAProducer(const std::string &examplesDir)
+TestARestSpaceConnectedToAComputedSpaceHasAProducer(
+    const std::string &examplesDir)
 {
-    const auto stage=UsdStage::Open(StagePath(examplesDir));
-    const auto referenceStage=UsdStage::Open(StagePath(examplesDir));
+    const auto stage = UsdStage::Open(StagePath(examplesDir));
+    const auto referenceStage = UsdStage::Open(StagePath(examplesDir));
     CHECK(stage && referenceStage);
-    if(!stage || !referenceStage)return;
-    EditInSession(stage);EditInSession(referenceStage);
-    const SdfPath parent=kJoint.GetParentPath();
-    const auto source=stage->GetPrimAtPath(parent).CreateAttribute(
-        TfToken("parent:space"),SdfValueTypeNames->Matrix4d);
-    const auto referenceSource=referenceStage->GetPrimAtPath(parent).CreateAttribute(
-        TfToken("parent:space"),SdfValueTypeNames->Matrix4d);
+    if (!stage || !referenceStage)
+        return;
+    EditInSession(stage);
+    EditInSession(referenceStage);
+    const SdfPath parent = kJoint.GetParentPath();
+    const auto source = stage->GetPrimAtPath(parent).CreateAttribute(
+        TfToken("parent:space"), SdfValueTypeNames->Matrix4d);
+    const auto referenceSource =
+        referenceStage->GetPrimAtPath(parent).CreateAttribute(
+            TfToken("parent:space"), SdfValueTypeNames->Matrix4d);
     CHECK(source.Set(GfMatrix4d(1.0)));
     CHECK(referenceSource.Set(GfMatrix4d(1.0)));
     CHECK(RestSpace(stage).SetConnections({source.GetPath()}));
     CHECK(RestSpace(referenceStage).Set(GfMatrix4d(1.0)));
-    RigExecRigEvaluator rig(stage,kRig),reference(referenceStage,kRig);
-    std::vector<std::string> errors,reasons;
-    CHECK(rig.Compile(&errors));CHECK(reference.Compile(&errors));
+    RigExecRigEvaluator rig(stage, kRig), reference(referenceStage, kRig);
+    std::vector<std::string> errors, reasons;
+    CHECK(rig.Compile(&errors));
+    CHECK(reference.Compile(&errors));
     CHECK(rig.IsBakeable(&reasons));
-    const size_t digest=rig.GetCompiledRigSignature();
+    const size_t digest = rig.GetCompiledRigSignature();
     std::vector<RigExecRigPose> initial;
-    for(double x:{0.0,7.0,7.0,0.0}) {
-        const auto matrix=Translation(x);
-        CHECK(source.Set(matrix));CHECK(referenceSource.Set(matrix));
+    for (double x : {0.0, 7.0, 7.0, 0.0}) {
+        const auto matrix = Translation(x);
+        CHECK(source.Set(matrix));
+        CHECK(referenceSource.Set(matrix));
         CHECK(RestSpace(referenceStage).Set(matrix));
-        std::string before;CHECK(stage->GetSessionLayer()->ExportToString(&before));
-        for(size_t frame=0;frame<kFrames.size();++frame) {
-            const auto expected=reference.Evaluate(UsdTimeCode(kFrames[frame]));
-            const auto actual=rig.Evaluate(UsdTimeCode(kFrames[frame]));
+        std::string before;
+        CHECK(stage->GetSessionLayer()->ExportToString(&before));
+        for (size_t frame = 0; frame < kFrames.size(); ++frame) {
+            const auto expected =
+                reference.Evaluate(UsdTimeCode(kFrames[frame]));
+            const auto actual = rig.Evaluate(UsdTimeCode(kFrames[frame]));
             CHECK(expected.valid && actual.valid);
-            ComparePoses("computed rest versus independently authored matrix",expected,actual);
-            CHECK(rig.GetCompiledRigSignature()==digest);
-            if(initial.size()<kFrames.size())initial.push_back(actual);
-            if(x==7.0) {
-                const auto changed=actual.jointMatricesFinal.find(kJoint);
-                const auto unchanged=initial[frame].jointMatricesFinal.find(kJoint);
-                CHECK(changed!=actual.jointMatricesFinal.end() &&
-                      unchanged!=initial[frame].jointMatricesFinal.end());
-                if(changed!=actual.jointMatricesFinal.end() && unchanged!=initial[frame].jointMatricesFinal.end())
-                    CHECK(changed->second!=unchanged->second);
-            } else if(initial.size()==kFrames.size())
-                ComparePoses("computed rest recovery",initial[frame],actual);
+            ComparePoses("computed rest versus independently authored matrix",
+                         expected, actual);
+            CHECK(rig.GetCompiledRigSignature() == digest);
+            if (initial.size() < kFrames.size())
+                initial.push_back(actual);
+            if (x == 7.0) {
+                const auto changed = actual.jointMatricesFinal.find(kJoint);
+                const auto unchanged =
+                    initial[frame].jointMatricesFinal.find(kJoint);
+                CHECK(changed != actual.jointMatricesFinal.end() &&
+                      unchanged != initial[frame].jointMatricesFinal.end());
+                if (changed != actual.jointMatricesFinal.end() &&
+                    unchanged != initial[frame].jointMatricesFinal.end())
+                    CHECK(changed->second != unchanged->second);
+            } else if (initial.size() == kFrames.size())
+                ComparePoses("computed rest recovery", initial[frame], actual);
         }
-        std::string after;CHECK(stage->GetSessionLayer()->ExportToString(&after));
-        CHECK(before==after);
+        std::string after;
+        CHECK(stage->GetSessionLayer()->ExportToString(&after));
+        CHECK(before == after);
     }
-    const auto *program=rig.GetBakedProgram();CHECK(program);
-    if(!program)return;
-    const auto &B=program->GetStepGraph();const auto slot=B.index.find(kJoint);
-    CHECK(slot!=B.index.end());if(slot==B.index.end())return;
-    const auto contains=[](const auto &ranges,RigExecBakedSlotDomain domain,uint32_t value) {
-        for(const auto &range:ranges)if(range.domain==domain && range.begin<=value && value<range.end)return true;
+    const auto *program = rig.GetBakedProgram();
+    CHECK(program);
+    if (!program)
+        return;
+    const auto &B = program->GetStepGraph();
+    const auto slot = B.index.find(kJoint);
+    CHECK(slot != B.index.end());
+    if (slot == B.index.end())
+        return;
+    const auto contains = [](const auto &ranges, RigExecBakedSlotDomain domain,
+                             uint32_t value) {
+        for (const auto &range : ranges)
+            if (range.domain == domain && range.begin <= value &&
+                value < range.end)
+                return true;
         return false;
     };
-    bool produced=false;
-    for(size_t rest=0;rest<B.steps.size();++rest)if(B.steps[rest].kind==RigExecBakedStepKind::RestCompose &&
-        contains(B.steps[rest].writes,RigExecBakedSlotDomain::Rest,uint32_t(slot->second)))
-        for(size_t sourceOp=0;sourceOp<B.steps.size();++sourceOp)if(B.steps[sourceOp].kind==RigExecBakedStepKind::SpaceExpression)
-            for(const auto &write:B.steps[sourceOp].writes)if(write.domain==RigExecBakedSlotDomain::SpaceValue)
-                for(uint32_t value=write.begin;value<write.end;++value)
-                    if(contains(B.steps[rest].reads,RigExecBakedSlotDomain::SpaceValue,value) &&
-                       std::find(B.opGraph.ops[rest].predecessors.begin(),B.opGraph.ops[rest].predecessors.end(),uint32_t(sourceOp))!=B.opGraph.ops[rest].predecessors.end())produced=true;
+    bool produced = false;
+    for (size_t rest = 0; rest < B.steps.size(); ++rest)
+        if (B.steps[rest].kind == RigExecBakedStepKind::RestCompose &&
+            contains(B.steps[rest].writes, RigExecBakedSlotDomain::Rest,
+                     uint32_t(slot->second)))
+            for (size_t sourceOp = 0; sourceOp < B.steps.size(); ++sourceOp)
+                if (B.steps[sourceOp].kind ==
+                    RigExecBakedStepKind::SpaceExpression)
+                    for (const auto &write : B.steps[sourceOp].writes)
+                        if (write.domain == RigExecBakedSlotDomain::SpaceValue)
+                            for (uint32_t value = write.begin;
+                                 value < write.end; ++value)
+                                if (contains(B.steps[rest].reads,
+                                             RigExecBakedSlotDomain::SpaceValue,
+                                             value) &&
+                                    std::find(
+                                        B.opGraph.ops[rest]
+                                            .predecessors.begin(),
+                                        B.opGraph.ops[rest].predecessors.end(),
+                                        uint32_t(sourceOp)) !=
+                                        B.opGraph.ops[rest].predecessors.end())
+                                    produced = true;
     CHECK(produced);
 }
 
@@ -486,18 +533,18 @@ TestARestThatMovesAloneStillRecomposes(const std::string &examplesDir)
     const SdfPath rigPath("/Asset/Rig");
     stage->DefinePrim(rigPath, TfToken("RigExecRoot"));
     stage->DefinePrim(SdfPath("/Asset/Rig/Controls"), TfToken("Scope"));
-    stage->DefinePrim(SdfPath("/Asset/Rig/Controls/Ctl"),
-                      TfToken("RigExecControl"))
+    stage
+        ->DefinePrim(SdfPath("/Asset/Rig/Controls/Ctl"),
+                     TfToken("RigExecControl"))
         .CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double)
         .Set(0.25);
     stage->DefinePrim(SdfPath("/Asset/Rig/Joints"), TfToken("Scope"));
-    const UsdPrim root = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Joints/Root"), TfToken("RigExecJoint"));
+    const UsdPrim root = stage->DefinePrim(SdfPath("/Asset/Rig/Joints/Root"),
+                                           TfToken("RigExecJoint"));
     root.CreateAttribute(TfToken("rest:tx"), SdfValueTypeNames->Double)
         .Set(1.0);
     const SdfPath childPath("/Asset/Rig/Joints/Root/Child");
-    const UsdPrim child =
-        stage->DefinePrim(childPath, TfToken("RigExecJoint"));
+    const UsdPrim child = stage->DefinePrim(childPath, TfToken("RigExecJoint"));
     const UsdAttribute restTx =
         child.CreateAttribute(TfToken("rest:tx"), SdfValueTypeNames->Double);
     restTx.Set(0.0, UsdTimeCode(1.0));
@@ -519,10 +566,9 @@ TestARestThatMovesAloneStillRecomposes(const std::string &examplesDir)
     // Frame 1 first, so the frames that follow are STEADY-STATE frames --
     // the state in which the dirty set, and not the first-run "everything
     // runs" path, decides what is recomposed.
-    for (const auto &[frame, x] : {std::make_pair(1.0, 1.0),
-                                   std::make_pair(2.0, 3.0),
-                                   std::make_pair(3.0, 6.0),
-                                   std::make_pair(1.0, 1.0)}) {
+    for (const auto &[frame, x] :
+         {std::make_pair(1.0, 1.0), std::make_pair(2.0, 3.0),
+          std::make_pair(3.0, 6.0), std::make_pair(1.0, 1.0)}) {
         const RigExecRigPose pose = rig.Evaluate(UsdTimeCode(frame));
         CHECK(pose.valid);
         const auto found = pose.jointFramesFinal.find(childPath);
@@ -531,8 +577,8 @@ TestARestThatMovesAloneStillRecomposes(const std::string &examplesDir)
             const double origin = found->second.Origin()[0];
             CHECK(GfIsClose(origin, x, 1e-9));
             if (!GfIsClose(origin, x, 1e-9)) {
-                std::printf("    frame %g: child at %g, expected %g\n",
-                            frame, origin, x);
+                std::printf("    frame %g: child at %g, expected %g\n", frame,
+                            origin, x);
             }
         }
     }
@@ -542,33 +588,33 @@ TestARestThatMovesAloneStillRecomposes(const std::string &examplesDir)
 // generation, so the compiled rig cannot hold the answer -- the same guard the skin
 // layout applies to its own three attributes.
 void
-TestAPropertyChainOnARestRefusesTheCompiledRigPath(const std::string &examplesDir)
+TestAPropertyChainOnARestRefusesTheCompiledRigPath(
+    const std::string &examplesDir)
 {
     size_t compiledRigRests = 1;
     const auto addRestOffset = [](const UsdStageRefPtr &stage) {
-            EditInSession(stage);
-            // Under the rig's Movers scope, which is where the mover walk
-            // composes a rig's mover stack from.
-            const SdfPath mover =
-                kRig.AppendChild(TfToken("Movers"))
-                    .AppendChild(TfToken("RestOffset"));
-            const UsdPrim prim =
-                stage->DefinePrim(mover, TfToken("RigExecMatrixMathMover"));
-            prim.ApplyAPI(TfToken("RigExecMoverAPI"));
-            prim.CreateAttribute(TfToken("rigExec:operation"),
-                                 SdfValueTypeNames->Token)
-                .Set(TfToken("multiply"));
-            GfMatrix4d offset(1.0);
-            offset[3][0] = 3.0;
-            prim.CreateAttribute(TfToken("inputs:value"),
-                                 SdfValueTypeNames->Matrix4d)
-                .Set(offset);
-            prim.CreateAttribute(TfToken("inputs:defaultWeight"),
-                                 SdfValueTypeNames->Float)
-                .Set(1.0f);
-            prim.CreateRelationship(TfToken("rigExec:moves"))
-                .SetTargets({kJoint.AppendProperty(TfToken("rest:space"))});
-        };
+        EditInSession(stage);
+        // Under the rig's Movers scope, which is where the mover walk
+        // composes a rig's mover stack from.
+        const SdfPath mover = kRig.AppendChild(TfToken("Movers"))
+                                  .AppendChild(TfToken("RestOffset"));
+        const UsdPrim prim =
+            stage->DefinePrim(mover, TfToken("RigExecMatrixMathMover"));
+        prim.ApplyAPI(TfToken("RigExecMoverAPI"));
+        prim.CreateAttribute(TfToken("rigExec:operation"),
+                             SdfValueTypeNames->Token)
+            .Set(TfToken("multiply"));
+        GfMatrix4d offset(1.0);
+        offset[3][0] = 3.0;
+        prim.CreateAttribute(TfToken("inputs:value"),
+                             SdfValueTypeNames->Matrix4d)
+            .Set(offset);
+        prim.CreateAttribute(TfToken("inputs:defaultWeight"),
+                             SdfValueTypeNames->Float)
+            .Set(1.0f);
+        prim.CreateRelationship(TfToken("rigExec:moves"))
+            .SetTargets({kJoint.AppendProperty(TfToken("rest:space"))});
+    };
     const std::vector<RigExecRigPose> subject =
         Run(examplesDir, addRestOffset, &compiledRigRests);
     // Seg2 and its two joint descendants vary; four controls and Seg1 stay static.
@@ -578,12 +624,14 @@ TestAPropertyChainOnARestRefusesTheCompiledRigPath(const std::string &examplesDi
     // rather than being bypassed by its sampled raw provider value.
     size_t referenceRests = 0;
     const auto reference = Run(
-        examplesDir, [](const UsdStageRefPtr &stage) {
+        examplesDir,
+        [](const UsdStageRefPtr &stage) {
             EditInSession(stage);
             GfMatrix4d authored(1.0);
             CHECK(RestSpace(stage).Get(&authored));
             CHECK(RestSpace(stage).Set(authored * Translation(3.0)));
-        }, &referenceRests);
+        },
+        &referenceRests);
     CHECK(referenceRests > 0);
     CHECK(reference.size() == subject.size());
     if (reference.size() == subject.size()) {
@@ -598,7 +646,8 @@ TestAPropertyChainOnARestRefusesTheCompiledRigPath(const std::string &examplesDi
     const auto stage = UsdStage::Open(StagePath(examplesDir));
     const auto referenceStage = UsdStage::Open(StagePath(examplesDir));
     CHECK(stage && referenceStage);
-    if (!stage || !referenceStage) return;
+    if (!stage || !referenceStage)
+        return;
     EditInSession(stage);
     EditInSession(referenceStage);
     GfMatrix4d rawRest(1.0);
@@ -615,11 +664,13 @@ TestAPropertyChainOnARestRefusesTheCompiledRigPath(const std::string &examplesDi
     CHECK(authored.Compile(&errors));
     const auto *program = rig.GetBakedProgram();
     CHECK(program);
-    if (!program) return;
+    if (!program)
+        return;
     const auto &B = program->GetStepGraph();
     const auto slot = B.index.find(kJoint);
     CHECK(slot != B.index.end());
-    if (slot == B.index.end()) return;
+    if (slot == B.index.end())
+        return;
     const SdfPath target = RestSpace(stage).GetPath();
     // The shared expression, when a reader keeps it from pruning, is not the
     // value the ladder reads.
@@ -635,15 +686,18 @@ TestAPropertyChainOnARestRefusesTheCompiledRigPath(const std::string &examplesDi
                        route.readPhase == TfToken("final");
     CHECK(ownFinal);
     const size_t digest = rig.GetCompiledRigSignature();
-    const auto offsetInput = stage->GetPrimAtPath(
-        kRig.AppendChild(TfToken("Movers")).AppendChild(TfToken("RestOffset")))
-        .GetAttribute(TfToken("inputs:value"));
+    const auto offsetInput =
+        stage
+            ->GetPrimAtPath(kRig.AppendChild(TfToken("Movers"))
+                                .AppendChild(TfToken("RestOffset")))
+            .GetAttribute(TfToken("inputs:value"));
     std::vector<RigExecRigPose> initial;
     for (double x : {3.0, 7.0, 7.0, 0.0, 3.0}) {
         CHECK(offsetInput.Set(Translation(x)));
         CHECK(RestSpace(referenceStage).Set(rawRest * Translation(x)));
         for (size_t frame = 0; frame < kFrames.size(); ++frame) {
-            const auto expected = authored.Evaluate(UsdTimeCode(kFrames[frame]));
+            const auto expected =
+                authored.Evaluate(UsdTimeCode(kFrames[frame]));
             const auto actual = rig.Evaluate(UsdTimeCode(kFrames[frame]));
             CHECK(expected.valid && actual.valid);
             CHECK(expected.jointMatricesFinal == actual.jointMatricesFinal);
@@ -651,11 +705,14 @@ TestAPropertyChainOnARestRefusesTheCompiledRigPath(const std::string &examplesDi
             GfMatrix4d unchanged(1.0);
             CHECK(driver.Get(&unchanged));
             CHECK(unchanged == rawRest);
-            if (initial.size() < kFrames.size()) initial.push_back(actual);
+            if (initial.size() < kFrames.size())
+                initial.push_back(actual);
             else if (x == 7.0)
-                CHECK(actual.jointMatricesFinal != initial[frame].jointMatricesFinal);
+                CHECK(actual.jointMatricesFinal !=
+                      initial[frame].jointMatricesFinal);
             else if (x == 3.0)
-                CHECK(actual.jointMatricesFinal == initial[frame].jointMatricesFinal);
+                CHECK(actual.jointMatricesFinal ==
+                      initial[frame].jointMatricesFinal);
         }
     }
 }
@@ -671,7 +728,8 @@ TestAnInteractiveOverrideOnARestIsFollowed(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(StagePath(examplesDir));
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecRigEvaluator rig(stage, kRig);
     std::vector<std::string> errors;
     CHECK(rig.Compile(&errors));
@@ -689,7 +747,8 @@ TestAnInteractiveOverrideOnARestIsFollowed(const std::string &examplesDir)
     const std::vector<RigExecRigPose> reference =
         RunWithConstantRestTx(examplesDir, 3.0, &referenceRests);
     CHECK(referenceRests > 0);
-    if (reference.size() != kFrames.size()) return;
+    if (reference.size() != kFrames.size())
+        return;
     for (size_t i = 0; i < kFrames.size(); ++i) {
         const RigExecRigPose dragged = rig.Evaluate(UsdTimeCode(kFrames[i]));
         CHECK(dragged.valid);
@@ -701,7 +760,8 @@ TestAnInteractiveOverrideOnARestIsFollowed(const std::string &examplesDir)
     // rest:space, the matrix the ladder composes against, which is the
     // channel the manipulation path previews when it drags a joint's rest.
     GfMatrix4d space(1.0);
-    stage->GetPrimAtPath(kJoint).GetAttribute(TfToken("rest:space"))
+    stage->GetPrimAtPath(kJoint)
+        .GetAttribute(TfToken("rest:space"))
         .Get(&space);
     GfMatrix4d moved = space;
     moved[3][1] += 3.0;
@@ -713,11 +773,13 @@ TestAnInteractiveOverrideOnARestIsFollowed(const std::string &examplesDir)
         [&moved](const UsdStageRefPtr &referenceStage) {
             EditInSession(referenceStage);
             referenceStage->GetPrimAtPath(kJoint)
-                .GetAttribute(TfToken("rest:space")).Set(moved);
+                .GetAttribute(TfToken("rest:space"))
+                .Set(moved);
         },
         &spaceReferenceRests);
     CHECK(spaceReferenceRests > 0);
-    if (spaceReference.size() != kFrames.size()) return;
+    if (spaceReference.size() != kFrames.size())
+        return;
     for (size_t i = 0; i < kFrames.size(); ++i) {
         const RigExecRigPose dragged = rig.Evaluate(UsdTimeCode(kFrames[i]));
         CHECK(dragged.valid);
@@ -744,16 +806,17 @@ TestAnOverrideElsewhereLeavesTheRestsAlone(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(StagePath(examplesDir));
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecRigEvaluator rig(stage, kRig);
     std::vector<std::string> errors;
     CHECK(rig.Compile(&errors));
     CHECK(rig.GetCompiledRigRestFrameCount() > 0);
     const RigExecRigPose before = rig.Evaluate(UsdTimeCode(kFrames[1]));
 
-    rig.SetInteractiveOverrides({RigExecValueOverride{
-        SdfPath("/TailAsset/Rig/Controls/Tail1"), TfToken(),
-        TfToken("avars:rz"), VtValue(12.0)}});
+    rig.SetInteractiveOverrides(
+        {RigExecValueOverride{SdfPath("/TailAsset/Rig/Controls/Tail1"),
+                              TfToken(), TfToken("avars:rz"), VtValue(12.0)}});
     const RigExecRigPose dragged = rig.Evaluate(UsdTimeCode(kFrames[1]));
     CHECK(dragged.valid);
     // The rests are unmoved, so the base frames are unmoved where no pose
@@ -779,55 +842,87 @@ TestAnOverrideElsewhereLeavesTheRestsAlone(const std::string &examplesDir)
 void
 TestAnUnavailableRequiredProviderRefusesCompile(const std::string &examplesDir)
 {
-    const std::string path=examplesDir+"/08_AimEyes.usda";
-    const SdfPath rigPath("/EyesAsset/Rig"),aim("/EyesAsset/Rig/Movers/Pose/AimL");
+    const std::string path = examplesDir + "/08_AimEyes.usda";
+    const SdfPath rigPath("/EyesAsset/Rig"),
+        aim("/EyesAsset/Rig/Movers/Pose/AimL");
     const SdfPath ghost("/EyesAsset/Rig/Controls/Ghost");
     const UsdTimeCode frame(1016.0);
-    const auto breakSource=[&](const UsdStageRefPtr &stage) {
-        EditInSession(stage);auto control=stage->DefinePrim(ghost,TfToken("RigExecControl"));
-        CHECK(control);CHECK(control.SetActive(false));
-        const auto target=stage->GetPrimAtPath(aim).GetRelationship(TfToken("rigExec:aimTarget"));
-        CHECK(target);CHECK(target.SetTargets({ghost}));
+    const auto breakSource = [&](const UsdStageRefPtr &stage) {
+        EditInSession(stage);
+        auto control = stage->DefinePrim(ghost, TfToken("RigExecControl"));
+        CHECK(control);
+        CHECK(control.SetActive(false));
+        const auto target = stage->GetPrimAtPath(aim).GetRelationship(
+            TfToken("rigExec:aimTarget"));
+        CHECK(target);
+        CHECK(target.SetTargets({ghost}));
     };
-    const auto referenceStage=UsdStage::Open(path);CHECK(referenceStage);if(!referenceStage)return;
-    RigExecRigEvaluator reference(referenceStage,rigPath);std::vector<std::string> errors;
-    CHECK(reference.Compile(&errors));const auto expected=reference.Evaluate(frame);
-    CHECK(expected.valid);CHECK(reference.GetBakedProgram());
-    const std::vector<std::string> refusal{"failed to prepare pose provider inputs"};
-    for(bool warm:{false,true}) {
-        const auto stage=UsdStage::Open(path);CHECK(stage);if(!stage)continue;
-        RigExecRigEvaluator rig(stage,rigPath);
-        if(warm) {
-            errors.clear();CHECK(rig.Compile(&errors));CHECK(rig.GetCompiledRigRestFrameCount()>0);
+    const auto referenceStage = UsdStage::Open(path);
+    CHECK(referenceStage);
+    if (!referenceStage)
+        return;
+    RigExecRigEvaluator reference(referenceStage, rigPath);
+    std::vector<std::string> errors;
+    CHECK(reference.Compile(&errors));
+    const auto expected = reference.Evaluate(frame);
+    CHECK(expected.valid);
+    CHECK(reference.GetBakedProgram());
+    const std::vector<std::string> refusal{
+        "failed to prepare pose provider inputs"};
+    for (bool warm : {false, true}) {
+        const auto stage = UsdStage::Open(path);
+        CHECK(stage);
+        if (!stage)
+            continue;
+        RigExecRigEvaluator rig(stage, rigPath);
+        if (warm) {
+            errors.clear();
+            CHECK(rig.Compile(&errors));
+            CHECK(rig.GetCompiledRigRestFrameCount() > 0);
             CHECK(rig.GetBakedProgram());
-            ComparePoses("before unavailable required provider edit",expected,rig.Evaluate(frame));
+            ComparePoses("before unavailable required provider edit", expected,
+                         rig.Evaluate(frame));
         }
         breakSource(stage);
-        std::string before;CHECK(stage->GetSessionLayer()->ExportToString(&before));
-        errors.clear();CHECK(!rig.Compile(&errors));CHECK(errors==refusal);
-        CHECK(rig.GetBakedProgram()==nullptr);
-        for(int held=0;held<2;++held) {
-            const auto actual=rig.Evaluate(frame);CHECK(!actual.valid);
-            CHECK(std::find(actual.diagnostics.begin(),actual.diagnostics.end(),refusal[0])!=actual.diagnostics.end());
-            CHECK(rig.GetBakedProgram()==nullptr);
+        std::string before;
+        CHECK(stage->GetSessionLayer()->ExportToString(&before));
+        errors.clear();
+        CHECK(!rig.Compile(&errors));
+        CHECK(errors == refusal);
+        CHECK(rig.GetBakedProgram() == nullptr);
+        for (int held = 0; held < 2; ++held) {
+            const auto actual = rig.Evaluate(frame);
+            CHECK(!actual.valid);
+            CHECK(std::find(actual.diagnostics.begin(),
+                            actual.diagnostics.end(),
+                            refusal[0]) != actual.diagnostics.end());
+            CHECK(rig.GetBakedProgram() == nullptr);
         }
-        std::string after;CHECK(stage->GetSessionLayer()->ExportToString(&after));CHECK(before==after);
-        RigExecInputReplayClearLayer(stage->GetSessionLayer());errors.clear();CHECK(rig.Compile(&errors));
-        CHECK(rig.GetCompiledRigRestFrameCount()>0);CHECK(rig.GetBakedProgram());
-        ComparePoses("unavailable required provider recovery",expected,rig.Evaluate(frame));
+        std::string after;
+        CHECK(stage->GetSessionLayer()->ExportToString(&after));
+        CHECK(before == after);
+        RigExecInputReplayClearLayer(stage->GetSessionLayer());
+        errors.clear();
+        CHECK(rig.Compile(&errors));
+        CHECK(rig.GetCompiledRigRestFrameCount() > 0);
+        CHECK(rig.GetBakedProgram());
+        ComparePoses("unavailable required provider recovery", expected,
+                     rig.Evaluate(frame));
     }
 }
 
 // Opens the tail, applies \p edit, and evaluates \p kFrames in \p mode.
 std::vector<RigExecRigPose>
 RunWithReferenceChecks(const std::string &examplesDir, const _Edit &edit,
-          bool referenceChecks)
+                       bool referenceChecks)
 {
     std::vector<RigExecRigPose> poses;
     UsdStageRefPtr stage = UsdStage::Open(StagePath(examplesDir));
     CHECK(stage);
-    if (!stage) return poses;
-    if (edit) edit(stage);
+    if (!stage)
+        return poses;
+    if (edit)
+        edit(stage);
     RigExecRigEvaluator rig(stage, kRig);
     rig.cpuReference = referenceChecks;
     std::vector<std::string> errors;
@@ -860,7 +955,8 @@ CheckARestValueEditAfterCompile(const std::string &examplesDir,
         EditInSession(stage);
         const UsdPrim target = stage->GetPrimAtPath(prim);
         CHECK(target);
-        if (!target) return;
+        if (!target)
+            return;
         UsdAttribute attribute = target.GetAttribute(restRx);
         if (!attribute) {
             attribute =
@@ -879,7 +975,8 @@ CheckARestValueEditAfterCompile(const std::string &examplesDir,
 
     UsdStageRefPtr stage = UsdStage::Open(StagePath(examplesDir));
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecRigEvaluator rig(stage, kRig);
     std::vector<std::string> errors;
     CHECK(rig.Compile(&errors));
@@ -900,8 +997,7 @@ CheckARestValueEditAfterCompile(const std::string &examplesDir,
         for (const std::string &diagnostic : pose.diagnostics) {
             CHECK(diagnostic.find("compiled rig rebuilt") == std::string::npos);
         }
-        ComparePoses(what + ", baked, frame " +
-                         std::to_string(int(kFrames[i])),
+        ComparePoses(what + ", baked, frame " + std::to_string(int(kFrames[i])),
                      bakedReference[i], pose);
     }
     // A value edit: the same compiled rig, still holding its rests as constants.
@@ -950,7 +1046,8 @@ CheckARestValueEditUnderTheParityCheck(const std::string &examplesDir,
         EditInSession(stage);
         const UsdPrim target = stage->GetPrimAtPath(prim);
         CHECK(target);
-        if (!target) return;
+        if (!target)
+            return;
         UsdAttribute attribute = target.GetAttribute(restRx);
         if (!attribute) {
             attribute =
@@ -958,8 +1055,7 @@ CheckARestValueEditUnderTheParityCheck(const std::string &examplesDir,
         }
         CHECK(attribute.Set(value));
     };
-    const bool mode =
-        true;
+    const bool mode = true;
     const std::vector<RigExecRigPose> reference =
         RunWithReferenceChecks(examplesDir, author, mode);
     if (reference.size() != kFrames.size()) {
@@ -968,7 +1064,8 @@ CheckARestValueEditUnderTheParityCheck(const std::string &examplesDir,
 
     UsdStageRefPtr stage = UsdStage::Open(StagePath(examplesDir));
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecRigEvaluator rig(stage, kRig);
     rig.cpuReference = true;
     std::vector<std::string> errors;
@@ -1093,7 +1190,8 @@ TestPruningKeepsProviderDiagnostics(const std::string &examplesDir)
         const PruneKnobs knobs(prune);
         const UsdStageRefPtr stage = UsdStage::Open(StagePath(examplesDir));
         CHECK(stage);
-        if (!stage) return out;
+        if (!stage)
+            return out;
         edit(stage);
         RigExecRigEvaluator rig(stage, kRig);
         std::vector<std::string> errors;
@@ -1110,7 +1208,8 @@ TestPruningKeepsProviderDiagnostics(const std::string &examplesDir)
         out.skipped = rig.GetSkippedOperations();
         const RigExecBakedProgram *program = rig.GetBakedProgram();
         CHECK(program != nullptr);
-        if (!program) return out;
+        if (!program)
+            return out;
         const RigExecBakedProgramImpl &B = program->GetStepGraph();
         out.cycles = B.opGraph.cycles;
         out.routed = B.GetProviderProgram().routedInputs.size();
@@ -1125,8 +1224,7 @@ TestPruningKeepsProviderDiagnostics(const std::string &examplesDir)
         CHECK(off.poses.size() == on.poses.size());
         for (size_t i = 0; i < off.poses.size() && i < on.poses.size(); ++i) {
             CHECK(off.poses[i].valid == on.poses[i].valid);
-            ComparePoses(what + " at frame " +
-                             std::to_string(int(kFrames[i])),
+            ComparePoses(what + " at frame " + std::to_string(int(kFrames[i])),
                          off.poses[i], on.poses[i]);
             CHECK(off.poses[i].diagnostics == on.poses[i].diagnostics);
         }
@@ -1141,13 +1239,15 @@ TestPruningKeepsProviderDiagnostics(const std::string &examplesDir)
         EditInSession(stage);
         GfMatrix4d rawRest(1.0);
         CHECK(RestSpace(stage).Get(&rawRest));
-        const UsdAttribute driver = stage->GetPrimAtPath(kJoint).CreateAttribute(
-            TfToken("inputs:ownRestDriver"), SdfValueTypeNames->Matrix4d);
+        const UsdAttribute driver =
+            stage->GetPrimAtPath(kJoint).CreateAttribute(
+                TfToken("inputs:ownRestDriver"), SdfValueTypeNames->Matrix4d);
         CHECK(driver.Set(rawRest));
         CHECK(RestSpace(stage).SetConnections({driver.GetPath()}));
-        const UsdPrim prim = stage->DefinePrim(
-            kRig.AppendChild(TfToken("Movers")).AppendChild(TfToken("RestOffset")),
-            TfToken("RigExecMatrixMathMover"));
+        const UsdPrim prim =
+            stage->DefinePrim(kRig.AppendChild(TfToken("Movers"))
+                                  .AppendChild(TfToken("RestOffset")),
+                              TfToken("RigExecMatrixMathMover"));
         prim.ApplyAPI(TfToken("RigExecMoverAPI"));
         prim.CreateAttribute(TfToken("rigExec:operation"),
                              SdfValueTypeNames->Token)
@@ -1185,7 +1285,8 @@ TestPruningKeepsProviderDiagnostics(const std::string &examplesDir)
                 .CreateAttribute(TfToken("avars:rspin"),
                                  SdfValueTypeNames->Double);
         CHECK(a && b);
-        if (!a || !b) return;
+        if (!a || !b)
+            return;
         CHECK(a.SetConnections({b.GetPath()}));
         CHECK(b.SetConnections({a.GetPath()}));
     };
@@ -1215,7 +1316,7 @@ SchemaResourceDir(const std::string &examplesDir)
 #endif
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
@@ -1227,8 +1328,7 @@ main(int argc, char **argv)
     const std::string examplesDir = argv[1];
     const std::string resources = SchemaResourceDir(examplesDir);
     if (PlugRegistry::GetInstance().RegisterPlugins(resources).empty()) {
-        std::printf("FATAL: no schema plugin found at %s\n",
-                    resources.c_str());
+        std::printf("FATAL: no schema plugin found at %s\n", resources.c_str());
         return 2;
     }
 

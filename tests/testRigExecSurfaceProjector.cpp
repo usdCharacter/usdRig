@@ -24,13 +24,13 @@ PXR_NAMESPACE_USING_DIRECTIVE
 static int failures = 0;
 static int checks = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                  \
-        ++checks;                                                         \
-        if (!(cond)) {                                                    \
-            ++failures;                                                   \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);      \
-        }                                                                 \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        ++checks;                                                              \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -91,17 +91,20 @@ def Xform "World"
 }
 )USDA";
 
-GfMatrix4d Translate(const GfVec3d &value)
+GfMatrix4d
+Translate(const GfVec3d &value)
 {
     return GfMatrix4d(1.0).SetTranslate(value);
 }
 
-GfMatrix4d Rotate(double degrees)
+GfMatrix4d
+Rotate(double degrees)
 {
     return GfMatrix4d(1.0).SetRotate(GfRotation(GfVec3d(0, 1, 0), degrees));
 }
 
-GfMatrix4d Scale(const GfVec3d &value)
+GfMatrix4d
+Scale(const GfVec3d &value)
 {
     return GfMatrix4d(1.0).SetScale(value);
 }
@@ -112,20 +115,22 @@ struct Placement {
     GfMatrix4d parent;
 };
 
-std::vector<Placement> Placements()
+std::vector<Placement>
+Placements()
 {
     return {{"identity", GfMatrix4d(1.0), GfMatrix4d(1.0)},
             {"translate20", Translate(GfVec3d(20, 0, 0)), GfMatrix4d(1.0)},
             {"rotate30", Rotate(30), GfMatrix4d(1.0)},
             {"scale2", Scale(GfVec3d(2)), GfMatrix4d(1.0)},
             {"nonuniform", Scale(GfVec3d(2, 0.6, 3)), GfMatrix4d(1.0)},
-            {"nested", Scale(GfVec3d(2)) * Rotate(30) *
-                       Translate(GfVec3d(20, 3, -8)),
-                       Rotate(-15) * Translate(GfVec3d(-6, 9, 2))}};
+            {"nested",
+             Scale(GfVec3d(2)) * Rotate(30) * Translate(GfVec3d(20, 3, -8)),
+             Rotate(-15) * Translate(GfVec3d(-6, 9, 2))}};
 }
 
-void Place(const UsdStageRefPtr &stage, const SdfPath &path,
-           const GfMatrix4d &matrix)
+void
+Place(const UsdStageRefPtr &stage, const SdfPath &path,
+      const GfMatrix4d &matrix)
 {
     CHECK(UsdGeomXformable(stage->GetPrimAtPath(path))
               .AddTransformOp(UsdGeomXformOp::PrecisionDouble,
@@ -135,7 +140,8 @@ void Place(const UsdStageRefPtr &stage, const SdfPath &path,
 
 using LayerState = std::vector<std::pair<SdfLayerHandle, std::string>>;
 
-LayerState SnapshotLayers(const UsdStageRefPtr &stage)
+LayerState
+SnapshotLayers(const UsdStageRefPtr &stage)
 {
     LayerState result;
     for (const SdfLayerHandle &layer : stage->GetUsedLayers()) {
@@ -146,7 +152,8 @@ LayerState SnapshotLayers(const UsdStageRefPtr &stage)
     return result;
 }
 
-void CheckLayersUnchanged(const LayerState &before)
+void
+CheckLayersUnchanged(const LayerState &before)
 {
     for (const auto &[layer, text] : before) {
         std::string after;
@@ -155,7 +162,8 @@ void CheckLayersUnchanged(const LayerState &before)
     }
 }
 
-bool Near(const GfMatrix4d &a, const GfMatrix4d &b, double tolerance)
+bool
+Near(const GfMatrix4d &a, const GfMatrix4d &b, double tolerance)
 {
     for (int i = 0; i < 4; ++i) {
         for (int j = 0; j < 4; ++j) {
@@ -168,7 +176,8 @@ bool Near(const GfMatrix4d &a, const GfMatrix4d &b, double tolerance)
     return true;
 }
 
-bool Compile(RigExecRigEvaluator *rig)
+bool
+Compile(RigExecRigEvaluator *rig)
 {
     std::vector<std::string> errors;
     const bool compiled = rig->Compile(&errors);
@@ -191,8 +200,8 @@ bool Compile(RigExecRigEvaluator *rig)
     return true;
 }
 
-bool ReadMatrix(const RigExecRigPose &pose, const SdfPath &path,
-                GfMatrix4d *value)
+bool
+ReadMatrix(const RigExecRigPose &pose, const SdfPath &path, GfMatrix4d *value)
 {
     const auto found = pose.movedProperties.find(path);
     CHECK(found != pose.movedProperties.end());
@@ -207,7 +216,8 @@ bool ReadMatrix(const RigExecRigPose &pose, const SdfPath &path,
     return true;
 }
 
-void CheckPose(const RigExecRigPose &pose)
+void
+CheckPose(const RigExecRigPose &pose)
 {
     CHECK(pose.valid);
     for (const std::string &diagnostic : pose.diagnostics) {
@@ -218,20 +228,19 @@ void CheckPose(const RigExecRigPose &pose)
     }
 }
 
-void TestAnalyticSurface()
+void
+TestAnalyticSurface()
 {
     const SdfPath rigPath("/World/Asset/Rig");
     const SdfPath pointsPath("/World/Asset/Surface.points");
     const SdfPath framePath("/World/Asset/Surface.primvars:projectionFrame");
     const SdfPath dialsPath("/World/Asset/Surface.primvars:projectionDials");
-    const VtVec3fArray rest = {{-2, -2, 0}, {2, -2, 0},
-                             {2, 2, 0}, {-2, 2, 0}};
+    const VtVec3fArray rest = {{-2, -2, 0}, {2, -2, 0}, {2, 2, 0}, {-2, 2, 0}};
     for (const Placement &placement : Placements()) {
         for (const bool reproject : {false, true}) {
             {
                 std::printf("  analytic %-10s %s %s\n", placement.name,
-                            reproject ? "reproject" : "material",
-                            "graph");
+                            reproject ? "reproject" : "material", "graph");
                 const SdfLayerRefPtr layer = SdfLayer::CreateAnonymous(".usda");
                 CHECK(layer->ImportFromString(kFixture));
                 const UsdStageRefPtr stage = UsdStage::Open(layer);
@@ -253,7 +262,8 @@ void TestAnalyticSurface()
                 CHECK(rig.GetSurfaceProjectorTargets() ==
                       std::vector<SdfPath>{framePath});
                 for (int frame = 1; frame <= 3; ++frame) {
-                    const RigExecRigPose pose = rig.Evaluate(UsdTimeCode(frame));
+                    const RigExecRigPose pose =
+                        rig.Evaluate(UsdTimeCode(frame));
                     CheckPose(pose);
                     const double tx = frame == 2 ? 0.25 : 0.0;
                     GfMatrix4d projectorMatrix;
@@ -277,19 +287,20 @@ void TestAnalyticSurface()
                             for (GfVec3f &point : expected) {
                                 point[0] += static_cast<float>(tx);
                             }
-                            CHECK(moved->second.Get<VtVec3fArray>() == expected);
+                            CHECK(moved->second.Get<VtVec3fArray>() ==
+                                  expected);
                         }
                     }
                 }
-                CHECK(rig.GetBakedGenerationCount() ==
-                      3);
+                CHECK(rig.GetBakedGenerationCount() == 3);
                 CheckLayersUnchanged(before);
             }
         }
     }
 }
 
-void TestOutputSemantics()
+void
+TestOutputSemantics()
 {
     const SdfPath firstPath("/World/Asset/Rig/Movers/Project");
     const SdfPath secondPath("/World/Asset/Rig/Movers/ProjectOther");
@@ -315,15 +326,16 @@ void TestOutputSemantics()
             CHECK(second.GetRelationship(TfToken("rigExec:sources"))
                       .SetTargets({SdfPath("/World/Asset/Rig/Source")}));
             CHECK(second.GetAttribute(TfToken("rigExec:shaderPrimvar"))
-                      .Set(TfToken(combination == 1 ? "" :
-                                   combination == 2 ? "projectionDials" :
-                                                      "projectionFrame")));
+                      .Set(TfToken(combination == 1   ? ""
+                                   : combination == 2 ? "projectionDials"
+                                                      : "projectionFrame")));
             CHECK(second.GetAttribute(TfToken("rigExec:shaderDialPrimvar"))
-                      .Set(TfToken(combination == 2 ? "" :
-                                   combination == 1 ? "projectionFrame" :
-                                                      "projectionDials")));
+                      .Set(TfToken(combination == 2   ? ""
+                                   : combination == 1 ? "projectionFrame"
+                                                      : "projectionDials")));
             if (combination == 2) {
-                conflict = SdfPath("/World/Asset/Surface.primvars:projectionDials");
+                conflict =
+                    SdfPath("/World/Asset/Surface.primvars:projectionDials");
             }
         }
         const LayerState before = SnapshotLayers(stage);
@@ -346,16 +358,16 @@ void TestOutputSemantics()
             CheckPose(pose);
             CHECK(pose.movedProperties.count(
                       SdfPath("/World/Asset/Surface.points")) == 1);
-            CHECK(pose.movedProperties.count(
-                      SdfPath("/World/Asset/Surface.primvars:projectionFrame")) == 0);
-            CHECK(pose.movedProperties.count(
-                      SdfPath("/World/Asset/Surface.primvars:projectionDials")) == 0);
+            CHECK(pose.movedProperties.count(SdfPath(
+                      "/World/Asset/Surface.primvars:projectionFrame")) == 0);
+            CHECK(pose.movedProperties.count(SdfPath(
+                      "/World/Asset/Surface.primvars:projectionDials")) == 0);
             if (!errors.empty()) {
                 const std::string &error = errors.front();
                 CHECK(error.find(conflict.GetString()) != std::string::npos);
                 CHECK(error.find(firstPath.GetString()) != std::string::npos);
-                CHECK(error.find(combination == 0 ? firstPath.GetString() :
-                                                   secondPath.GetString()) !=
+                CHECK(error.find(combination == 0 ? firstPath.GetString()
+                                                  : secondPath.GetString()) !=
                       std::string::npos);
                 CHECK(error.find("SurfaceProjector") != std::string::npos);
                 CHECK(error.find("ShaderDials") != std::string::npos);
@@ -364,14 +376,16 @@ void TestOutputSemantics()
         } else {
             CHECK(errors.empty());
             CHECK(rig.GetSkippedOperations().empty());
-            CHECK(rig.GetSurfaceProjectorTargets() == std::vector<SdfPath>{
-                SdfPath("/World/Asset/Surface.primvars:projectionFrame")});
+            CHECK(rig.GetSurfaceProjectorTargets() ==
+                  std::vector<SdfPath>{SdfPath(
+                      "/World/Asset/Surface.primvars:projectionFrame")});
         }
         CheckLayersUnchanged(before);
     }
 }
 
-void TestBiped(const std::string &examples)
+void
+TestBiped(const std::string &examples)
 {
     const SdfPath rigPath("/Biped/Rig");
     const SdfPath left("/Biped/Geom/l_eye_geo.primvars:eyeProjector");
@@ -380,10 +394,9 @@ void TestBiped(const std::string &examples)
     std::vector<VtValue> referencePoints;
     for (const Placement &placement : Placements()) {
         {
-            std::printf("  biped    %-10s %s\n", placement.name,
-                        "graph");
-            const UsdStageRefPtr stage = UsdStage::Open(
-                examples + "/biped/Biped_stack.usda");
+            std::printf("  biped    %-10s %s\n", placement.name, "graph");
+            const UsdStageRefPtr stage =
+                UsdStage::Open(examples + "/biped/Biped_stack.usda");
             CHECK(stage);
             if (!stage) {
                 continue;
@@ -396,7 +409,8 @@ void TestBiped(const std::string &examples)
             if (!Compile(&rig)) {
                 continue;
             }
-            const std::vector<SdfPath> targets = rig.GetSurfaceProjectorTargets();
+            const std::vector<SdfPath> targets =
+                rig.GetSurfaceProjectorTargets();
             CHECK(targets == std::vector<SdfPath>({left, right}));
             const RigExecRigPose pose = rig.Evaluate(UsdTimeCode(1));
             CheckPose(pose);
@@ -407,8 +421,8 @@ void TestBiped(const std::string &examples)
                 if (ReadMatrix(pose, target, &matrix)) {
                     matrices.push_back(matrix);
                 }
-                const SdfPath geometry = target.GetPrimPath()
-                    .AppendProperty(TfToken("points"));
+                const SdfPath geometry =
+                    target.GetPrimPath().AppendProperty(TfToken("points"));
                 const auto moved = pose.movedProperties.find(geometry);
                 CHECK(moved != pose.movedProperties.end());
                 if (moved != pose.movedProperties.end()) {
@@ -424,14 +438,13 @@ void TestBiped(const std::string &examples)
                 referencePoints = points;
             } else {
                 CHECK(matrices.size() == reference.size());
-                for (size_t i = 0; i < std::min(matrices.size(), reference.size());
-                     ++i) {
+                for (size_t i = 0;
+                     i < std::min(matrices.size(), reference.size()); ++i) {
                     CHECK(Near(matrices[i], reference[i], 1e-5));
                 }
                 CHECK(points == referencePoints);
             }
-            CHECK(rig.GetBakedGenerationCount() ==
-                  1);
+            CHECK(rig.GetBakedGenerationCount() == 1);
             CheckLayersUnchanged(before);
         }
     }
@@ -439,7 +452,8 @@ void TestBiped(const std::string &examples)
 
 } // namespace
 
-int main(int argc, char **argv)
+int
+main(int argc, char **argv)
 {
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     CHECK(argc == 2);

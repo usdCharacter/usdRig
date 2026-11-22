@@ -7,16 +7,20 @@
 namespace rigExec {
 
 struct RigExecBakedOpIdentityRemap;
-bool RigExecBakedEffectiveMemo(const RigExecBakedProgramImpl &,uint32_t,
-    std::string *,std::vector<uint32_t> *,std::vector<std::pair<uint32_t,uint32_t>> *,
-    const RigExecBakedOpIdentityRemap *remap=nullptr,bool contentLeaves=false);
-void RigExecBakedAdoptSkinOpState(RigExecBakedProgramImpl *,const RigExecBakedProgramImpl &);
+bool
+RigExecBakedEffectiveMemo(const RigExecBakedProgramImpl &, uint32_t,
+                          std::string *, std::vector<uint32_t> *,
+                          std::vector<std::pair<uint32_t, uint32_t>> *,
+                          const RigExecBakedOpIdentityRemap *remap = nullptr,
+                          bool contentLeaves = false);
+void RigExecBakedAdoptSkinOpState(RigExecBakedProgramImpl *,
+                                  const RigExecBakedProgramImpl &);
 bool RigExecBakedCompileOpGraph(RigExecBakedProgramImpl *, std::string *);
 
 bool RigExecBakedTranslateOpGraph(RigExecBakedProgramImpl *, std::string *);
 
 bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *, UsdTimeCode, bool);
 
-}
+} // namespace rigExec
 
 #endif

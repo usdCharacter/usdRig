@@ -24,28 +24,36 @@ struct RigExecSceneHooks {
     bool (*capture)(const UsdStageRefPtr &, const SdfPath &,
                     const std::vector<UsdTimeCode> &, RigExecSceneDescriptors *,
                     std::string *) = nullptr;
-    bool (*select)(const RigExecSceneDescriptors &, const std::vector<UsdTimeCode> &,
-                   RigExecSceneDescriptors *, std::string *) = nullptr;
-    bool (*translatePoseInterpolator)(const RigExecSceneDescriptors &, const SdfPath &,
-                                  RigExecScenePoseInterpolatorDescriptor *,
-                                  std::string *) = nullptr;
-    bool (*translateSpaceSwitch)(const RigExecSceneDescriptors &, const SdfPath &,
-                             RigExecSceneSpaceSwitchDescriptor *, std::string *) = nullptr;
-    bool (*translateGeometry)(const RigExecSceneDescriptors &, const SdfPath &, const SdfPath &,
-                          RigExecSceneGeometryDescriptor *, std::string *,
-                          const RigExecGeometryRecord *) = nullptr;
+    bool (*select)(const RigExecSceneDescriptors &,
+                   const std::vector<UsdTimeCode> &, RigExecSceneDescriptors *,
+                   std::string *) = nullptr;
+    bool (*translatePoseInterpolator)(const RigExecSceneDescriptors &,
+                                      const SdfPath &,
+                                      RigExecScenePoseInterpolatorDescriptor *,
+                                      std::string *) = nullptr;
+    bool (*translateSpaceSwitch)(const RigExecSceneDescriptors &,
+                                 const SdfPath &,
+                                 RigExecSceneSpaceSwitchDescriptor *,
+                                 std::string *) = nullptr;
+    bool (*translateGeometry)(const RigExecSceneDescriptors &, const SdfPath &,
+                              const SdfPath &, RigExecSceneGeometryDescriptor *,
+                              std::string *,
+                              const RigExecGeometryRecord *) = nullptr;
     bool (*translateSolver)(const RigExecSceneDescriptors &, const SdfPath &,
-                        const std::map<SdfPath, RigExecPointFrame> &,
-                        RigExecSceneSolverDescriptor *, std::string *) = nullptr;
-    bool (*translateConstraint)(const RigExecSceneDescriptors &, const SdfPath &,
-                            const SdfPathVector &, RigExecSceneConstraintDescriptor *,
+                            const std::map<SdfPath, RigExecPointFrame> &,
+                            RigExecSceneSolverDescriptor *,
                             std::string *) = nullptr;
+    bool (*translateConstraint)(const RigExecSceneDescriptors &,
+                                const SdfPath &, const SdfPathVector &,
+                                RigExecSceneConstraintDescriptor *,
+                                std::string *) = nullptr;
     bool (*bindAutoClavicle)(const RigExecSceneDescriptors &, const SdfPath &,
-                             const RigExecSceneGraphBindingContext &, RigExecValueId,
-                             RigExecValueId, RigExecBoundAutoClavicle *,
+                             const RigExecSceneGraphBindingContext &,
+                             RigExecValueId, RigExecValueId,
+                             RigExecBoundAutoClavicle *,
                              std::string *) = nullptr;
-    bool (*runAutoClavicle)(const RigExecBoundAutoClavicle &, RigExecTypedValueStore *,
-                            std::string *) = nullptr;
+    bool (*runAutoClavicle)(const RigExecBoundAutoClavicle &,
+                            RigExecTypedValueStore *, std::string *) = nullptr;
 };
 
 // The table and its functions must remain alive for the process lifetime.
@@ -58,8 +66,9 @@ bool RigExecDispatchCaptureSceneDescriptors(
     std::string *error);
 
 bool RigExecDispatchSelectSceneDescriptorIdentities(
-    const RigExecSceneDescriptors &scene, const std::vector<UsdTimeCode> &identities,
-    RigExecSceneDescriptors *result, std::string *error);
+    const RigExecSceneDescriptors &scene,
+    const std::vector<UsdTimeCode> &identities, RigExecSceneDescriptors *result,
+    std::string *error);
 
 bool RigExecDispatchTranslateScenePoseInterpolator(
     const RigExecSceneDescriptors &scene, const SdfPath &path,
@@ -70,9 +79,9 @@ bool RigExecDispatchTranslateSceneSpaceSwitch(
     RigExecSceneSpaceSwitchDescriptor *descriptor, std::string *error);
 
 bool RigExecDispatchTranslateSceneGeometry(
-    const RigExecSceneDescriptors &scene, const SdfPath &mover, const SdfPath &target,
-    RigExecSceneGeometryDescriptor *descriptor, std::string *error,
-    const RigExecGeometryRecord *normalized);
+    const RigExecSceneDescriptors &scene, const SdfPath &mover,
+    const SdfPath &target, RigExecSceneGeometryDescriptor *descriptor,
+    std::string *error, const RigExecGeometryRecord *normalized);
 
 bool RigExecDispatchTranslateSceneSolver(
     const RigExecSceneDescriptors &scene, const SdfPath &path,
@@ -87,11 +96,12 @@ bool RigExecDispatchTranslateSceneConstraint(
 bool RigExecDispatchBindAutoClavicle(
     const RigExecSceneDescriptors &scene, const SdfPath &path,
     const RigExecSceneGraphBindingContext &context, RigExecValueId incoming,
-    RigExecValueId output, RigExecBoundAutoClavicle *operation, std::string *error);
-
-bool RigExecDispatchRunAutoClavicle(
-    const RigExecBoundAutoClavicle &operation, RigExecTypedValueStore *values,
+    RigExecValueId output, RigExecBoundAutoClavicle *operation,
     std::string *error);
 
-}
+bool RigExecDispatchRunAutoClavicle(const RigExecBoundAutoClavicle &operation,
+                                    RigExecTypedValueStore *values,
+                                    std::string *error);
+
+} // namespace rigExec
 #endif

@@ -56,8 +56,10 @@ Precedes(const std::vector<rigExec::RigExecOpTraceEntry> &trace, size_t a,
 {
     uint32_t seqA = 0, seqB = 0;
     for (const rigExec::RigExecOpTraceEntry &entry : trace) {
-        if (entry.step == a) seqA = entry.seq;
-        if (entry.step == b) seqB = entry.seq;
+        if (entry.step == a)
+            seqA = entry.seq;
+        if (entry.step == b)
+            seqB = entry.seq;
     }
     return seqA != 0 && seqB != 0 && seqA < seqB;
 }
@@ -65,8 +67,7 @@ Precedes(const std::vector<rigExec::RigExecOpTraceEntry> &trace, size_t a,
 /// The 1-based completion sequence of program step \p step in \p trace, 0
 /// when it did not run.
 inline uint32_t
-TraceSeqOf(const std::vector<rigExec::RigExecOpTraceEntry> &trace,
-           size_t step)
+TraceSeqOf(const std::vector<rigExec::RigExecOpTraceEntry> &trace, size_t step)
 {
     for (const rigExec::RigExecOpTraceEntry &entry : trace) {
         if (entry.step == step) {
@@ -259,12 +260,12 @@ CheckTraceRespectsEdges(const std::vector<rigExec::RigExecOpTraceEntry> &trace,
                 continue;
             }
             if (seqOf[pred] >= seqOf[node.step]) {
-                violations.push_back(
-                    "edge " + std::to_string(pred) + " -> " +
-                    std::to_string(node.step) + " (" + graph[pred].label +
-                    " -> " + node.label + ") finished out of order: seq " +
-                    std::to_string(seqOf[pred]) + " >= " +
-                    std::to_string(seqOf[node.step]));
+                violations.push_back("edge " + std::to_string(pred) + " -> " +
+                                     std::to_string(node.step) + " (" +
+                                     graph[pred].label + " -> " + node.label +
+                                     ") finished out of order: seq " +
+                                     std::to_string(seqOf[pred]) +
+                                     " >= " + std::to_string(seqOf[node.step]));
             }
         }
     }
@@ -277,7 +278,7 @@ inline std::vector<std::string>
 CheckOpGraphIsAcyclic(const std::vector<rigExec::RigExecOpGraphNode> &graph)
 {
     std::vector<std::string> violations;
-    std::map<std::pair<size_t, size_t>, int> edges;  // +1 pred, +2 succ
+    std::map<std::pair<size_t, size_t>, int> edges; // +1 pred, +2 succ
     for (size_t index = 0; index < graph.size(); ++index) {
         const rigExec::RigExecOpGraphNode &node = graph[index];
         if (node.step != index) {
@@ -305,10 +306,10 @@ CheckOpGraphIsAcyclic(const std::vector<rigExec::RigExecOpGraphNode> &graph)
     }
     for (const auto &[edge, sides] : edges) {
         if (sides != 3) {
-            violations.push_back(
-                "edge " + std::to_string(edge.first) + " -> " +
-                std::to_string(edge.second) + " is listed only as a " +
-                (sides == 1 ? "pred" : "succ"));
+            violations.push_back("edge " + std::to_string(edge.first) + " -> " +
+                                 std::to_string(edge.second) +
+                                 " is listed only as a " +
+                                 (sides == 1 ? "pred" : "succ"));
         }
     }
     // Kahn over the pred lists.
@@ -344,6 +345,6 @@ CheckOpGraphIsAcyclic(const std::vector<rigExec::RigExecOpGraphNode> &graph)
     return violations;
 }
 
-}  // namespace rigExecTest
+} // namespace rigExecTest
 
-#endif  // RIGEXEC_TESTS_OP_TRACE_H
+#endif // RIGEXEC_TESTS_OP_TRACE_H

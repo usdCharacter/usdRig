@@ -23,7 +23,8 @@ std::atomic<uint64_t> _layoutSerial{0};
 bool
 _Fail(std::string *why, const char *text)
 {
-    if (why) *why = text;
+    if (why)
+        *why = text;
     return false;
 }
 
@@ -31,7 +32,8 @@ void
 _PutAffine(const GfMatrix4d &m, float *out)
 {
     for (int r = 0; r < 4; ++r)
-        for (int c = 0; c < 3; ++c) out[r * 3 + c] = float(m[r][c]);
+        for (int c = 0; c < 3; ++c)
+            out[r * 3 + c] = float(m[r][c]);
 }
 
 void
@@ -48,7 +50,8 @@ _PutDualQuat(const RigExecScaledDualQuat &q, float *out)
     out[6] = float(dual.GetImaginary()[1]);
     out[7] = float(dual.GetImaginary()[2]);
     for (int r = 0; r < 3; ++r)
-        for (int c = 0; c < 3; ++c) out[8 + r * 3 + c] = float(q.stretch[r][c]);
+        for (int c = 0; c < 3; ++c)
+            out[8 + r * 3 + c] = float(q.stretch[r][c]);
     out[17] = q.isRigid ? 1.0f : 0.0f;
 }
 
@@ -76,24 +79,29 @@ _BlendScales(const std::vector<RigExecBlendChannel> &channels,
                                  sample.PointCount() == 0;
             if (!std::isfinite(sample.activation) || sample.activation <= 0 ||
                 !shapeOk ||
-                (k > 0 && sample.activation == channel.samples[k - 1].activation)) {
+                (k > 0 &&
+                 sample.activation == channel.samples[k - 1].activation)) {
                 return false;
             }
             scales[id + k] = 0.0f;
         }
-        const float w = std::min(std::max(RigExecBlendInputWeight(channel.weight), 0.0f),
-                                 channel.samples.back().activation);
+        const float w =
+            std::min(std::max(RigExecBlendInputWeight(channel.weight), 0.0f),
+                     channel.samples.back().activation);
         if (w != 0.0f) {
             size_t hi = 0;
             while (hi < channel.samples.size() &&
                    channel.samples[hi].activation < w) {
                 ++hi;
             }
-            if (hi >= channel.samples.size()) hi = channel.samples.size() - 1;
+            if (hi >= channel.samples.size())
+                hi = channel.samples.size() - 1;
             const float aHi = channel.samples[hi].activation;
-            const float aLo = hi > 0 ? channel.samples[hi - 1].activation : 0.0f;
+            const float aLo =
+                hi > 0 ? channel.samples[hi - 1].activation : 0.0f;
             const float t = aHi > aLo ? (w - aLo) / (aHi - aLo) : 1.0f;
-            if (hi > 0) scales[id + hi - 1] = 1.0f - t;
+            if (hi > 0)
+                scales[id + hi - 1] = 1.0f - t;
             scales[id + hi] = t;
         }
         id += channel.samples.size();
@@ -105,11 +113,12 @@ size_t
 _SampleCount(const std::vector<RigExecBlendChannel> &channels)
 {
     size_t n = 0;
-    for (const RigExecBlendChannel &c : channels) n += c.samples.size();
+    for (const RigExecBlendChannel &c : channels)
+        n += c.samples.size();
     return n;
 }
 
-}  // namespace
+} // namespace
 
 /// What one op's layout entry was built from. Equal keys build equal
 /// entries, so a frame whose keys all hold reuses the layout.
@@ -138,14 +147,15 @@ struct RigExecGpuDeformTranslation::_Key {
     size_t controlCount = 0;
     double dropoff = 0.0;
 
-    bool operator==(const _Key &o) const {
+    bool operator==(const _Key &o) const
+    {
         return op == o.op && kind == o.kind && weights == o.weights &&
                topology == o.topology && skinIndices == o.skinIndices &&
                skinWeights == o.skinWeights && elementSize == o.elementSize &&
                influenceCount == o.influenceCount && layouts == o.layouts &&
-               channelSizes == o.channelSizes &&
-               bindCoords == o.bindCoords && knots == o.knots &&
-               order == o.order && controlCount == o.controlCount &&
+               channelSizes == o.channelSizes && bindCoords == o.bindCoords &&
+               knots == o.knots && order == o.order &&
+               controlCount == o.controlCount &&
                std::memcmp(&dropoff, &o.dropoff, sizeof(double)) == 0;
     }
 };
@@ -165,11 +175,14 @@ RigExecGpuDeformSupports(RigExecRevisionOp op, const RigExecMoverParameters &p,
         }
         return true;
     case RigExecRevisionOp::BlendShape:
-        if (p.blendSurfaceFrame) return _Fail(why, "surface-frame blend");
-        if (!channels) return _Fail(why, "blend channels not captured");
+        if (p.blendSurfaceFrame)
+            return _Fail(why, "surface-frame blend");
+        if (!channels)
+            return _Fail(why, "blend channels not captured");
         for (const RigExecBlendChannel &c : *channels)
             for (const RigExecBlendSampleData &s : c.samples)
-                if (!s.layout) return _Fail(why, "dense blend sample");
+                if (!s.layout)
+                    return _Fail(why, "dense blend sample");
         return true;
     case RigExecRevisionOp::Wire:
         return true;
@@ -182,14 +195,16 @@ RigExecGpuDeformMode
 RigExecGpuDeformModeFromEnv()
 {
     const std::string mode = TfGetenv("RIGEXEC_GPU_DEFORM");
-    if (mode == "readback" || mode == "gpu") return RigExecGpuDeformMode::Readback;
-    if (mode == "shader") return RigExecGpuDeformMode::Shader;
+    if (mode == "readback" || mode == "gpu")
+        return RigExecGpuDeformMode::Readback;
+    if (mode == "shader")
+        return RigExecGpuDeformMode::Shader;
     return RigExecGpuDeformMode::Off;
 }
 
 namespace {
 std::atomic<RigExecGpuDeformRunner> _runner{nullptr};
-}  // namespace
+} // namespace
 
 void
 RigExecSetGpuDeformRunner(RigExecGpuDeformRunner runner)
@@ -207,7 +222,7 @@ namespace {
 // Constant-initialized: no guard stands between a key and these.
 std::atomic<uint64_t> _deviceKeys{0};
 std::atomic<RigExecGpuDeviceReleaser> _releaser{nullptr};
-}  // namespace
+} // namespace
 
 void
 RigExecSetGpuDeviceReleaser(RigExecGpuDeviceReleaser releaser)
@@ -273,7 +288,8 @@ RigExecGpuDeviceKey::Use() const
 void
 RigExecGpuDeviceKey::_Release() noexcept
 {
-    if (!_used.load(std::memory_order_relaxed)) return;
+    if (!_used.load(std::memory_order_relaxed))
+        return;
     _used.store(false, std::memory_order_relaxed);
     if (const RigExecGpuDeviceReleaser release =
             _releaser.load(std::memory_order_acquire))
@@ -293,12 +309,14 @@ RigExecGpuDeformExtentSample(const RigExecGpuDeformLayout &layout,
                              const GfVec3f *base, size_t count)
 {
     std::vector<int32_t> sample;
-    if (!base || count != layout.pointCount || !count) return sample;
+    if (!base || count != layout.pointCount || !count)
+        return sample;
     // A small mesh is measured whole: its few points cost less than a
     // sample that misses the one a cluster pushed out.
     if (count <= 4096) {
         sample.resize(count);
-        for (size_t i = 0; i < count; ++i) sample[i] = int32_t(i);
+        for (size_t i = 0; i < count; ++i)
+            sample[i] = int32_t(i);
         return sample;
     }
     // The region of each point: its heaviest influence in the last skin op.
@@ -306,20 +324,25 @@ RigExecGpuDeformExtentSample(const RigExecGpuDeformLayout &layout,
     int32_t regions = 1;
     for (size_t o = layout.OpCount(); o-- > 0;) {
         const int32_t *op = layout.ops.data() + o * RigExecGpuOpStride;
-        const RigExecGpuOpKind kind = RigExecGpuOpKind(op[RigExecGpuOpKindField]);
+        const RigExecGpuOpKind kind =
+            RigExecGpuOpKind(op[RigExecGpuOpKindField]);
         if (kind != RigExecGpuOpKind::SkinLinear &&
-            kind != RigExecGpuOpKind::SkinDualQuat) continue;
+            kind != RigExecGpuOpKind::SkinDualQuat)
+            continue;
         const int32_t a = op[RigExecGpuOpAField], b = op[RigExecGpuOpBField];
         const int32_t k = op[RigExecGpuOpCField];
-        if (k < 1) break;
+        if (k < 1)
+            break;
         regions = op[RigExecGpuOpDField] + 1;
         for (size_t i = 0; i < count; ++i) {
             float best = -1.0f;
             for (int32_t slot = 0; slot < k; ++slot) {
-                const float w = layout.staticF[size_t(b) + i * size_t(k) + size_t(slot)];
+                const float w =
+                    layout.staticF[size_t(b) + i * size_t(k) + size_t(slot)];
                 if (w > best) {
                     best = w;
-                    region[i] = 1 + layout.staticI[size_t(a) + i * size_t(k) + size_t(slot)];
+                    region[i] = 1 + layout.staticI[size_t(a) + i * size_t(k) +
+                                                   size_t(slot)];
                 }
             }
         }
@@ -332,13 +355,17 @@ RigExecGpuDeformExtentSample(const RigExecGpuDeformLayout &layout,
         for (int axis = 0; axis < 3; ++axis) {
             int32_t &lo = extreme[size_t(r) * 6 + size_t(axis) * 2];
             int32_t &hi = extreme[size_t(r) * 6 + size_t(axis) * 2 + 1];
-            if (lo < 0 || base[i][axis] < base[size_t(lo)][axis]) lo = int32_t(i);
-            if (hi < 0 || base[i][axis] > base[size_t(hi)][axis]) hi = int32_t(i);
+            if (lo < 0 || base[i][axis] < base[size_t(lo)][axis])
+                lo = int32_t(i);
+            if (hi < 0 || base[i][axis] > base[size_t(hi)][axis])
+                hi = int32_t(i);
         }
     }
     for (const int32_t index : extreme)
-        if (index >= 0) sample.push_back(index);
-    for (size_t i = 0; i < count; i += 64) sample.push_back(int32_t(i));
+        if (index >= 0)
+            sample.push_back(index);
+    for (size_t i = 0; i < count; i += 64)
+        sample.push_back(int32_t(i));
     std::sort(sample.begin(), sample.end());
     sample.erase(std::unique(sample.begin(), sample.end()), sample.end());
     return sample;
@@ -347,16 +374,17 @@ RigExecGpuDeformExtentSample(const RigExecGpuDeformLayout &layout,
 bool
 RigExecGpuDeformSampleBounds(const RigExecGpuDeformFrame &frame,
                              const GfVec3f *base,
-                             const std::vector<int32_t> &sample,
-                             size_t begin, size_t end,
-                             GfVec3f *min, GfVec3f *max)
+                             const std::vector<int32_t> &sample, size_t begin,
+                             size_t end, GfVec3f *min, GfVec3f *max)
 {
-    if (!frame.layout || !base || !min || !max) return false;
+    if (!frame.layout || !base || !min || !max)
+        return false;
     end = std::min(end, sample.size());
     for (size_t k = begin; k < end; ++k) {
         const int32_t index = sample[k];
         float xyz[3] = {base[index][0], base[index][1], base[index][2]};
-        if (!RigExecRunGpuDeformPoint(frame, size_t(index), xyz)) return false;
+        if (!RigExecRunGpuDeformPoint(frame, size_t(index), xyz))
+            return false;
         for (int axis = 0; axis < 3; ++axis) {
             (*min)[axis] = std::min((*min)[axis], xyz[axis]);
             (*max)[axis] = std::max((*max)[axis], xyz[axis]);
@@ -385,7 +413,8 @@ RigExecGpuDeformTranslation::Translate(
     const std::vector<RigExecGpuRevisionInput> &revisions, size_t pointCount,
     RigExecGpuDeformFrame *frame, std::string *why)
 {
-    if (!frame) return false;
+    if (!frame)
+        return false;
     // The steady state: every stored key still holds, compared in place
     // so a frame copies no packet.
     bool holds = _layout && pointCount == _pointCount &&
@@ -406,9 +435,11 @@ RigExecGpuDeformTranslation::Translate(
     std::vector<_Key> keys(revisions.size());
     for (size_t r = 0; r < revisions.size(); ++r) {
         const RigExecGpuRevisionInput &in = revisions[r];
-        if (!in.parameters) return _Fail(why, "revision without a packet");
+        if (!in.parameters)
+            return _Fail(why, "revision without a packet");
         const RigExecMoverParameters &p = *in.parameters;
-        if (!RigExecGpuDeformSupports(in.op, p, in.channels, why)) return false;
+        if (!RigExecGpuDeformSupports(in.op, p, in.channels, why))
+            return false;
         _Key &key = keys[r];
         key.op = in.op;
         key.weights = p.weights;
@@ -494,10 +525,11 @@ RigExecGpuDeformTranslation::Translate(
                 const int k =
                     key.topology ? key.topology->elementSize : key.elementSize;
                 const bool usable = k >= 1 &&
-                    indices.size() == pointCount * size_t(k) &&
-                    weights.size() == indices.size() &&
-                    RigExecSkinLayoutIsUsable(p, pointCount);
-                if (!usable) key.staticOk = false;
+                                    indices.size() == pointCount * size_t(k) &&
+                                    weights.size() == indices.size() &&
+                                    RigExecSkinLayoutIsUsable(p, pointCount);
+                if (!usable)
+                    key.staticOk = false;
                 op[RigExecGpuOpAField] = int32_t(layout->staticI.size());
                 op[RigExecGpuOpBField] = int32_t(layout->staticF.size());
                 op[RigExecGpuOpCField] = usable ? k : 0;
@@ -513,7 +545,8 @@ RigExecGpuDeformTranslation::Translate(
                                     : RigExecGpuDualQuatFloats;
                 // The dual quaternion block ends with the identity entry
                 // the weight complement blends against.
-                blockFloats += uint32_t(per) *
+                blockFloats +=
+                    uint32_t(per) *
                     uint32_t(key.influenceCount +
                              (key.kind == RigExecGpuOpKind::SkinDualQuat));
                 break;
@@ -526,14 +559,16 @@ RigExecGpuDeformTranslation::Translate(
                 for (const auto &layoutPtr : key.layouts) {
                     const RigExecBlendSampleLayout &sl = *layoutPtr;
                     if (sl.indices.empty()) {
-                        for (size_t i = 0; i < pointCount; ++i) ++counts[i + 1];
+                        for (size_t i = 0; i < pointCount; ++i)
+                            ++counts[i + 1];
                     } else {
                         for (int idx : sl.indices)
                             if (idx >= 0 && size_t(idx) < pointCount)
                                 ++counts[size_t(idx) + 1];
                     }
                 }
-                for (size_t i = 0; i < pointCount; ++i) counts[i + 1] += counts[i];
+                for (size_t i = 0; i < pointCount; ++i)
+                    counts[i + 1] += counts[i];
                 const int32_t entries = counts[pointCount];
                 const int32_t rows = int32_t(layout->staticI.size());
                 const int32_t ids = rows + int32_t(pointCount) + 1;
@@ -549,13 +584,16 @@ RigExecGpuDeformTranslation::Translate(
                     const int32_t e = fill[point]++;
                     layout->staticI[size_t(ids + e)] = sample;
                     float *o = layout->staticF.data() + offs + 3 * e;
-                    o[0] = offset[0]; o[1] = offset[1]; o[2] = offset[2];
+                    o[0] = offset[0];
+                    o[1] = offset[1];
+                    o[2] = offset[2];
                 };
                 int32_t sample = 0;
                 for (const auto &layoutPtr : key.layouts) {
                     const RigExecBlendSampleLayout &sl = *layoutPtr;
                     if (sl.indices.empty()) {
-                        for (size_t i = 0; i < pointCount && i < sl.offsets.size(); ++i)
+                        for (size_t i = 0;
+                             i < pointCount && i < sl.offsets.size(); ++i)
                             put(i, sample, sl.offsets[i]);
                     } else {
                         for (size_t k = 0; k < sl.indices.size(); ++k) {
@@ -595,14 +633,16 @@ RigExecGpuDeformTranslation::Translate(
                         key.bindCoords.cdata(), key.bindCoords.size(),
                         pointCount, indices, key.order, key.knots,
                         key.controlCount, key.dropoff, &basis);
-                if (!built) key.staticOk = false;
+                if (!built)
+                    key.staticOk = false;
                 std::vector<int32_t> counts(pointCount + 1, 0);
                 if (built) {
                     for (const auto &column : basis.byControlPoint)
                         for (const auto &[k, coeff] : column)
                             ++counts[size_t(indices[k]) + 1];
                 }
-                for (size_t i = 0; i < pointCount; ++i) counts[i + 1] += counts[i];
+                for (size_t i = 0; i < pointCount; ++i)
+                    counts[i + 1] += counts[i];
                 const int32_t entries = counts[pointCount];
                 const int32_t rows = int32_t(layout->staticI.size());
                 const int32_t ids = rows + int32_t(pointCount) + 1;
@@ -614,7 +654,8 @@ RigExecGpuDeformTranslation::Translate(
                 std::vector<int32_t> fill(counts.begin(), counts.end() - 1);
                 // Control points ascending per point: the order the basis
                 // applies them in.
-                for (size_t j = 0; built && j < basis.byControlPoint.size(); ++j) {
+                for (size_t j = 0; built && j < basis.byControlPoint.size();
+                     ++j) {
                     for (const auto &[k, coeff] : basis.byControlPoint[j]) {
                         const size_t point = size_t(indices[k]);
                         const int32_t e = fill[point]++;
@@ -645,7 +686,7 @@ RigExecGpuDeformTranslation::Translate(
 
 bool
 RigExecGpuDeformTranslation::_KeyHolds(const _Key &key,
-                                    const RigExecGpuRevisionInput &in)
+                                       const RigExecGpuRevisionInput &in)
 {
     const RigExecMoverParameters &p = *in.parameters;
     const bool samePacket = in.weightsObject >= 0 &&
@@ -665,18 +706,20 @@ RigExecGpuDeformTranslation::_KeyHolds(const _Key &key,
             key.influenceCount != _Influences(in).size()) {
             return false;
         }
-        return key.topology ||
-               (key.skinIndices == p.skinIndices &&
-                key.skinWeights == p.skinWeights &&
-                key.elementSize == p.skinElementSize);
+        return key.topology || (key.skinIndices == p.skinIndices &&
+                                key.skinWeights == p.skinWeights &&
+                                key.elementSize == p.skinElementSize);
     case RigExecRevisionOp::BlendShape: {
-        if (key.channelSizes.size() != in.channels->size()) return false;
+        if (key.channelSizes.size() != in.channels->size())
+            return false;
         size_t s = 0;
         for (size_t c = 0; c < in.channels->size(); ++c) {
             const RigExecBlendChannel &channel = (*in.channels)[c];
-            if (key.channelSizes[c] != channel.samples.size()) return false;
+            if (key.channelSizes[c] != channel.samples.size())
+                return false;
             for (const RigExecBlendSampleData &sample : channel.samples)
-                if (s >= key.layouts.size() || key.layouts[s++] != sample.layout)
+                if (s >= key.layouts.size() ||
+                    key.layouts[s++] != sample.layout)
                     return false;
         }
         return s == key.layouts.size();
@@ -685,8 +728,8 @@ RigExecGpuDeformTranslation::_KeyHolds(const _Key &key,
         return key.bindCoords == p.wireBindCoords &&
                key.knots == p.curveKnots && key.order == p.curveOrder &&
                key.controlCount == p.restPoints.size() &&
-               std::memcmp(&key.dropoff, &p.dropoffDistance,
-                           sizeof(double)) == 0;
+               std::memcmp(&key.dropoff, &p.dropoffDistance, sizeof(double)) ==
+                   0;
     default:
         return false;
     }
@@ -730,14 +773,20 @@ RigExecGpuDeformTranslation::_FillFrame(
         }
         case RigExecGpuOpKind::SkinLinear: {
             const std::vector<GfMatrix4d> &table = _Influences(in);
-            if (table.size() != key.influenceCount) { applies = false; break; }
+            if (table.size() != key.influenceCount) {
+                applies = false;
+                break;
+            }
             for (size_t t = 0; t < table.size(); ++t)
                 _PutAffine(table[t], block + 1 + t * RigExecGpuAffineFloats);
             break;
         }
         case RigExecGpuOpKind::SkinDualQuat: {
             const std::vector<GfMatrix4d> &table = _Influences(in);
-            if (table.size() != key.influenceCount) { applies = false; break; }
+            if (table.size() != key.influenceCount) {
+                applies = false;
+                break;
+            }
             for (size_t t = 0; t < table.size(); ++t)
                 _PutDualQuat(RigExecScaledDualQuatFromMatrix(table[t]),
                              block + 1 + t * RigExecGpuDualQuatFloats);
@@ -769,4 +818,4 @@ RigExecGpuDeformTranslation::_FillFrame(
     }
 }
 
-}  // namespace rigExec
+} // namespace rigExec

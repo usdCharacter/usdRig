@@ -9,7 +9,8 @@ namespace rigExec {
 /// This adapter performs no evaluation, stage read, or transform arithmetic.
 /// The caller supplies the sampled time and Execute's success state.
 bool RigExecProjectRuntimePose(const RigExecRuntimeReader &reader,
-    UsdTimeCode time, bool valid, RigExecRigPose *pose,
-    std::string *error = nullptr);
-}
+                               UsdTimeCode time, bool valid,
+                               RigExecRigPose *pose,
+                               std::string *error = nullptr);
+} // namespace rigExec
 #endif

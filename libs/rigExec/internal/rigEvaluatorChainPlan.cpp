@@ -22,7 +22,7 @@ RigExecRigEvaluator::GetSurfaceProjectorTargets() const
             }
         }
     }
-    return std::vector<SdfPath>(targets.begin(),targets.end());
+    return std::vector<SdfPath>(targets.begin(), targets.end());
 }
 
 std::vector<SdfPath>
@@ -45,8 +45,7 @@ RigExecIsScalarPrimvarTarget(const SdfPath &target,
     constexpr char kPrimvars[] = "primvars:";
     constexpr size_t kLength = sizeof(kPrimvars) - 1;
     const std::string &name = target.GetName();
-    return name.size() > kLength &&
-           name.compare(0, kLength, kPrimvars) == 0 &&
+    return name.size() > kLength && name.compare(0, kLength, kPrimvars) == 0 &&
            (valueType == SdfValueTypeNames->Float ||
             valueType == SdfValueTypeNames->Double);
 }
@@ -56,11 +55,11 @@ RigExecRigEvaluator::_ValidateNativePhases(
     const std::map<SdfPath, std::vector<_GraphRevision>> &graphChains,
     const std::map<SdfPath, std::vector<SdfPath>> &frameChains,
     const std::vector<RigExecMoverRecord> &movers,
-    std::map<SdfPath,std::set<SdfPath>> *checkpoints, _CompileFailure *failure)
+    std::map<SdfPath, std::set<SdfPath>> *checkpoints, _CompileFailure *failure)
 {
     checkpoints->clear();
     const auto fail = [failure](const std::string &message,
-                               SdfPathVector operations) {
+                                SdfPathVector operations) {
         *failure = {message, std::move(operations)};
         return false;
     };
@@ -81,11 +80,13 @@ RigExecRigEvaluator::_ValidateNativePhases(
         (*checkpoints).clear();
         for (const auto &[target, revisions] : graphChains) {
             for (const _GraphRevision &revision : revisions) {
-                for (const auto &[inputPath, phase] : revision.binding.GetPhasedInputs()) {
+                for (const auto &[inputPath, phase] :
+                     revision.binding.GetPhasedInputs()) {
                     const auto who = [&revision, &phase = phase,
                                       &inputPath = inputPath]() {
-                        return revision.moverPath.GetString() + ": read phase '" +
-                               phase.GetAsString() + "' on " + inputPath.GetString();
+                        return revision.moverPath.GetString() +
+                               ": read phase '" + phase.GetAsString() +
+                               "' on " + inputPath.GetString();
                     };
 
                     // A phase on an input nothing writes is a no-op that
@@ -95,37 +96,43 @@ RigExecRigEvaluator::_ValidateNativePhases(
                     // deforming against the wrong pose with no signal.
                     const auto moversIt = chainMovers.find(inputPath);
                     if (moversIt == chainMovers.end()) {
-                        return fail(who() + " names a property no mover writes; "
-                                          "only `base` is meaningful there", {revision.moverPath});
+                        return fail(who() +
+                                        " names a property no mover writes; "
+                                        "only `base` is meaningful there",
+                                    {revision.moverPath});
                     }
                     const std::vector<SdfPath> &movers = moversIt->second;
 
                     if (phase.kind == RigExecReadPhaseKind::Final) {
-                        continue;  // the chain's published result
+                        continue; // the chain's published result
                     }
                     if (phase.kind == RigExecReadPhaseKind::Preceding) {
-                        const int readerOrdinal=ordinalOf[revision.moverPath];
+                        const int readerOrdinal = ordinalOf[revision.moverPath];
                         SdfPath preceding;
-                        for(const auto &writer:movers) {
-                            const auto position=ordinalOf.find(writer);
-                            if(position!=ordinalOf.end() && position->second<readerOrdinal)
-                                preceding=writer;
+                        for (const auto &writer : movers) {
+                            const auto position = ordinalOf.find(writer);
+                            if (position != ordinalOf.end() &&
+                                position->second < readerOrdinal)
+                                preceding = writer;
                         }
-                        if(!preceding.IsEmpty()) (*checkpoints)[inputPath].insert(preceding);
+                        if (!preceding.IsEmpty())
+                            (*checkpoints)[inputPath].insert(preceding);
                         continue;
                     }
 
                     // AtPrim: the last revision at or beneath the named prim.
                     SdfPath found;
                     for (const SdfPath &mover : movers) {
-                        if (mover == phase.prim || mover.HasPrefix(phase.prim)) {
+                        if (mover == phase.prim ||
+                            mover.HasPrefix(phase.prim)) {
                             found = mover;
                         }
                     }
                     if (found.IsEmpty()) {
                         return fail(who() + " names " + phase.prim.GetString() +
-                                    ", which writes nothing to " +
-                                    inputPath.GetString(), {revision.moverPath});
+                                        ", which writes nothing to " +
+                                        inputPath.GetString(),
+                                    {revision.moverPath});
                     }
                     (*checkpoints)[inputPath].insert(found);
                 }
@@ -147,9 +154,11 @@ RigExecRigEvaluator::_ValidateNativePhases(
                 const auto frameIt =
                     frameChains.find(revision.binding.transform);
                 if (frameIt == frameChains.end()) {
-                    return fail(who() + " names a point in the pose walk, but " +
-                                revision.binding.transform.GetString() +
-                                " is revised by no pose mover", {revision.moverPath});
+                    return fail(who() +
+                                    " names a point in the pose walk, but " +
+                                    revision.binding.transform.GetString() +
+                                    " is revised by no pose mover",
+                                {revision.moverPath});
                 }
                 SdfPath found;
                 for (const SdfPath &frameMover : frameIt->second) {
@@ -160,8 +169,9 @@ RigExecRigEvaluator::_ValidateNativePhases(
                 }
                 if (found.IsEmpty()) {
                     return fail(who() + " names " + phase.prim.GetString() +
-                                ", which revises nothing on " +
-                                revision.binding.transform.GetString(), {revision.moverPath});
+                                    ", which revises nothing on " +
+                                    revision.binding.transform.GetString(),
+                                {revision.moverPath});
                 }
                 (*checkpoints)[revision.binding.transform].insert(found);
             }

@@ -37,6 +37,6 @@ bool RigExecBindPathOperation(const PXR_NS::UsdPrim &mover,
                               RigExecPathBinding *out,
                               std::string *error = nullptr);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_MOVERS_PATH_OPERATION_H
+#endif // RIGEXEC_MOVERS_PATH_OPERATION_H

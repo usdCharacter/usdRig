@@ -33,8 +33,7 @@ void RigExecReportBodyRead();
 /// because a body waiting on a parallel loop can run another body on the
 /// same thread. \p violations is the program's audit counter, or null when
 /// the program does not audit.
-class RigExecOpBodyScope
-{
+class RigExecOpBodyScope {
 public:
     explicit RigExecOpBodyScope(std::atomic<uint64_t> *violations);
     ~RigExecOpBodyScope();
@@ -47,8 +46,7 @@ private:
 };
 
 /// Lifts the body mark for one of the volatile reads listed above.
-class RigExecVolatileRead
-{
+class RigExecVolatileRead {
 public:
     RigExecVolatileRead();
     ~RigExecVolatileRead();
@@ -59,13 +57,13 @@ private:
     bool _wasInBody;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#define RIGEXEC_PURITY_CHECK()                                             \
-    do {                                                                   \
-        if (::rigExec::RigExecInOpBody()) {                                \
-            ::rigExec::RigExecReportBodyRead();                            \
-        }                                                                  \
+#define RIGEXEC_PURITY_CHECK()                                                 \
+    do {                                                                       \
+        if (::rigExec::RigExecInOpBody()) {                                    \
+            ::rigExec::RigExecReportBodyRead();                                \
+        }                                                                      \
     } while (0)
 
-#endif  // RIGEXEC_BODY_PURITY_H
+#endif // RIGEXEC_BODY_PURITY_H

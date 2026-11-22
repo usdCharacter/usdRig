@@ -26,7 +26,7 @@ _RrTransformDir(const RrVec3d &v, const RrMat3d &m)
     return v * m;
 }
 
-}  // namespace
+} // namespace
 
 RrPointFrame
 RrFrameFromMatrix(const RrMat4d &m)
@@ -57,8 +57,7 @@ RrFrameEpsilon(const std::array<RrVec3d, 4> &restPoints)
 
 bool
 RrPointsToMatrix(const std::array<RrVec3d, 4> &restPoints,
-                 const std::array<RrVec3d, 4> &posePoints,
-                 RrMat4d *matrix)
+                 const std::array<RrVec3d, 4> &posePoints, RrMat4d *matrix)
 {
     const RrMat3d mq = _RrRowBasis(restPoints);
     const RrMat3d mp = _RrRowBasis(posePoints);
@@ -76,9 +75,9 @@ RrPointsToMatrix(const std::array<RrVec3d, 4> &restPoints,
     const RrVec3d t = posePoints[0] - _RrTransformDir(restPoints[0], m3);
 
     if (matrix) {
-        *matrix = RrMat4d(
-            m3[0][0], m3[0][1], m3[0][2], 0.0, m3[1][0], m3[1][1], m3[1][2],
-            0.0, m3[2][0], m3[2][1], m3[2][2], 0.0, t[0], t[1], t[2], 1.0);
+        *matrix = RrMat4d(m3[0][0], m3[0][1], m3[0][2], 0.0, m3[1][0], m3[1][1],
+                          m3[1][2], 0.0, m3[2][0], m3[2][1], m3[2][2], 0.0,
+                          t[0], t[1], t[2], 1.0);
     }
     return true;
 }
@@ -181,8 +180,7 @@ RrRoundTrip(const RrMat4d &m)
 {
     RrMat4d out;
     out.SetIdentity();
-    RrPointsToMatrix(RrIdentityLandmarks(), RrFrameFromMatrix(m).points,
-                     &out);
+    RrPointsToMatrix(RrIdentityLandmarks(), RrFrameFromMatrix(m).points, &out);
     return out;
 }
 
@@ -261,7 +259,7 @@ _RrRecompose(const _RrDecomposed &d)
     return mtx;
 }
 
-}  // namespace
+} // namespace
 
 bool
 RrFrameTranslation(const RrPointFrame &driverFinal,
@@ -317,9 +315,9 @@ RrBlendTransforms(const RrMat4d &a, const RrMat4d &b, double weight)
     out.translation = (1 - weight) * da.translation + weight * db.translation;
     out.scale = (1 - weight) * da.scale + weight * db.scale;
     RrQuatd target = db.rotation;
-    const double cosArc = da.rotation.GetReal() * target.GetReal() +
-                          RrDot(da.rotation.GetImaginary(),
-                                target.GetImaginary());
+    const double cosArc =
+        da.rotation.GetReal() * target.GetReal() +
+        RrDot(da.rotation.GetImaginary(), target.GetImaginary());
     if (cosArc < 0.0) {
         target = RrQuatd(-target.GetReal(), -target.GetImaginary());
     }
@@ -348,8 +346,7 @@ RrFilterSpaceRotation(const RrMat4d &m, const RrVec3d &axis,
     if (norm < 1e-12) {
         twist = RrQuatd::GetIdentity();
     } else {
-        twist = RrQuatd(twist.GetReal() / norm,
-                        twist.GetImaginary() / norm);
+        twist = RrQuatd(twist.GetReal() / norm, twist.GetImaginary() / norm);
     }
     d.rotation = filter == RrRotationFilter::Twist
                      ? twist
@@ -362,15 +359,17 @@ RrMaskTransform(const RrMat4d &m, const bool translation[3],
                 const bool rotation[3], const bool scale[3])
 {
     const bool all = translation[0] && translation[1] && translation[2] &&
-                     rotation[0] && rotation[1] && rotation[2] &&
-                     scale[0] && scale[1] && scale[2];
+                     rotation[0] && rotation[1] && rotation[2] && scale[0] &&
+                     scale[1] && scale[2];
     if (all) {
         return m;
     }
     _RrDecomposed d = _RrDecompose(m);
     for (int axis = 0; axis < 3; ++axis) {
-        if (!translation[axis]) d.translation[axis] = 0.0;
-        if (!scale[axis]) d.scale[axis] = 1.0;
+        if (!translation[axis])
+            d.translation[axis] = 0.0;
+        if (!scale[axis])
+            d.scale[axis] = 1.0;
     }
     if (!rotation[0] || !rotation[1] || !rotation[2]) {
         // The same XYZ row-vector extraction the program does, so a mask
@@ -389,18 +388,18 @@ RrMaskTransform(const RrMat4d &m, const bool translation[3],
         }
         const RrVec3d axes[3] = {RrVec3d(1, 0, 0), RrVec3d(0, 1, 0),
                                  RrVec3d(0, 0, 1)};
-        const double angles[3] = {RrRadiansToDegrees(x),
-                                  RrRadiansToDegrees(y),
+        const double angles[3] = {RrRadiansToDegrees(x), RrRadiansToDegrees(y),
                                   RrRadiansToDegrees(z)};
         RrMat4d composed(1.0);
         for (int axis = 0; axis < 3; ++axis) {
-            if (!rotation[axis] || angles[axis] == 0.0) continue;
-            composed = composed *
-                RrMat4d(RrRotation(axes[axis], angles[axis]), RrVec3d(0.0));
+            if (!rotation[axis] || angles[axis] == 0.0)
+                continue;
+            composed = composed * RrMat4d(RrRotation(axes[axis], angles[axis]),
+                                          RrVec3d(0.0));
         }
         d.rotation = composed.ExtractRotationQuat();
     }
     return _RrRecompose(d);
 }
 
-}  // namespace rigExec
+} // namespace rigExec

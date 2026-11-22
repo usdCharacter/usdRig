@@ -54,6 +54,6 @@ void RigExecParallelForInCallerEnvironment(size_t n, size_t grain,
 /// elements; the calling thread otherwise. Never null.
 const RigExecRangeRunner *RigExecGeometryRanges();
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_PARALLEL_H
+#endif // RIGEXEC_PARALLEL_H

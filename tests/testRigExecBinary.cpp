@@ -51,12 +51,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 // After the macro: the comparison and edit helpers report through CHECK.
@@ -94,8 +94,8 @@ static bool
 _EndsWith(const std::string &text, const std::string &suffix)
 {
     return text.size() >= suffix.size() &&
-           text.compare(text.size() - suffix.size(), suffix.size(),
-                        suffix) == 0;
+           text.compare(text.size() - suffix.size(), suffix.size(), suffix) ==
+               0;
 }
 
 static SdfPath
@@ -116,9 +116,8 @@ _ParseTableFrames(const std::string &text)
     size_t begin = 0;
     while (begin <= text.size()) {
         const size_t end = text.find(",", begin);
-        const std::string piece =
-            text.substr(begin, end == std::string::npos
-                        ? std::string::npos : end - begin);
+        const std::string piece = text.substr(
+            begin, end == std::string::npos ? std::string::npos : end - begin);
         if (!piece.empty()) {
             frames.push_back(std::stod(piece));
         }
@@ -214,8 +213,8 @@ _WithPlugin(const fb::RigExecWireFile &file)
 {
     fb::RigExecWireFile copy = _WithOp(file, RigExecWireExternalRevisionOp);
     copy.names.push_back("TestConformancePlugin");
-    copy.paths.push_back(fb::PathNode(0, uint32_t(copy.names.size() - 1),
-                                      fb::PathKind::Token));
+    copy.paths.push_back(
+        fb::PathNode(0, uint32_t(copy.names.size() - 1), fb::PathKind::Token));
     fb::RigExecWireExternalMover mover;
     mover.chain = 0;
     mover.revision = 0;
@@ -246,8 +245,7 @@ _HasRevision(const fb::RigExecWireFile *file)
 static void
 TestWrinkleWireExtensions(const std::vector<uint8_t> &bytes)
 {
-    const std::unique_ptr<fb::RigExecWireFile> file =
-        RigExecTestUnpack(bytes);
+    const std::unique_ptr<fb::RigExecWireFile> file = RigExecTestUnpack(bytes);
     CHECK(_HasRevision(file.get()));
     if (!_HasRevision(file.get())) {
         return;
@@ -276,8 +274,7 @@ TestWrinkleWireExtensions(const std::vector<uint8_t> &bytes)
 static void
 TestExternalMoversWire(const std::vector<uint8_t> &bytes)
 {
-    const std::unique_ptr<fb::RigExecWireFile> file =
-        RigExecTestUnpack(bytes);
+    const std::unique_ptr<fb::RigExecWireFile> file = RigExecTestUnpack(bytes);
     CHECK(_HasRevision(file.get()));
     if (!_HasRevision(file.get())) {
         return;
@@ -291,10 +288,9 @@ TestExternalMoversWire(const std::vector<uint8_t> &bytes)
         const fb::RigExecWireExternalMover &b = back->externalMovers[0];
         CHECK(a.chain == b.chain && a.revision == b.revision &&
               a.type == b.type && a.epoch == b.epoch &&
-              a.phasedFallback == b.phasedFallback &&
-              a.v2Frame == b.v2Frame && b.v2FrameValid && b.inputs.empty());
-        CHECK(RigExecFormatPathText(*back, b.type) ==
-              "TestConformancePlugin");
+              a.phasedFallback == b.phasedFallback && a.v2Frame == b.v2Frame &&
+              b.v2FrameValid && b.inputs.empty());
+        CHECK(RigExecFormatPathText(*back, b.type) == "TestConformancePlugin");
     }
     // A failed frame-0 assembly holds no bytes and still round-trips.
     fb::RigExecWireFile failed(plugin);
@@ -399,17 +395,21 @@ TestRealFileCorruption(const std::vector<uint8_t> &bytes)
     // the same FlatBuffer; corruption below still exercises its verifier.
     std::unique_ptr<fb::RigExecWireFile> accepted;
     std::string error;
-    const bool acceptedOpen = RigExecFormatOpen(bytes.data(), bytes.size(), &accepted, &error);
+    const bool acceptedOpen =
+        RigExecFormatOpen(bytes.data(), bytes.size(), &accepted, &error);
     CHECK(acceptedOpen);
-    if (!acceptedOpen || !accepted) return;
+    if (!acceptedOpen || !accepted)
+        return;
     rigExec::transport::Buffer decoded;
     const uint8_t *payload = bytes.data();
     size_t payloadSize = bytes.size();
     if (rigExec::transport::IsEnvelope(payload, payloadSize)) {
-        const bool ready = rigExec::transport::Decode(payload, payloadSize, &decoded, &error);
+        const bool ready =
+            rigExec::transport::Decode(payload, payloadSize, &decoded, &error);
         CHECK(ready);
         CHECK(decoded.data && decoded.size >= 8);
-        if (!ready || !decoded.data || decoded.size < 8) return;
+        if (!ready || !decoded.data || decoded.size < 8)
+            return;
         payload = decoded.data.get();
         payloadSize = decoded.size;
     }
@@ -475,7 +475,7 @@ TestRealFileCorruption(const std::vector<uint8_t> &bytes)
         for (int e = 0; e < edits; ++e) {
             const size_t at = next() % payloadSize;
             if (at >= 4 && at < 8) {
-                continue;  // keep the identifier: reach the verifier
+                continue; // keep the identifier: reach the verifier
             }
             switch (next() % 3) {
             case 0:
@@ -517,8 +517,7 @@ static void
 _BinaryCheckWeightGatherReads(const std::string &fixture,
                               const std::set<std::string> &pathReads)
 {
-    const std::string base =
-        std::filesystem::path(fixture).filename().string();
+    const std::string base = std::filesystem::path(fixture).filename().string();
     std::vector<std::string> want;
     if (base == "11_VolumeWeights.usda") {
         want = {"/VolumeAsset/Drivers/TipCurve.points",
@@ -597,8 +596,8 @@ using _ChainEnvelope =
                        float *weight, std::string *error)>;
 
 static bool
-_ChainOverlayHit(const _ChainOverlay &overlay, uint32_t name,
-                 fb::InputTag tag, _Val *out)
+_ChainOverlayHit(const _ChainOverlay &overlay, uint32_t name, fb::InputTag tag,
+                 _Val *out)
 {
     const auto found = overlay.find(name);
     if (found == overlay.end()) {
@@ -628,8 +627,8 @@ _ChainOverlayHit(const _ChainOverlay &overlay, uint32_t name,
 // readable hop.
 static bool
 _ChainLongWay(const fb::RigExecWireFile &file, const _ChainOverlay &overlay,
-              const std::vector<uint32_t> &walk, size_t from,
-              fb::InputTag tag, _Val *out)
+              const std::vector<uint32_t> &walk, size_t from, fb::InputTag tag,
+              _Val *out)
 {
     const auto narrow = [&](size_t k) {
         _Val wide;
@@ -801,22 +800,29 @@ _ComputedRunChains(const fb::RigExecWireFile &file,
     std::vector<size_t> order;
     std::vector<uint8_t> visited(file.propertyChains.size(), 0);
     std::function<bool(size_t)> visit = [&](size_t c) {
-        if (visited[c] == 2) return true;
-        if (visited[c] == 1) return false;
+        if (visited[c] == 2)
+            return true;
+        if (visited[c] == 1)
+            return false;
         visited[c] = 1;
         for (const auto &revision : file.propertyChains[c].revisions) {
-            for (const auto *read : {revision.enabled.get(),
-                    revision.defaultWeight.get(), revision.value.get(),
-                    revision.min.get(), revision.max.get()}) {
-                for (const auto *candidates : {&read->propertyCandidates,
-                                               &read->doubleCandidates}) {
+            for (const auto *read :
+                 {revision.enabled.get(), revision.defaultWeight.get(),
+                  revision.value.get(), revision.min.get(),
+                  revision.max.get()}) {
+                for (const auto *candidates :
+                     {&read->propertyCandidates, &read->doubleCandidates}) {
                     for (const auto &candidate : *candidates) {
-                        if (candidate.version < 0) continue;
-                        for (size_t other = 0; other < file.propertyChains.size(); ++other) {
+                        if (candidate.version < 0)
+                            continue;
+                        for (size_t other = 0;
+                             other < file.propertyChains.size(); ++other) {
                             const auto &source = file.propertyChains[other];
                             if (other != c && candidate.slot == source.target &&
-                                uint32_t(candidate.version) > source.versionBase &&
-                                !visit(other)) return false;
+                                uint32_t(candidate.version) >
+                                    source.versionBase &&
+                                !visit(other))
+                                return false;
                         }
                     }
                 }
@@ -829,7 +835,8 @@ _ComputedRunChains(const fb::RigExecWireFile &file,
     for (size_t c = 0; c < file.propertyChains.size(); ++c) {
         const bool ordered = visit(c);
         CHECK(ordered);
-        if (!ordered) return false;
+        if (!ordered)
+            return false;
     }
     for (size_t c : order) {
         const fb::RigExecWirePropertyChain &chain = file.propertyChains[c];
@@ -914,8 +921,7 @@ _ComputedRunChains(const fb::RigExecWireFile &file,
             } else {
                 weight = _ChainFloat(
                     _ChainRead(file, *overlay, *revision.defaultWeight));
-                if (!std::isfinite(weight) || weight < 0.0f ||
-                    weight > 1.0f) {
+                if (!std::isfinite(weight) || weight < 0.0f || weight > 1.0f) {
                     diagnostics->push_back(
                         "diag " + mover +
                         ": inputs:defaultWeight must be finite and in "
@@ -937,8 +943,7 @@ _ComputedRunChains(const fb::RigExecWireFile &file,
                 params.max =
                     _ChainFloat(_ChainRead(file, *overlay, *revision.max));
                 usable = std::isfinite(params.value) &&
-                         std::isfinite(params.min) &&
-                         std::isfinite(params.max);
+                         std::isfinite(params.min) && std::isfinite(params.max);
                 std::vector<GfVec2f> keys, tangents;
                 if (usable && op == RigExecPropertyOp::Curve) {
                     for (const RigExecWireVec2f &k : revision.keys) {
@@ -947,11 +952,10 @@ _ComputedRunChains(const fb::RigExecWireFile &file,
                     for (const RigExecWireVec2f &t : revision.tangents) {
                         tangents.emplace_back(t[0], t[1]);
                     }
-                    usable = !keys.empty() &&
-                             RigExecValidateLinearKeys(keys.data(),
-                                                       keys.size()) &&
-                             (tangents.empty() ||
-                              tangents.size() == keys.size());
+                    usable =
+                        !keys.empty() &&
+                        RigExecValidateLinearKeys(keys.data(), keys.size()) &&
+                        (tangents.empty() || tangents.size() == keys.size());
                     params.keys = keys.data();
                     params.keyCount = keys.size();
                     if (!tangents.empty()) {
@@ -963,8 +967,8 @@ _ComputedRunChains(const fb::RigExecWireFile &file,
                 if (usable && tag == Tag::Float) {
                     next.f32 = RigExecApplyFloatMath(value.f32, params);
                 } else if (usable) {
-                    next.f64 = double(
-                        RigExecApplyFloatMath(float(value.f64), params));
+                    next.f64 =
+                        double(RigExecApplyFloatMath(float(value.f64), params));
                 }
             } else if (usable && tag == Tag::Vec3f) {
                 RigExecPropertyMathParams<GfVec3f> params;
@@ -995,8 +999,8 @@ _ComputedRunChains(const fb::RigExecWireFile &file,
                 probe.matrix = _ChainWireMatrix(operand);
                 GfMatrix4d out = _ChainMatrix(value.matrix);
                 usable = _ChainFinite(probe) &&
-                         RigExecApplyMatrixMath(_ChainMatrix(value.matrix),
-                                                op, operand, weight, &out);
+                         RigExecApplyMatrixMath(_ChainMatrix(value.matrix), op,
+                                                operand, weight, &out);
                 next.matrix = _ChainWireMatrix(out);
             }
             if (!usable) {
@@ -1021,15 +1025,14 @@ _ComputedRunChains(const fb::RigExecWireFile &file,
         for (size_t k : phased) {
             const fb::RigExecWirePhasedConsumer &consumer =
                 file.phasedConsumers[k];
-            _ChainValue v = history[std::min(size_t(consumer.applied),
-                                             history.size() - 1)];
+            _ChainValue v =
+                history[std::min(size_t(consumer.applied), history.size() - 1)];
             if (consumer.consumerType == fb::PropertyValueType::Double &&
                 v.tag == Tag::Float) {
                 v.tag = Tag::Double;
                 v.f64 = double(v.f32);
                 v.f32 = 0;
-            } else if (consumer.consumerType ==
-                           fb::PropertyValueType::Float &&
+            } else if (consumer.consumerType == fb::PropertyValueType::Float &&
                        v.tag == Tag::Double) {
                 v.tag = Tag::Float;
                 v.f32 = float(v.f64);
@@ -1073,8 +1076,7 @@ static size_t
 _BinaryCheckChains(const RigExecBakedProgramImpl &program,
                    const fb::RigExecWireFile &file,
                    const _ChainEnvelope &envelope, size_t *skipped,
-                   std::vector<std::string> *diagnostics,
-                   size_t *chainReads)
+                   std::vector<std::string> *diagnostics, size_t *chainReads)
 {
     *skipped = 0;
     *chainReads = 0;
@@ -1180,21 +1182,23 @@ _BinaryCheckInputs(const RigExecBakedProgramImpl &program,
         }
         bool viaChain = false, varying = false;
         UsdAttribute selected;
-        RigExecBakedClassifyInput<float>(input.resolvedAttr,
-                                         UsdTimeCode::Default(),
-                                         program.chainTargets, &viaChain,
-                                         &varying, &selected);
+        RigExecBakedClassifyInput<float>(
+            input.resolvedAttr, UsdTimeCode::Default(), program.chainTargets,
+            &viaChain, &varying, &selected);
         crossing += viaChain ? 1 : 0;
     });
     size_t baked = 0, fileCrossing = 0;
-    _BinaryForEachRead(file, [&](const fb::RigExecWireInput &read) {
-        if (read.mode != fb::ReadMode::Baked) {
-            return;
-        }
-        ++baked;
-        fileCrossing +=
-            (read.flags & uint8_t(fb::InputReadFlags::ViaChain)) ? 1 : 0;
-    }, false);
+    _BinaryForEachRead(
+        file,
+        [&](const fb::RigExecWireInput &read) {
+            if (read.mode != fb::ReadMode::Baked) {
+                return;
+            }
+            ++baked;
+            fileCrossing +=
+                (read.flags & uint8_t(fb::InputReadFlags::ViaChain)) ? 1 : 0;
+        },
+        false);
     CHECK(registered == baked);
     CHECK(crossing == fileCrossing);
     std::printf("  input list: %zu slots, %zu weight objects (%zu "
@@ -1209,9 +1213,8 @@ _BinaryCheckInputs(const RigExecBakedProgramImpl &program,
     // and chain-crossing read of the run (chains that need an envelope are
     // left to the tests that resolve one).
     size_t skipped = 0, chainReads = 0;
-    const size_t chainValues = _BinaryCheckChains(program, file, nullptr,
-                                                  &skipped, nullptr,
-                                                  &chainReads);
+    const size_t chainValues = _BinaryCheckChains(
+        program, file, nullptr, &skipped, nullptr, &chainReads);
     if (!file.propertyChains.empty()) {
         std::printf("  chains: %zu chain(s), %zu phased consumer(s), %zu "
                     "property result(s) and %zu chain read(s) reproduced "
@@ -1232,8 +1235,7 @@ _ComputedLongWay(const fb::RigExecWireFile &file,
         if (tag == fb::InputTag::Float &&
             file.inputs[walk[k]].type() == fb::InputTag::Double) {
             _Val wide;
-            if (!_ComputedLongWay(file, walk, k, fb::InputTag::Double,
-                                  &wide)) {
+            if (!_ComputedLongWay(file, walk, k, fb::InputTag::Double, &wide)) {
                 return false;
             }
             double d = 0.0;
@@ -1266,18 +1268,27 @@ _ComputedReadFloat(const fb::RigExecWireFile &file,
 static const fb::RigExecWireInput *
 _EnvelopeScalarRead(const fb::RigExecWireFile &file, int fieldIndex, int member)
 {
-    CHECK(file.geometry && fieldIndex >= 0 && size_t(fieldIndex) < file.geometry->weightFields.size());
-    if (!file.geometry || fieldIndex < 0 || size_t(fieldIndex) >= file.geometry->weightFields.size()) return nullptr;
+    CHECK(file.geometry && fieldIndex >= 0 &&
+          size_t(fieldIndex) < file.geometry->weightFields.size());
+    if (!file.geometry || fieldIndex < 0 ||
+        size_t(fieldIndex) >= file.geometry->weightFields.size())
+        return nullptr;
     const auto &field = file.geometry->weightFields[size_t(fieldIndex)];
     const fb::RigExecWireInput *read = nullptr;
-    for (size_t r = 0; r < field.scalarReads.size() && r < field.scalarObjects.size() && r < field.scalarMembers.size(); ++r) {
-        if (field.scalarObjects[r] == field.object && int(field.scalarMembers[r]) == member) {
+    for (size_t r = 0;
+         r < field.scalarReads.size() && r < field.scalarObjects.size() &&
+         r < field.scalarMembers.size();
+         ++r) {
+        if (field.scalarObjects[r] == field.object &&
+            int(field.scalarMembers[r]) == member) {
             CHECK(!read);
             read = &field.scalarReads[r];
         }
     }
     CHECK(read);
-    if (read) CHECK(read->mode == fb::ReadMode::Resolved && read->tag == fb::InputTag::Float && read->overrideIndex == -1);
+    if (read)
+        CHECK(read->mode == fb::ReadMode::Resolved &&
+              read->tag == fb::InputTag::Float && read->overrideIndex == -1);
     return read;
 }
 
@@ -1302,8 +1313,7 @@ _BakeAndCompare(RigExecRigEvaluator &evaluator, double time,
     std::unique_ptr<fb::RigExecWireFile> file =
         _BinaryCompareProgram(evaluator, result.bytes, label);
     if (file) {
-        _BinaryCheckInputs(evaluator.GetBakedProgram()->GetStepGraph(),
-                           *file);
+        _BinaryCheckInputs(evaluator.GetBakedProgram()->GetStepGraph(), *file);
     }
     return file;
 }
@@ -1329,16 +1339,15 @@ TestPhaseBindingBakes()
         bool oracle = false;
     };
     const Row rows[] = {
-        {(fixtures / "frame_record_fallbacks.usda").string(), 1.0, true,
-         false},
+        {(fixtures / "frame_record_fallbacks.usda").string(), 1.0, true, false},
         {(fixtures / "solver_checkpoint.usda").string(), 1.0, true, false},
         {(fixtures / "volume_placements.usda").string(), 1.0, false, false,
          false, true},
         {(std::filesystem::path(RIGEXEC_EXAMPLES_DIR) / "13_ReadPhases.usda")
              .string(),
          1001.0, false, true},
-        {(fixtures / "phased_blend_samples.usda").string(), 3.0, false,
-         false, true},
+        {(fixtures / "phased_blend_samples.usda").string(), 3.0, false, false,
+         true},
     };
     for (const Row &row : rows) {
         const UsdStageRefPtr stage = UsdStage::Open(row.stage);
@@ -1497,8 +1506,8 @@ _HeldSettings(fb::RigExecWireFile *file, const std::string &mover)
     }
     const auto note = [&](uint32_t path) {
         if (_IsExtendedSetting(*file, *revision, path)) {
-            held.insert(RigExecFormatPathText(*file, path)
-                            .substr(mover.size() + 1));
+            held.insert(
+                RigExecFormatPathText(*file, path).substr(mover.size() + 1));
         }
     };
     for (const fb::RigExecWirePathRead &read : file->geometry->pathReads) {
@@ -1608,8 +1617,7 @@ TestExtendedDeformerSettingsBake()
         const char *const *names =
             RigExecFormatExtendedSettingNames(revision->op, &count);
         CHECK(names && count > 0);
-        const std::set<std::string> held =
-            _HeldSettings(file.get(), row.mover);
+        const std::set<std::string> held = _HeldSettings(file.get(), row.mover);
         for (size_t i = 0; names && i < count; ++i) {
             const bool found = held.count(names[i]) != 0;
             CHECK(found);
@@ -1629,8 +1637,7 @@ TestExtendedDeformerSettingsBake()
         const std::vector<uint8_t> future =
             RigExecTestPackUnchecked(relabelled);
         std::unique_ptr<fb::RigExecWireFile> opened;
-        CHECK(!RigExecFormatOpen(future.data(), future.size(), &opened,
-                                 &why) &&
+        CHECK(!RigExecFormatOpen(future.data(), future.size(), &opened, &why) &&
               _Contains(why, "rebake"));
     }
 
@@ -1638,8 +1645,7 @@ TestExtendedDeformerSettingsBake()
     size_t framed = 0;
     if (const UsdStageRefPtr stage =
             _StageFromText(latticeReferenceCases[0].stage)) {
-        stage->DefinePrim(SdfPath("/Rig/CageFrame"),
-                          TfToken("RigExecControl"));
+        stage->DefinePrim(SdfPath("/Rig/CageFrame"), TfToken("RigExecControl"));
         stage->DefinePrim(SdfPath("/Rig/TargetFrame"),
                           TfToken("RigExecControl"));
         const UsdRelationship frames =
@@ -1721,8 +1727,8 @@ TestAffineFrameRecords()
     const UsdPrim joint =
         stage->DefinePrim(SdfPath("/Rig/Joint"), TfToken("RigExecJoint"));
     CHECK(joint.GetAttribute(TfToken("posed:space"))
-              .SetConnections({copy.GetPath().AppendProperty(
-                  TfToken("outputs:matrix"))}));
+              .SetConnections(
+                  {copy.GetPath().AppendProperty(TfToken("outputs:matrix"))}));
     std::vector<uint8_t> bytes;
     const bool baked = _BakeAtOne(stage, &bytes);
     CHECK(baked);
@@ -1855,17 +1861,17 @@ TestComputedEnvelopeBake()
     xform("/Asset/TargetB", GfVec3d(0));
     xform("/Asset/Source", GfVec3d(10, 0, 0));
     const UsdPrim dial = xform("/Asset/Dial", GfVec3d(0));
-    const UsdAttribute amount = dial.CreateAttribute(
-        TfToken("avars:amount"), SdfValueTypeNames->Double);
+    const UsdAttribute amount = dial.CreateAttribute(TfToken("avars:amount"),
+                                                     SdfValueTypeNames->Double);
     amount.Set(0.2, UsdTimeCode(1.0));
     amount.Set(0.8, UsdTimeCode(10.0));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
     const auto constraint = [&](const char *name, const char *target,
                                 const SdfPath &weightPath) {
-        const UsdPrim prim = stage->DefinePrim(
-            SdfPath(std::string("/Asset/Rig/Movers/") + name),
-            TfToken("RigExecPositionConstraint"));
+        const UsdPrim prim =
+            stage->DefinePrim(SdfPath(std::string("/Asset/Rig/Movers/") + name),
+                              TfToken("RigExecPositionConstraint"));
         CHECK(prim.ApplyAPI(TfToken("RigExecMoverAPI")));
         prim.CreateRelationship(TfToken("rigExec:moves"))
             .SetTargets({SdfPath(target)});
@@ -1874,19 +1880,21 @@ TestComputedEnvelopeBake()
         prim.CreateRelationship(TfToken("rigExec:weightObject"))
             .SetTargets({weightPath});
     };
-    const UsdPrim fixed = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Weights/Fixed"), TfToken("RigExecStaticWeight"));
+    const UsdPrim fixed = stage->DefinePrim(SdfPath("/Asset/Rig/Weights/Fixed"),
+                                            TfToken("RigExecStaticWeight"));
     fixed.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({SdfPath("/Asset/TargetA")});
-    fixed.CreateAttribute(TfToken("rigExec:defaultWeight"),
-                          SdfValueTypeNames->Float)
+    fixed
+        .CreateAttribute(TfToken("rigExec:defaultWeight"),
+                         SdfValueTypeNames->Float)
         .Set(0.5f);
     const UsdPrim driven = stage->DefinePrim(
         SdfPath("/Asset/Rig/Weights/Driven"), TfToken("RigExecDynamicWeight"));
     driven.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({SdfPath("/Asset/TargetB")});
-    driven.CreateAttribute(TfToken("rigExec:representation"),
-                           SdfValueTypeNames->Token)
+    driven
+        .CreateAttribute(TfToken("rigExec:representation"),
+                         SdfValueTypeNames->Token)
         .Set(TfToken("constant"));
     driven.CreateAttribute(TfToken("inputs:driver"), SdfValueTypeNames->Float)
         .AddConnection(amount.GetPath());
@@ -1915,29 +1923,40 @@ TestComputedEnvelopeBake()
             if (index < 0 || size_t(index) >= objects.size()) {
                 continue;
             }
-            const fb::RigExecWireWeightObject &object =
-                objects[size_t(index)];
+            const fb::RigExecWireWeightObject &object = objects[size_t(index)];
             CHECK(!object.envelopeOnly);
             const int fieldIndex = file->pose->constraints[k].weightField;
-            CHECK(fieldIndex >= 0 && size_t(fieldIndex) < file->geometry->weightFields.size());
-            if (fieldIndex < 0 || size_t(fieldIndex) >= file->geometry->weightFields.size()) continue;
-            const auto &field = file->geometry->weightFields[size_t(fieldIndex)];
+            CHECK(fieldIndex >= 0 &&
+                  size_t(fieldIndex) < file->geometry->weightFields.size());
+            if (fieldIndex < 0 ||
+                size_t(fieldIndex) >= file->geometry->weightFields.size())
+                continue;
+            const auto &field =
+                file->geometry->weightFields[size_t(fieldIndex)];
             CHECK(field.object == index && uint8_t(field.form) == 1);
             size_t producers = 0;
             for (const auto &step : program.steps)
-                producers += step.kind == RigExecBakedStepKind::WeightPacket && step.object == index ? 1 : 0;
+                producers += step.kind == RigExecBakedStepKind::WeightPacket &&
+                                     step.object == index
+                                 ? 1
+                                 : 0;
             CHECK(producers == 1);
             CHECK(object.oracleStaticError.empty());
             CHECK(object.oraclePhaseError.empty());
             CHECK(object.defaultWeight->mode == fb::ReadMode::Baked);
-            const bool dynamic =
-                RigExecFormatPathText(*file, object.type) ==
-                "RigExecDynamicWeight";
-            const auto *defaultWeight = _EnvelopeScalarRead(*file, fieldIndex, 0);
-            const auto *driverRead = dynamic ? _EnvelopeScalarRead(*file, fieldIndex, 1) : nullptr;
-            const auto *scaleRead = dynamic ? _EnvelopeScalarRead(*file, fieldIndex, 2) : nullptr;
-            const auto *biasRead = dynamic ? _EnvelopeScalarRead(*file, fieldIndex, 3) : nullptr;
-            if (!defaultWeight || (dynamic && (!driverRead || !scaleRead || !biasRead))) continue;
+            const bool dynamic = RigExecFormatPathText(*file, object.type) ==
+                                 "RigExecDynamicWeight";
+            const auto *defaultWeight =
+                _EnvelopeScalarRead(*file, fieldIndex, 0);
+            const auto *driverRead =
+                dynamic ? _EnvelopeScalarRead(*file, fieldIndex, 1) : nullptr;
+            const auto *scaleRead =
+                dynamic ? _EnvelopeScalarRead(*file, fieldIndex, 2) : nullptr;
+            const auto *biasRead =
+                dynamic ? _EnvelopeScalarRead(*file, fieldIndex, 3) : nullptr;
+            if (!defaultWeight ||
+                (dynamic && (!driverRead || !scaleRead || !biasRead)))
+                continue;
             if (dynamic) {
                 // inputs:driver walks to the avar it is connected to.
                 CHECK(driverRead->walk.size() == 2);
@@ -1947,16 +1966,14 @@ TestComputedEnvelopeBake()
                     CHECK(RigExecFormatPathText(*file, leaf.name()) ==
                           amount.GetPath().GetString());
                     CHECK(leaf.type() == fb::InputTag::Double);
-                    CHECK(leaf.flags() &
-                          uint8_t(fb::InputSlotFlags::Animated));
+                    CHECK(leaf.flags() & uint8_t(fb::InputSlotFlags::Animated));
                 }
             }
             // _ResolveWeights' two scalar arms at count 1, no base.
             float expected = 0.0f;
             if (dynamic) {
                 const float base = 1.0f;
-                const float driver =
-                    _ComputedReadFloat(*file, *driverRead);
+                const float driver = _ComputedReadFloat(*file, *driverRead);
                 const float scale = _ComputedReadFloat(*file, *scaleRead);
                 const float bias = _ComputedReadFloat(*file, *biasRead);
                 expected = (base * driver) * scale + bias;
@@ -1995,8 +2012,8 @@ TestComputedCurrentPhaseBake()
     const UsdPrim mesh =
         stage->DefinePrim(SdfPath("/Asset/Geom/M"), TfToken("Points"));
     mesh.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
-        .Set(VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(0, 4, 0),
-                          GfVec3f(0, 8, 0)});
+        .Set(
+            VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(0, 4, 0), GfVec3f(0, 8, 0)});
     const UsdGeomXform source =
         UsdGeomXform::Define(stage, SdfPath("/Asset/PullTo"));
     source.MakeMatrixXform().Set(
@@ -2013,20 +2030,21 @@ TestComputedCurrentPhaseBake()
         .Set(0.0);
     sphere.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({SdfPath("/Asset/Geom/M.points")});
-    sphere.CreateAttribute(TfToken("inputs:falloffMin"),
-                           SdfValueTypeNames->Float)
+    sphere
+        .CreateAttribute(TfToken("inputs:falloffMin"), SdfValueTypeNames->Float)
         .Set(0.0f);
-    sphere.CreateAttribute(TfToken("inputs:falloffMax"),
-                           SdfValueTypeNames->Float)
+    sphere
+        .CreateAttribute(TfToken("inputs:falloffMax"), SdfValueTypeNames->Float)
         .Set(8.0f);
-    sphere.CreateAttribute(TfToken("rigExec:falloffProfile"),
-                           SdfValueTypeNames->Token)
+    sphere
+        .CreateAttribute(TfToken("rigExec:falloffProfile"),
+                         SdfValueTypeNames->Token)
         .Set(TfToken("linear"));
     sphere.GetRelationship(TfToken("rigExec:weightTarget"))
         .SetMetadata(TfToken("rigExecReadPhase"), std::string("preceding"));
-    const UsdPrim constraint = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Sweep/Pull"),
-        TfToken("RigExecPositionConstraint"));
+    const UsdPrim constraint =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Sweep/Pull"),
+                          TfToken("RigExecPositionConstraint"));
     constraint.ApplyAPI(TfToken("RigExecMoverAPI"));
     constraint.CreateRelationship(TfToken("rigExec:moves"))
         .SetTargets({SdfPath("/Asset/Geom/M.points")});
@@ -2075,8 +2093,7 @@ TestComputedCurrentPhaseBake()
         }
         for (const auto &chain : program.chains) {
             for (const auto &revision : chain.revisions) {
-                const RigExecWeightPacket &packet =
-                    revision.currentPhasePacket;
+                const RigExecWeightPacket &packet = revision.currentPhasePacket;
                 if (packet.valid && packet.values.size() == 3) {
                     fields.push_back(packet.values);
                 }
@@ -2094,8 +2111,8 @@ TestComputedCurrentPhaseBake()
 static _ChainEnvelope
 _ChainScalarEnvelopes(const fb::RigExecWireFile &file)
 {
-    return [&file](int32_t index, const _ChainOverlay &overlay,
-                   float *weight, std::string *error) {
+    return [&file](int32_t index, const _ChainOverlay &overlay, float *weight,
+                   std::string *error) {
         const fb::RigExecWireWeightObject &object =
             file.geometry->weightObjects[size_t(index)];
         const std::string type = _BinaryText(file, object.type);
@@ -2106,14 +2123,21 @@ _ChainScalarEnvelopes(const fb::RigExecWireFile &file)
         int fieldIndex = -1;
         for (size_t f = 0; f < file.geometry->weightFields.size(); ++f) {
             const auto &field = file.geometry->weightFields[f];
-            if (field.object == index && uint8_t(field.form) == 0) { fieldIndex = int(f); break; }
+            if (field.object == index && uint8_t(field.form) == 0) {
+                fieldIndex = int(f);
+                break;
+            }
         }
         const auto *defaultWeight = _EnvelopeScalarRead(file, fieldIndex, 0);
         const bool dynamic = type == "RigExecDynamicWeight";
-        const auto *driver = dynamic ? _EnvelopeScalarRead(file, fieldIndex, 1) : nullptr;
-        const auto *scale = dynamic ? _EnvelopeScalarRead(file, fieldIndex, 2) : nullptr;
-        const auto *bias = dynamic ? _EnvelopeScalarRead(file, fieldIndex, 3) : nullptr;
-        if (!defaultWeight || (dynamic && (!driver || !scale || !bias))) return false;
+        const auto *driver =
+            dynamic ? _EnvelopeScalarRead(file, fieldIndex, 1) : nullptr;
+        const auto *scale =
+            dynamic ? _EnvelopeScalarRead(file, fieldIndex, 2) : nullptr;
+        const auto *bias =
+            dynamic ? _EnvelopeScalarRead(file, fieldIndex, 3) : nullptr;
+        if (!defaultWeight || (dynamic && (!driver || !scale || !bias)))
+            return false;
         const auto read = [&](const fb::RigExecWireInput &input,
                               float fallback) {
             _Val value;
@@ -2252,21 +2276,19 @@ TestComputedChainBake()
                       fb::InputTag::Double);
             }
             const fb::RigExecWirePropertyRevision &shape = dial->revisions[1];
-            CHECK(shape.op == fb::PropertyOp::Curve &&
-                  shape.keys.size() == 3 && shape.tangents.size() == 3 &&
-                  shape.hasTangentsAttr);
+            CHECK(shape.op == fb::PropertyOp::Curve && shape.keys.size() == 3 &&
+                  shape.tangents.size() == 3 && shape.hasTangentsAttr);
             if (shape.keys.size() == 3) {
                 CHECK(shape.keys[1] == RigExecWireVec2f({0.5f, 0.8f}));
             }
-            const auto envelopeOf =
-                [&](const fb::RigExecWirePropertyRevision &revision) {
-                    return revision.envelope >= 0
-                               ? text(file.geometry
-                                          ->weightObjects[size_t(
-                                              revision.envelope)]
-                                          .path)
-                               : std::string();
-                };
+            const auto envelopeOf = [&](const fb::RigExecWirePropertyRevision
+                                            &revision) {
+                return revision.envelope >= 0
+                           ? text(file.geometry
+                                      ->weightObjects[size_t(revision.envelope)]
+                                      .path)
+                           : std::string();
+            };
             CHECK(envelopeOf(dial->revisions[2]) == "/Asset/Rig/Weights/Half");
             CHECK(envelopeOf(dial->revisions[3]) == "/Asset/Rig/Weights/Ramp");
             CHECK(dial->revisions[0].envelope == -1);
@@ -2325,19 +2347,21 @@ TestComputedChainBake()
         // from its own attribute to the dial's target, and it holds the
         // override number the program registered for that attribute.
         std::vector<const fb::RigExecWireInput *> crossing;
-        _BinaryForEachRead(file, [&](const fb::RigExecWireInput &read) {
-            if (read.mode == fb::ReadMode::Baked &&
-                (read.flags & uint8_t(fb::InputReadFlags::ViaChain))) {
-                crossing.push_back(&read);
-            }
-        }, false);
+        _BinaryForEachRead(
+            file,
+            [&](const fb::RigExecWireInput &read) {
+                if (read.mode == fb::ReadMode::Baked &&
+                    (read.flags & uint8_t(fb::InputReadFlags::ViaChain))) {
+                    crossing.push_back(&read);
+                }
+            },
+            false);
         CHECK(crossing.size() == 1);
         if (crossing.size() == 1) {
             const fb::RigExecWireInput &weight = *crossing[0];
             const std::string head =
                 "/Asset/Rig/Movers/Follow.inputs:defaultWeight";
-            CHECK(weight.tag == fb::InputTag::Float &&
-                  weight.walk.size() == 2);
+            CHECK(weight.tag == fb::InputTag::Float && weight.walk.size() == 2);
             if (weight.walk.size() == 2) {
                 CHECK(slotName(weight.walk[0]) == head);
                 const int32_t chain = file.inputs[weight.walk[1]].chain();
@@ -2348,8 +2372,12 @@ TestComputedChainBake()
                   std::find(numbers->second.begin(), numbers->second.end(),
                             weight.overrideIndex) != numbers->second.end());
             size_t memoCopies = 0;
-            for (const auto &step : file.steps) for (const auto &read : step.headInputReads)
-                if (read.overrideIndex == weight.overrideIndex) { CHECK(_BinarySameRead(read, weight)); ++memoCopies; }
+            for (const auto &step : file.steps)
+                for (const auto &read : step.headInputReads)
+                    if (read.overrideIndex == weight.overrideIndex) {
+                        CHECK(_BinarySameRead(read, weight));
+                        ++memoCopies;
+                    }
             CHECK(memoCopies > 0);
         }
 
@@ -2357,9 +2385,9 @@ TestComputedChainBake()
         // chains' lines as the evaluator printed them first at the time.
         size_t skipped = 0, chainReads = 0;
         std::vector<std::string> lines;
-        const size_t compared = _BinaryCheckChains(
-            program, file, _ChainScalarEnvelopes(file), &skipped, &lines,
-            &chainReads);
+        const size_t compared =
+            _BinaryCheckChains(program, file, _ChainScalarEnvelopes(file),
+                               &skipped, &lines, &chainReads);
         std::printf("  computed chains at %g: %zu value(s) and %zu chain "
                     "read(s) reproduced bit for bit\n",
                     time, compared, chainReads);
@@ -2369,9 +2397,9 @@ TestComputedChainBake()
         CHECK(lines.size() == 3);
         RigExecRigEvaluator replay(stage, rigPath);
         const RigExecRigPose pose = replay.Evaluate(UsdTimeCode(time));
-        const auto at = std::search(pose.diagnostics.begin(),
-                                    pose.diagnostics.end(), lines.begin(),
-                                    lines.end());
+        const auto at =
+            std::search(pose.diagnostics.begin(), pose.diagnostics.end(),
+                        lines.begin(), lines.end());
         if (at == pose.diagnostics.end()) {
             for (const std::string &line : lines) {
                 std::printf("  reference line: %s\n", line.c_str());
@@ -2485,11 +2513,12 @@ TestRangeChainBake()
         SdfPath("/Asset/Rig/BlendInputs/Raise"), TfToken("RigExecBlendInput"));
     input.CreateAttribute(TfToken("inputs:weight"), SdfValueTypeNames->Float)
         .Set(0.5f);
-    const UsdPrim sample = stage->DefinePrim(
-        SdfPath("/Asset/Rig/BlendInputs/Raise/Full"),
-        TfToken("RigExecBlendSample"));
-    sample.CreateAttribute(TfToken("rigExec:activation"),
-                           SdfValueTypeNames->Float)
+    const UsdPrim sample =
+        stage->DefinePrim(SdfPath("/Asset/Rig/BlendInputs/Raise/Full"),
+                          TfToken("RigExecBlendSample"));
+    sample
+        .CreateAttribute(TfToken("rigExec:activation"),
+                         SdfValueTypeNames->Float)
         .Set(1.0f);
     sample.CreateRelationship(TfToken("rigExec:targetPoints"))
         .SetTargets({SdfPath("/Asset/Raised.points")});
@@ -2515,15 +2544,16 @@ TestRangeChainBake()
             weight.Set(1.0f);
         }
     }
-    const UsdPrim blend = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Blend"), TfToken("RigExecBlendShapeMover"));
+    const UsdPrim blend = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Blend"),
+                                            TfToken("RigExecBlendShapeMover"));
     CHECK(blend.ApplyAPI(TfToken("RigExecMoverAPI")));
     blend.CreateRelationship(TfToken("rigExec:moves"))
         .SetTargets({SdfPath("/Asset/Shape.points")});
     blend.CreateRelationship(TfToken("rigExec:blendInputs"))
         .SetTargets({input.GetPath()});
-    blend.CreateAttribute(TfToken("inputs:defaultWeight"),
-                          SdfValueTypeNames->Float)
+    blend
+        .CreateAttribute(TfToken("inputs:defaultWeight"),
+                         SdfValueTypeNames->Float)
         .Set(1.0f);
 
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
@@ -2585,16 +2615,15 @@ TestRangeChainBake()
         CHECK(size_t(id) < g.revisionChunkCount.size() &&
               size_t(g.revisionChunkCount[size_t(id)]) == ranges);
         for (const fb::RigExecWireStep &step : file->steps) {
-            if (step.kind == fb::StepKind::RevisionChunk &&
-                step.object == id) {
+            if (step.kind == fb::StepKind::RevisionChunk && step.object == id) {
                 ++rangeSteps;
                 CHECK(_DeclaresRead(step, fb::SlotDomain::ChainBase,
                                     uint32_t(c)));
                 // Group `part` of the entering version: the previous
                 // revision's group, never its whole version.
                 if (r > 0) {
-                    const uint32_t entering = uint32_t(
-                        chain.revisions[r - 1].chunkBase + step.part);
+                    const uint32_t entering =
+                        uint32_t(chain.revisions[r - 1].chunkBase + step.part);
                     CHECK(_DeclaresRead(step, fb::SlotDomain::RevisionOut,
                                         entering));
                     CHECK(!_DeclaresRead(step, fb::SlotDomain::RevisionDone,
@@ -2603,8 +2632,7 @@ TestRangeChainBake()
                                          uint32_t(id) - 1));
                 }
             }
-            if (step.kind == fb::StepKind::RevisionFuse &&
-                step.object == id) {
+            if (step.kind == fb::StepKind::RevisionFuse && step.object == id) {
                 // Summaries depend on groups, never the preceding summary.
                 for (size_t k = 0; k < ranges; ++k) {
                     CHECK(_DeclaresRead(step, fb::SlotDomain::RevisionOut,
@@ -2619,9 +2647,9 @@ TestRangeChainBake()
             }
         }
     }
-    CHECK(movers == std::set<std::string>({"/Asset/Rig/Movers/M0",
-                                           "/Asset/Rig/Movers/M1",
-                                           "/Asset/Rig/Movers/M2"}));
+    CHECK(movers ==
+          std::set<std::string>({"/Asset/Rig/Movers/M0", "/Asset/Rig/Movers/M1",
+                                 "/Asset/Rig/Movers/M2"}));
     CHECK(rangeSteps == 4 * ranges);
     {
         std::string why;
@@ -2650,92 +2678,107 @@ TestRangeChainBake()
         return found;
     };
     int refused = 0;
-    const auto refuse = [&](const char *label,
-                            const std::function<bool(fb::RigExecWireFile &)>
-                                &edit,
-                            const std::string &part) {
-        fb::RigExecWireFile copy(*file);
-        const bool edited = edit(copy);
-        CHECK(edited);
-        const bool named = edited && _Refused(copy, part);
-        if (!named) {
-            std::printf("  range chain bake: %s\n", label);
-        }
-        CHECK(named);
-        refused += named ? 1 : 0;
-    };
-    refuse("a key on a group", [&](fb::RigExecWireFile &f) {
-        revisionAt(f, 1).chunks[1].key = {0};
-        return true;
-    }, "chunks[1]: a key on an unchunked revision");
-    refuse("a gap", [&](fb::RigExecWireFile &f) {
-        ++revisionAt(f, 1).chunks[1].begin;
-        return true;
-    }, "does not continue the chain's point partition");
-    refuse("two revisions cutting the chain differently",
-           [&](fb::RigExecWireFile &f) {
-               fb::RigExecWireRevision &revision = revisionAt(f, 2);
-               --revision.chunks[0].end;
-               --revision.chunks[1].begin;
-               return true;
-           },
-           ".revisions[2]: its point ranges differ from revisions[0]'s");
-    refuse("a group-shaped volume correction", [&](fb::RigExecWireFile &f) {
-        revisionAt(f, 1).op = uint8_t(fb::RevisionOp::VolumeCorrect);
-        return true;
-    }, std::to_string(ranges) + " chunks, but not chunked");
-    refuse("a group step missing the previous revision's group",
-           [&](fb::RigExecWireFile &f) {
-               fb::RigExecWireStep *step =
-                   stepOf(f, fb::StepKind::RevisionChunk, second, 1);
-               if (!step || !_DeclaresRead(*step, fb::SlotDomain::RevisionOut,
-                                           firstBase + 1)) {
-                   return false;
-               }
-               _DropRead(step, fb::SlotDomain::RevisionOut, firstBase + 1);
-               return true;
-           },
-           " does not declare RevisionOut[" + std::to_string(firstBase + 1) +
-               "]");
-    refuse("a group step missing the blend shape's group",
-           [&](fb::RigExecWireFile &f) {
-               fb::RigExecWireStep *step =
-                   stepOf(f, fb::StepKind::RevisionChunk, firstRange, 1);
-               if (!step || !_DeclaresRead(*step, fb::SlotDomain::RevisionOut,
-                                           blendBase + 1)) {
-                   return false;
-               }
-               _DropRead(step, fb::SlotDomain::RevisionOut, blendBase + 1);
-               return true;
-           },
-           " does not declare RevisionOut[" + std::to_string(blendBase + 1) +
-               "]");
-    refuse("a group step declaring the previous revision's version",
-           [&](fb::RigExecWireFile &f) {
-               fb::RigExecWireStep *step =
-                   stepOf(f, fb::StepKind::RevisionChunk, second, 1);
-               if (!step || _DeclaresRead(*step, fb::SlotDomain::RevisionDone,
-                                          firstRange)) {
-                   return false;
-               }
-               step->reads.emplace_back(fb::SlotDomain::RevisionDone,
-                                        firstRange, firstRange + 1);
-               step->reads.emplace_back(fb::SlotDomain::ChainDirty,
-                                        firstRange, firstRange + 1);
-               return true;
-           },
-           "which a range-pipelined range step does not read");
-    refuse("a join missing one of its groups", [&](fb::RigExecWireFile &f) {
-        fb::RigExecWireStep *join =
-            stepOf(f, fb::StepKind::RevisionFuse, firstRange, -1);
-        const uint32_t own = firstBase + uint32_t(ranges) - 1;
-        if (!join || !_DeclaresRead(*join, fb::SlotDomain::RevisionOut, own)) {
-            return false;
-        }
-        _DropRead(join, fb::SlotDomain::RevisionOut, own);
-        return true;
-    }, " does not declare RevisionOut[" +
-           std::to_string(firstBase + ranges - 1) + "]");
+    const auto refuse =
+        [&](const char *label,
+            const std::function<bool(fb::RigExecWireFile &)> &edit,
+            const std::string &part) {
+            fb::RigExecWireFile copy(*file);
+            const bool edited = edit(copy);
+            CHECK(edited);
+            const bool named = edited && _Refused(copy, part);
+            if (!named) {
+                std::printf("  range chain bake: %s\n", label);
+            }
+            CHECK(named);
+            refused += named ? 1 : 0;
+        };
+    refuse(
+        "a key on a group",
+        [&](fb::RigExecWireFile &f) {
+            revisionAt(f, 1).chunks[1].key = {0};
+            return true;
+        },
+        "chunks[1]: a key on an unchunked revision");
+    refuse(
+        "a gap",
+        [&](fb::RigExecWireFile &f) {
+            ++revisionAt(f, 1).chunks[1].begin;
+            return true;
+        },
+        "does not continue the chain's point partition");
+    refuse(
+        "two revisions cutting the chain differently",
+        [&](fb::RigExecWireFile &f) {
+            fb::RigExecWireRevision &revision = revisionAt(f, 2);
+            --revision.chunks[0].end;
+            --revision.chunks[1].begin;
+            return true;
+        },
+        ".revisions[2]: its point ranges differ from revisions[0]'s");
+    refuse(
+        "a group-shaped volume correction",
+        [&](fb::RigExecWireFile &f) {
+            revisionAt(f, 1).op = uint8_t(fb::RevisionOp::VolumeCorrect);
+            return true;
+        },
+        std::to_string(ranges) + " chunks, but not chunked");
+    refuse(
+        "a group step missing the previous revision's group",
+        [&](fb::RigExecWireFile &f) {
+            fb::RigExecWireStep *step =
+                stepOf(f, fb::StepKind::RevisionChunk, second, 1);
+            if (!step || !_DeclaresRead(*step, fb::SlotDomain::RevisionOut,
+                                        firstBase + 1)) {
+                return false;
+            }
+            _DropRead(step, fb::SlotDomain::RevisionOut, firstBase + 1);
+            return true;
+        },
+        " does not declare RevisionOut[" + std::to_string(firstBase + 1) + "]");
+    refuse(
+        "a group step missing the blend shape's group",
+        [&](fb::RigExecWireFile &f) {
+            fb::RigExecWireStep *step =
+                stepOf(f, fb::StepKind::RevisionChunk, firstRange, 1);
+            if (!step || !_DeclaresRead(*step, fb::SlotDomain::RevisionOut,
+                                        blendBase + 1)) {
+                return false;
+            }
+            _DropRead(step, fb::SlotDomain::RevisionOut, blendBase + 1);
+            return true;
+        },
+        " does not declare RevisionOut[" + std::to_string(blendBase + 1) + "]");
+    refuse(
+        "a group step declaring the previous revision's version",
+        [&](fb::RigExecWireFile &f) {
+            fb::RigExecWireStep *step =
+                stepOf(f, fb::StepKind::RevisionChunk, second, 1);
+            if (!step || _DeclaresRead(*step, fb::SlotDomain::RevisionDone,
+                                       firstRange)) {
+                return false;
+            }
+            step->reads.emplace_back(fb::SlotDomain::RevisionDone, firstRange,
+                                     firstRange + 1);
+            step->reads.emplace_back(fb::SlotDomain::ChainDirty, firstRange,
+                                     firstRange + 1);
+            return true;
+        },
+        "which a range-pipelined range step does not read");
+    refuse(
+        "a join missing one of its groups",
+        [&](fb::RigExecWireFile &f) {
+            fb::RigExecWireStep *join =
+                stepOf(f, fb::StepKind::RevisionFuse, firstRange, -1);
+            const uint32_t own = firstBase + uint32_t(ranges) - 1;
+            if (!join ||
+                !_DeclaresRead(*join, fb::SlotDomain::RevisionOut, own)) {
+                return false;
+            }
+            _DropRead(join, fb::SlotDomain::RevisionOut, own);
+            return true;
+        },
+        " does not declare RevisionOut[" +
+            std::to_string(firstBase + ranges - 1) + "]");
     {
         fb::RigExecWireFile legacy(*file);
         legacy.formatVersion = 29;
@@ -2841,10 +2884,10 @@ TestEnumeratedReadThroughPropertyResult()
     bool throughDriver = false;
     if (row && row->read) {
         for (const uint32_t slot : row->read->walk) {
-            throughDriver = throughDriver ||
-                            (_BinarySlotName(*file, slot) ==
-                                 driver.GetPath().GetString() &&
-                             file->inputs[slot].chain() >= 0);
+            throughDriver =
+                throughDriver ||
+                (_BinarySlotName(*file, slot) == driver.GetPath().GetString() &&
+                 file->inputs[slot].chain() >= 0);
         }
     }
     CHECK(throughDriver);
@@ -2854,9 +2897,9 @@ TestEnumeratedReadThroughPropertyResult()
     for (const RigExecBakeRevisionRead &candidate : enumerated) {
         if (candidate.path == scale.GetPath() && !candidate.rest &&
             candidate.value.IsHolding<float>()) {
-            enumeratedResult = enumeratedResult ||
-                               _BinarySame(candidate.value.UncheckedGet<float>(),
-                                           value);
+            enumeratedResult =
+                enumeratedResult ||
+                _BinarySame(candidate.value.UncheckedGet<float>(), value);
         }
     }
     CHECK(enumeratedResult);
@@ -2903,8 +2946,8 @@ TestStaticReportRevisionReads()
         UsdEditContext context(stage, stage->GetSessionLayer());
         const UsdAttribute attribute =
             stage->GetPrimAtPath(mode.GetPrimPath())
-                .CreateAttribute(mode.GetNameToken(),
-                                 SdfValueTypeNames->Token, false);
+                .CreateAttribute(mode.GetNameToken(), SdfValueTypeNames->Token,
+                                 false);
         CHECK(attribute.Set(TfToken("material"), UsdTimeCode(1.0)) &&
               attribute.Set(TfToken("material"), UsdTimeCode(10.0)));
     }
@@ -2989,9 +3032,9 @@ TestStaticReportAnsweredBlendSamples()
     for (const RigExecBakeStaticEntry &entry : entries) {
         std::printf("  static %s: %s\n", entry.field.c_str(),
                     entry.source.c_str());
-        chainBase = chainBase ||
-                    (entry.field == "chain base " + shape.GetString() &&
-                     entry.source == shape.GetString());
+        chainBase =
+            chainBase || (entry.field == "chain base " + shape.GetString() &&
+                          entry.source == shape.GetString());
         samplePoints += entry.field.rfind("blend sample points ", 0) == 0;
     }
     CHECK(bound == 2);
@@ -3010,17 +3053,16 @@ _PresentationBytes(const std::string &input,
 {
     flatbuffers::FlatBufferBuilder builder;
     const auto control = fb::CreatePresentationControl(
-        builder, builder.CreateString("Tail.rz"),
-        builder.CreateString(input), fb::PresentationUnit::Degrees);
+        builder, builder.CreateString("Tail.rz"), builder.CreateString(input),
+        fb::PresentationUnit::Degrees);
     const std::vector<flatbuffers::Offset<fb::PresentationControl>> controls(
         1, control);
-    const auto presentation = fb::CreatePresentation(
-        builder, 1, builder.CreateVector(controls), 0,
-        builder.CreateString("{}"));
+    const auto presentation =
+        fb::CreatePresentation(builder, 1, builder.CreateVector(controls), 0,
+                               builder.CreateString("{}"));
     builder.Finish(presentation, identifier);
     return std::vector<uint8_t>(builder.GetBufferPointer(),
-                                builder.GetBufferPointer() +
-                                    builder.GetSize());
+                                builder.GetBufferPointer() + builder.GetSize());
 }
 
 // The bake's options: a time must be finite; a presentation whose control
@@ -3071,8 +3113,8 @@ TestBakeOptions(const std::string &fixture, const std::string &input)
     CHECK(embedded(result.bytes) == valid);
 
     error.clear();
-    CHECK(!bake(_PresentationBytes("/RigExecTest/NoSuch.attr"), &result,
-                &error));
+    CHECK(
+        !bake(_PresentationBytes("/RigExecTest/NoSuch.attr"), &result, &error));
     CHECK(error == "presentation control Tail.rz names "
                    "/RigExecTest/NoSuch.attr, which is not a listed input");
     std::printf("presentation, unknown input: %s\n", error.c_str());
@@ -3114,8 +3156,7 @@ _MakeGroupRolesStage(size_t points)
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const auto control = [&](const char *path, const char *avar,
-                             double value) {
+    const auto control = [&](const char *path, const char *avar, double value) {
         const UsdPrim prim =
             stage->DefinePrim(SdfPath(path), TfToken("RigExecControl"));
         prim.CreateAttribute(TfToken(avar), SdfValueTypeNames->Double)
@@ -3145,11 +3186,12 @@ _MakeGroupRolesStage(size_t points)
         SdfPath("/Asset/Rig/BlendInputs/Raise"), TfToken("RigExecBlendInput"));
     input.CreateAttribute(TfToken("inputs:weight"), SdfValueTypeNames->Float)
         .Set(0.5f);
-    const UsdPrim sample = stage->DefinePrim(
-        SdfPath("/Asset/Rig/BlendInputs/Raise/Full"),
-        TfToken("RigExecBlendSample"));
-    sample.CreateAttribute(TfToken("rigExec:activation"),
-                           SdfValueTypeNames->Float)
+    const UsdPrim sample =
+        stage->DefinePrim(SdfPath("/Asset/Rig/BlendInputs/Raise/Full"),
+                          TfToken("RigExecBlendSample"));
+    sample
+        .CreateAttribute(TfToken("rigExec:activation"),
+                         SdfValueTypeNames->Float)
         .Set(1.0f);
     sample.CreateRelationship(TfToken("rigExec:targetPoints"))
         .SetTargets({SdfPath("/Asset/Raised.points")});
@@ -3164,17 +3206,21 @@ _MakeGroupRolesStage(size_t points)
         SdfPath("/Asset/Rig/Weights/Sparse"), TfToken("RigExecStaticWeight"));
     weight.CreateRelationship(TfToken("rigExec:weightTarget"), false)
         .SetTargets({target});
-    weight.CreateAttribute(TfToken("rigExec:representation"),
-                           SdfValueTypeNames->Token, false)
+    weight
+        .CreateAttribute(TfToken("rigExec:representation"),
+                         SdfValueTypeNames->Token, false)
         .Set(TfToken("sparse"));
-    weight.CreateAttribute(TfToken("rigExec:indices"),
-                           SdfValueTypeNames->IntArray, false)
+    weight
+        .CreateAttribute(TfToken("rigExec:indices"),
+                         SdfValueTypeNames->IntArray, false)
         .Set(named);
-    weight.CreateAttribute(TfToken("rigExec:values"),
-                           SdfValueTypeNames->FloatArray, false)
+    weight
+        .CreateAttribute(TfToken("rigExec:values"),
+                         SdfValueTypeNames->FloatArray, false)
         .Set(VtFloatArray(support.size(), 1.0f));
-    weight.CreateAttribute(TfToken("rigExec:defaultWeight"),
-                           SdfValueTypeNames->Float, false)
+    weight
+        .CreateAttribute(TfToken("rigExec:defaultWeight"),
+                         SdfValueTypeNames->Float, false)
         .Set(0.0f);
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
     const auto mover = [&](const char *name, const char *type) {
@@ -3218,8 +3264,9 @@ _MakeGroupRolesStage(size_t points)
     const UsdPrim blend = mover("Blend", "RigExecBlendShapeMover");
     blend.CreateRelationship(TfToken("rigExec:blendInputs"))
         .SetTargets({input.GetPath()});
-    blend.CreateAttribute(TfToken("inputs:defaultWeight"),
-                          SdfValueTypeNames->Float)
+    blend
+        .CreateAttribute(TfToken("inputs:defaultWeight"),
+                         SdfValueTypeNames->Float)
         .Set(1.0f);
     return stage;
 }
@@ -3309,9 +3356,8 @@ _RevisionChunkCount(const fb::RigExecWireFile &file, size_t c, int r)
 {
     const fb::RigExecWireDomainGeometry &g = *file.geometry;
     const size_t id = size_t(g.chainRevisionBegin[c]) + size_t(r);
-    return id < g.revisionChunkCount.size()
-               ? size_t(g.revisionChunkCount[id])
-               : 0;
+    return id < g.revisionChunkCount.size() ? size_t(g.revisionChunkCount[id])
+                                            : 0;
 }
 
 /// Whether \p file lists the input slot of attribute \p name.
@@ -3375,10 +3421,10 @@ _ListSlot(fb::RigExecWireFile *file, const std::string &name)
     file->inputs.erase(file->inputs.begin() + std::ptrdiff_t(from));
     file->inputs.insert(
         file->inputs.begin() + std::ptrdiff_t(at),
-        fb::InputSlot(moved.name(), moved.value(), moved.chain(),
-                      moved.phased(), moved.type(),
-                      uint8_t(moved.flags() |
-                              uint8_t(fb::InputSlotFlags::Listed))));
+        fb::InputSlot(
+            moved.name(), moved.value(), moved.chain(), moved.phased(),
+            moved.type(),
+            uint8_t(moved.flags() | uint8_t(fb::InputSlotFlags::Listed))));
     ++file->listedInputs;
     return true;
 }
@@ -3483,8 +3529,7 @@ TestGroupRolesBake()
             if (RigExecPointRangeBound(kPoints, groups, k) < kPoints / 2) {
                 want.insert(0);
             }
-            if (RigExecPointRangeBound(kPoints, groups, k + 1) >
-                kPoints / 2) {
+            if (RigExecPointRangeBound(kPoints, groups, k + 1) > kPoints / 2) {
                 want.insert(1);
             }
             CHECK(std::set<int>(skin->chunks[k].key.begin(),
@@ -3534,10 +3579,9 @@ TestGroupRolesBake()
         "/Asset/Rig/Weights/Sparse.rigExec:defaultWeight";
     const std::set<SdfPath> &pinned = baked->GetExportPinnedPaths();
     for (const std::string &name :
-         {linearAt + "rigExec:skinningMethod",
-          linearAt + "rigExec:elementSize", linearAt + "rigExec:jointIndices",
-          dualAt + "rigExec:skinningMethod", dualAt + "rigExec:elementSize",
-          dualAt + "rigExec:jointIndices",
+         {linearAt + "rigExec:skinningMethod", linearAt + "rigExec:elementSize",
+          linearAt + "rigExec:jointIndices", dualAt + "rigExec:skinningMethod",
+          dualAt + "rigExec:elementSize", dualAt + "rigExec:jointIndices",
           defaultWeight}) {
         const bool constant = _HoldsConstant(*file, name);
         if (!constant) {
@@ -3554,8 +3598,7 @@ TestGroupRolesBake()
          {linearAt + "rigExec:jointWeights", dualAt + "rigExec:jointWeights"}) {
         const bool listed = _ListsInput(*file, name);
         if (!listed) {
-            std::printf("  group roles bake: %s is not listed\n",
-                        name.c_str());
+            std::printf("  group roles bake: %s is not listed\n", name.c_str());
         }
         CHECK(listed);
     }
@@ -3617,11 +3660,15 @@ TestGroupRolesBake()
         const size_t r = size_t(at.gated);
         const int id = f.geometry->chainRevisionBegin[c] + int(r);
         for (size_t k = 0; k < groups; ++k) {
-            if (written.count(int(k))) continue;
-            const uint32_t slot = uint32_t(chain.revisions[size_t(entering[r][k])].chunkBase + k);
+            if (written.count(int(k)))
+                continue;
+            const uint32_t slot =
+                uint32_t(chain.revisions[size_t(entering[r][k])].chunkBase + k);
             for (auto &step : f.steps) {
-                if (step.kind == fb::StepKind::RevisionFuse && step.object == id) {
-                    CHECK(_DeclaresRead(step, fb::SlotDomain::RevisionOut, slot));
+                if (step.kind == fb::StepKind::RevisionFuse &&
+                    step.object == id) {
+                    CHECK(
+                        _DeclaresRead(step, fb::SlotDomain::RevisionOut, slot));
                     _DropRead(&step, fb::SlotDomain::RevisionOut, slot);
                     return true;
                 }
@@ -3630,11 +3677,11 @@ TestGroupRolesBake()
         return false;
     });
     for (const std::string &name :
-         {linearAt + "rigExec:skinningMethod", dualAt + "rigExec:skinningMethod", defaultWeight}) {
+         {linearAt + "rigExec:skinningMethod",
+          dualAt + "rigExec:skinningMethod", defaultWeight}) {
         const std::string why =
-            refuse("listing " + name, [&](fb::RigExecWireFile &f) {
-                return _ListSlot(&f, name);
-            });
+            refuse("listing " + name,
+                   [&](fb::RigExecWireFile &f) { return _ListSlot(&f, name); });
         // Refused for the constant, not for how the edit moved the slot.
         CHECK(!_Contains(why, "malformed type, flags or default") &&
               !_Contains(why, "listed inputs are not sorted"));
@@ -3664,11 +3711,9 @@ TestExportKeepSetBake()
         "/Asset/Rig/Weights/Sparse.rigExec:defaultWeight";
     const auto bake = [&](RigExecRigEvaluator &evaluator,
                           const RigExecBakeOpts &opts,
-                          RigExecBakeResult *result,
-                          const std::string &label) {
+                          RigExecBakeResult *result, const std::string &label) {
         std::string error;
-        const bool baked =
-            RigExecBakeToBinary(evaluator, opts, result, &error);
+        const bool baked = RigExecBakeToBinary(evaluator, opts, result, &error);
         if (!baked) {
             std::printf("%s bake diagnostic: %s\n", label.c_str(),
                         error.c_str());
@@ -3790,8 +3835,7 @@ TestBakeRestoresLiveRoles()
         CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
         const bool held = evaluator.GetBakedProgramBuildCount() == builds + 1;
         std::printf("bake role restore %s: %s\n", label,
-                    rebuilt && isLive && held ? "one rebuild, Live"
-                                              : "WRONG");
+                    rebuilt && isLive && held ? "one rebuild, Live" : "WRONG");
         CHECK(rebuilt && isLive && held);
     };
     RigExecBakeOpts opts;
@@ -3821,17 +3865,22 @@ static void
 TestTheExportIgnoresTheWorkLimit()
 {
     if (!TfGetenv("RIGEXEC_BAKED_GRAIN_US", "").empty()) {
-        std::printf("export work limit: skipped, RIGEXEC_BAKED_GRAIN_US is set\n");
+        std::printf(
+            "export work limit: skipped, RIGEXEC_BAKED_GRAIN_US is set\n");
         return;
     }
     struct RestoreLimit {
         unsigned limit;
-        ~RestoreLimit() { WorkSetConcurrencyLimit(limit); }
+        ~RestoreLimit()
+        {
+            WorkSetConcurrencyLimit(limit);
+        }
     } restore{WorkGetConcurrencyLimit()};
     std::string chosen;
     double cost = 0;
-    for (const char *name : {"02_TwoBoneIkLeg.usda", "09_PropertyMathMovers.usda",
-                             "06_LatticeBulge.usda"}) {
+    for (const char *name :
+         {"02_TwoBoneIkLeg.usda", "09_PropertyMathMovers.usda",
+          "06_LatticeBulge.usda"}) {
         const std::string path =
             (std::filesystem::path(RIGEXEC_EXAMPLES_DIR) / name).string();
         const std::vector<uint8_t> bytes = _BakeFixture(path, 1001.0);
@@ -3905,10 +3954,11 @@ _BinarySizeBudget(const std::string &fixture, const RigExecBakeResult &result)
     rigExec::transport::Buffer decoded;
     if (rigExec::transport::IsEnvelope(result.bytes.data(), bytes)) {
         std::string error;
-        const bool ready = rigExec::transport::Decode(
-            result.bytes.data(), bytes, &decoded, &error);
+        const bool ready = rigExec::transport::Decode(result.bytes.data(),
+                                                      bytes, &decoded, &error);
         CHECK(ready);
-        if (!ready) return;
+        if (!ready)
+            return;
         rawBytes = decoded.size;
     }
     CHECK(RigExecTestPackUnchecked(*file).size() == rawBytes);
@@ -3931,7 +3981,11 @@ _BinarySizeBudget(const std::string &fixture, const RigExecBakeResult &result)
         }
     };
     const std::pair<const char *, std::function<void(F &)>> fields[] = {
-        {"names+paths", [](F &f) { f.names.clear(); f.paths.clear(); }},
+        {"names+paths",
+         [](F &f) {
+             f.names.clear();
+             f.paths.clear();
+         }},
         {"values", [](F &f) { f.values.clear(); }},
         {"int_arrays", [](F &f) { f.intArrays.clear(); }},
         {"float_arrays", [](F &f) { f.floatArrays.clear(); }},
@@ -3966,8 +4020,7 @@ _BinarySizeBudget(const std::string &fixture, const RigExecBakeResult &result)
              f.geometry = std::make_unique<fb::RigExecWireDomainGeometry>();
          }},
         {"  of which skin topologies", topologies},
-        {"  of which path_reads",
-         [](F &f) { f.geometry->pathReads.clear(); }},
+        {"  of which path_reads", [](F &f) { f.geometry->pathReads.clear(); }},
         {"property_chains+phased_consumers",
          [](F &f) {
              f.propertyChains.clear();
@@ -4018,8 +4071,8 @@ TestBake(const std::string &fixture, const std::vector<double> &tableFrames,
     // independent evaluator makes the second, against the same authored
     // stage, root, time and inherited environment. Standalone calls still
     // make both fresh bakes here.
-    std::vector<uint8_t> first = cliArtifact ? *cliArtifact
-                                             : std::vector<uint8_t>();
+    std::vector<uint8_t> first =
+        cliArtifact ? *cliArtifact : std::vector<uint8_t>();
     std::unique_ptr<fb::RigExecWireFile> file;
     for (int pass = 0; pass < (cliArtifact ? 1 : 2); ++pass) {
         RigExecRigEvaluator evaluator(stage, rigPath);
@@ -4086,8 +4139,7 @@ TestBake(const std::string &fixture, const std::vector<double> &tableFrames,
         if (failed == 0) {
             ++compareRows;
         }
-        _BinaryCheckInputs(evaluator.GetBakedProgram()->GetStepGraph(),
-                           *file);
+        _BinaryCheckInputs(evaluator.GetBakedProgram()->GetStepGraph(), *file);
         _BinarySizeBudget(fixture, result);
         // The counts the bake reports: the file's rows, and the distinct
         // (path, rest) keys of the run's enumeration.
@@ -4146,8 +4198,8 @@ TestBake(const std::string &fixture, const std::vector<double> &tableFrames,
     {
         std::unique_ptr<fb::RigExecWireFile> reopened;
         std::string error;
-        CHECK(RigExecFormatOpen(onDisk.data(), onDisk.size(), &reopened,
-                                &error));
+        CHECK(
+            RigExecFormatOpen(onDisk.data(), onDisk.size(), &reopened, &error));
     }
 
     // A bake is of the authored compiled rig: a held drag refuses it rather than
@@ -4204,10 +4256,9 @@ struct _PruneKnobs {
 static void
 TestAPrunedBakeReplaysTheSameValues()
 {
-    const std::string fixture =
-        (std::filesystem::path(RIGEXEC_EXAMPLES_DIR) / "biped" /
-         "Biped_anim.usda")
-            .string();
+    const std::string fixture = (std::filesystem::path(RIGEXEC_EXAMPLES_DIR) /
+                                 "biped" / "Biped_anim.usda")
+                                    .string();
     struct _Baked {
         bool ok = false;
         size_t pruned = 0, violations = 0, providerOps = 0;
@@ -4311,7 +4362,8 @@ main(int argc, char **argv)
         // CLI artifact, one fresh independent bake, then every physical
         // owner/default/route assertion and the authored-compiled rig refusal.
         if (argc != 6) {
-            std::fprintf(stderr, "usage: --conformance STAGE TIME CLASS ARTIFACT\n");
+            std::fprintf(stderr,
+                         "usage: --conformance STAGE TIME CLASS ARTIFACT\n");
             return 2;
         }
         double time = 0.0;
@@ -4327,7 +4379,8 @@ main(int argc, char **argv)
         }
         const std::string animation(argv[4]);
         if (animation != "inputs" && animation != "static") {
-            std::fprintf(stderr, "conformance CLASS must be inputs or static\n");
+            std::fprintf(stderr,
+                         "conformance CLASS must be inputs or static\n");
             return 2;
         }
         const std::vector<uint8_t> artifact = Bytes(argv[5]);
@@ -4340,7 +4393,8 @@ main(int argc, char **argv)
         if (_EndsWith(_Slashed(argv[2]), "/biped/Biped.usda")) {
             CHECK(sizeBudgetChecked);
         }
-        if (!failures) std::filesystem::remove_all(scratch);
+        if (!failures)
+            std::filesystem::remove_all(scratch);
         std::printf("binary conformance: %s time=%.17g class=%s failures=%d\n",
                     argv[2], time, argv[4], failures);
         return failures ? 1 : 0;

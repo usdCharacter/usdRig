@@ -110,8 +110,9 @@ void RigExecSetGpuDeviceReleaser(RigExecGpuDeviceReleaser releaser);
 
 /// Whether the blend sum would accept \p channels over \p pointCount
 /// points (RigExecSumBlendChannels' structural checks), without summing.
-bool RigExecBlendChannelsAreUsable(
-    const std::vector<RigExecBlendChannel> &channels, size_t pointCount);
+bool
+RigExecBlendChannelsAreUsable(const std::vector<RigExecBlendChannel> &channels,
+                              size_t pointCount);
 
 /// A chain published as its program (RigExecGpuDeformMode::Shader): what a
 /// renderer needs to deform the entering points itself. Held in a pose's
@@ -127,18 +128,21 @@ struct RigExecGpuDeformPublication {
 
     /// Equal programs over equal points: the versions are per program (a
     /// frozen clone counts its own), so they only short-cut the compare.
-    bool operator==(const RigExecGpuDeformPublication &o) const {
+    bool operator==(const RigExecGpuDeformPublication &o) const
+    {
         const bool sameLayout =
             layout == o.layout ||
             (layout && o.layout && layout->pointCount == o.layout->pointCount &&
              layout->frameFloats == o.layout->frameFloats &&
-             layout->ops == o.layout->ops && layout->staticF == o.layout->staticF &&
+             layout->ops == o.layout->ops &&
+             layout->staticF == o.layout->staticF &&
              layout->staticI == o.layout->staticI);
         const bool sameFrame =
             frame == o.frame || (frame && o.frame && *frame == *o.frame);
         return sameLayout && sameFrame && base == o.base;
     }
-    bool operator!=(const RigExecGpuDeformPublication &o) const {
+    bool operator!=(const RigExecGpuDeformPublication &o) const
+    {
         return !(*this == o);
     }
 };
@@ -148,8 +152,9 @@ struct RigExecGpuDeformPublication {
 /// -- the points a skin op's dominant influence owns, or the whole mesh
 /// with no skin -- the six base points extreme along x, y and z, plus every
 /// 64th point. A mesh of 4096 points or fewer is sampled whole.
-std::vector<int32_t> RigExecGpuDeformExtentSample(
-    const RigExecGpuDeformLayout &layout, const GfVec3f *base, size_t count);
+std::vector<int32_t>
+RigExecGpuDeformExtentSample(const RigExecGpuDeformLayout &layout,
+                             const GfVec3f *base, size_t count);
 
 /// Samples [\p begin, \p end) run through \p frame on the CPU judge,
 /// grown into \p min and \p max. False where a blend is degenerate.
@@ -157,8 +162,8 @@ std::vector<int32_t> RigExecGpuDeformExtentSample(
 bool RigExecGpuDeformSampleBounds(const RigExecGpuDeformFrame &frame,
                                   const GfVec3f *base,
                                   const std::vector<int32_t> &sample,
-                                  size_t begin, size_t end,
-                                  GfVec3f *min, GfVec3f *max);
+                                  size_t begin, size_t end, GfVec3f *min,
+                                  GfVec3f *max);
 
 /// The sampled box grown by 2% of its diagonal: an approximation of the
 /// deformed extent, not the extent. Points the sample misses can lie
@@ -178,11 +183,14 @@ public:
     /// the layout only when a static key moved. Returns false, leaving
     /// \p frame untouched, when a revision is unsupported.
     bool Translate(const std::vector<RigExecGpuRevisionInput> &revisions,
-               size_t pointCount, RigExecGpuDeformFrame *frame,
-               std::string *why = nullptr);
+                   size_t pointCount, RigExecGpuDeformFrame *frame,
+                   std::string *why = nullptr);
 
     /// How many layouts this state has built, for tests.
-    size_t LayoutBuilds() const { return _layoutBuilds; }
+    size_t LayoutBuilds() const
+    {
+        return _layoutBuilds;
+    }
 
 private:
     struct _Key;
@@ -195,6 +203,6 @@ private:
     size_t _layoutBuilds = 0;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_GPU_DEFORM_TRANSLATION_H
+#endif // RIGEXEC_GPU_DEFORM_TRANSLATION_H

@@ -57,6 +57,6 @@ bool RigExecGpuClothEnabled();
 /// the CPU kernel at the same boundary. Read when a program is built.
 size_t RigExecGpuClothMinPoints();
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_GPU_CLOTH_H
+#endif // RIGEXEC_GPU_CLOTH_H

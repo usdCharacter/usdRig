@@ -19,12 +19,25 @@ struct RigExecWeightReferenceAttribute {
     VtValue raw;
     VtValue resolvedFloat;
     bool resolvedFloatSite = false;
-    explicit operator bool() const { return exists; }
-    bool HasAuthoredConnections() const { return connected; }
-    size_t GetNumTimeSamples() const { return timeSamples; }
-    template<class T> bool Get(T *out, UsdTimeCode = UsdTimeCode::Default()) const {
-        if (!raw.IsHolding<T>()) return false;
-        *out = raw.UncheckedGet<T>(); return true;
+    explicit operator bool() const
+    {
+        return exists;
+    }
+    bool HasAuthoredConnections() const
+    {
+        return connected;
+    }
+    size_t GetNumTimeSamples() const
+    {
+        return timeSamples;
+    }
+    template <class T>
+    bool Get(T *out, UsdTimeCode = UsdTimeCode::Default()) const
+    {
+        if (!raw.IsHolding<T>())
+            return false;
+        *out = raw.UncheckedGet<T>();
+        return true;
     }
 };
 struct RigExecWeightReferenceRelationship {
@@ -32,8 +45,14 @@ struct RigExecWeightReferenceRelationship {
     SdfPathVector targets;
     RigExecReadPhase phase;
     std::string phaseError;
-    explicit operator bool() const { return exists; }
-    void GetTargets(SdfPathVector *out) const { *out = targets; }
+    explicit operator bool() const
+    {
+        return exists;
+    }
+    void GetTargets(SdfPathVector *out) const
+    {
+        *out = targets;
+    }
 };
 struct RigExecWeightReferencePrim {
     bool exists = false;
@@ -44,16 +63,30 @@ struct RigExecWeightReferencePrim {
     RigExecReadPhase weightTargetPhase;
     std::string phaseError;
     std::vector<float> falloff;
-    explicit operator bool() const { return exists; }
-    const SdfPath &GetPath() const { return path; }
-    const TfToken &GetTypeName() const { return type; }
-    RigExecWeightReferenceAttribute GetAttribute(const TfToken &name) const {
-        const auto it = attributes.find(name);
-        return it == attributes.end() ? RigExecWeightReferenceAttribute() : it->second;
+    explicit operator bool() const
+    {
+        return exists;
     }
-    RigExecWeightReferenceRelationship GetRelationship(const TfToken &name) const {
+    const SdfPath &GetPath() const
+    {
+        return path;
+    }
+    const TfToken &GetTypeName() const
+    {
+        return type;
+    }
+    RigExecWeightReferenceAttribute GetAttribute(const TfToken &name) const
+    {
+        const auto it = attributes.find(name);
+        return it == attributes.end() ? RigExecWeightReferenceAttribute()
+                                      : it->second;
+    }
+    RigExecWeightReferenceRelationship
+    GetRelationship(const TfToken &name) const
+    {
         const auto it = relationships.find(name);
-        return it == relationships.end() ? RigExecWeightReferenceRelationship() : it->second;
+        return it == relationships.end() ? RigExecWeightReferenceRelationship()
+                                         : it->second;
     }
 };
 struct RigExecWeightReferenceContext {
@@ -63,8 +96,9 @@ struct RigExecWeightReferenceContext {
     std::map<SdfPath, SdfPath> canonicalPoints;
     std::map<SdfPath, GfMatrix4d> placements;
     /// Per relationship exact phased answer; an empty box means declared but unavailable.
-    std::map<std::pair<SdfPath,TfToken>,VtValue> phasedPoints;
-    RigExecWeightReferencePrim GetPrimAtPath(const SdfPath &path) const {
+    std::map<std::pair<SdfPath, TfToken>, VtValue> phasedPoints;
+    RigExecWeightReferencePrim GetPrimAtPath(const SdfPath &path) const
+    {
         const auto it = prims.find(path);
         return it == prims.end() ? RigExecWeightReferencePrim() : it->second;
     }
@@ -73,11 +107,12 @@ struct RigExecWeightReferenceContext {
 /// No WeightField output, production packet or interactive setter is an input.
 RigExecWeightReferenceContext RigExecCaptureWeightReference(
     const UsdStageRefPtr &stage, const SdfPath &root,
-    const RigExecResolvedInputs &resolved, const std::map<SdfPath,VtValue> &upstream,
-    UsdTimeCode time, const std::function<const GfMatrix4d *(const SdfPath &)> &placement);
+    const RigExecResolvedInputs &resolved,
+    const std::map<SdfPath, VtValue> &upstream, UsdTimeCode time,
+    const std::function<const GfMatrix4d *(const SdfPath &)> &placement);
 bool RigExecResolveWeightReference(
-    const RigExecWeightReferenceContext &context, const SdfPath &path, size_t count,
-    std::vector<float> *weights, std::string *error,
+    const RigExecWeightReferenceContext &context, const SdfPath &path,
+    size_t count, std::vector<float> *weights, std::string *error,
     const std::vector<GfVec3f> *currentPoints = nullptr);
 } // namespace rigExec
 #endif

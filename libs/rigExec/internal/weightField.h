@@ -10,16 +10,23 @@ struct RigExecBakedProgramImpl;
 struct RigExecBakedStep;
 struct RigExecWeightFieldInputs;
 struct RigExecWeightPointView;
-bool RigExecBakedBuildWeightFields(const RigExecRigEvaluator &, RigExecBakedProgramImpl *, std::string *error);
+bool RigExecBakedBuildWeightFields(const RigExecRigEvaluator &,
+                                   RigExecBakedProgramImpl *,
+                                   std::string *error);
 void RigExecBakedRunWeightField(RigExecBakedProgramImpl *, RigExecBakedStep *);
-void RigExecBakedDeclareWeightField(RigExecBakedProgramImpl *, RigExecBakedStep *);
+void RigExecBakedDeclareWeightField(RigExecBakedProgramImpl *,
+                                    RigExecBakedStep *);
 /// Fresh source-free numerical input packet, shared by body and exact key capture.
 /// All views remain immutable and live with B through the consuming call.
-bool RigExecBakedCaptureWeightFieldInputs(const RigExecBakedProgramImpl &,int field,
-    std::vector<RigExecWeightFieldInputs> *,RigExecWeightPointView *entering,size_t *count);
-void RigExecBakedWeightFieldCoveredVersions(const RigExecBakedProgramImpl &,int field,
-    std::vector<uint32_t> *versions);
+bool
+RigExecBakedCaptureWeightFieldInputs(const RigExecBakedProgramImpl &, int field,
+                                     std::vector<RigExecWeightFieldInputs> *,
+                                     RigExecWeightPointView *entering,
+                                     size_t *count);
+void RigExecBakedWeightFieldCoveredVersions(const RigExecBakedProgramImpl &,
+                                            int field,
+                                            std::vector<uint32_t> *versions);
 /// Materialize only the canonical compiler's SCC exclusion outcome.
 void RigExecBakedBindWeightCycleState(RigExecBakedProgramImpl *);
-}
+} // namespace rigExec
 #endif

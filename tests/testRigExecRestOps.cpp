@@ -43,12 +43,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -58,11 +58,13 @@ static std::vector<RigExecOpTraceEntry>
 ExecutedHeads(const RigExecBakedProgramImpl &B)
 {
     auto trace = RigExecBakedLastRunTrace(B);
-    trace.erase(std::remove_if(trace.begin(),trace.end(),
-        [&B](const auto &entry) { return !B.steps[entry.step].isHead; }),trace.end());
+    trace.erase(std::remove_if(trace.begin(), trace.end(),
+                               [&B](const auto &entry) {
+                                   return !B.steps[entry.step].isHead;
+                               }),
+                trace.end());
     return trace;
 }
-
 
 using Tables = RigExecBakedProgramTesting::LadderTables;
 
@@ -90,8 +92,7 @@ FirstDifference(const Tables &want, const Tables &got, std::string *table)
         } else if (!Bits(want.restPts[s], got.restPts[s])) {
             name = "restPts";
         } else if (want.restFrames[s].flags != got.restFrames[s].flags ||
-                   !Bits(want.restFrames[s].points,
-                         got.restFrames[s].points)) {
+                   !Bits(want.restFrames[s].points, got.restFrames[s].points)) {
             name = "restFrames";
         } else if (!Bits(want.restRoundTrip[s], got.restRoundTrip[s])) {
             name = "restRoundTrip";
@@ -130,8 +131,7 @@ FindRig(const UsdStageRefPtr &stage)
 double
 StartOf(const UsdStageRefPtr &stage)
 {
-    return stage->HasAuthoredTimeCodeRange() ? stage->GetStartTimeCode()
-                                              : 1.0;
+    return stage->HasAuthoredTimeCodeRange() ? stage->GetStartTimeCode() : 1.0;
 }
 
 void
@@ -175,8 +175,8 @@ LadderDrag(const RigExecBakedProgramImpl &B, bool rest, double delta,
         return false;
     }
     const RigExecBakedProgramImpl::Ladder &L = B.ladders[size_t(chosen)];
-    const double value = RigExecBakedLeafRead(
-        B, rest ? L.restAvars[0] : L.defaultAvars[0]);
+    const double value =
+        RigExecBakedLeafRead(B, rest ? L.restAvars[0] : L.defaultAvars[0]);
     *out = RigExecValueOverride{B.paths[size_t(chosen)], TfToken(),
                                 TfToken(rest ? "rest:tx" : "default:tx"),
                                 VtValue(value + delta)};
@@ -210,8 +210,10 @@ CheckTablesOfRig(const std::string &name, const UsdStageRefPtr &stage,
         CHECK(fresh.Evaluate(UsdTimeCode(currentTime)).valid);
         const auto *freshProgram = fresh.GetBakedProgram();
         CHECK(freshProgram);
-        if (!freshProgram) return;
-        const Tables want = RigExecBakedProgramTesting::LadderTablesOf(*freshProgram);
+        if (!freshProgram)
+            return;
+        const Tables want =
+            RigExecBakedProgramTesting::LadderTablesOf(*freshProgram);
         const Tables got = RigExecBakedProgramTesting::LadderTablesOf(*program);
         std::string table;
         const int slot = FirstDifference(want, got, &table);
@@ -229,24 +231,25 @@ CheckTablesOfRig(const std::string &name, const UsdStageRefPtr &stage,
         if (state > 0) {
             const RigExecBakedProgramImpl *B = Program(evaluator);
             RigExecValueOverride drag;
-            if (!B || !LadderDrag(*B, state == 1, state == 1 ? 0.5 : 0.25,
-                                  &drag)) {
+            if (!B ||
+                !LadderDrag(*B, state == 1, state == 1 ? 0.5 : 0.25, &drag)) {
                 continue;
             }
-            currentDrags={drag};
+            currentDrags = {drag};
             evaluator.SetInteractiveOverrides(currentDrags);
         }
         for (const double frame : frames) {
-            currentTime=frame;
+            currentTime = frame;
             CHECK(evaluator.Evaluate(UsdTimeCode(frame)).valid);
-            check((state == 0 ? "no override" : state == 1 ? "rest drag"
-                                                           : "default drag") +
+            check((state == 0   ? "no override"
+                   : state == 1 ? "rest drag"
+                                : "default drag") +
                   std::string(" at ") + TfStringify(frame));
         }
     }
     evaluator.ClearInteractiveOverrides();
     currentDrags.clear();
-    currentTime=frames[0];
+    currentTime = frames[0];
     CHECK(evaluator.Evaluate(UsdTimeCode(frames[0])).valid);
     check("released");
     return compared;
@@ -260,8 +263,7 @@ void
 TestTheRestTablesMatchFreshCompiledRigs(const std::string &examples)
 {
     std::vector<std::string> files;
-    for (const std::string &dir :
-         {examples, examples + "/../tests/fixtures"}) {
+    for (const std::string &dir : {examples, examples + "/../tests/fixtures"}) {
         for (const std::string &name : TfListDir(dir)) {
             if (TfStringEndsWith(name, ".usda")) {
                 files.push_back(name);
@@ -287,8 +289,8 @@ TestTheRestTablesMatchFreshCompiledRigs(const std::string &examples)
     // The compiled rig-rest stages: a ladder that recomposes every frame.
     const SdfPath tailRig("/TailAsset/Rig");
     const SdfPath joint("/TailAsset/Rig/Joints/Seg1/Seg2");
-    const std::vector<std::pair<std::string,
-                                std::function<void(const UsdStageRefPtr &)>>>
+    const std::vector<
+        std::pair<std::string, std::function<void(const UsdStageRefPtr &)>>>
         edits = {
             {"tail with a time-sampled rest:tx",
              [&joint](const UsdStageRefPtr &stage) {
@@ -329,8 +331,7 @@ TestTheRestTablesMatchFreshCompiledRigs(const std::string &examples)
                                       SdfValueTypeNames->Float)
                      .Set(1.0f);
                  prim.CreateRelationship(TfToken("rigExec:moves"))
-                     .SetTargets(
-                         {joint.AppendProperty(TfToken("rest:space"))});
+                     .SetTargets({joint.AppendProperty(TfToken("rest:space"))});
              }},
         };
     for (const auto &[name, edit] : edits) {
@@ -354,8 +355,7 @@ TestTheRestTablesMatchFreshCompiledRigs(const std::string &examples)
 
 // Whether \p step declares head slot \p slot of \p domain.
 bool
-Declares(const RigExecBakedStep &step, RigExecBakedSlotDomain domain,
-         int slot)
+Declares(const RigExecBakedStep &step, RigExecBakedSlotDomain domain, int slot)
 {
     for (const RigExecBakedSlotRange &range : step.reads) {
         if (range.domain == domain && range.begin <= uint32_t(slot) &&
@@ -513,8 +513,9 @@ JointRig(const std::function<void(const UsdStageRefPtr &)> &shape)
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Xform"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
     stage->DefinePrim(SdfPath("/Asset/Rig/Controls"), TfToken("Scope"));
-    stage->DefinePrim(SdfPath("/Asset/Rig/Controls/Ctl"),
-                      TfToken("RigExecControl"))
+    stage
+        ->DefinePrim(SdfPath("/Asset/Rig/Controls/Ctl"),
+                     TfToken("RigExecControl"))
         .CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double)
         .Set(0.25);
     stage->DefinePrim(SdfPath("/Asset/Rig/Joints"), TfToken("Scope"));
@@ -542,8 +543,7 @@ SetDefaultSpace(const UsdStageRefPtr &stage, const char *joint,
                 const GfMatrix4d &space)
 {
     stage->GetPrimAtPath(SdfPath(joint))
-        .CreateAttribute(TfToken("default:space"),
-                         SdfValueTypeNames->Matrix4d)
+        .CreateAttribute(TfToken("default:space"), SdfValueTypeNames->Matrix4d)
         .Set(space);
 }
 
@@ -596,8 +596,7 @@ SlotOf(const RigExecBakedProgramImpl &B, const SdfPath &path)
 
 // The head step of kind \p kind whose compose group holds \p slot.
 int
-HeadOpOf(const RigExecBakedProgramImpl &B, RigExecBakedStepKind kind,
-         int slot)
+HeadOpOf(const RigExecBakedProgramImpl &B, RigExecBakedStepKind kind, int slot)
 {
     for (const uint32_t i : RigExecBakedHeadIndices(B)) {
         const RigExecBakedStep &step = B.steps[i];
@@ -643,24 +642,32 @@ TestComposeKeysTrackConsumedLadderFields()
     B.paths = {SdfPath("/Root"), SdfPath("/Source")};
     B.pathTexts = RigExecBakedSpellPathTexts(B.paths);
     const GfMatrix4d identity(1.0);
-    B.restRoundTrip.assign(2, identity); B.defaultRoundTrip.assign(2, identity);
-    B.selfD.assign(2, identity); B.parentDinv.assign(2, identity);
-    B.posedAuthored.assign(2, 0); B.posedAuthoredM.assign(2, identity);
-    B.rotOrder.assign(2, TfToken("XYZ")); B.posedD.assign(2, identity);
-    B.parentSpaceM.assign(2, identity); B.parentSpaceAuthored.assign(2, 0);
+    B.restRoundTrip.assign(2, identity);
+    B.defaultRoundTrip.assign(2, identity);
+    B.selfD.assign(2, identity);
+    B.parentDinv.assign(2, identity);
+    B.posedAuthored.assign(2, 0);
+    B.posedAuthoredM.assign(2, identity);
+    B.rotOrder.assign(2, TfToken("XYZ"));
+    B.posedD.assign(2, identity);
+    B.parentSpaceM.assign(2, identity);
+    B.parentSpaceAuthored.assign(2, 0);
     B.rotationSign.assign(2, 0);
     RigExecBakedStep step;
     step.kind = RigExecBakedStepKind::ComposeSubtree;
-    step.reads.push_back(RigExecBakedRange(RigExecBakedSlotDomain::Ladder, 0, 2));
+    step.reads.push_back(
+        RigExecBakedRange(RigExecBakedSlotDomain::Ladder, 0, 2));
     std::vector<uint32_t> properties;
     std::vector<std::pair<uint32_t, uint32_t>> covered;
     const auto key = [&]() {
         std::string result;
-        CHECK(RigExecBakedOpEffectiveInputKey(B, step, &result, &properties, &covered));
+        CHECK(RigExecBakedOpEffectiveInputKey(B, step, &result, &properties,
+                                              &covered));
         CHECK(covered.size() == 2);
         for (uint32_t slot = 0; slot < 2; ++slot)
-            CHECK((covered[slot] == std::make_pair(
-                uint32_t(RigExecBakedSlotDomain::Ladder), slot)));
+            CHECK((covered[slot] ==
+                   std::make_pair(uint32_t(RigExecBakedSlotDomain::Ladder),
+                                  slot)));
         return result;
     };
     const auto baseline = key();
@@ -672,15 +679,23 @@ TestComposeKeysTrackConsumedLadderFields()
     CHECK(key() == baseline);
     B.restRoundTrip[0] = identity;
     for (auto *table : {&B.defaultRoundTrip, &B.selfD, &B.parentDinv,
-                       &B.posedAuthoredM, &B.posedD, &B.parentSpaceM}) {
+                        &B.posedAuthoredM, &B.posedD, &B.parentSpaceM}) {
         (*table)[0][3][0] = -0.0;
         CHECK(key() != baseline);
         (*table)[0] = identity;
     }
-    B.posedAuthored[0] = 1; CHECK(key() != baseline); B.posedAuthored[0] = 0;
-    B.parentSpaceAuthored[0] = 1; CHECK(key() != baseline); B.parentSpaceAuthored[0] = 0;
-    B.rotationSign[0] = 1; CHECK(key() != baseline); B.rotationSign[0] = 0;
-    B.rotOrder[0] = TfToken("ZYX"); CHECK(key() != baseline); B.rotOrder[0] = TfToken("XYZ");
+    B.posedAuthored[0] = 1;
+    CHECK(key() != baseline);
+    B.posedAuthored[0] = 0;
+    B.parentSpaceAuthored[0] = 1;
+    CHECK(key() != baseline);
+    B.parentSpaceAuthored[0] = 0;
+    B.rotationSign[0] = 1;
+    CHECK(key() != baseline);
+    B.rotationSign[0] = 0;
+    B.rotOrder[0] = TfToken("ZYX");
+    CHECK(key() != baseline);
+    B.rotOrder[0] = TfToken("XYZ");
     // A switch source/carry's default table is consumed independently of
     // the target's own authored-pose branch and must stay in the key.
     B.defaultRoundTrip[1][3][1] = 3.0;
@@ -689,7 +704,8 @@ TestComposeKeysTrackConsumedLadderFields()
     CHECK(key() == baseline);
     B.posedD.pop_back();
     std::string invalid;
-    CHECK(!RigExecBakedOpEffectiveInputKey(B, step, &invalid, &properties, &covered));
+    CHECK(!RigExecBakedOpEffectiveInputKey(B, step, &invalid, &properties,
+                                           &covered));
     CHECK(covered.empty());
 }
 
@@ -738,8 +754,7 @@ TestARestOnlyMoveSkipsTheCompose()
         return;
     }
     const int restOp = HeadOpOf(B, RigExecBakedStepKind::RestCompose, leaf);
-    const int ladderOp =
-        HeadOpOf(B, RigExecBakedStepKind::LadderCompose, leaf);
+    const int ladderOp = HeadOpOf(B, RigExecBakedStepKind::LadderCompose, leaf);
     CHECK(restOp >= 0 && ladderOp >= 0);
     std::vector<size_t> composes, matrices;
     for (size_t s = 0; s < B.steps.size(); ++s) {
@@ -824,26 +839,30 @@ TestTheValidatorRequiresComposeInputs(const std::string &examples)
     {
         // Isolate each actual compose-body dependency by removing exactly
         // one slot, leaving every other read and all writers intact.
-        const auto omit = [&](RigExecBakedStep &step, RigExecBakedSlotDomain domain,
-                              uint32_t slot) {
+        const auto omit = [&](RigExecBakedStep &step,
+                              RigExecBakedSlotDomain domain, uint32_t slot) {
             const auto saved = step.reads;
             std::vector<RigExecBakedSlotRange> kept;
             bool removed = false;
             for (const auto &range : saved) {
-                if (range.domain != domain || slot < range.begin || slot >= range.end) {
-                    kept.push_back(range); continue;
+                if (range.domain != domain || slot < range.begin ||
+                    slot >= range.end) {
+                    kept.push_back(range);
+                    continue;
                 }
                 removed = true;
-                if (range.begin < slot) kept.push_back({domain, range.begin, slot});
-                if (slot + 1 < range.end) kept.push_back({domain, slot + 1, range.end});
+                if (range.begin < slot)
+                    kept.push_back({domain, range.begin, slot});
+                if (slot + 1 < range.end)
+                    kept.push_back({domain, slot + 1, range.end});
             }
             CHECK(removed);
             step.reads = std::move(kept);
             error.clear();
             CHECK(!RigExecBakedValidateHeadTier(B, &error));
             CHECK(error.find("head step " + step.label + " omits required " +
-                RigExecBakedSlotDomainName(domain) + " slot " + std::to_string(slot))
-                != std::string::npos);
+                             RigExecBakedSlotDomainName(domain) + " slot " +
+                             std::to_string(slot)) != std::string::npos);
             step.reads = saved;
             CHECK(RigExecBakedValidateHeadTier(B, &error));
         };
@@ -852,17 +871,22 @@ TestTheValidatorRequiresComposeInputs(const std::string &examples)
         for (uint32_t index : RigExecBakedHeadIndices(B)) {
             auto &step = B.steps[index];
             const bool rest = step.kind == RigExecBakedStepKind::RestCompose;
-            const bool ladder = step.kind == RigExecBakedStepKind::LadderCompose;
-            if (!rest && !ladder) continue;
+            const bool ladder =
+                step.kind == RigExecBakedStepKind::LadderCompose;
+            if (!rest && !ladder)
+                continue;
             const auto &group = B.composeGroups[size_t(step.object)];
             if (ladder && !ladderOwnRest) {
                 omit(step, RigExecBakedSlotDomain::Rest, uint32_t(group.begin));
                 ladderOwnRest = true;
             }
             for (int slot = group.begin; slot < group.end; ++slot) {
-                if (B.slotKind[size_t(slot)] != RigExecBakedSlotKind::FirstFramePose) continue;
+                if (B.slotKind[size_t(slot)] !=
+                    RigExecBakedSlotKind::FirstFramePose)
+                    continue;
                 const int parent = B.parent[size_t(slot)];
-                if (parent < 0 || (parent >= group.begin && parent < group.end)) continue;
+                if (parent < 0 || (parent >= group.begin && parent < group.end))
+                    continue;
                 if (rest && !restParent) {
                     omit(step, RigExecBakedSlotDomain::Rest, uint32_t(parent));
                     restParent = true;
@@ -872,7 +896,8 @@ TestTheValidatorRequiresComposeInputs(const std::string &examples)
                     ladderParentRest = true;
                 }
                 if (ladder && !ladderParent) {
-                    omit(step, RigExecBakedSlotDomain::Ladder, uint32_t(parent));
+                    omit(step, RigExecBakedSlotDomain::Ladder,
+                         uint32_t(parent));
                     ladderParent = true;
                 }
             }
@@ -900,27 +925,33 @@ TestTheValidatorRequiresComposeInputs(const std::string &examples)
                 std::to_string(slot) + ", which no head step writes";
             if (error.find(expected) == std::string::npos) {
                 ++failures;
-                std::printf("FAIL \"%s\" is not in \"%s\"\n",
-                            expected.c_str(), error.c_str());
+                std::printf("FAIL \"%s\" is not in \"%s\"\n", expected.c_str(),
+                            error.c_str());
             }
             std::printf("  a solve reading an unwritten rest: %s\n",
                         error.c_str());
             solve->reads.pop_back();
-            const auto saved=solve->reads;
-            const auto required=RigExecBakedRequiredRestReads(B,*solve);
+            const auto saved = solve->reads;
+            const auto required = RigExecBakedRequiredRestReads(B, *solve);
             CHECK(!required.empty());
             if (!required.empty()) {
-                const auto missing=required.front();
-                solve->reads.erase(std::remove_if(solve->reads.begin(),solve->reads.end(),
-                    [&missing](const auto &r) { return r.domain==missing.domain &&
-                        r.begin<=missing.begin && missing.begin<r.end; }),solve->reads.end());
+                const auto missing = required.front();
+                solve->reads.erase(
+                    std::remove_if(solve->reads.begin(), solve->reads.end(),
+                                   [&missing](const auto &r) {
+                                       return r.domain == missing.domain &&
+                                              r.begin <= missing.begin &&
+                                              missing.begin < r.end;
+                                   }),
+                    solve->reads.end());
                 error.clear();
-                CHECK(!RigExecBakedValidateHeadReads(B,&error));
-                CHECK(error.find("step "+solve->label+" omits required "+
-                    RigExecBakedSlotDomainName(missing.domain)+" slot "+std::to_string(missing.begin))!=std::string::npos);
-                solve->reads=saved;
+                CHECK(!RigExecBakedValidateHeadReads(B, &error));
+                CHECK(error.find("step " + solve->label + " omits required " +
+                                 RigExecBakedSlotDomainName(missing.domain) +
+                                 " slot " + std::to_string(missing.begin)) !=
+                      std::string::npos);
+                solve->reads = saved;
             }
-
         }
     }
     error.clear();
@@ -957,8 +988,8 @@ TestTheValidatorAcceptsDomainEnumerationOrder(const std::string &examples)
     bool property = false;
     for (size_t p = 0; p < RigExecBakedHeadIndices(B).size(); ++p) {
         const RigExecBakedStep &step = B.steps[RigExecBakedHeadIndices(B)[p]];
-        property = property ||
-                   step.kind == RigExecBakedStepKind::PropertyRevision;
+        property =
+            property || step.kind == RigExecBakedStepKind::PropertyRevision;
         if (from == RigExecBakedHeadIndices(B).size() &&
             step.kind == RigExecBakedStepKind::RestCompose) {
             from = p;
@@ -969,7 +1000,8 @@ TestTheValidatorAcceptsDomainEnumerationOrder(const std::string &examples)
         return;
     }
     const std::vector<RigExecBakedStep> savedSteps = B.steps;
-    std::rotate(B.steps.begin(),B.steps.begin()+from,B.steps.begin()+from+1);
+    std::rotate(B.steps.begin(), B.steps.begin() + from,
+                B.steps.begin() + from + 1);
     std::string error;
     CHECK(RigExecBakedValidateHeadTier(B, &error));
     B.steps = savedSteps;
@@ -997,8 +1029,7 @@ TestARestEditIsSeedable()
         restTx.Set(1.0, UsdTimeCode(1.0));
         restTx.Set(2.0, UsdTimeCode(2.0));
         restTx.Set(4.0, UsdTimeCode(3.0));
-        SetDefaultSpace(stage, "/Asset/Rig/Joints/Root",
-                        Offset(0.0, 1.0, 0.0));
+        SetDefaultSpace(stage, "/Asset/Rig/Joints/Root", Offset(0.0, 1.0, 0.0));
         SetDefaultSpace(stage, "/Asset/Rig/Joints/Root/Child",
                         Offset(0.0, 0.0, 1.0));
     });
@@ -1035,7 +1066,8 @@ TestARestEditIsSeedable()
     // expansion identifies, including the child's provider matrices.
     const auto closure = affected.AffectedByControls({control});
     CHECK(!admitted.empty());
-    for (const int seed : seeds) CHECK(closure.Test(seed));
+    for (const int seed : seeds)
+        CHECK(closure.Test(seed));
     for (const uint32_t op : RigExecBakedHeadOpsReading(B, index)) {
         CHECK(std::binary_search(admitted.begin(), admitted.end(),
                                  B.steps[op].cluster));
@@ -1062,8 +1094,7 @@ TestARestEditIsSeedable()
         if (step.kind == RigExecBakedStepKind::ProviderMatrix &&
             step.object == childSlot) {
             ++childMatrices;
-            CHECK(std::binary_search(seeds.begin(), seeds.end(),
-                                     step.cluster));
+            CHECK(std::binary_search(seeds.begin(), seeds.end(), step.cluster));
             closureOnly += direct.count(step.cluster) ? 0 : 1;
         }
     }
@@ -1074,7 +1105,8 @@ TestARestEditIsSeedable()
 
     // The edit: one of the parent's samples, at the frame shown next.
     const size_t builds = baked.GetBakedProgramBuildCount();
-    stage->GetPrimAtPath(root).GetAttribute(TfToken("rest:tx"))
+    stage->GetPrimAtPath(root)
+        .GetAttribute(TfToken("rest:tx"))
         .Set(1.75, UsdTimeCode(1.0));
     const RigExecRigPose edited = baked.Evaluate(UsdTimeCode(1.0));
     CHECK(baked.GetBakedProgramBuildCount() == builds);
@@ -1090,7 +1122,7 @@ TestARestEditIsSeedable()
                          fresh.Evaluate(UsdTimeCode(1.0)));
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)

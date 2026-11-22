@@ -9,25 +9,25 @@ namespace rigExec {
 
 namespace {
 
-std::vector<std::vector<int>> _IndexSeeds(
-    const RigExecBakedProgramImpl &program);
+std::vector<std::vector<int>>
+_IndexSeeds(const RigExecBakedProgramImpl &program);
 
 // The seed clusters of the per-frame inputs \p path is overridable on,
 // placed as SetOverrides places an attribute override there: refused
 // (empty) when the path is folded or exec-typed, or feeds no input.
-std::vector<int> _OverridablePathSeeds(
-    const RigExecBakedProgramImpl &program,
-    const std::vector<std::vector<int>> &indexSeeds, const SdfPath &path);
+std::vector<int>
+_OverridablePathSeeds(const RigExecBakedProgramImpl &program,
+                      const std::vector<std::vector<int>> &indexSeeds,
+                      const SdfPath &path);
 
-}  // namespace
+} // namespace
 
 RigExecBakedClusterSet
 RigExecIntersectClusterSets(const RigExecBakedClusterSet &dirty,
                             const RigExecBakedClusterSet &affecting)
 {
     RigExecBakedClusterSet out;
-    const size_t words =
-        std::max(dirty.WordCount(), affecting.WordCount());
+    const size_t words = std::max(dirty.WordCount(), affecting.WordCount());
     out.words.assign(words, 0);
     for (size_t w = 0; w < words; ++w) {
         const uint64_t a = dirty.Word(w);
@@ -39,7 +39,7 @@ RigExecIntersectClusterSets(const RigExecBakedClusterSet &dirty,
 
 void
 RigExecOutputAffectedIndex::Build(const RigExecBakedProgramImpl &program,
-                                 uint64_t compiledRigSignature)
+                                  uint64_t compiledRigSignature)
 {
     Clear();
     _clusterCount = program.clustering.clusters.size();
@@ -68,8 +68,7 @@ RigExecOutputAffectedIndex::Build(const RigExecBakedProgramImpl &program,
     // their clusters for a moved time, override steps for a standing
     // override, matching the planner.
     for (const int step : program.cones.varyingSteps) {
-        if (step >= 0 &&
-            size_t(step) < program.clustering.clusterOf.size()) {
+        if (step >= 0 && size_t(step) < program.clustering.clusterOf.size()) {
             const int cluster = program.clustering.clusterOf[size_t(step)];
             if (cluster >= 0 && size_t(cluster) < cones.size()) {
                 _varying.Union(cones[size_t(cluster)]);
@@ -77,8 +76,7 @@ RigExecOutputAffectedIndex::Build(const RigExecBakedProgramImpl &program,
         }
     }
     for (const int step : program.cones.overrideSteps) {
-        if (step >= 0 &&
-            size_t(step) < program.clustering.clusterOf.size()) {
+        if (step >= 0 && size_t(step) < program.clustering.clusterOf.size()) {
             const int cluster = program.clustering.clusterOf[size_t(step)];
             if (cluster >= 0 && size_t(cluster) < cones.size()) {
                 _override.Union(cones[size_t(cluster)]);
@@ -103,9 +101,8 @@ RigExecOutputAffectedIndex::Build(const RigExecBakedProgramImpl &program,
         }
     };
     const std::vector<int> noSeeds;
-    const auto tableAt =
-        [&](const std::vector<std::vector<int>> &table,
-            size_t i) -> const std::vector<int> & {
+    const auto tableAt = [&](const std::vector<std::vector<int>> &table,
+                             size_t i) -> const std::vector<int> & {
         return i < table.size() ? table[i] : noSeeds;
     };
     // The compose cluster that reads a provider's avars, and the clusters
@@ -167,10 +164,9 @@ RigExecOutputAffectedIndex::Build(const RigExecBakedProgramImpl &program,
     // else.
     for (const auto &kv : program.solverIndex) {
         admit(RigExecControlIdForPath(kv.first),
-              kv.second >= 0
-                  ? tableAt(program.cones.solverPointsClusters,
-                            size_t(kv.second))
-                  : noSeeds);
+              kv.second >= 0 ? tableAt(program.cones.solverPointsClusters,
+                                       size_t(kv.second))
+                             : noSeeds);
     }
     // Revisions: the mover path reaches the revision's clusters plus its
     // RevisionStatic cluster.
@@ -258,7 +254,7 @@ RigExecOutputAffectedIndex::Clear()
 
 void
 RigExecOutputAffectedIndex::MapControl(const RigExecControlId &control,
-                                      const std::vector<int> &seeds)
+                                       const std::vector<int> &seeds)
 {
     if (_clusterCount == 0) {
         return;
@@ -378,9 +374,8 @@ RigExecNoticeControlIds(const UsdNotice::ObjectsChanged &notice)
 {
     const std::vector<SdfPath> resynced(notice.GetResyncedPaths().begin(),
                                         notice.GetResyncedPaths().end());
-    const std::vector<SdfPath> info(
-        notice.GetChangedInfoOnlyPaths().begin(),
-        notice.GetChangedInfoOnlyPaths().end());
+    const std::vector<SdfPath> info(notice.GetChangedInfoOnlyPaths().begin(),
+                                    notice.GetChangedInfoOnlyPaths().end());
     const std::vector<SdfPath> resolved(
         notice.GetResolvedAssetPathsResyncedPaths().begin(),
         notice.GetResolvedAssetPathsResyncedPaths().end());
@@ -388,10 +383,9 @@ RigExecNoticeControlIds(const UsdNotice::ObjectsChanged &notice)
 }
 
 std::vector<RigExecControlId>
-RigExecNoticeControlIdsFromPaths(
-    const std::vector<SdfPath> &resynced,
-    const std::vector<SdfPath> &infoOnly,
-    const std::vector<SdfPath> &resolvedResynced)
+RigExecNoticeControlIdsFromPaths(const std::vector<SdfPath> &resynced,
+                                 const std::vector<SdfPath> &infoOnly,
+                                 const std::vector<SdfPath> &resolvedResynced)
 {
     const std::vector<SdfPath> &info = infoOnly;
     const std::vector<SdfPath> &resolved = resolvedResynced;
@@ -438,8 +432,7 @@ RigExecNoticeControlIdsFromPaths(
                 // naming the same prim twice) is the same unspecified
                 // change, not a more specific one, so twins never
                 // shadow each other into silence.
-                if (j != i && info[j] != path &&
-                    info[j].HasPrefix(path)) {
+                if (j != i && info[j] != path && info[j].HasPrefix(path)) {
                     shadowed = true;
                 }
             }
@@ -589,6 +582,6 @@ _OverridablePathSeeds(const RigExecBakedProgramImpl &program,
     return std::vector<int>(seeds.begin(), seeds.end());
 }
 
-}  // namespace
+} // namespace
 
-}  // namespace rigExec
+} // namespace rigExec

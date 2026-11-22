@@ -59,12 +59,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                     \
-    do {                                                                \
-        if (!(cond)) {                                                  \
-            ++failures;                                                 \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);  \
-        }                                                               \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 #include "rigExecFileEdit.h"
@@ -88,9 +88,8 @@ _ParseFrames(const std::string &text)
     size_t begin = 0;
     while (begin <= text.size()) {
         const size_t end = text.find(",", begin);
-        const std::string piece =
-            text.substr(begin, end == std::string::npos
-                        ? std::string::npos : end - begin);
+        const std::string piece = text.substr(
+            begin, end == std::string::npos ? std::string::npos : end - begin);
         if (!piece.empty()) {
             frames.push_back(std::stod(piece));
         }
@@ -111,8 +110,7 @@ _TestMalformed()
     CHECK(!error.empty());
     // Truncated garbage.
     const std::vector<uint8_t> garbage = {'R', 'E', 'X', 'B', 1, 2, 3};
-    CHECK(!RigExecRuntimeReader::Open(garbage.data(), garbage.size(),
-                                      &error));
+    CHECK(!RigExecRuntimeReader::Open(garbage.data(), garbage.size(), &error));
     CHECK(!error.empty());
     // Wrong magic, plausible size.
     const std::vector<uint8_t> wrong(256, 0);
@@ -159,10 +157,8 @@ _TestFileRefusals(const std::vector<uint8_t> &bytes)
     identifier[7] = 'X';
     std::string got = _OpenError(identifier);
     CHECK(got == "not a .rigexec file (file identifier is not REXB)");
-    const std::vector<uint8_t> version =
-        RigExecTestEdited(bytes, [](fb::RigExecWireFile *file) {
-            file->formatVersion = 4;
-        });
+    const std::vector<uint8_t> version = RigExecTestEdited(
+        bytes, [](fb::RigExecWireFile *file) { file->formatVersion = 4; });
     got = _OpenError(version);
     CHECK(got == "unsupported .rigexec format version 4 (this reader reads " +
                      std::to_string(RigExecFormatOldestReadable) + " through " +
@@ -204,7 +200,8 @@ _TestValidatedObjectCopyIsolation()
     CHECK(first->values[0].bits == UINT64_C(0x8000000000000000));
     CHECK(first->values[1].bits == UINT64_C(0x7ff8000000000123));
     CHECK(std::memcmp(first->doubleArrays[0].v.data(),
-                      baseline.doubleArrays[0].v.data(), 2 * sizeof(double)) == 0);
+                      baseline.doubleArrays[0].v.data(),
+                      2 * sizeof(double)) == 0);
     CHECK(RigExecTestPackUnchecked(*first) == original);
     first->providerProgram->valueKeys[0] = "mutated:/Fixture.value";
     first->paths[2] = fb::PathNode(1, 3, fb::PathKind::Property);
@@ -231,9 +228,8 @@ static int stepGraphProducers = 0;
 // after the validator's prefix.
 template <class Source, class Edit>
 static void
-_ExpectRefusal(const std::string &name, const char *what,
-               const Source &bytes, const Edit &edit,
-               const std::string &expected)
+_ExpectRefusal(const std::string &name, const char *what, const Source &bytes,
+               const Edit &edit, const std::string &expected)
 {
     const std::string want = "invalid .rigexec: " + expected;
     const std::string got = _OpenError(RigExecTestEdited(bytes, edit));
@@ -269,20 +265,23 @@ struct _GenericMalformedCoverage {
 };
 
 static std::array<_GenericMalformedCoverage,
-                  size_t(_GenericMalformedCase::Count)> genericMalformed;
+                  size_t(_GenericMalformedCase::Count)>
+    genericMalformed;
 
 template <class Source, class Edit>
 static void
 _ExpectGenericRefusal(_GenericMalformedCase which, const std::string &name,
-                     const char *what, const Source &bytes, const Edit &edit,
-                     const std::string &expected)
+                      const char *what, const Source &bytes, const Edit &edit,
+                      const std::string &expected)
 {
     const size_t index = size_t(which);
     CHECK(index < genericMalformed.size());
-    if (index >= genericMalformed.size()) return;
+    if (index >= genericMalformed.size())
+        return;
     auto &coverage = genericMalformed[index];
     ++coverage.encountered;
-    if (coverage.executed != 0) return;
+    if (coverage.executed != 0)
+        return;
     _ExpectRefusal(name, what, bytes, edit, expected);
     ++coverage.executed;
     coverage.representative = name;
@@ -291,11 +290,18 @@ _ExpectGenericRefusal(_GenericMalformedCase which, const std::string &name,
 static void
 _TestGenericMalformedCoverage()
 {
-    const std::array<const char *, size_t(_GenericMalformedCase::Count)> names = {
-        "later predecessor", "predecessor range", "unproduced PosedM",
-        "unproduced Aggregate", "step cluster range", "cluster member range",
-        "cluster predecessor range", "cluster map count", "cluster cycle",
-        "xform base count", "delta-base flag count"};
+    const std::array<const char *, size_t(_GenericMalformedCase::Count)> names =
+        {"later predecessor",
+         "predecessor range",
+         "unproduced PosedM",
+         "unproduced Aggregate",
+         "step cluster range",
+         "cluster member range",
+         "cluster predecessor range",
+         "cluster map count",
+         "cluster cycle",
+         "xform base count",
+         "delta-base flag count"};
     size_t completed = 0;
     for (size_t i = 0; i < genericMalformed.size(); ++i) {
         const auto &coverage = genericMalformed[i];
@@ -303,9 +309,10 @@ _TestGenericMalformedCoverage()
         CHECK(coverage.executed == 1);
         CHECK(!coverage.representative.empty());
         completed += coverage.executed == 1 ? 1 : 0;
-        std::printf("generic malformed %s: %zu eligible, %zu execution(s), %s\n",
-                    names[i], coverage.encountered, coverage.executed,
-                    coverage.representative.c_str());
+        std::printf(
+            "generic malformed %s: %zu eligible, %zu execution(s), %s\n",
+            names[i], coverage.encountered, coverage.executed,
+            coverage.representative.c_str());
     }
     CHECK(completed == size_t(_GenericMalformedCase::Count));
 }
@@ -319,8 +326,7 @@ _TestGenericMalformedCoverage()
 // too.
 template <class Source>
 static void
-_TestStepGraphRefusals(const std::string &name,
-                       const Source &bytes)
+_TestStepGraphRefusals(const std::string &name, const Source &bytes)
 {
     const std::unique_ptr<fb::RigExecWireFile> file = RigExecTestUnpack(bytes);
     if (!file) {
@@ -336,21 +342,22 @@ _TestStepGraphRefusals(const std::string &name,
         if (steps[s].isHead || steps[s].preds.empty()) {
             continue;
         }
-        _ExpectGenericRefusal(_GenericMalformedCase::LaterPredecessor,
-                       name, "flipped predecessor", bytes,
-                       [&](fb::RigExecWireFile *edited) {
-                           edited->steps[s].preds[0] = int32_t(count - 1);
-                       },
-                       "step " + std::to_string(s) +
-                           " depends on later step " +
-                           std::to_string(count - 1));
-        _ExpectGenericRefusal(_GenericMalformedCase::PredecessorRange,
-                       name, "predecessor past the steps", bytes,
-                       [&](fb::RigExecWireFile *edited) {
-                           edited->steps[s].preds[0] = int32_t(count);
-                       },
-                       "step " + std::to_string(s) + " names predecessor " +
-                           stepCount + ", which is no step");
+        _ExpectGenericRefusal(
+            _GenericMalformedCase::LaterPredecessor, name,
+            "flipped predecessor", bytes,
+            [&](fb::RigExecWireFile *edited) {
+                edited->steps[s].preds[0] = int32_t(count - 1);
+            },
+            "step " + std::to_string(s) + " depends on later step " +
+                std::to_string(count - 1));
+        _ExpectGenericRefusal(
+            _GenericMalformedCase::PredecessorRange, name,
+            "predecessor past the steps", bytes,
+            [&](fb::RigExecWireFile *edited) {
+                edited->steps[s].preds[0] = int32_t(count);
+            },
+            "step " + std::to_string(s) + " names predecessor " + stepCount +
+                ", which is no step");
         ++stepGraphFlips;
         ++stepGraphRanges;
         break;
@@ -366,53 +373,53 @@ _TestStepGraphRefusals(const std::string &name,
         for (const auto &[domain, text] : domains) {
             const fb::SlotDomain read = domain;
             _ExpectGenericRefusal(
-                           domain == fb::SlotDomain::PosedM
-                               ? _GenericMalformedCase::UnproducedPosedM
-                               : _GenericMalformedCase::UnproducedAggregate,
-                           name, "read nothing writes", bytes,
-                           [&](fb::RigExecWireFile *edited) {
-                               edited->steps.back().reads.push_back(
-                                   fb::SlotRange(read, past, past + 1));
-                           },
-                           "step " + last + " reads " + text + " slots [" +
-                               std::to_string(past) + ", " +
-                               std::to_string(past + 1) +
-                               "), which no earlier step writes");
+                domain == fb::SlotDomain::PosedM
+                    ? _GenericMalformedCase::UnproducedPosedM
+                    : _GenericMalformedCase::UnproducedAggregate,
+                name, "read nothing writes", bytes,
+                [&](fb::RigExecWireFile *edited) {
+                    edited->steps.back().reads.push_back(
+                        fb::SlotRange(read, past, past + 1));
+                },
+                "step " + last + " reads " + text + " slots [" +
+                    std::to_string(past) + ", " + std::to_string(past + 1) +
+                    "), which no earlier step writes");
             ++stepGraphProducers;
         }
     }
     if (count > 0 && !clusters.empty()) {
-        _ExpectGenericRefusal(_GenericMalformedCase::StepClusterRange,
-                       name, "cluster past the clusters", bytes,
-                       [&](fb::RigExecWireFile *edited) {
-                           edited->steps[0].cluster =
-                               int32_t(clusters.size());
-                       },
-                       "step 0 names cluster " + clusterCount +
-                           ", which is no cluster");
-        _ExpectGenericRefusal(_GenericMalformedCase::ClusterMemberRange,
-                       name, "member past the steps", bytes,
-                       [&](fb::RigExecWireFile *edited) {
-                           edited->clustering->clusters[0].members.push_back(
-                               int32_t(count));
-                       },
-                       "cluster 0 names member " + stepCount +
-                           ", which is no step");
-        _ExpectGenericRefusal(_GenericMalformedCase::ClusterPredecessorRange,
-                       name, "cluster predecessor past the clusters", bytes,
-                       [&](fb::RigExecWireFile *edited) {
-                           edited->clustering->clusters[0].preds.push_back(
-                               int32_t(clusters.size()));
-                       },
-                       "cluster 0 names predecessor " + clusterCount +
-                           ", which is no cluster");
-        _ExpectGenericRefusal(_GenericMalformedCase::ClusterMapCount,
-                       name, "clustering one step short", bytes,
-                       [&](fb::RigExecWireFile *edited) {
-                           edited->clustering->clusterOf.pop_back();
-                       },
-                       "the clustering places " + std::to_string(count - 1) +
-                           " steps; the file has " + stepCount);
+        _ExpectGenericRefusal(
+            _GenericMalformedCase::StepClusterRange, name,
+            "cluster past the clusters", bytes,
+            [&](fb::RigExecWireFile *edited) {
+                edited->steps[0].cluster = int32_t(clusters.size());
+            },
+            "step 0 names cluster " + clusterCount + ", which is no cluster");
+        _ExpectGenericRefusal(
+            _GenericMalformedCase::ClusterMemberRange, name,
+            "member past the steps", bytes,
+            [&](fb::RigExecWireFile *edited) {
+                edited->clustering->clusters[0].members.push_back(
+                    int32_t(count));
+            },
+            "cluster 0 names member " + stepCount + ", which is no step");
+        _ExpectGenericRefusal(
+            _GenericMalformedCase::ClusterPredecessorRange, name,
+            "cluster predecessor past the clusters", bytes,
+            [&](fb::RigExecWireFile *edited) {
+                edited->clustering->clusters[0].preds.push_back(
+                    int32_t(clusters.size()));
+            },
+            "cluster 0 names predecessor " + clusterCount +
+                ", which is no cluster");
+        _ExpectGenericRefusal(
+            _GenericMalformedCase::ClusterMapCount, name,
+            "clustering one step short", bytes,
+            [&](fb::RigExecWireFile *edited) {
+                edited->clustering->clusterOf.pop_back();
+            },
+            "the clustering places " + std::to_string(count - 1) +
+                " steps; the file has " + stepCount);
         stepGraphRanges += 4;
     }
     // Every cluster \p from reaches along succs, itself included.
@@ -443,15 +450,14 @@ _TestStepGraphRefusals(const std::string &name,
             const bool otherPath = std::any_of(
                 clusters[b].preds.begin(), clusters[b].preds.end(),
                 [&](int32_t pred) { return pred != a && seen[size_t(pred)]; });
-            const bool lowest =
-                std::find(seen.begin(), seen.begin() + a, 1) ==
-                seen.begin() + a;
+            const bool lowest = std::find(seen.begin(), seen.begin() + a, 1) ==
+                                seen.begin() + a;
             if (otherPath || !lowest) {
                 continue;
             }
             _ExpectGenericRefusal(
-                _GenericMalformedCase::ClusterCycle,
-                name, "two-cluster cycle", bytes,
+                _GenericMalformedCase::ClusterCycle, name, "two-cluster cycle",
+                bytes,
                 [&](fb::RigExecWireFile *edited) {
                     std::vector<int32_t> &preds =
                         edited->clustering->clusters[size_t(a)].preds;
@@ -482,30 +488,30 @@ static int staticArrayRows = 0;
 // count than its sources.
 template <class Source>
 static void
-_TestStaticTableRefusals(const std::string &name,
-                         const Source &bytes)
+_TestStaticTableRefusals(const std::string &name, const Source &bytes)
 {
     const std::unique_ptr<fb::RigExecWireFile> file = RigExecTestUnpack(bytes);
     if (!file) {
         return;
     }
     const size_t xforms = file->pose->xformBase.size();
-    _ExpectGenericRefusal(_GenericMalformedCase::XformBaseCount,
-                       name, "xform base past the slots", bytes,
-                   [](fb::RigExecWireFile *edited) {
-                       edited->pose->xformBase.push_back(
-                           RigExecWireMatrix4d{});
-                   },
-                   "pose.xform_base: " + std::to_string(xforms + 1) +
-                       " entries, expected " + std::to_string(xforms));
+    _ExpectGenericRefusal(
+        _GenericMalformedCase::XformBaseCount, name,
+        "xform base past the slots", bytes,
+        [](fb::RigExecWireFile *edited) {
+            edited->pose->xformBase.push_back(RigExecWireMatrix4d{});
+        },
+        "pose.xform_base: " + std::to_string(xforms + 1) +
+            " entries, expected " + std::to_string(xforms));
     const size_t deltas = file->geometry->deltaBasePaths.size();
-    _ExpectGenericRefusal(_GenericMalformedCase::DeltaBaseFlagCount,
-                       name, "delta-base flag past the delta bases", bytes,
-                   [](fb::RigExecWireFile *edited) {
-                       edited->geometry->deltaBaseOk.push_back(0);
-                   },
-                   "geometry.delta_base_ok: " + std::to_string(deltas + 1) +
-                       " entries, expected " + std::to_string(deltas));
+    _ExpectGenericRefusal(
+        _GenericMalformedCase::DeltaBaseFlagCount, name,
+        "delta-base flag past the delta bases", bytes,
+        [](fb::RigExecWireFile *edited) {
+            edited->geometry->deltaBaseOk.push_back(0);
+        },
+        "geometry.delta_base_ok: " + std::to_string(deltas + 1) +
+            " entries, expected " + std::to_string(deltas));
     ++staticTableRows;
     // A chain holding base points, which keeps them without the flag.
     const auto &chains = file->geometry->chains;
@@ -513,12 +519,13 @@ _TestStaticTableRefusals(const std::string &name,
         if (!chains[c].haveBase || chains[c].base == 0) {
             continue;
         }
-        _ExpectRefusal(name, "chain base without have_base", bytes,
-                       [c](fb::RigExecWireFile *edited) {
-                           edited->geometry->chains[c].haveBase = false;
-                       },
-                       "geometry.chains[" + std::to_string(c) +
-                           "]: a base without have_base");
+        _ExpectRefusal(
+            name, "chain base without have_base", bytes,
+            [c](fb::RigExecWireFile *edited) {
+                edited->geometry->chains[c].haveBase = false;
+            },
+            "geometry.chains[" + std::to_string(c) +
+                "]: a base without have_base");
         ++staticChainRows;
         break;
     }
@@ -529,14 +536,14 @@ _TestStaticTableRefusals(const std::string &name,
             continue;
         }
         const uint64_t sources = arrays[k].sourceCount;
-        _ExpectRefusal(name, "array weights past the sources", bytes,
-                       [k](fb::RigExecWireFile *edited) {
-                           edited->pose->constraintArrays[k].weights.push_back(
-                               1.0);
-                       },
-                       "pose.constraint_arrays[" + std::to_string(k) +
-                           "].weights: " + std::to_string(sources + 1) +
-                           " entries, expected " + std::to_string(sources));
+        _ExpectRefusal(
+            name, "array weights past the sources", bytes,
+            [k](fb::RigExecWireFile *edited) {
+                edited->pose->constraintArrays[k].weights.push_back(1.0);
+            },
+            "pose.constraint_arrays[" + std::to_string(k) +
+                "].weights: " + std::to_string(sources + 1) +
+                " entries, expected " + std::to_string(sources));
         ++staticArrayRows;
         break;
     }
@@ -548,8 +555,7 @@ static int stepLabelRows = 0;
 // text, is the live program's label; a step past the steps is its number.
 // True when every label matches.
 static bool
-_TestStepLabels(const std::string &stage,
-                const RigExecRigEvaluator &evaluator,
+_TestStepLabels(const std::string &stage, const RigExecRigEvaluator &evaluator,
                 const std::vector<uint8_t> &bytes,
                 const fb::RigExecWireFile &baseline,
                 const RigExecRuntimeReader *reader = nullptr)
@@ -571,7 +577,8 @@ _TestStepLabels(const std::string &stage,
         return false;
     }
     const RigExecBakedProgramImpl &program = baked->GetStepGraph();
-    const std::unique_ptr<fb::RigExecWireFile> file = RigExecTestUnpack(baseline);
+    const std::unique_ptr<fb::RigExecWireFile> file =
+        RigExecTestUnpack(baseline);
     CHECK(file && file->steps.size() == program.steps.size());
     size_t matched = 0;
     size_t printed = 0;
@@ -599,8 +606,7 @@ _TestStepLabels(const std::string &stage,
 // the edited file names.
 template <class Source, class Edit>
 static std::string
-_EditedStepName(const Source &bytes, const Edit &edit,
-                size_t step)
+_EditedStepName(const Source &bytes, const Edit &edit, size_t step)
 {
     const std::unique_ptr<fb::RigExecWireFile> file = RigExecTestUnpack(bytes);
     if (!file) {
@@ -703,8 +709,7 @@ _TestFrameRecordRefusals(const std::string &name,
             if (commitLast[w] <= step) {
                 continue;
             }
-            const auto at = std::find(commit.slots.begin(),
-                                      commit.slots.end(),
+            const auto at = std::find(commit.slots.begin(), commit.slots.end(),
                                       int32_t(record.slot()));
             if (at == commit.slots.end()) {
                 continue;
@@ -713,19 +718,17 @@ _TestFrameRecordRefusals(const std::string &name,
                 commit.slotWrites[size_t(at - commit.slots.begin())];
             const auto edit = [&](fb::RigExecWireFile *edited) {
                 const fb::FrameRecord &was = edited->pose->frameRecords[r];
-                edited->pose->frameRecords[r] = fb::FrameRecord(
-                    was.slot(), was.commit(), was.target(), was.position(),
-                    version, was.moverLabel());
+                edited->pose->frameRecords[r] =
+                    fb::FrameRecord(was.slot(), was.commit(), was.target(),
+                                    was.position(), version, was.moverLabel());
             };
-            _ExpectShownRefusal(name, "record rebound to a later commit",
-                                bytes, edit,
-                                _EditedStepName(bytes, edit, size_t(step)) +
-                                    " is bound to PoseFin version " +
-                                    std::to_string(version) + " of " +
-                                    slotText(record.slot()) + ", which " +
-                                    _EditedStepName(bytes, edit,
-                                                    size_t(commitLast[w])) +
-                                    " writes at or after it");
+            _ExpectShownRefusal(
+                name, "record rebound to a later commit", bytes, edit,
+                _EditedStepName(bytes, edit, size_t(step)) +
+                    " is bound to PoseFin version " + std::to_string(version) +
+                    " of " + slotText(record.slot()) + ", which " +
+                    _EditedStepName(bytes, edit, size_t(commitLast[w])) +
+                    " writes at or after it");
             ++recordRefusals;
             rebound = true;
             break;
@@ -754,13 +757,12 @@ _TestFrameRecordRefusals(const std::string &name,
                 fb::FrameRecord(was.slot(), was.commit(), was.target(),
                                 position, was.version(), was.moverLabel());
         };
-        _ExpectShownRefusal(name, "solver record of another provider", bytes,
-                            edit,
-                            _EditedStepName(bytes, edit, size_t(step)) +
-                                " reads position " +
-                                std::to_string(position) + " of commit " +
-                                std::to_string(record.commit()) +
-                                ", which is not the provider it records");
+        _ExpectShownRefusal(
+            name, "solver record of another provider", bytes, edit,
+            _EditedStepName(bytes, edit, size_t(step)) + " reads position " +
+                std::to_string(position) + " of commit " +
+                std::to_string(record.commit()) +
+                ", which is not the provider it records");
         ++recordRefusals;
         break;
     }
@@ -795,14 +797,12 @@ _TestFrameRecordRefusals(const std::string &name,
             };
             const std::string folder =
                 _EditedStepName(bytes, past, size_t(fold));
-            _ExpectShownRefusal(name, "transform record past the records",
-                                bytes, past,
-                                folder + " reads frame record " + records +
-                                    " of " + records);
+            _ExpectShownRefusal(
+                name, "transform record past the records", bytes, past,
+                folder + " reads frame record " + records + " of " + records);
             const uint32_t k = revision.transformRecords[0];
             const auto stripped = [&](fb::RigExecWireFile *edited) {
-                _DropRead(edited, size_t(fold), fb::SlotDomain::FrameMatrix,
-                          k);
+                _DropRead(edited, size_t(fold), fb::SlotDomain::FrameMatrix, k);
             };
             _ExpectShownRefusal(name, "fold without a FrameMatrix read", bytes,
                                 stripped,
@@ -826,8 +826,7 @@ static int versionRefusals = 0;
 // and one placing a slot that is no volume; and the format version before
 // the oldest readable one, refused with its re-export message.
 static void
-_TestRetiredRefusals(const std::string &name,
-                     const std::vector<uint8_t> &bytes)
+_TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
 {
     const std::unique_ptr<fb::RigExecWireFile> file = RigExecTestUnpack(bytes);
     if (!file || file->steps.empty()) {
@@ -850,13 +849,14 @@ _TestRetiredRefusals(const std::string &name,
     }
     CHECK(status >= 0);
     if (status >= 0) {
-        _ExpectShownRefusal(name, "SnapshotFinals step", bytes,
-                            [&](fb::RigExecWireFile *edited) {
-                                edited->steps[size_t(status)].kind =
-                                    fb::StepKind::SnapshotFinals;
-                            },
-                            "step " + std::to_string(status) +
-                                " is a retired SnapshotFinals step");
+        _ExpectShownRefusal(
+            name, "SnapshotFinals step", bytes,
+            [&](fb::RigExecWireFile *edited) {
+                edited->steps[size_t(status)].kind =
+                    fb::StepKind::SnapshotFinals;
+            },
+            "step " + std::to_string(status) +
+                " is a retired SnapshotFinals step");
     }
     reservedRefusals += status >= 0 ? 2 : 1;
     // The first step of the first commit and the first VolumePlacements
@@ -873,16 +873,15 @@ _TestRetiredRefusals(const std::string &name,
         if (at < 0) {
             continue;
         }
-        _ExpectShownRefusal(name,
-                            commit ? "SnapshotFinals for a commit step"
-                                   : "SnapshotFinals for a placement step",
-                            bytes,
-                            [&](fb::RigExecWireFile *edited) {
-                                edited->steps[size_t(at)].kind =
-                                    fb::StepKind::SnapshotFinals;
-                            },
-                            "step " + std::to_string(at) +
-                                " is a retired SnapshotFinals step");
+        _ExpectShownRefusal(
+            name,
+            commit ? "SnapshotFinals for a commit step"
+                   : "SnapshotFinals for a placement step",
+            bytes,
+            [&](fb::RigExecWireFile *edited) {
+                edited->steps[size_t(at)].kind = fb::StepKind::SnapshotFinals;
+            },
+            "step " + std::to_string(at) + " is a retired SnapshotFinals step");
         ++reservedRefusals;
     }
 
@@ -927,8 +926,7 @@ _TestRetiredRefusals(const std::string &name,
     const auto notVolume = [&](fb::RigExecWireFile *edited) {
         edited->steps[size_t(place)].object = slot;
     };
-    _ExpectShownRefusal(name, "VolumePlacements of no volume", bytes,
-                        notVolume,
+    _ExpectShownRefusal(name, "VolumePlacements of no volume", bytes, notVolume,
                         _EditedStepName(bytes, notVolume, size_t(place)) +
                             " places slot " + std::to_string(slot) +
                             ", which is no volume slot");
@@ -945,8 +943,7 @@ static int pointBindingRefusals = 0;
 // candidate needs.
 template <class Source>
 static void
-_TestPointBindingRefusals(const std::string &name,
-                          const Source &bytes)
+_TestPointBindingRefusals(const std::string &name, const Source &bytes)
 {
     const std::unique_ptr<fb::RigExecWireFile> file = RigExecTestUnpack(bytes);
     if (!file) {
@@ -963,15 +960,14 @@ _TestPointBindingRefusals(const std::string &name,
                 revision.pointBindings[0].candidates.empty() || reader < 0) {
                 continue;
             }
-            const RigExecWirePointsBinding &binding =
-                revision.pointBindings[0];
+            const RigExecWirePointsBinding &binding = revision.pointBindings[0];
             const std::string input =
                 RigExecFormatPathText(*file, binding.inputPath);
             const std::string who = _EditedStepName(
                 bytes, [](fb::RigExecWireFile *) {}, size_t(reader));
             const fb::PointVersion candidate = binding.candidates[0];
-            const auto bound = [&](fb::RigExecWireFile *edited)
-                -> RigExecWirePointsBinding & {
+            const auto bound =
+                [&](fb::RigExecWireFile *edited) -> RigExecWirePointsBinding & {
                 return edited->geometry->chains[c]
                     .revisions[r]
                     .pointBindings[0];
@@ -988,36 +984,34 @@ _TestPointBindingRefusals(const std::string &name,
             const size_t versions =
                 chains[size_t(candidate.chain())].revisions.size();
             const auto pastVersions = [&](fb::RigExecWireFile *edited) {
-                bound(edited).candidates[0] = fb::PointVersion(
-                    candidate.chain(), int32_t(versions + 1));
+                bound(edited).candidates[0] =
+                    fb::PointVersion(candidate.chain(), int32_t(versions + 1));
             };
-            _ExpectShownRefusal(name, "candidate version past the revisions",
-                                bytes, pastVersions,
-                                who + " binds " + input + " to version " +
-                                    std::to_string(versions + 1) +
-                                    " of chain " +
-                                    std::to_string(candidate.chain()) +
-                                    ", past its last version " +
-                                    std::to_string(versions));
+            _ExpectShownRefusal(
+                name, "candidate version past the revisions", bytes,
+                pastVersions,
+                who + " binds " + input + " to version " +
+                    std::to_string(versions + 1) + " of chain " +
+                    std::to_string(candidate.chain()) +
+                    ", past its last version " + std::to_string(versions));
             const size_t inputs = revision.binding->phaseInputs.size();
             const auto oneMore = [&](fb::RigExecWireFile *edited) {
                 auto &bindings =
                     edited->geometry->chains[c].revisions[r].pointBindings;
                 bindings.push_back(bindings[0]);
             };
-            _ExpectShownRefusal(name, "one binding more than the inputs",
-                                bytes, oneMore,
+            _ExpectShownRefusal(name, "one binding more than the inputs", bytes,
+                                oneMore,
                                 who + " holds " + std::to_string(inputs + 1) +
                                     " point bindings for " +
                                     std::to_string(inputs) + " phased inputs");
             const auto otherInput = [&](fb::RigExecWireFile *edited) {
                 bound(edited).inputPath = edited->rig;
             };
-            _ExpectShownRefusal(name, "binding of another input", bytes,
-                                otherInput,
-                                who + " binds " +
-                                    RigExecFormatPathText(*file, file->rig) +
-                                    " for phased input 0, which is " + input);
+            _ExpectShownRefusal(
+                name, "binding of another input", bytes, otherInput,
+                who + " binds " + RigExecFormatPathText(*file, file->rig) +
+                    " for phased input 0, which is " + input);
             // The read the first candidate needs: the published points of
             // a final read, else the fuse's done slot (or the base).
             fb::SlotDomain domain = fb::SlotDomain::ChainPoints;
@@ -1026,12 +1020,13 @@ _TestPointBindingRefusals(const std::string &name,
                 domain = fb::SlotDomain::ChainBase;
             } else if (!binding.finalRead) {
                 domain = fb::SlotDomain::RevisionDone;
-                slot = uint32_t(file->geometry->chainRevisionBegin[size_t(
-                                    candidate.chain())] +
-                                candidate.version() - 1);
+                slot = uint32_t(
+                    file->geometry
+                        ->chainRevisionBegin[size_t(candidate.chain())] +
+                    candidate.version() - 1);
             }
             const char *domainName =
-                domain == fb::SlotDomain::ChainPoints  ? "ChainPoints"
+                domain == fb::SlotDomain::ChainPoints ? "ChainPoints"
                 : domain == fb::SlotDomain::ChainBase ? "ChainBase"
                                                       : "RevisionDone";
             const auto undeclared = [&](fb::RigExecWireFile *edited) {
@@ -1039,9 +1034,8 @@ _TestPointBindingRefusals(const std::string &name,
             };
             _ExpectShownRefusal(name, "reader without its version read", bytes,
                                 undeclared,
-                                who + " does not declare " + domainName +
-                                    "[" + std::to_string(slot) + "] for " +
-                                    input);
+                                who + " does not declare " + domainName + "[" +
+                                    std::to_string(slot) + "] for " + input);
             pointBindingRefusals += 5;
             ++pointBindingRows;
             return;
@@ -1098,8 +1092,7 @@ _TestOwnChainPreceding()
             RigExecRuntimeReader::Open(bytes->data(), bytes->size(), &error);
         CHECK(reader);
         if (!reader || !reader->Execute(&error)) {
-            std::printf("own-chain preceding, %s: %s\n", label,
-                        error.c_str());
+            std::printf("own-chain preceding, %s: %s\n", label, error.c_str());
             return false;
         }
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(time));
@@ -1122,11 +1115,10 @@ _TestOwnChainPreceding()
     // reads publish different points.
     bool differs = atPreceding.size() != atBase.size();
     for (size_t i = 0; !differs && i < atPreceding.size(); ++i) {
-        differs = atPreceding[i].points.size() != atBase[i].points.size() ||
-                  std::memcmp(atPreceding[i].points.data(),
-                              atBase[i].points.data(),
-                              sizeof(RrVec3f) * atPreceding[i].points.size()) !=
-                      0;
+        differs =
+            atPreceding[i].points.size() != atBase[i].points.size() ||
+            std::memcmp(atPreceding[i].points.data(), atBase[i].points.data(),
+                        sizeof(RrVec3f) * atPreceding[i].points.size()) != 0;
     }
     CHECK(differs);
     ++ownChainRuns;
@@ -1153,7 +1145,9 @@ _TestOwnChainPreceding()
             const uint32_t later =
                 uint32_t(file->geometry->chainRevisionBegin[c] + r);
             const auto edit = [&](fb::RigExecWireFile *edited) {
-                edited->geometry->chains[c].revisions[r].pointBindings[0]
+                edited->geometry->chains[c]
+                    .revisions[r]
+                    .pointBindings[0]
                     .candidates[0] =
                     fb::PointVersion(int32_t(c), int32_t(r + 1));
                 for (const fb::SlotDomain domain :
@@ -1163,13 +1157,12 @@ _TestOwnChainPreceding()
                         fb::SlotRange(domain, later, later + 1));
                 }
             };
-            _ExpectShownRefusal(stagePath, "own-chain candidate past the reader",
-                                bytes, edit,
-                                "step " + std::to_string(reader) +
-                                    " reads RevisionDone slots [" +
-                                    std::to_string(later) + ", " +
-                                    std::to_string(later + 1) +
-                                    "), which no earlier step writes");
+            _ExpectShownRefusal(
+                stagePath, "own-chain candidate past the reader", bytes, edit,
+                "step " + std::to_string(reader) +
+                    " reads RevisionDone slots [" + std::to_string(later) +
+                    ", " + std::to_string(later + 1) +
+                    "), which no earlier step writes");
             ++ownChainRefusals;
         }
     }
@@ -1288,8 +1281,7 @@ _TestRawSkinLayouts()
     // The evaluators' own answer, from the layout cache every evaluator
     // resolves through.
     for (const Skin &skin : skins) {
-        const UsdPrim prim =
-            stage->GetPrimAtPath(SdfPath(movers + skin.path));
+        const UsdPrim prim = stage->GetPrimAtPath(SdfPath(movers + skin.path));
         CHECK(prim);
         RigExecSkinTopologyCache cache;
         const std::shared_ptr<const RigExecSkinTopology> topology =
@@ -1323,8 +1315,7 @@ _TestRawSkinLayouts()
     if (!file) {
         return;
     }
-    std::vector<std::pair<size_t, size_t>> at(skinCount,
-                                              {SIZE_MAX, SIZE_MAX});
+    std::vector<std::pair<size_t, size_t>> at(skinCount, {SIZE_MAX, SIZE_MAX});
     const auto &chains = file->geometry->chains;
     for (size_t c = 0; c < chains.size(); ++c) {
         for (size_t r = 0; r < chains[c].revisions.size(); ++r) {
@@ -1362,16 +1353,13 @@ _TestRawSkinLayouts()
             stage->GetPrimAtPath(SdfPath(movers + skins[k].path));
         VtIntArray indices;
         VtFloatArray weights;
-        CHECK(prim.GetAttribute(TfToken("rigExec:jointIndices"))
-                  .Get(&indices));
-        CHECK(prim.GetAttribute(TfToken("rigExec:jointWeights"))
-                  .Get(&weights));
+        CHECK(prim.GetAttribute(TfToken("rigExec:jointIndices")).Get(&indices));
+        CHECK(prim.GetAttribute(TfToken("rigExec:jointWeights")).Get(&weights));
         CHECK(t.indexWidth == 0 && t.counts8.empty() && t.counts16.empty() &&
               t.indices8.empty() && t.indices16.empty() &&
               t.indices32.empty() && t.weights.empty());
         CHECK(t.rawIndices.size() == indices.size() &&
-              std::equal(indices.begin(), indices.end(),
-                         t.rawIndices.begin()));
+              std::equal(indices.begin(), indices.end(), t.rawIndices.begin()));
         CHECK(t.rawWeights.size() == weights.size() &&
               (weights.empty() ||
                std::memcmp(weights.cdata(), t.rawWeights.data(),
@@ -1397,11 +1385,11 @@ _TestRawSkinLayouts()
         RigExecRuntimeCounters counters[2];
         std::vector<RigExecRuntimePoints> points;
         std::vector<uint8_t> played;
-        rawLayoutRuns += _PlayRawLayouts(stage, rigPath, 1.0,
-                                         "raw skin layouts", &failed,
-                                         counters, &points, &played)
-                             ? 2
-                             : 0;
+        rawLayoutRuns +=
+            _PlayRawLayouts(stage, rigPath, 1.0, "raw skin layouts", &failed,
+                            counters, &points, &played)
+                ? 2
+                : 0;
         // A bake is deterministic: the played file is the one read above.
         CHECK(played == bytes);
         CHECK(failed == 4);
@@ -1429,8 +1417,8 @@ _TestRawSkinLayouts()
         const UsdPrim mesh = wide->DefinePrim(meshPath, TfToken("Mesh"));
         mesh.GetAttribute(TfToken("points")).Set(VtVec3fArray{authored});
         const std::string skinPath = movers + "WideRowSkin";
-        const UsdPrim skin = wide->DefinePrim(SdfPath(skinPath),
-                                              TfToken("RigExecSkinMover"));
+        const UsdPrim skin =
+            wide->DefinePrim(SdfPath(skinPath), TfToken("RigExecSkinMover"));
         skin.ApplyAPI(TfToken("RigExecMoverAPI"));
         skin.GetRelationship(TfToken("rigExec:moves"))
             .SetTargets({meshPath.AppendProperty(TfToken("points"))});
@@ -1460,12 +1448,11 @@ _TestRawSkinLayouts()
         RigExecRuntimeCounters counters[2];
         std::vector<RigExecRuntimePoints> points;
         std::vector<uint8_t> wideBytes;
-        rawLayoutRuns += _PlayRawLayouts(wide, rigPath, 7.0,
-                                         "raw skin layouts, a wide row",
-                                         &failed, counters, &points,
-                                         &wideBytes)
-                             ? 2
-                             : 0;
+        rawLayoutRuns +=
+            _PlayRawLayouts(wide, rigPath, 7.0, "raw skin layouts, a wide row",
+                            &failed, counters, &points, &wideBytes)
+                ? 2
+                : 0;
         CHECK(failed == 4);
         // The file holds the row raw and validated, its arrays bit for bit.
         bool stored = false;
@@ -1475,8 +1462,7 @@ _TestRawSkinLayouts()
                  wideFile->geometry->chains) {
                 for (const fb::RigExecWireRevision &revision :
                      chain.revisions) {
-                    if (RigExecFormatPathText(*wideFile,
-                                              revision.moverPath) !=
+                    if (RigExecFormatPathText(*wideFile, revision.moverPath) !=
                             skinPath ||
                         !revision.topology) {
                         continue;
@@ -1488,10 +1474,8 @@ _TestRawSkinLayouts()
                              std::equal(indices.begin(), indices.end(),
                                         t.rawIndices.begin()) &&
                              t.rawWeights.size() == weights.size() &&
-                             std::memcmp(weights.cdata(),
-                                         t.rawWeights.data(),
-                                         sizeof(float) * weights.size()) ==
-                                 0;
+                             std::memcmp(weights.cdata(), t.rawWeights.data(),
+                                         sizeof(float) * weights.size()) == 0;
                 }
             }
         }
@@ -1524,97 +1508,110 @@ _TestRawSkinLayouts()
     };
     const size_t odd = 0, wideEmpty = 2, row = 4;
     const std::string oddTopology = rowOf(odd) + ".topology";
-    const auto refuse = [&](const char *what, size_t k,
-                            const std::function<void(
-                                fb::RigExecWireRevision &)> &edit,
-                            const std::string &expected) {
-        _ExpectShownRefusal(stagePath, what, bytes,
-                            [&](fb::RigExecWireFile *edited) {
-                                edit(revisionOf(edited, k));
-                            },
-                            expected);
-        ++rawLayoutRefusals;
-    };
+    const auto refuse =
+        [&](const char *what, size_t k,
+            const std::function<void(fb::RigExecWireRevision &)> &edit,
+            const std::string &expected) {
+            _ExpectShownRefusal(
+                stagePath, what, bytes,
+                [&](fb::RigExecWireFile *edited) {
+                    edit(revisionOf(edited, k));
+                },
+                expected);
+            ++rawLayoutRefusals;
+        };
     using Rev = fb::RigExecWireRevision;
-    refuse("raw layout marked validated", odd,
-           [](Rev &r) { r.topology->validated = true; },
-           oddTopology +
-               ": validated, but its raw layout is not rows of element_size");
-    refuse("raw layout the sparse form holds", odd,
-           [](Rev &r) {
-               r.topology->rawIndices.pop_back();
-               r.topology->rawWeights.pop_back();
-           },
-           oddTopology + ": a raw layout of 4 indices and 4 weights at "
-                         "element_size 2, which the sparse form holds");
-    refuse("unvalidated raw row the rules pass", wideEmpty,
-           [](Rev &r) { r.topology->validated = false; },
-           rowOf(wideEmpty) + ".topology: not validated, but its layout "
-                              "passes the evaluator's rules");
-    refuse("raw layout point count", odd,
-           [](Rev &r) { r.topology->pointCount = 2; },
-           oddTopology + ": point_count 2, but its raw layout holds 0 "
-                         "point(s)");
-    refuse("raw arrays on a sparse layout", odd,
-           [](Rev &r) { r.topology->raw = false; },
-           oddTopology + ": raw_indices or raw_weights on a sparse layout");
-    refuse("raw layout with an index width", odd,
-           [](Rev &r) { r.topology->indexWidth = 1; },
-           oddTopology + ": a raw layout with sparse vectors or an "
-                         "index_width");
+    refuse(
+        "raw layout marked validated", odd,
+        [](Rev &r) { r.topology->validated = true; },
+        oddTopology +
+            ": validated, but its raw layout is not rows of element_size");
+    refuse(
+        "raw layout the sparse form holds", odd,
+        [](Rev &r) {
+            r.topology->rawIndices.pop_back();
+            r.topology->rawWeights.pop_back();
+        },
+        oddTopology + ": a raw layout of 4 indices and 4 weights at "
+                      "element_size 2, which the sparse form holds");
+    refuse(
+        "unvalidated raw row the rules pass", wideEmpty,
+        [](Rev &r) { r.topology->validated = false; },
+        rowOf(wideEmpty) + ".topology: not validated, but its layout "
+                           "passes the evaluator's rules");
+    refuse(
+        "raw layout point count", odd,
+        [](Rev &r) { r.topology->pointCount = 2; },
+        oddTopology + ": point_count 2, but its raw layout holds 0 "
+                      "point(s)");
+    refuse(
+        "raw arrays on a sparse layout", odd,
+        [](Rev &r) { r.topology->raw = false; },
+        oddTopology + ": raw_indices or raw_weights on a sparse layout");
+    refuse(
+        "raw layout with an index width", odd,
+        [](Rev &r) { r.topology->indexWidth = 1; },
+        oddTopology + ": a raw layout with sparse vectors or an "
+                      "index_width");
     const std::string rowTopology = rowOf(row) + ".topology";
     const Rev &stored = chains[at[row].first].revisions[at[row].second];
     CHECK(stored.topology->indexWidth == 1 &&
           !stored.topology->indices8.empty() &&
           stored.topology->indices8[0] == 0);
-    refuse("index at the influence count", row,
-           [](Rev &r) { r.topology->indices8[0] = 2; },
-           rowTopology + ": validated, but kept entry 0 indexes influence 2 "
-                         "of 2");
-    refuse("negative index", row,
-           [](Rev &r) {
-               fb::RigExecWireSkinTopology &t = *r.topology;
-               t.indexWidth = 4;
-               t.indices32.assign(t.indices8.begin(), t.indices8.end());
-               t.indices8.clear();
-               t.indices32[0] = -1;
-           },
-           rowTopology + ": validated, but kept entry 0 indexes influence -1 "
-                         "of 2");
-    refuse("unvalidated layout the rules pass", row,
-           [](Rev &r) { r.topology->validated = false; },
-           rowTopology + ": not validated, but its layout passes the "
-                         "evaluator's rules");
-    refuse("NaN weight", row,
-           [](Rev &r) {
-               r.topology->weights[0] =
-                   std::numeric_limits<float>::quiet_NaN();
-           },
-           rowTopology + ": validated, but kept entry 0 has a negative or "
-                         "non-finite weight");
-    refuse("chunked with one chunk", row,
-           [](Rev &r) {
-               r.chunked = true;
-               // The whole-array producer set names every influence. Keep
-               // that binding valid when marking its one range chunked.
-               for (size_t k = 0; k < r.influenceSlots.size(); ++k)
-                   r.chunks[0].key.push_back(int32_t(k));
-           },
-           rowOf(row) + ": chunked with 1 chunk(s)");
-    refuse("key on an unchunked revision", row,
-           [](Rev &r) { r.chunks[0].key = {0}; },
-           rowOf(row) + ".chunks[0]: a key on an unchunked revision");
-    refuse("partition point count", row,
-           [](Rev &r) { r.partitionPointCount = 11; },
-           rowOf(row) + ": partition_point_count 11, but "
-                        "partition_index_count " +
-               std::to_string(stored.partitionIndexCount) + " is " +
-               std::to_string(stored.partitionPointCount) +
-               " row(s) of partition_element_size " +
-               std::to_string(stored.partitionElementSize));
+    refuse(
+        "index at the influence count", row,
+        [](Rev &r) { r.topology->indices8[0] = 2; },
+        rowTopology + ": validated, but kept entry 0 indexes influence 2 "
+                      "of 2");
+    refuse(
+        "negative index", row,
+        [](Rev &r) {
+            fb::RigExecWireSkinTopology &t = *r.topology;
+            t.indexWidth = 4;
+            t.indices32.assign(t.indices8.begin(), t.indices8.end());
+            t.indices8.clear();
+            t.indices32[0] = -1;
+        },
+        rowTopology + ": validated, but kept entry 0 indexes influence -1 "
+                      "of 2");
+    refuse(
+        "unvalidated layout the rules pass", row,
+        [](Rev &r) { r.topology->validated = false; },
+        rowTopology + ": not validated, but its layout passes the "
+                      "evaluator's rules");
+    refuse(
+        "NaN weight", row,
+        [](Rev &r) {
+            r.topology->weights[0] = std::numeric_limits<float>::quiet_NaN();
+        },
+        rowTopology + ": validated, but kept entry 0 has a negative or "
+                      "non-finite weight");
+    refuse(
+        "chunked with one chunk", row,
+        [](Rev &r) {
+            r.chunked = true;
+            // The whole-array producer set names every influence. Keep
+            // that binding valid when marking its one range chunked.
+            for (size_t k = 0; k < r.influenceSlots.size(); ++k)
+                r.chunks[0].key.push_back(int32_t(k));
+        },
+        rowOf(row) + ": chunked with 1 chunk(s)");
+    refuse(
+        "key on an unchunked revision", row,
+        [](Rev &r) { r.chunks[0].key = {0}; },
+        rowOf(row) + ".chunks[0]: a key on an unchunked revision");
+    refuse(
+        "partition point count", row,
+        [](Rev &r) { r.partitionPointCount = 11; },
+        rowOf(row) +
+            ": partition_point_count 11, but "
+            "partition_index_count " +
+            std::to_string(stored.partitionIndexCount) + " is " +
+            std::to_string(stored.partitionPointCount) +
+            " row(s) of partition_element_size " +
+            std::to_string(stored.partitionElementSize));
     CHECK(stored.partitionPointCount == 10 &&
-          stored.partitionIndexCount == 20 &&
-          stored.partitionElementSize == 2);
+          stored.partitionIndexCount == 20 && stored.partitionElementSize == 2);
 }
 
 static int phaseFixtureRows = 0;
@@ -1770,7 +1767,8 @@ _CompareRuns(const RigExecRuntimeReader &a, const RigExecRuntimeReader &b,
             return "joint matrix count";
         }
         for (size_t i = 0; i < x.size(); ++i) {
-            if (x[i].path != y[i].path || !_SameBits(x[i].matrix, y[i].matrix)) {
+            if (x[i].path != y[i].path ||
+                !_SameBits(x[i].matrix, y[i].matrix)) {
                 return "joint matrix " + x[i].path;
             }
         }
@@ -1795,7 +1793,8 @@ _CompareRuns(const RigExecRuntimeReader &a, const RigExecRuntimeReader &b,
             return "matrix primvar count";
         }
         for (size_t i = 0; i < x.size(); ++i) {
-            if (x[i].path != y[i].path || !_SameBits(x[i].matrix, y[i].matrix)) {
+            if (x[i].path != y[i].path ||
+                !_SameBits(x[i].matrix, y[i].matrix)) {
                 return "matrix primvar " + x[i].path;
             }
         }
@@ -1807,7 +1806,8 @@ _CompareRuns(const RigExecRuntimeReader &a, const RigExecRuntimeReader &b,
             return "weight frame count";
         }
         for (size_t i = 0; i < x.size(); ++i) {
-            if (x[i].path != y[i].path || !_SameBits(x[i].matrix, y[i].matrix)) {
+            if (x[i].path != y[i].path ||
+                !_SameBits(x[i].matrix, y[i].matrix)) {
                 return "weight frame " + x[i].path;
             }
         }
@@ -1832,7 +1832,8 @@ _CompareRuns(const RigExecRuntimeReader &a, const RigExecRuntimeReader &b,
             return "provider transform count";
         }
         for (size_t i = 0; i < x.size(); ++i) {
-            if (x[i].path != y[i].path || !_SameBits(x[i].matrix, y[i].matrix) ||
+            if (x[i].path != y[i].path ||
+                !_SameBits(x[i].matrix, y[i].matrix) ||
                 !_SameBits(x[i].base, y[i].base)) {
                 return "provider transform " + x[i].path;
             }
@@ -1845,7 +1846,8 @@ _CompareRuns(const RigExecRuntimeReader &a, const RigExecRuntimeReader &b,
             return "property value count";
         }
         for (size_t i = 0; i < x.size(); ++i) {
-            if (x[i].path != y[i].path || !_SameProperty(x[i].value, y[i].value)) {
+            if (x[i].path != y[i].path ||
+                !_SameProperty(x[i].value, y[i].value)) {
                 return "property value " + x[i].path;
             }
         }
@@ -1879,10 +1881,9 @@ static int defaultsRows = 0;
 // work counters. A second run with nothing set matches the evaluator's
 // second generation at the same time, counters included.
 static void
-_TestDefaults(const RigExecExampleFixture &fixture,
-              const UsdStageRefPtr &stage, const SdfPath &rigPath,
-              std::unique_ptr<RigExecRuntimeReader> reader,
-              std::string error)
+_TestDefaults(const RigExecExampleFixture &fixture, const UsdStageRefPtr &stage,
+              const SdfPath &rigPath,
+              std::unique_ptr<RigExecRuntimeReader> reader, std::string error)
 {
     CHECK(reader);
     if (!reader) {
@@ -1897,8 +1898,7 @@ _TestDefaults(const RigExecExampleFixture &fixture,
     CHECK(evaluator.GetBakedGenerationCount() == 1);
     CHECK(reader->Execute(&error));
     if (!error.empty()) {
-        std::printf("%s: defaults execute: %s\n", fixture.stage,
-                    error.c_str());
+        std::printf("%s: defaults execute: %s\n", fixture.stage, error.c_str());
     }
     std::vector<std::string> diffs;
     bool same = RigExecCompareRuntime(pose, *reader, true, {}, &diffs);
@@ -1917,17 +1917,16 @@ _TestDefaults(const RigExecExampleFixture &fixture,
         same = same && sameAgain;
     }
     if (same) {
-        std::printf("defaults %s t=%g: == Evaluate(T), twice (%zu "
-                    "joints, %zu moved, %zu weight frames, %zu fields, %zu "
-                    "provider xforms, %zu diagnostics, counters "
-                    "%zu operation(s))\n",
-                    fixture.stage, t, reader->GetJointMatrices().size(),
-                    reader->GetPoints().size(),
-                    reader->GetWeightFrames().size(),
-                    reader->GetWeightFields().size(),
-                    reader->GetProviderXforms().size(),
-                    reader->GetDiagnostics().size(),
-                    size_t(reader->GetCounters().executedOpCount));
+        std::printf(
+            "defaults %s t=%g: == Evaluate(T), twice (%zu "
+            "joints, %zu moved, %zu weight frames, %zu fields, %zu "
+            "provider xforms, %zu diagnostics, counters "
+            "%zu operation(s))\n",
+            fixture.stage, t, reader->GetJointMatrices().size(),
+            reader->GetPoints().size(), reader->GetWeightFrames().size(),
+            reader->GetWeightFields().size(),
+            reader->GetProviderXforms().size(), reader->GetDiagnostics().size(),
+            size_t(reader->GetCounters().executedOpCount));
         ++defaultsRows;
     } else {
         std::printf("defaults %s t=%g: MISMATCH (%zu differences)\n",
@@ -2004,13 +2003,14 @@ _TestSamplerDrive(const RigExecExampleFixture &fixture,
             if (baked) {
                 const auto &program = baked->GetStepGraph();
                 for (size_t i = 0; i < program.steps.size(); ++i)
-                    if (i < program.opExecution.ran.size() && program.opExecution.ran[i])
+                    if (i < program.opExecution.ran.size() &&
+                        program.opExecution.ran[i])
                         std::printf("    native ran %zu: %s\n", i,
-                            program.steps[i].label.c_str());
+                                    program.steps[i].label.c_str());
             }
             for (int32_t i : reader->GetLastRunTraceForTesting())
                 std::printf("    runtime ran %d: %s\n", i,
-                    reader->GetStepLabelForTesting(size_t(i)).c_str());
+                            reader->GetStepLabelForTesting(size_t(i)).c_str());
         }
     }
     CHECK(evaluator.GetBakedGenerationCount() == times.size());
@@ -2020,8 +2020,7 @@ _TestSamplerDrive(const RigExecExampleFixture &fixture,
                 reader->GetInputCount(), sampler.GetAnimatedCount());
     if (matched == times.size()) {
         ++samplerRows;
-        if (!isStatic && times.size() > 1 &&
-            sampler.GetAnimatedCount() == 0) {
+        if (!isStatic && times.size() > 1 && sampler.GetAnimatedCount() == 0) {
             ++samplerUnanimatedRows;
         }
     }
@@ -2031,8 +2030,8 @@ _TestSamplerDrive(const RigExecExampleFixture &fixture,
 // The input API over a bake at the probe time, whose slot values are the
 // inputs' defaults.
 static void
-_TestInputApi(const RigExecExampleFixture &fixture,
-              const UsdStageRefPtr &stage, const std::vector<uint8_t> &bytes,
+_TestInputApi(const RigExecExampleFixture &fixture, const UsdStageRefPtr &stage,
+              const std::vector<uint8_t> &bytes,
               const fb::RigExecWireFile &baseline)
 {
     const double probe = RigExecBakedProbeTime(stage).GetValue();
@@ -2081,8 +2080,8 @@ _TestInputApi(const RigExecExampleFixture &fixture,
     {
         const RigExecRuntimeInputInfo &info = fresh->GetInputInfo(0);
         RrInputValue wrong = info.defaultValue;
-        wrong.tag = info.type == RrInputTag::Bool ? RrInputTag::Int
-                                                  : RrInputTag::Bool;
+        wrong.tag =
+            info.type == RrInputTag::Bool ? RrInputTag::Int : RrInputTag::Bool;
         why.clear();
         CHECK(!fresh->SetInputAt(0, wrong, &why));
         CHECK(!why.empty());
@@ -2090,8 +2089,7 @@ _TestInputApi(const RigExecExampleFixture &fixture,
     }
     for (size_t i = 0; i < count; ++i) {
         const RigExecRuntimeInputInfo &info = fresh->GetInputInfo(i);
-        if (info.type != RrInputTag::Double &&
-            info.type != RrInputTag::Float) {
+        if (info.type != RrInputTag::Double && info.type != RrInputTag::Float) {
             continue;
         }
         // A Float input also refuses a finite double that narrows to inf.
@@ -2109,8 +2107,7 @@ _TestInputApi(const RigExecExampleFixture &fixture,
         break;
     }
     why.clear();
-    CHECK(!fresh->SetInputAt(count, fresh->GetInputInfo(0).defaultValue,
-                             &why));
+    CHECK(!fresh->SetInputAt(count, fresh->GetInputInfo(0).defaultValue, &why));
     CHECK(why == "no input at index " + std::to_string(count) +
                      "; the file lists " + std::to_string(count));
 
@@ -2135,8 +2132,7 @@ _TestInputApi(const RigExecExampleFixture &fixture,
         if (found) {
             ++inputApiFields;
         } else {
-            std::printf("%s: %s is no input\n", fixture.stage,
-                        field.c_str());
+            std::printf("%s: %s is no input\n", fixture.stage, field.c_str());
         }
     }
     const std::string dragName = fields.empty() ? std::string() : fields[0];
@@ -2202,8 +2198,7 @@ _TestInputApi(const RigExecExampleFixture &fixture,
         CHECK(tokens->GetTokenText(id) == text);
         CHECK(tokens->SetInputToken(info.name, text, &why));
         CHECK(tokens->GetInputValue(i).token == id);
-        const std::string known =
-            tokens->GetTokenText(info.defaultValue.token);
+        const std::string known = tokens->GetTokenText(info.defaultValue.token);
         CHECK(tokens->SetInputToken(info.name, known, &why));
         CHECK(tokens->GetInputValue(i).token < paths);
         CHECK(tokens->GetTokenText(tokens->GetInputValue(i).token) == known);
@@ -2233,8 +2228,7 @@ _TestInputApi(const RigExecExampleFixture &fixture,
 }
 
 static void
-_TestFixture(const RigExecExampleFixture &fixture,
-             const std::string &stagePath,
+_TestFixture(const RigExecExampleFixture &fixture, const std::string &stagePath,
              const std::vector<double> &bakeFrames)
 {
     const UsdStageRefPtr stage = UsdStage::Open(stagePath);
@@ -2252,8 +2246,7 @@ _TestFixture(const RigExecExampleFixture &fixture,
 
     // One record at the probe time: the defaults, then the input API.
     std::vector<uint8_t> atProbe;
-    CHECK(RigExecTestBakeAt(evaluator,
-                            std::numeric_limits<double>::quiet_NaN(),
+    CHECK(RigExecTestBakeAt(evaluator, std::numeric_limits<double>::quiet_NaN(),
                             &atProbe, &error));
     if (atProbe.empty()) {
         std::printf("%s: probe bake: %s\n", fixture.stage, error.c_str());
@@ -2284,13 +2277,12 @@ _TestFixture(const RigExecExampleFixture &fixture,
     // Truncating the tail breaks the buffer, so Open refuses.
     if (atProbe.size() > 64) {
         std::string truncError;
-        CHECK(!RigExecRuntimeReader::Open(
-            atProbe.data(), atProbe.size() - 32, &truncError));
+        CHECK(!RigExecRuntimeReader::Open(atProbe.data(), atProbe.size() - 32,
+                                          &truncError));
         CHECK(!truncError.empty());
     }
 
-    _TestDefaults(fixture, stage, rigPath, std::move(defaultsReader),
-                  error);
+    _TestDefaults(fixture, stage, rigPath, std::move(defaultsReader), error);
     _TestInputApi(fixture, stage, atProbe, *baseline);
 
     // One record at the first table frame, played along the table.
@@ -2298,12 +2290,11 @@ _TestFixture(const RigExecExampleFixture &fixture,
     if (RigExecBakedProbeTime(stage).GetValue() == bakeFrames.front()) {
         atFirst = atProbe;
     } else {
-        CHECK(RigExecTestBakeAt(evaluator, bakeFrames.front(), &atFirst,
-                                &error));
+        CHECK(
+            RigExecTestBakeAt(evaluator, bakeFrames.front(), &atFirst, &error));
     }
     if (atFirst.empty()) {
-        std::printf("%s: first-frame bake: %s\n", fixture.stage,
-                    error.c_str());
+        std::printf("%s: first-frame bake: %s\n", fixture.stage, error.c_str());
         return;
     }
     _TestSamplerDrive(fixture, stage, rigPath, atFirst, bakeFrames);
@@ -2312,8 +2303,7 @@ _TestFixture(const RigExecExampleFixture &fixture,
 int
 main(int argc, char **argv)
 {
-    PlugRegistry::GetInstance().RegisterPlugins(
-        RIGEXEC_SCHEMA_RESOURCE_DIR);
+    PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     _TestMalformed();
     _TestValidatedObjectCopyIsolation();
 
@@ -2328,8 +2318,7 @@ main(int argc, char **argv)
         // One layered body retains the Biped loader/label/input contracts.
         // Full per-asset parity and binary conformance keep all Biped rows.
         const std::string name = fixture.stage;
-        if (name == "biped/Biped.usda" ||
-            name == "biped/Biped_anim.usda" ||
+        if (name == "biped/Biped.usda" || name == "biped/Biped_anim.usda" ||
             name == "biped/Biped_stack.usda") {
             continue;
         }
@@ -2338,8 +2327,7 @@ main(int argc, char **argv)
         }
         sawBaking = true;
         ++bakingRows;
-        const std::string stagePath =
-            examplesDir + "/" + fixture.stage;
+        const std::string stagePath = examplesDir + "/" + fixture.stage;
         const std::vector<double> frames = _ParseFrames(fixture.frames);
         CHECK(!frames.empty());
         if (frames.empty()) {
@@ -2398,10 +2386,10 @@ main(int argc, char **argv)
     // Every selected baking fixture opened above; refusals need a step with a
     // predecessor, a cluster and a cluster edge, which some fixture must
     // have.
-    std::printf("step graph malformed eligibility: %d flipped predecessor(s), %d index "
-                "range(s), %d cluster cycle(s), %d unproduced read(s)\n",
-                stepGraphFlips, stepGraphRanges, stepGraphCycles,
-                stepGraphProducers);
+    std::printf(
+        "step graph malformed eligibility: %d flipped predecessor(s), %d index "
+        "range(s), %d cluster cycle(s), %d unproduced read(s)\n",
+        stepGraphFlips, stepGraphRanges, stepGraphCycles, stepGraphProducers);
     CHECK(stepGraphProducers > 0);
     CHECK(stepGraphFlips > 0);
     CHECK(stepGraphRanges > 0);
@@ -2412,8 +2400,7 @@ main(int argc, char **argv)
     CHECK(fileRefusalRows == 1);
     std::printf("static table inventories: %d of %d baking row(s); chain base "
                 "on %d, constraint arrays on %d\n",
-                staticTableRows, bakingRows, staticChainRows,
-                staticArrayRows);
+                staticTableRows, bakingRows, staticChainRows, staticArrayRows);
     CHECK(staticTableRows == bakingRows);
     CHECK(staticChainRows > 0);
     CHECK(staticArrayRows > 0);
@@ -2437,8 +2424,7 @@ main(int argc, char **argv)
     // change of time keeps in step with the program.
     std::printf("sampler: %d of %d baking row(s) driven along their frames "
                 "(%d frame(s); %d inputs row(s) with no Animated input)\n",
-                samplerRows, bakingRows, samplerFrames,
-                samplerUnanimatedRows);
+                samplerRows, bakingRows, samplerFrames, samplerUnanimatedRows);
     CHECK(samplerRows == bakingRows);
     CHECK(samplerUnanimatedRows > 0);
     CHECK(inputApiFields > 0);

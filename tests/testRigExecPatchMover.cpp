@@ -14,12 +14,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 using namespace rigExec;
 
 static int failures = 0;
-#define CHECK(x)                                                           \
-    do {                                                                   \
-        if (!(x)) {                                                        \
-            std::printf("FAIL %d: %s\n", __LINE__, #x);                    \
-            ++failures;                                                    \
-        }                                                                  \
+#define CHECK(x)                                                               \
+    do {                                                                       \
+        if (!(x)) {                                                            \
+            std::printf("FAIL %d: %s\n", __LINE__, #x);                        \
+            ++failures;                                                        \
+        }                                                                      \
     } while (0)
 
 #include "rigExecFrozenParity.h"
@@ -71,7 +71,8 @@ def Xform "Asset" {
 }
 )USD";
 
-UsdStageRefPtr MakeStage()
+UsdStageRefPtr
+MakeStage()
 {
     auto stage = UsdStage::CreateInMemory();
     CHECK(stage->GetRootLayer()->ImportFromString(kFixture));
@@ -128,14 +129,16 @@ def Xform "Asset" {
 }
 )USD";
 
-UsdStageRefPtr MakeShapesStage()
+UsdStageRefPtr
+MakeShapesStage()
 {
     auto stage = UsdStage::CreateInMemory();
     CHECK(stage->GetRootLayer()->ImportFromString(kShapesFixture));
     return stage;
 }
 
-VtVec3fArray EvaluateTarget(RigExecRigEvaluator &rig)
+VtVec3fArray
+EvaluateTarget(RigExecRigEvaluator &rig)
 {
     rig.cpuReference = true;
     auto pose = rig.Evaluate(UsdTimeCode::Default());
@@ -144,35 +147,36 @@ VtVec3fArray EvaluateTarget(RigExecRigEvaluator &rig)
     CHECK(pose.referenceAgreements > 0);
     auto it = pose.movedProperties.find(SdfPath("/Asset/Target.points"));
     CHECK(it != pose.movedProperties.end());
-    return it == pose.movedProperties.end()
-               ? VtVec3fArray()
-               : it->second.Get<VtVec3fArray>();
+    return it == pose.movedProperties.end() ? VtVec3fArray()
+                                            : it->second.Get<VtVec3fArray>();
 }
 
-void CheckNear(const GfVec3f &actual, const GfVec3f &expected,
-               float tol = 2e-6f)
+void
+CheckNear(const GfVec3f &actual, const GfVec3f &expected, float tol = 2e-6f)
 {
     if ((actual - expected).GetLength() > tol) {
-        std::printf("actual (%g, %g, %g) expected (%g, %g, %g)\n",
-                    actual[0], actual[1], actual[2],
-                    expected[0], expected[1], expected[2]);
+        std::printf("actual (%g, %g, %g) expected (%g, %g, %g)\n", actual[0],
+                    actual[1], actual[2], expected[0], expected[1],
+                    expected[2]);
     }
     CHECK((actual - expected).GetLength() <= tol);
 }
 
-void CheckFrozen(RigExecRigEvaluator &rig)
+void
+CheckFrozen(RigExecRigEvaluator &rig)
 {
     std::string why;
-    const bool same = RigExecFrozenMatchesLive(
-        &rig, SdfPath("/Asset/Rig"), UsdTimeCode::Default(), &why);
+    const bool same = RigExecFrozenMatchesLive(&rig, SdfPath("/Asset/Rig"),
+                                               UsdTimeCode::Default(), &why);
     if (!same) {
         std::printf("frozen mismatch: %s\n", why.c_str());
     }
     CHECK(same);
 }
 
-void CheckRuntime(const UsdStageRefPtr &stage, const char *what,
-                  const SdfPath &avar, double posed)
+void
+CheckRuntime(const UsdStageRefPtr &stage, const char *what, const SdfPath &avar,
+             double posed)
 {
     RigExecRigEvaluator rig(stage, SdfPath("/Asset/Rig"));
     std::vector<std::string> errors;
@@ -192,14 +196,13 @@ void CheckRuntime(const UsdStageRefPtr &stage, const char *what,
         std::printf("%s open: %s\n", what, error.c_str());
         return;
     }
-    const auto *handler =
-        RigExecFindMoverHandler(TfToken("RigExecPatchMover"));
+    const auto *handler = RigExecFindMoverHandler(TfToken("RigExecPatchMover"));
     CHECK(handler && handler->runtimeKernel.IsSet());
     if (!handler) {
         return;
     }
-    CHECK(player->SetExternalKernel("RigExecPatchMover",
-                                    handler->runtimeKernel, &error));
+    CHECK(player->SetExternalKernel("RigExecPatchMover", handler->runtimeKernel,
+                                    &error));
     CHECK(player->GetMissingExternalKernels().empty());
     const auto compare = [&](const RigExecRigPose &pose, const char *phase) {
         std::vector<std::string> diffs;
@@ -220,8 +223,7 @@ void CheckRuntime(const UsdStageRefPtr &stage, const char *what,
     }
     compare(rig.Evaluate(UsdTimeCode(1)), "unposed");
     const bool held =
-        player.Hold(avar.GetString(), posed, &error) &&
-        player.Play(1, &error);
+        player.Hold(avar.GetString(), posed, &error) && player.Play(1, &error);
     CHECK(held);
     if (!held) {
         std::printf("%s posed play: %s\n", what, error.c_str());
@@ -231,11 +233,11 @@ void CheckRuntime(const UsdStageRefPtr &stage, const char *what,
     const UsdAttribute avarAttr = stage->GetAttributeAtPath(avar);
     const VtValue edited =
         avarAttr && avarAttr.GetTypeName() == SdfValueTypeNames->Float
-            ? VtValue(float(posed)) : VtValue(posed);
+            ? VtValue(float(posed))
+            : VtValue(posed);
     std::vector<RigExecRigPose> poses;
     const bool referenced = RigExecTestEditedPoses(
-        stage, SdfPath("/Asset/Rig"), {{avar, edited}}, {1.0}, &poses,
-        &error);
+        stage, SdfPath("/Asset/Rig"), {{avar, edited}}, {1.0}, &poses, &error);
     CHECK(referenced);
     if (referenced) {
         compare(poses.front(), "posed");
@@ -246,16 +248,18 @@ void CheckRuntime(const UsdStageRefPtr &stage, const char *what,
 // x(u) = 2*(1-u)*u + 2*u^2 = 2*u
 // z(u) = 4*(1-u)*u
 // Linear in v: y(v) = 4*v
-GfVec3f ExpectedArch(double u, double v)
+GfVec3f
+ExpectedArch(double u, double v)
 {
     u = std::min(std::max(u, 0.0), 1.0);
     v = std::min(std::max(v, 0.0), 1.0);
     return GfVec3f(float(2.0 * u), float(4.0 * v), float(4.0 * (1.0 - u) * u));
 }
 
-}  // namespace
+} // namespace
 
-int main()
+int
+main()
 {
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
 
@@ -303,7 +307,8 @@ int main()
 
         // Periodic vForm wraps v = 1.5 to 0.5.
         auto patchPrim = stage->GetPrimAtPath(SdfPath("/Asset/Patch"));
-        CHECK(patchPrim.GetAttribute(TfToken("vForm")).Set(TfToken("periodic")));
+        CHECK(
+            patchPrim.GetAttribute(TfToken("vForm")).Set(TfToken("periodic")));
         pts = EvaluateTarget(rig);
         if (pts.size() == 2) {
             CheckNear(pts[0], ExpectedArch(0.75, 0.75));
@@ -357,12 +362,10 @@ int main()
         CHECK(stick.GetAttribute(TfToken("inputs:defaultWeight")).Set(0.5f));
         pts = EvaluateTarget(rig);
         if (pts.size() == 2) {
-            CheckNear(pts[0],
-                      GfVec3f(10, 20, 30) * 0.5f +
-                          ExpectedArch(0.5, 0.5) * 0.5f);
-            CheckNear(pts[1],
-                      GfVec3f(-5, -6, -7) * 0.5f +
-                          ExpectedArch(0.5, 0.5) * 0.5f);
+            CheckNear(pts[0], GfVec3f(10, 20, 30) * 0.5f +
+                                  ExpectedArch(0.5, 0.5) * 0.5f);
+            CheckNear(pts[1], GfVec3f(-5, -6, -7) * 0.5f +
+                                  ExpectedArch(0.5, 0.5) * 0.5f);
         }
         CHECK(stick.GetAttribute(TfToken("inputs:enabled")).Set(false));
         pts = EvaluateTarget(rig);
@@ -389,9 +392,9 @@ int main()
         patch.CreateVOrderAttr().Set(2);
         patch.CreateUKnotsAttr().Set(VtDoubleArray{0, 0, 1, 1});
         patch.CreateVKnotsAttr().Set(VtDoubleArray{0, 0, 1, 1});
-        patch.CreatePointsAttr().Set(VtVec3fArray{
-            GfVec3f(0, 0, 0), GfVec3f(10, 0, 0),
-            GfVec3f(0, 20, 0), GfVec3f(10, 20, 0)});
+        patch.CreatePointsAttr().Set(
+            VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(10, 0, 0), GfVec3f(0, 20, 0),
+                         GfVec3f(10, 20, 0)});
 
         auto uvs = UsdGeomPoints::Define(stage, SdfPath("/Asset/UVs"));
         uvs.CreatePointsAttr().Set(
@@ -403,8 +406,8 @@ int main()
 
         // Note: movers execute bottom-sibling first, so AddPatchMover is
         // authored before AddSkinMover in child order so SkinMover runs first!
-        auto targetChain =
-            builder.NewMoverChain("TargetChain", SdfPath("/Asset/Target.points"));
+        auto targetChain = builder.NewMoverChain(
+            "TargetChain", SdfPath("/Asset/Target.points"));
         auto patchMover = targetChain.AddPatchMover(
             "StickToPatch", SdfPath("/Asset/Patch"), SdfPath("/Asset/UVs"),
             SdfPath("/Asset/Target.points"), TfToken("base"), TfToken("final"));
@@ -413,8 +416,8 @@ int main()
 
         auto uvChain =
             builder.NewMoverChain("UvChain", SdfPath("/Asset/UVs.points"));
-        auto skin = uvChain.AddSkinMover(
-            "DriveUvs", {c0.GetPath(), c1.GetPath()});
+        auto skin =
+            uvChain.AddSkinMover("DriveUvs", {c0.GetPath(), c1.GetPath()});
         skin.SetJointInfluences({0, 1}, {1.0f, 1.0f}, 1);
 
         RigExecRigEvaluator rig(stage, SdfPath("/Asset/Rig"));
@@ -447,16 +450,19 @@ int main()
     // 5. UV shapes: avars weight Smile and Open, which add to the neutral.
     {
         const GfVec3f neutral[2] = {GfVec3f(0.25f, 0.25f, 0), GfVec3f(0, 1, 0)};
-        const GfVec3f smile[2] = {GfVec3f(0.75f, 0.25f, 0), GfVec3f(0.5f, 1, 0)};
+        const GfVec3f smile[2] = {GfVec3f(0.75f, 0.25f, 0),
+                                  GfVec3f(0.5f, 1, 0)};
         const GfVec3f open[2] = {GfVec3f(0.25f, 0.75f, 0), GfVec3f(0, 0.5f, 0)};
         // The target at weights (s, o): the patch at
         // uv = neutral + s (smile - neutral) + o (open - neutral).
         const auto expectAt = [&](const VtVec3fArray &pts, double s, double o) {
             CHECK(pts.size() == 2);
             for (size_t i = 0; i < 2 && i < pts.size(); ++i) {
-                const double u = neutral[i][0] + s * (smile[i][0] - neutral[i][0]) +
+                const double u = neutral[i][0] +
+                                 s * (smile[i][0] - neutral[i][0]) +
                                  o * (open[i][0] - neutral[i][0]);
-                const double v = neutral[i][1] + s * (smile[i][1] - neutral[i][1]) +
+                const double v = neutral[i][1] +
+                                 s * (smile[i][1] - neutral[i][1]) +
                                  o * (open[i][1] - neutral[i][1]);
                 CheckNear(pts[i], ExpectedArch(u, v), 1e-5f);
             }
@@ -473,9 +479,12 @@ int main()
         const UsdAttribute openAvar =
             stage->GetAttributeAtPath(SdfPath("/Asset/Rig/Mouth.avars:open"));
         // Each alone, both together (they add), and a partial mix.
-        for (const auto &[s, o] : std::vector<std::pair<float, double>>{
-                 {0.0f, 0.0}, {1.0f, 0.0}, {0.0f, 1.0}, {1.0f, 1.0},
-                 {0.5f, 0.25}}) {
+        for (const auto &[s, o] :
+             std::vector<std::pair<float, double>>{{0.0f, 0.0},
+                                                   {1.0f, 0.0},
+                                                   {0.0f, 1.0},
+                                                   {1.0f, 1.0},
+                                                   {0.5f, 0.25}}) {
             CHECK(smileAvar.Set(s));
             CHECK(openAvar.Set(o));
             expectAt(EvaluateTarget(rig), s, o);
@@ -484,9 +493,9 @@ int main()
         // A drag on an avar reaches the mover.
         CHECK(smileAvar.Set(0.0f));
         CHECK(openAvar.Set(0.0));
-        rig.SetInteractiveOverrides({RigExecValueOverride{
-            SdfPath("/Asset/Rig/Mouth"), TfToken(), TfToken("avars:open"),
-            VtValue(1.0)}});
+        rig.SetInteractiveOverrides(
+            {RigExecValueOverride{SdfPath("/Asset/Rig/Mouth"), TfToken(),
+                                  TfToken("avars:open"), VtValue(1.0)}});
         expectAt(EvaluateTarget(rig), 0.0, 1.0);
         rig.ClearInteractiveOverrides();
         expectAt(EvaluateTarget(rig), 0.0, 0.0);
@@ -515,9 +524,9 @@ int main()
     // the shapes: one float or double source each, or an array of that size.
     // Contact lists are as long as each other, in range, and name a point
     // once.
-    for (const char *edit : {"shape count", "connections", "source type",
-                             "array size", "contact length", "contact range",
-                             "contact repeat"}) {
+    for (const char *edit :
+         {"shape count", "connections", "source type", "array size",
+          "contact length", "contact range", "contact repeat"}) {
         auto stage = MakeShapesStage();
         const UsdAttribute weights = stage->GetAttributeAtPath(
             SdfPath("/Asset/Rig/Movers/Stick.inputs:uvWeights"));
@@ -605,9 +614,12 @@ int main()
         const UsdAttribute openAvar =
             stage->GetAttributeAtPath(SdfPath("/Asset/Rig/Mouth.avars:open"));
         // Apart, touching, crossing, and crossing past the patch's edge.
-        for (const auto &[s, o] : std::vector<std::pair<float, double>>{
-                 {0.0f, 0.5}, {0.0f, 0.75}, {0.0f, 1.0}, {1.0f, 1.0},
-                 {0.5f, 2.5}}) {
+        for (const auto &[s, o] :
+             std::vector<std::pair<float, double>>{{0.0f, 0.5},
+                                                   {0.0f, 0.75},
+                                                   {0.0f, 1.0},
+                                                   {1.0f, 1.0},
+                                                   {0.5f, 2.5}}) {
             CHECK(smileAvar.Set(s));
             CHECK(openAvar.Set(o));
             const VtVec3fArray pts = EvaluateTarget(rig);

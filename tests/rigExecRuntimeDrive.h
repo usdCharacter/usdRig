@@ -77,8 +77,8 @@ RigExecTestDriveTo(rigExec::RigExecRuntimeReader *reader,
     if (reader->GetWindowedOperationCount() > 0) {
         reader->ClearHistory();
         for (size_t k = reader->GetHistoryDepth(); k >= 1; --k) {
-            if (!sampler->Apply(PXR_NS::UsdTimeCode(time - double(k)),
-                                reader, error) ||
+            if (!sampler->Apply(PXR_NS::UsdTimeCode(time - double(k)), reader,
+                                error) ||
                 !reader->ExecuteHistory(error)) {
                 return false;
             }
@@ -112,13 +112,11 @@ RigExecTestTypedValue(const PXR_NS::UsdAttribute &attribute, double value)
 /// back exactly as it was before the edit -- not merely cleared, since a
 /// spec left behind changes how an evaluator takes a later edit. Edits
 /// alive together restore in reverse order of construction.
-class RigExecTestSessionEdit
-{
+class RigExecTestSessionEdit {
 public:
     /// Typed to the attribute (RigExecTestTypedValue); any other attribute
     /// type is refused (IsSet false).
-    RigExecTestSessionEdit(const PXR_NS::UsdAttribute &attribute,
-                           double value)
+    RigExecTestSessionEdit(const PXR_NS::UsdAttribute &attribute, double value)
         : _attribute(attribute)
     {
         _Set(RigExecTestTypedValue(attribute, value));
@@ -130,13 +128,18 @@ public:
     {
         _Set(value);
     }
-    ~RigExecTestSessionEdit() { Restore(); }
+    ~RigExecTestSessionEdit()
+    {
+        Restore();
+    }
 
     RigExecTestSessionEdit(const RigExecTestSessionEdit &) = delete;
-    RigExecTestSessionEdit &operator=(const RigExecTestSessionEdit &) =
-        delete;
+    RigExecTestSessionEdit &operator=(const RigExecTestSessionEdit &) = delete;
 
-    bool IsSet() const { return _set; }
+    bool IsSet() const
+    {
+        return _set;
+    }
 
     /// The session layer as it was before this edit.
     void Restore()
@@ -190,8 +193,7 @@ struct RigExecTestEdit {
 inline bool
 RigExecTestEditedPoses(
     const PXR_NS::UsdStageRefPtr &stage, const PXR_NS::SdfPath &rigPath,
-    const std::vector<RigExecTestEdit> &edits,
-    const std::vector<double> &times,
+    const std::vector<RigExecTestEdit> &edits, const std::vector<double> &times,
     std::vector<rigExec::RigExecRigPose> *poses, std::string *error,
     const std::function<void(const rigExec::RigExecRigEvaluator &, size_t)>
         &each = {},
@@ -250,8 +252,7 @@ RigExecTestEditedPoses(
 /// the input sampler hands it the stage's Animated inputs at each new time,
 /// and the inputs a drag holds are set again after each sample, so a held
 /// drag stands at every time as an authored value does.
-class RigExecTestPlayer
-{
+class RigExecTestPlayer {
 public:
     /// Opens \p bytes and binds the sampler to \p stage. False with the
     /// reason, also when the sampler cannot resolve an input there.
@@ -273,10 +274,22 @@ public:
         return true;
     }
 
-    rigExec::RigExecRuntimeReader &Reader() { return *_reader; }
-    const rigExec::RigExecRuntimeReader &Reader() const { return *_reader; }
-    rigExec::RigExecRuntimeReader *operator->() { return _reader.get(); }
-    const rigExec::RigExecInputSampler &Sampler() const { return _sampler; }
+    rigExec::RigExecRuntimeReader &Reader()
+    {
+        return *_reader;
+    }
+    const rigExec::RigExecRuntimeReader &Reader() const
+    {
+        return *_reader;
+    }
+    rigExec::RigExecRuntimeReader *operator->()
+    {
+        return _reader.get();
+    }
+    const rigExec::RigExecInputSampler &Sampler() const
+    {
+        return _sampler;
+    }
 
     /// The sampler at \p time, the held inputs set again where it sampled,
     /// then Execute. A file with windowed operations reads the frames
@@ -324,8 +337,7 @@ private:
     bool _Sample(double time, std::string *error)
     {
         const bool moved = !_played || time != _time;
-        if (!_sampler.Apply(PXR_NS::UsdTimeCode(time), _reader.get(),
-                            error)) {
+        if (!_sampler.Apply(PXR_NS::UsdTimeCode(time), _reader.get(), error)) {
             return false;
         }
         if (moved) {
@@ -369,19 +381,21 @@ SameMatrix(const PXR_NS::GfMatrix4d &a, const rigExec::RrMat4d &b)
                 // Invalid graph publications use NaN sentinels. Matching
                 // sentinel bits are equal; other numerical mismatches remain
                 // failures, including a different NaN payload.
-                if (!std::isnan(a[r][c]) || !std::isnan(b[r][c])) return false;
+                if (!std::isnan(a[r][c]) || !std::isnan(b[r][c]))
+                    return false;
                 uint64_t left = 0, right = 0;
                 const double value = b[r][c];
                 std::memcpy(&left, &a[r][c], sizeof(left));
                 std::memcpy(&right, &value, sizeof(right));
-                if (left != right) return false;
+                if (left != right)
+                    return false;
             }
         }
     }
     return true;
 }
 
-}  // namespace rigExecTestDrive
+} // namespace rigExecTestDrive
 
 /// Compares \p reader's last run with \p pose in the output domains alone:
 /// joint matrices, moved point arrays (a moved scalar or matrix is outside
@@ -394,9 +408,9 @@ RigExecCompareRuntimeOutputs(const rigExec::RigExecRigPose &pose,
                              const rigExec::RigExecRuntimeReader &reader,
                              std::vector<std::string> *diffs)
 {
-    using rigExecTestDrive::SameMatrix;
     using PXR_NS::GfMatrix4d;
     using PXR_NS::VtVec3fArray;
+    using rigExecTestDrive::SameMatrix;
     bool same = true;
     const auto push = [&](const std::string &line) {
         same = false;
@@ -405,14 +419,15 @@ RigExecCompareRuntimeOutputs(const rigExec::RigExecRigPose &pose,
     const auto &trace = reader.GetLastRunTraceForTesting();
     if (reader.GetCounters().executedOpCount != trace.size() ||
         std::set<int32_t>(trace.begin(), trace.end()).size() != trace.size()) {
-        push("runtime completion trace does not name each executed operation once");
+        push("runtime completion trace does not name each executed operation "
+             "once");
     }
     {
         const auto &rt = reader.GetJointMatrices();
         if (pose.jointMatricesFinal.size() != rt.size()) {
             push("joint count baked " +
-                     std::to_string(pose.jointMatricesFinal.size()) +
-                     " binary " + std::to_string(rt.size()));
+                 std::to_string(pose.jointMatricesFinal.size()) + " binary " +
+                 std::to_string(rt.size()));
         }
         std::map<std::string, const rigExec::RrMat4d *> byPath;
         for (const auto &joint : rt) {
@@ -421,8 +436,7 @@ RigExecCompareRuntimeOutputs(const rigExec::RigExecRigPose &pose,
         for (const auto &[path, matrix] : pose.jointMatricesFinal) {
             const auto found = byPath.find(path.GetString());
             if (found == byPath.end()) {
-                push("joint " + path.GetString() +
-                         " missing from the binary");
+                push("joint " + path.GetString() + " missing from the binary");
             } else if (!SameMatrix(matrix, *found->second)) {
                 push("joint " + path.GetString() + " differs");
             }
@@ -441,15 +455,14 @@ RigExecCompareRuntimeOutputs(const rigExec::RigExecRigPose &pose,
             ++arrays;
             const auto found = byPath.find(path.GetString());
             if (found == byPath.end()) {
-                push("moved " + path.GetString() +
-                         " missing from the binary");
+                push("moved " + path.GetString() + " missing from the binary");
                 continue;
             }
             const VtVec3fArray &array = value.UncheckedGet<VtVec3fArray>();
             if (array.size() != found->second->size()) {
                 push("moved " + path.GetString() + " count " +
-                         std::to_string(array.size()) + " vs " +
-                         std::to_string(found->second->size()));
+                     std::to_string(array.size()) + " vs " +
+                     std::to_string(found->second->size()));
                 continue;
             }
             for (size_t i = 0; i < array.size(); ++i) {
@@ -457,15 +470,14 @@ RigExecCompareRuntimeOutputs(const rigExec::RigExecRigPose &pose,
                 if (array[i][0] != b[0] || array[i][1] != b[1] ||
                     array[i][2] != b[2]) {
                     push("moved " + path.GetString() + " point " +
-                             std::to_string(i) + " differs");
+                         std::to_string(i) + " differs");
                     break;
                 }
             }
         }
         if (arrays != byPath.size()) {
-            push("moved-property count baked " +
-                     std::to_string(arrays) + " binary " +
-                     std::to_string(byPath.size()));
+            push("moved-property count baked " + std::to_string(arrays) +
+                 " binary " + std::to_string(byPath.size()));
         }
     }
     {
@@ -484,17 +496,15 @@ RigExecCompareRuntimeOutputs(const rigExec::RigExecRigPose &pose,
             const auto found = byPath.find(path.GetString());
             if (found == byPath.end()) {
                 push("matrix primvar " + path.GetString() +
-                         " missing from the binary");
+                     " missing from the binary");
             } else if (!SameMatrix(value.UncheckedGet<GfMatrix4d>(),
                                    *found->second)) {
-                push("matrix primvar " + path.GetString() +
-                         " differs");
+                push("matrix primvar " + path.GetString() + " differs");
             }
         }
         if (matrices != byPath.size()) {
-            push("matrix primvar count baked " +
-                     std::to_string(matrices) + " binary " +
-                     std::to_string(byPath.size()));
+            push("matrix primvar count baked " + std::to_string(matrices) +
+                 " binary " + std::to_string(byPath.size()));
         }
     }
     {
@@ -504,14 +514,14 @@ RigExecCompareRuntimeOutputs(const rigExec::RigExecRigPose &pose,
         }
         if (pose.weightFrames.size() != byPath.size()) {
             push("weight-frame count baked " +
-                     std::to_string(pose.weightFrames.size()) +
-                     " binary " + std::to_string(byPath.size()));
+                 std::to_string(pose.weightFrames.size()) + " binary " +
+                 std::to_string(byPath.size()));
         }
         for (const auto &[path, matrix] : pose.weightFrames) {
             const auto found = byPath.find(path.GetString());
             if (found == byPath.end()) {
                 push("weight frame " + path.GetString() +
-                         " missing from the binary");
+                     " missing from the binary");
             } else if (!SameMatrix(matrix, *found->second)) {
                 push("weight frame " + path.GetString() + " differs");
             }
@@ -525,31 +535,29 @@ RigExecCompareRuntimeOutputs(const rigExec::RigExecRigPose &pose,
         }
         if (pose.weightFields.size() != byPath.size()) {
             push("weight-field count baked " +
-                     std::to_string(pose.weightFields.size()) +
-                     " binary " + std::to_string(byPath.size()));
+                 std::to_string(pose.weightFields.size()) + " binary " +
+                 std::to_string(byPath.size()));
         }
         for (const auto &[path, field] : pose.weightFields) {
             const auto found = byPath.find(path.GetString());
             if (found == byPath.end()) {
                 push("weight field " + path.GetString() +
-                         " missing from the binary");
+                     " missing from the binary");
                 continue;
             }
             if (field.target.GetString() != found->second->target) {
-                push("weight field " + path.GetString() +
-                         " targets " + found->second->target);
+                push("weight field " + path.GetString() + " targets " +
+                     found->second->target);
                 continue;
             }
             if (field.weights.size() != found->second->weights.size()) {
-                push("weight field " + path.GetString() +
-                         " count differs");
+                push("weight field " + path.GetString() + " count differs");
                 continue;
             }
             for (size_t i = 0; i < field.weights.size(); ++i) {
                 if (field.weights[i] != found->second->weights[i]) {
-                    push("weight field " + path.GetString() +
-                             " weight " + std::to_string(i) +
-                             " differs");
+                    push("weight field " + path.GetString() + " weight " +
+                         std::to_string(i) + " differs");
                     break;
                 }
             }
@@ -563,26 +571,24 @@ RigExecCompareRuntimeOutputs(const rigExec::RigExecRigPose &pose,
         }
         if (pose.providerXforms.size() != byPath.size()) {
             push("provider-xform count baked " +
-                     std::to_string(pose.providerXforms.size()) +
-                     " binary " + std::to_string(byPath.size()));
+                 std::to_string(pose.providerXforms.size()) + " binary " +
+                 std::to_string(byPath.size()));
         }
         for (const auto &[path, matrix] : pose.providerXforms) {
             const auto found = byPath.find(path.GetString());
             if (found == byPath.end()) {
                 push("provider xform " + path.GetString() +
-                         " missing from the binary");
+                     " missing from the binary");
                 continue;
             }
             if (!SameMatrix(matrix, found->second->matrix)) {
-                push("provider xform " + path.GetString() +
-                         " differs");
+                push("provider xform " + path.GetString() + " differs");
                 continue;
             }
             const auto base = pose.providerBaseXforms.find(path);
             if (base == pose.providerBaseXforms.end() ||
                 !SameMatrix(base->second, found->second->base)) {
-                push("provider base xform " + path.GetString() +
-                         " differs");
+                push("provider base xform " + path.GetString() + " differs");
             }
         }
     }
@@ -695,15 +701,14 @@ RigExecCompareRuntime(const rigExec::RigExecRigPose &pose,
                         pose.diagnostics.end());
         const std::vector<std::string> &rt = reader.GetDiagnostics();
         if (expected.size() != rt.size()) {
-            push("diagnostic count baked " +
-                     std::to_string(expected.size()) + " binary " +
-                     std::to_string(rt.size()));
+            push("diagnostic count baked " + std::to_string(expected.size()) +
+                 " binary " + std::to_string(rt.size()));
         }
         for (size_t i = 0; i < std::min(expected.size(), rt.size()); ++i) {
             if (expected[i] != rt[i]) {
                 push("diagnostic " + std::to_string(i) + " baked [" +
-                         expected[i].substr(0, 160) + "] binary [" +
-                         rt[i].substr(0, 160) + "]");
+                     expected[i].substr(0, 160) + "] binary [" +
+                     rt[i].substr(0, 160) + "]");
             }
         }
     }
@@ -711,8 +716,8 @@ RigExecCompareRuntime(const rigExec::RigExecRigPose &pose,
         const rigExec::RigExecRuntimeCounters counters = reader.GetCounters();
         if (pose.executedOpCount != counters.executedOpCount) {
             push("executed op counts differ: " +
-                     std::to_string(pose.executedOpCount) +
-                     "/" + std::to_string(counters.executedOpCount));
+                 std::to_string(pose.executedOpCount) + "/" +
+                 std::to_string(counters.executedOpCount));
         }
     }
     return same;
@@ -787,10 +792,9 @@ RigExecTestArrayReference(const PXR_NS::UsdStageRefPtr &stage,
             const PXR_NS::UsdAttribute attribute =
                 stage->GetAttributeAtPath(PXR_NS::SdfPath(set.name));
             authored = authored && attribute &&
-                       (set.sampled
-                            ? attribute.Set(set.value,
-                                            PXR_NS::UsdTimeCode(time))
-                            : attribute.Set(set.value));
+                       (set.sampled ? attribute.Set(set.value,
+                                                    PXR_NS::UsdTimeCode(time))
+                                    : attribute.Set(set.value));
         }
     }
     if (authored) {
@@ -826,10 +830,9 @@ RigExecTestApplyArraySets(rigExec::RigExecRuntimeReader *reader,
         const rigExec::RigExecRuntimeArray view =
             RigExecTestArrayView(set.value);
         if (view.tag != rigExec::RrInputTag::Double) {
-            if (!(set.sampled ? reader->SetSampledInputArrayAt(index, view,
-                                                               error)
-                              : reader->SetInputArrayAt(index, view,
-                                                        error))) {
+            if (!(set.sampled
+                      ? reader->SetSampledInputArrayAt(index, view, error)
+                      : reader->SetInputArrayAt(index, view, error))) {
                 return false;
             }
             continue;
@@ -870,20 +873,18 @@ RigExecCompareRuntimeRun(const rigExec::RigExecRigPose &pose,
     if (outputsOnly) {
         return same;
     }
-    std::vector<std::string> want =
-        pose.diagnostics;
-    if (!want.empty() && want.front() == "structural edit: compiled rig rebuilt") {
+    std::vector<std::string> want = pose.diagnostics;
+    if (!want.empty() &&
+        want.front() == "structural edit: compiled rig rebuilt") {
         want.erase(want.begin());
     }
-    const std::vector<std::string> got =
-        reader.GetDiagnostics();
+    const std::vector<std::string> got = reader.GetDiagnostics();
     if (want != got) {
         same = false;
-        rigExecTestDrive::Push(diffs, "diagnostics differ: " +
-                                          std::to_string(want.size()) +
-                                          " baked line(s), " +
-                                          std::to_string(got.size()) +
-                                          " binary");
+        rigExecTestDrive::Push(
+            diffs, "diagnostics differ: " + std::to_string(want.size()) +
+                       " baked line(s), " + std::to_string(got.size()) +
+                       " binary");
         for (size_t i = 0; i < std::max(want.size(), got.size()); ++i) {
             const std::string a = i < want.size() ? want[i] : "(none)";
             const std::string b = i < got.size() ? got[i] : "(none)";
@@ -897,4 +898,4 @@ RigExecCompareRuntimeRun(const rigExec::RigExecRigPose &pose,
     return same;
 }
 
-#endif  // RIGEXEC_TEST_RUNTIME_DRIVE_H
+#endif // RIGEXEC_TEST_RUNTIME_DRIVE_H

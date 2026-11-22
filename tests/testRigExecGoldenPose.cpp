@@ -9,18 +9,25 @@
 using namespace rigExec;
 PXR_NAMESPACE_USING_DIRECTIVE
 
-#define CHECK(expression) do { if (!(expression)) { \
-    std::cerr << "failed: " << #expression << '\n'; return 1; } } while (false)
+#define CHECK(expression)                                                      \
+    do {                                                                       \
+        if (!(expression)) {                                                   \
+            std::cerr << "failed: " << #expression << '\n';                    \
+            return 1;                                                          \
+        }                                                                      \
+    } while (false)
 
 namespace {
-double DoubleBits(uint64_t bits)
+double
+DoubleBits(uint64_t bits)
 {
     double value;
     std::memcpy(&value, &bits, sizeof value);
     return value;
 }
 
-bool Encode(const RigExecRigPose &pose, std::string *text, bool compact = false)
+bool
+Encode(const RigExecRigPose &pose, std::string *text, bool compact = false)
 {
     std::vector<RigExecGoldenValue> values;
     std::string error;
@@ -31,9 +38,10 @@ bool Encode(const RigExecRigPose &pose, std::string *text, bool compact = false)
     *text = RigExecGoldenVisit("first", 0, pose, values, compact);
     return true;
 }
-}
+} // namespace
 
-int main()
+int
+main()
 {
     RigExecRigPose pose;
     pose.valid = true;
@@ -51,7 +59,8 @@ int main()
     // Only the exact retired scheduler summary is excluded.
     RigExecRigPose summary = pose;
     summary.diagnostics.insert(summary.diagnostics.begin() + 1,
-        "mover graph: 2 chain(s), 3 revision(s); 1 created, 3 executed, 2 schedule(s) built");
+                               "mover graph: 2 chain(s), 3 revision(s); 1 "
+                               "created, 3 executed, 2 schedule(s) built");
     CHECK(Encode(summary, &changed));
     CHECK(RigExecCompareGolden(original, changed));
     summary.diagnostics[1] += "; failed";
@@ -87,12 +96,14 @@ int main()
         VtValue(DoubleBits(UINT64_C(0x7ff8000000000002)));
     CHECK(Encode(mutated, &changed));
     CHECK(!RigExecCompareGolden(original, changed));
-    pose.movedProperties[SdfPath("/Rig/Mesh.points")] = VtValue(VtFloatArray{0.0f, -0.0f});
+    pose.movedProperties[SdfPath("/Rig/Mesh.points")] =
+        VtValue(VtFloatArray{0.0f, -0.0f});
     CHECK(Encode(pose, &original));
     CHECK(original.find("float[2] 00000000 80000000") != std::string::npos);
     CHECK(Encode(pose, &compact, true));
     mutated = pose;
-    mutated.movedProperties[SdfPath("/Rig/Mesh.points")] = VtValue(VtFloatArray{0.0f});
+    mutated.movedProperties[SdfPath("/Rig/Mesh.points")] =
+        VtValue(VtFloatArray{0.0f});
     CHECK(Encode(mutated, &changed, true));
     CHECK(!RigExecCompareGolden(compact, changed));
 
@@ -110,7 +121,8 @@ int main()
     CHECK(!RigExecCompareGolden(original, changed));
 
     // Unsupported values must stop capture rather than stringify approximately.
-    pose.movedProperties[SdfPath("/Rig/Unsupported.value")] = VtValue(VtStringArray{"value"});
+    pose.movedProperties[SdfPath("/Rig/Unsupported.value")] =
+        VtValue(VtStringArray{"value"});
     std::vector<RigExecGoldenValue> values;
     CHECK(!RigExecEncodeGoldenPose(pose, &values, &error));
     CHECK(error.find("unsupported golden value type") != std::string::npos);

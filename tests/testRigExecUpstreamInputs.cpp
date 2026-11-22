@@ -68,12 +68,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -83,8 +83,11 @@ static std::vector<RigExecOpTraceEntry>
 ExecutedHeads(const RigExecBakedProgramImpl &B)
 {
     auto trace = RigExecBakedLastRunTrace(B);
-    trace.erase(std::remove_if(trace.begin(),trace.end(),
-        [&B](const auto &entry) { return !B.steps[entry.step].isHead; }),trace.end());
+    trace.erase(std::remove_if(trace.begin(), trace.end(),
+                               [&B](const auto &entry) {
+                                   return !B.steps[entry.step].isHead;
+                               }),
+                trace.end());
     return trace;
 }
 
@@ -197,8 +200,8 @@ OpenAuthored(const std::string &stagePath, const std::vector<Authored> &edits)
 // What a fresh evaluator publishes at \p time on \p stagePath
 // with \p edits authored.
 RigExecRigPose
-Reference(const std::string &stagePath, const SdfPath &rig, const std::vector<Authored> &edits,
-          UsdTimeCode time)
+Reference(const std::string &stagePath, const SdfPath &rig,
+          const std::vector<Authored> &edits, UsdTimeCode time)
 {
     const UsdStageRefPtr stage = OpenAuthored(stagePath, edits);
     if (!stage) {
@@ -311,9 +314,10 @@ struct FrozenJob {
     RigExecRigPose pose;
 };
 
-FrozenJob RunSampled(const RigExecRigEvaluator &evaluator,
-                     const std::shared_ptr<const RigExecFrozenProgram> &snapshot,
-                     RigExecFrameInputs inputs, const std::string &what);
+FrozenJob
+RunSampled(const RigExecRigEvaluator &evaluator,
+           const std::shared_ptr<const RigExecFrozenProgram> &snapshot,
+           RigExecFrameInputs inputs, const std::string &what);
 
 // One warming job at \p time from \p snapshot, sampled from \p evaluator's
 // program with \p upstream as the frame's upstream values, through the
@@ -326,10 +330,9 @@ RunJob(const RigExecRigEvaluator &evaluator,
 {
     RigExecFrameInputs inputs;
     std::string error;
-    if (!snapshot ||
-        !RigExecSampleFrameInputs(evaluator, time, {},
-                                  RigExecUpstreamValuesOf(upstream),
-                                  &inputs, &error)) {
+    if (!snapshot || !RigExecSampleFrameInputs(
+                         evaluator, time, {}, RigExecUpstreamValuesOf(upstream),
+                         &inputs, &error)) {
         std::printf("FAIL %s: no job sampled: %s\n", what.c_str(),
                     error.c_str());
         ++failures;
@@ -363,8 +366,8 @@ RunSampled(const RigExecRigEvaluator &evaluator,
     }
     context.frozen = snapshot.get();
     job.pose = RigExecEvaluateFrozen(context, job.inputs,
-                                     RigExecMakeProductionStepRunner(),
-                                     nullptr, SdfPath(), &job.report);
+                                     RigExecMakeProductionStepRunner(), nullptr,
+                                     SdfPath(), &job.report);
     // Accepted: the worker ran it from samples alone.
     CHECK(!job.inputs.HasChainResolvedInputs());
     CHECK(job.pose.valid);
@@ -394,7 +397,8 @@ StepsOutsideLive(const RigExecBakedProgramImpl &B, const FrozenJob &job,
     }
     size_t outside = 0;
     for (const RigExecOpTraceEntry &entry : job.report.region) {
-        if (B.steps[entry.step].isHead) continue;
+        if (B.steps[entry.step].isHead)
+            continue;
         if (entry.step < B.steps.size() && B.steps[entry.step].isSource) {
             continue;
         }
@@ -404,7 +408,8 @@ StepsOutsideLive(const RigExecBakedProgramImpl &B, const FrozenJob &job,
         }
     }
     for (const RigExecOpTraceEntry &entry : job.report.region) {
-        if (!B.steps[entry.step].isHead) continue;
+        if (!B.steps[entry.step].isHead)
+            continue;
         if (!head.count(entry.step)) {
             ++outside;
         }
@@ -418,7 +423,8 @@ WorkSteps(const RigExecBakedProgramImpl &B, const FrozenJob &job)
 {
     std::set<size_t> work;
     for (const RigExecOpTraceEntry &entry : job.report.region) {
-        if (entry.step < B.steps.size() && !B.steps[entry.step].isHead && !B.steps[entry.step].isSource &&
+        if (entry.step < B.steps.size() && !B.steps[entry.step].isHead &&
+            !B.steps[entry.step].isSource &&
             !B.cones.alwaysSteps.Test(int(entry.step))) {
             work.insert(entry.step);
         }
@@ -444,15 +450,14 @@ NonSourceWork(const RigExecBakedProgramImpl &B, const FrozenJob &job)
 //  - A job with none from that snapshot lifts them: it equals the authored
 //    pose and its key is the authored job's.
 void
-RunFrozenLegs(const std::string &what, const RigExecRigEvaluator &evaluator,
-              const std::shared_ptr<const RigExecFrozenProgram>
-                  &authoredSnapshot,
-              const FrozenJob &authoredJob,
-              const std::vector<RigExecValueOverride> &inputs,
-              UsdTimeCode time, const RigExecRigPose &authored,
-              const RigExecRigPose &standing,
-              const std::vector<RigExecOpTraceEntry> &liveRegion,
-              const std::vector<RigExecOpTraceEntry> &liveHead)
+RunFrozenLegs(
+    const std::string &what, const RigExecRigEvaluator &evaluator,
+    const std::shared_ptr<const RigExecFrozenProgram> &authoredSnapshot,
+    const FrozenJob &authoredJob,
+    const std::vector<RigExecValueOverride> &inputs, UsdTimeCode time,
+    const RigExecRigPose &authored, const RigExecRigPose &standing,
+    const std::vector<RigExecOpTraceEntry> &liveRegion,
+    const std::vector<RigExecOpTraceEntry> &liveHead)
 {
     const RigExecBakedProgram *program = evaluator.GetBakedProgram();
     CHECK(program);
@@ -468,7 +473,8 @@ RunFrozenLegs(const std::string &what, const RigExecRigEvaluator &evaluator,
     const size_t outside = StepsOutsideLive(B, placed, liveRegion, liveHead);
     if (outside != 0) {
         std::printf("FAIL %s: frozen job ran %zu step(s) outside live's "
-                    "cone\n", what.c_str(), outside);
+                    "cone\n",
+                    what.c_str(), outside);
     }
     CHECK(outside == 0);
     CHECK(RigExecControlStateDigest(placed.inputs) !=
@@ -480,18 +486,21 @@ RunFrozenLegs(const std::string &what, const RigExecRigEvaluator &evaluator,
         return;
     }
     CHECK(!standingSnapshot->program->lastUpstream.empty());
-    const FrozenJob again = RunJob(evaluator, standingSnapshot, time, inputs,
-                                   what + ": standing");
+    const FrozenJob again =
+        RunJob(evaluator, standingSnapshot, time, inputs, what + ": standing");
     CheckSamePose(what + ": frozen, standing", standing, again.pose);
     // The work a job does with nothing moved against its history: what the
     // authored job did against the authored snapshot (its time-varying
     // reads), and no more.
     CHECK(NonSourceWork(B, again) == NonSourceWork(B, authoredJob));
     CHECK(WorkSteps(B, again) == WorkSteps(B, authoredJob));
-    CHECK(std::count_if(again.report.region.begin(),again.report.region.end(),
-        [&B](const auto &entry) { return B.steps[entry.step].isHead; }) ==
-          std::count_if(authoredJob.report.region.begin(),authoredJob.report.region.end(),
-        [&B](const auto &entry) { return B.steps[entry.step].isHead; }));
+    CHECK(std::count_if(
+              again.report.region.begin(), again.report.region.end(),
+              [&B](const auto &entry) { return B.steps[entry.step].isHead; }) ==
+          std::count_if(
+              authoredJob.report.region.begin(),
+              authoredJob.report.region.end(),
+              [&B](const auto &entry) { return B.steps[entry.step].isHead; }));
 
     const FrozenJob lifted =
         RunJob(evaluator, standingSnapshot, time, {}, what + ": lifted");
@@ -522,8 +531,7 @@ RunCase(const std::string &name, const std::string &stagePath,
             return;
         }
         auto evaluator = Make(stage, rig);
-        const RigExecRigPose authored =
-            Reference(stagePath, rig, {}, time);
+        const RigExecRigPose authored = Reference(stagePath, rig, {}, time);
         const RigExecRigPose before = evaluator->Evaluate(time);
         CheckSamePose(what + ": before", authored, before);
         const bool frozen = true;
@@ -544,17 +552,15 @@ RunCase(const std::string &name, const std::string &stagePath,
         const RigExecRigPose standing = evaluator->Evaluate(time);
         CHECK(evaluator->GetUpstreamInputPaths() == PathsOf(inputs));
         CHECK(!HasLine(standing, "upstream input "));
-        const RigExecRigPose expected =
-            Reference(stagePath, rig, edits, time);
+        const RigExecRigPose expected = Reference(stagePath, rig, edits, time);
         CheckSamePose(what + ": standing", expected, standing);
         // The value moved something, so the case tests a move.
         CHECK(Differences(authored, standing) != 0);
         if (frozen && evaluator->GetBakedProgram()) {
-            RunFrozenLegs(what, *evaluator, authoredSnapshot, authoredJob,
-                          inputs, time, authored, standing,
-                          evaluator->GetLastOpTrace(),
-                          ExecutedHeads(
-                              evaluator->GetBakedProgram()->GetStepGraph()));
+            RunFrozenLegs(
+                what, *evaluator, authoredSnapshot, authoredJob, inputs, time,
+                authored, standing, evaluator->GetLastOpTrace(),
+                ExecutedHeads(evaluator->GetBakedProgram()->GetStepGraph()));
         }
         // A second generation with the same value standing.
         CheckSamePose(what + ": standing again", expected,
@@ -624,8 +630,8 @@ void
 TestAPinnedHop()
 {
     const GfMatrix4d moved = Translate(1, 0, 10);
-    RunCase("Upstream.inputs:space", Fixture("upstream_inputs.usda"),
-            kLimbsRig, 1, {Up(kUpstreamSpace, VtValue(moved))},
+    RunCase("Upstream.inputs:space", Fixture("upstream_inputs.usda"), kLimbsRig,
+            1, {Up(kUpstreamSpace, VtValue(moved))},
             {{kUpstreamSpace, VtValue(moved), {}}});
 }
 
@@ -668,17 +674,16 @@ TestUpstreamThroughADrag()
         evaluator->Evaluate(time);
         evaluator->SetInteractiveOverrides({Up(kA1Rz, VtValue(20.0))});
         CHECK(evaluator->HasInteractiveOverrides());
-        CheckSamePose(what + ": dragging",
-                      Reference(stagePath, kLimbsRig,
-                                {{kA0Rz, VtValue(30.0), {}},
-                                 {kA1Rz, VtValue(20.0), {}}},
-                                time),
-                      evaluator->Evaluate(time));
+        CheckSamePose(
+            what + ": dragging",
+            Reference(stagePath, kLimbsRig,
+                      {{kA0Rz, VtValue(30.0), {}}, {kA1Rz, VtValue(20.0), {}}},
+                      time),
+            evaluator->Evaluate(time));
         evaluator->ClearInteractiveOverrides();
-        const RigExecRigPose expected = Reference(
-            stagePath, kLimbsRig, {{kA0Rz, VtValue(30.0), {}}}, time);
-        CheckSamePose(what + ": released", expected,
-                      evaluator->Evaluate(time));
+        const RigExecRigPose expected =
+            Reference(stagePath, kLimbsRig, {{kA0Rz, VtValue(30.0), {}}}, time);
+        CheckSamePose(what + ": released", expected, evaluator->Evaluate(time));
         CheckSamePose(what + ": released again", expected,
                       evaluator->Evaluate(time));
         // An interactive value on the same key wins while it stands.
@@ -707,15 +712,13 @@ TestATimeVaryingValue()
     {
         const UsdStageRefPtr stage = UsdStage::Open(stagePath);
         auto evaluator = Make(stage, kLimbsRig);
-        const UsdStageRefPtr authoredStage =
-            OpenAuthored(stagePath, {samples});
+        const UsdStageRefPtr authoredStage = OpenAuthored(stagePath, {samples});
         auto reference = Make(authoredStage, kLimbsRig);
         std::shared_ptr<const RigExecFrozenProgram> snapshot;
         std::set<uint64_t> digests;
         for (int f = 1; f <= 5; ++f) {
-            const std::string what = std::string("A0 per frame (") +
-                                     "graph" + ") at " +
-                                     std::to_string(f);
+            const std::string what = std::string("A0 per frame (") + "graph" +
+                                     ") at " + std::to_string(f);
             const std::vector<RigExecValueOverride> inputs = {
                 Up(kA0Rz, VtValue(5.0 * f))};
             evaluator->SetUpstreamInputs(inputs);
@@ -797,25 +800,23 @@ TestALiftReachesAnOlderSnapshot()
         }
         CHECK(!standing->program->lastUpstream.empty());
         // The value stands at the warmed frame too.
-        const FrozenJob held =
-            RunJob(*evaluator, standing, warmedAt, {lift.input},
-                   what + ": held");
-        CheckSamePose(what + ": held",
-                      Reference(lift.stagePath, lift.rig,
-                                {{lift.input.prim.AppendProperty(
-                                      lift.input.attribute),
-                                  lift.input.value,
-                                  {}}},
-                                warmedAt),
-                      held.pose);
+        const FrozenJob held = RunJob(*evaluator, standing, warmedAt,
+                                      {lift.input}, what + ": held");
+        CheckSamePose(
+            what + ": held",
+            Reference(lift.stagePath, lift.rig,
+                      {{lift.input.prim.AppendProperty(lift.input.attribute),
+                        lift.input.value,
+                        {}}},
+                      warmedAt),
+            held.pose);
         // Lifted live; the snapshot taken while it stood is kept.
         evaluator->SetUpstreamInputs({});
         evaluator->Evaluate(placedAt);
         const FrozenJob job =
             RunJob(*evaluator, standing, warmedAt, {}, what + ": lifted");
         CheckSamePose(what + ": lifted",
-                      Reference(lift.stagePath, lift.rig, {},
-                                warmedAt),
+                      Reference(lift.stagePath, lift.rig, {}, warmedAt),
                       job.pose);
         CheckSamePose(what + ": lifted against the authored job",
                       authoredJob.pose, job.pose);
@@ -905,19 +906,19 @@ CheckBurst(const Burst &burst)
         }
         for (int k = 0; k < 3; ++k) {
             const UsdTimeCode time(burst.first + k);
-            const std::string at = what + " at " +
-                                   std::to_string(int(time.GetValue()));
+            const std::string at =
+                what + " at " + std::to_string(int(time.GetValue()));
             RigExecFrameInputs plain, burstInputs;
             CHECK(RigExecSampleFrameInputsWithChainBindings(
                 *evaluator, time, none, upstream, pinned, &plain, &error));
-            CHECK(RigExecSampleFrameInputsWithBurstCache(
-                *evaluator, time, none, upstream, &cache, &burstInputs,
-                &error));
+            CHECK(RigExecSampleFrameInputsWithBurstCache(*evaluator, time, none,
+                                                         upstream, &cache,
+                                                         &burstInputs, &error));
             CHECK(plain.upstream == upstream);
             CHECK(burstInputs.upstream == plain.upstream);
             CHECK(plain.values.size() == burstInputs.values.size());
-            for (size_t i = 0; i < plain.values.size() &&
-                               i < burstInputs.values.size();
+            for (size_t i = 0;
+                 i < plain.values.size() && i < burstInputs.values.size();
                  ++i) {
                 CHECK(plain.values[i].path == burstInputs.values[i].path);
                 CHECK(plain.values[i].hasValue ==
@@ -929,8 +930,8 @@ CheckBurst(const Burst &burst)
             CHECK(RigExecControlStateDigest(plain, none) ==
                   RigExecControlStateDigestWithBurstCache(burstInputs, none,
                                                           &cache));
-            const FrozenJob job = RunSampled(*evaluator, snapshot,
-                                             std::move(burstInputs), at);
+            const FrozenJob job =
+                RunSampled(*evaluator, snapshot, std::move(burstInputs), at);
             CheckSamePose(at + " (frozen)",
                           Reference(burst.stagePath, burst.rig,
                                     {{burst.input.prim.AppendProperty(
@@ -963,16 +964,16 @@ TestTheSamplerAdmitsAsLiveDoes()
     evaluator->Evaluate(time);
     const std::shared_ptr<const RigExecFrozenProgram> snapshot =
         Freeze(*evaluator, "admission");
-    const RigExecRigPose expected = Reference(
-        stagePath, kLimbsRig, {{kA0Rz, VtValue(30.0), {}}}, time);
+    const RigExecRigPose expected =
+        Reference(stagePath, kLimbsRig, {{kA0Rz, VtValue(30.0), {}}}, time);
     const RigExecValueOverride good = Up(kA0Rz, VtValue(30.0));
     const RigExecValueOverride wrongType = Up(kA0Rz, VtValue(1.0f));
     for (int order = 0; order < 2; ++order) {
         const std::vector<RigExecValueOverride> given =
             order == 0 ? std::vector<RigExecValueOverride>{good, wrongType}
                        : std::vector<RigExecValueOverride>{wrongType, good};
-        const std::string what =
-            std::string("admission, ") + (order == 0 ? "bad last" : "bad first");
+        const std::string what = std::string("admission, ") +
+                                 (order == 0 ? "bad last" : "bad first");
         evaluator->SetUpstreamInputs(given);
         CHECK(evaluator->GetUpstreamInputPaths() ==
               std::vector<SdfPath>{kA0Rz});
@@ -1006,21 +1007,26 @@ TestAStandingValueCostsNothing()
     auto evaluator = Make(stage, kLimbsRig);
     const RigExecBakedProgram *program = evaluator->GetBakedProgram();
     CHECK(program);
-    if (!program) return;
+    if (!program)
+        return;
     const auto &B = program->GetStepGraph();
     CHECK(std::all_of(B.cones.alwaysSteps.words.begin(),
                       B.cones.alwaysSteps.words.end(),
                       [](uint64_t w) { return w == 0; }));
     const UsdTimeCode time(1);
     const VtValue rotation(30.0), space(Translate(1, 0, 10));
-    const std::vector<RigExecValueOverride> inputs =
-        {Up(kA0Rz, rotation), Up(kUpstreamSpace, space)};
+    const std::vector<RigExecValueOverride> inputs = {
+        Up(kA0Rz, rotation), Up(kUpstreamSpace, space)};
     const auto authored = evaluator->Evaluate(time);
-    CheckSamePose("D2 authored", Reference(fixture, kLimbsRig, {}, time), authored);
-    const auto scalar = Reference(fixture, kLimbsRig, {{kA0Rz, rotation, {}}}, time);
-    const auto matrix = Reference(fixture, kLimbsRig, {{kUpstreamSpace, space, {}}}, time);
-    const auto expected = Reference(fixture, kLimbsRig,
-        {{kA0Rz, rotation, {}}, {kUpstreamSpace, space, {}}}, time);
+    CheckSamePose("D2 authored", Reference(fixture, kLimbsRig, {}, time),
+                  authored);
+    const auto scalar =
+        Reference(fixture, kLimbsRig, {{kA0Rz, rotation, {}}}, time);
+    const auto matrix =
+        Reference(fixture, kLimbsRig, {{kUpstreamSpace, space, {}}}, time);
+    const auto expected =
+        Reference(fixture, kLimbsRig,
+                  {{kA0Rz, rotation, {}}, {kUpstreamSpace, space, {}}}, time);
     CHECK(Differences(authored, scalar) > 0);
     CHECK(Differences(authored, matrix) > 0);
     CHECK(Differences(expected, scalar) > 0);
@@ -1032,9 +1038,12 @@ TestAStandingValueCostsNothing()
         std::pair<size_t, size_t> count{0, 0};
         for (const auto &entry : trace) {
             CHECK(entry.step < B.steps.size());
-            if (entry.step >= B.steps.size()) continue;
-            if (B.steps[entry.step].isHead) ++count.first;
-            else if (!B.steps[entry.step].isSource) ++count.second;
+            if (entry.step >= B.steps.size())
+                continue;
+            if (B.steps[entry.step].isHead)
+                ++count.first;
+            else if (!B.steps[entry.step].isSource)
+                ++count.second;
         }
         return count;
     };
@@ -1048,7 +1057,8 @@ TestAStandingValueCostsNothing()
     CHECK(work(evaluator->GetLastOpTrace()).second > 0);
     const auto snapshot = Freeze(*evaluator, "D2 standing snapshot");
     CHECK(snapshot);
-    if (!snapshot) return;
+    if (!snapshot)
+        return;
     const auto snapshotUpstream = snapshot->program->lastUpstream;
 
     evaluator->SetUpstreamInputs(inputs);
@@ -1058,16 +1068,16 @@ TestAStandingValueCostsNothing()
     const auto liveWork = work(evaluator->GetLastOpTrace());
     CHECK(liveWork.first == 0 && liveWork.second == 0);
     for (int repeat = 0; repeat < 2; ++repeat) {
-        const auto held = RunJob(*evaluator, snapshot, time, inputs,
-                                "D2 frozen standing");
+        const auto held =
+            RunJob(*evaluator, snapshot, time, inputs, "D2 frozen standing");
         CHECK(held.report.ran && held.pose.valid);
         CheckSamePose("D2 frozen standing", standing, held.pose);
         const auto heldWork = work(held.report.region);
         CHECK(heldWork.first == 0 && heldWork.second == 0);
         CHECK(snapshot->program->lastUpstream == snapshotUpstream);
     }
-    const auto lifted = RunJob(*evaluator, snapshot, time, {},
-                              "D2 frozen lift");
+    const auto lifted =
+        RunJob(*evaluator, snapshot, time, {}, "D2 frozen lift");
     CHECK(lifted.report.ran && lifted.pose.valid);
     CheckSamePose("D2 frozen lift", authored, lifted.pose);
     CHECK(work(lifted.report.region).second > 0);
@@ -1087,15 +1097,13 @@ TestAnOracleReadInput()
     const SdfPath scale("/Asset/Rig/Weights/Driven.inputs:scale");
     {
         const UsdStageRefPtr stage = UsdStage::Open(stagePath);
-        auto evaluator =
-            Make(stage, SdfPath("/Asset/Rig"));
+        auto evaluator = Make(stage, SdfPath("/Asset/Rig"));
         const RigExecBakedProgram *program = evaluator->GetBakedProgram();
         CHECK(program && program->GetUpstreamOracle().count(scale));
     }
     // At frame 5, where the driver has left 0 and the scale matters.
     RunCase("oracle input inputs:scale", stagePath, SdfPath("/Asset/Rig"), 5,
             {Up(scale, VtValue(0.25f))}, {{scale, VtValue(0.25f), {}}});
-
 }
 
 // Keys admission drops, in both paths: the pose is the authored one and
@@ -1115,8 +1123,8 @@ TestDroppedKeys()
         {Fixture("upstream_inputs.usda"), kLimbsRig,
          Up(kBRootRestSpace, VtValue(Translate(1, 0, 10))),
          "the attribute is connected"},
-        {Fixture("upstream_inputs.usda"), kLimbsRig,
-         Up(kA0Rz, VtValue(30.0f)), "a float value on a double attribute"},
+        {Fixture("upstream_inputs.usda"), kLimbsRig, Up(kA0Rz, VtValue(30.0f)),
+         "a float value on a double attribute"},
         {Fixture("computed_weights.usda"), SdfPath("/Asset/Rig"),
          Up(driver, VtValue(0.5f)), "the attribute is connected"},
     };
@@ -1132,18 +1140,15 @@ TestDroppedKeys()
             const std::string line = "upstream input " + path.GetString() +
                                      ": " + drop.reason + "; ignored";
             if (!HasLine(pose, line)) {
-                std::printf("FAIL: no line '%s' (%s)\n", line.c_str(),
-                            "graph");
+                std::printf("FAIL: no line '%s' (%s)\n", line.c_str(), "graph");
                 for (const std::string &l : pose.diagnostics) {
                     std::printf("    %s\n", l.c_str());
                 }
             }
             CHECK(HasLine(pose, line));
-            CheckSamePose(path.GetString() + " dropped (" + "graph" +
-                              ")",
-                          Reference(drop.stagePath, drop.rig, {},
-                                    UsdTimeCode(1)),
-                          pose);
+            CheckSamePose(
+                path.GetString() + " dropped (" + "graph" + ")",
+                Reference(drop.stagePath, drop.rig, {}, UsdTimeCode(1)), pose);
         }
     }
     // A key no listed read reaches drops against the program; with no
@@ -1164,8 +1169,14 @@ TestDroppedKeys()
 
 struct ArrayAdmission {
     bool previous = RigExecUpstreamArrayAdmission();
-    ArrayAdmission() { RigExecSetUpstreamArrayAdmissionForTesting(true); }
-    ~ArrayAdmission() { RigExecSetUpstreamArrayAdmissionForTesting(previous); }
+    ArrayAdmission()
+    {
+        RigExecSetUpstreamArrayAdmissionForTesting(true);
+    }
+    ~ArrayAdmission()
+    {
+        RigExecSetUpstreamArrayAdmissionForTesting(previous);
+    }
 };
 
 // An environment variable set for a scope, restored after.
@@ -1205,8 +1216,8 @@ AuthoredArray(const std::string &stagePath, const SdfPath &path)
 {
     A value;
     const UsdStageRefPtr stage = UsdStage::Open(stagePath);
-    const UsdAttribute a = stage ? stage->GetAttributeAtPath(path)
-                                 : UsdAttribute();
+    const UsdAttribute a =
+        stage ? stage->GetAttributeAtPath(path) : UsdAttribute();
     CHECK(a && a.Get(&value));
     return value;
 }
@@ -1239,8 +1250,8 @@ CheckDropped(const std::string &stagePath, const SdfPath &rig, double t,
     const SdfPath path = input.prim.AppendProperty(input.attribute);
     const UsdTimeCode time(t);
     {
-        const std::string what = path.GetString() + " dropped (" +
-                                 "graph" + ")";
+        const std::string what =
+            path.GetString() + " dropped (" + "graph" + ")";
         const UsdStageRefPtr stage = UsdStage::Open(stagePath);
         auto evaluator = Make(stage, rig);
         evaluator->SetUpstreamInputs({input});
@@ -1256,8 +1267,7 @@ CheckDropped(const std::string &stagePath, const SdfPath &rig, double t,
             }
         }
         CheckSamePose(what, Reference(stagePath, rig, {}, time), pose);
-        if (true &&
-            evaluator->GetBakedProgram()) {
+        if (true && evaluator->GetBakedProgram()) {
             RigExecFrameInputs inputs;
             std::string error;
             CHECK(RigExecSampleFrameInputs(*evaluator, time, {},
@@ -1318,7 +1328,8 @@ TestTheArrayRows()
         CHECK(!rows.count(kSeg1Values));
         CHECK(!rows.count(SdfPath("/TailAsset/Geom/TailStrip.normals")));
         // The derived normals read the mesh topology.
-        CHECK(rows.count(SdfPath("/TailAsset/Geom/TailStrip.faceVertexCounts")));
+        CHECK(
+            rows.count(SdfPath("/TailAsset/Geom/TailStrip.faceVertexCounts")));
         CHECK(rows.count(SdfPath("/TailAsset/Geom/TailStrip.points")));
     }
     {
@@ -1340,8 +1351,7 @@ TestTheArrayRows()
     {
         // Points a mover-bound weight object reads are exec's per-element
         // reads in the dynamic walk: structural, even as a chain base.
-        const auto rows = rowsOf(Example("11_VolumeWeights.usda"),
-                                 kVolumeRig);
+        const auto rows = rowsOf(Example("11_VolumeWeights.usda"), kVolumeRig);
         CHECK(!rows.count(kTipCurvePoints));
         CHECK(!rows.count(kStripPoints));
     }
@@ -1359,11 +1369,11 @@ TestAPaintedWeightIsDropped()
 {
     std::printf("case: painted values dropped\n");
     const ArrayAdmission arrays;
-    CheckDropped(Example("01_FkChainTail.usda"), kTailRig, 1012,
-                 Up(kSeg1Values,
-                    VtValue(VtFloatArray{0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.9f,
-                                         0.1f, 0.4f, 0.3f, 0.2f})),
-                 "no listed read reaches it");
+    CheckDropped(
+        Example("01_FkChainTail.usda"), kTailRig, 1012,
+        Up(kSeg1Values, VtValue(VtFloatArray{0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.9f,
+                                             0.1f, 0.4f, 0.3f, 0.2f})),
+        "no listed read reaches it");
 }
 
 // The chain base points of MeshA's chain, every point moved by (0, 1, 0):
@@ -1395,9 +1405,9 @@ TestUpstreamChainBasePoints()
         evaluator->Evaluate(time);
         evaluator->SetUpstreamInputs({Up(kMeshAPoints, VtValue(moved(1.0f)))});
         const RigExecRigPose first = evaluator->Evaluate(time);
-        const RigExecRigPose expected = Reference(
-            stagePath, kLimbsRig,
-            {{kMeshAPoints, VtValue(moved(1.0f)), {}}}, time);
+        const RigExecRigPose expected =
+            Reference(stagePath, kLimbsRig,
+                      {{kMeshAPoints, VtValue(moved(1.0f)), {}}}, time);
         CheckSamePose(what + ": first", expected, first);
         // The same value again: nothing re-reads or moves.
         evaluator->SetUpstreamInputs({Up(kMeshAPoints, VtValue(moved(1.0f)))});
@@ -1441,8 +1451,8 @@ TestUpstreamJointWeights()
     const ScopedEnv always("RIGEXEC_BAKED_CHUNK_ALWAYS", "1");
     const ScopedEnv verts("RIGEXEC_BAKED_CHUNK_VERTS", "5");
     const std::string stagePath = Fixture("upstream_inputs.usda");
-    VtFloatArray weights = AuthoredArray<VtFloatArray>(stagePath,
-                                                       kJointWeights);
+    VtFloatArray weights =
+        AuthoredArray<VtFloatArray>(stagePath, kJointWeights);
     CHECK(weights.size() == 20);
     // Vertex 0 and vertex 3 shared between the two joints.
     weights[0] = 0.5f;
@@ -1521,19 +1531,16 @@ TestUpstreamChunkedJointIndices()
 
     evaluator->SetUpstreamInputs({input});
     CheckSamePose("chunked: standing",
-                  Reference(stagePath, kLimbsRig,
-                            {repainted}, time),
+                  Reference(stagePath, kLimbsRig, {repainted}, time),
                   evaluator->Evaluate(time));
     // Only LimbA1 moves.
     evaluator->SetInteractiveOverrides(drag);
     const RigExecRigPose moved = evaluator->Evaluate(time);
     CheckSamePose("chunked: standing, LimbA1 moved (authored-stage reference)",
-                  Reference(stagePath, kLimbsRig,
-                            {repainted, dragged}, time),
+                  Reference(stagePath, kLimbsRig, {repainted, dragged}, time),
                   moved);
     CheckSamePose("chunked: standing, LimbA1 moved (baked reference)",
-                  Reference(stagePath, kLimbsRig,
-                            {repainted, dragged}, time),
+                  Reference(stagePath, kLimbsRig, {repainted, dragged}, time),
                   moved);
     revision = SkinRevision(*evaluator);
     CHECK(revision != nullptr);
@@ -1557,16 +1564,15 @@ TestUpstreamChunkedJointIndices()
                                        RigExecUpstreamValuesOf({input}),
                                        &inputs, &error));
         CHECK(inputs.upstream == RigExecUpstreamValuesOf({input}));
-        const FrozenJob job = RunSampled(*evaluator, snapshot,
-                                         std::move(inputs), "chunked job");
+        const FrozenJob job =
+            RunSampled(*evaluator, snapshot, std::move(inputs), "chunked job");
         CheckSamePose("chunked: frozen, standing, LimbA1 moved", moved,
                       job.pose);
     }
     // Lifted: the handle matches the partition again.
     evaluator->SetUpstreamInputs({});
     CheckSamePose("chunked: lifted",
-                  Reference(stagePath, kLimbsRig, {dragged},
-                            time),
+                  Reference(stagePath, kLimbsRig, {dragged}, time),
                   evaluator->Evaluate(time));
     revision = SkinRevision(*evaluator);
     CHECK(revision != nullptr);
@@ -1597,7 +1603,7 @@ TestUpstreamInvalidLayout()
     const ArrayAdmission arrays;
     const std::string stagePath = Fixture("upstream_inputs.usda");
     VtIntArray indices = AuthoredArray<VtIntArray>(stagePath, kJointIndices);
-    indices[3] = 2;  // MeshASkin binds two influences
+    indices[3] = 2; // MeshASkin binds two influences
     const std::vector<RigExecValueOverride> inputs = {
         Up(kJointIndices, VtValue(indices))};
     const UsdTimeCode time(5);
@@ -1619,8 +1625,8 @@ TestUpstreamInvalidLayout()
         {
             UsdEditContext context(referenceStage,
                                    referenceStage->GetSessionLayer());
-            CHECK(referenceStage->GetAttributeAtPath(kJointIndices)
-                      .Set(indices));
+            CHECK(
+                referenceStage->GetAttributeAtPath(kJointIndices).Set(indices));
         }
         const RigExecRigPose expected = reference->Evaluate(time);
         CHECK(skinFailed(expected));
@@ -1673,15 +1679,13 @@ TestUpstreamTimeVaryingJointWeights()
         std::set<uint64_t> digests;
         for (int f = 1; f <= 5; ++f) {
             const std::string what = std::string("jointWeights per frame (") +
-                                     "graph" + ") at " +
-                                     std::to_string(f);
+                                     "graph" + ") at " + std::to_string(f);
             const std::vector<RigExecValueOverride> inputs = {
                 Up(kJointWeights, VtValue(at(f)))};
             evaluator->SetUpstreamInputs(inputs);
-            const RigExecRigPose expected =
-                Reference(stagePath, kLimbsRig,
-                          {{kJointWeights, VtValue(at(f)), {}}},
-                          UsdTimeCode(f));
+            const RigExecRigPose expected = Reference(
+                stagePath, kLimbsRig, {{kJointWeights, VtValue(at(f)), {}}},
+                UsdTimeCode(f));
             const RigExecRigPose live = evaluator->Evaluate(UsdTimeCode(f));
             CheckSamePose(what, expected, live);
             if (!snapshot) {
@@ -1715,8 +1719,7 @@ TestUpstreamLatticeCage()
     VtVec3fArray bulged;
     {
         const UsdStageRefPtr stage = UsdStage::Open(stagePath);
-        CHECK(stage->GetAttributeAtPath(cage).Get(&bulged,
-                                                  UsdTimeCode(1024)));
+        CHECK(stage->GetAttributeAtPath(cage).Get(&bulged, UsdTimeCode(1024)));
     }
     RunCase("lattice cage (identity while it stands)", stagePath,
             SdfPath("/LatticeAsset/Rig"), 1024, {Up(cage, VtValue(bulged))},
@@ -1734,8 +1737,8 @@ TestABurstCarriesUpstreamArrays()
     for (GfVec3f &p : points) {
         p += GfVec3f(0.0f, 1.0f, 0.0f);
     }
-    VtFloatArray weights = AuthoredArray<VtFloatArray>(stagePath,
-                                                       kJointWeights);
+    VtFloatArray weights =
+        AuthoredArray<VtFloatArray>(stagePath, kJointWeights);
     weights[0] = 0.5f;
     weights[1] = 0.5f;
     CheckBurst({"chain base points", stagePath, kLimbsRig,
@@ -1809,8 +1812,8 @@ TestTheCountMemoReadsEachOpinion()
                                     UsdTimeCode(5), &memo, &listed)
               .empty());
     CHECK(RigExecUpstreamDropReason(stage, nullptr, a.GetPath(),
-                                    VtValue(VtFloatArray{4, 5}),
-                                    UsdTimeCode(5), &memo, &listed) ==
+                                    VtValue(VtFloatArray{4, 5}), UsdTimeCode(5),
+                                    &memo, &listed) ==
           "its element count 2 differs from the stage value's 3");
 }
 
@@ -1829,8 +1832,7 @@ TestTheCountMemoFollowsEdits()
     painted[0] = 0.5f;
     painted[1] = 0.5f;
     {
-        const std::string what =
-            std::string("count memo (") + "graph" + ")";
+        const std::string what = std::string("count memo (") + "graph" + ")";
         const UsdStageRefPtr stage = UsdStage::Open(stagePath);
         auto evaluator = Make(stage, kLimbsRig);
         evaluator->SetUpstreamInputs({Up(kJointWeights, VtValue(painted))});
@@ -1853,14 +1855,12 @@ TestTheCountMemoFollowsEdits()
         }
         const RigExecRigPose pose = evaluator->Evaluate(UsdTimeCode(5));
         CHECK(evaluator->GetUpstreamInputPaths().empty());
-        const std::string line = "upstream input " +
-                                 kJointWeights.GetString() +
+        const std::string line = "upstream input " + kJointWeights.GetString() +
                                  ": its element count 20 differs from the "
                                  "stage value's 22; ignored";
         if (!HasLine(pose, line)) {
             ++failures;
-            std::printf("FAIL %s: no line '%s'\n", what.c_str(),
-                        line.c_str());
+            std::printf("FAIL %s: no line '%s'\n", what.c_str(), line.c_str());
         }
     }
 }
@@ -1888,10 +1888,10 @@ TestDroppedArrayKeys()
                         VtValue(VtFloatArray{1, 1, 1, 1, 1})),
                      "no listed read reaches it");
         VtVec3fArray normals(10, GfVec3f(0.0f, 1.0f, 0.0f));
-        CheckDropped(Example("01_FkChainTail.usda"), kTailRig, 1012,
-                     Up(SdfPath("/TailAsset/Geom/TailStrip.normals"),
-                        VtValue(normals)),
-                     "no listed read reaches it");
+        CheckDropped(
+            Example("01_FkChainTail.usda"), kTailRig, 1012,
+            Up(SdfPath("/TailAsset/Geom/TailStrip.normals"), VtValue(normals)),
+            "no listed read reaches it");
         // Points a mover-bound weight object reads: exec would refuse the
         // value per element and the dynamic walk keep the stage's, so no
         // backend admits them (a curve weight's curve, and a chain base the
@@ -1943,11 +1943,12 @@ TestThePosedVariant()
     CHECK(evaluator->GetUpstreamInputPaths() == PathsOf(inputs));
     CheckSamePose("posed variant authored reference",
                   Reference(stagePath, kLimbsRig, edits, UsdTimeCode(1)), pose);
-    CHECK(Differences(Reference(stagePath, kLimbsRig, {}, UsdTimeCode(1)), pose) != 0);
+    CHECK(Differences(Reference(stagePath, kLimbsRig, {}, UsdTimeCode(1)),
+                      pose) != 0);
     auto snapshot = Freeze(*evaluator, "connected posed space");
     if (snapshot) {
-        const FrozenJob job = RunJob(*evaluator, snapshot, UsdTimeCode(1), inputs,
-                                    "connected posed space");
+        const FrozenJob job = RunJob(*evaluator, snapshot, UsdTimeCode(1),
+                                     inputs, "connected posed space");
         CheckSamePose("posed variant frozen", pose, job.pose);
     }
 }
@@ -1967,8 +1968,7 @@ TestTheBakeGuard()
     evaluator->Evaluate(UsdTimeCode(1));
     std::string error;
     CHECK(RigExecCanFreezeProgram(*evaluator, &error));
-    const std::vector<RigExecValueOverride> inputs = {
-        Up(kA0Rz, VtValue(30.0))};
+    const std::vector<RigExecValueOverride> inputs = {Up(kA0Rz, VtValue(30.0))};
     evaluator->SetUpstreamInputs(inputs);
     error.clear();
     CHECK(RigExecCanFreezeProgram(*evaluator, &error));
@@ -1984,7 +1984,8 @@ TestTheBakeGuard()
         error.clear();
         CHECK(RigExecCanFreezeProgram(*evaluator, &error));
         CheckSamePose("suspended",
-                      Reference(Fixture("upstream_inputs.usda"), kLimbsRig, {}, UsdTimeCode(1)),
+                      Reference(Fixture("upstream_inputs.usda"), kLimbsRig, {},
+                                UsdTimeCode(1)),
                       evaluator->Evaluate(UsdTimeCode(1)));
         CHECK(RigExecCanFreezeProgram(*evaluator, &error));
     }
@@ -2197,8 +2198,8 @@ TestPlaybackParity()
     // Apply that sampled, and on the lift read from the stage at the time
     // without a sample.
     CHECK(CheckPlaybackParity("animated input", limbs, kLimbsRig, 3,
-                              {Up(kA1Rz, VtValue(20.0))}, {}, {5, 8}) ==
-          std::set<SdfPath>{kA1Rz});
+                              {Up(kA1Rz, VtValue(20.0))}, {},
+                              {5, 8}) == std::set<SdfPath>{kA1Rz});
     // The solver input where it moves the pose.
     CheckPlaybackParity("solver input", limbs, kLimbsRig, 5,
                         {Up(offset, VtValue(0.5))});
@@ -2216,8 +2217,7 @@ TestPlaybackParity()
             VtValue(GfVec3f(0, 7, 0)))});
     CheckPlaybackParity(
         "rest:tx", Example("01_FkChainTail.usda"), kTailRig, 1012,
-        {Up(SdfPath("/TailAsset/Rig/Joints/Seg1/Seg2.rest:tx"),
-            VtValue(0.5))});
+        {Up(SdfPath("/TailAsset/Rig/Joints/Seg1/Seg2.rest:tx"), VtValue(0.5))});
     CheckPlaybackParity(
         "skin mover inputs:defaultWeight", Example("biped/Biped.usda"),
         SdfPath("/Biped/Rig"), 1,
@@ -2227,10 +2227,9 @@ TestPlaybackParity()
     // The oracle-read scalar (the runtime's oracle reads it as an input on
     // every call) and a connected listed hop.
     CheckPlaybackParity(
-        "oracle input", Fixture("computed_weights.usda"),
-        SdfPath("/Asset/Rig"), 5,
-        {Up(SdfPath("/Asset/Rig/Weights/Driven.inputs:scale"),
-            VtValue(0.25f)),
+        "oracle input", Fixture("computed_weights.usda"), SdfPath("/Asset/Rig"),
+        5,
+        {Up(SdfPath("/Asset/Rig/Weights/Driven.inputs:scale"), VtValue(0.25f)),
          Up(SdfPath("/Asset/Rig/Weights/Driven.inputs:driver"),
             VtValue(0.5f))});
 }
@@ -2307,10 +2306,12 @@ TestAStaticPlaybackKey()
 {
     const SdfPath path("/LimbsAsset/Rig/Controls/A0.rest:rx");
     const auto stage = OpenAuthored(Fixture("upstream_inputs.usda"), {});
-    if (!stage) return;
+    if (!stage)
+        return;
     const UsdAttribute attribute = stage->GetAttributeAtPath(path);
     CHECK(attribute);
-    if (!attribute) return;
+    if (!attribute)
+        return;
     auto evaluator = Make(stage, kLimbsRig);
     RigExecBakedPlayback play(stage, kLimbsRig,
                               std::make_shared<RigExecSnapshotStore>());
@@ -2318,17 +2319,21 @@ TestAStaticPlaybackKey()
     CHECK(play.Open(WriteBake(*evaluator, 1, "static_playback_key"), &error));
     const auto *reader = play.GetReaderForTesting();
     CHECK(reader);
-    if (!reader) return;
+    if (!reader)
+        return;
     size_t index = 0;
     const bool listed = reader->FindInput(path.GetString(), &index);
     CHECK(listed);
-    if (!listed) return;
+    if (!listed)
+        return;
     CHECK(!reader->GetInputInfo(index).animated);
-    CHECK(RigExecRuntimeStageArrayInputs::CanSampleProviderValue(*reader, index));
+    CHECK(
+        RigExecRuntimeStageArrayInputs::CanSampleProviderValue(*reader, index));
     const auto setUpstream = [&](bool standing) {
-        const auto values = standing
-            ? std::vector<RigExecValueOverride>{Up(path, VtValue(13.0))}
-            : std::vector<RigExecValueOverride>{};
+        const auto values =
+            standing
+                ? std::vector<RigExecValueOverride>{Up(path, VtValue(13.0))}
+                : std::vector<RigExecValueOverride>{};
         evaluator->SetUpstreamInputs(values);
         play.SetUpstreamInputs(UpstreamList(values));
     };
@@ -2382,7 +2387,8 @@ void
 TestDefaultOnlyKnotsLift()
 {
     const auto stage = UsdStage::CreateInMemory();
-    CHECK(rigExec::RigExecInputReplayImportFromString(stage->GetRootLayer(), R"USD(#usda 1.0
+    CHECK(rigExec::RigExecInputReplayImportFromString(stage->GetRootLayer(),
+                                                      R"USD(#usda 1.0
  def Xform "Asset" {
   def RigExecRoot "Rig" {
    uniform token rigExec:partition = "Asset"
@@ -2423,11 +2429,13 @@ TestDefaultOnlyKnotsLift()
     CHECK(play.Open(WriteBake(*evaluator, 1, "default_only_knots"), &error));
     const auto reader = play.GetReaderForTesting();
     CHECK(reader);
-    if (!reader) return;
+    if (!reader)
+        return;
     size_t index = 0;
     const bool listed = reader->FindInput(path.GetString(), &index);
     CHECK(listed);
-    if (!listed) return;
+    if (!listed)
+        return;
     CHECK(reader->GetInputInfo(index).type == RrInputTag::DoubleArray &&
           reader->GetInputInfo(index).animated);
     CHECK(!RigExecRuntimeStageArrayInputs::CanSample(*reader, index));
@@ -2435,19 +2443,19 @@ TestDefaultOnlyKnotsLift()
     const VtDoubleArray standing{0, 0, 2, 2};
     std::vector<uint8_t> bridgeBytes;
     CHECK(RigExecTestBakeAt(*evaluator, 1, &bridgeBytes, &error));
-    auto bridgeReader = RigExecRuntimeReader::Open(
-        bridgeBytes.data(), bridgeBytes.size(), &error);
+    auto bridgeReader = RigExecRuntimeReader::Open(bridgeBytes.data(),
+                                                   bridgeBytes.size(), &error);
     CHECK(bridgeReader);
-    if (!bridgeReader) return;
-    const std::string bridgeRefusal = "no sampled array at slot " +
-                                      std::to_string(index);
+    if (!bridgeReader)
+        return;
+    const std::string bridgeRefusal =
+        "no sampled array at slot " + std::to_string(index);
     CHECK(!RigExecRuntimeStageArrayInputs::SetSample(
-        *bridgeReader, index,
-        RigExecTestArrayView(VtValue(standing)), &error));
+        *bridgeReader, index, RigExecTestArrayView(VtValue(standing)), &error));
     CHECK(error == bridgeRefusal);
     error.clear();
-    CHECK(!RigExecRuntimeStageArrayInputs::ClearSample(
-        *bridgeReader, index, &error));
+    CHECK(!RigExecRuntimeStageArrayInputs::ClearSample(*bridgeReader, index,
+                                                       &error));
     CHECK(error == bridgeRefusal);
     const auto checkValue = [&](const VtDoubleArray &expected) {
         RigExecRuntimeArray value;
@@ -2458,19 +2466,21 @@ TestDefaultOnlyKnotsLift()
                           sizeof(double) * expected.size()) == 0);
     };
     for (const bool move : {false, true}) {
-        const auto input = std::vector<RigExecValueOverride>{
-            Up(path, VtValue(standing))};
+        const auto input =
+            std::vector<RigExecValueOverride>{Up(path, VtValue(standing))};
         evaluator->SetUpstreamInputs(input);
         play.SetUpstreamInputs(UpstreamList(input));
         CHECK(play.EvaluateAndPublishResult(UsdTimeCode(1)).ok);
         checkValue(standing);
-        CheckSameRun("Default-only knots standing", evaluator->Evaluate(UsdTimeCode(1)), reader);
+        CheckSameRun("Default-only knots standing",
+                     evaluator->Evaluate(UsdTimeCode(1)), reader);
         evaluator->SetUpstreamInputs({});
         play.SetUpstreamInputs(UpstreamList({}));
         const double frame = move ? 3 : 1;
         CHECK(play.EvaluateAndPublishResult(UsdTimeCode(frame)).ok);
         checkValue(initial);
-        CheckSameRun("Default-only knots lift", evaluator->Evaluate(UsdTimeCode(frame)), reader);
+        CheckSameRun("Default-only knots lift",
+                     evaluator->Evaluate(UsdTimeCode(frame)), reader);
     }
     std::vector<RigExecBakeStaticEntry> entries;
     CHECK(RigExecBakeStaticReport(*evaluator, &entries, &error));
@@ -2486,7 +2496,9 @@ TestTheArrayPlaybackLegs()
     TestDefaultOnlyKnotsLift();
     const std::string limbs = Fixture("upstream_inputs.usda");
     VtVec3fArray points = AuthoredArray<VtVec3fArray>(limbs, kMeshAPoints);
-    for (GfVec3f &p : points) { p[1] += 1.0f; }
+    for (GfVec3f &p : points) {
+        p[1] += 1.0f;
+    }
     CheckPlaybackParity("array chain base", limbs, kLimbsRig, 5,
                         {Up(kMeshAPoints, VtValue(points))});
     VtFloatArray weights = AuthoredArray<VtFloatArray>(limbs, kJointWeights);
@@ -2505,8 +2517,7 @@ TestTheArrayPlaybackLegs()
     CheckPlaybackParity("array invalid skin layout", limbs, kLimbsRig, 5,
                         {Up(kJointIndices, VtValue(indices))});
     const std::string chunked = Fixture("upstream_inputs_chunked.usda");
-    VtIntArray chunkIndices =
-        AuthoredArray<VtIntArray>(chunked, kJointIndices);
+    VtIntArray chunkIndices = AuthoredArray<VtIntArray>(chunked, kJointIndices);
     chunkIndices[0] = 1;
     CheckPlaybackParity("array chunked indices", chunked, kLimbsRig, 5,
                         {Up(kJointIndices, VtValue(chunkIndices))});
@@ -2517,16 +2528,17 @@ TestTheArrayPlaybackLegs()
     const SdfPath sampledPath("/SampleAsset/Geom/P.points");
     const auto varyingStage = UsdStage::CreateInMemory();
     varyingStage->DefinePrim(sampledRig, TfToken("RigExecRoot"));
-    const auto pointsPrim = varyingStage->DefinePrim(
-        sampledPath.GetPrimPath(), TfToken("Points"));
+    const auto pointsPrim =
+        varyingStage->DefinePrim(sampledPath.GetPrimPath(), TfToken("Points"));
     const auto attr = pointsPrim.CreateAttribute(
         TfToken("points"), SdfValueTypeNames->Point3fArray);
     const VtVec3fArray initial{GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
-                             GfVec3f(0, 1, 0)};
+                               GfVec3f(0, 1, 0)};
     CHECK(attr.Set(initial));
     CHECK(attr.Set(initial, UsdTimeCode(3)));
     VtVec3fArray stageMoved = initial;
-    for (auto &point : stageMoved) point[0] += 0.25f;
+    for (auto &point : stageMoved)
+        point[0] += 0.25f;
     CHECK(attr.Set(stageMoved, UsdTimeCode(7)));
     CHECK(attr.Set(initial, UsdTimeCode(9)));
     VtVec3fArray shortStage = initial;
@@ -2536,8 +2548,9 @@ TestTheArrayPlaybackLegs()
         sampledRig.AppendPath(SdfPath("Joints/J")), TfToken("RigExecJoint"));
     CHECK(joint.CreateAttribute(TfToken("avars:ty"), SdfValueTypeNames->Double)
               .Set(2.0));
-    const auto mover = varyingStage->DefinePrim(
-        sampledRig.AppendPath(SdfPath("Movers/Move")), TfToken("RigExecMatrixMover"));
+    const auto mover =
+        varyingStage->DefinePrim(sampledRig.AppendPath(SdfPath("Movers/Move")),
+                                 TfToken("RigExecMatrixMover"));
     CHECK(mover.ApplyAPI(TfToken("RigExecMoverAPI")));
     CHECK(mover.CreateRelationship(TfToken("rigExec:moves"))
               .SetTargets({sampledPath}));
@@ -2548,15 +2561,17 @@ TestTheArrayPlaybackLegs()
     RigExecBakedPlayback play(varyingStage, sampledRig,
                               std::make_shared<RigExecSnapshotStore>());
     std::string error;
-    const bool opened = play.Open(
-        WriteBake(*evaluator, 3, "array_varying_source"), &error);
+    const bool opened =
+        play.Open(WriteBake(*evaluator, 3, "array_varying_source"), &error);
     CHECK(opened && play.GetReaderForTesting());
-    if (!opened || !play.GetReaderForTesting()) return;
+    if (!opened || !play.GetReaderForTesting())
+        return;
     size_t slot = 0;
-    const bool listed = play.GetReaderForTesting()->FindInput(
-        sampledPath.GetString(), &slot);
+    const bool listed =
+        play.GetReaderForTesting()->FindInput(sampledPath.GetString(), &slot);
     CHECK(listed);
-    if (!listed) return;
+    if (!listed)
+        return;
     CHECK(play.GetReaderForTesting()->GetInputInfo(slot).animated);
     const auto set = [&](const std::vector<RigExecValueOverride> &inputs) {
         evaluator->SetUpstreamInputs(inputs);
@@ -2565,11 +2580,13 @@ TestTheArrayPlaybackLegs()
     const auto compare = [&](const char *what, double frame) {
         CHECK(play.EvaluateAndPublishResult(UsdTimeCode(frame)).ok);
         CheckSameRun(std::string(what) + " native",
-                     evaluator->Evaluate(UsdTimeCode(frame)), play.GetReaderForTesting());
+                     evaluator->Evaluate(UsdTimeCode(frame)),
+                     play.GetReaderForTesting());
     };
     VtVec3fArray standing = initial;
     standing[0][0] = 0.6f;
-    const std::vector<RigExecValueOverride> input{Up(sampledPath, VtValue(standing))};
+    const std::vector<RigExecValueOverride> input{
+        Up(sampledPath, VtValue(standing))};
     set(input);
     for (const double frame : {3., 5., 6., 7.}) {
         compare("array unchanged standing source", frame);
@@ -2578,17 +2595,20 @@ TestTheArrayPlaybackLegs()
         if (frame == 5) {
             auto unedited = Make(varyingStage, sampledRig);
             std::vector<std::string> diffs;
-            CHECK(!RigExecCompareRuntimeOutputs(unedited->Evaluate(UsdTimeCode(frame)),
-                                                 *play.GetReaderForTesting(), &diffs));
+            CHECK(!RigExecCompareRuntimeOutputs(
+                unedited->Evaluate(UsdTimeCode(frame)),
+                *play.GetReaderForTesting(), &diffs));
         }
         CHECK(play.EvaluateAndPublishResult(UsdTimeCode(frame)).ok);
         CHECK(play.GetReaderForTesting()->GetCounters().executedOpCount == 0);
     }
-    const std::vector<RigExecValueOverride> bad{Up(sampledPath, VtValue(shortStage))};
+    const std::vector<RigExecValueOverride> bad{
+        Up(sampledPath, VtValue(shortStage))};
     set(bad);
     compare("array same-time admission refusal lifts standing key", 7);
     CHECK(play.GetUpstreamInputPaths().empty());
-    CHECK(play.GetUpstreamDropLines() == DropLines(evaluator->Evaluate(UsdTimeCode(7))));
+    CHECK(play.GetUpstreamDropLines() ==
+          DropLines(evaluator->Evaluate(UsdTimeCode(7))));
     set(input);
     compare("array reinstall standing key", 7);
     set({});
@@ -2600,9 +2620,11 @@ TestTheArrayPlaybackLegs()
     compare("array runtime first-refusal restores short stage sample", 10);
     CHECK(evaluator->GetUpstreamInputPaths() == PathsOf(bad));
     CHECK(play.GetUpstreamInputPaths().empty());
-    CHECK(play.GetUpstreamDropLines() == std::vector<std::string>{
-        "upstream input " + sampledPath.GetString() + ": " +
-        sampledPath.GetString() + " holds 3 elements; an array set keeps that count, not 2; ignored"});
+    CHECK(play.GetUpstreamDropLines() ==
+          std::vector<std::string>{"upstream input " + sampledPath.GetString() +
+                                   ": " + sampledPath.GetString() +
+                                   " holds 3 elements; an array set keeps that "
+                                   "count, not 2; ignored"});
 
     const std::string lattice = Example("06_LatticeBulge.usda");
     const SdfPath cage("/LatticeAsset/Geom/Cage.points");
@@ -2683,8 +2705,9 @@ CheckStandingBake(const std::string &what, const std::string &stagePath,
             CHECK(reader->GetInputInfo(index).defaultCount == array.count);
             CHECK(reader->SetInputArrayAt(index, array, &error));
         } else if (tag == RrInputTag::Token) {
-            CHECK(reader->SetInputToken(path.GetString(),
-                  entry.value.UncheckedGet<TfToken>().GetString(), &error));
+            CHECK(reader->SetInputToken(
+                path.GetString(),
+                entry.value.UncheckedGet<TfToken>().GetString(), &error));
         } else {
             RrInputValue value;
             CHECK(RigExecInputValueFrom(entry.value, tag, &value));
@@ -2724,32 +2747,32 @@ TestStandingBakes()
     VtFloatArray weights = AuthoredArray<VtFloatArray>(limbs, kJointWeights);
     weights[0] = 0.25f;
     weights[1] = 0.75f;
-    CheckStandingBake("mixed upstream bake", limbs, kLimbsRig, 5,
+    CheckStandingBake(
+        "mixed upstream bake", limbs, kLimbsRig, 5,
         {Up(kA0Rz, VtValue(30.0)),
          Up(kUpstreamSpace, VtValue(Translate(1, 0, 10))),
-         Up(kMeshAPoints, VtValue(points)),
-         Up(kJointWeights, VtValue(weights)),
+         Up(kMeshAPoints, VtValue(points)), Up(kJointWeights, VtValue(weights)),
          Up(SdfPath("/LimbsAsset/Rig.noSuchInput"), VtValue(1.0))});
     CheckStandingBake("rest constants bake", Example("01_FkChainTail.usda"),
-        kTailRig, 1012,
-        {Up(SdfPath("/TailAsset/Rig/Joints/Seg1.rest:space"),
-            VtValue(Translate(0, 0.5, 0)))});
+                      kTailRig, 1012,
+                      {Up(SdfPath("/TailAsset/Rig/Joints/Seg1.rest:space"),
+                          VtValue(Translate(0, 0.5, 0)))});
     const std::string lattice = Example("06_LatticeBulge.usda");
     const SdfPath cage("/LatticeAsset/Geom/Cage.points");
     const auto stage = UsdStage::Open(lattice);
     VtVec3fArray bulged;
     CHECK(stage->GetAttributeAtPath(cage).Get(&bulged, UsdTimeCode(1024)));
-    CheckStandingBake("Both cage bake", lattice,
-        SdfPath("/LatticeAsset/Rig"), 1024, {Up(cage, VtValue(bulged))});
+    CheckStandingBake("Both cage bake", lattice, SdfPath("/LatticeAsset/Rig"),
+                      1024, {Up(cage, VtValue(bulged))});
 }
 
 void
 TestAnOracleBakeListsTheAttribute()
 {
     CheckStandingBake("oracle standing bake", Fixture("computed_weights.usda"),
-        SdfPath("/Asset/Rig"), 5,
-        {Up(SdfPath("/Asset/Rig/Weights/Driven.inputs:scale"),
-            VtValue(0.25f))});
+                      SdfPath("/Asset/Rig"), 5,
+                      {Up(SdfPath("/Asset/Rig/Weights/Driven.inputs:scale"),
+                          VtValue(0.25f))});
 }
 
 // --- The admission sets against the exporter -------------------------------
@@ -2758,19 +2781,32 @@ TfType
 TagType(fb::InputTag tag)
 {
     switch (tag) {
-    case fb::InputTag::Double: return TfType::Find<double>();
-    case fb::InputTag::Float: return TfType::Find<float>();
-    case fb::InputTag::Bool: return TfType::Find<bool>();
-    case fb::InputTag::Int: return TfType::Find<int>();
-    case fb::InputTag::Token: return TfType::Find<TfToken>();
-    case fb::InputTag::Matrix4d: return TfType::Find<GfMatrix4d>();
-    case fb::InputTag::Vec3d: return TfType::Find<GfVec3d>();
-    case fb::InputTag::Vec3f: return TfType::Find<GfVec3f>();
-    case fb::InputTag::Vec3fArray: return TfType::Find<VtVec3fArray>();
-    case fb::InputTag::Vec2fArray: return TfType::Find<VtVec2fArray>();
-    case fb::InputTag::DoubleArray: return TfType::Find<VtDoubleArray>();
-    case fb::InputTag::FloatArray: return TfType::Find<VtFloatArray>();
-    case fb::InputTag::IntArray: return TfType::Find<VtIntArray>();
+    case fb::InputTag::Double:
+        return TfType::Find<double>();
+    case fb::InputTag::Float:
+        return TfType::Find<float>();
+    case fb::InputTag::Bool:
+        return TfType::Find<bool>();
+    case fb::InputTag::Int:
+        return TfType::Find<int>();
+    case fb::InputTag::Token:
+        return TfType::Find<TfToken>();
+    case fb::InputTag::Matrix4d:
+        return TfType::Find<GfMatrix4d>();
+    case fb::InputTag::Vec3d:
+        return TfType::Find<GfVec3d>();
+    case fb::InputTag::Vec3f:
+        return TfType::Find<GfVec3f>();
+    case fb::InputTag::Vec3fArray:
+        return TfType::Find<VtVec3fArray>();
+    case fb::InputTag::Vec2fArray:
+        return TfType::Find<VtVec2fArray>();
+    case fb::InputTag::DoubleArray:
+        return TfType::Find<VtDoubleArray>();
+    case fb::InputTag::FloatArray:
+        return TfType::Find<VtFloatArray>();
+    case fb::InputTag::IntArray:
+        return TfType::Find<VtIntArray>();
     }
     return TfType();
 }
@@ -2797,8 +2833,7 @@ CheckSetsAgainstTheExporter(const std::string &stagePath, double t)
         return;
     }
     const SdfPath rig = FindRig(stage);
-    auto evaluator =
-        Make(stage, rig);
+    auto evaluator = Make(stage, rig);
     const RigExecBakedProgram *program = evaluator->GetBakedProgram();
     CHECK(program);
     if (!program) {
@@ -2810,8 +2845,7 @@ CheckSetsAgainstTheExporter(const std::string &stagePath, double t)
     RigExecBakeComputedCapture capture(*evaluator, t, &paths, &error);
     CHECK(capture.Valid());
     if (!capture.Valid()) {
-        std::printf("FAIL %s: capture: %s\n", stagePath.c_str(),
-                    error.c_str());
+        std::printf("FAIL %s: capture: %s\n", stagePath.c_str(), error.c_str());
         return;
     }
     const RigExecBakeInputs &C = capture.GetInputs();
@@ -2910,12 +2944,11 @@ CheckSetsAgainstTheExporter(const std::string &stagePath, double t)
         }
         const fb::RigExecWireWeightObject &w = C.weightObjects[i];
         for (const auto *read :
-             {&w.defaultWeight, &w.driver,    &w.scale,     &w.bias,
-              &w.strength,      &w.invert,    &w.falloffMin,
-              &w.falloffMax,    &w.scaleXPos, &w.scaleYPos,
-              &w.scaleZPos,     &w.scaleXNeg, &w.scaleYNeg,
-              &w.scaleZNeg,     &w.scaleX,    &w.scaleY,
-              &w.scaleZ,        &w.extentU,   &w.extentV}) {
+             {&w.defaultWeight, &w.driver, &w.scale, &w.bias, &w.strength,
+              &w.invert, &w.falloffMin, &w.falloffMax, &w.scaleXPos,
+              &w.scaleYPos, &w.scaleZPos, &w.scaleXNeg, &w.scaleYNeg,
+              &w.scaleZNeg, &w.scaleX, &w.scaleY, &w.scaleZ, &w.extentU,
+              &w.extentV}) {
             if (*read) {
                 for (const uint32_t slot : (*read)->walk) {
                     if (slot < names.size()) {
@@ -2953,15 +2986,14 @@ TestEveryAdmissiblePathIsAnInput()
         if (open == std::string::npos || close <= open) {
             continue;
         }
-        const std::vector<std::string> fields = TfStringSplit(
-            line.substr(open + 1, close - open - 1), "|");
+        const std::vector<std::string> fields =
+            TfStringSplit(line.substr(open + 1, close - open - 1), "|");
         if (fields.size() < 7 || fields[6] != "YES") {
             continue;
         }
         const std::vector<std::string> frames = TfStringSplit(fields[1], ",");
-        CheckSetsAgainstTheExporter(Example(fields[0]),
-                                    frames.empty() ? 1.0
-                                                   : std::stod(frames[0]));
+        CheckSetsAgainstTheExporter(
+            Example(fields[0]), frames.empty() ? 1.0 : std::stod(frames[0]));
         ++examples;
     }
     CHECK(examples > 0);
@@ -2974,7 +3006,7 @@ TestEveryAdmissiblePathIsAnInput()
     CheckSetsAgainstTheExporter(Fixture("computed_path_reads.usda"), 10);
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
@@ -2986,8 +3018,7 @@ main(int argc, char **argv)
     g_examples = argv[1];
     const std::string resources = SchemaResourceDir();
     if (PlugRegistry::GetInstance().RegisterPlugins(resources).empty()) {
-        std::printf("FATAL: no schema plugin found at %s\n",
-                    resources.c_str());
+        std::printf("FATAL: no schema plugin found at %s\n", resources.c_str());
         return 2;
     }
     std::setvbuf(stdout, nullptr, _IONBF, 0);

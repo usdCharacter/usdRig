@@ -40,8 +40,7 @@ AppendPrimPath(const SdfPath &prim, std::string *text)
     if (prim.IsAbsoluteRootPath()) {
         return true;
     }
-    if (!IsAbsolutePrim(prim) ||
-        !AppendPrimPath(prim.GetParentPath(), text)) {
+    if (!IsAbsolutePrim(prim) || !AppendPrimPath(prim.GetParentPath(), text)) {
         return false;
     }
     *text += '/';
@@ -49,7 +48,7 @@ AppendPrimPath(const SdfPath &prim, std::string *text)
     return true;
 }
 
-}  // namespace pathTextDetail
+} // namespace pathTextDetail
 
 /// The text of a path, spelled exactly as SdfPath::GetString() spells it,
 /// without asking SdfPath for it.
@@ -110,8 +109,7 @@ public:
     }
 
 private:
-    std::unordered_map<SdfPath, std::string, SdfPath::Hash>
-        _texts;
+    std::unordered_map<SdfPath, std::string, SdfPath::Hash> _texts;
 };
 
 /// Sets \p text to the root, an absolute prim path or an absolute prim
@@ -145,6 +143,6 @@ RigExecSpellPathText(const SdfPath &path, std::string *text)
     return true;
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_PATH_TEXT_H
+#endif // RIGEXEC_PATH_TEXT_H

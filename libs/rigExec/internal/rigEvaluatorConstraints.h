@@ -47,8 +47,8 @@ struct _ConstraintHandler {
     // Interned once with the table: dispatch compares tokens, so a lookup
     // never interns the name it is looking up.
     TfToken schemaType;
-    bool sourceFrame;      ///< blends rigExec:sources into one revision
-    bool frameConstraint;  ///< compiles to frame wiring at all
+    bool sourceFrame;     ///< blends rigExec:sources into one revision
+    bool frameConstraint; ///< compiles to frame wiring at all
     bool usesRotationOrder;
     bool dispatchesInline;
     _ChannelGroup maskGroup;
@@ -59,28 +59,22 @@ struct _ConstraintHandler {
     _ConstraintSolveFn solve;
 };
 
-const _ConstraintHandler *
-_FindConstraintHandler(const TfToken &typeName);
+const _ConstraintHandler *_FindConstraintHandler(const TfToken &typeName);
 
-bool
-_IsSourceFrameConstraintType(const TfToken &typeName);
+bool _IsSourceFrameConstraintType(const TfToken &typeName);
 
-bool
-_IsFrameConstraintType(const TfToken &typeName);
+bool _IsFrameConstraintType(const TfToken &typeName);
 
-RigExecEulerOrder
-_ParseConstraintEulerOrder(const TfToken &token);
+RigExecEulerOrder _ParseConstraintEulerOrder(const TfToken &token);
 
-bool
-_IsUsableConstraintFrame(const RigExecPointFrame &frame);
+bool _IsUsableConstraintFrame(const RigExecPointFrame &frame);
 
-bool
-_TokenIsOneOf(const TfToken &value,
-              std::initializer_list<const char *> allowed);
+bool _TokenIsOneOf(const TfToken &value,
+                   std::initializer_list<const char *> allowed);
 
-RigExecConstraintAxisMask
-_ReadGroupMask(const RigExecResolvedInputs &resolved, const UsdPrim &prim,
-               _ChannelGroup group, UsdTimeCode time);
+RigExecConstraintAxisMask _ReadGroupMask(const RigExecResolvedInputs &resolved,
+                                         const UsdPrim &prim,
+                                         _ChannelGroup group, UsdTimeCode time);
 
 } // namespace evaluatorDetail
 

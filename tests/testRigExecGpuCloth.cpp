@@ -27,12 +27,12 @@ namespace {
 
 int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 void
@@ -41,14 +41,20 @@ SetEnv(const char *name, const char *value)
 #ifdef _WIN32
     _putenv_s(name, value ? value : "");
 #else
-    if (value) setenv(name, value, 1); else unsetenv(name);
+    if (value)
+        setenv(name, value, 1);
+    else
+        unsetenv(name);
 #endif
 }
 
 struct Mesh {
     std::vector<float> points;
     std::vector<int> counts, indices;
-    size_t Size() const { return points.size() / 3; }
+    size_t Size() const
+    {
+        return points.size() / 3;
+    }
 };
 
 Mesh
@@ -57,8 +63,9 @@ Curtain(int n, float size, float top)
     Mesh m;
     for (int r = 0; r < n; ++r)
         for (int c = 0; c < n; ++c)
-            m.points.insert(m.points.end(), {-size / 2 + size * float(c) / float(n - 1),
-                                             top - size * float(r) / float(n - 1), 0.0f});
+            m.points.insert(m.points.end(),
+                            {-size / 2 + size * float(c) / float(n - 1),
+                             top - size * float(r) / float(n - 1), 0.0f});
     for (int r = 0; r + 1 < n; ++r)
         for (int c = 0; c + 1 < n; ++c) {
             const int a = r * n + c;
@@ -77,14 +84,17 @@ Sphere(float radius, int rings, int segments)
         const float phi = 3.14159265f * float(r) / float(rings);
         for (int s = 0; s < segments; ++s) {
             const float theta = 6.2831853f * float(s) / float(segments);
-            m.points.insert(m.points.end(), {radius * std::sin(phi) * std::cos(theta),
-                                             radius * std::cos(phi),
-                                             radius * std::sin(phi) * std::sin(theta)});
+            m.points.insert(m.points.end(),
+                            {radius * std::sin(phi) * std::cos(theta),
+                             radius * std::cos(phi),
+                             radius * std::sin(phi) * std::sin(theta)});
         }
     }
     m.points.insert(m.points.end(), {0.0f, -radius, 0.0f});
     const int south = int(m.Size()) - 1;
-    const auto ring = [segments](int r, int s) { return 1 + (r - 1) * segments + (s % segments); };
+    const auto ring = [segments](int r, int s) {
+        return 1 + (r - 1) * segments + (s % segments);
+    };
     for (int s = 0; s < segments; ++s) {
         m.counts.push_back(3);
         m.indices.insert(m.indices.end(), {0, ring(1, s + 1), ring(1, s)});
@@ -93,17 +103,20 @@ Sphere(float radius, int rings, int segments)
         for (int s = 0; s < segments; ++s) {
             m.counts.push_back(4);
             m.indices.insert(m.indices.end(),
-                             {ring(r, s), ring(r, s + 1), ring(r + 1, s + 1), ring(r + 1, s)});
+                             {ring(r, s), ring(r, s + 1), ring(r + 1, s + 1),
+                              ring(r + 1, s)});
         }
     for (int s = 0; s < segments; ++s) {
         m.counts.push_back(3);
-        m.indices.insert(m.indices.end(), {south, ring(rings - 1, s), ring(rings - 1, s + 1)});
+        m.indices.insert(m.indices.end(),
+                         {south, ring(rings - 1, s), ring(rings - 1, s + 1)});
     }
     return m;
 }
 
 double
-Ms(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b)
+Ms(std::chrono::steady_clock::time_point a,
+   std::chrono::steady_clock::time_point b)
 {
     return std::chrono::duration<double, std::milli>(b - a).count();
 }
@@ -118,18 +131,20 @@ CompareSweep(RigExecGpuDeformExecutor *executor, int n, float radius, int rings,
     const float size = 60.0f;
     const Mesh curtain = Curtain(n, size, 40.0f);
     std::vector<float> pins(curtain.Size(), 0.0f);
-    for (int c = 0; c < n; ++c) pins[size_t(c)] = 1.0f;
+    for (int c = 0; c < n; ++c)
+        pins[size_t(c)] = 1.0f;
     RigExecClothSettings settings;
     RigExecClothMesh mesh;
     std::string why;
-    CHECK(RigExecBuildClothMesh(curtain.Size(), curtain.counts.data(), curtain.counts.size(),
-                                curtain.indices.data(), curtain.indices.size(), false,
-                                curtain.points.data(), pins.data(), settings, &mesh, &why));
+    CHECK(RigExecBuildClothMesh(
+        curtain.Size(), curtain.counts.data(), curtain.counts.size(),
+        curtain.indices.data(), curtain.indices.size(), false,
+        curtain.points.data(), pins.data(), settings, &mesh, &why));
     const Mesh sphere = Sphere(radius, rings, 2 * rings);
     RigExecClothColliders colliders;
-    CHECK(RigExecAppendClothCollider(sphere.Size(), sphere.counts.data(), sphere.counts.size(),
-                                     sphere.indices.data(), sphere.indices.size(), false,
-                                     &colliders));
+    CHECK(RigExecAppendClothCollider(
+        sphere.Size(), sphere.counts.data(), sphere.counts.size(),
+        sphere.indices.data(), sphere.indices.size(), false, &colliders));
     const size_t ticks = size_t(settings.windowFrames) + 1;
     std::vector<std::vector<float>> spheres(ticks);
     std::vector<RigExecClothTick> window(ticks);
@@ -151,18 +166,20 @@ CompareSweep(RigExecGpuDeformExecutor *executor, int n, float radius, int rings,
     std::vector<float> cpu(3 * mesh.pointCount), gpu(3 * mesh.pointCount);
     RigExecClothWorkspace ws;
     const auto t0 = std::chrono::steady_clock::now();
-    CHECK(RigExecSolveCloth(mesh, colliders, settings, window.data(), window.size(),
-                            1.0 / 24.0, &ws, cpu.data(), &why));
+    CHECK(RigExecSolveCloth(mesh, colliders, settings, window.data(),
+                            window.size(), 1.0 / 24.0, &ws, cpu.data(), &why));
     const auto t1 = std::chrono::steady_clock::now();
     // The same window with one entering coordinate a millionth off: how far
     // float rounding alone can carry this scene.
     std::vector<float> nudged = curtain.points;
     nudged[3 * (mesh.pointCount / 2)] += 1e-6f;
     std::vector<RigExecClothTick> nudgedWindow = window;
-    for (auto &tick : nudgedWindow) tick.entering = nudged.data();
+    for (auto &tick : nudgedWindow)
+        tick.entering = nudged.data();
     std::vector<float> control(3 * mesh.pointCount);
     CHECK(RigExecSolveCloth(mesh, colliders, settings, nudgedWindow.data(),
-                            nudgedWindow.size(), 1.0 / 24.0, &ws, control.data(), &why));
+                            nudgedWindow.size(), 1.0 / 24.0, &ws,
+                            control.data(), &why));
     float spread = 0.0f;
     for (size_t i = 0; i < mesh.pointCount; ++i) {
         float d2 = 0.0f;
@@ -173,7 +190,8 @@ CompareSweep(RigExecGpuDeformExecutor *executor, int n, float radius, int rings,
         spread = std::max(spread, std::sqrt(d2));
     }
     std::printf("cloth %d x %d: CPU vs CPU nudged 1e-6: %.3g\n", n, n, spread);
-    if (!executor) return;
+    if (!executor)
+        return;
     std::vector<RigExecGpuClothJob> jobs(1);
     RigExecGpuClothJob &job = jobs[0];
     job.key = uint64_t(n);
@@ -203,15 +221,19 @@ CompareSweep(RigExecGpuDeformExecutor *executor, int n, float radius, int rings,
         }
         worst = std::max(worst, std::sqrt(d2));
         mean += std::sqrt(double(d2)) / double(mesh.pointCount);
-        const float dx = gpu[3 * i], dy = gpu[3 * i + 1] - centerY, dz = gpu[3 * i + 2] - cz;
-        inside = std::max(inside, radius - std::sqrt(dx * dx + dy * dy + dz * dz));
+        const float dx = gpu[3 * i], dy = gpu[3 * i + 1] - centerY,
+                    dz = gpu[3 * i + 2] - cz;
+        inside =
+            std::max(inside, radius - std::sqrt(dx * dx + dy * dy + dz * dz));
     }
-    std::printf("cloth %d x %d (%zu points, sphere %zu triangles): device vs CPU %.3g "
-                "(mean %.3g), deepest inside the sphere %.3g\n",
-                n, n, mesh.pointCount, colliders.triangles.size() / 3, worst, mean, inside);
+    std::printf(
+        "cloth %d x %d (%zu points, sphere %zu triangles): device vs CPU %.3g "
+        "(mean %.3g), deepest inside the sphere %.3g\n",
+        n, n, mesh.pointCount, colliders.triangles.size() / 3, worst, mean,
+        inside);
     if (timing)
-        std::printf("  CPU %.2f ms, GPU %.2f ms (first run %.2f ms)\n", Ms(t0, t1), Ms(t2, t3),
-                    Ms(t1, t2));
+        std::printf("  CPU %.2f ms, GPU %.2f ms (first run %.2f ms)\n",
+                    Ms(t0, t1), Ms(t2, t3), Ms(t1, t2));
     // Float rounding only: on average a small fraction of the spacing, and
     // nowhere more than half of it -- a point resting on a facet edge may
     // settle on the other facet -- and the device keeps the cloth out of
@@ -225,32 +247,38 @@ CompareSweep(RigExecGpuDeformExecutor *executor, int n, float radius, int rings,
 // A small curtain with no collider, over a few ticks and substeps: the
 // device and the CPU must agree closely before collisions enter.
 void
-CompareFree(RigExecGpuDeformExecutor *executor, int ticks, int substeps, int n = 6)
+CompareFree(RigExecGpuDeformExecutor *executor, int ticks, int substeps,
+            int n = 6)
 {
-    if (!executor) return;
+    if (!executor)
+        return;
     const Mesh curtain = Curtain(n, 20.0f, 40.0f);
     std::vector<float> pins(curtain.Size(), 0.0f);
-    for (int c = 0; c < n; ++c) pins[size_t(c)] = 1.0f;
+    for (int c = 0; c < n; ++c)
+        pins[size_t(c)] = 1.0f;
     RigExecClothSettings settings;
     settings.substeps = substeps;
     RigExecClothMesh mesh;
     std::string why;
-    CHECK(RigExecBuildClothMesh(curtain.Size(), curtain.counts.data(), curtain.counts.size(),
-                                curtain.indices.data(), curtain.indices.size(), false,
-                                curtain.points.data(), pins.data(), settings, &mesh, &why));
+    CHECK(RigExecBuildClothMesh(
+        curtain.Size(), curtain.counts.data(), curtain.counts.size(),
+        curtain.indices.data(), curtain.indices.size(), false,
+        curtain.points.data(), pins.data(), settings, &mesh, &why));
     RigExecClothColliders colliders;
     std::vector<std::vector<float>> entering(size_t(ticks), curtain.points);
     std::vector<RigExecClothTick> window(static_cast<size_t>(ticks));
     for (int k = 0; k < ticks; ++k) {
-        for (size_t i = 0; i < curtain.Size(); ++i) entering[size_t(k)][3 * i] += 2.0f * float(k);
+        for (size_t i = 0; i < curtain.Size(); ++i)
+            entering[size_t(k)][3 * i] += 2.0f * float(k);
         window[size_t(k)].entering = entering[size_t(k)].data();
     }
     std::vector<float> cpu(3 * mesh.pointCount), gpu(3 * mesh.pointCount);
     RigExecClothWorkspace ws;
-    CHECK(RigExecSolveCloth(mesh, colliders, settings, window.data(), window.size(),
-                            1.0 / 24.0, &ws, cpu.data(), &why));
+    CHECK(RigExecSolveCloth(mesh, colliders, settings, window.data(),
+                            window.size(), 1.0 / 24.0, &ws, cpu.data(), &why));
     std::vector<RigExecGpuClothJob> jobs(1);
-    jobs[0].key = 1000 + uint64_t(ticks * 100 + substeps) + uint64_t(n) * 100000;
+    jobs[0].key =
+        1000 + uint64_t(ticks * 100 + substeps) + uint64_t(n) * 100000;
     jobs[0].compiledRigSerial = 1;
     jobs[0].mesh = &mesh;
     jobs[0].colliders = &colliders;
@@ -260,9 +288,10 @@ CompareFree(RigExecGpuDeformExecutor *executor, int ticks, int substeps, int n =
     jobs[0].out = gpu.data();
     CHECK(executor->RunCloth(&jobs) && jobs[0].ok);
     float worst = 0.0f;
-    for (size_t i = 0; i < cpu.size(); ++i) worst = std::max(worst, std::fabs(cpu[i] - gpu[i]));
-    std::printf("free curtain, %d ticks x %d substeps: device vs CPU %.3g\n", ticks, substeps,
-                worst);
+    for (size_t i = 0; i < cpu.size(); ++i)
+        worst = std::max(worst, std::fabs(cpu[i] - gpu[i]));
+    std::printf("free curtain, %d ticks x %d substeps: device vs CPU %.3g\n",
+                ticks, substeps, worst);
     CHECK(worst < 1e-3f);
 }
 
@@ -285,7 +314,8 @@ CompareRig(RigExecGpuDeformExecutor *executor)
         const Points a = PointsOf(cpu.Evaluate(UsdTimeCode(13)), kCurtain);
         const Points b = PointsOf(small.Evaluate(UsdTimeCode(13)), kCurtain);
         CHECK(SameBits(a, b));
-        if (executor) CHECK(executor->ClothSolveCount() == before);
+        if (executor)
+            CHECK(executor->ClothSolveCount() == before);
     }
     SetEnv("RIGEXEC_GPU_CLOTH_MIN_POINTS", "0");
     RigExecRigEvaluator device(stage, kRig);
@@ -306,8 +336,9 @@ CompareRig(RigExecGpuDeformExecutor *executor)
     drag.value = VtValue(-6.0);
     cpu.SetInteractiveOverrides({drag});
     device.SetInteractiveOverrides({drag});
-    worst = std::max(worst, Furthest(PointsOf(cpu.Evaluate(UsdTimeCode(14)), kCurtain),
-                                     PointsOf(device.Evaluate(UsdTimeCode(14)), kCurtain)));
+    worst = std::max(
+        worst, Furthest(PointsOf(cpu.Evaluate(UsdTimeCode(14)), kCurtain),
+                        PointsOf(device.Evaluate(UsdTimeCode(14)), kCurtain)));
     std::printf("rig: device vs CPU %.3g\n", worst);
     CHECK(worst < 0.05f * kSpacing);
     if (executor) {
@@ -315,11 +346,19 @@ CompareRig(RigExecGpuDeformExecutor *executor)
         CHECK(executor->ClothSolveCount() >= before + 6);
     }
     auto profile = stage->DefinePrim(kCloth.AppendChild(TfToken("Damping")),
-                                    TfToken("RigExecClothConstraintSet"));
-    profile.CreateAttribute(TfToken("rigExec:kind"), SdfValueTypeNames->Token).Set(TfToken("damping"));
-    profile.CreateAttribute(TfToken("inputs:minStrength"), SdfValueTypeNames->Float).Set(8.0f);
-    profile.CreateAttribute(TfToken("inputs:maxStrength"), SdfValueTypeNames->Float).Set(8.0f);
-    stage->GetPrimAtPath(kCloth).CreateRelationship(TfToken("rigExec:constraints"))
+                                     TfToken("RigExecClothConstraintSet"));
+    profile.CreateAttribute(TfToken("rigExec:kind"), SdfValueTypeNames->Token)
+        .Set(TfToken("damping"));
+    profile
+        .CreateAttribute(TfToken("inputs:minStrength"),
+                         SdfValueTypeNames->Float)
+        .Set(8.0f);
+    profile
+        .CreateAttribute(TfToken("inputs:maxStrength"),
+                         SdfValueTypeNames->Float)
+        .Set(8.0f);
+    stage->GetPrimAtPath(kCloth)
+        .CreateRelationship(TfToken("rigExec:constraints"))
         .SetTargets({profile.GetPath()});
     SetEnv("RIGEXEC_GPU_CLOTH_MIN_POINTS", "0");
     RigExecRigEvaluator profiled(stage, kRig);
@@ -334,10 +373,11 @@ CompareRig(RigExecGpuDeformExecutor *executor)
     const auto expected = reference.Evaluate(UsdTimeCode(13));
     CHECK(actual.valid && expected.valid);
     CHECK(SameBits(PointsOf(actual, kCurtain), PointsOf(expected, kCurtain)));
-    if (executor) CHECK(executor->ClothSolveCount() == count);
+    if (executor)
+        CHECK(executor->ClothSolveCount() == count);
 }
 
-}  // namespace
+} // namespace
 
 int
 main()

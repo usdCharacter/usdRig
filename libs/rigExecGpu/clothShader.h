@@ -12,6 +12,6 @@ constexpr int RigExecGpuClothLocalSize = 64;
 /// The complete compute shader source, #version line included.
 const char *RigExecGpuClothKernelSource();
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_GPU_CLOTH_SHADER_H
+#endif // RIGEXEC_GPU_CLOTH_SHADER_H

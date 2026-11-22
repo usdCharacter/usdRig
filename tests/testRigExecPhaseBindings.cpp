@@ -37,21 +37,21 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
-#define CHECK_AT(where, cond)                                              \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d [%s]: %s\n", __FILE__, __LINE__,       \
-                        std::string(where).c_str(), #cond);                \
-        }                                                                  \
+#define CHECK_AT(where, cond)                                                  \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d [%s]: %s\n", __FILE__, __LINE__,           \
+                        std::string(where).c_str(), #cond);                    \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -82,11 +82,11 @@ Bindings(const RigExecBakedProgramImpl &B)
 {
     std::vector<BindingRef> out;
     const auto add = [&out](const RigExecBakedProgramImpl::GeomRevision &r,
-                            const SdfPath &target, size_t chain,
-                            bool derived, int step) {
+                            const SdfPath &target, size_t chain, bool derived,
+                            int step) {
         for (const RigExecBakedPointsBinding &binding : r.pointBindings) {
-            out.push_back({&binding, r.moverPath, target, chain, derived,
-                           false, step});
+            out.push_back(
+                {&binding, r.moverPath, target, chain, derived, false, step});
         }
         for (const auto &channel : r.blendChannels) {
             for (const auto &sample : channel.samples) {
@@ -104,10 +104,9 @@ Bindings(const RigExecBakedProgramImpl &B)
             if (step.kind != kind || step.object < 0) {
                 continue;
             }
-            const auto [c, i] =
-                kind == RigExecBakedStepKind::Derived
-                    ? B.derivedIndex[size_t(step.object)]
-                    : B.revisionIndex[size_t(step.object)];
+            const auto [c, i] = kind == RigExecBakedStepKind::Derived
+                                    ? B.derivedIndex[size_t(step.object)]
+                                    : B.revisionIndex[size_t(step.object)];
             if (size_t(c) == chain && size_t(i) == index) {
                 return int(s);
             }
@@ -180,8 +179,7 @@ CheckBindings(const std::string &where, const RigExecRigEvaluator &evaluator,
         return tally;
     }
     const RigExecBakedProgramImpl &B = program->GetStepGraph();
-    CHECK_AT(where, evaluator.cpuReference ==
-                        true);
+    CHECK_AT(where, evaluator.cpuReference == true);
     CHECK_AT(where, pose.referenceMismatches == 0);
     CHECK_AT(where, pose.referenceAgreements > 0);
     std::map<SdfPath, size_t> chainOf;
@@ -195,19 +193,26 @@ CheckBindings(const std::string &where, const RigExecRigEvaluator &evaluator,
                                binding.input.GetString() + " at " +
                                binding.phase.GetAsString();
         CHECK_AT(at, ref.step >= 0 && size_t(ref.step) < B.steps.size());
-        if (ref.step < 0 || size_t(ref.step) >= B.steps.size()) continue;
+        if (ref.step < 0 || size_t(ref.step) >= B.steps.size())
+            continue;
         const auto source = chainOf.find(binding.input);
-        if (rigExecOriginalQuery::configuration.check && source != chainOf.end() &&
-            source->second < ref.readerChain) {
+        if (rigExecOriginalQuery::configuration.check &&
+            source != chainOf.end() && source->second < ref.readerChain) {
             const GfVec3f *queryPoints = nullptr;
             size_t queryCount = 0;
-            const bool queryAnswered = RigExecBakedResolvePoints(B,binding,&queryPoints,&queryCount);
-            const VtValue queryValue = queryAnswered
-                ? VtValue(queryCount ? VtVec3fArray(queryPoints,queryPoints+queryCount) : VtVec3fArray())
-                : VtValue();
-            rigExecOriginalQuery::Emit(where,ref.reader.GetString(),binding.input.GetString(),
-                binding.phase.GetAsString(),pose.time.IsDefault(),pose.time.GetValue(),
-                queryAnswered ? &queryValue : nullptr);
+            const bool queryAnswered = RigExecBakedResolvePoints(
+                B, binding, &queryPoints, &queryCount);
+            const VtValue queryValue =
+                queryAnswered
+                    ? VtValue(queryCount
+                                  ? VtVec3fArray(queryPoints,
+                                                 queryPoints + queryCount)
+                                  : VtVec3fArray())
+                    : VtValue();
+            rigExecOriginalQuery::Emit(
+                where, ref.reader.GetString(), binding.input.GetString(),
+                binding.phase.GetAsString(), pose.time.IsDefault(),
+                pose.time.GetValue(), queryAnswered ? &queryValue : nullptr);
         }
         if (captured) {
             CHECK_AT(at, size_t(binding.id) < B.pointCaptures.size());
@@ -218,20 +223,22 @@ CheckBindings(const std::string &where, const RigExecRigEvaluator &evaluator,
                 B.pointCaptures[size_t(binding.id)];
             if (!capture.read) {
                 // Only a reader whose own chain read no base sits a run out.
-                CHECK_AT(at, (size_t(ref.step) >= B.opExecution.ran.size() || !B.opExecution.ran[size_t(ref.step)]) ||
-                             !B.chains[ref.readerChain].haveBase);
+                CHECK_AT(at, (size_t(ref.step) >= B.opExecution.ran.size() ||
+                              !B.opExecution.ran[size_t(ref.step)]) ||
+                                 !B.chains[ref.readerChain].haveBase);
             } else {
-                CHECK_AT(at, (size_t(ref.step) < B.opExecution.ran.size() && B.opExecution.ran[size_t(ref.step)]));
+                CHECK_AT(at, (size_t(ref.step) < B.opExecution.ran.size() &&
+                              B.opExecution.ran[size_t(ref.step)]));
                 ++tally.read;
                 const GfVec3f *points = nullptr;
                 size_t count = 0;
                 const bool answered =
                     RigExecBakedResolvePoints(B, binding, &points, &count);
                 CHECK_AT(at, capture.bindingAnswered == answered);
-                CHECK_AT(at, capture.bound ==
-                                 (answered ? VtVec3fArray(points,
-                                                          points + count)
-                                           : VtVec3fArray()));
+                CHECK_AT(at,
+                         capture.bound ==
+                             (answered ? VtVec3fArray(points, points + count)
+                                       : VtVec3fArray()));
                 if (capture.bindingAnswered) {
                     ++tally.answered;
                 } else {
@@ -254,7 +261,8 @@ MakeEvaluator(const UsdStageRefPtr &stage, const SdfPath &rig,
               bool referenceChecks)
 {
     auto evaluator = std::make_unique<RigExecRigEvaluator>(stage, rig);
-    evaluator->cpuReference = true; // Both capture styles retain the independent oracle.
+    evaluator->cpuReference =
+        true; // Both capture styles retain the independent oracle.
     std::vector<std::string> errors;
     const bool compiled = evaluator->Compile(&errors);
     for (const std::string &error : errors) {
@@ -348,11 +356,12 @@ DefineLattice(const UsdStageRefPtr &stage, const char *name,
     const UsdPrim lattice =
         stage->DefinePrim(path, TfToken("RigExecLatticeMover"));
     CHECK(lattice.ApplyAPI(TfToken("RigExecMoverAPI")));
-    lattice.CreateAttribute(TfToken("rigExec:basis"), SdfValueTypeNames->Token,
-                            false, SdfVariabilityUniform)
+    lattice
+        .CreateAttribute(TfToken("rigExec:basis"), SdfValueTypeNames->Token,
+                         false, SdfVariabilityUniform)
         .Set(TfToken("bernstein"));
-    lattice.CreateAttribute(TfToken("rigExec:divisions"),
-                            SdfValueTypeNames->Int3)
+    lattice
+        .CreateAttribute(TfToken("rigExec:divisions"), SdfValueTypeNames->Int3)
         .Set(GfVec3i(2, 2, 2));
     const UsdRelationship cage =
         lattice.CreateRelationship(TfToken("rigExec:cage"), false);
@@ -373,9 +382,9 @@ DefinePoints(const UsdStageRefPtr &stage, const SdfPath &target)
     for (GfVec3f &p : points) {
         p *= 0.5f;
     }
-    CHECK(prim.CreateAttribute(TfToken("points"),
-                               SdfValueTypeNames->Point3fArray)
-              .Set(points));
+    CHECK(
+        prim.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
+            .Set(points));
 }
 
 /// A surface mover under Movers/Geometry projecting \p targets onto the
@@ -389,8 +398,9 @@ DefineProjector(const UsdStageRefPtr &stage, const char *name,
     const UsdPrim mover =
         stage->DefinePrim(path, TfToken("RigExecSurfaceMover"));
     CHECK(mover.ApplyAPI(TfToken("RigExecMoverAPI")));
-    mover.CreateAttribute(TfToken("rigExec:mode"), SdfValueTypeNames->Token,
-                          false, SdfVariabilityUniform)
+    mover
+        .CreateAttribute(TfToken("rigExec:mode"), SdfValueTypeNames->Token,
+                         false, SdfVariabilityUniform)
         .Set(TfToken("project"));
     const UsdRelationship surface =
         mover.CreateRelationship(TfToken("rigExec:surface"), false);
@@ -497,10 +507,12 @@ CheckSlabAssembleEdges(const std::string &where,
     }
     CHECK_AT(where, slabChain >= 0 && cageChain >= 0 && slabRevision >= 0);
     CHECK_AT(where, assemble >= 0 && status >= 0);
-    const bool cageScope = phasePrim == SdfPath("/ReadPhaseAsset/Rig/Movers/Cage");
+    const bool cageScope =
+        phasePrim == SdfPath("/ReadPhaseAsset/Rig/Movers/Cage");
     const size_t expectedCandidates = cageScope ? 2 : 1;
     CHECK_AT(where, binding.candidates.size() == expectedCandidates);
-    if (assemble < 0 || status < 0 || binding.candidates.size() != expectedCandidates) {
+    if (assemble < 0 || status < 0 ||
+        binding.candidates.size() != expectedCandidates) {
         return;
     }
     const RigExecBakedStep &step = B.steps[size_t(assemble)];
@@ -523,9 +535,11 @@ CheckSlabAssembleEdges(const std::string &where,
     for (size_t k = 0; k < binding.candidates.size(); ++k) {
         const RigExecBakedPointVersion &candidate = binding.candidates[k];
         CHECK_AT(where, candidate.chain == cageChain);
-        CHECK_AT(where, candidate.version == (binding.finalRead || cageScope ? 2 - int(k) : 1));
+        CHECK_AT(where, candidate.version ==
+                            (binding.finalRead || cageScope ? 2 - int(k) : 1));
         if (binding.finalRead) {
-            CHECK_AT(where, reads(RigExecBakedSlotDomain::ChainPoints, cageChain));
+            CHECK_AT(where,
+                     reads(RigExecBakedSlotDomain::ChainPoints, cageChain));
             CHECK_AT(where, follows(status));
             return;
         }
@@ -537,9 +551,10 @@ CheckSlabAssembleEdges(const std::string &where,
             B.chainRevisionBegin[size_t(cageChain)] + candidate.version - 1;
         if (!phasePrim.IsEmpty()) {
             const auto [c, r] = B.revisionIndex[size_t(revision)];
-            CHECK_AT(where, B.chains[size_t(c)]
-                                .revisions[size_t(r)]
-                                .moverPath.HasPrefix(phasePrim));
+            CHECK_AT(
+                where,
+                B.chains[size_t(c)].revisions[size_t(r)].moverPath.HasPrefix(
+                    phasePrim));
         }
         CHECK_AT(where, reads(RigExecBakedSlotDomain::RevisionDone, revision));
         CHECK_AT(where, reads(RigExecBakedSlotDomain::ChainDirty, revision));
@@ -553,9 +568,8 @@ CheckSlabAssembleEdges(const std::string &where,
 void
 TestPointBindingsCaptureTypedVersions(const std::string &examples)
 {
-    for (const char *phase :
-         {"", "/ReadPhaseAsset/Rig/Movers/Cage/CageLift",
-          "/ReadPhaseAsset/Rig/Movers/Cage"}) {
+    for (const char *phase : {"", "/ReadPhaseAsset/Rig/Movers/Cage/CageLift",
+                              "/ReadPhaseAsset/Rig/Movers/Cage"}) {
         const UsdStageRefPtr stage = OpenReadPhases(examples);
         if (!stage) {
             return;
@@ -565,8 +579,7 @@ TestPointBindingsCaptureTypedVersions(const std::string &examples)
         }
         const std::string where =
             std::string("13 cage at ") + (*phase ? phase : "final");
-        auto evaluator = MakeEvaluator(
-            stage, kReadPhaseRig, true);
+        auto evaluator = MakeEvaluator(stage, kReadPhaseRig, true);
         if (!evaluator) {
             return;
         }
@@ -581,13 +594,13 @@ TestPointBindingsCaptureTypedVersions(const std::string &examples)
         }
         const std::vector<BindingRef> refs =
             Bindings(evaluator->GetBakedProgram()->GetStepGraph());
-        const BindingRef *slab =
-            Find(refs, kSlabLattice, kSlab, kCage);
+        const BindingRef *slab = Find(refs, kSlabLattice, kSlab, kCage);
         CHECK_AT(where, slab != nullptr);
         if (slab) {
             const size_t expectedCandidates =
                 std::string(phase) == "/ReadPhaseAsset/Rig/Movers/Cage" ? 2 : 1;
-            CHECK_AT(where, slab->binding->candidates.size() == expectedCandidates);
+            CHECK_AT(where,
+                     slab->binding->candidates.size() == expectedCandidates);
             CHECK_AT(where, slab->binding->finalRead == !*phase);
             CHECK_AT(where, slab->binding->diagnoseMiss);
             CheckSlabAssembleEdges(
@@ -632,20 +645,18 @@ TestPrecedingAcrossChains(const std::string &examples)
             spec->SetNameChildrenOrder(
                 {TfToken("Probe"), TfToken("Dual"), TfToken("SlabLattice")});
         }
-        const std::string where =
-            std::string("preceding across chains, ") +
-            (named ? "named" : "unnamed");
-        auto evaluator = MakeEvaluator(
-            stage, kReadPhaseRig, true);
+        const std::string where = std::string("preceding across chains, ") +
+                                  (named ? "named" : "unnamed");
+        auto evaluator = MakeEvaluator(stage, kReadPhaseRig, true);
         if (!evaluator) {
             return;
         }
         Tally tally;
         RigExecRigPose pose;
         for (const UsdTimeCode &time : kFrames) {
-            pose = EvaluateCaptured(
-                where + " at " + std::to_string(time.GetValue()),
-                evaluator.get(), time, &tally);
+            pose = EvaluateCaptured(where + " at " +
+                                        std::to_string(time.GetValue()),
+                                    evaluator.get(), time, &tally);
         }
         others.push_back(Moved(pose, kOther));
         const std::vector<RigExecRigPose> checked =
@@ -700,36 +711,40 @@ TestPrecedingAcrossChains(const std::string &examples)
     // phase sensitivity against the authored Base surface.
     CHECK(others.size() == 2 && others[0] == others[1]);
     std::map<std::string, VtVec3fArray> controls;
-    for (const std::string phase : {std::string("base"),
-                                   kSlabLattice.GetString()}) {
+    for (const std::string phase :
+         {std::string("base"), kSlabLattice.GetString()}) {
         const auto stage = OpenReadPhases(examples);
         CHECK(stage);
-        if (!stage) continue;
+        if (!stage)
+            continue;
         DefinePoints(stage, kOther);
         DefineProjector(stage, "Dual", {kOther, kSlab}, phase);
         const auto spec = stage->GetSessionLayer()->GetPrimAtPath(geometry);
         CHECK(spec);
-        if (spec) spec->SetNameChildrenOrder(
-            {TfToken("Probe"), TfToken("Dual"), TfToken("SlabLattice")});
+        if (spec)
+            spec->SetNameChildrenOrder(
+                {TfToken("Probe"), TfToken("Dual"), TfToken("SlabLattice")});
         VtVec3fArray authoredSurface;
         CHECK(stage->GetAttributeAtPath(kSlab).Get(&authoredSurface));
         auto evaluator = MakeEvaluator(stage, kReadPhaseRig, true);
         CHECK(evaluator);
-        if (!evaluator) continue;
+        if (!evaluator)
+            continue;
         const std::string where = "preceding control " + phase;
         Tally tally;
         RigExecRigPose pose;
         for (const auto time : kFrames)
             pose = EvaluateCaptured(where, evaluator.get(), time, &tally);
         controls[phase] = Moved(pose, kOther);
-        const auto checked = EvaluateUnderTheOracle(where, stage, kReadPhaseRig,
-                                                    kFrames);
+        const auto checked =
+            EvaluateUnderTheOracle(where, stage, kReadPhaseRig, kFrames);
         CHECK(checked.size() == kFrames.size());
         if (checked.size() == kFrames.size())
             CHECK(Moved(checked.back(), kOther) == controls[phase]);
         CHECK(evaluator->GetBakedProgram());
         if (evaluator->GetBakedProgram()) {
-            const auto refs = Bindings(evaluator->GetBakedProgram()->GetStepGraph());
+            const auto refs =
+                Bindings(evaluator->GetBakedProgram()->GetStepGraph());
             const auto *across = Find(refs, dual, kOther, kSlab);
             const auto *own = Find(refs, dual, kSlab, kSlab);
             if (phase == "base") {
@@ -738,9 +753,11 @@ TestPrecedingAcrossChains(const std::string &examples)
                 size_t readers = 0;
                 const auto &B = evaluator->GetBakedProgram()->GetStepGraph();
                 for (const auto &chain : B.chains) {
-                    if (chain.target != kOther && chain.target != kSlab) continue;
+                    if (chain.target != kOther && chain.target != kSlab)
+                        continue;
                     for (const auto &revision : chain.revisions) {
-                        if (revision.moverPath != dual) continue;
+                        if (revision.moverPath != dual)
+                            continue;
                         ++readers;
                         CHECK(revision.binding.surfacePoints == kSlab);
                         CHECK(revision.binding.phases.count(kSlab) == 0);
@@ -796,9 +813,7 @@ TestPrecedingOnTheOwnChainReadsTheEnteringPoints(const std::string &examples)
         }
         DefineLattice(stage, "Self", {kCage}, phase);
         const std::string where = std::string("own chain at ") + phase;
-        for (const bool mode :
-             {false,
-              true}) {
+        for (const bool mode : {false, true}) {
             auto evaluator = MakeEvaluator(stage, kReadPhaseRig, mode);
             if (!evaluator) {
                 return;
@@ -810,8 +825,7 @@ TestPrecedingOnTheOwnChainReadsTheEnteringPoints(const std::string &examples)
                 const RigExecRigPose pose =
                     mode == true
                         ? evaluator->Evaluate(time)
-                        : EvaluateCaptured(at, evaluator.get(), time,
-                                           &tally);
+                        : EvaluateCaptured(at, evaluator.get(), time, &tally);
                 CHECK_AT(at, pose.valid);
                 answers[phase].push_back(Moved(pose, kCage));
                 answers[phase].push_back(Moved(pose, kSlab));
@@ -855,8 +869,8 @@ TestPrecedingOwnChainFixture(const std::string &examples)
     const std::string settle = "/PrecedingAsset/Rig/Movers/Settle";
     std::map<std::string, std::vector<VtVec3fArray>> answers;
     std::map<std::string, std::vector<VtVec3fArray>> oracleAnswers;
-    for (const std::string phase : {std::string("preceding"), settle,
-                                    std::string("base")}) {
+    for (const std::string phase :
+         {std::string("preceding"), settle, std::string("base")}) {
         const UsdStageRefPtr stage = UsdStage::Open(
             examples + "/../tests/fixtures/preceding_own_chain.usda");
         CHECK(stage);
@@ -866,21 +880,16 @@ TestPrecedingOwnChainFixture(const std::string &examples)
         stage->SetEditTarget(stage->GetSessionLayer());
         SetPhase(stage, echo, "rigExec:cage", phase);
         const std::string where = "preceding_own_chain, cage at " + phase;
-        for (const bool mode :
-             {false,
-              true}) {
+        for (const bool mode : {false, true}) {
             auto evaluator = MakeEvaluator(stage, rig, mode);
             if (!evaluator) {
                 return;
             }
-            const bool baked =
-                mode == true;
+            const bool baked = mode == true;
             Tally tally;
-            const auto evaluate = [&](const std::string &at,
-                                      UsdTimeCode time) {
+            const auto evaluate = [&](const std::string &at, UsdTimeCode time) {
                 const RigExecRigPose pose =
-                    baked ? EvaluateCaptured(at, evaluator.get(), time,
-                                             &tally)
+                    baked ? EvaluateCaptured(at, evaluator.get(), time, &tally)
                           : evaluator->Evaluate(time);
                 CHECK_AT(at, pose.valid);
                 answers[phase].push_back(Moved(pose, box));
@@ -919,36 +928,36 @@ TestPrecedingOwnChainFixture(const std::string &examples)
             // The validator holds the assemble to that read: Echo's weight
             // field is not current-phase, so only the binding names
             // version 2, and dropping its RevisionDone read is refused.
-            RigExecBakedProgramImpl &B = const_cast<RigExecBakedProgramImpl &>(
-                program->GetStepGraph());
+            RigExecBakedProgramImpl &B =
+                const_cast<RigExecBakedProgramImpl &>(program->GetStepGraph());
             CHECK_AT(where, own->step >= 0);
             if (own->step >= 0 && own->binding->candidates.size() == 1) {
                 RigExecBakedStep &assemble = B.steps[size_t(own->step)];
-                CHECK_AT(where, assemble.kind ==
-                                    RigExecBakedStepKind::RevisionStatic);
+                CHECK_AT(where,
+                         assemble.kind == RigExecBakedStepKind::RevisionStatic);
                 const auto &[chain, r] =
                     B.revisionIndex[size_t(assemble.object)];
                 CHECK_AT(where, !B.chains[size_t(chain)]
                                      .revisions[size_t(r)]
                                      .weightCurrentPhase);
-                const RigExecBakedSlotRange done = RigExecBakedOne(
-                    RigExecBakedSlotDomain::RevisionDone,
-                    B.chainRevisionBegin[own->readerChain] + 1);
-                const std::vector<RigExecBakedSlotRange> reads =
-                    assemble.reads;
+                const RigExecBakedSlotRange done =
+                    RigExecBakedOne(RigExecBakedSlotDomain::RevisionDone,
+                                    B.chainRevisionBegin[own->readerChain] + 1);
+                const std::vector<RigExecBakedSlotRange> reads = assemble.reads;
                 assemble.reads.erase(std::remove(assemble.reads.begin(),
                                                  assemble.reads.end(), done),
                                      assemble.reads.end());
                 CHECK_AT(where, assemble.reads.size() + 1 == reads.size());
                 std::string error;
                 CHECK_AT(where, !RigExecBakedValidateStepGraph(B, &error));
-                const std::string expected =
-                    "binds point version 2 of chain " +
-                    std::to_string(own->readerChain) +
-                    " without declaring it";
+                const std::string expected = "binds point version 2 of chain " +
+                                             std::to_string(own->readerChain) +
+                                             " without declaring it";
                 CHECK_AT(where + ": " + error,
-                         error.find("step " + std::to_string(own->step) + " (") != std::string::npos &&
-                             error.find(own->reader.GetString()) != std::string::npos &&
+                         error.find("step " + std::to_string(own->step) +
+                                    " (") != std::string::npos &&
+                             error.find(own->reader.GetString()) !=
+                                 std::string::npos &&
                              error.find(expected) != std::string::npos);
                 assemble.reads = reads;
                 error.clear();
@@ -977,8 +986,8 @@ TestPrecedingOwnChainFixture(const std::string &examples)
         const auto &walked = answers[phase];
         CHECK_AT(where, walked.size() == 10 &&
                             oracleAnswers[phase] ==
-                                std::vector<VtVec3fArray>(
-                                    walked.begin() + 5, walked.begin() + 8));
+                                std::vector<VtVec3fArray>(walked.begin() + 5,
+                                                          walked.begin() + 8));
     }
     const auto &preceding = answers["preceding"];
     CHECK(preceding.size() == 10);
@@ -1003,22 +1012,19 @@ TestAChainWithoutABaseFallsThrough(const std::string &examples)
     CHECK(cage.Set(authored, UsdTimeCode(1001)));
     CHECK(cage.Set(SdfValueBlock(), UsdTimeCode(1002)));
     CHECK(cage.Set(authored, UsdTimeCode(1003)));
-    auto baked = MakeEvaluator(stage, kReadPhaseRig,
-                               true);
-    auto reference = MakeEvaluator(stage, kReadPhaseRig,
-                                   true);
+    auto baked = MakeEvaluator(stage, kReadPhaseRig, true);
+    auto reference = MakeEvaluator(stage, kReadPhaseRig, true);
     if (!baked || !reference) {
         return;
     }
-    const std::string line =
-        "diag " + kSlabLattice.GetString() + ": read phase 'final' for " +
-        kCage.GetString() + " resolved to nothing; read the authored base";
+    const std::string line = "diag " + kSlabLattice.GetString() +
+                             ": read phase 'final' for " + kCage.GetString() +
+                             " resolved to nothing; read the authored base";
     const std::string nativeFailure =
         "MoverFailed " + kSlabLattice.GetString() +
         ": execution rejected its inputs; revision passed through";
-    const std::string oracleOnly =
-        "MoverFailed " + kSlabLattice.GetString() +
-        ": lattice cage/divisions mismatch";
+    const std::string oracleOnly = "MoverFailed " + kSlabLattice.GetString() +
+                                   ": lattice cage/divisions mismatch";
     for (const double frame : {1001.0, 1002.0, 1003.0}) {
         const std::string where = "blocked cage at " + std::to_string(frame);
         Tally tally;
@@ -1031,7 +1037,7 @@ TestAChainWithoutABaseFallsThrough(const std::string &examples)
         CHECK_AT(where, Mentions(walk.diagnostics, line) == blocked);
         CHECK_AT(where, Moved(pose, kSlab) == Moved(walk, kSlab));
         CHECK_AT(where, pose.referenceMismatches == 0 &&
-                        walk.referenceMismatches == 0);
+                            walk.referenceMismatches == 0);
         CHECK_AT(where, Mentions(pose.diagnostics, nativeFailure) == blocked);
         CHECK_AT(where, Mentions(walk.diagnostics, nativeFailure) == blocked);
         CHECK_AT(where, !Mentions(pose.diagnostics, oracleOnly));
@@ -1056,9 +1062,10 @@ TestAChainWithoutABaseFallsThrough(const std::string &examples)
                 CHECK_AT(where, !agreed && mismatch.referenceMismatches > 0);
                 CHECK_AT(where, Mentions(mismatch.diagnostics, nativeFailure));
                 CHECK_AT(where, Mentions(mismatch.diagnostics, oracleOnly));
-                CHECK_AT(where, Mentions(mismatch.diagnostics,
-                    "cpu reference parity: value mismatch on " +
-                    kSlab.GetString()));
+                CHECK_AT(where,
+                         Mentions(mismatch.diagnostics,
+                                  "cpu reference parity: value mismatch on " +
+                                      kSlab.GetString()));
             }
         }
         if (SerialSchedule()) {
@@ -1216,8 +1223,7 @@ TestBlendSamplesBindToVersions()
     const SdfPath blend("/Asset/Rig/Movers/Blend");
     const SdfPath body("/Asset/Geom/Body.points");
     const SdfPath shape("/Asset/Geom/Shape.points");
-    auto evaluator = MakeEvaluator(stage, SdfPath("/Asset/Rig"),
-                                   true);
+    auto evaluator = MakeEvaluator(stage, SdfPath("/Asset/Rig"), true);
     if (!evaluator || !evaluator->GetBakedProgram()) {
         CHECK(!"the blend rig bakes");
         return;
@@ -1245,18 +1251,18 @@ TestBlendSamplesBindToVersions()
     Tally tally;
     VtVec3fArray first;
     for (const double frame : {1.0, 3.0, 7.0}) {
-        const RigExecRigPose pose = EvaluateCaptured(
-            "blend samples at " + std::to_string(frame), evaluator.get(),
-            UsdTimeCode(frame), &tally);
+        const RigExecRigPose pose =
+            EvaluateCaptured("blend samples at " + std::to_string(frame),
+                             evaluator.get(), UsdTimeCode(frame), &tally);
         if (frame == 1.0) {
             first = Moved(pose, body);
         } else {
             CHECK(Moved(pose, body) != first);
         }
     }
-    evaluator->SetInteractiveOverrides({RigExecValueOverride{
-        SdfPath("/Asset/Rig/Controls/CtlB"), TfToken(), TfToken("avars:tx"),
-        VtValue(3.0)}});
+    evaluator->SetInteractiveOverrides(
+        {RigExecValueOverride{SdfPath("/Asset/Rig/Controls/CtlB"), TfToken(),
+                              TfToken("avars:tx"), VtValue(3.0)}});
     EvaluateCaptured("blend samples dragged", evaluator.get(), UsdTimeCode(7),
                      &tally);
     evaluator->ClearInteractiveOverrides();
@@ -1280,8 +1286,8 @@ const SdfPath kRecordDial("/RecordAsset/Rig/Controls/Dial");
 SdfPath
 RecordReader(const char *name)
 {
-    return SdfPath("/RecordAsset/Rig/Movers/Geometry").AppendChild(
-        TfToken(name));
+    return SdfPath("/RecordAsset/Rig/Movers/Geometry")
+        .AppendChild(TfToken(name));
 }
 
 SdfPath
@@ -1338,8 +1344,8 @@ CheckFrameRecordSteps(const std::string &where,
     }
     for (size_t r = 0; r < B.frameRecords.size(); ++r) {
         const RigExecBakedFrameRecord &record = B.frameRecords[r];
-        const std::string at = where + " record after " +
-                               record.mover.GetString();
+        const std::string at =
+            where + " record after " + record.mover.GetString();
         CHECK_AT(at, stepOf[r] >= 0);
         if (stepOf[r] < 0) {
             continue;
@@ -1347,23 +1353,24 @@ CheckFrameRecordSteps(const std::string &where,
         const RigExecBakedStep &step = B.steps[size_t(stepOf[r])];
         CHECK_AT(at, stepOf[r] > commitLast[size_t(record.commit)]);
         CHECK_AT(at, std::find(step.reads.begin(), step.reads.end(),
-                               RigExecBakedOne(
-                                   RigExecBakedSlotDomain::PoseFin,
-                                   record.version)) != step.reads.end());
-        CHECK_AT(at, std::find(step.reads.begin(), step.reads.end(),
-                               RigExecBakedOne(
-                                   RigExecBakedSlotDomain::CommitTable,
-                                   record.commit)) != step.reads.end());
+                               RigExecBakedOne(RigExecBakedSlotDomain::PoseFin,
+                                               record.version)) !=
+                         step.reads.end());
+        CHECK_AT(at,
+                 std::find(step.reads.begin(), step.reads.end(),
+                           RigExecBakedOne(RigExecBakedSlotDomain::CommitTable,
+                                           record.commit)) != step.reads.end());
         // The provider is the constraint's candidate, so the record reads
         // the version its write-back produces.
         const RigExecBakedCommit &commit = B.commits[size_t(record.commit)];
-        const auto found = std::find(commit.slots.begin(), commit.slots.end(),
-                                     record.slot);
+        const auto found =
+            std::find(commit.slots.begin(), commit.slots.end(), record.slot);
         CHECK_AT(at, found != commit.slots.end());
         if (found != commit.slots.end()) {
-            CHECK_AT(at, record.version ==
-                             commit.slotWrites[size_t(
-                                 found - commit.slots.begin())]);
+            CHECK_AT(
+                at,
+                record.version ==
+                    commit.slotWrites[size_t(found - commit.slots.begin())]);
         }
     }
     const RigExecBakedProgramImpl::GeomRevision *revision =
@@ -1425,14 +1432,18 @@ CheckRecordStepsRan(const std::string &where,
             ++frameSteps;
             const SdfPath &mover = B.frameRecords[size_t(step.object)].mover;
             const bool expected =
-                std::find(movers.begin(), movers.end(), mover) !=
-                movers.end();
-            CHECK_AT(where + ": FrameMatrix " + step.label,
-                     ((size_t(&step - B.steps.data()) < B.opExecution.ran.size() && B.opExecution.ran[size_t(&step - B.steps.data())])) == expected);
+                std::find(movers.begin(), movers.end(), mover) != movers.end();
+            CHECK_AT(
+                where + ": FrameMatrix " + step.label,
+                ((size_t(&step - B.steps.data()) < B.opExecution.ran.size() &&
+                  B.opExecution.ran[size_t(&step - B.steps.data())])) ==
+                    expected);
         } else if (*folded &&
                    step.kind == RigExecBakedStepKind::InfluenceFold &&
                    moverOf(step) == RecordReader(folded)) {
-            foldRan = (size_t(&step - B.steps.data()) < B.opExecution.ran.size() && B.opExecution.ran[size_t(&step - B.steps.data())]);
+            foldRan =
+                (size_t(&step - B.steps.data()) < B.opExecution.ran.size() &&
+                 B.opExecution.ran[size_t(&step - B.steps.data())]);
         }
     }
     CHECK_AT(where, frameSteps == B.frameRecords.size());
@@ -1499,8 +1510,7 @@ TestFrameRecordTypedProvenance(const std::string &examples)
             CHECK_AT(label,
                      stage->GetPrimAtPath(RecordReader("R1")).SetActive(false));
         }
-        auto evaluator = MakeEvaluator(
-            stage, kRecordRig, true);
+        auto evaluator = MakeEvaluator(stage, kRecordRig, true);
         if (!evaluator) {
             return;
         }
@@ -1524,34 +1534,32 @@ TestFrameRecordTypedProvenance(const std::string &examples)
                 structureChecked = true;
                 CHECK_AT(where, B.frameRecords.size() == (withR1 ? 3u : 2u));
                 const auto list = [&](const char *reader) {
-                    const auto *revision = FindRevision(B, RecordReader(reader));
+                    const auto *revision =
+                        FindRevision(B, RecordReader(reader));
                     CHECK_AT(where + " " + reader, revision != nullptr);
                     return revision
                                ? RecordMovers(B, revision->transformRecords)
                                : std::vector<SdfPath>{SdfPath("/missing")};
                 };
                 if (withR1) {
-                    CHECK_AT(where, list("R1") ==
-                                        std::vector<SdfPath>{kRecordC1});
-                    CHECK_AT(where, list("R2") ==
-                                        (std::vector<SdfPath>{kRecordC2,
-                                                              kRecordC1}));
+                    CHECK_AT(where,
+                             list("R1") == std::vector<SdfPath>{kRecordC1});
+                    CHECK_AT(where, list("R2") == (std::vector<SdfPath>{
+                                                      kRecordC2, kRecordC1}));
                     CHECK_AT(where, list("R5") ==
                                         (std::vector<SdfPath>{
                                             kRecordC3, kRecordC2, kRecordC1}));
                 } else {
-                    CHECK_AT(where, list("R2") ==
-                                        std::vector<SdfPath>{kRecordC2});
-                    CHECK_AT(where, list("R5") ==
-                                        (std::vector<SdfPath>{kRecordC3,
-                                                              kRecordC2}));
+                    CHECK_AT(where,
+                             list("R2") == std::vector<SdfPath>{kRecordC2});
+                    CHECK_AT(where, list("R5") == (std::vector<SdfPath>{
+                                                      kRecordC3, kRecordC2}));
                 }
-                CHECK_AT(where, list("R4") ==
-                                    std::vector<SdfPath>{kRecordC2});
+                CHECK_AT(where, list("R4") == std::vector<SdfPath>{kRecordC2});
                 CHECK_AT(where, list("RB").empty());
                 for (const RigExecBakedFrameRecord &record : B.frameRecords) {
-                    CHECK_AT(where, B.paths[size_t(record.slot)] ==
-                                        kRecordJoint);
+                    CHECK_AT(where,
+                             B.paths[size_t(record.slot)] == kRecordJoint);
                     CHECK_AT(where, record.target == 0);
                 }
                 CheckFrameRecordSteps(where, B, RecordReader("R2"));
@@ -1581,15 +1589,15 @@ TestFrameRecordTypedProvenance(const std::string &examples)
         // reader's, and the release restores them. Under the cone it runs no
         // FrameMatrix step: the fold's table is the one the kept records gave
         // last run.
-        const RecordReads before = ReadRecordPoints(
-            evaluator->Evaluate(UsdTimeCode(8.0)), withR1);
+        const RecordReads before =
+            ReadRecordPoints(evaluator->Evaluate(UsdTimeCode(8.0)), withR1);
         evaluator->SetInteractiveOverrides({RigExecValueOverride{
             kRecordDial, TfToken(), TfToken("avars:amount"), VtValue(0.5)}});
         const RigExecRigPose dragged = EvaluateCaptured(
             label + " dragged", evaluator.get(), UsdTimeCode(8.0), &tally);
-        CHECK_AT(label + " dragged", CheckFrameRecords(label + " dragged",
-                                                       *evaluator) ==
-                                         (withR1 ? 4 : 3));
+        CHECK_AT(label + " dragged",
+                 CheckFrameRecords(label + " dragged", *evaluator) ==
+                     (withR1 ? 4 : 3));
         CheckRecordStepsRan(label + " dragged", *evaluator, {}, "");
         const RecordReads moved = ReadRecordPoints(dragged, withR1);
         CHECK_AT(label + " dragged", !Near(moved.r2, before.r2));
@@ -1608,8 +1616,7 @@ TestFrameRecordTypedProvenance(const std::string &examples)
             SdfPath("/RecordAsset/Rig/Controls/Late"), TfToken(),
             TfToken("avars:tz"), VtValue(0.25)}});
         const RigExecRigPose late = EvaluateCaptured(
-            label + " Late dragged", evaluator.get(), UsdTimeCode(8.0),
-            &tally);
+            label + " Late dragged", evaluator.get(), UsdTimeCode(8.0), &tally);
         CHECK_AT(label + " Late dragged",
                  CheckFrameRecords(label + " Late dragged", *evaluator) ==
                      (withR1 ? 4 : 3));
@@ -1620,9 +1627,9 @@ TestFrameRecordTypedProvenance(const std::string &examples)
         CHECK_AT(label + " Late dragged", lateReads.r2 == before.r2);
         CHECK_AT(label + " Late dragged", lateReads.r4 == before.r4);
         evaluator->ClearInteractiveOverrides();
-        const RigExecRigPose lateReleased = EvaluateCaptured(
-            label + " Late released", evaluator.get(), UsdTimeCode(8.0),
-            &tally);
+        const RigExecRigPose lateReleased =
+            EvaluateCaptured(label + " Late released", evaluator.get(),
+                             UsdTimeCode(8.0), &tally);
         CHECK_AT(label + " Late released",
                  ReadRecordPoints(lateReleased, withR1).r5 == before.r5);
     }
@@ -1643,8 +1650,7 @@ TestTheFoldReadsItsRecords(const std::string &examples)
     if (!stage) {
         return;
     }
-    auto evaluator =
-        MakeEvaluator(stage, kRecordRig, false);
+    auto evaluator = MakeEvaluator(stage, kRecordRig, false);
     if (!evaluator) {
         return;
     }
@@ -1657,9 +1663,9 @@ TestTheFoldReadsItsRecords(const std::string &examples)
     }
     RigExecBakedProgramImpl &B =
         const_cast<RigExecBakedProgramImpl &>(program->GetStepGraph());
-    CHECK_AT(where, RecordMovers(B, {0, 1, 2}) ==
-                        (std::vector<SdfPath>{kRecordC1, kRecordC2,
-                                              kRecordC3}));
+    CHECK_AT(where,
+             RecordMovers(B, {0, 1, 2}) ==
+                 (std::vector<SdfPath>{kRecordC1, kRecordC2, kRecordC3}));
     const RigExecBakedProgramImpl::GeomRevision *r5 =
         FindRevision(B, RecordReader("R5"));
     CHECK_AT(where, r5 != nullptr);
@@ -1681,28 +1687,38 @@ TestTheFoldReadsItsRecords(const std::string &examples)
     CHECK_AT(where, error.find("without declaring it") != std::string::npos);
     int reboundStep = -1;
     for (size_t s = 0; s < B.steps.size(); ++s)
-        if (B.steps[s].kind == RigExecBakedStepKind::FrameMatrix && B.steps[s].object == 2)
+        if (B.steps[s].kind == RigExecBakedStepKind::FrameMatrix &&
+            B.steps[s].object == 2)
             reboundStep = int(s);
     CHECK_AT(where, reboundStep >= 0);
-    if (reboundStep < 0) { B.frameRecords[2].version = bound; return; }
+    if (reboundStep < 0) {
+        B.frameRecords[2].version = bound;
+        return;
+    }
     auto &declared = B.steps[size_t(reboundStep)];
     const auto originalReads = declared.reads;
     const auto originalPreds = declared.preds;
     const uint32_t reboundVersion = B.frameRecords[0].version;
     size_t replaced = 0;
     for (auto &read : declared.reads)
-        if (read.domain == RigExecBakedSlotDomain::PoseFin && read.begin == bound && read.end == bound + 1) {
-            read = RigExecBakedOne(RigExecBakedSlotDomain::PoseFin, int(reboundVersion));
+        if (read.domain == RigExecBakedSlotDomain::PoseFin &&
+            read.begin == bound && read.end == bound + 1) {
+            read = RigExecBakedOne(RigExecBakedSlotDomain::PoseFin,
+                                   int(reboundVersion));
             ++replaced;
         }
     CHECK_AT(where, replaced == 1);
     size_t producers = 0;
     std::vector<std::pair<int, std::vector<int>>> originalSuccessors;
-    struct SavedClusterEdges { int cluster; std::vector<int> preds, succs; };
+    struct SavedClusterEdges {
+        int cluster;
+        std::vector<int> preds, succs;
+    };
     std::vector<SavedClusterEdges> originalClusterEdges;
     for (size_t s = 0; s < B.steps.size(); ++s)
         for (const auto &write : B.steps[s].writes)
-            if (write.domain == RigExecBakedSlotDomain::PoseFin && write.begin <= reboundVersion && reboundVersion < write.end) {
+            if (write.domain == RigExecBakedSlotDomain::PoseFin &&
+                write.begin <= reboundVersion && reboundVersion < write.end) {
                 CHECK_AT(where, int(s) < reboundStep);
                 ++producers;
                 declared.preds.push_back(int(s));
@@ -1710,33 +1726,48 @@ TestTheFoldReadsItsRecords(const std::string &examples)
                 auto &successors = B.steps[s].succs;
                 successors.push_back(reboundStep);
                 std::sort(successors.begin(), successors.end());
-                successors.erase(std::unique(successors.begin(), successors.end()), successors.end());
+                successors.erase(
+                    std::unique(successors.begin(), successors.end()),
+                    successors.end());
                 const int from = B.clustering.clusterOf[s];
                 const int to = B.clustering.clusterOf[size_t(reboundStep)];
                 CHECK_AT(where, from >= 0 && to >= 0);
                 if (from >= 0 && to >= 0 && from != to) {
                     for (const int cluster : {from, to}) {
-                        const auto &saved = B.clustering.clusters[size_t(cluster)];
-                        originalClusterEdges.push_back({cluster, saved.preds, saved.succs});
+                        const auto &saved =
+                            B.clustering.clusters[size_t(cluster)];
+                        originalClusterEdges.push_back(
+                            {cluster, saved.preds, saved.succs});
                     }
-                    auto &clusterPreds = B.clustering.clusters[size_t(to)].preds;
-                    auto &clusterSuccs = B.clustering.clusters[size_t(from)].succs;
+                    auto &clusterPreds =
+                        B.clustering.clusters[size_t(to)].preds;
+                    auto &clusterSuccs =
+                        B.clustering.clusters[size_t(from)].succs;
                     clusterPreds.push_back(from);
                     clusterSuccs.push_back(to);
                     std::sort(clusterPreds.begin(), clusterPreds.end());
-                    clusterPreds.erase(std::unique(clusterPreds.begin(), clusterPreds.end()), clusterPreds.end());
+                    clusterPreds.erase(
+                        std::unique(clusterPreds.begin(), clusterPreds.end()),
+                        clusterPreds.end());
                     std::sort(clusterSuccs.begin(), clusterSuccs.end());
-                    clusterSuccs.erase(std::unique(clusterSuccs.begin(), clusterSuccs.end()), clusterSuccs.end());
+                    clusterSuccs.erase(
+                        std::unique(clusterSuccs.begin(), clusterSuccs.end()),
+                        clusterSuccs.end());
                     const auto &order = B.clustering.topologicalOrder;
-                    const auto sourcePosition = std::find(order.begin(), order.end(), from);
-                    const auto consumerPosition = std::find(order.begin(), order.end(), to);
-                    CHECK_AT(where, sourcePosition != order.end() && consumerPosition != order.end());
+                    const auto sourcePosition =
+                        std::find(order.begin(), order.end(), from);
+                    const auto consumerPosition =
+                        std::find(order.begin(), order.end(), to);
+                    CHECK_AT(where, sourcePosition != order.end() &&
+                                        consumerPosition != order.end());
                     CHECK_AT(where, sourcePosition < consumerPosition);
                 }
             }
     CHECK_AT(where, producers == 1);
     std::sort(declared.preds.begin(), declared.preds.end());
-    declared.preds.erase(std::unique(declared.preds.begin(), declared.preds.end()), declared.preds.end());
+    declared.preds.erase(
+        std::unique(declared.preds.begin(), declared.preds.end()),
+        declared.preds.end());
     error.clear();
     CHECK_AT(where, RigExecBakedValidateStepGraph(B, &error));
     if (!error.empty()) {
@@ -1752,8 +1783,7 @@ TestTheFoldReadsItsRecords(const std::string &examples)
     CHECK_AT(where, reads.r5 == reads.r1);
     CHECK_AT(where, reads.r1 == before.r1);
     CHECK_AT(where, reads.r2 == before.r2);
-    auto reference =
-        MakeEvaluator(stage, kRecordRig, true);
+    auto reference = MakeEvaluator(stage, kRecordRig, true);
     if (reference) {
         const RigExecRigPose walked = reference->Evaluate(UsdTimeCode(8.0));
         CHECK_AT(where, walked.valid);
@@ -1774,8 +1804,8 @@ TestTheFoldReadsItsRecords(const std::string &examples)
     CHECK_AT(where, RigExecBakedValidateStepGraph(B, &error));
     CHECK_AT(where, evaluator->Evaluate(UsdTimeCode(1.0)).valid);
     CHECK_AT(where,
-             ReadRecordPoints(evaluator->Evaluate(UsdTimeCode(8.0)), true)
-                     .r5 == before.r5);
+             ReadRecordPoints(evaluator->Evaluate(UsdTimeCode(8.0)), true).r5 ==
+                 before.r5);
 }
 
 // 13_ReadPhases plus an unrelated chain: Other, moved by a matrix mover on a
@@ -1855,9 +1885,9 @@ TestAPhasedRigSkipsOnRepeat(const std::string &examples)
     if (!stage) {
         return;
     }
-    CHECK_AT(where, rigExec::RigExecInputReplayImportFromString(stage->GetSessionLayer(), kFreeChain));
-    auto baked =
-        MakeEvaluator(stage, kReadPhaseRig, false);
+    CHECK_AT(where, rigExec::RigExecInputReplayImportFromString(
+                        stage->GetSessionLayer(), kFreeChain));
+    auto baked = MakeEvaluator(stage, kReadPhaseRig, false);
     if (!baked) {
         return;
     }
@@ -1914,7 +1944,8 @@ TestAPhasedRigSkipsOnRepeat(const std::string &examples)
     CHECK_AT(where, !lift.empty() && !twist.empty() && !free.empty());
     const auto anyRan = [&B](const std::vector<int> &steps) {
         for (const int step : steps) {
-            if ((size_t(step) < B.opExecution.ran.size() && B.opExecution.ran[size_t(step)])) {
+            if ((size_t(step) < B.opExecution.ran.size() &&
+                 B.opExecution.ran[size_t(step)])) {
                 return true;
             }
         }
@@ -1923,11 +1954,13 @@ TestAPhasedRigSkipsOnRepeat(const std::string &examples)
     const auto poseRan = [&B]() {
         size_t count = 0;
         for (const RigExecBakedStep &step : B.steps) {
-            count += (size_t(&step - B.steps.data()) < B.opExecution.ran.size() && B.opExecution.ran[size_t(&step - B.steps.data())]) &&
-                             std::string(RigExecBakedStepDomainName(
-                                 step.kind)) == "pose"
-                         ? 1
-                         : 0;
+            count +=
+                (size_t(&step - B.steps.data()) < B.opExecution.ran.size() &&
+                 B.opExecution.ran[size_t(&step - B.steps.data())]) &&
+                        std::string(RigExecBakedStepDomainName(step.kind)) ==
+                            "pose"
+                    ? 1
+                    : 0;
         }
         return count;
     };
@@ -1946,9 +1979,9 @@ TestAPhasedRigSkipsOnRepeat(const std::string &examples)
 
     // FreeCtl reaches Other only: Lift's and Twist's matrices stay clean,
     // and the cage the lattice reads at `final` is the one they left.
-    const std::vector<RigExecValueOverride> drag{RigExecValueOverride{
-        SdfPath("/ReadPhaseAsset/Rig/Controls/FreeCtl"), TfToken(),
-        TfToken("avars:ty"), VtValue(0.75)}};
+    const std::vector<RigExecValueOverride> drag{
+        RigExecValueOverride{SdfPath("/ReadPhaseAsset/Rig/Controls/FreeCtl"),
+                             TfToken(), TfToken("avars:ty"), VtValue(0.75)}};
     baked->SetInteractiveOverrides(drag);
     const RigExecRigPose dragged = baked->Evaluate(time);
     CHECK_AT(where + " dragged", dragged.valid);
@@ -1956,8 +1989,7 @@ TestAPhasedRigSkipsOnRepeat(const std::string &examples)
     CHECK_AT(where + " dragged", !anyRan(lift) && !anyRan(twist));
     CHECK_AT(where + " dragged",
              Moved(dragged, kOther) != Moved(first, kOther));
-    auto reference = MakeEvaluator(stage, kReadPhaseRig,
-                                   true);
+    auto reference = MakeEvaluator(stage, kReadPhaseRig, true);
     if (!reference) {
         return;
     }
@@ -1978,8 +2010,8 @@ void
 TestSolverCheckpointSteps(const std::string &examples)
 {
     const std::string where = "solver checkpoint steps";
-    const UsdStageRefPtr stage = UsdStage::Open(
-        examples + "/../tests/fixtures/solver_checkpoint.usda");
+    const UsdStageRefPtr stage =
+        UsdStage::Open(examples + "/../tests/fixtures/solver_checkpoint.usda");
     CHECK_AT(where, stage);
     if (!stage) {
         return;
@@ -1987,8 +2019,7 @@ TestSolverCheckpointSteps(const std::string &examples)
     const SdfPath p1("/CheckpointAsset/Rig/Movers/P1");
     const SdfPath legFk("/CheckpointAsset/Rig/Stack/LegFK");
     auto evaluator =
-        MakeEvaluator(stage, SdfPath("/CheckpointAsset/Rig"),
-                      true);
+        MakeEvaluator(stage, SdfPath("/CheckpointAsset/Rig"), true);
     if (!evaluator) {
         return;
     }
@@ -2009,15 +2040,23 @@ TestSolverCheckpointSteps(const std::string &examples)
             B.frameRecords[size_t(step.object)].mover == legFk) {
             recordStep = int(s);
             const auto &record = B.frameRecords[size_t(step.object)];
-            CHECK_AT(where, B.paths[size_t(record.slot)] ==
-                                SdfPath("/CheckpointAsset/Rig/Joints/Hip/Knee"));
+            CHECK_AT(where,
+                     B.paths[size_t(record.slot)] ==
+                         SdfPath("/CheckpointAsset/Rig/Joints/Hip/Knee"));
             CHECK_AT(where, record.mover == legFk);
-            CHECK_AT(where, record.commit >= 0 && size_t(record.commit) < B.commits.size());
-            if (record.commit >= 0 && size_t(record.commit) < B.commits.size()) {
+            CHECK_AT(where, record.commit >= 0 &&
+                                size_t(record.commit) < B.commits.size());
+            if (record.commit >= 0 &&
+                size_t(record.commit) < B.commits.size()) {
                 const auto &commit = B.commits[size_t(record.commit)];
-                CHECK_AT(where, record.position >= 0 && size_t(record.position) < commit.slotWrites.size());
-                if (record.position >= 0 && size_t(record.position) < commit.slotWrites.size())
-                    CHECK_AT(where, record.version == commit.slotWrites[size_t(record.position)]);
+                CHECK_AT(where,
+                         record.position >= 0 && size_t(record.position) <
+                                                     commit.slotWrites.size());
+                if (record.position >= 0 &&
+                    size_t(record.position) < commit.slotWrites.size())
+                    CHECK_AT(where,
+                             record.version ==
+                                 commit.slotWrites[size_t(record.position)]);
             }
         }
     }
@@ -2038,21 +2077,25 @@ TestSolverCheckpointSteps(const std::string &examples)
     }
     CHECK_AT(where, commitStep >= 0);
     const std::vector<int> &preds = B.steps[size_t(recordStep)].preds;
-    CHECK_AT(where, std::find(preds.begin(), preds.end(), commitStep) !=
-                        preds.end());
+    CHECK_AT(where,
+             std::find(preds.begin(), preds.end(), commitStep) != preds.end());
 }
 
 // C1 is a pure positional constraint: Lead rest origin (1,0,0) plus the
 // literal tx=3 and ty=1 puts X at (4,1,0). X's rest origin is (0,.5,0),
 // so this checkpoint matrix is exactly Translate(4,.5,0), independent of
 // the later C2/C3 revisions and of the program's stored matrix.
-void TestLiteralCheckpointUnderOverride(const std::string &examples)
+void
+TestLiteralCheckpointUnderOverride(const std::string &examples)
 {
-    const auto stage = UsdStage::Open(examples + "/../tests/fixtures/frame_record_fallbacks.usda");
+    const auto stage = UsdStage::Open(
+        examples + "/../tests/fixtures/frame_record_fallbacks.usda");
     CHECK(stage);
-    if (!stage) return;
-    auto evaluator = MakeEvaluator(stage,kRecordRig,true);
-    if (!evaluator) return;
+    if (!stage)
+        return;
+    auto evaluator = MakeEvaluator(stage, kRecordRig, true);
+    if (!evaluator)
+        return;
     RigExecValueOverride drag;
     drag.prim = SdfPath("/RecordAsset/Rig/Controls/Lead");
     drag.attribute = TfToken("avars:tx");
@@ -2061,18 +2104,20 @@ void TestLiteralCheckpointUnderOverride(const std::string &examples)
     const auto pose = evaluator->Evaluate(UsdTimeCode(1));
     CHECK(pose.valid && pose.referenceMismatches == 0);
     const auto &B = evaluator->GetBakedProgram()->GetStepGraph();
-    std::map<int,rigExecTest::LiteralFrameFact> facts;
+    std::map<int, rigExecTest::LiteralFrameFact> facts;
     for (size_t id = 0; id < B.frameRecords.size(); ++id) {
-        if (B.frameRecords[id].mover != kRecordC1) continue;
+        if (B.frameRecords[id].mover != kRecordC1)
+            continue;
         rigExecTest::LiteralFrameFact fact;
-        fact.frame.points = {GfVec3d(4,1,0),GfVec3d(5,1,0),
-                             GfVec3d(4,2,0),GfVec3d(4,1,1)};
-        fact.matrix.SetTranslate(GfVec3d(4,.5,0));
+        fact.frame.points = {GfVec3d(4, 1, 0), GfVec3d(5, 1, 0),
+                             GfVec3d(4, 2, 0), GfVec3d(4, 1, 1)};
+        fact.matrix.SetTranslate(GfVec3d(4, .5, 0));
         fact.hasValue = true;
-        facts.emplace(int(id),fact);
+        facts.emplace(int(id), fact);
     }
     CHECK(facts.size() == 1);
-    CHECK(rigExecTest::CheckFrameRecords(&failures,"literal C1 checkpoint",*evaluator,&facts) > 0);
+    CHECK(rigExecTest::CheckFrameRecords(&failures, "literal C1 checkpoint",
+                                         *evaluator, &facts) > 0);
 }
 // RigExecBakedEvalFrameRecord's gates on a hand-built program, including
 // the two exits no authored rig reaches with a catalogued transform
@@ -2184,8 +2229,7 @@ TestSolverCheckpointGuard()
     CHECK(missing(binds, {solver}).empty());
     CHECK(missing(binds, {}) == std::vector<SdfPath>{solver});
     CHECK(missing(elsewhere, {solver}) == std::vector<SdfPath>{solver});
-    CHECK(missing(decltype(binds){}, {solver}) ==
-          std::vector<SdfPath>{solver});
+    CHECK(missing(decltype(binds){}, {solver}) == std::vector<SdfPath>{solver});
 }
 
 std::string
@@ -2198,7 +2242,7 @@ DefaultResourceDir()
 #endif
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)

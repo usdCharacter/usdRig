@@ -86,6 +86,6 @@ struct RigExecLiveOperationGraph {
     std::vector<RigExecLiveOpEdge> edges;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_LIVE_OPERATION_GRAPH_H
+#endif // RIGEXEC_LIVE_OPERATION_GRAPH_H
