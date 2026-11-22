@@ -39,17 +39,8 @@ function(rigexec_get_exact_fp_directory_flags out_var)
     set(${out_var} ${_rigexec_fp_dir} PARENT_SCOPE)
 endfunction()
 
-# PRIVATE: regex matching a complete compiler argument that sets the
-# floating-point reassociation, contraction, or precision mode. Every
-# alternative is anchored, so a match is one whole argument: a mode
-# spelling inside another argument's value (-DFP_LABEL="-ffast-math") is a
-# preprocessor definition and never matches. Callers split an entry into
-# arguments with rigexec_fp_strip_mode_arguments. Each result-altering
-# sub-option of -ffast-math is listed on its own: one spelled after the
-# canonical flags restores the loosened mode past them. The canonical
-# flags themselves match, so a rejecting caller first excludes an argument
-# equal to a canonical flag; the IEEE-safe negations match nothing and
-# leave their target alone.
+# PRIVATE: matches one whole compiler argument that sets the floating-point
+# mode. Anchoring keeps a mode spelling inside another argument's value data.
 function(rigexec_get_exact_fp_mode_regex out_var)
     set(_rigexec_fp_modes
         "-ffast-math"
@@ -72,39 +63,47 @@ function(rigexec_get_exact_fp_mode_regex out_var)
     set(${out_var} "${_rigexec_fp_regex}" PARENT_SCOPE)
 endfunction()
 
-# PRIVATE: rewrite one option entry with each mode-switch argument it spells
-# removed, and report the removed spellings. An argument ends at whitespace
-# and at generator-expression punctuation, which stays put so a rewritten
-# entry keeps a shape CMake accepts ($<cond:> is legal). A SHELL: group is
-# split into the arguments the entry contributes: its quotes are grouping
-# syntax that never reaches the compiler, so a quoted standalone switch is
-# one argument, while a mode spelling glued behind = is not. Quote characters
-# outside a SHELL: group reach the compiler verbatim, so they are not
-# argument boundaries. Callers that reject read the removal list and leave
-# the entry alone; callers that rewrite use the entry. An entry with no
-# mode switch comes back unchanged, and one whose only argument was a mode
-# switch comes back empty.
+# PRIVATE: rewrite one option entry with each mode-switch argument removed,
+# reporting the removals; a SHELL: payload is split by CMake's own shell
+# parser and rebuilt from the surviving arguments.
 function(rigexec_fp_strip_mode_arguments entry entry_out found_out)
     rigexec_get_exact_fp_mode_regex(_rigexec_sm_mode)
-    set(_rigexec_sm_prefix "")
-    set(_rigexec_sm_group "")
-    set(_rigexec_sm_body "${entry}")
-    if (_rigexec_sm_body MATCHES "^SHELL:")
-        set(_rigexec_sm_prefix "SHELL:")
-        string(SUBSTRING "${_rigexec_sm_body}" 6 -1 _rigexec_sm_body)
-        while (_rigexec_sm_body MATCHES "^[\"](.*)[\"]$")
-            string(APPEND _rigexec_sm_group "\"")
-            set(_rigexec_sm_body "${CMAKE_MATCH_1}")
-        endwhile ()
+    set(_rigexec_sm_found "")
+    if (entry MATCHES "^SHELL:")
+        string(SUBSTRING "${entry}" 6 -1 _rigexec_sm_payload)
+        separate_arguments(_rigexec_sm_args UNIX_COMMAND
+            "${_rigexec_sm_payload}")
+        set(_rigexec_sm_kept "")
+        foreach (_rigexec_sm_arg IN LISTS _rigexec_sm_args)
+            if (_rigexec_sm_arg MATCHES "${_rigexec_sm_mode}")
+                list(APPEND _rigexec_sm_found "${_rigexec_sm_arg}")
+            else ()
+                rigexec_fp_spell_shell_argument("${_rigexec_sm_arg}"
+                    _rigexec_sm_spelled)
+                list(APPEND _rigexec_sm_kept "${_rigexec_sm_spelled}")
+            endif ()
+        endforeach ()
+        if (NOT _rigexec_sm_found)
+            set(${entry_out} "${entry}" PARENT_SCOPE)
+            set(${found_out} "" PARENT_SCOPE)
+            return ()
+        endif ()
+        list(JOIN _rigexec_sm_kept " " _rigexec_sm_body)
+        if (_rigexec_sm_body STREQUAL "")
+            set(${entry_out} "" PARENT_SCOPE)
+        else ()
+            set(${entry_out} "SHELL:${_rigexec_sm_body}" PARENT_SCOPE)
+        endif ()
+        set(${found_out} "${_rigexec_sm_found}" PARENT_SCOPE)
+        return ()
     endif ()
-    string(APPEND _rigexec_sm_body " ")
+    set(_rigexec_sm_body "${entry} ")
     string(LENGTH "${_rigexec_sm_body}" _rigexec_sm_len)
     set(_rigexec_sm_i 0)
     set(_rigexec_sm_out "")
     set(_rigexec_sm_gap "")
     set(_rigexec_sm_run "")
     set(_rigexec_sm_quote 0)
-    set(_rigexec_sm_found "")
     while (_rigexec_sm_i LESS _rigexec_sm_len)
         string(SUBSTRING "${_rigexec_sm_body}" ${_rigexec_sm_i} 1
             _rigexec_sm_ch)
@@ -169,18 +168,26 @@ function(rigexec_fp_strip_mode_arguments entry entry_out found_out)
     if (_rigexec_sm_out STREQUAL "")
         set(${entry_out} "" PARENT_SCOPE)
     else ()
-        set(_rigexec_sm_entry "${_rigexec_sm_prefix}${_rigexec_sm_group}")
-        string(APPEND _rigexec_sm_entry "${_rigexec_sm_out}")
-        string(APPEND _rigexec_sm_entry "${_rigexec_sm_group}")
-        set(${entry_out} "${_rigexec_sm_entry}" PARENT_SCOPE)
+        set(${entry_out} "${_rigexec_sm_out}" PARENT_SCOPE)
     endif ()
     set(${found_out} "${_rigexec_sm_found}" PARENT_SCOPE)
 endfunction()
 
-# PRIVATE: 1 when a SHELL: group carries a generator expression: CMake
-# expands it at generate time, past this pass, so the group's arguments
-# cannot be established here and the group is reported rather than judged
-# or rewritten.
+# PRIVATE: re-spell a parsed shell argument so a rebuilt SHELL: group hands it
+# back as the same single argument.
+function(rigexec_fp_spell_shell_argument arg out_var)
+    if (arg MATCHES "^[A-Za-z0-9_+=,./:@-]+$")
+        set(${out_var} "${arg}" PARENT_SCOPE)
+        return ()
+    endif ()
+    string(REPLACE "\\" "\\\\" _rigexec_ss "${arg}")
+    string(REPLACE "\"" "\\\"" _rigexec_ss "${_rigexec_ss}")
+    set(${out_var} "\"${_rigexec_ss}\"" PARENT_SCOPE)
+endfunction()
+
+# PRIVATE: 1 when a generator expression, which CMake expands after this pass,
+# picks the arguments of a SHELL: group; its caller reports the group rather
+# than judging or rewriting it.
 function(rigexec_fp_group_unestablished entry out_var)
     if (entry MATCHES "^SHELL:.*[$]<")
         set(${out_var} 1 PARENT_SCOPE)

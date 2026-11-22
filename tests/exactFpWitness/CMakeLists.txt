@@ -13,11 +13,14 @@
 # expression options whose every expanded argument is harmless.
 # WITNESS_LABEL_OPTION adds definitions whose values spell a fast-math
 # sub-option, and WITNESS_LABEL_SWITCH adds that sub-option as a real
-# option beside them. WITNESS_QSHELL_OPTION and WITNESS_QGROUP_OPTION
-# group that sub-option inside a SHELL: entry's own quotes, which never
-# reach the compiler as part of the arguments the entry contributes.
-# WITNESS_EXPR_GROUP and WITNESS_OWN_EXPR_GROUP let an expression pick
-# the content of a SHELL: entry, which is unknown until generate time.
+# option beside them. WITNESS_QSHELL_OPTION, WITNESS_QSHELL_SQ_OPTION and
+# WITNESS_QSHELL_AFTER_OPTION group a switch inside a SHELL: entry's own
+# quotes, which never reach the compiler as part of the arguments the
+# entry contributes, and WITNESS_QGROUP_OPTION shares such a group with a
+# definition. WITNESS_LITERAL_GROUP quotes a switch inside one group
+# argument. WITNESS_EXPR_GROUP and WITNESS_OWN_EXPR_GROUP let an
+# expression pick the content of a SHELL: entry, which is unknown until
+# generate time.
 cmake_minimum_required(VERSION 3.26)
 project(rigexec_exact_fp_witness LANGUAGES CXX)
 
@@ -294,14 +297,53 @@ if (WITNESS_QSHELL_OPTION)
 endif ()
 
 if (WITNESS_QGROUP_OPTION)
-    # The switch shares one quoted SHELL: group with an independent
-    # definition: the switch must be cut out of the grouping and the
-    # definition must still reach the translation unit.
+    # The switch shares a SHELL: group with an independent definition:
+    # the group contributes two arguments, the switch must be cut out of
+    # the grouping, and the definition must still reach the translation
+    # unit as its own argument.
     add_executable(witnessQGroup
         probe.cpp
         "${_gen_dir}/generatedProbe.cpp")
     target_compile_options(witnessQGroup PRIVATE
-        "SHELL:\"${WITNESS_UNSAFE_FLAG} -DKEEP_QG=1\"")
+        "SHELL:\"${WITNESS_UNSAFE_FLAG}\" -DKEEP_QG=1")
+endif ()
+
+if (WITNESS_QSHELL_SQ_OPTION)
+    # The same standalone switch inside single quotes: those quotes are
+    # part of the group's payload, not of the argument the payload
+    # contributes, so the entry still places a complete switch after the
+    # canonical flags.
+    add_library(fpQuotedSq INTERFACE)
+    target_compile_options(fpQuotedSq INTERFACE
+        "SHELL:'${WITNESS_UNSAFE_FLAG}'")
+    add_executable(witnessQuotedSq
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    target_link_libraries(witnessQuotedSq PRIVATE fpQuotedSq)
+endif ()
+
+if (WITNESS_QSHELL_AFTER_OPTION)
+    # A quoted switch following a harmless argument in one group: the
+    # group's arguments are ranked after the canonical flags, so the
+    # switch is a conflict the helper cannot remove.
+    add_library(fpQuotedAfter INTERFACE)
+    target_compile_options(fpQuotedAfter INTERFACE
+        "SHELL:-DKEEP_QA=1 \"${WITNESS_UNSAFE_FLAG}\"")
+    add_executable(witnessQuotedAfter
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    target_link_libraries(witnessQuotedAfter PRIVATE fpQuotedAfter)
+endif ()
+
+if (WITNESS_LITERAL_GROUP)
+    # One group argument that merely spells a switch inside its own
+    # quoted text: cutting it out would change an argument the author
+    # wrote, so the entry has to reach the compiler exactly as authored.
+    add_executable(witnessLiteralGroup
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    target_compile_options(witnessLiteralGroup PRIVATE
+        "SHELL:\"${WITNESS_UNSAFE_FLAG} -DKEEP_LD=1\"")
 endif ()
 
 if (WITNESS_EXPR_GROUP)

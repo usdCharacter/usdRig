@@ -704,7 +704,7 @@ foreach (_w_needle IN ITEMS
     endif ()
 endforeach ()
 
-# Legs 22-30: -ffast-math's reassociation sub-options spelled on their own
+# Legs 22-33: -ffast-math's reassociation sub-options spelled on their own
 # after the canonical pair restore the loosened mode past it, so the
 # matcher must classify every resolved compiler argument and only that
 # argument. GNU-only: MSVC has no such spelling, and its /fp: family is
@@ -881,10 +881,10 @@ if (NOT _msvc)
     endforeach ()
 endif ()
 
-# Leg 28: the same quoted group as the target's own option, sharing the
-# entry with an independent definition: the switch is cut out of the
-# grouping, the definition survives as its own argument, and the probe
-# still prints the exact-mode patterns.
+# Leg 28: the same shape as the target's own option, where the group
+# contributes two arguments: the switch is cut out of the grouping, the
+# definition survives as its own argument, and the probe still prints the
+# exact-mode patterns.
 if (NOT _msvc)
     set(_work28 "${BUILD_ROOT}/third_party-qgroup-own")
     _witness_configure("${_work28}"
@@ -970,6 +970,89 @@ if (NOT _msvc)
                 "the option (${_needle}):\n${WITNESS_LOG}")
         endif ()
     endforeach ()
+endif ()
+
+# Legs 31-32: a standalone switch in an interface group, spelled in single
+# quotes, and spelled after a harmless argument in the same group. Each
+# group contributes the switch as a complete argument placed after the
+# canonical pair, so the rejection names the consuming target, the owning
+# interface target, the entry as authored, and the conflicting switch.
+if (NOT _msvc)
+    set(_work31 "${BUILD_ROOT}/qshell-single-quote")
+    _witness_configure("${_work31}"
+        "-DWITNESS_UNSAFE_FLAG=${_unsafe_flag}"
+        -DWITNESS_QSHELL_SQ_OPTION=ON)
+    if (WITNESS_RC EQUAL 0)
+        _witness_fail("a switch in single quotes inside a group reached the "
+            "build without a diagnostic (rc=0)")
+    endif ()
+    set(_needles31
+        "target witnessQuotedSq carries"
+        "fpQuotedSq: SHELL:'${_unsafe_flag}'"
+        "conflicting option \\(${_unsafe_flag}\\)")
+    foreach (_needle IN LISTS _needles31)
+        if (NOT WITNESS_LOG MATCHES "${_needle}")
+            _witness_fail("single-quoted group rejection lacks "
+                "'${_needle}':\n${WITNESS_LOG}")
+        endif ()
+    endforeach ()
+
+    set(_work32 "${BUILD_ROOT}/qshell-after-argument")
+    _witness_configure("${_work32}"
+        "-DWITNESS_UNSAFE_FLAG=${_unsafe_flag}"
+        -DWITNESS_QSHELL_AFTER_OPTION=ON)
+    if (WITNESS_RC EQUAL 0)
+        _witness_fail("a group placing its switch after its own argument "
+            "reached the build without a diagnostic (rc=0)")
+    endif ()
+    set(_needles32
+        "target witnessQuotedAfter carries"
+        "fpQuotedAfter: SHELL:-DKEEP_QA=1 \"${_unsafe_flag}\""
+        "conflicting option \\(${_unsafe_flag}\\)")
+    foreach (_needle IN LISTS _needles32)
+        if (NOT WITNESS_LOG MATCHES "${_needle}")
+            _witness_fail("group-after-argument rejection lacks "
+                "'${_needle}':\n${WITNESS_LOG}")
+        endif ()
+    endforeach ()
+endif ()
+
+# Leg 33: one group argument whose own quoted text spells a switch. That
+# text is data, so the entry has to reach the compiler exactly as
+# authored; the target is never built, since the compiler rejects that
+# argument on its own.
+if (NOT _msvc)
+    set(_work33 "${BUILD_ROOT}/literal-group-own")
+    _witness_configure("${_work33}"
+        "-DWITNESS_UNSAFE_FLAG=${_unsafe_flag}"
+        -DWITNESS_LITERAL_GROUP=ON)
+    if (NOT WITNESS_RC EQUAL 0)
+        _witness_fail("a group holding one argument that only spells a "
+            "switch aborted the configure (rc=${WITNESS_RC}):\n"
+            "${WITNESS_LOG}")
+    endif ()
+    if (WITNESS_LOG MATCHES "witnessLiteralGroup:")
+        _witness_fail("the helper rewrote an argument that only spells a "
+            "switch inside it:\n${WITNESS_LOG}")
+    endif ()
+    if (EXISTS "${_work33}/compile_commands.json")
+        file(READ "${_work33}/compile_commands.json" _cc33)
+        _witness_count("${_cc33}" "\\\"${_unsafe_flag} -DKEEP_LD=1\\\"" _n)
+        if (NOT _n EQUAL 2)
+            _witness_fail("the authored group appears ${_n} times instead of "
+                "once per source command")
+        endif ()
+        _witness_count("${_cc33}" "-DKEEP_LD=1" _n)
+        if (NOT _n EQUAL 2)
+            _witness_fail("-DKEEP_LD=1 appears ${_n} times, so the group was "
+                "split into separate arguments")
+        endif ()
+        _witness_count("${_cc33}" "-fno-fast-math" _n)
+        if (_n LESS 1)
+            _witness_fail("the exact-FP settings are missing from a target "
+                "whose group was left alone")
+        endif ()
+    endif ()
 endif ()
 
 message(STATUS "exactFpCompilerWitness: command audit and numeric probes "
