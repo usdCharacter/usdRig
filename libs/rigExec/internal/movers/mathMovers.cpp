@@ -104,7 +104,6 @@ _MakeFloatHandler()
         rigExec::SchemaTypeName::RigExecFloatMathMover,
         &rigExec::RigExecNoMoverOp, rigExec::RigExecMoverDomain::PropertyFloat);
     handler.singleTarget = true;
-    handler.legacyEnvelopeAttribute = rigExec::SchemaAttrText::inputsWeight;
     handler.validate = &_ValidateMathMoverOp;
     return handler;
 }
@@ -116,7 +115,6 @@ _MakeVec3fHandler()
         rigExec::SchemaTypeName::RigExecVec3fMathMover,
         &rigExec::RigExecNoMoverOp, rigExec::RigExecMoverDomain::PropertyVec3f);
     handler.singleTarget = true;
-    handler.legacyEnvelopeAttribute = rigExec::SchemaAttrText::inputsWeight;
     handler.validate = &_ValidateMathMoverOp;
     return handler;
 }
@@ -129,7 +127,6 @@ _MakeMatrixHandler()
         &rigExec::RigExecNoMoverOp,
         rigExec::RigExecMoverDomain::PropertyMatrix);
     handler.singleTarget = true;
-    handler.legacyEnvelopeAttribute = rigExec::SchemaAttrText::inputsWeight;
     handler.validate = &_ValidateMathMoverOp;
     return handler;
 }

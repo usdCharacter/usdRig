@@ -10,7 +10,7 @@ const rigExec::RigExecOpHandle &Scale();
 const rigExec::RigExecPortHandle &ScaleIn();
 const rigExec::RigExecPortHandle &ScaleOut();
 
-/// Runs after Scale.
+/// out = in + 1.
 const rigExec::RigExecOpHandle &Offset();
 const rigExec::RigExecPortHandle &OffsetIn();
 const rigExec::RigExecPortHandle &OffsetOut();

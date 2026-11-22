@@ -973,25 +973,6 @@ RigExecRigEvaluator::_DiscoverMovers(
                 }
             }
 
-            // Reject the row's predecessor envelope name; it would be inert.
-            // Movers without one have nothing to reject.
-            {
-                const RigExecMoverRegistration *migration =
-                    RigExecFindMoverRegistration(record.schemaType);
-                if (migration &&
-                    !migration->legacyEnvelopeAttribute.IsEmpty()) {
-                    const TfToken &oldName = migration->legacyEnvelopeAttribute;
-                    const UsdAttribute old = prim.GetAttribute(oldName);
-                    if (old && old.HasAuthoredValue()) {
-                        return fail(
-                            record.schemaType.GetString() + " " +
-                                prim.GetPath().GetString() + " authors " +
-                                oldName.GetString() +
-                                ", which was replaced by inputs:defaultWeight",
-                            {prim.GetPath()});
-                    }
-                }
-            }
             // Read-phase attributes are refused; use rigExecReadPhase metadata
             // on the input relationship.
             for (const _RemovedPhase &removed : _removedPhases) {

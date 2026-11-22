@@ -100,7 +100,6 @@ _MakeHandler()
         &rigExec::RigExecFixedMoverOp<rigExec::RigExecRevisionOp::Smooth>,
         rigExec::RigExecMoverDomain::Points);
     handler.singleTarget = true;
-    handler.legacyEnvelopeAttribute = rigExec::SchemaAttrText::inputsStrength;
     handler.bind = &_BindSmoothMover;
     handler.oracle = &_OracleSmoothMover;
     return handler;

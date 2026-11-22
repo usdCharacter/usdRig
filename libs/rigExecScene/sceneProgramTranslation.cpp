@@ -263,22 +263,6 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
                                    " must have exactly one canonical points "
                                    "target in v0.1 (multi-target fan-out would "
                                    "alias mover-level parameters)");
-        if (handler && handler->legacyEnvelopeAttribute) {
-            // Matched by name among the captured attributes: no token from text.
-            auto old = scene.attributes.end();
-            for (const auto &path : node->second.attributes)
-                if (path.GetName() == handler->legacyEnvelopeAttribute) {
-                    old = scene.attributes.find(path);
-                    break;
-                }
-            if (old != scene.attributes.end() &&
-                old->second.fact.hasAuthoredReadableValue)
-                return Fail(error,
-                            node->second.fact.type.GetString() + " " +
-                                owner.GetString() + " authors " +
-                                handler->legacyEnvelopeAttribute +
-                                ", which was replaced by inputs:defaultWeight");
-        }
         if (node->second.domain == RigExecSceneDomain::GeometryMover)
             for (const auto &target : targets) {
                 const auto prim = scene.nodes.find(target.GetPrimPath());

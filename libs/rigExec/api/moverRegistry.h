@@ -193,9 +193,6 @@ struct RigExecMoverHandler {
     /// the same check. Null for movers with none (only the matrix mover
     /// measures against a space).
     const char *spaceRelationship = nullptr;
-    /// Pre-MoverAPI envelope attr; authoring it is a compile error. Null for
-    /// movers with none.
-    const char *legacyEnvelopeAttribute = nullptr;
     /// Mover attributes the compiled rig layout is assembled from (skin only):
     /// override tracking re-reads exactly these on a notice.
     std::vector<TfToken> layoutAttributes;
@@ -324,7 +321,6 @@ struct RigExecMoverRegistration {
     TfToken schemaType;
     TfToken transformRelationship;
     TfToken spaceRelationship;
-    TfToken legacyEnvelopeAttribute;
 };
 
 /// RigExecFindMoverHandler with the interned names; same lifetime and

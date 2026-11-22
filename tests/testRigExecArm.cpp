@@ -2026,22 +2026,6 @@ TestSmoothMoverUniversalEnvelope()
             GfVec3d(base[i]) + (center - GfVec3d(base[i])) * spatial[i];
         CHECK(Near(GfVec3d(fieldMoved[i]), expected));
     }
-
-    // The old type-specific spelling must fail closed rather than compose as
-    // an ignored custom attribute.
-    const UsdStageRefPtr legacy = makeStage(1.0f, nullptr);
-    legacy->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/S"))
-        .CreateAttribute(TfToken("inputs:strength"), SdfValueTypeNames->Float,
-                         true)
-        .Set(0.5f);
-    RigExecRigEvaluator legacyEvaluator(legacy, SdfPath("/Asset/Rig"));
-    legacyEvaluator.cpuReference = true;
-    std::vector<std::string> errors;
-    CHECK(!legacyEvaluator.Compile(&errors));
-    CHECK(std::any_of(errors.begin(), errors.end(), [](const std::string &e) {
-        return e.find("inputs:strength") != std::string::npos &&
-               e.find("inputs:defaultWeight") != std::string::npos;
-    }));
 }
 
 // The scalar property domain uses the same contract.  A one-element constant
@@ -2105,22 +2089,6 @@ TestPropertyMoverUniversalEnvelope()
     }
     const float field = 0.75f;
     CHECK(std::abs(valueAt(makeStage(0.25f, &field)) - 8.0f) < 1e-6f);
-
-    // It is not an alias: only BlendInput keeps that spelling for channel
-    // amplitude.
-    const UsdStageRefPtr legacy = makeStage(1.0f, nullptr);
-    legacy->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/Add"))
-        .CreateAttribute(TfToken("inputs:weight"), SdfValueTypeNames->Float,
-                         true)
-        .Set(0.5f);
-    RigExecRigEvaluator legacyEvaluator(legacy, SdfPath("/Asset/Rig"));
-    legacyEvaluator.cpuReference = true;
-    std::vector<std::string> errors;
-    CHECK(!legacyEvaluator.Compile(&errors));
-    CHECK(std::any_of(errors.begin(), errors.end(), [](const std::string &e) {
-        return e.find("inputs:weight") != std::string::npos &&
-               e.find("inputs:defaultWeight") != std::string::npos;
-    }));
 }
 
 // Negative compile: a weight object whose target does not canonicalize to

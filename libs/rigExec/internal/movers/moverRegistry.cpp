@@ -47,8 +47,6 @@ struct _Entry {
         registration.transformRelationship =
             _Intern(handler.transformRelationship);
         registration.spaceRelationship = _Intern(handler.spaceRelationship);
-        registration.legacyEnvelopeAttribute =
-            _Intern(handler.legacyEnvelopeAttribute);
     }
     std::string schemaType;
     RigExecMoverHandler handler;

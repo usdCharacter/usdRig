@@ -93,7 +93,6 @@ _MakeHandler()
             rigExec::RigExecRevisionOp::VolumeCorrect>,
         rigExec::RigExecMoverDomain::Points);
     handler.singleTarget = true;
-    handler.legacyEnvelopeAttribute = rigExec::SchemaAttrText::inputsStrength;
     handler.bind = &_BindVolumeCorrectMover;
     handler.oracle = &_OracleVolumeCorrectMover;
     return handler;
