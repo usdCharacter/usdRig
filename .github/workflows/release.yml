@@ -616,6 +616,9 @@ jobs:
   smoke-linux:
     name: run vfx${{ matrix.year }} on ${{ matrix.distro }}
     needs: build-linux
+    # Test every year that built, even when another year's build failed;
+    # a year with no bundle fails at its download step.
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
