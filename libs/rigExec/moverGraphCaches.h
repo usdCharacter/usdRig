@@ -77,16 +77,19 @@ struct RigExecWireBasis;
 ///   * precedence: a value this generation already resolved in memory (a
 ///     property chain result, an interactive override) is consulted before
 ///     the cache is, by RigExecResolvedInputs::GetAttribute.
-class RigExecStaticInputCache
-{
+class RigExecStaticInputCache {
 public:
-    RigExecStaticInputCache() { Clear(); }
+    RigExecStaticInputCache()
+    {
+        Clear();
+    }
 
     /// Forgets everything. Called on every notice: the cache holds authored
     /// values, and a notice is the only way an authored value moves.
     ///
     /// Counters are cumulative; Clear() keeps them.
-    void Clear() {
+    void Clear()
+    {
         _entries.clear();
         // The cache is single-threaded state. It is stamped with the thread
         // that owns it here so a read from a worker (a parallel chain walk)
@@ -97,7 +100,8 @@ public:
     /// Forgets the entry for \p path alone: a changed-info notice on one
     /// property. Takes ownership for the calling thread exactly as Clear()
     /// does, because the thread that handles notices is the one that reads.
-    void Erase(const SdfPath &path) {
+    void Erase(const SdfPath &path)
+    {
         _entries.erase(path);
         _owner = std::this_thread::get_id();
     }
@@ -105,7 +109,8 @@ public:
     /// Forgets every entry at or under any of \p prefixes: a resync, or a
     /// change on a prim, reaches every property beneath it. One pass over
     /// the entries for all of them. Re-stamps the owner as Clear() does.
-    void ErasePrefixes(const std::vector<SdfPath> &prefixes) {
+    void ErasePrefixes(const std::vector<SdfPath> &prefixes)
+    {
         _owner = std::this_thread::get_id();
         if (prefixes.empty()) {
             return;
@@ -124,7 +129,8 @@ public:
     /// attribute is not cacheable and the caller must read it the long way.
     template <class T>
     bool Read(const UsdAttribute &attribute, const SdfPath &path,
-              UsdTimeCode time, T *out, bool *handled) {
+              UsdTimeCode time, T *out, bool *handled)
+    {
         *handled = false;
         if (_owner != std::this_thread::get_id()) {
             // Not this cache's thread: neither the map nor the counters may
@@ -175,14 +181,26 @@ public:
     }
 
     /// How many entries are held, cacheable or refused.
-    size_t GetSize() const { return _entries.size(); }
+    size_t GetSize() const
+    {
+        return _entries.size();
+    }
     /// Reads answered from a held value.
-    size_t GetHitCount() const { return _hits; }
+    size_t GetHitCount() const
+    {
+        return _hits;
+    }
     /// Reads that arrived from a thread that does not own the cache.
-    size_t GetBypassCount() const { return _bypasses; }
+    size_t GetBypassCount() const
+    {
+        return _bypasses;
+    }
     /// Reads on an attribute that admission refused, which the caller then
     /// resolved the long way.
-    size_t GetRefusalCount() const { return _refusals; }
+    size_t GetRefusalCount() const
+    {
+        return _refusals;
+    }
 
 private:
     struct _Entry {
@@ -214,50 +232,62 @@ private:
 /// the same revision reached every exec consumer through a value override.
 /// This is the other half of that path: one lookup, consulted first, holding
 /// whatever the current generation has already resolved.
-class RigExecResolvedInputs
-{
+class RigExecResolvedInputs {
 public:
     /// Records a property chain's result for \p path.
-    void SetProperty(const SdfPath &path, const VtValue &value) {
+    void SetProperty(const SdfPath &path, const VtValue &value)
+    {
         _erased.erase(path);
         _values[path] = value;
     }
 
     /// Forgets \p path, so a read of it goes back to the stage.
-    void ClearProperty(const SdfPath &path) {
+    void ClearProperty(const SdfPath &path)
+    {
         _values.erase(path);
-        if (_base && _base->Find(path)) _erased.insert(path);
+        if (_base && _base->Find(path))
+            _erased.insert(path);
     }
 
     /// Consumer-local overlay over an immutable source layer. The borrowed
     /// base must outlive this overlay; clones/shadows detach or reset it.
-    void SetChainedBase(const RigExecResolvedInputs *base) {
-        _values.clear(); _erased.clear();
+    void SetChainedBase(const RigExecResolvedInputs *base)
+    {
+        _values.clear();
+        _erased.clear();
         _base = base == this ? nullptr : base;
-        if (_base) _cache = _base->_cache;
+        if (_base)
+            _cache = _base->_cache;
     }
 
     /// Cold snapshot operations own their effective values independently.
-    RigExecResolvedInputs DetachedCopy() const {
+    RigExecResolvedInputs DetachedCopy() const
+    {
         RigExecResolvedInputs copy;
-        if (_base) copy = _base->DetachedCopy();
-        for (const auto &path : _erased) copy._values.erase(path);
-        for (const auto &entry : _values) copy._values[entry.first] = entry.second;
+        if (_base)
+            copy = _base->DetachedCopy();
+        for (const auto &path : _erased)
+            copy._values.erase(path);
+        for (const auto &entry : _values)
+            copy._values[entry.first] = entry.second;
         copy._cache = _cache;
         return copy;
     }
 
     /// The resolved value for \p path, or null to read the stage.
-    const VtValue *Find(const SdfPath &path) const {
+    const VtValue *Find(const SdfPath &path) const
+    {
         const auto it = _values.find(path);
-        if (it != _values.end()) return &it->second;
-        if (_erased.count(path)) return nullptr;
+        if (it != _values.end())
+            return &it->second;
+        if (_erased.count(path))
+            return nullptr;
         return _base ? _base->Find(path) : nullptr;
     }
 
     /// Typed convenience: true when \p path resolved to a \p T.
-    template <class T>
-    bool Get(const SdfPath &path, T *out) const {
+    template <class T> bool Get(const SdfPath &path, T *out) const
+    {
         const VtValue *v = Find(path);
         if (!v || !v->IsHolding<T>()) {
             return false;
@@ -273,16 +303,20 @@ public:
     /// cardinality/type/cycles for schema inputs that require one scalar.
     /// The float cast GetAttribute applies to a double source; false for
     /// every other type, which never reaches it.
-    template <class T>
-    static bool _CoerceFromDouble(double, T *) { return false; }
-    static bool _CoerceFromDouble(double value, float *out) {
+    template <class T> static bool _CoerceFromDouble(double, T *)
+    {
+        return false;
+    }
+    static bool _CoerceFromDouble(double value, float *out)
+    {
         *out = static_cast<float>(value);
         return true;
     }
 
     template <class T>
-    bool GetAttribute(
-        const UsdAttribute &attribute, UsdTimeCode time, T *out) const {
+    bool GetAttribute(const UsdAttribute &attribute, UsdTimeCode time,
+                      T *out) const
+    {
         RIGEXEC_PURITY_CHECK();
         if (!out) {
             return false;
@@ -311,14 +345,15 @@ public:
         // read skips the path hash; the path itself is spelled once and shared
         // with the cache lookup below.
         if (attribute) {
-            const bool checkOverlay = !_values.empty() || (_base && !_base->IsEmpty());
+            const bool checkOverlay =
+                !_values.empty() || (_base && !_base->IsEmpty());
             const SdfPath attrPath =
                 (checkOverlay || _cache) ? attribute.GetPath() : SdfPath();
             if (!checkOverlay || !Find(attrPath)) {
                 if (_cache) {
                     bool handled = false;
-                    const bool got = _cache->Read(
-                        attribute, attrPath, time, out, &handled);
+                    const bool got =
+                        _cache->Read(attribute, attrPath, time, out, &handled);
                     if (handled) {
                         return got;
                     }
@@ -385,9 +420,11 @@ public:
     /// consulted while \p layer holds anything; a null or empty layer is
     /// GetAttribute exactly.
     template <class T>
-    bool GetAttributeOverStageLayer(
-        const UsdAttribute &attribute, UsdTimeCode time,
-        const std::map<SdfPath, VtValue> *layer, T *out) const {
+    bool GetAttributeOverStageLayer(const UsdAttribute &attribute,
+                                    UsdTimeCode time,
+                                    const std::map<SdfPath, VtValue> *layer,
+                                    T *out) const
+    {
         if (!layer || layer->empty()) {
             return GetAttribute(attribute, time, out);
         }
@@ -407,8 +444,8 @@ public:
             if (attribute &&
                 attribute.GetTypeName() == SdfValueTypeNames->Double) {
                 double wide = 0.0;
-                if (!GetAttributeOverStageLayer<double>(attribute, time,
-                                                        layer, &wide)) {
+                if (!GetAttributeOverStageLayer<double>(attribute, time, layer,
+                                                        &wide)) {
                     return false;
                 }
                 return _CoerceFromDouble(wide, out);
@@ -449,22 +486,36 @@ public:
         return false;
     }
 
-    bool IsEmpty() const { return GetSize() == 0; }
-    size_t GetSize() const {
-        if (!_base) return _values.size();
+    bool IsEmpty() const
+    {
+        return GetSize() == 0;
+    }
+    size_t GetSize() const
+    {
+        if (!_base)
+            return _values.size();
         // This cold inspection is not used by consumer typed lookup.
         return DetachedCopy()._values.size();
     }
     /// Whether \p other holds the same values at the same paths.
-    bool HasSameValues(const RigExecResolvedInputs &other) const {
+    bool HasSameValues(const RigExecResolvedInputs &other) const
+    {
         return DetachedCopy()._values == other.DetachedCopy()._values;
     }
-    void Clear() { _values.clear(); _erased.clear(); _base = nullptr; }
+    void Clear()
+    {
+        _values.clear();
+        _erased.clear();
+        _base = nullptr;
+    }
 
     /// Attaches the owner's static-input cache. Not owned, and not cleared
     /// by Clear(): this object is emptied every generation, while the cache
     /// spans generations and is invalidated by stage notices.
-    void SetStaticCache(RigExecStaticInputCache *cache) { _cache = cache; }
+    void SetStaticCache(RigExecStaticInputCache *cache)
+    {
+        _cache = cache;
+    }
 
 private:
     std::unordered_map<SdfPath, VtValue, SdfPath::Hash> _values;
@@ -488,8 +539,7 @@ private:
 /// asks here. The lock decides nothing: a layout is a pure function of the
 /// mover's authored arrays, so whichever task happens to build it builds the
 /// same one, and after the first frame of a compiled rig every call is a hit.
-class RigExecSkinTopologyCache
-{
+class RigExecSkinTopologyCache {
 public:
     /// The layout for \p mover, calling \p build on a miss. \p build fills
     /// a fresh topology; whatever it produces -- validated or not -- is what
@@ -501,11 +551,12 @@ public:
     /// frame instead. The refusal is remembered exactly as a layout is, so
     /// the question costs one answer per notice and not one per frame; a
     /// refused mover answers null until the next Clear().
-    std::shared_ptr<const RigExecSkinTopology> Resolve(
-        const SdfPath &mover,
-        const std::function<bool(RigExecSkinTopology *)> &build);
+    std::shared_ptr<const RigExecSkinTopology>
+    Resolve(const SdfPath &mover,
+            const std::function<bool(RigExecSkinTopology *)> &build);
 
-    void Clear() {
+    void Clear()
+    {
         std::lock_guard<std::mutex> lock(_mutex);
         // Dropped as ANSWERS, kept as candidates. Every notice clears this
         // cache, including the overwhelming majority that touched no
@@ -521,7 +572,8 @@ public:
         }
         _entries.clear();
     }
-    size_t GetSize() const {
+    size_t GetSize() const
+    {
         std::lock_guard<std::mutex> lock(_mutex);
         return _entries.size();
     }
@@ -554,8 +606,7 @@ private:
 /// Resolve() is safe to call from several chain tasks at once. The lock
 /// decides nothing -- a layout is a pure function of the sample's authored
 /// arrays, so whichever task builds it builds the same one.
-class RigExecBlendSampleCache
-{
+class RigExecBlendSampleCache {
 public:
     /// The shape for \p sample, calling \p build on a miss.
     ///
@@ -564,17 +615,19 @@ public:
     /// frame instead. The refusal is remembered exactly as a shape is, so the
     /// question costs one answer per notice and not one per frame; a refused
     /// sample answers null until the next Clear().
-    std::shared_ptr<const RigExecBlendSampleLayout> Resolve(
-        const SdfPath &sample,
-        const std::function<bool(RigExecBlendSampleLayout *)> &build);
+    std::shared_ptr<const RigExecBlendSampleLayout>
+    Resolve(const SdfPath &sample,
+            const std::function<bool(RigExecBlendSampleLayout *)> &build);
 
     /// Adopt after the evaluator's Run joins, with stage edits and evaluator
     /// calls serialized on its owner thread. Equal layouts retain identity.
-    std::shared_ptr<const RigExecBlendSampleLayout> AdoptExclusive(
-        const SdfPath &sample,
-        std::shared_ptr<const RigExecBlendSampleLayout> layout, bool refused);
+    std::shared_ptr<const RigExecBlendSampleLayout>
+    AdoptExclusive(const SdfPath &sample,
+                   std::shared_ptr<const RigExecBlendSampleLayout> layout,
+                   bool refused);
 
-    void Clear() {
+    void Clear()
+    {
         std::lock_guard<std::mutex> lock(_mutex);
         // Dropped as ANSWERS, kept as candidates -- see
         // RigExecSkinTopologyCache::Clear for why handing back a fresh
@@ -590,7 +643,8 @@ public:
     /// Clear() for the one sample \p sample: its shape is dropped as an
     /// answer and kept as a candidate, so a re-read that finds the same
     /// arrays hands back the same pointer.
-    void Erase(const SdfPath &sample) {
+    void Erase(const SdfPath &sample)
+    {
         std::lock_guard<std::mutex> lock(_mutex);
         const auto found = _entries.find(sample);
         if (found == _entries.end()) {
@@ -601,7 +655,8 @@ public:
         }
         _entries.erase(found);
     }
-    size_t GetSize() const {
+    size_t GetSize() const
+    {
         std::lock_guard<std::mutex> lock(_mutex);
         return _entries.size();
     }
@@ -629,8 +684,7 @@ private:
 /// at a time) and one per baked revision (run by one step at a time), so no
 /// lock guards it. A copy shares the immutable entries, which is how a frozen
 /// clone starts from the program's bases.
-class RigExecWireBasisCache
-{
+class RigExecWireBasisCache {
 public:
     /// Entries held before the map is cleared; bind tables are fixed in
     /// practice, so one owner rarely holds more than one.
@@ -639,23 +693,30 @@ public:
     /// The basis for \p p's bind table over \p indices on a mesh of
     /// \p meshPoints points, built on a miss; null for an invalid curve
     /// layout.
-    std::shared_ptr<const RigExecWireBasis> Get(
-        const RigExecMoverParameters &p, const std::vector<int> &indices,
-        size_t meshPoints);
+    std::shared_ptr<const RigExecWireBasis> Get(const RigExecMoverParameters &p,
+                                                const std::vector<int> &indices,
+                                                size_t meshPoints);
 
-    size_t Size() const { return _entries.size(); }
+    size_t Size() const
+    {
+        return _entries.size();
+    }
     /// Test observable: bases built since construction (copies included).
-    size_t BuildCount() const { return _builds; }
+    size_t BuildCount() const
+    {
+        return _builds;
+    }
 
 private:
     struct _Entry;
     std::unordered_map<uint64_t, std::shared_ptr<const _Entry>> _entries;
     size_t _builds = 0;
     std::shared_ptr<const _Entry> _last;
+
 public:
-    RigExecWireRestCache<GfVec3f,GfVec2f> restEvaluations;
+    RigExecWireRestCache<GfVec3f, GfVec2f> restEvaluations;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_MOVER_GRAPH_CACHES_H
+#endif // RIGEXEC_MOVER_GRAPH_CACHES_H

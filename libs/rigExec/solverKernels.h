@@ -47,10 +47,8 @@ struct RigExecPointFrameArray;
 /// the ribbon is carried through it. \p jointRestLive selects the
 /// samples that were really written; the others keep the rest curve.
 RigExecPointFrameArray RigExecSampleRibbonFrames(
-    const std::vector<GfVec3f> &posed,
-    const std::vector<GfVec3f> &rest,
-    int sampleCount,
-    const std::vector<std::array<GfVec3d, 4>> &jointRests = {},
+    const std::vector<GfVec3f> &posed, const std::vector<GfVec3f> &rest,
+    int sampleCount, const std::vector<std::array<GfVec3d, 4>> &jointRests = {},
     const std::vector<bool> &jointRestLive = {});
 
 /// Resolves the sample positions of a RigExecTwistDistribution: leaves an
@@ -79,11 +77,9 @@ void RigExecResolveTwistWeights(int count, std::vector<double> *weights);
 /// the baked program: the rests half is the part a second expression would
 /// most easily get wrong, since it is not what RigExecDistributeTwist returns.
 RigExecPointFrameArray RigExecSolveTwistDistribution(
-    const RigExecPointFrame &start,
-    const RigExecPointFrame &end,
+    const RigExecPointFrame &start, const RigExecPointFrame &end,
     const std::array<GfVec3d, 4> &startRest,
-    const std::array<GfVec3d, 4> &endRest,
-    const std::vector<double> &weights,
+    const std::array<GfVec3d, 4> &endRest, const std::vector<double> &weights,
     double twistTurns,
     const std::vector<std::array<GfVec3d, 4>> &jointRests = {},
     const std::vector<bool> &jointRestLive = {});
@@ -126,8 +122,7 @@ bool RigExecFrameRotation(const RigExecPointFrame &frame, GfQuatd *out);
 bool RigExecFrameTranslation(const RigExecPointFrame &driverFinal,
                              const RigExecPointFrame &driverRest,
                              const RigExecPointFrame *parentFinal,
-                             const RigExecPointFrame *parentRest,
-                             GfVec3d *out);
+                             const RigExecPointFrame *parentRest, GfVec3d *out);
 
 /// Linear blend of two transforms, decomposed: translation and scale lerp,
 /// rotation slerps. `weight` 0 returns \p a unchanged and 1 returns \p b
@@ -146,10 +141,8 @@ GfMatrix4d RigExecBlendTransforms(const GfMatrix4d &a, const GfMatrix4d &b,
 /// An all-true mask returns \p m untouched rather than round-tripping it
 /// through a decomposition, so the ordinary space switch -- every axis on --
 /// is exact and costs nothing.
-GfMatrix4d RigExecMaskTransform(const GfMatrix4d &m,
-                                const bool translation[3],
-                                const bool rotation[3],
-                                const bool scale[3]);
+GfMatrix4d RigExecMaskTransform(const GfMatrix4d &m, const bool translation[3],
+                                const bool rotation[3], const bool scale[3]);
 
 /// How RigExecFilterSpaceRotation splits a rotation. `Orient` keeps the
 /// whole rotation; the space switch then takes the position from the
@@ -169,8 +162,7 @@ enum class RigExecRotationFilter { All, Twist, Swing, Orient };
 ///
 /// `All` returns \p m untouched rather than round-tripping it through a
 /// decomposition, so an unfiltered space is exact and costs nothing.
-GfMatrix4d RigExecFilterSpaceRotation(const GfMatrix4d &m,
-                                      const GfVec3d &axis,
+GfMatrix4d RigExecFilterSpaceRotation(const GfMatrix4d &m, const GfVec3d &axis,
                                       RigExecRotationFilter filter);
 
 /// A rotation-only space: the switch delta \p delta (target-local, so the
@@ -183,6 +175,6 @@ GfMatrix4d RigExecOrientSpaceDelta(const GfMatrix4d &delta,
                                    const GfMatrix4d &localInverse,
                                    const GfMatrix4d &unswitched);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_SOLVER_KERNELS_H
+#endif // RIGEXEC_SOLVER_KERNELS_H

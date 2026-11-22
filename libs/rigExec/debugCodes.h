@@ -14,7 +14,6 @@ TF_DEBUG_CODES(
     /// Wall time inside the ExecUsdSystem calls made by RigExecTapSet:
     /// BuildRequest, PrepareRequest (compilation) and Compute (execution),
     /// plus the tap count each request carries.
-    RIGEXEC_TAP_TIMING
-);
+    RIGEXEC_TAP_TIMING);
 
-#endif  // RIGEXEC_DEBUG_CODES_H
+#endif // RIGEXEC_DEBUG_CODES_H

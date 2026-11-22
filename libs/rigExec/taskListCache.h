@@ -74,6 +74,6 @@ private:
     size_t _stores = 0;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_TASK_LIST_CACHE_H
+#endif // RIGEXEC_TASK_LIST_CACHE_H

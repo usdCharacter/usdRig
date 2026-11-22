@@ -16,36 +16,42 @@ struct RigExecIndependentConstraintInputs {
 };
 
 // Numerical dispatch only; admission and commit are the caller's.
-inline bool RigExecIndependentConstraintCandidate(
+inline bool
+RigExecIndependentConstraintCandidate(
     const RigExecIndependentConstraintInputs &input,
     RigExecPointFrame *candidate)
 {
-    if (!candidate) return false;
+    if (!candidate)
+        return false;
     *candidate = input.entering;
     switch (input.kind) {
     case RigExecIndependentConstraintInputs::Kind::Rotation:
-        *candidate = RigExecApplyRotationConstraint(input.entering,input.sources,input.rotation);
+        *candidate = RigExecApplyRotationConstraint(
+            input.entering, input.sources, input.rotation);
         return true;
     case RigExecIndependentConstraintInputs::Kind::Parent:
-        *candidate = RigExecApplyParentConstraint(input.entering,input.sources,input.parent);
+        *candidate = RigExecApplyParentConstraint(input.entering, input.sources,
+                                                  input.parent);
         return true;
     case RigExecIndependentConstraintInputs::Kind::Aim: {
         GfVec3d target(0);
         double total = 0;
-        for (const auto &source:input.sources) {
+        for (const auto &source : input.sources) {
             if (!std::isfinite(source.normalizedWeight) ||
-                source.normalizedWeight < 0) return false;
+                source.normalizedWeight < 0)
+                return false;
             target += source.frame.Origin() * source.normalizedWeight;
             total += source.normalizedWeight;
         }
         if (total > 0) {
             target /= total;
-            *candidate = RigExecApplyAimConstraint(input.entering,target,input.aim);
+            *candidate =
+                RigExecApplyAimConstraint(input.entering, target, input.aim);
         }
         return true;
     }
     }
     return false;
 }
-}
+} // namespace rigExec
 #endif

@@ -19,10 +19,9 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExec {
 namespace {
-const GfVec3d _affectAxes[3] = {
-    GfVec3d(1, 0, 0), GfVec3d(0, 1, 0), GfVec3d(0, 0, 1)};
+const GfVec3d _affectAxes[3] = {GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
+                                GfVec3d(0, 0, 1)};
 }
-
 
 // The ribbon sampler, shared by the RigExecRibbon exec callback and by the
 // baked program, which samples the same two curves with no VdfNetwork around
@@ -52,14 +51,12 @@ _RebaseElement(const std::array<GfVec3d, 4> &ownRest,
     return true;
 }
 
-}  // namespace
+} // namespace
 
 RigExecPointFrameArray
 RigExecSampleRibbonFrames(const std::vector<GfVec3f> &posed,
-                          const std::vector<GfVec3f> &rest,
-                          int sampleCount,
-                          const std::vector<std::array<GfVec3d, 4>>
-                              &jointRests,
+                          const std::vector<GfVec3f> &rest, int sampleCount,
+                          const std::vector<std::array<GfVec3d, 4>> &jointRests,
                           const std::vector<bool> &jointRestLive)
 {
     RigExecPointFrameArray result;
@@ -92,8 +89,8 @@ RigExecSampleRibbonFrames(const std::vector<GfVec3f> &posed,
         // A sample a pose step below the ribbon already wrote is re-based
         // onto what that step left; every other sample keeps the rest
         // curve's own frame as its basis.
-        if (size_t(k) < jointRests.size() && size_t(k) < jointRestLive.size()
-            && jointRestLive[size_t(k)] &&
+        if (size_t(k) < jointRests.size() && size_t(k) < jointRestLive.size() &&
+            jointRestLive[size_t(k)] &&
             _RebaseElement(restPoints, jointRests[size_t(k)], &frame)) {
             restPoints = jointRests[size_t(k)];
         }
@@ -123,19 +120,16 @@ RigExecResolveTwistWeights(int count, std::vector<double> *weights)
 // every frame paired with the START landmarks, which is what the aggregate's
 // consumers re-solve against -- cannot be re-derived differently.
 RigExecPointFrameArray
-RigExecSolveTwistDistribution(const RigExecPointFrame &start,
-                              const RigExecPointFrame &end,
-                              const std::array<GfVec3d, 4> &startRest,
-                              const std::array<GfVec3d, 4> &endRest,
-                              const std::vector<double> &weights,
-                              double twistTurns,
-                              const std::vector<std::array<GfVec3d, 4>>
-                                  &jointRests,
-                              const std::vector<bool> &jointRestLive)
+RigExecSolveTwistDistribution(
+    const RigExecPointFrame &start, const RigExecPointFrame &end,
+    const std::array<GfVec3d, 4> &startRest,
+    const std::array<GfVec3d, 4> &endRest, const std::vector<double> &weights,
+    double twistTurns, const std::vector<std::array<GfVec3d, 4>> &jointRests,
+    const std::vector<bool> &jointRestLive)
 {
     RigExecPointFrameArray result;
     result.frames = RigExecDistributeTwist(start, end, startRest, endRest,
-        weights, twistTurns);
+                                           weights, twistTurns);
     result.rests.assign(result.frames.size(), startRest);
     // Same rule, same helper: an element a step below this solver wrote is
     // re-based onto what that step left, measured from the START landmarks
@@ -171,18 +165,16 @@ bool
 _FrameMatrix(const RigExecPointFrame &frame, GfMatrix4d *out)
 {
     return frame.IsValid() && !frame.IsDegenerate() &&
-           RigExecPointsToMatrix(RigExecIdentityLandmarks(), frame.points,
-                                 out);
+           RigExecPointsToMatrix(RigExecIdentityLandmarks(), frame.points, out);
 }
 
-}  // namespace
+} // namespace
 
 bool
 RigExecFrameTranslation(const RigExecPointFrame &driverFinal,
                         const RigExecPointFrame &driverRest,
                         const RigExecPointFrame *parentFinal,
-                        const RigExecPointFrame *parentRest,
-                        GfVec3d *out)
+                        const RigExecPointFrame *parentRest, GfVec3d *out)
 {
     GfMatrix4d world(1.0), restWorld(1.0);
     if (!_FrameMatrix(driverFinal, &world) ||
@@ -248,7 +240,7 @@ _Recompose(const _Decomposed &d)
     return transform.GetMatrix();
 }
 
-}  // namespace
+} // namespace
 
 GfMatrix4d
 RigExecBlendTransforms(const GfMatrix4d &a, const GfMatrix4d &b, double weight)
@@ -330,15 +322,17 @@ RigExecMaskTransform(const GfMatrix4d &m, const bool translation[3],
                      const bool rotation[3], const bool scale[3])
 {
     const bool all = translation[0] && translation[1] && translation[2] &&
-                     rotation[0] && rotation[1] && rotation[2] &&
-                     scale[0] && scale[1] && scale[2];
+                     rotation[0] && rotation[1] && rotation[2] && scale[0] &&
+                     scale[1] && scale[2];
     if (all) {
         return m;
     }
     _Decomposed d = _Decompose(m);
     for (int axis = 0; axis < 3; ++axis) {
-        if (!translation[axis]) d.translation[axis] = 0.0;
-        if (!scale[axis]) d.scale[axis] = 1.0;
+        if (!translation[axis])
+            d.translation[axis] = 0.0;
+        if (!scale[axis])
+            d.scale[axis] = 1.0;
     }
     if (!rotation[0] || !rotation[1] || !rotation[2]) {
         // Per-axis rotation masking is an EULER statement -- "keep the X
@@ -363,13 +357,14 @@ RigExecMaskTransform(const GfMatrix4d &m, const bool translation[3],
             z = 0.0;
         }
         const auto &axes = _affectAxes;
-        const double angles[3] = {GfRadiansToDegrees(x),
-                                  GfRadiansToDegrees(y),
+        const double angles[3] = {GfRadiansToDegrees(x), GfRadiansToDegrees(y),
                                   GfRadiansToDegrees(z)};
         GfMatrix4d composed(1.0);
         for (int axis = 0; axis < 3; ++axis) {
-            if (!rotation[axis] || angles[axis] == 0.0) continue;
-            composed = composed *
+            if (!rotation[axis] || angles[axis] == 0.0)
+                continue;
+            composed =
+                composed *
                 GfMatrix4d(GfRotation(axes[axis], angles[axis]), GfVec3d(0));
         }
         d.rotation = composed.ExtractRotationQuat();
@@ -377,4 +372,4 @@ RigExecMaskTransform(const GfMatrix4d &m, const bool translation[3],
     return _Recompose(d);
 }
 
-}  // namespace rigExec
+} // namespace rigExec

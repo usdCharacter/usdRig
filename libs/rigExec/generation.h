@@ -35,8 +35,8 @@ namespace rigExec {
 /// frees its arena and exits; the caller evaluates live instead.
 inline bool
 RigExecGenerationCheckAtStart(const RigExecBackgroundScheduler &scheduler,
-                             const SdfPath &rig,
-                             RigExecFrameGeneration generation)
+                              const SdfPath &rig,
+                              RigExecFrameGeneration generation)
 {
     return scheduler.IsGenerationCurrent(rig, generation);
 }
@@ -48,9 +48,9 @@ RigExecGenerationCheckAtStart(const RigExecBackgroundScheduler &scheduler,
 /// The same predicate as CheckAtStart. Re-checked after the run: an edit
 /// during the run drops it.
 inline bool
-RigExecGenerationCheckBeforePublish(
-    const RigExecBackgroundScheduler &scheduler, const SdfPath &rig,
-    RigExecFrameGeneration generation)
+RigExecGenerationCheckBeforePublish(const RigExecBackgroundScheduler &scheduler,
+                                    const SdfPath &rig,
+                                    RigExecFrameGeneration generation)
 {
     return scheduler.IsGenerationCurrent(rig, generation);
 }
@@ -82,6 +82,6 @@ RigExecShouldMemoizeUiThreadResult(bool bakeRefused)
     return true;
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_GENERATION_H
+#endif // RIGEXEC_GENERATION_H

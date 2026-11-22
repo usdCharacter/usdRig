@@ -57,7 +57,6 @@ bool RigExecBakedValidateStepGraph(const RigExecBakedProgramImpl &program,
 bool RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &program,
                                   std::string *error);
 
-
 /// The clusters a value edit on override index \p index re-runs, when the
 /// index is a ladder channel's (kEditRouteHead): the rest and ladder ops
 /// whose binding leaves hold it, their forward closure within the head
@@ -72,14 +71,14 @@ std::vector<int> RigExecBakedHeadSeeds(const RigExecBakedProgramImpl &program,
 /// per head step, the clusters its closure's outputs reach; the head steps
 /// whose binding leaves hold \p index's leaf; and the clusters a set of
 /// head steps reaches, sorted.
-std::vector<RigExecBakedClusterSet> RigExecBakedHeadOpSeeds(
-    const RigExecBakedProgramImpl &program);
-std::vector<uint32_t> RigExecBakedHeadOpsReading(
-    const RigExecBakedProgramImpl &program, int index);
-std::vector<int> RigExecBakedHeadSeedsFrom(
-    const RigExecBakedProgramImpl &program,
-    const std::vector<RigExecBakedClusterSet> &opSeeds,
-    const std::vector<uint32_t> &ops);
+std::vector<RigExecBakedClusterSet>
+RigExecBakedHeadOpSeeds(const RigExecBakedProgramImpl &program);
+std::vector<uint32_t>
+RigExecBakedHeadOpsReading(const RigExecBakedProgramImpl &program, int index);
+std::vector<int>
+RigExecBakedHeadSeedsFrom(const RigExecBakedProgramImpl &program,
+                          const std::vector<RigExecBakedClusterSet> &opSeeds,
+                          const std::vector<uint32_t> &ops);
 
 /// Assigns every step from \p firstStep on its size, its cost and its
 /// longest-path level.
@@ -117,8 +116,8 @@ size_t RigExecBakedTranslationConcurrency(const RigExecBakedProgramImpl &B);
 /// to be topological too (RigExecValidateOpClusters checks it). A cycle is a
 /// coding error and leaves the clusters on it out of the answer. Build caches
 /// the result as `RigExecBakedClustering::topologicalOrder`.
-std::vector<int> RigExecBakedClusterTopologicalOrder(
-    const RigExecBakedClustering &clustering);
+std::vector<int>
+RigExecBakedClusterTopologicalOrder(const RigExecBakedClustering &clustering);
 
 /// Computes cluster reachability and source-to-operation lookup tables.
 ///
@@ -136,7 +135,8 @@ void RigExecBakedBuildCones(RigExecBakedProgramImpl *program);
 /// Dispatches one body with optional timing and immutable check-row capture.
 /// \p profiling stamps the body interval; the run's owner decides it once.
 void RigExecBakedRunStepBody(RigExecBakedProgramImpl *program,
-    RigExecBakedStep *step, UsdTimeCode time, bool profiling);
+                             RigExecBakedStep *step, UsdTimeCode time,
+                             bool profiling);
 
 /// The clock RigExecProfiler::NowUs reads, in nanoseconds: a plain clock
 /// read, so an op may stamp itself with it.
@@ -144,13 +144,16 @@ uint64_t RigExecBakedNowNs();
 
 void RigExecBakedPrepareHeadOps(RigExecBakedProgramImpl *);
 
-std::vector<char> RigExecBakedExpectedStageFramesAdmissionReads(const RigExecBakedProgramImpl &);
+std::vector<char>
+RigExecBakedExpectedStageFramesAdmissionReads(const RigExecBakedProgramImpl &);
 void RigExecBakedDeclareStageFramesAdmission(RigExecBakedProgramImpl *);
 bool RigExecBakedRequiresStageFramesAdmission(const RigExecBakedStep &);
-bool RigExecBakedPublishStageFramesRefusal(RigExecBakedProgramImpl *, RigExecRigPose *);
-void RigExecBakedFinishHeadOp(RigExecBakedProgramImpl *, const RigExecBakedStep &);
+bool RigExecBakedPublishStageFramesRefusal(RigExecBakedProgramImpl *,
+                                           RigExecRigPose *);
+void RigExecBakedFinishHeadOp(RigExecBakedProgramImpl *,
+                              const RigExecBakedStep &);
 bool RigExecBakedHeadValueChanged(const RigExecBakedProgramImpl &,
-    RigExecBakedSlotDomain, uint32_t slot);
+                                  RigExecBakedSlotDomain, uint32_t slot);
 
 /// Zeroes the last execution's flags, completion numbers and counts, and the
 /// stamps of the steps runs since the last clear listed (`stampedSteps`).
@@ -210,8 +213,8 @@ std::string RigExecBakedScheduleReport(const RigExecBakedProgramImpl &program);
 /// Separate from the structural report because it is the only part of the
 /// schedule that is an observation: the structure can be printed at Build,
 /// this can only be printed after a frame.
-std::string RigExecBakedScheduleRunReport(
-    const RigExecBakedProgramImpl &program);
+std::string
+RigExecBakedScheduleRunReport(const RigExecBakedProgramImpl &program);
 
 /// Whether RIGEXEC_BAKED_SCHEDULE_REPORT asks for that dump on stderr.
 bool RigExecBakedScheduleReportRequested();
@@ -254,6 +257,6 @@ void RigExecBakedStepTimingReport(RigExecBakedProgramImpl *program);
 /// accumulated so far.
 std::string RigExecBakedStepTimingTable(const RigExecBakedProgramImpl &program);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_BAKED_SCHEDULE_H
+#endif // RIGEXEC_BAKED_SCHEDULE_H

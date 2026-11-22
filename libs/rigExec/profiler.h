@@ -157,16 +157,14 @@ public:
         event.startUs = startUs;
         event.durationUs = endUs >= startUs ? endUs - startUs : 0;
         event.threadIndex = _ThreadIndexLocked(
-            runner == std::thread::id() ? std::this_thread::get_id()
-                                        : runner);
+            runner == std::thread::id() ? std::this_thread::get_id() : runner);
         event.args = std::move(args);
         _events.push_back(std::move(event));
     }
 
     /// Records one instant point (a hit, a miss, a cancel) at \p timeUs,
     /// attributed to the calling thread. No-op unless enabled.
-    void RecordInstant(std::string name, std::string category,
-                       uint64_t timeUs,
+    void RecordInstant(std::string name, std::string category, uint64_t timeUs,
                        std::map<std::string, std::string> args = {}) const
     {
         if (!IsEnabled()) {
@@ -190,8 +188,7 @@ public:
     /// Records one counter sample (queue depth, running jobs, cancel
     /// counts) at \p timeUs, attributed to the calling thread. No-op unless
     /// enabled. The values write as JSON numbers.
-    void RecordCounter(std::string name, std::string category,
-                       uint64_t timeUs,
+    void RecordCounter(std::string name, std::string category, uint64_t timeUs,
                        std::map<std::string, double> counters) const
     {
         if (!IsEnabled()) {
@@ -237,8 +234,7 @@ public:
         if (!IsEnabled()) {
             return;
         }
-        RecordCounter("warmQueue", kRigExecProfileCategoryScheduler,
-                      NowUs(),
+        RecordCounter("warmQueue", kRigExecProfileCategoryScheduler, NowUs(),
                       {{"queuedDepth", double(queuedDepth)},
                        {"running", double(running)},
                        {"canceled", double(canceled)}});
@@ -247,16 +243,13 @@ public:
     /// The scheduler lane: one instant point per purge on the "scheduler"
     /// category, with the purged count and the cause ("edit", "playback",
     /// or "shutdown"). No-op unless enabled.
-    void RecordSchedulerCancel(size_t purged,
-                               const std::string &cause) const
+    void RecordSchedulerCancel(size_t purged, const std::string &cause) const
     {
         if (!IsEnabled()) {
             return;
         }
-        RecordInstant("warmCancel", kRigExecProfileCategoryScheduler,
-                      NowUs(),
-                      {{"purged", std::to_string(purged)},
-                       {"cause", cause}});
+        RecordInstant("warmCancel", kRigExecProfileCategoryScheduler, NowUs(),
+                      {{"purged", std::to_string(purged)}, {"cause", cause}});
     }
 
     /// A copy of every recorded event, in completion order.
@@ -286,8 +279,7 @@ public:
     std::vector<RigExecProfileSummaryRow> Summarize() const
     {
         std::lock_guard<std::mutex> lock(_mutex);
-        std::map<std::pair<std::string, std::string>,
-                 RigExecProfileSummaryRow>
+        std::map<std::pair<std::string, std::string>, RigExecProfileSummaryRow>
             rows;
         for (const RigExecProfileEvent &event : _events) {
             // Costs only: instants and counters have no duration to
@@ -295,8 +287,7 @@ public:
             if (event.kind != RigExecProfileEventKind::Complete) {
                 continue;
             }
-            RigExecProfileSummaryRow &row =
-                rows[{event.category, event.name}];
+            RigExecProfileSummaryRow &row = rows[{event.category, event.name}];
             row.name = event.name;
             row.category = event.category;
             ++row.count;
@@ -360,8 +351,8 @@ public:
                 out << ",\n";
             }
             first = false;
-            out << "{\"name\":\"" << _EscapeJson(event.name)
-                << "\",\"cat\":\"" << _EscapeJson(event.category) << "\",";
+            out << "{\"name\":\"" << _EscapeJson(event.name) << "\",\"cat\":\""
+                << _EscapeJson(event.category) << "\",";
             if (event.kind == RigExecProfileEventKind::Instant) {
                 out << "\"ph\":\"I\",\"ts\":" << (event.startUs - origin)
                     << ",\"pid\":1,\"tid\":" << event.threadIndex
@@ -382,8 +373,8 @@ public:
                         out << ",";
                     }
                     firstArg = false;
-                    out << "\"" << _EscapeJson(key)
-                        << "\":\"" << _EscapeJson(value) << "\"";
+                    out << "\"" << _EscapeJson(key) << "\":\""
+                        << _EscapeJson(value) << "\"";
                 }
                 for (const auto &[key, value] : event.counters) {
                     if (!firstArg) {
@@ -413,10 +404,9 @@ public:
     static uint64_t NowUs()
     {
         const auto now = std::chrono::steady_clock::now();
-        return uint64_t(
-            std::chrono::duration_cast<std::chrono::microseconds>(
-                now.time_since_epoch())
-                .count());
+        return uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(
+                            now.time_since_epoch())
+                            .count());
     }
 
 private:
@@ -547,7 +537,10 @@ public:
     {
     }
 
-    ~RigExecProfilePhases() { Close(); }
+    ~RigExecProfilePhases()
+    {
+        Close();
+    }
 
     RigExecProfilePhases(const RigExecProfilePhases &) = delete;
     RigExecProfilePhases &operator=(const RigExecProfilePhases &) = delete;
@@ -595,18 +588,18 @@ private:
 #define RIGEXEC_PROFILE_SCOPE(profiler, nameExpr)                              \
     ::rigExec::RigExecProfileScope RIGEXEC_PROFILE_CONCAT(                     \
         _rigExecProfileScope_, __LINE__)(                                      \
-        (profiler).IsEnabled() ? &(profiler) : nullptr,                         \
+        (profiler).IsEnabled() ? &(profiler) : nullptr,                        \
         (profiler).IsEnabled() ? std::string(nameExpr) : std::string(), "rig")
 
 /// Opens a profile scope with an explicit category. Like
 /// RIGEXEC_PROFILE_SCOPE, neither expression is evaluated when disabled.
-#define RIGEXEC_PROFILE_SCOPE_CAT(profiler, nameExpr, catExpr)                  \
+#define RIGEXEC_PROFILE_SCOPE_CAT(profiler, nameExpr, catExpr)                 \
     ::rigExec::RigExecProfileScope RIGEXEC_PROFILE_CONCAT(                     \
         _rigExecProfileScope_, __LINE__)(                                      \
-        (profiler).IsEnabled() ? &(profiler) : nullptr,                         \
-        (profiler).IsEnabled() ? std::string(nameExpr) : std::string(),         \
+        (profiler).IsEnabled() ? &(profiler) : nullptr,                        \
+        (profiler).IsEnabled() ? std::string(nameExpr) : std::string(),        \
         (profiler).IsEnabled() ? std::string(catExpr) : std::string())
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_PROFILER_H
+#endif // RIGEXEC_PROFILER_H
