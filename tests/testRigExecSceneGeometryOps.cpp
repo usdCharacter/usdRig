@@ -11,6 +11,7 @@
 
 #include "pxr/base/gf/rotation.h"
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -665,6 +666,135 @@ TestProjector(const Grid &grid)
                                       &builder, &node, &error));
 }
 
+/// One blend shape node over \p points, native against the op.
+bool
+CompareBlend(const std::vector<RigExecBlendChannel> &channels,
+             RigExecMoverParameters p, const std::vector<GfVec3f> &base,
+             const std::vector<GfVec3f> &points, const char *label)
+{
+    if (!RigExecGeometryBlendDeltas(channels, base, &p.blendDeltas))
+        return false;
+    std::vector<GfVec3f> expected = points;
+    const bool native = Native(RigExecRevisionOp::BlendShape, p, &expected);
+
+    RigExecRigDescBuilder builder;
+    RigExecGeometryOpNode node;
+    std::string error;
+    CHECK(RigExecAddGeometryBlendOp(channels, p, &builder, nullptr, &node,
+                                    &error));
+    auto desc = builder.Build(&error);
+    auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
+    auto evaluator =
+        program ? RigExecEvaluator::Create(program, {}, &error) : nullptr;
+    CHECK(evaluator);
+    if (!evaluator)
+        return false;
+    const bool ran = RigExecWriteGeometryBlendInputs(channels, p, node, base,
+                                                     &points, points.size(),
+                                                     evaluator.get(), &error) &&
+                     evaluator->Evaluate(&error);
+    if (ran != native) {
+        std::printf("%s: native %d op %d (%s)\n", label, int(native), int(ran),
+                    error.c_str());
+        CHECK(false);
+        return false;
+    }
+    if (!ran)
+        return false;
+    const auto &actual = *static_cast<const RigExecArray<Vec3f> *>(
+        evaluator->GetOutput(node.out));
+    if (!SameBits(expected, actual)) {
+        std::printf("%s differs\n", label);
+        CHECK(false);
+    }
+    return true;
+}
+
+void
+TestBlendShape(const Grid &grid)
+{
+    const size_t n = grid.rest.size();
+    const auto moved = [&](float scale) {
+        std::vector<GfVec3f> target = grid.rest;
+        for (size_t i = 0; i < n; ++i)
+            target[i] += GfVec3f(0.1f * std::sin(float(i) * scale),
+                                 0.05f * scale, 0.2f * std::cos(float(i)));
+        return target;
+    };
+    RigExecBlendSampleData half, full, sparse, denseLayout;
+    half.activation = 0.5f;
+    half.points = moved(0.7f);
+    full.points = moved(1.3f);
+    auto sparseLayout = std::make_shared<RigExecBlendSampleLayout>();
+    for (size_t i = 3; i < n; i += 5) {
+        sparseLayout->indices.push_back(int(i));
+        sparseLayout->offsets.emplace_back(0.01f * float(i), -0.2f, 0.07f);
+    }
+    sparseLayout->pointCount = n;
+    sparseLayout->valid = true;
+    sparse.layout = sparseLayout;
+    auto denseOffsets = std::make_shared<RigExecBlendSampleLayout>();
+    for (size_t i = 0; i < n; ++i)
+        denseOffsets->offsets.emplace_back(0.0f, 0.0f, 0.03f * float(i % 7));
+    denseOffsets->pointCount = n;
+    denseOffsets->valid = true;
+    denseLayout.layout = denseOffsets;
+
+    std::vector<RigExecBlendChannel> channels(3);
+    channels[0].samples = {half, full};
+    channels[1].samples = {sparse};
+    channels[2].samples = {denseLayout};
+
+    for (const bool surfaceFrame : {false, true})
+        for (const auto &w : std::vector<std::array<float, 3>>{
+                 {0.3f, 0.8f, -0.4f}, {0.75f, 1.0f, 1.0f}, {1.2f, 0.0f, 0.5f}})
+            for (const auto &[name, weights] : Envelopes(n)) {
+                for (size_t c = 0; c < 3; ++c)
+                    channels[c].weight = w[c];
+                RigExecMoverParameters p = Packet("blendShape");
+                p.weights = weights;
+                p.blendSurfaceFrame = surfaceFrame;
+                if (surfaceFrame) {
+                    p.restPoints = grid.rest;
+                    p.topologyCounts = grid.counts;
+                    p.topologyIndices = grid.indices;
+                }
+                const std::string label = std::string("blend ") +
+                                          (surfaceFrame ? "surface " : "") +
+                                          name;
+                CHECK(CompareBlend(channels, p, grid.rest, grid.points,
+                                   label.c_str()));
+            }
+
+    // A sample that moved after compile needs a rebuild.
+    RigExecRigDescBuilder builder;
+    RigExecGeometryOpNode node;
+    std::string error;
+    const RigExecMoverParameters p = Packet("blendShape");
+    CHECK(RigExecAddGeometryBlendOp(channels, p, &builder, nullptr, &node,
+                                    &error));
+    auto desc = builder.Build(&error);
+    auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
+    auto evaluator =
+        program ? RigExecEvaluator::Create(program, {}, &error) : nullptr;
+    CHECK(evaluator);
+    if (!evaluator)
+        return;
+    std::vector<RigExecBlendChannel> changed = channels;
+    changed[0].samples[1].points[4][0] += 1.0f;
+    CHECK(!RigExecWriteGeometryBlendInputs(
+        changed, p, node, grid.rest, &grid.points, n, evaluator.get(), &error));
+    CHECK(error.find("samples") != std::string::npos);
+    changed = channels;
+    changed[1].samples[0].layout =
+        std::make_shared<RigExecBlendSampleLayout>(*sparseLayout);
+    CHECK(!RigExecWriteGeometryBlendInputs(
+        changed, p, node, grid.rest, &grid.points, n, evaluator.get(), &error));
+    changed.pop_back();
+    CHECK(!RigExecWriteGeometryBlendInputs(
+        changed, p, node, grid.rest, &grid.points, n, evaluator.get(), &error));
+}
+
 /// Smooth, then a matrix, as two connected nodes.
 void
 TestChain(const Grid &grid)
@@ -747,6 +877,7 @@ main()
     TestWire(grid);
     TestDerived(grid);
     TestProjector(grid);
+    TestBlendShape(grid);
     TestChain(grid);
     TestRefusals(grid);
     if (failures) {

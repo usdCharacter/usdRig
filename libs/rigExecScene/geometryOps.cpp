@@ -1,5 +1,6 @@
 #include "rigExecScene/geometryOps.h"
 
+#include "rigExecOps/deform/blendShapeOp.h"
 #include "rigExecOps/deform/deltaMushOp.h"
 #include "rigExecOps/deform/derivedOps.h"
 #include "rigExecOps/deform/latticeOp.h"
@@ -14,6 +15,8 @@
 #include "rigExecRigTypes/rigTypes.h"
 
 #include "pxr/base/tf/staticTokens.h"
+
+#include <algorithm>
 
 namespace rigExec {
 
@@ -459,6 +462,16 @@ RigExecWriteGeometryOpInputs(const RigExecMoverParameters &p,
                evaluator->SetInput(node.indices, &indices, error) &&
                evaluator->SetInput(node.transform, &map, error);
     }
+    case RigExecRevisionOp::BlendShape: {
+        if (!Valid(node.rest))
+            return true;
+        const RigExecArray<Vec3f> rest = ToStd(p.restPoints);
+        const RigExecArray<int> counts = ToArray(p.topologyCounts);
+        const RigExecArray<int> indices = ToArray(p.topologyIndices);
+        return evaluator->SetInput(node.rest, &rest, error) &&
+               evaluator->SetInput(node.counts, &counts, error) &&
+               evaluator->SetInput(node.indices, &indices, error);
+    }
     case RigExecRevisionOp::Wrinkle: {
         const RigExecArray<Vec3f> rest = ToStd(p.restPoints);
         const RigExecArray<int> counts = ToArray(p.topologyCounts);
@@ -678,6 +691,122 @@ RigExecWriteGeometryMatrixInputs(const RigExecRevisionBinding &binding,
             return false;
     }
     return true;
+}
+
+namespace {
+
+std::vector<Vec3f>
+ToStdVector(const std::vector<GfVec3f> &v)
+{
+    std::vector<Vec3f> out(v.size());
+    for (size_t i = 0; i < v.size(); ++i)
+        out[i] = Vec3f(v[i][0], v[i][1], v[i][2]);
+    return out;
+}
+
+bool
+SameSample(const RigExecGeometryOpNode::BlendSample &a,
+           const RigExecBlendSampleData &b)
+{
+    if (a.activation != b.activation || a.layout != b.layout)
+        return false;
+    if (a.layout)
+        return true;
+    const size_t n = b.PointCount();
+    return a.points.size() == n &&
+           std::equal(a.points.begin(), a.points.end(), b.PointData());
+}
+
+} // namespace
+
+bool
+RigExecAddGeometryBlendOp(const std::vector<RigExecBlendChannel> &channels,
+                          const RigExecMoverParameters &p,
+                          RigExecRigDescBuilder *builder,
+                          const RigExecGeometryOpNode *upstream,
+                          RigExecGeometryOpNode *node, std::string *error)
+{
+    if (!builder || !node)
+        return Fail(error, "null geometry op destination");
+    RigExecGeometryOpNode result;
+    result.op = RigExecRevisionOp::BlendShape;
+    rigExecOps::BlendShapePayload payload;
+    payload.surfaceFrame = p.blendSurfaceFrame;
+    payload.channels.resize(channels.size());
+    result.blendSamples.resize(channels.size());
+    for (size_t c = 0; c < channels.size(); ++c)
+        for (const RigExecBlendSampleData &s : channels[c].samples) {
+            rigExecOps::BlendShapeSample sample;
+            sample.activation = s.activation;
+            RigExecGeometryOpNode::BlendSample kept;
+            kept.activation = s.activation;
+            kept.layout = s.layout;
+            if (s.layout) {
+                auto layout = std::make_shared<rigExecOps::BlendShapeLayout>();
+                layout->offsets = ToStdVector(s.layout->offsets);
+                layout->indices = s.layout->indices;
+                layout->pointCount = s.layout->pointCount;
+                layout->valid = s.layout->valid;
+                sample.layout = std::move(layout);
+            } else {
+                kept.points.assign(s.PointData(),
+                                   s.PointData() + s.PointCount());
+                sample.points = ToStdVector(kept.points);
+            }
+            payload.channels[c].samples.push_back(std::move(sample));
+            result.blendSamples[c].push_back(std::move(kept));
+        }
+    const RigExecNodeId n = builder->AddOp(rigExecOps::BlendShape(), &payload);
+    result.node = n;
+    result.channelWeights =
+        builder->BindInput(n, rigExecOps::BlendShapeWeights());
+    result.base = builder->BindInput(n, rigExecOps::BlendShapeBase());
+    if (p.blendSurfaceFrame) {
+        result.rest = builder->BindInput(n, rigExecOps::BlendShapeRest());
+        result.counts = builder->BindInput(n, rigExecOps::BlendShapeCounts());
+        result.indices = builder->BindInput(n, rigExecOps::BlendShapeIndices());
+    }
+    if (upstream)
+        builder->Connect(upstream->node, *upstream->outPort, n,
+                         rigExecOps::BlendShapePoints());
+    else
+        result.points = builder->BindInput(n, rigExecOps::BlendShapePoints());
+    result.envelope = builder->BindInput(n, rigExecOps::BlendShapeEnvelope());
+    result.outPort = &rigExecOps::BlendShapeOut();
+    result.out = builder->BindOutput(n, *result.outPort);
+    *node = std::move(result);
+    return true;
+}
+
+bool
+RigExecWriteGeometryBlendInputs(
+    const std::vector<RigExecBlendChannel> &channels,
+    const RigExecMoverParameters &p, const RigExecGeometryOpNode &node,
+    const std::vector<GfVec3f> &base, const std::vector<GfVec3f> *points,
+    size_t pointCount, RigExecEvaluator *evaluator, std::string *error)
+{
+    if (node.op != RigExecRevisionOp::BlendShape)
+        return Fail(error, "not a blend shape node");
+    if (channels.size() != node.blendSamples.size())
+        return Fail(error, "blend channels changed");
+    for (size_t c = 0; c < channels.size(); ++c) {
+        const auto &kept = node.blendSamples[c];
+        const auto &now = channels[c].samples;
+        if (kept.size() != now.size())
+            return Fail(error, "blend samples changed");
+        for (size_t k = 0; k < kept.size(); ++k)
+            if (!SameSample(kept[k], now[k]))
+                return Fail(error, "blend samples changed");
+    }
+    if (!RigExecWriteGeometryOpInputs(p, node, points, pointCount, evaluator,
+                                      error))
+        return false;
+    RigExecArray<float> weights(channels.size());
+    for (size_t c = 0; c < channels.size(); ++c)
+        weights[c] = channels[c].weight;
+    const RigExecArray<Vec3f> measured = ToStd(base);
+    return evaluator->SetInput(node.channelWeights, &weights, error) &&
+           evaluator->SetInput(node.base, &measured, error);
 }
 
 } // namespace rigExec

@@ -10,6 +10,7 @@
 #include "rigExec/api/rigDesc.h"
 #include "rigExecScene/geometryProgram.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -36,12 +37,24 @@ struct RigExecGeometryOpNode {
     /// A derived op's source: the final points, and an extent's widths.
     /// Its chained value is the authored normals or extent.
     RigExecInputId finalPoints, widths;
+    /// A blend shape's channel weights and the base its dense targets are
+    /// measured against.
+    RigExecInputId channelWeights, base;
+    /// The blend samples baked into the payload, by channel, to refuse a
+    /// frame whose samples moved.
+    struct BlendSample {
+        float activation = 1.0f;
+        std::vector<GfVec3f> points;
+        std::shared_ptr<const RigExecBlendSampleLayout> layout;
+    };
+    std::vector<std::vector<BlendSample>> blendSamples;
     RigExecOutputId out;
     /// The op's output port, for a downstream node to connect to.
     const RigExecPortHandle *outPort = nullptr;
 };
 
-/// True for the revision ops this bridge maps.
+/// True for the revision ops this bridge maps. A blend shape is added with
+/// RigExecAddGeometryBlendOp.
 bool RigExecGeometryOpSupported(RigExecRevisionOp op);
 
 /// Adds the deform op for \p op to \p builder, its payload taken from
@@ -64,6 +77,25 @@ bool RigExecWriteGeometryOpInputs(const RigExecMoverParameters &p,
                                   size_t pointCount,
                                   RigExecEvaluator *evaluator,
                                   std::string *error = nullptr);
+
+/// Adds a blend shape whose payload is \p channels' samples; \p p gives
+/// its delta space, and the points chain as for RigExecAddGeometryOp.
+bool RigExecAddGeometryBlendOp(const std::vector<RigExecBlendChannel> &channels,
+                               const RigExecMoverParameters &p,
+                               RigExecRigDescBuilder *builder,
+                               const RigExecGeometryOpNode *upstream,
+                               RigExecGeometryOpNode *node,
+                               std::string *error = nullptr);
+
+/// RigExecWriteGeometryOpInputs for a blend shape, plus \p channels'
+/// weights and the \p base the targets are measured against. False where
+/// a channel's samples differ from compile: the node must be rebuilt.
+bool RigExecWriteGeometryBlendInputs(
+    const std::vector<RigExecBlendChannel> &channels,
+    const RigExecMoverParameters &p, const RigExecGeometryOpNode &node,
+    const std::vector<GfVec3f> &base, const std::vector<GfVec3f> *points,
+    size_t pointCount, RigExecEvaluator *evaluator,
+    std::string *error = nullptr);
 
 /// A derived matrix op (surface projector or shader dials) and its
 /// host-written ports.
