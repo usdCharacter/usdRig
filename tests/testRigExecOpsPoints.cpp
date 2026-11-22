@@ -9,6 +9,7 @@
 #include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/simdKernels.h"
 #include "rigExecMath/solvers.h"
+#include "rigExecMath/surfaceProjectorKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecOps/deform/blendShapeOp.h"
 #include "rigExecOps/deform/deltaMushOp.h"
@@ -16,6 +17,7 @@
 #include "rigExecOps/deform/latticeOp.h"
 #include "rigExecOps/deform/matrixDeformOp.h"
 #include "rigExecOps/deform/pointOps.h"
+#include "rigExecOps/deform/projectorOps.h"
 #include "rigExecOps/deform/ribbonOp.h"
 #include "rigExecOps/deform/skinOp.h"
 #include "rigExecOps/deform/surfaceProjectOp.h"
@@ -130,7 +132,8 @@ struct Node {
         CHECK(evaluator);
     }
 
-    bool Run(const std::vector<const void *> &values, Points *result,
+    template <class T>
+    bool Run(const std::vector<const void *> &values, T *result,
              std::string *error = nullptr)
     {
         if (!evaluator)
@@ -140,7 +143,7 @@ struct Node {
                 return false;
         if (!evaluator->Evaluate(error))
             return false;
-        *result = *static_cast<const Points *>(evaluator->GetOutput(out));
+        *result = *static_cast<const T *>(evaluator->GetOutput(out));
         return true;
     }
 };
@@ -1414,6 +1417,167 @@ TestRibbon()
     CHECK(error.find("one frame per point") != std::string::npos);
 }
 
+bool
+SameBits(const GfMatrix4d &expected, const rigExecStd::Mat4d &actual)
+{
+    return std::memcmp(expected.GetArray(), &actual._mtx[0][0],
+                       sizeof(double) * 16) == 0;
+}
+
+void
+TestSurfaceProjector()
+{
+    using namespace rigExecOps;
+    using rigExecStd::Mat4d;
+    using rigExecStd::Vec3d;
+    const Grid grid(9, 41, true);
+    std::vector<GfVec3f> posed = grid.points;
+    const GfMatrix4d move =
+        GfMatrix4d().SetRotate(GfRotation(GfVec3d(0.3, 1.0, 0.2), 25.0)) *
+        GfMatrix4d().SetTranslate(GfVec3d(0.5, -1.0, 2.0));
+    for (size_t i = 0; i < posed.size(); ++i)
+        posed[i] = GfVec3f(move.Transform(GfVec3d(posed[i])) +
+                           GfVec3d(0.0, 0.0, 0.05 * double(i % 3)));
+    const Points base = ToStd(grid.points), posedArray = ToStd(posed);
+    const auto counts = ToArray(grid.counts);
+    const auto indices = ToArray(grid.indices);
+    const GfMatrix4d offset =
+        GfMatrix4d().SetScale(GfVec3d(1.5, 0.75, 1.0)) *
+        GfMatrix4d().SetTranslate(GfVec3d(0.25, 0.0, -0.5));
+    // The source looks down -Z at the grid.
+    const GfMatrix4d down =
+        GfMatrix4d().SetRotate(GfRotation(GfVec3d(1, 0, 0), 180.0));
+    const GfMatrix4d sourceBase =
+        down * GfMatrix4d().SetTranslate(GfVec3d(4.0, 4.0, 5.0));
+    const GfMatrix4d sourceFinal =
+        down * GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 0, 1), 15.0)) *
+        GfMatrix4d().SetTranslate(GfVec3d(4.5, 4.0, 5.5));
+    const GfMatrix4d spaceBase = GfMatrix4d(1.0);
+    const GfMatrix4d spaceFinal =
+        GfMatrix4d().SetTranslate(GfVec3d(0.0, 0.5, 0.25));
+    const GfMatrix4d rigSpace = GfMatrix4d().SetScale(1.25);
+    const GfMatrix4d worldToMesh =
+        GfMatrix4d().SetTranslate(GfVec3d(-0.5, 0.0, 0.0));
+    const Mat4d sourceBaseArray = ToStd(sourceBase),
+                sourceFinalArray = ToStd(sourceFinal),
+                spaceBaseArray = ToStd(spaceBase),
+                spaceFinalArray = ToStd(spaceFinal),
+                rigSpaceArray = ToStd(rigSpace),
+                worldToMeshArray = ToStd(worldToMesh);
+    for (const bool reproject : {false, true})
+        for (const bool named : {false, true}) {
+            SurfaceProjectorPayload payload;
+            payload.rayOrigin = Vec3d(4.0, 4.0, 5.0);
+            payload.rayDirection = Vec3d(0.0, 0.0, -1.0);
+            payload.rayUp = Vec3d(0.0, 1.0, 0.0);
+            payload.shaderOffset = ToStd(offset);
+            payload.reproject = reproject;
+            payload.sourceSpaceNamed = named;
+            payload.spaceNamed = named;
+            RigExecSurfaceProjectorInputs<GfMatrix4d, GfVec3d> in;
+            in.rayOrigin = GfVec3d(4.0, 4.0, 5.0);
+            in.rayDirection = GfVec3d(0.0, 0.0, -1.0);
+            in.rayUp = GfVec3d(0.0, 1.0, 0.0);
+            in.shaderOffset = offset;
+            in.reproject = reproject;
+            in.hasSource = true;
+            in.sourceBase = sourceBase;
+            in.sourceFinal = sourceFinal;
+            in.sourceSpaceNamed = named;
+            in.hasSourceSpace = named;
+            in.sourceSpaceBase = named ? spaceBase : GfMatrix4d(1.0);
+            in.sourceSpaceFinal = named ? spaceFinal : GfMatrix4d(1.0);
+            in.spaceNamed = named;
+            in.hasSpace = named;
+            in.spaceFinal = named ? rigSpace : GfMatrix4d(1.0);
+            in.worldToMesh = worldToMesh;
+            GfMatrix4d expected;
+            std::vector<std::string> diagnostics;
+            CHECK(RigExecSolveSurfaceProjectorT(
+                in, grid.points, posed, grid.counts, grid.indices,
+                static_cast<RigExecVertexNormalsFn>(
+                    &RigExecComputeVertexNormals),
+                "", &expected, &diagnostics));
+            Node node(
+                SurfaceProjector(),
+                {&SurfaceProjectorBasePoints(), &SurfaceProjectorPoints(),
+                 &SurfaceProjectorCounts(), &SurfaceProjectorIndices(),
+                 &SurfaceProjectorSourceBase(), &SurfaceProjectorSourceFinal(),
+                 &SurfaceProjectorSourceSpaceBase(),
+                 &SurfaceProjectorSourceSpaceFinal(),
+                 &SurfaceProjectorSpaceFinal(), &SurfaceProjectorWorldToMesh()},
+                SurfaceProjectorOut(), &payload);
+            Mat4d actual(0.0);
+            CHECK(
+                node.Run({&base, &posedArray, &counts, &indices,
+                          &sourceBaseArray, &sourceFinalArray, &spaceBaseArray,
+                          &spaceFinalArray, &rigSpaceArray, &worldToMeshArray},
+                         &actual));
+            CHECK(SameBits(expected, actual));
+        }
+    // Unfed source, spaces and worldToMesh are identity and unresolved.
+    SurfaceProjectorPayload payload;
+    payload.rayOrigin = Vec3d(3.0, 5.0, 4.0);
+    payload.rayDirection = Vec3d(0.0, 0.0, -1.0);
+    RigExecSurfaceProjectorInputs<GfMatrix4d, GfVec3d> in;
+    in.rayOrigin = GfVec3d(3.0, 5.0, 4.0);
+    in.rayDirection = GfVec3d(0.0, 0.0, -1.0);
+    in.rayUp = GfVec3d(0.0, 1.0, 0.0);
+    in.shaderOffset = GfMatrix4d(1.0);
+    in.sourceBase = in.sourceFinal = in.sourceSpaceBase = in.sourceSpaceFinal =
+        in.spaceFinal = in.worldToMesh = GfMatrix4d(1.0);
+    GfMatrix4d expected;
+    std::vector<std::string> diagnostics;
+    CHECK(RigExecSolveSurfaceProjectorT(
+        in, grid.points, posed, grid.counts, grid.indices,
+        static_cast<RigExecVertexNormalsFn>(&RigExecComputeVertexNormals), "",
+        &expected, &diagnostics));
+    Node bare(SurfaceProjector(),
+              {&SurfaceProjectorBasePoints(), &SurfaceProjectorPoints(),
+               &SurfaceProjectorCounts(), &SurfaceProjectorIndices()},
+              SurfaceProjectorOut(), &payload);
+    Mat4d actual(0.0);
+    CHECK(bare.Run({&base, &posedArray, &counts, &indices}, &actual));
+    CHECK(SameBits(expected, actual));
+    // A ray that misses the surface measures no frame.
+    payload.rayOrigin = Vec3d(40.0, 40.0, 5.0);
+    Node miss(SurfaceProjector(),
+              {&SurfaceProjectorBasePoints(), &SurfaceProjectorPoints(),
+               &SurfaceProjectorCounts(), &SurfaceProjectorIndices()},
+              SurfaceProjectorOut(), &payload);
+    std::string error;
+    CHECK(!miss.Run({&base, &posedArray, &counts, &indices}, &actual, &error));
+    CHECK(error.find("cast=MISS") != std::string::npos);
+    CHECK(error.find("SurfaceProjector: SurfaceProjector") ==
+          std::string::npos);
+    // Half a source is refused.
+    Node half(SurfaceProjector(),
+              {&SurfaceProjectorBasePoints(), &SurfaceProjectorPoints(),
+               &SurfaceProjectorCounts(), &SurfaceProjectorIndices(),
+               &SurfaceProjectorSourceBase()},
+              SurfaceProjectorOut(), &payload);
+    error.clear();
+    CHECK(!half.Run({&base, &posedArray, &counts, &indices, &sourceBaseArray},
+                    &actual, &error));
+    CHECK(error.find("base and final") != std::string::npos);
+}
+
+void
+TestShaderDials()
+{
+    using namespace rigExecOps;
+    Node node(ShaderDials(), {&ShaderDialsDials()}, ShaderDialsOut());
+    for (const size_t count : {size_t(0), size_t(5), size_t(16), size_t(20)}) {
+        std::vector<double> dials(count);
+        for (size_t i = 0; i < count; ++i)
+            dials[i] = i == 3 ? std::nan("") : 0.37 * double(i) - 1.0;
+        const auto array = ToArray(dials);
+        rigExecStd::Mat4d actual(1.0);
+        CHECK(node.Run({&array}, &actual));
+        CHECK(SameBits(RigExecPackShaderDialsT<GfMatrix4d>(dials), actual));
+    }
+}
+
 int
 main()
 {
@@ -1436,6 +1600,8 @@ main()
     TestRecomputeExtent();
     TestWire();
     TestRibbon();
+    TestSurfaceProjector();
+    TestShaderDials();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

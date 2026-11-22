@@ -1265,6 +1265,7 @@ rigexec_add_op_library(rigExecOps
         libs/rigExecOps/deform/derivedOps.cpp
         libs/rigExecOps/deform/wireOp.cpp
         libs/rigExecOps/deform/ribbonOp.cpp
+        libs/rigExecOps/deform/projectorOps.cpp
     USES_TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes)
 rigexec_apply_exact_fp_flags(rigExecOps)
 add_executable(testRigExecOpsMath tests/testRigExecOpsMath.cpp
