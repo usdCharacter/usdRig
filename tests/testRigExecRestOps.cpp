@@ -144,7 +144,8 @@ const RigExecBakedProgramImpl *
 Program(const RigExecRigEvaluator &evaluator)
 {
     const RigExecBakedProgram *program = evaluator.GetBakedProgram();
-    return program ? &program->GetStepGraph() : nullptr;
+    return program ? &rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+                   : nullptr;
 }
 
 // An override of ladder channel \p channel ("rest:tx", "default:tx") on
@@ -222,7 +223,9 @@ CheckTablesOfRig(const std::string &name, const UsdStageRefPtr &stage,
             std::printf("FAIL %s %s: %s differs from the fresh compiled rig at "
                         "%s\n",
                         name.c_str(), when.c_str(), table.c_str(),
-                        program->GetStepGraph().paths[size_t(slot)].GetText());
+                        rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+                            .paths[size_t(slot)]
+                            .GetText());
         }
         ++compared;
     };
@@ -1044,7 +1047,8 @@ TestARestEditIsSeedable()
     if (!standing) {
         return;
     }
-    const RigExecBakedProgramImpl &B = standing->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*standing);
     const auto found = B.overridableInputs.find(restTxPath);
     CHECK(found != B.overridableInputs.end() && found->second.size() == 1);
     if (found == B.overridableInputs.end() || found->second.empty()) {

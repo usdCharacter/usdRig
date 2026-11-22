@@ -6316,11 +6316,11 @@ RigExecBakedProjectorFrames(
 }
 
 bool
-RigExecBakedRunProjectorTarget(
-    const RigExecBakedProgramImpl &B,
-    const RigExecBakedProgramImpl::GeomChain &chain,
-    const RigExecBakedProgramImpl::GeomRevision &revision, GfMatrix4d *matrix,
-    std::vector<std::string> *diagnostics)
+RigExecBakedRunProjectorTarget(const RigExecBakedProgramImpl &B,
+                               const RigExecBakedProgramImpl::GeomChain &chain,
+                               RigExecBakedProgramImpl::GeomRevision &revision,
+                               GfMatrix4d *matrix,
+                               std::vector<std::string> *diagnostics)
 {
     RigExecRevisionLeafView view;
     view.decl = &revision.leaves.decl;

@@ -84,8 +84,9 @@ main(int argc, char **argv)
         CHECK(bridge);
         const auto opTrace = bridge->GetEvaluator().GetLastOpTrace();
         CHECK(bridge->GetEvaluator().GetBakedProgram());
-        const auto &steps =
-            bridge->GetEvaluator().GetBakedProgram()->GetStepGraph().steps;
+        const auto &steps = rigExec::RigExecBakedProgramAccess::StepGraph(
+                                *bridge->GetEvaluator().GetBakedProgram())
+                                .steps;
         CHECK(phaseRows.size() == traceRows.size());
         CHECK(opTrace.size() == traceRows.size());
         std::map<std::string, std::vector<std::pair<double, double>>> spans;

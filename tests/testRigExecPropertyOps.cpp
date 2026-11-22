@@ -126,7 +126,8 @@ const RigExecBakedProgramImpl *
 Program(const RigExecRigEvaluator &evaluator)
 {
     const RigExecBakedProgram *program = evaluator.GetBakedProgram();
-    return program ? &program->GetStepGraph() : nullptr;
+    return program ? &rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+                   : nullptr;
 }
 
 UsdStageRefPtr
@@ -1451,7 +1452,8 @@ TestUnavailableConstraintTargetKeepsIndependentChains(
     };
     checkDial(first);
     CHECK(first.providerXforms.count(target) == 1);
-    const auto &initial = (*kept)->GetStepGraph();
+    const auto &initial =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*(*kept));
     const auto targetSlot = initial.index.find(target);
     CHECK(targetSlot != initial.index.end());
     if (targetSlot == initial.index.end())
@@ -1465,8 +1467,10 @@ TestUnavailableConstraintTargetKeepsIndependentChains(
     const int32_t firstBad = int32_t(required - initial.xformSlots.begin());
     const auto keptBase = initial.base;
     const auto keptFin = initial.fin;
-    const auto coldBase = (*cold)->GetStepGraph().base;
-    const auto coldFin = (*cold)->GetStepGraph().fin;
+    const auto coldBase =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*(*cold)).base;
+    const auto coldFin =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*(*cold)).fin;
 
     CHECK(targetPrim.SetTypeName(TfToken("Scope")));
     const UsdTimeCode bent(1024.0);
@@ -1475,32 +1479,33 @@ TestUnavailableConstraintTargetKeepsIndependentChains(
             ": disabled; revision passed through",
         "could not resolve constraint target " + target.GetString() +
             " relative to the asset root"};
-    const auto checkRefusal =
-        [&](const RigExecBakedProgram &program, const RigExecRigPose &pose,
-            const auto &retainedBase, const auto &retainedFin) {
-            CHECK(!pose.valid);
-            CHECK(program.GetLastBail() == RigExecBakedBail::StageFrames);
-            checkDial(pose);
-            CHECK(LineMismatches(wantLines, pose.diagnostics,
-                                 "required target diagnostics") == 0);
-            CHECK(pose.providerXforms.count(target) == 0);
-            CHECK(pose.providerBaseXforms.count(target) == 0);
-            const auto &B = program.GetStepGraph();
-            CHECK(!B.requiredStageFramesAdmission.admitted);
-            CHECK(B.requiredStageFramesAdmission.firstBadTarget == firstBad);
-            CHECK(B.base[size_t(targetSlot->second)] ==
-                  retainedBase[size_t(targetSlot->second)]);
-            const size_t fin = size_t(B.finLast[size_t(targetSlot->second)]);
-            CHECK(B.fin[fin] == retainedFin[fin]);
-            // ORIGINAL publishes scalar heads, not unrelated post-frame geometry.
-            for (const char *name : {"Fin.points", "Fin.normals", "Fin.extent",
-                                     "SpineGuides.points", "SpineGuides.extent",
-                                     "SpineStrip.points", "SpineStrip.normals",
-                                     "SpineStrip.extent"}) {
-                const SdfPath path(std::string("/SpineAsset/Geom/") + name);
-                CHECK(pose.movedProperties.count(path) == 0);
-            }
-        };
+    const auto checkRefusal = [&](const RigExecBakedProgram &program,
+                                  const RigExecRigPose &pose,
+                                  const auto &retainedBase,
+                                  const auto &retainedFin) {
+        CHECK(!pose.valid);
+        CHECK(program.GetLastBail() == RigExecBakedBail::StageFrames);
+        checkDial(pose);
+        CHECK(LineMismatches(wantLines, pose.diagnostics,
+                             "required target diagnostics") == 0);
+        CHECK(pose.providerXforms.count(target) == 0);
+        CHECK(pose.providerBaseXforms.count(target) == 0);
+        const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(program);
+        CHECK(!B.requiredStageFramesAdmission.admitted);
+        CHECK(B.requiredStageFramesAdmission.firstBadTarget == firstBad);
+        CHECK(B.base[size_t(targetSlot->second)] ==
+              retainedBase[size_t(targetSlot->second)]);
+        const size_t fin = size_t(B.finLast[size_t(targetSlot->second)]);
+        CHECK(B.fin[fin] == retainedFin[fin]);
+        // ORIGINAL publishes scalar heads, not unrelated post-frame geometry.
+        for (const char *name :
+             {"Fin.points", "Fin.normals", "Fin.extent", "SpineGuides.points",
+              "SpineGuides.extent", "SpineStrip.points", "SpineStrip.normals",
+              "SpineStrip.extent"}) {
+            const SdfPath path(std::string("/SpineAsset/Geom/") + name);
+            CHECK(pose.movedProperties.count(path) == 0);
+        }
+    };
     RigExecRigPose given;
     // Direct held-program refusal follows ORIGINAL's property-only boundary.
     CHECK(!kept->Run(bent, &given, false));
@@ -1520,7 +1525,8 @@ TestUnavailableConstraintTargetKeepsIndependentChains(
     CHECK(kept->Run(bent, &recovered, false));
     CHECK(recovered.valid);
     CHECK((*kept)->GetLastBail() == RigExecBakedBail::None);
-    CHECK((*kept)->GetStepGraph().requiredStageFramesAdmission.admitted);
+    CHECK(rigExec::RigExecBakedProgramAccess::StepGraph(*(*kept))
+              .requiredStageFramesAdmission.admitted);
     checkDial(recovered);
     CHECK(recovered.providerXforms.count(target) == 1);
     CHECK(recovered.providerBaseXforms.count(target) == 1);
@@ -1633,8 +1639,12 @@ TestABakeAfterAnEvaluationExportsTheChains(const std::string &examples)
             standing->RequestFullRun();
             CHECK(evaluator->Evaluate(UsdTimeCode(t)).valid);
             CHECK(evaluator->GetBakedProgram() == standing);
-            CHECK(ExecutedHeads(standing->GetStepGraph()).size() ==
-                  RigExecBakedHeadIndices(standing->GetStepGraph()).size());
+            CHECK(ExecutedHeads(
+                      rigExec::RigExecBakedProgramAccess::StepGraph(*standing))
+                      .size() ==
+                  RigExecBakedHeadIndices(
+                      rigExec::RigExecBakedProgramAccess::StepGraph(*standing))
+                      .size());
         }
         RigExecBakeOpts opts;
         opts.time = t;

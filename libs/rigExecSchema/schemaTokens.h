@@ -202,6 +202,12 @@ inline const PXR_NS::TfToken
 inline const PXR_NS::TfToken
     avarsRotationSign(SchemaAttrText::avarsRotationSign);
 inline const PXR_NS::TfToken rigExecPlaneAxis(SchemaAttrText::rigExecPlaneAxis);
+inline const PXR_NS::TfToken rigExecMoves(SchemaAttrText::rigExecMoves);
+inline const PXR_NS::TfToken rigExecOperation(SchemaAttrText::rigExecOperation);
+inline const PXR_NS::TfToken rigExecTransform(SchemaAttrText::rigExecTransform);
+inline const PXR_NS::TfToken
+    inputsDefaultWeight(SchemaAttrText::inputsDefaultWeight);
+inline const PXR_NS::TfToken inputsValue(SchemaAttrText::inputsValue);
 inline const PXR_NS::TfToken
     rigExecPlaneBounds(SchemaAttrText::rigExecPlaneBounds);
 inline const PXR_NS::TfToken inputsExtentU(SchemaAttrText::inputsExtentU);

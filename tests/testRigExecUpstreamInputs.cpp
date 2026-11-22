@@ -464,7 +464,8 @@ RunFrozenLegs(
     if (!program || !authoredSnapshot) {
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const FrozenJob placed =
         RunJob(evaluator, authoredSnapshot, time, inputs, what + ": placed");
     CheckSamePose(what + ": frozen, placed", standing, placed.pose);
@@ -560,7 +561,8 @@ RunCase(const std::string &name, const std::string &stagePath,
             RunFrozenLegs(
                 what, *evaluator, authoredSnapshot, authoredJob, inputs, time,
                 authored, standing, evaluator->GetLastOpTrace(),
-                ExecutedHeads(evaluator->GetBakedProgram()->GetStepGraph()));
+                ExecutedHeads(rigExec::RigExecBakedProgramAccess::StepGraph(
+                    *evaluator->GetBakedProgram())));
         }
         // A second generation with the same value standing.
         CheckSamePose(what + ": standing again", expected,
@@ -1009,7 +1011,7 @@ TestAStandingValueCostsNothing()
     CHECK(program);
     if (!program)
         return;
-    const auto &B = program->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     CHECK(std::all_of(B.cones.alwaysSteps.words.begin(),
                       B.cones.alwaysSteps.words.end(),
                       [](uint64_t w) { return w == 0; }));
@@ -1230,7 +1232,8 @@ SkinRevision(const RigExecRigEvaluator &evaluator)
     if (!program) {
         return nullptr;
     }
-    for (const auto &chain : program->GetStepGraph().chains) {
+    for (const auto &chain :
+         rigExec::RigExecBakedProgramAccess::StepGraph(*program).chains) {
         for (const auto &revision : chain.revisions) {
             if (revision.moverPath == kMeshASkin) {
                 return &revision;
@@ -2915,7 +2918,8 @@ CheckSetsAgainstTheExporter(const std::string &stagePath, double t)
 
     // The oracle set: every listed slot on a read of an object the
     // exporter's descending pass marks resolved.
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     std::vector<char> resolved(C.weightObjects.size(), 0);
     const auto mark = [&resolved](int index) {
         if (index >= 0 && size_t(index) < resolved.size()) {

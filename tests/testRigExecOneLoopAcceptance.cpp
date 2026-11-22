@@ -261,7 +261,8 @@ TestCrossDomainTrace(const std::string &fixturesDir)
     }
     CHECK((domains == std::vector<std::string>{"property", "pose", "geometry",
                                                "weight", "geometry"}));
-    const auto &B = E.GetBakedProgram()->GetStepGraph();
+    const auto &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*E.GetBakedProgram());
     CHECK(B.opGraph.ops.size() == B.steps.size());
     for (size_t i = 0; i < B.steps.size(); ++i) {
         CHECK(B.opGraph.ops[i].originalIndex == i);
@@ -294,7 +295,8 @@ TestTwoLimbs(const std::string &fixturesDir)
     CHECK(!rigExecTest::OpGraphForwardCone(graph, {bSolve})[aSkin]);
     CHECK(!rigExecTest::OpGraphForwardCone(graph, {aSolve})[bSkin]);
     // This is the compiled production artifact, including real kernel chunks.
-    const auto &B = E.GetBakedProgram()->GetStepGraph();
+    const auto &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*E.GetBakedProgram());
     CHECK(B.opGraph.ops.size() == B.steps.size());
     std::string clusterError;
     CHECK(RigExecValidateOpClusters(B.opGraph, &clusterError));
@@ -381,7 +383,8 @@ TestPrecedingWeight(const std::string &fixturesDir)
     const CrossDomainChain c = FindChain(graph);
     if (!ChainFound(c))
         return;
-    const RigExecBakedProgramImpl &B = E.GetBakedProgram()->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*E.GetBakedProgram());
     const SdfPath volume =
         kCrossRig.AppendPath(SdfPath("Joints/Finger/FingerVolume"));
 
@@ -500,7 +503,8 @@ TestPropertyDragCone(const std::string &fixturesDir)
     E.SetInteractiveOverrides(ClampMaxDrag(0.6f));
     CHECK(E.Evaluate(time).valid);
     const auto trace = E.GetLastOpTrace();
-    const auto &B = E.GetBakedProgram()->GetStepGraph();
+    const auto &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*E.GetBakedProgram());
     std::set<size_t> ran;
     for (const auto &entry : trace) {
         CHECK(cone[entry.step]);
@@ -554,7 +558,8 @@ TestSkipEffects(const std::string &fixturesDir)
         return;
     auto &E = *rig.evaluator;
     CHECK(E.Evaluate(UsdTimeCode(12)).valid);
-    const auto &B = E.GetBakedProgram()->GetStepGraph();
+    const auto &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*E.GetBakedProgram());
     const auto &effects = B.opAdapter.skipEffects;
     CHECK(std::is_sorted(effects.begin(), effects.end()));
     size_t listed = 0;
@@ -590,7 +595,8 @@ TestBackendKernelsAndBinaryCycle(const std::string &fixturesDir)
     auto &E = *rig.evaluator;
     const auto live = E.Evaluate(UsdTimeCode(12));
     CHECK(live.valid);
-    const auto &B = E.GetBakedProgram()->GetStepGraph();
+    const auto &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*E.GetBakedProgram());
     // Partition metadata names natural typed producers. Scheduling levels
     // cannot stand in for the matrix-domain/provider identities the body reads.
     for (const auto &chain : B.chains)
@@ -623,7 +629,8 @@ TestBackendKernelsAndBinaryCycle(const std::string &fixturesDir)
         [&](const std::vector<RigExecOpTraceEntry> &trace) {
             // Baking recompiles the evaluator, so each trace belongs to the
             // program currently held by the evaluator.
-            const auto &B = E.GetBakedProgram()->GetStepGraph();
+            const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+                *E.GetBakedProgram());
             std::vector<size_t> counts(B.steps.size(), 0);
             for (const auto &entry : trace) {
                 CHECK(entry.step < counts.size());
@@ -775,7 +782,8 @@ TestCycle(const std::string &fixturesDir)
     auto &E = *rig.evaluator;
     const auto pose = E.Evaluate(UsdTimeCode(2));
     CHECK(pose.valid);
-    const auto &B = E.GetBakedProgram()->GetStepGraph();
+    const auto &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*E.GetBakedProgram());
     // D3 preserves unrelated work while every output of the complete cycle
     // is cleared. No member may run against a prior-generation loop value.
     CHECK(!B.opGraph.cycles.empty());
@@ -899,7 +907,8 @@ TestCycle(const std::string &fixturesDir)
             return;
         auto &E = *rig.evaluator;
         CHECK(E.Evaluate(UsdTimeCode(2)).valid);
-        const auto &B = E.GetBakedProgram()->GetStepGraph();
+        const auto &B =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*E.GetBakedProgram());
         const SdfPath lift("/S9Asset/Rig/Geometry/Lift");
         CHECK(E.GetSkippedOperations().count(withdrawn) == 1);
         bool laterIdentity = false;

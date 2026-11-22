@@ -1049,7 +1049,9 @@ TestRoleFlipsRebuildOnce()
         const RigExecBakedProgramImpl::GeomRevision *skin = nullptr;
         size_t bounds = 0;
         if (program) {
-            for (const auto &chain : program->GetStepGraph().chains) {
+            for (const auto &chain :
+                 rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+                     .chains) {
                 for (const auto &revision : chain.revisions) {
                     if (revision.moverPath == mover) {
                         skin = &revision;

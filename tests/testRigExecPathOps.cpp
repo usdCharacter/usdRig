@@ -392,7 +392,8 @@ CheckPurity(const char *what, const RigExecRigEvaluator &evaluator)
     if (!program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     CHECK(B.purityAudit);
     const uint64_t reads =
         B.purityViolations.count.load(std::memory_order_relaxed);

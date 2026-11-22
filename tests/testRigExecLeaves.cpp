@@ -166,7 +166,8 @@ const RigExecBakedProgramImpl *
 Program(const RigExecRigEvaluator &evaluator)
 {
     const RigExecBakedProgram *program = evaluator.GetBakedProgram();
-    return program ? &program->GetStepGraph() : nullptr;
+    return program ? &rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+                   : nullptr;
 }
 
 // Every visited binding's leaf against RigExecBakedRead evaluated again now,
@@ -1370,7 +1371,8 @@ TestAnAvarPatchExportsThePatchedBinding(const std::string &examples)
         auto evaluator = MakeEvaluator(stage, f.rig);
         RunChecked(evaluator.get(), {}, t, std::string(name) + " patch");
         const RigExecBakedProgram *program = evaluator->GetBakedProgram();
-        const RigExecBakedProgramImpl &B = program->GetStepGraph();
+        const RigExecBakedProgramImpl &B =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*program);
         const size_t index = B.patchableAvars.at(path);
         const RigExecBakedProgramImpl::AvarBinding &binding =
             B.avarConstantBindings[index];
@@ -1581,8 +1583,11 @@ ShadowChecked(const RigExecRigEvaluator &evaluator,
     size_t compared = 0;
     const std::vector<std::string> report =
         RigExecBakedProgramTesting::ShadowAssembly(
-            *program, PrologueInputs(program->GetStepGraph(), overrides), time,
-            {}, &compared);
+            *program,
+            PrologueInputs(
+                rigExec::RigExecBakedProgramAccess::StepGraph(*program),
+                overrides),
+            time, {}, &compared);
     for (size_t i = 0; i < report.size() && i < 6; ++i) {
         std::printf("FAIL %s: %s\n", what.c_str(), report[i].c_str());
     }

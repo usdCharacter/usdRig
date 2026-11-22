@@ -5136,7 +5136,8 @@ TestDirectStaticNumericSources()
     CHECK(evaluator.Compile(&errors));
     CHECK(errors.empty());
     CHECK(evaluator.Evaluate(UsdTimeCode(1)).valid);
-    const auto &initial = evaluator.GetBakedProgram()->GetStepGraph();
+    const auto &initial = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     const size_t sourceSlot = size_t(initial.index.at(source.GetPath()));
     CHECK(initial.ladders[sourceSlot].restAvars[0].sourceBacked);
     CHECK(!initial.ladders[sourceSlot].restAvars[0].varying);
@@ -5262,7 +5263,8 @@ TestDirectStaticNumericSources()
     rest.Set(9.0, UsdTimeCode(1));
     const auto animated = evaluator.Evaluate(UsdTimeCode(1));
     CHECK(animated.valid);
-    const auto &rebound = evaluator.GetBakedProgram()->GetStepGraph();
+    const auto &rebound = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     const auto &input =
         rebound.ladders[size_t(rebound.index.at(source.GetPath()))]
             .restAvars[0];
@@ -5327,7 +5329,7 @@ TestDirectStaticRotationSignSource()
     CHECK(program);
     if (!program)
         return;
-    const auto &B = program->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const auto slot = B.index.find(source.GetPath());
     CHECK(slot != B.index.end());
     if (slot == B.index.end())
@@ -5384,7 +5386,7 @@ TestDirectStaticRotationSignSource()
     CHECK(rebound);
     if (!rebound)
         return;
-    const auto &R = rebound->GetStepGraph();
+    const auto &R = rigExec::RigExecBakedProgramAccess::StepGraph(*rebound);
     const auto at = R.index.find(source.GetPath());
     CHECK(at != R.index.end());
     if (at == R.index.end())
@@ -5480,7 +5482,8 @@ TestAuthoredPosedSpaceBakesAndAnimatedOneFollows()
     CHECK(wired.IsBakeable(&reasons));
     CHECK(reasons.empty());
     const auto graph = wired.GetOpGraph();
-    const auto &binding = wired.GetBakedProgram()->GetStepGraph();
+    const auto &binding =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*wired.GetBakedProgram());
     const int childSlot = binding.index.at(child.GetPath());
     const int posedValue = binding.ladders[size_t(childSlot)].spaceValues[2];
     CHECK(posedValue >= 0);

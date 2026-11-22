@@ -589,7 +589,9 @@ TestViewFreeValidation(const std::string &examplesDir)
                 const auto *program = eval.GetBakedProgram();
                 CHECK(program);
                 if (program)
-                    for (const auto &chain : program->GetStepGraph().chains)
+                    for (const auto &chain :
+                         rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+                             .chains)
                         for (const auto &revision : chain.revisions)
                             CHECK(revision.moverPath !=
                                       geometry.AppendChild(
@@ -2482,7 +2484,8 @@ TestPureSolverToSolverCycleRejected(const std::string &examplesDir)
         CHECK(ok.GetBakedProgram());
         if (!ok.GetBakedProgram())
             return;
-        const auto &B = ok.GetBakedProgram()->GetStepGraph();
+        const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+            *ok.GetBakedProgram());
         const auto producer =
             B.solverIndex.find(SdfPath("/BlendArmAsset/Rig/Solvers/ArmFK"));
         const auto ik =

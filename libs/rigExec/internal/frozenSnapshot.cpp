@@ -1,6 +1,7 @@
 // Stage-side program snapshot construction and constant patching.
 
 #include "rigExecSchema/schemaNames.h"
+#include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/frozenContextInternal.h"
 #include "rigExec/internal/inputReplay.h"
 #include "rigExec/internal/oracleDispatch.h"
@@ -568,7 +569,8 @@ RigExecCanFreezeProgram(const RigExecRigEvaluator &evaluator,
     if (!program) {
         return fail("no compiled program is available to freeze");
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     // Property chains and weight envelopes run as declared graph operations.
     // Source discovery must match the compiled rig and every envelope
     // must name its compiled field producer.
@@ -690,7 +692,8 @@ RigExecFreezeProgram(const RigExecRigEvaluator &evaluator,
         return false;
     }
     const RigExecBakedProgramImpl &B =
-        evaluator.GetBakedProgram()->GetStepGraph();
+        rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
     auto snapshot = std::make_shared<RigExecFrozenProgram>();
     auto program = std::make_shared<RigExecBakedProgramImpl>();
     auto bindings = std::make_shared<RigExecFrozenBindings>();
@@ -805,7 +808,8 @@ RigExecFrozenSnapshotOwesLiveEdits(const RigExecFrozenProgram &base,
 {
     if (!base.program)
         return true;
-    const RigExecBakedProgramImpl &L = live.GetStepGraph();
+    const RigExecBakedProgramImpl &L =
+        rigExec::RigExecBakedProgramAccess::StepGraph(live);
     const auto *patch = base.avarPatch.get();
     const uint64_t serial =
         patch ? patch->valueEditSerial : base.program->valueEditSerial;

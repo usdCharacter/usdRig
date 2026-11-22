@@ -1,6 +1,7 @@
 // Stage-side frame sampling and burst sample caches.
 
 #include "rigExecSchema/schemaNames.h"
+#include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/frozenContextInternal.h"
 #include "rigExec/internal/oracleDispatch.h"
 #include "rigExec/api/frameCache.h"
@@ -2604,7 +2605,8 @@ _AdmitFrameUpstream(const RigExecBakedProgram &program,
     if (upstream.empty()) {
         return;
     }
-    const RigExecBakedProgramImpl &B = program.GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(program);
     const std::map<SdfPath, TfType> &listed = program.GetUpstreamAdmissible();
     // The array part, as live judges it (RigExecBakedUpstreamAdmissibleArrays
     // over the same compiled rig).
@@ -2896,7 +2898,8 @@ _SampleWithPinnedChainBindings(
     if (!program) {
         return fail("rig has no valid compiled program for frozen sampling");
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     // No shape gate on xform slots, native sources, or delta bases: the
     // seeds sample per frame below, through the program's hook.
 
@@ -3395,7 +3398,8 @@ RigExecBuildBurstSampleCache(const RigExecBakedProgram &program,
     // The decline checks mirror the sampler's below, with its messages: a
     // rig the sampler would decline per frame fails the build once, and
     // the burst skips every frame up front instead of declining each.
-    const RigExecBakedProgramImpl &B = program.GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(program);
     // No shape gate on xform slots, native sources, or delta bases: the
     // seeds sample per frame through the program's hook, as in the plain
     // sampler, so no frame of the burst is unshaped for them.
@@ -3505,7 +3509,8 @@ RigExecSampleFrameInputsWithBurstCache(
         return fail("burst cache was prepared for other upstream values; "
                     "re-prepare");
     }
-    const RigExecBakedProgramImpl &B = cache->program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*cache->program);
     const RigExecProfiler &sampleProfiler = evaluator.GetProfiler();
     const bool profileSample = sampleProfiler.IsEnabled();
     uint64_t sampleStart = profileSample ? RigExecProfiler::NowUs() : 0;

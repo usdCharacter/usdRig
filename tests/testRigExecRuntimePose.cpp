@@ -585,7 +585,8 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
             failed = true;
             break;
         }
-        const RigExecBakedProgramImpl &graph = program->GetStepGraph();
+        const RigExecBakedProgramImpl &graph =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*program);
         if (!player.Play(frame, &error)) {
             std::printf("execute diagnostic at %s frame %.17g: %s\n",
                         name.c_str(), frame, error.c_str());
@@ -3094,8 +3095,11 @@ _References(const UsdStageRefPtr &stage, const SdfPath &rigPath,
         [&](const RigExecRigEvaluator &evaluator, size_t i) {
             const RigExecBakedProgram *program = evaluator.GetBakedProgram();
             if (program) {
-                out[i].fin = program->GetStepGraph().fin;
-                out[i].base = program->GetStepGraph().base;
+                out[i].fin =
+                    rigExec::RigExecBakedProgramAccess::StepGraph(*program).fin;
+                out[i].base =
+                    rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+                        .base;
             }
         },
         compileAfterEdits);
@@ -5269,7 +5273,8 @@ TestUnusableComposedRestUsesLocalMatrixFallback()
         const auto *program = evaluator.GetBakedProgram();
         CHECK(program);
         if (program) {
-            const auto &graph = program->GetStepGraph();
+            const auto &graph =
+                rigExec::RigExecBakedProgramAccess::StepGraph(*program);
             const auto slot = graph.index.find(joint);
             CHECK(slot != graph.index.end());
             if (slot != graph.index.end()) {
@@ -5713,8 +5718,10 @@ TestHeldDragCountsValueEditWork()
         const auto each = [&](const RigExecRigEvaluator &evaluator, size_t) {
             const RigExecBakedProgram *program = evaluator.GetBakedProgram();
             bakedRuns.emplace_back(
-                program ? program->GetStepGraph().lastClosedClusters
-                        : size_t(0),
+                program
+                    ? rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+                          .lastClosedClusters
+                    : size_t(0),
                 evaluator.GetBakedGenerationCount());
             liveOps.push_back(evaluator.GetLastOpTrace().size());
         };
@@ -6173,7 +6180,9 @@ def Xform "Asset"
         evaluator.Evaluate(UsdTimeCode(frame));
         CHECK(evaluator.GetBakedGenerationCount() == generations + 1);
         const RigExecBakedProgram *program = evaluator.GetBakedProgram();
-        return program ? &program->GetStepGraph() : nullptr;
+        return program
+                   ? &rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+                   : nullptr;
     };
     const RigExecBakedProgramImpl *const B = evaluate(1.0);
     CHECK(B);

@@ -7,13 +7,15 @@ namespace rigExec {
 size_t
 RigExecProgramView::ClusterCount() const
 {
-    return _program ? _program->GetStepGraph().clustering.clusters.size() : 0;
+    return _program ? RigExecBakedProgramAccess::StepGraph(*_program)
+                          .clustering.clusters.size()
+                    : 0;
 }
 
 UsdTimeCode
 RigExecProgramView::LastTime() const
 {
-    return _program ? _program->GetStepGraph().lastTime
+    return _program ? RigExecBakedProgramAccess::StepGraph(*_program).lastTime
                     : UsdTimeCode::Default();
 }
 

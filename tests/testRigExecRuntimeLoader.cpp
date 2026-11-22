@@ -576,7 +576,8 @@ _TestStepLabels(const std::string &stage, const RigExecRigEvaluator &evaluator,
         }
         return false;
     }
-    const RigExecBakedProgramImpl &program = baked->GetStepGraph();
+    const RigExecBakedProgramImpl &program =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*baked);
     const std::unique_ptr<fb::RigExecWireFile> file =
         RigExecTestUnpack(baseline);
     CHECK(file && file->steps.size() == program.steps.size());
@@ -2001,7 +2002,8 @@ _TestSamplerDrive(const RigExecExampleFixture &fixture,
             // changing the strict native/runtime numerical or work contract.
             const auto baked = evaluator.GetBakedProgram();
             if (baked) {
-                const auto &program = baked->GetStepGraph();
+                const auto &program =
+                    rigExec::RigExecBakedProgramAccess::StepGraph(*baked);
                 for (size_t i = 0; i < program.steps.size(); ++i)
                     if (i < program.opExecution.ran.size() &&
                         program.opExecution.ran[i])

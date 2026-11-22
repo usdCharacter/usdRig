@@ -1,6 +1,7 @@
 // Exact frame-input and compiled rig constant fingerprints.
 
 #include "rigExec/internal/compiledProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/frozenContextInternal.h"
 #include "rigExec/internal/pathText.h"
 #include "pxr/base/gf/vec2f.h"
@@ -384,7 +385,8 @@ std::vector<uint64_t>
 RigExecConstantRegionsForPaths(const RigExecBakedProgram &program,
                                const std::vector<SdfPath> &paths)
 {
-    const RigExecBakedProgramImpl &B = program.GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(program);
     std::vector<uint64_t> regions;
     for (const SdfPath &path : paths) {
         const auto found = B.patchableAvars.find(path);
@@ -419,7 +421,8 @@ RigExecCaptureFrozenAvarPatch(
     }
     if (!base.program || !base.bindings)
         return fail("empty frozen snapshot");
-    const RigExecBakedProgramImpl &L = live.GetStepGraph();
+    const RigExecBakedProgramImpl &L =
+        rigExec::RigExecBakedProgramAccess::StepGraph(live);
     const RigExecBakedProgramImpl &S = *base.program;
     // Live's avar slots, carried below, hold the upstream values its last
     // run placed; the copy keeps the snapshot's table as its history, so

@@ -499,12 +499,15 @@ TestAnUnrelatedEditDoesNotRerunTheKernel()
 
     // A prim the rig has never heard of, between two identical frames.
     // Neutral routing preserves the stamp as well as the compiled rig.
-    const size_t stamp =
-        evaluator.GetBakedProgram()->GetStepGraph().programStamp;
+    const size_t stamp = rigExec::RigExecBakedProgramAccess::StepGraph(
+                             *evaluator.GetBakedProgram())
+                             .programStamp;
     stage->DefinePrim(SdfPath("/Scratch"), TfToken("Scope"));
     CHECK(evaluator.GetLastNoticeDisposition() ==
           RigExecNoticeDisposition::Edited);
-    CHECK(evaluator.GetBakedProgram()->GetStepGraph().programStamp == stamp);
+    CHECK(rigExec::RigExecBakedProgramAccess::StepGraph(
+              *evaluator.GetBakedProgram())
+              .programStamp == stamp);
     const RigExecRigPose after = evaluator.Evaluate(1.0);
     CheckSkinned(after, 1.0f, 0.0f, "after an unrelated edit");
     CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
@@ -696,7 +699,10 @@ const Revision *
 SkinRevision(const RigExecRigEvaluator &evaluator)
 {
     const RigExecBakedProgram *program = evaluator.GetBakedProgram();
-    return program ? RevisionOf(program->GetStepGraph(), kSkin) : nullptr;
+    return program ? RevisionOf(rigExec::RigExecBakedProgramAccess::StepGraph(
+                                    *program),
+                                kSkin)
+                   : nullptr;
 }
 
 // What the layout handle adopted for the skin holds: null when there is no
@@ -897,7 +903,8 @@ TestBakedLayoutFollowsEdits()
     }
     CHECK(RunSkinProgramAtTime(*program, rig, t1, &pose));
     CheckSkinned(pose, 0.5f, 0.25f, "direct, before the samples");
-    const Revision *revision = RevisionOf(program->GetStepGraph(), kSkin);
+    const Revision *revision = RevisionOf(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program), kSkin);
     CHECK(revision != nullptr);
     if (!revision) {
         return;
@@ -985,7 +992,8 @@ TestATargetRefusalKeepsIndependentLayoutWork()
         }
         return;
     }
-    const auto &compiled = (*program)->GetStepGraph();
+    const auto &compiled =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*(*program));
     const auto hasRequiredTarget = [&](const SdfPath &path) {
         return std::any_of(
             compiled.xformSlots.begin(), compiled.xformSlots.end(),
@@ -996,7 +1004,8 @@ TestATargetRefusalKeepsIndependentLayoutWork()
     RigExecRigPose first;
     CHECK(program->Run(UsdTimeCode(1.0), &first, true));
     CheckSkinned(first, 1.0f, 0.0f, "before the bail");
-    const Revision *revision = RevisionOf((*program)->GetStepGraph(), kSkin);
+    const Revision *revision = RevisionOf(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*(*program)), kSkin);
     CHECK(revision != nullptr);
     if (!revision) {
         return;
@@ -1005,8 +1014,8 @@ TestATargetRefusalKeepsIndependentLayoutWork()
     CHECK(held != nullptr);
 
     // Duplicate admission input must be rejected, not counted as one read.
-    auto &mutableGraph =
-        const_cast<RigExecBakedProgramImpl &>((*program)->GetStepGraph());
+    auto &mutableGraph = const_cast<RigExecBakedProgramImpl &>(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*(*program)));
     auto gate = std::find_if(
         mutableGraph.steps.begin(), mutableGraph.steps.end(),
         [](const auto &step) {
@@ -1042,7 +1051,8 @@ TestATargetRefusalKeepsIndependentLayoutWork()
     CHECK(!program->Run(UsdTimeCode(2.0), &given, true));
     CHECK((*program)->GetLastBail() == RigExecBakedBail::StageFrames);
     CHECK(!given.valid);
-    const auto &graph = (*program)->GetStepGraph();
+    const auto &graph =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*(*program));
     const auto &admission = graph.requiredStageFramesAdmission;
     CHECK(!admission.admitted && admission.firstBadTarget >= 0);
     int firstBad = -1;
@@ -1089,9 +1099,9 @@ TestATargetRefusalKeepsIndependentLayoutWork()
     CHECK(probeBPrim.SetTypeName(TfToken("Xform")));
     RigExecRigPose next;
     CHECK(program->Run(UsdTimeCode(3.0), &next, true));
-    CHECK((*program)->GetStepGraph().requiredStageFramesAdmission.admitted);
-    CHECK((*program)
-              ->GetStepGraph()
+    CHECK(rigExec::RigExecBakedProgramAccess::StepGraph(*(*program))
+              .requiredStageFramesAdmission.admitted);
+    CHECK(rigExec::RigExecBakedProgramAccess::StepGraph(*(*program))
               .requiredStageFramesAdmission.firstBadTarget == -1);
     CheckSkinned(next, 0.0f, 1.0f, "the generation after the bail");
     CHECK(revision->topology != held);
@@ -1114,9 +1124,9 @@ TestATargetRefusalKeepsIndependentLayoutWork()
               .Set(VtTokenArray{TfToken("xformOp:transform")}));
     RigExecRigPose degeneratePose;
     program->Run(UsdTimeCode(4.0), &degeneratePose, true);
-    CHECK((*program)->GetStepGraph().requiredStageFramesAdmission.admitted);
-    CHECK((*program)
-              ->GetStepGraph()
+    CHECK(rigExec::RigExecBakedProgramAccess::StepGraph(*(*program))
+              .requiredStageFramesAdmission.admitted);
+    CHECK(rigExec::RigExecBakedProgramAccess::StepGraph(*(*program))
               .requiredStageFramesAdmission.firstBadTarget == -1);
     CHECK((*program)->GetLastBail() != RigExecBakedBail::StageFrames);
 }
@@ -1239,7 +1249,8 @@ CheckLayoutFields(const std::string &what, const UsdStageRefPtr &stage,
         }
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     struct Built {
         std::vector<std::vector<int>> keys;
         size_t indexCount = 0, pointCount = 0;
@@ -1448,7 +1459,8 @@ TestTheLayoutHandleSurvivesUnrelatedNotices()
             // ORIGINAL requires no retained geometry kernels. The new control
             // still initializes through the common graph in this generation.
             CHECK(pose.valid && pose.executedOpCount > 0);
-            const auto &B = evaluator->GetBakedProgram()->GetStepGraph();
+            const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+                *evaluator->GetBakedProgram());
             size_t geometryBodies = 0;
             for (size_t i = 0; i < B.steps.size(); ++i)
                 if (i < B.opExecution.ran.size() && B.opExecution.ran[i] &&
@@ -1486,15 +1498,17 @@ TestTheLayoutHandleSurvivesUnrelatedNotices()
     // one's geometry state, and its first build of the same layout hands
     // back the same object, so the kept packet still compares equal.
     const size_t builds = evaluator->GetBakedProgramBuildCount();
-    const int oldAlongX = evaluator->GetBakedProgram()->GetStepGraph().index.at(
-        SdfPath("/Asset/Rig/AlongX"));
+    const int oldAlongX = rigExec::RigExecBakedProgramAccess::StepGraph(
+                              *evaluator->GetBakedProgram())
+                              .index.at(SdfPath("/Asset/Rig/AlongX"));
     const auto reordered = stage->DefinePrim(SdfPath("/Asset/Rig/A0Extra"),
                                              TfToken("RigExecControl"));
     CHECK(reordered.GetAttribute(TfToken("avars:tx")).Set(3.0));
     stage->DefinePrim(SdfPath("/Asset/Rig/Extra"), TfToken("RigExecControl"));
     unrelated("after a rebuild", true);
-    CHECK(evaluator->GetBakedProgram()->GetStepGraph().index.at(
-              SdfPath("/Asset/Rig/AlongX")) != oldAlongX);
+    CHECK(rigExec::RigExecBakedProgramAccess::StepGraph(
+              *evaluator->GetBakedProgram())
+              .index.at(SdfPath("/Asset/Rig/AlongX")) != oldAlongX);
     const auto reorderedPose = evaluator->Evaluate(UsdTimeCode(1.0));
     CHECK(reorderedPose.controlFrames.count(reordered.GetPath()) == 1);
     if (reorderedPose.controlFrames.count(reordered.GetPath()))
@@ -1510,7 +1524,7 @@ TestTheLayoutHandleSurvivesUnrelatedNotices()
         const RigExecBakedProgram *program = evaluator->GetBakedProgram();
         if (!program)
             return size_t(0);
-        const auto &B = program->GetStepGraph();
+        const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(*program);
         size_t count = 0;
         for (size_t i = 0; i < B.steps.size() && i < B.opExecution.ran.size();
              ++i)
@@ -1578,7 +1592,8 @@ TestRetainedSkinRebuildInvalidation()
               (std::vector<std::string>{
                   "structural edit: compiled rig rebuilt"}));
         CHECK(evaluator->GetBakedProgramBuildCount() > builds);
-        const auto &B = evaluator->GetBakedProgram()->GetStepGraph();
+        const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator->GetBakedProgram());
         size_t kernels = 0;
         for (size_t i = 0; i < B.steps.size(); ++i)
             if (B.steps[i].kind == RigExecBakedStepKind::RevisionChunk &&
@@ -1624,7 +1639,8 @@ TestATopologyEditRebuildsTheProgram()
         if (!program) {
             return;
         }
-        const RigExecBakedProgramImpl &B = program->GetStepGraph();
+        const RigExecBakedProgramImpl &B =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*program);
         CHECK(B.rebuild.count(
                   kSkin.AppendProperty(TfToken("rigExec:jointIndices"))) == 1);
         CHECK(B.rebuild.count(

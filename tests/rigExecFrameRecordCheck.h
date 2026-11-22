@@ -91,7 +91,8 @@ CheckFrameRecords(int *failures, const std::string &where,
     if (!program) {
         return answered;
     }
-    const rigExec::RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const rigExec::RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     expect(where, B.frameMatrix.size() == B.frameRecords.size(),
            "one frameMatrix per record");
     expect(where, B.frameMatrixValid.size() == B.frameRecords.size(),

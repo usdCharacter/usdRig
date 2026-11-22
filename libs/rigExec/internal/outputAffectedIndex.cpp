@@ -593,7 +593,8 @@ RigExecOutputAffectedIndex::Build(const RigExecProgramView &program,
         Clear();
         return;
     }
-    Build(program.Program()->GetStepGraph(), compiledRigSignature);
+    Build(RigExecBakedProgramAccess::StepGraph(*program.Program()),
+          compiledRigSignature);
 }
 
 std::vector<int>
@@ -602,7 +603,8 @@ RigExecOverrideSeeds(const RigExecProgramView &program,
 {
     if (!program)
         return {};
-    return RigExecOverrideSeeds(program.Program()->GetStepGraph(), override);
+    return RigExecOverrideSeeds(
+        RigExecBakedProgramAccess::StepGraph(*program.Program()), override);
 }
 
 } // namespace rigExec

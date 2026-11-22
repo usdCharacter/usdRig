@@ -1101,7 +1101,8 @@ TestPhasedReferenceIsBound()
         CHECK(baked.GetBakedGenerationCount() == generations + 1);
         const RigExecBakedProgram *program = baked.GetBakedProgram();
         CHECK(program);
-        const RigExecBakedProgramImpl &B = program->GetStepGraph();
+        const RigExecBakedProgramImpl &B =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*program);
         const RigExecBakedPointsBinding *binding = nullptr;
         for (const auto &chain : B.chains) {
             for (const auto &revision : chain.revisions) {
@@ -1158,7 +1159,8 @@ TestTheExternalPayloadIsTheAssemblersAnswer()
         const auto check = [&](double time, const std::string &what) {
             const RigExecBakedProgram *program = baked.GetBakedProgram();
             CHECK(program);
-            const RigExecBakedProgramImpl &B = program->GetStepGraph();
+            const RigExecBakedProgramImpl &B =
+                rigExec::RigExecBakedProgramAccess::StepGraph(*program);
             const RigExecBakedProgramImpl::GeomChain *chain = nullptr;
             const RigExecBakedProgramImpl::GeomRevision *revision = nullptr;
             for (const auto &c : B.chains) {

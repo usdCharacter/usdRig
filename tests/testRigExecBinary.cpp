@@ -1,6 +1,7 @@
 // .rigexec bake conformance: the FlatBuffer file a bake writes, held to the
 // program it was baked from, and the format's refusals on real bakes.
 #include "rigExecBake/bake.h"
+#include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExecBake/revisionReads.h"
 #include "rigExecBake/staticReport.h"
 #include "rigExec/internal/bakedSchedule.h"
@@ -1313,7 +1314,9 @@ _BakeAndCompare(RigExecRigEvaluator &evaluator, double time,
     std::unique_ptr<fb::RigExecWireFile> file =
         _BinaryCompareProgram(evaluator, result.bytes, label);
     if (file) {
-        _BinaryCheckInputs(evaluator.GetBakedProgram()->GetStepGraph(), *file);
+        _BinaryCheckInputs(rigExec::RigExecBakedProgramAccess::StepGraph(
+                               *evaluator.GetBakedProgram()),
+                           *file);
     }
     return file;
 }
@@ -1909,7 +1912,8 @@ TestComputedEnvelopeBake()
             return;
         }
         const RigExecBakedProgramImpl &program =
-            evaluator.GetBakedProgram()->GetStepGraph();
+            rigExec::RigExecBakedProgramAccess::StepGraph(
+                *evaluator.GetBakedProgram());
         const auto &objects = file->geometry->weightObjects;
         CHECK(program.weightObjects.size() == 2);
         CHECK(objects.size() == 2);
@@ -2064,7 +2068,8 @@ TestComputedCurrentPhaseBake()
             return;
         }
         const RigExecBakedProgramImpl &program =
-            evaluator.GetBakedProgram()->GetStepGraph();
+            rigExec::RigExecBakedProgramAccess::StepGraph(
+                *evaluator.GetBakedProgram());
         for (const fb::RigExecWireConstraint &c : file->pose->constraints) {
             CHECK(c.weightObjectIndex == -1);
         }
@@ -2215,7 +2220,8 @@ TestComputedChainBake()
         }
         const fb::RigExecWireFile &file = *owned;
         const RigExecBakedProgramImpl &program =
-            evaluator.GetBakedProgram()->GetStepGraph();
+            rigExec::RigExecBakedProgramAccess::StepGraph(
+                *evaluator.GetBakedProgram());
         const auto text = [&](uint32_t id) {
             return RigExecFormatPathText(file, id);
         };
@@ -2563,7 +2569,8 @@ TestRangeChainBake()
         return;
     }
     const RigExecBakedProgramImpl &program =
-        evaluator.GetBakedProgram()->GetStepGraph();
+        rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
     const fb::RigExecWireDomainGeometry &g = *file->geometry;
     int chainIndex = -1;
     for (size_t c = 0; c < g.chains.size(); ++c) {
@@ -2856,7 +2863,8 @@ TestEnumeratedReadThroughPropertyResult()
     }
     CHECK(result.pathReadsWritten > 0);
     const RigExecBakedProgramImpl &program =
-        evaluator.GetBakedProgram()->GetStepGraph();
+        rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
     const auto chained = program.propertyResults.find(driver.GetPath());
     CHECK(chained != program.propertyResults.end() &&
           chained->second.IsHolding<float>());
@@ -3012,7 +3020,8 @@ TestStaticReportAnsweredBlendSamples()
         }
         if (ok && evaluator.GetBakedProgram()) {
             const RigExecBakedProgramImpl &B =
-                evaluator.GetBakedProgram()->GetStepGraph();
+                rigExec::RigExecBakedProgramAccess::StepGraph(
+                    *evaluator.GetBakedProgram());
             for (const auto &chain : B.chains) {
                 for (const auto &revision : chain.revisions) {
                     for (const auto &channel : revision.blendChannels) {
@@ -3443,7 +3452,8 @@ TestGroupRolesBake()
     if (!file || !baked) {
         return;
     }
-    const RigExecBakedProgramImpl &program = baked->GetStepGraph();
+    const RigExecBakedProgramImpl &program =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*baked);
     CHECK(program.roleMode == RigExecBakedRoleMode::Export);
     const _GroupRolesChain at = _FindGroupRolesChain(*file);
     CHECK(at.Found());
@@ -3819,10 +3829,11 @@ TestBakeRestoresLiveRoles()
         CHECK(evaluator.GetBakedRoleMode() == RigExecBakedRoleMode::Live);
         CHECK(evaluator.GetBakedExportKeep().empty());
         const RigExecBakedProgram *exported = evaluator.GetBakedProgram();
-        CHECK(exported &&
-              exported->GetStepGraph().roleMode ==
-                  RigExecBakedRoleMode::Export &&
-              !exported->GetExportPinnedPaths().empty());
+        CHECK(
+            exported &&
+            rigExec::RigExecBakedProgramAccess::StepGraph(*exported).roleMode ==
+                RigExecBakedRoleMode::Export &&
+            !exported->GetExportPinnedPaths().empty());
         const size_t builds = evaluator.GetBakedProgramBuildCount();
         CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
         const bool rebuilt =
@@ -3830,7 +3841,8 @@ TestBakeRestoresLiveRoles()
         const RigExecBakedProgram *live = evaluator.GetBakedProgram();
         const bool isLive =
             live &&
-            live->GetStepGraph().roleMode == RigExecBakedRoleMode::Live &&
+            rigExec::RigExecBakedProgramAccess::StepGraph(*live).roleMode ==
+                RigExecBakedRoleMode::Live &&
             live->GetExportPinnedPaths().empty();
         CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
         const bool held = evaluator.GetBakedProgramBuildCount() == builds + 1;
@@ -4139,7 +4151,9 @@ TestBake(const std::string &fixture, const std::vector<double> &tableFrames,
         if (failed == 0) {
             ++compareRows;
         }
-        _BinaryCheckInputs(evaluator.GetBakedProgram()->GetStepGraph(), *file);
+        _BinaryCheckInputs(rigExec::RigExecBakedProgramAccess::StepGraph(
+                               *evaluator.GetBakedProgram()),
+                           *file);
         _BinarySizeBudget(fixture, result);
         // The counts the bake reports: the file's rows, and the distinct
         // (path, rest) keys of the run's enumeration.
@@ -4147,7 +4161,9 @@ TestBake(const std::string &fixture, const std::vector<double> &tableFrames,
         {
             std::vector<RigExecBakeRevisionRead> enumerated;
             RigExecBakeEnumerateProgramReads(
-                evaluator.GetBakedProgram()->GetStepGraph(), t, &enumerated);
+                rigExec::RigExecBakedProgramAccess::StepGraph(
+                    *evaluator.GetBakedProgram()),
+                t, &enumerated);
             std::set<std::pair<std::string, bool>> keys;
             for (const RigExecBakeRevisionRead &read : enumerated) {
                 keys.emplace(read.path.GetString(), read.rest);
@@ -4289,7 +4305,8 @@ TestAPrunedBakeReplaysTheSameValues()
             return out;
         }
         const RigExecBakedProgramImpl &program =
-            evaluator.GetBakedProgram()->GetStepGraph();
+            rigExec::RigExecBakedProgramAccess::StepGraph(
+                *evaluator.GetBakedProgram());
         out.pruned = program.providerStepsPruned;
         out.violations = program.providerPruneViolations;
         const std::unique_ptr<_BinaryFile> file = _BinaryCompareProgram(

@@ -1298,7 +1298,8 @@ CompareProgramRests(const std::string &where,
                     const RigExecBakedProgram &program,
                     const RigExecBakedProgramImpl *build, RestCounts *counts)
 {
-    const RigExecBakedProgramImpl &B = program.GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(program);
     size_t solvers = 0;
     for (size_t i = 0; i < B.solvers.size(); ++i) {
         const SolverDesc &held = B.solvers[i];
@@ -1402,7 +1403,8 @@ TestRefreshSolverRestsOnBuildStateIsIdentity(const char *what,
         std::printf("FAIL %s: no solver measures from a rest\n", what);
         return 0;
     }
-    const RigExecBakedProgramImpl &build = built->GetStepGraph();
+    const RigExecBakedProgramImpl &build =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*built);
 
     // After runs: settled, under a drag on a rest channel, and released.
     const UsdStageRefPtr stage = make();
@@ -1437,7 +1439,8 @@ TestRefreshSolverRestsOnBuildStateIsIdentity(const char *what,
     size_t draggedSolver = 0;
     int slot = -1;
     if (program) {
-        const auto &solvers = program->GetStepGraph().solvers;
+        const auto &solvers =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*program).solvers;
         for (size_t i = 0; i < solvers.size() && slot < 0; ++i) {
             const SolverDesc &s = solvers[i];
             std::set<int> live;
@@ -1460,7 +1463,9 @@ TestRefreshSolverRestsOnBuildStateIsIdentity(const char *what,
         std::printf("FAIL %s: no authored solver rest to drag\n", what);
         return counts.sinceBuildRecomposed;
     }
-    const SdfPath dragged = program->GetStepGraph().paths[size_t(slot)];
+    const SdfPath dragged =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+            .paths[size_t(slot)];
     double authored = 0.0;
     if (const UsdAttribute a =
             stage->GetPrimAtPath(dragged).GetAttribute(TfToken("rest:tx"))) {
@@ -1475,9 +1480,11 @@ TestRefreshSolverRestsOnBuildStateIsIdentity(const char *what,
     RestDiff moved;
     moved.report = false;
     if (program) {
-        CompareRestDescription(build.solvers[draggedSolver],
-                               program->GetStepGraph().solvers[draggedSolver],
-                               &moved);
+        CompareRestDescription(
+            build.solvers[draggedSolver],
+            rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+                .solvers[draggedSolver],
+            &moved);
     }
     if (moved.differing == 0) {
         ++failures;
@@ -1781,7 +1788,8 @@ CheckOwnRestRefreshes(const char *what, const MakeStage &make,
         std::printf("FAIL %s: no baked program\n", what);
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     if (!B.ladderVarying) {
         ++failures;
         std::printf("FAIL %s: the ladder does not vary, so the case says "
@@ -1900,7 +1908,8 @@ ListSpaceRestCandidates(const std::vector<CandidateRig> &rigs)
                 std::printf("%s: does not bake, not listed\n", where.c_str());
                 continue;
             }
-            const RigExecBakedProgramImpl &build = built->GetStepGraph();
+            const RigExecBakedProgramImpl &build =
+                rigExec::RigExecBakedProgramAccess::StepGraph(*built);
             std::vector<size_t> spaceSolvers;
             for (size_t i = 0; i < build.solvers.size(); ++i) {
                 if (build.solvers[i].spaceSlot >= 0)
@@ -1945,7 +1954,8 @@ ListSpaceRestCandidates(const std::vector<CandidateRig> &rigs)
                     evaluator.GetBakedProgram();
                 if (!program)
                     continue;
-                const RigExecBakedProgramImpl &B = program->GetStepGraph();
+                const RigExecBakedProgramImpl &B =
+                    rigExec::RigExecBakedProgramAccess::StepGraph(*program);
                 if (B.paths != build.paths) {
                     ++failures;
                     std::printf("FAIL %s: the run's program numbers its "

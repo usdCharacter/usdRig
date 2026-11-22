@@ -320,7 +320,10 @@ RigExecBakeToBinary(RigExecRigEvaluator &evaluator, const RigExecBakeOpts &opts,
     }
     const double bakeTime =
         std::isnan(opts.time)
-            ? RigExecBakedProbeTime(standing->GetStepGraph().stage).GetValue()
+            ? RigExecBakedProbeTime(
+                  rigExec::RigExecBakedProgramAccess::StepGraph(*standing)
+                      .stage)
+                  .GetValue()
             : opts.time;
     char number[32];
     std::string why;
@@ -338,8 +341,11 @@ RigExecBakeToBinary(RigExecRigEvaluator &evaluator, const RigExecBakeOpts &opts,
                     _FormatDouble(bakeTime, number, sizeof(number)));
     }
     _ExternalExport external;
-    if (!external.List(standing->GetStepGraph(), &why) ||
-        !external.Capture(standing->GetStepGraph(), bakeTime, &why)) {
+    if (!external.List(rigExec::RigExecBakedProgramAccess::StepGraph(*standing),
+                       &why) ||
+        !external.Capture(
+            rigExec::RigExecBakedProgramAccess::StepGraph(*standing), bakeTime,
+            &why)) {
         return Fail(why);
     }
     // The IsBakeable gate above is necessary but not sufficient: an
@@ -350,7 +356,8 @@ RigExecBakeToBinary(RigExecRigEvaluator &evaluator, const RigExecBakeOpts &opts,
     if (evaluator.GetBakedGenerationCount() - bakedBefore != 1) {
         return Fail("the bake run did not come from the baked program");
     }
-    const RigExecBakedProgramImpl &program = standing->GetStepGraph();
+    const RigExecBakedProgramImpl &program =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*standing);
 
     // The input list, from the standing program: the slots every read
     // takes, with their values at the bake time as the defaults, every read

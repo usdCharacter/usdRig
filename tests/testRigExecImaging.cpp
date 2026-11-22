@@ -6950,7 +6950,8 @@ _CheckUpstreamCone(const _UpstreamImaging &imaging,
     if (!evaluator || !program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     for (size_t i = 0; i < B.steps.size(); ++i) {
         CHECK(!B.cones.alwaysSteps.Test(int(i)));
     }
@@ -7011,7 +7012,8 @@ _UpstreamWork(const _UpstreamImaging &imaging)
     if (!evaluator || !program) {
         return 0;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     size_t work = ExecutedHeads(B).size();
     for (const RigExecOpTraceEntry &entry : evaluator->GetLastOpTrace()) {
         if (entry.step >= B.steps.size() || !B.steps[entry.step].isSource) {
@@ -7113,7 +7115,8 @@ _CheckUpstreamFrozen(const _UpstreamImaging &imaging,
     for (const RigExecOpTraceEntry &entry : evaluator->GetLastOpTrace()) {
         clusters.insert(entry.cluster);
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     size_t outside = 0;
     for (const RigExecOpTraceEntry &entry : report.region) {
         if (entry.step < B.steps.size() && B.steps[entry.step].isSource) {
@@ -7500,7 +7503,8 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
     CHECK(nativeProgram);
     if (!nativeProgram)
         return;
-    const auto &native = nativeProgram->GetStepGraph();
+    const auto &native =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*nativeProgram);
     CHECK(file->steps.size() == native.steps.size());
     CHECK(file->commonGraph);
     if (!file->commonGraph || file->steps.size() != native.steps.size())
@@ -8043,7 +8047,7 @@ _CheckConnectedPosedSourceGraph(const _UpstreamImaging &imaging)
     CHECK(program != nullptr);
     if (!program)
         return;
-    const auto &B = program->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     std::string error;
     CHECK(RigExecBakedValidateStepGraph(B, &error));
     const SdfPath owner("/LimbsAsset/Rig/Controls/BRoot");

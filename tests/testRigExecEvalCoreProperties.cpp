@@ -345,7 +345,7 @@ _RunBoth(const _Case &testCase, std::vector<RigExecRigPose> *poses,
                 *error = "no baked program for the execution witness";
                 return false;
             }
-            const auto &graph = program->GetStepGraph();
+            const auto &graph = RigExecBakedProgramAccess::StepGraph(*program);
             witness->nativeClusters = graph.lastClosedClusters;
             witness->runtimeClusters =
                 player.Reader().GetClosedClusterCountForTesting();

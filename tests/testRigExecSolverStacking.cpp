@@ -29,6 +29,7 @@
 
 #include "rigExec/api/backgroundScheduler.h"
 #include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/api/frozenContext.h"
 #include "rigExec/api/rigEvaluator.h"
 
@@ -1215,7 +1216,8 @@ TestCheckpointSeesTheEarlierWriter()
     CHECK(program != nullptr);
     if (!program)
         return;
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const RigExecBakedProgramImpl::GeomRevision *probe =
         rigExecTest::FindRevision(B, SdfPath("/Asset/Rig/Movers/KneeProbe"));
     CHECK(probe != nullptr);
@@ -1810,7 +1812,8 @@ TestReadPhasesOverTheUnifiedStack()
     CHECK(program != nullptr);
     if (!program)
         return;
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const RigExecBakedProgramImpl::GeomRevision *knee =
         rigExecTest::FindRevision(B, SdfPath("/Asset/Rig/Movers/KneeProbe"));
     CHECK(knee != nullptr);
@@ -1864,7 +1867,8 @@ TestAtPrimMoversRecordsMatchTheStore()
         CHECK(program != nullptr);
         if (!program)
             continue;
-        const RigExecBakedProgramImpl &B = program->GetStepGraph();
+        const RigExecBakedProgramImpl &B =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*program);
         const RigExecBakedProgramImpl::GeomRevision *probe =
             rigExecTest::FindRevision(B,
                                       SdfPath("/Asset/Rig/Movers/KneeProbe"));
@@ -1930,7 +1934,8 @@ TestSolverCheckpointsBake(const std::string &examplesDir)
         CHECK(program != nullptr);
         if (!program)
             return;
-        const RigExecBakedProgramImpl &B = program->GetStepGraph();
+        const RigExecBakedProgramImpl &B =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*program);
 
         // The records: one per named (knee, solver) pair, in walk order, on
         // the solvers' commits.

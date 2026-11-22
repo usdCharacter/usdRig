@@ -89,7 +89,8 @@ PlacementGeometryAndRecovery(const std::string &fixture)
     CHECK(Scalar(first, "geometry") == 5);
     CHECK(JointX(first, "Base") == 6);
     CHECK(JointX(first, "Final") == 0);
-    const auto &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     size_t property = 0, constraint = 0, base = 0, final = 0;
     for (const auto &field : B.weightFields) {
         using F = RigExecBakedProgramImpl::WeightField;
@@ -182,7 +183,8 @@ FinalPlacementCycle(const std::string &fixture)
             std::printf("    %s\n", line.c_str());
         return;
     }
-    const auto &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     bool cycle = false;
     for (const auto &loop : B.opGraph.cycles) {
         bool field = false, move = false;

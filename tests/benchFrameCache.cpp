@@ -20,7 +20,7 @@
 //     overhead is estimated at 32 bytes per entry (MSVC x64) and reported
 //     on its own line, never folded into the payload.
 //   * Arena bytes walk the baked program's per-frame working state through
-//     GetStepGraph: SSA frame versions, avars, matrices, property results,
+//     the step graph: SSA frame versions, avars, matrices, property results,
 //     solver outputs and scratch, geometry outputs and packets, weight
 //     packets, chain buffers, and the last-run comparison buffers. Compiled rig
 //     structure (steps, clustering, cones, walk, ladder tables) is excluded.
@@ -314,7 +314,7 @@ GeomRevisionBytes(const RigExecBakedProgramImpl::GeomRevision &revision,
     return bytes;
 }
 
-// The program's per-frame working state through GetStepGraph, in payload
+// The program's per-frame working state, in payload
 // bytes. Prints the per-domain breakdown and returns the total. Compiled rig
 // structure -- steps, clustering, cones, walk/commits, ladder tables,
 // invalidation index, topology and bind caches -- is excluded: it is the
@@ -898,11 +898,13 @@ MeasureRig(const char *rig, const UsdStageRefPtr &stage,
     std::printf("  pose bytes stable across frames: %s (%zu vs %zu)\n",
                 poseBytes == poseBytes2 ? "yes" : "NO", poseBytes, poseBytes2);
 
-    const size_t arenaBytes = MeasureArenaBytes(program->GetStepGraph(), rig);
+    const size_t arenaBytes = MeasureArenaBytes(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program), rig);
     std::printf("  stored bytes per frame: %zu pose + %zu arena = %zu\n",
                 poseBytes, arenaBytes, poseBytes + arenaBytes);
 
-    MeasureSampling(program->GetStepGraph(), UsdTimeCode(sampleTime), rig);
+    MeasureSampling(rigExec::RigExecBakedProgramAccess::StepGraph(*program),
+                    UsdTimeCode(sampleTime), rig);
 
     // Warm frames: min-of-5 pass means over animated frames, with the
     // minimum clusters-run proving every timed frame ran the whole program.

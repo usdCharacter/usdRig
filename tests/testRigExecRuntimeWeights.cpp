@@ -249,7 +249,8 @@ _RunFixture(const UsdStageRefPtr &stage, const std::vector<double> &frames,
         CHECK(std::set<int32_t>(trace.begin(), trace.end()).size() ==
               trace.size());
         const std::vector<RigExecWeightPacket> &bakedPackets =
-            program->GetStepGraph().weightPackets;
+            rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+                .weightPackets;
         const std::vector<RrWeightPacket> &actualPackets =
             runtime->GetWeightPackets();
         if (bakedPackets.size() != objects || actualPackets.size() != objects) {
@@ -2633,7 +2634,8 @@ _TestS9ExportedPlacementCycle(const std::string &fixture)
     CHECK(RigExecTestBakeAt(evaluator, 1, &bytes, &error));
     if (!evaluator.GetBakedProgram())
         return;
-    const auto &native = evaluator.GetBakedProgram()->GetStepGraph();
+    const auto &native = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     const auto cycleContains = [](const auto &cycles) {
         for (const auto &cycle : cycles) {
             bool field = false, consumer = false;

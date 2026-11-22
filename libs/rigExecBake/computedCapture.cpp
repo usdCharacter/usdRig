@@ -859,7 +859,8 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
         Fail("no baked program standing to capture from");
         return;
     }
-    const RigExecBakedProgramImpl &B = baked->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*baked);
     _State &S = *_state;
     S.interner = interner;
     S.stage = B.stage;

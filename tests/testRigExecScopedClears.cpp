@@ -128,7 +128,7 @@ ChainPartsRan(const RigExecRigEvaluator &evaluator, const SdfPath &target)
     CHECK(program);
     if (!program)
         return parts;
-    const auto &B = program->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     for (const auto &entry : evaluator.GetLastOpTrace()) {
         if (entry.kind != "PropertyRevision")
             continue;
@@ -257,7 +257,8 @@ TestAChainInputDefaultEditReachesTheChain()
     CHECK(program);
     if (!program)
         return;
-    const auto &chains = program->GetStepGraph().propertyChains;
+    const auto &chains =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program).propertyChains;
     const auto chain =
         std::find_if(chains.begin(), chains.end(),
                      [&](const auto &entry) { return entry.target == dial; });
@@ -568,7 +569,8 @@ SparseSamples(const RigExecRigEvaluator &evaluator)
     if (!program) {
         return out;
     }
-    for (const auto &chain : program->GetStepGraph().chains) {
+    for (const auto &chain :
+         rigExec::RigExecBakedProgramAccess::StepGraph(*program).chains) {
         for (const auto &revision : chain.revisions) {
             for (const auto &channel : revision.blendChannels) {
                 for (const auto &sample : channel.samples) {

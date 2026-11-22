@@ -381,7 +381,8 @@ def Xform "Asset"
             std::printf("    not bakeable: %s\n", reason.c_str());
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     CHECK(B.poseProviderInputs.size() == B.paths.size());
     CHECK(B.connectedPoseProviders.size() == B.paths.size());
     if (B.poseProviderInputs.size() != B.paths.size() ||

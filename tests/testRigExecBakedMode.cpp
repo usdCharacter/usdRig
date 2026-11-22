@@ -4,6 +4,7 @@
 #include "rigExecPoseCompare.h"
 
 #include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/moverGraph.h"
 #include "rigExec/api/rigEvaluator.h"
 
@@ -1548,7 +1549,8 @@ TestAPoseWalkReadPhaseMatchesTheStore()
     if (!program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const RigExecBakedProgramImpl::GeomRevision *slide =
         rigExecTest::FindRevision(B,
                                   SdfPath("/Asset/Rig/Movers/Geometry/Slide"));

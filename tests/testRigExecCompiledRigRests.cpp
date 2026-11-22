@@ -476,7 +476,7 @@ TestARestSpaceConnectedToAComputedSpaceHasAProducer(
     CHECK(program);
     if (!program)
         return;
-    const auto &B = program->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const auto slot = B.index.find(kJoint);
     CHECK(slot != B.index.end());
     if (slot == B.index.end())
@@ -666,7 +666,7 @@ TestAPropertyChainOnARestRefusesTheCompiledRigPath(
     CHECK(program);
     if (!program)
         return;
-    const auto &B = program->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const auto slot = B.index.find(kJoint);
     CHECK(slot != B.index.end());
     if (slot == B.index.end())
@@ -1210,7 +1210,8 @@ TestPruningKeepsProviderDiagnostics(const std::string &examplesDir)
         CHECK(program != nullptr);
         if (!program)
             return out;
-        const RigExecBakedProgramImpl &B = program->GetStepGraph();
+        const RigExecBakedProgramImpl &B =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*program);
         out.cycles = B.opGraph.cycles;
         out.routed = B.GetProviderProgram().routedInputs.size();
         out.pruned = B.providerStepsPruned;

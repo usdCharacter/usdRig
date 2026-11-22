@@ -1,7 +1,3 @@
-// The read-only surface of one compiled rig version. Every query reads the
-// records the program was built from, through the storage the program itself
-// runs; nothing here copies or mutates them.
-
 #include "rigExec/internal/compiledProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 
@@ -17,6 +13,25 @@ RigExecCompiledProgram::RigExecCompiledProgram(
     _VersionTag, std::shared_ptr<const RigExecBakedProgramImpl> compiled)
     : _compiled(std::move(compiled))
 {
+    // Built once from an impl that has finished compiling, so this pass sees
+    // every record the counts and facts queries answer for.
+    const RigExecBakedProgramImpl &B = *_compiled;
+    _chainFacts.reserve(B.chains.size());
+    _chainRevisionFacts.resize(B.chains.size());
+    for (size_t chainIndex = 0; chainIndex < B.chains.size(); ++chainIndex) {
+        const RigExecBakedGeomChain &chain = B.chains[chainIndex];
+        _chainFacts.push_back({chain.target});
+        std::vector<RigExecCompiledRevisionFacts> &facts =
+            _chainRevisionFacts[chainIndex];
+        facts.reserve(chain.revisions.size());
+        for (const RigExecBakedGeomRevision &revision : chain.revisions) {
+            facts.push_back({revision.moverPath, revision.target, revision.op});
+        }
+    }
+    _weightFacts.reserve(B.weightObjects.size());
+    for (const RigExecBakedWeightObject &weight : B.weightObjects) {
+        _weightFacts.push_back({weight.path, weight.type});
+    }
 }
 
 size_t
@@ -100,26 +115,32 @@ RigExecCompiledProgram::GetSpaceSwitch(size_t index) const noexcept
 size_t
 RigExecCompiledProgram::GetChainCount() const noexcept
 {
-    return _compiled->chains.size();
-}
-
-const RigExecBakedGeomChain &
-RigExecCompiledProgram::GetChain(size_t index) const noexcept
-{
-    return _compiled->chains[index];
+    return _chainFacts.size();
 }
 
 size_t
 RigExecCompiledProgram::GetChainRevisionCount(size_t chainIndex) const noexcept
 {
-    return _compiled->chains[chainIndex].revisions.size();
+    return _chainRevisionFacts[chainIndex].size();
 }
 
-const RigExecBakedGeomRevision &
-RigExecCompiledProgram::GetChainRevision(size_t chainIndex,
-                                         size_t revisionIndex) const noexcept
+const RigExecCompiledChainFacts &
+RigExecCompiledProgram::GetChainFacts(size_t index) const noexcept
 {
-    return _compiled->chains[chainIndex].revisions[revisionIndex];
+    return _chainFacts[index];
+}
+
+const RigExecCompiledRevisionFacts &
+RigExecCompiledProgram::GetChainRevisionFacts(
+    size_t chainIndex, size_t revisionIndex) const noexcept
+{
+    return _chainRevisionFacts[chainIndex][revisionIndex];
+}
+
+const RigExecCompiledWeightFacts &
+RigExecCompiledProgram::GetWeightObjectFacts(size_t index) const noexcept
+{
+    return _weightFacts[index];
 }
 
 size_t
@@ -149,13 +170,7 @@ RigExecCompiledProgram::GetDerivedIdentity(size_t index) const noexcept
 size_t
 RigExecCompiledProgram::GetWeightObjectCount() const noexcept
 {
-    return _compiled->weightObjects.size();
-}
-
-const RigExecBakedWeightObject &
-RigExecCompiledProgram::GetWeightObject(size_t index) const noexcept
-{
-    return _compiled->weightObjects[index];
+    return _weightFacts.size();
 }
 
 size_t
@@ -168,18 +183,6 @@ const RigExecBakedConstraint &
 RigExecCompiledProgram::GetConstraint(size_t index) const noexcept
 {
     return _compiled->constraints[index];
-}
-
-size_t
-RigExecCompiledProgram::GetSolverCount() const noexcept
-{
-    return _compiled->solvers.size();
-}
-
-const RigExecBakedSolver &
-RigExecCompiledProgram::GetSolver(size_t index) const noexcept
-{
-    return _compiled->solvers[index];
 }
 
 size_t
@@ -240,18 +243,6 @@ const RigExecBakedFrameRecord &
 RigExecCompiledProgram::GetFrameRecord(size_t index) const noexcept
 {
     return _compiled->frameRecords[index];
-}
-
-size_t
-RigExecCompiledProgram::GetPoseInterpolatorCount() const noexcept
-{
-    return _compiled->poseInterpolators.size();
-}
-
-const RigExecBakedPoseInterpolator &
-RigExecCompiledProgram::GetPoseInterpolator(size_t index) const noexcept
-{
-    return _compiled->poseInterpolators[index];
 }
 
 size_t

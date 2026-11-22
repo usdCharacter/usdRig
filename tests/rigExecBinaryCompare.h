@@ -4411,7 +4411,8 @@ _BinaryCompareProgram(rigExec::RigExecRigEvaluator &evaluator,
     if (!baked) {
         return nullptr;
     }
-    const rigExec::RigExecBakedProgramImpl &program = baked->GetStepGraph();
+    const rigExec::RigExecBakedProgramImpl &program =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*baked);
     std::unique_ptr<_BinaryFile> opened;
     std::string error;
     CHECK(rigExec::RigExecFormatOpen(bytes.data(), bytes.size(), &opened,

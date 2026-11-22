@@ -178,7 +178,8 @@ CheckBindings(const std::string &where, const RigExecRigEvaluator &evaluator,
     if (!program) {
         return tally;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     CHECK_AT(where, evaluator.cpuReference == true);
     CHECK_AT(where, pose.referenceMismatches == 0);
     CHECK_AT(where, pose.referenceAgreements > 0);
@@ -593,7 +594,8 @@ TestPointBindingsCaptureTypedVersions(const std::string &examples)
             CHECK_AT(where, tally.answered == 5);
         }
         const std::vector<BindingRef> refs =
-            Bindings(evaluator->GetBakedProgram()->GetStepGraph());
+            Bindings(rigExec::RigExecBakedProgramAccess::StepGraph(
+                *evaluator->GetBakedProgram()));
         const BindingRef *slab = Find(refs, kSlabLattice, kSlab, kCage);
         CHECK_AT(where, slab != nullptr);
         if (slab) {
@@ -604,7 +606,9 @@ TestPointBindingsCaptureTypedVersions(const std::string &examples)
             CHECK_AT(where, slab->binding->finalRead == !*phase);
             CHECK_AT(where, slab->binding->diagnoseMiss);
             CheckSlabAssembleEdges(
-                where, evaluator->GetBakedProgram()->GetStepGraph(),
+                where,
+                rigExec::RigExecBakedProgramAccess::StepGraph(
+                    *evaluator->GetBakedProgram()),
                 *slab->binding, *phase ? SdfPath(phase) : SdfPath());
         }
     }
@@ -670,7 +674,8 @@ TestPrecedingAcrossChains(const std::string &examples)
             continue;
         }
         const std::vector<BindingRef> refs =
-            Bindings(evaluator->GetBakedProgram()->GetStepGraph());
+            Bindings(rigExec::RigExecBakedProgramAccess::StepGraph(
+                *evaluator->GetBakedProgram()));
         const BindingRef *across = Find(refs, dual, kOther, kSlab);
         const BindingRef *own = Find(refs, dual, kSlab, kSlab);
         CHECK_AT(where, across && own);
@@ -697,7 +702,8 @@ TestPrecedingAcrossChains(const std::string &examples)
         }
         if (SerialSchedule()) {
             const RigExecBakedProgramImpl &B =
-                evaluator->GetBakedProgram()->GetStepGraph();
+                rigExec::RigExecBakedProgramAccess::StepGraph(
+                    *evaluator->GetBakedProgram());
             const RigExecBakedPointCapture &a =
                 B.pointCaptures[size_t(across->binding->id)];
             const RigExecBakedPointCapture &o =
@@ -744,14 +750,16 @@ TestPrecedingAcrossChains(const std::string &examples)
         CHECK(evaluator->GetBakedProgram());
         if (evaluator->GetBakedProgram()) {
             const auto refs =
-                Bindings(evaluator->GetBakedProgram()->GetStepGraph());
+                Bindings(rigExec::RigExecBakedProgramAccess::StepGraph(
+                    *evaluator->GetBakedProgram()));
             const auto *across = Find(refs, dual, kOther, kSlab);
             const auto *own = Find(refs, dual, kSlab, kSlab);
             if (phase == "base") {
                 // Base surface inputs use the authored head value, not a phased binding.
                 CHECK(across == nullptr && own == nullptr);
                 size_t readers = 0;
-                const auto &B = evaluator->GetBakedProgram()->GetStepGraph();
+                const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+                    *evaluator->GetBakedProgram());
                 for (const auto &chain : B.chains) {
                     if (chain.target != kOther && chain.target != kSlab)
                         continue;
@@ -911,8 +919,8 @@ TestPrecedingOwnChainFixture(const std::string &examples)
             if (!program) {
                 continue;
             }
-            const std::vector<BindingRef> refs =
-                Bindings(program->GetStepGraph());
+            const std::vector<BindingRef> refs = Bindings(
+                rigExec::RigExecBakedProgramAccess::StepGraph(*program));
             const BindingRef *own = Find(refs, echo, box, box);
             CHECK_AT(where, own != nullptr);
             if (!own) {
@@ -928,8 +936,8 @@ TestPrecedingOwnChainFixture(const std::string &examples)
             // The validator holds the assemble to that read: Echo's weight
             // field is not current-phase, so only the binding names
             // version 2, and dropping its RevisionDone read is refused.
-            RigExecBakedProgramImpl &B =
-                const_cast<RigExecBakedProgramImpl &>(program->GetStepGraph());
+            RigExecBakedProgramImpl &B = const_cast<RigExecBakedProgramImpl &>(
+                rigExec::RigExecBakedProgramAccess::StepGraph(*program));
             CHECK_AT(where, own->step >= 0);
             if (own->step >= 0 && own->binding->candidates.size() == 1) {
                 RigExecBakedStep &assemble = B.steps[size_t(own->step)];
@@ -1045,7 +1053,8 @@ TestAChainWithoutABaseFallsThrough(const std::string &examples)
         CHECK_AT(where, baked->GetBakedProgram() != nullptr);
         if (blocked && baked->GetBakedProgram()) {
             auto &B = const_cast<RigExecBakedProgramImpl &>(
-                baked->GetBakedProgram()->GetStepGraph());
+                rigExec::RigExecBakedProgramAccess::StepGraph(
+                    *baked->GetBakedProgram()));
             const auto chain = std::find_if(
                 B.chains.begin(), B.chains.end(),
                 [](const auto &item) { return item.target == kSlab; });
@@ -1229,7 +1238,8 @@ TestBlendSamplesBindToVersions()
         return;
     }
     const std::vector<BindingRef> refs =
-        Bindings(evaluator->GetBakedProgram()->GetStepGraph());
+        Bindings(rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator->GetBakedProgram()));
     size_t samples = 0;
     for (const BindingRef &ref : refs) {
         if (!ref.sample) {
@@ -1420,7 +1430,8 @@ CheckRecordStepsRan(const std::string &where,
     if (!program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const auto moverOf = [&B](const RigExecBakedStep &step) {
         const auto [c, r] = B.revisionIndex[size_t(step.object)];
         return B.chains[size_t(c)].revisions[size_t(r)].moverPath;
@@ -1529,7 +1540,8 @@ TestFrameRecordTypedProvenance(const std::string &examples)
                 CHECK_AT(where, !"the rig bakes");
                 return;
             }
-            const RigExecBakedProgramImpl &B = program->GetStepGraph();
+            const RigExecBakedProgramImpl &B =
+                rigExec::RigExecBakedProgramAccess::StepGraph(*program);
             if (!structureChecked) {
                 structureChecked = true;
                 CHECK_AT(where, B.frameRecords.size() == (withR1 ? 3u : 2u));
@@ -1661,8 +1673,8 @@ TestTheFoldReadsItsRecords(const std::string &examples)
     if (!program) {
         return;
     }
-    RigExecBakedProgramImpl &B =
-        const_cast<RigExecBakedProgramImpl &>(program->GetStepGraph());
+    RigExecBakedProgramImpl &B = const_cast<RigExecBakedProgramImpl &>(
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program));
     CHECK_AT(where,
              RecordMovers(B, {0, 1, 2}) ==
                  (std::vector<SdfPath>{kRecordC1, kRecordC2, kRecordC3}));
@@ -1899,7 +1911,8 @@ TestAPhasedRigSkipsOnRepeat(const std::string &examples)
     if (!program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     // Some revision declares a read phase: an input phase, an AtPrim
     // transform, or a phased blend sample.
     const auto declaresPhase =
@@ -2030,7 +2043,8 @@ TestSolverCheckpointSteps(const std::string &examples)
     if (!program) {
         return;
     }
-    const RigExecBakedProgramImpl &B = program->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     CheckFrameRecordSteps(where, B, p1);
     int recordStep = -1;
     int commitStep = -1;
@@ -2103,7 +2117,8 @@ TestLiteralCheckpointUnderOverride(const std::string &examples)
     evaluator->SetInteractiveOverrides({drag});
     const auto pose = evaluator->Evaluate(UsdTimeCode(1));
     CHECK(pose.valid && pose.referenceMismatches == 0);
-    const auto &B = evaluator->GetBakedProgram()->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator->GetBakedProgram());
     std::map<int, rigExecTest::LiteralFrameFact> facts;
     for (size_t id = 0; id < B.frameRecords.size(); ++id) {
         if (B.frameRecords[id].mover != kRecordC1)

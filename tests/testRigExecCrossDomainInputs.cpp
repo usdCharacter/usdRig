@@ -149,7 +149,8 @@ CountRecoveryAndCutoff(const std::string &fixture)
     CHECK(Vector(first, rawValue) == GfVec3f(6, 0, 0));
     CHECK(Vector(first, downstream) == GfVec3f(6, 0, 0));
     const size_t builds = evaluator.GetBakedProgramBuildCount();
-    const auto &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
     std::atomic<unsigned> runs{0};
     RigExecBakedProgramTesting::SetOpObservers(
         *evaluator.GetBakedProgram(),
@@ -279,7 +280,7 @@ PropertyPhaseAuthority()
     CHECK(program);
     if (!program)
         return;
-    const auto &B = program->GetStepGraph();
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const auto found = std::find_if(
         B.propertyChains.begin(), B.propertyChains.end(),
         [&](const auto &chain) { return chain.target == own.GetPath(); });

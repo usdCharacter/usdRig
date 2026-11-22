@@ -531,7 +531,8 @@ RigExecFullEvalProvenance(const RigExecProgramView &program, UsdTimeCode time)
 {
     if (!program)
         return {};
-    return RigExecFullEvalProvenance(program.Program()->GetStepGraph(), time);
+    return RigExecFullEvalProvenance(
+        RigExecBakedProgramAccess::StepGraph(*program.Program()), time);
 }
 
 } // namespace rigExec

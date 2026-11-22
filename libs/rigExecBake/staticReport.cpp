@@ -217,7 +217,8 @@ RigExecBakeStaticReport(RigExecRigEvaluator &evaluator,
     if (!baked) {
         return Fail("no compiled program stands for this compiled rig");
     }
-    const RigExecBakedProgramImpl &B = baked->GetStepGraph();
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(*baked);
     const UsdStageRefPtr &stage = B.stage;
     const double probe = RigExecBakedProbeTime(stage).GetValue();
     _Entries found;
