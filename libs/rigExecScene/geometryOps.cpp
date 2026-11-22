@@ -1,6 +1,7 @@
 #include "rigExecScene/geometryOps.h"
 
 #include "rigExecOps/deform/deltaMushOp.h"
+#include "rigExecOps/deform/derivedOps.h"
 #include "rigExecOps/deform/latticeOp.h"
 #include "rigExecOps/deform/matrixDeformOp.h"
 #include "rigExecOps/deform/pointOps.h"
@@ -147,6 +148,8 @@ RigExecGeometryOpSupported(RigExecRevisionOp op)
     case RigExecRevisionOp::Ribbon:
     case RigExecRevisionOp::EmitGuidePoints:
     case RigExecRevisionOp::Wire:
+    case RigExecRevisionOp::RecomputeNormals:
+    case RigExecRevisionOp::RecomputeExtent:
         return true;
     default:
         return false;
@@ -347,6 +350,32 @@ RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
         }
         break;
     }
+    case RigExecRevisionOp::RecomputeNormals: {
+        rigExecOps::NormalsPayload payload;
+        payload.perCorner = p.normalsPerCorner;
+        payload.leftHanded = p.normalsLeftHanded;
+        result.node = builder->AddOp(rigExecOps::RecomputeNormals(), &payload);
+        in = &rigExecOps::RecomputeNormalsAuthored();
+        out = &rigExecOps::RecomputeNormalsOut();
+        envelope = &rigExecOps::RecomputeNormalsEnvelope();
+        result.finalPoints = builder->BindInput(
+            result.node, rigExecOps::RecomputeNormalsPoints());
+        result.counts = builder->BindInput(
+            result.node, rigExecOps::RecomputeNormalsCounts());
+        result.indices = builder->BindInput(
+            result.node, rigExecOps::RecomputeNormalsIndices());
+        break;
+    }
+    case RigExecRevisionOp::RecomputeExtent:
+        result.node = builder->AddOp(rigExecOps::RecomputeExtent());
+        in = &rigExecOps::RecomputeExtentAuthored();
+        out = &rigExecOps::RecomputeExtentOut();
+        envelope = &rigExecOps::RecomputeExtentEnvelope();
+        result.finalPoints = builder->BindInput(
+            result.node, rigExecOps::RecomputeExtentPoints());
+        result.widths = builder->BindInput(result.node,
+                                           rigExecOps::RecomputeExtentWidths());
+        break;
     default:
         return Fail(error, "geometry op has no deform op yet");
     }
@@ -486,6 +515,20 @@ RigExecWriteGeometryOpInputs(const RigExecMoverParameters &p,
         return evaluator->SetInput(node.rest, &rest, error) &&
                evaluator->SetInput(node.curve, &posed, error) &&
                evaluator->SetInput(node.bindCoords, &binds, error);
+    }
+    case RigExecRevisionOp::RecomputeNormals: {
+        const RigExecArray<Vec3f> final = ToStd(p.auxPoints);
+        const RigExecArray<int> counts = ToArray(p.topologyCounts);
+        const RigExecArray<int> indices = ToArray(p.topologyIndices);
+        return evaluator->SetInput(node.finalPoints, &final, error) &&
+               evaluator->SetInput(node.counts, &counts, error) &&
+               evaluator->SetInput(node.indices, &indices, error);
+    }
+    case RigExecRevisionOp::RecomputeExtent: {
+        const RigExecArray<Vec3f> final = ToStd(p.auxPoints);
+        const RigExecArray<float> widths = ToArray(p.widths);
+        return evaluator->SetInput(node.finalPoints, &final, error) &&
+               evaluator->SetInput(node.widths, &widths, error);
     }
     default:
         return Fail(error, "geometry op has no deform op yet");

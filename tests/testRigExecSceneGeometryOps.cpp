@@ -422,6 +422,66 @@ TestWire(const Grid &grid)
     CHECK(!chain.Run({&p}, grid.points, &actual, &error));
 }
 
+/// The native derived answer: recomputed from the final points, blended
+/// toward \p authored.
+bool
+NativeDerived(RigExecRevisionOp op, const RigExecMoverParameters &p,
+              std::vector<GfVec3f> *authored)
+{
+    return RigExecRunGeometryDerived(op, p, authored->data(), authored->size(),
+                                     authored);
+}
+
+void
+TestDerived(const Grid &grid)
+{
+    for (const bool perCorner : {false, true})
+        for (const bool leftHanded : {false, true}) {
+            RigExecMoverParameters p = Packet("recomputeNormals");
+            p.auxPoints = grid.points;
+            p.topologyCounts = grid.counts;
+            p.topologyIndices = grid.indices;
+            p.normalsPerCorner = perCorner;
+            p.normalsLeftHanded = leftHanded;
+            const std::vector<GfVec3f> authored(perCorner ? grid.indices.size()
+                                                          : grid.points.size(),
+                                                GfVec3f(0, 0, 1));
+            for (const auto &[name, weights] : Envelopes(authored.size())) {
+                p.weights = weights;
+                std::vector<GfVec3f> expected = authored;
+                CHECK(NativeDerived(RigExecRevisionOp::RecomputeNormals, p,
+                                    &expected));
+                Chain chain({{RigExecRevisionOp::RecomputeNormals, &p}});
+                RigExecArray<Vec3f> actual;
+                std::string error;
+                CHECK(chain.Run({&p}, authored, &actual, &error));
+                if (!SameBits(expected, actual)) {
+                    std::printf("normals corner %d left %d %s differs\n",
+                                int(perCorner), int(leftHanded), name);
+                    CHECK(false);
+                }
+            }
+        }
+
+    RigExecMoverParameters extent = Packet("recomputeExtent");
+    extent.auxPoints = grid.points;
+    const std::vector<GfVec3f> authored = {GfVec3f(-1), GfVec3f(1)};
+    for (const std::vector<float> &widths :
+         {std::vector<float>{}, std::vector<float>{0.5f},
+          std::vector<float>(grid.points.size(), 0.25f)}) {
+        extent.widths = widths;
+        extent.weights = RigExecWeightPacket::Constant(0.6f);
+        std::vector<GfVec3f> expected = authored;
+        CHECK(NativeDerived(RigExecRevisionOp::RecomputeExtent, extent,
+                            &expected));
+        Chain chain({{RigExecRevisionOp::RecomputeExtent, &extent}});
+        RigExecArray<Vec3f> actual;
+        std::string error;
+        CHECK(chain.Run({&extent}, authored, &actual, &error));
+        CHECK(SameBits(expected, actual));
+    }
+}
+
 /// Smooth, then a matrix, as two connected nodes.
 void
 TestChain(const Grid &grid)
@@ -502,6 +562,7 @@ main()
     TestSurfaceProject(grid);
     TestFrameDriven(grid);
     TestWire(grid);
+    TestDerived(grid);
     TestChain(grid);
     TestRefusals(grid);
     if (failures) {

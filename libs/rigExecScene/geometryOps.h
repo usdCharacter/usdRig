@@ -33,6 +33,9 @@ struct RigExecGeometryOpNode {
     RigExecInputId toSpace, fromSpace, metric;
     /// A wire's sparse field, in place of the envelope.
     RigExecInputId weightIndices, weightValues;
+    /// A derived op's source: the final points, and an extent's widths.
+    /// Its chained value is the authored normals or extent.
+    RigExecInputId finalPoints, widths;
     RigExecOutputId out;
     /// The op's output port, for a downstream node to connect to.
     const RigExecPortHandle *outPort = nullptr;
@@ -51,7 +54,8 @@ bool RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
                           std::string *error = nullptr);
 
 /// Writes \p p's per-frame values into \p evaluator for \p pointCount
-/// points, and \p points when \p node takes them from the host. The
+/// points, and \p points when \p node takes them from the host. For a
+/// derived op the points are the authored normals or extent. The
 /// envelope is \p p's weights resolved at \p pointCount. False, writing
 /// nothing more, where the packet's envelope does not resolve.
 bool RigExecWriteGeometryOpInputs(const RigExecMoverParameters &p,
