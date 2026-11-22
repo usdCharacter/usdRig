@@ -8,6 +8,12 @@
 #include "rigExec/internal/pathText.h"
 #include "rigExec/internal/frameExtraction.h"
 #include "rigExec/api/moverRegistry.h"
+#include "moverGraph.h"
+#include "rigExecEvalCore/gate.h"
+#include "rigExecEvalCore/skin.h"
+#include "parallel.h"
+#include "pathText.h"
+#include "frameExtraction.h"
 
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecMath/envelope.h"
@@ -239,6 +245,188 @@ RigExecRevisionKindToken(RigExecRevisionOp op)
     return _RevisionKindToken(op);
 }
 
+namespace {
+
+// EvalCore's envelope and matrix bodies (rigExecEvalCore/envelope.h) over
+// the Gf numbers: the weighted-matrix rule and its SIMD form, the radial
+// arc factorization, and the Gf vector and matrix types.
+struct _EnvelopeMath {
+    using Vec3f = GfVec3f;
+    using Vec3d = GfVec3d;
+    using Mat4 = GfMatrix4d;
+    using PartialDecomposition = RigExecPartialDecomposition;
+    static Vec3f ToFloat(const Vec3d &v)
+    {
+        return Vec3f(v);
+    }
+    static Vec3d ToDouble(const Vec3f &v)
+    {
+        return Vec3d(v);
+    }
+    static double Clamp(double v, double lo, double hi)
+    {
+        return GfClamp(v, lo, hi);
+    }
+    static Mat4 Identity()
+    {
+        return Mat4(1.0);
+    }
+    static const unsigned char *TransformBytes(const Mat4 &t)
+    {
+        return reinterpret_cast<const unsigned char *>(&t);
+    }
+    static PartialDecomposition DecomposePartialTransform(const Mat4 &t)
+    {
+        return RigExecDecomposePartialTransform(t);
+    }
+    static Mat4 ApplyPartialDecomposition(const PartialDecomposition &d,
+                                          double weight)
+    {
+        return RigExecApplyPartialDecomposition(d, weight);
+    }
+    static Vec3d ApplyWeightedMatrix(const Vec3d &point, const Mat4 &t,
+                                     double weight)
+    {
+        return RigExecApplyWeightedMatrix(point, t, weight);
+    }
+    static void ApplyWeightedMatrixSimd(const Vec3f *in, Vec3f *out,
+                                        const float *weights, size_t count,
+                                        const Mat4 &t)
+    {
+        if (weights) {
+            RigExecApplyWeightedMatrixSimd(in, out, weights, count, t);
+        } else {
+            RigExecApplyWeightedMatrixSimd(in, out, 1.0f, count, t);
+        }
+    }
+    static bool FloatEnvironmentIsDefault()
+    {
+        return RigExecFloatEnvironmentIsDefault();
+    }
+};
+
+// EvalCore's skin bodies (rigExecEvalCore/skin.h) over the Gf numbers, as
+// in bakedGeometry.cpp's BakedSkinMath: the SIMD blend and narrowed rows
+// are the rigExecMath kernels, the split is the Gf dual-quat palette.
+struct _SkinMath {
+    using Vec3f = GfVec3f;
+    using Vec3d = GfVec3d;
+    using Mat4 = GfMatrix4d;
+    using ScaledDualQuat = RigExecScaledDualQuat;
+    static Vec3f ToFloat(const Vec3d &v)
+    {
+        return Vec3f(v);
+    }
+    static Vec3d ToDouble(const Vec3f &v)
+    {
+        return Vec3d(v);
+    }
+    static void NarrowSkinRows(const Mat4 &t, float *rows)
+    {
+        RigExecNarrowSkinRows(t, rows);
+    }
+    static void
+    ApplyLinearBlendSkinSimd(const Vec3f *in, Vec3f *out,
+                             const eval::SkinLayoutViewT<_SkinMath> &part,
+                             const float *rows)
+    {
+        RigExecSkinLayout layout;
+        layout.transforms = part.transforms;
+        layout.transformCount = part.transformCount;
+        layout.indices = part.indices;
+        layout.weights = part.weights;
+        layout.indexCount = part.indexCount;
+        layout.elementSize = part.elementSize;
+        layout.pointCount = part.pointCount;
+        RigExecApplyLinearBlendSkinSimd(in, out, layout, rows);
+    }
+};
+
+// The packet as EvalCore's EnvelopePacketView: representation and range
+// policy classified to its integer codes, the arrays borrowed.
+eval::EnvelopePacketView
+_EnvelopeView(const RigExecWeightPacket &w)
+{
+    eval::EnvelopePacketView v;
+    v.valid = w.valid;
+    v.defaultWeight = w.defaultWeight;
+    v.values = w.values.data();
+    v.valueCount = w.values.size();
+    v.indices = w.indices.data();
+    v.indexCount = w.indices.size();
+    v.rangePolicyEmpty = w.rangePolicy.IsEmpty();
+    v.representation = w.representation == SchemaValueText::constant
+                           ? eval::kWeightConstant
+                           : (w.representation == SchemaValueText::sparse
+                                  ? eval::kWeightSparse
+                                  : (w.representation == SchemaValueText::dense
+                                         ? eval::kWeightDense
+                                         : eval::kWeightRepresentationUnknown));
+    v.rangePolicy = w.rangePolicy == SchemaValueText::strict
+                        ? eval::kWeightPolicyStrict
+                        : (w.rangePolicy == SchemaValueText::clamp
+                               ? eval::kWeightPolicyClamp
+                               : eval::kWeightPolicyUnknown);
+    return v;
+}
+
+// The packet as EvalCore's SkinPacketView: the method classified by
+// RigExecSkinMethodOf, the layout arrays borrowed from the handle or the
+// packet.
+eval::SkinPacketView
+_SkinPacket(const RigExecMoverParameters &p)
+{
+    eval::SkinPacketView v;
+    const RigExecSkinMethod method = RigExecSkinMethodOf(p);
+    v.method = method == RigExecSkinMethod::ClassicLinear
+                   ? eval::kSkinMethodClassicLinear
+                   : (method == RigExecSkinMethod::DualQuaternion
+                          ? eval::kSkinMethodDualQuaternion
+                          : eval::kSkinMethodUnknown);
+    if (const RigExecSkinTopology *const topology = p.skinTopology.get()) {
+        v.hasTopology = true;
+        v.topologyValidated = topology->validated;
+        v.topologyInfluenceCount = topology->influenceCount;
+        v.topologyIndices = topology->indices.data();
+        v.topologyWeights = topology->weights.data();
+        v.topologyIndexCount = topology->indices.size();
+        v.topologyElementSize = topology->elementSize;
+    }
+    v.indices = p.skinIndices.data();
+    v.weights = p.skinWeights.data();
+    v.indexCount = p.skinIndices.size();
+    v.weightCount = p.skinWeights.size();
+    v.elementSize = p.skinElementSize;
+    return v;
+}
+
+// The influence tables as EvalCore's view: the same borrowed arrays.
+eval::SkinTransformsViewT<_SkinMath>
+_EvalSkinTransforms(const RigExecSkinTransformsView &view)
+{
+    eval::SkinTransformsViewT<_SkinMath> out;
+    out.transforms = view.transforms;
+    out.transformCount = view.transformCount;
+    out.rows = view.rows;
+    out.palette = view.palette;
+    out.paletteSize = view.paletteSize;
+    return out;
+}
+
+} // namespace
+
+bool
+RigExecWireTakesSparseEnvelope(const RigExecWeightPacket &w)
+{
+    return eval::EnvelopeIsSparseWalk(_EnvelopeView(w));
+}
+
+bool
+RigExecEnvelopeIsFullStrength(const RigExecWeightPacket &envelope)
+{
+    return eval::EnvelopeIsFullStrength(_EnvelopeView(envelope));
+}
+
 // The matrix kernel, shared by the mover-graph revision node and by the
 // baked program. Unlike the point3f[] ops the envelope is NOT a separate
 // blend here: the weighted-matrix rule folds it into the movement itself
@@ -251,9 +439,8 @@ RigExecApplyMatrixKernelRange(const RigExecMoverParameters &p,
                               const float *envelope, size_t begin, size_t end,
                               GfVec3f *pts, bool useSimd)
 {
-    RigExecApplyMatrixRangeKernel<GfVec3f, GfVec3d>(
-        p.transform, p.radialWeight, envelope, begin, end, pts, pts, useSimd,
-        RigExecFloatEnvironmentIsDefault());
+    eval::ApplyMatrixKernelRange<_EnvelopeMath>(
+        p.radialWeight, p.transform, envelope, begin, end, pts, pts, useSimd);
 }
 
 namespace {
@@ -361,8 +548,8 @@ void
 ApplyMatrixFullStrength(const RigExecMoverParameters &p, const GfVec3f *in,
                         GfVec3f *out, size_t count, bool useSimd)
 {
-    RigExecApplyMatrixFullStrengthKernel<GfVec3f, GfVec3d>(
-        p.transform, p.radialWeight, in, out, count, useSimd);
+    eval::ApplyMatrixKernelRange<_EnvelopeMath>(
+        p.radialWeight, p.transform, nullptr, 0, count, in, out, useSimd);
 }
 } // namespace
 
@@ -383,7 +570,7 @@ _PacketMatches(RigExecRevisionOp op, const RigExecMoverParameters &p)
 bool
 _MatrixWalksSparse(const RigExecWeightPacket &w)
 {
-    return RigExecWireTakesSparseEnvelope(w);
+    return eval::EnvelopeIsSparseWalk(_EnvelopeView(w));
 }
 
 // Every entry a sparse walk names is usable over \p count points: in range,
@@ -392,16 +579,7 @@ _MatrixWalksSparse(const RigExecWeightPacket &w)
 bool
 _SparseWalkIsUsable(const RigExecWeightPacket &w, size_t count)
 {
-    for (size_t k = 0; k < w.indices.size(); ++k) {
-        const int index = w.indices[k];
-        const float value = w.values[k];
-        if (index < 0 || size_t(index) >= count ||
-            (k > 0 && index <= w.indices[k - 1]) || !std::isfinite(value) ||
-            value < 0.0f || value > 1.0f) {
-            return false;
-        }
-    }
-    return true;
+    return eval::SparseEnvelopeIsUsable(_EnvelopeView(w), count);
 }
 
 // RigExecApplyMatrixKernel's validation over \p count points: a full-strength
@@ -412,15 +590,8 @@ bool
 _MatrixKernelAccepts(const RigExecMoverParameters &p, size_t count,
                      std::vector<float> *weights)
 {
-    const RigExecWeightPacket &w = p.weights;
-    if (RigExecEnvelopeIsFullStrength(w)) {
-        return true;
-    }
-    if (_MatrixWalksSparse(w)) {
-        return _SparseWalkIsUsable(w, count);
-    }
-    // A cardinality mismatch fails atomically.
-    return weights ? w.ResolveAll(count, weights) : w.ResolvesAll(count);
+    return eval::MatrixKernelAccepts(_EnvelopeView(p.weights), p.weights, count,
+                                     weights);
 }
 
 // The matrix kernel's sparse walk over entries [first, last) of \p w, in
@@ -443,94 +614,9 @@ _ApplyMatrixSparseWalk(const RigExecMoverParameters &p,
                        GfVec3f *data, size_t offset = 0,
                        RigExecSparseWalkMemo<GfVec3f> *memo = nullptr)
 {
-    using Mode = RigExecSparseWalkMode;
-    Mode mode = Mode::Compute;
-    if (memo) {
-        // The arm, then the transform's sixteen doubles.
-        unsigned char params[1 + 16 * sizeof(double)];
-        params[0] = p.radialWeight ? 1 : 0;
-        std::memcpy(params + 1, p.transform.GetArray(), 16 * sizeof(double));
-        mode =
-            RigExecSparseWalkBegin(memo, params, sizeof(params), last - first);
-    }
-    // Whether the memo answers for entry k's point; if not and the walk
-    // records, its inputs are noted for the result `keep` stores.
-    const auto reuse = [&](size_t k, GfVec3f *point) {
-        if (mode == Mode::Compute) {
-            return false;
-        }
-        const size_t j = k - first;
-        if (mode == Mode::Reuse &&
-            RigExecSparseWalkHolds(*memo, j, w.indices[k], w.values[k],
-                                   *point)) {
-            *point = memo->out[j];
-            ++memo->reused;
-            return true;
-        }
-        RigExecSparseWalkNote(memo, j, w.indices[k], w.values[k], *point);
-        return false;
-    };
-    const auto keep = [&](size_t k, const GfVec3f &point) {
-        if (mode != Mode::Compute) {
-            memo->out[k - first] = point;
-        }
-        if (memo) {
-            ++memo->computed;
-        }
-    };
-    if (p.radialWeight) {
-        // The sparse walk must take the same arc the dense kernel
-        // does. A painted cluster falloff is almost always sparse --
-        // the upper blink weights 414 points of a 26276-point body --
-        // so EVERY radial cluster on this rig arrived here and got a
-        // linear blend, the one case RigExecPartialTransform exists to
-        // prevent. Measured: at a full blink the lid's half-weighted
-        // points cut the chord and sank 0.2951 into an eyeball of
-        // radius 2.4846, which is the lid clipping through the eye.
-        //
-        // Factored per WEIGHT, as the dense kernel is, and for the
-        // same reason: a falloff is mostly a few distinct values.
-        double cachedWeight = -1.0;
-        RigExecPartialDecomposition decomposition;
-        bool haveDecomposition = false;
-        GfMatrix4d partial(1.0);
-        for (size_t k = first; k < last; ++k) {
-            GfVec3f &point = data[size_t(w.indices[k]) - offset];
-            if (reuse(k, &point)) {
-                continue;
-            }
-            const double value = w.values[k];
-            if (value != cachedWeight) {
-                const double clamped = GfClamp(value, 0.0, 1.0);
-                if (clamped <= 0.0)
-                    partial = GfMatrix4d(1.0);
-                else if (clamped >= 1.0)
-                    partial = p.transform;
-                else {
-                    if (!haveDecomposition) {
-                        decomposition =
-                            RigExecDecomposePartialTransform(p.transform);
-                        haveDecomposition = true;
-                    }
-                    partial = RigExecApplyPartialDecomposition(decomposition,
-                                                               clamped);
-                }
-                cachedWeight = value;
-            }
-            point = GfVec3f(partial.TransformAffine(GfVec3d(point)));
-            keep(k, point);
-        }
-        return;
-    }
-    for (size_t k = first; k < last; ++k) {
-        GfVec3f &point = data[size_t(w.indices[k]) - offset];
-        if (reuse(k, &point)) {
-            continue;
-        }
-        point = GfVec3f(RigExecApplyWeightedMatrix(GfVec3d(point), p.transform,
-                                                   w.values[k]));
-        keep(k, point);
-    }
+    eval::ApplyMatrixSparseWalk<_EnvelopeMath>(p.radialWeight, p.transform,
+                                               _EnvelopeView(w), first, last,
+                                               data, offset, memo);
 }
 
 // The entries [*first, *last) of the ascending \p indices that name a point
@@ -627,64 +713,24 @@ bool
 RigExecApplyMatrixKernel(const RigExecMoverParameters &p,
                          std::vector<GfVec3f> *pts, bool useSimd)
 {
-    const size_t count = pts->size();
-    // Validated before any point is written; a dense envelope is resolved
-    // into `weights` by the same call.
-    std::vector<float> weights;
-    if (!_MatrixKernelAccepts(p, count, &weights)) {
-        return false;
-    }
-    if (RigExecEnvelopeIsFullStrength(p.weights)) {
-        ApplyMatrixFullStrength(p, pts->data(), pts->data(), count, useSimd);
-        return true;
-    }
-    // A sparse field with a zero default touches only its named points: a
-    // face cluster weights a few hundred of a body's tens of thousands, so
-    // resolving and walking the dense array is almost all waste. Its entries
-    // were validated above, exactly as ResolveAll would, so the same packets
-    // fail.
-    const RigExecWeightPacket &w = p.weights;
-    if (_MatrixWalksSparse(w)) {
-        if (p.transform == GfMatrix4d(1.0)) {
-            return true; // at rest every weighted point maps to itself
-        }
-        _ApplyMatrixSparseWalk(p, w, 0, w.indices.size(), pts->data());
-        return true;
-    }
-    RigExecApplyMatrixKernelRange(p, weights.data(), 0, count, pts->data(),
-                                  useSimd);
-    return true;
+    return eval::ApplyMatrixKernel<_EnvelopeMath>(_EnvelopeView(p.weights),
+                                                  p.weights, p.radialWeight,
+                                                  p.transform, pts, useSimd);
 }
 
 void
 RigExecBlendEnvelopeRange(const GfVec3f *preceding, const float *envelope,
                           size_t begin, size_t end, GfVec3f *blended)
 {
-    for (size_t i = begin; i < end; ++i) {
-        blended[i] =
-            RigExecBlendEnvelope(preceding[i], blended[i], envelope[i]);
-    }
+    eval::BlendEnvelopeRange<GfVec3f>(preceding, envelope, begin, end, blended);
 }
 
 void
 RigExecBlendEnvelopeAll(const GfVec3f *preceding, const float *envelope,
                         size_t count, GfVec3f *blended)
 {
-    // Per point, reading two arrays and writing a third at the same index: a
-    // point range is an independent sub-problem, so splitting it changes
-    // nothing about the arithmetic -- only who performs it.
-    if (RigExecParallelEvaluationEnabled() && !RigExecFrozenSerialActive() &&
-        count >= RigExecGeometryParallelThreshold) {
-        WorkParallelForN(
-            count,
-            [blended, preceding, envelope](size_t begin, size_t end) {
-                RigExecBlendEnvelopeRange(preceding, envelope, begin, end,
-                                          blended);
-            },
-            RigExecGeometryGrainSize);
-        return;
-    }
-    RigExecBlendEnvelopeRange(preceding, envelope, 0, count, blended);
+    eval::BlendEnvelopeAll<GfVec3f>(preceding, envelope, count, blended,
+                                    RigExecGeometryRanges());
 }
 
 // The skin kernel, shared by the mover-graph revision node and by the
@@ -715,9 +761,15 @@ RigExecSkinMethodOf(const RigExecMoverParameters &p)
 RigExecSkinTransformsView
 RigExecSkinTransformsOf(const RigExecMoverParameters &p)
 {
+    const eval::SkinTransformsViewT<_SkinMath> evalView =
+        eval::SkinTransformsOf<_SkinMath>(p.skinTransforms.data(),
+                                          p.skinTransforms.size());
     RigExecSkinTransformsView view;
-    view.transforms = p.skinTransforms.data();
-    view.transformCount = p.skinTransforms.size();
+    view.transforms = evalView.transforms;
+    view.transformCount = evalView.transformCount;
+    view.rows = evalView.rows;
+    view.palette = evalView.palette;
+    view.paletteSize = evalView.paletteSize;
     return view;
 }
 
@@ -732,89 +784,31 @@ RigExecSkinLayoutForPacket(const RigExecMoverParameters &p,
     // before skinning -- and when the skin is first in its chain the incoming
     // points are the authored base. No separate rest input is needed for
     // that, and every skinning method reads the same gather below.
+    const eval::SkinLayoutViewT<_SkinMath> evalLayout =
+        eval::SkinLayoutForPacket<_SkinMath>(
+            _SkinPacket(p), _EvalSkinTransforms(transforms), pointCount);
     RigExecSkinLayout layout;
-    layout.transforms = transforms.transforms;
-    layout.transformCount = transforms.transformCount;
-    const RigExecSkinTopology *const topology = p.skinTopology.get();
-    if (topology) {
-        layout.indices = topology->indices.data();
-        layout.weights = topology->weights.data();
-        layout.indexCount = topology->indices.size();
-        layout.elementSize =
-            topology->elementSize < 1 ? 0 : size_t(topology->elementSize);
-    } else {
-        layout.indices = p.skinIndices.data();
-        layout.weights = p.skinWeights.data();
-        layout.indexCount = p.skinIndices.size();
-        layout.elementSize =
-            p.skinElementSize < 1 ? 0 : size_t(p.skinElementSize);
-    }
-    layout.pointCount = pointCount;
+    layout.transforms = evalLayout.transforms;
+    layout.transformCount = evalLayout.transformCount;
+    layout.indices = evalLayout.indices;
+    layout.weights = evalLayout.weights;
+    layout.indexCount = evalLayout.indexCount;
+    layout.elementSize = evalLayout.elementSize;
+    layout.pointCount = evalLayout.pointCount;
     return layout;
 }
 
 bool
 RigExecSkinLayoutIsUsable(const RigExecMoverParameters &p, size_t pointCount)
 {
-    const size_t transformCount = p.skinTransforms.size();
-    if (const RigExecSkinTopology *const topology = p.skinTopology.get()) {
-        // O(1). The compiled rig checked the element shape, the index range and the
-        // weights; the assembler checked THIS frame's matrices and would have
-        // failed the packet otherwise, so the only question left is whether
-        // the points that arrived are the points the layout describes --
-        // which is the one thing the assembler could not know.
-        const size_t elementSize =
-            topology->elementSize < 1 ? 0 : size_t(topology->elementSize);
-        return topology->validated &&
-               topology->influenceCount == transformCount &&
-               topology->indices.size() == pointCount * elementSize;
-    }
-    if (p.skinWeights.size() != p.skinIndices.size()) {
-        return false; // cardinality mismatch fails atomically
-    }
-    // RigExecSkinLayout::Validate, minus its influence-matrix loop, which is
-    // RigExecSkinTransformsAreUsable below. The two together are the same
-    // conjunction Validate() is, so splitting them changes no answer.
-    const size_t elementSize =
-        p.skinElementSize < 1 ? 0 : size_t(p.skinElementSize);
-    if (elementSize < 1 || transformCount == 0) {
-        return false;
-    }
-    if (p.skinIndices.size() != pointCount * elementSize) {
-        return false;
-    }
-    for (size_t i = 0; i < p.skinIndices.size(); ++i) {
-        if (p.skinIndices[i] < 0 ||
-            size_t(p.skinIndices[i]) >= transformCount) {
-            return false;
-        }
-        if (!std::isfinite(p.skinWeights[i]) || p.skinWeights[i] < 0.0f) {
-            return false;
-        }
-    }
-    return true;
+    return eval::SkinLayoutIsUsable(_SkinPacket(p), pointCount,
+                                    p.skinTransforms.size());
 }
 
 bool
 RigExecSkinTransformsAreUsable(const GfMatrix4d *transforms, size_t count)
 {
-    if (!transforms || count == 0) {
-        return false;
-    }
-    for (size_t t = 0; t < count; ++t) {
-        const GfMatrix4d &m = transforms[t];
-        for (int r = 0; r < 4; ++r) {
-            for (int c = 0; c < 4; ++c) {
-                if (!std::isfinite(m[r][c])) {
-                    return false;
-                }
-            }
-        }
-        if (m[0][3] != 0 || m[1][3] != 0 || m[2][3] != 0 || m[3][3] != 1) {
-            return false;
-        }
-    }
-    return true;
+    return eval::SkinTransformsAreUsable<_SkinMath>(transforms, count);
 }
 
 bool
@@ -823,61 +817,9 @@ RigExecApplySkinKernelRange(const RigExecMoverParameters &p,
                             size_t begin, size_t end, std::vector<GfVec3f> *pts,
                             bool useSimd)
 {
-    const RigExecSkinMethod method = RigExecSkinMethodOf(p);
-    const RigExecSkinLayout layout =
-        RigExecSkinLayoutForPacket(p, transforms, pts->size());
-    // A point range IS a layout: the indices and weights of point i live at
-    // i * elementSize and nowhere else, and no point reads another's result.
-    // Both kernels loop one point at a time, so a split boundary cannot land
-    // inside a vectorised block either -- which is what makes a chunked
-    // result bit-identical to the whole-array one rather than merely equal to
-    // tolerance.
-    RigExecSkinLayout part = layout;
-    part.indices = layout.indices + begin * layout.elementSize;
-    part.weights = layout.weights + begin * layout.elementSize;
-    part.indexCount = (end - begin) * layout.elementSize;
-    part.pointCount = end - begin;
-    GfVec3f *const points = pts->data();
-
-    // The one point where the skinning methods part. Everything above is
-    // the shared per-point gather (indices, weights, influence matrices,
-    // rest point); only the accumulation differs.
-    if (method == RigExecSkinMethod::ClassicLinear) {
-        // sum_k w_k T_k p, with the weight complement held at the rest
-        // point (see RigExecApplyLinearBlendSkin).
-        if (useSimd) {
-            RigExecApplyLinearBlendSkinSimd(points + begin, points + begin,
-                                            part, transforms.rows);
-        } else {
-            RigExecApplyLinearBlendSkin(points + begin, points + begin, part);
-        }
-        return true;
-    }
-    if (method == RigExecSkinMethod::DualQuaternion) {
-        // Scale-aware DQS from libs/rigExecMath/dualQuat.h: each influence
-        // split once per evaluation into a pre-rotation stretch and a unit
-        // dual quaternion, weighted sum over the same layout with
-        // shortest-arc sign correction, ONE normalisation, then the direct
-        // point transform. Weight shortfall enters as an identity influence
-        // (see RigExecApplyDualQuatSkin). Scalar only; a degenerate blend
-        // fails atomically.
-        // The split is per matrix, so a caller skinning several ranges
-        // against one table hands the palette in and pays for it once.
-        std::vector<RigExecScaledDualQuat> local;
-        const RigExecScaledDualQuat *palette = transforms.palette;
-        size_t paletteSize = transforms.paletteSize;
-        if (!palette) {
-            local = RigExecSkinDualQuatPalette(layout);
-            palette = local.data();
-            paletteSize = local.size();
-        }
-        return RigExecApplyDualQuatSkin(points + begin, points + begin, part,
-                                        palette, paletteSize);
-    }
-    // A token neither kernel owns is a compile error upstream; a packet that
-    // reaches here anyway fails the application rather than silently running
-    // the wrong maths.
-    return false;
+    return eval::ApplySkinKernelRange<_SkinMath>(
+        _SkinPacket(p), _EvalSkinTransforms(transforms), begin, end, pts,
+        useSimd);
 }
 
 bool
@@ -886,73 +828,9 @@ RigExecApplySkinKernelWithTransforms(
     const RigExecSkinTransformsView &transforms, std::vector<GfVec3f> *pts,
     bool useSimd)
 {
-    const size_t count = pts->size();
-    if (!RigExecSkinLayoutIsUsable(p, count)) {
-        return false;
-    }
-    if (!p.skinTopology &&
-        !RigExecSkinTransformsAreUsable(transforms.transforms,
-                                        transforms.transformCount)) {
-        return false;
-    }
-
-    // BOTH methods split, not just the linear one. A point range is an
-    // independent sub-problem under either kernel -- the indices and weights
-    // of point i live at i * elementSize and no point reads another's result
-    // -- so which method is running says nothing about whether the work can
-    // be divided, so both methods split.
-    const bool splittable = RigExecParallelEvaluationEnabled() &&
-                            !RigExecFrozenSerialActive() &&
-                            count >= RigExecGeometryParallelThreshold &&
-                            (p.skinningMethod == "classicLinear" ||
-                             p.skinningMethod == "dualQuaternion");
-    if (!splittable) {
-        return RigExecApplySkinKernelRange(p, transforms, 0, count, pts,
-                                           useSimd);
-    }
-
-    // THE PER-MATRIX TABLES ARE DERIVED ONCE HERE AND HANDED TO EVERY CHUNK.
-    // Both kernels build their own when handed none -- the SIMD path narrows
-    // the rows to float, the dual-quaternion path splits each matrix into a
-    // stretch and a unit dual quaternion -- and both are pure functions of
-    // the influence table, so a chunk that derives its own gets the same
-    // table every other chunk derived. Identical, and paid for once per task
-    // instead of once: with 137 influences and a grain of 512 points that is
-    // fifty-odd redundant derivations of the same thing. The linear path has
-    // been splitting without hoisting since it gained the split.
-    RigExecSkinTransformsView shared = transforms;
-    const RigExecSkinLayout layout =
-        RigExecSkinLayoutForPacket(p, transforms, count);
-    std::vector<float> rows;
-    std::vector<RigExecScaledDualQuat> palette;
-    if (p.skinningMethod == "classicLinear" && !shared.rows &&
-        layout.transforms) {
-        rows.resize(layout.transformCount * RigExecSkinRowStride);
-        for (size_t t = 0; t < layout.transformCount; ++t) {
-            RigExecNarrowSkinRows(layout.transforms[t],
-                                  &rows[t * RigExecSkinRowStride]);
-        }
-        shared.rows = rows.data();
-    } else if (p.skinningMethod == "dualQuaternion" && !shared.palette) {
-        palette = RigExecSkinDualQuatPalette(layout);
-        shared.palette = palette.data();
-        shared.paletteSize = palette.size();
-    }
-
-    // A degenerate blend fails one range, and the answer for the operation is
-    // that it failed. Relaxed ordering is enough: nothing is published
-    // through this flag, and WorkParallelForN joins before it is read.
-    std::atomic<bool> ok(true);
-    WorkParallelForN(
-        count,
-        [&p, &shared, pts, &ok, useSimd](size_t begin, size_t end) {
-            if (!RigExecApplySkinKernelRange(p, shared, begin, end, pts,
-                                             useSimd)) {
-                ok.store(false, std::memory_order_relaxed);
-            }
-        },
-        RigExecGeometryGrainSize);
-    return ok.load(std::memory_order_relaxed);
+    return eval::ApplySkinKernelWithTransforms<_SkinMath>(
+        _SkinPacket(p), _EvalSkinTransforms(transforms), pts, useSimd,
+        !p.skinTopology, RigExecGeometryRanges());
 }
 
 bool
@@ -1440,15 +1318,8 @@ bool
 RigExecRevisionTakesSeparateBlend(RigExecRevisionOp op,
                                   const RigExecWeightPacket &w)
 {
-    // Matrix, blendShape and the two derived recomputations resolve the
-    // envelope inside their own arithmetic; blending their result again would
-    // apply it twice.
-    return !(
-        op == RigExecRevisionOp::Matrix ||
-        op == RigExecRevisionOp::BlendShape ||
-        op == RigExecRevisionOp::RecomputeNormals ||
-        op == RigExecRevisionOp::RecomputeExtent ||
-        (op == RigExecRevisionOp::Wire && RigExecWireTakesSparseEnvelope(w)));
+    return eval::RevisionTakesSeparateBlend(static_cast<int>(op),
+                                            _EnvelopeView(w));
 }
 
 RigExecRevisionAcceptance
@@ -1532,35 +1403,16 @@ RigExecRevisionIsRangeOp(RigExecRevisionOp op)
 bool
 RigExecRevisionGateHolds(RigExecRevisionOp op, const RigExecMoverParameters &p)
 {
-    // Only the listed points of such an envelope weigh above 0, and each op
-    // below leaves a point of weight <= 0 at its entering bytes: the matrix
-    // and wire walks never visit it, and the lattice, linear skin and target
-    // blend take RigExecBlendEnvelope's `weight <= 0` branch, whatever the
-    // deformation computed there.
-    if (!RigExecWireTakesSparseEnvelope(p.weights)) {
-        return false;
-    }
-    switch (op) {
-    case RigExecRevisionOp::Matrix:
-    case RigExecRevisionOp::Wire:
-        return true;
-    case RigExecRevisionOp::Lattice:
-        // A regular grid can fail the revision at any point.
-        return !p.latticeSettings.regularGrid;
-    case RigExecRevisionOp::Skin:
-        // A dual-quaternion blend can fail the revision at any vertex.
-        return RigExecSkinMethodOf(p) == RigExecSkinMethod::ClassicLinear;
-    case RigExecRevisionOp::BlendShape:
-        // The surface-frame transport reads every entering point.
-        return !p.blendSurfaceFrame;
-    case RigExecRevisionOp::Smooth:
-    case RigExecRevisionOp::DeltaMush:
-        // Its separate blend keeps a point of weight <= 0 at its entering
-        // bytes, whatever its neighbours smoothed it to.
-        return true;
-    default:
-        return false;
-    }
+    // The kernel half of a group gate (gate.h): the packet facts alone,
+    // with no written-group proof. The enable half stays with the caller.
+    eval::GroupGateFacts facts;
+    facts.enabled = true;
+    facts.op = int(op);
+    facts.envelope = _EnvelopeView(p.weights);
+    facts.skinMethod = _SkinPacket(p).method;
+    facts.blendSurfaceFrame = p.blendSurfaceFrame;
+    facts.regularGrid = p.latticeSettings.regularGrid;
+    return eval::GroupGateHolds(facts);
 }
 
 RigExecRevisionAcceptance
@@ -1902,50 +1754,13 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
         }
     } else {
         // Skin: the group's part of the layout against the table it reads
-        // (\p skin, or the packet's own). The layout and the table were
-        // validated whole by the caller, as for RigExecApplySkinKernelRange;
-        // only the shape the part indexes is checked here. A dual-quaternion
-        // palette not handed in is built here, per call.
+        // (\p skin, or the packet's own), blended over the entering points
+        // afterwards unless the envelope is at full strength.
         const RigExecSkinTransformsView view =
             skin ? *skin : RigExecSkinTransformsOf(p);
-        const RigExecSkinLayout layout =
-            RigExecSkinLayoutForPacket(p, view, count);
-        if (layout.elementSize < 1 ||
-            layout.indexCount != count * layout.elementSize ||
-            (!p.skinTopology && p.skinWeights.size() != p.skinIndices.size())) {
-            return false;
-        }
-        RigExecSkinLayout part = layout;
-        part.indices = layout.indices + begin * layout.elementSize;
-        part.weights = layout.weights + begin * layout.elementSize;
-        part.indexCount = n * layout.elementSize;
-        part.pointCount = n;
-        switch (RigExecSkinMethodOf(p)) {
-        case RigExecSkinMethod::ClassicLinear:
-            if (useSimd) {
-                RigExecApplyLinearBlendSkinSimd(in, out, part, view.rows);
-            } else {
-                RigExecApplyLinearBlendSkin(in, out, part);
-            }
-            break;
-        case RigExecSkinMethod::DualQuaternion: {
-            std::vector<RigExecScaledDualQuat> local;
-            const RigExecScaledDualQuat *palette = view.palette;
-            size_t paletteSize = view.paletteSize;
-            if (!palette) {
-                local = RigExecSkinDualQuatPalette(layout);
-                palette = local.data();
-                paletteSize = local.size();
-            }
-            if (!RigExecApplyDualQuatSkin(in, out, part, palette,
-                                          paletteSize)) {
-                return false;
-            }
-            break;
-        }
-        case RigExecSkinMethod::Unknown:
-            return false;
-        }
+        return eval::ApplySkinGroupRange<_SkinMath>(
+            _SkinPacket(p), !blend, separateEnvelope, _EvalSkinTransforms(view),
+            in, count, begin, end, useSimd, out);
     }
     if (blend) {
         RigExecBlendEnvelopeRange(in, separateEnvelope + begin, 0, n, out);

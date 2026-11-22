@@ -1,7 +1,8 @@
 #include "rigExecOps/deform/derivedOps.h"
 
 #include "rigExecOps/opIo.h"
-#include "rigExecMath/normalsKernel.h"
+#include "rigExecMath/meshBoundsKernel.h"
+#include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/normalsLayoutKernel.h"
 
 #include <iterator>
@@ -65,12 +66,9 @@ RunNormals(const void *payload, void *, const RigExecOpIo &io,
     const auto &indices = *In<RigExecArray<int>>(io, RecomputeNormalsIndices());
     if (points.Empty())
         return Fail(error, "RecomputeNormals", "no points");
-    std::vector<Vec3f> normals = rigExec::RigExecVertexNormalsKernel(
-        points.Data(), points.Size(), counts.Data(), indices.Data(),
-        rigExec::RigExecBuildVertexNormalsTopology(
-            points.Size(), counts.Data(), counts.Size(), indices.Data(),
-            indices.Size()),
-        nullptr);
+    std::vector<Vec3f> normals = rigExec::RigExecComputeVertexNormalsKernel(
+        points.Data(), points.Size(), counts.Data(), counts.Size(),
+        indices.Data(), indices.Size());
     if (!rigExec::RigExecLayoutNormals(&normals, indices.Data(), indices.Size(),
                                        p.perCorner, p.leftHanded))
         return Fail(error, "RecomputeNormals", "a corner names no point");
@@ -89,9 +87,9 @@ RunExtent(const void *, void *, const RigExecOpIo &io, std::string *error)
         return Fail(error, "RecomputeExtent", "no points");
     return WriteDerived(
         io, RecomputeExtentOut(),
-        rigExec::RigExecExtentKernel(points.Data(), points.Size(),
-                                     widths ? widths->Data() : nullptr,
-                                     widths ? widths->Size() : 0),
+        rigExec::RigExecComputeExtentKernel(points.Data(), points.Size(),
+                                            widths ? widths->Data() : nullptr,
+                                            widths ? widths->Size() : 0),
         In<Points>(io, RecomputeExtentAuthored()),
         In<Envelope>(io, RecomputeExtentEnvelope()), "RecomputeExtent", error);
 }

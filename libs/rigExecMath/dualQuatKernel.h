@@ -20,6 +20,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <vector>
 
 namespace rigExec {
 
@@ -534,6 +535,121 @@ RigExecScaledDualQuatTransformPointKernel(
     }
     return RigExecDualQuatTransformPointKernel(
         sdq.rigid, dualQuatDetail::MulRow<Point, Double>(point, sdq.stretch));
+}
+
+// The skinning gather, palette and apply over the trait above: the one
+// numeric definition the Gf wrappers in solvers.cpp and the runtime skin
+// path both run, so the two front ends blend the same influences bit for
+// bit. A layout names Weight(point, slot), indices, elementSize,
+// transformCount and pointCount, as RigExecSkinLayout and its runtime
+// mirror do.
+
+/// Per point: the largest-weight slot first (the blend's sign-correction
+/// reference), the other non-zero slots in authored order, then the
+/// identity entry at transformCount with the weight complement when it is
+/// not exactly zero. The total accumulates in double in slot order, as the
+/// linear blend accumulates it, so both kernels see the same complement.
+template <class Layout>
+void
+RigExecGatherDualQuatInfluencesKernel(const Layout &layout, size_t point,
+                                      std::vector<int> *indices,
+                                      std::vector<double> *weights)
+{
+    indices->clear();
+    weights->clear();
+    size_t pivot = 0;
+    float pivotWeight = -1.0f;
+    double total = 0;
+    for (size_t k = 0; k < layout.elementSize; ++k) {
+        const float weight = layout.Weight(point, k);
+        if (pivotWeight < weight) {
+            pivotWeight = weight;
+            pivot = k;
+        }
+        total += weight;
+    }
+    const auto push = [&](size_t k) {
+        const double weight = layout.Weight(point, k);
+        if (weight != 0) {
+            indices->push_back(layout.indices[point * layout.elementSize + k]);
+            weights->push_back(weight);
+        }
+    };
+    push(pivot);
+    for (size_t k = 0; k < layout.elementSize; ++k) {
+        if (k != pivot)
+            push(k);
+    }
+    const double complement = 1.0 - total;
+    if (complement != 0) {
+        indices->push_back(int(layout.transformCount));
+        weights->push_back(complement);
+    }
+}
+
+/// One split per influence in table order, then the trailing identity
+/// entry that carries the weight complement.
+template <class Point, class Double>
+std::vector<RigExecScaledDualQuatKernelT<Point, Double>>
+RigExecSkinDualQuatPaletteKernel(
+    const typename RigExecDualQuatMath<Point, Double>::Mat4 *transforms,
+    size_t transformCount)
+{
+    using ScaledDualQuat = RigExecScaledDualQuatKernelT<Point, Double>;
+    std::vector<ScaledDualQuat> palette;
+    palette.reserve(transformCount + 1);
+    for (size_t t = 0; t < transformCount; ++t) {
+        palette.push_back(RigExecScaledDualQuatFromMatrixKernel<Point, Double>(
+            transforms[t]));
+    }
+    palette.emplace_back();
+    return palette;
+}
+
+/// One point of the scale-aware blend against \p palette. False leaves
+/// \p out unspecified when the blend is degenerate.
+template <class Point, class Double, class Layout>
+bool
+RigExecApplyDualQuatSkinPointKernel(
+    const Double &point, const Layout &layout, size_t i,
+    const RigExecScaledDualQuatKernelT<Point, Double> *palette,
+    size_t paletteSize, Double *out)
+{
+    using ScaledDualQuat = RigExecScaledDualQuatKernelT<Point, Double>;
+    std::vector<int> indices;
+    std::vector<double> weights;
+    indices.reserve(layout.elementSize + 1);
+    weights.reserve(layout.elementSize + 1);
+    RigExecGatherDualQuatInfluencesKernel(layout, i, &indices, &weights);
+    ScaledDualQuat blend;
+    if (!RigExecBlendScaledDualQuatsKernel<Point, Double>(
+            palette, paletteSize, indices.data(), weights.data(),
+            indices.size(), &blend)) {
+        return false;
+    }
+    *out = RigExecScaledDualQuatTransformPointKernel(blend, point);
+    return true;
+}
+
+/// The array form over \p layout.pointCount points; in/out may alias
+/// because point i is widened before it is written.
+template <class Point, class Double, class Layout>
+bool
+RigExecApplyDualQuatSkinKernel(
+    const Point *in, Point *out, const Layout &layout,
+    const RigExecScaledDualQuatKernelT<Point, Double> *palette,
+    size_t paletteSize)
+{
+    for (size_t i = 0; i < layout.pointCount; ++i) {
+        Double moved;
+        if (!RigExecApplyDualQuatSkinPointKernel<Point, Double>(
+                Double(double(in[i][0]), double(in[i][1]), double(in[i][2])),
+                layout, i, palette, paletteSize, &moved)) {
+            return false;
+        }
+        out[i] = Point(float(moved[0]), float(moved[1]), float(moved[2]));
+    }
+    return true;
 }
 
 } // namespace rigExec

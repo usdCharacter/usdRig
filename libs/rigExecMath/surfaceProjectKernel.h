@@ -1,95 +1,155 @@
-// The legacy surface projection: each point moves toward its nearest point
-// on the surface's fan triangulation. One definition for native evaluation,
-// the runtime and the ops. V is GfVec3f or RrVec3f. USD-free.
+// Nearest-surface projection with optional retained acceleration.
 #ifndef RIGEXEC_MATH_SURFACE_PROJECT_KERNEL_H
 #define RIGEXEC_MATH_SURFACE_PROJECT_KERNEL_H
+
+#include "spatialAccel.h"
+#include "surfaceSnapKernel.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <limits>
+#include <memory>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 namespace rigExec {
 
-/// Nearest point to \p p on triangle (a, b, c). Ericson, Real-Time
-/// Collision Detection, 5.1.5.
-template <class V>
-V
-RigExecClosestPointOnTriangleKernel(const V &p, const V &a, const V &b,
-                                    const V &c)
+namespace surfaceProjectDetail {
+
+// Whether an owned key still describes a borrowed range: same size and
+// same values. A null range only ever matches the empty key, and the
+// projector returns before validation on a null range with a nonzero
+// size, so every validated call below compares against real storage.
+template <typename T>
+bool
+RangeMatches(const std::vector<T> &key, const T *data, size_t size)
 {
-    const auto dot = [](const V &x, const V &y) {
-        return float(x[0] * y[0] + x[1] * y[1] + x[2] * y[2]);
-    };
-    const V ab = b - a, ac = c - a, ap = p - a;
-    const float d1 = dot(ab, ap), d2 = dot(ac, ap);
-    if (d1 <= 0 && d2 <= 0)
-        return a;
-    const V bp = p - b;
-    const float d3 = dot(ab, bp), d4 = dot(ac, bp);
-    if (d3 >= 0 && d4 <= d3)
-        return b;
-    const float vc = d1 * d4 - d3 * d2;
-    if (vc <= 0 && d1 >= 0 && d3 <= 0) {
-        const float v = d1 / (d1 - d3);
-        return a + ab * v;
-    }
-    const V cp = p - c;
-    const float d5 = dot(ab, cp), d6 = dot(ac, cp);
-    if (d6 >= 0 && d5 <= d6)
-        return c;
-    const float vb = d5 * d2 - d1 * d6;
-    if (vb <= 0 && d2 >= 0 && d6 <= 0) {
-        const float w = d2 / (d2 - d6);
-        return a + ac * w;
-    }
-    const float va = d3 * d6 - d5 * d4;
-    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
-        const float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
-        return b + (c - b) * w;
-    }
-    const float denom = 1.0f / (va + vb + vc);
-    const float v = vb * denom, w = vc * denom;
-    return a + ab * v + ac * w;
+    return key.size() == size &&
+           (size == 0 || std::equal(key.begin(), key.end(), data));
 }
 
-/// Moves each of \p count points by \p weight (clamped to [0, 1]) toward
-/// its nearest point on the fans of (counts, indices) over \p surface. Out
-/// of range corners skip their triangle; an index walk that overruns
-/// leaves every point as it was. The brute-force search; a native caller
-/// may answer the same query from a BVH.
-template <class V>
+} // namespace surfaceProjectDetail
+
+template <class Point, class Accel>
 void
-RigExecApplySurfaceProjectKernel(V *points, size_t count, const V *surface,
-                                 size_t surfaceSize, const int *counts,
-                                 size_t countsSize, const int *indices,
-                                 size_t indicesSize, double weight)
+RigExecBuildSurfaceAccelKernel(const int *faceVertexCounts,
+                               size_t faceVertexCountsSize,
+                               const int *faceVertexIndices,
+                               size_t faceVertexIndicesSize,
+                               const Point *surfacePoints,
+                               size_t surfacePointsSize, Accel *accel)
 {
-    const double w = std::min(std::max(weight, 0.0), 1.0);
-    if (count == 0 || surfaceSize == 0 || w <= 0.0) {
+    if (!accel) {
         return;
     }
-    for (size_t i = 0; i < count; ++i) {
-        V &p = points[i];
+    Accel built;
+    if (faceVertexCounts) {
+        built.counts.assign(faceVertexCounts,
+                            faceVertexCounts + faceVertexCountsSize);
+    }
+    if (faceVertexIndices) {
+        built.indices.assign(faceVertexIndices,
+                             faceVertexIndices + faceVertexIndicesSize);
+    }
+    if (surfacePoints) {
+        built.points.assign(surfacePoints, surfacePoints + surfacePointsSize);
+    }
+    built.fan = std::make_shared<const RigExecFanTrisH7>(RigExecBuildFanTrisH7(
+        faceVertexCounts, faceVertexCountsSize, faceVertexIndices,
+        faceVertexIndicesSize, surfacePointsSize));
+    if (!built.fan->truncated && built.fan->tris.size() >= kRigExecBvhMinTris &&
+        (surfacePointsSize == 0 || surfacePoints)) {
+        auto bvh = std::make_shared<RigExecTriangleBvh<Point>>();
+        if (bvh->Build(surfacePoints, surfacePointsSize, built.fan->tris.data(),
+                       built.fan->tris.size())) {
+            built.bvh = std::move(bvh);
+        }
+        // Build failed (non-finite surface points): the null bvh runs the
+        // verbatim loop, whose NaN behavior is the defined one.
+    }
+    *accel = std::move(built);
+}
+
+template <class Point, class Accel = std::nullptr_t>
+void
+RigExecApplySurfaceProjectKernel(
+    std::vector<Point> *points, const Point *surfacePoints,
+    size_t surfacePointsSize, const int *faceVertexCounts,
+    size_t faceVertexCountsSize, const int *faceVertexIndices,
+    size_t faceVertexIndicesSize, double weight, const Accel *accel = nullptr)
+{
+    const double w = std::min(std::max(weight, 0.0), 1.0);
+    if (points->empty() || surfacePointsSize == 0 || w <= 0.0) {
+        return;
+    }
+    if (!surfacePoints || (faceVertexCountsSize > 0 && !faceVertexCounts) ||
+        (faceVertexIndicesSize > 0 && !faceVertexIndices)) {
+        return; // a null range with a nonzero size: pass through
+    }
+    // Only callers opting into acceleration build or validate a retained fan.
+    if constexpr (!std::is_same_v<Accel, std::nullptr_t>) {
+        // One fan triangulation for the whole call instead of one per point.
+        // A truncated walk returns with no point modified: the nested walk
+        // below always meets the overrun during its first point.
+        Accel unretained;
+        // A stale entry -- same cardinality but new topology or, on the
+        // BVH path, new points -- rebuilds rather than answering wrong.
+        // The fan only depends on the topology and the point count, so
+        // below the gate the values are not compared: the verbatim loop
+        // walks the current inputs either way.
+        if (!accel || !accel->fan ||
+            !surfaceProjectDetail::RangeMatches(accel->counts, faceVertexCounts,
+                                                faceVertexCountsSize) ||
+            !surfaceProjectDetail::RangeMatches(
+                accel->indices, faceVertexIndices, faceVertexIndicesSize) ||
+            accel->points.size() != surfacePointsSize ||
+            (accel->bvh &&
+             !surfaceProjectDetail::RangeMatches(accel->points, surfacePoints,
+                                                 surfacePointsSize))) {
+            RigExecBuildSurfaceAccelKernel(
+                faceVertexCounts, faceVertexCountsSize, faceVertexIndices,
+                faceVertexIndicesSize, surfacePoints, surfacePointsSize,
+                &unretained);
+            accel = &unretained;
+        }
+        const RigExecFanTrisH7 &fan = *accel->fan;
+        if (fan.truncated) {
+            return;
+        }
+        if (fan.tris.size() >= kRigExecBvhMinTris &&
+            points->size() >= kRigExecBvhMinQueries && accel->bvh) {
+            for (Point &p : *points) {
+                const Point best =
+                    accel->bvh->QueryNearest(p, surfacePoints, fan.tris.data(),
+                                             surfaceSnapDetail::Closest<Point>);
+                p = p + (best - p) * float(w);
+            }
+            return;
+        }
+    }
+    for (Point &p : *points) {
         float bestDistSq = std::numeric_limits<float>::max();
-        V best = p;
+        Point best = p;
         size_t offset = 0;
-        for (size_t f = 0; f < countsSize; ++f) {
-            const int faceCount = counts[f];
+        for (size_t f = 0; f < faceVertexCountsSize; ++f) {
+            const int faceCount = faceVertexCounts[f];
             for (int c = 1; c + 1 < faceCount; ++c) {
                 const size_t i2 = offset + c + 1;
-                if (i2 >= indicesSize) {
-                    // Met during the first point, before any moved.
+                if (i2 >= faceVertexIndicesSize) {
                     return;
                 }
-                const int ia = indices[offset];
-                const int ib = indices[offset + c];
-                const int ic = indices[i2];
-                if (ia < 0 || ib < 0 || ic < 0 || size_t(ia) >= surfaceSize ||
-                    size_t(ib) >= surfaceSize || size_t(ic) >= surfaceSize) {
+                const int ia = faceVertexIndices[offset];
+                const int ib = faceVertexIndices[offset + c];
+                const int ic = faceVertexIndices[i2];
+                if (ia < 0 || ib < 0 || ic < 0 ||
+                    size_t(ia) >= surfacePointsSize ||
+                    size_t(ib) >= surfacePointsSize ||
+                    size_t(ic) >= surfacePointsSize) {
                     continue;
                 }
-                const V q = RigExecClosestPointOnTriangleKernel(
-                    p, surface[ia], surface[ib], surface[ic]);
+                const Point q = surfaceSnapDetail::Closest<Point>(
+                    p, surfacePoints[ia], surfacePoints[ib], surfacePoints[ic]);
                 const float distSq = (q - p).GetLengthSq();
                 if (distSq < bestDistSq) {
                     bestDistSq = distSq;

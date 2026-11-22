@@ -31,15 +31,15 @@ endif()
 # test (RuntimeMath, RuntimePose, RuntimeGeometry, ImagingPlayback,
 # verify_binary, the Rbf oracle) by an ulp. -fno-fast-math does not cover
 # this; only -ffp-contract=off does. MSVC needs nothing: /fp:precise is
-# its default and it never auto-contracts.
-if (NOT MSVC)
-    add_compile_options(-ffp-contract=off)
-endif()
-
-# The exact-FP settings every translation unit that instantiates the kernels
-# must carry; rigexec_apply_exact_fp_flags adds them without repeating the
-# directory option above. Docs: docs/concepts/baked-vs-dynamic.md.
+# its default and it never auto-contracts. cmake/rigexec_flags.cmake owns
+# the flag spelling; this scope installs only its contraction-family
+# directory policy, so a vendored target compiled in a child scope can
+# still re-declare the fast family and keep its codegen while the exact-FP
+# finalization walk enforces the effective mode on every owned target.
+# Docs: docs/concepts/baked-vs-dynamic.md.
 include(cmake/rigexec_flags.cmake)
+rigexec_get_exact_fp_directory_flags(_rigexec_fp_directory_flags)
+add_compile_options(${_rigexec_fp_directory_flags})
 include(cmake/installManifests.cmake)
 
 set(RIGEXEC_INSTALL_LIBDIR     "lib"
@@ -82,7 +82,6 @@ add_library(rigExec::rigExecGraph ALIAS rigExecGraph)
 # USD-free headers. The wire enum it reuses is generated against the vendored
 # FlatBuffers headers.
 add_library(rigExecEvalCore STATIC libs/rigExecEvalCore/kinds.cpp)
-rigexec_apply_exact_fp_flags(rigExecEvalCore)
 target_compile_features(rigExecEvalCore PUBLIC cxx_std_17)
 target_include_directories(rigExecEvalCore PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
@@ -110,7 +109,6 @@ target_include_directories(rigExecMath PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rigExecMath PUBLIC arch tf gf vt)
-rigexec_apply_exact_fp_flags(rigExecMath)
 set_target_properties(rigExecMath PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Keep value-codec template instantiations private to its archive. Only the
@@ -204,9 +202,6 @@ target_link_libraries(rigExec PUBLIC
 
 target_link_libraries(rigExec PRIVATE
     rigExecGraph rigExecMath rigExecEvalCore rigExecInputValues ts)
-# Every rigExec translation unit instantiates the pose, geometry and mover
-# kernels, so the whole archive carries the exact-FP settings.
-rigexec_apply_exact_fp_flags(rigExec)
 # On Windows the consumers of rigExec need those two archives as well.
 
 # Scene translation calls back into the evaluator. The evaluator does not
@@ -450,7 +445,10 @@ add_library(rigExecLzma STATIC
     thirdparty/lzma/C/CpuArch.c)
 target_include_directories(rigExecLzma PRIVATE thirdparty/lzma/C)
 target_compile_definitions(rigExecLzma PRIVATE Z7_ST RIGEXEC_LZMA_PORTABLE_SCALAR)
-set_target_properties(rigExecLzma PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Vendored code keeps its own floating-point codegen: the exact-FP walk
+# exempts targets by this marker, never by source-path text.
+set_target_properties(rigExecLzma PROPERTIES POSITION_INDEPENDENT_CODE ON
+    RIGEXEC_VENDORED TRUE)
 add_library(rigExec::rigExecLzma ALIAS rigExecLzma)
 
 add_library(rigExecBinary STATIC libs/rigExecBinary/format.cpp
@@ -505,7 +503,6 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreSources.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,SOURCES>,\n>\n")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreIncludes.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,INCLUDE_DIRECTORIES>,\n>\n")
-rigexec_apply_exact_fp_flags(rigExecRuntime)
 
 set(RIGEXEC_SDK_MANIFEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/sdkManifests")
 rigexec_add_sdk_manifest_export(
@@ -539,6 +536,23 @@ add_test(NAME testRigExecInstallStaging
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/checkInstallStaging.cmake")
 set_tests_properties(testRigExecInstallStaging PROPERTIES LABELS "fast"
     TIMEOUT 120)
+# Effective-mode witness: configures and builds a throwaway project through
+# the same helper, then checks the real compiler commands and runs numeric
+# probes proving the exact mode survives generator expressions, per-source
+# options, PCH creation and reuse, a third_party-named generated path, and a
+# relocated build directory, and that unrankable link expressions abort the
+# configuration by name. Needs only a C++ compiler.
+add_test(NAME testRigExecExactFpCompiler
+    COMMAND "${CMAKE_COMMAND}"
+        "-DWITNESS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/exactFpWitness"
+        "-DWITNESS_MODULE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/rigexec_flags.cmake"
+        "-DBUILD_ROOT=${CMAKE_CURRENT_BINARY_DIR}/exactFpWitness"
+        "-DGENERATOR=${CMAKE_GENERATOR}"
+        "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DCXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/exactFpCompilerWitness.cmake")
+set_tests_properties(testRigExecExactFpCompiler PROPERTIES TIMEOUT 300
+    ENVIRONMENT "CMAKE_BUILD_PARALLEL_LEVEL=2")
 
 # rigExecSampler: hands a .rigexec's Animated inputs the values a stage holds
 # at each new time (RigExecInputSampler), for every consumer that plays the
@@ -1274,13 +1288,11 @@ rigexec_add_op_library(rigExecOps
         libs/rigExecOps/solver/singleChainIkOps.cpp
         libs/rigExecOps/solver/splineIkOps.cpp
     USES_TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes)
-rigexec_apply_exact_fp_flags(rigExecOps)
 add_executable(testRigExecOpsMath tests/testRigExecOpsMath.cpp
     $<TARGET_OBJECTS:rigExecRegistry> $<TARGET_OBJECTS:rigExecCore>)
 target_include_directories(testRigExecOpsMath PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/libs")
 target_link_libraries(testRigExecOpsMath PRIVATE rigExecMath Threads::Threads)
-rigexec_apply_exact_fp_flags(testRigExecOpsMath)
 rigexec_link_registrations(testRigExecOpsMath
     TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 add_test(NAME testRigExecOpsMath COMMAND testRigExecOpsMath)
@@ -1289,7 +1301,6 @@ add_executable(testRigExecOpsPoints tests/testRigExecOpsPoints.cpp
     $<TARGET_OBJECTS:rigExecRegistry> $<TARGET_OBJECTS:rigExecCore>)
 target_include_directories(testRigExecOpsPoints PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libs")
 target_link_libraries(testRigExecOpsPoints PRIVATE rigExecMath Threads::Threads)
-rigexec_apply_exact_fp_flags(testRigExecOpsPoints)
 rigexec_link_registrations(testRigExecOpsPoints TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 add_test(NAME testRigExecOpsPoints COMMAND testRigExecOpsPoints)
 set_tests_properties(testRigExecOpsPoints PROPERTIES LABELS "fast")
@@ -1305,7 +1316,6 @@ target_compile_features(rigExecBuiltins PUBLIC cxx_std_17)
 target_include_directories(rigExecBuiltins PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>")
 target_link_libraries(rigExecBuiltins PUBLIC rigExec PRIVATE rigExecMath)
-rigexec_apply_exact_fp_flags(rigExecBuiltins)
 
 # Host-side bridge from translated USD movers to op nodes; not installed.
 # Step 10 folds it into rigExecUsd.
@@ -1322,7 +1332,6 @@ target_compile_definitions(testRigExecScenePropertyOps PRIVATE
 add_test(NAME testRigExecScenePropertyOps COMMAND testRigExecScenePropertyOps)
 add_executable(testRigExecSceneGeometryOps tests/testRigExecSceneGeometryOps.cpp)
 target_link_libraries(testRigExecSceneGeometryOps PRIVATE rigExecSceneOps)
-rigexec_apply_exact_fp_flags(testRigExecSceneGeometryOps)
 add_test(NAME testRigExecSceneGeometryOps COMMAND testRigExecSceneGeometryOps)
 set_tests_properties(testRigExecSceneGeometryOps PROPERTIES LABELS "fast")
 
@@ -1348,6 +1357,20 @@ add_test(NAME testRigExecCompiledProgram COMMAND testRigExecCompiledProgram)
 add_executable(testRigExecEvalCoreKinds tests/testRigExecEvalCoreKinds.cpp)
 target_link_libraries(testRigExecEvalCoreKinds PRIVATE rigExec rigExecEvalCore)
 add_test(NAME testRigExecEvalCoreKinds COMMAND testRigExecEvalCoreKinds)
+
+add_executable(testRigExecEvalCoreProperties
+    tests/testRigExecEvalCoreProperties.cpp)
+target_link_libraries(testRigExecEvalCoreProperties PRIVATE
+    rigExecRuntime rigExecBake rigExecSampler)
+target_include_directories(testRigExecEvalCoreProperties PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/tests")
+target_compile_definitions(testRigExecEvalCoreProperties PRIVATE
+    ${_rigexec_schema_resource_define}
+    RIGEXEC_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples")
+add_test(NAME testRigExecEvalCoreProperties COMMAND testRigExecEvalCoreProperties
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+set_tests_properties(testRigExecEvalCoreProperties PROPERTIES
+    LABELS "rigExecRuntime;rigExecBake;rigExecSampler")
 
 add_executable(testRigExecSurfaceKernelCache tests/testRigExecSurfaceKernelCache.cpp)
 target_link_libraries(testRigExecSurfaceKernelCache PRIVATE rigExecMath)
@@ -2708,6 +2731,10 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
         COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_baked_attribute.py"
         "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+    add_test(NAME testRigExecSdkSmoke
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_sdk_binding_smoke.py"
+            "$<TARGET_FILE_DIR:_rigexec>")
 
     add_test(NAME testRigExecUndo
         COMMAND ${Python3_EXECUTABLE}
@@ -2887,6 +2914,7 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
                          testGizmoMarquee testRigExecImagingPublishedPython
                          testRigExecGil testRigExecBakedPsd testRigExecBakedCone
                          testRigExecBakedAttributePython
+                         testRigExecSdkSmoke
                          testRigExecBipedHandPython testRigExecBlinkClearancePython
                          testRigExecDeformerEnabledPython
                          testRigExecDeformerOrderPython testRigExecEyeSymmetryPython
@@ -3119,6 +3147,15 @@ foreach(_rigexec_oracle_exe IN ITEMS
         target_link_libraries(${_rigexec_oracle_exe} PRIVATE rigExecOracle)
     endif()
 endforeach()
+
+# Placement invariant for the exact-FP finalize walk: it must stay the last
+# code in this scope that mutates target options. It runs after every
+# target_precompile_headers producer and REUSE_FROM consumer above and after
+# every compile-affecting target_link_libraries call in this scope, the
+# scene and oracle links just above included, because interface and
+# per-source options reach the command line after the appended exact-FP
+# flags. Only install() rules follow it here.
+rigexec_apply_exact_fp_flags_to_directory_targets()
 
 # Install
 include(CMakePackageConfigHelpers)

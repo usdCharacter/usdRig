@@ -3,8 +3,8 @@
 
 /// Skin: points moved by weighted influence transforms, linear blend or
 /// scale-aware dual quaternion. The incoming points are the bind pose. The
-/// kernel is rigExecMath/skinKernel.h, shared with the baked and zero-USD
-/// runtimes. USD-free.
+/// kernels are rigExecMath/skinKernel.h and dualQuatKernel.h, shared with
+/// the baked and zero-USD runtimes. USD-free.
 
 #include "rigExecOps/library.h"
 

@@ -49,8 +49,8 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
                                             toMetric)) {
         // Brute force; a BVH waits for ops to carry state.
         rigExec::RigExecApplySurfaceProjectKernel(
-            points.data(), points.size(), surface.Data(), surface.Size(),
-            counts.Data(), counts.Size(), indices.Data(), indices.Size(),
+            &points, surface.Data(), surface.Size(), counts.Data(),
+            counts.Size(), indices.Data(), indices.Size(),
             InOr(io, SurfaceProjectStrength(), 1.0f));
     } else if (!rigExec::RigExecApplySurfaceSnapKernel<Vec3f,
                                                        rigExecStd::Vec3d>(

@@ -91,7 +91,8 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
                 in.Data(), out.Data(), layout);
     } else {
         const auto palette =
-            rigExec::RigExecSkinDualQuatPaletteKernel<Vec3f, Vec3d>(layout);
+            rigExec::RigExecSkinDualQuatPaletteKernel<Vec3f, Vec3d>(
+                layout.transforms, layout.transformCount);
         if (!rigExec::RigExecApplyDualQuatSkinKernel<Vec3f, Vec3d>(
                 in.Data(), out.Data(), layout, palette.data(), palette.size()))
             return Fail(error, "Skin", "dual quaternion blend is degenerate");

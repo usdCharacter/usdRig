@@ -1,7 +1,7 @@
 #include "rigExecOps/deform/projectorOps.h"
 
 #include "rigExecOps/opIo.h"
-#include "rigExecMath/normalsKernel.h"
+#include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
 
 #include <iterator>
@@ -85,12 +85,8 @@ RunSurfaceProjector(const void *payload, void *, const RigExecOpIo &io,
     const auto normals = [](const std::vector<Vec3f> &points,
                             const std::vector<int> &counts,
                             const std::vector<int> &indices) {
-        return rigExec::RigExecVertexNormalsKernel(
-            points.data(), points.size(), counts.data(), indices.data(),
-            rigExec::RigExecBuildVertexNormalsTopology(
-                points.size(), counts.data(), counts.size(), indices.data(),
-                indices.size()),
-            nullptr);
+        return rigExec::RigExecComputeMeshVertexNormalsKernel(points, counts,
+                                                              indices);
     };
     std::vector<std::string> diagnostics;
     Mat4d &out = Out<Mat4d>(io, SurfaceProjectorOut());

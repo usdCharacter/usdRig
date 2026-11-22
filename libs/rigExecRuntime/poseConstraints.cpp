@@ -1,6 +1,7 @@
 // Runtime constraints, source resolution, and single-chain IK.
 
 #include "rigExecSchema/schemaNames.h"
+#include "poseEvalHost.h"
 #include "poseInternal.h"
 #include "dualQuatMath.h"
 #include "rigExecMath/constraintKernel.h"
@@ -14,79 +15,6 @@ namespace rigExec {
 using namespace runtimePoseDetail;
 
 namespace {
-
-// FBX constraint kernels (solvers.cpp).
-
-enum class _RrEulerOrder : uint8_t {
-    XYZ = 0,
-    XZY,
-    YXZ,
-    YZX,
-    ZXY,
-    ZYX,
-};
-
-struct _RrConstraintAxisMask {
-    bool x = true;
-    bool y = true;
-    bool z = true;
-};
-
-struct _RrConstraintSource {
-    RrPointFrame frame;
-    double normalizedWeight = 0.0;
-    RrVec3d translationOffset{0.0};
-    RrVec3d rotationOffsetDegrees{0.0};
-};
-
-struct _RrPositionConstraintParams {
-    double weight = 1.0;
-    RrVec3d offset{0.0};
-    _RrConstraintAxisMask affect;
-};
-
-struct _RrRotationConstraintParams {
-    double weight = 1.0;
-    RrVec3d offsetDegrees{0.0};
-    _RrConstraintAxisMask affect;
-    _RrEulerOrder rotationOrder = _RrEulerOrder::XYZ;
-    /// rigExec:space -- the carrying provider's rest->pose map, or nullptr
-    /// when none is named. Twin of RigExecRotationConstraintParams::carry:
-    /// the mask runs with the carry stripped and the answer is carried
-    /// back. Guarded on "named", never on "identity".
-    const RrMat4d *carry = nullptr;
-};
-
-struct _RrScaleConstraintParams {
-    double weight = 1.0;
-    RrVec3d offset{1.0, 1.0, 1.0};
-    _RrConstraintAxisMask affect;
-    /// rigExec:blendShear: see RigExecScaleConstraintParams.
-    bool blendShear = false;
-};
-
-struct _RrParentConstraintParams {
-    double weight = 1.0;
-    _RrConstraintAxisMask translationAxes;
-    _RrConstraintAxisMask rotationAxes;
-    _RrConstraintAxisMask scaleAxes;
-    _RrEulerOrder rotationOrder = _RrEulerOrder::XYZ;
-    /// rigExec:space, or nullptr: see RigExecParentConstraintParams.
-    const RrMat4d *carry = nullptr;
-    /// rigExec:blendShear: see RigExecParentConstraintParams.
-    bool blendShear = false;
-};
-
-struct _RrAimConstraintParams {
-    double weight = 1.0;
-    RrVec3d localAimVector{1.0, 0.0, 0.0};
-    RrVec3d localUpVector{0.0, 1.0, 0.0};
-    RrVec3d rotationOffsetDegrees{0.0};
-    _RrConstraintAxisMask affectRotation;
-    _RrEulerOrder rotationOrder = _RrEulerOrder::XYZ;
-    const RrVec3d *worldUpDirection = nullptr;
-    bool preserveInputUp = false;
-};
 
 // Single-chain IK (singleChainIk.cpp).
 
@@ -145,8 +73,7 @@ _RrPrepareRestDerivedIkChain(const std::vector<RrPointFrame> &current,
     prepared->clear();
     prepared->reserve(current.size());
     for (size_t i = 0; i < current.size(); ++i) {
-        if (!constraintDetail::IsUsableFrame(current[i]) ||
-            !constraintDetail::IsUsableFrame(rest[i])) {
+        if (!RrFrameUsable(current[i]) || !RrFrameUsable(rest[i])) {
             return false;
         }
         RrVec3d origin = current[i].points[0];
@@ -179,7 +106,7 @@ _RrPrepareRestDerivedIkChain(const std::vector<RrPointFrame> &current,
             direction /= directionLength;
             frame.points[axis] = origin + direction * length;
         }
-        if (!constraintDetail::IsUsableFrame(frame)) {
+        if (!RrFrameUsable(frame)) {
             return false;
         }
         prepared->push_back(frame);
@@ -189,55 +116,40 @@ _RrPrepareRestDerivedIkChain(const std::vector<RrPointFrame> &current,
 
 // The Constraint step (bakedPose.cpp).
 
-// RigExecApplyRevisedAncestorDelta (rigEvaluator.cpp): the native
-// source rides the delta of the deepest revised ancestor above it.
-// Provider paths are never the root, where slash-counting and
-// SdfPath's element count agree everywhere else.
-bool
-_RrApplyRevisedAncestorDelta(
-    const RrProgram *program, const std::string &xformPath,
-    const std::vector<RigExecWireAncestorRead> &ancestors, RrPointFrame *frame)
-{
-    const RrStore &store = program->store;
-    const auto elementCount = [](const std::string &path) {
-        return size_t(std::count(path.begin(), path.end(), '/'));
-    };
-    std::string closest;
-    RrPointFrame closestBase, closestCurrent;
-    for (const RigExecWireAncestorRead &a : ancestors) {
-        if (a.slot < 0 || size_t(a.slot) >= program->slotMeta->paths.size() ||
-            size_t(a.base) >= store.base.size() ||
-            size_t(a.fin) >= store.fin.size()) {
-            return false;
-        }
-        const std::string provider =
-            program->TextOrEmpty(program->slotMeta->paths[size_t(a.slot)]);
-        const RrPointFrame &base = store.base[size_t(a.base)];
-        const RrPointFrame &current = store.fin[size_t(a.fin)];
-        if (provider == xformPath || xformPath.size() <= provider.size() ||
-            xformPath.compare(0, provider.size(), provider) != 0 ||
-            xformPath[provider.size()] != '/' ||
-            current.points == base.points) {
-            continue;
-        }
-        if (closest.empty() || elementCount(provider) > elementCount(closest)) {
-            closest = provider;
-            closestBase = base;
-            closestCurrent = current;
-        }
-    }
-    if (!closest.empty()) {
-        RrMat4d delta = _RrIdentity();
-        if (!RrPointsToMatrix(closestBase.points, closestCurrent.points,
-                              &delta)) {
-            return false;
-        }
-        *frame = RrMatrixToPoints(frame->points, delta);
-    }
-    return frame->IsValid();
-}
-
 } // namespace
+
+// RrPoseState::solveIkChain (poseEvalHost.h): the single-chain IK
+// core, called from pose.h with gathered frames. The core itself
+// stays here until the Solve lift unifies it.
+bool
+RrPoseState::solveIkChain(size_t object, const std::vector<RrPointFrame> &chain,
+                          const std::vector<RrPointFrame> &rests,
+                          const RrPointFrame &effector, int mode,
+                          double stretch, double weight, const RrVec3d &pole,
+                          double twistDegrees, bool useAnimatedTs,
+                          std::vector<RrPointFrame> *solved)
+{
+    std::vector<RrPointFrame> prepared;
+    const std::vector<RrPointFrame> *solveChain = &chain;
+    if (!useAnimatedTs) {
+        if (!_RrPrepareRestDerivedIkChain(chain, rests, &prepared)) {
+            return false;
+        }
+        solveChain = &prepared;
+    }
+    _RrSingleChainIkParams params;
+    params.mode = _RrSingleChainIkMode(mode);
+    params.pole = pole;
+    params.twistDegrees = twistDegrees;
+    params.stretch = stretch;
+    params.weight = weight;
+    const size_t ci = size_t(_program->poses->walkSteps[object].index);
+    params.preserveJointOrientation =
+        (_program->poses->constraints[ci].flags &
+         RigExecWireConstraintPreserveJointOrientation) != 0;
+    *solved = _RrSolveSingleChainIk(*solveChain, effector, params);
+    return true;
+}
 
 namespace runtimePoseDetail {
 
@@ -273,8 +185,6 @@ _RrRunConstraintStep(RrProgram *program, size_t step, std::string *error)
     }
     const size_t ci = size_t(walkIndex);
     const RigExecWireConstraint &c = program->poses->constraints[ci];
-    const std::string cpath = program->TextOrEmpty(c.path);
-    RrStepOutput &output = store.stepOutputs[step];
     if (ci < store.matchValid.size())
         store.matchValid[ci] = 0;
     commit.abandoned = true;
@@ -284,15 +194,25 @@ _RrRunConstraintStep(RrProgram *program, size_t step, std::string *error)
         if (wireCommit.split) {
             return true;
         }
-        if (!commit.abandoned) {
-            if (!_RrComputeCommitDeltas(program, step, wireCommit, &commit,
-                                        error) ||
-                !_RrStageCommitPairs(program, step, wireCommit, &commit, 0,
-                                     wireCommit.propagate.size(), error)) {
-                return false;
-            }
+        RrPoseHost host(program, step);
+        const eval::StepResult result =
+            eval::RunFinishCommit(host, size_t(wire.object));
+        if (result.outcome == eval::Outcome::Applied) {
+            return true;
         }
-        return _RrFinishCommit(program, step, size_t(wire.object), error);
+        if (error) {
+            const char *what = " names no commit";
+            if (result.detail == eval::pose_detail::kPoseDetailNoChunk) {
+                what = " names no chunk";
+            } else if (result.detail == eval::pose_detail::kPoseDetailNoSlot) {
+                what = " names no slot";
+            } else if (result.detail ==
+                       eval::pose_detail::kPoseDetailNoVersion) {
+                what = " names no version";
+            }
+            *error = _RrStepHead(program, step) + what;
+        }
+        return false;
     };
 
     const int deltaBase = c.deltaBase;
@@ -320,1021 +240,55 @@ _RrRunConstraintStep(RrProgram *program, size_t step, std::string *error)
     }
     if (ci < store.matchShownMask.size())
         store.matchShownMask[ci] = 0;
-    if (c.ikFkMatch) {
-        // RunIkFkMatch (bakedPose.cpp), on the runtime's own stores:
-        // presentation and values only, so the commit stays abandoned.
-        if (!program->ReadConstraint(ci, RrConstraintEnabled).boolean) {
-            return finish();
-        }
-        const double envelope =
-            double(program->ReadConstraint(ci, RrConstraintDefaultWeight).f32);
-        const double weight = std::isfinite(envelope) ? envelope : 0.0;
-        const auto matrixOf = [](const RrPointFrame &frame, RrMat4d *out) {
-            return RrFrameUsable(frame) &&
-                   RrPointsToMatrix(RrIdentityLandmarks(), frame.points, out);
-        };
-        const auto raw = [](const RrMat4d &m) { return &m._mtx[0][0]; };
-        if (c.sources.size() != 10 || wireCommit.sourceReads.size() < 10 ||
-            c.matchConstants.size() != 4 || ci >= store.matchValues.size() ||
-            ci >= store.matchShown.size()) {
-            if (error) {
-                *error = _RrStepHead(program, step) +
-                         " names an incomplete IK/FK match";
-            }
-            return false;
-        }
-        // Sources: joints 0-2, IK root 3, effector 4, IK control 5, pole 6,
-        // FK controls 7-9. Rests: joints 0-2, then the controls' at 3-7.
-        RrMat4d input[10], rest[8];
-        bool usable = true;
-        for (size_t i = 0; usable && i < 10; ++i) {
-            usable = c.sources[i] >= 0 &&
-                     size_t(wireCommit.sourceReads[i]) < store.fin.size() &&
-                     matrixOf(store.fin[size_t(wireCommit.sourceReads[i])],
-                              &input[i]);
-        }
-        const auto restOf = [&](int slot, RrMat4d *out) {
-            return slot >= 0 && size_t(slot) < scratch->restFrames.size() &&
-                   matrixOf(scratch->restFrames[size_t(slot)], out);
-        };
-        for (size_t i = 0; usable && i < 3; ++i) {
-            usable = restOf(c.sources[i], &rest[i]);
-        }
-        for (size_t i = 0; usable && i < 5; ++i) {
-            usable = restOf(c.sources[5 + i], &rest[3 + i]);
-        }
-        if (!usable) {
-            output.diagnostics.push_back(
-                cpath + " could not read its limb; constraint passed through");
-            return finish();
-        }
-        const RrMat4d *control = input + 5;
-        const auto channelsOf = [&](int slot) {
-            return _RrMatchChannelsOf(*program, *scratch, size_t(slot));
-        };
-        RigExecIkFkMatchChannels channels[5];
-        for (size_t i = 0; i < 5; ++i) {
-            channels[i] = channelsOf(c.sources[5 + i]);
-        }
-        const auto scalar = [&](int k) {
-            const RrInputValue value =
-                program->ReadConstraint(ci, RrConstraintMatchFirst + k);
-            return value.tag == RrInputTag::Float ? double(value.f32)
-                                                  : value.f64;
-        };
-        const double ikValue = c.matchConstants[0];
-        const double switchValue = scalar(0);
-        RigExecLimbStretch limb;
-        limb.stretch = scalar(1);
-        limb.softDistance = scalar(2);
-        limb.upperScale = scalar(3);
-        limb.lowerScale = scalar(4);
-        limb.pin = scalar(5);
-        limb.scaleCalibration = c.matchConstants[1];
-        const double twistDegrees = scalar(6);
-
-        double space[16];
-        const double *spaceMatrix = nullptr;
-        if (c.spaceSlot >= 0 && size_t(c.spaceSlot) < store.posedM.size()) {
-            RrMat4d spaceRest;
-            const RrMat4d spacePosed = store.posedM[size_t(c.spaceSlot)];
-            if (restOf(c.spaceSlot, &spaceRest) &&
-                std::isfinite(spacePosed[3][0])) {
-                const RrMat4d carry = spaceRest.GetInverse() * spacePosed;
-                std::copy(raw(carry), raw(carry) + 16, space);
-                spaceMatrix = space;
-            }
-        }
-        double restOrigins[3][3], restUpper = 0, restLower = 0, spaceFactor = 1;
-        for (size_t i = 0; i < 3; ++i) {
-            for (int k = 0; k < 3; ++k)
-                restOrigins[i][k] = rest[i][3][k];
-        }
-        RigExecIkFkMatchRestLengths(restOrigins, spaceMatrix,
-                                    c.matchConstants[2], c.matchConstants[3],
-                                    &restUpper, &restLower, &spaceFactor);
-        limb.softDistance *= spaceFactor;
-
-        RigExecIkFkMatchIkInputs ikIn;
-        for (size_t i = 0; i < 3; ++i)
-            ikIn.joints[i] = raw(input[i]);
-        ikIn.root = raw(input[3]);
-        ikIn.effectorPosed = raw(input[4]);
-        ikIn.ikPosed = raw(control[0]);
-        ikIn.ik = channels[0];
-        ikIn.twistRadians = twistDegrees * std::acos(-1.0) / 180.0;
-        ikIn.poleDistance =
-            (rest[4].ExtractTranslation() - rest[1].ExtractTranslation())
-                .GetLength() *
-            spaceFactor;
-        ikIn.polePosed = raw(control[1]);
-        ikIn.hasStretch = c.matchStretchLimb;
-        ikIn.limb = limb;
-        ikIn.restUpper = restUpper;
-        ikIn.restLower = restLower;
-        RigExecIkFkMatchIkResult ik;
-        RigExecIkFkMatchIk(ikIn, &ik);
-
-        RigExecIkFkMatchChannels pole = channels[1];
-        double poleFrame[16];
-        bool poleOk = false;
-        if (ik.ok) {
-            RrMat4d ikNew;
-            std::copy(ik.ikFrame, ik.ikFrame + 16, &ikNew._mtx[0][0]);
-            const RrMat4d moved = control[0].GetInverse() * ikNew;
-            const auto composed = ikFkMatchKernel::Compose(channels[1]);
-            RrMat4d avars;
-            std::copy(composed.begin(), composed.end(), &avars._mtx[0][0]);
-            RrMat4d parent = avars.GetInverse() * control[1];
-            const int poleSlot = c.sources[6];
-            if (c.matchPoleSwitch >= 0 &&
-                !scratch->posedAuthored[size_t(poleSlot)]) {
-                RrMat4d switched;
-                if (_RrMatchPoleParent(program, c.matchPoleSwitch,
-                                       c.matchPoleSourceRides, moved,
-                                       &switched)) {
-                    parent = switched;
-                }
-            } else if (c.matchPoleParentRides) {
-                parent = parent * moved;
-            }
-            poleOk = RigExecIkFkMatchPole(ik.poleTarget, raw(parent), &pole,
-                                          poleFrame);
-        }
-
-        RigExecIkFkMatchFkInputs fkIn;
-        RrMat4d offsets[3];
-        for (size_t i = 0; i < 3; ++i) {
-            fkIn.joints[i] = raw(input[i]);
-            fkIn.fkPosed[i] = raw(control[2 + i]);
-            fkIn.fk[i] = channels[2 + i];
-            offsets[i] = rest[5 + i] * rest[i].GetInverse();
-            fkIn.offsets[i] = raw(offsets[i]);
-        }
-        fkIn.hasStretch = c.matchStretchLimb;
-        fkIn.upperScale = limb.upperScale;
-        fkIn.lowerScale = limb.lowerScale;
-        fkIn.restUpper = restUpper;
-        fkIn.restLower = restLower;
-        RigExecIkFkMatchFkResult fk;
-        RigExecIkFkMatchFk(fkIn, &fk);
-
-        if (ik.ok && poleOk && fk.ok) {
-            double *v = store.matchValues[ci].data();
-            RigExecIkFkMatchPack(ik, pole, fk, v, v + 11);
-            store.matchValid[ci] = 1;
-        } else {
-            output.diagnostics.push_back(
-                cpath + " could not match its limb's other half");
-        }
-
-        const auto show = [&](size_t k, const double *frame) {
-            RrMat4d matrix;
-            std::copy(frame, frame + 16, &matrix._mtx[0][0]);
-            store.matchShown[ci][k] = RrFrameFromMatrix(matrix);
-            store.matchShownMask[ci] |= uint8_t(1u << k);
-        };
-        switch (RigExecIkFkMatchShownSide(switchValue, ikValue, weight)) {
-        case RigExecIkFkMatchShown::IkSide:
-            if (ik.ok && poleOk) {
-                show(0, ik.ikFrame);
-                show(1, poleFrame);
-            }
-            break;
-        case RigExecIkFkMatchShown::FkSide:
-            if (fk.ok) {
-                for (size_t i = 0; i < 3; ++i)
-                    show(2 + i, fk.frames[i]);
-            }
-            break;
-        case RigExecIkFkMatchShown::None:
-            break;
-        }
-        return finish();
-    }
-    if (c.target < 0) {
-        return finish();
-    }
-    if (c.harmonics) {
-        // RigExecBakedRunHarmonics (bakedHarmonics.cpp), on the runtime's
-        // own stores: capture the incoming origin in the measuring space,
-        // then, when solving, ring the window and revise the one target.
-        scratch->recordEveryTarget[size_t(wire.object)] = 0;
-        if (c.window < 0 || size_t(c.window) >= store.windowCaptures.size() ||
-            size_t(c.window) >= program->windowedOps.size() ||
-            size_t(wireCommit.targetRead) >= store.fin.size() ||
-            (c.spaceSlot >= 0 && size_t(c.spaceSlot) >= store.posedM.size()) ||
-            c.harmonicsConstants.size() != 3) {
-            if (error) {
-                *error =
-                    _RrStepHead(program, step) + " names no harmonics window";
-            }
-            return false;
-        }
-        const RrPointFrame input = store.fin[size_t(wireCommit.targetRead)];
-        RrMat4d space = _RrIdentity();
-        RrMat4d toSpace = _RrIdentity();
-        bool spaceUsable = true;
-        if (c.spaceSlot >= 0) {
-            space = store.posedM[size_t(c.spaceSlot)];
-            const double det = space.GetDeterminant();
-            spaceUsable = std::isfinite(det) && det != 0.0;
-            if (spaceUsable)
-                toSpace = space.GetInverse();
-        }
-        RigExecWindowPacketPtr captured;
-        if (spaceUsable && RrFrameUsable(input)) {
-            const RrVec3d p = c.spaceSlot >= 0
-                                  ? toSpace.Transform(input.points[0])
-                                  : input.points[0];
-            if (std::isfinite(p[0]) && std::isfinite(p[1]) &&
-                std::isfinite(p[2])) {
-                auto packet = std::make_shared<RigExecWindowPacket>();
-                packet->scalars = {p[0], p[1], p[2]};
-                captured = std::move(packet);
-            }
-        }
-        RigExecWindowPacketPtr &held = store.windowCaptures[size_t(c.window)];
-        if (!RigExecWindowPacketsEqual(held, captured))
-            held = std::move(captured);
-        if (store.historyTick &&
-            !program->windowedOps[size_t(c.window)].feedsWindow) {
-            return finish();
-        }
-        if (!program->ReadConstraint(ci, RrConstraintEnabled).boolean) {
-            return finish();
-        }
-        double weight = 1.0;
-        if (c.weightObject != 0) {
-            const auto &field = store.weightFieldResults[size_t(c.weightField)];
-            if (!field.ok || field.values.size() != 1) {
-                output.diagnostics.push_back(cpath + ": " + field.error +
-                                             "; constraint passed through");
-                return finish();
-            }
-            weight = field.values[0];
-        } else {
-            weight = double(
-                program->ReadConstraint(ci, RrConstraintDefaultWeight).f32);
-            if (!std::isfinite(weight) || weight < 0.0 || weight > 1.0) {
-                output.diagnostics.push_back(
-                    cpath + " has inputs:defaultWeight outside finite [0, 1]; "
-                            "constraint passed through");
-                return finish();
-            }
-        }
-        if (weight <= 0.0)
-            return finish();
-        const std::string targetPath =
-            size_t(c.target) < program->slotMeta->paths.size()
-                ? program->TextOrEmpty(
-                      program->slotMeta->paths[size_t(c.target)])
-                : std::string();
-        if (!held) {
-            output.diagnostics.push_back(
-                cpath + " could not measure " + targetPath +
-                (spaceUsable ? "" : " in a degenerate rigExec:space") +
-                "; constraint passed through");
-            return finish();
-        }
-        const RigExecWindowRing &ring = store.windowRings[size_t(c.window)];
-        size_t begin = ring.size();
-        while (begin > 0 && ring[begin - 1] &&
-               ring[begin - 1]->scalars.size() == 3)
-            --begin;
-        std::vector<double> positions;
-        positions.reserve(3 * (ring.size() - begin + 1));
-        for (size_t k = begin; k < ring.size(); ++k)
-            positions.insert(positions.end(), ring[k]->scalars.begin(),
-                             ring[k]->scalars.end());
-        positions.insert(positions.end(), held->scalars.begin(),
-                         held->scalars.end());
-        const auto scalar = [&](int k) {
-            const RrInputValue value =
-                program->ReadConstraint(ci, RrConstraintHarmonicsFirst + k);
-            return value.tag == RrInputTag::Float ? double(value.f32)
-                                                  : value.f64;
-        };
-        RigExecHarmonicsSettings settings;
-        settings.waves = c.harmonicsConstants[0];
-        settings.waveLength = c.harmonicsConstants[1];
-        settings.frequency = c.harmonicsConstants[2];
-        settings.ignoreFirstFrame = c.harmonicsIgnoreFirstFrame;
-        RigExecHarmonicsParameters params;
-        params.amplitude = scalar(0);
-        params.decay = scalar(1);
-        params.termination = scalar(2);
-        const RrVec3d axis =
-            program->ReadConstraint(ci, RrConstraintOffset).vec;
-        params.axisAmplitude[0] = axis[0];
-        params.axisAmplitude[1] = axis[1];
-        params.axisAmplitude[2] = axis[2];
-        params.matchVelocity = c.harmonicsMatchVelocity;
-        if (!std::isfinite(params.amplitude) || !std::isfinite(params.decay) ||
-            !std::isfinite(params.termination) || !std::isfinite(axis[0]) ||
-            !std::isfinite(axis[1]) || !std::isfinite(axis[2])) {
-            output.diagnostics.push_back(cpath +
-                                         " has a non-finite input; constraint "
-                                         "passed through");
-            return finish();
-        }
-        double ring3[3];
-        if (!RigExecHarmonicsOffset(
-                settings, params,
-                reinterpret_cast<const double(*)[3]>(positions.data()),
-                positions.size() / 3, ring3)) {
-            return finish();
-        }
-        RrVec3d offset(ring3[0], ring3[1], ring3[2]);
-        if (c.spaceSlot >= 0)
-            offset = space.TransformDir(offset);
-        offset *= weight;
-        RrPointFrame candidate = input;
-        for (RrVec3d &q : candidate.points)
-            q += offset;
-        if (!RrFrameUsable(candidate)) {
-            output.diagnostics.push_back(
-                cpath + " produced an invalid or degenerate frame for " +
-                targetPath + "; constraint passed through");
-            return finish();
-        }
-        commit.frames[0] = candidate;
-        commit.present[0] = 1;
-        commit.abandoned = false;
-        return finish();
-    }
-    if (!program->ReadConstraint(ci, RrConstraintEnabled).boolean) {
-        return finish();
-    }
-    // The envelope, in the dynamic path's THREE exclusive arms. The
-    // first resolves the weight object through the oracle into this
-    // constraint's own scratch, with the oracle's error on failure
-    // (bakedPose.cpp, the Constraint step). A geometry-domain constraint
-    // (points target) resolves none and keeps 1.0: its weight applies
-    // per point on the revision its delta feeds.
-    double weight = 1.0;
-    if (c.weightObject != 0 && c.pointsTarget == 0) {
-        std::vector<float> &envelope = scratch->weightScratch[ci];
-        std::string &envelopeError = scratch->weightError[ci];
-        envelope.clear();
-        envelopeError.clear();
-        if (c.weightObjectIndex < 0) {
-            if (error) {
-                *error = _RrStepHead(program, step) +
-                         " resolves an envelope with no weight object";
-            }
-            return false;
-        }
-        const auto &field = store.weightFieldResults[size_t(c.weightField)];
-        envelope = field.values;
-        envelopeError = field.error;
-        if (!field.ok || envelope.size() != 1) {
-            output.diagnostics.push_back(cpath + ": " + envelopeError +
-                                         "; constraint passed through");
-            return finish();
-        }
-        weight = envelope[0];
-    } else if (c.weightObject == 0) {
-        weight =
-            double(program->ReadConstraint(ci, RrConstraintDefaultWeight).f32);
-        if (!std::isfinite(weight) || weight < 0.0 || weight > 1.0) {
-            output.diagnostics.push_back(
-                cpath + " has inputs:defaultWeight outside finite [0, 1]; "
-                        "constraint passed through");
-            return finish();
-        }
-    }
-    if (weight <= 0.0 && (c.pointsTarget == 0 || c.weightObject == 0)) {
-        if (deltaBase >= 0) {
-            if (size_t(deltaBase) >= scratch->deltaValues.size() ||
-                size_t(deltaBase) >= store.deltaValues.size() ||
-                size_t(deltaBase) >= store.deltaPresent.size()) {
-                if (error) {
-                    *error =
-                        _RrStepHead(program, step) + " names no delta path";
-                }
-                return false;
-            }
-            scratch->deltaValues[size_t(deltaBase)] = _RrIdentity();
-            scratch->deltaPresent[size_t(deltaBase)] = 1;
-            store.deltaValues[size_t(deltaBase)] = _RrIdentity();
-            store.deltaPresent[size_t(deltaBase)] = 1;
-        }
-        return finish();
-    }
-
-    const auto resolveSource =
-        [&](int slot, uint32_t finRead, int native,
-            const std::vector<RigExecWireAncestorRead> &ancestors,
-            RrPointFrame *out) {
-            if (slot >= 0) {
-                if (size_t(finRead) >= store.fin.size()) {
-                    if (error) {
-                        *error = _RrStepHead(program, step) +
-                                 " names no fin version";
-                    }
-                    return false;
-                }
-                *out = store.fin[size_t(finRead)];
-                return out->IsValid();
-            }
-            if (native < 0 || size_t(native) >= store.nativeFrameOk.size() ||
-                size_t(native) >= store.nativeFrames.size() ||
-                size_t(native) >= program->poses->nativeSources.size() ||
-                !store.nativeFrameOk[size_t(native)]) {
-                return false;
-            }
-            *out = store.nativeFrames[size_t(native)];
-            if (!out->IsValid()) {
-                return false;
-            }
-            return _RrApplyRevisedAncestorDelta(
-                program,
-                program->TextOrEmpty(
-                    program->poses->nativeSources[size_t(native)].path),
-                ancestors, out);
-        };
-
-    if (size_t(c.arrays) >= store.arrays.size()) {
+    RrPoseHost host(program, step);
+    eval::StepRef ref;
+    ref.kind = uint32_t(wire.kind);
+    ref.object = wire.object;
+    ref.part = wire.part;
+    ref.slot = step;
+    const eval::StepResult result = eval::RunValueStep(host, ref);
+    if (result.outcome != eval::Outcome::Applied) {
         if (error) {
-            *error = _RrStepHead(program, step) + " names no constraint arrays";
+            const char *what = " names no commit";
+            if (result.detail == eval::pose_detail::kPoseDetailNoConstraint) {
+                what = " names an incomplete IK/FK match";
+            } else if (result.detail == eval::pose_detail::kPoseDetailNoChain) {
+                what = " names no chain target";
+            } else if (result.detail == eval::pose_detail::kPoseDetailNoRest) {
+                what = " names no rest slot";
+            } else if (result.detail == eval::pose_detail::kPoseDetailNoPole) {
+                what = " names no pole object";
+            } else if (result.detail ==
+                       eval::pose_detail::kPoseDetailNoVersion) {
+                what = " names no fin version";
+            } else if (result.detail ==
+                       eval::pose_detail::kPoseDetailNoDeltaPath) {
+                what = " names no delta path";
+            } else if (result.detail ==
+                       eval::pose_detail::kPoseDetailNoCandidate) {
+                what = " names no candidate slot";
+            } else if (result.detail ==
+                       eval::pose_detail::kPoseDetailNoTarget) {
+                what = " names no target slot";
+            } else if (result.detail ==
+                       eval::pose_detail::kPoseDetailNoArrays) {
+                what = " names no constraint arrays";
+            } else if (result.detail ==
+                       eval::pose_detail::kPoseDetailNoSource) {
+                what = " names no constraint source";
+            } else if (result.detail == eval::pose_detail::kPoseDetailNoSpace) {
+                what = " names no space slot";
+            } else if (result.detail ==
+                       eval::pose_detail::kPoseDetailNoWindow) {
+                what = " names no harmonics window";
+            } else if (result.detail == eval::pose_detail::kPoseDetailNoSlot) {
+                what = " names no slot";
+            } else if (result.detail == eval::pose_detail::kPoseDetailNoChunk) {
+                what = " names no chunk";
+            }
+            *error = _RrStepHead(program, step) + what;
         }
         return false;
-    }
-    RrConstraintArraysLive &arrays = store.arrays[size_t(c.arrays)];
-    const auto &arrayWire = program->poses->constraintArrays[size_t(c.arrays)];
-    const auto arrayPath = program->TextOrEmpty(arrayWire.prim);
-    arrays.diagnostics.clear();
-    arrays.poleDiagnostics.clear();
-    const auto weights = [&](size_t channel, size_t count, const char *name,
-                             std::vector<std::string> *lines,
-                             std::vector<double> *values) {
-        const int slot = arrayWire.rawSlots[channel];
-        const auto *raw = slot >= 0 && RrInputHasValue(program, uint32_t(slot))
-                              ? RrInputArray<float>(program, uint32_t(slot))
-                              : nullptr;
-        if (raw && !raw->empty() && raw->size() != count) {
-            lines->push_back(arrayPath + " " + name + " has " +
-                             std::to_string(raw->size()) + " entries for " +
-                             std::to_string(count) + " sources");
-            return false;
-        }
-        values->assign(count, 1.0);
-        if (raw)
-            for (size_t k = 0; k < raw->size(); ++k)
-                (*values)[k] = (*raw)[k];
-        return true;
-    };
-    const auto offsets = [&](size_t channel, const char *name,
-                             std::vector<RrVec3d> *values) {
-        const int slot = arrayWire.rawSlots[channel];
-        const auto *raw =
-            slot >= 0 && RrInputHasValue(program, uint32_t(slot))
-                ? RrInputArray<RigExecWireVec3d>(program, uint32_t(slot))
-                : nullptr;
-        if (raw && !raw->empty() && raw->size() != arrayWire.sourceCount) {
-            arrays.diagnostics.push_back(
-                arrayPath + " " + name + " has " + std::to_string(raw->size()) +
-                " entries for " + std::to_string(arrayWire.sourceCount) +
-                " sources");
-            return false;
-        }
-        values->assign(size_t(arrayWire.sourceCount), RrVec3d(0));
-        if (raw)
-            for (size_t k = 0; k < raw->size(); ++k)
-                (*values)[k] =
-                    RrVec3d((*raw)[k][0], (*raw)[k][1], (*raw)[k][2]);
-        return true;
-    };
-    arrays.ok = weights(0, size_t(arrayWire.sourceCount),
-                        SchemaAttrText::inputsSourceWeights,
-                        &arrays.diagnostics, &arrays.weights);
-    if (arrayWire.parentOffsets)
-        arrays.ok = arrays.ok &&
-                    offsets(1, SchemaAttrText::inputsTranslationOffsets,
-                            &arrays.translationOffsets) &&
-                    offsets(2, SchemaAttrText::inputsRotationOffsets,
-                            &arrays.rotationOffsets);
-    else {
-        arrays.translationOffsets.assign(size_t(arrayWire.sourceCount),
-                                         RrVec3d(0));
-        arrays.rotationOffsets.assign(size_t(arrayWire.sourceCount),
-                                      RrVec3d(0));
-    }
-    if (arrayWire.readPole)
-        arrays.poleOk = weights(3, size_t(arrayWire.poleCount),
-                                SchemaAttrText::inputsPoleVectorWeights,
-                                &arrays.poleDiagnostics, &arrays.poleWeights);
-
-    if (c.singleChainIk) {
-        if (wireCommit.targetReads.size() != c.targetSlots.size() ||
-            commit.ikChain.size() != c.targetSlots.size() ||
-            commit.ikRest.size() != c.targetSlots.size()) {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no chain target";
-            }
-            return false;
-        }
-        bool inputsValid = true;
-        for (size_t k = 0; k < c.targetSlots.size(); ++k) {
-            if (size_t(wireCommit.targetReads[k]) >= store.fin.size()) {
-                if (error) {
-                    *error =
-                        _RrStepHead(program, step) + " names no fin version";
-                }
-                return false;
-            }
-            commit.ikChain[k] = store.fin[size_t(wireCommit.targetReads[k])];
-        }
-        RrPointFrame effector;
-        if (!resolveSource(c.effector, wireCommit.effectorRead,
-                           c.effectorNative, wireCommit.effectorAncestors,
-                           &effector)) {
-            output.diagnostics.push_back(
-                cpath + " could not resolve its effector; constraint "
-                        "passed through");
-            inputsValid = false;
-        }
-        _RrSingleChainIkParams params;
-        params.stretch =
-            c.stretch ? program->ReadConstraint(ci, RrConstraintStretch).f32
-                      : 0;
-        params.mode = _RrSingleChainIkMode(c.ikMode);
-        params.preserveJointOrientation =
-            (c.flags & RigExecWireConstraintPreserveJointOrientation) != 0;
-        params.weight = weight;
-        if (c.ikMode == 0) {
-            params.pole =
-                program->ReadConstraint(ci, RrConstraintPoleVector).vec;
-            params.twistDegrees =
-                program->ReadConstraint(ci, RrConstraintTwistDegrees).f64;
-        }
-        if (inputsValid && c.ikMode == 0 && c.poleModeObject) {
-            if (c.poleObjects.empty()) {
-                output.diagnostics.push_back(
-                    cpath + " uses object pole mode with no pole-vector "
-                            "objects; constraint passed through");
-                inputsValid = false;
-            }
-            if (inputsValid && !arrays.poleOk) {
-                for (const std::string &line : arrays.poleDiagnostics) {
-                    output.diagnostics.push_back(line);
-                }
-                inputsValid = false;
-            }
-            RrVec3d polePoint(0.0);
-            double total = 0;
-            for (size_t k = 0; inputsValid && k < c.poleObjects.size(); ++k) {
-                if (k >= wireCommit.poleReads.size() ||
-                    k >= wireCommit.poleAncestors.size() ||
-                    k >= c.poleObjectNatives.size() ||
-                    k >= arrays.poleWeights.size()) {
-                    if (error) {
-                        *error = _RrStepHead(program, step) +
-                                 " names no pole object";
-                    }
-                    return false;
-                }
-                RrPointFrame poleFrame;
-                if (!resolveSource(c.poleObjects[k], wireCommit.poleReads[k],
-                                   c.poleObjectNatives[k],
-                                   wireCommit.poleAncestors[k].v, &poleFrame) ||
-                    !std::isfinite(arrays.poleWeights[k]) ||
-                    arrays.poleWeights[k] < 0) {
-                    output.diagnostics.push_back(
-                        cpath + " has an invalid pole-vector source or "
-                                "weight; constraint passed through");
-                    inputsValid = false;
-                    break;
-                }
-                polePoint += poleFrame.points[0] * arrays.poleWeights[k];
-                total += arrays.poleWeights[k];
-            }
-            if (inputsValid && total <= 0) {
-                output.diagnostics.push_back(
-                    cpath + " has zero total pole-vector weight; "
-                            "constraint passed through");
-                inputsValid = false;
-            }
-            if (inputsValid) {
-                params.pole = polePoint / total;
-            }
-        }
-        const std::vector<RrPointFrame> *solveChain = &commit.ikChain;
-        if (inputsValid && !c.useAnimatedTs) {
-            for (size_t k = 0; k < c.targetSlots.size(); ++k) {
-                if (c.targetSlots[k] < 0 ||
-                    size_t(c.targetSlots[k]) >= scratch->restFrames.size()) {
-                    if (error) {
-                        *error =
-                            _RrStepHead(program, step) + " names no rest slot";
-                    }
-                    return false;
-                }
-                commit.ikRest[k] =
-                    (k < c.ikRestLive.size() && c.ikRestLive[k] &&
-                     k < commit.ikChain.size())
-                        ? commit.ikChain[k]
-                        : scratch->restFrames[size_t(c.targetSlots[k])];
-            }
-            if (!_RrPrepareRestDerivedIkChain(commit.ikChain, commit.ikRest,
-                                              &commit.ikPrepared)) {
-                output.diagnostics.push_back(
-                    cpath + " could not prepare rest-derived IK inputs; "
-                            "constraint passed through");
-                inputsValid = false;
-            } else {
-                solveChain = &commit.ikPrepared;
-            }
-        }
-        commit.ikSolved.clear();
-        if (inputsValid) {
-            commit.ikSolved =
-                _RrSolveSingleChainIk(*solveChain, effector, params);
-        }
-        if (inputsValid &&
-            (commit.ikSolved.size() != c.targetSlots.size() ||
-             std::any_of(commit.ikSolved.begin(), commit.ikSolved.end(),
-                         [](const RrPointFrame &frame) {
-                             return !RrFrameUsable(frame);
-                         }))) {
-            output.diagnostics.push_back(
-                cpath + " failed to solve its joint chain; constraint "
-                        "passed through atomically");
-            inputsValid = false;
-        }
-        if (inputsValid) {
-            for (size_t k = 0; k < c.targetSlots.size(); ++k) {
-                const auto found =
-                    std::lower_bound(wireCommit.slots.begin(),
-                                     wireCommit.slots.end(), c.targetSlots[k]);
-                if (found == wireCommit.slots.end() ||
-                    *found != c.targetSlots[k]) {
-                    continue;
-                }
-                const size_t pos = size_t(found - wireCommit.slots.begin());
-                if (pos >= commit.frames.size() ||
-                    pos >= commit.present.size()) {
-                    if (error) {
-                        *error = _RrStepHead(program, step) +
-                                 " names no candidate slot";
-                    }
-                    return false;
-                }
-                commit.frames[pos] = commit.ikSolved[k];
-                commit.present[pos] = 1;
-            }
-            commit.abandoned = false;
-        }
-        return finish();
-    }
-
-    scratch->recordEveryTarget[size_t(wire.object)] = 0;
-
-    // The authored tables first, then the source frames: the arrays' own
-    // lines ahead of any source's, as the baked step orders them.
-    bool sourcesReady = arrays.ok;
-    for (const std::string &line : arrays.diagnostics) {
-        output.diagnostics.push_back(line);
-    }
-    for (size_t k = 0; sourcesReady && k < c.sources.size(); ++k) {
-        if (k >= wireCommit.sourceReads.size() ||
-            k >= wireCommit.sourceAncestors.size() ||
-            k >= c.sourceNatives.size() || k >= c.sourcePaths.size() ||
-            k >= commit.sources.size() || k >= arrays.weights.size() ||
-            k >= arrays.translationOffsets.size() ||
-            k >= arrays.rotationOffsets.size()) {
-            if (error) {
-                *error =
-                    _RrStepHead(program, step) + " names no constraint source";
-            }
-            return false;
-        }
-        RrPointFrame frame;
-        if (!resolveSource(c.sources[k], wireCommit.sourceReads[k],
-                           c.sourceNatives[k], wireCommit.sourceAncestors[k].v,
-                           &frame)) {
-            output.diagnostics.push_back(
-                cpath + " could not resolve source " +
-                program->TextOrEmpty(c.sourcePaths[k]));
-            sourcesReady = false;
-            break;
-        }
-        commit.sources[k].frame = frame;
-        commit.sources[k].normalizedWeight = arrays.weights[k];
-        commit.sources[k].translationOffset = arrays.translationOffsets[k];
-        commit.sources[k].rotationOffsetDegrees = arrays.rotationOffsets[k];
-    }
-    if (!sourcesReady) {
-        output.diagnostics.push_back(
-            cpath + " has unusable constraint inputs; constraint passed "
-                    "through");
-        return finish();
-    }
-    scratch->recordAfter[size_t(wire.object)] = deltaBase < 0 ? 1 : 0;
-    const double solveWeight = deltaBase < 0 ? weight : 1.0;
-    if (size_t(wireCommit.targetRead) >= store.fin.size()) {
-        if (error) {
-            *error = _RrStepHead(program, step) + " names no fin version";
-        }
-        return false;
-    }
-    const std::vector<RrConstraintSource> &scratchSources = commit.sources;
-    std::vector<_RrConstraintSource> sources;
-    sources.reserve(scratchSources.size());
-    for (const RrConstraintSource &s : scratchSources) {
-        _RrConstraintSource out;
-        out.frame = s.frame;
-        out.normalizedWeight = s.normalizedWeight;
-        out.translationOffset = s.translationOffset;
-        out.rotationOffsetDegrees = s.rotationOffsetDegrees;
-        sources.push_back(out);
-    }
-    const RrPointFrame input = store.fin[size_t(wireCommit.targetRead)];
-    RrPointFrame candidate = input;
-    bool candidateReady = true;
-    _RrConstraintAxisMask affect;
-    affect.x = program->ReadConstraint(ci, RrConstraintAffectX).boolean;
-    affect.y = program->ReadConstraint(ci, RrConstraintAffectY).boolean;
-    affect.z = program->ReadConstraint(ci, RrConstraintAffectZ).boolean;
-    const std::string ctype = program->TextOrEmpty(c.type);
-    const _RrEulerOrder order = _RrEulerOrder(c.order);
-    // rigExec:space: the space switch's carry, from the same two tables
-    // the compose reads it from. -1 is "no space named", and the params
-    // keep their null carry so the kernel's untouched branch runs.
-    RrMat4d carry = _RrIdentity();
-    const bool hasCarry = c.spaceSlot >= 0;
-    if (hasCarry) {
-        if (size_t(c.spaceSlot) >= store.posedM.size() ||
-            size_t(c.spaceSlot) >= scratch->defaultRoundTrip.size()) {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no space slot";
-            }
-            return false;
-        }
-        carry = scratch->defaultRoundTrip[size_t(c.spaceSlot)].GetInverse() *
-                store.posedM[size_t(c.spaceSlot)];
-    }
-    if (ctype == SchemaTypeName::RigExecMatrixMover) {
-        // The transform-domain matrix mover, as the USD walks take it: each
-        // source measured as its rest->posed map, the transform in its
-        // space, and the envelope applied to the target's four landmarks
-        // with the point kernel's rule.
-        const auto mapOf = [&](size_t k, RrMat4d *out) {
-            const int32_t slot = c.sources[k];
-            const bool haveRest = slot >= 0 &&
-                                  size_t(slot) < scratch->restFrames.size() &&
-                                  scratch->restFrames[size_t(slot)].IsValid();
-            const std::array<RrVec3d, 4> &landmarks =
-                haveRest ? scratch->restFrames[size_t(slot)].points
-                         : RrIdentityLandmarks();
-            return RrPointsToMatrix(landmarks, sources[k].frame, out);
-        };
-        RrMat4d transform = _RrIdentity();
-        if (sources.empty() || !mapOf(0, &transform)) {
-            output.diagnostics.push_back(
-                cpath + " could not resolve rigExec:transform; mover passed "
-                        "through");
-            return finish();
-        }
-        if (sources.size() > 1) {
-            RrMat4d space = _RrIdentity();
-            if (!mapOf(1, &space)) {
-                output.diagnostics.push_back(
-                    cpath + " could not resolve rigExec:transformSpace; "
-                            "mover passed through");
-                return finish();
-            }
-            transform = RrMeasureInSpace(transform, space);
-        }
-        RrPointFrame solved = input;
-        if (c.flags & RigExecWireConstraintRadialBlend) {
-            const RrMat4d partial = RrPartialTransform(transform, weight);
-            for (RrVec3d &q : solved.points) {
-                q = partial.TransformAffine(q);
-            }
-        } else {
-            for (RrVec3d &q : solved.points) {
-                q = q + weight * (transform.TransformAffine(q) - q);
-            }
-        }
-        candidate = solved;
-    } else if (ctype == SchemaTypeName::RigExecPositionConstraint) {
-        _RrPositionConstraintParams params;
-        params.offset = program->ReadConstraint(ci, RrConstraintOffset).vec;
-        params.affect = affect;
-        params.weight = solveWeight;
-        candidate = RigExecApplyPositionConstraintKernel<RrVec3f, RrVec3d>(
-            input, sources, params);
-    } else if (ctype == SchemaTypeName::RigExecRotationConstraint) {
-        _RrRotationConstraintParams params;
-        params.offsetDegrees =
-            program->ReadConstraint(ci, RrConstraintOffset).vec;
-        params.affect = affect;
-        params.rotationOrder = order;
-        params.weight = solveWeight;
-        params.carry = hasCarry ? &carry : nullptr;
-        candidate = RigExecApplyRotationConstraintKernel<RrVec3f, RrVec3d>(
-            input, sources, params);
-    } else if (ctype == SchemaTypeName::RigExecScaleConstraint) {
-        _RrScaleConstraintParams params;
-        params.offset = program->ReadConstraint(ci, RrConstraintOffset).vec;
-        params.affect = affect;
-        params.weight = solveWeight;
-        params.blendShear = (c.flags & RigExecWireConstraintBlendShear) != 0;
-        candidate = RigExecApplyScaleConstraintKernel<RrVec3f, RrVec3d>(
-            input, sources, params);
-    } else if (ctype == SchemaTypeName::RigExecParentConstraint) {
-        _RrParentConstraintParams params;
-        params.translationAxes.x =
-            program->ReadConstraint(ci, RrConstraintTX).boolean;
-        params.translationAxes.y =
-            program->ReadConstraint(ci, RrConstraintTY).boolean;
-        params.translationAxes.z =
-            program->ReadConstraint(ci, RrConstraintTZ).boolean;
-        params.rotationAxes.x =
-            program->ReadConstraint(ci, RrConstraintRX).boolean;
-        params.rotationAxes.y =
-            program->ReadConstraint(ci, RrConstraintRY).boolean;
-        params.rotationAxes.z =
-            program->ReadConstraint(ci, RrConstraintRZ).boolean;
-        params.scaleAxes.x =
-            program->ReadConstraint(ci, RrConstraintSX).boolean;
-        params.scaleAxes.y =
-            program->ReadConstraint(ci, RrConstraintSY).boolean;
-        params.scaleAxes.z =
-            program->ReadConstraint(ci, RrConstraintSZ).boolean;
-        params.rotationOrder = order;
-        params.weight = solveWeight;
-        params.carry = hasCarry ? &carry : nullptr;
-        params.blendShear = (c.flags & RigExecWireConstraintBlendShear) != 0;
-        candidate = RigExecApplyParentConstraintKernel<RrVec3f, RrVec3d>(
-            input, sources, params);
-    } else {
-        RrVec3d target(0.0);
-        double total = 0;
-        for (const _RrConstraintSource &source : sources) {
-            if (!std::isfinite(source.normalizedWeight) ||
-                source.normalizedWeight < 0) {
-                output.diagnostics.push_back(
-                    cpath + " has an invalid source weight; constraint "
-                            "passed through");
-                candidateReady = false;
-                break;
-            }
-            target += source.frame.points[0] * source.normalizedWeight;
-            total += source.normalizedWeight;
-        }
-        if (candidateReady && total > 0) {
-            target /= total;
-            _RrAimConstraintParams params;
-            params.localAimVector =
-                c.aimVectorAuthored
-                    ? program->ReadConstraint(ci, RrConstraintAimVector).vec
-                    : RrVec3d(c.aimAxisFallback[0], c.aimAxisFallback[1],
-                              c.aimAxisFallback[2]);
-            params.localUpVector =
-                program->ReadConstraint(ci, RrConstraintUpVector).vec;
-            params.rotationOffsetDegrees =
-                program->ReadConstraint(ci, RrConstraintRotationOffset).vec;
-            params.affectRotation = affect;
-            params.rotationOrder = order;
-            params.weight = solveWeight;
-            params.preserveInputUp = c.preserveInputUp;
-            const RrVec3d authoredWorldUp =
-                program->ReadConstraint(ci, RrConstraintWorldUpVector).vec;
-            const RrVec3d sceneUp(c.sceneUp[0], c.sceneUp[1], c.sceneUp[2]);
-            RrVec3d worldUpStorage(0.0);
-            bool haveWorldUp = false;
-            const std::string worldUpType = program->TextOrEmpty(c.worldUpType);
-            if (worldUpType == "sceneUp") {
-                worldUpStorage = sceneUp;
-                haveWorldUp = true;
-            } else if (worldUpType == "vector") {
-                worldUpStorage = authoredWorldUp;
-                haveWorldUp = true;
-            } else if (worldUpType == "objectUp") {
-                RrPointFrame upObject;
-                if (!c.worldUpObjectNamed) {
-                    worldUpStorage = -input.points[0];
-                    haveWorldUp = true;
-                } else if (!resolveSource(
-                               c.worldUpObject, wireCommit.worldUpRead,
-                               c.worldUpNative, wireCommit.worldUpAncestors,
-                               &upObject)) {
-                    output.diagnostics.push_back(
-                        cpath + " could not resolve its world-up object; "
-                                "constraint passed through");
-                    candidateReady = false;
-                } else {
-                    worldUpStorage = upObject.points[0] - input.points[0];
-                    haveWorldUp = true;
-                }
-            } else if (worldUpType == "objectRotationUp") {
-                if (!c.worldUpObjectNamed) {
-                    worldUpStorage = authoredWorldUp;
-                    haveWorldUp = true;
-                } else {
-                    RrPointFrame upObject;
-                    if (!resolveSource(c.worldUpObject, wireCommit.worldUpRead,
-                                       c.worldUpNative,
-                                       wireCommit.worldUpAncestors,
-                                       &upObject)) {
-                        output.diagnostics.push_back(
-                            cpath + " could not resolve its world-up object; "
-                                    "constraint passed through");
-                        candidateReady = false;
-                    }
-                    RrMat4d up = _RrIdentity();
-                    if (candidateReady &&
-                        !RrPointsToMatrix(RrIdentityLandmarks(),
-                                          upObject.points, &up)) {
-                        output.diagnostics.push_back(
-                            cpath + " has a degenerate world-up object");
-                        candidateReady = false;
-                    } else if (candidateReady) {
-                        // rigExec:worldUpRotationOnly, exactly as the two
-                        // USD-side paths take it.
-                        const bool rotationOnly =
-                            (c.flags &
-                             RigExecWireConstraintWorldUpRotationOnly) != 0;
-                        worldUpStorage =
-                            (rotationOnly ? up.GetOrthonormalized(false) : up)
-                                .ExtractRotation()
-                                .TransformDir(authoredWorldUp);
-                        haveWorldUp = true;
-                    }
-                }
-            }
-            if (haveWorldUp) {
-                params.worldUpDirection = &worldUpStorage;
-            }
-            if (candidateReady) {
-                candidate = RigExecApplyAimConstraintKernel<RrVec3f, RrVec3d>(
-                    input, target, params);
-            }
-        }
-    }
-    if (candidateReady && deltaBase >= 0) {
-        if (size_t(deltaBase) >= scratch->deltaValues.size() ||
-            size_t(deltaBase) >= scratch->deltaPresent.size() ||
-            size_t(deltaBase) >= store.deltaValues.size() ||
-            size_t(deltaBase) >= store.deltaPresent.size() ||
-            size_t(deltaBase) >= store.deltaBaseMatrix.size() ||
-            size_t(deltaBase) >= store.deltaBaseOk.size() ||
-            size_t(deltaBase) >= program->geometry->deltaBasePaths.size()) {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no delta path";
-            }
-            return false;
-        }
-        const RrMat4d &baseMatrix = store.deltaBaseMatrix[size_t(deltaBase)];
-        RrMat4d solvedMatrix = _RrIdentity();
-        if (RrFrameUsable(candidate) && store.deltaBaseOk[size_t(deltaBase)] &&
-            std::isfinite(baseMatrix.GetDeterminant()) &&
-            baseMatrix.GetDeterminant() != 0.0 &&
-            RrPointsToMatrix(RrIdentityLandmarks(), candidate.points,
-                             &solvedMatrix)) {
-            scratch->deltaValues[size_t(deltaBase)] =
-                solvedMatrix * baseMatrix.GetInverse();
-            scratch->deltaPresent[size_t(deltaBase)] = 1;
-            store.deltaValues[size_t(deltaBase)] =
-                solvedMatrix * baseMatrix.GetInverse();
-            store.deltaPresent[size_t(deltaBase)] = 1;
-        } else {
-            output.diagnostics.push_back(
-                cpath + " could not measure its delta against " +
-                program->TextOrEmpty(
-                    program->geometry->deltaBasePaths[size_t(deltaBase)]) +
-                "; constraint passed through");
-        }
-    } else if (candidateReady) {
-        if (!RrFrameUsable(candidate)) {
-            if (c.target < 0 ||
-                size_t(c.target) >= program->slotMeta->paths.size()) {
-                if (error) {
-                    *error =
-                        _RrStepHead(program, step) + " names no target slot";
-                }
-                return false;
-            }
-            output.diagnostics.push_back(
-                cpath + " produced an invalid or degenerate frame for " +
-                program->TextOrEmpty(
-                    program->slotMeta->paths[size_t(c.target)]) +
-                "; constraint passed through");
-        } else {
-            if (commit.frames.empty() || commit.present.empty()) {
-                if (error) {
-                    *error =
-                        _RrStepHead(program, step) + " names no candidate slot";
-                }
-                return false;
-            }
-            commit.frames[0] = candidate;
-            commit.present[0] = 1;
-            commit.abandoned = false;
-        }
     }
     return finish();
 }

@@ -3,7 +3,7 @@
 
 /// Wire: each point moves by f(d) * (C(u) - C0(u)), C the posed curve, C0
 /// the rest curve, (u, d) its bind coordinates and f = 1 - smoothstep(0,
-/// dropoff, d). The kernel is rigExecMath/wireKernel.h, shared with the
+/// dropoff, d). The kernel is rigExecMath/wireBasisKernel.h, shared with the
 /// baked and zero-USD runtimes. USD-free.
 
 #include "rigExecOps/library.h"

@@ -20,7 +20,7 @@ Readiness levels used here:
 | Display | `libs/rigExecImaging`: Hydra scene indices and viewport publication | Prototype | Display state stays separate from authoring state. |
 | Touch Pose | `plugin/touchPose` with [touch regions](docs/nodes/touch_regions.md) | Beta | More mature than the surrounding prototype layers; details may still change. |
 | Picker | `plugin/rigExecUsdview` picker UI with [picker panels](docs/nodes/picker.md) | Beta | More mature than the surrounding prototype layers; details may still change. |
-| Export and runtime | `libs/rigExecBake`, `libs/rigExecBinary`, `libs/rigExecRuntime`: experimental `.rigexec` export and playback | Prototype | Format changes require explicit compatibility testing. |
+| Export and runtime | `libs/rigExecBake`, `libs/rigExecBinary`, `libs/rigExecRuntime`: experimental `.rigexec` export and playback | Prototype | Playback is a front-end adapter over the shared `rigExecEvalCore` step executor, not a parallel implementation; format changes require explicit compatibility testing. |
 | Standalone runtime | `libs/rigExecStandalone`: experimental stage-free scene runtime and rigpack backend | Prototype | Narrow supported surface; check its guide before integration. |
 
 The [architecture guide](docs/specs/spec.md) explains how these layers relate.

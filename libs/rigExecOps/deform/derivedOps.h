@@ -3,8 +3,9 @@
 
 /// Derived ops: normals and extent recomputed from final points, blended
 /// toward an optional Authored value by an optional Envelope (Envelope
-/// needs Authored). The kernels are rigExecMath/normalsKernel.h, shared
-/// with the baked and zero-USD runtimes. USD-free.
+/// needs Authored). The kernels are rigExecMath/normalsLayoutKernel.h and
+/// meshBoundsKernel.h, shared with the baked and zero-USD runtimes.
+/// USD-free.
 
 #include "rigExecOps/library.h"
 #include "rigExecStdTypes/stdTypes.h"

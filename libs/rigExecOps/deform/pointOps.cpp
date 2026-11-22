@@ -3,7 +3,7 @@
 #include "rigExecOps/opIo.h"
 #include "rigExecMath/meshConnectivity.h"
 #include "rigExecMath/smoothKernel.h"
-#include "rigExecMath/volumeCorrectKernel.h"
+#include "rigExecMath/meshBoundsKernel.h"
 
 #include <iterator>
 #include <string>
@@ -75,14 +75,13 @@ RunVolumeCorrect(const void *, void *, const RigExecOpIo &io,
                  std::string *error)
 {
     const Points &in = *In<Points>(io, VolumeCorrectPoints());
-    Points &out = Out<Points>(io, VolumeCorrectOut());
-    out = in;
+    std::vector<Vec3f> points = ToVector(in);
     rigExec::RigExecApplyVolumeCorrectKernel(
-        out.Data(), out.Size(), *In<double>(io, VolumeCorrectReference()),
+        &points, *In<double>(io, VolumeCorrectReference()),
         StrengthOr1(In<float>(io, VolumeCorrectStrength())));
-    return BlendEnvelope(in,
-                         In<RigExecArray<float>>(io, VolumeCorrectEnvelope()),
-                         &out, "VolumeCorrect", error);
+    return WritePoints(io, VolumeCorrectOut(), in, points,
+                       In<RigExecArray<float>>(io, VolumeCorrectEnvelope()),
+                       "VolumeCorrect", error);
 }
 
 rigExec::RigExecOpDesc

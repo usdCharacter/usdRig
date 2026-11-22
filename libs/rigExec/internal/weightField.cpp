@@ -5,6 +5,8 @@
 #include "rigExecScene/weightProgram.h"
 #include "rigExec/internal/parallel.h"
 #include "rigExec/internal/pathText.h"
+#include "rigExecEvalCore/weights.h"
+#include "rigExecMath/affineFrameKernels.h"
 #include <pxr/base/tf/staticTokens.h>
 #include <pxr/usd/usdGeom/pointBased.h>
 #include <pxr/usd/sdf/types.h>
@@ -589,6 +591,138 @@ RigExecBakedWeightFieldCoveredVersions(const Baked &B, int index,
         versions->insert(versions->end(), read.versions.begin(),
                          read.versions.end());
 }
+namespace {
+struct FieldMath : RigExecGfAffineMath {
+    static Mat4 RemoveScaleShear(const Mat4 &m)
+    {
+        return m.RemoveScaleShear();
+    }
+};
+struct FieldInputs {
+    const Baked &b;
+    const Field &field;
+    eval::WeightObjectFacts weightFacts(size_t i) const
+    {
+        const auto &r = b.weightProgram[i];
+        eval::WeightObjectFacts f;
+        f.kind = r.kind;
+        f.representation = r.representation;
+        f.combineMode = r.combineMode;
+        f.base = r.base;
+        f.clamp = r.clamp;
+        // Baked descriptor errors already reject unknown range policies.
+        f.strict = !r.clamp;
+        f.samplesInFlight = r.samplesInFlight;
+        f.blocked = field.currentInputs[i].blocked;
+        f.blockedBeforeStaticError = true;
+        f.inputCount = r.inputs.size();
+        f.inputIndices = r.inputs.data();
+        f.falloffCurve = r.falloffCurve.data();
+        f.falloffCurveCount = r.falloffCurve.size();
+        return f;
+    }
+    const std::string &weightName(size_t i) const
+    {
+        return b.weightProgram[i].name;
+    }
+    const char *weightTypeText(size_t i) const
+    {
+        return b.weightProgram[i].type.GetText();
+    }
+    std::string weightCombineText(size_t i) const
+    {
+        return b.weightProgram[i].combineToken.GetText();
+    }
+    const std::string &weightStaticError(size_t i) const
+    {
+        return b.weightProgram[i].staticError;
+    }
+    const std::string &weightPhaseError(size_t i) const
+    {
+        return b.weightProgram[i].phaseError;
+    }
+    bool dynamicSupportMatches(size_t, size_t) const
+    {
+        return true;
+    }
+    float fieldScalar(size_t i, int m, float) const
+    {
+        return field.currentInputs[i].scalars[size_t(m)];
+    }
+    const GfMatrix4d *fieldPlacement(size_t i) const
+    {
+        const auto &in = field.currentInputs[i];
+        return in.hasPlacement ? &in.placement : nullptr;
+    }
+    RigExecWeightPointInput fieldPoints(size_t i, int leaf, bool phased) const
+    {
+        const auto &in = field.currentInputs[i];
+        return (phased ? in.phasedPoints : in.rawPoints)[size_t(leaf)];
+    }
+    auto fieldFalloff(size_t i) const
+    {
+        const auto &in = field.currentInputs[i];
+        return std::make_pair(in.falloffSamples, in.falloffSampleCount);
+    }
+    const std::string &fieldPlaneToken(size_t i, bool bounds) const
+    {
+        const auto &in = field.currentInputs[i];
+        return bounds ? in.bounds : in.axis;
+    }
+    auto fieldValues(size_t i) const
+    {
+        const auto &in = field.currentInputs[i];
+        const auto &v = b.weightProgram[i].values;
+        return in.paintedArraysDeclared
+                   ? std::make_pair(in.paintedValues, in.paintedValueCount)
+                   : std::make_pair(v.data(), v.size());
+    }
+    auto fieldIndices(size_t i) const
+    {
+        const auto &in = field.currentInputs[i];
+        const auto &v = b.weightProgram[i].indices;
+        return in.paintedArraysDeclared
+                   ? std::make_pair(in.paintedIndices, in.paintedIndexCount)
+                   : std::make_pair(v.data(), v.size());
+    }
+};
+struct FieldState {
+    size_t count;
+    RigExecWeightFieldWorkspace &work;
+    size_t weightObjectCount() const
+    {
+        return count;
+    }
+    auto &fieldWorkspace() const
+    {
+        return work;
+    }
+    auto *fieldCurveScratch() const
+    {
+        return &work.localCurve;
+    }
+};
+struct FieldHost {
+    using Math = FieldMath;
+    using Inputs = FieldInputs;
+    using State = FieldState;
+    Inputs in;
+    State out;
+    const Inputs &inputs() const
+    {
+        return in;
+    }
+    State &state()
+    {
+        return out;
+    }
+    const RigExecRangeRunner *ranges() const
+    {
+        return out.work.ranges;
+    }
+};
+} // namespace
+
 void
 RigExecBakedRunWeightField(Baked *program, RigExecBakedStep *step)
 {
@@ -603,15 +737,15 @@ RigExecBakedRunWeightField(Baked *program, RigExecBakedStep *step)
     auto &inputs = field.currentInputs;
     const bool haveContext = RigExecBakedCaptureWeightFieldInputs(
         B, step->object, &inputs, &entering, &count);
-    const auto *current =
-        field.form == Field::Form::Revision ? &entering : nullptr;
+    const eval::WeightPointViewT<FieldMath> view{entering.data, entering.count};
+    const auto *current = field.form == Field::Form::Revision ? &view : nullptr;
     field.count = count;
     field.error.clear();
     field.workspace.ranges = RigExecGeometryRanges();
+    FieldHost host{{B, field}, {B.weightProgram.size(), field.workspace}};
     field.ok = haveContext &&
-               RigExecRunWeightField(B.weightProgram, field.object, inputs,
-                                     count, current, &field.workspace,
-                                     &field.nextValues, &field.error);
+               eval::RunWeightField(host, size_t(field.object), count, current,
+                                    &field.nextValues, &field.error);
     // Failed fields publish no partial values. Equality preserves signed-zero bits.
     if (!field.ok)
         field.nextValues.clear();

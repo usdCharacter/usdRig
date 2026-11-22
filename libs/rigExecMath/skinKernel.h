@@ -1,6 +1,6 @@
-// Skinning over a jointIndices/jointWeights layout: linear blend (scalar
-// and SSE2) and scale-aware dual quaternion. One definition for native
-// evaluation, the runtime and the ops. V is a float point, D its double
+// Linear blend skinning (scalar and SSE2) over a jointIndices/jointWeights
+// layout; the scale-aware dual quaternion blend is dualQuatKernel.h's. One
+// definition for native evaluation, the runtime and the ops. V is a float point, D its double
 // twin, M a double 4x4 with Gf's operators, L any layout with transforms,
 // transformCount, indices, elementSize, pointCount, Transform(i, k) and
 // Weight(i, k). USD-free.
@@ -126,46 +126,6 @@ RigExecApplyLinearBlendSkinSimdKernel(const V *in, V *out, const L &layout,
         out[i] = V(result[0], result[1], result[2]);
     }
 #endif
-}
-
-/// One scaled dual quaternion per influence, then identity for the
-/// weight complement.
-template <class V, class D, class L>
-std::vector<RigExecScaledDualQuatKernelT<V, D>>
-RigExecSkinDualQuatPaletteKernel(const L &layout)
-{
-    std::vector<RigExecScaledDualQuatKernelT<V, D>> palette;
-    palette.reserve(layout.transformCount + 1);
-    for (size_t t = 0; t < layout.transformCount; ++t)
-        palette.push_back(
-            RigExecScaledDualQuatFromMatrixKernel<V, D>(layout.transforms[t]));
-    palette.emplace_back();
-    return palette;
-}
-
-/// False when a blend degenerates. in/out may alias.
-template <class V, class D, class L>
-bool
-RigExecApplyDualQuatSkinKernel(
-    const V *in, V *out, const L &layout,
-    const RigExecScaledDualQuatKernelT<V, D> *palette, size_t paletteSize)
-{
-    std::vector<int> indices;
-    std::vector<double> weights;
-    indices.reserve(layout.elementSize + 1);
-    weights.reserve(layout.elementSize + 1);
-    for (size_t i = 0; i < layout.pointCount; ++i) {
-        RigExecGatherDualQuatInfluences(layout, i, &indices, &weights);
-        RigExecScaledDualQuatKernelT<V, D> blend;
-        if (!RigExecBlendScaledDualQuatsKernel(palette, paletteSize,
-                                               indices.data(), weights.data(),
-                                               indices.size(), &blend))
-            return false;
-        out[i] =
-            matrixDetail::Narrow<V>(RigExecScaledDualQuatTransformPointKernel(
-                blend, matrixDetail::Wide<D>(in[i])));
-    }
-    return true;
 }
 
 } // namespace rigExec

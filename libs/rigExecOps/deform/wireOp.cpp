@@ -1,7 +1,7 @@
 #include "rigExecOps/deform/wireOp.h"
 
 #include "rigExecOps/opIo.h"
-#include "rigExecMath/wireKernel.h"
+#include "rigExecMath/wireBasisKernel.h"
 
 #include <iterator>
 #include <string>
@@ -28,20 +28,27 @@ using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 using namespace opIo;
 
-rigExec::RigExecNurbsCurveSpan<Vec3f>
-CurveOf(const Points &controlPoints, const WirePayload &p)
-{
-    return {controlPoints.Data(), controlPoints.Size(), p.order, p.knots.data(),
-            p.knots.size()};
-}
+/// The curve and basis records the wire kernel reads.
+struct Curve {
+    const std::vector<Vec3f> *points = nullptr;
+    int order = 0;
+    const std::vector<double> *knots = nullptr;
+};
+
+struct Basis {
+    std::vector<std::vector<std::pair<uint32_t, float>>> byControlPoint;
+    bool ascendingIndices = false;
+};
 
 bool
 RunWire(const void *payload, void *, const RigExecOpIo &io, std::string *error)
 {
     const WirePayload &p = *static_cast<const WirePayload *>(payload);
     const Points &in = *In<Points>(io, WirePoints());
-    const Points &restCurve = *In<Points>(io, WireRestCurve());
-    const Points &curve = *In<Points>(io, WireCurve());
+    const std::vector<Vec3f> restPoints =
+        ToVector(*In<Points>(io, WireRestCurve()));
+    const std::vector<Vec3f> posedPoints =
+        ToVector(*In<Points>(io, WireCurve()));
     const auto &bind = *In<RigExecArray<Vec2f>>(io, WireBindCoords());
     const Envelope *envelope = In<Envelope>(io, WireEnvelope());
     const auto *indices = In<RigExecArray<int>>(io, WireWeightIndices());
@@ -50,30 +57,31 @@ RunWire(const void *payload, void *, const RigExecOpIo &io, std::string *error)
         return Fail(error, "Wire", "weight indices and weights go together");
     if (indices && envelope)
         return Fail(error, "Wire", "an envelope or sparse weights, not both");
-    Points &out = Out<Points>(io, WireOut());
-    out = in;
-    const auto rest = CurveOf(restCurve, p);
-    const auto posed = CurveOf(curve, p);
+    std::vector<Vec3f> points = ToVector(in);
     if (indices) {
-        rigExec::RigExecWireBasis basis;
-        if (!rest.IsValid() || !rest.Matches(posed) ||
-            !rigExec::RigExecBuildWireBasisKernel(
-                bind.Data(), bind.Size(), in.Size(), indices->Data(),
-                indices->Size(), p.order, p.knots.data(), p.knots.size(),
-                restCurve.Size(), p.dropoffDistance, &basis) ||
-            !rigExec::RigExecApplyWireBasisGroupKernel(
-                out.Data(), 0, out.Size(), basis, indices->Data(),
-                indices->Size(), weights->Data(), weights->Size(),
-                restCurve.Data(), restCurve.Size(), curve.Data(), curve.Size()))
+        const std::vector<int> index = ToVector(*indices);
+        const std::vector<float> weight = ToVector(*weights);
+        Basis basis;
+        if (!rigExec::RigExecNurbsCurveIsValidKernel<Vec3f, Vec3d, Vec2f>(
+                &restPoints, &p.knots, p.order) ||
+            restPoints.size() != posedPoints.size() ||
+            !rigExec::RigExecBuildWireBasisKernel<Vec3f, Vec3d, Vec2f>(
+                bind.Data(), bind.Size(), in.Size(), index, p.order, p.knots,
+                restPoints.size(), p.dropoffDistance, &basis) ||
+            !rigExec::RigExecApplyWireBasisGroupKernel<Vec3f, Vec3d, Vec2f>(
+                points.data(), 0, points.size(), basis, index, weight,
+                restPoints, posedPoints))
             return Fail(error, "Wire",
                         "curves, binds or sparse weights do not fit");
-        return true;
+        return WritePoints(io, WireOut(), in, points, nullptr, "Wire", error);
     }
-    if (!rigExec::RigExecApplyWireGroupKernel<Vec3f, Vec3d>(
-            out.Data(), 0, out.Size(), out.Size(), rest, posed, bind.Data(),
-            bind.Size(), p.dropoffDistance, nullptr, 0))
+    const Curve rest{&restPoints, p.order, &p.knots};
+    const Curve posed{&posedPoints, p.order, &p.knots};
+    if (!rigExec::RigExecApplyWireGroupKernel<Vec3f, Vec3d, Vec2f>(
+            points.data(), 0, points.size(), points.size(), rest, posed,
+            bind.Data(), bind.Size(), p.dropoffDistance, nullptr, 0))
         return Fail(error, "Wire", "curves or binds do not fit");
-    return BlendEnvelope(in, envelope, &out, "Wire", error);
+    return WritePoints(io, WireOut(), in, points, envelope, "Wire", error);
 }
 
 } // namespace
