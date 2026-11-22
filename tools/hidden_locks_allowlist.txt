@@ -141,6 +141,15 @@ libs/rigExec/inputReplay.cpp | env | if (const auto *capture = std::getenv("RIGE
 
 libs/rigExec/inputReplayValues.cpp | token-text | void Item(TfToken& v) {std::string x=v.GetString();Text(x);if(reading)v=TfToken(x);}
 
+libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
+libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
+libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::unique_lock<std::mutex> lock(_mutex);
+libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::unique_lock<std::mutex> lock(_mutex);
+libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
+libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::mutex _mutex;
+libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::condition_variable _wake;
+libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::condition_variable _done;
+
 libs/rigExec/moverGraph.cpp | env | const bool _simdEnabled = TfGetenvBool("RIGEXEC_ENABLE_SIMD", true);
 libs/rigExec/moverGraph.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
 libs/rigExec/moverGraph.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);

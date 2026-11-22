@@ -169,9 +169,10 @@ target_sources(rigExecScene INTERFACE
 
 # The evaluator's layers, as object libraries: build boundaries, not
 # shipped libraries. Each file declares its own target, sources, include
-# directories and links, and the four compose into librigExec below. None
+# directories and links, and they compose into librigExec below. None
 # of them is installed, exported, aliased or linked.
 include(cmake/rigExecRegistrySources.cmake)
+include(cmake/rigExecCoreSources.cmake)
 include(cmake/rigExecCompileSources.cmake)
 include(cmake/rigExecEvalSources.cmake)
 include(cmake/rigExecScheduleSources.cmake)
@@ -184,6 +185,7 @@ include(cmake/rigExecVerifySources.cmake)
 # source-notice sources compile here.
 add_library(rigExec SHARED
     $<TARGET_OBJECTS:rigExecRegistry>
+    $<TARGET_OBJECTS:rigExecCore>
     $<TARGET_OBJECTS:rigExecCompile>
     $<TARGET_OBJECTS:rigExecEval>
     $<TARGET_OBJECTS:rigExecSchedule>
@@ -1209,6 +1211,15 @@ target_include_directories(testRigExecRegistry PRIVATE
 rigexec_link_registrations(testRigExecRegistry
     TYPE_LIBRARIES rigExecTestFakeTypes OP_LIBRARIES rigExecTestFakeOps)
 add_test(NAME testRigExecRegistry COMMAND testRigExecRegistry)
+
+add_executable(testRigExecCore tests/testRigExecCore.cpp
+    $<TARGET_OBJECTS:rigExecRegistry> $<TARGET_OBJECTS:rigExecCore>)
+target_include_directories(testRigExecCore PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/libs" "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+target_link_libraries(testRigExecCore PRIVATE Threads::Threads)
+rigexec_link_registrations(testRigExecCore
+    TYPE_LIBRARIES rigExecTestFakeTypes OP_LIBRARIES rigExecTestFakeOps)
+add_test(NAME testRigExecCore COMMAND testRigExecCore)
 
 add_executable(testRigExecOpGraph tests/testRigExecOpGraph.cpp)
 target_link_libraries(testRigExecOpGraph PRIVATE rigExecGraph work Threads::Threads)
