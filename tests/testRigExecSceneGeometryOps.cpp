@@ -4,6 +4,7 @@
 #include "rigExec/api/compile.h"
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
+#include "rigExecBuiltins/builtins.h"
 #include "rigExecScene/geometryOps.h"
 #include "rigExecScene/geometryProgram.h"
 #include "rigExecMath/geometryKernels.h"
@@ -879,10 +880,9 @@ TestRefusals(const Grid &grid)
 int
 main()
 {
-    std::vector<std::string> errors;
-    if (!RigExecRegistry::Initialize(RigExecLinkedRegistrations(), &errors)) {
-        for (const std::string &e : errors)
-            std::printf("%s\n", e.c_str());
+    std::string registryError;
+    if (!RigExecEnsureBuiltinRegistry(&registryError)) {
+        std::printf("%s\n", registryError.c_str());
         return 1;
     }
     const Grid grid(9, 7);

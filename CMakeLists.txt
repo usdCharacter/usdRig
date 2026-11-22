@@ -1294,26 +1294,35 @@ rigexec_link_registrations(testRigExecOpsPoints TYPE_LIBRARIES rigExecStdTypes r
 add_test(NAME testRigExecOpsPoints COMMAND testRigExecOpsPoints)
 set_tests_properties(testRigExecOpsPoints PROPERTIES LABELS "fast")
 
+# The built-in type and op libraries in one shared module, so every library
+# and executable sees one set of handles. Their sources compile here as its
+# own objects, which is what the Windows export-all exports.
+get_target_property(_rigexec_builtin_ops rigExecOps SOURCES)
+add_library(rigExecBuiltins SHARED libs/rigExecBuiltins/builtins.cpp
+    libs/rigExecStdTypes/stdTypes.cpp libs/rigExecRigTypes/rigTypes.cpp
+    ${_rigexec_builtin_ops})
+target_compile_features(rigExecBuiltins PUBLIC cxx_std_17)
+target_include_directories(rigExecBuiltins PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>")
+target_link_libraries(rigExecBuiltins PUBLIC rigExec PRIVATE rigExecMath)
+rigexec_apply_exact_fp_flags(rigExecBuiltins)
+
 # Host-side bridge from translated USD movers to op nodes; not installed.
 # Step 10 folds it into rigExecUsd.
 add_library(rigExecSceneOps STATIC libs/rigExecScene/propertyOps.cpp
     libs/rigExecScene/geometryOps.cpp)
-target_link_libraries(rigExecSceneOps PUBLIC rigExec rigExecScene rigExecOps
-    PRIVATE rigExecMath)
+target_link_libraries(rigExecSceneOps PUBLIC rigExec rigExecScene
+    rigExecBuiltins PRIVATE rigExecMath)
 set_target_properties(rigExecSceneOps PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_executable(testRigExecScenePropertyOps tests/testRigExecScenePropertyOps.cpp)
 target_link_libraries(testRigExecScenePropertyOps PRIVATE rigExecSceneOps
     rigExecStandalone)
 target_compile_definitions(testRigExecScenePropertyOps PRIVATE
     ${_rigexec_schema_resource_define})
-rigexec_link_registrations(testRigExecScenePropertyOps
-    TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 add_test(NAME testRigExecScenePropertyOps COMMAND testRigExecScenePropertyOps)
 add_executable(testRigExecSceneGeometryOps tests/testRigExecSceneGeometryOps.cpp)
 target_link_libraries(testRigExecSceneGeometryOps PRIVATE rigExecSceneOps)
 rigexec_apply_exact_fp_flags(testRigExecSceneGeometryOps)
-rigexec_link_registrations(testRigExecSceneGeometryOps
-    TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 add_test(NAME testRigExecSceneGeometryOps COMMAND testRigExecSceneGeometryOps)
 set_tests_properties(testRigExecSceneGeometryOps PROPERTIES LABELS "fast")
 
@@ -3117,7 +3126,8 @@ include(CMakePackageConfigHelpers)
 set(RIGEXEC_INSTALL_TARGETS
     rigExecLzma rigExecGraph rigExecEvalCore rigExecMath rigExec rigExecScene
     rigExecOracle rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu
-    rigExecFlatBuffers rigExecBinary rigExecBake rigExecRuntime rigExecSampler)
+    rigExecFlatBuffers rigExecBinary rigExecBake rigExecRuntime rigExecSampler
+    rigExecBuiltins)
 install(TARGETS ${RIGEXEC_INSTALL_TARGETS}
     EXPORT rigExecTargets
     RUNTIME DESTINATION "${RIGEXEC_INSTALL_LIBDIR}"

@@ -4,6 +4,7 @@
 #include "rigExec/api/compile.h"
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
+#include "rigExecBuiltins/builtins.h"
 #include "rigExecScene/propertyOps.h"
 #include "rigExecScene/propertySceneTranslation.h"
 #include "rigExecStandalone/sceneAccess.h"
@@ -312,10 +313,9 @@ main()
     CHECK(!PlugRegistry::GetInstance()
                .RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR)
                .empty());
-    std::vector<std::string> errors;
-    if (!RigExecRegistry::Initialize(RigExecLinkedRegistrations(), &errors)) {
-        for (const std::string &e : errors)
-            std::printf("%s\n", e.c_str());
+    std::string registryError;
+    if (!RigExecEnsureBuiltinRegistry(&registryError)) {
+        std::printf("%s\n", registryError.c_str());
         return 1;
     }
     TestFloat();
