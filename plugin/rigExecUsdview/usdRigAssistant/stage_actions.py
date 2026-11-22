@@ -185,19 +185,14 @@ def to_json(value):
     return [to_json(v) for v in items]
 
 
-# The actions whose change is one opinion on a prim or attribute that is
-# already there, so the assistant can snapshot the layer and record the
-# change before the action's USD notice runs (see Applier's bracket). Each
-# action here leaves the same layer and fires the same one notice sealed or
-# not. define_prim, override_prim and add_reference are left out: they read
-# back a prim they bring into being, and a stage does not recompose inside a
-# change block. add_sublayer and set_edit_target author no opinion the
-# history would record.
+# Seal tracked writes before their USD notices; never compose new prims
+# until the per-action block has exited.
 DEFER_NOTICE_ACTIONS = frozenset((
+    'define_prim', 'override_prim', 'add_reference', 'remove_prim',
+    'rename_prim', 'reparent_prim', 'set_active', 'reorder_children',
     'set_attr', 'clear_attr', 'block_attr', 'set_connections',
     'set_relationship', 'apply_schema', 'remove_schema', 'set_variant',
-    'set_active', 'reorder_children', 'set_metadata', 'remove_prim',
-    'rename_prim', 'reparent_prim'))
+    'set_metadata'))
 
 
 class Applier(object):
@@ -207,12 +202,8 @@ class Applier(object):
     :param select: called with a list of paths for the select action
     :param revalidate: called on the owner thread before each action; when
         it gives back False the rest of the batch is not made
-    :param bracket: called with the action before it runs, giving back a
-        context manager around that one action. The assistant uses it to
-        snapshot and record each change as it is made, so the history keeps
-        the order the changes were made, and to hold the action's USD notice
-        until that record is made; DEFER_NOTICE_ACTIONS lists the actions
-        whose notice can be held without changing what the action does.
+    :param bracket: context manager around one prepared write, recording
+        its edit before its USD notice is delivered
     """
 
     def __init__(self, stage, select=None, revalidate=None, bracket=None):
@@ -222,8 +213,7 @@ class Applier(object):
         self.bracket = bracket or (lambda action: contextlib.nullcontext())
 
     def apply(self, actions):
-        # No Sdf.ChangeBlock: each action reads the stage the one before it
-        # made, and a stage does not recompose inside a block.
+        # Recompose and revalidate between writes, never inside the batch.
         done, failed = [], []
         for left, action in enumerate(actions):
             if self.revalidate is not None and not self.revalidate():
@@ -240,8 +230,7 @@ class Applier(object):
                 failed.append('There is no action {}'.format(name))
                 continue
             try:
-                with self.bracket(action):
-                    done.append(handler(action))
+                done.append(handler(action))
             except ActionError as err:
                 failed.append('{}: {}'.format(name, err))
             except Exception as err:
@@ -250,6 +239,34 @@ class Applier(object):
         return done, failed
 
     # Helpers
+    def write(self, action):
+        return self.bracket(action)
+
+    def spec_target(self, path):
+        target = self.stage.GetEditTarget()
+        spec_path = target.MapToSpecPath(path)
+        if not spec_path:
+            raise ActionError('Cannot edit {}'.format(path))
+        return target, spec_path
+
+    def create_spec(self, target, spec_path):
+        spec = Sdf.CreatePrimInLayer(target.GetLayer(), spec_path)
+        if spec is None:
+            raise ActionError('Cannot edit {}'.format(spec_path))
+        return spec
+
+    def plain_parents(self, path):
+        parents = []
+        parent = path.GetParentPath()
+        while parent and not parent.IsAbsoluteRootPath():
+            prim = self.stage.GetPrimAtPath(parent)
+            if prim and prim.IsDefined():
+                break
+            parents.append(parent)
+            parent = parent.GetParentPath()
+        parents.reverse()
+        return parents
+
     def path(self, action, key='path'):
         text = str(action.get(key) or '').strip()
         if not text:
@@ -290,36 +307,52 @@ class Applier(object):
     def do_define_prim(self, action):
         path = self.path(action)
         type_name = str(action.get('type') or '')
-        prim = self.stage.DefinePrim(path, type_name)
-        if not prim:
-            raise ActionError('Could not define {}'.format(path))
+        prim = self.stage.GetPrimAtPath(path)
+        if prim and prim.IsDefined() and (not type_name or
+                                          prim.GetTypeName() == type_name):
+            return 'Defined {}{}'.format(
+                path, ' as ' + type_name if type_name else '')
+        target, spec_path = self.spec_target(path)
+        plain = [target.MapToSpecPath(parent)
+                 for parent in self.plain_parents(path)]
+        with self.write(action):
+            spec = self.create_spec(target, spec_path)
+            layer = target.GetLayer()
+            for parent in plain:
+                made = layer.GetPrimAtPath(parent)
+                if made is not None:
+                    made.specifier = Sdf.SpecifierDef
+            spec.specifier = Sdf.SpecifierDef
+            if type_name:
+                spec.typeName = type_name
         return 'Defined {}{}'.format(path, ' as ' + type_name
                                      if type_name else '')
 
     def do_override_prim(self, action):
         path = self.path(action)
-        if not self.stage.OverridePrim(path):
-            raise ActionError('Could not override {}'.format(path))
+        if self.stage.GetPrimAtPath(path):
+            return 'Added an over for {}'.format(path)
+        target, spec_path = self.spec_target(path)
+        with self.write(action):
+            self.create_spec(target, spec_path)
         return 'Added an over for {}'.format(path)
 
     def do_remove_prim(self, action):
         path = self.path(action)
-        if not self.stage.RemovePrim(path):
-            raise ActionError('{} has no spec on the edit target to '
-                              'remove; deactivate it instead'.format(path))
+        with self.write(action):
+            if not self.stage.RemovePrim(path):
+                raise ActionError('{} has no spec on the edit target to '
+                                  'remove; deactivate it instead'.format(path))
         return 'Removed {}'.format(path)
 
-    def _namespace_edit(self, prim, new_path):
+    def _namespace_edit(self, old, new_path):
         editor_type = getattr(Usd, 'NamespaceEditor', None)
         if editor_type is None:
             raise ActionError('This USD has no namespace editor')
         editor = editor_type(self.stage)
-        if not editor.MovePrimAtPath(prim.GetPath(), new_path):
-            raise ActionError('Cannot move {} to {}'.format(
-                prim.GetPath(), new_path))
-        if not editor.ApplyEdits():
-            raise ActionError('Moving {} to {} failed'.format(
-                prim.GetPath(), new_path))
+        if not editor.MovePrimAtPath(old, new_path) or not editor.CanApplyEdits():
+            raise ActionError('Cannot move {} to {}'.format(old, new_path))
+        return editor
 
     def do_rename_prim(self, action):
         prim = self.prim(action)
@@ -327,28 +360,41 @@ class Applier(object):
         if not Sdf.Path.IsValidIdentifier(name):
             raise ActionError('{} is not a valid name'.format(name))
         old = prim.GetPath()
-        self._namespace_edit(prim, old.GetParentPath().AppendChild(name))
+        new_path = old.GetParentPath().AppendChild(name)
+        editor = self._namespace_edit(old, new_path)
+        with self.write(action):
+            if not editor.ApplyEdits():
+                raise ActionError('Moving {} to {} failed'.format(old, new_path))
         return 'Renamed {} to {}'.format(old, name)
 
     def do_reparent_prim(self, action):
         prim = self.prim(action)
         parent = self.path(action, 'parent')
         old = prim.GetPath()
-        self._namespace_edit(prim, parent.AppendChild(old.name))
+        new_path = parent.AppendChild(old.name)
+        editor = self._namespace_edit(old, new_path)
+        with self.write(action):
+            if not editor.ApplyEdits():
+                raise ActionError('Moving {} to {} failed'.format(old, new_path))
         return 'Moved {} under {}'.format(old, parent)
 
     def do_set_active(self, action):
         path = self.path(action)
-        prim = self.stage.GetPrimAtPath(path) or self.stage.OverridePrim(
-            path)
         value = bool(action.get('value', True))
-        prim.SetActive(value)
+        prim = self.stage.GetPrimAtPath(path)
+        target, spec_path = self.spec_target(path)
+        with self.write(action):
+            if prim:
+                prim.SetActive(value)
+            else:
+                self.create_spec(target, spec_path).active = value
         return '{} {}'.format('Activated' if value else 'Deactivated', path)
 
     def do_reorder_children(self, action):
         prim = self.prim(action)
         names = [str(n) for n in action.get('names') or []]
-        prim.SetChildrenReorder(names)
+        with self.write(action):
+            prim.SetChildrenReorder(names)
         return 'Reordered the children of {}'.format(prim.GetPath())
 
     # Properties
@@ -358,90 +404,109 @@ class Applier(object):
         if not name:
             raise ActionError('"name" is needed')
         attr = prim.GetAttribute(name)
-        if not attr:
-            type_name = action.get('type')
-            if not type_name:
+        type_name = None
+        if attr:
+            type_name = attr.GetTypeName()
+        else:
+            if not action.get('type'):
                 raise ActionError('{} has no attribute {}; give a "type" to '
                                   'make it'.format(prim.GetPath(), name))
-            vtype = Sdf.ValueTypeNames.Find(str(type_name))
-            if not vtype:
+            type_name = str(action['type'])
+            if not Sdf.ValueTypeNames.Find(type_name):
                 raise ActionError('There is no value type {}'.format(
                     type_name))
-            attr = prim.CreateAttribute(name, vtype,
-                                        bool(action.get('custom', True)))
-        value = to_value(action.get('value'), attr.GetTypeName())
+        value = to_value(action.get('value'), type_name)
         time = self.time(action)
-        if not attr.Set(value, time):
-            raise ActionError('Could not set {}'.format(attr.GetPath()))
+        with self.write(action):
+            if not attr:
+                attr = prim.CreateAttribute(
+                    name, Sdf.ValueTypeNames.Find(type_name),
+                    bool(action.get('custom', True)))
+            if not attr.Set(value, time):
+                raise ActionError('Could not set {}'.format(attr.GetPath()))
         return 'Set {} to {}{}'.format(
             attr.GetPath(), json.dumps(to_json(value))[:80], self.when(time))
 
     def do_clear_attr(self, action):
         attr = self.attr(action)
         time = self.time(action)
-        if time.IsDefault():
-            attr.Clear()
-        else:
-            attr.ClearAtTime(time)
+        with self.write(action):
+            if time.IsDefault():
+                attr.Clear()
+            else:
+                attr.ClearAtTime(time)
         return 'Cleared {}{}'.format(attr.GetPath(), self.when(time))
 
     def do_block_attr(self, action):
         attr = self.attr(action)
-        attr.Block()
+        with self.write(action):
+            attr.Block()
         return 'Blocked {}'.format(attr.GetPath())
 
     def do_set_connections(self, action):
         attr = self.attr(action)
         sources = [Sdf.Path(str(s)) for s in action.get('sources') or []]
-        attr.SetConnections(sources)
+        with self.write(action):
+            attr.SetConnections(sources)
         return 'Connected {} to {}'.format(
             attr.GetPath(), ', '.join(str(s) for s in sources) or 'nothing')
 
     def do_set_relationship(self, action):
         prim = self.prim(action)
         name = str(action.get('name') or '')
-        rel = prim.GetRelationship(name) or prim.CreateRelationship(name)
+        rel = prim.GetRelationship(name)
         targets = [Sdf.Path(str(t)) for t in action.get('targets') or []]
-        rel.SetTargets(targets)
+        with self.write(action):
+            if not rel:
+                rel = prim.CreateRelationship(name)
+            rel.SetTargets(targets)
         return 'Pointed {} at {}'.format(
             rel.GetPath(), ', '.join(str(t) for t in targets) or 'nothing')
 
     def do_apply_schema(self, action):
         prim = self.prim(action)
         schema = str(action.get('schema') or '')
-        if not prim.AddAppliedSchema(schema):
-            raise ActionError('Could not apply {}'.format(schema))
+        with self.write(action):
+            if not prim.AddAppliedSchema(schema):
+                raise ActionError('Could not apply {}'.format(schema))
         return 'Applied {} to {}'.format(schema, prim.GetPath())
 
     def do_remove_schema(self, action):
         prim = self.prim(action)
         schema = str(action.get('schema') or '')
-        if not prim.RemoveAppliedSchema(schema):
-            raise ActionError('Could not remove {}'.format(schema))
+        with self.write(action):
+            if not prim.RemoveAppliedSchema(schema):
+                raise ActionError('Could not remove {}'.format(schema))
         return 'Removed {} from {}'.format(schema, prim.GetPath())
 
     def do_set_variant(self, action):
         prim = self.prim(action)
         vset = prim.GetVariantSets().GetVariantSet(str(action.get('set')))
-        if not vset or not vset.SetVariantSelection(
-                str(action.get('variant'))):
-            raise ActionError('Could not select {} in {}'.format(
-                action.get('variant'), action.get('set')))
+        if not vset:
+            raise ActionError('{} has no variant set {}'.format(
+                prim.GetPath(), action.get('set')))
+        with self.write(action):
+            if not vset.SetVariantSelection(str(action.get('variant'))):
+                raise ActionError('Could not select {} in {}'.format(
+                    action.get('variant'), action.get('set')))
         return 'Selected {} {} on {}'.format(
             action.get('set'), action.get('variant'), prim.GetPath())
 
+    # References and layers
     def do_add_reference(self, action):
         path = self.path(action)
-        prim = self.stage.GetPrimAtPath(path) or self.stage.OverridePrim(
-            path)
         asset = str(action.get('asset') or '')
         if not asset:
             raise ActionError('"asset" is needed')
-        target = action.get('prim')
-        if target:
-            prim.GetReferences().AddReference(asset, Sdf.Path(str(target)))
-        else:
-            prim.GetReferences().AddReference(asset)
+        target_path = Sdf.Path(str(action.get('prim'))) if action.get(
+            'prim') else Sdf.Path()
+        target, spec_path = self.spec_target(path)
+        reference = Sdf.Reference(asset, target_path)
+        with self.write(action):
+            refs = self.create_spec(target, spec_path).referenceList
+            prepended = [item for item in refs.prependedItems
+                         if item != reference]
+            refs.prependedItems = prepended + [reference]
         return 'Referenced {} on {}'.format(asset, path)
 
     def do_add_sublayer(self, action):
@@ -450,7 +515,8 @@ class Applier(object):
             raise ActionError('"asset" is needed')
         layer = self.stage.GetEditTarget().GetLayer()
         position = int(action.get('position', 0))
-        layer.subLayerPaths.insert(position, asset)
+        with self.write(action):
+            layer.subLayerPaths.insert(position, asset)
         return 'Added the sublayer {} to {}'.format(asset, layer.identifier)
 
     def do_set_edit_target(self, action):
@@ -460,7 +526,8 @@ class Applier(object):
                      (layer.realPath or '').replace('\\', '/').split(
                          '/')[-1]}
             if wanted in names:
-                self.stage.SetEditTarget(Usd.EditTarget(layer))
+                with self.write(action):
+                    self.stage.SetEditTarget(Usd.EditTarget(layer))
                 return 'Edits now go to {}'.format(layer.identifier)
         raise ActionError('No layer {} in the layer stack'.format(wanted))
 
@@ -473,8 +540,9 @@ class Applier(object):
                 raise ActionError('{} has no property {}'.format(
                     prim.GetPath(), action['name']))
         key = str(action.get('key') or '')
-        if not target.SetMetadata(key, action.get('value')):
-            raise ActionError('Could not set {}'.format(key))
+        with self.write(action):
+            if not target.SetMetadata(key, action.get('value')):
+                raise ActionError('Could not set {}'.format(key))
         return 'Set {} on {}'.format(key, target.GetPath())
 
     def do_select(self, action):

@@ -25,6 +25,7 @@ import io
 import json
 import logging
 import os
+import sys
 import threading
 import time
 import traceback
@@ -736,16 +737,21 @@ class Toolbox(QtCore.QObject):
         step = self._open_step(stack, label)
         scope = rigExecUndo.SpecScope(self.stage, paths, None, label)
         closed = False
+        scope.__enter__()
         try:
-            # An authored write can fire a USD notice whose handler
-            # authors a second edit. Seal this edit before dispatching
-            # that notice.
+            # Begin maps edit-target paths before the block; commit and
+            # record before its notice can dispatch another editor write.
             block = Sdf.ChangeBlock() if defer_notice else contextlib.nullcontext()
             with block:
-                with scope:
+                try:
                     yield scope
-                self._close_step(stack, step, scope.edit)
-                closed = True
+                except BaseException:
+                    scope.__exit__(*sys.exc_info())
+                    raise
+                else:
+                    scope.__exit__(None, None, None)
+                    self._close_step(stack, step, scope.edit)
+                    closed = True
         finally:
             if not closed:
                 self._close_step(stack, step, scope.edit)
@@ -1549,11 +1555,11 @@ class Toolbox(QtCore.QObject):
             changes = [changes]
         if not isinstance(changes, list) or not changes:
             raise ToolError('"changes" must be a list of changes')
-        layer = self.stage.GetEditTarget().GetLayer() if self.stage else None
         stack = self._undo_stack()
 
         def guard(change):
-            paths = _spec_paths([change], layer) if layer is not None else []
+            target = self.stage.GetEditTarget()
+            paths = _spec_paths([change], target)
             return self._authored_edit(
                 stack, paths, 'AI Assistant changes',
                 defer_notice=change.get('action') in
@@ -1702,10 +1708,9 @@ _PROPERTY_ACTIONS = ('set_attr', 'clear_attr', 'block_attr',
                      'set_connections', 'set_relationship', 'set_metadata')
 
 
-def _spec_paths(changes, layer=None):
-    """The prim and property paths a list of changes can touch, so their
-    specs can be snapshotted for undo before the change. layer is the edit
-    target's, to find where a new prim's missing parents begin."""
+def _spec_paths(changes, target=None):
+    """Paths to snapshot before a write; target maps missing ancestors
+    to the layer where the write will create them."""
     paths = set()
 
     def add(text):
@@ -1740,15 +1745,16 @@ def _spec_paths(changes, layer=None):
             if parent is not None:
                 paths.add(parent.AppendChild(prim.name))
             paths.add(prim.GetParentPath())
-        if prim is not None and layer is not None and action in (
+        if prim is not None and target is not None and action in (
                 'define_prim', 'override_prim', 'set_active',
                 'add_reference'):
-            # The topmost ancestor the edit brings into being on the layer,
-            # so undo takes the whole new chain away.
             top = prim
             parent = prim.GetParentPath()
-            while parent != Sdf.Path.absoluteRootPath and \
-                    layer.GetPrimAtPath(parent) is None:
+            while parent != Sdf.Path.absoluteRootPath:
+                mapped = target.MapToSpecPath(parent)
+                if not mapped or target.GetLayer().GetPrimAtPath(
+                        mapped) is not None:
+                    break
                 top = parent
                 parent = parent.GetParentPath()
             paths.add(top)

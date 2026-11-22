@@ -790,6 +790,84 @@ def TestAClearCommitFromAStageNoticeKeepsTheAuthoredOrder():
     _Check(not container.stack.CanRedo(), 'redo stops at the newest change')
 
 
+def TestCreationNoticeKeepsTheArtistEditSeparate():
+    asset = Sdf.Layer.CreateAnonymous('assistant_reference.usda')
+    Sdf.CreatePrimInLayer(asset, '/Ref').specifier = Sdf.SpecifierDef
+    asset.defaultPrim = 'Ref'
+    for action in ({'action': 'define_prim', 'path': '/Char/New',
+                    'type': 'Xform'},
+                   {'action': 'override_prim', 'path': '/Char/New'},
+                   {'action': 'add_reference', 'path': '/Char/New',
+                    'asset': asset.identifier}):
+        stage = _Stage()
+        container = _Container()
+        box, _api = _Toolbox(stage, container, can_edit=True)
+        made = []
+
+        def artist_edits_created_prim(_notice, _sender):
+            if made:
+                return
+            prim = stage.GetPrimAtPath('/Char/New')
+            if not prim:
+                return
+            made.append(True)
+            with rigExecUndo.SpecScope(stage, ['/Char/New.artist:mark'],
+                                       container.stack, 'Artist edit'):
+                prim.CreateAttribute('artist:mark',
+                                     Sdf.ValueTypeNames.Int).Set(23)
+
+        listener = Tf.Notice.Register(Usd.Notice.ObjectsChanged,
+                                      artist_edits_created_prim, stage)
+        text, failed = box.call('change_stage', {'changes': [action]})
+        listener.Revoke()
+        prim = stage.GetPrimAtPath('/Char/New')
+        _Check(not failed and made == [True] and prim and
+               prim.GetAttribute('artist:mark').Get() == 23,
+               '{} creates the prim before the artist edit: {}'.format(
+                   action['action'], text))
+        _Check(container.stack.UndoText() == 'Artist edit',
+               '{} keeps artist edit newest'.format(action['action']))
+        _Check(container.stack.Undo() and stage.GetPrimAtPath('/Char/New') and
+               not stage.GetPrimAtPath('/Char/New').HasAttribute('artist:mark'),
+               '{} first undo leaves only the created prim'.format(
+                   action['action']))
+        _Check(container.stack.Undo() and
+               not stage.GetPrimAtPath('/Char/New') and
+               not container.stack.CanUndo(),
+               '{} second undo removes creation'.format(action['action']))
+        _Check(container.stack.Redo() and stage.GetPrimAtPath('/Char/New') and
+               not stage.GetPrimAtPath('/Char/New').HasAttribute('artist:mark'),
+               '{} first redo restores creation alone'.format(
+                   action['action']))
+        _Check(container.stack.Redo() and
+               stage.GetPrimAtPath('/Char/New').GetAttribute(
+                   'artist:mark').Get() == 23 and
+               not container.stack.CanRedo(),
+               '{} second redo restores artist edit'.format(action['action']))
+
+
+def TestReferencePreservesExistingOpinionsAndOrder():
+    stage = _Stage()
+    prim = stage.GetPrimAtPath('/Char/Ctl')
+    assets = [Sdf.Layer.CreateAnonymous(name + '.usda')
+              for name in ('first', 'second', 'third')]
+    for asset in assets:
+        Sdf.CreatePrimInLayer(asset, '/Ref').specifier = Sdf.SpecifierDef
+        asset.defaultPrim = 'Ref'
+    for asset in assets[:2]:
+        prim.GetReferences().AddReference(asset.identifier)
+    spec = stage.GetEditTarget().GetLayer().GetPrimAtPath('/Char/Ctl')
+    spec.SetInfo('documentation', 'artist note')
+    box, _api = _Toolbox(stage, _Container(), can_edit=True)
+    text, failed = box.call('change_stage', {'changes': [
+        {'action': 'add_reference', 'path': '/Char/Ctl',
+         'asset': assets[2].identifier}]})
+    _Check(not failed and spec.GetInfo('documentation') == 'artist note' and
+           [r.assetPath for r in spec.referenceList.prependedItems] ==
+           [asset.identifier for asset in assets],
+           'add_reference keeps existing opinions and append order: %s' % text)
+
+
 def TestACallThatChangesNothingLeavesHistoryAlone():
     """A read-only call, a change that cannot be made and a write of the
     value that is already there record no undo step: the redo branch an
@@ -1890,6 +1968,8 @@ def main():
                  TestAPoseCommitFromAStageNoticeKeepsTheAuthoredOrder,
                  TestAResetCommitFromAStageNoticeKeepsTheAuthoredOrder,
                  TestAClearCommitFromAStageNoticeKeepsTheAuthoredOrder,
+                 TestCreationNoticeKeepsTheArtistEditSeparate,
+                 TestReferencePreservesExistingOpinionsAndOrder,
                  TestACallThatChangesNothingLeavesHistoryAlone,
                  TestAWriteAfterAnUndoDoesNotGrowAnOlderStep,
                  TestHostUndoStackWithoutLastEdit,
