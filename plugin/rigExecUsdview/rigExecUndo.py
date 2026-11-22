@@ -304,6 +304,29 @@ class EditEntry(object):
         self.after = after
 
 
+def ApplyPlan(snapshots):
+    """Restore the snapshots in one change block, putting back the ones
+    already restored if one of them fails."""
+    with Sdf.ChangeBlock():
+        attempted = []
+        try:
+            for target, current in snapshots:
+                attempted.append(current)
+                target.Restore()
+        except Exception as error:
+            failures = []
+            for current in reversed(attempted):
+                try:
+                    current.Restore()
+                except Exception as rollbackError:
+                    failures.append(str(rollbackError))
+            if failures:
+                raise RuntimeError(
+                    "Undo restoration failed (%s); rollback also failed: %s" %
+                    (error, "; ".join(failures))) from error
+            raise
+
+
 class Edit(object):
     """One undoable unit: a label and the per-attribute before/after."""
 
@@ -311,7 +334,12 @@ class Edit(object):
         self.label = label
         self.entries = list(entries)
 
-    def _Apply(self, useAfter):
+    def Snapshots(self, useAfter):
+        """The restores this edit would make, checked first.
+
+        Nothing is written here: a layer that cannot be edited raises before
+        any change happens, so a replay never half-applies.
+        """
         snapshots = []
         for entry in self.entries:
             # A removed or reloaded layer has nothing left to restore; the
@@ -324,49 +352,36 @@ class Edit(object):
             target = entry.after if useAfter else entry.before
             current = None
             # Restoring a property can create an entire missing parent chain.
-            # Roll back from its first absent ancestor to remove those specs too.
+            # Roll back from its first absent ancestor to remove those specs
+            # too.
             for prefix in entry.specPath.GetPrefixes():
                 if entry.layer.GetObjectAtPath(prefix) is None:
                     current = SpecSnapshot.Capture(entry.layer, prefix)
                     break
             if current is None:
                 # Capture's arguments differ per snapshot kind (an info
-                # field needs its key, a layer's sublayers or relocates
-                # need no path), so each snapshot recaptures its own scope.
+                # field needs its key, a layer's sublayers or relocates need
+                # no path), so each snapshot recaptures its own scope.
                 current = target.Recapture()
             snapshots.append((target, current))
-        # ONE change block around the whole edit, not one per attribute.
-        # An xform edit writes the op attributes and xformOpOrder as
-        # separate specs; restoring them in separate blocks lets the
-        # stage see an xformOpOrder naming ops that do not exist yet,
-        # and anything that recomposes on every notice (the gizmo
-        # controller, outside a drag) reads that half-applied state and
-        # warns. The nested blocks inside Restore() are harmless: USD
-        # sends the notices when the OUTERMOST block closes.
-        with Sdf.ChangeBlock():
-            attempted = []
-            try:
-                for target, current in snapshots:
-                    attempted.append(current)
-                    target.Restore()
-            except Exception as error:
-                failures = []
-                for current in reversed(attempted):
-                    try:
-                        current.Restore()
-                    except Exception as rollbackError:
-                        failures.append(str(rollbackError))
-                if failures:
-                    raise RuntimeError(
-                        "Undo restoration failed (%s); rollback also failed: %s" %
-                        (error, "; ".join(failures))) from error
-                raise
+        return snapshots
+
+    def _Apply(self, useAfter):
+        # ONE change block around the whole edit, not one per attribute. An
+        # xform edit writes the op attributes and xformOpOrder as separate
+        # specs; restoring them in separate blocks lets the stage see an
+        # xformOpOrder naming ops that do not exist yet, and anything that
+        # recomposes on every notice (the gizmo controller, outside a drag)
+        # reads that half-applied state and warns. The nested blocks inside
+        # Restore() are harmless: USD sends the notices when the OUTERMOST
+        # block closes.
+        ApplyPlan(self.Snapshots(useAfter))
 
     def Undo(self):
-        self._Apply(useAfter=False)
+        self._Apply(False)
 
     def Redo(self):
-        self._Apply(useAfter=True)
+        self._Apply(True)
 
 
 class UndoStack(object):
@@ -378,6 +393,7 @@ class UndoStack(object):
         self._undo = []
         self._redo = []
         self._listeners = []
+        self._before_push = []
         self._flushers = []
         self._replaying = False
 
@@ -387,6 +403,13 @@ class UndoStack(object):
     def RemoveListener(self, fn):
         if fn in self._listeners:
             self._listeners.remove(fn)
+
+    def AddBeforePush(self, fn):
+        self._before_push.append(fn)
+
+    def RemoveBeforePush(self, fn):
+        if fn in self._before_push:
+            self._before_push.remove(fn)
 
     def AddFlusher(self, fn):
         """`fn()` runs before every Undo and Redo, so an editor holding
@@ -404,6 +427,8 @@ class UndoStack(object):
     def Push(self, edit):
         if self._replaying:
             raise RuntimeError("Cannot record an edit during undo or redo")
+        for fn in list(self._before_push):
+            fn()
         self._undo.append(edit)
         del self._undo[:-self.LIMIT]
         self._redo = []

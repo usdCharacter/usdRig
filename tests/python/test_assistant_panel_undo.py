@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qt-free tests for the AI Assistant panel's reply transaction.
+"""Offscreen Qt tests for the AI Assistant panel's reply transaction.
 
 Every reply is one transaction: native tool calls and the fenced action
 blocks of the same reply share one Toolbox, and closing it pushes exactly
@@ -23,7 +23,7 @@ import rigexec_test_env  # noqa: E402
 
 rigexec_test_env.SetupPluginTest()
 
-from pxr import Sdf, Usd  # noqa: E402
+from pxr import Sdf, Tf, Usd  # noqa: E402
 from pxr.Usdviewq.qt import QtWidgets  # noqa: E402
 
 import rigExecUndo  # noqa: E402
@@ -488,6 +488,218 @@ def TestChangeBlocksAreTitledApart():
            "an old message grew an effects block: %s" % old)
 
 
+def TestStageReplacementRejectsLateWrites():
+    a, b = _Stage(), _Stage()
+    b.GetAttributeAtPath('/Char/Ctl.x').Set(10.0)
+    container = _CountingContainer()
+    assistant = _Panel(a, container)
+    box = _ReplyToolbox(assistant)
+    _Reply(assistant, _Fence('[{"action":"set_attr","path":"/Char/Ctl",'
+                              '"name":"x","value":30}]'), box)
+    text, failed = box.call('change_stage', {'changes': [
+        {'action': 'set_attr', 'path': '/Char/Ctl', 'name': 'x', 'value': 2.0}]})
+    _Check(not failed, 'A did not get the first edit: %s' % text)
+    assistant.session.api.stage = b
+    for name, args in (('change_stage', {'changes': [
+            {'action': 'set_attr', 'path': '/Char/Ctl', 'name': 'x',
+             'value': 20.0}]}),
+                       ('run_python', {'code': 'stage.GetAttributeAtPath('
+                                     '"/Char/Ctl.x").Set(20)' })):
+        text, failed = box.call(name, args)
+        _Check(failed and 'stage changed' in text,
+               'late %s was accepted: %s' % (name, text))
+    assistant.on_finished()
+    _Check(b.GetAttributeAtPath('/Char/Ctl.x').Get() == 10.0,
+           'B changed from A reply')
+    _Check(len(container.stack.pushed) == 1, 'A did not get one undo entry')
+    container.stack.Undo()
+    _Check(a.GetAttributeAtPath('/Char/Ctl.x').Get() == 1.0 and
+           b.GetAttributeAtPath('/Char/Ctl.x').Get() == 10.0,
+           'A undo modified B or missed A')
+
+
+def TestGroupFailsAtomically():
+    root = _Layer('group_root.usda', _CAPTURE_USDA)
+    over = _Layer('group_over.usda')
+    root.subLayerPaths.append(over.identifier)
+    stage = Usd.Stage.Open(root)
+    container = _CountingContainer()
+    box = tools.Toolbox(assistant_session.Session(_Api(stage), container),
+                        can_edit=True)
+    box.call('change_stage', {'changes': [
+        {'action': 'set_attr', 'path': '/Char/Ctl', 'name': 'x', 'value': 2.0},
+        {'action': 'set_edit_target', 'layer': over.identifier},
+        {'action': 'set_attr', 'path': '/Char/Ctl', 'name': 'y',
+         'type': 'double', 'value': 7.0}]})
+    box.close()
+    _Check(len(container.stack.pushed) == 1, 'expected one compound step')
+    root.SetPermissionToEdit(False)
+    try:
+        try:
+            container.stack.Undo()
+            _Check(False, 'undo accepted a locked later member')
+        except RuntimeError:
+            pass
+        _Check(root.GetAttributeAtPath('/Char/Ctl.x').default == 2.0 and
+               over.GetAttributeAtPath('/Char/Ctl.y').default == 7.0 and
+               container.stack.CanUndo() and not container.stack.CanRedo(),
+               'failed undo changed layers or cursor')
+    finally:
+        root.SetPermissionToEdit(True)
+    container.stack.Undo()
+    over.SetPermissionToEdit(False)
+    try:
+        try:
+            container.stack.Redo()
+            _Check(False, 'redo accepted a locked later member')
+        except RuntimeError:
+            pass
+        _Check(root.GetAttributeAtPath('/Char/Ctl.x').default == 1.0 and
+               over.GetAttributeAtPath('/Char/Ctl.y') is None and
+               container.stack.CanRedo() and not container.stack.CanUndo(),
+               'failed redo changed layers or cursor')
+    finally:
+        over.SetPermissionToEdit(True)
+    container.stack.Redo()
+
+
+def TestSharedLayerPythonLeavesIndependentField():
+    shared = _Layer('shared.usda', _CAPTURE_USDA.replace('custom double x = 1',
+        'custom double x = 1\n        custom double y = 10'))
+    a, b = Usd.Stage.Open(shared), Usd.Stage.Open(shared)
+    container = _CountingContainer()
+    box = tools.Toolbox(assistant_session.Session(_Api(a), container),
+                        can_run=True)
+    text, failed = box.call('run_python', {'code':
+        'stage.GetAttributeAtPath("/Char/Ctl.x").Set(2.0)'})
+    _Check(not failed, 'Python write failed: %s' % text)
+    box.close()
+    b.GetAttributeAtPath('/Char/Ctl.y').Set(20.0)
+    container.stack.Undo()
+    _Check(shared.GetAttributeAtPath('/Char/Ctl.x').default == 1.0 and
+           shared.GetAttributeAtPath('/Char/Ctl.y').default == 20.0,
+           'undo removed independent y')
+    container.stack.Redo()
+    _Check(shared.GetAttributeAtPath('/Char/Ctl.x').default == 2.0 and
+           shared.GetAttributeAtPath('/Char/Ctl.y').default == 20.0,
+           'redo removed independent y')
+
+
+def TestInterleavedEditorHistory():
+    stage = _Stage()
+    root = stage.GetRootLayer()
+    container = _CountingContainer()
+    box = tools.Toolbox(assistant_session.Session(_Api(stage), container),
+                        can_edit=True)
+    box.call('change_stage', {'changes': [
+        {'action': 'set_attr', 'path': '/Char/Ctl', 'name': 'x',
+         'value': 2.0}]})
+    path = Sdf.Path('/Char/Ctl.x')
+    before = rigExecUndo.SpecSnapshot.Capture(root, path)
+    stage.GetAttributeAtPath(path).Set(3.0)
+    after = rigExecUndo.SpecSnapshot.Capture(root, path)
+    container.stack.Push(rigExecUndo.Edit('Editor', [
+        rigExecUndo.EditEntry(root, path, before, after)]))
+    text, failed = box.call('change_stage', {'changes': [
+        {'action': 'set_attr', 'path': '/Char/Ctl', 'name': 'x',
+         'value': 4.0}]})
+    _Check(failed and len(container.stack.pushed) == 2,
+           'interleaved editor write did not close reply: %s' % text)
+    container.stack.Undo()
+    _Check(stage.GetAttributeAtPath(path).Get() == 2.0,
+           'undo editor did not restore Assistant value')
+    container.stack.Undo()
+    _Check(stage.GetAttributeAtPath(path).Get() == 1.0,
+           'undo Assistant did not restore original value')
+
+
+def TestReferencedMoves():
+    for action in ('rename_prim', 'reparent_prim'):
+        for local_over in (False, True):
+            source = _Layer('reference.usda', '#usda 1.0\n'
+                            'def Xform "Asset"\n{\n    def Xform "Part"\n'
+                            '    {\n    }\n}\n')
+            root = _Layer('reference_root.usda')
+            stage = Usd.Stage.Open(root)
+            world = stage.DefinePrim('/World', 'Xform')
+            world.GetReferences().AddReference(source.identifier, '/Asset')
+            stage.DefinePrim('/NewParent', 'Xform')
+            link = stage.DefinePrim('/Link', 'Xform').CreateRelationship('target')
+            link.SetTargets(['/World/Part'])
+            if local_over:
+                stage.OverridePrim('/World/Part').SetMetadata('kind', 'component')
+            container = _CountingContainer()
+            box = tools.Toolbox(assistant_session.Session(_Api(stage), container),
+                                can_edit=True)
+            destination = ('/World/Moved' if action == 'rename_prim' else
+                           '/NewParent/Part')
+            args = {'action': action, 'path': '/World/Part'}
+            args['name' if action == 'rename_prim' else 'parent'] = (
+                'Moved' if action == 'rename_prim' else '/NewParent')
+            text, failed = box.call('change_stage', {'changes': [args]})
+            _Check(not failed, '%s over=%s failed: %s' %
+                   (action, local_over, text))
+            box.close()
+            if failed:
+                continue
+
+            def check(moved):
+                expected = destination if moved else '/World/Part'
+                _Check(stage.GetPrimAtPath(expected).IsValid() and
+                       not stage.GetPrimAtPath(
+                           '/World/Part' if moved else destination).IsValid(),
+                       '%s over=%s composed path wrong (%s)' %
+                       (action, local_over, moved))
+                _Check([str(p) for p in link.GetTargets()] == [expected],
+                       '%s over=%s relationship wrong (%s)' %
+                       (action, local_over, moved))
+                _Check(bool(root.relocates) == moved,
+                       '%s over=%s relocate wrong (%s): %s' %
+                       (action, local_over, moved, root.relocates))
+
+            check(True)
+            _Check(len(container.stack.pushed) == 1,
+                   'referenced move missing undo entry')
+            container.stack.Undo()
+            check(False)
+            container.stack.Redo()
+            check(True)
+
+
+def TestCloseDuringWrite():
+    stage = _Stage()
+    container = _CountingContainer()
+    assistant = _Panel(stage, container)
+    box = _ReplyToolbox(assistant)
+    _Reply(assistant, 'Set x.', box)
+    closed = [False]
+
+    def on_change(_notice, _sender):
+        if not closed[0] and stage.GetAttributeAtPath('/Char/Ctl.x').Get() == 2:
+            closed[0] = True
+            assistant.close()
+
+    key = Tf.Notice.Register(Usd.Notice.ObjectsChanged, on_change, stage)
+    try:
+        text, failed = box.call('change_stage', {'changes': [
+            {'action': 'set_attr', 'path': '/Char/Ctl', 'name': 'x',
+             'value': 2.0}]})
+    finally:
+        key.Revoke()
+    _Check(not failed and closed[0], 'close notice did not fire: %s' % text)
+    _Check(stage.GetAttributeAtPath('/Char/Ctl.x').Get() == 2.0 and
+           len(container.stack.pushed) == 1 and
+           assistant.messages and assistant.messages[-1]['done'],
+           'close lost the change, undo step, or saved outcome')
+    text, failed = box.call('change_stage', {'changes': [
+        {'action': 'set_attr', 'path': '/Char/Ctl', 'name': 'x', 'value': 3.0}]})
+    _Check(failed and stage.GetAttributeAtPath('/Char/Ctl.x').Get() == 2.0,
+           'closed toolbox authored another change: %s' % text)
+    container.stack.Undo()
+    _Check(stage.GetAttributeAtPath('/Char/Ctl.x').Get() == 1.0,
+           'the close step is not usable')
+
+
 def main():
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     _ = app
@@ -498,7 +710,13 @@ def main():
                  TestMissingUndoStackIsVisible,
                  TestRefusedPushIsVisible,
                  TestSaveOnlyReplyHasEffectsAndNoStep,
-                 TestChangeBlocksAreTitledApart):
+                 TestChangeBlocksAreTitledApart,
+                 TestStageReplacementRejectsLateWrites,
+                 TestGroupFailsAtomically,
+                 TestSharedLayerPythonLeavesIndependentField,
+                 TestReferencedMoves,
+                 TestInterleavedEditorHistory,
+                 TestCloseDuringWrite):
         try:
             test()
         except Exception as err:

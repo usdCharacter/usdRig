@@ -6,57 +6,44 @@ import os
 
 from pxr import Sdf, Usd
 
+import rigExecUndo
+
 from . import host
 
 logger = logging.getLogger(host.LOGGER_NAME)
 
 
 class GroupEdit(object):
-    """Several rigExecUndo edits as one undo step: undone last first."""
+    """Several rigExecUndo edits as one undo step: undone last first.
+
+    The group replays as one host boundary: every layer is checked before
+    anything is written, and if a restore still fails the ones already made
+    are put back, so neither the stage nor the history cursor moves.
+    """
 
     def __init__(self, label, edits):
         self.label = label
         self.edits = list(edits)
 
-    def Undo(self):
-        for edit in reversed(self.edits):
-            edit.Undo()
-
-    def Redo(self):
-        for edit in self.edits:
-            edit.Redo()
-
-
-class LayerSnapshotEdit(object):
-    """Undo for code the assistant ran: the whole layer before and after,
-    since there is no telling which specs it touched."""
-
-    def __init__(self, label, layer, before, after):
-        self.label = label
-        self.layer = layer
-        self.before = before
-        self.after = after
-
-    def _restore(self, source):
-        if self.layer is None or self.layer.expired:
-            return
-        self.layer.TransferContent(source)
+    def _Plan(self, direction):
+        useAfter = direction == 'Redo'
+        members = self.edits if useAfter else reversed(self.edits)
+        plan = []
+        for edit in members:
+            plan.extend(edit.Snapshots(useAfter))
+        return plan
 
     def Undo(self):
-        self._restore(self.before)
+        rigExecUndo.ApplyPlan(self._Plan('Undo'))
 
     def Redo(self):
-        self._restore(self.after)
+        rigExecUndo.ApplyPlan(self._Plan('Redo'))
 
 
 def snapshot(layer):
     copy = Sdf.Layer.CreateAnonymous('assistant_snapshot')
     copy.TransferContent(layer)
     return copy
-
-
-def same_content(a, b):
-    return a.ExportToString() == b.ExportToString()
 
 
 def stage_layers(stage):

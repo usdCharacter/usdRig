@@ -1610,7 +1610,7 @@ class InfoSnapshot(object):
     @classmethod
     def Capture(cls, layer, primPath, key):
         snap = cls(layer, primPath, key)
-        spec = layer.GetPrimAtPath(snap.primPath)
+        spec = layer.GetObjectAtPath(snap.primPath)
         if spec is not None and spec.HasInfo(key):
             snap.had = True
             snap.value = spec.GetInfo(key)
@@ -1621,10 +1621,13 @@ class InfoSnapshot(object):
         return type(self).Capture(self.layer, self.primPath, self.key)
 
     def Restore(self):
-        spec = self.layer.GetPrimAtPath(self.primPath)
+        spec = self.layer.GetObjectAtPath(self.primPath)
         if spec is None:
             if not self.had:
                 return
+            if self.primPath.IsPropertyPath():
+                raise RuntimeError('Cannot restore a field on missing property '
+                                   + str(self.primPath))
             spec = Sdf.CreatePrimInLayer(self.layer, self.primPath)
         if self.had:
             spec.SetInfo(self.key, self.value)
