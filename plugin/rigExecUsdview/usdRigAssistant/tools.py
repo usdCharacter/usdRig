@@ -1762,8 +1762,11 @@ def _spec_paths(changes, target, stage):
                 parent = parent.GetParentPath()
             paths.add(top)
             # define_prim also promotes every ancestor the stage does not
-            # compose as defined; each of those needs its own snapshot.
-            paths.update(stage_actions.parents_to_define(stage, prim))
+            # compose as defined, so each of those needs its own snapshot.
+            # The other creation writers leave an existing ancestor alone:
+            # snapshotting it would undo opinions the artist authored later.
+            if action == 'define_prim':
+                paths.update(stage_actions.parents_to_define(stage, prim))
     # A prim's snapshot holds its subtree, so its descendants need none.
     kept = [p for p in paths
             if not any(p != q and p.HasPrefix(q) for q in paths)]

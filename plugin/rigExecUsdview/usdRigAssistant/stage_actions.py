@@ -507,8 +507,10 @@ class Applier(object):
         reference = Sdf.Reference(asset, target_path)
         with self.write(action):
             listOp = self.create_spec(target, spec_path).referenceList
-            # Match UsdReferences.AddReference: append to the list the prim's
-            # list op already edits, and move a repeat to the back of it.
+            # Match UsdReferences.AddReference: an explicit list stays
+            # explicit and takes the new arc at its back; any other opinion
+            # takes it at the back of prependedItems, even when an append
+            # list exists. A repeat moves to the back of the list it joins.
             explicit = listOp.isExplicit
             items = list(listOp.explicitItems if explicit
                          else listOp.prependedItems)

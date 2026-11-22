@@ -356,10 +356,12 @@ mis-ordered:
   arcs)" promises.
 
 An action that adds one arc without asking where it goes follows
-`UsdReferences.AddReference` instead: it appends to the arm the prim's
-opinion already edits, so an explicit list stays explicit and an existing
-prepend list keeps its order. That is what the Assistant's `add_reference`
-action does (`usdRigAssistant/stage_actions.py`, `do_add_reference`), and
+`UsdReferences.AddReference` instead: an **explicit** opinion stays
+explicit and the new arc joins the back of it, and any other opinion — a
+prepend list, an append list, or none — puts the new arc at the back of
+`prependedItems`, leaving an existing `appendedItems` alone. The
+Assistant's `add_reference` action does this
+(`usdRigAssistant/stage_actions.py`, `do_add_reference`), and
 `tests/python/test_assistant.py`
 (`TestAddReferenceMatchesTheUsdApiOnEveryListOpMode`) compares its authored
 arcs and composed order with the API on every arm.

@@ -970,6 +970,64 @@ def Xform "Char"
                '%s: one redo restores the API result' % mode)
 
 
+def TestAddReferenceUnderAnOverAncestorLeavesSiblingsAlone():
+    """A reference below an over prim snapshots that prim alone. An
+    existing over prim is no reason to snapshot all of it: the artist can
+    author a sibling afterwards, outside the Assistant's undo stack, and
+    undoing the reference must not overwrite that opinion."""
+    layer = Sdf.Layer.CreateAnonymous('assistant_reference_sibling.usda')
+    layer.ImportFromString('''#usda 1.0
+(
+)
+over "A"
+{
+}
+''')
+    stage = Usd.Stage.Open(layer)
+    asset = Sdf.Layer.CreateAnonymous('model_sibling.usda')
+    Sdf.CreatePrimInLayer(asset, '/Ref').specifier = Sdf.SpecifierDef
+    asset.defaultPrim = 'Ref'
+    container = _Container()
+    box, _api = _Toolbox(stage, container, can_edit=True)
+
+    def referenced():
+        spec = layer.GetPrimAtPath('/A/B')
+        if spec is None:
+            return False
+        listOp = spec.referenceList
+        return bool(list(listOp.explicitItems) + list(listOp.prependedItems)
+                    + list(listOp.appendedItems))
+
+    text, failed = box.call('change_stage', {'changes': [
+        {'action': 'add_reference', 'path': '/A/B',
+         'asset': asset.identifier}]})
+    _Check(not failed, text)
+    _Check(referenced(), 'add_reference under an over ancestor: %s' % text)
+
+    def siblingMark():
+        attr = layer.GetAttributeAtPath(
+            Sdf.Path('/A/Sibling').AppendProperty('float:artistMark'))
+        if attr is None or not attr.HasDefaultValue():
+            return None
+        return attr.default
+
+    stage.OverridePrim('/A/Sibling').CreateAttribute(
+        'float:artistMark', Sdf.ValueTypeNames.Float).Set(7.0)
+    _Check(siblingMark() == 7.0, 'the sibling opinion was not authored')
+
+    _Check(container.stack.Undo(), 'the Assistant edit was not recorded')
+    _Check(not stage.GetPrimAtPath('/A/B') and
+           stage.GetPrimAtPath('/A').GetSpecifier() == Sdf.SpecifierOver and
+           siblingMark() == 7.0,
+           'one undo removes the referenced prim and keeps the sibling: '
+           'B=%r A=%r mark=%r' % (bool(stage.GetPrimAtPath('/A/B')),
+                                  stage.GetPrimAtPath('/A').GetSpecifier(),
+                                  siblingMark()))
+    _Check(container.stack.Redo() and referenced() and siblingMark() == 7.0,
+           'one redo restores the referenced prim with its reference and '
+           'keeps the sibling: B=%r mark=%r' % (referenced(), siblingMark()))
+
+
 def TestReferencePreservesExistingOpinionsAndOrder():
     stage = _Stage()
     prim = stage.GetPrimAtPath('/Char/Ctl')
@@ -2096,6 +2154,7 @@ def main():
                  TestReferencePreservesExistingOpinionsAndOrder,
                  TestDefinePrimUnderAnOverAncestorUndoesTheWholeEdit,
                  TestAddReferenceMatchesTheUsdApiOnEveryListOpMode,
+                 TestAddReferenceUnderAnOverAncestorLeavesSiblingsAlone,
                  TestACallThatChangesNothingLeavesHistoryAlone,
                  TestAWriteAfterAnUndoDoesNotGrowAnOlderStep,
                  TestHostUndoStackWithoutLastEdit,
