@@ -252,6 +252,34 @@ def copy_msvc_runtime(app_dir: Path, python_home: Path, usd: Path,
     return copied
 
 
+def merge_lib64(tree: Path) -> list[str]:
+    """Move shared libraries from ``tree/lib64`` into ``tree/lib``.
+
+    On RHEL-family hosts CMake's GNUInstallDirs installs into lib64, so
+    build_usd.py's oneTBB lands in usd-install/lib64 while OpenUSD itself
+    uses lib. The launcher puts only lib on the loader path, and the
+    install's absolute RUNPATH to lib64 is gone once the bundle moves.
+    """
+    lib64 = tree / "lib64"
+    if not lib64.is_dir() or lib64.is_symlink():
+        return []
+    lib = tree / "lib"
+    lib.mkdir(parents=True, exist_ok=True)
+    moved = []
+    for path in sorted(lib64.iterdir()):
+        if ".so" not in path.name or path.is_dir():
+            continue
+        target = lib / path.name
+        if os.path.lexists(target):
+            continue
+        if path.is_symlink() and "/" not in os.readlink(path):
+            os.symlink(os.readlink(path), target)
+        else:
+            shutil.copy2(path, target)
+        moved.append(path.name)
+    return moved
+
+
 def make_executable(path: Path) -> None:
     if os.name != "nt":
         target = path.resolve() if path.is_symlink() else path
@@ -537,6 +565,10 @@ def assemble(args) -> Path:
               preserve_symlinks=keep_links)
     copy_tree(Path(args.rig_install), app_dir / "rig", args.trim_dev,
               preserve_symlinks=keep_links)
+    if platform == "linux":
+        for sub in ("usd", "rig"):
+            for name in merge_lib64(app_dir / sub):
+                print(f"assemble_bundle: {sub}/lib64/{name} -> {sub}/lib")
     python_src = resolve_python_home(Path(args.python_home), platform)
     if python_src != Path(args.python_home):
         print(f"assemble_bundle: note: python home resolves to "

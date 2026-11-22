@@ -2,7 +2,9 @@
 """Check an assembled bundle against a VFX Reference Platform year.
 
 Linux (``--platform linux``): every ELF file in the bundle must resolve each
-library it needs either inside the bundle or to a system library that every
+library it needs either where the relocated bundle's loader looks (the
+launcher's library directories, or a RUNPATH inside the bundle) or to a
+system library that every
 supported distribution provides (the manylinux policy list plus the GL,
 X11/xcb, Wayland, font and D-Bus libraries a desktop session supplies).
 With ``--collect``, a needed library that resolves on the build machine to a
@@ -102,6 +104,18 @@ def readelf(flag: str, path: Path) -> str:
                           check=False).stdout
 
 
+def runpath(path: Path) -> list[Path]:
+    """RUNPATH/RPATH entries, with $ORIGIN expanded."""
+    found = re.findall(r"\((?:RUNPATH|RPATH)\)\s+Library r(?:un)?path: "
+                       r"\[([^\]]*)\]", readelf("-d", path))
+    dirs = []
+    for entry in ":".join(found).split(":"):
+        if entry:
+            dirs.append(Path(entry.replace("${ORIGIN}", str(path.parent))
+                             .replace("$ORIGIN", str(path.parent))))
+    return dirs
+
+
 def needed(path: Path) -> list[str]:
     return re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]",
                       readelf("-d", path))
@@ -140,6 +154,12 @@ def check_linux(root: Path, glibc_max: str, glibcxx_max: str,
                 collect: bool) -> int:
     app = root / "app"
     collect_dir = app / "usd" / "lib"
+    # Where the relocated bundle's loader looks: the launcher's
+    # LD_LIBRARY_PATH, plus the interpreter's own lib (libpython is already
+    # loaded). A library that only sits elsewhere in the bundle, or is found
+    # through an absolute RUNPATH into the build tree, does not count.
+    loader_dirs = [app / "rig" / "lib", app / "rig" / "bin",
+                   app / "usd" / "lib", app / "python" / "lib"]
     host_dirs = [Path(p) for p in os.environ.get(
         "LD_LIBRARY_PATH", "").split(":") if p]
     host_dirs += [Path("/usr/local/lib64"), Path("/usr/local/lib")]
@@ -151,17 +171,18 @@ def check_linux(root: Path, glibc_max: str, glibcxx_max: str,
     while changed:  # a collected library may need further libraries
         changed = False
         files = list(elf_files(root))
-        in_bundle = {path.name for path in files}
-        in_bundle |= {p.name for p in root.rglob("*.so*") if p.is_symlink()}
         for path in files:
             optional = is_optional(path, root)
+            search = loader_dirs + [d for d in runpath(path)
+                                    if d.resolve().is_relative_to(root)]
             for name in needed(path):
                 if "/" in name:  # a path, usually $ORIGIN-relative
                     target = Path(name.replace("$ORIGIN", str(path.parent))
                                   .replace("${ORIGIN}", str(path.parent)))
                     if target.exists():
                         continue
-                elif name in in_bundle or is_system(name):
+                elif is_system(name) or any((d / name).exists()
+                                            for d in search):
                     continue
                 source = (None if optional or "/" in name
                           else resolve_system(name, host_dirs))
@@ -169,7 +190,6 @@ def check_linux(root: Path, glibc_max: str, glibcxx_max: str,
                     collect_dir.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source.resolve(), collect_dir / name)
                     collected.append(f"{name} (from {source})")
-                    in_bundle.add(name)
                     changed = True
                     continue
                 message = (f"{path.relative_to(root)} needs {name}, which is "
