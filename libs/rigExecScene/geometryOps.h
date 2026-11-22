@@ -141,6 +141,20 @@ bool RigExecWriteGeometryMatrixInputs(
     const std::vector<GfVec3f> &final, const RigExecGeometryMatrixNode &node,
     RigExecEvaluator *evaluator, std::string *error = nullptr);
 
+/// Whether \p node was built from settings that \p p or \p channels no
+/// longer carry: its write then refuses, and it must be rebuilt.
+bool
+RigExecGeometryOpNodeStale(RigExecRevisionOp op,
+                           const RigExecMoverParameters &p,
+                           const std::vector<RigExecBlendChannel> *channels,
+                           const RigExecGeometryOpNode &node);
+
+/// RigExecGeometryOpNodeStale for a derived matrix node.
+bool RigExecGeometryMatrixNodeStale(RigExecRevisionOp op,
+                                    const RigExecSurfaceProjectorFrames &frames,
+                                    const RigExecProjectorReads &reads,
+                                    const RigExecGeometryMatrixNode &node);
+
 } // namespace rigExec
 
 #endif

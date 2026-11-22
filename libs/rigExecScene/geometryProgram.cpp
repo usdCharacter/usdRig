@@ -146,11 +146,9 @@ RigExecRunGeometryMatrix(const RigExecGeometryRecord &record,
                          std::vector<std::string> *diagnostics)
 {
     // Only the surface projector names its mover in a diagnostic.
-    std::string who;
-    const SdfPath &mover = record.binding.moverPath;
-    if (record.op == RigExecRevisionOp::SurfaceProjector &&
-        !RigExecSpellPathText(mover, &who) && !mover.IsEmpty())
-        who = mover.GetAsString();
+    const std::string who = record.op == RigExecRevisionOp::SurfaceProjector
+                                ? RigExecGeometryMoverText(record.binding)
+                                : std::string();
     return workspace && matrix &&
            RigExecRunProjectorTarget(record.op, record.binding, frames, reads,
                                      base, final, who, matrix, diagnostics,
@@ -166,5 +164,20 @@ RigExecRunGeometry(const RigExecGeometryRecord &record,
         return false;
     return RigExecRunGeometry(record.op, parameters, points, useSimd,
                               &workspace->wire, &workspace->surface);
+}
+bool
+RigExecGeometryPacketMatches(RigExecRevisionOp op,
+                             const RigExecMoverParameters &parameters)
+{
+    return parameters.valid && parameters.kind == RigExecRevisionKindToken(op);
+}
+std::string
+RigExecGeometryMoverText(const RigExecRevisionBinding &binding)
+{
+    std::string who;
+    if (!RigExecSpellPathText(binding.moverPath, &who) &&
+        !binding.moverPath.IsEmpty())
+        who = binding.moverPath.GetAsString();
+    return who;
 }
 } // namespace rigExec

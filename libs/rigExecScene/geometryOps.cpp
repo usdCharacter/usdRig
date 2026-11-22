@@ -454,7 +454,9 @@ RigExecWriteGeometryOpInputs(const RigExecMoverParameters &p,
 {
     if (!evaluator)
         return Fail(error, "null evaluator");
-    if (!(PayloadFields(node.op, p) == node.payloadFields))
+    if (!(PayloadFields(node.op, p) == node.payloadFields) ||
+        (node.op == RigExecRevisionOp::Wire &&
+         Valid(node.weightIndices) != WireSparse(p.weights)))
         return Fail(error, "op settings changed");
     if (Valid(node.envelope)) {
         std::vector<float> resolved;
@@ -860,6 +862,48 @@ RigExecWriteGeometryBlendInputs(
     const RigExecArray<Vec3f> measured = ToStd(base);
     return evaluator->SetInput(node.channelWeights, &weights, error) &&
            evaluator->SetInput(node.base, &measured, error);
+}
+
+bool
+RigExecGeometryOpNodeStale(RigExecRevisionOp op,
+                           const RigExecMoverParameters &p,
+                           const std::vector<RigExecBlendChannel> *channels,
+                           const RigExecGeometryOpNode &node)
+{
+    if (node.op != op || !(PayloadFields(op, p) == node.payloadFields) ||
+        (op == RigExecRevisionOp::Wire &&
+         Valid(node.weightIndices) != WireSparse(p.weights)))
+        return true;
+    if (!channels)
+        return false;
+    if (channels->size() != node.blendSamples.size())
+        return true;
+    for (size_t c = 0; c < channels->size(); ++c) {
+        const auto &kept = node.blendSamples[c];
+        const auto &now = (*channels)[c].samples;
+        if (kept.size() != now.size())
+            return true;
+        for (size_t k = 0; k < kept.size(); ++k)
+            if (!SameSample(kept[k], now[k]))
+                return true;
+    }
+    return false;
+}
+
+bool
+RigExecGeometryMatrixNodeStale(RigExecRevisionOp op,
+                               const RigExecSurfaceProjectorFrames &frames,
+                               const RigExecProjectorReads &reads,
+                               const RigExecGeometryMatrixNode &node)
+{
+    if (node.op != op)
+        return true;
+    if (op == RigExecRevisionOp::ShaderDials)
+        return false;
+    for (int k = 0; k < 3; ++k)
+        if (Fed(frames, k) != node.resolved[k])
+            return true;
+    return !SameSettings(reads, node.settings);
 }
 
 } // namespace rigExec

@@ -102,5 +102,10 @@ bool RigExecRunGeometry(const RigExecGeometryRecord &,
                         const RigExecMoverParameters &,
                         RigExecGeometryWorkspace *, std::vector<GfVec3f> *,
                         bool useSimd);
+/// RigExecRunGeometry's packet check: valid and of the op's kind.
+bool RigExecGeometryPacketMatches(RigExecRevisionOp,
+                                  const RigExecMoverParameters &);
+/// The mover a surface projector diagnostic names.
+std::string RigExecGeometryMoverText(const RigExecRevisionBinding &);
 } // namespace rigExec
 #endif

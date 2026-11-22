@@ -249,6 +249,49 @@ include(cmake/rigExecMoverPlugin.cmake)
 include(cmake/rigExecMover.cmake)
 include(cmake/rigExecRegistration.cmake)
 
+# The op core's built-in type and op libraries. rigExecScene runs geometry
+# through them, so they build with or without tests.
+rigexec_add_type_library(rigExecStdTypes
+    SOURCES libs/rigExecStdTypes/stdTypes.cpp)
+rigexec_add_type_library(rigExecRigTypes
+    SOURCES libs/rigExecRigTypes/rigTypes.cpp
+    REQUIRES rigExecStdTypes)
+rigexec_add_op_library(rigExecOps
+    SOURCES libs/rigExecOps/library.cpp
+        libs/rigExecOps/property/mathOps.cpp
+        libs/rigExecOps/deform/pointOps.cpp
+        libs/rigExecOps/deform/deltaMushOp.cpp
+        libs/rigExecOps/deform/latticeOp.cpp
+        libs/rigExecOps/deform/wrinkleOp.cpp
+        libs/rigExecOps/deform/surfaceProjectOp.cpp
+        libs/rigExecOps/deform/matrixDeformOp.cpp
+        libs/rigExecOps/deform/skinOp.cpp
+        libs/rigExecOps/deform/blendShapeOp.cpp
+        libs/rigExecOps/deform/derivedOps.cpp
+        libs/rigExecOps/deform/wireOp.cpp
+        libs/rigExecOps/deform/ribbonOp.cpp
+        libs/rigExecOps/deform/projectorOps.cpp
+        libs/rigExecOps/constraint/constraintOps.cpp
+        libs/rigExecOps/weight/weightOps.cpp
+        libs/rigExecOps/solver/chainSolverOps.cpp
+        libs/rigExecOps/solver/frameBlendOps.cpp
+        libs/rigExecOps/solver/ribbonFramesOps.cpp
+        libs/rigExecOps/solver/singleChainIkOps.cpp
+        libs/rigExecOps/solver/splineIkOps.cpp
+    USES_TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes)
+
+# The built-in type and op libraries in one shared module, so every library
+# and executable sees one set of handles. Their sources compile here as its
+# own objects, which is what the Windows export-all exports.
+get_target_property(_rigexec_builtin_ops rigExecOps SOURCES)
+add_library(rigExecBuiltins SHARED libs/rigExecBuiltins/builtins.cpp
+    libs/rigExecStdTypes/stdTypes.cpp libs/rigExecRigTypes/rigTypes.cpp
+    ${_rigexec_builtin_ops})
+target_compile_features(rigExecBuiltins PUBLIC cxx_std_17)
+target_include_directories(rigExecBuiltins PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>")
+target_link_libraries(rigExecBuiltins PUBLIC rigExec PRIVATE rigExecMath)
+
 add_library(rigExecStandalone SHARED
     libs/rigExecStandalone/sceneDb.cpp
     libs/rigExecStandalone/sceneAccess.cpp
@@ -1245,8 +1288,6 @@ rigexec_link_registrations(testRigExecCore
     TYPE_LIBRARIES rigExecTestFakeTypes OP_LIBRARIES rigExecTestFakeOps)
 add_test(NAME testRigExecCore COMMAND testRigExecCore)
 
-rigexec_add_type_library(rigExecStdTypes
-    SOURCES libs/rigExecStdTypes/stdTypes.cpp)
 add_executable(testRigExecStdTypes tests/testRigExecStdTypes.cpp
     $<TARGET_OBJECTS:rigExecRegistry> $<TARGET_OBJECTS:rigExecCore>)
 target_include_directories(testRigExecStdTypes PRIVATE
@@ -1256,9 +1297,6 @@ rigexec_link_registrations(testRigExecStdTypes
     TYPE_LIBRARIES rigExecStdTypes)
 add_test(NAME testRigExecStdTypes COMMAND testRigExecStdTypes)
 
-rigexec_add_type_library(rigExecRigTypes
-    SOURCES libs/rigExecRigTypes/rigTypes.cpp
-    REQUIRES rigExecStdTypes)
 add_executable(testRigExecRigTypes tests/testRigExecRigTypes.cpp
     $<TARGET_OBJECTS:rigExecRegistry> $<TARGET_OBJECTS:rigExecCore>)
 target_include_directories(testRigExecRigTypes PRIVATE
@@ -1268,29 +1306,6 @@ rigexec_link_registrations(testRigExecRigTypes
     TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes)
 add_test(NAME testRigExecRigTypes COMMAND testRigExecRigTypes)
 
-rigexec_add_op_library(rigExecOps
-    SOURCES libs/rigExecOps/library.cpp
-        libs/rigExecOps/property/mathOps.cpp
-        libs/rigExecOps/deform/pointOps.cpp
-        libs/rigExecOps/deform/deltaMushOp.cpp
-        libs/rigExecOps/deform/latticeOp.cpp
-        libs/rigExecOps/deform/wrinkleOp.cpp
-        libs/rigExecOps/deform/surfaceProjectOp.cpp
-        libs/rigExecOps/deform/matrixDeformOp.cpp
-        libs/rigExecOps/deform/skinOp.cpp
-        libs/rigExecOps/deform/blendShapeOp.cpp
-        libs/rigExecOps/deform/derivedOps.cpp
-        libs/rigExecOps/deform/wireOp.cpp
-        libs/rigExecOps/deform/ribbonOp.cpp
-        libs/rigExecOps/deform/projectorOps.cpp
-        libs/rigExecOps/constraint/constraintOps.cpp
-        libs/rigExecOps/weight/weightOps.cpp
-        libs/rigExecOps/solver/chainSolverOps.cpp
-        libs/rigExecOps/solver/frameBlendOps.cpp
-        libs/rigExecOps/solver/ribbonFramesOps.cpp
-        libs/rigExecOps/solver/singleChainIkOps.cpp
-        libs/rigExecOps/solver/splineIkOps.cpp
-    USES_TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes)
 add_executable(testRigExecOpsMath tests/testRigExecOpsMath.cpp
     $<TARGET_OBJECTS:rigExecRegistry> $<TARGET_OBJECTS:rigExecCore>)
 target_include_directories(testRigExecOpsMath PRIVATE
@@ -1307,18 +1322,6 @@ target_link_libraries(testRigExecOpsPoints PRIVATE rigExecMath Threads::Threads)
 rigexec_link_registrations(testRigExecOpsPoints TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 add_test(NAME testRigExecOpsPoints COMMAND testRigExecOpsPoints)
 set_tests_properties(testRigExecOpsPoints PROPERTIES LABELS "fast")
-
-# The built-in type and op libraries in one shared module, so every library
-# and executable sees one set of handles. Their sources compile here as its
-# own objects, which is what the Windows export-all exports.
-get_target_property(_rigexec_builtin_ops rigExecOps SOURCES)
-add_library(rigExecBuiltins SHARED libs/rigExecBuiltins/builtins.cpp
-    libs/rigExecStdTypes/stdTypes.cpp libs/rigExecRigTypes/rigTypes.cpp
-    ${_rigexec_builtin_ops})
-target_compile_features(rigExecBuiltins PUBLIC cxx_std_17)
-target_include_directories(rigExecBuiltins PUBLIC
-    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>")
-target_link_libraries(rigExecBuiltins PUBLIC rigExec PRIVATE rigExecMath)
 
 # Host-side bridge from translated USD properties to op nodes; not installed.
 # Step 10 folds it into rigExecUsd.

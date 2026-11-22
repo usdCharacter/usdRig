@@ -4,8 +4,6 @@
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecStdTypes/stdTypes.h"
 
-#include <string>
-
 namespace rigExec {
 
 namespace {
@@ -14,90 +12,84 @@ using rigExecStd::Mat4d;
 using rigExecStd::RigExecArray;
 using rigExecStd::Vec3f;
 
-/// Compiles \p builder into \p runner's evaluator.
 bool
-Finish(RigExecRigDescBuilder *builder, RigExecGeometryOpRunner *runner)
+Compile(RigExecRigDescBuilder &builder, RigExecGeometryOpRunner &runner,
+        std::string *error)
 {
-    std::string error;
-    auto desc = builder->Build(&error);
-    auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
-    runner->evaluator =
-        program ? RigExecEvaluator::Create(program, {}, &error) : nullptr;
-    return runner->evaluator != nullptr;
+    const auto desc = builder.Build(error);
+    const auto program = desc ? RigExecCompile(*desc, {}, error) : nullptr;
+    runner.evaluator =
+        program ? RigExecEvaluator::Create(program, {}, error) : nullptr;
+    return runner.evaluator != nullptr;
 }
 
-/// Builds when needed, then writes; one rebuild when the written settings
-/// moved since the build. A fresh build that still refuses latches native.
-template <class Build, class Write>
+/// Writes into the built node; builds first when there is none of \p built's
+/// op, and rebuilds once when the write refused settings that moved.
+template <class Add, class Write, class Stale>
 bool
-Prepare(RigExecGeometryOpRunner *runner, const Build &build, const Write &write)
+Ready(RigExecGeometryOpRunner &runner, bool built, const Add &add,
+      const Write &write, const Stale &stale, std::string *error)
 {
-    if (runner->native)
-        return false;
-    for (int attempt = 0; attempt < 2; ++attempt) {
-        const bool fresh = !runner->evaluator;
-        if (fresh) {
-            RigExecRigDescBuilder builder;
-            if (!build(&builder) || !Finish(&builder, runner)) {
-                runner->native = true;
-                return false;
-            }
-        }
+    if (built) {
         if (write())
             return true;
-        runner->evaluator.reset();
-        if (fresh) {
-            runner->native = true;
+        if (!stale())
             return false;
-        }
     }
-    return false;
+    runner.evaluator.reset();
+    RigExecRigDescBuilder builder;
+    return add(builder) && Compile(builder, runner, error) && write();
 }
 
 } // namespace
 
 bool
-RigExecLoadGeometryOpCore()
+RigExecLoadGeometryOpCore(std::string *error)
 {
-    return RigExecEnsureBuiltinRegistry();
+    return RigExecEnsureBuiltinRegistry(error);
 }
 
 bool
 RigExecRunGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
                      const std::vector<RigExecBlendChannel> *channels,
                      const std::vector<GfVec3f> &base,
-                     RigExecGeometryOpRunner *runner,
-                     std::vector<GfVec3f> *points)
+                     RigExecGeometryOpRunner &runner,
+                     std::vector<GfVec3f> &points, std::string *error)
 {
-    const bool blend = op == RigExecRevisionOp::BlendShape && channels;
-    if (!runner || !points || (!blend && !RigExecGeometryOpSupported(op)))
-        return false;
-    const bool ready = Prepare(
-        runner,
-        [&](RigExecRigDescBuilder *builder) {
-            return blend ? RigExecAddGeometryBlendOp(*channels, p, builder,
-                                                     nullptr, &runner->node)
-                         : RigExecAddGeometryOp(op, p, builder, nullptr,
-                                                &runner->node);
+    const bool ready = Ready(
+        runner, runner.evaluator && runner.node.op == op,
+        [&](RigExecRigDescBuilder &builder) {
+            return channels
+                       ? RigExecAddGeometryBlendOp(*channels, p, &builder,
+                                                   nullptr, &runner.node, error)
+                       : RigExecAddGeometryOp(op, p, &builder, nullptr,
+                                              &runner.node, error);
         },
         [&] {
-            RigExecEvaluator *e = runner->evaluator.get();
-            return blend ? RigExecWriteGeometryBlendInputs(
-                               *channels, p, runner->node, base, points,
-                               points->size(), e)
-                         : RigExecWriteGeometryOpInputs(p, runner->node, points,
-                                                        points->size(), e);
-        });
-    if (!ready || !runner->evaluator->Evaluate())
+            RigExecEvaluator *e = runner.evaluator.get();
+            return channels
+                       ? RigExecWriteGeometryBlendInputs(
+                             *channels, p, runner.node, base, &points,
+                             points.size(), e, error)
+                       : RigExecWriteGeometryOpInputs(p, runner.node, &points,
+                                                      points.size(), e, error);
+        },
+        [&] {
+            return RigExecGeometryOpNodeStale(op, p, channels, runner.node);
+        },
+        error);
+    if (!ready || !runner.evaluator->Evaluate(error))
         return false;
     const auto *out = static_cast<const RigExecArray<Vec3f> *>(
-        runner->evaluator->GetOutput(runner->node.out));
-    if (!out)
+        runner.evaluator->GetOutput(runner.node.out));
+    if (!out || out->Size() != points.size()) {
+        if (error)
+            *error = "geometry op changed the point count";
         return false;
-    points->resize(out->Size());
+    }
     for (size_t i = 0; i < out->Size(); ++i) {
         const Vec3f &v = (*out)[i];
-        (*points)[i] = GfVec3f(v[0], v[1], v[2]);
+        points[i] = GfVec3f(v[0], v[1], v[2]);
     }
     return true;
 }
@@ -109,30 +101,56 @@ RigExecRunGeometryMatrixOp(RigExecRevisionOp op,
                            const RigExecProjectorReads &reads,
                            const std::vector<GfVec3f> &base,
                            const std::vector<GfVec3f> &final,
-                           RigExecGeometryOpRunner *runner, GfMatrix4d *matrix)
+                           RigExecGeometryOpRunner &runner, GfMatrix4d &matrix,
+                           std::string &diagnostic)
 {
-    if (!runner || !matrix || !RigExecGeometryMatrixOpSupported(op))
-        return false;
-    const bool ready = Prepare(
-        runner,
-        [&](RigExecRigDescBuilder *builder) {
-            return RigExecAddGeometryMatrixOp(op, frames, reads, builder,
-                                              &runner->matrix);
+    diagnostic.clear();
+    std::string error;
+    const bool ready = Ready(
+        runner, runner.evaluator && runner.matrix.op == op,
+        [&](RigExecRigDescBuilder &builder) {
+            return RigExecAddGeometryMatrixOp(op, frames, reads, &builder,
+                                              &runner.matrix, &error);
         },
         [&] {
-            return RigExecWriteGeometryMatrixInputs(binding, frames, reads,
-                                                    base, final, runner->matrix,
-                                                    runner->evaluator.get());
-        });
-    if (!ready || !runner->evaluator->Evaluate())
+            return RigExecWriteGeometryMatrixInputs(
+                binding, frames, reads, base, final, runner.matrix,
+                runner.evaluator.get(), &error);
+        },
+        [&] {
+            return RigExecGeometryMatrixNodeStale(op, frames, reads,
+                                                  runner.matrix);
+        },
+        &error);
+    if (!ready) {
+        diagnostic = error;
         return false;
+    }
+    if (!runner.evaluator->Evaluate(&error)) {
+        // The op joins the projector kernel's lines with "; " after its own
+        // prefix; the native run reports the first. Only the not-a-frame-
+        // provider warning can precede the failing line, which is "ray ...".
+        const std::string prefix = "SurfaceProjector: ";
+        const size_t at = error.find(prefix);
+        std::string why =
+            at == std::string::npos ? error : error.substr(at + prefix.size());
+        const size_t ray = why.rfind("; ray ");
+        if (ray != std::string::npos)
+            why.resize(ray);
+        if (why != "no frame measured")
+            diagnostic = "SurfaceProjector " +
+                         RigExecGeometryMoverText(binding) + ": " + why;
+        return false;
+    }
     const auto *out = static_cast<const Mat4d *>(
-        runner->evaluator->GetOutput(runner->matrix.out));
-    if (!out)
+        runner.evaluator->GetOutput(runner.matrix.out));
+    if (!out) {
+        diagnostic = "geometry matrix op has no output";
         return false;
+    }
     for (int r = 0; r < 4; ++r)
         for (int c = 0; c < 4; ++c)
-            (*matrix)[r][c] = out->_mtx[r][c];
+            matrix[r][c] = out->_mtx[r][c];
     return true;
 }
 

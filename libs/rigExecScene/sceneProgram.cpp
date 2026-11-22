@@ -10,6 +10,20 @@ Fail(std::string *error, const std::string &message)
         *error = message;
     return false;
 }
+// Decided up front: External movers, a scalar-mode request and a windowed
+// revision run natively; the deform ops run SIMD kernels only, without a
+// window.
+bool
+RunsOnOps(const RigExecSceneGeometryOp &op)
+{
+    const auto kind = op.binding.descriptor.record.op;
+    if (!op.useSimd || op.windowFrames)
+        return false;
+    if (op.binding.descriptor.matrixOutput)
+        return RigExecGeometryMatrixOpSupported(kind);
+    return kind == RigExecRevisionOp::BlendShape ||
+           RigExecGeometryOpSupported(kind);
+}
 } // namespace
 bool
 RigExecSceneProgram::Append(const std::string &key,
@@ -174,6 +188,16 @@ RigExecSceneProgramRuntime::Prepare(const RigExecSceneProgram &program,
         return Fail(error, "scene operation layout mismatch");
     if (!program.identity)
         return Fail(error, "scene program has not been compiled");
+    if (std::any_of(program.operations.begin(), program.operations.end(),
+                    [](const RigExecSceneOperation &operation) {
+                        const auto *geometry =
+                            std::get_if<RigExecSceneGeometryOp>(&operation);
+                        return geometry && RunsOnOps(*geometry);
+                    })) {
+        std::string why;
+        if (!RigExecLoadGeometryOpCore(&why))
+            return Fail(error, "op registry unavailable: " + why);
+    }
     _preparedProgram = &program;
     _identity = program.identity;
     _excluded.clear();
@@ -181,11 +205,8 @@ RigExecSceneProgramRuntime::Prepare(const RigExecSceneProgram &program,
     _operations = program.operations;
     _workspaces.resize(_operations.size());
     _ran = false;
-    const bool opCore = RigExecLoadGeometryOpCore();
-    for (auto &workspace : _workspaces) {
+    for (auto &workspace : _workspaces)
         workspace.opRunner = RigExecGeometryOpRunner();
-        workspace.opRunner.native = !opCore;
-    }
     _windows.assign(program.windowedOps.size(), Window());
     _windowOfOperation.assign(_operations.size(), -1);
     for (size_t w = 0; w < program.windowedOps.size(); ++w)
@@ -405,24 +426,33 @@ RigExecSceneProgramRuntime::Run(const RigExecSceneProgram &program,
                 if (op.pointsFinal != UINT64_MAX &&
                     !readPoints(op.pointsFinal, &workspace.finalPoints))
                     return failed("geometry final points unavailable");
+                const bool opCore = !window && RunsOnOps(op);
                 if (descriptor.matrixOutput) {
                     RigExecSurfaceProjectorFrames frames;
                     RigExecProjectorReads reads;
                     GfMatrix4d matrix;
                     workspace.geometryDiagnostics.clear();
-                    if (!RigExecReadGeometryGraphProjector(
-                            op.binding, values, &workspace.geometryInputs,
-                            &frames, &reads, error) ||
-                        (!RigExecRunGeometryMatrixOp(
-                             descriptor.record.op, descriptor.record.binding,
-                             frames, reads, workspace.basePoints,
-                             workspace.finalPoints, &workspace.opRunner,
-                             &matrix) &&
-                         !RigExecRunGeometryMatrix(
-                             descriptor.record, frames, reads,
-                             workspace.basePoints, workspace.finalPoints,
-                             &workspace.geometry, &matrix,
-                             &workspace.geometryDiagnostics)))
+                    bool ran = RigExecReadGeometryGraphProjector(
+                        op.binding, values, &workspace.geometryInputs, &frames,
+                        &reads, error);
+                    if (ran && opCore) {
+                        std::string diagnostic;
+                        ran = RigExecRunGeometryMatrixOp(
+                            descriptor.record.op, descriptor.record.binding,
+                            frames, reads, workspace.basePoints,
+                            workspace.finalPoints, workspace.opRunner, matrix,
+                            diagnostic);
+                        if (!ran && !diagnostic.empty())
+                            workspace.geometryDiagnostics.push_back(
+                                std::move(diagnostic));
+                    } else if (ran) {
+                        ran = RigExecRunGeometryMatrix(
+                            descriptor.record, frames, reads,
+                            workspace.basePoints, workspace.finalPoints,
+                            &workspace.geometry, &matrix,
+                            &workspace.geometryDiagnostics);
+                    }
+                    if (!ran)
                         return failed(
                             workspace.geometryDiagnostics.empty()
                                 ? "projector inputs unavailable"
@@ -466,17 +496,32 @@ RigExecSceneProgramRuntime::Run(const RigExecSceneProgram &program,
                     op.fieldPacket.valid = true;
                     inputs.weights = &op.fieldPacket;
                 }
+                const auto kind = descriptor.record.op;
+                // The op sums the blend deltas from the channels. A stand-in
+                // lets the packet check judge everything else, as the native
+                // run does once its deltas are non-empty.
+                if (opCore && blend)
+                    inputs.blendDeltas.assign(1, GfVec3f(0.0f));
                 auto params =
                     RigExecAssembleGeometry(descriptor.record, inputs);
-                params.window = window;
-                // The op core first; the native run decides what it does not take.
-                const bool ran = !window && op.useSimd &&
-                                 RigExecRunGeometryOp(
-                                     descriptor.record.op, params,
-                                     blend ? &workspace.blendChannels : nullptr,
-                                     inputs.basePoints, &workspace.opRunner,
-                                     &workspace.points);
-                if (!ran) {
+                if (opCore) {
+                    if (!RigExecGeometryPacketMatches(kind, params) ||
+                        !RigExecRunGeometryOp(
+                            kind, params,
+                            blend ? &workspace.blendChannels : nullptr,
+                            inputs.basePoints, workspace.opRunner,
+                            workspace.points)) {
+                        // The native run refuses unusable channels first.
+                        if (blend &&
+                            !RigExecGeometryBlendDeltas(workspace.blendChannels,
+                                                        inputs.basePoints,
+                                                        &inputs.blendDeltas))
+                            return failed("blend shape input/cardinality "
+                                          "validation failed");
+                        return failed(
+                            "geometry input/cardinality validation failed");
+                    }
+                } else {
                     if (blend) {
                         if (!RigExecGeometryBlendDeltas(workspace.blendChannels,
                                                         inputs.basePoints,
@@ -485,8 +530,8 @@ RigExecSceneProgramRuntime::Run(const RigExecSceneProgram &program,
                                           "validation failed");
                         params =
                             RigExecAssembleGeometry(descriptor.record, inputs);
-                        params.window = window;
                     }
+                    params.window = window;
                     if (!RigExecRunGeometry(descriptor.record, params,
                                             &workspace.geometry,
                                             &workspace.points, op.useSimd))

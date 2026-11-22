@@ -59,7 +59,9 @@ starting its workflow, and keep this list current when adding or changing skills
   readiness, invalidation and invocation.
 - `libs/rigExecScene`: USD scene translation, built as `librigExecScene.so`.
   It links `tf`, `gf`, `vt`, `sdf`, `ts`, `usd`, `usdGeom`, and `rigExec`
-  publicly; graph and math are private. `librigExec.so` does not link it.
+  publicly; graph, math and `rigExecBuiltins` are private. Its scene
+  geometry operations run as op nodes through `geometryOps`, except
+  External movers. `librigExec.so` does not link it.
   Imaging, bake, and the standalone adapter link it privately, so playback,
   runtime, and imaging tests load the library without being selected as
   scene tests. The evaluator calls it through the hooks in `sceneDispatch`.
