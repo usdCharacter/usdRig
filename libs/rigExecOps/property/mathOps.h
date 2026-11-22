@@ -6,7 +6,7 @@
 /// arithmetic is rigExecMath/propertyMathKernel.h, shared with the baked
 /// and zero-USD runtimes. USD-free.
 
-#include "rigExec/api/registry.h"
+#include "rigExecOps/library.h"
 #include "rigExecMath/pathCurveKernel.h"
 #include "rigExecMath/propertyMathKernel.h"
 #include "rigExecStdTypes/stdTypes.h"
@@ -62,7 +62,5 @@ const rigExec::RigExecPortHandle &MatrixWeight();
 const rigExec::RigExecPortHandle &MatrixOut();
 
 } // namespace rigExecOps
-
-RIGEXEC_OP_LIBRARY_ENTRY(rigExecOps);
 
 #endif

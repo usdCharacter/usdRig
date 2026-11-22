@@ -1252,7 +1252,9 @@ rigexec_link_registrations(testRigExecRigTypes
 add_test(NAME testRigExecRigTypes COMMAND testRigExecRigTypes)
 
 rigexec_add_op_library(rigExecOps
-    SOURCES libs/rigExecOps/property/mathOps.cpp
+    SOURCES libs/rigExecOps/library.cpp
+        libs/rigExecOps/property/mathOps.cpp
+        libs/rigExecOps/deform/pointOps.cpp
     USES_TYPE_LIBRARIES rigExecStdTypes)
 rigexec_apply_exact_fp_flags(rigExecOps)
 add_executable(testRigExecOpsMath tests/testRigExecOpsMath.cpp
@@ -1265,6 +1267,14 @@ rigexec_link_registrations(testRigExecOpsMath
     TYPE_LIBRARIES rigExecStdTypes OP_LIBRARIES rigExecOps)
 add_test(NAME testRigExecOpsMath COMMAND testRigExecOpsMath)
 set_tests_properties(testRigExecOpsMath PROPERTIES LABELS "fast")
+add_executable(testRigExecOpsPoints tests/testRigExecOpsPoints.cpp
+    $<TARGET_OBJECTS:rigExecRegistry> $<TARGET_OBJECTS:rigExecCore>)
+target_include_directories(testRigExecOpsPoints PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libs")
+target_link_libraries(testRigExecOpsPoints PRIVATE rigExecMath Threads::Threads)
+rigexec_apply_exact_fp_flags(testRigExecOpsPoints)
+rigexec_link_registrations(testRigExecOpsPoints TYPE_LIBRARIES rigExecStdTypes OP_LIBRARIES rigExecOps)
+add_test(NAME testRigExecOpsPoints COMMAND testRigExecOpsPoints)
+set_tests_properties(testRigExecOpsPoints PROPERTIES LABELS "fast")
 
 # Host-side bridge from translated USD movers to op nodes; not installed.
 # Step 10 folds it into rigExecUsd.

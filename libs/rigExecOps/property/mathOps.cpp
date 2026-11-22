@@ -211,8 +211,10 @@ MathDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     return d;
 }
 
+} // namespace
+
 void
-Register(rigExec::RigExecOpRegistrar &registrar)
+RegisterPropertyMathOps(rigExec::RigExecOpRegistrar &registrar)
 {
     using rigExec::kRigExecPortInput;
     using rigExec::kRigExecPortOptional;
@@ -257,17 +259,4 @@ Register(rigExec::RigExecOpRegistrar &registrar)
     registrar.Add(MatrixMath(), matrixDesc);
 }
 
-const rigExec::RigExecOpLibraryDesc kLibrary = [] {
-    rigExec::RigExecOpLibraryDesc d;
-    d.name = "rigExecOps";
-    d.registerOps = &Register;
-    return d;
-}();
-
-} // namespace
 } // namespace rigExecOps
-
-RIGEXEC_OP_LIBRARY_ENTRY(rigExecOps)
-{
-    return &rigExecOps::kLibrary;
-}
