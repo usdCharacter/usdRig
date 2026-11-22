@@ -1,15 +1,31 @@
-# Bundled usdview releases for v<major>.<minor>.0 tags.
+# Bundled usdview releases for v<major>.<minor>.0 tags, one per VFX
+# Reference Platform year and operating system.
 #
-# Each platform job builds OpenUSD 26.08 WITH usdview and Python (a cache
-# lineage separate from usdrig.yml's C++-only prefix), builds usdRig with
-# its Python bindings, the usdNoodles editor and the usdRigView launcher,
-# assembles a relocatable bundle with packaging/assemble_bundle.py, signs
-# it when signing secrets are configured, and uploads one archive. The
-# publish job attaches the three archives plus SHA256SUMS.txt to a GitHub
-# Release. See packaging/README.md for the layout and the secret list.
+# packaging/vfx/profiles.json holds each year's pins (C++ standard, Python,
+# PySide6, NumPy, oneTBB, OpenSubdiv, macOS deployment target, Linux glibc
+# baseline). Every cell builds OpenUSD 26.08 WITH usdview and Python against
+# its year's pins (a cache lineage separate from usdrig.yml's C++-only
+# prefix), builds usdRig with its Python bindings, the usdNoodles editor and
+# the usdRigView launcher, assembles a relocatable bundle with
+# packaging/assemble_bundle.py, signs it when signing is on and secrets are
+# configured, and uploads the bundle plus an SDK archive of the RigExec
+# install.
+#
+#   Windows x86-64  windows-2022 (VS 2022 17.14 toolset)
+#   macOS arm64     macos-15, deployment target from the year's profile
+#   Linux x86-64    inside the year's ASWF ci-base image (Rocky Linux with
+#                   the year's gcc and glibc), via packaging/vfx/build_linux.sh
+#
+# Each Linux bundle is then run on Rocky 8 (glibc 2.28 years only), Rocky 9,
+# Ubuntu 22.04, Ubuntu 24.04 and Arch Linux (the base of Omarchy), the Arch
+# lane also under a headless Wayland compositor and through the AUR recipe in
+# packaging/aur. The publish job attaches every archive plus SHA256SUMS.txt
+# to a GitHub Release. See packaging/README.md for the layout and secrets.
 #
 # Patch tags (v0.3.1) never trigger this workflow: the tag glob plus the
-# gate job's strict vX.Y.0 check see to that.
+# gate job's strict vX.Y.0 check see to that. A dispatch with publish off
+# is a full test run that publishes nothing; turn sign off as well to keep
+# signing material and Apple notarization out of a test run.
 
 name: release
 
@@ -26,6 +42,11 @@ on:
         description: "Create/update the GitHub Release for that tag"
         required: false
         default: false
+        type: boolean
+      sign:
+        description: "Sign (and notarize on macOS) when secrets are configured"
+        required: false
+        default: true
         type: boolean
 
 permissions:
@@ -44,6 +65,7 @@ jobs:
       version: ${{ steps.check.outputs.version }}
       version-num: ${{ steps.check.outputs.version-num }}
       publish: ${{ steps.check.outputs.publish }}
+      sign: ${{ steps.check.outputs.sign }}
     steps:
       - name: Checkout usdRig
         uses: actions/checkout@v4
@@ -56,12 +78,18 @@ jobs:
           if [ "${{ github.event_name }}" = "push" ]; then
             version="$GITHUB_REF_NAME"
             publish=true
+            sign=true
           else
             version="$INPUT_VERSION"
             publish="${{ inputs.publish }}"
+            sign="${{ inputs.sign }}"
           fi
           if ! echo "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.0$'; then
             echo "not a v<major>.<minor>.0 version: $version" >&2
+            exit 1
+          fi
+          if [ "$publish" = "true" ] && [ "$sign" != "true" ]; then
+            echo "a published release must be signed (sign=true)" >&2
             exit 1
           fi
           cmake_version="$(sed -n \
@@ -71,48 +99,58 @@ jobs:
             echo "is $version; bump project(rigExec VERSION ...) first." >&2
             exit 1
           fi
+          python3 packaging/vfx/test_vfx_profile.py
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "version-num=${version#v}" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "sign=$sign" >> "$GITHUB_OUTPUT"
 
-  build:
-    name: bundle (${{ matrix.slug }})
+  # ---- Windows and macOS ---------------------------------------------
+  build-desktop:
+    name: bundle (vfx${{ matrix.year }}-${{ matrix.target.slug }})
     needs: gate
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - slug: windows-x64
+        year: ["2025", "2026", "2027"]
+        target:
+          - slug: windows-x86_64
             os: windows-2022
-            platform: windows
             jobs: 4
           - slug: macos-arm64
             os: macos-15
-            platform: macos
             jobs: 3
-          - slug: linux-x64
-            os: ubuntu-24.04
-            platform: linux
-            jobs: 4
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.target.os }}
     timeout-minutes: 360
+    env:
+      YEAR: ${{ matrix.year }}
+      SLUG: vfx${{ matrix.year }}-${{ matrix.target.slug }}
+      VERSION_NUM: ${{ needs.gate.outputs.version-num }}
     steps:
       - name: Checkout usdRig
         uses: actions/checkout@v4
 
-      - name: Checkout OpenUSD @ v26.08
+      - name: VFX platform profile
+        id: vfx
+        shell: bash
+        run: |
+          py="$(command -v python3 || command -v python)"
+          "$py" packaging/vfx/vfx_profile.py outputs "$YEAR" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Checkout OpenUSD @ ${{ steps.vfx.outputs.openusd }}
         uses: actions/checkout@v4
         with:
           repository: PixarAnimationStudios/OpenUSD
-          ref: v26.08
+          ref: ${{ steps.vfx.outputs.openusd }}
           path: OpenUSD
           fetch-depth: 1
 
-      - name: Set up Python 3.11
+      - name: Set up Python ${{ steps.vfx.outputs.python }}
         id: py
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ steps.vfx.outputs.python }}
 
       # PySide6/PyOpenGL must be in this interpreter before OpenUSD is
       # configured: --usdview enables usdview only when they import, and
@@ -121,29 +159,35 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "cmake>=3.26,<4" ninja pybind11 \
-            PySide6 PyOpenGL "numpy==1.26.4"
-
-      - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            python3-dev libglew-dev libxrandr-dev libxcursor-dev \
-            libxinerama-dev libxi-dev libgl1-mesa-dev xorg-dev xvfb
+          python -m pip install "cmake>=3.27,<4" ninja pybind11 PyOpenGL \
+            "PySide6==${{ steps.vfx.outputs.pyside6 }}" \
+            "numpy==${{ steps.vfx.outputs.numpy }}"
+          python -c "import PySide6, numpy; print('PySide6', PySide6.__version__, 'numpy', numpy.__version__)"
 
       - name: OpenUSD commit (cache key)
         id: usd
         shell: bash
         run: echo "sha=$(git -C OpenUSD rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Windows toolchain identity (cache key)
+      - name: Windows toolchain identity and platform minimums
         if: runner.os == 'Windows'
         id: msvc
         shell: pwsh
+        env:
+          TOOLSET_MIN: ${{ steps.vfx.outputs.msvc_toolset_min }}
+          SDK_MIN: ${{ steps.vfx.outputs.windows_sdk_min }}
         run: |
           $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
           $version = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion
+          $path = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $tools = (Get-Content "$path/VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt").Trim()
+          $sdks = Get-ChildItem "${env:ProgramFiles(x86)}/Windows Kits/10/Include" -Directory |
+            Where-Object { $_.Name -match '^10\.' } | ForEach-Object { [version]$_.Name } | Sort-Object
+          $sdk = $sdks[-1]
+          "Visual Studio $version, MSVC tools $tools, newest Windows SDK $sdk"
+          $toolsShort = [version](($tools -split '\.')[0..1] -join '.')
+          if ($toolsShort -lt [version]$env:TOOLSET_MIN) { throw "MSVC tools $tools older than the platform's $env:TOOLSET_MIN" }
+          if ($sdk -lt [version]$env:SDK_MIN) { throw "Windows SDK $sdk older than the platform's $env:SDK_MIN" }
           "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: macOS toolchain identity (cache key)
@@ -157,7 +201,12 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: usd-install
-          key: openusd-${{ matrix.os }}-${{ runner.arch }}-${{ steps.usd.outputs.sha }}-${{ steps.msvc.outputs.version }}${{ steps.xcode.outputs.version }}-exec-usdimg-usdview-py311-v1
+          key: openusd-vfx${{ matrix.year }}-${{ matrix.target.os }}-${{ runner.arch }}-${{ steps.usd.outputs.sha }}-${{ steps.vfx.outputs.profile_hash }}-${{ steps.msvc.outputs.version }}${{ steps.xcode.outputs.version }}-exec-usdimg-usdview-v1
+
+      - name: Pin oneTBB and OpenSubdiv to the platform year
+        if: steps.usd-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: python packaging/vfx/vfx_profile.py pin-build-usd "$YEAR" OpenUSD/build_scripts/build_usd.py
 
       - name: Build OpenUSD on Windows
         if: runner.os == 'Windows' && steps.usd-cache.outputs.cache-hit != 'true'
@@ -165,15 +214,17 @@ jobs:
         run: |
           call bin\_vcvars.bat
           if errorlevel 1 exit /b 1
-          python OpenUSD\build_scripts\build_usd.py usd-install --build usd-build --generator Ninja --build-variant release --jobs ${{ matrix.jobs }} --usd-imaging --usdview --no-tests --no-examples --no-tutorials --no-docs --no-materialx --build-args USD,"-DPXR_BUILD_EXEC=ON" -v
+          python OpenUSD\build_scripts\build_usd.py usd-install --build usd-build --generator Ninja --build-variant release --jobs ${{ matrix.target.jobs }} --onetbb --usd-imaging --usdview --no-tests --no-examples --no-tutorials --no-docs --no-materialx --build-args USD,"-DPXR_BUILD_EXEC=ON" -v
 
-      - name: Build OpenUSD on macOS / Linux
-        if: runner.os != 'Windows' && steps.usd-cache.outputs.cache-hit != 'true'
+      - name: Build OpenUSD on macOS
+        if: runner.os == 'macOS' && steps.usd-cache.outputs.cache-hit != 'true'
         shell: bash
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ steps.vfx.outputs.macos_deployment_target }}
         run: |
           python OpenUSD/build_scripts/build_usd.py usd-install \
             --build usd-build --generator Ninja --build-variant release \
-            --jobs ${{ matrix.jobs }} --usd-imaging --usdview \
+            --jobs ${{ matrix.target.jobs }} --onetbb --usd-imaging --usdview \
             --no-tests --no-examples --no-tutorials --no-docs \
             --no-materialx --build-args USD,"-DPXR_BUILD_EXEC=ON" -v
 
@@ -187,7 +238,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: usd-install
-          key: openusd-${{ matrix.os }}-${{ runner.arch }}-${{ steps.usd.outputs.sha }}-${{ steps.msvc.outputs.version }}${{ steps.xcode.outputs.version }}-exec-usdimg-usdview-py311-v1
+          key: ${{ steps.usd-cache.outputs.cache-primary-key }}
 
       - name: Sanity - usdview and pxr are in the prefix
         shell: bash
@@ -202,24 +253,28 @@ jobs:
           call bin\_vcvars.bat
           if errorlevel 1 exit /b 1
           set "USD=%GITHUB_WORKSPACE%\usd-install"
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSD_INSTALL_DIR="%USD%" -DCMAKE_PREFIX_PATH="%USD%" -DPython3_EXECUTABLE="${{ steps.py.outputs.python-path }}" -DRIGEXEC_BUILD_PYTHON=ON -DRIGEXEC_BUILD_USDNOODLES=ON -DRIGEXEC_BUILD_TESTS=OFF -DRIGEXEC_BUILD_VIEWER_LAUNCHER=ON
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSD_INSTALL_DIR="%USD%" -DCMAKE_PREFIX_PATH="%USD%" -DPython3_EXECUTABLE="${{ steps.py.outputs.python-path }}" -DCMAKE_CXX_STANDARD=${{ steps.vfx.outputs.cxx_standard }} -DRIGEXEC_BUILD_PYTHON=ON -DRIGEXEC_BUILD_USDNOODLES=ON -DRIGEXEC_BUILD_TESTS=OFF -DRIGEXEC_BUILD_VIEWER_LAUNCHER=ON
           if errorlevel 1 exit /b 1
-          cmake --build build --parallel ${{ matrix.jobs }}
+          cmake --build build --parallel ${{ matrix.target.jobs }}
           if errorlevel 1 exit /b 1
           cmake --install build --prefix "%GITHUB_WORKSPACE%\usdrig-install"
           if errorlevel 1 exit /b 1
 
-      - name: Build and install usdRig on macOS / Linux
-        if: runner.os != 'Windows'
+      - name: Build and install usdRig on macOS
+        if: runner.os == 'macOS'
         shell: bash
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ steps.vfx.outputs.macos_deployment_target }}
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DUSD_INSTALL_DIR="$GITHUB_WORKSPACE/usd-install" \
             -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/usd-install" \
             -DPython3_EXECUTABLE="${{ steps.py.outputs.python-path }}" \
+            -DCMAKE_CXX_STANDARD=${{ steps.vfx.outputs.cxx_standard }} \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
             -DRIGEXEC_BUILD_PYTHON=ON -DRIGEXEC_BUILD_USDNOODLES=ON \
             -DRIGEXEC_BUILD_TESTS=OFF -DRIGEXEC_BUILD_VIEWER_LAUNCHER=ON
-          cmake --build build --parallel ${{ matrix.jobs }}
+          cmake --build build --parallel ${{ matrix.target.jobs }}
           cmake --install build --prefix "$GITHUB_WORKSPACE/usdrig-install"
 
       - name: Test macOS bundle relocation and launcher checks
@@ -232,16 +287,14 @@ jobs:
       - name: Assemble bundle (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          VERSION_NUM: ${{ needs.gate.outputs.version-num }}
         run: |
-          $bundle = "dist/usdRig-$env:VERSION_NUM-windows-x64"
+          $bundle = "dist/usdRig-$env:VERSION_NUM-$env:SLUG"
           python packaging/assemble_bundle.py `
             --usd-install usd-install --rig-install usdrig-install `
             --python-home "$env:pythonLocation" `
             --launcher build/usdRigView.exe `
             --output $bundle --version "$env:VERSION_NUM" `
-            --platform windows --platform-slug windows-x64 `
+            --platform windows --platform-slug $env:SLUG `
             --source-root . --rig-build-dir build `
             --usdnoodles-dir build/python/UsdNoodles `
             --git-sha "${{ github.sha }}" --trim-dev
@@ -253,10 +306,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          VERSION_NUM: ${{ needs.gate.outputs.version-num }}
           QT_QPA_PLATFORM: offscreen
         run: |
-          $bundle = "dist/usdRig-$env:VERSION_NUM-windows-x64"
+          $bundle = "dist/usdRig-$env:VERSION_NUM-$env:SLUG"
           foreach ($line in (& "$bundle/usdRigView.exe" --usdRig-print-env)) {
             $name, $value = $line -split "=", 2
             Set-Item "env:$name" $value
@@ -273,10 +325,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          VERSION_NUM: ${{ needs.gate.outputs.version-num }}
           QT_QPA_PLATFORM: offscreen
         run: |
-          $bundle = "dist/usdRig-$env:VERSION_NUM-windows-x64"
+          $bundle = "dist/usdRig-$env:VERSION_NUM-$env:SLUG"
           & "$bundle/usdRigView.exe" "$bundle/app/examples/rigexec_flat.usda" --norender --quitAfterStartup
           if ($LASTEXITCODE -ne 0) { throw "GUI launch failed for rigexec_flat.usda" }
           & "$bundle/usdRigView.exe" "$bundle/app/examples/ArmShotAnim.usda" --norender --quitAfterStartup
@@ -288,10 +339,8 @@ jobs:
       - name: Smoke test launcher env isolation (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          VERSION_NUM: ${{ needs.gate.outputs.version-num }}
         run: |
-          $bundle = "dist/usdRig-$env:VERSION_NUM-windows-x64"
+          $bundle = "dist/usdRig-$env:VERSION_NUM-$env:SLUG"
           $bogus = Join-Path $env:RUNNER_TEMP "bogus-ambient"
           $env:PYTHONPATH = $bogus
           $env:PXR_PLUGINPATH_NAME = $bogus
@@ -311,15 +360,14 @@ jobs:
           }
 
       - name: Sign bundle (Windows, when configured)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && needs.gate.outputs.sign == 'true'
         shell: pwsh
         env:
-          VERSION_NUM: ${{ needs.gate.outputs.version-num }}
           WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
           WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
           WINDOWS_SIGNING_THUMBPRINT: ${{ secrets.WINDOWS_SIGNING_THUMBPRINT }}
         run: |
-          $bundle = "dist/usdRig-$env:VERSION_NUM-windows-x64"
+          $bundle = "dist/usdRig-$env:VERSION_NUM-$env:SLUG"
           if ($env:WINDOWS_SIGNING_CERT_BASE64) {
             $pfx = Join-Path $env:RUNNER_TEMP "signing.pfx"
             [IO.File]::WriteAllBytes($pfx,
@@ -332,29 +380,31 @@ jobs:
           }
           & packaging/sign-windows.ps1 -Bundle $bundle
 
-      - name: Zip bundle (Windows)
+      - name: Zip bundle and SDK (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          VERSION_NUM: ${{ needs.gate.outputs.version-num }}
         run: |
           Compress-Archive `
-            -Path "dist/usdRig-$env:VERSION_NUM-windows-x64" `
-            -DestinationPath "dist/usdRig-$env:VERSION_NUM-windows-x64.zip"
+            -Path "dist/usdRig-$env:VERSION_NUM-$env:SLUG" `
+            -DestinationPath "dist/usdRig-$env:VERSION_NUM-$env:SLUG.zip"
+          $sdk = "dist/usdRig-sdk-$env:VERSION_NUM-$env:SLUG"
+          Copy-Item -Recurse usdrig-install $sdk
+          Compress-Archive -Path $sdk -DestinationPath "$sdk.zip"
 
       # ---- macOS: assemble, smoke, sign + notarize, tar ----------------
       - name: Assemble, smoke, sign and tar bundle (macOS)
         if: runner.os == 'macOS'
         shell: bash
         env:
-          VERSION_NUM: ${{ needs.gate.outputs.version-num }}
           QT_QPA_PLATFORM: offscreen
-          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
-          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
-          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
-          AC_API_KEY_BASE64: ${{ secrets.AC_API_KEY_BASE64 }}
+          MACOS_MINIMUM: ${{ steps.vfx.outputs.macos_deployment_target }}
+          SIGN: ${{ needs.gate.outputs.sign }}
+          MACOS_SIGNING_IDENTITY: ${{ needs.gate.outputs.sign == 'true' && secrets.MACOS_SIGNING_IDENTITY || '' }}
+          MACOS_CERTIFICATE_BASE64: ${{ needs.gate.outputs.sign == 'true' && secrets.MACOS_CERTIFICATE_BASE64 || '' }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ needs.gate.outputs.sign == 'true' && secrets.MACOS_CERTIFICATE_PASSWORD || '' }}
+          AC_API_KEY_ID: ${{ needs.gate.outputs.sign == 'true' && secrets.AC_API_KEY_ID || '' }}
+          AC_API_ISSUER_ID: ${{ needs.gate.outputs.sign == 'true' && secrets.AC_API_ISSUER_ID || '' }}
+          AC_API_KEY_BASE64: ${{ needs.gate.outputs.sign == 'true' && secrets.AC_API_KEY_BASE64 || '' }}
           # Published releases must ship signed + notarized: the
           # signing script fails instead of warn-skipping when this
           # is 1. Test dispatches (publish=false) may stay unsigned.
@@ -369,16 +419,19 @@ jobs:
             fi
           }
           trap cleanup_signing EXIT
-          bundle="dist/usdRig-$VERSION_NUM-macos-arm64"
+          bundle="dist/usdRig-$VERSION_NUM-$SLUG"
           python3 packaging/assemble_bundle.py \
             --usd-install usd-install --rig-install usdrig-install \
             --python-home "$pythonLocation" \
             --launcher build/usdRigView \
             --output "$bundle" --version "$VERSION_NUM" \
-            --platform macos --platform-slug macos-arm64 \
+            --platform macos --platform-slug "$SLUG" \
+            --macos-minimum "$MACOS_MINIMUM" \
             --source-root . --rig-build-dir build \
             --usdnoodles-dir build/python/UsdNoodles \
             --git-sha "${{ github.sha }}" --trim-dev
+          python3 packaging/vfx/check_bundle.py "$bundle" --platform macos \
+            --macos-minimum "$MACOS_MINIMUM"
           exe="$bundle/usdRigView.app/Contents/MacOS/usdRigView"
           "$exe" --usdRig-check
           while IFS='=' read -r name value; do
@@ -412,7 +465,11 @@ jobs:
             export AC_API_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
             echo "$AC_API_KEY_BASE64" | base64 --decode > "$AC_API_KEY_PATH"
           fi
-          bash packaging/sign-macos.sh "$bundle"
+          if [ "$SIGN" = "true" ]; then
+            bash packaging/sign-macos.sh "$bundle"
+          else
+            echo "sign=false: bundle stays unsigned"
+          fi
           # The pre-sign smoke proves nothing about the hardened
           # runtime: re-check the signed + notarized bundle launches.
           "$exe" --usdRig-check
@@ -422,18 +479,21 @@ jobs:
           "$bundle/usdRigView.app/Contents/Resources/app/python/bin/python3" \
             -c "from pxr import Usd; import rigExecUsdview, shapeEditorUsdview, touchPoseUsdview, usdRigViewMenu, rigexec, numpy; s = Usd.Stage.Open('$bundle/usdRigView.app/Contents/Resources/app/examples/rigexec_flat.usda'); assert s is not None; a = Usd.Stage.Open(str(s.GetRootLayer().realPath).replace('rigexec_flat.usda', 'ArmShotAnim.usda')); assert a and a.GetPrimAtPath('/Shot/HeroArm/Geom/ArmBody'); print('signed bundle smoke OK')"
           tar -C dist -czf "$bundle.tar.gz" "$(basename "$bundle")"
+          sdk="usdRig-sdk-$VERSION_NUM-$SLUG"
+          cp -R usdrig-install "dist/$sdk"
+          tar -C dist -czf "dist/$sdk.tar.gz" "$sdk"
 
       - name: Verify extracted macOS bundle without host Python
         if: runner.os == 'macOS'
         shell: bash
         env:
-          VERSION_NUM: ${{ needs.gate.outputs.version-num }}
+          SIGNED: ${{ needs.gate.outputs.sign == 'true' && '1' || '0' }}
         run: |
           # Test the archive users receive, at a different path containing spaces.
           probe="$RUNNER_TEMP/relocated bundle"
           mkdir -p "$probe"
-          tar -xzf "dist/usdRig-$VERSION_NUM-macos-arm64.tar.gz" -C "$probe"
-          exe="$probe/usdRig-$VERSION_NUM-macos-arm64/usdRigView.app/Contents/MacOS/usdRigView"
+          tar -xzf "dist/usdRig-$VERSION_NUM-$SLUG.tar.gz" -C "$probe"
+          exe="$probe/usdRig-$VERSION_NUM-$SLUG/usdRigView.app/Contents/MacOS/usdRigView"
           framework=/Library/Frameworks/Python.framework
           hidden="$RUNNER_TEMP/host-Python.framework"
           restore_python() {
@@ -449,59 +509,234 @@ jobs:
             "$exe" --usdRig-check
           env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
             QT_QPA_PLATFORM=offscreen "$exe" --help
-          stage="$probe/usdRig-$VERSION_NUM-macos-arm64/usdRigView.app/Contents/Resources/app/examples/rigexec_flat.usda"
+          stage="$probe/usdRig-$VERSION_NUM-$SLUG/usdRigView.app/Contents/Resources/app/examples/rigexec_flat.usda"
           env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
             QT_QPA_PLATFORM=offscreen "$exe" "$stage" \
             --norender --quitAfterStartup
-          stage="$probe/usdRig-$VERSION_NUM-macos-arm64/usdRigView.app/Contents/Resources/app/examples/ArmShotAnim.usda"
+          stage="$probe/usdRig-$VERSION_NUM-$SLUG/usdRigView.app/Contents/Resources/app/examples/ArmShotAnim.usda"
           env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
             QT_QPA_PLATFORM=offscreen "$exe" "$stage" \
             --norender --quitAfterStartup
-          app_bundle="${exe%/Contents/MacOS/usdRigView}"
-          codesign --verify --deep --strict "$app_bundle"
-          codesign --verify --strict "$app_bundle/Contents/Resources/app/python/Python"
-
-      # ---- Linux: assemble, smoke, tar ---------------------------------
-      - name: Assemble, smoke and tar bundle (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          VERSION_NUM: ${{ needs.gate.outputs.version-num }}
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          bundle="dist/usdRig-$VERSION_NUM-linux-x64"
-          python3 packaging/assemble_bundle.py \
-            --usd-install usd-install --rig-install usdrig-install \
-            --python-home "$pythonLocation" \
-            --launcher build/usdRigView \
-            --output "$bundle" --version "$VERSION_NUM" \
-            --platform linux --platform-slug linux-x64 \
-            --source-root . --rig-build-dir build \
-            --usdnoodles-dir build/python/UsdNoodles \
-            --git-sha "${{ github.sha }}" --trim-dev
-          "$bundle/usdRigView" --usdRig-check
-          while IFS='=' read -r name value; do
-            export "$name=$value"
-          done < <("$bundle/usdRigView" --usdRig-print-env)
-          "$bundle/app/python/bin/python3" \
-            -c "from pxr import Usd; import rigExecUsdview, shapeEditorUsdview, touchPoseUsdview, usdRigViewMenu, rigexec, numpy; s = Usd.Stage.Open('$bundle/app/examples/rigexec_flat.usda'); assert s is not None; a = Usd.Stage.Open(str(s.GetRootLayer().realPath).replace('rigexec_flat.usda', 'ArmShotAnim.usda')); assert a and a.GetPrimAtPath('/Shot/HeroArm/Geom/ArmBody'); print('bundle smoke OK')"
-          "$bundle/app/python/bin/python3" "$bundle/app/usd/bin/usdview" \
-            --help | head -5
-          tar -C dist -czf "$bundle.tar.gz" "$(basename "$bundle")"
+          if [ "$SIGNED" = "1" ]; then
+            app_bundle="${exe%/Contents/MacOS/usdRigView}"
+            codesign --verify --deep --strict "$app_bundle"
+            codesign --verify --strict "$app_bundle/Contents/Resources/app/python/Python"
+          fi
 
       - name: Upload bundle archive
         uses: actions/upload-artifact@v4
         with:
-          name: bundle-${{ matrix.slug }}
+          name: bundle-${{ env.SLUG }}
           path: |
             dist/*.zip
             dist/*.tar.gz
           if-no-files-found: error
           retention-days: 14
 
+  # ---- Linux: build in the year's ASWF image ---------------------------
+  build-linux:
+    name: bundle (vfx${{ matrix.year }}-linux-x86_64)
+    needs: gate
+    strategy:
+      fail-fast: false
+      matrix:
+        year: ["2025", "2026", "2027"]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      YEAR: ${{ matrix.year }}
+      VERSION_NUM: ${{ needs.gate.outputs.version-num }}
+    steps:
+      - name: Checkout usdRig
+        uses: actions/checkout@v4
+
+      - name: VFX platform profile
+        id: vfx
+        run: python3 packaging/vfx/vfx_profile.py outputs "$YEAR" --github-output "$GITHUB_OUTPUT"
+
+      - name: Checkout OpenUSD @ ${{ steps.vfx.outputs.openusd }}
+        uses: actions/checkout@v4
+        with:
+          repository: PixarAnimationStudios/OpenUSD
+          ref: ${{ steps.vfx.outputs.openusd }}
+          path: OpenUSD
+          fetch-depth: 1
+
+      - name: OpenUSD commit (cache key)
+        id: usd
+        run: echo "sha=$(git -C OpenUSD rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # The ASWF images are several GB; make room before pulling one.
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          docker image prune -af > /dev/null
+          df -h /
+
+      - name: Restore cached OpenUSD (usdview + Python)
+        id: usd-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: usd-install
+          key: openusd-vfx${{ matrix.year }}-linux-x86_64-${{ steps.usd.outputs.sha }}-${{ steps.vfx.outputs.profile_hash }}-exec-usdimg-usdview-v1
+
+      - name: Pull ${{ steps.vfx.outputs.linux_image }}
+        run: |
+          docker pull "${{ steps.vfx.outputs.linux_image }}"
+          docker image inspect --format '{{index .RepoDigests 0}}' \
+            "${{ steps.vfx.outputs.linux_image }}"
+
+      - name: Build OpenUSD, usdRig and the bundle in the image
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/w" -w /w -e JOBS=4 \
+            --entrypoint /bin/bash "${{ steps.vfx.outputs.linux_image }}" \
+            -lc "bash packaging/vfx/build_linux.sh '$YEAR' '$VERSION_NUM' '${{ github.sha }}'"
+
+      - name: Hand the workspace back to the runner user
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+
+      - name: Save OpenUSD to cache
+        if: always() && steps.usd-cache.outputs.cache-hit != 'true' && hashFiles('usd-install/bin/usdview') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: usd-install
+          key: ${{ steps.usd-cache.outputs.cache-primary-key }}
+
+      - name: Upload bundle archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-vfx${{ matrix.year }}-linux-x86_64
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---- Linux: run each bundle on the distributions users run -----------
+  smoke-linux:
+    name: run vfx${{ matrix.year }} on ${{ matrix.distro }}
+    needs: build-linux
+    strategy:
+      fail-fast: false
+      matrix:
+        year: ["2025", "2026", "2027"]
+        distro: [rocky8, rocky9, ubuntu22, ubuntu24, arch]
+        include:
+          - distro: rocky8
+            runner: ubuntu-24.04
+            image: rockylinux/rockylinux:8
+          - distro: rocky9
+            runner: ubuntu-24.04
+            image: rockylinux/rockylinux:9
+          - distro: ubuntu22
+            runner: ubuntu-22.04
+            image: ""
+          - distro: ubuntu24
+            runner: ubuntu-24.04
+            image: ""
+          - distro: arch
+            runner: ubuntu-24.04
+            image: archlinux:latest
+        exclude:
+          # CY2027 needs glibc 2.34: EL9 or newer.
+          - year: "2027"
+            distro: rocky8
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    timeout-minutes: 30
+    env:
+      YEAR: ${{ matrix.year }}
+      DISTRO: ${{ matrix.distro }}
+    steps:
+      - name: Install the host libraries the bundle expects
+        run: |
+          case "$DISTRO" in
+            ubuntu*)
+              sudo apt-get update -qq
+              sudo apt-get install -y --no-install-recommends \
+                libgl1 libegl1 libopengl0 libfontconfig1 libdbus-1-3 \
+                libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0 \
+                libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+                libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
+                libxcb-xkb1 libxrender1 libxi6 libxrandr2 libxcursor1 \
+                libxinerama1 xvfb xauth
+              ;;
+            rocky*)
+              dnf install -y epel-release
+              dnf install -y --setopt=strict=0 tar gzip findutils which \
+                mesa-libGL mesa-libEGL mesa-dri-drivers libglvnd-opengl \
+                fontconfig dbus-libs libxkbcommon libxkbcommon-x11 \
+                xcb-util-wm xcb-util-image xcb-util-keysyms \
+                xcb-util-renderutil xcb-util-cursor libXrender libXi \
+                libXrandr libXcursor libXinerama xorg-x11-server-Xvfb \
+                xorg-x11-xauth
+              ;;
+            arch)
+              pacman -Syu --noconfirm --needed tar gzip which binutils \
+                fakeroot sudo mesa libglvnd fontconfig dbus libxkbcommon \
+                libxkbcommon-x11 xcb-util-wm xcb-util-image \
+                xcb-util-keysyms xcb-util-renderutil xcb-util-cursor \
+                libxrender libxi libxrandr libxcursor libxinerama \
+                xorg-server-xvfb xorg-xauth weston
+              ;;
+          esac
+
+      - name: Checkout usdRig
+        uses: actions/checkout@v4
+
+      - name: Download vfx${{ matrix.year }} Linux bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: bundle-vfx${{ matrix.year }}-linux-x86_64
+          path: dl
+
+      # Test the archive users receive, at a path containing spaces.
+      - name: Extract
+        id: extract
+        run: |
+          probe="$RUNNER_TEMP/relocated bundle"
+          mkdir -p "$probe"
+          tar -xzf dl/usdRig-[0-9]*-vfx"$YEAR"-linux-x86_64.tar.gz -C "$probe"
+          bundle="$(ls -d "$probe"/usdRig-*-vfx"$YEAR"-linux-x86_64)"
+          echo "bundle=$bundle" >> "$GITHUB_OUTPUT"
+          grep -m1 -E '^(PRETTY_NAME)=' /etc/os-release
+          ldd --version | head -1
+
+      - name: Bundle check, imports and offscreen launch
+        run: bash packaging/vfx/smoke_linux.sh "${{ steps.extract.outputs.bundle }}" offscreen
+
+      - name: Launch on X11 (Xvfb, rendering on)
+        id: xcb
+        continue-on-error: true
+        run: bash packaging/vfx/smoke_linux.sh "${{ steps.extract.outputs.bundle }}" xcb
+
+      - name: Launch on Wayland (headless Weston)
+        id: wayland
+        if: matrix.distro == 'arch'
+        continue-on-error: true
+        run: bash packaging/vfx/smoke_linux.sh "${{ steps.extract.outputs.bundle }}" wayland
+
+      - name: Install through the AUR recipe
+        id: aur
+        if: matrix.distro == 'arch' && matrix.year == '2027'
+        continue-on-error: true
+        run: |
+          tarball="$(ls "$PWD"/dl/usdRig-[0-9]*-vfx2027-linux-x86_64.tar.gz)"
+          bash packaging/aur/test_pkgbuild.sh "$tarball"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### vfx$YEAR on $DISTRO"
+            echo "- X11 launch: ${{ steps.xcb.outcome }}"
+            echo "- Wayland launch: ${{ steps.wayland.outcome || 'not run' }}"
+            echo "- AUR recipe: ${{ steps.aur.outcome || 'not run' }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   publish:
     name: publish GitHub Release
-    needs: [gate, build]
+    needs: [gate, build-desktop, build-linux, smoke-linux]
     if: needs.gate.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -514,7 +749,7 @@ jobs:
       # Every value below is read from its source of truth at publish
       # time, so the notes cannot restate a stale version: the API
       # version from CMakeLists.txt, the .rigexec format range from
-      # format.h, and the OpenUSD/Python pins from this workflow.
+      # format.h, and the platform pins from packaging/vfx/profiles.json.
       - name: Compatibility notes
         env:
           VERSION_NUM: ${{ needs.gate.outputs.version-num }}
@@ -527,12 +762,7 @@ jobs:
           oldest="$(sed -n \
             's/^inline constexpr uint32_t RigExecFormatOldestReadable = \([0-9]*\);/\1/p' \
             libs/rigExecBinary/format.h)"
-          usd="$(grep -A5 'Checkout OpenUSD' .github/workflows/release.yml | \
-            sed -n 's/.*ref: v\([0-9.]*\)/\1/p' | head -1)"
-          python="$(sed -n \
-            's/.*python-version: "\([0-9.]*\)"/\1/p' \
-            .github/workflows/release.yml | head -1)"
-          for value in "$api" "$format" "$oldest" "$usd" "$python"; do
+          for value in "$api" "$format" "$oldest"; do
             if [ -z "$value" ]; then
               echo "could not derive a compatibility version" >&2
               exit 1
@@ -542,19 +772,21 @@ jobs:
             echo "CMake API version $api != release $VERSION_NUM" >&2
             exit 1
           fi
-          cat > release-notes.md <<EOF
-          ## Compatibility
-
-          | | |
-          |---|---|
-          | usdRig API | $api (0.x: APIs and file formats may change without notice) |
-          | OpenUSD | $usd with OpenExec (bundled in every download; no separate install needed) |
-          | Python | $python (bundled) |
-          | \`.rigexec\` format | writes format $format; reads formats $oldest-$format |
-          | Platforms | Windows x64, macOS Apple Silicon (macOS 13+), Linux Ubuntu x86-64 |
-
-          The macOS download is signed with Developer ID and notarized by Apple.
-          EOF
+          {
+            echo "## Compatibility"
+            echo
+            echo "usdRig API $api (0.x: APIs and file formats may change without notice)."
+            echo "\`.rigexec\` format: writes format $format; reads formats $oldest-$format."
+            echo
+            echo "One download per [VFX Reference Platform](https://vfxplatform.com/) year."
+            echo "Each bundles its own OpenUSD (with OpenExec), Python and Qt; no separate install is needed."
+            echo "The \`usdRig-sdk-*\` archives hold only the RigExec install, for building against the same OpenUSD."
+            echo
+            python3 packaging/vfx/vfx_profile.py notes
+            echo
+            echo "Each Linux download is tested on Rocky Linux 8 (glibc 2.28 years) and 9, Ubuntu 22.04 and 24.04, and Arch Linux."
+            echo "The macOS downloads are signed with Developer ID and notarized by Apple."
+          } > release-notes.md
           cat release-notes.md
 
       - name: Download all bundles
