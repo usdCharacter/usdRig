@@ -14,6 +14,7 @@
 #include "meshConnectivity.h"
 #include "deltaMushSettings.h"
 #include "matrixKernel.h"
+#include "wireKernel.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec2f.h"
@@ -310,6 +311,8 @@ struct RigExecNurbsCurve {
     double DomainEnd() const;
     /// The curve point at parameter u (clamped to the domain), by de Boor.
     GfVec3f Evaluate(double u) const;
+    /// The shared kernel's view of these arrays.
+    RigExecNurbsCurveSpan<GfVec3f> Span() const;
 };
 
 /// Bind coordinates for RigExecApplyWire: per point, (u, d) with u the
@@ -372,19 +375,9 @@ bool RigExecApplyWireSparse(std::vector<GfVec3f> *points,
                             const std::vector<float> &weights);
 
 /// A sparse wire's deformation as a fixed linear map from control point
-/// motion to point motion.
-///
-/// A wire moves point k by f(d_k) * sum_j N_j(u_k) (C_j - C0_j): u_k and d_k
-/// are fixed at bind, the basis functions N_j depend only on the knots and
-/// order, so every coefficient f(d_k) N_j(u_k) is a constant until the bind,
-/// the knots or the weighted point set change. Stored per control point, so
-/// a frame in which one tweak moves touches only the points that control
-/// point can reach, with no curve evaluation at all.
-struct RigExecWireBasis {
-    /// For control point j: (position in the weight index list, coefficient).
-    std::vector<std::vector<std::pair<uint32_t, float>>> byControlPoint;
-    bool ascendingIndices = false;
-};
+/// motion to point motion (RigExecWireBasis, wireKernel.h): a wire moves
+/// point k by f(d_k) * sum_j N_j(u_k) (C_j - C0_j), and every coefficient is
+/// constant until the bind, the knots or the weighted point set change.
 
 /// Builds the basis for the points named by \p indices. \p bindCoords is
 /// either one entry per mesh point (\p meshPointCount of them) or one per

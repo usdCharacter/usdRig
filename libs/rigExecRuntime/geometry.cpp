@@ -28,6 +28,7 @@
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/skinAcceptance.h"
 #include "rigExecMath/skinKernel.h"
+#include "rigExecMath/wireKernel.h"
 #include "rigExecMath/pointRanges.h"
 #include "rigExecMath/surfaceKernelCache.h"
 #include "rigExecMath/wireKernelCache.h"
@@ -1235,73 +1236,33 @@ struct RrGeoNurbsCurve {
     int order = 0;
     const std::vector<double> *knots = nullptr;
 
+    RigExecNurbsCurveSpan<RrVec3f> Span() const
+    {
+        return {points ? points->data() : nullptr, points ? points->size() : 0,
+                order, knots ? knots->data() : nullptr,
+                knots ? knots->size() : 0};
+    }
     bool IsValid() const
     {
-        if (!points || !knots || order < 2) {
-            return false;
-        }
-        const size_t n = points->size();
-        return order <= 16 && n >= size_t(order) &&
-               knots->size() == n + size_t(order) &&
-               (*knots)[size_t(order) - 1] < (*knots)[n];
+        return Span().IsValid();
     }
-
-    double DomainStart() const
-    {
-        return (*knots)[size_t(order) - 1];
-    }
-
-    double DomainEnd() const
-    {
-        return (*knots)[points->size()];
-    }
-
     RrVec3f Evaluate(double u) const
     {
-        const std::vector<double> &k = *knots;
-        const std::vector<RrVec3f> &cv = *points;
-        const int p = order - 1;
-        const size_t n = cv.size();
-        u = std::min(std::max(u, DomainStart()), DomainEnd());
-        size_t s = size_t(p);
-        while (s + 1 < n && k[s + 1] <= u) {
-            ++s;
-        }
-        RrVec3d d[16];
-        const int count = std::min(order, 16);
-        for (int j = 0; j < count; ++j) {
-            d[j] = RrGeoToVec3d(cv[s - size_t(p) + size_t(j)]);
-        }
-        for (int r = 1; r <= p && r < 16; ++r) {
-            for (int j = p; j >= r; --j) {
-                const size_t i = s - size_t(p) + size_t(j);
-                const double denom = k[i + size_t(p) + 1 - size_t(r)] - k[i];
-                const double a = denom > 0.0 ? (u - k[i]) / denom : 0.0;
-                d[j] = d[j - 1] * (1.0 - a) + d[j] * a;
-            }
-        }
-        return RrGeoToVec3f(d[p]);
+        return Span().Evaluate<RrVec3d>(u);
     }
 };
 
-struct RrGeoWireBasis {
-    // Per control point, the (weighted-point ordinal, coefficient) pairs.
-    std::vector<std::vector<std::pair<uint32_t, float>>> byControlPoint;
-    bool ascendingIndices = false;
-};
+using RrGeoWireBasis = RigExecWireBasis;
 
-// RigExecWireBasisInputsAreUsable: the basis build's checks before it builds.
 bool
 RrGeoWireBasisInputsAreUsable(const RrVec2f *bindCoords, size_t bindCount,
                               size_t meshPointCount, size_t indexCount,
                               int order, const std::vector<double> &knots,
                               size_t controlPointCount)
 {
-    const size_t n = controlPointCount;
-    return bindCoords && order >= 1 && order <= 16 && n >= size_t(order) &&
-           knots.size() == n + size_t(order) &&
-           knots[size_t(order - 1)] < knots[n] &&
-           (bindCount == meshPointCount || bindCount == indexCount);
+    return RigExecWireBasisInputsAreUsableKernel(
+        bindCoords, bindCount, meshPointCount, indexCount, order, knots.data(),
+        knots.size(), controlPointCount);
 }
 
 bool
@@ -1311,61 +1272,26 @@ RrGeoBuildWireBasis(const RrVec2f *bindCoords, size_t bindCount,
                     size_t controlPointCount, double dropoffDistance,
                     RrGeoWireBasis *basis)
 {
-    const size_t n = controlPointCount;
-    if (!basis ||
-        !RrGeoWireBasisInputsAreUsable(bindCoords, bindCount, meshPointCount,
-                                       indices.size(), order, knots, n)) {
-        return false;
-    }
-    const bool parallel = bindCount == indices.size();
-    const int p = order - 1;
-    const double u0 = knots[size_t(p)];
-    const double u1 = knots[n];
-    basis->byControlPoint.assign(n, {});
-    basis->ascendingIndices = std::is_sorted(indices.begin(), indices.end());
-    double left[16], right[16], N[16];
-    for (size_t k = 0; k < indices.size(); ++k) {
-        const int index = indices[k];
-        if (index < 0 || size_t(index) >= meshPointCount) {
-            return false;
-        }
-        const RrVec2f &bind = bindCoords[parallel ? k : size_t(index)];
-        double f = 1.0;
-        if (dropoffDistance > 0.0) {
-            const double s =
-                std::min(std::max(double(bind[1]) / dropoffDistance, 0.0), 1.0);
-            f = 1.0 - s * s * (3.0 - 2.0 * s);
-        }
-        if (f <= 0.0) {
-            continue;
-        }
-        const double u = std::min(std::max(double(bind[0]), u0), u1);
-        size_t span = size_t(p);
-        while (span + 1 < n && knots[span + 1] <= u) {
-            ++span;
-        }
-        N[0] = 1.0;
-        for (int j = 1; j <= p; ++j) {
-            left[j] = u - knots[span + 1 - size_t(j)];
-            right[j] = knots[span + size_t(j)] - u;
-            double saved = 0.0;
-            for (int r = 0; r < j; ++r) {
-                const double denom = right[r + 1] + left[j - r];
-                const double temp = denom != 0.0 ? N[r] / denom : 0.0;
-                N[r] = saved + right[r + 1] * temp;
-                saved = left[j - r] * temp;
-            }
-            N[j] = saved;
-        }
-        for (int r = 0; r <= p; ++r) {
-            const double c = f * N[r];
-            if (c != 0.0) {
-                basis->byControlPoint[span - size_t(p) + size_t(r)]
-                    .emplace_back(uint32_t(k), float(c));
-            }
-        }
-    }
-    return true;
+    return RigExecBuildWireBasisKernel(
+        bindCoords, bindCount, meshPointCount, indices.data(), indices.size(),
+        order, knots.data(), knots.size(), controlPointCount, dropoffDistance,
+        basis);
+}
+
+// Over points [begin, end), held at \p out[0, end - begin) and seeded by the
+// caller; the whole call is the group [0, size).
+bool
+RrGeoApplyWireBasisGroup(RrVec3f *out, size_t begin, size_t end,
+                         const RrGeoWireBasis &basis,
+                         const std::vector<int> &indices,
+                         const std::vector<float> &weights,
+                         const std::vector<RrVec3f> &restControlPoints,
+                         const std::vector<RrVec3f> &posedControlPoints)
+{
+    return RigExecApplyWireBasisGroupKernel(
+        out, begin, end, basis, indices.data(), indices.size(), weights.data(),
+        weights.size(), restControlPoints.data(), restControlPoints.size(),
+        posedControlPoints.data(), posedControlPoints.size());
 }
 
 bool
@@ -1375,79 +1301,36 @@ RrGeoApplyWireBasis(std::vector<RrVec3f> *points, const RrGeoWireBasis &basis,
                     const std::vector<RrVec3f> &restControlPoints,
                     const std::vector<RrVec3f> &posedControlPoints)
 {
-    const size_t n = basis.byControlPoint.size();
-    if (!points || restControlPoints.size() != n ||
-        posedControlPoints.size() != n || indices.size() != weights.size()) {
-        return false;
-    }
-    RrVec3f *data = points->data();
-    for (size_t j = 0; j < n; ++j) {
-        const RrVec3f delta = posedControlPoints[j] - restControlPoints[j];
-        if (delta == RrVec3f(0.0f)) {
-            continue; // a control point at rest moves nothing
-        }
-        for (const auto &[k, coefficient] : basis.byControlPoint[j]) {
-            data[size_t(indices[k])] += delta * (coefficient * weights[k]);
-        }
-    }
-    return true;
+    return points && RrGeoApplyWireBasisGroup(
+                         points->data(), 0, points->size(), basis, indices,
+                         weights, restControlPoints, posedControlPoints);
 }
 
-// RrGeoApplyWireBasis over the points in [begin, end) only, held in a
-// group's own buffer (RigExecApplyWireBasisGroup): \p out[k] is point
-// begin + k, seeded by the caller; every control point in the same order,
-// applying only the entries whose index falls in the group, so each point
-// receives the same additions in the same order as from the whole call.
-bool
-RrGeoApplyWireBasisGroup(RrVec3f *out, size_t begin, size_t end,
-                         const RrGeoWireBasis &basis,
-                         const std::vector<int> &indices,
-                         const std::vector<float> &weights,
-                         const std::vector<RrVec3f> &restControlPoints,
-                         const std::vector<RrVec3f> &posedControlPoints)
-{
-    const size_t n = basis.byControlPoint.size();
-    if (!out || restControlPoints.size() != n ||
-        posedControlPoints.size() != n || indices.size() != weights.size()) {
-        return false;
-    }
-    for (size_t j = 0; j < n; ++j) {
-        const RrVec3f delta = posedControlPoints[j] - restControlPoints[j];
-        if (delta == RrVec3f(0.0f)) {
-            continue; // a control point at rest moves nothing
-        }
-        const auto &entries = basis.byControlPoint[j];
-        auto first = entries.begin(), last = entries.end();
-        if (basis.ascendingIndices) {
-            const auto before = [&](const auto &entry, size_t bound) {
-                return indices[entry.first] < 0 ||
-                       size_t(indices[entry.first]) < bound;
-            };
-            first = std::lower_bound(first, last, begin, before);
-            last = std::lower_bound(first, last, end, before);
-        }
-        for (auto entry = first; entry != last; ++entry) {
-            const auto [k, coefficient] = *entry;
-            const size_t index = size_t(indices[k]);
-            if (index >= begin && index < end) {
-                out[index - begin] += delta * (coefficient * weights[k]);
-            }
-        }
-    }
-    return true;
-}
-
-// RigExecWireInputsAreUsable: RrGeoApplyWire's checks before it writes.
 bool
 RrGeoWireInputsAreUsable(const RrGeoNurbsCurve &restCurve,
                          const RrGeoNurbsCurve &posedCurve,
                          const RrVec2f *bindCoords, size_t bindCount,
                          size_t pointCount)
 {
-    return bindCoords && restCurve.IsValid() && posedCurve.IsValid() &&
-           restCurve.order == posedCurve.order &&
-           restCurve.points->size() == posedCurve.points->size() &&
-           !(*restCurve.knots != *posedCurve.knots) && bindCount == pointCount;
+    return RigExecWireInputsAreUsableKernel(restCurve.Span(), posedCurve.Span(),
+                                            bindCoords, bindCount, pointCount);
+}
+
+// Over points [begin, end) of \p count, held at \p out[0, end - begin) and
+// seeded by the caller; the whole call is the group [0, size).
+bool
+RrGeoApplyWireGroup(RrVec3f *out, size_t begin, size_t end, size_t count,
+                    const RrGeoNurbsCurve &restCurve,
+                    const RrGeoNurbsCurve &posedCurve,
+                    const RrVec2f *bindCoords, size_t bindCount,
+                    double dropoffDistance,
+                    const std::vector<RrVec3f> *restEvaluations = nullptr)
+{
+    return RigExecApplyWireGroupKernel<RrVec3f, RrVec3d>(
+        out, begin, end, count, restCurve.Span(), posedCurve.Span(), bindCoords,
+        bindCount, dropoffDistance,
+        restEvaluations ? restEvaluations->data() : nullptr,
+        restEvaluations ? restEvaluations->size() : 0);
 }
 
 bool
@@ -1457,63 +1340,13 @@ RrGeoApplyWire(std::vector<RrVec3f> *points, const RrGeoNurbsCurve &restCurve,
                size_t end,
                const std::vector<RrVec3f> *restEvaluations = nullptr)
 {
-    if (!points || !RrGeoWireInputsAreUsable(restCurve, posedCurve, bindCoords,
-                                             bindCount, points->size())) {
+    if (!points)
         return false;
-    }
     end = std::min(end, points->size());
-    for (size_t i = begin; i < end; ++i) {
-        const double u = bindCoords[i][0];
-        const double d = bindCoords[i][1];
-        double f = 1.0;
-        if (dropoffDistance > 0.0) {
-            const double s = std::min(std::max(d / dropoffDistance, 0.0), 1.0);
-            f = 1.0 - s * s * (3.0 - 2.0 * s);
-        }
-        if (f <= 0.0) {
-            continue;
-        }
-        const RrVec3f delta =
-            posedCurve.Evaluate(u) -
-            (restEvaluations ? (*restEvaluations)[i] : restCurve.Evaluate(u));
-        (*points)[i] += delta * float(f);
-    }
-    return true;
-}
-
-// RrGeoApplyWire over points [begin, end) of \p count, held at
-// \p out[0, end - begin) and seeded by the caller (RigExecApplyWireGroup):
-// the whole call's checks over \p count and its arithmetic per point.
-bool
-RrGeoApplyWireGroup(RrVec3f *out, size_t begin, size_t end, size_t count,
-                    const RrGeoNurbsCurve &restCurve,
-                    const RrGeoNurbsCurve &posedCurve,
-                    const RrVec2f *bindCoords, size_t bindCount,
-                    double dropoffDistance,
-                    const std::vector<RrVec3f> *restEvaluations = nullptr)
-{
-    if (!out || !RrGeoWireInputsAreUsable(restCurve, posedCurve, bindCoords,
-                                          bindCount, count)) {
-        return false;
-    }
-    end = std::min(end, count);
-    for (size_t i = begin; i < end; ++i) {
-        const double u = bindCoords[i][0];
-        const double d = bindCoords[i][1];
-        double f = 1.0;
-        if (dropoffDistance > 0.0) {
-            const double s = std::min(std::max(d / dropoffDistance, 0.0), 1.0);
-            f = 1.0 - s * s * (3.0 - 2.0 * s);
-        }
-        if (f <= 0.0) {
-            continue;
-        }
-        const RrVec3f delta =
-            posedCurve.Evaluate(u) -
-            (restEvaluations ? (*restEvaluations)[i] : restCurve.Evaluate(u));
-        out[i - begin] += delta * float(f);
-    }
-    return true;
+    begin = std::min(begin, end);
+    return RrGeoApplyWireGroup(
+        points->data() + begin, begin, end, points->size(), restCurve,
+        posedCurve, bindCoords, bindCount, dropoffDistance, restEvaluations);
 }
 
 struct RrGeoSkinTransformsView {

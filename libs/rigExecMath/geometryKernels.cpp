@@ -673,59 +673,35 @@ RigExecApplyRibbonTransport(std::vector<GfVec3f> *points,
 
 namespace rigExec {
 
+RigExecNurbsCurveSpan<GfVec3f>
+RigExecNurbsCurve::Span() const
+{
+    return {points ? points->data() : nullptr, points ? points->size() : 0,
+            order, knots ? knots->data() : nullptr, knots ? knots->size() : 0};
+}
+
 bool
 RigExecNurbsCurve::IsValid() const
 {
-    if (!points || !knots || order < 2) {
-        return false;
-    }
-    const size_t n = points->size();
-    return order <= 16 && n >= size_t(order) &&
-           knots->size() == n + size_t(order) &&
-           (*knots)[size_t(order) - 1] < (*knots)[n];
+    return Span().IsValid();
 }
 
 double
 RigExecNurbsCurve::DomainStart() const
 {
-    return (*knots)[size_t(order) - 1];
+    return Span().DomainStart();
 }
 
 double
 RigExecNurbsCurve::DomainEnd() const
 {
-    return (*knots)[points->size()];
+    return Span().DomainEnd();
 }
 
 GfVec3f
 RigExecNurbsCurve::Evaluate(double u) const
 {
-    const std::vector<double> &k = *knots;
-    const std::vector<GfVec3f> &cv = *points;
-    const int p = order - 1;
-    const size_t n = cv.size();
-    u = std::min(std::max(u, DomainStart()), DomainEnd());
-    // The span: largest s in [p, n-1] with k[s] <= u < k[s+1]; the domain
-    // end belongs to the last non-empty span.
-    size_t s = size_t(p);
-    while (s + 1 < n && k[s + 1] <= u) {
-        ++s;
-    }
-    // de Boor over the order control points of that span.
-    GfVec3d d[16];
-    const int count = std::min(order, 16);
-    for (int j = 0; j < count; ++j) {
-        d[j] = GfVec3d(cv[s - size_t(p) + size_t(j)]);
-    }
-    for (int r = 1; r <= p && r < 16; ++r) {
-        for (int j = p; j >= r; --j) {
-            const size_t i = s - size_t(p) + size_t(j);
-            const double denom = k[i + size_t(p) + 1 - size_t(r)] - k[i];
-            const double a = denom > 0.0 ? (u - k[i]) / denom : 0.0;
-            d[j] = d[j - 1] * (1.0 - a) + d[j] * a;
-        }
-    }
-    return GfVec3f(d[p]);
+    return Span().Evaluate<GfVec3d>(u);
 }
 
 bool
@@ -735,63 +711,10 @@ RigExecBuildWireBasis(const GfVec2f *bindCoords, size_t bindCount,
                       size_t controlPointCount, double dropoffDistance,
                       RigExecWireBasis *basis)
 {
-    const size_t n = controlPointCount;
-    if (!basis ||
-        !RigExecWireBasisInputsAreUsable(bindCoords, bindCount, meshPointCount,
-                                         indices.size(), order, knots, n)) {
-        return false;
-    }
-    const bool parallel = bindCount == indices.size();
-    const int p = order - 1;
-    const double u0 = knots[size_t(p)];
-    const double u1 = knots[n];
-    basis->byControlPoint.assign(n, {});
-    basis->ascendingIndices = std::is_sorted(indices.begin(), indices.end());
-    double left[16], right[16], N[16];
-    for (size_t k = 0; k < indices.size(); ++k) {
-        const int index = indices[k];
-        if (index < 0 || size_t(index) >= meshPointCount) {
-            return false;
-        }
-        const GfVec2f &bind = bindCoords[parallel ? k : size_t(index)];
-        double f = 1.0;
-        if (dropoffDistance > 0.0) {
-            const double s =
-                std::min(std::max(double(bind[1]) / dropoffDistance, 0.0), 1.0);
-            f = 1.0 - s * s * (3.0 - 2.0 * s);
-        }
-        if (f <= 0.0) {
-            continue;
-        }
-        const double u = std::min(std::max(double(bind[0]), u0), u1);
-        // The span exactly as RigExecNurbsCurve::Evaluate finds it.
-        size_t span = size_t(p);
-        while (span + 1 < n && knots[span + 1] <= u) {
-            ++span;
-        }
-        // The order nonzero basis functions at u (Piegl and Tiller, A2.2).
-        N[0] = 1.0;
-        for (int j = 1; j <= p; ++j) {
-            left[j] = u - knots[span + 1 - size_t(j)];
-            right[j] = knots[span + size_t(j)] - u;
-            double saved = 0.0;
-            for (int r = 0; r < j; ++r) {
-                const double denom = right[r + 1] + left[j - r];
-                const double temp = denom != 0.0 ? N[r] / denom : 0.0;
-                N[r] = saved + right[r + 1] * temp;
-                saved = left[j - r] * temp;
-            }
-            N[j] = saved;
-        }
-        for (int r = 0; r <= p; ++r) {
-            const double c = f * N[r];
-            if (c != 0.0) {
-                basis->byControlPoint[span - size_t(p) + size_t(r)]
-                    .emplace_back(uint32_t(k), float(c));
-            }
-        }
-    }
-    return true;
+    return RigExecBuildWireBasisKernel(
+        bindCoords, bindCount, meshPointCount, indices.data(), indices.size(),
+        order, knots.data(), knots.size(), controlPointCount, dropoffDistance,
+        basis);
 }
 
 bool
@@ -800,11 +723,9 @@ RigExecWireBasisInputsAreUsable(const GfVec2f *bindCoords, size_t bindCount,
                                 int order, const std::vector<double> &knots,
                                 size_t controlPointCount)
 {
-    const size_t n = controlPointCount;
-    return bindCoords && order >= 1 && order <= 16 && n >= size_t(order) &&
-           knots.size() == n + size_t(order) &&
-           knots[size_t(order - 1)] < knots[n] &&
-           (bindCount == meshPointCount || bindCount == indexCount);
+    return RigExecWireBasisInputsAreUsableKernel(
+        bindCoords, bindCount, meshPointCount, indexCount, order, knots.data(),
+        knots.size(), controlPointCount);
 }
 
 bool
@@ -847,38 +768,10 @@ RigExecApplyWireBasisGroup(GfVec3f *out, size_t begin, size_t end,
                            const std::vector<GfVec3f> &restControlPoints,
                            const std::vector<GfVec3f> &posedControlPoints)
 {
-    const size_t n = basis.byControlPoint.size();
-    if ((!out && begin < end) || restControlPoints.size() != n ||
-        posedControlPoints.size() != n || indices.size() != weights.size()) {
-        return false;
-    }
-    // Control-point-major, as the whole call: a point's additions arrive in
-    // control point order whichever range it is applied in.
-    for (size_t j = 0; j < n; ++j) {
-        const GfVec3f delta = posedControlPoints[j] - restControlPoints[j];
-        if (delta == GfVec3f(0.0f)) {
-            continue; // a control point at rest moves nothing
-        }
-        const auto &entries = basis.byControlPoint[j];
-        auto first = entries.begin(), last = entries.end();
-        if (basis.ascendingIndices) {
-            const auto before = [&](const auto &entry, size_t bound) {
-                return indices[entry.first] < 0 ||
-                       size_t(indices[entry.first]) < bound;
-            };
-            first = std::lower_bound(first, last, begin, before);
-            last = std::lower_bound(first, last, end, before);
-        }
-        for (auto entry = first; entry != last; ++entry) {
-            const auto [k, coefficient] = *entry;
-            const int index = indices[k];
-            if (index < 0 || size_t(index) < begin || size_t(index) >= end) {
-                continue;
-            }
-            out[size_t(index) - begin] += delta * (coefficient * weights[k]);
-        }
-    }
-    return true;
+    return RigExecApplyWireBasisGroupKernel(
+        out, begin, end, basis, indices.data(), indices.size(), weights.data(),
+        weights.size(), restControlPoints.data(), restControlPoints.size(),
+        posedControlPoints.data(), posedControlPoints.size());
 }
 
 std::vector<GfVec2f>
@@ -956,31 +849,9 @@ RigExecApplyWireGroup(GfVec3f *out, size_t begin, size_t end, size_t count,
                       double dropoffDistance, const GfVec3f *restEvals,
                       size_t restEvalCount)
 {
-    if (!RigExecWireInputsAreUsable(restCurve, posedCurve, bindCoords,
-                                    bindCount, count) ||
-        (restEvals && restEvalCount != count)) {
-        return false;
-    }
-    end = std::min(end, count);
-    if (begin < end && !out) {
-        return false;
-    }
-    for (size_t i = begin; i < end; ++i) {
-        const double u = bindCoords[i][0];
-        const double d = bindCoords[i][1];
-        double f = 1.0;
-        if (dropoffDistance > 0.0) {
-            const double s = std::min(std::max(d / dropoffDistance, 0.0), 1.0);
-            f = 1.0 - s * s * (3.0 - 2.0 * s);
-        }
-        if (f <= 0.0) {
-            continue;
-        }
-        const GfVec3f rest = restEvals ? restEvals[i] : restCurve.Evaluate(u);
-        const GfVec3f delta = posedCurve.Evaluate(u) - rest;
-        out[i - begin] += delta * float(f);
-    }
-    return true;
+    return RigExecApplyWireGroupKernel<GfVec3f, GfVec3d>(
+        out, begin, end, count, restCurve.Span(), posedCurve.Span(), bindCoords,
+        bindCount, dropoffDistance, restEvals, restEvalCount);
 }
 
 bool
@@ -989,12 +860,8 @@ RigExecWireInputsAreUsable(const RigExecNurbsCurve &restCurve,
                            const GfVec2f *bindCoords, size_t bindCount,
                            size_t pointCount)
 {
-    // The knot vectors compare by value, so a NaN knot fails even when both
-    // curves share one vector.
-    return bindCoords && restCurve.IsValid() && posedCurve.IsValid() &&
-           restCurve.order == posedCurve.order &&
-           restCurve.points->size() == posedCurve.points->size() &&
-           !(*restCurve.knots != *posedCurve.knots) && bindCount == pointCount;
+    return RigExecWireInputsAreUsableKernel(restCurve.Span(), posedCurve.Span(),
+                                            bindCoords, bindCount, pointCount);
 }
 
 bool
@@ -1005,10 +872,10 @@ RigExecApplyWireSparse(std::vector<GfVec3f> *points,
                        double dropoffDistance, const std::vector<int> &indices,
                        const std::vector<float> &weights)
 {
-    if (!points || !bindCoords || !restCurve.IsValid() ||
-        !posedCurve.IsValid() || restCurve.order != posedCurve.order ||
-        restCurve.points->size() != posedCurve.points->size() ||
-        *restCurve.knots != *posedCurve.knots ||
+    const RigExecNurbsCurveSpan<GfVec3f> rest = restCurve.Span();
+    const RigExecNurbsCurveSpan<GfVec3f> posed = posedCurve.Span();
+    if (!points || !bindCoords || !rest.IsValid() || !posed.IsValid() ||
+        !rest.Matches(posed) ||
         (bindCount != points->size() && bindCount != indices.size()) ||
         indices.size() != weights.size()) {
         return false;
@@ -1018,16 +885,13 @@ RigExecApplyWireSparse(std::vector<GfVec3f> *points,
         const size_t i = size_t(indices[k]);
         const GfVec2f &bind = bindCoords[parallel ? k : i];
         const double u = bind[0];
-        const double d = bind[1];
-        double f = weights[k];
-        if (dropoffDistance > 0.0) {
-            const double s = std::min(std::max(d / dropoffDistance, 0.0), 1.0);
-            f *= 1.0 - s * s * (3.0 - 2.0 * s);
-        }
+        const double f =
+            weights[k] * RigExecWireFalloff(bind[1], dropoffDistance);
         if (f <= 0.0) {
             continue;
         }
-        const GfVec3f delta = posedCurve.Evaluate(u) - restCurve.Evaluate(u);
+        const GfVec3f delta =
+            posed.Evaluate<GfVec3d>(u) - rest.Evaluate<GfVec3d>(u);
         (*points)[i] += delta * float(f);
     }
     return true;
