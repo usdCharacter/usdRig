@@ -42,6 +42,19 @@ main(int argc, char **argv)
     std::printf("probe keep2 2\n");
 #endif
 
+    // The label-option witness defines these to a fast-math sub-option
+    // spelling; printing them proves a definition carrying that spelling
+    // reaches the translation unit instead of being filtered out.
+#ifdef RIGEXEC_FP_LABEL_TARGET
+    std::printf("probe label target %s\n", RIGEXEC_FP_LABEL_TARGET);
+#endif
+#ifdef RIGEXEC_FP_LABEL_SOURCE
+    std::printf("probe label source %s\n", RIGEXEC_FP_LABEL_SOURCE);
+#endif
+#ifdef RIGEXEC_FP_LABEL_IFACE
+    std::printf("probe label iface %s\n", RIGEXEC_FP_LABEL_IFACE);
+#endif
+
     rigexecPrintGeneratedProbe();
     return 0;
 }

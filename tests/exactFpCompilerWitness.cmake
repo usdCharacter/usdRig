@@ -704,12 +704,11 @@ foreach (_w_needle IN ITEMS
     endif ()
 endforeach ()
 
-# Legs 22-24: the reassociation sub-option spelled on its own after the
-# canonical pair. GNU-only: MSVC has no such spelling, and its /fp: family is
-# already covered by the fast-flag legs. The pre-fix commands for these legs
-# read "-fno-fast-math -ffp-contract=off -funsafe-math-optimizations" and the
-# built probe reassociated (probe reassoc 322bcc77, not 00000000), so the
-# matcher must classify the resolved argument, not only the raw entry.
+# Legs 22-26: -ffast-math's reassociation sub-options spelled on their own
+# after the canonical pair restore the loosened mode past it, so the
+# matcher must classify every resolved compiler argument and only that
+# argument. GNU-only: MSVC has no such spelling, and its /fp: family is
+# already covered by the fast-flag legs.
 
 # Leg 22: the split unsafe sub-option as an interface compile option; the
 # rejection must name the consuming target, the owning interface target, the
@@ -785,6 +784,76 @@ if (NOT _msvc)
         if (NOT _n EQUAL 0)
             _witness_fail("unsafe sub-option entered the safe leg")
         endif ()
+    endif ()
+
+    # Leg 25: a definition that carries the sub-option spelling as its
+    # value is not a mode switch: beside the real switch it must not be
+    # reported, and the rejection must name the switch alone.
+    set(_work25 "${BUILD_ROOT}/label-with-switch")
+    _witness_configure("${_work25}"
+        "-DWITNESS_UNSAFE_FLAG=${_unsafe_flag}"
+        -DWITNESS_LABEL_OPTION=ON
+        -DWITNESS_LABEL_SWITCH=ON)
+    if (WITNESS_RC EQUAL 0)
+        _witness_fail("interface option carrying the real switch configured "
+            "without a diagnostic (rc=0)")
+    endif ()
+    foreach (_w_needle IN ITEMS
+        "target witnessLabel carries"
+        "fpIface: ${_unsafe_flag} \\(conflicting option \\(${_unsafe_flag}\\)\\)")
+        if (NOT WITNESS_LOG MATCHES "${_w_needle}")
+            _witness_fail("leg25 diagnostic lacks '${_w_needle}':\n${WITNESS_LOG}")
+        endif ()
+    endforeach ()
+    if (WITNESS_LOG MATCHES "RIGEXEC_FP_LABEL")
+        _witness_fail("a definition carrying the sub-option spelling was "
+            "reported as a mode switch:\n${WITNESS_LOG}")
+    endif ()
+
+    # Leg 26: the same definitions alone are harmless. The rig must
+    # configure untouched, every value must reach the translation unit
+    # verbatim, and the exact-mode patterns must still hold.
+    set(_work26 "${BUILD_ROOT}/third_party-label-defs")
+    _witness_configure("${_work26}"
+        "-DWITNESS_UNSAFE_FLAG=${_unsafe_flag}"
+        -DWITNESS_LABEL_OPTION=ON)
+    if (NOT WITNESS_RC EQUAL 0)
+        _witness_fail("definitions carrying the sub-option spelling were "
+            "rejected as mode switches:\n${WITNESS_LOG}")
+    endif ()
+    execute_process(COMMAND "${CMAKE_COMMAND}" --build "${_work26}"
+        ${_build_config}
+        RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
+    if (NOT _rc EQUAL 0)
+        _witness_fail("label-definition leg failed to build: ${_out}${_err}")
+    endif ()
+    _witness_audit("${_work26}")
+    _witness_run_and_check_exact("${_work26}${_cfgdir}/witnessLabel")
+    execute_process(COMMAND "${_work26}${_cfgdir}/witnessLabel${_exe}"
+        RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
+    if (NOT _rc EQUAL 0)
+        _witness_fail("witnessLabel exited ${_rc}: ${_err}")
+    endif ()
+    foreach (_needle IN ITEMS
+        "label target ${_unsafe_flag}"
+        "label source ${_unsafe_flag}"
+        "label iface ${_unsafe_flag}")
+        if (NOT _out MATCHES "${_needle}")
+            _witness_fail("witnessLabel lost a label definition "
+                "(${_needle}): ${_out}")
+        endif ()
+    endforeach ()
+    if (EXISTS "${_work26}/compile_commands.json")
+        file(READ "${_work26}/compile_commands.json" _cc26)
+        foreach (_label IN ITEMS
+            "-DRIGEXEC_FP_LABEL_TARGET=" "-DRIGEXEC_FP_LABEL_SOURCE="
+            "-DRIGEXEC_FP_LABEL_IFACE=")
+            _witness_count("${_cc26}" "${_label}" _n)
+            if (_n LESS 1)
+                _witness_fail("label definition ${_label} missing from "
+                    "the real commands")
+            endif ()
+        endforeach ()
     endif ()
 endif ()
 

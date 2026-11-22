@@ -2,14 +2,18 @@
 # applies the root project's exact-FP helper to adversarial target shapes;
 # the driver audits the real compiler commands and runs the numeric
 # probes. WITNESS_MODULE, WITNESS_FAST_FLAGS, WITNESS_FAST_HEAD,
-# WITNESS_FAST_TAIL and WITNESS_CONFLICT_FLAG come from the driver, and
-# each WITNESS_*_LINK, WITNESS_*_OPTION and WITNESS_MIXED/ADJACENT/
-# DEEP/ONE_ARG mode adds a target whose only route to a fast option is
-# that one link- or compile-option shape. The WITNESS_CONCAT_*_OPTION
-# modes split the fast flag across literal text and a property lookup;
+# WITNESS_FAST_TAIL, WITNESS_CONFLICT_FLAG and WITNESS_UNSAFE_FLAG come
+# from the driver, and each WITNESS_*_LINK, WITNESS_*_OPTION and
+# WITNESS_MIXED/ADJACENT/DEEP/ONE_ARG mode adds a target whose only route
+# to a fast option is that one link- or compile-option shape. The
+# WITNESS_CONCAT_*_OPTION modes split the fast flag across literal text
+# and a property lookup;
 # the WITNESS_EXPR_*_OPTION modes start that split with a constant
 # generator expression, and WITNESS_EXPR_SAFE_OPTION adds only
 # expression options whose every expanded argument is harmless.
+# WITNESS_LABEL_OPTION adds definitions whose values spell a fast-math
+# sub-option, and WITNESS_LABEL_SWITCH adds that sub-option as a real
+# option beside them.
 cmake_minimum_required(VERSION 3.26)
 project(rigexec_exact_fp_witness LANGUAGES CXX)
 
@@ -61,7 +65,8 @@ if (NOT WITNESS_IF_LINK AND NOT WITNESS_DEEP_LINK AND NOT WITNESS_PROP_LINK
     AND NOT WITNESS_EXPR_IFACE_OPTION
     AND NOT WITNESS_EXPR_SOURCE_OPTION
     AND NOT WITNESS_EXPR_SAFE_OPTION
-    AND NOT WITNESS_EXPR_CONDITIONAL_OPTION)
+    AND NOT WITNESS_EXPR_CONDITIONAL_OPTION
+    AND NOT WITNESS_LABEL_OPTION)
     target_link_libraries(witnessExact PRIVATE $<$<CONFIG:Release>:Pkg::Fast>)
 endif ()
 
@@ -244,6 +249,30 @@ if (WITNESS_EXPR_SAFE_OPTION)
         "$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CXX>>:$<TARGET_PROPERTY:fpIface,FP_MODE>>"
         "$<$<CONFIG:Release>:-DEXPR_FIRST;-DEXPR_SECOND>")
     target_link_libraries(witnessExprSafe PRIVATE fpIface)
+endif ()
+
+if (WITNESS_LABEL_OPTION)
+    # Definitions carrying a fast-math sub-option as their value. A define
+    # is a preprocessor argument, never a compiler mode switch, so both
+    # spellings must survive the walk untouched. WITNESS_LABEL_SWITCH adds
+    # the real switch as its own interface option: the rejection still has
+    # to name it and nothing else.
+    add_executable(witnessLabel
+        probe.cpp
+        "${_gen_dir}/generatedProbe.cpp")
+    target_compile_options(witnessLabel PRIVATE
+        "-DRIGEXEC_FP_LABEL_TARGET=\"${WITNESS_UNSAFE_FLAG}\"")
+    # The same shape through the per-source property, which the matcher
+    # scans with the same classifier.
+    set_source_files_properties(probe.cpp
+        PROPERTIES COMPILE_OPTIONS
+                   "-DRIGEXEC_FP_LABEL_SOURCE=\"${WITNESS_UNSAFE_FLAG}\"")
+    target_compile_options(fpIface INTERFACE
+        "-DRIGEXEC_FP_LABEL_IFACE=\"${WITNESS_UNSAFE_FLAG}\"")
+    if (WITNESS_LABEL_SWITCH)
+        target_compile_options(fpIface INTERFACE "${WITNESS_UNSAFE_FLAG}")
+    endif ()
+    target_link_libraries(witnessLabel PRIVATE fpIface)
 endif ()
 
 if (WITNESS_UNSUPPORTED_LINK)

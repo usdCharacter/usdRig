@@ -39,19 +39,24 @@ function(rigexec_get_exact_fp_directory_flags out_var)
     set(${out_var} ${_rigexec_fp_dir} PARENT_SCOPE)
 endfunction()
 
-# PRIVATE: regex matching any option that changes the floating-point
-# reassociation, contraction, or precision mode. The canonical exact-FP flags
-# themselves match, so a caller that compares must first exclude entries
-# equal to a canonical flag. Entry detection and token filtering both use
-# this substring form, so a grouped entry like "-O2 -ffast-math" is caught.
-# Each result-altering sub-option of -ffast-math is listed on its own: one
-# spelled after the canonical flags restores the loosened mode past them.
-# The IEEE-safe negations (-fno-unsafe-math-optimizations, -fsigned-zeros
-# and friends) match no alternative, so a target asking for the safe form is
-# left alone.
-function(rigexec_get_exact_fp_conflict_regex out_var)
-    set(_rigexec_fp_conflicts
+# PRIVATE: regex matching a complete compiler argument that sets the
+# floating-point reassociation, contraction, or precision mode. Every
+# alternative is anchored, so a match is always one whole argument: an
+# argument that merely carries a mode spelling in its value
+# (-DFP_LABEL="-ffast-math") is a preprocessor definition, not a mode
+# switch, and never matches. Callers classify the arguments an entry spells
+# with rigexec_fp_strip_mode_arguments, which also covers a grouped entry
+# like "-O2 -ffast-math". Each result-altering sub-option of
+# -ffast-math is listed on its own: one spelled after the canonical flags
+# restores the loosened mode past them. The canonical exact-FP flags
+# themselves match, so a caller that rejects must first exclude an argument
+# equal to a canonical flag. The IEEE-safe negations
+# (-fno-unsafe-math-optimizations, -fsigned-zeros and friends) match no
+# alternative, so a target asking for the safe form is left alone.
+function(rigexec_get_exact_fp_mode_regex out_var)
+    set(_rigexec_fp_modes
         "-ffast-math"
+        "-fno-fast-math"
         "-Ofast"
         "-funsafe-math-optimizations"
         "-fassociative-math"
@@ -59,11 +64,105 @@ function(rigexec_get_exact_fp_conflict_regex out_var)
         "-freciprocal-math"
         "-fno-signed-zeros"
         "-fno-trapping-math"
-        "-ffp-contract="
-        "-ffp-model="
-        "[/-]fp:")
-    list(JOIN _rigexec_fp_conflicts "|" _rigexec_fp_regex)
+        "-ffp-contract=[^ ]*"
+        "-ffp-model=[^ ]*"
+        "[-/]fp:[^ ]*")
+    set(_rigexec_fp_alternatives "")
+    foreach (_rigexec_fp_mode IN LISTS _rigexec_fp_modes)
+        list(APPEND _rigexec_fp_alternatives "^${_rigexec_fp_mode}$")
+    endforeach ()
+    list(JOIN _rigexec_fp_alternatives "|" _rigexec_fp_regex)
     set(${out_var} "${_rigexec_fp_regex}" PARENT_SCOPE)
+endfunction()
+
+# PRIVATE: rewrite one option entry with each mode-switch argument it spells
+# removed, and report the removed spellings. The entry is walked once: a
+# leading SHELL: prefix, double-quoted values, and generator-expression
+# punctuation and condition text all stay put, so the entry keeps a shape
+# CMake accepts ($<cond:> is legal), while only complete switch arguments
+# are cut. A quoted value, or a mode spelling glued behind an = inside a
+# -D definition, is therefore never a candidate, and each candidate is a
+# whole switch a compiler could receive. Callers that reject read the
+# removal list and leave the entry alone; callers that rewrite use the
+# entry. An entry with no mode switch comes back unchanged.
+function(rigexec_fp_strip_mode_arguments entry entry_out found_out)
+    rigexec_get_exact_fp_mode_regex(_rigexec_sm_mode)
+    set(_rigexec_sm_prefix "")
+    set(_rigexec_sm_body "${entry} ")
+    if (_rigexec_sm_body MATCHES "^SHELL:")
+        set(_rigexec_sm_prefix "SHELL:")
+        string(SUBSTRING "${_rigexec_sm_body}" 6 -1 _rigexec_sm_body)
+    endif ()
+    string(LENGTH "${_rigexec_sm_body}" _rigexec_sm_len)
+    set(_rigexec_sm_i 0)
+    set(_rigexec_sm_out "")
+    set(_rigexec_sm_gap "")
+    set(_rigexec_sm_run "")
+    set(_rigexec_sm_quote 0)
+    set(_rigexec_sm_found "")
+    while (_rigexec_sm_i LESS _rigexec_sm_len)
+        string(SUBSTRING "${_rigexec_sm_body}" ${_rigexec_sm_i} 1
+            _rigexec_sm_ch)
+        if (_rigexec_sm_quote)
+            string(APPEND _rigexec_sm_out "${_rigexec_sm_ch}")
+            if (_rigexec_sm_ch STREQUAL "\"")
+                set(_rigexec_sm_quote 0)
+            endif ()
+            math(EXPR _rigexec_sm_i "${_rigexec_sm_i} + 1")
+            continue ()
+        endif ()
+        if (_rigexec_sm_ch STREQUAL " " OR _rigexec_sm_ch STREQUAL "\t"
+            OR _rigexec_sm_ch STREQUAL "<" OR _rigexec_sm_ch STREQUAL ">"
+            OR _rigexec_sm_ch STREQUAL "\"")
+            if (NOT _rigexec_sm_run STREQUAL "")
+                set(_rigexec_sm_head "")
+                set(_rigexec_sm_test "${_rigexec_sm_run}")
+                if (_rigexec_sm_test MATCHES "^(0:|1:|:)(.+)$")
+                    set(_rigexec_sm_head "${CMAKE_MATCH_1}")
+                    set(_rigexec_sm_test "${CMAKE_MATCH_2}")
+                endif ()
+                string(LENGTH "${_rigexec_sm_test}" _rigexec_sm_full)
+                string(REGEX REPLACE "[>$]+$" "" _rigexec_sm_arg
+                    "${_rigexec_sm_test}")
+                string(LENGTH "${_rigexec_sm_arg}" _rigexec_sm_kept)
+                math(EXPR _rigexec_sm_glue
+                    "${_rigexec_sm_full} - ${_rigexec_sm_kept}")
+                if (_rigexec_sm_glue GREATER 0)
+                    string(SUBSTRING "${_rigexec_sm_test}"
+                        ${_rigexec_sm_kept} -1 _rigexec_sm_tail)
+                else ()
+                    set(_rigexec_sm_tail "")
+                endif ()
+                if (_rigexec_sm_arg MATCHES "${_rigexec_sm_mode}")
+                    list(APPEND _rigexec_sm_found "${_rigexec_sm_arg}")
+                    string(APPEND _rigexec_sm_out
+                        "${_rigexec_sm_head}${_rigexec_sm_tail}")
+                elseif (_rigexec_sm_out STREQUAL "")
+                    string(APPEND _rigexec_sm_out "${_rigexec_sm_run}")
+                else ()
+                    string(APPEND _rigexec_sm_out
+                        "${_rigexec_sm_gap}${_rigexec_sm_run}")
+                endif ()
+                set(_rigexec_sm_gap "")
+                set(_rigexec_sm_run "")
+            endif ()
+            if (_rigexec_sm_ch STREQUAL " " OR _rigexec_sm_ch STREQUAL "\t")
+                string(APPEND _rigexec_sm_gap "${_rigexec_sm_ch}")
+            else ()
+                string(APPEND _rigexec_sm_out
+                    "${_rigexec_sm_gap}${_rigexec_sm_ch}")
+                set(_rigexec_sm_gap "")
+                if (_rigexec_sm_ch STREQUAL "\"")
+                    set(_rigexec_sm_quote 1)
+                endif ()
+            endif ()
+        else ()
+            string(APPEND _rigexec_sm_run "${_rigexec_sm_ch}")
+        endif ()
+        math(EXPR _rigexec_sm_i "${_rigexec_sm_i} + 1")
+    endwhile ()
+    set(${entry_out} "${_rigexec_sm_prefix}${_rigexec_sm_out}" PARENT_SCOPE)
+    set(${found_out} "${_rigexec_sm_found}" PARENT_SCOPE)
 endfunction()
 
 # PRIVATE: the content of the outermost generator expression, split at the
@@ -144,8 +243,10 @@ endfunction()
 
 # PRIVATE: the canonical flags must finish the target's own option list:
 # every literal or generator-expression copy of the family in the
-# target's options is removed token by token (a SHELL: grouping prefix
-# survives). Options the ordering cannot outrank abort configuration
+# target's options is removed argument by argument (a SHELL: grouping
+# prefix survives, and a definition that only carries a mode spelling in
+# its value stays; a copy of a canonical flag moves without a note).
+# Options the ordering cannot outrank abort configuration
 # instead: per-source COMPILE_OPTIONS, which CMake places last and whose
 # properties are shared across targets, and the interface compile options
 # of the link closure.
@@ -154,7 +255,6 @@ function(rigexec_apply_exact_fp_flags target)
         message(FATAL_ERROR "rigexec_apply_exact_fp_flags: no target ${target}")
     endif ()
     rigexec_get_exact_fp_flags(_rigexec_fp_flags)
-    rigexec_get_exact_fp_conflict_regex(_rigexec_fp_conflict)
     rigexec_fp_reject_unrankable_conflicts("${target}")
     get_target_property(_rigexec_fp_own "${target}" COMPILE_OPTIONS)
     if (NOT _rigexec_fp_own)
@@ -162,32 +262,21 @@ function(rigexec_apply_exact_fp_flags target)
     endif ()
     set(_rigexec_fp_kept "")
     foreach (_rigexec_fp_entry IN LISTS _rigexec_fp_own)
-        if (NOT _rigexec_fp_entry MATCHES "${_rigexec_fp_conflict}")
-            list(APPEND _rigexec_fp_kept "${_rigexec_fp_entry}")
-            continue ()
-        endif ()
-        # Keep the non-conflicting tokens of a grouped entry, in order, and
-        # keep the SHELL: prefix so the survivors stay separate options.
-        set(_rigexec_fp_prefix "")
-        set(_rigexec_fp_body "${_rigexec_fp_entry}")
-        if (_rigexec_fp_body MATCHES "^SHELL:")
-            set(_rigexec_fp_prefix "SHELL:")
-            string(SUBSTRING "${_rigexec_fp_body}" 6 -1 _rigexec_fp_body)
-        endif ()
-        string(REGEX REPLACE "[ \t]+" ";" _rigexec_fp_tokens
-            "${_rigexec_fp_body}")
-        set(_rigexec_fp_part "")
-        foreach (_rigexec_fp_token IN LISTS _rigexec_fp_tokens)
-            if (_rigexec_fp_token STREQUAL "")
-                continue ()
-            endif ()
-            if (NOT _rigexec_fp_token MATCHES "${_rigexec_fp_conflict}")
-                list(APPEND _rigexec_fp_part "${_rigexec_fp_token}")
+        rigexec_fp_strip_mode_arguments("${_rigexec_fp_entry}"
+            _rigexec_fp_stripped _rigexec_fp_found)
+        set(_rigexec_fp_notable "")
+        foreach (_rigexec_fp_mode IN LISTS _rigexec_fp_found)
+            if (NOT _rigexec_fp_mode IN_LIST _rigexec_fp_flags)
+                list(APPEND _rigexec_fp_notable "${_rigexec_fp_mode}")
             endif ()
         endforeach ()
-        if (_rigexec_fp_part)
-            list(JOIN _rigexec_fp_part " " _rigexec_fp_join)
-            list(APPEND _rigexec_fp_kept "${_rigexec_fp_prefix}${_rigexec_fp_join}")
+        if (_rigexec_fp_notable)
+            message(STATUS
+                "rigexec exact-FP: ${target}: removing floating-point mode "
+                "option ${_rigexec_fp_notable} from its own compile options")
+        endif ()
+        if (NOT _rigexec_fp_stripped STREQUAL "")
+            list(APPEND _rigexec_fp_kept "${_rigexec_fp_stripped}")
         endif ()
     endforeach ()
     if (_rigexec_fp_kept)
@@ -373,18 +462,18 @@ function(rigexec_fp_option_arguments entry depth out_var)
 endfunction()
 
 # PRIVATE: reason text when a compile-option entry could contribute a
-# conflicting floating-point option, empty when it is provably safe. A
-# bare $<TARGET_PROPERTY:...> entry is judged per value item; a lookup
-# concatenated into text is substituted into the entry and the complete
-# compiler argument is judged, so a split spelling cannot re-form a
-# conflicting option. An entry leading with an expression is accepted
-# only when every complete argument it can expand to is judged safe;
-# unresolvable lookups, multi-value concatenations, expressions with no
-# established argument set and values past the nesting cutoff are
-# rejected naming the full entry.
+# conflicting floating-point option, empty when it is provably safe. Only
+# complete switch arguments count, so a definition that carries a mode
+# spelling as its value is never a conflict. A bare $<TARGET_PROPERTY:...>
+# entry is judged per value item; a lookup concatenated into text is
+# substituted into the entry and the complete compiler argument is judged,
+# so a split spelling cannot re-form a conflicting option. An entry leading
+# with an expression is accepted only when every complete argument it can
+# expand to is judged safe; unresolvable lookups, multi-value
+# concatenations, expressions with no established argument set and values
+# past the nesting cutoff are rejected naming the full entry.
 function(rigexec_fp_option_conflict_reason entry ctx_target depth out_var)
     rigexec_get_exact_fp_flags(_rigexec_fp_canonical)
-    rigexec_get_exact_fp_conflict_regex(_rigexec_fp_conflict)
     set(${out_var} "" PARENT_SCOPE)
     if (${depth} GREATER 5)
         set(${out_var} "option value nested past the inspection cutoff"
@@ -395,11 +484,15 @@ function(rigexec_fp_option_conflict_reason entry ctx_target depth out_var)
         set(${out_var} "unevaluable option expression" PARENT_SCOPE)
         return ()
     endif ()
-    if (entry MATCHES "${_rigexec_fp_conflict}"
-        AND NOT entry IN_LIST _rigexec_fp_canonical)
-        set(${out_var} "conflicting option (${entry})" PARENT_SCOPE)
-        return ()
-    endif ()
+    rigexec_fp_strip_mode_arguments("${entry}" _rigexec_fp_entry_ignored
+        _rigexec_fp_entry_args)
+    foreach (_rigexec_fp_arg IN LISTS _rigexec_fp_entry_args)
+        if (NOT _rigexec_fp_arg IN_LIST _rigexec_fp_canonical)
+            set(${out_var} "conflicting option (${_rigexec_fp_arg})"
+                PARENT_SCOPE)
+            return ()
+        endif ()
+    endforeach ()
     string(FIND "${entry}" "$<TARGET_PROPERTY:" _rigexec_or_pos)
     if (_rigexec_or_pos EQUAL -1)
         if (NOT entry MATCHES "[$]<")
@@ -547,8 +640,6 @@ endfunction()
 # target and chains past the per-branch nesting cutoff are rejected
 # naming the full entry.
 function(rigexec_fp_reject_unrankable_conflicts target)
-    rigexec_get_exact_fp_flags(_rigexec_fp_canonical)
-    rigexec_get_exact_fp_conflict_regex(_rigexec_fp_conflict)
     set(_rigexec_fp_found "")
     get_target_property(_rigexec_fp_srcs "${target}" SOURCES)
     foreach (_rigexec_fp_src IN LISTS _rigexec_fp_srcs)
