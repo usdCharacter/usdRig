@@ -34,15 +34,12 @@ function(rigexec_add_sdk_manifest_export)
     add_custom_target(rigexecSdkManifests ALL DEPENDS ${_outputs})
 endfunction()
 
-# No configure-time existence check: the copies appear during the build, and a
-# missing or stale one has to fail the install step. INPUT_DIR and SOURCE_ROOT
-# name the generated lists and root the staged copies were relocated against;
-# the install re-derives them and refuses a staged copy that no longer
-# matches, so a reconfigure that renames or reorders an export can never
-# install the previous generation's bytes. install(FILES) skips a copy whose
-# timestamps say "up to date" even when the bytes differ, so a follow-up
-# install code compares installed bytes with the staged ones and rewrites a
-# skipped copy instead of shipping it.
+# The install re-derives each relocated list from INPUT_DIR and SOURCE_ROOT
+# and refuses a staged copy that no longer matches, so a reconfigure can
+# never install the previous generation's bytes. install(FILES) skips a copy
+# whose timestamps say "up to date" even when the bytes differ, so a
+# follow-up install code compares installed bytes with the staged ones and
+# rewrites the skipped copy.
 function(rigexec_install_sdk_manifests)
     cmake_parse_arguments(RIGEXEC_MANIFEST_INSTALL ""
         "BUILD_DIR;INPUT_DIR;SOURCE_ROOT;DESTINATION" "" ${ARGN})
@@ -68,10 +65,8 @@ include(\"${CMAKE_CURRENT_FUNCTION_LIST_DIR}/verifyManifests.cmake\")")
 set(_staged \"${_staged}\")
 set(_dest \"${RIGEXEC_MANIFEST_INSTALL_DESTINATION}\")
 # file(INSTALL) prepends DESTDIR itself; the generated script only knows the
-# logical prefix. The effective destination is exactly one layout: with
-# DESTDIR set it is the staged tree only, never the logical prefix, so a
-# manifest already installed on the host is left untouched and the packaged
-# copy is the one verified and refreshed.
+# logical prefix. With DESTDIR set the effective destination is the staged
+# tree only, never the logical prefix.
 if (DEFINED ENV{DESTDIR} AND NOT \"\$ENV{DESTDIR}\" STREQUAL \"\")
     string(REGEX REPLACE \"^[A-Za-z]:\" \"\" _stripped \"\${CMAKE_INSTALL_PREFIX}\")
     set(_candidates

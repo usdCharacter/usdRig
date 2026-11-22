@@ -1,12 +1,8 @@
-# Runs real `cmake --install` over the SDK manifest rule: a plain prefix, a
-# DESTDIR-staged install, a CMAKE_STAGING_PREFIX-staged install, an
-# incomplete staged export, a stale staged export, a vanished generated
-# input, a same-timestamp staged change reinstalled over the same prefix
-# and staging root, and a reconfigure-without-rebuild against changed
-# inputs. The fixture project carries the production install rule, so the
-# check exercises the shipped install rather than a copy of it. Child
-# configures forward the parent's build tool and must find the make program
-# only through that forwarding, never through PATH.
+# Runs real `cmake --install` over the shipped manifest rule: plain prefix,
+# DESTDIR and CMAKE_STAGING_PREFIX staging, incomplete, stale and vanished
+# staged exports, a same-timestamp staged change, and a reconfigure without
+# rebuild. The fixture carries the production install rule so the check
+# cannot drift from the product.
 
 if (NOT SOURCE_DIR OR NOT BINARY_DIR OR NOT SCRATCH_DIR)
     message(FATAL_ERROR
@@ -26,10 +22,9 @@ if (NOT GENERATOR)
     endif()
 endif()
 
-# A child configure reuses the parent's toolchain. Generators that record a
-# build tool outside PATH (Ninja's CMAKE_MAKE_PROGRAM, VS platform and
-# toolset) need it forwarded; a child that re-ran PATH lookup would pass on
-# a machine with ninja installed and break without it.
+# Child configures must reach the build tool through forwarding, not PATH
+# lookup: Ninja's CMAKE_MAKE_PROGRAM and the VS platform/toolset are not
+# re-derivable from the generator name alone.
 function(_parent_cache_var name out_var)
     file(STRINGS "${BINARY_DIR}/CMakeCache.txt" _line REGEX "^${name}:")
     string(REGEX REPLACE "^[^=]*=" "" _value "${_line}")
@@ -51,10 +46,7 @@ if (_generator_toolset AND GENERATOR MATCHES "Visual Studio|Xcode")
 endif()
 
 # Resolve the timestamp setter to an absolute path while PATH is still
-# whole: the filter below removes every directory holding the make
-# program, and on a host where Ninja and coreutils share one bin
-# directory that is also the only PATH-visible setter. The negative
-# control and every child configure then run with the filtered PATH.
+# whole: the filter below can remove the directory that holds it.
 if (WIN32)
     find_program(_mtime_tool powershell.exe)
 else()
@@ -65,10 +57,8 @@ if (NOT _mtime_tool)
         "checkInstallStaging.cmake needs a timestamp setter (touch or powershell)")
 endif()
 
-# Hide every PATH directory that holds a copy of the make program, so a
-# child configure can only succeed through the forwarded
-# CMAKE_MAKE_PROGRAM. Filtering one known directory would leave a second
-# install on PATH and make the negative probe host-dependent.
+# Hide every PATH directory holding the make program, so a child configure
+# can succeed only through the forwarded CMAKE_MAKE_PROGRAM.
 set(_saved_path "$ENV{PATH}")
 set(_path_sep ":")
 if (WIN32)
@@ -137,9 +127,6 @@ macro(_install build_dir install_args)
     string(CONCAT _out "${_out}" "${_err}")
 endmacro()
 
-# _forward_inputs overrides where the fixture's freshness gate reads the
-# generated lists and their root.
-
 function(_assert_identical expected actual label)
     if (NOT EXISTS "${actual}")
         _clean_and_fail("${label}: ${actual} is missing after install")
@@ -158,10 +145,9 @@ function(_check_manifests root label)
     endforeach()
 endfunction()
 
-# Copy a reference file's timestamp onto a target with the platform's
-# timestamp tool, then prove the copy took. cmake -E has no reference-mode
-# touch; passing -r there creates a file literally named "-r". The tool
-# runs by absolute path: the filtered PATH may have removed its directory.
+# cmake -E has no reference-mode touch: passing -r there creates a file
+# literally named "-r". The copy is verified, and the tool runs by absolute
+# path because the filtered PATH may have removed its directory.
 function(_copy_mtime reference target)
     if (WIN32)
         execute_process(COMMAND "${_mtime_tool}" -NoProfile -Command
@@ -196,8 +182,8 @@ foreach (_manifest IN LISTS _manifests)
     endif()
 endforeach()
 
-# DESTDIR joins the staging root with the prefix after dropping a Windows
-# drive letter; one expression covers both platforms.
+# DESTDIR joins the staging root with the prefix, dropping a Windows drive
+# letter; one expression covers both platforms.
 function(_destdir_logical_root stage_root logical_prefix out_var)
     string(REGEX REPLACE "^[A-Za-z]:" "" _stripped "${logical_prefix}")
     set(${out_var} "${stage_root}${_stripped}" PARENT_SCOPE)
@@ -263,18 +249,14 @@ if (NOT _destdir_root AND NOT _staging_root)
     _clean_and_fail("no staging mechanism is supported by ${GENERATOR} (CMake ${CMAKE_VERSION})")
 endif()
 
-# On Unix DESTDIR staging is a hard requirement: a packager's staged tree
-# is the documented route. On Windows the CMAKE_STAGING_PREFIX route must
-# exist (DESTDIR support is generator-dependent there); the check above
-# already fails if neither works.
+# Unix must honor DESTDIR: a packager's staged tree is the documented route.
+# Windows may stage through CMAKE_STAGING_PREFIX instead.
 if (UNIX AND NOT _destdir_root)
     _clean_and_fail("DESTDIR staging is not honored by ${GENERATOR} (CMake ${CMAKE_VERSION}) on this Unix host")
 endif()
 
-# The Ninja generator resolves the make program through PATH unless it is
-# configured explicitly. With the program's directory hidden from PATH, a
-# child configure without the forwarded CMAKE_MAKE_PROGRAM must fail, and
-# every fixture configure below must succeed on the forwarded path alone.
+# With the make program unreachable through PATH, a configure without the
+# forwarded CMAKE_MAKE_PROGRAM must fail.
 if (_hide_make)
     set(_probe_dir "${SCRATCH_DIR}/probeNoMake")
     file(MAKE_DIRECTORY "${_probe_dir}")
@@ -425,12 +407,8 @@ if (NOT "${_out}" MATCHES "${_vanished}")
 endif()
 message(STATUS "vanished input: pass (cmake --install exited ${_rc} naming ${_vanished}.txt)")
 
-# (g) a staged change with an equal timestamp: install(FILES) calls the
-# destination up to date and skips the copy, so the install rule must
-# refresh the bytes instead of leaving them stale. Runs over a plain
-# prefix and a DESTDIR staging root, driven by the real producer; the
-# staged tree must be the only destination the rule touches, with a
-# sentinel at the logical prefix checked byte for byte.
+# (g) install(FILES) skips a copy whose timestamps say "up to date", so a
+# staged change with an equal timestamp must still reach the destination.
 set(_gInputs "${SCRATCH_DIR}/refreshInputs")
 set(_gStage "${SCRATCH_DIR}/refreshStaged")
 function(_produce_manifests inputs_dir stage_dir tag)
@@ -462,10 +440,9 @@ foreach (_manifest IN LISTS _manifests)
 endforeach()
 
 _produce_manifests("${_gInputs}" "${_gStage}" second)
-# Bring the regenerated staged copies to the installed files' timestamps:
-# exactly when install(FILES) reports Up-to-date and skips the copy. Prove
-# the equal-mtime, different-bytes state before reinstalling, or the
-# scenario proves nothing.
+# Equal mtime with different bytes is exactly the state install(FILES)
+# calls "Up-to-date"; prove it before reinstalling, or the scenario
+# proves nothing.
 foreach (_manifest IN LISTS _manifests)
     _copy_mtime("${_gPrefix}/${INSTALL_DATADIR}/${_manifest}.txt"
         "${_gStage}/${_manifest}.txt")
@@ -482,8 +459,7 @@ foreach (_manifest IN LISTS _manifests)
         "${_gPrefix}/${INSTALL_DATADIR}/${_manifest}.txt" "reinstall over the same prefix")
 endforeach()
 if (_broot)
-    # Scenario (c) reassigns _stage/_logical; recompute scenario (b)'s roots
-    # under names this block owns.
+    # Scenario (c) reassigns _stage/_logical; recompute (b)'s roots here.
     set(_gdStage "${SCRATCH_DIR}/destdirStage")
     set(_gdLogical "${SCRATCH_DIR}/destdirLogical")
     _destdir_logical_root("${_gdStage}" "${_gdLogical}" _gdRoot)
@@ -509,9 +485,8 @@ if (_broot)
     if (NOT _rc EQUAL 0)
         _clean_and_fail("refresh (DESTDIR): producer rerun failed: ${_out}${_err}")
     endif()
-    # A manifest already installed on the host sits at the logical prefix.
-    # Staged installs must neither read from there nor write there: leave a
-    # distinctive copy and check it after the reinstall.
+    # A staged install must neither read from nor write to the logical
+    # prefix; a sentinel there is checked byte for byte after reinstall.
     file(WRITE "${_gdLogical}/${INSTALL_DATADIR}/runtimeSources.txt" "hostInstalledSentinel\n")
     file(WRITE "${SCRATCH_DIR}/sentinelExpect.txt" "hostInstalledSentinel\n")
     _copy_mtime("${_gdRoot}/${INSTALL_DATADIR}/runtimeSources.txt"
@@ -539,10 +514,8 @@ else()
     message(STATUS "refresh: plain prefix only (no supported DESTDIR staging root)")
 endif()
 
-# (h) reconfigure without rebuild: install a valid export once, then
-# reconfigure the same build tree while a regenerated input list changed
-# and the staged manifest was not rebuilt. The install must name that
-# manifest instead of reinstalling the previous generation's bytes.
+# (h) a reconfigure that changes an input list without rebuilding the
+# staged manifest must fail the install, not reinstall old bytes.
 set(_hInputs "${SCRATCH_DIR}/reconfInputs")
 set(_hStage "${SCRATCH_DIR}/reconfStaged")
 _produce_manifests("${_hInputs}" "${_hStage}" first)

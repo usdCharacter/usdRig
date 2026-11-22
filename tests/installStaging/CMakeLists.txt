@@ -1,9 +1,8 @@
 cmake_minimum_required(VERSION 3.26)
 project(RigExecInstallStaging NONE)
 
-# Fixture for tests/checkInstallStaging.cmake: it reuses the production install
-# rule instead of restating it, so the staging check cannot drift from the
-# product. Never add_subdirectory'd.
+# Fixture for tests/checkInstallStaging.cmake: it includes the production
+# install rule rather than restating it. Never add_subdirectory'd.
 if (NOT RIGEXEC_MANIFEST_MODULE OR NOT RIGEXEC_STAGED_MANIFESTS
     OR NOT RIGEXEC_MANIFEST_INPUT_DIR OR NOT RIGEXEC_MANIFEST_SOURCE_ROOT
     OR NOT RIGEXEC_INSTALL_DATADIR)
