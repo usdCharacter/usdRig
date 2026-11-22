@@ -153,10 +153,12 @@ def adoptPrimsNewToScope(view, resyncedPaths):
     renamed node disappears from the editor until a manual reload.
 
     Only paths in this notice are considered, and only direct children of
-    the scope this graph loads. Note this can re-add a node the user hid
-    with 'D' (which removes from the view without touching USD) if that
-    same prim is later edited — the view follows the stage, which is the
-    contract being asked for here.
+    the scope this graph loads. A resync of the pseudo-root ("/" — USD's
+    spelling for a stage-wide resync) names no child, so it instead
+    reconciles membership against the scope's current direct children.
+    Note this can re-add a node the user hid with 'D' (which removes from
+    the view without touching USD) if that same prim is later edited — the
+    view follows the stage, which is the contract being asked for here.
 
     Returns:
         list[str]: node ids added.
@@ -166,8 +168,20 @@ def adoptPrimsNewToScope(view, resyncedPaths):
     if not stage or scope is None:
         return []
 
+    paths = set(resyncedPaths)
+    if "/" in paths:
+        paths.discard("/")
+        scopePrim = (
+            stage.GetPseudoRoot() if scope == "/"
+            else stage.GetPrimAtPath(scope)
+        )
+        if scopePrim and scopePrim.IsValid():
+            paths.update(
+                str(prim.GetPath()) for prim in scopePrim.GetChildren()
+            )
+
     added = []
-    for pathStr in sorted(resyncedPaths):
+    for pathStr in sorted(paths):
         if "." in pathStr or pathStr in view.nodes:
             continue
         if str(Sdf.Path(pathStr).GetParentPath()) != scope:

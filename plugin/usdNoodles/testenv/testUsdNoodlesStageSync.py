@@ -489,6 +489,20 @@ class AdoptPrimsNewToScopeTest(unittest.TestCase):
 
         self.assertEqual(added, ["/Keeper/Child"])
 
+    def test_a_pseudo_root_resync_reconciles_scope_membership(self):
+        """"/" names no child: membership is reconciled against the
+        scope's current direct children, not the notice's paths."""
+        self.stage.RemovePrim("/Keeper")
+        UsdGeom.Sphere.Define(self.stage, "/Fresh")
+        UsdGeom.Sphere.Define(self.stage, "/Fresh/Kid")
+        UsdGeom.Sphere.Define(self.stage, "/Dormant")
+        self.stage.GetPrimAtPath("/Dormant").SetActive(False)
+        view = _StubView(self.stage, ["/Keeper"])
+
+        added = stage_adapter.adoptPrimsNewToScope(view, {"/"})
+
+        self.assertEqual(added, ["/Fresh"])
+
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
 class AdoptRenamedPrimTest(unittest.TestCase):
@@ -1306,6 +1320,93 @@ class NoticeRegistrationTest(unittest.TestCase):
         self.assertTrue(view.linksChanged)
         self.assertTrue(view.textChanged)
         view._hooks.update.assert_called_once()
+
+
+@unittest.skipUnless(_has_stage_sync, "stage_sync module not available")
+class RootResyncSuppressionTest(unittest.TestCase):
+    """A stage-wide resync survives gesture suppression.
+
+    USD spells a stage-wide resync as a resync of "/" alone (pseudo-root
+    metadata, a reconfigured composition): no child path names what
+    changed. Dropped before graph delivery, a gesture whose only
+    structural evidence is that resync releases with the graph holding a
+    node for a prim that is gone and missing a child the stage now shows.
+    The batch keeps the root invalidation under the epoch that produced
+    it, and the final release reconciles membership against the scope's
+    current direct children.
+    """
+
+    @staticmethod
+    def _service(view, apply=None):
+        return stage_sync.StageSync(
+            read=lambda: stage_sync.StageContext(tuple(view.nodes)),
+            notice=lambda: stage_sync.NoticeContext(view._syncingSelection),
+            apply=apply if apply is not None else (lambda delta: None),
+            post=lambda callback: None,
+            listen=lambda receiver: UsdNoticeHandler(receiver),
+            warn=lambda message: None,
+            reset=lambda: None,
+            reconcile=lambda resynced, info, trace, moved: (
+                stage_adapter.applyUsdChanges(
+                    view, resynced, info, trace=trace, movedPaths=moved
+                )
+            ),
+        )
+
+    def test_a_root_only_resync_reconciles_scope_on_release(self) -> None:
+        stage = Usd.Stage.CreateInMemory()
+        UsdGeom.Sphere.Define(stage, "/Alpha")
+        UsdGeom.Sphere.Define(stage, "/Keeper")
+        view = _StubView(stage, ["/Alpha", "/Keeper"])
+        service = self._service(view)
+        service.bind(stage)
+
+        # The stage reconfigures while notices are discarded outright, so
+        # no per-path notice was ever recorded for the change.
+        with service.suppressed():
+            stage.RemovePrim("/Alpha")
+            UsdGeom.Sphere.Define(stage, "/Fresh")
+
+        # A gesture whose only structural evidence is the stage-wide
+        # resync: USD reports the pseudo-root metadata edit as "/".
+        token = service.acquireSuppression(reconcile=True)
+        stage.SetDefaultPrim(stage.GetPrimAtPath("/Keeper"))
+        self.assertEqual(sorted(view.nodes), ["/Alpha", "/Keeper"])
+
+        authored = _layer_text(stage)
+        token.release()
+
+        # Both halves of the reconciliation, with no further USD edit:
+        # the obsolete node dropped, the now-visible child adopted.
+        self.assertEqual(sorted(view.nodes), ["/Fresh", "/Keeper"])
+        self.assertEqual(_layer_text(stage), authored)
+
+    def test_replacing_the_stage_drops_the_pending_root_invalidation(self) -> None:
+        stageA = Usd.Stage.CreateInMemory()
+        UsdGeom.Sphere.Define(stageA, "/Alpha")
+        UsdGeom.Sphere.Define(stageA, "/Keeper")
+        stageB = Usd.Stage.CreateInMemory()
+        UsdGeom.Sphere.Define(stageB, "/Beta")
+        view = _StubView(stageA, ["/Alpha", "/Keeper"])
+
+        def apply(delta):
+            if isinstance(delta, stage_sync.Load):
+                view.nodeGraph._stage = delta.stage
+
+        service = self._service(view, apply=apply)
+        service.bind(stageA)
+        token = service.acquireSuppression(reconcile=True)
+        stageA.SetDefaultPrim(stageA.GetPrimAtPath("/Keeper"))
+        service.replace(stageB, "stage", None, "frame-B")
+        afterReplace = sorted(view.nodes)
+
+        token.release()
+
+        # The old epoch's root invalidation never reaches the replacement
+        # graph: nothing is dropped or adopted from stage A's notice.
+        self.assertEqual(sorted(view.nodes), afterReplace)
+        self.assertNotIn("/Beta", view.nodes)
+        view._addNewNodeFast.assert_not_called()
 
 
 @unittest.skipUnless(_has_stage_sync, "stage_sync module not available")

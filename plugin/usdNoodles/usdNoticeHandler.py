@@ -118,7 +118,10 @@ class UsdNoticeHandler:
             observe(resyncedPaths, movedPaths)
         if callback is None:
             return
-        resyncedPaths.discard("/")
+        # "/" stays in the resynced set: it is USD's only spelling for a
+        # stage-wide resync (pseudo-root metadata, reconfigured composition)
+        # and reconciliation treats it as a scope-membership recheck, never
+        # as a node path (see adoptPrimsNewToScope).
 
         # Collect info-only changes (property value changes)
         # These allow targeted cache invalidation
