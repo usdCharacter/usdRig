@@ -1818,8 +1818,7 @@ _BinaryCompareConstraint(
     _BinaryCompareInput(live.upVector, wire.upVector, file);
     _BinaryCompareInput(live.rotationOffset, wire.rotationOffset, file);
     _BinaryCompareInput(live.worldUpVector, wire.worldUpVector, file);
-    _BinaryCheckVec(live.aimAxisFallback, wire.aimAxisFallback);
-    CHECK(live.aimVectorAuthored == wire.aimVectorAuthored);
+    CHECK(wire.aimVectorAuthored);
     CHECK(live.preserveInputUp == wire.preserveInputUp);
     CHECK(live.worldUpType.GetString() == _BinaryText(file, wire.worldUpType));
     _BinaryCheckVec(live.sceneUp, wire.sceneUp);

@@ -1857,10 +1857,9 @@ struct RigExecBakedConstraint {
     RigExecBakedInput<bool> tX, tY, tZ, rX, rY, rZ, sX, sY, sZ; // parent
     RigExecEulerOrder order = RigExecEulerOrder::XYZ;
     // aim
+    /// aimVector holds the aimAxis fallback as a constant when unauthored.
     RigExecBakedInput<GfVec3d> aimVector, upVector, rotationOffset,
         worldUpVector;
-    GfVec3d aimAxisFallback{1, 0, 0};
-    bool aimVectorAuthored = false;
     bool preserveInputUp = false;
     TfToken worldUpType;
     GfVec3d sceneUp{0, 1, 0};

@@ -925,8 +925,10 @@ _FileFill::_Constraint(size_t index, fb::RigExecWireConstraint *out)
     out->twistDegrees = read(20);
     out->stretch = read(21);
     out->order = uint8_t(constraint.order);
-    out->aimAxisFallback = _ToVec3d(constraint.aimAxisFallback);
-    out->aimVectorAuthored = constraint.aimVectorAuthored;
+    // Build binds the aimAxis fallback into aimVector itself; the two
+    // fields choose for files written before it did.
+    out->aimAxisFallback = _ToVec3d(GfVec3d(1, 0, 0));
+    out->aimVectorAuthored = true;
     out->preserveInputUp = constraint.preserveInputUp;
     out->worldUpType = _Tok(constraint.worldUpType);
     out->sceneUp = _ToVec3d(constraint.sceneUp);

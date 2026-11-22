@@ -4100,9 +4100,7 @@ template <class Math> struct PoseSourceT {
 // The Aim arm's bound inputs: vectors, world-up selection, and the
 // up-object reference (resolved like a source when named).
 template <class Math> struct PoseAimFactsT {
-    bool aimVectorAuthored = false;
     typename Math::Vec3 aimVector;
-    typename Math::Vec3 aimAxisFallback;
     typename Math::Vec3 upVector;
     typename Math::Vec3 rotationOffset;
     bool preserveInputUp = false;
@@ -4421,8 +4419,7 @@ RunAimSolve(Host &host, size_t object, const PoseCommitFacts &commitFacts,
         target = pose_ops::Scale3<Math>(target, 1.0 / total);
         const PoseAimFactsT<Math> aim = host.inputs().aimFacts(object);
         pose_constraints::PoseAimParamsT<Math> params;
-        params.localAimVector =
-            aim.aimVectorAuthored ? aim.aimVector : aim.aimAxisFallback;
+        params.localAimVector = aim.aimVector;
         params.localUpVector = aim.upVector;
         params.rotationOffsetDegrees = aim.rotationOffset;
         params.affectRotation.x = facts.affectX;

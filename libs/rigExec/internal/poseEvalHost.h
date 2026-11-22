@@ -1003,9 +1003,7 @@ public:
         const RigExecBakedProgramImpl::Constraint &c =
             _program->constraints[size_t(_program->walkSteps[object].index)];
         eval::PoseAimFactsT<BakedPoseMath> aim;
-        aim.aimVectorAuthored = c.aimVectorAuthored;
         aim.aimVector = RigExecBakedLeafRead(*_program, c.aimVector);
-        aim.aimAxisFallback = c.aimAxisFallback;
         aim.upVector = RigExecBakedLeafRead(*_program, c.upVector);
         aim.rotationOffset = RigExecBakedLeafRead(*_program, c.rotationOffset);
         aim.preserveInputUp = c.preserveInputUp;

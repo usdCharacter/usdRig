@@ -920,10 +920,13 @@ public:
         const size_t ci = size_t(_program->poses->walkSteps[object].index);
         const RigExecWireConstraint &c = _program->poses->constraints[ci];
         eval::PoseAimFactsT<RrPoseMath> aim;
-        aim.aimVectorAuthored = c.aimVectorAuthored;
-        aim.aimVector = _program->ReadConstraint(ci, RrConstraintAimVector).vec;
-        aim.aimAxisFallback = RrVec3d(
-            c.aimAxisFallback[0], c.aimAxisFallback[1], c.aimAxisFallback[2]);
+        // Files written before Build bound the aimAxis fallback into
+        // aimVector choose it here.
+        aim.aimVector =
+            c.aimVectorAuthored
+                ? _program->ReadConstraint(ci, RrConstraintAimVector).vec
+                : RrVec3d(c.aimAxisFallback[0], c.aimAxisFallback[1],
+                          c.aimAxisFallback[2]);
         aim.upVector = _program->ReadConstraint(ci, RrConstraintUpVector).vec;
         aim.rotationOffset =
             _program->ReadConstraint(ci, RrConstraintRotationOffset).vec;

@@ -1294,21 +1294,27 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             c.affectX = bind(prim, _tokens->inputsAffectRotationX, true);
             c.affectY = bind(prim, _tokens->inputsAffectRotationY, true);
             c.affectZ = bind(prim, _tokens->inputsAffectRotationZ, true);
-            c.aimVector =
-                bind(prim, _tokens->inputsAimVector, GfVec3d(1, 0, 0));
             const UsdAttribute aimAttr =
                 prim.GetAttribute(_tokens->inputsAimVector);
-            // Whether it is authored, not what it holds: the value stays a
-            // per-frame read (and so an override can stand on it), but the
-            // choice between aimVector and aimAxis is baked.
+            // Whether it is authored, not what it holds, is baked: an
+            // authored aimVector is a per-frame read; an unauthored one is
+            // the aimAxis constant, with no read or override of its own.
+            const bool aimVectorAuthored =
+                translatedConstraint
+                    ? sceneConstraint.aimVectorAuthored
+                    : aimAttr && aimAttr.HasAuthoredValueOpinion();
+            if (aimVectorAuthored)
+                c.aimVector =
+                    bind(prim, _tokens->inputsAimVector, GfVec3d(1, 0, 0));
             foldShape(prim, _tokens->inputsAimVector);
-            c.aimVectorAuthored = aimAttr && aimAttr.HasAuthoredValueOpinion();
-            // aimAxis applies when aimVector is unauthored.
             const TfToken axis =
                 readToken(prim, _tokens->rigExecAimAxis, _tokens->x);
-            c.aimAxisFallback = axis == SchemaValueText::y   ? GfVec3d(0, 1, 0)
-                                : axis == SchemaValueText::z ? GfVec3d(0, 0, 1)
-                                                             : GfVec3d(1, 0, 0);
+            if (!aimVectorAuthored)
+                c.aimVector.constant =
+                    translatedConstraint ? sceneConstraint.aimAxisFallback
+                    : axis == SchemaValueText::y ? GfVec3d(0, 1, 0)
+                    : axis == SchemaValueText::z ? GfVec3d(0, 0, 1)
+                                                 : GfVec3d(1, 0, 0);
             c.upVector = bind(prim, _tokens->inputsUpVector, GfVec3d(0, 1, 0));
             c.rotationOffset =
                 bind(prim, _tokens->inputsRotationOffset, GfVec3d(0));
@@ -1356,8 +1362,6 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             c.ikMode = sceneConstraint.record.singleChain.mode;
             c.poleModeObject = sceneConstraint.poleModeObject;
             c.useAnimatedTs = sceneConstraint.useAnimatedTs;
-            c.aimVectorAuthored = sceneConstraint.aimVectorAuthored;
-            c.aimAxisFallback = sceneConstraint.aimAxisFallback;
             c.worldUpType = sceneConstraint.worldUpType;
             c.sceneUp = sceneConstraint.sceneUp;
             c.preserveInputUp = sceneConstraint.preserveInputUp;
