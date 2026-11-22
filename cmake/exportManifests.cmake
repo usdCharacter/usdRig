@@ -20,10 +20,3 @@ foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreInclud
     rigexec_relocate_manifest_text("${SOURCE_ROOT}" _text _entries)
     file(WRITE "${OUT_DIR}/${_manifest}.txt" "${_text}")
 endforeach ()
-
-foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
-    if (NOT EXISTS "${OUT_DIR}/${_manifest}.txt")
-        message(FATAL_ERROR
-            "exportManifests.cmake wrote no ${OUT_DIR}/${_manifest}.txt")
-    endif ()
-endforeach ()
