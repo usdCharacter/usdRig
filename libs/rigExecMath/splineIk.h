@@ -73,6 +73,7 @@
 #define RIGEXEC_MATH_SPLINE_IK_H
 
 #include "pointFrame.h"
+#include "splineIkKernel.h"
 
 #include "pxr/pxr.h"
 #include "pxr/base/gf/vec3d.h"
@@ -88,57 +89,11 @@ namespace rigExec {
 /// Length tolerance below which a curve, chain, segment, or handle is
 /// considered collapsed. Inputs are character-scale (centimetres), so an
 /// absolute tolerance is appropriate, matching RigExecFrameEpsilon's scale.
-constexpr double RigExecSplineIkEpsilon = 1e-10;
+constexpr double RigExecSplineIkEpsilon = kRigExecSplineIkEpsilon;
 
 /// The open degree-2, four-CV B-spline with its arc-length table. Built
 /// once per solve (or once per test) from the posed CVs.
-class RigExecSplineIkCurve {
-public:
-    RigExecSplineIkCurve();
-    explicit RigExecSplineIkCurve(const std::array<GfVec3d, 4> &cvs);
-
-    const std::array<GfVec3d, 4> &Cvs() const
-    {
-        return _cvs;
-    }
-
-    /// Total arc length over u in [0, 2].
-    double ArcLength() const
-    {
-        return _length;
-    }
-
-    /// True when the whole curve is shorter than RigExecSplineIkEpsilon
-    /// (all four CVs coincident): there is no usable tangent anywhere.
-    bool IsDegenerate() const
-    {
-        return _length <= RigExecSplineIkEpsilon;
-    }
-
-    /// Position and derivative dC/du at parameter u, clamped to [0, 2].
-    /// Either output may be null.
-    void Evaluate(double u, GfVec3d *position, GfVec3d *derivative) const;
-
-    /// Parameter u at arc distance \p distance from the start, clamped to
-    /// [0, ArcLength()]. Accurate to about 1e-13 of the arc length.
-    double ParamAtArcLength(double distance) const;
-
-    /// Position and unit tangent at arc distance \p distance. A distance
-    /// past the end extrapolates straight along the end tangent; a
-    /// negative distance extrapolates backward along the start tangent.
-    /// Returns false (position = start CV, tangent = zero) when the curve
-    /// is degenerate. When the derivative vanishes at the requested point
-    /// (coincident CVs at one end) the tangent falls back to the chord to
-    /// the nearest distinct point on the curve.
-    bool PointAtArcLength(double distance, GfVec3d *position,
-                          GfVec3d *tangent) const;
-
-private:
-    std::array<GfVec3d, 4> _cvs;
-    std::vector<double> _u;          ///< table parameters (sub-interval edges)
-    std::vector<double> _cumulative; ///< arc length at each table parameter
-    double _length = 0.0;
-};
+using RigExecSplineIkCurve = RigExecSplineIkCurveKernel<GfVec3d>;
 
 /// Which length the stretch ratio is measured against (see the file
 /// comment: they differ whenever the rest chain is not itself the curve).

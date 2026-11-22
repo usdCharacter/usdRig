@@ -1270,6 +1270,7 @@ rigexec_add_op_library(rigExecOps
         libs/rigExecOps/weight/weightOps.cpp
         libs/rigExecOps/solver/chainSolverOps.cpp
         libs/rigExecOps/solver/frameBlendOps.cpp
+        libs/rigExecOps/solver/splineIkOps.cpp
     USES_TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes)
 rigexec_apply_exact_fp_flags(rigExecOps)
 add_executable(testRigExecOpsMath tests/testRigExecOpsMath.cpp

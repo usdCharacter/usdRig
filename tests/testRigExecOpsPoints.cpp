@@ -9,12 +9,14 @@
 #include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/simdKernels.h"
 #include "rigExecMath/solvers.h"
+#include "rigExecMath/splineIk.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
 #include "rigExecMath/weightFields.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecOps/constraint/constraintOps.h"
 #include "rigExecOps/solver/chainSolverOps.h"
 #include "rigExecOps/solver/frameBlendOps.h"
+#include "rigExecOps/solver/splineIkOps.h"
 #include "rigExecOps/deform/blendShapeOp.h"
 #include "rigExecOps/deform/deltaMushOp.h"
 #include "rigExecOps/deform/derivedOps.h"
@@ -2305,6 +2307,139 @@ TestFrameBlend()
         &error));
 }
 
+void
+TestSplineIk()
+{
+    using namespace rigExecOps;
+    // A six-joint spine curving up and forward, with rest controls at its
+    // root, middle and end.
+    std::vector<RigExecPointFrame> joints;
+    RigExecArray<rigExecRig::PointFrame> restJoints(6);
+    for (size_t i = 0; i < 6; ++i) {
+        const double t = double(i);
+        joints.push_back(MakeFrame(GfVec3d(0.1 * t * t, t, 0.05 * t),
+                                   GfVec3d(1, 0, 0), -90.0 + 4.0 * t,
+                                   GfVec3d(1.0)));
+        restJoints[i] = ToRig(joints.back());
+    }
+    const RigExecPointFrame restRoot = joints[0];
+    const RigExecPointFrame restMid = MakeFrame(
+        GfVec3d(0.6, 2.5, 0.1), GfVec3d(1, 0, 0), -80.0, GfVec3d(1.0));
+    const RigExecPointFrame restEnd = joints[5];
+    const RigExecPointFrame root = MakeFrame(
+        GfVec3d(0.1, -0.2, 0.0), GfVec3d(0.2, 0.1, 1), -70.0, GfVec3d(1.0));
+    const RigExecPointFrame mid = MakeFrame(
+        GfVec3d(1.4, 2.2, 0.6), GfVec3d(1, 0.1, 0), -60.0, GfVec3d(1.0));
+    const std::vector<double> volume = {0.0, 0.2, 0.6, 1.0, 0.6, 0.2};
+    const auto volumeArray = RigExecArray<double>(volume.data(), volume.size());
+    const double preserve = 0.8, follow = 0.35, roll = 0.2, twist = -0.4;
+    const rigExecRig::PointFrame rigRestRoot = ToRig(restRoot),
+                                 rigRestMid = ToRig(restMid),
+                                 rigRestEnd = ToRig(restEnd),
+                                 rigRoot = ToRig(root), rigMid = ToRig(mid);
+    rigExecRig::PointFrameArray actual;
+    // A stretched end, and one driven back past the root (the floor).
+    for (const double reach : {6.5, -1.0}) {
+        const RigExecPointFrame end = MakeFrame(
+            GfVec3d(2.0, reach, 1.0), GfVec3d(0, 1, 0.3), 30.0, GfVec3d(1.0));
+        const rigExecRig::PointFrame rigEnd = ToRig(end);
+        for (const bool variant : {false, true}) {
+            SplineIkPayload payload;
+            payload.restLengthChain = variant;
+            payload.minLengthRatio = variant ? 0.6 : 0.0;
+            payload.aimRootTangent = variant;
+            const RigExecSplineIkRest rest = RigExecSplineIkMakeRest(
+                joints, restRoot, restMid, restEnd, volume,
+                variant ? RigExecSplineIkRestLength::Chain
+                        : RigExecSplineIkRestLength::Curve);
+            RigExecSplineIkParams params;
+            params.preserveVolume = preserve;
+            params.midFollowWeight = follow;
+            params.roll = roll;
+            params.twist = twist;
+            params.minLengthRatio = payload.minLengthRatio;
+            params.aimRootTangent = payload.aimRootTangent;
+            RigExecSplineIkResult expected;
+            RigExecSolveSplineIk(rest, {root, mid, end}, params, &expected);
+            Node full(SplineIk(),
+                      {&SplineIkRestJoints(), &SplineIkRestRoot(),
+                       &SplineIkRestMid(), &SplineIkRestEnd(), &SplineIkRoot(),
+                       &SplineIkMid(), &SplineIkEnd(), &SplineIkVolumeWeights(),
+                       &SplineIkPreserveVolume(), &SplineIkMidFollow(),
+                       &SplineIkRoll(), &SplineIkTwist()},
+                      SplineIkOut(), &payload);
+            CHECK(full.Run({&restJoints, &rigRestRoot, &rigRestMid, &rigRestEnd,
+                            &rigRoot, &rigMid, &rigEnd, &volumeArray, &preserve,
+                            &follow, &roll, &twist},
+                           &actual));
+            CHECK(actual.frames.Size() == 6 && actual.rests.Size() == 6);
+            for (size_t i = 0; i < 6 && i < actual.frames.Size(); ++i) {
+                CHECK(SameBits(expected.joints[i].frame, actual.frames[i]));
+                CHECK(SameBits(joints[i].points, actual.rests[i]));
+            }
+
+            // Defaults: no volume weights, follow 0.5, no roll or twist.
+            const RigExecSplineIkRest bareRest = RigExecSplineIkMakeRest(
+                joints, restRoot, restMid, restEnd, {},
+                variant ? RigExecSplineIkRestLength::Chain
+                        : RigExecSplineIkRestLength::Curve);
+            RigExecSplineIkParams bareParams;
+            bareParams.minLengthRatio = payload.minLengthRatio;
+            bareParams.aimRootTangent = payload.aimRootTangent;
+            RigExecSolveSplineIk(bareRest, {root, mid, end}, bareParams,
+                                 &expected);
+            Node bare(SplineIk(),
+                      {&SplineIkRestJoints(), &SplineIkRestRoot(),
+                       &SplineIkRestMid(), &SplineIkRestEnd(), &SplineIkRoot(),
+                       &SplineIkMid(), &SplineIkEnd()},
+                      SplineIkOut(), &payload);
+            CHECK(bare.Run({&restJoints, &rigRestRoot, &rigRestMid, &rigRestEnd,
+                            &rigRoot, &rigMid, &rigEnd},
+                           &actual));
+            for (size_t i = 0; i < 6 && i < actual.frames.Size(); ++i)
+                CHECK(SameBits(expected.joints[i].frame, actual.frames[i]));
+        }
+    }
+
+    // A singular rest root holds every joint at rest, flagged.
+    RigExecPointFrame flatRoot = restRoot;
+    flatRoot.points[2] = flatRoot.points[0];
+    const rigExecRig::PointFrame rigFlatRoot = ToRig(flatRoot);
+    const RigExecSplineIkRest flatRest =
+        RigExecSplineIkMakeRest(joints, flatRoot, restMid, restEnd);
+    RigExecSplineIkResult expected;
+    CHECK(!RigExecSolveSplineIk(flatRest, {root, mid, root},
+                                RigExecSplineIkParams(), &expected));
+    SplineIkPayload payload;
+    Node bare(SplineIk(),
+              {&SplineIkRestJoints(), &SplineIkRestRoot(), &SplineIkRestMid(),
+               &SplineIkRestEnd(), &SplineIkRoot(), &SplineIkMid(),
+               &SplineIkEnd()},
+              SplineIkOut(), &payload);
+    CHECK(bare.Run({&restJoints, &rigFlatRoot, &rigRestMid, &rigRestEnd,
+                    &rigRoot, &rigMid, &rigRoot},
+                   &actual));
+    for (size_t i = 0; i < 6 && i < actual.frames.Size(); ++i)
+        CHECK(SameBits(expected.joints[i].frame, actual.frames[i]));
+
+    // Volume weights of the wrong length and an empty chain refuse.
+    const std::vector<double> short3 = {0.1, 0.2, 0.3};
+    const auto shortArray = RigExecArray<double>(short3.data(), short3.size());
+    Node weighted(SplineIk(),
+                  {&SplineIkRestJoints(), &SplineIkRestRoot(),
+                   &SplineIkRestMid(), &SplineIkRestEnd(), &SplineIkRoot(),
+                   &SplineIkMid(), &SplineIkEnd(), &SplineIkVolumeWeights()},
+                  SplineIkOut(), &payload);
+    std::string error;
+    CHECK(!weighted.Run({&restJoints, &rigRestRoot, &rigRestMid, &rigRestEnd,
+                         &rigRoot, &rigMid, &rigRoot, &shortArray},
+                        &actual, &error));
+    const RigExecArray<rigExecRig::PointFrame> none;
+    CHECK(!bare.Run({&none, &rigRestRoot, &rigRestMid, &rigRestEnd, &rigRoot,
+                     &rigMid, &rigRoot},
+                    &actual, &error));
+}
+
 int
 main()
 {
@@ -2333,6 +2468,7 @@ main()
     TestWeightFields();
     TestChainSolvers();
     TestFrameBlend();
+    TestSplineIk();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;
