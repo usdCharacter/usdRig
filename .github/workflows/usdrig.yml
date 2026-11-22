@@ -734,7 +734,8 @@ jobs:
             runtimeSources.txt \
             runtimeIncludes.txt \
             evalCoreSources.txt \
-            evalCoreIncludes.txt
+            evalCoreIncludes.txt \
+            runtime-generated/moverCatalog.cpp
           do
             test -e "$S/$f" || { echo "missing from staging tree: $S/$f"; exit 1; }
           done
@@ -742,6 +743,42 @@ jobs:
           test -e "$GITHUB_WORKSPACE/unstaged-prefix" \
             && { echo "staged install wrote into the unstaged prefix $GITHUB_WORKSPACE/unstaged-prefix"; exit 1; }
           python3 tools/check_licenses.py --install "$GITHUB_WORKSPACE/stage/$GITHUB_WORKSPACE/unstaged-prefix"
+
+      # RIGEXEC_INSTALL_CMAKEDIR and RIGEXEC_INSTALL_DATADIR move the package
+      # file and the manifest set together. Install a second prefix with both
+      # spelled differently: the consumer's SConstruct must reach the manifests
+      # through the package file wherever it sits, not through the default
+      # lib/cmake/rigExec location.
+      - name: Install with a non-default package and data layout
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DUSD_INSTALL_DIR="${GITHUB_WORKSPACE}/usd-install" \
+            -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/usd-install" \
+            -DRIGEXEC_INSTALL_CMAKEDIR="cmake/rigExec-alt" \
+            -DRIGEXEC_INSTALL_DATADIR="sdk data"
+          cmake --install build --prefix "${GITHUB_WORKSPACE}/usdrig-install-alt"
+          A="${GITHUB_WORKSPACE}/usdrig-install-alt"
+          for f in "cmake/rigExec-alt/rigExecConfig.cmake" \
+                   "sdk data/exactFpFlags.txt" \
+                   "sdk data/runtimeSources.txt" \
+                   "sdk data/runtimeIncludes.txt" \
+                   "sdk data/evalCoreSources.txt" \
+                   "sdk data/evalCoreIncludes.txt" \
+                   "sdk data/runtime-generated/moverCatalog.cpp"
+          do
+            test -f "$A/$f" || { echo "missing from the alt layout: $A/$f"; exit 1; }
+          done
+          test ! -e "$A/lib/cmake/rigExec/rigExecConfig.cmake" \
+            || { echo "the configured cmake directory was ignored"; exit 1; }
+          python3 tools/check_licenses.py --install "$A"
+          tar -C "$A" -cf usdrig-sdk-alt.tar "cmake/rigExec-alt" "sdk data"
+
+      - name: Upload the non-default-layout SDK data
+        uses: actions/upload-artifact@v4
+        with:
+          name: usdrig-sdk-alt.tar
+          path: usdrig-sdk-alt.tar
+          retention-days: 5
 
       - name: Validate installed plugInfo.json files (python3)
         run: |
@@ -862,7 +899,9 @@ jobs:
   # configured build with no SDK. The SCons manifest contract is checked at
   # parse level: an incomplete manifest set is refused instead of completed
   # from a build tree, a non-default data directory comes from the SDK's own
-  # package file, and a .cxx unit in a manifest reaches the object list. Every
+  # package file, and so does a non-default package-file location, which the
+  # install writes under the configured cmake directory, and a .cxx unit in a
+  # manifest reaches the object list. Every
   # object-path assertion reads actual SCons outputs; nothing here reimplements
   # the SConstruct mapping.
   # --------------------------------------------------------------------------
@@ -888,6 +927,13 @@ jobs:
         with:
           name: usdrig-sdk-data.tar
 
+      # The same install with RIGEXEC_INSTALL_CMAKEDIR and RIGEXEC_INSTALL_DATADIR
+      # spelled differently: the package file is not under lib/cmake/rigExec here.
+      - name: Download the non-default-layout SDK data
+        uses: actions/download-artifact@v4
+        with:
+          name: usdrig-sdk-alt.tar
+
       # Third-party dependency for the in-place configure leg below, the same
       # prefix every other job uses -- not a usdRig build artifact.
       - name: Download OpenUSD prefix (in-place configure only)
@@ -897,9 +943,14 @@ jobs:
 
       - name: Extract SDK data and OpenUSD prefix
         run: |
-          mkdir -p sdk-relocated usd-install
+          mkdir -p sdk-relocated sdk-alt usd-install
           tar -C sdk-relocated -xf usdrig-sdk-data.tar
+          tar -C sdk-alt -xf usdrig-sdk-alt.tar
           tar -C usd-install -xf usd-install.tar
+          test -f sdk-alt/cmake/rigExec-alt/rigExecConfig.cmake \
+            || { echo "the alt layout has no package file where it was installed"; exit 1; }
+          test ! -e sdk-alt/lib/cmake/rigExec \
+            || { echo "the alt layout still carries the default package directory"; exit 1; }
 
       - name: Assert a clean room with no producer path
         run: |
@@ -1425,6 +1476,26 @@ jobs:
                  cat "$GITHUB_WORKSPACE/weird-layout-targets.txt"; exit 1; }
           grep -F "generated/moverCatalog" "$GITHUB_WORKSPACE/weird-layout-targets.txt" >/dev/null \
             || { echo "the non-default set enumerated no generated object"
+                 exit 1; }
+
+      # The package file itself moves with RIGEXEC_INSTALL_CMAKEDIR, so this
+      # SDK prefix has no lib/cmake/rigExec at all: the default location finds
+      # nothing, and the SConstruct must locate the package file where the
+      # install put it instead of falling back to the configured build tree
+      # beside it.
+      - name: Follow the package file a configured cmake directory installs
+        run: |
+          cd tutorial-inplace/godot_rigExec
+          scons -Q --tree=all --dry-run platform=linux target=template_debug \
+            api_version=4.7 "sdk_root=$GITHUB_WORKSPACE/sdk-alt" \
+            "usdrig_root=$GITHUB_WORKSPACE/consumer-src" \
+            > "$GITHUB_WORKSPACE/alt-layout-targets.txt" 2>&1
+          grep -F "manifests: $GITHUB_WORKSPACE/sdk-alt/sdk data (sdk mode)" \
+            "$GITHUB_WORKSPACE/alt-layout-targets.txt" >/dev/null \
+            || { echo "SCons did not find the package file where the SDK installed it"
+                 cat "$GITHUB_WORKSPACE/alt-layout-targets.txt"; exit 1; }
+          grep -F "generated/moverCatalog" "$GITHUB_WORKSPACE/alt-layout-targets.txt" >/dev/null \
+            || { echo "the alt-layout set enumerated no generated object"
                  exit 1; }
 
       # One case-sensitive final-suffix policy covers the exporter, this

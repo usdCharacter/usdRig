@@ -58,7 +58,13 @@ foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreInclud
             "generated ${BINARY_DIR}/${_manifest}.txt is missing; the staged copy is stale")
     endif ()
     file(STRINGS "${BINARY_DIR}/${_manifest}.txt" _built)
-    rigexec_relocate_manifest_text("${SOURCE_DIR}" _expected _built)
+    if (_manifest MATCHES "Includes$")
+        set(_is_directory TRUE)
+    else ()
+        set(_is_directory FALSE)
+    endif ()
+    rigexec_relocate_manifest_text("${SOURCE_DIR}" "${BINARY_DIR}" _built
+        ${_is_directory} _expected _expected_entries)
     file(READ "${STAGED_DIR}/${_manifest}.txt" _shipped_text)
     if (NOT _shipped_text STREQUAL _expected)
         message(FATAL_ERROR
@@ -78,7 +84,7 @@ foreach (_manifest runtimeSources evalCoreSources)
                 "${_manifest}.txt lists compiler-generated unit ${_entry}")
         endif ()
     endforeach ()
-endforeach ()or PR #87)
+endforeach ()
 
 # A staged install ships the generated payload beside the manifests, so the
 # scratch tree mirrors that install(FILES) payload from the build tree before
@@ -100,7 +106,7 @@ function (check_installed_entry entry manifest kind root manifest_dir)
     if (_absolute)
         message(FATAL_ERROR "${manifest}.txt ships an absolute path: ${entry}")
     endif ()
-    if (entry MATCHES "(^|/)\.\.(/|$)")
+    if (entry MATCHES "(^|/)\\.\\.(/|$)")
         message(FATAL_ERROR "${manifest}.txt ships a '..' segment: ${entry}")
     endif ()
     if (entry MATCHES "^runtime-generated(/|$)")

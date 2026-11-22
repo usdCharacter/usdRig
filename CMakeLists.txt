@@ -41,8 +41,6 @@ include(cmake/rigexec_flags.cmake)
 rigexec_get_exact_fp_directory_flags(_rigexec_fp_directory_flags)
 add_compile_options(${_rigexec_fp_directory_flags})
 include(cmake/installManifests.cmake)
-include(cmake/installSdkPayload.cmake)
-
 set(RIGEXEC_INSTALL_LIBDIR     "lib"
     CACHE STRING "Install directory for libraries, relative to the prefix")
 set(RIGEXEC_INSTALL_INCLUDEDIR "include"
@@ -3197,34 +3195,16 @@ install(FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generateMoverSchema.py"
     DESTINATION "${RIGEXEC_INSTALL_CMAKEDIR}")
 
-# The generated runtime translation units, the USD-free file lists rewritten
-# into the installed-manifest grammar, and the exact-FP flags this tree was
-# built with, for a host that compiles those sources without CMake (the Godot
-# and Unreal extensions). The payload preserves the build's runtime-generated/
-# subtree, which the manifests' reserved first component names; the mover
-# declarations above own the built-in list, so this adds no second inventory.
-get_property(_rigexec_builtin_movers GLOBAL PROPERTY RIGEXEC_BUILTIN_MOVERS)
-set(_rigexec_generated_payload "")
-if (_rigexec_builtin_movers)
-    set(_rigexec_runtime_generated
-        "${CMAKE_CURRENT_BINARY_DIR}/runtime-generated")
-    list(APPEND _rigexec_generated_payload
-        "${_rigexec_runtime_generated}/moverCatalog.cpp")
-    foreach (_mover IN LISTS _rigexec_builtin_movers)
-        list(APPEND _rigexec_generated_payload
-            "${_rigexec_runtime_generated}/${_mover}/${_mover}Kernel.cpp"
-            "${_rigexec_runtime_generated}/${_mover}/${_mover}Schema.h"
-            "${_rigexec_runtime_generated}/${_mover}/${_mover}Registration.h")
-    endforeach ()
-endif ()
-rigexec_install_sdk_payload(
+# What a host that compiles the USD-free sources without CMake (the Godot and
+# Unreal extensions) needs: the relocated manifests, the generated runtime
+# translation units they name, and the exact-FP flags this tree was built with.
+# rigexec_install_sdk_manifests stages all three under one destination so
+# DESTDIR keeps them together.
+rigexec_install_sdk_manifests(BUILD_DIR "${RIGEXEC_SDK_MANIFEST_DIR}"
+    INPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}"
     SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}"
-    BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}"
-    EXPORT_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/cmake/exportManifests.cmake"
-    DATA_DIR "${RIGEXEC_INSTALL_DATADIR}"
-    FLAGS_FILE "${CMAKE_CURRENT_BINARY_DIR}/exactFpFlags.txt"
-    PAYLOAD ${_rigexec_generated_payload})
-
+    DESTINATION "${RIGEXEC_INSTALL_DATADIR}"
+    FLAGS_FILE "${CMAKE_CURRENT_BINARY_DIR}/exactFpFlags.txt")
 install(FILES LICENSE NOTICE THIRD_PARTY_NOTICES.md
     DESTINATION "share/rigExec")
 install(FILES plugin/usdNoodles/LICENSE.txt

@@ -165,13 +165,14 @@ Building needs a C++ compiler, the existing usdRig build, its matching USD
 Python bindings with numpy, and OpenSubdiv. The tested Windows toolchain uses
 MSVC. If needed, append `--godot "C:/path/to/godot_console.exe"` to setup.
 
-The packaged `SConstruct` spells out no compiler flags and no runtime file
-list. It reads the exact-FP settings from the SDK's installed
-`exactFpFlags.txt`, and the USD-free source and include lists from the four
-manifests `runtimeSources.txt`, `evalCoreSources.txt`, `runtimeIncludes.txt`
-and `evalCoreIncludes.txt`. One directory supplies all five files: the SDK's
-data directory, which its own package file names as `rigExec_DATA_DIR` in
-`lib/cmake/rigExec/rigExecConfig.cmake`, or a configured usdRig build tree.
+The packaged `SConstruct` names no floating-point settings and no runtime
+file list: it imports the exact-FP settings from the SDK's installed
+`exactFpFlags.txt` (its own language and exception flags stay in the file),
+and the USD-free source and include lists from the four manifests
+`runtimeSources.txt`, `evalCoreSources.txt`, `runtimeIncludes.txt` and
+`evalCoreIncludes.txt`. One directory supplies all five files: the SDK's
+data directory, which its own package file names as `rigExec_DATA_DIR`
+wherever that file was installed, or a configured usdRig build tree.
 A directory holding part of the set is refused by name; the build never
 completes it from the other root, and `manifest_dir=<directory>` picks the
 directory explicitly. Each holds one forward-slash path per line, in

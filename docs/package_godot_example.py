@@ -39,7 +39,7 @@ The SConstruct takes its exact-FP flags and its USD-free source and include
 lists from one directory of the installed SDK: exactFpFlags.txt with
 runtimeSources.txt, evalCoreSources.txt, runtimeIncludes.txt and
 evalCoreIncludes.txt, in the data directory the SDK names as rigExec_DATA_DIR
-in lib/cmake/rigExec/rigExecConfig.cmake. A manifest entry starting
+in its installed package file. A manifest entry starting
 runtime-generated/ resolves beside the manifests; every other entry
 resolves under the usdRig checkout. With no installed SDK the same five
 files are read from a configured usdRig build tree. Pass

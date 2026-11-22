@@ -16,9 +16,9 @@ runtimeSources.txt, evalCoreSources.txt, runtimeIncludes.txt and
 evalCoreIncludes.txt -- or, when no SDK is installed, from the same files in a
 configured usdRig build tree. One directory supplies all five, so an
 installed SDK and an in-place build tree are never mixed. That directory is
-the one the installed SDK's own package file names (rigExec_DATA_DIR in
-lib/cmake/rigExec/rigExecConfig.cmake), so a non-default install layout works
-instead of falling back to the build tree.
+the one the installed SDK's own package file names as rigExec_DATA_DIR,
+wherever that package file was installed, so a non-default install layout
+works instead of falling back to the build tree.
 Both grammars reserve the first path component "runtime-generated": an
 entry starting with it names a translation unit this SDK ships beside the
 manifests and resolves under the manifest directory M, every other entry
@@ -97,14 +97,33 @@ def _missing_manifests(directory):
             if not os.path.isfile(os.path.join(directory, name))]
 
 
+def _package_file(prefix):
+    """rigExecConfig.cmake wherever this SDK's install wrote it. CMake puts it
+    under the configured RIGEXEC_INSTALL_CMAKEDIR, so the default spelling is a
+    shortcut, not a requirement."""
+    direct = os.path.join(prefix, "lib", "cmake", "rigExec",
+                          "rigExecConfig.cmake")
+    if os.path.isfile(direct):
+        return direct
+    found = None
+    for dirpath, dirnames, filenames in os.walk(prefix):
+        if "rigExecConfig.cmake" in filenames:
+            candidate = os.path.join(dirpath, "rigExecConfig.cmake")
+            if found is None or len(candidate) < len(found):
+                found = candidate
+        # Install layouts are shallow; the library and include trees hold none.
+        if os.path.relpath(dirpath, prefix).count(os.sep) >= 4:
+            dirnames[:] = []
+    return found
+
+
 def _sdk_manifest_dir():
     """The data directory the installed SDK names for itself. The installer
     picks the layout, so read rigExec_DATA_DIR out of the SDK's package file
-    instead of assuming share/rigExec; the default spelling is the fallback
-    for an SDK that ships no package file."""
-    config = os.path.join(sdk_root, "lib", "cmake", "rigExec",
-                          "rigExecConfig.cmake")
-    if os.path.isfile(config):
+    wherever it sits, instead of assuming share/rigExec; the default spelling
+    is the fallback for an SDK that ships no package file."""
+    config = _package_file(sdk_root)
+    if config:
         with open(config, "r", encoding="utf-8") as handle:
             declared = re.search(r'rigExec_DATA_DIR\s+"([^"]+)"',
                                  handle.read())
