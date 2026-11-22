@@ -1,6 +1,7 @@
 // RigExec output-affected index. See outputAffectedIndex.h.
 #include "rigExec/internal/outputAffectedIndex.h"
 
+#include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedSchedule.h"
 
 #include <algorithm>
@@ -583,5 +584,25 @@ _OverridablePathSeeds(const RigExecBakedProgramImpl &program,
 }
 
 } // namespace
+
+void
+RigExecOutputAffectedIndex::Build(const RigExecProgramView &program,
+                                  uint64_t compiledRigSignature)
+{
+    if (!program) {
+        Clear();
+        return;
+    }
+    Build(program.Program()->GetStepGraph(), compiledRigSignature);
+}
+
+std::vector<int>
+RigExecOverrideSeeds(const RigExecProgramView &program,
+                     const RigExecValueOverride &override)
+{
+    if (!program)
+        return {};
+    return RigExecOverrideSeeds(program.Program()->GetStepGraph(), override);
+}
 
 } // namespace rigExec

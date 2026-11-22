@@ -9,15 +9,12 @@ libs/rigExecGpu/gpuDeformExecutor.h | rigExec/internal/gpuCloth.h
 libs/rigExecImaging/bridge.cpp | rigExec/internal/frameCacheSparsity.h
 libs/rigExecImaging/bridge.cpp | rigExec/internal/parallel.h
 libs/rigExecImaging/bridge.h | rigExec/internal/outputAffectedIndex.h
-libs/rigExecImaging/bridgeCacheFreshness.cpp | rigExec/internal/bakedProgramImpl.h
 libs/rigExecImaging/bridgeCacheFreshness.cpp | rigExec/internal/frameCacheSparsity.h
-libs/rigExecImaging/bridgeFrameCache.cpp | rigExec/internal/bakedProgramImpl.h
 libs/rigExecImaging/bridgeFrameCache.cpp | rigExec/internal/frameCacheSparsity.h
 libs/rigExecImaging/bridgeFrameCache.h | rigExec/internal/outputAffectedIndex.h
 libs/rigExecImaging/bridgeFrameCache.h | rigExec/internal/taskListCache.h
 libs/rigExecImaging/bridgeFreshness.cpp | rigExec/internal/outputAffectedIndex.h
 libs/rigExecImaging/bridgeGuides.cpp | rigExec/internal/movers/clothInputs.h
-libs/rigExecImaging/liveDebug.cpp | rigExec/internal/bakedProgramImpl.h
 libs/rigExecImaging/playback.cpp | rigExec/internal/bakedSchedule.h
 libs/rigExecImaging/playback.cpp | rigExec/internal/parallel.h
 libs/rigExecImaging/profilerApi.cpp | rigExec/internal/parallel.h
@@ -25,7 +22,6 @@ libs/rigExecImaging/registryInvalidation.cpp | rigExec/internal/bakedClusters.h
 libs/rigExecImaging/registryInvalidation.cpp | rigExec/internal/outputAffectedIndex.h
 libs/rigExecImaging/registryPreview.cpp | rigExec/internal/parallel.h
 libs/rigExecImaging/registryUpstream.cpp | rigExec/internal/frameCacheSparsity.h
-libs/rigExecImaging/registryWarmWork.cpp | rigExec/internal/bakedProgramImpl.h
 libs/rigExecImaging/registryWarmWork.cpp | rigExec/internal/frameCacheSparsity.h
 libs/rigExecImaging/registryWarming.cpp | rigExec/internal/parallel.h
 libs/rigExecImaging/snapshotStore.h | rigExec/internal/gpuDeformTranslation.h

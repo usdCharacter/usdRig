@@ -8,7 +8,6 @@
 #include "warmIndex.h"
 
 #include "rigExec/api/backgroundScheduler.h"
-#include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/frameCacheSparsity.h"
 #include "rigExec/api/frozenContext.h"
 #include "rigExec/api/rigEvaluator.h"
@@ -107,7 +106,7 @@ RigExecBridgeFrameCache::_SyncAffectedIndex(const RigExecCacheCall &call)
         _affectedValid = false;
         return nullptr;
     }
-    const RigExecBakedProgramImpl &impl = program->GetStepGraph();
+    const RigExecProgramView view(program);
     const uint64_t compiledRig =
         RigExecFrameCacheCompiledRigSignature(call.evaluator);
     // The program object test matters as much as the compiled rig: a rebuild can
@@ -120,7 +119,7 @@ RigExecBridgeFrameCache::_SyncAffectedIndex(const RigExecCacheCall &call)
         return _affectedIndex.get();
     }
     _affectedIndex = std::make_unique<RigExecOutputAffectedIndex>();
-    _affectedIndex->Build(impl, compiledRig);
+    _affectedIndex->Build(view, compiledRig);
     _affectedCompiledRig = compiledRig;
     _affectedProgram = program;
     _affectedValid = true;
@@ -584,19 +583,18 @@ RigExecBridgeFrameCache::MemoizeLive(const RigExecCacheCall &call,
             // Retained-state publish: the source snapshot and
             // the dependency record ride with the pose, so a later edit
             // retains the source snapshot used to validate cache reuse.
-            const RigExecBakedProgramImpl &impl =
-                call.evaluator.GetBakedProgram()->GetStepGraph();
+            const RigExecProgramView view = call.evaluator.GetProgramView();
             RigExecRetainedFrameState retainedState =
                 RigExecCaptureRetainedState(
                     memoInputs, call.overrides, key.compiledRigSignature,
-                    impl.clustering.clusters.size(),
+                    view.ClusterCount(),
                     RigExecCompiledRigConstantDigest(
                         *call.evaluator.GetBakedProgram()));
             auto retained = std::make_shared<RigExecRetainedFrameState>(
                 std::move(retainedState));
             const size_t retainedBytes = retained->RetainedBytes();
             RigExecEntryProvenance provenance =
-                RigExecFullEvalProvenance(impl, time);
+                RigExecFullEvalProvenance(view, time);
             provenance.unfoldedControlDigest = memoUnfolded;
             stored = _frameCache->Publish(key, time, pose, retainedBytes,
                                           retained, &provenance);

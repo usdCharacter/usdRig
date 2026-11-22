@@ -1,7 +1,7 @@
 // Owner-thread snapshots of the existing imaging evaluator for live tools.
 #include "profilerApi.h"
 #include "rigExec/api/bakedProgram.h"
-#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/programView.h"
 #include "pxr/base/js/json.h"
 #include "pxr/base/js/value.h"
 #include "pxr/base/work/threadLimits.h"
@@ -75,15 +75,15 @@ RigExecImagingRegistry::LiveDebugJson(const SdfPath &rig,
         }
         const std::string generation =
             std::to_string(evaluator.GetBakedGenerationCount());
-        const auto &body = program->GetStepGraph();
+        const RigExecProgramView view(program);
         reply["active"] = JsValue(true);
         reply["rig"] = JsValue(rig.GetString());
         reply["graph_key"] = JsValue(session.debugGraphKey);
         reply["generation"] = JsValue(generation);
         reply["recording"] = JsValue(evaluator.GetOpTimingEnabled());
-        reply["time"] = body.lastTime.IsDefault()
+        reply["time"] = view.LastTime().IsDefault()
                             ? JsValue()
-                            : JsValue(body.lastTime.GetValue());
+                            : JsValue(view.LastTime().GetValue());
         reply["viewport_time"] =
             _lastTime.IsDefault() ? JsValue() : JsValue(_lastTime.GetValue());
         reply["evaluations"] = JsValue(double(session.evaluationCount));

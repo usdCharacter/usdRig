@@ -9,7 +9,6 @@
 #include "registry.h"
 
 #include "rigExec/api/backgroundScheduler.h"
-#include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/api/frameCache.h"
 #include "rigExec/internal/frameCacheSparsity.h"
 #include "rigExec/api/frozenContext.h"
@@ -544,13 +543,13 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
     // The source snapshot and dependency record travel with the pose.
     RigExecRetainedFrameState retainedState = RigExecCaptureRetainedState(
         inputs, overrides, key.compiledRigSignature,
-        program->GetStepGraph().clustering.clusters.size(), constantDigest);
+        RigExecProgramView(program).ClusterCount(), constantDigest);
     warmPhase("Warm.EnqueueProofRetained");
     auto retained =
         std::make_shared<RigExecRetainedFrameState>(std::move(retainedState));
     const size_t retainedBytes = retained->RetainedBytes();
     RigExecEntryProvenance provenance =
-        RigExecFullEvalProvenance(program->GetStepGraph(), time);
+        RigExecFullEvalProvenance(RigExecProgramView(program), time);
     provenance.unfoldedControlDigest = unfoldedDigest;
     warmPhase("Warm.Provenance");
     // The retained state holds its own copy, so the job takes the sampled

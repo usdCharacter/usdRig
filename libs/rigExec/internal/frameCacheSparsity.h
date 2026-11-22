@@ -125,6 +125,9 @@ bool RigExecCanReuseRetainedPose(
 RigExecEntryProvenance
 RigExecFullEvalProvenance(const RigExecBakedProgramImpl &program,
                           UsdTimeCode time);
+/// Default on an empty view.
+RigExecEntryProvenance
+RigExecFullEvalProvenance(const RigExecProgramView &program, UsdTimeCode time);
 
 /// Captures the retained frame state for a just-evaluated frame: the sampled
 /// inputs and standing overrides by value, plus the compiled rig, the

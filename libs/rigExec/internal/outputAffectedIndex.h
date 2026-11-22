@@ -13,6 +13,7 @@
 #ifndef RIGEXEC_OUTPUT_AFFECTED_INDEX_H
 #define RIGEXEC_OUTPUT_AFFECTED_INDEX_H
 
+#include "rigExec/api/programView.h"
 #include "rigExec/internal/bakedClusters.h"
 #include "rigExec/internal/valueAddress.h"
 
@@ -82,6 +83,9 @@ public:
     /// family walk yields. Replaces any previous build, including explicit
     /// MapControl entries, and zeroes the walk counter.
     void Build(const RigExecBakedProgramImpl &program,
+               uint64_t compiledRigSignature);
+    /// Clears on an empty view.
+    void Build(const RigExecProgramView &program,
                uint64_t compiledRigSignature);
 
     void Clear();
@@ -243,6 +247,9 @@ RigExecNoticeControlIdsFromPaths(const std::vector<SdfPath> &resynced,
 /// it seedless. Exact, not conservative: these are the clusters the
 /// executor dirties for a standing override.
 std::vector<int> RigExecOverrideSeeds(const RigExecBakedProgramImpl &program,
+                                      const RigExecValueOverride &override);
+/// Empty on an empty view.
+std::vector<int> RigExecOverrideSeeds(const RigExecProgramView &program,
                                       const RigExecValueOverride &override);
 
 } // namespace rigExec

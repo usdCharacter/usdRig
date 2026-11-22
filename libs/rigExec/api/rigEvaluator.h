@@ -8,6 +8,7 @@
 #include "rigExec/internal/moverGraphCaches.h"
 #include "rigExec/internal/moverGraphTypes.h"
 #include "rigExec/api/profiler.h"
+#include "rigExec/api/programView.h"
 #include "rigExec/internal/solverKernels.h"
 #include "rigExec/internal/valueAddress.h"
 
@@ -418,6 +419,13 @@ public:
     const RigExecBakedProgram *GetBakedProgram() const
     {
         return _bakedProgram.get();
+    }
+
+    /// Read-only view of the standing program; empty when compilation
+    /// failed.
+    RigExecProgramView GetProgramView() const
+    {
+        return RigExecProgramView(_bakedProgram.get());
     }
 
     /// The baked program's op trace and op graph for the last generation,

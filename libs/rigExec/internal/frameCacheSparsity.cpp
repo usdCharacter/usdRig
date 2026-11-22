@@ -526,4 +526,12 @@ RigExecVerifyHitWithLive(const RigExecRigPose &cached, RigExecLiveRunner live)
     return verdict;
 }
 
+RigExecEntryProvenance
+RigExecFullEvalProvenance(const RigExecProgramView &program, UsdTimeCode time)
+{
+    if (!program)
+        return {};
+    return RigExecFullEvalProvenance(program.Program()->GetStepGraph(), time);
+}
+
 } // namespace rigExec

@@ -4,7 +4,6 @@
 // contract: no second proof mechanism, no parallel dependency model.
 #include "bridgeFrameCache.h"
 
-#include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/frameCacheSparsity.h"
 #include "rigExec/api/rigEvaluator.h"
 
@@ -59,13 +58,13 @@ RigExecBridgeFrameCache::AdmitOverrideControls(
         // plan over them stays conservative.
         return;
     }
-    const RigExecBakedProgramImpl &impl = program->GetStepGraph();
+    const RigExecProgramView view(program);
     for (const RigExecValueOverride &o : overrides) {
         const RigExecControlId id = RigExecControlIdForOverride(o);
         if (_affectedIndex->IsKnownControl(id)) {
             continue;
         }
-        const std::vector<int> seeds = RigExecOverrideSeeds(impl, o);
+        const std::vector<int> seeds = RigExecOverrideSeeds(view, o);
         if (seeds.empty()) {
             // Places nowhere (folded, exec-typed, routed, or unknown):
             // left foreign, never admitted seedless. A seedless

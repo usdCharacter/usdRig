@@ -18,6 +18,7 @@ add_library(rigExecCompile OBJECT
     libs/rigExec/internal/rigEvaluatorLiveGraph.cpp
     libs/rigExec/internal/rigEvaluatorValidation.cpp
     libs/rigExec/internal/bakedProgram.cpp
+    libs/rigExec/internal/programView.cpp
     libs/rigExec/internal/compiledProgram.cpp
     # Scene programs that compose compiled descriptors.
     libs/rigExecScene/constraintProgram.cpp
