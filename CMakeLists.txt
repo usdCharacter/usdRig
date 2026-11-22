@@ -1251,6 +1251,21 @@ rigexec_link_registrations(testRigExecRigTypes
     TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes)
 add_test(NAME testRigExecRigTypes COMMAND testRigExecRigTypes)
 
+rigexec_add_op_library(rigExecOps
+    SOURCES libs/rigExecOps/property/mathOps.cpp
+    USES_TYPE_LIBRARIES rigExecStdTypes)
+rigexec_apply_exact_fp_flags(rigExecOps)
+add_executable(testRigExecOpsMath tests/testRigExecOpsMath.cpp
+    $<TARGET_OBJECTS:rigExecRegistry> $<TARGET_OBJECTS:rigExecCore>)
+target_include_directories(testRigExecOpsMath PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/libs")
+target_link_libraries(testRigExecOpsMath PRIVATE rigExecMath Threads::Threads)
+rigexec_apply_exact_fp_flags(testRigExecOpsMath)
+rigexec_link_registrations(testRigExecOpsMath
+    TYPE_LIBRARIES rigExecStdTypes OP_LIBRARIES rigExecOps)
+add_test(NAME testRigExecOpsMath COMMAND testRigExecOpsMath)
+set_tests_properties(testRigExecOpsMath PROPERTIES LABELS "fast")
+
 add_executable(testRigExecOpGraph tests/testRigExecOpGraph.cpp)
 target_link_libraries(testRigExecOpGraph PRIVATE rigExecGraph work Threads::Threads)
 add_test(NAME testRigExecOpGraph COMMAND testRigExecOpGraph)
