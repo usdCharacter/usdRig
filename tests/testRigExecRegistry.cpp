@@ -57,35 +57,6 @@ RegisterBad(RigExecOpRegistrar &registrar)
     registrar.Add(BadOp(), desc);
 }
 
-// Two ops ordered after each other.
-RIGEXEC_DEFINE_OP_HANDLE(CycleA)
-RIGEXEC_DEFINE_OP_HANDLE(CycleB)
-
-void
-RegisterCycle(RigExecOpRegistrar &registrar)
-{
-    static const RigExecOpHandle *const afterB[] = {&CycleB()};
-    static const RigExecOpHandle *const afterA[] = {&CycleA()};
-    static const RigExecOpDesc a = [] {
-        RigExecOpDesc d;
-        d.name = "CycleA";
-        d.after = afterB;
-        d.afterCount = 1;
-        d.run = &NoRun;
-        return d;
-    }();
-    static const RigExecOpDesc b = [] {
-        RigExecOpDesc d;
-        d.name = "CycleB";
-        d.after = afterA;
-        d.afterCount = 1;
-        d.run = &NoRun;
-        return d;
-    }();
-    registrar.Add(CycleA(), a);
-    registrar.Add(CycleB(), b);
-}
-
 void
 TestValidateErrors(const RigExecRegistryInit &good)
 {
@@ -98,16 +69,6 @@ TestValidateErrors(const RigExecRegistryInit &good)
         std::vector<std::string> errors;
         CHECK(!RigExecRegistry::Validate(init, &errors));
         CHECK(Mentions(errors, "port x uses a type that is not registered"));
-    }
-    {
-        RigExecOpLibraryDesc cycle;
-        cycle.name = "cycle";
-        cycle.registerOps = &RegisterCycle;
-        RigExecRegistryInit init = good;
-        init.opLibraries.push_back(&cycle);
-        std::vector<std::string> errors;
-        CHECK(!RigExecRegistry::Validate(init, &errors));
-        CHECK(Mentions(errors, "cycle"));
     }
     {
         RigExecRegistryInit init = good;
@@ -156,8 +117,6 @@ TestInitialize(const RigExecRegistryInit &init)
     CHECK(fakeOps::ScaleIn().Index() == 0);
     CHECK(fakeOps::ScaleOut().Index() == 1);
     const RigExecRegisteredOp &offset = r.Op(fakeOps::Offset());
-    CHECK(offset.after.size() == 1 &&
-          offset.after[0] == fakeOps::Scale().Index());
     CHECK(offset.portTypes.size() == 2 &&
           offset.portTypes[0] == fakeTypes::Vec3Type().Index());
     CHECK(r.Fingerprint() != 0);

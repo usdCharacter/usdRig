@@ -143,20 +143,9 @@ RigExecCompile(const RigExecRigDesc &desc, const RigExecCompileOptions &options,
         program->outputSlots.push_back(program->portSlots[portIndex(out)]);
     }
 
-    // Order: explicit pairs and the registry's op ordering.
+    // Order: data edges plus the host's explicit pairs.
     for (const auto &[first, second] : data.orders) {
         successors[first].push_back(second);
-    }
-    std::vector<std::vector<uint32_t>> nodesOfOp(registry.OpCount());
-    for (uint32_t n = 0; n < nodeCount; ++n) {
-        nodesOfOp[data.nodes[n].op].push_back(n);
-    }
-    for (uint32_t n = 0; n < nodeCount; ++n) {
-        for (const uint32_t before : registry.OpAt(data.nodes[n].op).after) {
-            for (const uint32_t m : nodesOfOp[before]) {
-                successors[m].push_back(n);
-            }
-        }
     }
 
     // Levels by longest path; a node runs after everything it depends on.

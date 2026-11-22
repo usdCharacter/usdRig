@@ -125,21 +125,6 @@ struct RigExecPortDesc {
     const char *name = "";
 };
 
-/// Generic engine phases an op runs in.
-enum class RigExecOpPhase : uint8_t {
-    Compose,
-    Solve,
-    Commit,
-    Constrain,
-    Propagate,
-    Publish,
-    ChainInput,
-    Revision,
-    Derived,
-    Property,
-    Weight,
-};
-
 enum class RigExecOpThreading : uint8_t { Pure, OwnerThread, Device, Windowed };
 
 enum RigExecOpCapabilities : uint32_t {
@@ -189,12 +174,6 @@ struct RigExecOpDesc {
     uint32_t version = 1;
     const RigExecPortDesc *ports = nullptr;
     size_t portCount = 0;
-    RigExecOpPhase phase = RigExecOpPhase::Revision;
-    /// Ops this op runs after or before, within its phase.
-    const RigExecOpHandle *const *after = nullptr;
-    size_t afterCount = 0;
-    const RigExecOpHandle *const *before = nullptr;
-    size_t beforeCount = 0;
     RigExecOpRunFn run = nullptr;
     RigExecOpThreading threading = RigExecOpThreading::Pure;
     uint32_t capabilities = 0;
@@ -258,8 +237,6 @@ struct RigExecRegisteredOp {
     uint32_t index = kRigExecInvalidIndex;
     /// Type index per port, in port order.
     std::vector<uint32_t> portTypes;
-    /// Op indices this op runs after, with `before` edges folded in.
-    std::vector<uint32_t> after;
 };
 
 /// The process-wide registry: built once by Initialize on the owner thread,

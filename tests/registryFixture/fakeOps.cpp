@@ -71,15 +71,12 @@ Register(rigExec::RigExecOpRegistrar &registrar)
         {&OffsetOut(), &fakeTypes::Vec3Type(), rigExec::kRigExecPortOutput,
          "out"},
     };
-    static const rigExec::RigExecOpHandle *const offsetAfter[] = {&Scale()};
     static const rigExec::RigExecOpDesc offset = [] {
         rigExec::RigExecOpDesc d;
         d.nameSpace = "fake";
         d.name = "Offset";
         d.ports = offsetPorts;
         d.portCount = 2;
-        d.after = offsetAfter;
-        d.afterCount = 1;
         d.run = &RunOffset;
         return d;
     }();

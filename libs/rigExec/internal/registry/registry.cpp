@@ -276,65 +276,6 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
         return false;
     }
 
-    // Ordering edges, with `before` folded into the other op's `after`.
-    std::vector<std::vector<uint32_t>> after(_opEntries.size());
-    for (size_t i = 0; i < _opEntries.size(); ++i) {
-        const RigExecOpDesc &d = *_opEntries[i].desc;
-        const std::string name = QualifiedName(d.nameSpace, d.name);
-        const auto resolve = [&](const RigExecOpHandle *other,
-                                 uint32_t *index) {
-            const auto found = _opIndex.find(other);
-            if (found == _opIndex.end()) {
-                _Error("op " + name +
-                       ": ordering edge to an op that is not "
-                       "registered");
-                return false;
-            }
-            *index = found->second;
-            return true;
-        };
-        uint32_t other = 0;
-        for (size_t e = 0; e < d.afterCount; ++e) {
-            if (resolve(d.after[e], &other)) {
-                after[i].push_back(other);
-            }
-        }
-        for (size_t e = 0; e < d.beforeCount; ++e) {
-            if (resolve(d.before[e], &other)) {
-                after[other].push_back(uint32_t(i));
-            }
-        }
-    }
-    // Cycle check over the ordering edges.
-    std::vector<uint8_t> mark(_opEntries.size(), 0);
-    std::vector<std::pair<uint32_t, size_t>> stack;
-    for (uint32_t root = 0; root < _opEntries.size(); ++root) {
-        if (mark[root]) {
-            continue;
-        }
-        stack.push_back({root, 0});
-        mark[root] = 1;
-        while (!stack.empty()) {
-            auto &[node, next] = stack.back();
-            if (next < after[node].size()) {
-                const uint32_t child = after[node][next++];
-                if (mark[child] == 1) {
-                    const RigExecOpDesc &d = *_opEntries[child].desc;
-                    _Error("op " + QualifiedName(d.nameSpace, d.name) +
-                           ": ordering edges form a cycle");
-                    return false;
-                }
-                if (mark[child] == 0) {
-                    mark[child] = 1;
-                    stack.push_back({child, 0});
-                }
-            } else {
-                mark[node] = 2;
-                stack.pop_back();
-            }
-        }
-    }
-
     _registry =
         std::make_unique<RigExecRegistry>(RigExecRegistry::_BuilderKey(0));
     RigExecRegistry &r = *_registry;
@@ -356,7 +297,6 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
         op.desc = e.desc;
         op.library = e.library;
         op.index = uint32_t(i);
-        op.after = std::move(after[i]);
         for (size_t p = 0; p < e.desc->portCount; ++p) {
             op.portTypes.push_back(_typeIndex.at(e.desc->ports[p].type));
             _portIndex.emplace_back(e.desc->ports[p].port, uint32_t(p));
