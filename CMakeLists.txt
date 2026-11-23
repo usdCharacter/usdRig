@@ -129,6 +129,7 @@ add_library(rigExecScene SHARED
     libs/rigExecScene/externalOps.cpp
     libs/rigExecScene/geometryOpRunner.cpp
     libs/rigExecScene/geometryOps.cpp
+    libs/rigExecScene/opPlugins.cpp
     libs/rigExecScene/geometrySceneTranslation.cpp
     libs/rigExecScene/jointGroupTranslation.cpp
     libs/rigExecScene/poseCommit.cpp
@@ -164,7 +165,7 @@ target_include_directories(rigExecScene PUBLIC
 target_link_libraries(rigExecScene PUBLIC
     tf gf vt sdf ts usd usdGeom)
 target_link_libraries(rigExecScene PRIVATE rigExecGraph rigExecMath
-    rigExecBuiltins)
+    rigExecBuiltins plug js)
 set_target_properties(rigExecScene PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(rigExec::rigExecScene ALIAS rigExecScene)
 target_sources(rigExecScene INTERFACE
@@ -270,6 +271,7 @@ add_library(rigExec::rigExec ALIAS rigExec)
 include(cmake/rigExecMoverPlugin.cmake)
 include(cmake/rigExecMover.cmake)
 include(cmake/rigExecRegistration.cmake)
+include(cmake/rigExecOpPlugin.cmake)
 
 # The op core's built-in type and op libraries. rigExecScene runs geometry
 # through them, so they build with or without tests.
@@ -320,7 +322,8 @@ add_library(rigExecBuiltins SHARED libs/rigExecBuiltins/builtins.cpp
     ${_rigexec_builtin_ops})
 target_compile_features(rigExecBuiltins PUBLIC cxx_std_17)
 target_include_directories(rigExecBuiltins PUBLIC
-    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>")
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>"
+    "$<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>")
 target_link_libraries(rigExecBuiltins PUBLIC rigExecOpCore PRIVATE rigExecEvalCore)
 
 add_library(rigExecStandalone SHARED
@@ -782,6 +785,18 @@ add_test(NAME testRigExecOracleGoldenSuiteMissing COMMAND "${CMAKE_COMMAND}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/checkOracleGoldenSuiteMissing.cmake")
 
 add_subdirectory(tests/externalMovers)
+add_subdirectory(tests/opPlugins)
+add_executable(testRigExecOpPlugins tests/testRigExecOpPlugins.cpp)
+target_link_libraries(testRigExecOpPlugins PRIVATE rigExec rigExecScene
+    rigExecBuiltins plug usd)
+add_dependencies(testRigExecOpPlugins testOffsetOps)
+foreach(_mode good abi symbol late)
+    add_test(NAME testRigExecOpPlugins_${_mode} COMMAND testRigExecOpPlugins
+        ${_mode}
+        "$<TARGET_GENEX_EVAL:testOffsetOps,$<TARGET_PROPERTY:testOffsetOps,RIGEXEC_PLUGIN_RESOURCE_DIR>>"
+        "$<TARGET_FILE:testOffsetOps>"
+        "${CMAKE_CURRENT_BINARY_DIR}/testRigExecOpPlugins/${_mode}")
+endforeach()
 add_executable(testRigExecExternalMovers tests/testRigExecExternalMovers.cpp)
 target_link_libraries(testRigExecExternalMovers PRIVATE
     rigExec rigExecAuthoring rigExecBake rigExecRuntime usd usdGeom plug)
@@ -3281,7 +3296,7 @@ install(FILES libs/rigExecOracle/registerOracle.h
     DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/rigExecOracle")
 
 # FILES_MATCHING still walks -- and recreates -- every subdirectory it passes
-foreach(_lib rigExecGraph rigExecEvalCore rigExecScene rigExecMath rigExec rigExecSchema rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler)
+foreach(_lib rigExecGraph rigExecEvalCore rigExecScene rigExecMath rigExec rigExecSchema rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler rigExecStdTypes rigExecRigTypes rigExecBuiltins)
     install(DIRECTORY "libs/${_lib}/"
         DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/${_lib}"
         FILES_MATCHING
@@ -3417,6 +3432,7 @@ install(FILES
         "${CMAKE_CURRENT_BINARY_DIR}/rigExecConfigVersion.cmake"
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/rigExecMoverPlugin.cmake"
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/rigExecMover.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/rigExecOpPlugin.cmake"
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/rigexec_flags.cmake"
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generateMoverSchema.py"
     DESTINATION "${RIGEXEC_INSTALL_CMAKEDIR}")

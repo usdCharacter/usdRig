@@ -466,6 +466,60 @@ callbacks; the reader keeps the packets (`PushHistory`, `ExecuteHistory`,
 `ClearHistory`). The built-in cloth mover is written this way; see
 [secondary motion and cloth](secondary-motion.md).
 
+## Build an op plugin
+
+An op library can ship as an OpenUSD plugin of its own. The scene program
+then runs a mover on that library's op through the op core, with no core code
+naming either. Until the generic USD binder arrives, the mover itself still
+comes from a mover plugin as above, and the op plugin adds a *binder* for its
+schema type: how the mover's declared inputs and provider values become the
+op's payload and inputs. The baked program, the frozen evaluator and
+`.rigexec` playback keep running the mover's External callbacks.
+
+Declare the plugin with `rigexec_add_op_plugin` from
+[rigExecOpPlugin.cmake](../../cmake/rigExecOpPlugin.cmake), available inside
+the usdRig build and from `find_package(rigExec)`:
+
+```cmake
+rigexec_add_op_plugin(quadraticOps BINDERS
+    SOURCES quadraticOps.cpp
+    LIBRARIES quadraticKernel)
+```
+
+The sources define the op library's entry with
+`RIGEXEC_OP_LIBRARY_ENTRY(quadraticOps)` (see `rigExec/api/registry.h`),
+and with `BINDERS` a binder table with
+`RIGEXEC_EXTERNAL_OP_BINDERS_ENTRY(quadraticOps)`
+(`rigExecScene/externalOps.h`): one `RigExecExternalOpBinder` per schema
+type, with `add`, `write` and `stale` functions shaped like the built-in
+movers' binders in `libs/rigExecScene/externalOps.cpp`. `TYPE_LIBRARIES`
+lists type library entries the plugin also defines, and `SCHEMA` with
+`SCHEMA_TYPE` adds a codeless schema the same way `rigexec_add_mover` does.
+Keep the arithmetic in one kernel that the mover's callbacks and the op both
+call, so the two paths give the same bits.
+
+The generated `plugInfo.json` marks the library with
+
+```json
+"Info": {"RigExecOpLibrary": {"abiVersion": <registry ABI>,
+    "entry": "quadraticOps_RigExecOpLibrary",
+    "binders": "quadraticOps_RigExecExternalOpBinders"}}
+```
+
+where `abiVersion` is the `kRigExecRegistryAbiVersion` of the
+`rigExec/api/registry.h` the plugin was compiled against. Add
+`build/usd/rigExecOpPlugins` (or the installed `lib/usd/rigExecOpPlugins`)
+to `PXR_PLUGINPATH_NAME`. `rigExecScene` discovers the plugins at the first
+scene program that needs the op core, before the registry initializes, and
+takes their libraries into that one initialization
+(`RigExecEnsureSceneOpRegistry` in `rigExecScene/opPlugins.h`). A plugin
+built for another registry or binder ABI, a library that does not load, a
+missing entry symbol, a library the registry refuses, a schema type that
+already has a binder, or a registry initialized before discovery is reported
+by plugin name and fails that scene program; it is never skipped silently.
+A host without OpenUSD passes its op libraries to
+`RigExecRegistry::Initialize` itself.
+
 ## Discovery and supported evaluation
 
 For an independent build, add `mover-build/usd/rigExecMoverPlugins` to

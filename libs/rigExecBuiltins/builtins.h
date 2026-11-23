@@ -15,10 +15,12 @@ namespace rigExec {
 /// The built-in libraries in freeze order.
 RigExecRegistryInit RigExecBuiltinRegistrations();
 
-/// Initializes the registry with the built-ins unless it already is. False
-/// with \p error when that fails, or when the registry was initialized
-/// without them.
-bool RigExecEnsureBuiltinRegistry(std::string *error = nullptr);
+/// Initializes the registry with the built-ins, then \p more's libraries,
+/// unless it already is. False with \p error when that fails, or when the
+/// registry was initialized without the built-ins. \p more counts only on
+/// the call that initializes.
+bool RigExecEnsureBuiltinRegistry(std::string *error = nullptr,
+                                  const RigExecRegistryInit *more = nullptr);
 
 } // namespace rigExec
 

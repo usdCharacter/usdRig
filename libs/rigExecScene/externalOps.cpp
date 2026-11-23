@@ -17,6 +17,7 @@
 #include "pxr/base/vt/array.h"
 #include "pxr/base/vt/types.h"
 
+#include <atomic>
 #include <cstring>
 #include <iterator>
 
@@ -773,49 +774,77 @@ ClothStale(const RigExecRevisionBinding &binding,
 
 // --- Table ----------------------------------------------------------------
 
-/// One built-in External mover: its schema, its op, and how its declared
-/// inputs and provider values become the op's payload and inputs.
-struct ExternalOp {
-    const TfToken *schema;
-    const RigExecOpHandle &(*op)();
-    bool (*add)(const RigExecRevisionBinding &, const RigExecExternalOpValues &,
-                RigExecRigDescBuilder &, RigExecExternalOpNode &,
-                std::string *);
-    bool (*write)(const RigExecRevisionBinding &,
-                  const RigExecExternalOpValues &,
-                  const RigExecExternalOpNode &, RigExecEvaluator &,
-                  std::string *);
-    bool (*stale)(const RigExecRevisionBinding &,
-                  const RigExecExternalOpValues &,
-                  const RigExecExternalOpNode &);
-};
-
-const ExternalOp kExternalOps[] = {
-    {&SchemaType::RigExecPatchMover, &rigExecOps::Patch, &AddPatch, &WritePatch,
-     &PatchStale},
-    {&SchemaType::RigExecSurfaceBindingMover, &rigExecOps::SurfaceBinding,
+const RigExecExternalOpBinder kBuiltinBinders[] = {
+    {sizeof(RigExecExternalOpBinder), SchemaTypeName::RigExecPatchMover,
+     &rigExecOps::Patch, &AddPatch, &WritePatch, &PatchStale},
+    {sizeof(RigExecExternalOpBinder),
+     SchemaTypeName::RigExecSurfaceBindingMover, &rigExecOps::SurfaceBinding,
      &AddSurfaceBinding, &WriteSurfaceBinding, &SurfaceBindingStale},
-    {&SchemaType::RigExecLayeredSkinMover, &rigExecOps::LayeredSkin,
-     &AddLayeredSkin, &WriteLayeredSkin, &LayeredSkinStale},
-    {&SchemaType::RigExecClothMover, &rigExecOps::Cloth, &AddCloth, &WriteCloth,
-     &ClothStale},
+    {sizeof(RigExecExternalOpBinder), SchemaTypeName::RigExecLayeredSkinMover,
+     &rigExecOps::LayeredSkin, &AddLayeredSkin, &WriteLayeredSkin,
+     &LayeredSkinStale},
+    {sizeof(RigExecExternalOpBinder), SchemaTypeName::RigExecClothMover,
+     &rigExecOps::Cloth, &AddCloth, &WriteCloth, &ClothStale},
 };
 
-const ExternalOp *
+// Written once by RigExecAddExternalOpBinders before `added` is set; read
+// only after it is.
+std::vector<const RigExecExternalOpBinder *> gAddedBinders;
+std::atomic<bool> gAdded{false};
+
+const RigExecExternalOpBinder *
+FindBinder(const char *schemaType)
+{
+    for (const RigExecExternalOpBinder &binder : kBuiltinBinders)
+        if (std::strcmp(binder.schemaType, schemaType) == 0)
+            return &binder;
+    if (gAdded.load(std::memory_order_acquire))
+        for (const RigExecExternalOpBinder *binder : gAddedBinders)
+            if (std::strcmp(binder->schemaType, schemaType) == 0)
+                return binder;
+    return nullptr;
+}
+
+const RigExecExternalOpBinder *
 Find(const RigExecRevisionBinding &binding)
 {
-    for (const ExternalOp &op : kExternalOps)
-        if (binding.externalSchema == *op.schema)
-            return &op;
-    return nullptr;
+    return binding.externalSchema.IsEmpty()
+               ? nullptr
+               : FindBinder(binding.externalSchema.GetText());
 }
 
 } // namespace
 
+bool
+RigExecAddExternalOpBinders(
+    const std::vector<const RigExecExternalOpBinder *> &binders,
+    std::string *error)
+{
+    if (gAdded.load(std::memory_order_acquire))
+        return Fail(error, "op binders were already added");
+    for (size_t i = 0; i < binders.size(); ++i) {
+        const RigExecExternalOpBinder *binder = binders[i];
+        if (!binder || binder->structSize != sizeof(RigExecExternalOpBinder) ||
+            !binder->schemaType || !binder->op || !binder->add ||
+            !binder->write || !binder->stale)
+            return Fail(error, "an incomplete op binder");
+        bool taken = FindBinder(binder->schemaType) != nullptr;
+        for (size_t j = 0; j < i && !taken; ++j)
+            taken =
+                std::strcmp(binders[j]->schemaType, binder->schemaType) == 0;
+        if (taken)
+            return Fail(error, std::string("two op binders for ") +
+                                   binder->schemaType);
+    }
+    gAddedBinders = binders;
+    gAdded.store(true, std::memory_order_release);
+    return true;
+}
+
 const RigExecOpHandle *
 RigExecExternalOpHandle(const RigExecRevisionBinding &binding)
 {
-    const ExternalOp *op = Find(binding);
+    const RigExecExternalOpBinder *op = Find(binding);
     return op ? &op->op() : nullptr;
 }
 
@@ -825,7 +854,7 @@ RigExecAddExternalOp(const RigExecRevisionBinding &binding,
                      RigExecRigDescBuilder *builder,
                      RigExecExternalOpNode *node, std::string *error)
 {
-    const ExternalOp *op = Find(binding);
+    const RigExecExternalOpBinder *op = Find(binding);
     if (!op)
         return Fail(error, "mover has no op");
     if (!builder || !node || !values.inputs)
@@ -847,7 +876,7 @@ RigExecWriteExternalOpInputs(const RigExecRevisionBinding &binding,
                              RigExecEvaluator *evaluator, std::string *error,
                              bool *envelopeResolved)
 {
-    const ExternalOp *op = Find(binding);
+    const RigExecExternalOpBinder *op = Find(binding);
     if (!op || node.op != &op->op())
         return Fail(error, "node is not this mover's op");
     if (!evaluator || !values.inputs)
@@ -876,7 +905,7 @@ RigExecExternalOpNodeStale(const RigExecRevisionBinding &binding,
                            const RigExecExternalOpValues &values,
                            const RigExecExternalOpNode &node)
 {
-    const ExternalOp *op = Find(binding);
+    const RigExecExternalOpBinder *op = Find(binding);
     if (!op || node.op != &op->op())
         return true;
     return values.inputs && op->stale(binding, values, node);

@@ -21,16 +21,25 @@ RigExecBuiltinRegistrations()
 }
 
 bool
-RigExecEnsureBuiltinRegistry(std::string *error)
+RigExecEnsureBuiltinRegistry(std::string *error,
+                             const RigExecRegistryInit *more)
 {
     static std::once_flag once;
     static std::string failure;
-    std::call_once(once, [] {
+    std::call_once(once, [more] {
         if (RigExecRegistry::IsInitialized())
             return;
+        RigExecRegistryInit init = RigExecBuiltinRegistrations();
+        if (more) {
+            init.typeLibraries.insert(init.typeLibraries.end(),
+                                      more->typeLibraries.begin(),
+                                      more->typeLibraries.end());
+            init.opLibraries.insert(init.opLibraries.end(),
+                                    more->opLibraries.begin(),
+                                    more->opLibraries.end());
+        }
         std::vector<std::string> errors;
-        if (!RigExecRegistry::Initialize(RigExecBuiltinRegistrations(),
-                                         &errors))
+        if (!RigExecRegistry::Initialize(init, &errors))
             for (const std::string &e : errors)
                 failure += (failure.empty() ? "" : "; ") + e;
     });

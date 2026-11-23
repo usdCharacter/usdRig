@@ -216,4 +216,5 @@ libs/rigExecRuntime/inputs.cpp | env | const char *value = std::getenv(name);
 
 libs/rigExecRuntime/open.cpp | env | const char *value = std::getenv(name);
 
+libs/rigExecScene/opPlugins.cpp | lock | std::call_once(gDiscovered, [] { Discover(&gDiscovery); });
 libs/rigExecScene/sceneDescriptors.cpp | token-text | scene.primvarNames.emplace(primvar, TfToken(primvar));

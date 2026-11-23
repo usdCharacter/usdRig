@@ -25,7 +25,9 @@ struct RigExecGeometryOpRunner {
     RigExecCompileOptions compile;
 };
 
-/// Loads the built-in op library. False with \p error when it cannot.
+/// Initializes the op registry with the built-in libraries and the op
+/// plugins (RigExecEnsureSceneOpRegistry). False with \p error when it
+/// cannot.
 bool RigExecLoadGeometryOpCore(std::string *error);
 
 /// Runs \p p over \p points as \p op's node; \p channels for a blend

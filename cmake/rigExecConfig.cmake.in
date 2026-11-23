@@ -54,6 +54,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/rigExecTargets.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/rigExecMoverPlugin.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/rigexec_flags.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/rigExecMover.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/rigExecOpPlugin.cmake")
 
 # The USD-free file lists and the exact-FP flags this SDK was built with,
 # for a host that compiles those sources with its own build tool instead of

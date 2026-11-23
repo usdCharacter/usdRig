@@ -1,0 +1,19 @@
+#usda 1.0
+(
+    subLayers = [@usd/schema.usda@]
+)
+over "GLOBAL" (
+    customData = {
+        string libraryName = "testOffsetOpsSchema"
+        string libraryPath = "testOffsetOpsSchema"
+        string libraryPrefix = "TestOffset"
+        bool skipCodeGeneration = true
+    }
+) {}
+
+class TestOffsetMover "TestOffsetMover" (
+    inherits = </Typed>
+    customData = { string className = "Mover" }
+) {
+    float3 inputs:by = (0, 0, 0)
+}

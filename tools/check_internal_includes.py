@@ -35,7 +35,8 @@ SKIPPED_DIRS = {"build", "thirdparty", ".git"}
 INSTALLED_LIBS = (
     "rigExecGraph rigExecEvalCore rigExecScene rigExecMath rigExec "
     "rigExecSchema rigExecStandalone rigExecAuthoring rigExecImaging "
-    "rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler"
+    "rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler "
+    "rigExecStdTypes rigExecRigTypes rigExecBuiltins"
 ).split()
 NOT_INSTALLED = {"guideBoundsInternal.h", "registryInternal.h",
                  "evaluatorTesting.h"}

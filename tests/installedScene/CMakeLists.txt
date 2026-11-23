@@ -110,6 +110,29 @@ set_tests_properties(testRigExecInstalledMover PROPERTIES
     ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:${rigExec_LIBRARY_DIR};PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/bin;PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;LD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};LD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib")
 
+# An op plugin built by the installed rigexec_add_op_plugin against the
+# installed headers, then discovered by the installed rigExecScene.
+rigexec_add_op_plugin(testOffsetOps NO_INSTALL BINDERS
+    PLUGIN_ROOT "${CMAKE_BINARY_DIR}/test-op-plugins"
+    SOURCES ../opPlugins/offsetOps.cpp
+    SCHEMA ../opPlugins/schema.usda
+    SCHEMA_TYPE TestOffsetMover)
+get_target_property(installedOffsetOpsResources testOffsetOps
+                    RIGEXEC_PLUGIN_RESOURCE_DIR)
+add_executable(testRigExecInstalledOpPlugins ../testRigExecOpPlugins.cpp)
+target_compile_features(testRigExecInstalledOpPlugins PRIVATE cxx_std_17)
+target_link_libraries(testRigExecInstalledOpPlugins PRIVATE
+    rigExec::rigExec rigExec::rigExecScene rigExec::rigExecBuiltins plug usd)
+add_dependencies(testRigExecInstalledOpPlugins testOffsetOps)
+add_test(NAME testRigExecInstalledOpPlugins
+    COMMAND testRigExecInstalledOpPlugins good "${installedOffsetOpsResources}"
+        "$<TARGET_FILE:testOffsetOps>"
+        "${CMAKE_CURRENT_BINARY_DIR}/testRigExecInstalledOpPlugins")
+set_tests_properties(testRigExecInstalledOpPlugins PROPERTIES
+    ENVIRONMENT "PXR_PLUGINPATH_NAME=${rigExec_PLUGIN_DIR}/rigExecSchema/resources"
+    ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:${rigExec_LIBRARY_DIR};PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/bin;PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;LD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};LD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib")
+
 foreach(_test testRigExecInstalledScene testRigExecExplicitScene testRigExecInstalledSceneMissing)
     add_test(NAME ${_test} COMMAND ${_test}
         "${rigExec_PLUGIN_DIR}/rigExecSchema/resources")

@@ -2,6 +2,7 @@
 
 #include "rigExec/api/compile.h"
 #include "rigExecBuiltins/builtins.h"
+#include "rigExecScene/opPlugins.h"
 #include "rigExecStdTypes/stdTypes.h"
 
 namespace rigExec {
@@ -55,7 +56,7 @@ Ready(RigExecGeometryOpRunner &runner, bool built, const Add &add,
 bool
 RigExecLoadGeometryOpCore(std::string *error)
 {
-    return RigExecEnsureBuiltinRegistry(error);
+    return RigExecEnsureSceneOpRegistry(error);
 }
 
 bool

@@ -123,7 +123,11 @@ starting its workflow, and keep this list current when adding or changing skills
   Built-ins enter the generated runtime catalog, and standalone hosts supply
   generated definitions at `Open`. Do not add mover names to runtime dispatch
   or registry lookups to graph bodies. Preserve existing binary opcodes and
-  specialized range or weighting contracts when migrating built-ins.
+  specialized range or weighting contracts when migrating built-ins. An op
+  library shipped as a plugin uses `rigexec_add_op_plugin` in
+  [rigExecOpPlugin.cmake](cmake/rigExecOpPlugin.cmake); its binders let the
+  scene program run a plugin mover on its op
+  ([op plugins](docs/concepts/external-movers.md#build-an-op-plugin)).
 - Design a new or changed point mover to run per vertex group. A mesh's
   points are cut into groups once per compiled rig, and a Range mover
   passes each group straight to the next mover. A Whole mover waits for

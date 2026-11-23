@@ -1,9 +1,10 @@
 #ifndef RIGEXEC_SCENE_EXTERNAL_OPS_H
 #define RIGEXEC_SCENE_EXTERNAL_OPS_H
 
-/// Host-side binding of the built-in External movers to their rigExecOps
-/// ops: the mover's declared inputs and provider values become the op's
-/// payload and inputs, and its envelope the op's.
+/// Host-side binding of External movers to ops: the mover's declared inputs
+/// and provider values become the op's payload and inputs, and its envelope
+/// the op's. The built-in movers' binders live here; an op plugin brings
+/// its own (see RIGEXEC_EXTERNAL_OP_BINDERS_ENTRY).
 
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/rigDesc.h"
@@ -14,6 +15,7 @@
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/vt/value.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -51,6 +53,44 @@ struct RigExecExternalOpNode {
     std::vector<VtValue> source;
 };
 
+/// How one External mover runs as an op: the mover's schema type, the op,
+/// and the functions that add its node, write one frame's inputs, and say
+/// whether a node was built from settings the inputs no longer carry.
+struct RigExecExternalOpBinder {
+    uint32_t structSize = sizeof(RigExecExternalOpBinder);
+    const char *schemaType = "";
+    const RigExecOpHandle &(*op)() = nullptr;
+    bool (*add)(const RigExecRevisionBinding &, const RigExecExternalOpValues &,
+                RigExecRigDescBuilder &, RigExecExternalOpNode &,
+                std::string *) = nullptr;
+    bool (*write)(const RigExecRevisionBinding &,
+                  const RigExecExternalOpValues &,
+                  const RigExecExternalOpNode &, RigExecEvaluator &,
+                  std::string *) = nullptr;
+    bool (*stale)(const RigExecRevisionBinding &,
+                  const RigExecExternalOpValues &,
+                  const RigExecExternalOpNode &) = nullptr;
+};
+
+/// Version of RigExecExternalOpBinder and RigExecExternalOpBinderTable;
+/// discovery refuses a table built with another.
+inline constexpr uint32_t kRigExecExternalOpBinderAbiVersion = 1;
+
+/// A library's binders.
+struct RigExecExternalOpBinderTable {
+    uint32_t abiVersion = kRigExecExternalOpBinderAbiVersion;
+    const RigExecExternalOpBinder *binders = nullptr;
+    size_t count = 0;
+};
+
+/// Adds binders to the ones the built-ins bring, once, before the first
+/// lookup that needs them: op plugin discovery calls it. False with
+/// \p error, adding none, when one names a schema type that already has a
+/// binder, or is incomplete.
+bool RigExecAddExternalOpBinders(
+    const std::vector<const RigExecExternalOpBinder *> &binders,
+    std::string *error);
+
 /// The op \p binding's mover runs as, or null for a mover with none.
 const RigExecOpHandle *
 RigExecExternalOpHandle(const RigExecRevisionBinding &binding);
@@ -86,5 +126,11 @@ bool RigExecExternalOpNodeStale(const RigExecRevisionBinding &binding,
                                 const RigExecExternalOpNode &node);
 
 } // namespace rigExec
+
+/// Defines the function through which an op plugin hands its binders to
+/// discovery; its plugInfo names the symbol.
+#define RIGEXEC_EXTERNAL_OP_BINDERS_ENTRY(lib)                                 \
+    extern "C" const ::rigExec::RigExecExternalOpBinderTable                   \
+        *lib##_RigExecExternalOpBinders()
 
 #endif

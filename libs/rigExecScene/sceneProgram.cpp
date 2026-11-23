@@ -52,6 +52,15 @@ CombinesWeights(const RigExecWeightGraphBinding &binding)
         binding.records.begin(), binding.records.end(),
         [](const RigExecWeightRecord &record) { return record.kind == 2; });
 }
+// An External mover, which an op plugin may bind: plugins are discovered
+// before its operation is classified.
+bool
+MovesExternally(const RigExecSceneOperation &operation)
+{
+    const auto *op = std::get_if<RigExecSceneGeometryOp>(&operation);
+    return op &&
+           op->binding.descriptor.record.op == RigExecRevisionOp::External;
+}
 bool
 NeedsOpCore(const RigExecSceneOperation &operation)
 {
@@ -248,7 +257,9 @@ RigExecSceneProgramRuntime::Prepare(const RigExecSceneProgram &program,
     if (!program.identity)
         return Fail(error, "scene program has not been compiled");
     if (std::any_of(program.operations.begin(), program.operations.end(),
-                    NeedsOpCore)) {
+                    NeedsOpCore) ||
+        std::any_of(program.operations.begin(), program.operations.end(),
+                    MovesExternally)) {
         std::string why;
         if (!RigExecLoadGeometryOpCore(&why))
             return Fail(error, "op registry unavailable: " + why);
