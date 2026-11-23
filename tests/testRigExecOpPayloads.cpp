@@ -579,6 +579,170 @@ TestMathBytes()
     CHECK(error.find("longer than") != std::string::npos);
 }
 
+std::string
+HexOf(const std::vector<uint8_t> &bytes)
+{
+    static const char digits[] = "0123456789abcdef";
+    std::string text;
+    for (const uint8_t b : bytes) {
+        text += digits[b >> 4];
+        text += digits[b & 15];
+    }
+    return text;
+}
+
+/// \p payload of \p op saves exactly \p hex, the bytes its hand-written
+/// save wrote before the op declared its fields.
+void
+CheckSaved(const RigExecOpHandle &op, const void *payload, const char *hex)
+{
+    std::vector<uint8_t> bytes;
+    CHECK(RigExecEncodeOpPayload(*Op(op).desc, payload, bytes));
+    const bool same = bytes == Hex(hex);
+    if (!same)
+        std::printf("%s saves %s\n", Op(op).desc->name, HexOf(bytes).c_str());
+    CHECK(same);
+}
+
+/// The solver, constraint and weight payloads save the bytes they saved
+/// before their fields were declared, at defaults and filled.
+void
+TestSavedBytes()
+{
+    {
+        FkChainPayload fk;
+        CheckSaved(FkChain(), &fk, "01000000000000000000000000");
+        fk.parentIndices = {-1, 0, 1};
+        fk.scaleSegments = true;
+        CheckSaved(FkChain(), &fk,
+                   "010000000300000000000000ffffffff000000000100000001");
+        TwoBoneIkPayload ik;
+        CheckSaved(TwoBoneIk(), &ik, "0100000000000000000000000000");
+        ik.softDistancePolicy = true;
+        ik.scaleCalibration = -0.25;
+        CheckSaved(TwoBoneIk(), &ik, "010000000100000000000000d0bf");
+    }
+    {
+        BlendFramesPayload p;
+        CheckSaved(BlendFrames(), &p, "0100000000");
+        p.logScale = true;
+        CheckSaved(BlendFrames(), &p, "0100000001");
+        SampleRibbonFramesPayload r;
+        CheckSaved(SampleRibbonFrames(), &r, "0100000002000000");
+        r.sampleCount = -9;
+        CheckSaved(SampleRibbonFrames(), &r, "01000000f7ffffff");
+        SingleChainIkPayload s;
+        CheckSaved(SingleChainIk(), &s, "010000000000");
+        s.preserveJointOrientation = true;
+        CheckSaved(SingleChainIk(), &s, "010000000001");
+        SplineIkPayload sp;
+        CheckSaved(SplineIk(), &sp, "0100000000000000000000000000");
+        sp.restLengthChain = true;
+        sp.minLengthRatio = 0.75;
+        sp.aimRootTangent = true;
+        CheckSaved(SplineIk(), &sp, "0100000001000000000000e83f01");
+    }
+    {
+        ConstraintPayload p;
+        CheckSaved(PositionConstraint(), &p,
+                   "01000000000000000000000000000000000000000000000000000000"
+                   "01010101010101010100000000000000000000000000000000000000"
+                   "0000000000000000000000f03f000000000000000000000000000000"
+                   "000000000000000000000000000000f03f000000000000000001");
+        p.offset = Vec3d(1.0, -2.0, 3.5);
+        p.affect = {true, false, true};
+        p.scaleAxes = {true, true, true};
+        p.translationOffsets = {Vec3d(1.0, 2.0, 3.0), Vec3d(-1.0, 0.0, 0.5)};
+        p.rotationOffsetsDegrees = {Vec3d(90.0, 0.0, -45.0)};
+        p.rotationOrder = ConstraintEulerOrder::ZYX;
+        p.blendShear = true;
+        p.localAimVector = Vec3d(0.0, 0.0, 1.0);
+        p.preserveInputUp = false;
+        for (const RigExecOpHandle *op :
+             {&PositionConstraint(), &RotationConstraint(), &ScaleConstraint(),
+              &ParentConstraint(), &AimConstraint()})
+            CheckSaved(
+                *op, &p,
+                "01000000000000000000f03f00000000000000c00000000000000c40"
+                "0100010101010101010101010200000000000000000000000000f03f"
+                "00000000000000400000000000000840000000000000f0bf00000000"
+                "00000000000000000000e03f01000000000000000000000000805640"
+                "000000000000000000000000008046c0050000000100000000000000"
+                "000000000000000000000000000000f03f0000000000000000000000"
+                "000000f03f000000000000000000");
+    }
+    {
+        HarmonicsPayload p;
+        CheckSaved(Harmonics(), &p,
+                   "0100000000000000000014400000000000001440000000000000f03f"
+                   "01010000000000");
+        p.settings.waves = 3.0;
+        p.settings.waveLength = -0.5;
+        p.settings.frequency = 1.25;
+        p.settings.ignoreFirstFrame = false;
+        p.matchVelocity = false;
+        p.hasSpace = true;
+        p.frames = 17;
+        CheckSaved(Harmonics(), &p,
+                   "010000000000000000000840000000000000e0bf000000000000f43f"
+                   "00000111000000");
+    }
+    {
+        IkFkMatchPayload p;
+        CheckSaved(IkFkMatch(), &p,
+                   "010000000000000000000000000000000000f03f0000000000000000"
+                   "00000000000000000101010101010101010000000000000000000000"
+                   "000000000000000000000000f03f0000000000000000000000000000"
+                   "0000000000000000000001");
+        SpaceMatchPayload s;
+        CheckSaved(SpaceMatch(), &s,
+                   "010000000000000000000000000000000000f03f0000000000000000"
+                   "0000000000000000010101010101010101000000000000000000");
+        p.poleSwitch.filters = {0, 3, 1};
+        p.poleSwitch.twistAxis = Vec3d(0.0, 1.0, 0.0);
+        p.poleSwitch.affectRotation = {{true, false, true}};
+        p.poleSwitch.hasCarry = true;
+        p.poleSwitch.world = {1, 0, 1};
+        p.poleSourceRides = {0, 1, 1};
+        p.ikValue = 0.0;
+        p.scaleCalibration = 2.0;
+        p.upperLengthOffset = 0.125;
+        p.lowerLengthOffset = -3.0;
+        p.stretchLimb = false;
+        CheckSaved(IkFkMatch(), &p,
+                   "01000000030000000000000000000000030000000100000000000000"
+                   "00000000000000000000f03f00000000000000000101010100010101"
+                   "01010300000000000000010001030000000000000000010100000000"
+                   "000000000000000000000040000000000000c03f00000000000008c0"
+                   "00");
+        s.space = p.poleSwitch;
+        CheckSaved(SpaceMatch(), &s,
+                   "01000000030000000000000000000000030000000100000000000000"
+                   "00000000000000000000f03f00000000000000000101010100010101"
+                   "01010300000000000000010001");
+    }
+    {
+        WeightFieldPayload p;
+        CheckSaved(PlaneWeight(), &p, "010000000000000000000000000200000000");
+        p.falloffCurve = {1.0f, 0.5f, 0.0f};
+        p.clamp = true;
+        p.planeAxis = WeightFieldAxis::X;
+        p.planeBounded = true;
+        for (const RigExecOpHandle *op :
+             {&SphereWeight(), &PlaneWeight(), &CurveWeight()})
+            CheckSaved(
+                *op, &p,
+                "0100000003000000000000000000803f0000003f0000000001000000"
+                "0001");
+        CombineWeightsPayload c;
+        CheckSaved(CombineWeights(), &c, "01000000000000000000000000");
+        c.mode = WeightCombineMode::Overlay;
+        c.inputs = WeightCombineInputs::Fields;
+        c.clamp = true;
+        CheckSaved(CombineWeights(), &c, "01000000060000000100000001");
+    }
+}
+
 /// Values a writer cannot produce are refused.
 void
 TestCorruptValues()
@@ -593,12 +757,19 @@ TestCorruptValues()
     CHECK(!Decodes(skin, badEnum, &error));
     CHECK(error.find("enum") != std::string::npos);
 
-    const RigExecOpPayloadHandling &blend = Op(BlendFrames()).desc->payload;
-    BlendFramesPayload b;
-    blend.encode(&b, bytes);
+    const RigExecOpPayloadHandling &clavicle = Op(AutoClavicle()).desc->payload;
+    AutoClavicleOpPayload a;
+    clavicle.encode(&a, bytes);
     bytes.back() = 2;
-    CHECK(!Decodes(blend, bytes, &error));
+    CHECK(!Decodes(clavicle, bytes, &error));
     CHECK(error.find("flag") != std::string::npos);
+
+    // A declared flag holding 2 is refused the same way.
+    BlendFramesPayload b;
+    CHECK(RigExecEncodeOpPayload(*Op(BlendFrames()).desc, &b, bytes));
+    bytes.back() = 2;
+    CHECK(!FieldsDecode(*Op(BlendFrames()).desc, bytes, &error));
+    CHECK(error.find("logScale: a value is out of range") != std::string::npos);
 
     // A list length larger than the bytes left is refused before any item
     // is read or allocated.
@@ -627,6 +798,7 @@ main()
     TestFilledPayloads();
     TestCorruptValues();
     TestMathBytes();
+    TestSavedBytes();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

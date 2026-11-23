@@ -1,7 +1,7 @@
 #include "rigExecOps/solver/chainSolverOps.h"
 
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 #include "rigExecMath/chainSolverKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecRuntime/dualQuatMath.h"
@@ -40,6 +40,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(TwoBoneIkOut)
 
 namespace {
 
+using rigExec::RigExecOpBatch;
 using rigExec::RigExecOpIo;
 using rigExecRig::PointFrame;
 using rigExecRig::PointFrameArray;
@@ -50,6 +51,12 @@ using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 using Landmarks = RigExecArray<PointLandmarks>;
 using namespace opIo;
+using namespace fieldIo;
+
+/// FkChain's declared fields, in saved order.
+enum FkField : uint32_t { kParentCount, kParents, kScaleSegments };
+/// TwoBoneIk's.
+enum IkField : uint32_t { kSoftDistancePolicy, kIkScaleSegments, kCalibration };
 
 struct Element {
     PointLandmarks restPoints;
@@ -73,22 +80,22 @@ struct IkParams {
 };
 
 bool
-RunFkChain(const void *payload, void *, const RigExecOpIo &io,
-           std::string *error)
+FkChainOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
-    const auto &p = *static_cast<const FkChainPayload *>(payload);
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const auto parents = ListAt<int32_t>(batch, kParents, k);
     const PointFrameArray &controls =
         *In<PointFrameArray>(io, FkChainControls());
     const Landmarks *outRests = In<Landmarks>(io, FkChainOutRests());
     const size_t n = controls.frames.Size();
-    if (controls.rests.Size() != n || p.parentIndices.size() != n)
+    if (controls.rests.Size() != n || parents.Size() != n)
         return Fail(error, "FkChain",
                     "needs one rest and one parent index per control");
     if (outRests && outRests->Size() != n)
         return Fail(error, "FkChain", "needs one output rest per control");
     std::vector<Element> elements(n);
     for (size_t i = 0; i < n; ++i) {
-        const int parent = p.parentIndices[i];
+        const int parent = parents[i];
         if (parent >= int(i) || parent < -1)
             return Fail(error, "FkChain", "parents must come first");
         Element &e = elements[i];
@@ -101,7 +108,7 @@ RunFkChain(const void *payload, void *, const RigExecOpIo &io,
     }
     std::vector<PointFrame> frames =
         rigExec::RigExecSolveFkChainKernel<Vec3f, Vec3d, PointFrame>(elements);
-    if (p.scaleSegments)
+    if (FlagAt(batch, kScaleSegments, k))
         rigExec::RigExecScaleFkSegmentsKernel<Vec3d>(elements, &frames);
     PointFrameArray &out = Out<PointFrameArray>(io, FkChainOut());
     out.frames = RigExecArray<PointFrame>(frames.data(), frames.size());
@@ -110,10 +117,20 @@ RunFkChain(const void *payload, void *, const RigExecOpIo &io,
 }
 
 bool
-RunTwoBoneIk(const void *payload, void *, const RigExecOpIo &io,
-             std::string *error)
+RunFkChain(const RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
-    const auto &p = *static_cast<const TwoBoneIkPayload *>(payload);
+    return EachInstance(batch, failed,
+                        [&](size_t k) { return FkChainOne(batch, k, error); });
+}
+
+bool
+TwoBoneIkOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    TwoBoneIkPayload p;
+    p.softDistancePolicy = FlagAt(batch, kSoftDistancePolicy, k);
+    p.scaleSegments = FlagAt(batch, kIkScaleSegments, k);
+    p.scaleCalibration = ValueAt<double>(batch, kCalibration, k);
     const Landmarks &restList = *In<Landmarks>(io, TwoBoneIkRests());
     if (restList.Size() != 3)
         return Fail(error, "TwoBoneIk", "needs three joint rests");
@@ -149,6 +166,13 @@ RunTwoBoneIk(const void *payload, void *, const RigExecOpIo &io,
     out.frames = RigExecArray<PointFrame>(frames.data(), frames.size());
     out.rests = restList;
     return true;
+}
+
+bool
+RunTwoBoneIk(const RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    return EachInstance(
+        batch, failed, [&](size_t k) { return TwoBoneIkOne(batch, k, error); });
 }
 
 } // namespace
@@ -199,42 +223,34 @@ const rigExec::RigExecPortDesc kIkPorts[] = {
      "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
 void
-Save(Writer &w, const FkChainPayload &p)
+FkValues(const void *payload, RigExecFieldValues &out)
 {
-    w.Version(1);
-    payloadIo::PutList(w, p.parentIndices);
-    w.Bool(p.scaleSegments);
+    const auto &p = *static_cast<const FkChainPayload *>(payload);
+    SetList(out, kParentCount, p.parentIndices);
+    SetFlag(out, kScaleSegments, p.scaleSegments);
 }
 
 void
-Load(Reader &r, FkChainPayload &p)
+IkValues(const void *payload, RigExecFieldValues &out)
 {
-    r.Version(1);
-    payloadIo::GetList(r, p.parentIndices);
-    p.scaleSegments = r.Bool();
+    const auto &p = *static_cast<const TwoBoneIkPayload *>(payload);
+    SetFlag(out, kSoftDistancePolicy, p.softDistancePolicy);
+    SetFlag(out, kIkScaleSegments, p.scaleSegments);
+    out.Set(kCalibration, p.scaleCalibration);
 }
 
-void
-Save(Writer &w, const TwoBoneIkPayload &p)
-{
-    w.Version(1);
-    w.Bool(p.softDistancePolicy);
-    w.Bool(p.scaleSegments);
-    w.F64(p.scaleCalibration);
-}
+const rigExec::RigExecFieldDesc kFkFields[] = {
+    Count("parentCount"),
+    Items("parentIndices", rigExecStd::IntType(), kParentCount),
+    Flag("scaleSegments"),
+};
 
-void
-Load(Reader &r, TwoBoneIkPayload &p)
-{
-    r.Version(1);
-    p.softDistancePolicy = r.Bool();
-    p.scaleSegments = r.Bool();
-    p.scaleCalibration = r.F64();
-}
+const rigExec::RigExecFieldDesc kIkFields[] = {
+    Flag("softDistancePolicy"),
+    Flag("scaleSegments"),
+    Value("scaleCalibration", rigExecStd::DoubleType()),
+};
 
 const rigExec::RigExecOpDesc kFk = [] {
     rigExec::RigExecOpDesc d;
@@ -242,10 +258,12 @@ const rigExec::RigExecOpDesc kFk = [] {
     d.name = "FkChain";
     d.ports = kFkPorts;
     d.portCount = std::size(kFkPorts);
-    d.run = &RunFkChain;
+    d.runBatch = &RunFkChain;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload =
-        rigExec::RigExecPayloadHandlingFor<FkChainPayload, &Save, &Load>();
+    d.payloadFields = kFkFields;
+    d.payloadFieldCount = std::size(kFkFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &FkValues;
     return d;
 }();
 
@@ -255,10 +273,12 @@ const rigExec::RigExecOpDesc kIk = [] {
     d.name = "TwoBoneIk";
     d.ports = kIkPorts;
     d.portCount = std::size(kIkPorts);
-    d.run = &RunTwoBoneIk;
+    d.runBatch = &RunTwoBoneIk;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload =
-        rigExec::RigExecPayloadHandlingFor<TwoBoneIkPayload, &Save, &Load>();
+    d.payloadFields = kIkFields;
+    d.payloadFieldCount = std::size(kIkFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &IkValues;
     return d;
 }();
 

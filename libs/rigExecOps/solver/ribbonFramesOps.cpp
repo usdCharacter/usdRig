@@ -1,7 +1,7 @@
 #include "rigExecOps/solver/ribbonFramesOps.h"
 
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 #include "rigExecOps/solver/liveRests.h"
 #include "rigExecMath/ribbonFramesKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
@@ -23,6 +23,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(SampleRibbonFramesOut)
 
 namespace {
 
+using rigExec::RigExecOpBatch;
 using rigExec::RigExecOpIo;
 using rigExecRig::PointFrame;
 using rigExecRig::PointFrameArray;
@@ -31,12 +32,17 @@ using rigExecStd::RigExecArray;
 using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 using namespace opIo;
+using namespace fieldIo;
+
+/// SampleRibbonFrames' declared field.
+enum RibbonField : uint32_t { kSampleCount };
 
 bool
-RunSampleRibbonFrames(const void *payload, void *, const RigExecOpIo &io,
-                      std::string *error)
+SampleRibbonFramesOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
-    const auto &p = *static_cast<const SampleRibbonFramesPayload *>(payload);
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    SampleRibbonFramesPayload p;
+    p.sampleCount = ValueAt<int32_t>(batch, kSampleCount, k);
     const Points &posed = *In<Points>(io, SampleRibbonFramesPosed());
     const Points &rest = *In<Points>(io, SampleRibbonFramesRest());
     std::vector<PointFrame> frames;
@@ -53,6 +59,15 @@ RunSampleRibbonFrames(const void *payload, void *, const RigExecOpIo &io,
     out.frames = RigExecArray<PointFrame>(frames.data(), frames.size());
     out.rests = RigExecArray<PointLandmarks>(rests.data(), rests.size());
     return true;
+}
+
+bool
+RunSampleRibbonFrames(const RigExecOpBatch &batch, size_t *failed,
+                      std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return SampleRibbonFramesOne(batch, k, error);
+    });
 }
 
 } // namespace
@@ -77,22 +92,16 @@ const rigExec::RigExecPortDesc kPorts[] = {
      kRigExecPortOutput, "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
 void
-Save(Writer &w, const SampleRibbonFramesPayload &p)
+RibbonValues(const void *payload, RigExecFieldValues &out)
 {
-    w.Version(1);
-    w.I32(p.sampleCount);
+    out.Set(kSampleCount,
+            int32_t(static_cast<const SampleRibbonFramesPayload *>(payload)
+                        ->sampleCount));
 }
 
-void
-Load(Reader &r, SampleRibbonFramesPayload &p)
-{
-    r.Version(1);
-    p.sampleCount = r.I32();
-}
+const rigExec::RigExecFieldDesc kFields[] = {
+    Value("sampleCount", rigExecStd::IntType())};
 
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
@@ -100,10 +109,12 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.name = "SampleRibbonFrames";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.run = &RunSampleRibbonFrames;
+    d.runBatch = &RunSampleRibbonFrames;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<SampleRibbonFramesPayload,
-                                                   &Save, &Load>();
+    d.payloadFields = kFields;
+    d.payloadFieldCount = std::size(kFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &RibbonValues;
     return d;
 }();
 

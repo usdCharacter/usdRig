@@ -1,7 +1,7 @@
 #include "rigExecOps/solver/frameBlendOps.h"
 
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 #include "rigExecOps/solver/liveRests.h"
 #include "rigExecMath/frameBlendKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
@@ -36,6 +36,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(DistributeTwistOut)
 
 namespace {
 
+using rigExec::RigExecOpBatch;
 using rigExec::RigExecOpIo;
 using rigExecRig::PointFrame;
 using rigExecRig::PointFrameArray;
@@ -44,12 +45,17 @@ using rigExecStd::RigExecArray;
 using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 using namespace opIo;
+using namespace fieldIo;
+
+/// BlendFrames' declared field.
+enum BlendField : uint32_t { kLogScale };
 
 bool
-RunBlendFrames(const void *payload, void *, const RigExecOpIo &io,
-               std::string *)
+BlendFramesOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
-    const auto &p = *static_cast<const BlendFramesPayload *>(payload);
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    BlendFramesPayload p;
+    p.logScale = FlagAt(batch, kLogScale, k);
     const double weight = *In<double>(io, BlendFramesWeight());
     Out<PointFrame>(io, BlendFramesOut()) =
         rigExec::RigExecBlendFramesKernel<Vec3f, Vec3d>(
@@ -58,6 +64,14 @@ RunBlendFrames(const void *payload, void *, const RigExecOpIo &io,
             *In<PointLandmarks>(io, BlendFramesRest()), weight, p.logScale,
             In<PointLandmarks>(io, BlendFramesOutRest()));
     return true;
+}
+
+bool
+RunBlendFrames(const RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return BlendFramesOne(batch, k, error);
+    });
 }
 
 bool
@@ -129,22 +143,14 @@ const rigExec::RigExecPortDesc kTwistPorts[] = {
      kRigExecPortOutput, "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
 void
-Save(Writer &w, const BlendFramesPayload &p)
+BlendValues(const void *payload, RigExecFieldValues &out)
 {
-    w.Version(1);
-    w.Bool(p.logScale);
+    SetFlag(out, kLogScale,
+            static_cast<const BlendFramesPayload *>(payload)->logScale);
 }
 
-void
-Load(Reader &r, BlendFramesPayload &p)
-{
-    r.Version(1);
-    p.logScale = r.Bool();
-}
+const rigExec::RigExecFieldDesc kBlendFields[] = {Flag("logScale")};
 
 const rigExec::RigExecOpDesc kBlend = [] {
     rigExec::RigExecOpDesc d;
@@ -152,10 +158,12 @@ const rigExec::RigExecOpDesc kBlend = [] {
     d.name = "BlendFrames";
     d.ports = kBlendPorts;
     d.portCount = std::size(kBlendPorts);
-    d.run = &RunBlendFrames;
+    d.runBatch = &RunBlendFrames;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload =
-        rigExec::RigExecPayloadHandlingFor<BlendFramesPayload, &Save, &Load>();
+    d.payloadFields = kBlendFields;
+    d.payloadFieldCount = std::size(kBlendFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &BlendValues;
     return d;
 }();
 

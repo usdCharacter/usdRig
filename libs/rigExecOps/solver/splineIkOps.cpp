@@ -1,7 +1,7 @@
 #include "rigExecOps/solver/splineIkOps.h"
 
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 #include "rigExecMath/splineIkKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecRuntime/dualQuatMath.h"
@@ -31,6 +31,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(SplineIkOut)
 
 namespace {
 
+using rigExec::RigExecOpBatch;
 using rigExec::RigExecOpIo;
 using rigExecRig::PointFrame;
 using rigExecRig::PointFrameArray;
@@ -39,6 +40,14 @@ using rigExecStd::RigExecArray;
 using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 using namespace opIo;
+using namespace fieldIo;
+
+/// SplineIk's declared fields, in saved order.
+enum SplineField : uint32_t {
+    kRestLengthChain,
+    kMinLengthRatio,
+    kAimRootTangent
+};
 
 struct Rest {
     std::array<Vec3d, 4> cvs{};
@@ -87,10 +96,13 @@ ToVector(const RigExecArray<T> *a)
 }
 
 bool
-RunSplineIk(const void *payload, void *, const RigExecOpIo &io,
-            std::string *error)
+SplineIkOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
-    const auto &p = *static_cast<const SplineIkPayload *>(payload);
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    SplineIkPayload p;
+    p.restLengthChain = FlagAt(batch, kRestLengthChain, k);
+    p.minLengthRatio = ValueAt<double>(batch, kMinLengthRatio, k);
+    p.aimRootTangent = FlagAt(batch, kAimRootTangent, k);
     const auto *restJoints =
         In<RigExecArray<PointFrame>>(io, SplineIkRestJoints());
     const std::vector<double> volume =
@@ -130,6 +142,13 @@ RunSplineIk(const void *payload, void *, const RigExecOpIo &io,
     return true;
 }
 
+bool
+RunSplineIk(const RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    return EachInstance(batch, failed,
+                        [&](size_t k) { return SplineIkOne(batch, k, error); });
+}
+
 } // namespace
 
 namespace {
@@ -163,26 +182,20 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
 void
-Save(Writer &w, const SplineIkPayload &p)
+SplineValues(const void *payload, RigExecFieldValues &out)
 {
-    w.Version(1);
-    w.Bool(p.restLengthChain);
-    w.F64(p.minLengthRatio);
-    w.Bool(p.aimRootTangent);
+    const auto &p = *static_cast<const SplineIkPayload *>(payload);
+    SetFlag(out, kRestLengthChain, p.restLengthChain);
+    out.Set(kMinLengthRatio, p.minLengthRatio);
+    SetFlag(out, kAimRootTangent, p.aimRootTangent);
 }
 
-void
-Load(Reader &r, SplineIkPayload &p)
-{
-    r.Version(1);
-    p.restLengthChain = r.Bool();
-    p.minLengthRatio = r.F64();
-    p.aimRootTangent = r.Bool();
-}
+const rigExec::RigExecFieldDesc kFields[] = {
+    Flag("restLengthChain"),
+    Value("minLengthRatio", rigExecStd::DoubleType()),
+    Flag("aimRootTangent"),
+};
 
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
@@ -190,10 +203,12 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.name = "SplineIk";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.run = &RunSplineIk;
+    d.runBatch = &RunSplineIk;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload =
-        rigExec::RigExecPayloadHandlingFor<SplineIkPayload, &Save, &Load>();
+    d.payloadFields = kFields;
+    d.payloadFieldCount = std::size(kFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &SplineValues;
     return d;
 }();
 

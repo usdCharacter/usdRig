@@ -1,7 +1,7 @@
 #include "rigExecOps/solver/singleChainIkOps.h"
 
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 #include "rigExecMath/singleChainIkKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecRuntime/dualQuatMath.h"
@@ -24,6 +24,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(SingleChainIkOut)
 
 namespace {
 
+using rigExec::RigExecOpBatch;
 using rigExec::RigExecOpIo;
 using rigExecRig::PointFrame;
 using rigExecRig::PointFrameArray;
@@ -31,12 +32,18 @@ using rigExecStd::RigExecArray;
 using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 using namespace opIo;
+using namespace fieldIo;
+
+/// SingleChainIk's declared fields, in saved order.
+enum IkField : uint32_t { kSingleChain, kPreserveJointOrientation };
 
 bool
-RunSingleChainIk(const void *payload, void *, const RigExecOpIo &io,
-                 std::string *)
+SingleChainIkOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
-    const auto &p = *static_cast<const SingleChainIkPayload *>(payload);
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    SingleChainIkPayload p;
+    p.singleChain = FlagAt(batch, kSingleChain, k);
+    p.preserveJointOrientation = FlagAt(batch, kPreserveJointOrientation, k);
     const PointFrameArray &chain =
         *In<PointFrameArray>(io, SingleChainIkChain());
     rigExec::RigExecSingleChainIkKernelParams<Vec3d> params;
@@ -55,6 +62,15 @@ RunSingleChainIk(const void *payload, void *, const RigExecOpIo &io,
     out.frames = RigExecArray<PointFrame>(solved.data(), solved.size());
     out.rests = chain.rests;
     return true;
+}
+
+bool
+RunSingleChainIk(const RigExecOpBatch &batch, size_t *failed,
+                 std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return SingleChainIkOne(batch, k, error);
+    });
 }
 
 } // namespace
@@ -80,24 +96,18 @@ const rigExec::RigExecPortDesc kPorts[] = {
      kRigExecPortOutput, "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
 void
-Save(Writer &w, const SingleChainIkPayload &p)
+IkValues(const void *payload, RigExecFieldValues &out)
 {
-    w.Version(1);
-    w.Bool(p.singleChain);
-    w.Bool(p.preserveJointOrientation);
+    const auto &p = *static_cast<const SingleChainIkPayload *>(payload);
+    SetFlag(out, kSingleChain, p.singleChain);
+    SetFlag(out, kPreserveJointOrientation, p.preserveJointOrientation);
 }
 
-void
-Load(Reader &r, SingleChainIkPayload &p)
-{
-    r.Version(1);
-    p.singleChain = r.Bool();
-    p.preserveJointOrientation = r.Bool();
-}
+const rigExec::RigExecFieldDesc kFields[] = {
+    Flag("singleChain"),
+    Flag("preserveJointOrientation"),
+};
 
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
@@ -105,10 +115,12 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.name = "SingleChainIk";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.run = &RunSingleChainIk;
+    d.runBatch = &RunSingleChainIk;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<SingleChainIkPayload, &Save,
-                                                   &Load>();
+    d.payloadFields = kFields;
+    d.payloadFieldCount = std::size(kFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &IkValues;
     return d;
 }();
 
