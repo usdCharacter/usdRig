@@ -669,12 +669,10 @@ RigExecRigEvaluator::_DiscoverMovers(
                 record.targets.push_back(canonical);
             }
 
-            // FBX-style transform constraints use rigExec:moves as the
-            // composition-native replacement for FBX's singleton
-            // ConstrainedObject connection. Source constraints therefore
-            // write exactly one transform provider. SingleChainIK is the one
-            // multi-output exception: its write set is the complete inferred
-            // joint chain and is validated during constraint compilation.
+            // Source constraints therefore write exactly one transform
+            // provider. SingleChainIK is the one multi-output exception: its
+            // write set is the complete inferred joint chain and is validated
+            // during constraint compilation.
             if (_IsSourceFrameConstraintType(record.schemaType)) {
                 if (record.targets.size() != 1) {
                     return fail(

@@ -2,7 +2,7 @@
 #define RIGEXEC_COMPILE_GOLDEN_H
 
 // Passive metadata only. Caller arguments and actual returned results remain
-// distinct. A matching negative attestation never changes a native exit code.
+// distinct.
 #include "rigExec/internal/heldProgramGolden.h"
 #include <cstdint>
 #include <map>

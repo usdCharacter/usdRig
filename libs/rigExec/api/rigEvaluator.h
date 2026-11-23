@@ -174,16 +174,10 @@ struct RigExecRigPose {
     /// this generation resolved for it, for every volume reachable in
     /// the current compiled rig.
     ///
-    /// The companion to weightFields, and published for the same
-    /// consumer: an authoring tool that paints the influence overlay
-    /// also has to DRAW the volume, and a falloff iso-surface can only be
-    /// drawn in the space the field was measured in. Taken from the
-    /// volume's own computeMatrix tap rather than left to the consumer to
-    /// re-derive, because a second hand-rolled composition of
-    /// posed:space + rest offsets + avars + rotation order is exactly the
-    /// drift frameExtraction.h exists to prevent -- the same reasoning
-    /// that made _ResolveVolumeWeights read this map instead of
-    /// recomputing it.
+    /// The companion to weightFields, and published for the same consumer: an
+    /// authoring tool that paints the influence overlay also has to DRAW the
+    /// volume, and a falloff iso-surface can only be drawn in the space the
+    /// field was measured in.
     std::map<SdfPath, GfMatrix4d> weightFrames;
 
     /// Pass-through, failure, and unimplemented-operation reports

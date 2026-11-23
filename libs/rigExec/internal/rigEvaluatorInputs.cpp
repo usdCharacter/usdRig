@@ -548,25 +548,20 @@ RigExecRigEvaluator::SetInteractiveOverrides(
     //   * an override on a connection SOURCE cannot leave a stale reader,
     //     because the cache refuses any attribute with an authored
     //     connection and that reader goes the long way every time;
-    //   * lifting an override is safe, because the cache only ever holds the
-    //     authored value it read from the stage.
-    // Authored edits still clear it: every notice does.
-    // _propertyChainBindings not dropped: overrides are applied before any
-    // chain reads. Invalidated by a stage edit (_OnObjectsChanged) and by
-    // recompile.
-    // An override is a value the static reads must prefer over the stage,
-    // and the skin layout is read through exactly that route -- so a layout
-    // resolved before the override set changed was resolved against a
-    // different answer. But only for an override that can actually reach
-    // one: dropping every layout costs ~400us of a biped drag frame (a
-    // third of it) re-reading and re-comparing 105k elements that no
-    // manipulator touched, and an animator's drag names a control avar.
-    // The predicate follows the same connection walk the layout is read
-    // through and answers yes wherever it is unsure -- see
-    // _OverridesReachSkinLayout. The dynamic path shares this cache, so
-    // both paths get the same answer either way: the cache hands back the
-    // pointer it held for arrays that compare equal, so what is at stake is
-    // the re-read and not the deformation.
+    // * lifting an override is safe, because the cache only ever holds the
+    //     authored value it read from the stage. Authored edits still clear it:
+    //     every notice does. _propertyChainBindings not dropped: overrides are
+    //     applied before any chain reads. Invalidated by a stage edit
+    //     (_OnObjectsChanged) and by recompile. An override is a value the
+    //     static reads must prefer over the stage, and the skin layout is read
+    //     through exactly that route -- so a layout resolved before the
+    //     override set changed was resolved against a different answer. But
+    //     only for an override that can actually reach one: dropping every
+    //     layout costs ~400us of a biped drag frame (a third of it) re-reading
+    //     and re-comparing 105k elements that no manipulator touched, and an
+    //     animator's drag names a control avar. The predicate follows the same
+    //     connection walk the layout is read through and answers yes wherever
+    //     it is unsure -- see _OverridesReachSkinLayout.
     if (touchesLayout) {
         _skinTopologies.Clear();
         _rigState.skinTopologyObservationPending = true;

@@ -135,10 +135,6 @@ RigExecRevisionOpBakes(RigExecRevisionOp op, bool derived)
                op == RigExecRevisionOp::RecomputeNormals ||
                RigExecIsDerivedMatrixOp(op);
     }
-    // Every operation whose whole packet the per-frame assembler reads off
-    // the stage: the program hands RigExecAssembleParameters the same binding
-    // and resolved inputs the dynamic walk does, and RigExecRunRevisionKernel
-    // is the same kernel.
     switch (op) {
     case RigExecRevisionOp::Skin:
     case RigExecRevisionOp::Matrix:
@@ -295,12 +291,6 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
             // expression of the rule, in the place that needs its answer.
         }
     }
-    // An aggregate solver no batch runs is not a rig the program cannot
-    // express: the dynamic path computes it inside the guide request,
-    // against the walk's FINAL frames, and the program runs it as a Solve
-    // step after the walk for the same reason. Its TYPE still has to be one
-    // the program expresses, which the batch loop above never asked about
-    // because it never saw it.
     for (const SdfPath &solverPath : E._nativeGuideSolvers) {
         if (batched.count(solverPath)) {
             continue;
@@ -375,12 +365,8 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
             say("constraint names no target", constraint.moverPath);
             continue;
         }
-        // Either provider family: an exec-seeded one, or a plain Xformable
-        // the program seeds from the stage in its prologue. Both take a slot
-        // in the same table, which is what the dynamic walk's one frame map
-        // holds. EVERY target, not only the first: a SingleChainIK revises
-        // its whole chain atomically, and the dynamic walk records every
-        // target of every constraint whatever it revises.
+        // Either provider family: an exec-seeded one, or a plain Xformable the
+        // program seeds from the stage in its prologue.
         for (const SdfPath &target : constraint.targets) {
             if (!E._nativeProviderPaths.count(target) &&
                 !E._xformDerivedProviders.count(target)) {

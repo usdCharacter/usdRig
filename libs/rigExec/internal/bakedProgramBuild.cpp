@@ -103,9 +103,6 @@ const TfToken kAvarTokens[11] = {SchemaAttr::avarsTx,
                                  SchemaAttr::avarsRspin,
                                  SchemaAttr::avarsUnitScaleFactor};
 
-// A plain attribute read with no time and no resolution walk, for the
-// uniform tokens the dynamic path reads exactly this way
-// (rigExec:rotationOrder, rigExec:worldUpType, rigExec:aimAxis, ...).
 TfToken
 _ReadToken(const UsdPrim &prim, const TfToken &name, const TfToken &fallback)
 {
@@ -717,14 +714,6 @@ RigExecBakedProgram::_BuildProviderSlots(_BuildAttempt &build)
     RigExecRigEvaluator &E = build.E;
     RigExecBakedProgramImpl &B = *build.impl;
     auto &ctx = build.ctx;
-    // The ordered union of the two families, which is the set the dynamic
-    // walk's frame maps hold: the exec-seeded providers and the plain
-    // Xformables a constraint targets. Both are already in SdfPath order, so
-    // merging them through one ordered map keeps namespace DFS pre-order and
-    // with it the "a parent has a lower slot" invariant the compose relies
-    // on. The two sets are disjoint by construction (only what isFrameProvider
-    // accepts is seeded); FirstFramePose wins a collision, because that is the kind
-    // the compose can actually write.
     {
         std::map<SdfPath, RigExecBakedSlotKind> ordered;
         for (const SdfPath &path : E._nativeProviderPaths) {
@@ -986,14 +975,11 @@ RigExecBakedProgram::_BuildLadder(_BuildAttempt &build)
         RigExecBakedMergeCommitShards(&B, &ladderShards);
     for (int i = 0; i < N; ++i) {
         if (B.slotKind[size_t(i)] != RigExecBakedSlotKind::FirstFramePose) {
-            // An xform-derived slot has no rest chain and no default-space
-            // ladder: the dynamic path gives it the identity rest frame
-            // outright and reads its pose off the stage.
-            // Invalidation-index coverage: the prim and every ancestor
-            // whose transform the prologue composes go into B.prims, so a
-            // RESYNC that retypes or reparents one rebuilds the program. Only
-            // in B.prims: value notices must not rebuild (the prologue
-            // re-reads the ladder every frame).
+            // Invalidation-index coverage: the prim and every ancestor whose
+            // transform the prologue composes go into B.prims, so a RESYNC that
+            // retypes or reparents one rebuilds the program. Only in B.prims:
+            // value notices must not rebuild (the prologue re-reads the ladder
+            // every frame).
             B.restFrames[i] = RigExecFrameFromMatrix(GfMatrix4d(1.0));
             B.restPts[i] = B.restFrames[i].points;
             B.xformSlots.push_back(i);

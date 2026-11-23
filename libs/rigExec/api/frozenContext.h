@@ -106,10 +106,9 @@ struct RigExecSampledInput {
     int burstSampleRoute = RigExecBurstRouteFresh;
     /// True for an explicit authored source block, distinct from missing.
     bool valueBlocked = false;
-    /// The RigExecFrameInputs::staticSamples entry this sample copies
-    /// verbatim, or -1. Set only by the samplers, when they serve the entry;
-    /// the digests then fold the entry's memoized level-1, so a caller that
-    /// rewrites a marked sample must reset this.
+    /// Set only by the samplers, when they serve the entry; the digests then
+    /// fold the entry's memoized level-1, so a caller that rewrites a marked
+    /// sample must reset this.
     int32_t staticSample = -1;
 };
 
@@ -243,12 +242,11 @@ struct RigExecFrameInputs {
     /// folded by the control-state digest; a moved constraint target must
     /// miss the cache.
     RigExecStageFrameSeeds stageSeeds;
-    /// The standing overrides the vector was sampled under, verbatim from
-    /// the caller's list. The worker replicates override placement from
-    /// these (SetOverrides' flags drive cone dirtiness exactly as live).
-    /// The values ALSO ride as samples in `values` (keyed by override
-    /// path), which is what the digest hashes; this list is the worker's
-    /// placement input, excluded from the digest as redundant.
+    /// The worker replicates override placement from these (SetOverrides' flags
+    /// drive cone dirtiness exactly as live). The values ALSO ride as samples
+    /// in `values` (keyed by override path), which is what the digest hashes;
+    /// this list is the worker's placement input, excluded from the digest as
+    /// redundant.
     std::vector<RigExecValueOverride> overrides;
     /// Parallel to `overrides`: each attribute override's property path
     /// (prim.attribute), empty for a computation override. Built on the

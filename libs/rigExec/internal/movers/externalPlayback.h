@@ -1,8 +1,3 @@
-// A built-in external mover's .rigexec playback through its own stage-side
-// callbacks: the declared inputs and provider values a playback kernel
-// receives (rigExecBinary/external.h), turned back into what the mover's
-// assembleExternal reads, so playback runs the same assembly and
-// deformation as native and frozen evaluation.
 #ifndef RIGEXEC_MOVERS_EXTERNAL_PLAYBACK_H
 #define RIGEXEC_MOVERS_EXTERNAL_PLAYBACK_H
 

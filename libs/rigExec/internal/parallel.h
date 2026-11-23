@@ -30,7 +30,7 @@ bool RigExecParallelEvaluationEnabled();
 bool RigExecFrozenSerialActive();
 
 // RigExecGeometryGrainSize and RigExecGeometryParallelThreshold live in
-// rigExecMath/rangeRunner.h, which the USD-free runtime shares.
+// rigExecMath/rangeRunner.h, which the runtime shares.
 
 /// Whether this thread's floating-point environment is the IEEE default:
 /// round to nearest, no flush-to-zero, no denormals-are-zero. A shortcut that

@@ -116,9 +116,6 @@ bool RigExecFrameRotation(const RigExecPointFrame &frame, GfQuatd *out);
 /// parent moves measures nothing. `parentFinal`/`parentRest` are null when
 /// the driver has no frame-publishing parent. False when a frame is invalid,
 /// degenerate or singular.
-///
-/// ONE definition, for the same reason as RigExecFrameRotation: the dynamic
-/// phase and the baked step compare against the same authored poses.
 bool RigExecFrameTranslation(const RigExecPointFrame &driverFinal,
                              const RigExecPointFrame &driverRest,
                              const RigExecPointFrame *parentFinal,

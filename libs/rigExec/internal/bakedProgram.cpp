@@ -347,11 +347,8 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
             B.base[slot] = frame;
             B.fin[slot] = frame;
         }
-        // And the target transform each geometry-domain constraint measures
-        // its delta against. A stage read even when the target is a
-        // RigExecJoint, because RigExecXformable inherits Xformable and the
-        // dynamic walk measures against the authored transform rather than
-        // the rig frame.
+        // And the target transform each geometry-domain constraint measures its
+        // delta against.
         for (size_t k = 0; k < B.deltaBasePaths.size(); ++k) {
             GfMatrix4d matrix(1.0);
             B.deltaBaseOk[k] = E._FrameFromXformRelativeToAsset(
@@ -360,12 +357,9 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
         }
         // And the plain Xformables a constraint reads as a SOURCE. Only the
         // stage half is settled here: the delta such a source rides is the
-        // deepest revision above it, which is a frame the walk has not
-        // produced yet, so the constraint step performs the ride out of the
-        // slots it declared. A source the stage cannot answer for is not a
-        // bail -- the dynamic walk diagnoses it per constraint and passes
-        // that constraint through -- so the failure is recorded and carried
-        // into the step.
+        // deepest revision above it, which is a frame the walk has not produced
+        // yet, so the constraint step performs the ride out of the slots it
+        // declared. A source the stage cannot answer for is not a bail.
         for (size_t k = 0; k < B.nativeSources.size(); ++k) {
             RigExecPointFrame frame;
             B.nativeFrameOk[k] = E._FrameFromXformRelativeToAsset(

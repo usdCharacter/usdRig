@@ -1566,7 +1566,6 @@ RigExecRigEvaluator::_ComputeStructureDigest(unsigned segments,
                 const UsdPrim &provider = prims[i];
                 const SdfPath &key = provider.GetPath();
                 _DigestPrefetched &made = prefetched[i];
-                // hopFor's rules, verbatim: see its uncached branch.
                 const TfToken type = provider.GetTypeName();
                 made.isProvider = _IsFrameProviderType(type);
                 if (made.isProvider) {

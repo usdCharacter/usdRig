@@ -442,15 +442,10 @@ public:
     /// follow, returning false when one of them names something the program
     /// cannot place.
     ///
-    /// A placeable override is one the program can route the way the dynamic
-    /// path does: an input the frame path reads (it is read the long way,
-    /// through the generation's resolved inputs, while the override stands),
-    /// or a property whose only reader already goes through those resolved
-    /// inputs -- a property-chain mover, a geometry mover. An override on a
-    /// value folded into bake state (a rest, a default-space ladder, a
-    /// solver rest description) cannot be placed without rebaking, and a
-    /// computation override names something that only exec can answer; both
-    /// return false so the caller runs the generation dynamically. A wrong
+    /// An override on a value folded into bake state (a rest, a default-space
+    /// ladder, a solver rest description) cannot be placed without rebaking,
+    /// and a computation override names something that only exec can answer;
+    /// both return false so the caller runs the generation dynamically. A wrong
     /// baked answer is never one of the outcomes.
     bool SetOverrides(const std::vector<RigExecValueOverride> &overrides);
 
@@ -493,11 +488,6 @@ public:
 
     /// How many clusters the program's schedule holds, and how many of them
     /// the last generation actually ran.
-    ///
-    /// Observable so a test can hold cone re-execution to account in both
-    /// directions: a frame that skipped nothing is a cone that is not
-    /// working, and a frame that skipped something has to publish what the
-    /// dynamic path publishes anyway.
     size_t GetClusterCount() const;
     size_t GetClustersRunLastGeneration() const;
 

@@ -431,22 +431,12 @@ RigExecRigEvaluator::_RebuildBakedProgram(
              _bakedProgram->_GetCycleSkips(switchOwners))
             _skippedOperations.emplace(owner, reason);
         if (outgoing && outgoingPublished) {
-            // The replacement inherits the geometry nodes that survive,
-            // matched the way the dynamic walk matches its VdfNetwork nodes.
             // Without it a rebuilt program re-runs every per-point kernel and
             // publishes "created"/"schedule(s) built" counters, and the mover
-            // graph diagnostic, for nodes nothing rebuilt -- while the
-            // dynamic path, whose graphs stood through the same edit, reports
-            // none of it.
-            // Only from a program that PUBLISHED a generation, which is what
-            // makes the sentence above true: the whole of what an unrun
-            // program carries here is `created = false` on nodes whose
-            // creation no consumer has been told about, so adopting it makes
-            // the replacement under-report work the dynamic path -- whose
-            // graphs are still cold -- goes on to report. The case is reached
-            // by building at Compile and changing the mode afterwards, which
-            // is what a rig carrying rigExec:baked does whenever a tool then
-            // asks for the parity check.
+            // graph diagnostic, for nodes nothing rebuilt. The case is reached
+            // by building at Compile and changing the mode afterwards, which is
+            // what a rig carrying rigExec:baked does whenever a tool then asks
+            // for the parity check.
             _bakedProgram->AdoptGeometryStateFrom(*outgoing);
         }
     }

@@ -545,8 +545,7 @@ RigExecRigEvaluator::_CompilePoseConstraints(_CompileAttempt &attempt)
         }
         // Precompute the axis masks when provably static for this mover: no
         // property chain revises a mask attribute, none is connected, and each
-        // is a single authored opinion. Fallbacks mirror the live read:
-        // translation/rotation default on, scale defaults off (FBX).
+        // is a single authored opinion.
         {
             const TfToken kMaskNames[3][3] = {
                 {_tokens->inputsAffectTranslationX,

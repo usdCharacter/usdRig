@@ -115,11 +115,6 @@ RigExecBakedProgram::AdoptGeometryStateFrom(RigExecBakedProgram &previous)
     // held. Everything here is a CACHE of the last run; the compiled
     // description around it comes from the compiled rig the new program was built
     // from and is left alone.
-    // \p keepRun says whether the cached RESULT may be kept as well as the
-    // node: a revision spliced into or out of a chain changes the point
-    // stream every revision after it reads, which is why the dynamic path's
-    // VdfNetwork re-executes them, so from the first divergence on the node
-    // survives but its result does not.
     const auto adopt = [](RigExecBakedProgramImpl::GeomRevision *destination,
                           RigExecBakedProgramImpl::GeomRevision *source,
                           bool keepRun) {
@@ -144,34 +139,24 @@ RigExecBakedProgram::AdoptGeometryStateFrom(RigExecBakedProgram &previous)
         destination->passedPoints = std::move(source->passedPoints);
         destination->doneVersion = source->doneVersion;
         destination->lastParameters = std::move(source->lastParameters);
-        // A DERIVED revision's remembered input lives beside the packet
-        // rather than inside it -- the chain's 315KB point buffer, held by
-        // handle with `lastParameters.auxPoints` left empty -- so it has to
-        // travel with the packet it was split from. Leaving it behind gives
-        // the adopted node a `ran` that says "compare against what I last
-        // saw" and an empty array to compare against, so every derived
-        // revision of the rig re-executes on the first generation after any
-        // edit, bumps `revisionsExecuted` and emits its diagnostic, while
-        // the dynamic path -- whose graphs stood through the same edit --
-        // reports none of it. Exactly the failure lastDefaultWeight below
+        // A DERIVED revision's remembered input lives beside the packet rather
+        // than inside it -- the chain's 315KB point buffer, held by handle with
+        // `lastParameters.auxPoints` left empty -- so it has to travel with the
+        // packet it was split from. Exactly the failure lastDefaultWeight below
         // describes, one field further along.
         destination->lastAuxPoints = std::move(source->lastAuxPoints);
         destination->lastStatus = source->lastStatus;
         destination->ran = source->ran;
-        // The FOLDED influence table, which is the other half of the
-        // comparison `ran` promises. A skin revision re-executes when one of
-        // its matrices moved, and `influencesChanged` is decided by the fold
-        // against the table it last wrote -- so a node that kept its `ran`
-        // and lost its table compares this run's matrices against a table
-        // that has never held one, reports every entry changed and runs.
-        // That is the same divergence the packet fields above describe,
-        // reached through the fold instead of through the packet: the
-        // dynamic path's VdfNetwork keeps the buffers of the nodes it
-        // reconnects, so it reports no such work.
-        // Carried only where the two tables are the same shape. keepRun says
-        // the revision is the same mover at the same place in the chain; it
-        // does not say its binding still names the same joints, and the fold
-        // writes one entry per influence slot of the NEW binding.
+        // The FOLDED influence table, which is the other half of the comparison
+        // `ran` promises. A skin revision re-executes when one of its matrices
+        // moved, and `influencesChanged` is decided by the fold against the
+        // table it last wrote -- so a node that kept its `ran` and lost its
+        // table compares this run's matrices against a table that has never
+        // held one, reports every entry changed and runs. Carried only where
+        // the two tables are the same shape. keepRun says the revision is the
+        // same mover at the same place in the chain; it does not say its
+        // binding still names the same joints, and the fold writes one entry
+        // per influence slot of the NEW binding.
         if (source->influences.size() == destination->influences.size()) {
             destination->influences = std::move(source->influences);
             // And the fold's verdict on that table, which is a function of
@@ -204,9 +189,6 @@ RigExecBakedProgram::AdoptGeometryStateFrom(RigExecBakedProgram &previous)
     for (RigExecBakedProgramImpl::GeomChain &chain : B.chains) {
         const auto found = outgoing.find(chain.target);
         if (found == outgoing.end()) {
-            // A target the outgoing program did not drive: every revision of
-            // it is genuinely new, which is also what the dynamic path says
-            // about a live graph it has just created.
             continue;
         }
         RigExecBakedProgramImpl::GeomChain &old = *found->second;
@@ -308,8 +290,8 @@ RigExecBakedProgram::AdoptGeometryStateFrom(RigExecBakedProgram &previous)
                 }
             }
         }
-        // Insertion, removal and reordering rebuild the schedule; a rebind
-        // only updates packets. Same rule, same words, as the dynamic walk.
+        // Insertion, removal and reordering rebuild the schedule; a rebind only
+        // updates packets.
         chain.scheduleDirty = !sameSequence;
         chain.lastBase = std::move(old.lastBase);
         chain.result = std::move(old.result);

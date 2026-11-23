@@ -98,9 +98,6 @@ struct RigExecPropertyChainBindings {
         };
         std::vector<Phased> phased;
 
-        // The last run: whether it published, what, and the diagnostics it
-        // pushed, all replayed verbatim when the chain is clean. lastPhased
-        // parallels `phased`, empty where nothing was published.
         bool cached = false;
         bool published = false;
         VtValue lastValue;

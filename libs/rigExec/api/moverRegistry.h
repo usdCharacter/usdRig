@@ -216,7 +216,6 @@ struct RigExecMoverHandler {
                                   std::vector<RigExecRevisionLeafKey> *inputs) =
         nullptr;
     /// Owner-thread detached compilation over composed, owned source facts.
-    /// Produces the same immutable binding/declared inputs as native capture.
     /// Plugin-owned scene data schemas consumed by immutable detached capture.
     /// They are data records, not separately scheduled rig operations.
     std::vector<std::string> sceneDataSchemas;

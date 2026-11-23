@@ -65,19 +65,15 @@ namespace rigExec {
 
 struct RigExecBakedProgramImpl;
 
-// The input binding table.
-// RigExecResolvedInputs::GetAttribute -- which is what both exec's
-// AttributeValue accessor and every static read in the evaluator resolve
-// through -- walks a single authored connection chain and takes the nearest
-// readable upstream value, preferring anything this generation already
-// resolved. That WALK is structural: connections cannot change without
-// a resync, and a resync recompiles. Only the VALUES on it can move.
-// So each input is classified once: if nothing on its walk is written by a
-// property chain and nothing on it might vary with time, the value is a
-// compiled rig constant and the frame path never touches USD for it. Otherwise it is
-// read per frame -- through a retained UsdAttributeQuery when USD alone can
-// answer, and through the generation's resolved inputs when a property chain
-// is in the way, which is the same route the dynamic path takes.
+// The input binding table. RigExecResolvedInputs::GetAttribute -- which is what
+// both exec's AttributeValue accessor and every static read in the evaluator
+// resolve through -- walks a single authored connection chain and takes the
+// nearest readable upstream value, preferring anything this generation already
+// resolved. That WALK is structural: connections cannot change without a
+// resync, and a resync recompiles. Only the VALUES on it can move. So each
+// input is classified once: if nothing on its walk is written by a property
+// chain and nothing on it might vary with time, the value is a compiled rig
+// constant and the frame path never touches USD for it.
 
 template <class T> struct RigExecBakedInput {
     T constant{};
@@ -1455,14 +1451,11 @@ struct RigExecBakedRolePin {
     int weightObject = -1;
 };
 
-// inputs:sourceWeights and the parent offsets are read RAW off the
-// attribute -- no connection walk, no resolved input, no interactive
-// override -- because that is what the dynamic walk does with them, and
-// an operator input is not a rig input. The read is USD, so it is the
-// PROLOGUE's, kept as compiled rig state (`sampled` below) and taken again
-// only where a read at the frame's time could answer differently; the
-// cardinality diagnostic belongs to the constraint step, at the
-// constraint's own place in the walk, so what the prologue leaves
+// inputs:sourceWeights and the parent offsets are read RAW off the attribute.
+// The read is USD, so it is the PROLOGUE's, kept as compiled rig state
+// (`sampled` below) and taken again only where a read at the frame's time could
+// answer differently; the cardinality diagnostic belongs to the constraint
+// step, at the constraint's own place in the walk, so what the prologue leaves
 // behind is the line rather than the pose it would have gone into.
 struct RigExecBakedConstraintArray {
     UsdPrim prim;
@@ -1570,14 +1563,8 @@ struct RigExecBakedLadder {
     RigExecBakedInput<TfToken> rotationOrder;
 };
 
-// A RigExecPoseInterpolator reads the FINAL pose of its driver and writes
-// floats the geometry chains consume, so on the dynamic path it is a
-// phase of its own between the pose walk and the chains. Here it is a
-// step: it reads its driver's (and the driver's parent's) last PoseFin
-// version and writes a range of PoseWeight slots, and a blend channel
-// whose inputs:weight is connected to one of those reads the slot. The
-// edges follow, and so does the cone -- a drag that cannot reach the
-// driver leaves every corrective it drives untouched.
+// The edges follow, and so does the cone -- a drag that cannot reach the driver
+// leaves every corrective it drives untouched.
 struct RigExecBakedPoseInterpolator : RigExecPoseInterpolatorRecord {
     SdfPath path;
     /// `path` spelled at Build, for the body's diagnostics.
@@ -1691,10 +1678,9 @@ struct RigExecBakedSolver : RigExecSolverRecord {
     /// diagnostic that carries.
     // FkChain
     std::vector<int> controls;
-    /// rigExec:startFrame provider slot (-1 when unwired or not a
-    /// provider, the computation's silent absolute path), its rest,
-    /// and the `fin` version bound where this batch begins -- the
-    /// baked mirror of the computation's synthetic base element.
+    /// rigExec:startFrame provider slot (-1 when unwired or not a provider, the
+    /// computation's silent absolute path), its rest, and the `fin` version
+    /// bound where this batch begins.
     int start = -1;
     uint32_t startRead = 0;
     // IK / spline controls
@@ -1754,13 +1740,9 @@ struct RigExecBakedSolver : RigExecSolverRecord {
     VtFloatArray execSplineWeights;
     int execTwistCount = 1;
     RigExecBakedInput<double> twistTurns;
-    // Ribbon. The driver curve's points are the one solver input that
-    // is scene data rather than rig state: the dynamic path reads the
-    // attribute straight off the stage and hands exec both values as
-    // packet overrides, honouring neither connections nor the resolved
-    // inputs. So they are read the same way -- but in the PROLOGUE, into
-    // the SolverPoints slot the Solve step declares, because a step body
-    // may not touch USD.
+    // Ribbon. So they are read the same way -- but in the PROLOGUE, into the
+    // SolverPoints slot the Solve step declares, because a step body may not
+    // touch USD.
     SdfPath ribbonPointsPath;
     UsdAttributeQuery ribbonPointsQuery;
     RigExecReadPhase ribbonPointsPhase;
@@ -2055,10 +2037,7 @@ struct RigExecBakedSpaceSwitch {
     bool matchValid = false;
 };
 
-// One entry per revision of one chain, in chain order. The packet is
-// assembled by the SAME RigExecAssembleParameters the dynamic path calls
-// and the kernel is the same shared kernel, so only the plumbing around
-// them is baked.
+// One entry per revision of one chain, in chain order.
 /// One contiguous vertex range of one revision, and the influences the
 /// vertices in it reference.
 ///
@@ -2111,9 +2090,7 @@ struct RigExecBakedGeomChunk {
 /// Float addition is not associative, so an order that differs from the
 /// dynamic walk's is a different last bit.
 struct RigExecBakedGeomBlendChannel {
-    /// `inputs:weight` on the RigExecBlendInput prim. Invalid when the
-    /// prim or the attribute is absent, which reads as the channel's
-    /// default exactly as the dynamic walk's invalid handle does.
+    /// `inputs:weight` on the RigExecBlendInput prim.
     UsdAttribute weight;
     SdfPath weightPath;
     /// The PoseWeight slot `inputs:weight` resolves to through its

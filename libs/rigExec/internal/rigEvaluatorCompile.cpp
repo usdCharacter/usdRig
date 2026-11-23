@@ -388,14 +388,11 @@ RigExecRigEvaluator::_CompileAttempt::StackOrdinalOf(const SdfPath &path) const
 void
 RigExecRigEvaluator::_CompileRetireProgram(_CompileAttempt &attempt)
 {
-    // The program describes the compiled rig this call is about to replace, so it
-    // stops being the rig's program here: a Compile that fails and restores
-    // the previous compiled rig returns before the rebuild at the tail, this local
-    // goes out of scope, and the rig is left dynamic -- slower and never
-    // wrong. Retired rather than destroyed, because its persistent GEOMETRY
-    // state (which node ran with which packet) is not about the compiled rig: the
-    // dynamic path keeps its _liveGraphs across a recompile and reconnects
-    // whichever nodes survive, and the rebuild below does the same.
+    // The program describes the compiled rig this call is about to replace, so
+    // it stops being the rig's program here: a Compile that fails and restores
+    // the previous compiled rig returns before the rebuild at the tail, this
+    // local goes out of scope, and the rig is left dynamic -- slower and never
+    // wrong.
     attempt.retiringBakedProgram = std::move(_bakedProgram);
     // A new compiled rig is a new question: whatever refused the last one said
     // nothing about this one, and whatever made its program bail neither.

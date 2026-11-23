@@ -503,11 +503,8 @@ struct RigExecBakedGeomRevision {
     int transformSlot = -1;
     /// The rigExec:transformSpace provider's slot, or -1.
     int transformSpaceSlot = -1;
-    /// The rigExec:space provider's slot, or -1: the prim whose own
-    /// rest->pose map carries the whole rig, normally a TRS master.
-    /// Read out of the SAME base/final matrix table the two above come
-    /// from, because that table is what computeMatrix publishes and
-    /// the dynamic path's carry tap reads computeMatrix.
+    /// The rigExec:space provider's slot, or -1: the prim whose own rest->pose
+    /// map carries the whole rig, normally a TRS master.
     int carrySpaceSlot = -1;
     /// The geometry-domain constraint whose delta IS this revision's
     /// transform, as an index into the dense delta tables, or -1. Joined
@@ -542,8 +539,7 @@ struct RigExecBakedGeomRevision {
     std::vector<GfVec3f> output;
     std::vector<GfVec3f> stagingOutput;
     // Last evaluated packet/status and result, so an unchanged input
-    // re-publishes instead of re-running -- which is the accounting the
-    // VdfNetwork performs for the dynamic path.
+    // re-publishes instead of re-running.
     RigExecMoverParameters lastParameters;
     /// A DERIVED revision's `auxPoints` -- the chain's final points, up
     /// to 315KB of them -- held here as the handle the chain published
@@ -594,11 +590,8 @@ struct RigExecBakedGeomRevision {
     /// is the same per `influenceSlots` entry.
     std::vector<int> transformRecords;
     std::vector<std::vector<int>> influenceRecords;
-    /// This node is new to the rig's geometry state and its creation has
-    /// not been reported yet. Cleared by AdoptGeometryStateFrom for a
-    /// node the outgoing program already held, which is the same
-    /// bookkeeping the dynamic walk does when it reconnects a surviving
-    /// VdfNetwork node instead of adding one.
+    /// This node is new to the rig's geometry state and its creation has not
+    /// been reported yet.
     bool created = true;
 
     /// The influence table the PACKET carries, which for a skin revision
@@ -724,10 +717,9 @@ struct RigExecBakedGeomRevision {
     /// many movers bind it -- so what a revision holds is the index.
     int weightObject = -1;
     int weightField = -1;
-    /// Whether the weight object weights the MOVER (one declared target,
-    /// and it is this mover) rather than the points. Decided at Build
-    /// because it is a relationship read, and the relationship is compiled rig
-    /// state; the condition is the dynamic path's, verbatim.
+    /// Whether the weight object weights the MOVER (one declared target, and it
+    /// is this mover) rather than the points. Decided at Build because it is a
+    /// relationship read, and the relationship is compiled rig state.
     bool weightOperationDomain = false;
     /// The property the published field says it weights: the mover for
     /// an operation-domain object, the chain's target otherwise.
@@ -1191,12 +1183,6 @@ struct RigExecBakedProgramImpl {
     /// program, so this one is a captured constant and not a pointer.
     bool hasPropertyChains = false;
 
-    // The slot table is the ordered UNION of the two provider families the
-    // dynamic walk holds in one frame map: the RigExec providers exec seeds
-    // (_nativeProviderPaths) and the plain Xformables a constraint targets
-    // (_xformDerivedProviders). Both are keyed by SdfPath, whose order IS
-    // namespace DFS pre-order, so a provider's parent always has a lower slot
-    // than it does and one forward pass composes the whole hierarchy.
     std::vector<SdfPath> paths;
     /// `paths` spelled once at Build on the owning thread, one text per slot.
     /// Step bodies and worker-side keys read this text: SdfPath::GetString
@@ -1211,9 +1197,6 @@ struct RigExecBakedProgramImpl {
     /// The compose ladder inherits from it, because exec's NamespaceAncestor
     /// resolves only RigExec provider types and skips anything else.
     std::vector<int> parent;
-    /// Nearest ancestor slot of ANY kind, which is what the dynamic walk's
-    /// pure namespace climb finds when it looks for the closest revised
-    /// ancestor a propagated descendant rides.
     std::vector<int> propParent;
 
     // A plain Xformable a constraint targets has no rest chain and no avars:
@@ -1550,11 +1533,9 @@ struct RigExecBakedProgramImpl {
         size_t level = 0;
         int index = 0; // constraint slot
         std::vector<int> batchSolvers;
-        // Descendant propagation, decided at bake: the closest changed
-        // ancestor each descendant rides, with the ownership-blocking rule
-        // already applied. The dynamic walk rediscovers these by climbing
-        // the namespace per constraint per frame, which is what makes a long
-        // chain quadratic.
+        // Descendant propagation, decided at bake: the closest changed ancestor
+        // each descendant rides, with the ownership-blocking rule already
+        // applied.
         std::vector<std::pair<int, int>> propagate;
     };
     std::vector<WalkStep> walkSteps;

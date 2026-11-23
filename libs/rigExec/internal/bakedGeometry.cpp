@@ -4,12 +4,9 @@
 #include "rigExecMath/blendRangeKernel.h"
 #include "rigExec/internal/weightField.h"
 #include "rigExec/internal/gpuCloth.h"
-// The baked program's geometry half: the chain/revision bake and the frame
-// path that runs those revisions and the derived maintenance behind them.
-// Geometry-domain bake and frame path; must agree on captured vs re-read
-// state. The evaluator is not visible here -- the compiled chains arrive
-// restated as RigExecBakedChainSpec, and the caches the frame path shares
-// with the dynamic walk were captured into RigExecBakedProgramImpl at Build.
+// The baked program's geometry half: the chain/revision bake and the frame path
+// that runs those revisions and the derived maintenance behind them.
+// Geometry-domain bake and frame path; must agree on captured vs re-read state.
 #include "rigExec/internal/bakedOpValues.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/bakedSlotDomains.h"
@@ -202,9 +199,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
         out.skinTopologyFixed = r.skinTopologyFixed;
         out.snapshotAfter = r.snapshotAfter;
         // The geometry-domain constraint whose measured delta IS this
-        // revision's transform. The join key is the MOVER path, which is
-        // what the dynamic walk's own constraintDeltas map is keyed by; the
-        // pose half is baked first, so the constraint is already here.
+        // revision's transform.
         for (const RigExecBakedProgramImpl::Constraint &constraint :
              B.constraints) {
             if (constraint.deltaBase >= 0 && constraint.path == r.moverPath) {
@@ -308,10 +303,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
             channel.weightPath = weightPath;
             // A weight connected to a pose interpolator's output reads the
             // interpolator's slot. The walk is the one RigExecResolvedInputs::
-            // GetAttribute makes -- single authored connections, followed
-            // until one lands on a property the program publishes -- so the
-            // slot answers exactly where the dynamic walk's in-memory lookup
-            // would have.
+            // GetAttribute makes.
             {
                 std::set<SdfPath> visiting;
                 UsdAttribute a = channel.weight;
@@ -399,10 +391,6 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
                        r.binding.carrySpace);
             }
         }
-        // The solver whose aggregate supplies values.driverFrames, resolved
-        // once here: the walk's solver table is built before the geometry
-        // half, so the per-revision tap the dynamic path reads becomes an
-        // index into it.
         if (!r.binding.driverFrames.IsEmpty()) {
             B.prims.insert(r.binding.driverFrames);
             const auto solver = B.solverIndex.find(r.binding.driverFrames);
@@ -429,12 +417,8 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
         out.weightObject =
             RigExecBakedBakeWeightObject(ctx, r.binding.weightObject);
         if (out.weightObject >= 0) {
-            // WHAT the published field says it weights, decided here because
-            // it is a relationship read and a relationship is compiled rig state.
-            // The condition is the dynamic path's, verbatim: exactly one
-            // declared target, and it is this mover, means the field weights
-            // the OPERATION and carries one element; anything else weights
-            // the chain's points.
+            // WHAT the published field says it weights, decided here because it
+            // is a relationship read and a relationship is compiled rig state.
             const UsdPrim weightPrim =
                 B.stage->GetPrimAtPath(r.binding.weightObject);
             const SdfPathVector declared =
@@ -2611,13 +2595,6 @@ RigExecBakedRolesStand(const RigExecBakedProgramImpl &B)
     return true;
 }
 
-// One frame, geometry half.
-// The packet is assembled by the same RigExecAssembleParameters the dynamic
-// path calls and the kernel is the same shared kernel; only the VdfNetwork
-// around them is baked away, so the accounting it performed -- a revision
-// runs when its inputs changed, and not otherwise -- is performed here
-// instead, by the four steps a revision is made of.
-
 namespace {
 
 /// The points of version \p version of \p chain (RigExecBakedPointVersion):
@@ -2667,10 +2644,8 @@ FoldInfluences(const RigExecBakedProgramImpl &B,
                 ? B.finalMatrix[size_t(revision->transformSlot)]
                 : B.baseMatrix[size_t(revision->transformSlot)];
     }
-    // rigExec:space, out of the same table at the same phase, so this reads
-    // exactly what the dynamic path's carry tap reads. Held on the revision
-    // for the assemble, which may not read the tables itself: the fold is
-    // the step that declared them.
+    // Held on the revision for the assemble, which may not read the tables
+    // itself: the fold is the step that declared them.
     revision->haveCarry = revision->carrySpaceSlot >= 0;
     if (revision->haveCarry) {
         const GfMatrix4d &carry =
@@ -2682,38 +2657,24 @@ FoldInfluences(const RigExecBakedProgramImpl &B,
             changed = true;
         }
     }
-    // A geometry-domain constraint's delta, if one was measured for this
-    // mover: the pose walk solved the constraint and stashed the map from the
-    // target's authored transform to the solved one, and THIS is the Matrix
-    // revision that same constraint contributes. Find-guarded, and here
-    // rather than in the assemble because the transform table is what this
-    // step declares -- the assemble only READS it, and a step that writes a
-    // slot it declared as a read is the declaration the executor trusts
-    // being wrong.
-    // The dynamic path applies it before the final-phase substitution rather
-    // than after. The two orders can only disagree for a revision that has
-    // both a bound transform provider and a delta, which cannot arise: a
-    // geometry-domain constraint's binding.transform is empty -- that is what
-    // makes the delta the only source of the matrix.
+    // A geometry-domain constraint's delta, if one was measured for this mover:
+    // the pose walk solved the constraint and stashed the map from the target's
+    // authored transform to the solved one, and THIS is the Matrix revision
+    // that same constraint contributes. Find-guarded, and here rather than in
+    // the assemble because the transform table is what this step declares --
+    // the assemble only READS it, and a step that writes a slot it declared as
+    // a read is the declaration the executor trusts being wrong.
     if (revision->constraintDelta >= 0 &&
         B.deltaPresent[size_t(revision->constraintDelta)]) {
         revision->transform = B.deltaValues[size_t(revision->constraintDelta)];
         revision->haveTransform = true;
     }
-    // A read phase naming a POINT IN THE POSE WALK, which is the general
-    // form `base`, `preceding` and `final` abbreviate: the provider's matrix
-    // as it stood immediately after one named constraint, out of the frame
-    // records bound at Build instead of out of the dense tables.
-    // AFTER the delta, exactly as the dynamic path orders the two, and the
-    // two can no more both apply here than they can there: an AtPrim phase
-    // needs a bound rigExec:transform to name a frame chain of, and a
-    // geometry-domain constraint's binding.transform is empty -- which is
-    // what makes its delta the only source of the matrix.
-    // The first valid record of the list answers: the last record the walk
-    // made under the phase's prim. A list with none valid leaves the
-    // dense-table value standing and says nothing, as the dynamic path does:
-    // every named constraint under the prim declined to record this run (a
-    // geometry-domain exit, an unusable frame).
+    // A read phase naming a POINT IN THE POSE WALK, which is the general form
+    // `base`, `preceding` and `final` abbreviate: the provider's matrix as it
+    // stood immediately after one named constraint, out of the frame records
+    // bound at Build instead of out of the dense tables. The first valid record
+    // of the list answers: the last record the walk made under the phase's
+    // prim.
     const auto phased = [&B](const std::vector<int> &records,
                              GfMatrix4d *matrix) {
         for (const int record : records) {
@@ -2727,8 +2688,6 @@ FoldInfluences(const RigExecBakedProgramImpl &B,
     const bool atPrim =
         revision->binding.transformPhase.kind == RigExecReadPhaseKind::AtPrim;
     if (atPrim && phased(revision->transformRecords, &revision->transform)) {
-        // Set rather than left alone: the dynamic path binds its matrix
-        // pointer whenever the store answered, whatever the tap held.
         revision->haveTransform = true;
     }
     const bool hasReference = revision->op == RigExecRevisionOp::Matrix &&
@@ -3112,7 +3071,6 @@ RigExecBakedOverlayPointReads(RigExecBakedProgramImpl *program,
                           B.chains[size_t(binding.candidates[0].chain)].result)
                     : VtValue(VtVec3fArray(points, points + count)));
         } else if (binding.diagnoseMiss) {
-            // A `preceding` tail is silent, as it is in the dynamic walk.
             diagnostics->push_back(binding.missDiagnostic);
         }
     }
@@ -3178,12 +3136,8 @@ RevisionValues(RigExecBakedProgramImpl &B,
             values.borrowedBaseCount = basePointCount;
         }
     }
-    // The driver solver's aggregate, which is what the dynamic path's
-    // per-revision tap resolves to: exec computes one and the pose walk then
-    // OVERRIDES the tap with its own solve, so the program's table -- the
-    // same solve, by the same kernel -- is the authoritative value on both
-    // paths. Declared as a read of the Aggregate slot, which is the edge
-    // from the solver's Solve step to this revision.
+    // Declared as a read of the Aggregate slot, which is the edge from the
+    // solver's Solve step to this revision.
     if (revision->driverFramesSolver >= 0) {
         values.driverFrames =
             &B.aggregates[size_t(revision->driverFramesSolver)];
@@ -3198,18 +3152,14 @@ RevisionValues(RigExecBakedProgramImpl &B,
     return values;
 }
 
-// The blend channels. Gathered here rather than inside the assembler
-// because the dynamic walk gathers them here too, and the ORDER is the
-// whole contract: channels in `binding.blendInputs` order, which compile
-// sorted, and each channel's samples stable-sorted by activation. Float
-// addition is not associative, so a different order is a different last
-// bit of every point.
-// The reads are the generation-wide resolved inputs' and NOT this
-// revision's phase overlay's: a sample's own phase is looked up directly,
-// which is what lets one blend sample read another chain while the rest of
-// the channel reads the stage. \p read answers each one: the stage gather
-// through the resolved inputs, the leaf gather from the leaves the prologue
-// sampled through them. \p record writes each dense sample's `lastPoints`.
+// The blend channels. Float addition is not associative, so a different order
+// is a different last bit of every point. The reads are the generation-wide
+// resolved inputs' and NOT this revision's phase overlay's: a sample's own
+// phase is looked up directly, which is what lets one blend sample read another
+// chain while the rest of the channel reads the stage. \p read answers each
+// one: the stage gather through the resolved inputs, the leaf gather from the
+// leaves the prologue sampled through them. \p record writes each dense
+// sample's `lastPoints`.
 template <class Read>
 void
 GatherBlendChannels(RigExecBakedProgramImpl &B,
@@ -3226,10 +3176,6 @@ GatherBlendChannels(RigExecBakedProgramImpl &B,
         RigExecBakedProgramImpl::GeomBlendChannel &bound =
             revision->blendChannels[c];
         RigExecBlendChannel channel;
-        // A pose-driven weight is this run's slot -- unless an override
-        // stands on the weight itself, which the dynamic walk's lookup
-        // finds before it follows the connection and which the resolved
-        // inputs therefore answer here too.
         if (revision->blendChunked && record) {
             channel.weight = 0.0f;
         } else if (bound.poseWeight >= 0 && !read.WeightHeld(bound)) {
@@ -3250,9 +3196,6 @@ GatherBlendChannels(RigExecBakedProgramImpl &B,
                 channel.samples.push_back(std::move(sample));
                 continue;
             }
-            // A phased sample reads the version it is bound to, and the
-            // resolved input when that chain read no base: silently,
-            // as the dynamic gather falls back.
             const GfVec3f *phased = nullptr;
             size_t phasedCount = 0;
             const bool answered =
@@ -6235,12 +6178,11 @@ RigExecBakedPublishGeometry(RigExecBakedProgramImpl *program,
             const RigExecBakedProgramImpl::GeomRevision &revision =
                 chain.revisions[size_t(revisionIndex)];
             // `haveBase` for the same reason the two arms below test it: a
-            // chain whose points stopped reading at this time drives
-            // nothing, and the assemble that would have refreshed the field
-            // returned before it ever looked at the packet. Its last answer
-            // is then last FRAME's, and publishing that is the one shape of
-            // staleness a value comparison cannot catch -- the dynamic path
-            // publishes no field at all for such a chain.
+            // chain whose points stopped reading at this time drives nothing,
+            // and the assemble that would have refreshed the field returned
+            // before it ever looked at the packet. Its last answer is then last
+            // FRAME's, and publishing that is the one shape of staleness a
+            // value comparison cannot catch.
             if (B.publishWeightFields && chain.haveBase &&
                 revision.weightFieldPublished) {
                 RigExecResolvedWeightField &field =

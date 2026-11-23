@@ -500,9 +500,6 @@ void RigExecRevisionKernelTouchTokens();
 /// The envelope is resolved and applied INSIDE the kernel, unlike the
 /// point3f[] ops: the weighted-matrix rule folds the weight into the movement
 /// (p' = q + w (T q - q)) rather than blending a finished result.
-///
-/// Shared by the mover-graph revision node and by the baked program, which
-/// runs the same operation with no VdfNetwork around it.
 bool RigExecApplyMatrixKernel(const RigExecMoverParameters &p,
                               std::vector<GfVec3f> *pts, bool useSimd);
 
@@ -511,9 +508,6 @@ bool RigExecApplyMatrixKernel(const RigExecMoverParameters &p,
 ///
 /// The envelope is NOT applied here: the caller blends the result against the
 /// preceding revision, because that is where the "apply once" rule lives.
-///
-/// Shared by the mover-graph revision node and by the baked program, which
-/// runs the same operation with no VdfNetwork around it.
 bool RigExecApplySkinKernel(const RigExecMoverParameters &p,
                             std::vector<GfVec3f> *pts, bool useSimd);
 /// One vertex range of the matrix operation, against an envelope the caller
@@ -638,12 +632,6 @@ bool RigExecApplySkinKernelWithTransforms(
 /// The envelope is resolved and applied INSIDE the kernel, like the matrix
 /// kernel and unlike the point3f[] ops: the deltas are added to the preceding
 /// revision and blended back against it in one pass.
-///
-/// ONE definition, called by the mover-graph revision node and by the baked
-/// program, which runs the same operation with no VdfNetwork around it: a
-/// second copy of the blend would have to agree about where the envelope is
-/// folded in, and the rigs that would show a disagreement are the ones no
-/// fixture happened to have.
 bool RigExecApplyBlendShapeKernel(
     const RigExecMoverParameters &p, std::vector<GfVec3f> *pts,
     RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache = nullptr);
@@ -655,11 +643,6 @@ bool RigExecApplyBlendShapeKernel(
 ///
 /// The envelope is resolved and applied INSIDE the kernel, as for the matrix
 /// and blend-shape kernels.
-///
-/// ONE definition, called by the mover-graph revision node and by the baked
-/// program, which maintains the same property with no VdfNetwork around it:
-/// two copies would have to keep agreeing about the cardinality rules that
-/// decide when a recomputation fails instead of truncating.
 bool RigExecApplyDerivedKernel(RigExecRevisionOp op,
                                const RigExecMoverParameters &p,
                                std::vector<GfVec3f> *pts);
@@ -957,8 +940,6 @@ bool RigExecRunProjectorTarget(
     GfMatrix4d *matrix, std::vector<std::string> *diagnostics,
     RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache = nullptr);
 
-/// RigExecReadProjectorTarget then RigExecRunProjectorTarget: what the
-/// dynamic walk and the baked program both call.
 bool RigExecEvaluateProjectorTarget(const UsdPrim &projectorPrim,
                                     RigExecRevisionOp op,
                                     const RigExecRevisionBinding &binding,

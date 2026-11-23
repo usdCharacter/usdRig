@@ -428,7 +428,6 @@ RigExecRigEvaluator::_CompilePublish(_CompileAttempt &attempt)
     auto &newSpaceSwitches = attempt.newSpaceSwitches;
     auto &newCompiledRigRestsConstant = attempt.newCompiledRigRestsConstant;
     auto &newPhaseCheckpoints = attempt.newPhaseCheckpoints;
-    // Publish descriptor facts atomically before native graph translation.
     _movers = std::move(newMovers);
     _jointPaths = std::move(newJointPaths);
     _controlPaths = std::move(newControlPaths);

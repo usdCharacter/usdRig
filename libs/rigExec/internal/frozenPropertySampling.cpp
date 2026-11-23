@@ -61,10 +61,8 @@ _ChainBoundInput(const RigExecChainSampleRevision &revision, size_t i)
 
 namespace frozenDetail {
 
-// Mirror of the compile pass that fills the evaluator's property chains:
-// every math mover in mover order, each over its one exact property
-// target. Validation guarantees the shape for a compiled rig; anything
-// else fails the bind, never the evaluation.
+// Validation guarantees the shape for a compiled rig; anything else fails the
+// bind, never the evaluation.
 bool
 _DiscoverChainMovers(const RigExecRigEvaluator &evaluator,
                      std::vector<_ChainMoverDesc> *out, std::string *error)
@@ -90,10 +88,8 @@ _DiscoverChainMovers(const RigExecRigEvaluator &evaluator,
     return true;
 }
 
-// Mirror of the compile pass that orders the chains: producers first, over
-// the same dependency edges (every mover attribute's connection walk, plus
-// the weight prims behind rigExec:weightObject). Same walk, same sets,
-// same depth-first visit -- so the same order, deterministically.
+// Same walk, same sets, same depth-first visit -- so the same order,
+// deterministically.
 bool
 _OrderDiscoveredChains(
     const UsdStageRefPtr &stage,
@@ -206,10 +202,9 @@ _OrderDiscoveredChains(
     return true;
 }
 
-// Mirror of _BindInput: one chain input pinned, or empty when the mover
-// authors none. Constants fold at Default rather than at the live path's
-// first-run time; a constant reads identically at every time code, so the
-// pins agree whatever frame ran first.
+// Constants fold at Default rather than at the live path's first-run time; a
+// constant reads identically at every time code, so the pins agree whatever
+// frame ran first.
 RigExecChainSampleInput
 _BindChainInput(const UsdPrim &prim, const TfToken &name)
 {
