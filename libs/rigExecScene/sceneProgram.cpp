@@ -25,15 +25,20 @@ RunsOnOps(const RigExecSceneGeometryOp &op)
            RigExecGeometryOpSupported(kind);
 }
 // Decided up front: a record without an op (a degenerate one, a joint
-// group FK chain), an IK/FK match and a windowed constraint run natively.
+// group FK chain) and an IK/FK match run natively.
 bool
 RunsPoseOnOps(const RigExecSceneOperation &operation)
 {
     if (const auto *op = std::get_if<RigExecSolverGraphBinding>(&operation))
         return RigExecSolverOpSupported(op->record);
-    if (const auto *op = std::get_if<RigExecConstraintGraphBinding>(&operation))
-        return RigExecConstraintOpSupported(op->structural.record.kind) &&
-               !op->match && !op->windowFrames;
+    if (const auto *op =
+            std::get_if<RigExecConstraintGraphBinding>(&operation)) {
+        const RigExecConstraintKind kind = op->structural.record.kind;
+        if (kind == RigExecConstraintKind::Harmonics)
+            return true;
+        return RigExecConstraintOpSupported(kind) && !op->match &&
+               !op->windowFrames;
+    }
     return std::holds_alternative<RigExecBoundAutoClavicle>(operation);
 }
 // Weight combines always run on the op core.

@@ -9,11 +9,13 @@
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/rigDesc.h"
 #include "rigExecMath/autoClavicleKernel.h"
+#include "rigExecMath/harmonicsKernel.h"
 #include "rigExecScene/constraintProgram.h"
 #include "rigExecScene/solverProgram.h"
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -134,8 +136,8 @@ struct RigExecConstraintOpNode {
     bool hasSpace = false, hasWorldUp = false;
 };
 
-/// True for the constraint kinds this bridge maps: every kind but IkFkMatch
-/// and Harmonics.
+/// True for the constraint kinds RigExecAddConstraintOp maps: every kind but
+/// IkFkMatch and Harmonics, which have bridges of their own below.
 bool RigExecConstraintOpSupported(RigExecConstraintKind kind);
 
 /// Adds \p record's op node, its payload from \p record and \p input.
@@ -206,6 +208,54 @@ bool RigExecWriteAutoClavicleOpInputs(
 bool RigExecReadAutoClavicleOpOutput(const RigExecAutoClavicleOpNode &node,
                                      const RigExecEvaluator &evaluator,
                                      double delta[3], GfMatrix4d *shifted);
+
+/// A harmonics constraint's settings, baked into its op's payload.
+struct RigExecHarmonicsOpConstants {
+    RigExecHarmonicsSettings settings;
+    bool matchVelocity = true;
+    /// The window's earlier ticks; 0 without a window.
+    uint32_t frames = 0;
+};
+
+/// One frame of a harmonics constraint, read and gated by the host: a
+/// space that could not be read is a zero matrix, and a gate the host
+/// closed (a failed read, a weight out of range) is a disabled constraint.
+struct RigExecHarmonicsOpInputs {
+    RigExecPointFrame incoming;
+    std::optional<GfMatrix4d> space;
+    bool enabled = true;
+    double weight = 1.0, amplitude = 1.0, decay = 3.0, termination = 0.0;
+    GfVec3d axisAmplitude = GfVec3d(1.0);
+};
+
+/// A harmonics constraint's op node and its host-written ports.
+struct RigExecHarmonicsOpNode {
+    RigExecInputId in, space, enabled, weight, amplitude, decay, termination,
+        axisAmplitude;
+    RigExecOutputId out, status;
+    RigExecHarmonicsOpConstants constants;
+    bool hasSpace = false;
+};
+
+bool RigExecAddHarmonicsOp(const RigExecHarmonicsOpConstants &constants,
+                           const RigExecHarmonicsOpInputs &input,
+                           RigExecRigDescBuilder *builder,
+                           RigExecHarmonicsOpNode *node,
+                           std::string *error = nullptr);
+
+/// Writes one frame's values. False, writing nothing, where a setting
+/// baked into the node differs: the node must then be rebuilt.
+bool RigExecWriteHarmonicsOpInputs(const RigExecHarmonicsOpConstants &constants,
+                                   const RigExecHarmonicsOpInputs &input,
+                                   const RigExecHarmonicsOpNode &node,
+                                   RigExecEvaluator *evaluator,
+                                   std::string *error = nullptr);
+
+/// The op's frame and its rigExecOps::HarmonicsStatus. False where the node
+/// has no output.
+bool RigExecReadHarmonicsOpOutput(const RigExecHarmonicsOpNode &node,
+                                  const RigExecEvaluator &evaluator,
+                                  RigExecPointFrame *frame, uint32_t *status);
 
 } // namespace rigExec
 

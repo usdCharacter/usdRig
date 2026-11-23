@@ -9,6 +9,7 @@
 #include "rigExecGraph/windowHistory.h"
 #include "rigExecMath/harmonicsKernel.h"
 #include "rigExecMath/ikFkMatchKernel.h"
+#include "rigExecOps/constraint/harmonicsOps.h"
 #include "rigExec/internal/frameExtraction.h"
 #include "pxr/base/gf/matrix4d.h"
 namespace rigExec {
@@ -150,13 +151,161 @@ RigExecBindConstraintGraph(const RigExecSceneDescriptors &scene,
     return true;
 }
 namespace {
+// RunHarmonics with the op core capturing and solving. The host reads and
+// gates as natively, so the same reads reach \p error in the same order; the
+// window's ring and capture stay the scene runtime's.
+bool
+RunHarmonicsOnOps(const RigExecConstraintGraphBinding &bound,
+                  RigExecTypedValueStore *store, RigExecWindowRun *window,
+                  RigExecPoseOpRunner &ops, const RigExecPointFrame &input,
+                  std::string *error)
+{
+    using rigExecOps::HarmonicsStatus;
+    const auto &descriptor = bound.structural;
+    const auto passThrough = [&](const std::string &reason) {
+        store->Publish(bound.target.output, input, false, false, 1, reason);
+        return reason.empty() || Fail(error, reason);
+    };
+    RigExecHarmonicsOpConstants constants;
+    constants.settings.waves = descriptor.harmonicsWaves;
+    constants.settings.waveLength = descriptor.harmonicsWaveLength;
+    constants.settings.frequency = descriptor.harmonicsFrequency;
+    constants.settings.ignoreFirstFrame = descriptor.harmonicsIgnoreFirstFrame;
+    constants.matchVelocity = descriptor.harmonicsMatchVelocity;
+    constants.frames = bound.windowFrames;
+    RigExecHarmonicsOpInputs in;
+    in.incoming = input;
+    if (bound.target.carry != UINT64_MAX) {
+        VtValue matrix;
+        const bool read = RigExecReadSceneGraphValue(*store, bound.target.carry,
+                                                     &matrix, true) &&
+                          matrix.IsHolding<GfMatrix4d>();
+        in.space = read ? matrix.UncheckedGet<GfMatrix4d>() : GfMatrix4d(0.0);
+    }
+    uint32_t status = 0;
+    RigExecPointFrame frame;
+    RigExecWindowPacketPtr captured;
+    const auto run = [&](bool captureOnly) {
+        const bool ran = RigExecRunHarmonicsOp(
+            constants, in, window && window->ring ? window->ring : nullptr,
+            captureOnly, ops, &captured, &frame, &status, error);
+        if (!ran)
+            captured.reset();
+        if (window && window->capture &&
+            !RigExecWindowPacketsEqual(*window->capture, captured))
+            *window->capture = captured;
+        return ran;
+    };
+    const auto refused = [&] {
+        return passThrough(error && !error->empty() ? *error
+                                                    : "harmonics op refused");
+    };
+    if (window && window->captureOnly)
+        return run(true) ? passThrough({}) : refused();
+    const auto read = [&](const char *name, VtValue *value) {
+        return RigExecReadBoundGraphInput(bound.inputs, name, *store, value,
+                                          error);
+    };
+    // A gate the host closes still captures, as natively.
+    std::string gate;
+    bool closed = false;
+    VtValue enabled;
+    if (!read(SchemaAttrText::inputsEnabled, &enabled)) {
+        closed = true;
+        gate = error ? *error : "constraint enabled input unavailable";
+    } else if (enabled.IsHolding<bool>() && !enabled.UncheckedGet<bool>()) {
+        in.enabled = false;
+    } else if (bound.target.weight != UINT64_MAX) {
+        VtValue field;
+        if (!RigExecReadSceneGraphValue(*store, bound.target.weight, &field) ||
+            !field.IsHolding<VtFloatArray>() ||
+            field.UncheckedGet<VtFloatArray>().size() != 1) {
+            closed = true;
+            gate = "constraint weight field producer unavailable";
+        } else {
+            in.weight = field.UncheckedGet<VtFloatArray>()[0];
+        }
+    } else {
+        VtValue value;
+        if (!read(SchemaAttrText::inputsDefaultWeight, &value)) {
+            closed = true;
+            gate = error ? *error : "constraint weight unavailable";
+        } else {
+            if (value.IsHolding<float>())
+                in.weight = value.UncheckedGet<float>();
+            if (!std::isfinite(in.weight) || in.weight < 0.0 ||
+                in.weight > 1.0) {
+                closed = true;
+                gate = "constraint weight outside finite [0,1]";
+            }
+        }
+    }
+    if (closed || !in.enabled) {
+        in.enabled = false;
+        return run(false) ? passThrough(gate) : refused();
+    }
+    // Natively these reads follow the solve's gates; a failed one reaches
+    // \p error only when the solve gets that far.
+    std::string failedRead;
+    const auto scalar = [&](const char *name, double fallback) {
+        VtValue value;
+        std::string why;
+        if (!RigExecReadBoundGraphInput(bound.inputs, name, *store, &value,
+                                        &why)) {
+            failedRead = why;
+            return fallback;
+        }
+        if (value.IsHolding<float>())
+            return double(value.UncheckedGet<float>());
+        return value.IsHolding<double>() ? value.UncheckedGet<double>()
+                                         : fallback;
+    };
+    in.amplitude = scalar(SchemaAttrText::inputsAmplitude, 1.0);
+    in.decay = scalar(SchemaAttrText::inputsDecay, 3.0);
+    in.termination = scalar(SchemaAttrText::inputsTermination, 0.0);
+    {
+        VtValue value;
+        std::string why;
+        if (!RigExecReadBoundGraphInput(bound.inputs,
+                                        SchemaAttrText::inputsAxisAmplitude,
+                                        *store, &value, &why))
+            failedRead = why;
+        else if (value.IsHolding<GfVec3d>())
+            in.axisAmplitude = value.UncheckedGet<GfVec3d>();
+    }
+    if (!run(false))
+        return refused();
+    if (!(in.weight <= 0.0) && captured && error && !failedRead.empty())
+        *error = failedRead;
+    switch (HarmonicsStatus(status)) {
+    case HarmonicsStatus::Applied:
+        store->Publish(bound.target.output, frame, false, false, 1, {});
+        return true;
+    case HarmonicsStatus::PassedThrough:
+        return passThrough({});
+    case HarmonicsStatus::NoMeasure:
+        return passThrough("harmonics constraint could not measure its target");
+    case HarmonicsStatus::NoMeasureDegenerateSpace:
+        return passThrough("harmonics constraint could not measure its target "
+                           "in a degenerate rigExec:space");
+    case HarmonicsStatus::NonFinite:
+        return passThrough("harmonics constraint has a non-finite input");
+    case HarmonicsStatus::InvalidResult:
+        return passThrough(
+            "harmonics constraint produced an invalid or degenerate frame");
+    case HarmonicsStatus::Unusable:
+        break;
+    }
+    return refused();
+}
+
 // RigExecHarmonicsConstraint: the bakedHarmonics.cpp body over typed values.
 // The capture is the incoming origin in rigExec:space and is taken before any
 // gate; an unusable input captures nothing, which ends the history before it.
 bool
 RunHarmonics(const RigExecConstraintGraphBinding &bound,
              RigExecTypedValueStore *store, RigExecWindowRun *window,
-             std::string *error)
+             RigExecPoseOpRunner *ops, std::string *error)
 {
     const auto &descriptor = bound.structural;
     const auto publish = [&](const RigExecPointFrame &frame, bool blocked,
@@ -176,6 +325,8 @@ RunHarmonics(const RigExecConstraintGraphBinding &bound,
         publish(invalid, true, "constraint incoming producer unavailable");
         return Fail(error, "constraint incoming producer unavailable");
     }
+    if (ops)
+        return RunHarmonicsOnOps(bound, store, window, *ops, input, error);
     const auto passThrough = [&](const std::string &reason) {
         publish(input, false, reason);
         return reason.empty() || Fail(error, reason);
@@ -658,7 +809,7 @@ RigExecRunConstraintGraph(const RigExecConstraintGraphBinding &bound,
     if (!store || bound.target.output >= store->values.size())
         return Fail(error, "invalid constraint graph storage");
     if (bound.structural.record.kind == RigExecConstraintKind::Harmonics)
-        return RunHarmonics(bound, store, window, error);
+        return RunHarmonics(bound, store, window, ops, error);
     if (bound.match)
         return RunIkFkMatch(bound, store, error);
     auto descriptor = bound.structural;

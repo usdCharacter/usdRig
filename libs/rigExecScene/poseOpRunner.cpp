@@ -2,6 +2,7 @@
 
 #include "rigExec/api/compile.h"
 #include "rigExec/api/types.h"
+#include "rigExecOps/constraint/harmonicsOps.h"
 
 namespace rigExec {
 
@@ -147,6 +148,60 @@ RigExecRunAutoClavicleOp(const RigExecAutoClavicleConstants &constants,
     if (!RigExecReadAutoClavicleOpOutput(runner.clavicle, *runner.evaluator,
                                          delta, shifted))
         return Fail(error, "auto clavicle op has no output");
+    return true;
+}
+
+bool
+RigExecRunHarmonicsOp(const RigExecHarmonicsOpConstants &constants,
+                      const RigExecHarmonicsOpInputs &input,
+                      const RigExecWindowRing *ring, bool captureOnly,
+                      RigExecPoseOpRunner &runner,
+                      RigExecWindowPacketPtr *capture, RigExecPointFrame *frame,
+                      uint32_t *status, std::string *error)
+{
+    if (!capture || !frame || !status)
+        return Fail(error, "null harmonics output");
+    capture->reset();
+    *frame = input.incoming;
+    const bool built = runner.evaluator &&
+                       runner.built == RigExecPoseOpRunner::Built::Harmonics;
+    const bool ready = Ready(
+        runner, built,
+        [&](RigExecRigDescBuilder &builder) {
+            runner.built = RigExecPoseOpRunner::Built::Harmonics;
+            return RigExecAddHarmonicsOp(constants, input, &builder,
+                                         &runner.harmonics, error);
+        },
+        [&](std::string *why) {
+            return RigExecWriteHarmonicsOpInputs(constants, input,
+                                                 runner.harmonics,
+                                                 runner.evaluator.get(), why);
+        },
+        error);
+    if (!ready)
+        return false;
+    runner.rings.resize(1);
+    if (ring)
+        runner.rings[0] = *ring;
+    else
+        runner.rings[0].clear();
+    if (!runner.evaluator->SetWindowRings(runner.rings, error))
+        return false;
+    if (captureOnly) {
+        if (!runner.evaluator->EvaluateHistory(error))
+            return false;
+        const RigExecWindowRing &pushed = runner.evaluator->GetWindowRings()[0];
+        if (!pushed.empty())
+            *capture = pushed.back();
+        *status = uint32_t(rigExecOps::HarmonicsStatus::PassedThrough);
+        return true;
+    }
+    if (!runner.evaluator->Evaluate(error))
+        return false;
+    *capture = runner.evaluator->GetWindowCaptures()[0];
+    if (!RigExecReadHarmonicsOpOutput(runner.harmonics, *runner.evaluator,
+                                      frame, status))
+        return Fail(error, "harmonics op has no output");
     return true;
 }
 

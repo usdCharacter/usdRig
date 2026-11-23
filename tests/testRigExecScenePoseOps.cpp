@@ -1,5 +1,5 @@
 // A scene solver or constraint run as rigExecOps' pose ops gives the bits
-// RigExecRunSolver and RigExecRunConstraint give: per kind over its
+// RigExecRunSolver, RigExecRunConstraint and the harmonics body give: per kind over its
 // settings, through refusals and a moved setting's rebuild, and per
 // operation of authored rigs, where the scene program's own publish, a
 // native rerun and an op rerun are compared value for value.
@@ -9,10 +9,13 @@
 #include "rigExec/api/compile.h"
 #include "rigExec/api/types.h"
 #include "rigExecBuiltins/builtins.h"
+#include "rigExecGraph/windowHistory.h"
+#include "rigExecMath/harmonicsKernel.h"
 #include "rigExecMath/splineIk.h"
 #include "rigExecScene/constraintGraphBinding.h"
 #include "rigExecScene/solverGraphBinding.h"
 #include "rigExecSceneProgramDrive.h"
+#include "rigExecSchema/schemaNames.h"
 
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/plug/registry.h"
@@ -823,6 +826,8 @@ ConstraintName(RigExecConstraintKind kind)
         return "Aim";
     case RigExecConstraintKind::SingleChainIk:
         return "SingleChainIk";
+    case RigExecConstraintKind::Harmonics:
+        return "Harmonics";
     default:
         return "?";
     }
@@ -931,6 +936,181 @@ TestAutoClavicle()
             }
 }
 
+/// A harmonics constraint natively and on the op core, run on one store:
+/// the publish, the error and the capture, bit for bit.
+struct HarmonicsRun {
+    RigExecTypedValueState state;
+    std::string error;
+    RigExecWindowPacketPtr capture;
+    bool ran = false;
+};
+
+HarmonicsRun
+RunHarmonicsOnce(const RigExecConstraintGraphBinding &bound,
+                 RigExecTypedValueStore &store, const RigExecWindowRing *ring,
+                 bool captureOnly, RigExecPoseOpRunner *ops)
+{
+    const RigExecTypedValueState saved =
+        store.values[size_t(bound.target.output)];
+    HarmonicsRun run;
+    RigExecWindowRun window;
+    window.ring = ring;
+    window.capture = &run.capture;
+    window.captureOnly = captureOnly;
+    run.ran = RigExecRunConstraintGraph(bound, &store, &run.error,
+                                        ring ? &window : nullptr, ops);
+    run.state = store.values[size_t(bound.target.output)];
+    store.values[size_t(bound.target.output)] = saved;
+    return run;
+}
+
+bool
+SameHarmonics(const HarmonicsRun &a, const HarmonicsRun &b)
+{
+    return a.ran == b.ran && a.error == b.error &&
+           SameState(a.state, b.state) &&
+           RigExecWindowPacketsEqual(a.capture, b.capture);
+}
+
+/// Frame by frame over a ring the native captures fill, on one runner that
+/// rebuilds when a setting moves: with and without a space (a singular and
+/// an unreadable one), on capture-only ticks, disabled, at zero and out of
+/// range weights, with a field weight and a broken field, with a
+/// non-finite amplitude and an unusable incoming frame.
+void
+TestHarmonics()
+{
+    enum Value : RigExecValueId {
+        kIncoming,
+        kOutput,
+        kCarry,
+        kField,
+        kEnabled,
+        kWeight,
+        kAmplitude,
+        kDecay,
+        kTermination,
+        kAxis,
+        kCount
+    };
+    struct Case {
+        const char *label;
+        int space = 0; // 0 none, 1 usable, 2 singular, 3 unreadable
+        bool enabled = true;
+        float weight = 0.8f;
+        int field = 0; // 0 none, 1 usable, 2 broken
+        double amplitude = 1.3;
+        bool ignoreFirst = true;
+        bool unusableAt3 = false;
+    };
+    const Case cases[] = {
+        {"plain"},
+        {"space", 1},
+        {"singular space", 2},
+        {"unreadable space", 3},
+        {"disabled", 0, false},
+        {"zero weight", 0, true, 0.0f},
+        {"weight out of range", 0, true, 1.5f},
+        {"field weight", 1, true, 0.8f, 1},
+        {"broken field", 0, true, 0.8f, 2},
+        {"non-finite amplitude", 0, true, 0.8f, 0,
+         std::numeric_limits<double>::quiet_NaN()},
+        {"from rest", 1, true, 1.0f, 0, 0.7, false},
+        {"unusable frame", 0, true, 0.8f, 0, 1.3, true, true},
+    };
+    RigExecPoseOpRunner runner;
+    int applied = 0;
+    for (const Case &c : cases) {
+        RigExecConstraintGraphBinding bound;
+        bound.structural.record.kind = RigExecConstraintKind::Harmonics;
+        bound.structural.harmonicsWaves = 2.0;
+        bound.structural.harmonicsWaveLength = 3.0;
+        bound.structural.harmonicsFrequency = 1.0;
+        bound.structural.harmonicsIgnoreFirstFrame = c.ignoreFirst;
+        bound.target.incoming = kIncoming;
+        bound.target.output = kOutput;
+        if (c.space)
+            bound.target.carry = kCarry;
+        if (c.field)
+            bound.target.weight = kField;
+        RigExecHarmonicsSettings settings;
+        settings.waves = 2.0;
+        settings.waveLength = 3.0;
+        bound.windowFrames = uint32_t(RigExecHarmonicsWindowFrames(settings));
+        const auto direct = [](RigExecValueId id) {
+            RigExecBoundGraphInput input;
+            input.direct = id;
+            return input;
+        };
+        bound.inputs[SchemaAttrText::inputsEnabled] = direct(kEnabled);
+        bound.inputs[SchemaAttrText::inputsDefaultWeight] = direct(kWeight);
+        bound.inputs[SchemaAttrText::inputsAmplitude] = direct(kAmplitude);
+        bound.inputs[SchemaAttrText::inputsDecay] = direct(kDecay);
+        bound.inputs[SchemaAttrText::inputsTermination] = direct(kTermination);
+        bound.inputs[SchemaAttrText::inputsAxisAmplitude] = direct(kAxis);
+
+        RigExecTypedValueStore store(kCount);
+        GfMatrix4d space(1.0);
+        space.SetRotate(GfRotation(GfVec3d(0.3, 1.0, 0.2), 35.0));
+        space.SetTranslateOnly(GfVec3d(0.5, -2.0, 1.25));
+        if (c.space == 2)
+            space = GfMatrix4d(1.0).SetScale(GfVec3d(1.0, 0.0, 1.0));
+        store.PublishSource(kCarry,
+                            c.space == 3 ? VtValue(1.0f) : VtValue(space));
+        VtFloatArray field(c.field == 2 ? 0 : 1, 0.6f);
+        store.PublishSource(kField, VtValue(field));
+        store.PublishSource(kEnabled, VtValue(c.enabled));
+        store.PublishSource(kWeight, VtValue(c.weight));
+        store.PublishSource(kAmplitude, VtValue(c.amplitude));
+        store.PublishSource(kDecay, VtValue(2.5f));
+        store.PublishSource(kTermination, VtValue(0.1));
+        store.PublishSource(kAxis, VtValue(GfVec3d(1.0, 0.5, 2.0)));
+
+        RigExecWindowRing ring;
+        for (int t = 0; t < 9; ++t) {
+            const double s = double(t);
+            RigExecPointFrame incoming =
+                Frame(GfVec3d(0.3 * s * s, std::sin(0.7 * s), -0.4 * s),
+                      GfVec3d(0, 1, 0), 9.0 * s);
+            if (c.unusableAt3 && t == 3)
+                incoming.flags = 0;
+            store.Publish(kIncoming, incoming);
+            for (const bool captureOnly : {false, true}) {
+                const HarmonicsRun native =
+                    RunHarmonicsOnce(bound, store, &ring, captureOnly, nullptr);
+                const HarmonicsRun op =
+                    RunHarmonicsOnce(bound, store, &ring, captureOnly, &runner);
+                const bool same = SameHarmonics(native, op);
+                if (!same)
+                    std::printf("harmonics %s at %d%s: native %d (%s), op %d "
+                                "(%s)\n",
+                                c.label, t, captureOnly ? " captured only" : "",
+                                int(native.ran), native.error.c_str(),
+                                int(op.ran), op.error.c_str());
+                CHECK(same);
+                if (!captureOnly && native.ran && native.error.empty() &&
+                    !SameFrame(std::get<RigExecPointFrame>(native.state.value),
+                               incoming))
+                    ++applied;
+                if (!captureOnly) {
+                    ring.push_back(native.capture);
+                    if (ring.size() > bound.windowFrames)
+                        ring.erase(ring.begin());
+                }
+            }
+        }
+        // Without a window: no history, nothing rings.
+        const bool same = SameHarmonics(
+            RunHarmonicsOnce(bound, store, nullptr, false, nullptr),
+            RunHarmonicsOnce(bound, store, nullptr, false, &runner));
+        if (!same)
+            std::printf("harmonics %s without a window differs\n", c.label);
+        CHECK(same);
+    }
+    std::printf("harmonics: %d applied comparisons\n", applied);
+    CHECK(applied > 0);
+}
+
 void
 CompareRig(const std::string &label, const UsdStageRefPtr &stage,
            const SdfPath &rig, int first, int last)
@@ -980,6 +1160,28 @@ CompareRig(const std::string &label, const UsdStageRefPtr &stage,
                            std::get_if<RigExecConstraintGraphBinding>(
                                &operations[i])) {
                 const RigExecConstraintKind kind = op->structural.record.kind;
+                if (kind == RigExecConstraintKind::Harmonics) {
+                    // The drive pushes no history: the scene read an empty
+                    // ring.
+                    const RigExecWindowRing empty;
+                    const RigExecWindowRing *ring =
+                        op->windowFrames ? &empty : nullptr;
+                    const HarmonicsRun native =
+                        RunHarmonicsOnce(*op, store, ring, false, nullptr);
+                    const HarmonicsRun onOps =
+                        RunHarmonicsOnce(*op, store, ring, false, &runners[i]);
+                    const bool same =
+                        SameHarmonics(native, onOps) &&
+                        SameState(native.state,
+                                  store.values[size_t(op->target.output)]);
+                    if (!same)
+                        std::printf("%s: harmonics constraint %zu differs at "
+                                    "%d\n",
+                                    label.c_str(), i, t);
+                    CHECK(same);
+                    ++sceneConstraints[ConstraintName(kind)];
+                    continue;
+                }
                 if (!RigExecConstraintOpSupported(kind) || op->match ||
                     op->windowFrames)
                     continue;
@@ -1060,8 +1262,8 @@ TestAuthoredRigs(const std::string &examples)
                     sceneSolvers[kind]);
         CHECK(sceneSolvers[kind] > 0);
     }
-    for (const char *kind :
-         {"Position", "Rotation", "Scale", "Parent", "Aim", "SingleChainIk"}) {
+    for (const char *kind : {"Position", "Rotation", "Scale", "Parent", "Aim",
+                             "SingleChainIk", "Harmonics"}) {
         std::printf("scene %s constraints compared: %d\n", kind,
                     sceneConstraints[kind]);
         CHECK(sceneConstraints[kind] > 0);
@@ -1099,6 +1301,7 @@ main(int argc, char **argv)
     TestConstraints();
     TestSingleChainIk();
     TestAutoClavicle();
+    TestHarmonics();
     // Each kind's comparisons include solved frames, not only empty ones.
     for (const char *kind : {"fk", "two-bone", "blend", "twist", "ribbon",
                              "spline", "skeleton2d", "constraint"}) {

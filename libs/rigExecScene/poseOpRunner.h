@@ -10,17 +10,20 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace rigExec {
 
 struct RigExecPoseOpRunner {
-    enum class Built { None, Solver, Constraint, AutoClavicle };
+    enum class Built { None, Solver, Constraint, AutoClavicle, Harmonics };
     std::unique_ptr<RigExecEvaluator> evaluator;
     Built built = Built::None;
     RigExecSolverOpNode solver;
     RigExecConstraintOpNode constraint;
     RigExecAutoClavicleOpNode clavicle;
+    RigExecHarmonicsOpNode harmonics;
     RigExecPoseOpScratch scratch;
+    std::vector<RigExecWindowRing> rings;
 };
 
 /// RigExecRunSolver for a record RigExecSolverOpSupported accepts: the same
@@ -46,6 +49,19 @@ bool RigExecRunAutoClavicleOp(const RigExecAutoClavicleConstants &constants,
                               RigExecPoseOpRunner &runner, double delta[3],
                               GfMatrix4d *shifted,
                               std::string *error = nullptr);
+
+/// A harmonics constraint's frame on the op core. The ring and capture stay
+/// the caller's: \p ring (null without a window) is set as the op's window,
+/// and this tick's capture comes back in \p capture. A \p captureOnly tick
+/// runs as the op evaluator's history tick and answers the incoming frame.
+/// \p status is a rigExecOps::HarmonicsStatus.
+bool RigExecRunHarmonicsOp(const RigExecHarmonicsOpConstants &constants,
+                           const RigExecHarmonicsOpInputs &input,
+                           const RigExecWindowRing *ring, bool captureOnly,
+                           RigExecPoseOpRunner &runner,
+                           RigExecWindowPacketPtr *capture,
+                           RigExecPointFrame *frame, uint32_t *status,
+                           std::string *error = nullptr);
 
 } // namespace rigExec
 

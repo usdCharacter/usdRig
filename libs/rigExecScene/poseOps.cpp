@@ -2,6 +2,7 @@
 
 #include "rigExec/api/types.h"
 #include "rigExecOps/constraint/constraintOps.h"
+#include "rigExecOps/constraint/harmonicsOps.h"
 #include "rigExecOps/solver/chainSolverOps.h"
 #include "rigExecOps/solver/frameBlendOps.h"
 #include "rigExecOps/solver/ribbonFramesOps.h"
@@ -1201,6 +1202,91 @@ RigExecReadAutoClavicleOpOutput(const RigExecAutoClavicleOpNode &node,
     for (int r = 0; r < 4; ++r)
         for (int c = 0; c < 4; ++c)
             (*shifted)[r][c] = m->_mtx[r][c];
+    return true;
+}
+
+namespace {
+
+bool
+SameHarmonics(const RigExecHarmonicsOpConstants &a,
+              const RigExecHarmonicsOpConstants &b)
+{
+    return Same(a.settings.waves, b.settings.waves) &&
+           Same(a.settings.waveLength, b.settings.waveLength) &&
+           Same(a.settings.frequency, b.settings.frequency) &&
+           a.settings.ignoreFirstFrame == b.settings.ignoreFirstFrame &&
+           a.matchVelocity == b.matchVelocity && a.frames == b.frames;
+}
+
+} // namespace
+
+bool
+RigExecAddHarmonicsOp(const RigExecHarmonicsOpConstants &constants,
+                      const RigExecHarmonicsOpInputs &input,
+                      RigExecRigDescBuilder *builder,
+                      RigExecHarmonicsOpNode *node, std::string *error)
+{
+    if (!builder || !node)
+        return Fail(error, "null harmonics op destination");
+    using namespace rigExecOps;
+    HarmonicsPayload payload;
+    payload.settings = constants.settings;
+    payload.matchVelocity = constants.matchVelocity;
+    payload.hasSpace = input.space.has_value();
+    payload.frames = constants.frames;
+    RigExecRigDescBuilder &b = *builder;
+    RigExecHarmonicsOpNode n;
+    n.constants = constants;
+    n.hasSpace = payload.hasSpace;
+    const RigExecNodeId id = b.AddOp(Harmonics(), &payload);
+    n.in = b.BindInput(id, HarmonicsIn());
+    if (n.hasSpace)
+        n.space = b.BindInput(id, HarmonicsSpace());
+    n.enabled = b.BindInput(id, HarmonicsEnabled());
+    n.weight = b.BindInput(id, HarmonicsWeight());
+    n.amplitude = b.BindInput(id, HarmonicsAmplitude());
+    n.decay = b.BindInput(id, HarmonicsDecay());
+    n.termination = b.BindInput(id, HarmonicsTermination());
+    n.axisAmplitude = b.BindInput(id, HarmonicsAxisAmplitude());
+    n.out = b.BindOutput(id, HarmonicsOut());
+    n.status = b.BindOutput(id, HarmonicsStatusOut());
+    *node = std::move(n);
+    return true;
+}
+
+bool
+RigExecWriteHarmonicsOpInputs(const RigExecHarmonicsOpConstants &constants,
+                              const RigExecHarmonicsOpInputs &input,
+                              const RigExecHarmonicsOpNode &node,
+                              RigExecEvaluator *e, std::string *error)
+{
+    if (!e)
+        return Fail(error, "null harmonics op evaluator");
+    if (!SameHarmonics(node.constants, constants) ||
+        node.hasSpace != input.space.has_value())
+        return Fail(error, "harmonics settings moved");
+    const uint8_t enabled = input.enabled ? 1 : 0;
+    return Set(e, node.in, ToStd(input.incoming), error) &&
+           (!node.hasSpace || Set(e, node.space, ToStd(*input.space), error)) &&
+           Set(e, node.enabled, enabled, error) &&
+           Set(e, node.weight, input.weight, error) &&
+           Set(e, node.amplitude, input.amplitude, error) &&
+           Set(e, node.decay, input.decay, error) &&
+           Set(e, node.termination, input.termination, error) &&
+           Set(e, node.axisAmplitude, ToStd(input.axisAmplitude), error);
+}
+
+bool
+RigExecReadHarmonicsOpOutput(const RigExecHarmonicsOpNode &node,
+                             const RigExecEvaluator &e,
+                             RigExecPointFrame *frame, uint32_t *status)
+{
+    const auto *out = static_cast<const PointFrame *>(e.GetOutput(node.out));
+    const auto *why = static_cast<const uint32_t *>(e.GetOutput(node.status));
+    if (!out || !why)
+        return false;
+    *frame = FromStd(*out);
+    *status = *why;
     return true;
 }
 
