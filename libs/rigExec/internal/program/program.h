@@ -6,6 +6,7 @@
 
 #include "rigExec/api/compile.h"
 #include "rigExec/internal/program/alignedBuffer.h"
+#include "rigExecGraph/opGraph.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -86,6 +87,10 @@ public:
     RigExecProgram &operator=(const RigExecProgram &) = delete;
 
     uint64_t registryFingerprint = 0;
+    /// The nodes as the shared dependency compiler ordered them, one op
+    /// per node keyed by node id, reading and writing slot ids. Its
+    /// readers map each slot to the nodes that read it.
+    RigExecCompiledGraph graph;
     std::vector<RigExecProgramSlot> slots;
     std::vector<RigExecProgramNode> nodes;
     /// Slot per node port, nodes in batch order; kRigExecInvalidIndex for

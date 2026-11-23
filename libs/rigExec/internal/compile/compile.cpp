@@ -56,8 +56,6 @@ struct CompileState {
     std::vector<uint8_t> fed;
     /// Per array input port: its element slots, by element index.
     std::vector<std::vector<uint32_t>> elements;
-    /// Per node: the nodes that run after it, from data and order edges.
-    std::vector<std::vector<uint32_t>> successors;
     /// Per node: the length of the longest chain of nodes it depends on.
     std::vector<uint32_t> level;
 
@@ -104,7 +102,6 @@ InitNodes(CompileState &s)
     }
     s.fed.assign(program.portSlots.size(), 0);
     s.elements.assign(program.portSlots.size(), {});
-    s.successors.assign(s.nodeCount, {});
 }
 
 /// Points input \p to at \p slot; an array input takes it at the element
@@ -138,7 +135,7 @@ FedTwice(CompileState &s, const RigExecDescPort &to)
 }
 
 /// Feeds each connected input from its source output's slot, checking that
-/// both ends have one type, and records the data edges.
+/// both ends have one type.
 bool
 ConnectNodes(CompileState &s)
 {
@@ -154,7 +151,6 @@ ConnectNodes(CompileState &s)
         if (c.from.node == c.to.node)
             return Fail(s.error, NodeText(s.registry, s.data, c.to.node) +
                                      " feeds itself");
-        s.successors[c.from.node].push_back(c.to.node);
     }
     return true;
 }
@@ -213,63 +209,96 @@ BindOutputs(CompileState &s)
     }
 }
 
-/// Adds the host's explicit order pairs to the data edges.
-void
-AddOrders(CompileState &s)
+/// The node's key in the dependency compiler: its id, zero-padded so the
+/// compiler's key order is node order.
+std::string
+NodeKey(uint32_t node)
 {
-    for (const auto &[first, second] : s.data.orders) {
-        s.successors[first].push_back(second);
-    }
+    std::string digits = std::to_string(node);
+    return std::string(10 - digits.size(), '0') + digits;
 }
 
-/// Places each node one level after the deepest node it depends on; fails
-/// on a cycle.
-bool
-AssignLevels(CompileState &s)
+/// What node \p n reads and writes: the slots of its fed inputs, list
+/// elements included, and of its outputs.
+RigExecOpDescriptor
+NodeDescriptor(const CompileState &s, uint32_t n)
 {
-    std::vector<uint32_t> pending(s.nodeCount, 0);
-    for (uint32_t n = 0; n < s.nodeCount; ++n) {
-        std::vector<uint32_t> &next = s.successors[n];
-        std::sort(next.begin(), next.end());
-        next.erase(std::unique(next.begin(), next.end()), next.end());
-        for (const uint32_t succ : next) {
-            ++pending[succ];
+    const RigExecProgramNode &node = s.program.nodes[n];
+    const RigExecOpDesc &d = s.OpDesc(n);
+    RigExecOpDescriptor descriptor;
+    descriptor.key = NodeKey(n);
+    descriptor.kind = node.op;
+    for (uint32_t p = 0; p < node.portCount; ++p) {
+        const uint32_t port = node.firstPort + p;
+        if (d.ports[p].flags & kRigExecPortOutput) {
+            descriptor.writes.push_back(s.program.portSlots[port]);
+            continue;
         }
+        if (s.program.portSlots[port] != kRigExecInvalidIndex)
+            descriptor.reads.push_back(s.program.portSlots[port]);
+        for (const uint32_t slot : s.elements[port])
+            if (slot != kRigExecInvalidIndex)
+                descriptor.reads.push_back(slot);
     }
+    return descriptor;
+}
+
+/// Names the nodes of the first cycle \p graph found, in edge order.
+std::string
+CycleText(const CompileState &s, const RigExecCompiledGraph &graph)
+{
+    std::string text = "order cycle:";
+    const std::vector<std::string> &loop = graph.cycles.front();
+    for (size_t i = 0; i < loop.size(); ++i) {
+        uint32_t node = 0;
+        for (const char digit : loop[i])
+            node = node * 10 + uint32_t(digit - '0');
+        text += (i ? " -> " : " ") + NodeText(s.registry, s.data, node);
+    }
+    return text;
+}
+
+/// Orders the nodes with the dependency compiler every evaluator shares:
+/// data edges come from the slots each node reads and writes, the host's
+/// order pairs are predecessor edges, and host-written slots are leaves.
+/// Each node's level is one after its deepest predecessor's. Fails on a
+/// cycle.
+bool
+OrderNodes(CompileState &s)
+{
+    RigExecProgram &program = s.program;
+    std::vector<RigExecOpDescriptor> descriptors;
+    descriptors.reserve(s.nodeCount);
+    for (uint32_t n = 0; n < s.nodeCount; ++n)
+        descriptors.push_back(NodeDescriptor(s, n));
+    for (const auto &[first, second] : s.data.orders)
+        descriptors[second].predecessors.push_back(first);
+    const std::vector<RigExecValueId> leaves(program.inputSlots.begin(),
+                                             program.inputSlots.end());
+    std::string why;
+    if (!RigExecCompileOpGraph(descriptors, leaves,
+                               RigExecCyclePolicy::SetAside, &program.graph,
+                               &why))
+        return Fail(s.error, why);
+    if (!program.graph.cycles.empty())
+        return Fail(s.error, CycleText(s, program.graph));
     s.level.assign(s.nodeCount, 0);
-    std::vector<uint32_t> ready;
-    for (uint32_t n = 0; n < s.nodeCount; ++n) {
-        if (!pending[n])
-            ready.push_back(n);
-    }
-    uint32_t placed = 0;
-    while (!ready.empty()) {
-        const uint32_t n = ready.back();
-        ready.pop_back();
-        ++placed;
-        for (const uint32_t succ : s.successors[n]) {
-            s.level[succ] = std::max(s.level[succ], s.level[n] + 1);
-            if (!--pending[succ])
-                ready.push_back(succ);
-        }
-    }
-    if (placed != s.nodeCount) {
-        for (uint32_t n = 0; n < s.nodeCount; ++n) {
-            if (pending[n])
-                return Fail(s.error, "order cycle through " +
-                                         NodeText(s.registry, s.data, n));
-        }
-    }
+    for (const RigExecCompiledOp &op : program.graph.ops)
+        for (const uint32_t predecessor : op.predecessors)
+            s.level[op.originalIndex] = std::max(
+                s.level[op.originalIndex],
+                s.level[program.graph.ops[predecessor].originalIndex] + 1);
     return true;
 }
 
-/// Records each Windowed node's frame count, and settles over data and
-/// order predecessors which windowed nodes each depends on and which nodes
-/// a history tick runs, as every evaluator settles its windowed ops.
+/// Records each Windowed node's frame count, and settles over the compiled
+/// graph which windowed nodes each depends on and which nodes a history
+/// tick runs, as every evaluator settles its windowed ops.
 void
 SettleWindows(CompileState &s)
 {
     RigExecProgram &program = s.program;
+    const RigExecCompiledGraph &graph = program.graph;
     program.windowOfNode.assign(s.nodeCount, kRigExecInvalidIndex);
     std::vector<uint32_t> windowed;
     for (uint32_t n = 0; n < s.nodeCount; ++n) {
@@ -282,32 +311,24 @@ SettleWindows(CompileState &s)
         window.frames =
             d.windowFrames(node.hasPayload ? node.payload.Data() : nullptr);
         program.windowOfNode[n] = uint32_t(windowed.size());
-        windowed.push_back(n);
+        windowed.push_back(uint32_t(graph.canonicalIndex[n]));
         program.windowedNodes.push_back(std::move(window));
     }
     if (windowed.empty())
         return;
-    std::vector<std::vector<uint32_t>> predecessors(s.nodeCount);
-    for (uint32_t n = 0; n < s.nodeCount; ++n) {
-        for (const uint32_t succ : s.successors[n])
-            predecessors[succ].push_back(n);
-    }
     RigExecWindowLayout layout;
-    RigExecSettleWindowLayout(
-        s.nodeCount,
-        [&](uint32_t n) -> const std::vector<uint32_t> & {
-            return predecessors[n];
-        },
-        windowed, &layout);
-    program.historyMask = std::move(layout.mask);
+    RigExecSettleWindowLayout(graph, windowed, &layout);
+    program.historyMask.resize(s.nodeCount);
+    for (uint32_t n = 0; n < s.nodeCount; ++n)
+        program.historyMask[n] = layout.mask[graph.canonicalIndex[n]];
     for (size_t w = 0; w < windowed.size(); ++w) {
         program.windowedNodes[w].inner = std::move(layout.inner[w]);
         program.windowedNodes[w].feedsWindow = layout.feedsWindow[w] != 0;
     }
 }
 
-/// Groups nodes into batches by level, then op, then node id, splitting a
-/// batch at \p limit nodes (0 for no limit).
+/// Groups nodes into batches by level, then op, then the compiled graph's
+/// canonical order, splitting a batch at \p limit nodes (0 for no limit).
 void
 BuildBatches(CompileState &s, size_t limit)
 {
@@ -315,9 +336,10 @@ BuildBatches(CompileState &s, size_t limit)
     const std::vector<uint32_t> &level = s.level;
     std::vector<uint32_t> order(s.nodeCount);
     std::iota(order.begin(), order.end(), 0u);
+    const std::vector<int32_t> &canonical = program.graph.canonicalIndex;
     std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
-        return std::make_tuple(level[a], s.data.nodes[a].op, a) <
-               std::make_tuple(level[b], s.data.nodes[b].op, b);
+        return std::make_tuple(level[a], s.data.nodes[a].op, canonical[a]) <
+               std::make_tuple(level[b], s.data.nodes[b].op, canonical[b]);
     });
     program.batchNodes = order;
     uint32_t currentLevel = kRigExecInvalidIndex;
@@ -470,8 +492,7 @@ RigExecCompile(const RigExecRigDesc &desc, const RigExecCompileOptions &options,
     if (!ConnectNodes(s) || !BindInputs(s) || !CheckInputsAndLists(s))
         return nullptr;
     BindOutputs(s);
-    AddOrders(s);
-    if (!AssignLevels(s))
+    if (!OrderNodes(s))
         return nullptr;
     SettleWindows(s);
     BuildBatches(s, options.maxBatchNodes);

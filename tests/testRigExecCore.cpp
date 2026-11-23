@@ -462,7 +462,21 @@ TestCompileErrors()
         builder.Order(a, b);
         builder.Order(b, a);
         CHECK(!Compile(builder, 0, &error));
-        CHECK(Contains(error, "cycle"));
+        CHECK(Contains(error, "order cycle: node 0 (fake:Offset) -> "
+                              "node 1 (fake:Offset) -> node 0 (fake:Offset)"));
+    }
+    {
+        // A data edge one way and an order pair the other.
+        RigExecRigDescBuilder builder;
+        const RigExecNodeId a = builder.AddOp(fakeOps::Offset());
+        const RigExecNodeId b = builder.AddOp(Check());
+        builder.BindInput(a, fakeOps::OffsetIn());
+        builder.Connect(a, fakeOps::OffsetOut(), b, CheckIn());
+        builder.Order(b, a);
+        CHECK(!Compile(builder, 0, &error));
+        CHECK(Contains(error, "order cycle: ") &&
+              Contains(error, "node 0 (fake:Offset)") &&
+              Contains(error, "node 1 (test:Check)"));
     }
 }
 
@@ -1247,6 +1261,111 @@ TestBatchHistoryMask()
           evaluator->GetWindowRings()[0][0]);
 }
 
+std::string
+Key(uint32_t node)
+{
+    char text[16];
+    std::snprintf(text, sizeof(text), "%010u", node);
+    return text;
+}
+
+// The op core orders nodes as the shared dependency compiler orders the same
+// edges keyed by node id: a diamond into a list, order pairs, a window.
+// Batches follow that order within a level and op.
+void
+TestCanonicalOrder()
+{
+    RigExecRigDescBuilder builder;
+    const RingPayload two{2};
+    const RigExecNodeId sink = builder.AddOp(Weighted());
+    const RigExecNodeId ring = builder.AddOp(RingSum(), &two);
+    const RigExecNodeId left = builder.AddOp(fakeOps::Offset());
+    const RigExecNodeId right = builder.AddOp(Check());
+    const RigExecNodeId source = builder.AddOp(fakeOps::Offset());
+    const RigExecNodeId early = builder.AddOp(fakeOps::Offset());
+    const RigExecNodeId after = builder.AddOp(fakeOps::Offset());
+    const RigExecNodeId last = builder.AddOp(Tally());
+    builder.BindInput(source, fakeOps::OffsetIn());
+    builder.BindInput(early, fakeOps::OffsetIn());
+    builder.BindInput(last, TallyIn());
+    builder.Connect(source, fakeOps::OffsetOut(), ring, RingSumIn());
+    builder.Connect(source, fakeOps::OffsetOut(), left, fakeOps::OffsetIn());
+    builder.Connect(source, fakeOps::OffsetOut(), right, CheckIn());
+    builder.Connect(right, CheckOut(), sink, WeightedItems());
+    builder.Connect(left, fakeOps::OffsetOut(), sink, WeightedItems());
+    builder.BindInput(sink, WeightedItems());
+    builder.Connect(ring, RingSumOut(), after, fakeOps::OffsetIn());
+    builder.Order(early, source);
+    builder.Order(sink, last);
+    std::string error;
+    auto program = Compile(builder, 0, &error);
+    CHECK(program);
+    if (!program)
+        return;
+
+    // Value ids: 100 + node for each node's one output, 1000 + k for the
+    // host-written inputs.
+    std::vector<RigExecOpDescriptor> descriptors(8);
+    for (uint32_t n = 0; n < 8; ++n) {
+        descriptors[n].key = Key(n);
+        descriptors[n].writes = {100 + n};
+    }
+    descriptors[source].reads = {1000};
+    descriptors[early].reads = {1001};
+    descriptors[last].reads = {1002};
+    descriptors[ring].reads = {100 + source};
+    descriptors[left].reads = {100 + source};
+    descriptors[right].reads = {100 + source};
+    descriptors[sink].reads = {100 + right, 100 + left, 1003};
+    descriptors[after].reads = {100 + ring};
+    descriptors[source].predecessors = {early};
+    descriptors[last].predecessors = {sink};
+    RigExecCompiledGraph expected;
+    CHECK(RigExecCompileOpGraph(descriptors, {1000, 1001, 1002, 1003},
+                                RigExecCyclePolicy::Reject, &expected, &error));
+    const RigExecCompiledGraph &graph = program->graph;
+    CHECK(graph.canonicalIndex == expected.canonicalIndex);
+    CHECK(graph.ops.size() == expected.ops.size());
+    for (size_t c = 0; c < graph.ops.size() && c < expected.ops.size(); ++c) {
+        CHECK(graph.ops[c].originalIndex == expected.ops[c].originalIndex);
+        CHECK(graph.ops[c].predecessors == expected.ops[c].predecessors);
+    }
+
+    // The source's output slot is read by the ring, left and right.
+    const RigExecProgramNode &from = program->nodes[source];
+    const uint32_t slot =
+        program->portSlots[from.firstPort + fakeOps::OffsetOut().Index()];
+    std::vector<uint32_t> readers = {uint32_t(graph.canonicalIndex[ring]),
+                                     uint32_t(graph.canonicalIndex[left]),
+                                     uint32_t(graph.canonicalIndex[right])};
+    std::sort(readers.begin(), readers.end());
+    const auto found = graph.readers.find(slot);
+    CHECK(found != graph.readers.end() && found->second == readers);
+
+    // Levels are longest paths; within a level and op, batch order is
+    // canonical order.
+    std::vector<uint32_t> level(8, 0);
+    for (const RigExecCompiledOp &op : graph.ops)
+        for (const uint32_t p : op.predecessors)
+            level[op.originalIndex] = std::max(
+                level[op.originalIndex], level[graph.ops[p].originalIndex] + 1);
+    CHECK(level[sink] == 3 && level[last] == 4 && level[after] == 3);
+    for (size_t l = 0; l + 1 < program->levelBatches.size(); ++l)
+        for (uint32_t b = program->levelBatches[l];
+             b < program->levelBatches[l + 1]; ++b) {
+            const RigExecProgramBatch &batch = program->batches[b];
+            for (uint32_t k = 0; k < batch.nodeCount; ++k) {
+                const uint32_t n = program->batchNodes[batch.firstNode + k];
+                CHECK(level[n] == l);
+                if (k)
+                    CHECK(graph.canonicalIndex
+                              [program->batchNodes[batch.firstNode + k - 1]] <
+                          graph.canonicalIndex[n]);
+            }
+        }
+    CHECK((program->historyMask == std::vector<char>{0, 1, 0, 0, 1, 1, 0, 0}));
+}
+
 } // namespace
 
 int
@@ -1278,6 +1397,7 @@ main()
     TestScheduleOrder();
     TestBatchCalls();
     TestBatchHistoryMask();
+    TestCanonicalOrder();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;
