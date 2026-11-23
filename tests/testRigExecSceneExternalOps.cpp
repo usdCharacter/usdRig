@@ -19,6 +19,7 @@
 #include "pxr/base/plug/registry.h"
 #include "pxr/usd/usd/stage.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -783,6 +784,44 @@ TestLayeredSkinScene()
         CHECK(skin.GetAttribute(TfToken("inputs:useBaseInput")).Set(true));
         CHECK(skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(0.5f));
         check(s, "layered skin scene, dual quaternion, from base, half weight");
+    }
+    // An input transform with no rigExec:transform: both refuse, pass the
+    // points through and say so the same way.
+    {
+        auto s = stage();
+        CHECK(s->GetRelationshipAtPath(
+                   SdfPath("/Rig/Movers/Skin.rigExec:transform"))
+                  .ClearTargets(true));
+        RigExecRigEvaluator rig(s, SdfPath("/Rig"));
+        const RigExecRigPose pose = rig.Evaluate(UsdTimeCode(1));
+        const std::string refused = "MoverFailed /Rig/Movers/Skin: execution "
+                                    "rejected its inputs; revision passed "
+                                    "through";
+        CHECK(std::find(pose.diagnostics.begin(), pose.diagnostics.end(),
+                        refused) != pose.diagnostics.end());
+        rigExecSceneProgramDrive::SceneRun scene(s, SdfPath("/Rig"), 1, 1);
+        CHECK(scene.ok && scene.Evaluate(1));
+        const auto chain = scene.program.layout.routes.chains.find(
+            {cloud, RigExecSceneValueDomain::Points});
+        CHECK(chain != scene.program.layout.routes.chains.end() &&
+              !chain->second.versions.empty());
+        if (chain == scene.program.layout.routes.chains.end() ||
+            chain->second.versions.empty())
+            return;
+        const auto &entry =
+            scene.runtime.values
+                .values[size_t(chain->second.versions.back().value)];
+        CHECK(entry.error == refused);
+        const VtValue value =
+            scene.Final(cloud, RigExecSceneValueDomain::Points);
+        VtVec3fArray rest;
+        CHECK(s->GetAttributeAtPath(cloud).Get(&rest));
+        const auto moved = pose.movedProperties.find(cloud);
+        const VtVec3fArray native = moved != pose.movedProperties.end()
+                                        ? moved->second.Get<VtVec3fArray>()
+                                        : rest;
+        CHECK(value.IsHolding<VtVec3fArray>() &&
+              value.UncheckedGet<VtVec3fArray>() == rest && native == rest);
     }
 }
 

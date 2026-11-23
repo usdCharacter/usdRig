@@ -587,8 +587,11 @@ RigExecSceneProgramRuntime::Run(const RigExecSceneProgram &program,
                 if (opCore && kind == RigExecRevisionOp::External) {
                     if (!RunExternalOp(descriptor.record, inputs, workspace,
                                        window))
-                        return failed(
-                            "geometry input/cardinality validation failed");
+                        return failed("MoverFailed " +
+                                      RigExecGeometryMoverText(
+                                          descriptor.record.binding) +
+                                      ": execution rejected its inputs; "
+                                      "revision passed through");
                     return publish();
                 }
                 inputs.blendFromChannels = opCore && blend;

@@ -262,7 +262,8 @@ RigExecReadGeometryGraphInputs(const RigExecGeometryGraphBinding &binding,
         binding.carry == UINT64_MAX ? nullptr : &carry);
     workspace->carry = carry;
     out->leaves = &workspace->leaves;
-    out->transform = &workspace->transform;
+    out->transform =
+        binding.transform == UINT64_MAX ? nullptr : &workspace->transform;
     out->carry = &workspace->carry;
     out->influenceTransforms =
         workspace->influences.empty() ? nullptr : &workspace->influences;
