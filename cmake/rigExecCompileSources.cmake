@@ -23,6 +23,13 @@ add_library(rigExecCompile OBJECT
     libs/rigExec/internal/rigEvaluatorLiveGraph.cpp
     libs/rigExec/internal/rigEvaluatorValidation.cpp
     libs/rigExec/internal/bakedProgram.cpp
+    libs/rigExec/internal/bakedProgramAdopt.cpp
+    libs/rigExec/internal/bakedProgramBakeable.cpp
+    libs/rigExec/internal/bakedProgramBuild.cpp
+    libs/rigExec/internal/bakedProgramBuildGraph.cpp
+    libs/rigExec/internal/bakedProgramBuildPose.cpp
+    libs/rigExec/internal/bakedProgramDescribe.cpp
+    libs/rigExec/internal/bakedProgramEdits.cpp
     libs/rigExec/internal/programView.cpp
     libs/rigExec/internal/compiledProgram.cpp
     # Scene programs that compose compiled descriptors.

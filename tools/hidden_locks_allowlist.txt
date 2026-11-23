@@ -75,14 +75,14 @@ libs/rigExec/internal/bakedOpGraph.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_EXEC
 libs/rigExec/internal/bakedPose.cpp | token-text | TfToken value(fallback);
 libs/rigExec/internal/bakedPose.cpp | token-text | return TfToken(port);
 
-libs/rigExec/internal/bakedProgram.cpp | env | TfGetenvBool("RIGEXEC_BAKED_PROGRAM_DIGEST", false);
-libs/rigExec/internal/bakedProgram.cpp | env | B.gpuDeformStats = TfGetenvBool("RIGEXEC_GPU_DEFORM_STATS", false);
-libs/rigExec/internal/bakedProgram.cpp | env | B.purityAudit = TfGetenvBool("RIGEXEC_PURITY_AUDIT", false);
-libs/rigExec/internal/bakedProgram.cpp | env | B.verifyFrozenStatic = TfGetenvBool("RIGEXEC_VERIFY_FROZEN_STATIC", false);
-libs/rigExec/internal/bakedProgram.cpp | env | B.pathLeafGating = TfGetenvBool("RIGEXEC_PATH_LEAF_GATING", true);
-libs/rigExec/internal/bakedProgram.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_PATH_LEAF_GATING", false);
-libs/rigExec/internal/bakedProgram.cpp | env | B.sparseSampling = TfGetenvBool("RIGEXEC_SPARSE_SAMPLING", true);
-libs/rigExec/internal/bakedProgram.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_SPARSE_SAMPLING", false);
+libs/rigExec/internal/bakedProgramBuildGraph.cpp | env | TfGetenvBool("RIGEXEC_BAKED_PROGRAM_DIGEST", false);
+libs/rigExec/internal/bakedProgramBuild.cpp | env | B.gpuDeformStats = TfGetenvBool("RIGEXEC_GPU_DEFORM_STATS", false);
+libs/rigExec/internal/bakedProgramBuild.cpp | env | B.purityAudit = TfGetenvBool("RIGEXEC_PURITY_AUDIT", false);
+libs/rigExec/internal/bakedProgramBuild.cpp | env | B.verifyFrozenStatic = TfGetenvBool("RIGEXEC_VERIFY_FROZEN_STATIC", false);
+libs/rigExec/internal/bakedProgramBuild.cpp | env | B.pathLeafGating = TfGetenvBool("RIGEXEC_PATH_LEAF_GATING", true);
+libs/rigExec/internal/bakedProgramBuild.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_PATH_LEAF_GATING", false);
+libs/rigExec/internal/bakedProgramBuild.cpp | env | B.sparseSampling = TfGetenvBool("RIGEXEC_SPARSE_SAMPLING", true);
+libs/rigExec/internal/bakedProgramBuild.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_SPARSE_SAMPLING", false);
 
 libs/rigExec/internal/bakedProperties.cpp | token-text | TfToken("frozenOracleHop:" + leaf.path.GetName()));
 
