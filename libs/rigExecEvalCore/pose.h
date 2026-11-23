@@ -4078,8 +4078,6 @@ ComputeSpaceCarry(Host &host, int spaceSlot, typename Host::Math::Mat4 *carry)
     return true;
 }
 
-// One constraint source reference: a provider slot read as a fin
-// version, or a native source by index.
 struct PoseSourceRef {
     int slot = -1;
     uint32_t finRead = 0;

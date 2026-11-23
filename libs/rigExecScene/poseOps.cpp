@@ -737,7 +737,6 @@ RigExecWriteSolverOpInputs(const RigExecSolverRecord &s,
             !Same(payload.minLengthRatio, node.minLengthRatio) ||
             payload.aimRootTangent != node.aimRootTangent)
             return Fail(error, "spline IK settings moved");
-        // The rests carried by the space's rest-to-pose map, as native does.
         GfMatrix4d delta(1.0);
         const bool spaced =
             input.hasSpace &&

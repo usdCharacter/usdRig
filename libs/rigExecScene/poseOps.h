@@ -1,10 +1,9 @@
 #ifndef RIGEXEC_SCENE_POSE_OPS_H
 #define RIGEXEC_SCENE_POSE_OPS_H
 
-/// Host-side bridge from a solver or constraint record to rigExecOps' pose
-/// ops: the record's settings become the op's payload and the frame's
-/// values its inputs. The scene program runs its solvers and constraints
-/// through it; step 10 moves it to rigExecUsd.
+/// Host-side bridge from a solver or constraint record to rigExecOps' pose ops:
+/// the record's settings become the op's payload and the frame's values its
+/// inputs. The scene program runs its solvers and constraints through it.
 
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/rigDesc.h"
@@ -59,9 +58,7 @@ struct RigExecSolverOpNode {
     std::vector<RigExecJointGroup> groups;
 };
 
-/// True for the solver records this bridge maps. The others, and a
-/// degenerate record, run natively: an FK chain with joint groups, a frame
-/// blend whose rotation blend was refused and a spline IK without joints.
+/// True for the solver records this bridge maps.
 bool RigExecSolverOpSupported(const RigExecSolverRecord &record);
 
 /// Host-side port values, kept between frames so a write reuses their

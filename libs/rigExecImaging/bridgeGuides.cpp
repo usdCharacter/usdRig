@@ -265,8 +265,6 @@ RigExecBridgeGuides::_ReadGuideStyleCached(_GuideInputs &inputs,
                 static const float unread = RigExecPublishedPrim().guideOpacity;
                 published->guideOpacity = _HeldOpacity(inputs, pose, unread);
             } else {
-                // _ReadGuideStyle's opacity rule verbatim (connected dial,
-                // invert, floor), every part of it read again.
                 RigExecPublishedPrim scratch;
                 _ReadGuideStyle(prim, pose, &scratch);
                 published->guideOpacity = scratch.guideOpacity;

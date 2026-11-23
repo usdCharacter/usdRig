@@ -1,9 +1,8 @@
 #ifndef RIGEXEC_SCENE_PROPERTY_OPS_H
 #define RIGEXEC_SCENE_PROPERTY_OPS_H
 
-/// Host-side bridge from a translated property mover to rigExecOps' math
-/// ops: the first piece of the stage walk that emits op nodes. Not
-/// installed; step 10 moves it to rigExecUsd.
+/// Host-side bridge from a translated property mover to rigExecOps' math ops:
+/// the first piece of the stage walk that emits op nodes.
 
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/rigDesc.h"

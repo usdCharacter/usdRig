@@ -152,9 +152,7 @@ RigExecBindConstraintGraph(const RigExecSceneDescriptors &scene,
     return true;
 }
 namespace {
-// RunHarmonics with the op core capturing and solving. The host reads and
-// gates as natively, so the same reads reach \p error in the same order; the
-// window's ring and capture stay the scene runtime's.
+// RunHarmonics with the op core capturing and solving.
 bool
 RunHarmonicsOnOps(const RigExecConstraintGraphBinding &bound,
                   RigExecTypedValueStore *store, RigExecWindowRun *window,
@@ -207,7 +205,6 @@ RunHarmonicsOnOps(const RigExecConstraintGraphBinding &bound,
         return RigExecReadBoundGraphInput(bound.inputs, name, *store, value,
                                           error);
     };
-    // A gate the host closes still captures, as natively.
     std::string gate;
     bool closed = false;
     VtValue enabled;
@@ -245,7 +242,6 @@ RunHarmonicsOnOps(const RigExecConstraintGraphBinding &bound,
         in.enabled = false;
         return run(false) ? passThrough(gate) : refused();
     }
-    // Natively these reads follow the solve's gates; a failed one reaches
     // \p error only when the solve gets that far.
     std::string failedRead;
     const auto scalar = [&](const char *name, double fallback) {
@@ -553,9 +549,6 @@ PoleSwitchInputs(const RigExecBoundSpaceSwitch &packet,
         }
     return usable;
 }
-// RunIkFkMatch's arithmetic on the op core, from the values it read: the
-// IK solve's space and the pole's mode are read here as natively, and the
-// op's values and presented frames go to \p finish.
 template <class Finish>
 bool
 RunIkFkMatchOnOps(const RigExecConstraintGraphBinding &bound,
@@ -645,7 +638,6 @@ RunIkFkMatch(const RigExecConstraintGraphBinding &bound,
     unsigned shownMask = 0;
     const std::string *diagnostic = nullptr;
     const std::string none;
-    // Values the match could not solve are not published, as natively.
     const auto finish = [&]() {
         if (valuesValid) {
             store->Publish(m.ikValues, VtValue(VtDoubleArray(ikValues.begin(),

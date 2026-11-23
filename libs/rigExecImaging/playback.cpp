@@ -439,8 +439,7 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
     }
     if (ran && _dispatchExecute && !RigExecFrozenSerialActive()) {
         // The dispatcher lives for this Execute only, in its own arena; the
-        // reader forgets it before it goes. A frozen serial scope keeps
-        // the reader serial, as it keeps the native schedule.
+        // reader forgets it before it goes.
         pxr::WorkWithScopedParallelism([&] {
             pxr::WorkDispatcher dispatcher;
             _reader->SetTaskDispatch(

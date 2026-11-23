@@ -142,8 +142,6 @@ GatherSources(const char *op, const ConstraintPayload &p, const RigExecOpIo &io,
     return true;
 }
 
-/// The kernel's frame: a constraint that cannot solve gives the input
-/// flagged degenerate, as native publishes it.
 void
 Commit(const PointFrame &, const PointFrame &solved, PointFrame *out)
 {

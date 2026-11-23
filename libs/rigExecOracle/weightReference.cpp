@@ -290,10 +290,7 @@ ResolveVolume(const RigExecWeightReferenceContext &context,
             *error = who() + ": unknown rigExec:planeAxis " + axis.GetString();
             return false;
         }
-        // Bounded clips the field to the in-plane rectangle. Mirrors
-        // _BuildPlaneWeightPacket exactly, including reading the extents
-        // only in the bounded arm -- the two paths have to agree value
-        // for value or the parity harness fires.
+        // Bounded clips the field to the in-plane rectangle.
         TfToken boundsMode = _kGeoUnbounded;
         if (RigExecWeightReferenceAttribute a =
                 prim.GetAttribute(_kGeoPlaneBounds)) {

@@ -29,8 +29,7 @@ bool RigExecBindAutoClavicle(const RigExecSceneDescriptors &, const SdfPath &,
 bool RigExecRunAutoClavicle(const RigExecBoundAutoClavicle &,
                             RigExecTypedValueStore *,
                             std::string *error = nullptr);
-/// \p ops runs the shift on the op core (poseOpRunner.h); null runs it
-/// natively.
+/// \p ops runs the shift on the op core (poseOpRunner.h).
 bool RigExecRunAutoClavicle(const RigExecBoundAutoClavicle &,
                             RigExecTypedValueStore *, std::string *error,
                             RigExecPoseOpRunner *ops);

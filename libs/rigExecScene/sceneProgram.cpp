@@ -10,9 +10,7 @@ Fail(std::string *error, const std::string &message)
         *error = message;
     return false;
 }
-// Decided up front: a windowed revision, an External mover without an op
-// and a scalar-mode request for a deform op run natively; the deform ops
-// run SIMD kernels only. An External mover's op has no SIMD form.
+// An External mover's op has no SIMD form.
 bool
 RunsOnOps(const RigExecSceneGeometryOp &op)
 {
@@ -29,8 +27,6 @@ RunsOnOps(const RigExecSceneGeometryOp &op)
     return kind == RigExecRevisionOp::BlendShape ||
            RigExecGeometryOpSupported(kind);
 }
-// Decided up front: a record without an op (a degenerate one, a joint
-// group FK chain) runs natively.
 bool
 RunsPoseOnOps(const RigExecSceneOperation &operation)
 {
@@ -578,9 +574,7 @@ RigExecSceneProgramRuntime::Run(const RigExecSceneProgram &program,
                             "geometry input/cardinality validation failed");
                     return publish();
                 }
-                // The op sums the blend deltas from the channels. A stand-in
-                // lets the packet check judge everything else, as the native
-                // run does once its deltas are non-empty.
+                // The op sums the blend deltas from the channels.
                 if (opCore && blend)
                     inputs.blendDeltas.assign(1, GfVec3f(0.0f));
                 RigExecExternalRevision external;
