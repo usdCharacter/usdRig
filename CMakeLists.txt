@@ -501,11 +501,11 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/runtimeSources.txt"
     CONTENT "${_rigexec_runtime_manifest_text}\n")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/runtimeIncludes.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecRuntime,INCLUDE_DIRECTORIES>,\n>\n")
-get_property(_rigexevevalcore_manifest_sources TARGET rigExecEvalCore PROPERTY SOURCES)
-list(FILTER _rigexevevalcore_manifest_sources EXCLUDE REGEX "(^|/|\\\\)(CMakeFiles/|cmake_pch\\.(cxx|cpp|c)$)")
-list(JOIN _rigexevevalcore_manifest_sources "\n" _rigexevevalcore_manifest_text)
+get_property(_rigexec_evalcore_manifest_sources TARGET rigExecEvalCore PROPERTY SOURCES)
+list(FILTER _rigexec_evalcore_manifest_sources EXCLUDE REGEX "(^|/|\\\\)(CMakeFiles/|cmake_pch\\.(cxx|cpp|c)$)")
+list(JOIN _rigexec_evalcore_manifest_sources "\n" _rigexec_evalcore_manifest_text)
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreSources.txt"
-    CONTENT "${_rigexevevalcore_manifest_text}\n")
+    CONTENT "${_rigexec_evalcore_manifest_text}\n")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreIncludes.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,INCLUDE_DIRECTORIES>,\n>\n")
 
