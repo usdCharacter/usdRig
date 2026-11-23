@@ -62,7 +62,8 @@ PXR_LIBS = {
 # Project libraries whose PUBLIC interface does not pull pxr, from the
 # target_link_libraries edges in CMakeLists.txt. Recomputed after parse
 # when the file says otherwise.
-USD_FREE_SEEDS = {"rigExecGraph", "rigExecBinary", "rigExecRuntime", "rigExecLzma", "rigExecFlatBuffers"}
+USD_FREE_SEEDS = {"rigExecGraph", "rigExecOpCore", "rigExecBinary", "rigExecRuntime",
+                  "rigExecLzma", "rigExecFlatBuffers"}
 
 # Script tests (add_test ... COMMAND cmake -P script.cmake) have no
 # executable, so the link graph never selects them; their -P script is an
@@ -702,8 +703,8 @@ def ctest_regex(names: list[str]) -> str:
 
 # Labels cmake/TestLabels.cmake writes from an executable's own link line.
 PROJECT_LIBS = {
-    "rigExec", "rigExecCompile", "rigExecEval", "rigExecSchedule",
-    "rigExecVerify",
+    "rigExec", "rigExecOpCore", "rigExecCompile", "rigExecEval",
+    "rigExecSchedule", "rigExecVerify",
     "rigExecScene", "rigExecOracle", "rigExecRuntime", "rigExecMath",
     "rigExecGraph", "rigExecBinary", "rigExecBake", "rigExecImaging",
     "rigExecAuthoring", "rigExecStandalone", "rigExecSampler", "rigExecLzma",

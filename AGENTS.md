@@ -57,6 +57,14 @@ starting its workflow, and keep this list current when adding or changing skills
   free of `pxr/` includes and of new `.cpp` files so the installed source
   and include manifests stay byte-stable; `rigExecGraph` alone owns edges,
   readiness, invalidation and invocation.
+- `rigExecOpCore`: the op core, built from `libs/rigExec/internal/`
+  `registry`, `compile`, `program` and `exec` behind the `api/` headers
+  `registry.h`, `rigDesc.h`, `compile.h`, `evaluator.h`, `taps.h`,
+  `taskSystem.h` and `opPorts.h`. A shared library, so a process has one
+  registry; it links `rigExecGraph` and no OpenUSD library. `rigExec`,
+  `rigExecRuntime`, `rigExecBuiltins` and every type and op library link
+  it. `bin/check_runtime_usd_free.sh` compiles it and the built-in type and
+  op libraries with no `pxr` include path.
 - `libs/rigExecScene`: USD scene translation, built as `librigExecScene.so`.
   It links `tf`, `gf`, `vt`, `sdf`, `ts`, `usd`, `usdGeom`, and `rigExec`
   publicly; graph, math and `rigExecBuiltins` are private. Its scene

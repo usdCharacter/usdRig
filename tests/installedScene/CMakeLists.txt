@@ -50,8 +50,8 @@ set_tests_properties(testRigExecInstalledSeal PROPERTIES
     ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:${rigExec_LIBRARY_DIR};PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/bin;PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;LD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};LD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib")
 
-# Each op-core API header compiles on its own from the install, with no
-# OpenUSD include path.
+# Each op-core API header compiles on its own against the installed op core,
+# which carries no OpenUSD include path.
 set(_rigexec_op_core_tus)
 foreach(_header registry opPorts rigDesc compile taps taskSystem evaluator)
     set(_tu "${CMAKE_CURRENT_BINARY_DIR}/opCoreHeaders/${_header}.cpp")
@@ -61,8 +61,8 @@ foreach(_header registry opPorts rigDesc compile taps taskSystem evaluator)
 endforeach()
 add_library(testRigExecInstalledOpCoreHeaders OBJECT ${_rigexec_op_core_tus})
 target_compile_features(testRigExecInstalledOpCoreHeaders PRIVATE cxx_std_17)
-target_include_directories(testRigExecInstalledOpCoreHeaders PRIVATE
-    "${_rigexec_include_dir}")
+target_link_libraries(testRigExecInstalledOpCoreHeaders PRIVATE
+    rigExec::rigExecOpCore)
 
 add_executable(testRigExecInstalledOracle ../testRigExecOracleDependency.cpp)
 target_compile_features(testRigExecInstalledOracle PRIVATE cxx_std_17)

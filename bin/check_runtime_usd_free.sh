@@ -1,13 +1,15 @@
 #!/bin/bash
-# Compile the runtime, the EvalCore step table, the op scheduler, and the
-# binary format with no OpenUSD include path. Fails if a translation unit
-# needs a pxr header, or if an undefined symbol is an OpenUSD type.
+# Compile the runtime, the EvalCore step table, the op scheduler, the binary
+# format, the op core, and the built-in type and op libraries with no OpenUSD
+# include path. Fails if a translation unit needs a pxr header, or if an
+# undefined symbol is an OpenUSD type.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD="${1:-$ROOT/build}"
 if [[ ! -f "$BUILD/runtimeSources.txt" || ! -f "$BUILD/runtimeIncludes.txt" ||
-      ! -f "$BUILD/evalCoreSources.txt" || ! -f "$BUILD/evalCoreIncludes.txt" ]]; then
+      ! -f "$BUILD/evalCoreSources.txt" || ! -f "$BUILD/evalCoreIncludes.txt" ||
+      ! -f "$BUILD/opCoreSources.txt" ]]; then
     echo "configure and build rigExecRuntime first (missing source manifest in $BUILD)" >&2
     exit 1
 fi
@@ -73,7 +75,7 @@ compile_one() {
 }
 
 sources=()
-for manifest in runtimeSources.txt evalCoreSources.txt; do
+for manifest in runtimeSources.txt evalCoreSources.txt opCoreSources.txt; do
     while IFS= read -r src; do
         src="${src%$'\r'}"
         [[ -z "$src" ]] && continue
