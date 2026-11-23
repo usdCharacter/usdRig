@@ -1,6 +1,7 @@
 #include "rigExecOps/solver/skeleton2dOps.h"
 
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 #include "rigExecRigTypes/rigTypes.h"
 
 #include <iterator>
@@ -166,6 +167,107 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "result"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+// The saved size of one RigExecBone2dSetup and one RigExecJointGroup.
+constexpr size_t kBoneBytes = 125;
+constexpr size_t kGroupBytes = 9;
+
+void
+PutBone(Writer &w, const rigExec::RigExecBone2dSetup &b)
+{
+    w.I32(b.parent);
+    w.U8(b.flags);
+    w.F64(b.minAngle);
+    w.F64(b.maxAngle);
+    w.Enum(b.scaling);
+    w.F64(b.squashFactor);
+    w.F64(b.maxStretch);
+    w.I32(b.tipBone);
+    w.F64(b.tipX);
+    w.F64(b.tipY);
+    w.U32(b.spaceBegin);
+    w.U32(b.spaceCount);
+    w.I32(b.spaceSelector);
+    w.U32(b.targetBegin);
+    w.U32(b.targetCount);
+    w.I32(b.angleController);
+    w.I32(b.posController);
+    w.I32(b.scaleController);
+    w.F64(b.angleFactor);
+    w.F64(b.posFactorX);
+    w.F64(b.posFactorY);
+    w.F64(b.scaleFactor);
+}
+
+void
+GetBone(Reader &r, rigExec::RigExecBone2dSetup &b)
+{
+    b.parent = r.I32();
+    b.flags = r.U8();
+    b.minAngle = r.F64();
+    b.maxAngle = r.F64();
+    b.scaling = r.Enum(rigExec::RigExecBone2dScaling::Uniform);
+    b.squashFactor = r.F64();
+    b.maxStretch = r.F64();
+    b.tipBone = r.I32();
+    b.tipX = r.F64();
+    b.tipY = r.F64();
+    b.spaceBegin = r.U32();
+    b.spaceCount = r.U32();
+    b.spaceSelector = r.I32();
+    b.targetBegin = r.U32();
+    b.targetCount = r.U32();
+    b.angleController = r.I32();
+    b.posController = r.I32();
+    b.scaleController = r.I32();
+    b.angleFactor = r.F64();
+    b.posFactorX = r.F64();
+    b.posFactorY = r.F64();
+    b.scaleFactor = r.F64();
+}
+
+void
+PutGroup(Writer &w, const rigExec::RigExecJointGroup &g)
+{
+    w.U32(g.memberBegin);
+    w.U32(g.memberCount);
+    w.Bool(g.enabled);
+}
+
+void
+GetGroup(Reader &r, rigExec::RigExecJointGroup &g)
+{
+    g.memberBegin = r.U32();
+    g.memberCount = r.U32();
+    g.enabled = r.Bool();
+}
+
+void
+Save(Writer &w, const Skeleton2dPayload &p)
+{
+    w.Version(1);
+    payloadIo::PutList(w, p.order);
+    w.List(p.setup, &PutBone);
+    payloadIo::PutList(w, p.spaceSources);
+    payloadIo::PutList(w, p.targetCandidates);
+    w.List(p.groups, &PutGroup);
+    payloadIo::PutList(w, p.groupMembers);
+}
+
+void
+Load(Reader &r, Skeleton2dPayload &p)
+{
+    r.Version(1);
+    payloadIo::GetList(r, p.order);
+    r.List(p.setup, kBoneBytes, &GetBone);
+    payloadIo::GetList(r, p.spaceSources);
+    payloadIo::GetList(r, p.targetCandidates);
+    r.List(p.groups, kGroupBytes, &GetGroup);
+    payloadIo::GetList(r, p.groupMembers);
+}
+
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -174,7 +276,8 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.portCount = std::size(kPorts);
     d.run = &RunSkeleton2d;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<Skeleton2dPayload>();
+    d.payload =
+        rigExec::RigExecPayloadHandlingFor<Skeleton2dPayload, &Save, &Load>();
     d.state.size = sizeof(Skeleton2dState);
     d.state.align = alignof(Skeleton2dState);
     d.state.create = [](void *dst) {

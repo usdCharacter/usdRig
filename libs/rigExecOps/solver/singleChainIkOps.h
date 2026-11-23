@@ -14,6 +14,12 @@ struct SingleChainIkPayload {
     bool singleChain = false;
     /// Keep each joint's orientation relative to its bone.
     bool preserveJointOrientation = false;
+
+    bool operator==(const SingleChainIkPayload &o) const
+    {
+        return singleChain == o.singleChain &&
+               preserveJointOrientation == o.preserveJointOrientation;
+    }
 };
 
 const rigExec::RigExecOpHandle &SingleChainIk();

@@ -13,6 +13,11 @@ struct AutoClavicleOpPayload {
     rigExec::RigExecAutoClavicleConstants constants;
     /// The limb's own soft-distance IK options are fed.
     bool hasLimb = false;
+
+    bool operator==(const AutoClavicleOpPayload &o) const
+    {
+        return constants == o.constants && hasLimb == o.hasLimb;
+    }
 };
 
 const rigExec::RigExecOpHandle &AutoClavicle();

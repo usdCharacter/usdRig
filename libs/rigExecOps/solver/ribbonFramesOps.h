@@ -11,6 +11,11 @@ namespace rigExecOps {
 struct SampleRibbonFramesPayload {
     /// Samples along each curve, at least two.
     int sampleCount = 2;
+
+    bool operator==(const SampleRibbonFramesPayload &o) const
+    {
+        return sampleCount == o.sampleCount;
+    }
 };
 
 const rigExec::RigExecOpHandle &SampleRibbonFrames();

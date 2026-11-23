@@ -2,6 +2,7 @@
 
 #include "rigExecGraph/windowHistory.h"
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 #include "rigExecRigTypes/rigTypes.h"
 
 #include <cmath>
@@ -185,6 +186,35 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "status"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const HarmonicsPayload &p)
+{
+    w.Version(1);
+    w.F64(p.settings.waves);
+    w.F64(p.settings.waveLength);
+    w.F64(p.settings.frequency);
+    w.Bool(p.settings.ignoreFirstFrame);
+    w.Bool(p.matchVelocity);
+    w.Bool(p.hasSpace);
+    w.U32(p.frames);
+}
+
+void
+Load(Reader &r, HarmonicsPayload &p)
+{
+    r.Version(1);
+    p.settings.waves = r.F64();
+    p.settings.waveLength = r.F64();
+    p.settings.frequency = r.F64();
+    p.settings.ignoreFirstFrame = r.Bool();
+    p.matchVelocity = r.Bool();
+    p.hasSpace = r.Bool();
+    p.frames = r.U32();
+}
+
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc op;
     op.nameSpace = "rig";
@@ -196,7 +226,8 @@ const rigExec::RigExecOpDesc kDesc = [] {
     op.windowFrames = &HarmonicsFrames;
     op.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    op.payload = rigExec::RigExecPayloadHandlingFor<HarmonicsPayload>();
+    op.payload =
+        rigExec::RigExecPayloadHandlingFor<HarmonicsPayload, &Save, &Load>();
     return op;
 }();
 

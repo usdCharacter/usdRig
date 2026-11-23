@@ -41,6 +41,16 @@ struct RigExecAutoClavicleConstants {
     std::vector<double> weights;
 
     size_t PoseCount() const { return widths.size(); }
+
+    bool operator==(const RigExecAutoClavicleConstants &o) const
+    {
+        for (int i = 0; i < 9; ++i)
+            if (basis[i] != o.basis[i])
+                return false;
+        return ikValue == o.ikValue && gain == o.gain && kernel == o.kernel &&
+               normalize == o.normalize && swings == o.swings &&
+               widths == o.widths && gains == o.gains && weights == o.weights;
+    }
 };
 
 /// One frame's inputs. Null pointers are absent optional inputs.

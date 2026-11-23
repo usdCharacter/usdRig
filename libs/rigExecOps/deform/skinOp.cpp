@@ -2,6 +2,7 @@
 
 #include "rigExecMath/skinKernel.h"
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 #include "rigExecRuntime/dualQuatMath.h"
 
 #include <cmath>
@@ -120,6 +121,25 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&SkinOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const SkinPayload &p)
+{
+    w.Version(1);
+    w.Enum(p.method);
+    w.I32(p.elementSize);
+}
+
+void
+Load(Reader &r, SkinPayload &p)
+{
+    r.Version(1);
+    p.method = r.Enum(SkinMethod::DualQuaternion);
+    p.elementSize = r.I32();
+}
+
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -131,7 +151,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
         rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
-    d.payload = rigExec::RigExecPayloadHandlingFor<SkinPayload>();
+    d.payload = rigExec::RigExecPayloadHandlingFor<SkinPayload, &Save, &Load>();
     return d;
 }();
 

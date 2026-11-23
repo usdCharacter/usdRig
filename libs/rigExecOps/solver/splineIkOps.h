@@ -15,6 +15,13 @@ struct SplineIkPayload {
     double minLengthRatio = 0.0;
     /// Turn the root tangent onto the root-to-end chord.
     bool aimRootTangent = false;
+
+    bool operator==(const SplineIkPayload &o) const
+    {
+        return restLengthChain == o.restLengthChain &&
+               minLengthRatio == o.minLengthRatio &&
+               aimRootTangent == o.aimRootTangent;
+    }
 };
 
 const rigExec::RigExecOpHandle &SplineIk();

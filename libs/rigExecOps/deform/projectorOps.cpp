@@ -1,6 +1,7 @@
 #include "rigExecOps/deform/projectorOps.h"
 
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 #include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
 
@@ -175,11 +176,41 @@ const rigExec::RigExecPortDesc kDialPorts[] = {
     {&ShaderDialsOut(), &rigExecStd::Mat4dType(), kRigExecPortOutput, "out"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const SurfaceProjectorPayload &p)
+{
+    w.Version(1);
+    payloadIo::Put(w, p.rayOrigin);
+    payloadIo::Put(w, p.rayDirection);
+    payloadIo::Put(w, p.rayUp);
+    payloadIo::Put(w, p.shaderOffset);
+    w.Bool(p.reproject);
+    w.Bool(p.sourceSpaceNamed);
+    w.Bool(p.spaceNamed);
+}
+
+void
+Load(Reader &r, SurfaceProjectorPayload &p)
+{
+    r.Version(1);
+    payloadIo::Get(r, p.rayOrigin);
+    payloadIo::Get(r, p.rayDirection);
+    payloadIo::Get(r, p.rayUp);
+    payloadIo::Get(r, p.shaderOffset);
+    p.reproject = r.Bool();
+    p.sourceSpaceNamed = r.Bool();
+    p.spaceNamed = r.Bool();
+}
+
 const rigExec::RigExecOpDesc kProjectorDesc = [] {
     rigExec::RigExecOpDesc d = ProjectorDesc(
         "SurfaceProjector", kProjectorPorts, std::size(kProjectorPorts),
         &RunSurfaceProjector, rigExec::kRigExecOpSeparateBlend);
-    d.payload = rigExec::RigExecPayloadHandlingFor<SurfaceProjectorPayload>();
+    d.payload = rigExec::RigExecPayloadHandlingFor<SurfaceProjectorPayload,
+                                                   &Save, &Load>();
     return d;
 }();
 

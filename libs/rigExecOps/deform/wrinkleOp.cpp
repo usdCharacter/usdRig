@@ -2,6 +2,7 @@
 
 #include "rigExecMath/wrinkleKernel.h"
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 
 #include <iterator>
 #include <string>
@@ -63,6 +64,51 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&WrinkleOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const WrinklePayload &p)
+{
+    const rigExec::RigExecWrinkleSettings &s = p.settings;
+    w.Version(1);
+    w.I32(s.iterations);
+    w.Enum(s.topology);
+    w.I32(s.neighborDistance);
+    w.F32(s.restLengthScale);
+    w.F32(s.stretchStiffness);
+    w.F32(s.compressionStiffness);
+    w.F32(s.bendStiffness);
+    w.F32(s.maxDisplacement);
+    w.Bool(s.pinBorders);
+    w.Bool(s.tangentPlaneCollisions);
+    w.F32(s.tangentPlaneInset);
+    w.F32(s.wrinkleScale);
+    w.I32(s.smoothingIterations);
+    payloadIo::PutList(w, s.pinPoints);
+}
+
+void
+Load(Reader &r, WrinklePayload &p)
+{
+    rigExec::RigExecWrinkleSettings &s = p.settings;
+    r.Version(1);
+    s.iterations = r.I32();
+    s.topology = r.Enum(rigExec::RigExecWrinkleTopology::SurfaceStruts);
+    s.neighborDistance = r.I32();
+    s.restLengthScale = r.F32();
+    s.stretchStiffness = r.F32();
+    s.compressionStiffness = r.F32();
+    s.bendStiffness = r.F32();
+    s.maxDisplacement = r.F32();
+    s.pinBorders = r.Bool();
+    s.tangentPlaneCollisions = r.Bool();
+    s.tangentPlaneInset = r.F32();
+    s.wrinkleScale = r.F32();
+    s.smoothingIterations = r.I32();
+    payloadIo::GetList(r, s.pinPoints);
+}
+
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -73,7 +119,8 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;
-    d.payload = rigExec::RigExecPayloadHandlingFor<WrinklePayload>();
+    d.payload =
+        rigExec::RigExecPayloadHandlingFor<WrinklePayload, &Save, &Load>();
     return d;
 }();
 

@@ -1,6 +1,7 @@
 #include "rigExecOps/solver/ribbonFramesOps.h"
 
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 #include "rigExecOps/solver/liveRests.h"
 #include "rigExecMath/ribbonFramesKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
@@ -76,6 +77,23 @@ const rigExec::RigExecPortDesc kPorts[] = {
      kRigExecPortOutput, "out"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const SampleRibbonFramesPayload &p)
+{
+    w.Version(1);
+    w.I32(p.sampleCount);
+}
+
+void
+Load(Reader &r, SampleRibbonFramesPayload &p)
+{
+    r.Version(1);
+    p.sampleCount = r.I32();
+}
+
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -84,7 +102,8 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.portCount = std::size(kPorts);
     d.run = &RunSampleRibbonFrames;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<SampleRibbonFramesPayload>();
+    d.payload = rigExec::RigExecPayloadHandlingFor<SampleRibbonFramesPayload,
+                                                   &Save, &Load>();
     return d;
 }();
 

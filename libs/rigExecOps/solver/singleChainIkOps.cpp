@@ -1,6 +1,7 @@
 #include "rigExecOps/solver/singleChainIkOps.h"
 
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 #include "rigExecMath/singleChainIkKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecRuntime/dualQuatMath.h"
@@ -79,6 +80,25 @@ const rigExec::RigExecPortDesc kPorts[] = {
      kRigExecPortOutput, "out"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const SingleChainIkPayload &p)
+{
+    w.Version(1);
+    w.Bool(p.singleChain);
+    w.Bool(p.preserveJointOrientation);
+}
+
+void
+Load(Reader &r, SingleChainIkPayload &p)
+{
+    r.Version(1);
+    p.singleChain = r.Bool();
+    p.preserveJointOrientation = r.Bool();
+}
+
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -87,7 +107,8 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.portCount = std::size(kPorts);
     d.run = &RunSingleChainIk;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<SingleChainIkPayload>();
+    d.payload = rigExec::RigExecPayloadHandlingFor<SingleChainIkPayload, &Save,
+                                                   &Load>();
     return d;
 }();
 

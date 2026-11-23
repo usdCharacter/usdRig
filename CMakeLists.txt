@@ -1384,6 +1384,14 @@ target_link_libraries(testRigExecOpsPoints PRIVATE rigExecMath Threads::Threads)
 rigexec_link_registrations(testRigExecOpsPoints TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 add_test(NAME testRigExecOpsPoints COMMAND testRigExecOpsPoints)
 set_tests_properties(testRigExecOpsPoints PROPERTIES LABELS "fast")
+add_executable(testRigExecOpPayloads tests/testRigExecOpPayloads.cpp)
+target_include_directories(testRigExecOpPayloads PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/libs")
+target_link_libraries(testRigExecOpPayloads PRIVATE rigExecOpCore rigExecMath)
+rigexec_link_registrations(testRigExecOpPayloads
+    TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
+add_test(NAME testRigExecOpPayloads COMMAND testRigExecOpPayloads)
+set_tests_properties(testRigExecOpPayloads PROPERTIES LABELS "fast")
 
 # Host-side bridge from translated USD properties to op nodes; not installed.
 # Step 10 folds it into rigExecUsd.

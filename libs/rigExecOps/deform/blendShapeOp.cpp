@@ -2,6 +2,7 @@
 
 #include "rigExecMath/deltaMushKernel.h"
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 
 #include <iterator>
 #include <string>
@@ -116,6 +117,62 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&BlendShapeOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+// A sample's fixed part: activation, the points count and the layout flag.
+constexpr size_t kSampleBytes = 4 + 8 + 1;
+
+void
+PutSample(Writer &w, const BlendShapeSample &s)
+{
+    w.F32(s.activation);
+    payloadIo::PutList(w, s.points);
+    w.Bool(s.layout != nullptr);
+    if (!s.layout)
+        return;
+    payloadIo::PutList(w, s.layout->offsets);
+    payloadIo::PutList(w, s.layout->indices);
+    w.U64(s.layout->pointCount);
+    w.Bool(s.layout->valid);
+}
+
+void
+GetSample(Reader &r, BlendShapeSample &s)
+{
+    s.activation = r.F32();
+    payloadIo::GetList(r, s.points);
+    s.layout.reset();
+    if (!r.Bool() || !r.Ok())
+        return;
+    auto layout = std::make_shared<BlendShapeLayout>();
+    payloadIo::GetList(r, layout->offsets);
+    payloadIo::GetList(r, layout->indices);
+    layout->pointCount = size_t(r.U64());
+    layout->valid = r.Bool();
+    s.layout = std::move(layout);
+}
+
+void
+Save(Writer &w, const BlendShapePayload &p)
+{
+    w.Version(1);
+    w.List(p.channels, [](Writer &out, const BlendShapeChannel &c) {
+        out.List(c.samples, &PutSample);
+    });
+    w.Bool(p.surfaceFrame);
+}
+
+void
+Load(Reader &r, BlendShapePayload &p)
+{
+    r.Version(1);
+    r.List(p.channels, 8, [](Reader &in, BlendShapeChannel &c) {
+        in.List(c.samples, kSampleBytes, &GetSample);
+    });
+    p.surfaceFrame = r.Bool();
+}
+
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -126,7 +183,8 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.capabilities = rigExec::kRigExecOpBakeable |
                      rigExec::kRigExecOpFreezable | rigExec::kRigExecOpRanged |
                      rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
-    d.payload = rigExec::RigExecPayloadHandlingFor<BlendShapePayload>();
+    d.payload =
+        rigExec::RigExecPayloadHandlingFor<BlendShapePayload, &Save, &Load>();
     return d;
 }();
 

@@ -21,6 +21,14 @@ struct Skeleton2dPayload {
     std::vector<int32_t> spaceSources, targetCandidates;
     std::vector<rigExec::RigExecJointGroup> groups;
     std::vector<int32_t> groupMembers;
+
+    bool operator==(const Skeleton2dPayload &o) const
+    {
+        return order == o.order && setup == o.setup &&
+               spaceSources == o.spaceSources &&
+               targetCandidates == o.targetCandidates && groups == o.groups &&
+               groupMembers == o.groupMembers;
+    }
 };
 
 const rigExec::RigExecOpHandle &Skeleton2d();

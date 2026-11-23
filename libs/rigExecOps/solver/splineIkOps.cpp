@@ -1,6 +1,7 @@
 #include "rigExecOps/solver/splineIkOps.h"
 
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 #include "rigExecMath/splineIkKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecRuntime/dualQuatMath.h"
@@ -162,6 +163,27 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "out"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const SplineIkPayload &p)
+{
+    w.Version(1);
+    w.Bool(p.restLengthChain);
+    w.F64(p.minLengthRatio);
+    w.Bool(p.aimRootTangent);
+}
+
+void
+Load(Reader &r, SplineIkPayload &p)
+{
+    r.Version(1);
+    p.restLengthChain = r.Bool();
+    p.minLengthRatio = r.F64();
+    p.aimRootTangent = r.Bool();
+}
+
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -170,7 +192,8 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.portCount = std::size(kPorts);
     d.run = &RunSplineIk;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<SplineIkPayload>();
+    d.payload =
+        rigExec::RigExecPayloadHandlingFor<SplineIkPayload, &Save, &Load>();
     return d;
 }();
 

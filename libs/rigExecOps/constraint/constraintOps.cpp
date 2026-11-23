@@ -1,6 +1,7 @@
 #include "rigExecOps/constraint/constraintOps.h"
 
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 #include "rigExecMath/constraintKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecRuntime/dualQuatMath.h"
@@ -253,6 +254,61 @@ RunAim(const void *payload, void *, const RigExecOpIo &io, std::string *)
     return true;
 }
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+PutAxes(Writer &w, const ConstraintAxes &a)
+{
+    w.Bool(a.x);
+    w.Bool(a.y);
+    w.Bool(a.z);
+}
+
+void
+GetAxes(Reader &r, ConstraintAxes &a)
+{
+    a.x = r.Bool();
+    a.y = r.Bool();
+    a.z = r.Bool();
+}
+
+void
+Save(Writer &w, const ConstraintPayload &p)
+{
+    w.Version(1);
+    payloadIo::Put(w, p.offset);
+    PutAxes(w, p.affect);
+    PutAxes(w, p.translationAxes);
+    PutAxes(w, p.rotationAxes);
+    PutAxes(w, p.scaleAxes);
+    payloadIo::PutList(w, p.translationOffsets);
+    payloadIo::PutList(w, p.rotationOffsetsDegrees);
+    w.Enum(p.rotationOrder);
+    w.Bool(p.blendShear);
+    payloadIo::Put(w, p.localAimVector);
+    payloadIo::Put(w, p.localUpVector);
+    w.Bool(p.preserveInputUp);
+}
+
+void
+Load(Reader &r, ConstraintPayload &p)
+{
+    r.Version(1);
+    payloadIo::Get(r, p.offset);
+    GetAxes(r, p.affect);
+    GetAxes(r, p.translationAxes);
+    GetAxes(r, p.rotationAxes);
+    GetAxes(r, p.scaleAxes);
+    payloadIo::GetList(r, p.translationOffsets);
+    payloadIo::GetList(r, p.rotationOffsetsDegrees);
+    p.rotationOrder = r.Enum(ConstraintEulerOrder::ZYX);
+    p.blendShear = r.Bool();
+    payloadIo::Get(r, p.localAimVector);
+    payloadIo::Get(r, p.localUpVector);
+    p.preserveInputUp = r.Bool();
+}
+
 rigExec::RigExecOpDesc
 ConstraintDesc(const char *name, const rigExec::RigExecPortDesc *ports,
                size_t portCount, rigExec::RigExecOpRunFn run)
@@ -264,7 +320,8 @@ ConstraintDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.portCount = portCount;
     d.run = run;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<ConstraintPayload>();
+    d.payload =
+        rigExec::RigExecPayloadHandlingFor<ConstraintPayload, &Save, &Load>();
     return d;
 }
 

@@ -1,6 +1,7 @@
 #include "rigExecOps/solver/frameBlendOps.h"
 
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 #include "rigExecOps/solver/liveRests.h"
 #include "rigExecMath/frameBlendKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
@@ -128,6 +129,23 @@ const rigExec::RigExecPortDesc kTwistPorts[] = {
      kRigExecPortOutput, "out"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const BlendFramesPayload &p)
+{
+    w.Version(1);
+    w.Bool(p.logScale);
+}
+
+void
+Load(Reader &r, BlendFramesPayload &p)
+{
+    r.Version(1);
+    p.logScale = r.Bool();
+}
+
 const rigExec::RigExecOpDesc kBlend = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -136,7 +154,8 @@ const rigExec::RigExecOpDesc kBlend = [] {
     d.portCount = std::size(kBlendPorts);
     d.run = &RunBlendFrames;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<BlendFramesPayload>();
+    d.payload =
+        rigExec::RigExecPayloadHandlingFor<BlendFramesPayload, &Save, &Load>();
     return d;
 }();
 

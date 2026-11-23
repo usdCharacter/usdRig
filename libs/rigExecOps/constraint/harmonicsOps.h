@@ -19,6 +19,12 @@ struct HarmonicsPayload {
     bool hasSpace = false;
     /// The window's earlier ticks.
     uint32_t frames = 0;
+
+    bool operator==(const HarmonicsPayload &o) const
+    {
+        return settings == o.settings && matchVelocity == o.matchVelocity &&
+               hasSpace == o.hasSpace && frames == o.frames;
+    }
 };
 
 /// Why Out is In rather than the shifted frame, or Applied.

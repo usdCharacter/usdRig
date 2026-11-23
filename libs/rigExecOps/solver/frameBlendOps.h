@@ -11,6 +11,11 @@ namespace rigExecOps {
 struct BlendFramesPayload {
     /// scaleBlend "log" rather than "linear".
     bool logScale = false;
+
+    bool operator==(const BlendFramesPayload &o) const
+    {
+        return logScale == o.logScale;
+    }
 };
 
 const rigExec::RigExecOpHandle &BlendFrames();

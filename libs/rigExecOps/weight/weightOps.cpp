@@ -1,6 +1,7 @@
 #include "rigExecOps/weight/weightOps.h"
 
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 #include "rigExecEvalCore/weights.h"
 #include "rigExecMath/spatialAccel.h"
 #include "rigExecMath/weightFieldKernel.h"
@@ -408,6 +409,47 @@ const RigExecPortDesc kCurvePorts[] = {
 };
 #undef RIGEXEC_FIELD_PORT_DESCS
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const WeightFieldPayload &p)
+{
+    w.Version(1);
+    payloadIo::PutList(w, p.falloffCurve);
+    w.Bool(p.clamp);
+    w.Enum(p.planeAxis);
+    w.Bool(p.planeBounded);
+}
+
+void
+Load(Reader &r, WeightFieldPayload &p)
+{
+    r.Version(1);
+    payloadIo::GetList(r, p.falloffCurve);
+    p.clamp = r.Bool();
+    p.planeAxis = r.Enum(WeightFieldAxis::Z);
+    p.planeBounded = r.Bool();
+}
+
+void
+Save(Writer &w, const CombineWeightsPayload &p)
+{
+    w.Version(1);
+    w.Enum(p.mode);
+    w.Enum(p.inputs);
+    w.Bool(p.clamp);
+}
+
+void
+Load(Reader &r, CombineWeightsPayload &p)
+{
+    r.Version(1);
+    p.mode = r.Enum(WeightCombineMode::Overlay);
+    p.inputs = r.Enum(WeightCombineInputs::Fields);
+    p.clamp = r.Bool();
+}
+
 rigExec::RigExecOpDesc
 FieldDesc(const char *name, const RigExecPortDesc *ports, size_t count,
           rigExec::RigExecOpRunFn run)
@@ -419,7 +461,8 @@ FieldDesc(const char *name, const RigExecPortDesc *ports, size_t count,
     d.portCount = count;
     d.run = run;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<WeightFieldPayload>();
+    d.payload =
+        rigExec::RigExecPayloadHandlingFor<WeightFieldPayload, &Save, &Load>();
     return d;
 }
 
@@ -450,7 +493,8 @@ const rigExec::RigExecOpDesc kCombine = [] {
     d.portCount = std::size(kCombinePorts);
     d.run = &RunCombineWeights;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<CombineWeightsPayload>();
+    d.payload = rigExec::RigExecPayloadHandlingFor<CombineWeightsPayload, &Save,
+                                                   &Load>();
     d.state.size = sizeof(CombineState);
     d.state.align = alignof(CombineState);
     d.state.create = [](void *dst) {

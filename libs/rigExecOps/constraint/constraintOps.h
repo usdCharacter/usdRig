@@ -17,6 +17,11 @@ struct ConstraintAxes {
     bool x = true;
     bool y = true;
     bool z = true;
+
+    bool operator==(const ConstraintAxes &o) const
+    {
+        return x == o.x && y == o.y && z == o.z;
+    }
 };
 
 /// Euler orders, applied left to right in row-vector convention.
@@ -47,6 +52,19 @@ struct ConstraintPayload {
     /// Aim without a fed WorldUp: keep the input's up (true) or take the
     /// minimum swing (false, FBX worldUpType None).
     bool preserveInputUp = true;
+
+    bool operator==(const ConstraintPayload &o) const
+    {
+        return offset == o.offset && affect == o.affect &&
+               translationAxes == o.translationAxes &&
+               rotationAxes == o.rotationAxes && scaleAxes == o.scaleAxes &&
+               translationOffsets == o.translationOffsets &&
+               rotationOffsetsDegrees == o.rotationOffsetsDegrees &&
+               rotationOrder == o.rotationOrder && blendShear == o.blendShear &&
+               localAimVector == o.localAimVector &&
+               localUpVector == o.localUpVector &&
+               preserveInputUp == o.preserveInputUp;
+    }
 };
 
 const rigExec::RigExecOpHandle &PositionConstraint();

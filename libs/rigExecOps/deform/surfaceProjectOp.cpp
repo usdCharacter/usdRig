@@ -2,6 +2,7 @@
 
 #include "rigExecMath/surfaceProjectKernel.h"
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 
 #include <iterator>
 #include <string>
@@ -97,6 +98,29 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "out"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const SurfaceProjectPayload &p)
+{
+    w.Version(1);
+    w.Enum(p.settings.mode);
+    w.F32(p.settings.offset);
+    payloadIo::PutList(w, p.settings.mask);
+    payloadIo::PutList(w, p.settings.triangles);
+}
+
+void
+Load(Reader &r, SurfaceProjectPayload &p)
+{
+    r.Version(1);
+    p.settings.mode = r.Enum(rigExec::RigExecSurfaceSnapMode::OutsideSurface);
+    p.settings.offset = r.F32();
+    payloadIo::GetList(r, p.settings.mask);
+    payloadIo::GetList(r, p.settings.triangles);
+}
+
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -107,7 +131,8 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;
-    d.payload = rigExec::RigExecPayloadHandlingFor<SurfaceProjectPayload>();
+    d.payload = rigExec::RigExecPayloadHandlingFor<SurfaceProjectPayload, &Save,
+                                                   &Load>();
     return d;
 }();
 

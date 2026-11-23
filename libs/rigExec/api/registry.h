@@ -7,6 +7,8 @@
 /// and op port through a handle object rather than by name; names appear
 /// only in messages and saved files.
 
+#include "rigExec/api/payloadCodec.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -27,7 +29,7 @@ inline constexpr uint32_t kRigExecInvalidIndex = 0xffffffffu;
 /// Version of the descriptor structs below. Each library records the version
 /// it was built with, and Initialize rejects one built with another. Raise
 /// it whenever a descriptor's layout changes.
-inline constexpr uint32_t kRigExecRegistryAbiVersion = 3;
+inline constexpr uint32_t kRigExecRegistryAbiVersion = 4;
 
 /// Refers to one registered data type. A type library defines one per type
 /// with RIGEXEC_DEFINE_TYPE_HANDLE, and Initialize gives it its index; read
@@ -177,9 +179,11 @@ enum RigExecOpCapabilities : uint32_t {
     kRigExecOpFromLeaves = 1u << 6,
 };
 
-/// How to copy, compare and destroy an op's settings ("payload"): values
-/// fixed when the rig is compiled, such as a solver's iteration count. The
-/// payload is private to the op and is not a registered data type.
+/// How to copy, compare, destroy and save an op's settings ("payload"):
+/// values fixed when the rig is compiled, such as a solver's iteration
+/// count. The payload is private to the op and is not a registered data
+/// type. A Bakeable op with a payload must provide encode and decode, so a
+/// saved rig can carry its settings.
 struct RigExecOpPayloadHandling {
     size_t size = 0;
     size_t align = 1;
@@ -188,6 +192,13 @@ struct RigExecOpPayloadHandling {
     void (*destroy)(void *dst) = nullptr;
     uint64_t (*hash)(const void *payload) = nullptr;
     bool (*equal)(const void *a, const void *b) = nullptr;
+    /// Replaces \p bytes with the payload's saved form.
+    void (*encode)(const void *payload, std::vector<uint8_t> &bytes) = nullptr;
+    /// Reads \p size bytes into \p payload, which construct has made.
+    /// Returns false, with the reason in \p error, for bytes encode cannot
+    /// have written; it never reads outside them.
+    bool (*decode)(const uint8_t *bytes, size_t size, void *payload,
+                   std::string *error) = nullptr;
 };
 
 template <class T, class = void>
@@ -218,6 +229,28 @@ RigExecPayloadHandlingFor()
         h.equal = [](const void *a, const void *b) {
             return *static_cast<const T *>(a) == *static_cast<const T *>(b);
         };
+    return h;
+}
+
+/// Payload handling for \p T that also saves and reads it with
+/// \p Encode(writer, payload) and \p Decode(reader, payload).
+template <class T, void (*Encode)(RigExecPayloadWriter &, const T &),
+          void (*Decode)(RigExecPayloadReader &, T &)>
+RigExecOpPayloadHandling
+RigExecPayloadHandlingFor()
+{
+    RigExecOpPayloadHandling h = RigExecPayloadHandlingFor<T>();
+    h.encode = [](const void *payload, std::vector<uint8_t> &bytes) {
+        bytes.clear();
+        RigExecPayloadWriter writer(bytes);
+        Encode(writer, *static_cast<const T *>(payload));
+    };
+    h.decode = [](const uint8_t *bytes, size_t size, void *payload,
+                  std::string *error) {
+        RigExecPayloadReader reader(bytes, size);
+        Decode(reader, *static_cast<T *>(payload));
+        return reader.Finish(error);
+    };
     return h;
 }
 

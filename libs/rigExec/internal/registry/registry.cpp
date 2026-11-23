@@ -273,6 +273,11 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
         if (d.payload.size && (!d.payload.copy || !d.payload.destroy)) {
             _Error("op " + name + ": payload needs copy and destroy");
         }
+        if ((d.capabilities & kRigExecOpBakeable) && d.payload.size &&
+            (!d.payload.encode || !d.payload.decode)) {
+            _Error("op " + name +
+                   ": a Bakeable op's payload needs encode and decode");
+        }
         if (d.state.size && (!d.state.create || !d.state.destroy)) {
             _Error("op " + name + ": state needs create and destroy");
         }

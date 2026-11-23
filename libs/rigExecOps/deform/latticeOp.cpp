@@ -1,6 +1,7 @@
 #include "rigExecOps/deform/latticeOp.h"
 
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 
 #include <iterator>
 #include <string>
@@ -100,6 +101,45 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&LatticeOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const LatticePayload &p)
+{
+    w.Version(1);
+    for (int d : p.divisions)
+        w.I32(d);
+    const rigExec::RigExecLatticeSettings &s = p.settings;
+    w.Bool(s.regularGrid);
+    for (rigExec::RigExecLatticeInterpolation i : s.interpolation)
+        w.Enum(i);
+    for (float v : s.origin)
+        w.F32(v);
+    for (float v : s.spacing)
+        w.F32(v);
+    w.F32(s.strength);
+    payloadIo::PutList(w, s.mask);
+}
+
+void
+Load(Reader &r, LatticePayload &p)
+{
+    r.Version(1);
+    for (int &d : p.divisions)
+        d = r.I32();
+    rigExec::RigExecLatticeSettings &s = p.settings;
+    s.regularGrid = r.Bool();
+    for (rigExec::RigExecLatticeInterpolation &i : s.interpolation)
+        i = r.Enum(rigExec::RigExecLatticeInterpolation::CatmullRom);
+    for (float &v : s.origin)
+        v = r.F32();
+    for (float &v : s.spacing)
+        v = r.F32();
+    s.strength = r.F32();
+    payloadIo::GetList(r, s.mask);
+}
+
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -111,7 +151,8 @@ const rigExec::RigExecOpDesc kDesc = [] {
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
         rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
-    d.payload = rigExec::RigExecPayloadHandlingFor<LatticePayload>();
+    d.payload =
+        rigExec::RigExecPayloadHandlingFor<LatticePayload, &Save, &Load>();
     return d;
 }();
 

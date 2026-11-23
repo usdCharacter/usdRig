@@ -15,6 +15,12 @@ struct FkChainPayload {
     std::vector<int> parentIndices;
     /// segmentScale "toChild": each joint scales along its bone.
     bool scaleSegments = false;
+
+    bool operator==(const FkChainPayload &o) const
+    {
+        return parentIndices == o.parentIndices &&
+               scaleSegments == o.scaleSegments;
+    }
 };
 
 struct TwoBoneIkPayload {
@@ -25,6 +31,13 @@ struct TwoBoneIkPayload {
     bool scaleSegments = false;
     /// Subtracted from both scales inside the soft stretch.
     double scaleCalibration = 0.0;
+
+    bool operator==(const TwoBoneIkPayload &o) const
+    {
+        return softDistancePolicy == o.softDistancePolicy &&
+               scaleSegments == o.scaleSegments &&
+               scaleCalibration == o.scaleCalibration;
+    }
 };
 
 const rigExec::RigExecOpHandle &FkChain();

@@ -1,6 +1,7 @@
 #include "rigExecOps/solver/chainSolverOps.h"
 
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 #include "rigExecMath/chainSolverKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecRuntime/dualQuatMath.h"
@@ -198,6 +199,43 @@ const rigExec::RigExecPortDesc kIkPorts[] = {
      "out"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const FkChainPayload &p)
+{
+    w.Version(1);
+    payloadIo::PutList(w, p.parentIndices);
+    w.Bool(p.scaleSegments);
+}
+
+void
+Load(Reader &r, FkChainPayload &p)
+{
+    r.Version(1);
+    payloadIo::GetList(r, p.parentIndices);
+    p.scaleSegments = r.Bool();
+}
+
+void
+Save(Writer &w, const TwoBoneIkPayload &p)
+{
+    w.Version(1);
+    w.Bool(p.softDistancePolicy);
+    w.Bool(p.scaleSegments);
+    w.F64(p.scaleCalibration);
+}
+
+void
+Load(Reader &r, TwoBoneIkPayload &p)
+{
+    r.Version(1);
+    p.softDistancePolicy = r.Bool();
+    p.scaleSegments = r.Bool();
+    p.scaleCalibration = r.F64();
+}
+
 const rigExec::RigExecOpDesc kFk = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -206,7 +244,8 @@ const rigExec::RigExecOpDesc kFk = [] {
     d.portCount = std::size(kFkPorts);
     d.run = &RunFkChain;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<FkChainPayload>();
+    d.payload =
+        rigExec::RigExecPayloadHandlingFor<FkChainPayload, &Save, &Load>();
     return d;
 }();
 
@@ -218,7 +257,8 @@ const rigExec::RigExecOpDesc kIk = [] {
     d.portCount = std::size(kIkPorts);
     d.run = &RunTwoBoneIk;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<TwoBoneIkPayload>();
+    d.payload =
+        rigExec::RigExecPayloadHandlingFor<TwoBoneIkPayload, &Save, &Load>();
     return d;
 }();
 

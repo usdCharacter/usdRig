@@ -170,6 +170,23 @@ struct RigExecBone2dSetup {
     // Delta form: a controller adds its change from rest, scaled by the factor.
     int32_t angleController = -1, posController = -1, scaleController = -1;
     double angleFactor = 0, posFactorX = 0, posFactorY = 0, scaleFactor = 0;
+
+    bool operator==(const RigExecBone2dSetup &o) const
+    {
+        return parent == o.parent && flags == o.flags &&
+               minAngle == o.minAngle && maxAngle == o.maxAngle &&
+               scaling == o.scaling && squashFactor == o.squashFactor &&
+               maxStretch == o.maxStretch && tipBone == o.tipBone &&
+               tipX == o.tipX && tipY == o.tipY &&
+               spaceBegin == o.spaceBegin && spaceCount == o.spaceCount &&
+               spaceSelector == o.spaceSelector &&
+               targetBegin == o.targetBegin && targetCount == o.targetCount &&
+               angleController == o.angleController &&
+               posController == o.posController &&
+               scaleController == o.scaleController &&
+               angleFactor == o.angleFactor && posFactorX == o.posFactorX &&
+               posFactorY == o.posFactorY && scaleFactor == o.scaleFactor;
+    }
 };
 
 /// Parent-space, target and group arrays, shared by reference (never copied

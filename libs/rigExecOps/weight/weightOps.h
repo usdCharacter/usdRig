@@ -26,6 +26,12 @@ struct WeightFieldPayload {
     /// field is zero outside the ExtentU by ExtentV rectangle.
     WeightFieldAxis planeAxis = WeightFieldAxis::Z;
     bool planeBounded = false;
+
+    bool operator==(const WeightFieldPayload &o) const
+    {
+        return falloffCurve == o.falloffCurve && clamp == o.clamp &&
+               planeAxis == o.planeAxis && planeBounded == o.planeBounded;
+    }
 };
 
 /// Codes as rigExecEvalCore's WeightCombineCode.
@@ -48,6 +54,11 @@ struct CombineWeightsPayload {
     WeightCombineInputs inputs = WeightCombineInputs::Packets;
     /// Packets: out-of-range results clamp (true) or fail the op (false).
     bool clamp = false;
+
+    bool operator==(const CombineWeightsPayload &o) const
+    {
+        return mode == o.mode && inputs == o.inputs && clamp == o.clamp;
+    }
 };
 
 const rigExec::RigExecOpHandle &SphereWeight();

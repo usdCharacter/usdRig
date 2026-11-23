@@ -4,6 +4,7 @@
 #include "rigExecMath/poseArithmeticKernel.h"
 #include "rigExecMath/spaceMatchKernel.h"
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 #include "rigExecRuntime/switchMath.h"
 
 #include <cmath>
@@ -466,6 +467,73 @@ const rigExec::RigExecPortDesc kIkFkPorts[] = {
     {&IkFkMatchShownMask(), &rigExecStd::UIntType(), kOut, "shownMask"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+PutSwitch(Writer &w, const SpaceSwitchSetup &s)
+{
+    payloadIo::PutList(w, s.filters);
+    payloadIo::Put(w, s.twistAxis);
+    payloadIo::PutFlags(w, s.affectTranslation);
+    payloadIo::PutFlags(w, s.affectRotation);
+    payloadIo::PutFlags(w, s.affectScale);
+    w.Bool(s.hasCarry);
+    payloadIo::PutList(w, s.world);
+}
+
+void
+GetSwitch(Reader &r, SpaceSwitchSetup &s)
+{
+    payloadIo::GetList(r, s.filters);
+    payloadIo::Get(r, s.twistAxis);
+    payloadIo::GetFlags(r, s.affectTranslation);
+    payloadIo::GetFlags(r, s.affectRotation);
+    payloadIo::GetFlags(r, s.affectScale);
+    s.hasCarry = r.Bool();
+    payloadIo::GetList(r, s.world);
+}
+
+void
+Save(Writer &w, const IkFkMatchPayload &p)
+{
+    w.Version(1);
+    PutSwitch(w, p.poleSwitch);
+    payloadIo::PutList(w, p.poleSourceRides);
+    w.F64(p.ikValue);
+    w.F64(p.scaleCalibration);
+    w.F64(p.upperLengthOffset);
+    w.F64(p.lowerLengthOffset);
+    w.Bool(p.stretchLimb);
+}
+
+void
+Load(Reader &r, IkFkMatchPayload &p)
+{
+    r.Version(1);
+    GetSwitch(r, p.poleSwitch);
+    payloadIo::GetList(r, p.poleSourceRides);
+    p.ikValue = r.F64();
+    p.scaleCalibration = r.F64();
+    p.upperLengthOffset = r.F64();
+    p.lowerLengthOffset = r.F64();
+    p.stretchLimb = r.Bool();
+}
+
+void
+Save(Writer &w, const SpaceMatchPayload &p)
+{
+    w.Version(1);
+    PutSwitch(w, p.space);
+}
+
+void
+Load(Reader &r, SpaceMatchPayload &p)
+{
+    r.Version(1);
+    GetSwitch(r, p.space);
+}
+
 const rigExec::RigExecOpDesc kIkFk = [] {
     rigExec::RigExecOpDesc op;
     op.nameSpace = "rig";
@@ -475,7 +543,8 @@ const rigExec::RigExecOpDesc kIkFk = [] {
     op.run = &RunIkFkMatch;
     op.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    op.payload = rigExec::RigExecPayloadHandlingFor<IkFkMatchPayload>();
+    op.payload =
+        rigExec::RigExecPayloadHandlingFor<IkFkMatchPayload, &Save, &Load>();
     return op;
 }();
 
@@ -508,7 +577,8 @@ const rigExec::RigExecOpDesc kSpace = [] {
     op.run = &RunSpaceMatch;
     op.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    op.payload = rigExec::RigExecPayloadHandlingFor<SpaceMatchPayload>();
+    op.payload =
+        rigExec::RigExecPayloadHandlingFor<SpaceMatchPayload, &Save, &Load>();
     return op;
 }();
 

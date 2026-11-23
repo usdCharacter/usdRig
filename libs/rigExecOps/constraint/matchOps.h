@@ -33,6 +33,15 @@ struct SpaceSwitchSetup {
     bool hasCarry = false;
     /// Per source: a world source, whose space ports entries are unread.
     std::vector<uint8_t> world;
+
+    bool operator==(const SpaceSwitchSetup &o) const
+    {
+        return filters == o.filters && twistAxis == o.twistAxis &&
+               affectTranslation == o.affectTranslation &&
+               affectRotation == o.affectRotation &&
+               affectScale == o.affectScale && hasCarry == o.hasCarry &&
+               world == o.world;
+    }
 };
 
 struct IkFkMatchPayload {
@@ -44,6 +53,16 @@ struct IkFkMatchPayload {
     double upperLengthOffset = 0.0;
     double lowerLengthOffset = 0.0;
     bool stretchLimb = true;
+
+    bool operator==(const IkFkMatchPayload &o) const
+    {
+        return poleSwitch == o.poleSwitch &&
+               poleSourceRides == o.poleSourceRides && ikValue == o.ikValue &&
+               scaleCalibration == o.scaleCalibration &&
+               upperLengthOffset == o.upperLengthOffset &&
+               lowerLengthOffset == o.lowerLengthOffset &&
+               stretchLimb == o.stretchLimb;
+    }
 };
 
 /// How the pole's parent follows the IK control the match moves.
@@ -95,6 +114,11 @@ const rigExec::RigExecPortHandle &IkFkMatchShownMask();
 
 struct SpaceMatchPayload {
     SpaceSwitchSetup space;
+
+    bool operator==(const SpaceMatchPayload &o) const
+    {
+        return space == o.space;
+    }
 };
 
 const rigExec::RigExecOpHandle &SpaceMatch();

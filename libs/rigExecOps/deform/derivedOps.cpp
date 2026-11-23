@@ -1,6 +1,7 @@
 #include "rigExecOps/deform/derivedOps.h"
 
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 #include "rigExecMath/meshBoundsKernel.h"
 #include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/normalsLayoutKernel.h"
@@ -147,11 +148,31 @@ const rigExec::RigExecPortDesc kExtentPorts[] = {
      "out"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const NormalsPayload &p)
+{
+    w.Version(1);
+    w.Bool(p.perCorner);
+    w.Bool(p.leftHanded);
+}
+
+void
+Load(Reader &r, NormalsPayload &p)
+{
+    r.Version(1);
+    p.perCorner = r.Bool();
+    p.leftHanded = r.Bool();
+}
+
 const rigExec::RigExecOpDesc kNormalsDesc = [] {
     rigExec::RigExecOpDesc d =
         DerivedDesc("RecomputeNormals", kNormalsPorts, std::size(kNormalsPorts),
                     &RunNormals, 0);
-    d.payload = rigExec::RigExecPayloadHandlingFor<NormalsPayload>();
+    d.payload =
+        rigExec::RigExecPayloadHandlingFor<NormalsPayload, &Save, &Load>();
     return d;
 }();
 

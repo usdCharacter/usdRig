@@ -2,6 +2,7 @@
 
 #include "rigExecMath/matrixKernel.h"
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 
 #include <cmath>
 #include <iterator>
@@ -74,6 +75,23 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&MatrixDeformOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const MatrixDeformPayload &p)
+{
+    w.Version(1);
+    w.Bool(p.radial);
+}
+
+void
+Load(Reader &r, MatrixDeformPayload &p)
+{
+    r.Version(1);
+    p.radial = r.Bool();
+}
+
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -84,7 +102,8 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.capabilities = rigExec::kRigExecOpBakeable |
                      rigExec::kRigExecOpFreezable | rigExec::kRigExecOpRanged |
                      rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
-    d.payload = rigExec::RigExecPayloadHandlingFor<MatrixDeformPayload>();
+    d.payload =
+        rigExec::RigExecPayloadHandlingFor<MatrixDeformPayload, &Save, &Load>();
     return d;
 }();
 

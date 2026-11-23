@@ -20,6 +20,12 @@ namespace rigExec {
 struct RigExecJointGroup {
     uint32_t memberBegin = 0, memberCount = 0;
     bool enabled = true;
+
+    bool operator==(const RigExecJointGroup &o) const
+    {
+        return memberBegin == o.memberBegin && memberCount == o.memberCount &&
+               enabled == o.enabled;
+    }
 };
 
 /// The active member of \p group for selector \p v: rounded half away from

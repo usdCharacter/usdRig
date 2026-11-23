@@ -122,9 +122,46 @@ RegisterWindowMismatch(RigExecOpRegistrar &registrar)
     registrar.Add(FramedOp(), framed);
 }
 
+// A Bakeable op whose payload cannot be saved.
+RIGEXEC_DEFINE_OP_HANDLE(UnsavedOp)
+RIGEXEC_DEFINE_PORT_HANDLE(UnsavedPort)
+
+struct UnsavedPayload {
+    float scale = 1.0f;
+};
+
+void
+RegisterUnsaved(RigExecOpRegistrar &registrar)
+{
+    static const RigExecPortDesc ports[] = {
+        {&UnsavedPort(), &fakeTypes::Float(), kRigExecPortOutput, "out"}};
+    static const RigExecOpDesc desc = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "Unsaved";
+        d.ports = ports;
+        d.portCount = 1;
+        d.run = &NoRun;
+        d.capabilities = kRigExecOpBakeable;
+        d.payload = RigExecPayloadHandlingFor<UnsavedPayload>();
+        return d;
+    }();
+    registrar.Add(UnsavedOp(), desc);
+}
+
 void
 TestValidateErrors(const RigExecRegistryInit &good)
 {
+    {
+        RigExecOpLibraryDesc bad;
+        bad.name = "unsaved";
+        bad.registerOps = &RegisterUnsaved;
+        RigExecRegistryInit init = good;
+        init.opLibraries.push_back(&bad);
+        std::vector<std::string> errors;
+        CHECK(!RigExecRegistry::Validate(init, &errors));
+        CHECK(Mentions(errors, "payload needs encode and decode"));
+    }
     {
         RigExecOpLibraryDesc bad;
         bad.name = "windowMismatch";

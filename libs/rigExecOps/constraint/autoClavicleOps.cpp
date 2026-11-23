@@ -1,6 +1,7 @@
 #include "rigExecOps/constraint/autoClavicleOps.h"
 
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 
 #include <cmath>
 #include <iterator>
@@ -159,6 +160,45 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&AutoClavicleOut(), &rigExecStd::Mat4dType(), kRigExecPortOutput, "out"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const AutoClavicleOpPayload &p)
+{
+    w.Version(1);
+    const rigExec::RigExecAutoClavicleConstants &c = p.constants;
+    for (double b : c.basis)
+        w.F64(b);
+    w.F64(c.ikValue);
+    w.F64(c.gain);
+    w.I32(c.kernel);
+    w.Bool(c.normalize);
+    payloadIo::PutList(w, c.swings);
+    payloadIo::PutList(w, c.widths);
+    payloadIo::PutList(w, c.gains);
+    payloadIo::PutList(w, c.weights);
+    w.Bool(p.hasLimb);
+}
+
+void
+Load(Reader &r, AutoClavicleOpPayload &p)
+{
+    r.Version(1);
+    rigExec::RigExecAutoClavicleConstants &c = p.constants;
+    for (double &b : c.basis)
+        b = r.F64();
+    c.ikValue = r.F64();
+    c.gain = r.F64();
+    c.kernel = r.I32();
+    c.normalize = r.Bool();
+    payloadIo::GetList(r, c.swings);
+    payloadIo::GetList(r, c.widths);
+    payloadIo::GetList(r, c.gains);
+    payloadIo::GetList(r, c.weights);
+    p.hasLimb = r.Bool();
+}
+
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -167,7 +207,8 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.portCount = std::size(kPorts);
     d.run = &RunAutoClavicle;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<AutoClavicleOpPayload>();
+    d.payload = rigExec::RigExecPayloadHandlingFor<AutoClavicleOpPayload, &Save,
+                                                   &Load>();
     return d;
 }();
 

@@ -1,6 +1,7 @@
 #include "rigExecOps/property/mathOps.h"
 
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 #include <iterator>
 #include <string>
 
@@ -144,6 +145,43 @@ RunMatrix(const void *payload, void *, const RigExecOpIo &io,
     return true;
 }
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const MathPayload &p)
+{
+    w.Version(1);
+    w.Enum(p.op);
+    payloadIo::PutList(w, p.keys);
+    payloadIo::PutList(w, p.tangents);
+    w.Bool(p.path.valid);
+    w.Enum(p.path.basis);
+    w.Bool(p.path.pinned);
+    w.Bool(p.path.planar);
+    w.Enum(p.path.component);
+    w.F32(p.path.offsetX);
+    w.F32(p.path.offsetZ);
+    w.F32(p.path.headingOffset);
+}
+
+void
+Load(Reader &r, MathPayload &p)
+{
+    r.Version(1);
+    p.op = r.Enum(RigExecPropertyOp::Path);
+    payloadIo::GetList(r, p.keys);
+    payloadIo::GetList(r, p.tangents);
+    p.path.valid = r.Bool();
+    p.path.basis = r.Enum(rigExec::RigExecPathBasis::CatmullRom);
+    p.path.pinned = r.Bool();
+    p.path.planar = r.Bool();
+    p.path.component = r.Enum(rigExec::RigExecPathComponent::End);
+    p.path.offsetX = r.F32();
+    p.path.offsetZ = r.F32();
+    p.path.headingOffset = r.F32();
+}
+
 rigExec::RigExecOpDesc
 MathDesc(const char *name, const rigExec::RigExecPortDesc *ports,
          size_t portCount, rigExec::RigExecOpRunFn run)
@@ -155,7 +193,7 @@ MathDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.portCount = portCount;
     d.run = run;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<MathPayload>();
+    d.payload = rigExec::RigExecPayloadHandlingFor<MathPayload, &Save, &Load>();
     return d;
 }
 

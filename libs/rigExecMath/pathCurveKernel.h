@@ -62,6 +62,14 @@ struct RigExecPathSettings {
     float offsetZ = 0.0f;
     /// Added to the tangent's heading, in degrees.
     float headingOffset = 0.0f;
+
+    bool operator==(const RigExecPathSettings &o) const
+    {
+        return valid == o.valid && basis == o.basis && pinned == o.pinned &&
+               planar == o.planar && component == o.component &&
+               offsetX == o.offsetX && offsetZ == o.offsetZ &&
+               headingOffset == o.headingOffset;
+    }
 };
 
 namespace pathKernelDetail {

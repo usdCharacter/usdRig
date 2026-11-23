@@ -26,6 +26,12 @@ struct MathPayload {
     std::vector<rigExecStd::Vec2f> keys;
     std::vector<rigExecStd::Vec2f> tangents;
     rigExec::RigExecPathSettings path;
+
+    bool operator==(const MathPayload &o) const
+    {
+        return op == o.op && keys == o.keys && tangents == o.tangents &&
+               path == o.path;
+    }
 };
 
 /// out = mix(in, op(in), weight), on a float. Every operation.

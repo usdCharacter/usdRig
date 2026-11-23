@@ -1,6 +1,7 @@
 #include "rigExecOps/deform/wireOp.h"
 
 #include "rigExecOps/opIo.h"
+#include "rigExecOps/payloadIo.h"
 #include "rigExecMath/wireBasisKernel.h"
 
 #include <iterator>
@@ -106,6 +107,27 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&WireOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
 };
 
+using payloadIo::Reader;
+using payloadIo::Writer;
+
+void
+Save(Writer &w, const WirePayload &p)
+{
+    w.Version(1);
+    w.I32(p.order);
+    payloadIo::PutList(w, p.knots);
+    w.F64(p.dropoffDistance);
+}
+
+void
+Load(Reader &r, WirePayload &p)
+{
+    r.Version(1);
+    p.order = r.I32();
+    payloadIo::GetList(r, p.knots);
+    p.dropoffDistance = r.F64();
+}
+
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -117,7 +139,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
         rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
-    d.payload = rigExec::RigExecPayloadHandlingFor<WirePayload>();
+    d.payload = rigExec::RigExecPayloadHandlingFor<WirePayload, &Save, &Load>();
     return d;
 }();
 
