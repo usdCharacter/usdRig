@@ -13,6 +13,11 @@ add_library(rigExecCompile OBJECT
     libs/rigExec/internal/frozenDigest.cpp
     libs/rigExec/internal/rigEvaluatorChainPlan.cpp
     libs/rigExec/internal/rigEvaluatorCompile.cpp
+    libs/rigExec/internal/rigEvaluatorCompileChains.cpp
+    libs/rigExec/internal/rigEvaluatorCompileCommit.cpp
+    libs/rigExec/internal/rigEvaluatorCompileConstraints.cpp
+    libs/rigExec/internal/rigEvaluatorCompilePoseGraph.cpp
+    libs/rigExec/internal/rigEvaluatorCompileSolvers.cpp
     libs/rigExec/internal/rigEvaluatorDependencies.cpp
     libs/rigExec/internal/rigEvaluatorDigest.cpp
     libs/rigExec/internal/rigEvaluatorLiveGraph.cpp
