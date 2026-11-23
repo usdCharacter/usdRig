@@ -121,6 +121,8 @@ struct RigExecSceneOperationWorkspace {
     std::vector<GfVec3f> points, basePoints, finalPoints;
     std::vector<std::string> geometryDiagnostics;
     std::vector<RigExecBlendChannel> blendChannels;
+    /// An External mover's declared inputs, when it runs on its op.
+    std::vector<VtValue> externalInputs;
     RigExecGeometryOpRunner opRunner;
     /// Set at Prepare for a solver or constraint the op core runs.
     bool poseOnOps = false;

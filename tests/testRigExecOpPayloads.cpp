@@ -10,6 +10,7 @@
 #include "rigExecOps/deform/derivedOps.h"
 #include "rigExecOps/deform/latticeOp.h"
 #include "rigExecOps/deform/matrixDeformOp.h"
+#include "rigExecOps/deform/patchOp.h"
 #include "rigExecOps/deform/projectorOps.h"
 #include "rigExecOps/deform/skinOp.h"
 #include "rigExecOps/deform/surfaceProjectOp.h"
@@ -382,6 +383,15 @@ TestFilledPayloads()
         c.inputs = WeightCombineInputs::Fields;
         c.clamp = true;
         CheckRoundTrip(Op(CombineWeights()), &c);
+    }
+    {
+        PatchPayload p;
+        p.uVertexCount = 7;
+        p.vVertexCount = -2;
+        p.uOrder = 4;
+        p.vOrder = 16;
+        p.uPeriodic = true;
+        CheckRoundTrip(Op(Patch()), &p);
     }
 }
 

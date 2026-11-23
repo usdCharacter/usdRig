@@ -32,6 +32,7 @@ void RegisterSkeleton2dOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterAutoClavicleOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterHarmonicsOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterMatchOps(rigExec::RigExecOpRegistrar &registrar);
+void RegisterPatchOps(rigExec::RigExecOpRegistrar &registrar);
 
 } // namespace rigExecOps
 

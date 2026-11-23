@@ -42,6 +42,12 @@ RigExecAssembleGeometry(RigExecRevisionOp, const RigExecRevisionBinding &,
                         const RigExecRevisionLeafView &,
                         const RigExecProviderValues &,
                         RigExecExternalRevision *external = nullptr);
+/// An External revision's packet and declared inputs without its handler's
+/// assembly (RigExecGatherExternalInputs), for a revision that runs as an op.
+RigExecMoverParameters
+RigExecGatherExternalGeometryInputs(const RigExecGeometryRecord &,
+                                    const RigExecGeometryInputs &,
+                                    std::vector<VtValue> *declared);
 /// Fold measured neutral references and point-frame carry in production order.
 GfMatrix4d RigExecGeometryMatrixInPointFrame(const GfMatrix4d &,
                                              const GfMatrix4d *space,

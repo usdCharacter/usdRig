@@ -100,6 +100,47 @@ RigExecRunGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
 }
 
 bool
+RigExecRunExternalOp(const RigExecRevisionBinding &binding,
+                     const RigExecMoverParameters &p,
+                     const RigExecExternalOpValues &values,
+                     RigExecGeometryOpRunner &runner,
+                     std::vector<GfVec3f> &points, std::string *error)
+{
+    const RigExecOpHandle *op = RigExecExternalOpHandle(binding);
+    const bool ready =
+        op && Ready(
+                  runner, runner.evaluator && runner.external.op == op,
+                  [&](RigExecRigDescBuilder &builder) {
+                      return RigExecAddExternalOp(binding, values, &builder,
+                                                  &runner.external, error);
+                  },
+                  [&] {
+                      return RigExecWriteExternalOpInputs(
+                          binding, values, p.weights, points, runner.external,
+                          runner.evaluator.get(), error);
+                  },
+                  [&] {
+                      return RigExecExternalOpNodeStale(binding, values,
+                                                        runner.external);
+                  },
+                  error);
+    if (!ready || !runner.evaluator->Evaluate(error))
+        return false;
+    const auto *out = static_cast<const RigExecArray<Vec3f> *>(
+        runner.evaluator->GetOutput(runner.external.out));
+    if (!out || out->Size() != points.size()) {
+        if (error)
+            *error = "external op changed the point count";
+        return false;
+    }
+    for (size_t i = 0; i < out->Size(); ++i) {
+        const Vec3f &v = (*out)[i];
+        points[i] = GfVec3f(v[0], v[1], v[2]);
+    }
+    return true;
+}
+
+bool
 RigExecRunGeometryMatrixOp(RigExecRevisionOp op,
                            const RigExecRevisionBinding &binding,
                            const RigExecSurfaceProjectorFrames &frames,

@@ -6,6 +6,8 @@
 #include "rigExec/internal/parallel.h"
 #include "rigExec/internal/pathText.h"
 #include "rigExecMath/geometryKernels.h"
+#include "rigExecMath/patchKernel.h"
+#include "rigExecScene/patchInputs.h"
 #include "rigExecScene/sceneDescriptors.h"
 
 #include "pxr/base/tf/staticTokens.h"
@@ -49,25 +51,7 @@ TF_DEFINE_PRIVATE_TOKENS(_patchTokens,
 
 namespace {
 
-// Declared inputs: the patch's ten, the neutral UV points, one points array
-// per rigExec:uvShapes target, then the shape weights -- one per shape, read
-// from the sources inputs:uvWeights connects to, in order, or, with no
-// connection, the authored array itself -- and last the two contact index
-// lists, rigExec:uvContactLower and rigExec:uvContactUpper.
-enum Input : size_t {
-    PatchPoints = 0,
-    PatchPointWeights,
-    PatchUVertexCount,
-    PatchVVertexCount,
-    PatchUOrder,
-    PatchVOrder,
-    PatchUKnots,
-    PatchVKnots,
-    PatchUForm,
-    PatchVForm,
-    UvPoints,
-    UvShapes
-};
+using namespace patchInputs;
 
 // Interned once at load: the oracle asks per frame, and interning takes
 // the token registry's lock.
@@ -75,46 +59,6 @@ const TfToken _uvWeights(rigExec::SchemaAttrText::inputsUvWeights);
 const TfToken _uvShapes(rigExec::SchemaAttrText::rigExecUvShapes);
 const TfToken _uvContactLower(rigExec::SchemaAttrText::rigExecUvContactLower);
 const TfToken _uvContactUpper(rigExec::SchemaAttrText::rigExecUvContactUpper);
-
-// How many shapes the declared inputs hold, and whether their weights are
-// connected sources (one Dial each) or the authored array.
-struct Layout {
-    size_t shapes = 0;
-    bool connected = false;
-};
-
-size_t
-WeightsBegin(const Layout &layout)
-{
-    return UvShapes + layout.shapes;
-}
-
-size_t
-ContactsBegin(const Layout &layout)
-{
-    return WeightsBegin(layout) + (layout.connected ? layout.shapes : 1);
-}
-
-size_t
-InputCount(const Layout &layout)
-{
-    return ContactsBegin(layout) + 2;
-}
-
-Layout
-LayoutOf(const std::vector<RigExecRevisionLeafKey> &keys)
-{
-    Layout layout;
-    size_t k = UvShapes;
-    while (k < keys.size() &&
-           keys[k].type == RigExecRevisionLeafType::Vec3fArray) {
-        ++layout.shapes;
-        ++k;
-    }
-    layout.connected =
-        k < keys.size() && keys[k].type == RigExecRevisionLeafType::Dial;
-    return layout;
-}
 
 std::vector<RigExecRevisionLeafKey>
 DeclaredInputs(const SdfPath &mover, const SdfPath &patchTarget,
@@ -276,103 +220,31 @@ ValidForm(const char *form, bool *periodic)
     return false;
 }
 
-// The neutral UV points mixed toward the shapes:
-// uv = neutral + sum_k w_k (shape_k - neutral), in UV space, accumulated in
-// double. Only the XY components move. False when a shape's point count
-// differs from the neutral's or a weight is not finite.
+// The shape mix and contacts of rigExecMath/patchKernel.h over Vt arrays.
 bool
 MixShapes(const std::vector<const GfVec3f *> &shapes,
           const std::vector<double> &weights, VtVec3fArray *uvPoints)
 {
-    for (const double weight : weights) {
-        if (!std::isfinite(weight)) {
-            return false;
-        }
-    }
-    const VtVec3fArray neutral = *uvPoints;
-    GfVec3f *const mixed = uvPoints->data();
-    // Each point mixes independently, so the loop may be split.
-    RigExecRunRanges(
-        RigExecGeometryRanges(), neutral.size(), 1024,
-        [&](size_t begin, size_t end) {
-            for (size_t i = begin; i < end; ++i) {
-                double u = double(neutral[i][0]), v = double(neutral[i][1]);
-                for (size_t k = 0; k < shapes.size(); ++k) {
-                    if (weights[k] == 0.0) {
-                        continue;
-                    }
-                    u += weights[k] *
-                         (double(shapes[k][i][0]) - double(neutral[i][0]));
-                    v += weights[k] *
-                         (double(shapes[k][i][1]) - double(neutral[i][1]));
-                }
-                mixed[i] = GfVec3f(float(u), float(v), neutral[i][2]);
-            }
-        });
-    return true;
+    return RigExecMixPatchShapes(shapes.data(), weights.data(), shapes.size(),
+                                 uvPoints->data(), uvPoints->size(),
+                                 RigExecGeometryRanges());
 }
 
-// Why the contact lists are unusable for pointCount UV points, or empty
-// when they are usable: as long as each other, every index in range, and
-// no point named twice, so pairs do not interact.
 std::string
 ContactError(const VtIntArray &lower, const VtIntArray &upper,
              size_t pointCount)
 {
-    if (lower.size() != upper.size()) {
-        return "rigExec:uvContactLower holds " + std::to_string(lower.size()) +
-               " indices; rigExec:uvContactUpper holds " +
-               std::to_string(upper.size());
-    }
-    std::vector<int> named;
-    named.reserve(2 * lower.size());
-    for (size_t k = 0; k < lower.size(); ++k) {
-        for (const int index : {lower[k], upper[k]}) {
-            if (index < 0 || size_t(index) >= pointCount) {
-                return "UV contact " + std::to_string(k) + " names point " +
-                       std::to_string(index) + "; rigExec:uvPoints has " +
-                       std::to_string(pointCount);
-            }
-            named.push_back(index);
-        }
-    }
-    std::sort(named.begin(), named.end());
-    const auto twice = std::adjacent_find(named.begin(), named.end());
-    if (twice != named.end()) {
-        return "UV contacts name point " + std::to_string(*twice) +
-               " more than once";
-    }
-    return std::string();
+    return RigExecPatchContactError(lower.cdata(), lower.size(), upper.cdata(),
+                                    upper.size(), pointCount);
 }
 
-// Contacts, after the shapes mix: point lower[k] never stands above point
-// upper[k] in v. A pair that would cross meets at the midpoint of its two
-// v values, so shapes that close past contact press together instead of
-// passing through. Only v moves; a pair meant to keep two curves apart
-// shares its u (one column of each curve), and then the curves cannot
-// cross between columns either. False when ContactError reports.
 bool
 TouchContacts(const VtIntArray &lower, const VtIntArray &upper,
               VtVec3fArray *uvPoints)
 {
-    if (lower.empty() && upper.empty()) {
-        return true;
-    }
-    if (!ContactError(lower, upper, uvPoints->size()).empty()) {
-        return false;
-    }
-    GfVec3f *uv = uvPoints->data();
-    for (size_t k = 0; k < lower.size(); ++k) {
-        GfVec3f &below = uv[lower[k]];
-        GfVec3f &above = uv[upper[k]];
-        if (below[1] > above[1]) {
-            const float mid =
-                float(0.5 * (double(below[1]) + double(above[1])));
-            below[1] = mid;
-            above[1] = mid;
-        }
-    }
-    return true;
+    return RigExecTouchPatchContacts(lower.cdata(), lower.size(), upper.cdata(),
+                                     upper.size(), uvPoints->data(),
+                                     uvPoints->size());
 }
 
 void

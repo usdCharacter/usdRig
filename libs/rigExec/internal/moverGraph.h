@@ -1087,6 +1087,17 @@ RigExecMoverParameters RigExecAssembleFromLeaves(
     const RigExecRevisionLeafView &leaves, const RigExecProviderValues &values,
     RigExecExternalRevision *external = nullptr);
 
+/// RigExecAssembleFromLeaves for an External revision up to its handler's
+/// assembly, which it does not call: the packet's enable and envelope, and
+/// in \p inputs the declared inputs in declaration order, the phase overlay
+/// applied as there. The packet is valid when every declared input was
+/// sampled.
+RigExecMoverParameters
+RigExecGatherExternalInputs(const RigExecRevisionBinding &binding,
+                            const RigExecRevisionLeafView &leaves,
+                            const RigExecProviderValues &values,
+                            std::vector<VtValue> *inputs);
+
 /// Whether RigExecAssembleFromLeaves reaches an External revision's payload
 /// over \p leaves and \p values: the enable and the envelope, which the
 /// stage assembler checks before it calls the plugin.

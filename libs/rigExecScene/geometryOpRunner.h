@@ -6,6 +6,7 @@
 /// so stale settings never run. Owner-thread state of the scene runtime.
 
 #include "rigExec/api/evaluator.h"
+#include "rigExecScene/externalOps.h"
 #include "rigExecScene/geometryOps.h"
 #include "rigExecScene/geometryProgram.h"
 
@@ -19,6 +20,7 @@ struct RigExecGeometryOpRunner {
     std::unique_ptr<RigExecEvaluator> evaluator;
     RigExecGeometryOpNode node;
     RigExecGeometryMatrixNode matrix;
+    RigExecExternalOpNode external;
     RigExecGeometryPayloadScratchPtr payloadScratch;
 };
 
@@ -31,6 +33,16 @@ bool RigExecLoadGeometryOpCore(std::string *error);
 bool RigExecRunGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
                           const std::vector<RigExecBlendChannel> *channels,
                           const std::vector<GfVec3f> &base,
+                          RigExecGeometryOpRunner &runner,
+                          std::vector<GfVec3f> &points,
+                          std::string *error = nullptr);
+
+/// \p binding's External mover over \p points as its op's node, \p p
+/// giving the envelope. False with \p error, \p points untouched, where
+/// the op refuses.
+bool RigExecRunExternalOp(const RigExecRevisionBinding &binding,
+                          const RigExecMoverParameters &p,
+                          const RigExecExternalOpValues &values,
                           RigExecGeometryOpRunner &runner,
                           std::vector<GfVec3f> &points,
                           std::string *error = nullptr);

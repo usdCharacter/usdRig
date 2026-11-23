@@ -126,6 +126,7 @@ add_library(rigExecScene SHARED
     libs/rigExecScene/constraintGraphBinding.cpp
     libs/rigExecScene/constraintSceneTranslation.cpp
     libs/rigExecScene/geometryGraphBinding.cpp
+    libs/rigExecScene/externalOps.cpp
     libs/rigExecScene/geometryOpRunner.cpp
     libs/rigExecScene/geometryOps.cpp
     libs/rigExecScene/geometrySceneTranslation.cpp
@@ -292,6 +293,7 @@ rigexec_add_op_library(rigExecOps
         libs/rigExecOps/deform/wireOp.cpp
         libs/rigExecOps/deform/ribbonOp.cpp
         libs/rigExecOps/deform/projectorOps.cpp
+        libs/rigExecOps/deform/patchOp.cpp
         libs/rigExecOps/constraint/autoClavicleOps.cpp
         libs/rigExecOps/constraint/constraintOps.cpp
         libs/rigExecOps/constraint/harmonicsOps.cpp
@@ -1277,7 +1279,8 @@ rigexec_add_graph_test(testRigExecSurfaceBinding CONE_VERIFY)
 
 add_executable(testRigExecPatchMover tests/testRigExecPatchMover.cpp)
 target_link_libraries(testRigExecPatchMover PRIVATE
-    rigExec rigExecAuthoring rigExecBake rigExecRuntime rigExecSampler)
+    rigExec rigExecAuthoring rigExecBake rigExecRuntime rigExecSampler
+    rigExecScene)
 target_compile_definitions(testRigExecPatchMover PRIVATE ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecPatchMover COMMAND testRigExecPatchMover)
 rigexec_add_graph_test(testRigExecPatchMover CONE_VERIFY)
@@ -1422,6 +1425,10 @@ add_executable(testRigExecSceneGeometryOps tests/testRigExecSceneGeometryOps.cpp
 target_link_libraries(testRigExecSceneGeometryOps PRIVATE rigExecSceneOps)
 add_test(NAME testRigExecSceneGeometryOps COMMAND testRigExecSceneGeometryOps)
 set_tests_properties(testRigExecSceneGeometryOps PROPERTIES LABELS "fast")
+add_executable(testRigExecSceneExternalOps tests/testRigExecSceneExternalOps.cpp)
+target_link_libraries(testRigExecSceneExternalOps PRIVATE rigExecSceneOps)
+add_test(NAME testRigExecSceneExternalOps COMMAND testRigExecSceneExternalOps)
+set_tests_properties(testRigExecSceneExternalOps PROPERTIES LABELS "fast")
 add_executable(testRigExecScenePoseOps tests/testRigExecScenePoseOps.cpp)
 target_link_libraries(testRigExecScenePoseOps PRIVATE rigExecSceneOps)
 target_compile_definitions(testRigExecScenePoseOps PRIVATE

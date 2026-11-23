@@ -30,6 +30,7 @@ Register(rigExec::RigExecOpRegistrar &registrar)
     RegisterAutoClavicleOps(registrar);
     RegisterHarmonicsOps(registrar);
     RegisterMatchOps(registrar);
+    RegisterPatchOps(registrar);
 }
 
 const rigExec::RigExecOpLibraryDesc kLibrary = [] {

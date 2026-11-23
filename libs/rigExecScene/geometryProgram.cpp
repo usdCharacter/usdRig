@@ -4,15 +4,20 @@
 #include "rigExec/internal/pathText.h"
 #include <cmath>
 namespace rigExec {
-RigExecMoverParameters
-RigExecAssembleGeometry(const RigExecGeometryRecord &record,
-                        const RigExecGeometryInputs &inputs,
-                        RigExecExternalRevision *external)
+namespace {
+RigExecRevisionLeafView
+LeavesOf(const RigExecGeometryRecord &record,
+         const RigExecGeometryInputs &inputs)
 {
     RigExecRevisionLeafView leaves;
     leaves.decl = &record.leaves;
     leaves.values = inputs.leaves;
     leaves.phased = inputs.phased;
+    return leaves;
+}
+RigExecProviderValues
+ProvidersOf(const RigExecGeometryInputs &inputs)
+{
     RigExecProviderValues providers;
     providers.transform = inputs.transform;
     providers.carry = inputs.carry;
@@ -22,8 +27,25 @@ RigExecAssembleGeometry(const RigExecGeometryRecord &record,
     providers.skinTopology = inputs.skinTopology;
     providers.basePoints = inputs.basePoints;
     providers.blendDeltas = inputs.blendDeltas;
-    return RigExecAssembleFromLeaves(record.op, record.binding, leaves,
-                                     providers, external);
+    return providers;
+}
+} // namespace
+RigExecMoverParameters
+RigExecAssembleGeometry(const RigExecGeometryRecord &record,
+                        const RigExecGeometryInputs &inputs,
+                        RigExecExternalRevision *external)
+{
+    return RigExecAssembleFromLeaves(record.op, record.binding,
+                                     LeavesOf(record, inputs),
+                                     ProvidersOf(inputs), external);
+}
+RigExecMoverParameters
+RigExecGatherExternalGeometryInputs(const RigExecGeometryRecord &record,
+                                    const RigExecGeometryInputs &inputs,
+                                    std::vector<VtValue> *declared)
+{
+    return RigExecGatherExternalInputs(record.binding, LeavesOf(record, inputs),
+                                       ProvidersOf(inputs), declared);
 }
 RigExecMoverParameters
 RigExecAssembleGeometry(RigExecRevisionOp op,

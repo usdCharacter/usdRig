@@ -10,14 +10,19 @@ Fail(std::string *error, const std::string &message)
         *error = message;
     return false;
 }
-// Decided up front: External movers, a scalar-mode request and a windowed
-// revision run natively; the deform ops run SIMD kernels only, without a
-// window.
+// Decided up front: a windowed revision, an External mover without an op
+// and a scalar-mode request for a deform op run natively; the deform ops
+// run SIMD kernels only. An External mover's op has no SIMD form.
 bool
 RunsOnOps(const RigExecSceneGeometryOp &op)
 {
     const auto kind = op.binding.descriptor.record.op;
-    if (!op.useSimd || op.windowFrames)
+    if (op.windowFrames)
+        return false;
+    if (kind == RigExecRevisionOp::External)
+        return RigExecExternalOpHandle(op.binding.descriptor.record.binding) !=
+               nullptr;
+    if (!op.useSimd)
         return false;
     if (op.binding.descriptor.matrixOutput)
         return RigExecGeometryMatrixOpSupported(kind);
@@ -58,6 +63,24 @@ NeedsOpCore(const RigExecSceneOperation &operation)
     if (const auto *op = std::get_if<RigExecSceneFieldOp>(&operation))
         return CombinesWeights(op->binding);
     return RunsPoseOnOps(operation);
+}
+// An External mover on its op, from its declared inputs and provider
+// values; the handler's assembly does not run.
+bool
+RunExternalOp(const RigExecGeometryRecord &record,
+              const RigExecGeometryInputs &inputs,
+              RigExecSceneOperationWorkspace &workspace)
+{
+    const auto params = RigExecGatherExternalGeometryInputs(
+        record, inputs, &workspace.externalInputs);
+    RigExecExternalOpValues values;
+    values.inputs = &workspace.externalInputs;
+    values.transform = inputs.transform;
+    values.influenceTransforms = inputs.influenceTransforms;
+    values.basePoints = &inputs.basePoints;
+    return RigExecGeometryPacketMatches(record.op, params) &&
+           RigExecRunExternalOp(record.binding, params, values,
+                                workspace.opRunner, workspace.points);
 }
 } // namespace
 bool
@@ -538,6 +561,20 @@ RigExecSceneProgramRuntime::Run(const RigExecSceneProgram &program,
                     inputs.weights = &op.fieldPacket;
                 }
                 const auto kind = descriptor.record.op;
+                const auto publish = [&] {
+                    values.PublishSource(
+                        op.output,
+                        VtValue(VtVec3fArray(workspace.points.begin(),
+                                             workspace.points.end())),
+                        false, true);
+                    return true;
+                };
+                if (opCore && kind == RigExecRevisionOp::External) {
+                    if (!RunExternalOp(descriptor.record, inputs, workspace))
+                        return failed(
+                            "geometry input/cardinality validation failed");
+                    return publish();
+                }
                 // The op sums the blend deltas from the channels. A stand-in
                 // lets the packet check judge everything else, as the native
                 // run does once its deltas are non-empty.
@@ -580,12 +617,7 @@ RigExecSceneProgramRuntime::Run(const RigExecSceneProgram &program,
                         return failed(
                             "geometry input/cardinality validation failed");
                 }
-                values.PublishSource(
-                    op.output,
-                    VtValue(VtVec3fArray(workspace.points.begin(),
-                                         workspace.points.end())),
-                    false, true);
-                return true;
+                return publish();
             }
         },
         _operations[index]);

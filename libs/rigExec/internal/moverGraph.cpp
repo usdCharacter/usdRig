@@ -4301,6 +4301,113 @@ _SkinFromLeaves(const _Leaves &L, const RigExecProviderValues &values)
     return params;
 }
 
+// The kind, enable and envelope every leaf-assembled revision but a
+// matrix's and a skin's starts from. False when that completes the packet:
+// a disabled revision passes through, an invalid envelope fails.
+bool
+_AssembleCommon(RigExecRevisionOp op, const _Leaves &L,
+                const RigExecProviderValues &values,
+                RigExecMoverParameters *params)
+{
+    const bool synthesizedDerived = op == RigExecRevisionOp::RecomputeNormals ||
+                                    op == RigExecRevisionOp::RecomputeExtent;
+    params->enabled = synthesizedDerived ? true : L.Enabled();
+    switch (op) {
+    case RigExecRevisionOp::BlendShape:
+        params->kind = _kindTokens->blendShape;
+        break;
+    case RigExecRevisionOp::VolumeCorrect:
+        params->kind = _kindTokens->volumeCorrect;
+        break;
+    case RigExecRevisionOp::Smooth:
+        params->kind = _kindTokens->smooth;
+        break;
+    case RigExecRevisionOp::SurfaceProject:
+        params->kind = _kindTokens->surfaceProject;
+        break;
+    case RigExecRevisionOp::Ribbon:
+        params->kind = _kindTokens->ribbon;
+        break;
+    case RigExecRevisionOp::EmitGuidePoints:
+        params->kind = _kindTokens->emitGuidePoints;
+        break;
+    case RigExecRevisionOp::RecomputeNormals:
+        params->kind = _kindTokens->recomputeNormals;
+        break;
+    case RigExecRevisionOp::RecomputeExtent:
+        params->kind = _kindTokens->recomputeExtent;
+        break;
+    case RigExecRevisionOp::DeltaMush:
+        params->kind = _kindTokens->deltaMush;
+        break;
+    case RigExecRevisionOp::Wrinkle:
+        params->kind = _kindTokens->wrinkle;
+        break;
+    case RigExecRevisionOp::Lattice:
+        params->kind = _kindTokens->lattice;
+        break;
+    case RigExecRevisionOp::Wire:
+        params->kind = _kindTokens->wire;
+        break;
+    case RigExecRevisionOp::External:
+        params->kind = _kindTokens->external;
+        break;
+    case RigExecRevisionOp::SurfaceProjector:
+        params->kind = _kindTokens->surfaceProjector;
+        break;
+    case RigExecRevisionOp::ShaderDials:
+        params->kind = _kindTokens->shaderDials;
+        break;
+    case RigExecRevisionOp::Matrix:
+    case RigExecRevisionOp::Skin:
+        break; // handled above
+    }
+    if (!params->enabled) {
+        params->valid = true; // disabled is an ordinary pass-through
+        return false;
+    }
+    params->weights =
+        synthesizedDerived
+            ? RigExecWeightPacket::Constant(1.0f)
+            : (values.weights
+                   ? *values.weights
+                   : RigExecWeightPacket::Constant(L.DefaultWeight()));
+    // An invalid envelope is MoverFailed, preserving the preceding revision.
+    return params->weights.valid;
+}
+
+// An External revision's declared inputs, in declaration order: a points
+// read at the time through a phase-honouring flavour takes the phase
+// overlay's array at its path, every other its sampled leaf. False when a
+// leaf is missing.
+bool
+_ExternalInputs(const RigExecRevisionBinding &binding,
+                const RigExecRevisionLeafView &leaves,
+                std::vector<VtValue> *inputs)
+{
+    inputs->clear();
+    inputs->reserve(binding.externalInputs.size());
+    for (size_t i = 0; i < binding.externalInputs.size(); ++i) {
+        const auto &key = binding.externalInputs[i];
+        const size_t slot = size_t(leaves.decl->externalBegin) + i;
+        if (slot >= leaves.values->size())
+            break;
+        const VtValue *phased =
+            leaves.phased ? leaves.phased->Find(key.path) : nullptr;
+        const bool phaseRead =
+            key.time == RigExecRevisionLeafTime::AtTime &&
+            (key.flavour == RigExecRevisionLeafFlavour::Resolved ||
+             key.flavour == RigExecRevisionLeafFlavour::ResolvedOnly ||
+             key.flavour == RigExecRevisionLeafFlavour::OverlayThenRaw);
+        inputs->push_back(phased && phaseRead &&
+                                  key.type ==
+                                      RigExecRevisionLeafType::Vec3fArray
+                              ? *phased
+                              : (*leaves.values)[slot]);
+    }
+    return inputs->size() == binding.externalInputs.size();
+}
+
 } // namespace
 
 RigExecMoverParameters
@@ -4319,71 +4426,8 @@ RigExecAssembleFromLeaves(RigExecRevisionOp op,
         return _SkinFromLeaves(L, values);
     }
     RigExecMoverParameters params;
-    const bool synthesizedDerived = op == RigExecRevisionOp::RecomputeNormals ||
-                                    op == RigExecRevisionOp::RecomputeExtent;
-    params.enabled = synthesizedDerived ? true : L.Enabled();
-    switch (op) {
-    case RigExecRevisionOp::BlendShape:
-        params.kind = _kindTokens->blendShape;
-        break;
-    case RigExecRevisionOp::VolumeCorrect:
-        params.kind = _kindTokens->volumeCorrect;
-        break;
-    case RigExecRevisionOp::Smooth:
-        params.kind = _kindTokens->smooth;
-        break;
-    case RigExecRevisionOp::SurfaceProject:
-        params.kind = _kindTokens->surfaceProject;
-        break;
-    case RigExecRevisionOp::Ribbon:
-        params.kind = _kindTokens->ribbon;
-        break;
-    case RigExecRevisionOp::EmitGuidePoints:
-        params.kind = _kindTokens->emitGuidePoints;
-        break;
-    case RigExecRevisionOp::RecomputeNormals:
-        params.kind = _kindTokens->recomputeNormals;
-        break;
-    case RigExecRevisionOp::RecomputeExtent:
-        params.kind = _kindTokens->recomputeExtent;
-        break;
-    case RigExecRevisionOp::DeltaMush:
-        params.kind = _kindTokens->deltaMush;
-        break;
-    case RigExecRevisionOp::Wrinkle:
-        params.kind = _kindTokens->wrinkle;
-        break;
-    case RigExecRevisionOp::Lattice:
-        params.kind = _kindTokens->lattice;
-        break;
-    case RigExecRevisionOp::Wire:
-        params.kind = _kindTokens->wire;
-        break;
-    case RigExecRevisionOp::External:
-        params.kind = _kindTokens->external;
-        break;
-    case RigExecRevisionOp::SurfaceProjector:
-        params.kind = _kindTokens->surfaceProjector;
-        break;
-    case RigExecRevisionOp::ShaderDials:
-        params.kind = _kindTokens->shaderDials;
-        break;
-    case RigExecRevisionOp::Matrix:
-    case RigExecRevisionOp::Skin:
-        break; // handled above
-    }
-    if (!params.enabled) {
-        params.valid = true; // disabled is an ordinary pass-through
+    if (!_AssembleCommon(op, L, values, &params)) {
         return params;
-    }
-    params.weights =
-        synthesizedDerived
-            ? RigExecWeightPacket::Constant(1.0f)
-            : (values.weights
-                   ? *values.weights
-                   : RigExecWeightPacket::Constant(L.DefaultWeight()));
-    if (!params.weights.valid) {
-        return params; // MoverFailed, preserving the preceding revision
     }
     switch (op) {
     case RigExecRevisionOp::BlendShape: {
@@ -4653,30 +4697,12 @@ RigExecAssembleFromLeaves(RigExecRevisionOp op,
         if (external)
             external->schema = binding.externalSchema;
         std::vector<VtValue> inputs;
-        inputs.reserve(binding.externalInputs.size());
-        for (size_t i = 0; i < binding.externalInputs.size(); ++i) {
-            const auto &key = binding.externalInputs[i];
-            const size_t slot = size_t(leaves.decl->externalBegin) + i;
-            if (slot >= leaves.values->size())
-                break;
-            const VtValue *phased =
-                leaves.phased ? leaves.phased->Find(key.path) : nullptr;
-            const bool phaseRead =
-                key.time == RigExecRevisionLeafTime::AtTime &&
-                (key.flavour == RigExecRevisionLeafFlavour::Resolved ||
-                 key.flavour == RigExecRevisionLeafFlavour::ResolvedOnly ||
-                 key.flavour == RigExecRevisionLeafFlavour::OverlayThenRaw);
-            inputs.push_back(phased && phaseRead &&
-                                     key.type ==
-                                         RigExecRevisionLeafType::Vec3fArray
-                                 ? *phased
-                                 : (*leaves.values)[slot]);
-        }
+        const bool gathered = _ExternalInputs(binding, leaves, &inputs);
         const RigExecExternalProviderValues pureValues(values);
         const RigExecExternalInputContext ctx{binding, pureValues, inputs};
         VtValue data;
-        params.valid = inputs.size() == binding.externalInputs.size() &&
-                       binding.handler->assembleExternal(ctx, &data);
+        params.valid =
+            gathered && binding.handler->assembleExternal(ctx, &data);
         if (external)
             external->data = std::move(data);
         break;
@@ -4687,6 +4713,27 @@ RigExecAssembleFromLeaves(RigExecRevisionOp op,
     case RigExecRevisionOp::Skin:
         break;
     }
+    return params;
+}
+
+RigExecMoverParameters
+RigExecGatherExternalInputs(const RigExecRevisionBinding &binding,
+                            const RigExecRevisionLeafView &leaves,
+                            const RigExecProviderValues &values,
+                            std::vector<VtValue> *inputs)
+{
+    inputs->clear();
+    const _Leaves L{leaves};
+    RigExecMoverParameters params;
+    if (!_AssembleCommon(RigExecRevisionOp::External, L, values, &params)) {
+        return params;
+    }
+    if (!leaves.decl || !leaves.values || leaves.decl->externalBegin < 0) {
+        if (leaves.missing)
+            leaves.missing->push_back("external inputs");
+        return params;
+    }
+    params.valid = _ExternalInputs(binding, leaves, inputs);
     return params;
 }
 
