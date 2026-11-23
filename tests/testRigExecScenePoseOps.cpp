@@ -10,7 +10,10 @@
 #include "rigExec/api/types.h"
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecGraph/windowHistory.h"
+#include "rigExec/internal/frameExtraction.h"
 #include "rigExecMath/harmonicsKernel.h"
+#include "rigExecMath/spaceMatchKernel.h"
+#include "rigExecOps/constraint/matchOps.h"
 #include "rigExecMath/splineIk.h"
 #include "rigExecScene/constraintGraphBinding.h"
 #include "rigExecScene/solverGraphBinding.h"
@@ -21,7 +24,9 @@
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"
 #include "pxr/usd/sdf/layer.h"
+#include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/primRange.h"
+#include "pxr/usd/usd/relationship.h"
 
 #include <cmath>
 #include <cstdio>
@@ -828,6 +833,8 @@ ConstraintName(RigExecConstraintKind kind)
         return "SingleChainIk";
     case RigExecConstraintKind::Harmonics:
         return "Harmonics";
+    case RigExecConstraintKind::IkFkMatch:
+        return "IkFkMatch";
     default:
         return "?";
     }
@@ -1111,6 +1118,215 @@ TestHarmonics()
     CHECK(applied > 0);
 }
 
+/// The baked space match (bakedSpaces.cpp): per space, the channels that
+/// keep the control on \p target, over the native space switch.
+bool
+NativeSpaceMatch(const RigExecSpaceSwitchRecord &record,
+                 const RigExecSpaceSwitchInputs &input,
+                 const GfMatrix4d &target,
+                 const RigExecIkFkMatchChannels &current,
+                 std::vector<double> *values)
+{
+    RigExecSpaceSwitchInputs trial = input;
+    const auto run = [&](const double *avars, double active, double *out) {
+        std::copy(avars, avars + 16, trial.avars.data());
+        trial.active = active;
+        RigExecPointFrame frame;
+        GfMatrix4d matrix;
+        if (!RigExecRunSpaceSwitch(record, trial, &frame) ||
+            !RigExecPointsToMatrix(RigExecIdentityLandmarks(), frame.points,
+                                   &matrix))
+            return false;
+        std::copy(matrix.data(), matrix.data() + 16, out);
+        return true;
+    };
+    values->resize(input.sources.size() * RigExecSpaceMatchStride);
+    return RigExecSpaceMatchSolveAll(target.data(), current,
+                                     input.sources.size(), run, values->data());
+}
+
+rigExecStd::Mat4d
+StdMatrix(const GfMatrix4d &m)
+{
+    rigExecStd::Mat4d out;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            out._mtx[r][c] = m[r][c];
+    return out;
+}
+
+GfMatrix4d
+Placement(const GfVec3d &axis, double degrees, const GfVec3d &at,
+          double scale = 1.0)
+{
+    GfMatrix4d s(1.0), r(1.0), t(1.0);
+    s.SetScale(scale);
+    r.SetRotate(GfRotation(axis, degrees));
+    t.SetTranslate(at);
+    return s * r * t;
+}
+
+/// The SpaceMatch op against the baked space match, bit for bit, over
+/// rotation filters, axis masks, a carry, a world source and channels in
+/// several orders, signs, spins and scales.
+void
+TestSpaceMatch()
+{
+    using namespace rigExecOps;
+    int solved = 0;
+    for (int variant = 0; variant < 6; ++variant) {
+        RigExecSpaceSwitchRecord record;
+        if (variant == 1)
+            record.filters = {1, 2, 0};
+        if (variant == 2)
+            record.filters = {3, 0, 2};
+        record.twistAxis = GfVec3d(0.2, 1.0, 0.1);
+        if (variant == 3) {
+            record.affectTranslation = {{true, false, true}};
+            record.affectRotation = {{false, true, true}};
+        }
+        if (variant == 4)
+            record.affectScale = {{true, true, false}};
+        RigExecSpaceSwitchInputs input;
+        input.posedDefault = Placement(GfVec3d(0, 0, 1), 10, GfVec3d(1, 2, 0));
+        input.parentDefault = Placement(GfVec3d(1, 0, 0), 5, GfVec3d(0, 1, 0));
+        input.parentDefaultInverse = input.parentDefault.GetInverse();
+        input.parentPosed =
+            Placement(GfVec3d(0.3, 1, 0), 25, GfVec3d(0.5, 1.5, -0.25));
+        input.hasCarry = variant >= 3;
+        input.spaceDefault = Placement(GfVec3d(0, 1, 0), 0, GfVec3d(0));
+        input.spacePosed =
+            Placement(GfVec3d(0, 1, 0), 30, GfVec3d(0.1, 0, 0.2), 1.1);
+        input.sources.resize(3);
+        input.sources[0].world = variant == 5;
+        for (size_t k = 0; k < 3; ++k) {
+            input.sources[k].defaultSpace = Placement(
+                GfVec3d(0, 0, 1), 7.0 * double(k), GfVec3d(double(k), 0, 0));
+            input.sources[k].posedSpace = Placement(
+                GfVec3d(1, 0.4, 0.2), 20.0 + 11.0 * double(k),
+                GfVec3d(double(k), 0.5 * double(k), -1.0), 1.0 + 0.1 * k);
+        }
+        RigExecIkFkMatchChannels channels;
+        const char *orders[3] = {"XYZ", "ZXY", "YZX"};
+        std::copy(orders[variant % 3], orders[variant % 3] + 3, channels.order);
+        for (int k = 0; k < 3; ++k) {
+            channels.t[k] = 0.3 * (k + 1) - 0.2 * variant;
+            channels.r[k] = 12.0 * (k + 1) + 3.0 * variant;
+            channels.s[k] = variant == 2 ? 1.2 : 1.0;
+        }
+        channels.sign[1] = variant % 2 ? -1.0 : 1.0;
+        channels.spin = variant == 4 ? 15.0 : 0.0;
+        // The target is the frame the switch composes at the second space.
+        RigExecSpaceSwitchInputs at = input;
+        const auto composed = ikFkMatchKernel::Compose(channels);
+        std::copy(composed.begin(), composed.end(), at.avars.data());
+        at.active = 1.0;
+        RigExecPointFrame frame;
+        GfMatrix4d target(1.0);
+        CHECK(RigExecRunSpaceSwitch(record, at, &frame) &&
+              RigExecPointsToMatrix(RigExecIdentityLandmarks(), frame.points,
+                                    &target));
+        std::vector<double> want;
+        const bool native =
+            NativeSpaceMatch(record, input, target, channels, &want);
+
+        SpaceMatchPayload payload;
+        payload.space.filters = record.filters;
+        payload.space.twistAxis = rigExecStd::Vec3d(
+            record.twistAxis[0], record.twistAxis[1], record.twistAxis[2]);
+        payload.space.affectTranslation = record.affectTranslation;
+        payload.space.affectRotation = record.affectRotation;
+        payload.space.affectScale = record.affectScale;
+        payload.space.hasCarry = input.hasCarry;
+        for (const auto &source : input.sources)
+            payload.space.world.push_back(source.world ? 1 : 0);
+        RigExecRigDescBuilder builder;
+        const RigExecNodeId id = builder.AddOp(SpaceMatch(), &payload);
+        const RigExecInputId targetIn =
+            builder.BindInput(id, SpaceMatchTarget());
+        const RigExecInputId channelsIn =
+            builder.BindInput(id, SpaceMatchChannels());
+        const RigExecInputId posedDefault =
+            builder.BindInput(id, SpaceMatchPosedDefault());
+        const RigExecInputId parentDefaultInverse =
+            builder.BindInput(id, SpaceMatchParentDefaultInverse());
+        const RigExecInputId parentPosed =
+            builder.BindInput(id, SpaceMatchParentPosed());
+        const RigExecInputId parentDefault =
+            builder.BindInput(id, SpaceMatchParentDefault());
+        RigExecInputId spaceDefault, spacePosed;
+        if (input.hasCarry) {
+            spaceDefault = builder.BindInput(id, SpaceMatchSpaceDefault());
+            spacePosed = builder.BindInput(id, SpaceMatchSpacePosed());
+        }
+        const RigExecInputId sourceDefaults =
+            builder.BindInput(id, SpaceMatchSourceDefaults());
+        const RigExecInputId sourcePosed =
+            builder.BindInput(id, SpaceMatchSourcePosed());
+        const RigExecOutputId values =
+            builder.BindOutput(id, SpaceMatchValues());
+        const RigExecOutputId validOut =
+            builder.BindOutput(id, SpaceMatchValid());
+        std::string error;
+        const auto desc = builder.Build(&error);
+        const auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
+        auto evaluator =
+            program ? RigExecEvaluator::Create(program, {}, &error) : nullptr;
+        CHECK(evaluator);
+        if (!evaluator) {
+            std::printf("space match: %s\n", error.c_str());
+            continue;
+        }
+        const auto set = [&](const RigExecInputId &in, const auto &value) {
+            CHECK(evaluator->SetInput(in, &value));
+        };
+        set(targetIn, StdMatrix(target));
+        rigExecStd::RigExecArray<double> packed(kMatchChannelStride);
+        for (int k = 0; k < 3; ++k) {
+            packed[size_t(k)] = channels.t[k];
+            packed[size_t(3 + k)] = channels.s[k];
+            packed[size_t(6 + k)] = channels.r[k];
+            packed[size_t(10 + k)] = channels.sign[k];
+            packed[size_t(15 + k)] = double(channels.order[k]);
+        }
+        packed[9] = channels.spin;
+        packed[13] = channels.units;
+        packed[14] = 0.0;
+        set(channelsIn, packed);
+        set(posedDefault, StdMatrix(input.posedDefault));
+        set(parentDefaultInverse, StdMatrix(input.parentDefaultInverse));
+        set(parentPosed, StdMatrix(input.parentPosed));
+        set(parentDefault, StdMatrix(input.parentDefault));
+        if (input.hasCarry) {
+            set(spaceDefault, StdMatrix(input.spaceDefault));
+            set(spacePosed, StdMatrix(input.spacePosed));
+        }
+        rigExecStd::RigExecArray<rigExecStd::Mat4d> defaults(3), posed(3);
+        for (size_t k = 0; k < 3; ++k) {
+            defaults[k] = StdMatrix(input.sources[k].defaultSpace);
+            posed[k] = StdMatrix(input.sources[k].posedSpace);
+        }
+        set(sourceDefaults, defaults);
+        set(sourcePosed, posed);
+        CHECK(evaluator->Evaluate(&error));
+        const auto *got = static_cast<const rigExecStd::RigExecArray<double> *>(
+            evaluator->GetOutput(values));
+        const auto *valid =
+            static_cast<const uint8_t *>(evaluator->GetOutput(validOut));
+        const bool same =
+            got && valid && (*valid != 0) == native &&
+            got->Size() == want.size() &&
+            Bits(got->Data(), want.data(), want.size() * sizeof(double));
+        if (!same)
+            std::printf("space match variant %d differs\n", variant);
+        CHECK(same);
+        if (native)
+            ++solved;
+    }
+    std::printf("space match: %d solved comparisons\n", solved);
+    CHECK(solved > 0);
+}
+
 void
 CompareRig(const std::string &label, const UsdStageRefPtr &stage,
            const SdfPath &rig, int first, int last)
@@ -1160,6 +1376,34 @@ CompareRig(const std::string &label, const UsdStageRefPtr &stage,
                            std::get_if<RigExecConstraintGraphBinding>(
                                &operations[i])) {
                 const RigExecConstraintKind kind = op->structural.record.kind;
+                if (op->match) {
+                    const auto &m = *op->match;
+                    std::vector<RigExecValueId> writes = {m.ikValues,
+                                                          m.fkValues};
+                    writes.insert(writes.end(), m.presented.begin(),
+                                  m.presented.end());
+                    for (const auto &rider : m.riders)
+                        writes.push_back(rider.presented);
+                    writes.erase(std::remove_if(writes.begin(), writes.end(),
+                                                [&](RigExecValueId id) {
+                                                    return id >=
+                                                           store.values.size();
+                                                }),
+                                 writes.end());
+                    const bool same =
+                        SamePublish(store, writes, runners[i],
+                                    [&](RigExecPoseOpRunner *ops) {
+                                        std::string error;
+                                        RigExecRunConstraintGraph(
+                                            *op, &store, &error, nullptr, ops);
+                                    });
+                    if (!same)
+                        std::printf("%s: IK/FK match %zu differs at %d\n",
+                                    label.c_str(), i, t);
+                    CHECK(same);
+                    ++sceneConstraints["IkFkMatch"];
+                    continue;
+                }
                 if (kind == RigExecConstraintKind::Harmonics) {
                     // The drive pushes no history: the scene read an empty
                     // ring.
@@ -1203,6 +1447,119 @@ CompareRig(const std::string &label, const UsdStageRefPtr &stage,
             }
         }
     }
+}
+
+/// testRigExecConstraints' IK/FK match arm: FK on frames 1-4, IK after,
+/// the IK control carrying a rider; with \p poleRides the pole sits under
+/// the IK control, so its parent rides the match's move.
+UsdStageRefPtr
+IkFkMatchStage(bool poleRides)
+{
+    const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->SetStartTimeCode(1);
+    stage->SetEndTimeCode(10);
+    stage->DefinePrim(SdfPath("/Asset"), TfToken("Xform"));
+    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
+    const auto control = [&](const std::string &path, double tx, double tz) {
+        const UsdPrim prim = stage->DefinePrim(
+            SdfPath("/Asset/Rig/Controls/" + path), TfToken("RigExecControl"));
+        prim.CreateAttribute(TfToken("rest:tx"), SdfValueTypeNames->Double)
+            .Set(tx);
+        prim.CreateAttribute(TfToken("rest:tz"), SdfValueTypeNames->Double)
+            .Set(tz);
+        return prim;
+    };
+    const UsdPrim shoulder = control("Shoulder", 0, 0);
+    const UsdPrim up = control("Shoulder/Up", 0, 0);
+    const UsdPrim lo = control("Shoulder/Up/Lo", 3, 0);
+    const UsdPrim hand = control("Shoulder/Up/Lo/Hand", 4, 0);
+    const UsdPrim ik = control("Ik", 7, 0);
+    const UsdPrim orient = control("Ik/Orient", 0, 0);
+    const UsdPrim pole =
+        control(poleRides ? "Ik/Pole" : "Pole", poleRides ? -3.5 : 3.5, 2);
+    const UsdPrim settings = control("Settings", 0, -3);
+    const UsdAttribute ikfk = settings.CreateAttribute(
+        TfToken("avars:ikfk"), SdfValueTypeNames->Float);
+    const UsdAttribute ikTx =
+        ik.CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double);
+    const UsdAttribute ikTz =
+        ik.CreateAttribute(TfToken("avars:tz"), SdfValueTypeNames->Double);
+    const UsdAttribute ikRy =
+        ik.CreateAttribute(TfToken("avars:ry"), SdfValueTypeNames->Double);
+    const UsdAttribute upRz =
+        up.CreateAttribute(TfToken("avars:rz"), SdfValueTypeNames->Double);
+    const UsdAttribute loRz =
+        lo.CreateAttribute(TfToken("avars:rz"), SdfValueTypeNames->Double);
+    const UsdAttribute handRx =
+        hand.CreateAttribute(TfToken("avars:rx"), SdfValueTypeNames->Double);
+    for (int t = 1; t <= 10; ++t) {
+        ikfk.Set(t <= 4 ? 0.0f : t <= 8 ? 1.0f : 0.5f, UsdTimeCode(t));
+        ikTx.Set(-0.4 * t, UsdTimeCode(t));
+        ikTz.Set(0.3 * (t % 4), UsdTimeCode(t));
+        ikRy.Set(4.0 * t, UsdTimeCode(t));
+        upRz.Set(3.0 * t, UsdTimeCode(t));
+        loRz.Set(-6.0 * t, UsdTimeCode(t));
+        handRx.Set(5.0 * t, UsdTimeCode(t));
+    }
+    const SdfPath joints[3] = {
+        SdfPath("/Asset/Rig/Joints/Shoulder"),
+        SdfPath("/Asset/Rig/Joints/Shoulder/Elbow"),
+        SdfPath("/Asset/Rig/Joints/Shoulder/Elbow/Wrist")};
+    const double restTx[3] = {0.0, 3.0, 4.0};
+    for (int i = 0; i < 3; ++i)
+        stage->DefinePrim(joints[i], TfToken("RigExecJoint"))
+            .CreateAttribute(TfToken("rest:tx"), SdfValueTypeNames->Double)
+            .Set(restTx[i]);
+    const SdfPathVector chain(std::begin(joints), std::end(joints));
+    const UsdPrim match =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Match"),
+                          TfToken("RigExecIkFkMatchConstraint"));
+    match.ApplyAPI(TfToken("RigExecMoverAPI"));
+    match.CreateRelationship(TfToken("rigExec:moves"))
+        .SetTargets({ik.GetPath(), pole.GetPath(), up.GetPath(), lo.GetPath(),
+                     hand.GetPath()});
+    match.CreateRelationship(TfToken("rigExec:ikControl"))
+        .SetTargets({ik.GetPath()});
+    match.CreateRelationship(TfToken("rigExec:poleControl"))
+        .SetTargets({pole.GetPath()});
+    match.CreateRelationship(TfToken("rigExec:fkControls"))
+        .SetTargets({up.GetPath(), lo.GetPath(), hand.GetPath()});
+    match.CreateRelationship(TfToken("rigExec:limbJoints")).SetTargets(chain);
+    match.CreateRelationship(TfToken("rigExec:rootControl"))
+        .SetTargets({shoulder.GetPath()});
+    match.CreateRelationship(TfToken("rigExec:effector"))
+        .SetTargets({orient.GetPath()});
+    match.CreateAttribute(TfToken("inputs:switch"), SdfValueTypeNames->Double)
+        .SetConnections({ikfk.GetPath()});
+    match.CreateAttribute(TfToken("inputs:twist"), SdfValueTypeNames->Double)
+        .Set(10.0);
+    const UsdPrim fk = stage->DefinePrim(SdfPath("/Asset/Rig/Solvers/FK"),
+                                         TfToken("RigExecFkChain"));
+    fk.CreateRelationship(TfToken("rigExec:controls"))
+        .SetTargets({up.GetPath(), lo.GetPath(), hand.GetPath()});
+    const UsdPrim twoBone = stage->DefinePrim(SdfPath("/Asset/Rig/Solvers/IK"),
+                                              TfToken("RigExecTwoBoneIk"));
+    twoBone.CreateRelationship(TfToken("rigExec:rootControl"))
+        .SetTargets({shoulder.GetPath()});
+    twoBone.CreateRelationship(TfToken("rigExec:effectorControl"))
+        .SetTargets({orient.GetPath()});
+    twoBone.CreateRelationship(TfToken("rigExec:poleControl"))
+        .SetTargets({pole.GetPath()});
+    twoBone.CreateRelationship(TfToken("rigExec:joints")).SetTargets(chain);
+    const UsdPrim blend = stage->DefinePrim(SdfPath("/Asset/Rig/Solvers/Blend"),
+                                            TfToken("RigExecBlendPointFrames"));
+    blend.CreateRelationship(TfToken("rigExec:inputA"))
+        .SetTargets({fk.GetPath()});
+    blend.CreateRelationship(TfToken("rigExec:inputB"))
+        .SetTargets({twoBone.GetPath()});
+    blend.GetAttribute(TfToken("inputs:weight"))
+        .SetConnections({ikfk.GetPath()});
+    blend.CreateRelationship(TfToken("rigExec:joints")).SetTargets(chain);
+    // Solvers last: the match revises what they solve.
+    stage->GetPrimAtPath(SdfPath("/Asset/Rig"))
+        .SetChildrenReorder({TfToken("Controls"), TfToken("Joints"),
+                             TfToken("Movers"), TfToken("Solvers")});
+    return stage;
 }
 
 void
@@ -1253,6 +1610,9 @@ TestAuthoredRigs(const std::string &examples)
     SdfLayerRefPtr layer = SdfLayer::CreateAnonymous(".usda");
     CHECK(layer->ImportFromString(kSingleChainRig));
     CompareStage("single-chain rig", UsdStage::Open(layer));
+    for (const bool poleRides : {false, true})
+        CompareStage(poleRides ? "IK/FK match, riding pole" : "IK/FK match",
+                     IkFkMatchStage(poleRides));
 
     // The scene program refuses RigExecBone2dAPI stages; TestSkeleton2d
     // compares the 2D skeleton's records.
@@ -1263,7 +1623,7 @@ TestAuthoredRigs(const std::string &examples)
         CHECK(sceneSolvers[kind] > 0);
     }
     for (const char *kind : {"Position", "Rotation", "Scale", "Parent", "Aim",
-                             "SingleChainIk", "Harmonics"}) {
+                             "SingleChainIk", "Harmonics", "IkFkMatch"}) {
         std::printf("scene %s constraints compared: %d\n", kind,
                     sceneConstraints[kind]);
         CHECK(sceneConstraints[kind] > 0);
@@ -1302,6 +1662,7 @@ main(int argc, char **argv)
     TestSingleChainIk();
     TestAutoClavicle();
     TestHarmonics();
+    TestSpaceMatch();
     // Each kind's comparisons include solved frames, not only empty ones.
     for (const char *kind : {"fk", "two-bone", "blend", "twist", "ribbon",
                              "spline", "skeleton2d", "constraint"}) {

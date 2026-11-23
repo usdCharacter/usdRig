@@ -277,6 +277,7 @@ rigexec_add_op_library(rigExecOps
         libs/rigExecOps/constraint/autoClavicleOps.cpp
         libs/rigExecOps/constraint/constraintOps.cpp
         libs/rigExecOps/constraint/harmonicsOps.cpp
+        libs/rigExecOps/constraint/matchOps.cpp
         libs/rigExecOps/weight/weightOps.cpp
         libs/rigExecOps/solver/chainSolverOps.cpp
         libs/rigExecOps/solver/frameBlendOps.cpp

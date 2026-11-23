@@ -205,4 +205,34 @@ RigExecRunHarmonicsOp(const RigExecHarmonicsOpConstants &constants,
     return true;
 }
 
+bool
+RigExecRunIkFkMatchOp(const RigExecIkFkMatchOpConstants &constants,
+                      const RigExecIkFkMatchOpInputs &input,
+                      RigExecPoseOpRunner &runner,
+                      RigExecIkFkMatchOpOutputs *output, std::string *error)
+{
+    if (!output)
+        return Fail(error, "null IK/FK match output");
+    const bool built = runner.evaluator &&
+                       runner.built == RigExecPoseOpRunner::Built::IkFkMatch;
+    const bool ready = Ready(
+        runner, built,
+        [&](RigExecRigDescBuilder &builder) {
+            runner.built = RigExecPoseOpRunner::Built::IkFkMatch;
+            return RigExecAddIkFkMatchOp(constants, &builder, &runner.match,
+                                         error);
+        },
+        [&](std::string *why) {
+            return RigExecWriteIkFkMatchOpInputs(constants, input, runner.match,
+                                                 &runner.scratch,
+                                                 runner.evaluator.get(), why);
+        },
+        error);
+    if (!ready || !runner.evaluator->Evaluate(error))
+        return false;
+    if (!RigExecReadIkFkMatchOpOutput(runner.match, *runner.evaluator, output))
+        return Fail(error, "IK/FK match op has no output");
+    return true;
+}
+
 } // namespace rigExec

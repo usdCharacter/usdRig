@@ -15,13 +15,21 @@
 namespace rigExec {
 
 struct RigExecPoseOpRunner {
-    enum class Built { None, Solver, Constraint, AutoClavicle, Harmonics };
+    enum class Built {
+        None,
+        Solver,
+        Constraint,
+        AutoClavicle,
+        Harmonics,
+        IkFkMatch
+    };
     std::unique_ptr<RigExecEvaluator> evaluator;
     Built built = Built::None;
     RigExecSolverOpNode solver;
     RigExecConstraintOpNode constraint;
     RigExecAutoClavicleOpNode clavicle;
     RigExecHarmonicsOpNode harmonics;
+    RigExecIkFkMatchOpNode match;
     RigExecPoseOpScratch scratch;
     std::vector<RigExecWindowRing> rings;
 };
@@ -61,6 +69,13 @@ bool RigExecRunHarmonicsOp(const RigExecHarmonicsOpConstants &constants,
                            RigExecPoseOpRunner &runner,
                            RigExecWindowPacketPtr *capture,
                            RigExecPointFrame *frame, uint32_t *status,
+                           std::string *error = nullptr);
+
+/// An IK/FK match's values and presented frames on the op core.
+bool RigExecRunIkFkMatchOp(const RigExecIkFkMatchOpConstants &constants,
+                           const RigExecIkFkMatchOpInputs &input,
+                           RigExecPoseOpRunner &runner,
+                           RigExecIkFkMatchOpOutputs *output,
                            std::string *error = nullptr);
 
 } // namespace rigExec

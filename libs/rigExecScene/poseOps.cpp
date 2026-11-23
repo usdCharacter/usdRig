@@ -3,6 +3,7 @@
 #include "rigExec/api/types.h"
 #include "rigExecOps/constraint/constraintOps.h"
 #include "rigExecOps/constraint/harmonicsOps.h"
+#include "rigExecOps/constraint/matchOps.h"
 #include "rigExecOps/solver/chainSolverOps.h"
 #include "rigExecOps/solver/frameBlendOps.h"
 #include "rigExecOps/solver/ribbonFramesOps.h"
@@ -1287,6 +1288,204 @@ RigExecReadHarmonicsOpOutput(const RigExecHarmonicsOpNode &node,
         return false;
     *frame = FromStd(*out);
     *status = *why;
+    return true;
+}
+
+namespace {
+
+bool
+SameIkFkMatch(const RigExecIkFkMatchOpConstants &a,
+              const RigExecIkFkMatchOpConstants &b)
+{
+    const RigExecSpaceSwitchRecord &x = a.poleRecord, &y = b.poleRecord;
+    return x.filters == y.filters && Same(x.twistAxis, y.twistAxis) &&
+           x.affectTranslation == y.affectTranslation &&
+           x.affectRotation == y.affectRotation &&
+           x.affectScale == y.affectScale && a.poleHasCarry == b.poleHasCarry &&
+           a.poleWorld == b.poleWorld &&
+           a.poleSourceRides == b.poleSourceRides &&
+           Same(a.ikValue, b.ikValue) &&
+           Same(a.scaleCalibration, b.scaleCalibration) &&
+           Same(a.upperLengthOffset, b.upperLengthOffset) &&
+           Same(a.lowerLengthOffset, b.lowerLengthOffset) &&
+           a.stretchLimb == b.stretchLimb;
+}
+
+void
+PackChannels(const RigExecIkFkMatchChannels &ch, double *out)
+{
+    for (int k = 0; k < 3; ++k) {
+        out[k] = ch.t[k];
+        out[3 + k] = ch.s[k];
+        out[6 + k] = ch.r[k];
+        out[10 + k] = ch.sign[k];
+        out[15 + k] = double(ch.order[k]);
+    }
+    out[9] = ch.spin;
+    out[13] = ch.units;
+    out[14] = 0.0;
+}
+
+GfMatrix4d
+FromStd(const Mat4d &m)
+{
+    GfMatrix4d out;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            out[r][c] = m._mtx[r][c];
+    return out;
+}
+
+} // namespace
+
+bool
+RigExecAddIkFkMatchOp(const RigExecIkFkMatchOpConstants &constants,
+                      RigExecRigDescBuilder *builder,
+                      RigExecIkFkMatchOpNode *node, std::string *error)
+{
+    if (!builder || !node)
+        return Fail(error, "null IK/FK match op destination");
+    using namespace rigExecOps;
+    IkFkMatchPayload payload;
+    const RigExecSpaceSwitchRecord &record = constants.poleRecord;
+    payload.poleSwitch.filters = record.filters;
+    payload.poleSwitch.twistAxis = ToStd(record.twistAxis);
+    payload.poleSwitch.affectTranslation = record.affectTranslation;
+    payload.poleSwitch.affectRotation = record.affectRotation;
+    payload.poleSwitch.affectScale = record.affectScale;
+    payload.poleSwitch.hasCarry = constants.poleHasCarry;
+    payload.poleSwitch.world.assign(constants.poleWorld.begin(),
+                                    constants.poleWorld.end());
+    payload.poleSourceRides.assign(constants.poleSourceRides.begin(),
+                                   constants.poleSourceRides.end());
+    payload.ikValue = constants.ikValue;
+    payload.scaleCalibration = constants.scaleCalibration;
+    payload.upperLengthOffset = constants.upperLengthOffset;
+    payload.lowerLengthOffset = constants.lowerLengthOffset;
+    payload.stretchLimb = constants.stretchLimb;
+    RigExecRigDescBuilder &b = *builder;
+    RigExecIkFkMatchOpNode n;
+    n.constants = constants;
+    const RigExecNodeId id = b.AddOp(IkFkMatch(), &payload);
+    n.enabled = b.BindInput(id, IkFkMatchEnabled());
+    n.weight = b.BindInput(id, IkFkMatchWeight());
+    const RigExecPortHandle *scalars[7] = {
+        &IkFkMatchSwitch(),       &IkFkMatchStretch(),
+        &IkFkMatchSoftDistance(), &IkFkMatchUpperScale(),
+        &IkFkMatchLowerScale(),   &IkFkMatchPin(),
+        &IkFkMatchTwist()};
+    for (size_t k = 0; k < 7; ++k)
+        n.scalars[k] = b.BindInput(id, *scalars[k]);
+    n.sources = b.BindInput(id, IkFkMatchSources());
+    n.rests = b.BindInput(id, IkFkMatchRests());
+    n.channels = b.BindInput(id, IkFkMatchChannels());
+    n.hasSpace = b.BindInput(id, IkFkMatchHasSpace());
+    n.spaceRest = b.BindInput(id, IkFkMatchSpaceRest());
+    n.spacePosed = b.BindInput(id, IkFkMatchSpacePosed());
+    n.poleMode = b.BindInput(id, IkFkMatchPoleMode());
+    n.posedDefault = b.BindInput(id, IkFkMatchPosedDefault());
+    n.parentDefaultInverse = b.BindInput(id, IkFkMatchParentDefaultInverse());
+    n.parentPosed = b.BindInput(id, IkFkMatchParentPosed());
+    n.parentDefault = b.BindInput(id, IkFkMatchParentDefault());
+    if (constants.poleHasCarry) {
+        n.spaceDefault = b.BindInput(id, IkFkMatchSwitchSpaceDefault());
+        n.switchSpacePosed = b.BindInput(id, IkFkMatchSwitchSpacePosed());
+    }
+    n.sourceDefaults = b.BindInput(id, IkFkMatchSourceDefaults());
+    n.sourcePosed = b.BindInput(id, IkFkMatchSourcePosed());
+    n.active = b.BindInput(id, IkFkMatchActive());
+    n.ikValues = b.BindOutput(id, IkFkMatchIkValues());
+    n.fkValues = b.BindOutput(id, IkFkMatchFkValues());
+    n.valid = b.BindOutput(id, IkFkMatchValid());
+    n.shown = b.BindOutput(id, IkFkMatchShown());
+    n.shownMask = b.BindOutput(id, IkFkMatchShownMask());
+    *node = std::move(n);
+    return true;
+}
+
+bool
+RigExecWriteIkFkMatchOpInputs(const RigExecIkFkMatchOpConstants &constants,
+                              const RigExecIkFkMatchOpInputs &input,
+                              const RigExecIkFkMatchOpNode &node,
+                              RigExecPoseOpScratch *scratch,
+                              RigExecEvaluator *e, std::string *error)
+{
+    if (!e || !scratch || !scratch->values)
+        return Fail(error, "null IK/FK match op evaluator");
+    if (!SameIkFkMatch(node.constants, constants))
+        return Fail(error, "IK/FK match settings moved");
+    RigExecPoseOpScratch::Values &v = *scratch->values;
+    const uint8_t enabled = 1, hasSpace = input.hasSpace ? 1 : 0;
+    if (!Set(e, node.enabled, enabled, error) ||
+        !Set(e, node.weight, input.weight, error))
+        return false;
+    for (size_t k = 0; k < 7; ++k)
+        if (!Set(e, node.scalars[k], input.scalars[k], error))
+            return false;
+    const auto matrices = [&](const GfMatrix4d *m, size_t count,
+                              const RigExecInputId &id) {
+        v.matrices.Resize(count);
+        for (size_t k = 0; k < count; ++k)
+            v.matrices[k] = ToStd(m[k]);
+        return Set(e, id, v.matrices, error);
+    };
+    if (!matrices(input.sources.data(), 10, node.sources) ||
+        !matrices(input.rests.data(), 8, node.rests))
+        return false;
+    v.doubles.Resize(5 * rigExecOps::kMatchChannelStride);
+    for (size_t i = 0; i < 5; ++i)
+        PackChannels(input.channels[i],
+                     v.doubles.Data() + i * rigExecOps::kMatchChannelStride);
+    if (!Set(e, node.channels, v.doubles, error) ||
+        !Set(e, node.hasSpace, hasSpace, error) ||
+        !Set(e, node.spaceRest, ToStd(input.spaceRest), error) ||
+        !Set(e, node.spacePosed, ToStd(input.spacePosed), error) ||
+        !Set(e, node.poleMode, input.poleMode, error))
+        return false;
+    const RigExecSpaceSwitchInputs &s = input.poleSwitch;
+    if (!Set(e, node.posedDefault, ToStd(s.posedDefault), error) ||
+        !Set(e, node.parentDefaultInverse, ToStd(s.parentDefaultInverse),
+             error) ||
+        !Set(e, node.parentPosed, ToStd(s.parentPosed), error) ||
+        !Set(e, node.parentDefault, ToStd(s.parentDefault), error) ||
+        !Set(e, node.active, s.active, error))
+        return false;
+    if (constants.poleHasCarry &&
+        (!Set(e, node.spaceDefault, ToStd(s.spaceDefault), error) ||
+         !Set(e, node.switchSpacePosed, ToStd(s.spacePosed), error)))
+        return false;
+    std::vector<GfMatrix4d> defaults, posed;
+    for (const auto &source : s.sources) {
+        defaults.push_back(source.defaultSpace);
+        posed.push_back(source.posedSpace);
+    }
+    return matrices(defaults.data(), defaults.size(), node.sourceDefaults) &&
+           matrices(posed.data(), posed.size(), node.sourcePosed);
+}
+
+bool
+RigExecReadIkFkMatchOpOutput(const RigExecIkFkMatchOpNode &node,
+                             const RigExecEvaluator &e,
+                             RigExecIkFkMatchOpOutputs *output)
+{
+    const auto *ik =
+        static_cast<const RigExecArray<double> *>(e.GetOutput(node.ikValues));
+    const auto *fk =
+        static_cast<const RigExecArray<double> *>(e.GetOutput(node.fkValues));
+    const auto *valid = static_cast<const uint8_t *>(e.GetOutput(node.valid));
+    const auto *shown =
+        static_cast<const RigExecArray<Mat4d> *>(e.GetOutput(node.shown));
+    const auto *mask =
+        static_cast<const uint32_t *>(e.GetOutput(node.shownMask));
+    if (!ik || !fk || !valid || !shown || !mask || ik->Size() != 11 ||
+        fk->Size() != 20 || shown->Size() != 5)
+        return false;
+    std::copy(ik->begin(), ik->end(), output->ikValues.begin());
+    std::copy(fk->begin(), fk->end(), output->fkValues.begin());
+    output->valid = *valid != 0;
+    for (size_t k = 0; k < 5; ++k)
+        output->shown[k] = FromStd((*shown)[k]);
+    output->shownMask = *mask;
     return true;
 }
 

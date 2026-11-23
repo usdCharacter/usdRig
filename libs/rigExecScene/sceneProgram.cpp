@@ -25,7 +25,7 @@ RunsOnOps(const RigExecSceneGeometryOp &op)
            RigExecGeometryOpSupported(kind);
 }
 // Decided up front: a record without an op (a degenerate one, a joint
-// group FK chain) and an IK/FK match run natively.
+// group FK chain) runs natively.
 bool
 RunsPoseOnOps(const RigExecSceneOperation &operation)
 {
@@ -34,10 +34,9 @@ RunsPoseOnOps(const RigExecSceneOperation &operation)
     if (const auto *op =
             std::get_if<RigExecConstraintGraphBinding>(&operation)) {
         const RigExecConstraintKind kind = op->structural.record.kind;
-        if (kind == RigExecConstraintKind::Harmonics)
+        if (kind == RigExecConstraintKind::Harmonics || op->match)
             return true;
-        return RigExecConstraintOpSupported(kind) && !op->match &&
-               !op->windowFrames;
+        return RigExecConstraintOpSupported(kind) && !op->windowFrames;
     }
     return std::holds_alternative<RigExecBoundAutoClavicle>(operation);
 }

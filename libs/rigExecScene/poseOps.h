@@ -10,7 +10,9 @@
 #include "rigExec/api/rigDesc.h"
 #include "rigExecMath/autoClavicleKernel.h"
 #include "rigExecMath/harmonicsKernel.h"
+#include "rigExecMath/ikFkMatchKernel.h"
 #include "rigExecScene/constraintProgram.h"
+#include "rigExecScene/poseProgram.h"
 #include "rigExecScene/solverProgram.h"
 
 #include <array>
@@ -256,6 +258,70 @@ bool RigExecWriteHarmonicsOpInputs(const RigExecHarmonicsOpConstants &constants,
 bool RigExecReadHarmonicsOpOutput(const RigExecHarmonicsOpNode &node,
                                   const RigExecEvaluator &evaluator,
                                   RigExecPointFrame *frame, uint32_t *status);
+
+/// An IK/FK match's settings, baked into its op's payload: the pole's space
+/// switch and which of its sources ride the IK control.
+struct RigExecIkFkMatchOpConstants {
+    RigExecSpaceSwitchRecord poleRecord;
+    bool poleHasCarry = false;
+    std::vector<char> poleWorld, poleSourceRides;
+    double ikValue = 1, scaleCalibration = 0, upperLengthOffset = 0,
+           lowerLengthOffset = 0;
+    bool stretchLimb = true;
+};
+
+/// One frame of an IK/FK match as RunIkFkMatch reads it.
+struct RigExecIkFkMatchOpInputs {
+    double weight = 1.0;
+    /// Switch, stretch, softDistance, upperScale, lowerScale, pin, twist.
+    std::array<double, 7> scalars{};
+    std::array<GfMatrix4d, 10> sources;
+    std::array<GfMatrix4d, 8> rests;
+    std::array<RigExecIkFkMatchChannels, 5> channels;
+    bool hasSpace = false;
+    GfMatrix4d spaceRest = GfMatrix4d(1.0), spacePosed = GfMatrix4d(1.0);
+    /// A rigExecOps::IkFkPoleMode, and the pole switch's inputs it reads.
+    uint32_t poleMode = 0;
+    RigExecSpaceSwitchInputs poleSwitch;
+};
+
+/// The op's results: the published values, and the frames presented.
+struct RigExecIkFkMatchOpOutputs {
+    std::array<double, 11> ikValues{};
+    std::array<double, 20> fkValues{};
+    bool valid = false;
+    std::array<GfMatrix4d, 5> shown;
+    unsigned shownMask = 0;
+};
+
+/// An IK/FK match's op node and its host-written ports.
+struct RigExecIkFkMatchOpNode {
+    RigExecInputId enabled, weight, sources, rests, channels, hasSpace,
+        spaceRest, spacePosed, poleMode, posedDefault, parentDefaultInverse,
+        parentPosed, parentDefault, spaceDefault, switchSpacePosed,
+        sourceDefaults, sourcePosed, active;
+    std::array<RigExecInputId, 7> scalars;
+    RigExecOutputId ikValues, fkValues, valid, shown, shownMask;
+    RigExecIkFkMatchOpConstants constants;
+};
+
+bool RigExecAddIkFkMatchOp(const RigExecIkFkMatchOpConstants &constants,
+                           RigExecRigDescBuilder *builder,
+                           RigExecIkFkMatchOpNode *node,
+                           std::string *error = nullptr);
+
+/// Writes one frame's values. False, writing nothing, where a setting
+/// baked into the node differs: the node must then be rebuilt.
+bool RigExecWriteIkFkMatchOpInputs(const RigExecIkFkMatchOpConstants &constants,
+                                   const RigExecIkFkMatchOpInputs &input,
+                                   const RigExecIkFkMatchOpNode &node,
+                                   RigExecPoseOpScratch *scratch,
+                                   RigExecEvaluator *evaluator,
+                                   std::string *error = nullptr);
+
+bool RigExecReadIkFkMatchOpOutput(const RigExecIkFkMatchOpNode &node,
+                                  const RigExecEvaluator &evaluator,
+                                  RigExecIkFkMatchOpOutputs *output);
 
 } // namespace rigExec
 

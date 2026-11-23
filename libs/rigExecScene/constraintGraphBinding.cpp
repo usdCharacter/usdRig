@@ -10,6 +10,7 @@
 #include "rigExecMath/harmonicsKernel.h"
 #include "rigExecMath/ikFkMatchKernel.h"
 #include "rigExecOps/constraint/harmonicsOps.h"
+#include "rigExecOps/constraint/matchOps.h"
 #include "rigExec/internal/frameExtraction.h"
 #include "pxr/base/gf/matrix4d.h"
 namespace rigExec {
@@ -552,12 +553,89 @@ PoleSwitchInputs(const RigExecBoundSpaceSwitch &packet,
         }
     return usable;
 }
+// RunIkFkMatch's arithmetic on the op core, from the values it read: the
+// IK solve's space and the pole's mode are read here as natively, and the
+// op's values and presented frames go to \p finish.
+template <class Finish>
+bool
+RunIkFkMatchOnOps(const RigExecConstraintGraphBinding &bound,
+                  RigExecTypedValueStore *store, double weight,
+                  const double scalars[7], const GfMatrix4d input[10],
+                  const GfMatrix4d rest[8],
+                  const RigExecIkFkMatchChannels channels[5],
+                  RigExecPoseOpRunner &ops, const Finish &finish,
+                  std::array<double, 11> *ikValues,
+                  std::array<double, 20> *fkValues, bool *valuesValid,
+                  std::array<RigExecPointFrame, 5> *shown, unsigned *shownMask,
+                  const std::string **diagnostic)
+{
+    using rigExecOps::IkFkPoleMode;
+    const auto &m = *bound.match;
+    RigExecIkFkMatchOpConstants constants;
+    constants.poleRecord = m.poleSwitchBinding.record;
+    constants.poleHasCarry = m.poleSwitchBinding.inputs.hasCarry;
+    for (const auto &source : m.poleSwitchBinding.inputs.sources)
+        constants.poleWorld.push_back(source.world ? 1 : 0);
+    constants.poleSourceRides = m.poleSourceRides;
+    constants.ikValue = m.ikValue;
+    constants.scaleCalibration = m.scaleCalibration;
+    constants.upperLengthOffset = m.upperLengthOffset;
+    constants.lowerLengthOffset = m.lowerLengthOffset;
+    constants.stretchLimb = m.stretchLimb;
+    RigExecIkFkMatchOpInputs in;
+    in.weight = weight;
+    std::copy(scalars, scalars + 7, in.scalars.begin());
+    std::copy(input, input + 10, in.sources.begin());
+    std::copy(rest, rest + 8, in.rests.begin());
+    std::copy(channels, channels + 5, in.channels.begin());
+    if (bound.target.carry != UINT64_MAX) {
+        VtValue posed;
+        in.hasSpace = MatrixOf(*store, m.spaceRest, &in.spaceRest) &&
+                      RigExecReadSceneGraphValue(*store, bound.target.carry,
+                                                 &posed, true) &&
+                      posed.IsHolding<GfMatrix4d>() &&
+                      std::isfinite(posed.UncheckedGet<GfMatrix4d>()[3][0]);
+        if (in.hasSpace)
+            in.spacePosed = posed.UncheckedGet<GfMatrix4d>();
+    }
+    // An authored posed:space is the pole's pose: no switch composes it.
+    const auto *posedSpace = store->Read<GfMatrix4d>(m.polePosedSpace);
+    const bool posedAuthored =
+        posedSpace && (store->values[size_t(m.polePosedSpace)].authoritative ||
+                       *posedSpace != GfMatrix4d(1.0));
+    IkFkPoleMode mode = IkFkPoleMode::Keep;
+    if (m.poleSwitch && !posedAuthored) {
+        if (PoleSwitchInputs(m.poleSwitchBinding, *store, &in.poleSwitch))
+            mode = IkFkPoleMode::Switch;
+    } else if (m.poleParentRides) {
+        mode = IkFkPoleMode::Ride;
+    }
+    in.poleMode = uint32_t(mode);
+    RigExecIkFkMatchOpOutputs out;
+    std::string refusal;
+    if (!RigExecRunIkFkMatchOp(constants, in, ops, &out, &refusal)) {
+        *diagnostic = &refusal;
+        return finish();
+    }
+    *ikValues = out.ikValues;
+    *fkValues = out.fkValues;
+    *valuesValid = out.valid;
+    if (!out.valid)
+        *diagnostic = &m.unmatched;
+    for (size_t k = 0; k < 5; ++k)
+        if (out.shownMask & (1u << k))
+            (*shown)[k] = RigExecFrameFromMatrix(out.shown[k]);
+    *shownMask = out.shownMask;
+    return finish();
+}
+
 // RigExecIkFkMatchConstraint: RigExecBakedRunIkFkMatch's arithmetic, then
 // RigExecBakedPresentIkFkMatches' presentation of the five controls and their
 // riders. Every output is published on every run.
 bool
 RunIkFkMatch(const RigExecConstraintGraphBinding &bound,
-             RigExecTypedValueStore *store, std::string *error)
+             RigExecTypedValueStore *store, std::string *error,
+             RigExecPoseOpRunner *ops)
 {
     const auto &m = *bound.match;
     std::array<double, 11> ikValues{};
@@ -661,6 +739,10 @@ RunIkFkMatch(const RigExecConstraintGraphBinding &bound,
     RigExecIkFkMatchChannels channels[5];
     for (size_t i = 0; i < 5; ++i)
         channels[i] = ChannelsOf(*store, m.channels[i], m.scaleAvars[i] != 0);
+    if (ops)
+        return RunIkFkMatchOnOps(bound, store, weight, scalars, input, rest,
+                                 channels, *ops, finish, &ikValues, &fkValues,
+                                 &valuesValid, &shown, &shownMask, &diagnostic);
     RigExecLimbStretch limb;
     limb.stretch = scalars[1];
     limb.softDistance = scalars[2];
@@ -811,7 +893,7 @@ RigExecRunConstraintGraph(const RigExecConstraintGraphBinding &bound,
     if (bound.structural.record.kind == RigExecConstraintKind::Harmonics)
         return RunHarmonics(bound, store, window, ops, error);
     if (bound.match)
-        return RunIkFkMatch(bound, store, error);
+        return RunIkFkMatch(bound, store, error, ops);
     auto descriptor = bound.structural;
     RigExecConstraintInputs input;
     std::vector<char> chainAvailable;
