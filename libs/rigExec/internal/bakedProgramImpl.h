@@ -1132,6 +1132,12 @@ struct RigExecBakedWeightObject {
            combineLeaves = 0;
 };
 
+/// Where a program's runs stand. A run that completes moves a Cold program
+/// to Ran, or to RanUnadmitted when its stage frames were not admitted; a
+/// failed run makes it Cold. Retired (ReleaseStageReferences) is final and
+/// refuses every later run.
+enum class RigExecBakedRunState : uint8_t { Cold, RanUnadmitted, Ran, Retired };
+
 struct RigExecBakedProgramImpl {
     using ConstraintArrays = RigExecBakedConstraintArray;
     using NativeXformSource = RigExecBakedNativeXformSource;
@@ -1768,7 +1774,7 @@ struct RigExecBakedProgramImpl {
     /// Whether each chain's base read at all last run.
     std::vector<char> lastHaveBase;
     UsdTimeCode lastTime = UsdTimeCode::Default();
-    bool everRan = false;
+    RigExecBakedRunState runState = RigExecBakedRunState::Cold;
     /// Bumped by the evaluator for a notice that does NOT invalidate the
     /// program -- a value edit on an input the frame path re-reads, which is
     /// IsInvalidatedBy's documented gap. One run of everything answers it.
@@ -4122,7 +4128,7 @@ struct RigExecBakedLadderTables {
 ///    prologue's sampler pools and routing stamps.
 ///  * cone bookkeeping: `closedSteps`, `closed`, `lastAvars`,
 ///    `lastOverridden`, `edited`/`anyEdited`, `lastHaveBase`, `lastTime`,
-///    `everRan`, `lastProgramStamp`, `spaceLeafRekey`.
+///    `runState`, `lastProgramStamp`, `spaceLeafRekey`.
 ///  * each chain's `spare`; only `result` is an answer.
 ///  * each revision's `deltasSpare`, and its `revisionInputs` (captured and
 ///    restored, not compared).

@@ -589,8 +589,8 @@ RigExecBakedAdoptSkinOpState(RigExecBakedProgramImpl *program,
                              const RigExecBakedProgramImpl &P)
 {
     auto &B = *program;
-    if (!P.everRan || !P.opAdapter.everRan || !P.opAdapter.compiled ||
-        !B.opAdapter.compiled)
+    if (P.runState != RigExecBakedRunState::Ran || !P.opAdapter.everRan ||
+        !P.opAdapter.compiled || !B.opAdapter.compiled)
         return;
     RigExecBakedOpIdentityRemap map;
     if (!SkinSourceMap(B, P, &map))
@@ -1913,7 +1913,7 @@ RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program, UsdTimeCode time,
         });
     if (!ok) {
         state.retainedFirst.clear();
-        B.everRan = false;
+        B.runState = RigExecBakedRunState::Cold;
         state.everRan = false;
         return false;
     }
@@ -1989,12 +1989,15 @@ RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program, UsdTimeCode time,
     state.everRan = ok;
     if (B.requiredStageFramesAdmission.admitted) {
         B.lastTime = time;
-        B.everRan = ok;
+        B.runState =
+            ok ? RigExecBakedRunState::Ran : RigExecBakedRunState::Cold;
         B.lastProgramStamp = B.programStamp;
         B.lastOverridden = B.overridden;
         B.lastHeadOverrides = B.headOverrides;
         std::fill(B.edited.begin(), B.edited.end(), char(0));
         B.anyEdited = false;
+    } else if (ok && B.runState == RigExecBakedRunState::Cold) {
+        B.runState = RigExecBakedRunState::RanUnadmitted;
     }
     return ok;
 }

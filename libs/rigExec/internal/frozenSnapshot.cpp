@@ -65,7 +65,8 @@ _CloneKeysStand(const RigExecBakedProgramImpl &src,
                 const RigExecBakedProgramImpl &copy)
 {
     bool retainedComplete =
-        src.everRan && src.opAdapter.compiled && src.opAdapter.everRan &&
+        src.runState == RigExecBakedRunState::Ran && src.opAdapter.compiled &&
+        src.opAdapter.everRan &&
         src.opAdapter.inputKeys.size() == src.steps.size() &&
         src.opAdapter.sourceKeys.size() == src.steps.size() &&
         src.opAdapter.inputExact.size() == src.steps.size();
@@ -309,7 +310,7 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
     D.lastOverridden = src.lastOverridden;
     D.lastHaveBase = src.lastHaveBase;
     D.lastTime = src.lastTime;
-    D.everRan = src.everRan;
+    D.runState = src.runState;
     D.programStamp = src.programStamp;
     D.lastProgramStamp = src.lastProgramStamp;
     // Pending value edits travel with the stamps: a clone first run at the

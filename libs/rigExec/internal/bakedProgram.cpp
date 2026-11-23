@@ -816,7 +816,7 @@ RigExecBakedProgram::GetVaryingInputCount() const
 void
 RigExecBakedProgram::ReleaseStageReferences()
 {
-    _released = true;
+    _impl->runState = RigExecBakedRunState::Retired;
     _impl->stage.Reset();
 }
 
@@ -4856,7 +4856,7 @@ RigExecBakedProgramImpl::ConstraintArrays::Names()
 bool
 RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
 {
-    if (_released) {
+    if (_impl->runState == RigExecBakedRunState::Retired) {
         if (pose) {
             pose->diagnostics.push_back("program released: run refused");
         }

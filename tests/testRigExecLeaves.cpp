@@ -4026,7 +4026,7 @@ TestSparseSourceKeys(const std::string &examples)
     CHECK(step(2, "new program stamp") == keyed);
     CHECK(step(2, "held after the stamp") == held);
     if (RigExecBakedProgramImpl *M = mutableProgram()) {
-        M->everRan = false;
+        M->runState = RigExecBakedRunState::Cold;
         M->opAdapter.everRan = false;
     }
     CHECK(step(2, "failed run's reset") == keyed);
@@ -5247,7 +5247,7 @@ TestTheChangedListsClearTheFlags(const std::string &examples)
     // A forced run (a failed run's reset) under a placed upstream value,
     // then a sparse run under a moved one.
     evaluator->SetUpstreamInputs({DragOf(control, 30.0)});
-    B->everRan = false;
+    B->runState = RigExecBakedRunState::Cold;
     B->opAdapter.everRan = false;
     plainRun(1010, "changed lists, forced");
     B = program();

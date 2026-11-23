@@ -594,7 +594,6 @@ private:
     /// RequestFullRun's one-shot flag, consumed by the next Run.
     mutable bool _fullRunRequested = false;
     RigExecBakedBail _lastBail = RigExecBakedBail::None;
-    bool _released = false;
 };
 
 } // namespace rigExec

@@ -3931,7 +3931,8 @@ RigExecBakedSampleLeaves(RigExecBakedProgramImpl *program, UsdTimeCode time,
         B.lastRoutedOverrides = B.routedOverrides;
     }
     // Rules 1 and 2: the caller's `all`, the first run, a moved stamp.
-    all = all || !B.everRan || B.programStamp != B.lastProgramStamp;
+    all = all || B.runState != RigExecBakedRunState::Ran ||
+          B.programStamp != B.lastProgramStamp;
     const bool timeMoved = time != B.lastTime;
     const bool edited = B.anyEdited;
     // Both passes of a Run decide alike: `all` is recomputed from the same
