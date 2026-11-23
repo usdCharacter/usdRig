@@ -54,8 +54,8 @@ RigExecPublishBackgroundCompletion(
     // 3.3): the fenced clear holds the same mutex across bump + purge +
     // clear + reset, so no clear can land between the check and the store.
     // Lock order: fence, then scheduler, cache shards or warm index.
-    std::lock_guard<std::mutex> fenceLock(scheduler->FenceMutex());
-    if (!scheduler->IsWarmRequestCurrent(rig, generation, time, fenceToken)) {
+    const RigExecPublishFence fence(scheduler);
+    if (!fence.Current(rig, generation, time, fenceToken)) {
         return false;
     }
     if (_sPublishFenceProbe) {

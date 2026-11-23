@@ -88,10 +88,7 @@ RigExecImagingRegistry::SetWeightOverlay(const std::string &weightPrimPath)
         std::lock_guard<std::mutex> lock(_mutex);
         scheduler = _scheduler;
     }
-    std::unique_lock<std::mutex> fenceLock;
-    if (scheduler) {
-        fenceLock = std::unique_lock<std::mutex>(scheduler->FenceMutex());
-    }
+    RigExecPublishFence fence(scheduler.get());
     {
         std::lock_guard<std::mutex> lock(_mutex);
         // An arbitrary caller-supplied string reaches SdfPath here and its

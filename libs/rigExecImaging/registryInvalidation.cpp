@@ -554,10 +554,7 @@ RigExecImagingRegistry::_OnObjectsChanged(
     // Retiring cache rows and fencing their running jobs is atomic with
     // worker cache/index publication. The fence precedes the registry
     // lock, and is released before publishing any scene-index notices.
-    std::unique_lock<std::mutex> fenceLock;
-    if (scheduler) {
-        fenceLock = std::unique_lock<std::mutex>(scheduler->FenceMutex());
-    }
+    RigExecPublishFence fence(scheduler.get());
     std::set<SdfPath> readRoots;
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -778,9 +775,7 @@ RigExecImagingRegistry::_OnObjectsChanged(
             }
             time = _lastTime;
         }
-        if (fenceLock.owns_lock()) {
-            fenceLock.unlock();
-        }
+        fence.Release();
         SetTime(time);
     }
 }

@@ -833,6 +833,40 @@ private:
     RigExecProfiler _profiler;
 };
 
+/// The publish fence (RigExecBackgroundScheduler::FenceMutex) held for one
+/// scope: taken at construction, released at destruction or Release.
+/// Holds nothing without a scheduler, which must outlive the fence. Take it
+/// holding neither the scheduler mutex nor the registry mutex.
+class RigExecPublishFence {
+public:
+    explicit RigExecPublishFence(const RigExecBackgroundScheduler *scheduler)
+        : _scheduler(scheduler)
+    {
+        if (_scheduler)
+            _lock = std::unique_lock<std::mutex>(_scheduler->FenceMutex());
+    }
+    RigExecPublishFence(const RigExecPublishFence &) = delete;
+    RigExecPublishFence &operator=(const RigExecPublishFence &) = delete;
+
+    /// IsWarmRequestCurrent, asked under the fence; true without a
+    /// scheduler.
+    bool Current(const SdfPath &rig, RigExecFrameGeneration generation,
+                 UsdTimeCode time, RigExecWarmFenceToken fenceToken) const
+    {
+        return !_scheduler || _scheduler->IsWarmRequestCurrent(
+                                  rig, generation, time, fenceToken);
+    }
+    void Release()
+    {
+        if (_lock.owns_lock())
+            _lock.unlock();
+    }
+
+private:
+    const RigExecBackgroundScheduler *_scheduler;
+    std::unique_lock<std::mutex> _lock;
+};
+
 } // namespace rigExec
 
 #endif // RIGEXEC_BACKGROUND_SCHEDULER_H
