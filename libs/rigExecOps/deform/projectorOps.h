@@ -2,8 +2,7 @@
 #define RIGEXEC_OPS_DEFORM_PROJECTOR_OPS_H
 
 /// Matrix outputs measured from a deforming surface. The kernel is
-/// rigExecMath/surfaceProjectorKernel.h, shared with the baked and zero-USD
-/// runtimes. USD-free.
+/// rigExecMath/surfaceProjectorKernel.h.
 
 #include "rigExecOps/library.h"
 #include "rigExecStdTypes/stdTypes.h"

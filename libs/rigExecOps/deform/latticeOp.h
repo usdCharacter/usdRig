@@ -1,11 +1,10 @@
 #ifndef RIGEXEC_OPS_DEFORM_LATTICE_OP_H
 #define RIGEXEC_OPS_DEFORM_LATTICE_OP_H
 
-/// Lattice: points deformed by a cage. A regular grid displaces each point
-/// by the posed nodes' offsets from their grid positions; otherwise the
-/// points bind into the rest cage's bound and follow the posed cage. The
-/// kernels are rigExecMath/latticeKernel.h, shared with the baked and
-/// zero-USD runtimes. USD-free.
+/// Lattice: points deformed by a cage. A regular grid displaces each point by
+/// the posed nodes' offsets from their grid positions; otherwise the points
+/// bind into the rest cage's bound and follow the posed cage. The kernels are
+/// rigExecMath/latticeKernel.h.
 
 #include "rigExecMath/latticeKernel.h"
 #include "rigExecOps/library.h"

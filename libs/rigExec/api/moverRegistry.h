@@ -251,7 +251,7 @@ struct RigExecMoverHandler {
                            const RigExecRevisionBinding &binding,
                            std::vector<uint8_t> *compiledRig,
                            std::vector<uint8_t> *frame) = nullptr;
-    /// The playback half of encodeExternal, USD-free. A host that opens a
+    /// The playback half of encodeExternal. A host that opens a
     /// .rigexec file installs it into the runtime; a runtime without it
     /// passes this mover's points through with a warning.
     RigExecExternalKernel runtimeKernel;

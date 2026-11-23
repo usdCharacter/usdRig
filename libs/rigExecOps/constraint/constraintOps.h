@@ -1,10 +1,8 @@
 #ifndef RIGEXEC_OPS_CONSTRAINT_CONSTRAINT_OPS_H
 #define RIGEXEC_OPS_CONSTRAINT_CONSTRAINT_OPS_H
 
-/// The FBX-equivalent Position, Rotation, Scale, Parent and Aim
-/// constraints on rigExecRig::PointFrame. The kernel is
-/// rigExecMath/constraintKernel.h, shared with the native and zero-USD
-/// runtimes. USD-free.
+/// The FBX-equivalent Position, Rotation, Scale, Parent and Aim constraints on
+/// rigExecRig::PointFrame. The kernel is rigExecMath/constraintKernel.h.
 
 #include "rigExecOps/library.h"
 #include "rigExecStdTypes/stdTypes.h"

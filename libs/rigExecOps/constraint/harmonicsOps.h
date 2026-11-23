@@ -3,8 +3,7 @@
 
 /// Harmonic secondary motion: a Windowed op whose capture is its target's
 /// incoming origin in its space, and whose result adds the ringing offset of
-/// the earlier ticks' captures. The kernel is rigExecMath/harmonicsKernel.h,
-/// shared with the native and zero-USD runtimes. USD-free.
+/// the earlier ticks' captures. The kernel is rigExecMath/harmonicsKernel.h.
 
 #include "rigExecMath/harmonicsKernel.h"
 #include "rigExecOps/library.h"

@@ -1,10 +1,8 @@
 #ifndef RIGEXEC_OPS_DEFORM_WRINKLE_OP_H
 #define RIGEXEC_OPS_DEFORM_WRINKLE_OP_H
 
-/// Wrinkle: guided quasistatic edge constraints that buckle compressed
-/// regions of a mesh into wrinkles. The kernel is
-/// rigExecMath/wrinkleKernel.h, shared with the baked and zero-USD
-/// runtimes. USD-free.
+/// Wrinkle: guided quasistatic edge constraints that buckle compressed regions
+/// of a mesh into wrinkles. The kernel is rigExecMath/wrinkleKernel.h.
 
 #include "rigExecMath/wrinkleSettings.h"
 #include "rigExecOps/library.h"

@@ -111,55 +111,72 @@ RunAutoClavicle(const void *payload, void *, const RigExecOpIo &io,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kPorts[] = {
+    {&AutoClavicleTarget(), &rigExecStd::Mat4dType(), kRigExecPortInput,
+     "target"},
+    {&AutoClaviclePivot(), &rigExecStd::Mat4dType(), kRigExecPortInput,
+     "pivot"},
+    {&AutoClavicleAnchor(), &rigExecStd::Mat4dType(), kRigExecPortInput,
+     "anchor"},
+    {&AutoClavicleAnchorDefault(), &rigExecStd::Mat4dType(), kRigExecPortInput,
+     "anchorDefault"},
+    {&AutoClavicleFkPosed(), &rigExecStd::Mat4dType(), kRigExecPortInput,
+     "fkPosed"},
+    {&AutoClavicleFkDefault(), &rigExecStd::Mat4dArray(), kRigExecPortInput,
+     "fkDefault"},
+    {&AutoClavicleIkTarget(), &rigExecStd::Mat4dType(), kOptional, "ikTarget"},
+    {&AutoClaviclePole(), &rigExecStd::Mat4dType(), kOptional, "pole"},
+    {&AutoClavicleIkBlend(), &rigExecStd::DoubleType(), kRigExecPortInput,
+     "ikBlend"},
+    {&AutoClavicleAmount(), &rigExecStd::DoubleType(), kRigExecPortInput,
+     "amount"},
+    {&AutoClavicleLimbRests(), &rigExecStd::Mat4dArray(), kOptional,
+     "limbRests"},
+    {&AutoClavicleStretch(), &rigExecStd::DoubleType(), kOptional, "stretch"},
+    {&AutoClaviclePin(), &rigExecStd::DoubleType(), kOptional, "pin"},
+    {&AutoClavicleUpperScale(), &rigExecStd::DoubleType(), kOptional,
+     "upperScale"},
+    {&AutoClavicleLowerScale(), &rigExecStd::DoubleType(), kOptional,
+     "lowerScale"},
+    {&AutoClavicleSoftDistance(), &rigExecStd::DoubleType(), kOptional,
+     "softDistance"},
+    {&AutoClavicleScaleCalibration(), &rigExecStd::DoubleType(), kOptional,
+     "scaleCalibration"},
+    {&AutoClavicleTwist(), &rigExecStd::DoubleType(), kOptional, "twist"},
+    {&AutoClavicleUpperOffset(), &rigExecStd::DoubleType(), kOptional,
+     "upperLengthOffset"},
+    {&AutoClavicleLowerOffset(), &rigExecStd::DoubleType(), kOptional,
+     "lowerLengthOffset"},
+    {&AutoClavicleDelta(), &rigExecStd::Vec3dType(), kRigExecPortOutput,
+     "delta"},
+    {&AutoClavicleOut(), &rigExecStd::Mat4dType(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "AutoClavicle";
+    d.ports = kPorts;
+    d.portCount = std::size(kPorts);
+    d.run = &RunAutoClavicle;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    d.payload = rigExec::RigExecPayloadHandlingFor<AutoClavicleOpPayload>();
+    return d;
+}();
+
+} // namespace
+
 void
 RegisterAutoClavicleOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &m = rigExecStd::Mat4dType();
-    const auto &ms = rigExecStd::Mat4dArray();
-    const auto &d = rigExecStd::DoubleType();
-
-    static const rigExec::RigExecPortDesc ports[] = {
-        {&AutoClavicleTarget(), &m, kRigExecPortInput, "target"},
-        {&AutoClaviclePivot(), &m, kRigExecPortInput, "pivot"},
-        {&AutoClavicleAnchor(), &m, kRigExecPortInput, "anchor"},
-        {&AutoClavicleAnchorDefault(), &m, kRigExecPortInput, "anchorDefault"},
-        {&AutoClavicleFkPosed(), &m, kRigExecPortInput, "fkPosed"},
-        {&AutoClavicleFkDefault(), &ms, kRigExecPortInput, "fkDefault"},
-        {&AutoClavicleIkTarget(), &m, kOptional, "ikTarget"},
-        {&AutoClaviclePole(), &m, kOptional, "pole"},
-        {&AutoClavicleIkBlend(), &d, kRigExecPortInput, "ikBlend"},
-        {&AutoClavicleAmount(), &d, kRigExecPortInput, "amount"},
-        {&AutoClavicleLimbRests(), &ms, kOptional, "limbRests"},
-        {&AutoClavicleStretch(), &d, kOptional, "stretch"},
-        {&AutoClaviclePin(), &d, kOptional, "pin"},
-        {&AutoClavicleUpperScale(), &d, kOptional, "upperScale"},
-        {&AutoClavicleLowerScale(), &d, kOptional, "lowerScale"},
-        {&AutoClavicleSoftDistance(), &d, kOptional, "softDistance"},
-        {&AutoClavicleScaleCalibration(), &d, kOptional, "scaleCalibration"},
-        {&AutoClavicleTwist(), &d, kOptional, "twist"},
-        {&AutoClavicleUpperOffset(), &d, kOptional, "upperLengthOffset"},
-        {&AutoClavicleLowerOffset(), &d, kOptional, "lowerLengthOffset"},
-        {&AutoClavicleDelta(), &rigExecStd::Vec3dType(), kRigExecPortOutput,
-         "delta"},
-        {&AutoClavicleOut(), &m, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc desc = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "AutoClavicle";
-        d.ports = ports;
-        d.portCount = std::size(ports);
-        d.run = &RunAutoClavicle;
-        d.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-        d.payload = rigExec::RigExecPayloadHandlingFor<AutoClavicleOpPayload>();
-        return d;
-    }();
-    registrar.Add(AutoClavicle(), desc);
+    registrar.Add(AutoClavicle(), kDesc);
 }
 
 } // namespace rigExecOps

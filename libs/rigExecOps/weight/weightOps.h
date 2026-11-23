@@ -1,11 +1,10 @@
 #ifndef RIGEXEC_OPS_WEIGHT_WEIGHT_OPS_H
 #define RIGEXEC_OPS_WEIGHT_WEIGHT_OPS_H
 
-/// The volume weight producers: sphere, plane and curve fields over a
-/// target's points, in the volume's rigid local space, and the ordered
-/// combine of weights. The field kernel is rigExecMath/weightFieldKernel.h
-/// and the combine rigExecEvalCore/weights.h, both shared with the native
-/// and zero-USD runtimes. USD-free.
+/// The volume weight producers: sphere, plane and curve fields over a target's
+/// points, in the volume's rigid local space, and the ordered combine of
+/// weights. The field kernel is rigExecMath/weightFieldKernel.h and the combine
+/// rigExecEvalCore/weights.h.
 
 #include "rigExecOps/library.h"
 

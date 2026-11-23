@@ -2,10 +2,9 @@
 #define RIGEXEC_OPS_DEFORM_BLEND_SHAPE_OP_H
 
 /// BlendShape: the channels' summed deltas added to the points, optionally
-/// carried on the posed surface's frames first, then blended by the
-/// envelope. Each channel's weight picks and lerps its in-between pair. The
-/// kernel is rigExecMath/blendShapeKernel.h, shared with the baked and
-/// zero-USD runtimes. USD-free.
+/// carried on the posed surface's frames first, then blended by the envelope.
+/// Each channel's weight picks and lerps its in-between pair. The kernel is
+/// rigExecMath/blendShapeKernel.h.
 
 #include "rigExecMath/blendShapeKernel.h"
 #include "rigExecOps/library.h"

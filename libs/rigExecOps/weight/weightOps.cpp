@@ -365,106 +365,113 @@ RunCombineWeights(const void *payload, void *state, const RigExecOpIo &io,
     return true;
 }
 
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+using rigExec::RigExecPortDesc;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+#define RIGEXEC_FIELD_PORT_DESCS(Op)                                           \
+    {&Op##Points(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "points"},   \
+        {&Op##Placement(), &rigExecStd::Mat4dType(), kRigExecPortInput,        \
+         "placement"},                                                         \
+        {&Op##Strength(), &rigExecStd::FloatType(), kOptional, "strength"},    \
+        {&Op##Invert(), &rigExecStd::FloatType(), kOptional, "invert"},        \
+        {&Op##FalloffMin(), &rigExecStd::FloatType(), kOptional,               \
+         "falloffMin"},                                                        \
+        {&Op##FalloffMax(), &rigExecStd::FloatType(), kOptional,               \
+         "falloffMax"},                                                        \
+        {&Op##FalloffSamples(), &rigExecStd::FloatArray(), kOptional,          \
+         "falloffSamples"},                                                    \
+    {                                                                          \
+        &Op##Out(), &rigExecStd::FloatArray(), kRigExecPortOutput, "out"       \
+    }
+
+const RigExecPortDesc kSpherePorts[] = {
+    RIGEXEC_FIELD_PORT_DESCS(SphereWeight),
+    {&SphereWeightScale(), &rigExecStd::Vec3fType(), kOptional, "scale"},
+    {&SphereWeightPositiveScale(), &rigExecStd::Vec3fType(), kOptional,
+     "positiveScale"},
+    {&SphereWeightNegativeScale(), &rigExecStd::Vec3fType(), kOptional,
+     "negativeScale"},
+};
+const RigExecPortDesc kPlanePorts[] = {
+    RIGEXEC_FIELD_PORT_DESCS(PlaneWeight),
+    {&PlaneWeightExtentU(), &rigExecStd::FloatType(), kOptional, "extentU"},
+    {&PlaneWeightExtentV(), &rigExecStd::FloatType(), kOptional, "extentV"},
+};
+const RigExecPortDesc kCurvePorts[] = {
+    RIGEXEC_FIELD_PORT_DESCS(CurveWeight),
+    {&CurveWeightScale(), &rigExecStd::Vec3fType(), kOptional, "scale"},
+    {&CurveWeightCurve(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "curve"},
+};
+#undef RIGEXEC_FIELD_PORT_DESCS
+
+rigExec::RigExecOpDesc
+FieldDesc(const char *name, const RigExecPortDesc *ports, size_t count,
+          rigExec::RigExecOpRunFn run)
+{
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = name;
+    d.ports = ports;
+    d.portCount = count;
+    d.run = run;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    d.payload = rigExec::RigExecPayloadHandlingFor<WeightFieldPayload>();
+    return d;
+}
+
+const rigExec::RigExecOpDesc kSphere = FieldDesc(
+    "SphereWeight", kSpherePorts, std::size(kSpherePorts), &RunSphereWeight);
+const rigExec::RigExecOpDesc kPlane = FieldDesc(
+    "PlaneWeight", kPlanePorts, std::size(kPlanePorts), &RunPlaneWeight);
+const rigExec::RigExecOpDesc kCurve = FieldDesc(
+    "CurveWeight", kCurvePorts, std::size(kCurvePorts), &RunCurveWeight);
+
+const RigExecPortDesc kCombinePorts[] = {
+    {&CombineWeightsInputs(), &rigExecRig::PointWeightsType(),
+     kOptional | rigExec::kRigExecPortArray, "inputs"},
+    {&CombineWeightsTargetCount(), &rigExecStd::UIntType(), kOptional,
+     "targetCount"},
+    {&CombineWeightsStrength(), &rigExecStd::FloatType(), kOptional,
+     "strength"},
+    {&CombineWeightsInvert(), &rigExecStd::FloatType(), kOptional, "invert"},
+    {&CombineWeightsOut(), &rigExecRig::PointWeightsType(), kRigExecPortOutput,
+     "out"},
+};
+
+const rigExec::RigExecOpDesc kCombine = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "CombineWeights";
+    d.ports = kCombinePorts;
+    d.portCount = std::size(kCombinePorts);
+    d.run = &RunCombineWeights;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    d.payload = rigExec::RigExecPayloadHandlingFor<CombineWeightsPayload>();
+    d.state.size = sizeof(CombineState);
+    d.state.align = alignof(CombineState);
+    d.state.create = [](void *dst) {
+        std::uninitialized_value_construct_n(static_cast<CombineState *>(dst),
+                                             1);
+    };
+    d.state.destroy = [](void *dst) {
+        std::destroy_at(static_cast<CombineState *>(dst));
+    };
+    return d;
+}();
+
 } // namespace
 
 void
 RegisterWeightOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    using rigExec::RigExecPortDesc;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &points = rigExecStd::Vec3fArray();
-    const auto &floats = rigExecStd::FloatArray();
-    const auto &scalar = rigExecStd::FloatType();
-    const auto &vec = rigExecStd::Vec3fType();
-    const auto &matrix = rigExecStd::Mat4dType();
-
-#define RIGEXEC_FIELD_PORT_DESCS(Op)                                           \
-    {&Op##Points(), &points, kRigExecPortInput, "points"},                     \
-        {&Op##Placement(), &matrix, kRigExecPortInput, "placement"},           \
-        {&Op##Strength(), &scalar, kOptional, "strength"},                     \
-        {&Op##Invert(), &scalar, kOptional, "invert"},                         \
-        {&Op##FalloffMin(), &scalar, kOptional, "falloffMin"},                 \
-        {&Op##FalloffMax(), &scalar, kOptional, "falloffMax"},                 \
-        {&Op##FalloffSamples(), &floats, kOptional, "falloffSamples"},         \
-    {                                                                          \
-        &Op##Out(), &floats, kRigExecPortOutput, "out"                         \
-    }
-
-    static const RigExecPortDesc spherePorts[] = {
-        RIGEXEC_FIELD_PORT_DESCS(SphereWeight),
-        {&SphereWeightScale(), &vec, kOptional, "scale"},
-        {&SphereWeightPositiveScale(), &vec, kOptional, "positiveScale"},
-        {&SphereWeightNegativeScale(), &vec, kOptional, "negativeScale"},
-    };
-    static const RigExecPortDesc planePorts[] = {
-        RIGEXEC_FIELD_PORT_DESCS(PlaneWeight),
-        {&PlaneWeightExtentU(), &scalar, kOptional, "extentU"},
-        {&PlaneWeightExtentV(), &scalar, kOptional, "extentV"},
-    };
-    static const RigExecPortDesc curvePorts[] = {
-        RIGEXEC_FIELD_PORT_DESCS(CurveWeight),
-        {&CurveWeightScale(), &vec, kOptional, "scale"},
-        {&CurveWeightCurve(), &points, kRigExecPortInput, "curve"},
-    };
-#undef RIGEXEC_FIELD_PORT_DESCS
-
-    const auto desc = [](const char *name, const RigExecPortDesc *ports,
-                         size_t count, rigExec::RigExecOpRunFn run) {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = name;
-        d.ports = ports;
-        d.portCount = count;
-        d.run = run;
-        d.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-        d.payload = rigExec::RigExecPayloadHandlingFor<WeightFieldPayload>();
-        return d;
-    };
-    static const rigExec::RigExecOpDesc sphere = desc(
-        "SphereWeight", spherePorts, std::size(spherePorts), &RunSphereWeight);
-    static const rigExec::RigExecOpDesc plane =
-        desc("PlaneWeight", planePorts, std::size(planePorts), &RunPlaneWeight);
-    static const rigExec::RigExecOpDesc curve =
-        desc("CurveWeight", curvePorts, std::size(curvePorts), &RunCurveWeight);
-    static const RigExecPortDesc combinePorts[] = {
-        {&CombineWeightsInputs(), &rigExecRig::PointWeightsType(),
-         kOptional | rigExec::kRigExecPortArray, "inputs"},
-        {&CombineWeightsTargetCount(), &rigExecStd::UIntType(), kOptional,
-         "targetCount"},
-        {&CombineWeightsStrength(), &scalar, kOptional, "strength"},
-        {&CombineWeightsInvert(), &scalar, kOptional, "invert"},
-        {&CombineWeightsOut(), &rigExecRig::PointWeightsType(),
-         kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc combine = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "CombineWeights";
-        d.ports = combinePorts;
-        d.portCount = std::size(combinePorts);
-        d.run = &RunCombineWeights;
-        d.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-        d.payload = rigExec::RigExecPayloadHandlingFor<CombineWeightsPayload>();
-        d.state.size = sizeof(CombineState);
-        d.state.align = alignof(CombineState);
-        d.state.create = [](void *dst) {
-            std::uninitialized_value_construct_n(
-                static_cast<CombineState *>(dst), 1);
-        };
-        d.state.destroy = [](void *dst) {
-            std::destroy_at(static_cast<CombineState *>(dst));
-        };
-        return d;
-    }();
-    registrar.Add(SphereWeight(), sphere);
-    registrar.Add(PlaneWeight(), plane);
-    registrar.Add(CurveWeight(), curve);
-    registrar.Add(CombineWeights(), combine);
+    registrar.Add(SphereWeight(), kSphere);
+    registrar.Add(PlaneWeight(), kPlane);
+    registrar.Add(CurveWeight(), kCurve);
+    registrar.Add(CombineWeights(), kCombine);
 }
 
 } // namespace rigExecOps

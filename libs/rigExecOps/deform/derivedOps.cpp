@@ -113,45 +113,58 @@ DerivedDesc(const char *name, const rigExec::RigExecPortDesc *ports,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kNormalsPorts[] = {
+    {&RecomputeNormalsPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "points"},
+    {&RecomputeNormalsCounts(), &rigExecStd::IntArray(), kRigExecPortInput,
+     "faceVertexCounts"},
+    {&RecomputeNormalsIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
+     "faceVertexIndices"},
+    {&RecomputeNormalsAuthored(), &rigExecStd::Vec3fArray(), kOptional,
+     "authored"},
+    {&RecomputeNormalsEnvelope(), &rigExecStd::FloatArray(), kOptional,
+     "envelope"},
+    {&RecomputeNormalsOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput,
+     "out"},
+};
+
+const rigExec::RigExecPortDesc kExtentPorts[] = {
+    {&RecomputeExtentPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "points"},
+    {&RecomputeExtentWidths(), &rigExecStd::FloatArray(), kOptional, "widths"},
+    {&RecomputeExtentAuthored(), &rigExecStd::Vec3fArray(), kOptional,
+     "authored"},
+    {&RecomputeExtentEnvelope(), &rigExecStd::FloatArray(), kOptional,
+     "envelope"},
+    {&RecomputeExtentOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput,
+     "out"},
+};
+
+const rigExec::RigExecOpDesc kNormalsDesc = [] {
+    rigExec::RigExecOpDesc d =
+        DerivedDesc("RecomputeNormals", kNormalsPorts, std::size(kNormalsPorts),
+                    &RunNormals, 0);
+    d.payload = rigExec::RigExecPayloadHandlingFor<NormalsPayload>();
+    return d;
+}();
+
+const rigExec::RigExecOpDesc kExtentDesc = DerivedDesc(
+    "RecomputeExtent", kExtentPorts, std::size(kExtentPorts), &RunExtent, 0);
+
+} // namespace
+
 void
 RegisterDerivedOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &points = rigExecStd::Vec3fArray();
-    const auto &ints = rigExecStd::IntArray();
-    const auto &floats = rigExecStd::FloatArray();
-
-    static const rigExec::RigExecPortDesc normalsPorts[] = {
-        {&RecomputeNormalsPoints(), &points, kRigExecPortInput, "points"},
-        {&RecomputeNormalsCounts(), &ints, kRigExecPortInput,
-         "faceVertexCounts"},
-        {&RecomputeNormalsIndices(), &ints, kRigExecPortInput,
-         "faceVertexIndices"},
-        {&RecomputeNormalsAuthored(), &points, kOptional, "authored"},
-        {&RecomputeNormalsEnvelope(), &floats, kOptional, "envelope"},
-        {&RecomputeNormalsOut(), &points, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecPortDesc extentPorts[] = {
-        {&RecomputeExtentPoints(), &points, kRigExecPortInput, "points"},
-        {&RecomputeExtentWidths(), &floats, kOptional, "widths"},
-        {&RecomputeExtentAuthored(), &points, kOptional, "authored"},
-        {&RecomputeExtentEnvelope(), &floats, kOptional, "envelope"},
-        {&RecomputeExtentOut(), &points, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc normalsDesc = [] {
-        rigExec::RigExecOpDesc d =
-            DerivedDesc("RecomputeNormals", normalsPorts,
-                        std::size(normalsPorts), &RunNormals, 0);
-        d.payload = rigExec::RigExecPayloadHandlingFor<NormalsPayload>();
-        return d;
-    }();
-    static const rigExec::RigExecOpDesc extentDesc = DerivedDesc(
-        "RecomputeExtent", extentPorts, std::size(extentPorts), &RunExtent, 0);
-    registrar.Add(RecomputeNormals(), normalsDesc);
-    registrar.Add(RecomputeExtent(), extentDesc);
+    registrar.Add(RecomputeNormals(), kNormalsDesc);
+    registrar.Add(RecomputeExtent(), kExtentDesc);
 }
 
 } // namespace rigExecOps

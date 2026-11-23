@@ -1,7 +1,9 @@
 #ifndef RIGEXEC_API_COMPILE_H
 #define RIGEXEC_API_COMPILE_H
 
-/// Compiles a rig description into an immutable program. USD-free.
+/// Turns a rig description into a program an evaluator can run: it checks
+/// the connections, works out the order the ops run in and which can run
+/// at the same time, and lays out the memory for every value.
 
 #include "rigExec/api/rigDesc.h"
 
@@ -14,14 +16,17 @@ namespace rigExec {
 class RigExecProgram;
 
 struct RigExecCompileOptions {
-    /// Most nodes in one batch; 0 puts every node of one op at one level in
-    /// a single batch. Changes dispatch only, never results.
+    /// The most nodes handed to one worker thread at a time; 0 for no
+    /// limit. Smaller groups spread work across more threads. Results are
+    /// the same for any value.
     size_t maxBatchNodes = 0;
 };
 
-/// Null with \p error when a required input is unfed, an input other than
-/// an array is fed twice, a connection joins different types, or the order
-/// has a cycle.
+/// The compiled program, shared by any number of evaluators; it never
+/// changes. Null with \p error when the description is invalid, for example
+/// when a required input has nothing feeding it, an input that takes one
+/// value is fed twice, a connection joins different types, or the order
+/// runs in a circle.
 std::shared_ptr<const RigExecProgram>
 RigExecCompile(const RigExecRigDesc &desc,
                const RigExecCompileOptions &options = {},

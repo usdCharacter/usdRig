@@ -77,41 +77,50 @@ Run(const void *payload, void *, const RigExecOpIo &io, std::string *error)
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kPorts[] = {
+    {&LatticePoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "points"},
+    {&LatticeRestPoints(), &rigExecStd::Vec3fArray(), kOptional, "restPoints"},
+    {&LatticeRestCage(), &rigExecStd::Vec3fArray(), kOptional, "restCage"},
+    {&LatticePosedCage(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "posedCage"},
+    {&LatticeTargetToLattice(), &rigExecStd::Mat4dType(), kOptional,
+     "targetToLattice"},
+    {&LatticeLatticeToTarget(), &rigExecStd::Mat4dType(), kOptional,
+     "latticeToTarget"},
+    {&LatticeCageToLattice(), &rigExecStd::Mat4dType(), kOptional,
+     "cageToLattice"},
+    {&LatticeEnvelope(), &rigExecStd::FloatArray(), kOptional, "envelope"},
+    {&LatticeOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "Lattice";
+    d.ports = kPorts;
+    d.portCount = std::size(kPorts);
+    d.run = &Run;
+    d.capabilities =
+        rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
+        rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
+        rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
+    d.payload = rigExec::RigExecPayloadHandlingFor<LatticePayload>();
+    return d;
+}();
+
+} // namespace
+
 void
 RegisterLatticeOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &points = rigExecStd::Vec3fArray();
-    const auto &m = rigExecStd::Mat4dType();
-    static const rigExec::RigExecPortDesc ports[] = {
-        {&LatticePoints(), &points, kRigExecPortInput, "points"},
-        {&LatticeRestPoints(), &points, kOptional, "restPoints"},
-        {&LatticeRestCage(), &points, kOptional, "restCage"},
-        {&LatticePosedCage(), &points, kRigExecPortInput, "posedCage"},
-        {&LatticeTargetToLattice(), &m, kOptional, "targetToLattice"},
-        {&LatticeLatticeToTarget(), &m, kOptional, "latticeToTarget"},
-        {&LatticeCageToLattice(), &m, kOptional, "cageToLattice"},
-        {&LatticeEnvelope(), &rigExecStd::FloatArray(), kOptional, "envelope"},
-        {&LatticeOut(), &points, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc desc = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "Lattice";
-        d.ports = ports;
-        d.portCount = std::size(ports);
-        d.run = &Run;
-        d.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
-            rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
-            rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
-        d.payload = rigExec::RigExecPayloadHandlingFor<LatticePayload>();
-        return d;
-    }();
-    registrar.Add(Lattice(), desc);
+    registrar.Add(Lattice(), kDesc);
 }
 
 } // namespace rigExecOps

@@ -102,43 +102,51 @@ PointDesc(const char *name, const rigExec::RigExecPortDesc *ports,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kSmoothPorts[] = {
+    {&SmoothPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "points"},
+    {&SmoothCounts(), &rigExecStd::IntArray(), kRigExecPortInput,
+     "faceVertexCounts"},
+    {&SmoothIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
+     "faceVertexIndices"},
+    {&SmoothStrength(), &rigExecStd::FloatType(), kOptional, "strength"},
+    {&SmoothEnvelope(), &rigExecStd::FloatArray(), kOptional, "envelope"},
+    {&SmoothOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecPortDesc kVolumePorts[] = {
+    {&VolumeCorrectPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "points"},
+    {&VolumeCorrectReference(), &rigExecStd::DoubleType(), kRigExecPortInput,
+     "referenceVolume"},
+    {&VolumeCorrectStrength(), &rigExecStd::FloatType(), kOptional, "strength"},
+    {&VolumeCorrectEnvelope(), &rigExecStd::FloatArray(), kOptional,
+     "envelope"},
+    {&VolumeCorrectOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kSmoothDesc =
+    PointDesc("Smooth", kSmoothPorts, std::size(kSmoothPorts), &RunSmooth,
+              rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
+                  rigExec::kRigExecOpGate);
+
+const rigExec::RigExecOpDesc kVolumeDesc =
+    PointDesc("VolumeCorrect", kVolumePorts, std::size(kVolumePorts),
+              &RunVolumeCorrect, rigExec::kRigExecOpSeparateBlend);
+
+} // namespace
+
 void
 RegisterPointOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &points = rigExecStd::Vec3fArray();
-    const auto &ints = rigExecStd::IntArray();
-    const auto &f = rigExecStd::FloatType();
-    const auto &floats = rigExecStd::FloatArray();
-
-    static const rigExec::RigExecPortDesc smoothPorts[] = {
-        {&SmoothPoints(), &points, kRigExecPortInput, "points"},
-        {&SmoothCounts(), &ints, kRigExecPortInput, "faceVertexCounts"},
-        {&SmoothIndices(), &ints, kRigExecPortInput, "faceVertexIndices"},
-        {&SmoothStrength(), &f, kOptional, "strength"},
-        {&SmoothEnvelope(), &floats, kOptional, "envelope"},
-        {&SmoothOut(), &points, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecPortDesc volumePorts[] = {
-        {&VolumeCorrectPoints(), &points, kRigExecPortInput, "points"},
-        {&VolumeCorrectReference(), &rigExecStd::DoubleType(),
-         kRigExecPortInput, "referenceVolume"},
-        {&VolumeCorrectStrength(), &f, kOptional, "strength"},
-        {&VolumeCorrectEnvelope(), &floats, kOptional, "envelope"},
-        {&VolumeCorrectOut(), &points, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc smoothDesc =
-        PointDesc("Smooth", smoothPorts, std::size(smoothPorts), &RunSmooth,
-                  rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
-                      rigExec::kRigExecOpGate);
-    static const rigExec::RigExecOpDesc volumeDesc =
-        PointDesc("VolumeCorrect", volumePorts, std::size(volumePorts),
-                  &RunVolumeCorrect, rigExec::kRigExecOpSeparateBlend);
-    registrar.Add(Smooth(), smoothDesc);
-    registrar.Add(VolumeCorrect(), volumeDesc);
+    registrar.Add(Smooth(), kSmoothDesc);
+    registrar.Add(VolumeCorrect(), kVolumeDesc);
 }
 
 } // namespace rigExecOps

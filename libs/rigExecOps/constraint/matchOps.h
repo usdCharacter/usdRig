@@ -1,11 +1,10 @@
 #ifndef RIGEXEC_OPS_CONSTRAINT_MATCH_OPS_H
 #define RIGEXEC_OPS_CONSTRAINT_MATCH_OPS_H
 
-/// IK/FK match and space match: the channel values that keep a control where
-/// it is once a switch moves, as ordinary outputs. The kernels are
+/// IK/FK match and space match: the channel values that keep a control where it
+/// is once a switch moves, as ordinary outputs. The kernels are
 /// rigExecMath/ikFkMatchKernel.h and spaceMatchKernel.h, and the space switch
-/// rigExecMath/poseArithmeticKernel.h, shared with the native and zero-USD
-/// runtimes. USD-free.
+/// rigExecMath/poseArithmeticKernel.h.
 
 #include "rigExecOps/library.h"
 #include "rigExecStdTypes/stdTypes.h"

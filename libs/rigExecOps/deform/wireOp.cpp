@@ -86,43 +86,47 @@ RunWire(const void *payload, void *, const RigExecOpIo &io, std::string *error)
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kPorts[] = {
+    {&WirePoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "points"},
+    {&WireRestCurve(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "restCurve"},
+    {&WireCurve(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "curve"},
+    {&WireBindCoords(), &rigExecStd::Vec2fArray(), kRigExecPortInput,
+     "bindCoords"},
+    {&WireEnvelope(), &rigExecStd::FloatArray(), kOptional, "envelope"},
+    {&WireWeightIndices(), &rigExecStd::IntArray(), kOptional, "weightIndices"},
+    {&WireWeights(), &rigExecStd::FloatArray(), kOptional, "weights"},
+    {&WireOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "Wire";
+    d.ports = kPorts;
+    d.portCount = std::size(kPorts);
+    d.run = &RunWire;
+    d.capabilities =
+        rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
+        rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
+        rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
+    d.payload = rigExec::RigExecPayloadHandlingFor<WirePayload>();
+    return d;
+}();
+
+} // namespace
+
 void
 RegisterWireOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &points = rigExecStd::Vec3fArray();
-    const auto &floats = rigExecStd::FloatArray();
-
-    static const rigExec::RigExecPortDesc ports[] = {
-        {&WirePoints(), &points, kRigExecPortInput, "points"},
-        {&WireRestCurve(), &points, kRigExecPortInput, "restCurve"},
-        {&WireCurve(), &points, kRigExecPortInput, "curve"},
-        {&WireBindCoords(), &rigExecStd::Vec2fArray(), kRigExecPortInput,
-         "bindCoords"},
-        {&WireEnvelope(), &floats, kOptional, "envelope"},
-        {&WireWeightIndices(), &rigExecStd::IntArray(), kOptional,
-         "weightIndices"},
-        {&WireWeights(), &floats, kOptional, "weights"},
-        {&WireOut(), &points, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc desc = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "Wire";
-        d.ports = ports;
-        d.portCount = std::size(ports);
-        d.run = &RunWire;
-        d.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
-            rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
-            rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
-        d.payload = rigExec::RigExecPayloadHandlingFor<WirePayload>();
-        return d;
-    }();
-    registrar.Add(Wire(), desc);
+    registrar.Add(Wire(), kDesc);
 }
 
 } // namespace rigExecOps

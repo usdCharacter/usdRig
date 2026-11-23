@@ -2,8 +2,7 @@
 #define RIGEXEC_OPS_DEFORM_RIBBON_OP_H
 
 /// Point ops driven by a solver's frames. Ribbon's kernel is
-/// rigExecMath/ribbonKernel.h, shared with the baked and zero-USD runtimes.
-/// USD-free.
+/// rigExecMath/ribbonKernel.h.
 
 #include "rigExecOps/library.h"
 

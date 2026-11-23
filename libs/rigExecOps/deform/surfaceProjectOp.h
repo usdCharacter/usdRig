@@ -3,9 +3,8 @@
 
 /// SurfaceProject: points snapped onto, inside or outside a surface mesh.
 /// Default settings with identity spaces are the legacy projection
-/// (surfaceProjectKernel.h), weighted by Strength; anything else is the
-/// snap kernel (surfaceSnapKernel.h). Both are shared with the baked and
-/// zero-USD runtimes. USD-free.
+/// (surfaceProjectKernel.h), weighted by Strength; anything else is the snap
+/// kernel (surfaceSnapKernel.h).
 
 #include "rigExecMath/surfaceSnapKernel.h"
 #include "rigExecOps/library.h"

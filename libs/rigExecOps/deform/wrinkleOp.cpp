@@ -44,37 +44,45 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+
+const rigExec::RigExecPortDesc kPorts[] = {
+    {&WrinklePoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "points"},
+    {&WrinkleRest(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "restPoints"},
+    {&WrinkleCounts(), &rigExecStd::IntArray(), kRigExecPortInput,
+     "faceVertexCounts"},
+    {&WrinkleIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
+     "faceVertexIndices"},
+    {&WrinkleEnvelope(), &rigExecStd::FloatArray(),
+     kRigExecPortInput | kRigExecPortOptional, "envelope"},
+    {&WrinkleOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "Wrinkle";
+    d.ports = kPorts;
+    d.portCount = std::size(kPorts);
+    d.run = &Run;
+    d.capabilities =
+        rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
+        rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;
+    d.payload = rigExec::RigExecPayloadHandlingFor<WrinklePayload>();
+    return d;
+}();
+
+} // namespace
+
 void
 RegisterWrinkleOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    const auto &points = rigExecStd::Vec3fArray();
-    const auto &ints = rigExecStd::IntArray();
-    static const rigExec::RigExecPortDesc ports[] = {
-        {&WrinklePoints(), &points, kRigExecPortInput, "points"},
-        {&WrinkleRest(), &points, kRigExecPortInput, "restPoints"},
-        {&WrinkleCounts(), &ints, kRigExecPortInput, "faceVertexCounts"},
-        {&WrinkleIndices(), &ints, kRigExecPortInput, "faceVertexIndices"},
-        {&WrinkleEnvelope(), &rigExecStd::FloatArray(),
-         kRigExecPortInput | kRigExecPortOptional, "envelope"},
-        {&WrinkleOut(), &points, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc desc = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "Wrinkle";
-        d.ports = ports;
-        d.portCount = std::size(ports);
-        d.run = &Run;
-        d.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
-            rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;
-        d.payload = rigExec::RigExecPayloadHandlingFor<WrinklePayload>();
-        return d;
-    }();
-    registrar.Add(Wrinkle(), desc);
+    registrar.Add(Wrinkle(), kDesc);
 }
 
 } // namespace rigExecOps

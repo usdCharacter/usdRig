@@ -1,9 +1,9 @@
 #ifndef RIGEXEC_STD_TYPES_STD_TYPES_H
 #define RIGEXEC_STD_TYPES_STD_TYPES_H
 
-/// The standard type library: scalars, rigExec's vector, matrix and
-/// quaternion values (laid out like Gf), and arrays of each. USD-free; Gf
-/// and Vt conversion belongs to the USD adapter.
+/// The standard type library: scalars, rigExec's vector, matrix and quaternion
+/// values (laid out like Gf), and arrays of each. Gf and Vt conversion belongs
+/// to the USD adapter.
 
 #include "rigExec/api/registry.h"
 #include "rigExecRuntime/runtimeMath.h"

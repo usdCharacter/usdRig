@@ -87,66 +87,77 @@ RunDistributeTwist(const void *, void *, const RigExecOpIo &io,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kBlendPorts[] = {
+    {&BlendFramesA(), &rigExecRig::PointFrameType(), kRigExecPortInput, "a"},
+    {&BlendFramesB(), &rigExecRig::PointFrameType(), kRigExecPortInput, "b"},
+    {&BlendFramesRest(), &rigExecRig::PointLandmarksType(), kRigExecPortInput,
+     "rest"},
+    {&BlendFramesWeight(), &rigExecStd::DoubleType(), kRigExecPortInput,
+     "weight"},
+    {&BlendFramesOutRest(), &rigExecRig::PointLandmarksType(), kOptional,
+     "outRest"},
+    {&BlendFramesOut(), &rigExecRig::PointFrameType(), kRigExecPortOutput,
+     "out"},
+};
+
+const rigExec::RigExecPortDesc kTwistPorts[] = {
+    {&DistributeTwistStart(), &rigExecRig::PointFrameType(), kRigExecPortInput,
+     "start"},
+    {&DistributeTwistEnd(), &rigExecRig::PointFrameType(), kRigExecPortInput,
+     "end"},
+    {&DistributeTwistStartRest(), &rigExecRig::PointLandmarksType(),
+     kRigExecPortInput, "startRest"},
+    {&DistributeTwistEndRest(), &rigExecRig::PointLandmarksType(),
+     kRigExecPortInput, "endRest"},
+    {&DistributeTwistWeights(), &rigExecStd::DoubleArray(), kRigExecPortInput,
+     "weights"},
+    {&DistributeTwistTurns(), &rigExecStd::DoubleType(), kOptional,
+     "twistTurns"},
+    {&DistributeTwistJointRests(), &rigExecRig::PointLandmarksList(), kOptional,
+     "jointRests"},
+    {&DistributeTwistJointRestLive(), &rigExecStd::BoolArray(), kOptional,
+     "jointRestLive"},
+    {&DistributeTwistOut(), &rigExecRig::PointFrameArrayType(),
+     kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kBlend = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "BlendFrames";
+    d.ports = kBlendPorts;
+    d.portCount = std::size(kBlendPorts);
+    d.run = &RunBlendFrames;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    d.payload = rigExec::RigExecPayloadHandlingFor<BlendFramesPayload>();
+    return d;
+}();
+
+const rigExec::RigExecOpDesc kTwist = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "DistributeTwist";
+    d.ports = kTwistPorts;
+    d.portCount = std::size(kTwistPorts);
+    d.run = &RunDistributeTwist;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    return d;
+}();
+
+} // namespace
+
 void
 RegisterFrameBlendOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &frame = rigExecRig::PointFrameType();
-    const auto &landmarks = rigExecRig::PointLandmarksType();
-    const auto &d = rigExecStd::DoubleType();
-
-    static const rigExec::RigExecPortDesc blendPorts[] = {
-        {&BlendFramesA(), &frame, kRigExecPortInput, "a"},
-        {&BlendFramesB(), &frame, kRigExecPortInput, "b"},
-        {&BlendFramesRest(), &landmarks, kRigExecPortInput, "rest"},
-        {&BlendFramesWeight(), &d, kRigExecPortInput, "weight"},
-        {&BlendFramesOutRest(), &landmarks, kOptional, "outRest"},
-        {&BlendFramesOut(), &frame, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecPortDesc twistPorts[] = {
-        {&DistributeTwistStart(), &frame, kRigExecPortInput, "start"},
-        {&DistributeTwistEnd(), &frame, kRigExecPortInput, "end"},
-        {&DistributeTwistStartRest(), &landmarks, kRigExecPortInput,
-         "startRest"},
-        {&DistributeTwistEndRest(), &landmarks, kRigExecPortInput, "endRest"},
-        {&DistributeTwistWeights(), &rigExecStd::DoubleArray(),
-         kRigExecPortInput, "weights"},
-        {&DistributeTwistTurns(), &d, kOptional, "twistTurns"},
-        {&DistributeTwistJointRests(), &rigExecRig::PointLandmarksList(),
-         kOptional, "jointRests"},
-        {&DistributeTwistJointRestLive(), &rigExecStd::BoolArray(), kOptional,
-         "jointRestLive"},
-        {&DistributeTwistOut(), &rigExecRig::PointFrameArrayType(),
-         kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc blend = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "BlendFrames";
-        d.ports = blendPorts;
-        d.portCount = std::size(blendPorts);
-        d.run = &RunBlendFrames;
-        d.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-        d.payload = rigExec::RigExecPayloadHandlingFor<BlendFramesPayload>();
-        return d;
-    }();
-    static const rigExec::RigExecOpDesc twist = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "DistributeTwist";
-        d.ports = twistPorts;
-        d.portCount = std::size(twistPorts);
-        d.run = &RunDistributeTwist;
-        d.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-        return d;
-    }();
-    registrar.Add(BlendFrames(), blend);
-    registrar.Add(DistributeTwist(), twist);
+    registrar.Add(BlendFrames(), kBlend);
+    registrar.Add(DistributeTwist(), kTwist);
 }
 
 } // namespace rigExecOps

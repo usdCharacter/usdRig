@@ -96,42 +96,46 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kPorts[] = {
+    {&BlendShapePoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "points"},
+    {&BlendShapeWeights(), &rigExecStd::FloatArray(), kRigExecPortInput,
+     "weights"},
+    {&BlendShapeBase(), &rigExecStd::Vec3fArray(), kOptional, "base"},
+    {&BlendShapeRest(), &rigExecStd::Vec3fArray(), kOptional, "rest"},
+    {&BlendShapeCounts(), &rigExecStd::IntArray(), kOptional, "counts"},
+    {&BlendShapeIndices(), &rigExecStd::IntArray(), kOptional, "indices"},
+    {&BlendShapeEnvelope(), &rigExecStd::FloatArray(), kOptional, "envelope"},
+    {&BlendShapeOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "BlendShape";
+    d.ports = kPorts;
+    d.portCount = std::size(kPorts);
+    d.run = &Run;
+    d.capabilities = rigExec::kRigExecOpBakeable |
+                     rigExec::kRigExecOpFreezable | rigExec::kRigExecOpRanged |
+                     rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
+    d.payload = rigExec::RigExecPayloadHandlingFor<BlendShapePayload>();
+    return d;
+}();
+
+} // namespace
+
 void
 RegisterBlendShapeOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &points = rigExecStd::Vec3fArray();
-    const auto &ints = rigExecStd::IntArray();
-    static const rigExec::RigExecPortDesc ports[] = {
-        {&BlendShapePoints(), &points, kRigExecPortInput, "points"},
-        {&BlendShapeWeights(), &rigExecStd::FloatArray(), kRigExecPortInput,
-         "weights"},
-        {&BlendShapeBase(), &points, kOptional, "base"},
-        {&BlendShapeRest(), &points, kOptional, "rest"},
-        {&BlendShapeCounts(), &ints, kOptional, "counts"},
-        {&BlendShapeIndices(), &ints, kOptional, "indices"},
-        {&BlendShapeEnvelope(), &rigExecStd::FloatArray(), kOptional,
-         "envelope"},
-        {&BlendShapeOut(), &points, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc desc = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "BlendShape";
-        d.ports = ports;
-        d.portCount = std::size(ports);
-        d.run = &Run;
-        d.capabilities = rigExec::kRigExecOpBakeable |
-                         rigExec::kRigExecOpFreezable |
-                         rigExec::kRigExecOpRanged | rigExec::kRigExecOpGate |
-                         rigExec::kRigExecOpFromLeaves;
-        d.payload = rigExec::RigExecPayloadHandlingFor<BlendShapePayload>();
-        return d;
-    }();
-    registrar.Add(BlendShape(), desc);
+    registrar.Add(BlendShape(), kDesc);
 }
 
 } // namespace rigExecOps

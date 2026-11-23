@@ -137,52 +137,63 @@ ProjectorDesc(const char *name, const rigExec::RigExecPortDesc *ports,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kProjectorPorts[] = {
+    {&SurfaceProjectorBasePoints(), &rigExecStd::Vec3fArray(),
+     kRigExecPortInput, "basePoints"},
+    {&SurfaceProjectorPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "points"},
+    {&SurfaceProjectorCounts(), &rigExecStd::IntArray(), kRigExecPortInput,
+     "faceVertexCounts"},
+    {&SurfaceProjectorIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
+     "faceVertexIndices"},
+    {&SurfaceProjectorSourceBase(), &rigExecStd::Mat4dType(), kOptional,
+     "sourceBase"},
+    {&SurfaceProjectorSourceFinal(), &rigExecStd::Mat4dType(), kOptional,
+     "sourceFinal"},
+    {&SurfaceProjectorSourceSpaceBase(), &rigExecStd::Mat4dType(), kOptional,
+     "sourceSpaceBase"},
+    {&SurfaceProjectorSourceSpaceFinal(), &rigExecStd::Mat4dType(), kOptional,
+     "sourceSpaceFinal"},
+    {&SurfaceProjectorSpaceFinal(), &rigExecStd::Mat4dType(), kOptional,
+     "spaceFinal"},
+    {&SurfaceProjectorWorldToMesh(), &rigExecStd::Mat4dType(), kOptional,
+     "worldToMesh"},
+    {&SurfaceProjectorOut(), &rigExecStd::Mat4dType(), kRigExecPortOutput,
+     "out"},
+};
+
+const rigExec::RigExecPortDesc kDialPorts[] = {
+    {&ShaderDialsDials(), &rigExecStd::DoubleArray(), kRigExecPortInput,
+     "dials"},
+    {&ShaderDialsOut(), &rigExecStd::Mat4dType(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kProjectorDesc = [] {
+    rigExec::RigExecOpDesc d = ProjectorDesc(
+        "SurfaceProjector", kProjectorPorts, std::size(kProjectorPorts),
+        &RunSurfaceProjector, rigExec::kRigExecOpSeparateBlend);
+    d.payload = rigExec::RigExecPayloadHandlingFor<SurfaceProjectorPayload>();
+    return d;
+}();
+
+const rigExec::RigExecOpDesc kDialDesc =
+    ProjectorDesc("ShaderDials", kDialPorts, std::size(kDialPorts),
+                  &RunShaderDials, rigExec::kRigExecOpSeparateBlend);
+
+} // namespace
+
 void
 RegisterProjectorOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &points = rigExecStd::Vec3fArray();
-    const auto &ints = rigExecStd::IntArray();
-    const auto &m = rigExecStd::Mat4dType();
-
-    static const rigExec::RigExecPortDesc projectorPorts[] = {
-        {&SurfaceProjectorBasePoints(), &points, kRigExecPortInput,
-         "basePoints"},
-        {&SurfaceProjectorPoints(), &points, kRigExecPortInput, "points"},
-        {&SurfaceProjectorCounts(), &ints, kRigExecPortInput,
-         "faceVertexCounts"},
-        {&SurfaceProjectorIndices(), &ints, kRigExecPortInput,
-         "faceVertexIndices"},
-        {&SurfaceProjectorSourceBase(), &m, kOptional, "sourceBase"},
-        {&SurfaceProjectorSourceFinal(), &m, kOptional, "sourceFinal"},
-        {&SurfaceProjectorSourceSpaceBase(), &m, kOptional, "sourceSpaceBase"},
-        {&SurfaceProjectorSourceSpaceFinal(), &m, kOptional,
-         "sourceSpaceFinal"},
-        {&SurfaceProjectorSpaceFinal(), &m, kOptional, "spaceFinal"},
-        {&SurfaceProjectorWorldToMesh(), &m, kOptional, "worldToMesh"},
-        {&SurfaceProjectorOut(), &m, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecPortDesc dialPorts[] = {
-        {&ShaderDialsDials(), &rigExecStd::DoubleArray(), kRigExecPortInput,
-         "dials"},
-        {&ShaderDialsOut(), &m, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc projectorDesc = [] {
-        rigExec::RigExecOpDesc d = ProjectorDesc(
-            "SurfaceProjector", projectorPorts, std::size(projectorPorts),
-            &RunSurfaceProjector, rigExec::kRigExecOpSeparateBlend);
-        d.payload =
-            rigExec::RigExecPayloadHandlingFor<SurfaceProjectorPayload>();
-        return d;
-    }();
-    static const rigExec::RigExecOpDesc dialDesc =
-        ProjectorDesc("ShaderDials", dialPorts, std::size(dialPorts),
-                      &RunShaderDials, rigExec::kRigExecOpSeparateBlend);
-    registrar.Add(SurfaceProjector(), projectorDesc);
-    registrar.Add(ShaderDials(), dialDesc);
+    registrar.Add(SurfaceProjector(), kProjectorDesc);
+    registrar.Add(ShaderDials(), kDialDesc);
 }
 
 } // namespace rigExecOps

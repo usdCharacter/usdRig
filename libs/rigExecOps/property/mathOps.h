@@ -3,8 +3,7 @@
 
 /// The property math ops: one float, vec3f or matrix4d value revised by an
 /// operation and mixed back toward the incoming value by the weight. The
-/// arithmetic is rigExecMath/propertyMathKernel.h, shared with the baked
-/// and zero-USD runtimes. USD-free.
+/// arithmetic is rigExecMath/propertyMathKernel.h.
 
 #include "rigExecOps/library.h"
 #include "rigExecMath/pathCurveKernel.h"

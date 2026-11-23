@@ -1,9 +1,11 @@
 #ifndef RIGEXEC_API_REGISTRY_H
 #define RIGEXEC_API_REGISTRY_H
 
-/// Type and op registry. Types are global; ops reference registered types on
-/// their ports. Everything is reached through handles; names are display
-/// data and boundary keys only. USD-free.
+/// The list of data types and operations ("ops") a process can use. Type
+/// and op libraries describe theirs in tables; RigExecRegistry::Initialize
+/// collects them once at startup. From then on code refers to each type, op
+/// and op port through a handle object rather than by name; names appear
+/// only in messages and saved files.
 
 #include <cstddef>
 #include <cstdint>
@@ -17,17 +19,19 @@ namespace rigExec {
 
 class RigExecRegistry;
 class RigExecRegistryBuilder;
-/// rigExecGraph/windowHistory.h.
+/// Defined in rigExecGraph/windowHistory.h.
 struct RigExecWindowRun;
 
 inline constexpr uint32_t kRigExecInvalidIndex = 0xffffffffu;
 
-/// Raises a library's ABI version on any layout change of the descriptors
-/// below.
+/// Version of the descriptor structs below. Each library records the version
+/// it was built with, and Initialize rejects one built with another. Raise
+/// it whenever a descriptor's layout changes.
 inline constexpr uint32_t kRigExecRegistryAbiVersion = 3;
 
-/// Dense index assigned at freeze. Constant-initialized at namespace scope
-/// by the RIGEXEC_DEFINE_*_HANDLE macros; read only after Initialize.
+/// Refers to one registered data type. A type library defines one per type
+/// with RIGEXEC_DEFINE_TYPE_HANDLE, and Initialize gives it its index; read
+/// it only after Initialize.
 class RigExecTypeHandle {
 public:
     constexpr RigExecTypeHandle() = default;
@@ -47,6 +51,8 @@ private:
     mutable uint32_t _index = kRigExecInvalidIndex;
 };
 
+/// Refers to one registered op. Defined with RIGEXEC_DEFINE_OP_HANDLE and
+/// valid after Initialize.
 class RigExecOpHandle {
 public:
     constexpr RigExecOpHandle() = default;
@@ -66,7 +72,8 @@ private:
     mutable uint32_t _index = kRigExecInvalidIndex;
 };
 
-/// Port index within its op.
+/// Refers to one input or output of an op, by its position in the op's port
+/// list. Defined with RIGEXEC_DEFINE_PORT_HANDLE and valid after Initialize.
 class RigExecPortHandle {
 public:
     constexpr RigExecPortHandle() = default;
@@ -86,13 +93,20 @@ private:
     mutable uint32_t _index = kRigExecInvalidIndex;
 };
 
+/// How a type's equal function treats floating-point members: Bitwise
+/// compares bytes, NaNEqual compares numbers but counts two NaNs as equal,
+/// and Ieee compares numbers, so a NaN equals nothing.
 enum class RigExecEqualMode : uint8_t { Bitwise, NaNEqual, Ieee };
+/// Whether values of a type can be hashed; any class but Unhashable needs a
+/// hash function.
 enum class RigExecHashClass : uint8_t { Exact, Generic, Unhashable };
 
-/// One global data type.
+/// Describes one data type: its size and alignment, how to construct, copy,
+/// compare and hash a value, and, for an array or a record, the types it is
+/// made of. A type that is not trivially copyable needs copy and destroy.
 struct RigExecTypeDesc {
     uint32_t structSize = sizeof(RigExecTypeDesc);
-    /// Stable id: (nameSpace, name, major). Manifest and messages only.
+    /// With major, the type's name in saved files and messages.
     const char *nameSpace = "";
     const char *name = "";
     uint32_t major = 1;
@@ -101,9 +115,9 @@ struct RigExecTypeDesc {
     size_t size = 0;
     size_t align = 1;
     bool triviallyCopyable = false;
-    /// Array element type, when this type is an array.
+    /// The element type, when this type is an array of them.
     const RigExecTypeHandle *element = nullptr;
-    /// Record field types, when this type is a record.
+    /// The member types, in order, when this type is a record.
     const RigExecTypeHandle *const *fields = nullptr;
     size_t fieldCount = 0;
     void (*construct)(void *dst) = nullptr;
@@ -115,24 +129,31 @@ struct RigExecTypeDesc {
     uint64_t (*hash)(const void *value) = nullptr;
 };
 
+/// Whether a port is an input or an output, and how it may be fed.
 enum RigExecPortFlags : uint32_t {
     kRigExecPortInput = 1u << 0,
     kRigExecPortOutput = 1u << 1,
     kRigExecPortOptional = 1u << 2,
-    /// Input only: fed by any number of connections and bindings, kept in
-    /// call order. The port's type is the element type; the op reads a
-    /// RigExecPortList.
+    /// An input that takes any number of values, in the order they were
+    /// connected or bound. The port's type is the type of one value; the op
+    /// reads them as a RigExecPortList.
     kRigExecPortArray = 1u << 3,
 };
 
+/// One input or output of an op.
 struct RigExecPortDesc {
     const RigExecPortHandle *port = nullptr;
     const RigExecTypeHandle *type = nullptr;
     uint32_t flags = 0;
-    /// Stable name used by schema generation and messages.
+    /// The port's name in generated schema and in messages.
     const char *name = "";
 };
 
+/// Where an op may run. Pure ops depend only on their inputs and may run on
+/// any worker thread. Every other op runs on the thread that calls
+/// Evaluate: OwnerThread ops need that thread, Device ops drive a GPU or
+/// other device, and Windowed ops also read what their inputs were on
+/// earlier frames (see the history calls on RigExecEvaluator).
 enum class RigExecOpThreading : uint8_t { Pure, OwnerThread, Device, Windowed };
 
 /// What the evaluators may do with an op. A point op's bits mirror the
@@ -142,19 +163,23 @@ enum RigExecOpCapabilities : uint32_t {
     kRigExecOpBakeable = 1u << 0,
     kRigExecOpFreezable = 1u << 1,
     kRigExecOpGpu = 1u << 2,
-    /// A gated sparse zero-default envelope leaves unlisted points at their
-    /// entering bytes.
+    /// When the op's per-point weights list only some points, the points
+    /// left out pass through unchanged.
     kRigExecOpGate = 1u << 3,
-    /// The envelope is blended back over the entering points after the run,
-    /// rather than folded into the op's arithmetic.
+    /// The op computes its full effect; the per-point weights then blend
+    /// that result with the incoming points, instead of the op applying
+    /// the weights itself.
     kRigExecOpSeparateBlend = 1u << 4,
-    /// Runs one vertex group at a time.
+    /// The op can process a mesh one group of points at a time.
     kRigExecOpRanged = 1u << 5,
-    /// The scene assembles its inputs from declared leaf reads.
+    /// The scene translation builds the op's inputs from values it reads
+    /// directly from the stage.
     kRigExecOpFromLeaves = 1u << 6,
 };
 
-/// Opaque compile-time configuration an op owns. Not a data type.
+/// How to copy, compare and destroy an op's settings ("payload"): values
+/// fixed when the rig is compiled, such as a solver's iteration count. The
+/// payload is private to the op and is not a registered data type.
 struct RigExecOpPayloadHandling {
     size_t size = 0;
     size_t align = 1;
@@ -172,8 +197,8 @@ struct RigExecPayloadComparable<
     T, std::void_t<decltype(std::declval<const T &>() ==
                             std::declval<const T &>())>> : std::true_type {};
 
-/// Payload handling for a copyable \p T: equality where \p T has
-/// operator==, no hash.
+/// Payload handling for a copyable settings struct \p T. Payloads compare
+/// equal with \p T's operator== when it has one; they are not hashed.
 template <class T>
 RigExecOpPayloadHandling
 RigExecPayloadHandlingFor()
@@ -196,7 +221,9 @@ RigExecPayloadHandlingFor()
     return h;
 }
 
-/// Per-instance caches and history an op owns.
+/// How to create, copy, reset and destroy an op's private working state,
+/// such as caches it keeps from one evaluation to the next. Each node that
+/// runs the op in each evaluator has its own state.
 struct RigExecOpStateHandling {
     size_t size = 0;
     size_t align = 1;
@@ -206,26 +233,34 @@ struct RigExecOpStateHandling {
     void (*destroy)(void *dst) = nullptr;
 };
 
-/// An array input's element values, in feed order.
+/// The values fed to an input that takes many values, in the order they
+/// were connected or bound.
 struct RigExecPortList {
     const void *const *items = nullptr;
     size_t count = 0;
 };
 
-/// Port values for one run, indexed by port handle. An array input's entry
-/// points to its RigExecPortList, empty when unfed.
+/// What an op's run function receives: a pointer to each input value and
+/// to each output to write, indexed by port handle. An unfed optional input
+/// is null. An input that takes many values points to a RigExecPortList,
+/// empty when nothing feeds it.
 struct RigExecOpIo {
     const void *const *inputs = nullptr;
     void *const *outputs = nullptr;
     size_t portCount = 0;
-    /// A Windowed op's earlier ticks and capture slot; null for other ops.
-    /// The op writes only its own capture.
+    /// For a Windowed op: what it recorded on earlier frames, and where to
+    /// record this frame's. Null for other ops.
     const RigExecWindowRun *window = nullptr;
 };
 
+/// Computes an op's outputs from its inputs. Returns false, optionally with
+/// a message in \p error, when it cannot.
 using RigExecOpRunFn = bool (*)(const void *payload, void *state,
                                 const RigExecOpIo &io, std::string *error);
 
+/// Describes one op: its name and version, its ports, its run function,
+/// where it may run, what it costs, and how to handle its settings and
+/// working state.
 struct RigExecOpDesc {
     uint32_t structSize = sizeof(RigExecOpDesc);
     const char *nameSpace = "";
@@ -240,12 +275,12 @@ struct RigExecOpDesc {
     double costPerElement = 0.0;
     RigExecOpPayloadHandling payload;
     RigExecOpStateHandling state;
-    /// Required for Windowed threading, and only there: the earlier ticks a
-    /// node reads, from its payload (null without one). Fixed per program.
+    /// Windowed ops only, and required there: how many earlier frames a
+    /// node reads, given its payload (null when it has none).
     uint32_t (*windowFrames)(const void *payload) = nullptr;
 };
 
-/// Collects a type library's types during freeze.
+/// Receives a type library's types during Initialize.
 class RigExecTypeRegistrar {
 public:
     virtual ~RigExecTypeRegistrar() = default;
@@ -253,8 +288,8 @@ public:
                      const RigExecTypeDesc &desc) = 0;
 };
 
-/// Collects an op library's ops during freeze. No type API: ports name
-/// type handles from type library headers.
+/// Receives an op library's ops during Initialize. Op libraries do not
+/// define types; their ports name types from type libraries.
 class RigExecOpRegistrar {
 public:
     virtual ~RigExecOpRegistrar() = default;
@@ -262,17 +297,21 @@ public:
                      const RigExecOpDesc &desc) = 0;
 };
 
+/// One type library: the function that adds its types and the libraries
+/// whose types it builds on.
 struct RigExecTypeLibraryDesc {
     uint32_t structSize = sizeof(RigExecTypeLibraryDesc);
     uint32_t abiVersion = kRigExecRegistryAbiVersion;
     const char *name = "";
     uint64_t fingerprint = 0;
-    /// Type libraries this one composes types from; they freeze first.
+    /// Type libraries this one builds types from; they must come before it
+    /// in RigExecRegistryInit.
     const RigExecTypeLibraryDesc *const *required = nullptr;
     size_t requiredCount = 0;
     void (*registerTypes)(RigExecTypeRegistrar &) = nullptr;
 };
 
+/// One op library: the function that adds its ops.
 struct RigExecOpLibraryDesc {
     uint32_t structSize = sizeof(RigExecOpLibraryDesc);
     uint32_t abiVersion = kRigExecRegistryAbiVersion;
@@ -281,18 +320,22 @@ struct RigExecOpLibraryDesc {
     void (*registerOps)(RigExecOpRegistrar &) = nullptr;
 };
 
+/// The libraries to register, in the order Initialize processes them.
 struct RigExecRegistryInit {
     std::vector<const RigExecTypeLibraryDesc *> typeLibraries;
     std::vector<const RigExecOpLibraryDesc *> opLibraries;
 };
 
-/// A registered type, as Get().Type(handle) returns it.
+/// A registered type: its description, the library that added it and its
+/// index.
 struct RigExecRegisteredType {
     const RigExecTypeDesc *desc = nullptr;
     const RigExecTypeLibraryDesc *library = nullptr;
     uint32_t index = kRigExecInvalidIndex;
 };
 
+/// A registered op: its description, the library that added it, its index
+/// and its ports' types.
 struct RigExecRegisteredOp {
     const RigExecOpDesc *desc = nullptr;
     const RigExecOpLibraryDesc *library = nullptr;
@@ -301,22 +344,24 @@ struct RigExecRegisteredOp {
     std::vector<uint32_t> portTypes;
 };
 
-/// The process-wide registry: built once by Initialize on the owner thread,
-/// immutable and immortal after it. Reads take no lock.
+/// The one registry of the process. Initialize builds it once at startup;
+/// after that it never changes and lives until the process ends, so any
+/// thread may read it without locking.
 class RigExecRegistry {
 public:
-    /// Freezes types then ops and publishes. False with errors and nothing
-    /// published on any error; a second call is an error.
+    /// Registers the given libraries' types, then their ops, and makes the
+    /// result available through Get. On any error, returns false with the
+    /// errors and registers nothing. Call it once.
     static bool Initialize(const RigExecRegistryInit &init,
                            std::vector<std::string> *errors = nullptr);
 
-    /// Runs every freeze check without publishing or writing handles.
+    /// Reports the errors Initialize would, without registering anything.
     static bool Validate(const RigExecRegistryInit &init,
                          std::vector<std::string> *errors = nullptr);
 
     static bool IsInitialized();
 
-    /// Requires IsInitialized().
+    /// The registry. Call only after Initialize has succeeded.
     static const RigExecRegistry &Get();
 
     const RigExecRegisteredType &Type(const RigExecTypeHandle &h) const
@@ -344,7 +389,9 @@ public:
         return _ops.size();
     }
 
-    /// Hash of the ordered types and ops with versions and layout hashes.
+    /// Identifies this exact set of types and ops, with their order and
+    /// versions. A compiled program records it, and an evaluator refuses a
+    /// program compiled against a different registry.
     uint64_t Fingerprint() const
     {
         return _fingerprint;
@@ -369,14 +416,16 @@ private:
     uint64_t _fingerprint = 0;
 };
 
-/// The libraries rigexec_link_registrations generated into this binary, in
-/// freeze order.
+/// The libraries this binary was linked with by the CMake function
+/// rigexec_link_registrations, in registration order.
 RigExecRegistryInit RigExecLinkedRegistrations();
 
 } // namespace rigExec
 
-/// Defines a handle accessor `const RigExecTypeHandle &fn()`. Use at
-/// namespace scope in the library's source; declare fn in its header.
+/// Defines the handle of a type, op or port with an accessor
+/// `const RigExecTypeHandle &fn()` (or the op or port handle type). Use at
+/// namespace scope in the library's source file and declare fn in its
+/// header.
 #define RIGEXEC_DEFINE_TYPE_HANDLE(fn)                                         \
     namespace {                                                                \
     ::rigExec::RigExecTypeHandle fn##_rigExecHandle;                           \
@@ -404,8 +453,8 @@ RigExecRegistryInit RigExecLinkedRegistrations();
         return fn##_rigExecHandle;                                             \
     }
 
-/// Entry points a library exports; rigexec_link_registrations references
-/// them by name from the generated tables.
+/// Defines the function through which a library hands its description to
+/// the registry. rigexec_link_registrations calls it by name.
 #define RIGEXEC_TYPE_LIBRARY_ENTRY(lib)                                        \
     extern "C" const ::rigExec::RigExecTypeLibraryDesc                         \
         *lib##_RigExecTypeLibrary()

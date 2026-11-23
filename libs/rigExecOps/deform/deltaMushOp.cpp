@@ -52,41 +52,49 @@ Run(const void *payload, void *, const RigExecOpIo &io, std::string *error)
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kPorts[] = {
+    {&DeltaMushPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "points"},
+    {&DeltaMushRest(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "restPoints"},
+    {&DeltaMushCounts(), &rigExecStd::IntArray(), kRigExecPortInput,
+     "faceVertexCounts"},
+    {&DeltaMushIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
+     "faceVertexIndices"},
+    {&DeltaMushComputationToTarget(), &rigExecStd::Mat4dType(), kOptional,
+     "computationToTarget"},
+    {&DeltaMushEnvelope(), &rigExecStd::FloatArray(), kOptional, "envelope"},
+    {&DeltaMushOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "DeltaMush";
+    d.ports = kPorts;
+    d.portCount = std::size(kPorts);
+    d.run = &Run;
+    d.capabilities =
+        rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
+        rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
+        rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
+    d.payload = rigExec::RigExecPayloadHandlingFor<DeltaMushPayload>();
+    return d;
+}();
+
+} // namespace
+
 void
 RegisterDeltaMushOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &points = rigExecStd::Vec3fArray();
-    const auto &ints = rigExecStd::IntArray();
-    static const rigExec::RigExecPortDesc ports[] = {
-        {&DeltaMushPoints(), &points, kRigExecPortInput, "points"},
-        {&DeltaMushRest(), &points, kRigExecPortInput, "restPoints"},
-        {&DeltaMushCounts(), &ints, kRigExecPortInput, "faceVertexCounts"},
-        {&DeltaMushIndices(), &ints, kRigExecPortInput, "faceVertexIndices"},
-        {&DeltaMushComputationToTarget(), &rigExecStd::Mat4dType(), kOptional,
-         "computationToTarget"},
-        {&DeltaMushEnvelope(), &rigExecStd::FloatArray(), kOptional,
-         "envelope"},
-        {&DeltaMushOut(), &points, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc desc = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "DeltaMush";
-        d.ports = ports;
-        d.portCount = std::size(ports);
-        d.run = &Run;
-        d.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
-            rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
-            rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
-        d.payload = rigExec::RigExecPayloadHandlingFor<DeltaMushPayload>();
-        return d;
-    }();
-    registrar.Add(DeltaMush(), desc);
+    registrar.Add(DeltaMush(), kDesc);
 }
 
 } // namespace rigExecOps

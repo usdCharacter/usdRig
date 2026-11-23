@@ -1,11 +1,10 @@
 #ifndef RIGEXEC_OPS_DEFORM_MATRIX_DEFORM_OP_H
 #define RIGEXEC_OPS_DEFORM_MATRIX_DEFORM_OP_H
 
-/// MatrixDeform: points moved by one transform, each by its envelope
-/// weight, which is folded into the movement (p' = q + w (T q - q), or a
-/// fraction of the rotation when radial) rather than blended after. The
-/// kernel is rigExecMath/matrixKernel.h, shared with the baked and zero-USD
-/// runtimes. USD-free.
+/// MatrixDeform: points moved by one transform, each by its envelope weight,
+/// which is folded into the movement (p' = q + w (T q - q), or a fraction of
+/// the rotation when radial) rather than blended after. The kernel is
+/// rigExecMath/matrixKernel.h.
 
 #include "rigExecOps/library.h"
 

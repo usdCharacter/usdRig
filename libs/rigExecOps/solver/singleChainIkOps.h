@@ -2,8 +2,7 @@
 #define RIGEXEC_OPS_SOLVER_SINGLE_CHAIN_IK_OPS_H
 
 /// Arbitrary-length single-chain IK on rigExecRig frames. The kernel is
-/// rigExecMath/singleChainIkKernel.h, shared with the native and zero-USD
-/// runtimes. USD-free.
+/// rigExecMath/singleChainIkKernel.h.
 
 #include "rigExecOps/library.h"
 

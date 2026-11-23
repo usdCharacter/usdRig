@@ -161,50 +161,56 @@ MathDesc(const char *name, const rigExec::RigExecPortDesc *ports,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kFloatPorts[] = {
+    {&FloatIn(), &rigExecStd::FloatType(), kRigExecPortInput, "in"},
+    {&FloatValue(), &rigExecStd::FloatType(), kOptional, "value"},
+    {&FloatMin(), &rigExecStd::FloatType(), kOptional, "min"},
+    {&FloatMax(), &rigExecStd::FloatType(), kOptional, "max"},
+    {&FloatWeight(), &rigExecStd::FloatType(), kRigExecPortInput, "weight"},
+    {&FloatPathPoints(), &rigExecStd::Vec3fArray(), kOptional, "pathPoints"},
+    {&FloatOut(), &rigExecStd::FloatType(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecPortDesc kVec3fPorts[] = {
+    {&Vec3fIn(), &rigExecStd::Vec3fType(), kRigExecPortInput, "in"},
+    {&Vec3fValue(), &rigExecStd::Vec3fType(), kOptional, "value"},
+    {&Vec3fMin(), &rigExecStd::Vec3fType(), kOptional, "min"},
+    {&Vec3fMax(), &rigExecStd::Vec3fType(), kOptional, "max"},
+    {&Vec3fWeight(), &rigExecStd::FloatType(), kRigExecPortInput, "weight"},
+    {&Vec3fOut(), &rigExecStd::Vec3fType(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecPortDesc kMatrixPorts[] = {
+    {&MatrixIn(), &rigExecStd::Mat4dType(), kRigExecPortInput, "in"},
+    {&MatrixValue(), &rigExecStd::Mat4dType(), kOptional, "value"},
+    {&MatrixWeight(), &rigExecStd::FloatType(), kRigExecPortInput, "weight"},
+    {&MatrixOut(), &rigExecStd::Mat4dType(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kFloatDesc =
+    MathDesc("FloatMath", kFloatPorts, std::size(kFloatPorts), &RunFloat);
+
+const rigExec::RigExecOpDesc kVec3fDesc =
+    MathDesc("Vec3fMath", kVec3fPorts, std::size(kVec3fPorts), &RunVec3f);
+
+const rigExec::RigExecOpDesc kMatrixDesc =
+    MathDesc("MatrixMath", kMatrixPorts, std::size(kMatrixPorts), &RunMatrix);
+
+} // namespace
+
 void
 RegisterPropertyMathOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &f = rigExecStd::FloatType();
-    const auto &v = rigExecStd::Vec3fType();
-    const auto &m = rigExecStd::Mat4dType();
-
-    static const rigExec::RigExecPortDesc floatPorts[] = {
-        {&FloatIn(), &f, kRigExecPortInput, "in"},
-        {&FloatValue(), &f, kOptional, "value"},
-        {&FloatMin(), &f, kOptional, "min"},
-        {&FloatMax(), &f, kOptional, "max"},
-        {&FloatWeight(), &f, kRigExecPortInput, "weight"},
-        {&FloatPathPoints(), &rigExecStd::Vec3fArray(), kOptional,
-         "pathPoints"},
-        {&FloatOut(), &f, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecPortDesc vec3fPorts[] = {
-        {&Vec3fIn(), &v, kRigExecPortInput, "in"},
-        {&Vec3fValue(), &v, kOptional, "value"},
-        {&Vec3fMin(), &v, kOptional, "min"},
-        {&Vec3fMax(), &v, kOptional, "max"},
-        {&Vec3fWeight(), &f, kRigExecPortInput, "weight"},
-        {&Vec3fOut(), &v, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecPortDesc matrixPorts[] = {
-        {&MatrixIn(), &m, kRigExecPortInput, "in"},
-        {&MatrixValue(), &m, kOptional, "value"},
-        {&MatrixWeight(), &f, kRigExecPortInput, "weight"},
-        {&MatrixOut(), &m, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc floatDesc =
-        MathDesc("FloatMath", floatPorts, std::size(floatPorts), &RunFloat);
-    static const rigExec::RigExecOpDesc vec3fDesc =
-        MathDesc("Vec3fMath", vec3fPorts, std::size(vec3fPorts), &RunVec3f);
-    static const rigExec::RigExecOpDesc matrixDesc =
-        MathDesc("MatrixMath", matrixPorts, std::size(matrixPorts), &RunMatrix);
-    registrar.Add(FloatMath(), floatDesc);
-    registrar.Add(Vec3fMath(), vec3fDesc);
-    registrar.Add(MatrixMath(), matrixDesc);
+    registrar.Add(FloatMath(), kFloatDesc);
+    registrar.Add(Vec3fMath(), kVec3fDesc);
+    registrar.Add(MatrixMath(), kMatrixDesc);
 }
 
 } // namespace rigExecOps

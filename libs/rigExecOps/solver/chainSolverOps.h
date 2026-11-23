@@ -1,9 +1,8 @@
 #ifndef RIGEXEC_OPS_SOLVER_CHAIN_SOLVER_OPS_H
 #define RIGEXEC_OPS_SOLVER_CHAIN_SOLVER_OPS_H
 
-/// The FK chain and the analytic two-bone IK on rigExecRig frames. The
-/// kernel is rigExecMath/chainSolverKernel.h, shared with the native and
-/// zero-USD runtimes. USD-free.
+/// The FK chain and the analytic two-bone IK on rigExecRig frames. The kernel
+/// is rigExecMath/chainSolverKernel.h.
 
 #include "rigExecOps/library.h"
 

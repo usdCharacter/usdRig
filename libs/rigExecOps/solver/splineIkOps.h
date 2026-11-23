@@ -2,8 +2,7 @@
 #define RIGEXEC_OPS_SOLVER_SPLINE_IK_OPS_H
 
 /// The spline-IK spine on rigExecRig frames. The kernel is
-/// rigExecMath/splineIkKernel.h, shared with the native and zero-USD
-/// runtimes. USD-free.
+/// rigExecMath/splineIkKernel.h.
 
 #include "rigExecOps/library.h"
 

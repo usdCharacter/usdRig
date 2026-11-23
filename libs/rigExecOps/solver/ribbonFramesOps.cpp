@@ -56,39 +56,44 @@ RunSampleRibbonFrames(const void *payload, void *, const RigExecOpIo &io,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kPorts[] = {
+    {&SampleRibbonFramesPosed(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "posed"},
+    {&SampleRibbonFramesRest(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "rest"},
+    {&SampleRibbonFramesJointRests(), &rigExecRig::PointLandmarksList(),
+     kOptional, "jointRests"},
+    {&SampleRibbonFramesJointRestLive(), &rigExecStd::BoolArray(), kOptional,
+     "jointRestLive"},
+    {&SampleRibbonFramesOut(), &rigExecRig::PointFrameArrayType(),
+     kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "SampleRibbonFrames";
+    d.ports = kPorts;
+    d.portCount = std::size(kPorts);
+    d.run = &RunSampleRibbonFrames;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    d.payload = rigExec::RigExecPayloadHandlingFor<SampleRibbonFramesPayload>();
+    return d;
+}();
+
+} // namespace
+
 void
 RegisterRibbonFramesOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &points = rigExecStd::Vec3fArray();
-
-    static const rigExec::RigExecPortDesc ports[] = {
-        {&SampleRibbonFramesPosed(), &points, kRigExecPortInput, "posed"},
-        {&SampleRibbonFramesRest(), &points, kRigExecPortInput, "rest"},
-        {&SampleRibbonFramesJointRests(), &rigExecRig::PointLandmarksList(),
-         kOptional, "jointRests"},
-        {&SampleRibbonFramesJointRestLive(), &rigExecStd::BoolArray(),
-         kOptional, "jointRestLive"},
-        {&SampleRibbonFramesOut(), &rigExecRig::PointFrameArrayType(),
-         kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc desc = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "SampleRibbonFrames";
-        d.ports = ports;
-        d.portCount = std::size(ports);
-        d.run = &RunSampleRibbonFrames;
-        d.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-        d.payload =
-            rigExec::RigExecPayloadHandlingFor<SampleRibbonFramesPayload>();
-        return d;
-    }();
-    registrar.Add(SampleRibbonFrames(), desc);
+    registrar.Add(SampleRibbonFrames(), kDesc);
 }
 
 } // namespace rigExecOps

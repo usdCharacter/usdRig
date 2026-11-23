@@ -91,40 +91,48 @@ FrameDesc(const char *name, const rigExec::RigExecPortDesc *ports,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+
+const rigExec::RigExecPortDesc kPorts[] = {
+    {&RibbonPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "points"},
+    {&RibbonBindCoords(), &rigExecStd::Vec2fArray(), kRigExecPortInput,
+     "bindCoords"},
+    {&RibbonFrames(), &rigExecRig::PointFrameArrayType(), kRigExecPortInput,
+     "frames"},
+    {&RibbonEnvelope(), &rigExecStd::FloatArray(),
+     kRigExecPortInput | kRigExecPortOptional, "envelope"},
+    {&RibbonOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecPortDesc kGuidePorts[] = {
+    {&GuidePointsPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "points"},
+    {&GuidePointsFrames(), &rigExecRig::PointFrameArrayType(),
+     kRigExecPortInput, "frames"},
+    {&GuidePointsEnvelope(), &rigExecStd::FloatArray(),
+     kRigExecPortInput | kRigExecPortOptional, "envelope"},
+    {&GuidePointsOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kRibbonDesc =
+    FrameDesc("Ribbon", kPorts, std::size(kPorts), &RunRibbon,
+              rigExec::kRigExecOpSeparateBlend);
+
+const rigExec::RigExecOpDesc kGuideDesc =
+    FrameDesc("GuidePoints", kGuidePorts, std::size(kGuidePorts),
+              &RunGuidePoints, rigExec::kRigExecOpSeparateBlend);
+
+} // namespace
+
 void
 RegisterRibbonOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    const auto &points = rigExecStd::Vec3fArray();
-
-    static const rigExec::RigExecPortDesc ports[] = {
-        {&RibbonPoints(), &points, kRigExecPortInput, "points"},
-        {&RibbonBindCoords(), &rigExecStd::Vec2fArray(), kRigExecPortInput,
-         "bindCoords"},
-        {&RibbonFrames(), &rigExecRig::PointFrameArrayType(), kRigExecPortInput,
-         "frames"},
-        {&RibbonEnvelope(), &rigExecStd::FloatArray(),
-         kRigExecPortInput | kRigExecPortOptional, "envelope"},
-        {&RibbonOut(), &points, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecPortDesc guidePorts[] = {
-        {&GuidePointsPoints(), &points, kRigExecPortInput, "points"},
-        {&GuidePointsFrames(), &rigExecRig::PointFrameArrayType(),
-         kRigExecPortInput, "frames"},
-        {&GuidePointsEnvelope(), &rigExecStd::FloatArray(),
-         kRigExecPortInput | kRigExecPortOptional, "envelope"},
-        {&GuidePointsOut(), &points, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc ribbonDesc =
-        FrameDesc("Ribbon", ports, std::size(ports), &RunRibbon,
-                  rigExec::kRigExecOpSeparateBlend);
-    static const rigExec::RigExecOpDesc guideDesc =
-        FrameDesc("GuidePoints", guidePorts, std::size(guidePorts),
-                  &RunGuidePoints, rigExec::kRigExecOpSeparateBlend);
-    registrar.Add(Ribbon(), ribbonDesc);
-    registrar.Add(GuidePoints(), guideDesc);
+    registrar.Add(Ribbon(), kRibbonDesc);
+    registrar.Add(GuidePoints(), kGuideDesc);
 }
 
 } // namespace rigExecOps

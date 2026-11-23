@@ -2,8 +2,7 @@
 #define RIGEXEC_OPS_SOLVER_SKELETON2D_OPS_H
 
 /// The 2D skeleton solve on rigExecRig frames. The kernel is
-/// rigExecMath/skeleton2dKernel.h, shared with the native and zero-USD
-/// runtimes. USD-free.
+/// rigExecMath/skeleton2dKernel.h.
 
 #include "rigExecMath/skeleton2dKernel.h"
 #include "rigExecOps/library.h"

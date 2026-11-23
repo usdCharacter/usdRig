@@ -2,8 +2,7 @@
 #define RIGEXEC_OPS_CONSTRAINT_AUTO_CLAVICLE_OPS_H
 
 /// The auto clavicle's shift of its target. The kernel is
-/// rigExecMath/autoClavicleKernel.h, shared with the native and zero-USD
-/// runtimes. USD-free.
+/// rigExecMath/autoClavicleKernel.h.
 
 #include "rigExecMath/autoClavicleKernel.h"
 #include "rigExecOps/library.h"

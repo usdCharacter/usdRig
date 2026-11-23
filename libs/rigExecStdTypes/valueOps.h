@@ -1,10 +1,10 @@
 #ifndef RIGEXEC_STD_TYPES_VALUE_OPS_H
 #define RIGEXEC_STD_TYPES_VALUE_OPS_H
 
-/// Equality, hashing, layout keys and type descriptors for the standard
-/// values, their arrays, and records built from them. Type libraries built
-/// on the standard one describe their types with these, so every type
-/// follows one equality and hash rule set. USD-free.
+/// Equality, hashing, layout keys and type descriptors for the standard values,
+/// their arrays, and records built from them. Type libraries built on the
+/// standard one describe their types with these, so every type follows one
+/// equality and hash rule set.
 ///
 /// A record lists its members for these templates:
 ///

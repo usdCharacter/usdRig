@@ -4,6 +4,7 @@
 /// Port access and the point ops' shared envelope handling. Private to
 /// rigExecOps.
 
+#include "rigExec/api/opPorts.h"
 #include "rigExec/api/registry.h"
 #include "rigExecMath/envelope.h"
 #include "rigExecStdTypes/stdTypes.h"
@@ -17,51 +18,10 @@ namespace opIo {
 using Points = rigExecStd::RigExecArray<rigExecStd::Vec3f>;
 using Envelope = rigExecStd::RigExecArray<float>;
 
-/// An input's value; null for an unfed optional input.
-template <class T>
-const T *
-In(const rigExec::RigExecOpIo &io, const rigExec::RigExecPortHandle &port)
-{
-    return static_cast<const T *>(io.inputs[port.Index()]);
-}
-
-/// An array input's elements, in feed order.
-template <class T> class InList {
-public:
-    InList(const rigExec::RigExecOpIo &io,
-           const rigExec::RigExecPortHandle &port)
-        : _list(static_cast<const rigExec::RigExecPortList *>(
-              io.inputs[port.Index()]))
-    {
-    }
-    size_t Size() const
-    {
-        return _list->count;
-    }
-    const T &operator[](size_t i) const
-    {
-        return *static_cast<const T *>(_list->items[i]);
-    }
-
-private:
-    const rigExec::RigExecPortList *_list;
-};
-
-template <class T>
-T
-InOr(const rigExec::RigExecOpIo &io, const rigExec::RigExecPortHandle &port,
-     const T &fallback)
-{
-    const T *value = In<T>(io, port);
-    return value ? *value : fallback;
-}
-
-template <class T>
-T &
-Out(const rigExec::RigExecOpIo &io, const rigExec::RigExecPortHandle &port)
-{
-    return *static_cast<T *>(io.outputs[port.Index()]);
-}
+using rigExec::opPorts::In;
+using rigExec::opPorts::InList;
+using rigExec::opPorts::InOr;
+using rigExec::opPorts::Out;
 
 template <class T>
 std::vector<T>

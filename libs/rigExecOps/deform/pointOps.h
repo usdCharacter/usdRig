@@ -3,8 +3,7 @@
 
 /// Point ops: a Vec3fArray in, the same count out, blended back toward the
 /// incoming points by an optional per-point Envelope (unfed is 1 at every
-/// point; its length must match). The kernels are rigExecMath's, shared
-/// with the baked and zero-USD runtimes. USD-free.
+/// point; its length must match). The kernels are rigExecMath's.
 
 #include "rigExecOps/library.h"
 #include "rigExecStdTypes/stdTypes.h"

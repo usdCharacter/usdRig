@@ -417,94 +417,108 @@ RunSpaceMatch(const void *payload, void *, const RigExecOpIo &io,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kIn = kRigExecPortInput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+constexpr uint32_t kOut = kRigExecPortOutput;
+
+const rigExec::RigExecPortDesc kIkFkPorts[] = {
+    {&IkFkMatchEnabled(), &rigExecStd::BoolType(), kIn, "enabled"},
+    {&IkFkMatchWeight(), &rigExecStd::DoubleType(), kIn, "weight"},
+    {&IkFkMatchSwitch(), &rigExecStd::DoubleType(), kIn, "switch"},
+    {&IkFkMatchStretch(), &rigExecStd::DoubleType(), kIn, "stretch"},
+    {&IkFkMatchSoftDistance(), &rigExecStd::DoubleType(), kIn, "softDistance"},
+    {&IkFkMatchUpperScale(), &rigExecStd::DoubleType(), kIn, "upperScale"},
+    {&IkFkMatchLowerScale(), &rigExecStd::DoubleType(), kIn, "lowerScale"},
+    {&IkFkMatchPin(), &rigExecStd::DoubleType(), kIn, "pin"},
+    {&IkFkMatchTwist(), &rigExecStd::DoubleType(), kIn, "twist"},
+    {&IkFkMatchSources(), &rigExecStd::Mat4dArray(), kIn, "sources"},
+    {&IkFkMatchRests(), &rigExecStd::Mat4dArray(), kIn, "rests"},
+    {&IkFkMatchChannels(), &rigExecStd::DoubleArray(), kIn, "channels"},
+    {&IkFkMatchHasSpace(), &rigExecStd::BoolType(), kIn, "hasSpace"},
+    {&IkFkMatchSpaceRest(), &rigExecStd::Mat4dType(), kIn, "spaceRest"},
+    {&IkFkMatchSpacePosed(), &rigExecStd::Mat4dType(), kIn, "spacePosed"},
+    {&IkFkMatchPoleMode(), &rigExecStd::UIntType(), kIn, "poleMode"},
+    {&IkFkMatchPosedDefault(), &rigExecStd::Mat4dType(), kIn,
+     "polePosedDefault"},
+    {&IkFkMatchParentDefaultInverse(), &rigExecStd::Mat4dType(), kIn,
+     "poleParentDefaultInverse"},
+    {&IkFkMatchParentPosed(), &rigExecStd::Mat4dType(), kIn, "poleParentPosed"},
+    {&IkFkMatchParentDefault(), &rigExecStd::Mat4dType(), kIn,
+     "poleParentDefault"},
+    {&IkFkMatchSwitchSpaceDefault(), &rigExecStd::Mat4dType(), kOptional,
+     "poleSpaceDefault"},
+    {&IkFkMatchSwitchSpacePosed(), &rigExecStd::Mat4dType(), kOptional,
+     "poleSpacePosed"},
+    {&IkFkMatchSourceDefaults(), &rigExecStd::Mat4dArray(), kIn,
+     "poleSourceDefaults"},
+    {&IkFkMatchSourcePosed(), &rigExecStd::Mat4dArray(), kIn,
+     "poleSourcePosed"},
+    {&IkFkMatchActive(), &rigExecStd::DoubleType(), kIn, "poleActive"},
+    {&IkFkMatchIkValues(), &rigExecStd::DoubleArray(), kOut, "ikValues"},
+    {&IkFkMatchFkValues(), &rigExecStd::DoubleArray(), kOut, "fkValues"},
+    {&IkFkMatchValid(), &rigExecStd::BoolType(), kOut, "valid"},
+    {&IkFkMatchShown(), &rigExecStd::Mat4dArray(), kOut, "shown"},
+    {&IkFkMatchShownMask(), &rigExecStd::UIntType(), kOut, "shownMask"},
+};
+
+const rigExec::RigExecOpDesc kIkFk = [] {
+    rigExec::RigExecOpDesc op;
+    op.nameSpace = "rig";
+    op.name = "IkFkMatch";
+    op.ports = kIkFkPorts;
+    op.portCount = std::size(kIkFkPorts);
+    op.run = &RunIkFkMatch;
+    op.capabilities =
+        rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    op.payload = rigExec::RigExecPayloadHandlingFor<IkFkMatchPayload>();
+    return op;
+}();
+
+const rigExec::RigExecPortDesc kSpacePorts[] = {
+    {&SpaceMatchTarget(), &rigExecStd::Mat4dType(), kIn, "target"},
+    {&SpaceMatchChannels(), &rigExecStd::DoubleArray(), kIn, "channels"},
+    {&SpaceMatchPosedDefault(), &rigExecStd::Mat4dType(), kIn, "posedDefault"},
+    {&SpaceMatchParentDefaultInverse(), &rigExecStd::Mat4dType(), kIn,
+     "parentDefaultInverse"},
+    {&SpaceMatchParentPosed(), &rigExecStd::Mat4dType(), kIn, "parentPosed"},
+    {&SpaceMatchParentDefault(), &rigExecStd::Mat4dType(), kIn,
+     "parentDefault"},
+    {&SpaceMatchSpaceDefault(), &rigExecStd::Mat4dType(), kOptional,
+     "spaceDefault"},
+    {&SpaceMatchSpacePosed(), &rigExecStd::Mat4dType(), kOptional,
+     "spacePosed"},
+    {&SpaceMatchSourceDefaults(), &rigExecStd::Mat4dArray(), kIn,
+     "sourceDefaults"},
+    {&SpaceMatchSourcePosed(), &rigExecStd::Mat4dArray(), kIn, "sourcePosed"},
+    {&SpaceMatchValues(), &rigExecStd::DoubleArray(), kOut, "values"},
+    {&SpaceMatchValid(), &rigExecStd::BoolType(), kOut, "valid"},
+};
+
+const rigExec::RigExecOpDesc kSpace = [] {
+    rigExec::RigExecOpDesc op;
+    op.nameSpace = "rig";
+    op.name = "SpaceMatch";
+    op.ports = kSpacePorts;
+    op.portCount = std::size(kSpacePorts);
+    op.run = &RunSpaceMatch;
+    op.capabilities =
+        rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    op.payload = rigExec::RigExecPayloadHandlingFor<SpaceMatchPayload>();
+    return op;
+}();
+
+} // namespace
+
 void
 RegisterMatchOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kIn = kRigExecPortInput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    constexpr uint32_t kOut = kRigExecPortOutput;
-    const auto &m = rigExecStd::Mat4dType();
-    const auto &ms = rigExecStd::Mat4dArray();
-    const auto &d = rigExecStd::DoubleType();
-    const auto &ds = rigExecStd::DoubleArray();
-    const auto &b = rigExecStd::BoolType();
-    const auto &u = rigExecStd::UIntType();
-
-    static const rigExec::RigExecPortDesc ikFkPorts[] = {
-        {&IkFkMatchEnabled(), &b, kIn, "enabled"},
-        {&IkFkMatchWeight(), &d, kIn, "weight"},
-        {&IkFkMatchSwitch(), &d, kIn, "switch"},
-        {&IkFkMatchStretch(), &d, kIn, "stretch"},
-        {&IkFkMatchSoftDistance(), &d, kIn, "softDistance"},
-        {&IkFkMatchUpperScale(), &d, kIn, "upperScale"},
-        {&IkFkMatchLowerScale(), &d, kIn, "lowerScale"},
-        {&IkFkMatchPin(), &d, kIn, "pin"},
-        {&IkFkMatchTwist(), &d, kIn, "twist"},
-        {&IkFkMatchSources(), &ms, kIn, "sources"},
-        {&IkFkMatchRests(), &ms, kIn, "rests"},
-        {&IkFkMatchChannels(), &ds, kIn, "channels"},
-        {&IkFkMatchHasSpace(), &b, kIn, "hasSpace"},
-        {&IkFkMatchSpaceRest(), &m, kIn, "spaceRest"},
-        {&IkFkMatchSpacePosed(), &m, kIn, "spacePosed"},
-        {&IkFkMatchPoleMode(), &u, kIn, "poleMode"},
-        {&IkFkMatchPosedDefault(), &m, kIn, "polePosedDefault"},
-        {&IkFkMatchParentDefaultInverse(), &m, kIn, "poleParentDefaultInverse"},
-        {&IkFkMatchParentPosed(), &m, kIn, "poleParentPosed"},
-        {&IkFkMatchParentDefault(), &m, kIn, "poleParentDefault"},
-        {&IkFkMatchSwitchSpaceDefault(), &m, kOptional, "poleSpaceDefault"},
-        {&IkFkMatchSwitchSpacePosed(), &m, kOptional, "poleSpacePosed"},
-        {&IkFkMatchSourceDefaults(), &ms, kIn, "poleSourceDefaults"},
-        {&IkFkMatchSourcePosed(), &ms, kIn, "poleSourcePosed"},
-        {&IkFkMatchActive(), &d, kIn, "poleActive"},
-        {&IkFkMatchIkValues(), &ds, kOut, "ikValues"},
-        {&IkFkMatchFkValues(), &ds, kOut, "fkValues"},
-        {&IkFkMatchValid(), &b, kOut, "valid"},
-        {&IkFkMatchShown(), &ms, kOut, "shown"},
-        {&IkFkMatchShownMask(), &u, kOut, "shownMask"},
-    };
-    static const rigExec::RigExecOpDesc ikFk = [] {
-        rigExec::RigExecOpDesc op;
-        op.nameSpace = "rig";
-        op.name = "IkFkMatch";
-        op.ports = ikFkPorts;
-        op.portCount = std::size(ikFkPorts);
-        op.run = &RunIkFkMatch;
-        op.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-        op.payload = rigExec::RigExecPayloadHandlingFor<IkFkMatchPayload>();
-        return op;
-    }();
-    static const rigExec::RigExecPortDesc spacePorts[] = {
-        {&SpaceMatchTarget(), &m, kIn, "target"},
-        {&SpaceMatchChannels(), &ds, kIn, "channels"},
-        {&SpaceMatchPosedDefault(), &m, kIn, "posedDefault"},
-        {&SpaceMatchParentDefaultInverse(), &m, kIn, "parentDefaultInverse"},
-        {&SpaceMatchParentPosed(), &m, kIn, "parentPosed"},
-        {&SpaceMatchParentDefault(), &m, kIn, "parentDefault"},
-        {&SpaceMatchSpaceDefault(), &m, kOptional, "spaceDefault"},
-        {&SpaceMatchSpacePosed(), &m, kOptional, "spacePosed"},
-        {&SpaceMatchSourceDefaults(), &ms, kIn, "sourceDefaults"},
-        {&SpaceMatchSourcePosed(), &ms, kIn, "sourcePosed"},
-        {&SpaceMatchValues(), &ds, kOut, "values"},
-        {&SpaceMatchValid(), &b, kOut, "valid"},
-    };
-    static const rigExec::RigExecOpDesc space = [] {
-        rigExec::RigExecOpDesc op;
-        op.nameSpace = "rig";
-        op.name = "SpaceMatch";
-        op.ports = spacePorts;
-        op.portCount = std::size(spacePorts);
-        op.run = &RunSpaceMatch;
-        op.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-        op.payload = rigExec::RigExecPayloadHandlingFor<SpaceMatchPayload>();
-        return op;
-    }();
-    registrar.Add(IkFkMatch(), ikFk);
-    registrar.Add(SpaceMatch(), space);
+    registrar.Add(IkFkMatch(), kIkFk);
+    registrar.Add(SpaceMatch(), kSpace);
 }
 
 } // namespace rigExecOps

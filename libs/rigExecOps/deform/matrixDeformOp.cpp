@@ -58,36 +58,42 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+
+const rigExec::RigExecPortDesc kPorts[] = {
+    {&MatrixDeformPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "points"},
+    {&MatrixDeformTransform(), &rigExecStd::Mat4dType(), kRigExecPortInput,
+     "transform"},
+    {&MatrixDeformEnvelope(), &rigExecStd::FloatArray(),
+     kRigExecPortInput | kRigExecPortOptional, "envelope"},
+    {&MatrixDeformOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "MatrixDeform";
+    d.ports = kPorts;
+    d.portCount = std::size(kPorts);
+    d.run = &Run;
+    d.capabilities = rigExec::kRigExecOpBakeable |
+                     rigExec::kRigExecOpFreezable | rigExec::kRigExecOpRanged |
+                     rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
+    d.payload = rigExec::RigExecPayloadHandlingFor<MatrixDeformPayload>();
+    return d;
+}();
+
+} // namespace
+
 void
 RegisterMatrixDeformOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    const auto &points = rigExecStd::Vec3fArray();
-    static const rigExec::RigExecPortDesc ports[] = {
-        {&MatrixDeformPoints(), &points, kRigExecPortInput, "points"},
-        {&MatrixDeformTransform(), &rigExecStd::Mat4dType(), kRigExecPortInput,
-         "transform"},
-        {&MatrixDeformEnvelope(), &rigExecStd::FloatArray(),
-         kRigExecPortInput | kRigExecPortOptional, "envelope"},
-        {&MatrixDeformOut(), &points, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc desc = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "MatrixDeform";
-        d.ports = ports;
-        d.portCount = std::size(ports);
-        d.run = &Run;
-        d.capabilities = rigExec::kRigExecOpBakeable |
-                         rigExec::kRigExecOpFreezable |
-                         rigExec::kRigExecOpRanged | rigExec::kRigExecOpGate |
-                         rigExec::kRigExecOpFromLeaves;
-        d.payload = rigExec::RigExecPayloadHandlingFor<MatrixDeformPayload>();
-        return d;
-    }();
-    registrar.Add(MatrixDeform(), desc);
+    registrar.Add(MatrixDeform(), kDesc);
 }
 
 } // namespace rigExecOps

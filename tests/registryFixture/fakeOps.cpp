@@ -1,6 +1,8 @@
 #include "fakeOps.h"
 #include "fakeTypes.h"
 
+#include "rigExec/api/opPorts.h"
+
 namespace fakeOps {
 
 RIGEXEC_DEFINE_OP_HANDLE(Scale)
@@ -13,75 +15,63 @@ RIGEXEC_DEFINE_PORT_HANDLE(OffsetOut)
 namespace {
 
 using fakeTypes::Vec3;
+using rigExec::opPorts::In;
+using rigExec::opPorts::Out;
 
 bool
 RunScale(const void *payload, void *, const rigExec::RigExecOpIo &io,
          std::string *)
 {
     const float s = static_cast<const ScalePayload *>(payload)->scale;
-    const Vec3 &in = *static_cast<const Vec3 *>(io.inputs[ScaleIn().Index()]);
-    Vec3 &out = *static_cast<Vec3 *>(io.outputs[ScaleOut().Index()]);
-    out = Vec3{in.x * s, in.y * s, in.z * s};
+    const Vec3 &in = *In<Vec3>(io, ScaleIn());
+    Out<Vec3>(io, ScaleOut()) = Vec3{in.x * s, in.y * s, in.z * s};
     return true;
 }
 
 bool
 RunOffset(const void *, void *, const rigExec::RigExecOpIo &io, std::string *)
 {
-    const Vec3 &in = *static_cast<const Vec3 *>(io.inputs[OffsetIn().Index()]);
-    Vec3 &out = *static_cast<Vec3 *>(io.outputs[OffsetOut().Index()]);
-    out = Vec3{in.x + 1.0f, in.y + 1.0f, in.z + 1.0f};
+    const Vec3 &in = *In<Vec3>(io, OffsetIn());
+    Out<Vec3>(io, OffsetOut()) = Vec3{in.x + 1.0f, in.y + 1.0f, in.z + 1.0f};
     return true;
 }
 
-void
-CopyPayload(void *dst, const void *src)
-{
-    *static_cast<ScalePayload *>(dst) = *static_cast<const ScalePayload *>(src);
-}
+const rigExec::RigExecPortDesc kScalePorts[] = {
+    {&ScaleIn(), &fakeTypes::Vec3Type(), rigExec::kRigExecPortInput, "in"},
+    {&ScaleOut(), &fakeTypes::Vec3Type(), rigExec::kRigExecPortOutput, "out"},
+};
 
-void
-DestroyPayload(void *)
-{
-}
+const rigExec::RigExecOpDesc kScale = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "fake";
+    d.name = "Scale";
+    d.ports = kScalePorts;
+    d.portCount = 2;
+    d.run = &RunScale;
+    d.payload = rigExec::RigExecPayloadHandlingFor<ScalePayload>();
+    return d;
+}();
+
+const rigExec::RigExecPortDesc kOffsetPorts[] = {
+    {&OffsetIn(), &fakeTypes::Vec3Type(), rigExec::kRigExecPortInput, "in"},
+    {&OffsetOut(), &fakeTypes::Vec3Type(), rigExec::kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kOffset = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "fake";
+    d.name = "Offset";
+    d.ports = kOffsetPorts;
+    d.portCount = 2;
+    d.run = &RunOffset;
+    return d;
+}();
 
 void
 Register(rigExec::RigExecOpRegistrar &registrar)
 {
-    static const rigExec::RigExecPortDesc scalePorts[] = {
-        {&ScaleIn(), &fakeTypes::Vec3Type(), rigExec::kRigExecPortInput, "in"},
-        {&ScaleOut(), &fakeTypes::Vec3Type(), rigExec::kRigExecPortOutput,
-         "out"},
-    };
-    static const rigExec::RigExecOpDesc scale = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "fake";
-        d.name = "Scale";
-        d.ports = scalePorts;
-        d.portCount = 2;
-        d.run = &RunScale;
-        d.payload.size = sizeof(ScalePayload);
-        d.payload.align = alignof(ScalePayload);
-        d.payload.copy = &CopyPayload;
-        d.payload.destroy = &DestroyPayload;
-        return d;
-    }();
-    static const rigExec::RigExecPortDesc offsetPorts[] = {
-        {&OffsetIn(), &fakeTypes::Vec3Type(), rigExec::kRigExecPortInput, "in"},
-        {&OffsetOut(), &fakeTypes::Vec3Type(), rigExec::kRigExecPortOutput,
-         "out"},
-    };
-    static const rigExec::RigExecOpDesc offset = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "fake";
-        d.name = "Offset";
-        d.ports = offsetPorts;
-        d.portCount = 2;
-        d.run = &RunOffset;
-        return d;
-    }();
-    registrar.Add(Scale(), scale);
-    registrar.Add(Offset(), offset);
+    registrar.Add(Scale(), kScale);
+    registrar.Add(Offset(), kOffset);
 }
 
 const rigExec::RigExecOpLibraryDesc kLibrary = [] {

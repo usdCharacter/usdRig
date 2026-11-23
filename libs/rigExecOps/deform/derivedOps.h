@@ -1,11 +1,10 @@
 #ifndef RIGEXEC_OPS_DEFORM_DERIVED_OPS_H
 #define RIGEXEC_OPS_DEFORM_DERIVED_OPS_H
 
-/// Derived ops: normals and extent recomputed from final points, blended
-/// toward an optional Authored value by an optional Envelope (Envelope
-/// needs Authored). The kernels are rigExecMath/normalsLayoutKernel.h and
-/// meshBoundsKernel.h, shared with the baked and zero-USD runtimes.
-/// USD-free.
+/// Derived ops: normals and extent recomputed from final points, blended toward
+/// an optional Authored value by an optional Envelope (Envelope needs
+/// Authored). The kernels are rigExecMath/normalsLayoutKernel.h and
+/// meshBoundsKernel.h.
 
 #include "rigExecOps/library.h"
 #include "rigExecStdTypes/stdTypes.h"

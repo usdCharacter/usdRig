@@ -1,10 +1,9 @@
 #ifndef RIGEXEC_OPS_DEFORM_DELTA_MUSH_OP_H
 #define RIGEXEC_OPS_DEFORM_DELTA_MUSH_OP_H
 
-/// Delta mush: smooths the points, then restores the rest pose's detail
-/// in frames transported from the smoothed rest. The kernel is
-/// rigExecMath/deltaMushKernel.h, shared with the baked and zero-USD
-/// runtimes. USD-free.
+/// Delta mush: smooths the points, then restores the rest pose's detail in
+/// frames transported from the smoothed rest. The kernel is
+/// rigExecMath/deltaMushKernel.h.
 
 #include "rigExecMath/deltaMushSettings.h"
 #include "rigExecOps/library.h"

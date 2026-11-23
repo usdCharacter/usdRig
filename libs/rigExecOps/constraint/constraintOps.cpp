@@ -270,77 +270,106 @@ ConstraintDesc(const char *name, const rigExec::RigExecPortDesc *ports,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kPositionPorts[] = {
+    {&PositionConstraintIn(), &rigExecRig::PointFrameType(), kRigExecPortInput,
+     "in"},
+    {&PositionConstraintSources(), &rigExecRig::PointFrameArrayType(),
+     kRigExecPortInput, "sources"},
+    {&PositionConstraintSourceWeights(), &rigExecStd::DoubleArray(), kOptional,
+     "sourceWeights"},
+    {&PositionConstraintWeight(), &rigExecStd::DoubleType(), kRigExecPortInput,
+     "weight"},
+    {&PositionConstraintOut(), &rigExecRig::PointFrameType(),
+     kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecPortDesc kRotationPorts[] = {
+    {&RotationConstraintIn(), &rigExecRig::PointFrameType(), kRigExecPortInput,
+     "in"},
+    {&RotationConstraintSources(), &rigExecRig::PointFrameArrayType(),
+     kRigExecPortInput, "sources"},
+    {&RotationConstraintSourceWeights(), &rigExecStd::DoubleArray(), kOptional,
+     "sourceWeights"},
+    {&RotationConstraintWeight(), &rigExecStd::DoubleType(), kRigExecPortInput,
+     "weight"},
+    {&RotationConstraintSpace(), &rigExecStd::Mat4dType(), kOptional, "space"},
+    {&RotationConstraintOut(), &rigExecRig::PointFrameType(),
+     kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecPortDesc kScalePorts[] = {
+    {&ScaleConstraintIn(), &rigExecRig::PointFrameType(), kRigExecPortInput,
+     "in"},
+    {&ScaleConstraintSources(), &rigExecRig::PointFrameArrayType(),
+     kRigExecPortInput, "sources"},
+    {&ScaleConstraintSourceWeights(), &rigExecStd::DoubleArray(), kOptional,
+     "sourceWeights"},
+    {&ScaleConstraintWeight(), &rigExecStd::DoubleType(), kRigExecPortInput,
+     "weight"},
+    {&ScaleConstraintOut(), &rigExecRig::PointFrameType(), kRigExecPortOutput,
+     "out"},
+};
+
+const rigExec::RigExecPortDesc kParentPorts[] = {
+    {&ParentConstraintIn(), &rigExecRig::PointFrameType(), kRigExecPortInput,
+     "in"},
+    {&ParentConstraintSources(), &rigExecRig::PointFrameArrayType(),
+     kRigExecPortInput, "sources"},
+    {&ParentConstraintSourceWeights(), &rigExecStd::DoubleArray(), kOptional,
+     "sourceWeights"},
+    {&ParentConstraintWeight(), &rigExecStd::DoubleType(), kRigExecPortInput,
+     "weight"},
+    {&ParentConstraintSpace(), &rigExecStd::Mat4dType(), kOptional, "space"},
+    {&ParentConstraintOut(), &rigExecRig::PointFrameType(), kRigExecPortOutput,
+     "out"},
+};
+
+const rigExec::RigExecPortDesc kAimPorts[] = {
+    {&AimConstraintIn(), &rigExecRig::PointFrameType(), kRigExecPortInput,
+     "in"},
+    {&AimConstraintTarget(), &rigExecStd::Vec3dType(), kRigExecPortInput,
+     "target"},
+    {&AimConstraintWorldUp(), &rigExecStd::Vec3dType(), kOptional, "worldUp"},
+    {&AimConstraintWeight(), &rigExecStd::DoubleType(), kRigExecPortInput,
+     "weight"},
+    {&AimConstraintOut(), &rigExecRig::PointFrameType(), kRigExecPortOutput,
+     "out"},
+};
+
+const rigExec::RigExecOpDesc kPositionDesc =
+    ConstraintDesc("PositionConstraint", kPositionPorts,
+                   std::size(kPositionPorts), &RunPosition);
+
+const rigExec::RigExecOpDesc kRotationDesc =
+    ConstraintDesc("RotationConstraint", kRotationPorts,
+                   std::size(kRotationPorts), &RunRotation);
+
+const rigExec::RigExecOpDesc kScaleDesc = ConstraintDesc(
+    "ScaleConstraint", kScalePorts, std::size(kScalePorts), &RunScale);
+
+const rigExec::RigExecOpDesc kParentDesc = ConstraintDesc(
+    "ParentConstraint", kParentPorts, std::size(kParentPorts), &RunParent);
+
+const rigExec::RigExecOpDesc kAimDesc =
+    ConstraintDesc("AimConstraint", kAimPorts, std::size(kAimPorts), &RunAim);
+
+} // namespace
+
 void
 RegisterConstraintOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &frame = rigExecRig::PointFrameType();
-    const auto &frames = rigExecRig::PointFrameArrayType();
-    const auto &weights = rigExecStd::DoubleArray();
-    const auto &d = rigExecStd::DoubleType();
-    const auto &m = rigExecStd::Mat4dType();
-    const auto &v = rigExecStd::Vec3dType();
-
-    static const rigExec::RigExecPortDesc positionPorts[] = {
-        {&PositionConstraintIn(), &frame, kRigExecPortInput, "in"},
-        {&PositionConstraintSources(), &frames, kRigExecPortInput, "sources"},
-        {&PositionConstraintSourceWeights(), &weights, kOptional,
-         "sourceWeights"},
-        {&PositionConstraintWeight(), &d, kRigExecPortInput, "weight"},
-        {&PositionConstraintOut(), &frame, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecPortDesc rotationPorts[] = {
-        {&RotationConstraintIn(), &frame, kRigExecPortInput, "in"},
-        {&RotationConstraintSources(), &frames, kRigExecPortInput, "sources"},
-        {&RotationConstraintSourceWeights(), &weights, kOptional,
-         "sourceWeights"},
-        {&RotationConstraintWeight(), &d, kRigExecPortInput, "weight"},
-        {&RotationConstraintSpace(), &m, kOptional, "space"},
-        {&RotationConstraintOut(), &frame, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecPortDesc scalePorts[] = {
-        {&ScaleConstraintIn(), &frame, kRigExecPortInput, "in"},
-        {&ScaleConstraintSources(), &frames, kRigExecPortInput, "sources"},
-        {&ScaleConstraintSourceWeights(), &weights, kOptional, "sourceWeights"},
-        {&ScaleConstraintWeight(), &d, kRigExecPortInput, "weight"},
-        {&ScaleConstraintOut(), &frame, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecPortDesc parentPorts[] = {
-        {&ParentConstraintIn(), &frame, kRigExecPortInput, "in"},
-        {&ParentConstraintSources(), &frames, kRigExecPortInput, "sources"},
-        {&ParentConstraintSourceWeights(), &weights, kOptional,
-         "sourceWeights"},
-        {&ParentConstraintWeight(), &d, kRigExecPortInput, "weight"},
-        {&ParentConstraintSpace(), &m, kOptional, "space"},
-        {&ParentConstraintOut(), &frame, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecPortDesc aimPorts[] = {
-        {&AimConstraintIn(), &frame, kRigExecPortInput, "in"},
-        {&AimConstraintTarget(), &v, kRigExecPortInput, "target"},
-        {&AimConstraintWorldUp(), &v, kOptional, "worldUp"},
-        {&AimConstraintWeight(), &d, kRigExecPortInput, "weight"},
-        {&AimConstraintOut(), &frame, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc positionDesc =
-        ConstraintDesc("PositionConstraint", positionPorts,
-                       std::size(positionPorts), &RunPosition);
-    static const rigExec::RigExecOpDesc rotationDesc =
-        ConstraintDesc("RotationConstraint", rotationPorts,
-                       std::size(rotationPorts), &RunRotation);
-    static const rigExec::RigExecOpDesc scaleDesc = ConstraintDesc(
-        "ScaleConstraint", scalePorts, std::size(scalePorts), &RunScale);
-    static const rigExec::RigExecOpDesc parentDesc = ConstraintDesc(
-        "ParentConstraint", parentPorts, std::size(parentPorts), &RunParent);
-    static const rigExec::RigExecOpDesc aimDesc =
-        ConstraintDesc("AimConstraint", aimPorts, std::size(aimPorts), &RunAim);
-    registrar.Add(PositionConstraint(), positionDesc);
-    registrar.Add(RotationConstraint(), rotationDesc);
-    registrar.Add(ScaleConstraint(), scaleDesc);
-    registrar.Add(ParentConstraint(), parentDesc);
-    registrar.Add(AimConstraint(), aimDesc);
+    registrar.Add(PositionConstraint(), kPositionDesc);
+    registrar.Add(RotationConstraint(), kRotationDesc);
+    registrar.Add(ScaleConstraint(), kScaleDesc);
+    registrar.Add(ParentConstraint(), kParentDesc);
+    registrar.Add(AimConstraint(), kAimDesc);
 }
 
 } // namespace rigExecOps

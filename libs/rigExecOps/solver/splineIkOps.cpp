@@ -131,47 +131,55 @@ RunSplineIk(const void *payload, void *, const RigExecOpIo &io,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kPorts[] = {
+    {&SplineIkRestJoints(), &rigExecRig::PointFrameList(), kRigExecPortInput,
+     "restJoints"},
+    {&SplineIkRestRoot(), &rigExecRig::PointFrameType(), kRigExecPortInput,
+     "restRoot"},
+    {&SplineIkRestMid(), &rigExecRig::PointFrameType(), kRigExecPortInput,
+     "restMid"},
+    {&SplineIkRestEnd(), &rigExecRig::PointFrameType(), kRigExecPortInput,
+     "restEnd"},
+    {&SplineIkRoot(), &rigExecRig::PointFrameType(), kRigExecPortInput, "root"},
+    {&SplineIkMid(), &rigExecRig::PointFrameType(), kRigExecPortInput, "mid"},
+    {&SplineIkEnd(), &rigExecRig::PointFrameType(), kRigExecPortInput, "end"},
+    {&SplineIkVolumeWeights(), &rigExecStd::DoubleArray(), kOptional,
+     "volumeWeights"},
+    {&SplineIkPreserveVolume(), &rigExecStd::DoubleType(), kOptional,
+     "preserveVolume"},
+    {&SplineIkMidFollow(), &rigExecStd::DoubleType(), kOptional,
+     "midFollowWeight"},
+    {&SplineIkRoll(), &rigExecStd::DoubleType(), kOptional, "roll"},
+    {&SplineIkTwist(), &rigExecStd::DoubleType(), kOptional, "twist"},
+    {&SplineIkOut(), &rigExecRig::PointFrameArrayType(), kRigExecPortOutput,
+     "out"},
+};
+
+const rigExec::RigExecOpDesc kDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "SplineIk";
+    d.ports = kPorts;
+    d.portCount = std::size(kPorts);
+    d.run = &RunSplineIk;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    d.payload = rigExec::RigExecPayloadHandlingFor<SplineIkPayload>();
+    return d;
+}();
+
+} // namespace
+
 void
 RegisterSplineIkOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &frame = rigExecRig::PointFrameType();
-    const auto &d = rigExecStd::DoubleType();
-
-    static const rigExec::RigExecPortDesc ports[] = {
-        {&SplineIkRestJoints(), &rigExecRig::PointFrameList(),
-         kRigExecPortInput, "restJoints"},
-        {&SplineIkRestRoot(), &frame, kRigExecPortInput, "restRoot"},
-        {&SplineIkRestMid(), &frame, kRigExecPortInput, "restMid"},
-        {&SplineIkRestEnd(), &frame, kRigExecPortInput, "restEnd"},
-        {&SplineIkRoot(), &frame, kRigExecPortInput, "root"},
-        {&SplineIkMid(), &frame, kRigExecPortInput, "mid"},
-        {&SplineIkEnd(), &frame, kRigExecPortInput, "end"},
-        {&SplineIkVolumeWeights(), &rigExecStd::DoubleArray(), kOptional,
-         "volumeWeights"},
-        {&SplineIkPreserveVolume(), &d, kOptional, "preserveVolume"},
-        {&SplineIkMidFollow(), &d, kOptional, "midFollowWeight"},
-        {&SplineIkRoll(), &d, kOptional, "roll"},
-        {&SplineIkTwist(), &d, kOptional, "twist"},
-        {&SplineIkOut(), &rigExecRig::PointFrameArrayType(), kRigExecPortOutput,
-         "out"},
-    };
-    static const rigExec::RigExecOpDesc desc = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "SplineIk";
-        d.ports = ports;
-        d.portCount = std::size(ports);
-        d.run = &RunSplineIk;
-        d.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-        d.payload = rigExec::RigExecPayloadHandlingFor<SplineIkPayload>();
-        return d;
-    }();
-    registrar.Add(SplineIk(), desc);
+    registrar.Add(SplineIk(), kDesc);
 }
 
 } // namespace rigExecOps

@@ -1,9 +1,8 @@
 #ifndef RIGEXEC_OPS_SOLVER_FRAME_BLEND_OPS_H
 #define RIGEXEC_OPS_SOLVER_FRAME_BLEND_OPS_H
 
-/// The SRT frame blend and the swing/twist distribution on rigExecRig
-/// frames. The kernel is rigExecMath/frameBlendKernel.h, shared with the
-/// native and zero-USD runtimes. USD-free.
+/// The SRT frame blend and the swing/twist distribution on rigExecRig frames.
+/// The kernel is rigExecMath/frameBlendKernel.h.
 
 #include "rigExecOps/library.h"
 

@@ -58,39 +58,45 @@ RunSingleChainIk(const void *payload, void *, const RigExecOpIo &io,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kPorts[] = {
+    {&SingleChainIkChain(), &rigExecRig::PointFrameArrayType(),
+     kRigExecPortInput, "chain"},
+    {&SingleChainIkEffector(), &rigExecRig::PointFrameType(), kRigExecPortInput,
+     "effector"},
+    {&SingleChainIkPole(), &rigExecStd::Vec3dType(), kOptional, "pole"},
+    {&SingleChainIkTwist(), &rigExecStd::DoubleType(), kOptional,
+     "twistDegrees"},
+    {&SingleChainIkWeight(), &rigExecStd::DoubleType(), kOptional, "weight"},
+    {&SingleChainIkStretch(), &rigExecStd::DoubleType(), kOptional, "stretch"},
+    {&SingleChainIkOut(), &rigExecRig::PointFrameArrayType(),
+     kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "SingleChainIk";
+    d.ports = kPorts;
+    d.portCount = std::size(kPorts);
+    d.run = &RunSingleChainIk;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    d.payload = rigExec::RigExecPayloadHandlingFor<SingleChainIkPayload>();
+    return d;
+}();
+
+} // namespace
+
 void
 RegisterSingleChainIkOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &frames = rigExecRig::PointFrameArrayType();
-    const auto &d = rigExecStd::DoubleType();
-
-    static const rigExec::RigExecPortDesc ports[] = {
-        {&SingleChainIkChain(), &frames, kRigExecPortInput, "chain"},
-        {&SingleChainIkEffector(), &rigExecRig::PointFrameType(),
-         kRigExecPortInput, "effector"},
-        {&SingleChainIkPole(), &rigExecStd::Vec3dType(), kOptional, "pole"},
-        {&SingleChainIkTwist(), &d, kOptional, "twistDegrees"},
-        {&SingleChainIkWeight(), &d, kOptional, "weight"},
-        {&SingleChainIkStretch(), &d, kOptional, "stretch"},
-        {&SingleChainIkOut(), &frames, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc desc = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "SingleChainIk";
-        d.ports = ports;
-        d.portCount = std::size(ports);
-        d.run = &RunSingleChainIk;
-        d.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-        d.payload = rigExec::RigExecPayloadHandlingFor<SingleChainIkPayload>();
-        return d;
-    }();
-    registrar.Add(SingleChainIk(), desc);
+    registrar.Add(SingleChainIk(), kDesc);
 }
 
 } // namespace rigExecOps

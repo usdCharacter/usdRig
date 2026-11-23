@@ -1,4 +1,4 @@
-// The USD-free core: build a rig description by hand, compile, evaluate,
+// The op core: build a rig description by hand, compile, evaluate,
 // read outputs and taps, and check results are bit-identical across
 // thread counts and batch sizes.
 #include "registryFixture/fakeOps.h"
@@ -14,12 +14,44 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <tuple>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 using namespace rigExec;
 using fakeTypes::Vec3;
 
 namespace {
+
+// Whether T({}, args...) compiles: true when anyone can make the passkey.
+template <class T, class Args, class = void>
+struct BracedKeyConstructs : std::false_type {};
+template <class T, class... A>
+struct BracedKeyConstructs<T, std::tuple<A...>,
+                           std::void_t<decltype(T({}, std::declval<A>()...))>>
+    : std::true_type {};
+
+struct OpenGate {
+    struct Key {};
+    explicit OpenGate(Key, int)
+    {
+    }
+};
+static_assert(BracedKeyConstructs<OpenGate, std::tuple<int>>::value,
+              "the probe detects an open passkey");
+static_assert(!BracedKeyConstructs<RigExecProgram, std::tuple<>>::value,
+              "only RigExecCompile constructs a program");
+static_assert(
+    !BracedKeyConstructs<RigExecEvaluator,
+                         std::tuple<std::shared_ptr<const RigExecProgram>,
+                                    const RigExecEvaluatorOptions &>>::value,
+    "only RigExecEvaluator::Create constructs an evaluator");
+static_assert(!BracedKeyConstructs<
+                  RigExecRigDesc,
+                  std::tuple<std::unique_ptr<const RigExecRigDescData>>>::value,
+              "only RigExecRigDescBuilder::Build constructs a description");
+
 int failures = 0;
 #define CHECK(value)                                                           \
     do {                                                                       \

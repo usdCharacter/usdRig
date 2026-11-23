@@ -1,9 +1,8 @@
 #ifndef RIGEXEC_OPS_SOLVER_RIBBON_FRAMES_OPS_H
 #define RIGEXEC_OPS_SOLVER_RIBBON_FRAMES_OPS_H
 
-/// The ribbon solver: rotation-minimizing frames sampled along a posed
-/// and a rest B-spline. The kernel is rigExecMath/ribbonFramesKernel.h,
-/// shared with the native and zero-USD runtimes. USD-free.
+/// The ribbon solver: rotation-minimizing frames sampled along a posed and a
+/// rest B-spline. The kernel is rigExecMath/ribbonFramesKernel.h.
 
 #include "rigExecOps/library.h"
 

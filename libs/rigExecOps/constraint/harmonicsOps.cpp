@@ -159,46 +159,53 @@ HarmonicsFrames(const void *payload)
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+
+const rigExec::RigExecPortDesc kPorts[] = {
+    {&HarmonicsIn(), &rigExecRig::PointFrameType(), kRigExecPortInput, "in"},
+    {&HarmonicsSpace(), &rigExecStd::Mat4dType(),
+     kRigExecPortInput | kRigExecPortOptional, "space"},
+    {&HarmonicsEnabled(), &rigExecStd::BoolType(), kRigExecPortInput,
+     "enabled"},
+    {&HarmonicsWeight(), &rigExecStd::DoubleType(), kRigExecPortInput,
+     "weight"},
+    {&HarmonicsAmplitude(), &rigExecStd::DoubleType(), kRigExecPortInput,
+     "amplitude"},
+    {&HarmonicsDecay(), &rigExecStd::DoubleType(), kRigExecPortInput, "decay"},
+    {&HarmonicsTermination(), &rigExecStd::DoubleType(), kRigExecPortInput,
+     "termination"},
+    {&HarmonicsAxisAmplitude(), &rigExecStd::Vec3dType(), kRigExecPortInput,
+     "axisAmplitude"},
+    {&HarmonicsOut(), &rigExecRig::PointFrameType(), kRigExecPortOutput, "out"},
+    {&HarmonicsStatusOut(), &rigExecStd::UIntType(), kRigExecPortOutput,
+     "status"},
+};
+
+const rigExec::RigExecOpDesc kDesc = [] {
+    rigExec::RigExecOpDesc op;
+    op.nameSpace = "rig";
+    op.name = "Harmonics";
+    op.ports = kPorts;
+    op.portCount = std::size(kPorts);
+    op.run = &RunHarmonics;
+    op.threading = rigExec::RigExecOpThreading::Windowed;
+    op.windowFrames = &HarmonicsFrames;
+    op.capabilities =
+        rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    op.payload = rigExec::RigExecPayloadHandlingFor<HarmonicsPayload>();
+    return op;
+}();
+
+} // namespace
+
 void
 RegisterHarmonicsOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    const auto &d = rigExecStd::DoubleType();
-    static const rigExec::RigExecPortDesc ports[] = {
-        {&HarmonicsIn(), &rigExecRig::PointFrameType(), kRigExecPortInput,
-         "in"},
-        {&HarmonicsSpace(), &rigExecStd::Mat4dType(),
-         kRigExecPortInput | kRigExecPortOptional, "space"},
-        {&HarmonicsEnabled(), &rigExecStd::BoolType(), kRigExecPortInput,
-         "enabled"},
-        {&HarmonicsWeight(), &d, kRigExecPortInput, "weight"},
-        {&HarmonicsAmplitude(), &d, kRigExecPortInput, "amplitude"},
-        {&HarmonicsDecay(), &d, kRigExecPortInput, "decay"},
-        {&HarmonicsTermination(), &d, kRigExecPortInput, "termination"},
-        {&HarmonicsAxisAmplitude(), &rigExecStd::Vec3dType(), kRigExecPortInput,
-         "axisAmplitude"},
-        {&HarmonicsOut(), &rigExecRig::PointFrameType(), kRigExecPortOutput,
-         "out"},
-        {&HarmonicsStatusOut(), &rigExecStd::UIntType(), kRigExecPortOutput,
-         "status"},
-    };
-    static const rigExec::RigExecOpDesc desc = [] {
-        rigExec::RigExecOpDesc op;
-        op.nameSpace = "rig";
-        op.name = "Harmonics";
-        op.ports = ports;
-        op.portCount = std::size(ports);
-        op.run = &RunHarmonics;
-        op.threading = rigExec::RigExecOpThreading::Windowed;
-        op.windowFrames = &HarmonicsFrames;
-        op.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-        op.payload = rigExec::RigExecPayloadHandlingFor<HarmonicsPayload>();
-        return op;
-    }();
-    registrar.Add(Harmonics(), desc);
+    registrar.Add(Harmonics(), kDesc);
 }
 
 } // namespace rigExecOps

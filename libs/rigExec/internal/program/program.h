@@ -1,8 +1,8 @@
 #ifndef RIGEXEC_INTERNAL_PROGRAM_PROGRAM_H
 #define RIGEXEC_INTERNAL_PROGRAM_PROGRAM_H
 
-/// The compiled program: immutable, USD-free, shared by evaluators. Compile
-/// writes it; exec only reads it.
+/// The compiled program: immutable and shared by evaluators. Compile writes
+/// it; exec only reads it.
 
 #include "rigExec/api/compile.h"
 #include "rigExec/internal/program/alignedBuffer.h"
@@ -58,12 +58,16 @@ struct RigExecProgramBatch {
 };
 
 class RigExecProgram {
-public:
+    friend std::shared_ptr<const RigExecProgram>
+    RigExecCompile(const RigExecRigDesc &desc,
+                   const RigExecCompileOptions &options, std::string *error);
     struct _CompileKey {
         explicit _CompileKey(int)
         {
         }
     };
+
+public:
     explicit RigExecProgram(_CompileKey)
     {
     }

@@ -52,46 +52,46 @@ ArrayDesc(const char *name, const RigExecTypeHandle &element)
     return TypeDescFor<RigExecArray<T>>("std", name, &element);
 }
 
+struct Entry {
+    const RigExecTypeHandle &handle;
+    RigExecTypeDesc desc;
+};
+
+const Entry kEntries[] = {
+    {BoolType(), ValueDesc<uint8_t>("Bool")},
+    {IntType(), ValueDesc<int32_t>("Int")},
+    {UIntType(), ValueDesc<uint32_t>("UInt")},
+    {FloatType(), ValueDesc<float>("Float")},
+    {DoubleType(), ValueDesc<double>("Double")},
+    {Vec2fType(), ValueDesc<Vec2f>("Vec2f")},
+    {Vec2dType(), ValueDesc<Vec2d>("Vec2d")},
+    {Vec3fType(), ValueDesc<Vec3f>("Vec3f")},
+    {Vec3dType(), ValueDesc<Vec3d>("Vec3d")},
+    {Vec4dType(), ValueDesc<Vec4d>("Vec4d")},
+    {Vec3iType(), ValueDesc<Vec3i>("Vec3i")},
+    {Mat3dType(), ValueDesc<Mat3d>("Mat3d")},
+    {Mat4dType(), ValueDesc<Mat4d>("Mat4d")},
+    {QuatdType(), ValueDesc<Quatd>("Quatd")},
+    {BoolArray(), ArrayDesc<uint8_t>("BoolArray", BoolType())},
+    {IntArray(), ArrayDesc<int32_t>("IntArray", IntType())},
+    {UIntArray(), ArrayDesc<uint32_t>("UIntArray", UIntType())},
+    {FloatArray(), ArrayDesc<float>("FloatArray", FloatType())},
+    {DoubleArray(), ArrayDesc<double>("DoubleArray", DoubleType())},
+    {Vec2fArray(), ArrayDesc<Vec2f>("Vec2fArray", Vec2fType())},
+    {Vec2dArray(), ArrayDesc<Vec2d>("Vec2dArray", Vec2dType())},
+    {Vec3fArray(), ArrayDesc<Vec3f>("Vec3fArray", Vec3fType())},
+    {Vec3dArray(), ArrayDesc<Vec3d>("Vec3dArray", Vec3dType())},
+    {Vec4dArray(), ArrayDesc<Vec4d>("Vec4dArray", Vec4dType())},
+    {Vec3iArray(), ArrayDesc<Vec3i>("Vec3iArray", Vec3iType())},
+    {Mat3dArray(), ArrayDesc<Mat3d>("Mat3dArray", Mat3dType())},
+    {Mat4dArray(), ArrayDesc<Mat4d>("Mat4dArray", Mat4dType())},
+    {QuatdArray(), ArrayDesc<Quatd>("QuatdArray", QuatdType())},
+};
+
 void
 Register(RigExecTypeRegistrar &registrar)
 {
-    struct Entry {
-        const RigExecTypeHandle &handle;
-        RigExecTypeDesc desc;
-    };
-    // Function-local so descriptors outlive registration; built once, on the
-    // owner thread, during freeze.
-    static const Entry entries[] = {
-        {BoolType(), ValueDesc<uint8_t>("Bool")},
-        {IntType(), ValueDesc<int32_t>("Int")},
-        {UIntType(), ValueDesc<uint32_t>("UInt")},
-        {FloatType(), ValueDesc<float>("Float")},
-        {DoubleType(), ValueDesc<double>("Double")},
-        {Vec2fType(), ValueDesc<Vec2f>("Vec2f")},
-        {Vec2dType(), ValueDesc<Vec2d>("Vec2d")},
-        {Vec3fType(), ValueDesc<Vec3f>("Vec3f")},
-        {Vec3dType(), ValueDesc<Vec3d>("Vec3d")},
-        {Vec4dType(), ValueDesc<Vec4d>("Vec4d")},
-        {Vec3iType(), ValueDesc<Vec3i>("Vec3i")},
-        {Mat3dType(), ValueDesc<Mat3d>("Mat3d")},
-        {Mat4dType(), ValueDesc<Mat4d>("Mat4d")},
-        {QuatdType(), ValueDesc<Quatd>("Quatd")},
-        {BoolArray(), ArrayDesc<uint8_t>("BoolArray", BoolType())},
-        {IntArray(), ArrayDesc<int32_t>("IntArray", IntType())},
-        {UIntArray(), ArrayDesc<uint32_t>("UIntArray", UIntType())},
-        {FloatArray(), ArrayDesc<float>("FloatArray", FloatType())},
-        {DoubleArray(), ArrayDesc<double>("DoubleArray", DoubleType())},
-        {Vec2fArray(), ArrayDesc<Vec2f>("Vec2fArray", Vec2fType())},
-        {Vec2dArray(), ArrayDesc<Vec2d>("Vec2dArray", Vec2dType())},
-        {Vec3fArray(), ArrayDesc<Vec3f>("Vec3fArray", Vec3fType())},
-        {Vec3dArray(), ArrayDesc<Vec3d>("Vec3dArray", Vec3dType())},
-        {Vec4dArray(), ArrayDesc<Vec4d>("Vec4dArray", Vec4dType())},
-        {Vec3iArray(), ArrayDesc<Vec3i>("Vec3iArray", Vec3iType())},
-        {Mat3dArray(), ArrayDesc<Mat3d>("Mat3dArray", Mat3dType())},
-        {Mat4dArray(), ArrayDesc<Mat4d>("Mat4dArray", Mat4dType())},
-        {QuatdArray(), ArrayDesc<Quatd>("QuatdArray", QuatdType())},
-    };
-    for (const Entry &entry : entries)
+    for (const Entry &entry : kEntries)
         registrar.Add(entry.handle, entry.desc);
 }
 

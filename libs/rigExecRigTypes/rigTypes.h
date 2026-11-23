@@ -4,7 +4,6 @@
 /// The rig type library: the values more than one op reads, built from the
 /// standard types. Derived structures (adjacency, normal walks, cloth and
 /// wrinkle meshes, skin and blend layouts) are op state, not types here.
-/// USD-free.
 
 #include "rigExec/api/registry.h"
 #include "rigExecStdTypes/stdTypes.h"

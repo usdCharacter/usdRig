@@ -2,7 +2,6 @@
 #define RIGEXEC_OPS_LIBRARY_H
 
 /// The rigExecOps op library: every op family below libs/rigExecOps/.
-/// USD-free.
 
 #include "rigExec/api/registry.h"
 

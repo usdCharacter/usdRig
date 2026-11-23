@@ -2,8 +2,8 @@
 #define RIGEXEC_STD_TYPES_ARRAY_H
 
 /// An owned array of a trivially copyable element, the storage of every
-/// standard array type. Elements start at 16 bytes, or 256 from 4 KiB, so
-/// SIMD loops and device copies need no realignment. USD-free.
+/// standard array type. Elements start at 16 bytes, or 256 from 4 KiB, so SIMD
+/// loops and device copies need no realignment.
 
 #include <algorithm>
 #include <cstddef>

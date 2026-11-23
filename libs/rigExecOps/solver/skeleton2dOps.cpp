@@ -136,53 +136,63 @@ RunSkeleton2d(const void *payload, void *state, const RigExecOpIo &io,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kPorts[] = {
+    {&Skeleton2dRests(), &rigExecRig::PointLandmarksList(), kRigExecPortInput,
+     "rests"},
+    {&Skeleton2dStartRest(), &rigExecRig::PointLandmarksType(), kOptional,
+     "startRest"},
+    {&Skeleton2dStartPose(), &rigExecRig::PointLandmarksType(), kOptional,
+     "startPose"},
+    {&Skeleton2dExternalRests(), &rigExecRig::PointLandmarksList(), kOptional,
+     "externalRests"},
+    {&Skeleton2dExternalPoses(), &rigExecRig::PointLandmarksList(), kOptional,
+     "externalPoses"},
+    {&Skeleton2dChannels(), &rigExecStd::DoubleArray(), kRigExecPortInput,
+     "channels"},
+    {&Skeleton2dSelectors(), &rigExecStd::DoubleArray(), kOptional,
+     "selectors"},
+    {&Skeleton2dGroupSelectors(), &rigExecStd::DoubleArray(), kOptional,
+     "groupSelectors"},
+    {&Skeleton2dOut(), &rigExecRig::PointFrameArrayType(), kRigExecPortOutput,
+     "out"},
+    {&Skeleton2dResult(), &rigExecStd::UIntType(), kRigExecPortOutput,
+     "result"},
+};
+
+const rigExec::RigExecOpDesc kDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "Skeleton2d";
+    d.ports = kPorts;
+    d.portCount = std::size(kPorts);
+    d.run = &RunSkeleton2d;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    d.payload = rigExec::RigExecPayloadHandlingFor<Skeleton2dPayload>();
+    d.state.size = sizeof(Skeleton2dState);
+    d.state.align = alignof(Skeleton2dState);
+    d.state.create = [](void *dst) {
+        std::uninitialized_value_construct_n(
+            static_cast<Skeleton2dState *>(dst), 1);
+    };
+    d.state.destroy = [](void *dst) {
+        std::destroy_at(static_cast<Skeleton2dState *>(dst));
+    };
+    return d;
+}();
+
+} // namespace
+
 void
 RegisterSkeleton2dOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &landmarks = rigExecRig::PointLandmarksType();
-    const auto &list = rigExecRig::PointLandmarksList();
-    const auto &doubles = rigExecStd::DoubleArray();
-
-    static const rigExec::RigExecPortDesc ports[] = {
-        {&Skeleton2dRests(), &list, kRigExecPortInput, "rests"},
-        {&Skeleton2dStartRest(), &landmarks, kOptional, "startRest"},
-        {&Skeleton2dStartPose(), &landmarks, kOptional, "startPose"},
-        {&Skeleton2dExternalRests(), &list, kOptional, "externalRests"},
-        {&Skeleton2dExternalPoses(), &list, kOptional, "externalPoses"},
-        {&Skeleton2dChannels(), &doubles, kRigExecPortInput, "channels"},
-        {&Skeleton2dSelectors(), &doubles, kOptional, "selectors"},
-        {&Skeleton2dGroupSelectors(), &doubles, kOptional, "groupSelectors"},
-        {&Skeleton2dOut(), &rigExecRig::PointFrameArrayType(),
-         kRigExecPortOutput, "out"},
-        {&Skeleton2dResult(), &rigExecStd::UIntType(), kRigExecPortOutput,
-         "result"},
-    };
-    static const rigExec::RigExecOpDesc desc = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "Skeleton2d";
-        d.ports = ports;
-        d.portCount = std::size(ports);
-        d.run = &RunSkeleton2d;
-        d.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-        d.payload = rigExec::RigExecPayloadHandlingFor<Skeleton2dPayload>();
-        d.state.size = sizeof(Skeleton2dState);
-        d.state.align = alignof(Skeleton2dState);
-        d.state.create = [](void *dst) {
-            std::uninitialized_value_construct_n(
-                static_cast<Skeleton2dState *>(dst), 1);
-        };
-        d.state.destroy = [](void *dst) {
-            std::destroy_at(static_cast<Skeleton2dState *>(dst));
-        };
-        return d;
-    }();
-    registrar.Add(Skeleton2d(), desc);
+    registrar.Add(Skeleton2d(), kDesc);
 }
 
 } // namespace rigExecOps

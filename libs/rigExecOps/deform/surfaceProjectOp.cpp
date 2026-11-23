@@ -67,45 +67,56 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kPorts[] = {
+    {&SurfaceProjectPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "points"},
+    {&SurfaceProjectSurface(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "surface"},
+    {&SurfaceProjectCounts(), &rigExecStd::IntArray(), kRigExecPortInput,
+     "faceVertexCounts"},
+    {&SurfaceProjectIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
+     "faceVertexIndices"},
+    {&SurfaceProjectStrength(), &rigExecStd::FloatType(), kOptional,
+     "strength"},
+    {&SurfaceProjectTargetToSurface(), &rigExecStd::Mat4dType(), kOptional,
+     "targetToSurface"},
+    {&SurfaceProjectSurfaceToTarget(), &rigExecStd::Mat4dType(), kOptional,
+     "surfaceToTarget"},
+    {&SurfaceProjectSurfaceToMetric(), &rigExecStd::Mat4dType(), kOptional,
+     "surfaceToMetric"},
+    {&SurfaceProjectEnvelope(), &rigExecStd::FloatArray(), kOptional,
+     "envelope"},
+    {&SurfaceProjectOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput,
+     "out"},
+};
+
+const rigExec::RigExecOpDesc kDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "SurfaceProject";
+    d.ports = kPorts;
+    d.portCount = std::size(kPorts);
+    d.run = &Run;
+    d.capabilities =
+        rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
+        rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;
+    d.payload = rigExec::RigExecPayloadHandlingFor<SurfaceProjectPayload>();
+    return d;
+}();
+
+} // namespace
+
 void
 RegisterSurfaceProjectOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &points = rigExecStd::Vec3fArray();
-    const auto &ints = rigExecStd::IntArray();
-    const auto &m = rigExecStd::Mat4dType();
-    static const rigExec::RigExecPortDesc ports[] = {
-        {&SurfaceProjectPoints(), &points, kRigExecPortInput, "points"},
-        {&SurfaceProjectSurface(), &points, kRigExecPortInput, "surface"},
-        {&SurfaceProjectCounts(), &ints, kRigExecPortInput, "faceVertexCounts"},
-        {&SurfaceProjectIndices(), &ints, kRigExecPortInput,
-         "faceVertexIndices"},
-        {&SurfaceProjectStrength(), &rigExecStd::FloatType(), kOptional,
-         "strength"},
-        {&SurfaceProjectTargetToSurface(), &m, kOptional, "targetToSurface"},
-        {&SurfaceProjectSurfaceToTarget(), &m, kOptional, "surfaceToTarget"},
-        {&SurfaceProjectSurfaceToMetric(), &m, kOptional, "surfaceToMetric"},
-        {&SurfaceProjectEnvelope(), &rigExecStd::FloatArray(), kOptional,
-         "envelope"},
-        {&SurfaceProjectOut(), &points, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc desc = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "SurfaceProject";
-        d.ports = ports;
-        d.portCount = std::size(ports);
-        d.run = &Run;
-        d.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
-            rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;
-        d.payload = rigExec::RigExecPayloadHandlingFor<SurfaceProjectPayload>();
-        return d;
-    }();
-    registrar.Add(SurfaceProject(), desc);
+    registrar.Add(SurfaceProject(), kDesc);
 }
 
 } // namespace rigExecOps

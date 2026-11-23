@@ -152,68 +152,83 @@ RunTwoBoneIk(const void *payload, void *, const RigExecOpIo &io,
 
 } // namespace
 
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kFkPorts[] = {
+    {&FkChainControls(), &rigExecRig::PointFrameArrayType(), kRigExecPortInput,
+     "controls"},
+    {&FkChainOutRests(), &rigExecRig::PointLandmarksList(), kOptional,
+     "outRests"},
+    {&FkChainOut(), &rigExecRig::PointFrameArrayType(), kRigExecPortOutput,
+     "out"},
+};
+
+const rigExec::RigExecPortDesc kIkPorts[] = {
+    {&TwoBoneIkRoot(), &rigExecRig::PointFrameType(), kRigExecPortInput,
+     "root"},
+    {&TwoBoneIkEffector(), &rigExecRig::PointFrameType(), kRigExecPortInput,
+     "effector"},
+    {&TwoBoneIkPole(), &rigExecRig::PointFrameType(), kRigExecPortInput,
+     "pole"},
+    {&TwoBoneIkRests(), &rigExecRig::PointLandmarksList(), kRigExecPortInput,
+     "rests"},
+    {&TwoBoneIkSpace(), &rigExecStd::Mat4dType(), kOptional, "space"},
+    {&TwoBoneIkBend(), &rigExecStd::DoubleType(), kOptional,
+     "preferredBendRadians"},
+    {&TwoBoneIkUpperOffset(), &rigExecStd::DoubleType(), kOptional,
+     "upperLengthOffset"},
+    {&TwoBoneIkLowerOffset(), &rigExecStd::DoubleType(), kOptional,
+     "lowerLengthOffset"},
+    {&TwoBoneIkStretch(), &rigExecStd::FloatType(), kOptional, "stretch"},
+    {&TwoBoneIkSoftness(), &rigExecStd::FloatType(), kOptional, "softness"},
+    {&TwoBoneIkPin(), &rigExecStd::FloatType(), kOptional, "pin"},
+    {&TwoBoneIkUpperScale(), &rigExecStd::DoubleType(), kOptional,
+     "upperScale"},
+    {&TwoBoneIkLowerScale(), &rigExecStd::DoubleType(), kOptional,
+     "lowerScale"},
+    {&TwoBoneIkSoftDistance(), &rigExecStd::FloatType(), kOptional,
+     "softDistance"},
+    {&TwoBoneIkTwist(), &rigExecStd::FloatType(), kOptional, "twist"},
+    {&TwoBoneIkOut(), &rigExecRig::PointFrameArrayType(), kRigExecPortOutput,
+     "out"},
+};
+
+const rigExec::RigExecOpDesc kFk = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "FkChain";
+    d.ports = kFkPorts;
+    d.portCount = std::size(kFkPorts);
+    d.run = &RunFkChain;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    d.payload = rigExec::RigExecPayloadHandlingFor<FkChainPayload>();
+    return d;
+}();
+
+const rigExec::RigExecOpDesc kIk = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "TwoBoneIk";
+    d.ports = kIkPorts;
+    d.portCount = std::size(kIkPorts);
+    d.run = &RunTwoBoneIk;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    d.payload = rigExec::RigExecPayloadHandlingFor<TwoBoneIkPayload>();
+    return d;
+}();
+
+} // namespace
+
 void
 RegisterChainSolverOps(rigExec::RigExecOpRegistrar &registrar)
 {
-    using rigExec::kRigExecPortInput;
-    using rigExec::kRigExecPortOptional;
-    using rigExec::kRigExecPortOutput;
-    constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
-    const auto &frame = rigExecRig::PointFrameType();
-    const auto &frames = rigExecRig::PointFrameArrayType();
-    const auto &landmarks = rigExecRig::PointLandmarksList();
-    const auto &f = rigExecStd::FloatType();
-    const auto &d = rigExecStd::DoubleType();
-
-    static const rigExec::RigExecPortDesc fkPorts[] = {
-        {&FkChainControls(), &frames, kRigExecPortInput, "controls"},
-        {&FkChainOutRests(), &landmarks, kOptional, "outRests"},
-        {&FkChainOut(), &frames, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecPortDesc ikPorts[] = {
-        {&TwoBoneIkRoot(), &frame, kRigExecPortInput, "root"},
-        {&TwoBoneIkEffector(), &frame, kRigExecPortInput, "effector"},
-        {&TwoBoneIkPole(), &frame, kRigExecPortInput, "pole"},
-        {&TwoBoneIkRests(), &landmarks, kRigExecPortInput, "rests"},
-        {&TwoBoneIkSpace(), &rigExecStd::Mat4dType(), kOptional, "space"},
-        {&TwoBoneIkBend(), &d, kOptional, "preferredBendRadians"},
-        {&TwoBoneIkUpperOffset(), &d, kOptional, "upperLengthOffset"},
-        {&TwoBoneIkLowerOffset(), &d, kOptional, "lowerLengthOffset"},
-        {&TwoBoneIkStretch(), &f, kOptional, "stretch"},
-        {&TwoBoneIkSoftness(), &f, kOptional, "softness"},
-        {&TwoBoneIkPin(), &f, kOptional, "pin"},
-        {&TwoBoneIkUpperScale(), &d, kOptional, "upperScale"},
-        {&TwoBoneIkLowerScale(), &d, kOptional, "lowerScale"},
-        {&TwoBoneIkSoftDistance(), &f, kOptional, "softDistance"},
-        {&TwoBoneIkTwist(), &f, kOptional, "twist"},
-        {&TwoBoneIkOut(), &frames, kRigExecPortOutput, "out"},
-    };
-    static const rigExec::RigExecOpDesc fk = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "FkChain";
-        d.ports = fkPorts;
-        d.portCount = std::size(fkPorts);
-        d.run = &RunFkChain;
-        d.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-        d.payload = rigExec::RigExecPayloadHandlingFor<FkChainPayload>();
-        return d;
-    }();
-    static const rigExec::RigExecOpDesc ik = [] {
-        rigExec::RigExecOpDesc d;
-        d.nameSpace = "rig";
-        d.name = "TwoBoneIk";
-        d.ports = ikPorts;
-        d.portCount = std::size(ikPorts);
-        d.run = &RunTwoBoneIk;
-        d.capabilities =
-            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-        d.payload = rigExec::RigExecPayloadHandlingFor<TwoBoneIkPayload>();
-        return d;
-    }();
-    registrar.Add(FkChain(), fk);
-    registrar.Add(TwoBoneIk(), ik);
+    registrar.Add(FkChain(), kFk);
+    registrar.Add(TwoBoneIk(), kIk);
 }
 
 } // namespace rigExecOps

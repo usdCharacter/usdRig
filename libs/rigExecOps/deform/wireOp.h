@@ -1,10 +1,9 @@
 #ifndef RIGEXEC_OPS_DEFORM_WIRE_OP_H
 #define RIGEXEC_OPS_DEFORM_WIRE_OP_H
 
-/// Wire: each point moves by f(d) * (C(u) - C0(u)), C the posed curve, C0
-/// the rest curve, (u, d) its bind coordinates and f = 1 - smoothstep(0,
-/// dropoff, d). The kernel is rigExecMath/wireBasisKernel.h, shared with the
-/// baked and zero-USD runtimes. USD-free.
+/// Wire: each point moves by f(d) * (C(u) - C0(u)), C the posed curve, C0 the
+/// rest curve, (u, d) its bind coordinates and f = 1 - smoothstep(0, dropoff,
+/// d). The kernel is rigExecMath/wireBasisKernel.h.
 
 #include "rigExecOps/library.h"
 
