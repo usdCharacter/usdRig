@@ -33,7 +33,12 @@
 namespace rigExec {
 
 /// The curve's interpolation: UsdGeomBasisCurves `type` and `basis` folded.
-enum class RigExecPathBasis : uint8_t { Linear = 0, Bezier, Bspline, CatmullRom };
+enum class RigExecPathBasis : uint8_t {
+    Linear = 0,
+    Bezier,
+    Bspline,
+    CatmullRom
+};
 
 /// What a path operation returns (schema `rigExec:pathComponent`).
 enum class RigExecPathComponent : uint8_t { X = 0, Y, Z, Heading, End };
@@ -103,8 +108,8 @@ Control(const RigExecPathCurve &c, long i, double out[3])
         }
         if (i == n + 1) {
             for (int k = 0; k < 3; ++k) {
-                out[k] = 2.0 * c.points[3 * (n - 1) + k] -
-                         c.points[3 * (n - 2) + k];
+                out[k] =
+                    2.0 * c.points[3 * (n - 1) + k] - c.points[3 * (n - 2) + k];
             }
             return;
         }
@@ -136,8 +141,7 @@ SegmentCount(const RigExecPathCurve &c)
 
 // Position (and derivative in t) of segment s at t in [0, 1].
 inline void
-Evaluate(const RigExecPathCurve &c, long s, double t, double p[3],
-         double d[3])
+Evaluate(const RigExecPathCurve &c, long s, double t, double p[3], double d[3])
 {
     if (c.basis == RigExecPathBasis::Linear) {
         double a[3], b[3];
@@ -177,7 +181,7 @@ Evaluate(const RigExecPathCurve &c, long s, double t, double p[3],
         dw[2] = (-9.0 * t2 + 6.0 * t + 3.0) / 6.0;
         dw[3] = t2 / 2.0;
         break;
-    default:  // CatmullRom
+    default: // CatmullRom
         w[0] = 0.5 * (-t3 + 2.0 * t2 - t);
         w[1] = 0.5 * (3.0 * t3 - 5.0 * t2 + 2.0);
         w[2] = 0.5 * (-3.0 * t3 + 4.0 * t2 + t);
@@ -189,8 +193,8 @@ Evaluate(const RigExecPathCurve &c, long s, double t, double p[3],
         break;
     }
     for (int k = 0; k < 3; ++k) {
-        p[k] = w[0] * q[0][k] + w[1] * q[1][k] + w[2] * q[2][k] +
-               w[3] * q[3][k];
+        p[k] =
+            w[0] * q[0][k] + w[1] * q[1][k] + w[2] * q[2][k] + w[3] * q[3][k];
         d[k] = dw[0] * q[0][k] + dw[1] * q[1][k] + dw[2] * q[2][k] +
                dw[3] * q[3][k];
     }
@@ -201,7 +205,8 @@ Speed(const RigExecPathCurve &c, long s, double t)
 {
     double p[3], d[3];
     Evaluate(c, s, t, p, d);
-    return std::sqrt(d[0] * d[0] + (c.planar ? 0.0 : d[1] * d[1]) + d[2] * d[2]);
+    return std::sqrt(d[0] * d[0] + (c.planar ? 0.0 : d[1] * d[1]) +
+                     d[2] * d[2]);
 }
 
 // Arc length of segment s over [a, b], one Gauss-Legendre panel.
@@ -278,7 +283,7 @@ WrapDegrees(double h)
     return h;
 }
 
-}  // namespace pathKernelDetail
+} // namespace pathKernelDetail
 
 /// Whether \p curve has at least one segment for its basis and only finite
 /// points.
@@ -412,7 +417,7 @@ RigExecEvaluatePathComponent(const RigExecPathCurve &curve,
     case RigExecPathComponent::Y:
         *result = float(point[1]);
         break;
-    default:  // Z
+    default: // Z
         *result = float(point[2] - s * ox + c * oz);
         break;
     }
@@ -440,6 +445,6 @@ RigExecQuantizeDown(float base, float start, float step)
     return float(s + k * h);
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_MATH_PATH_CURVE_KERNEL_H
+#endif // RIGEXEC_MATH_PATH_CURVE_KERNEL_H

@@ -31,13 +31,15 @@ struct RigExecJointGroup {
 /// The active member of \p group for selector \p v: rounded half away from
 /// zero, clamped to the members (NaN selects the first); -1 for a disabled
 /// or empty group.
-inline int32_t RigExecJointGroupSlot(const RigExecJointGroup &group, double v)
+inline int32_t
+RigExecJointGroupSlot(const RigExecJointGroup &group, double v)
 {
     if (!group.enabled || group.memberCount == 0) {
         return -1;
     }
     const int64_t count = int64_t(group.memberCount);
-    int64_t slot = (v >= -0.5 && v < double(count) - 0.5) ? int64_t(std::llround(v)) : -1;
+    int64_t slot =
+        (v >= -0.5 && v < double(count) - 0.5) ? int64_t(std::llround(v)) : -1;
     if (slot < 0) {
         slot = !(v >= 0.0) ? 0 : count - 1;
     }
@@ -51,9 +53,11 @@ inline int32_t RigExecJointGroupSlot(const RigExecJointGroup &group, double v)
 /// cycle in malformed data ends. \p slots receives each group's
 /// RigExecJointGroupSlot. A member outside [0, count) matches no joint.
 template <class ParentOf>
-inline void RigExecResolveJointGroups(size_t count, ParentOf &&parentOf,
-    const RigExecJointGroup *groups, size_t groupCount, const int32_t *members,
-    const double *selectors, int32_t *slots, uint8_t *active)
+inline void
+RigExecResolveJointGroups(size_t count, ParentOf &&parentOf,
+                          const RigExecJointGroup *groups, size_t groupCount,
+                          const int32_t *members, const double *selectors,
+                          int32_t *slots, uint8_t *active)
 {
     for (size_t i = 0; i < count; ++i) {
         active[i] = 1;
@@ -64,7 +68,8 @@ inline void RigExecResolveJointGroups(size_t count, ParentOf &&parentOf,
     for (size_t i = 0; i < count; ++i) {
         bool underActive = false, underInactive = false;
         int32_t a = int32_t(i);
-        for (size_t step = 0; a >= 0 && step < count && !(underActive && underInactive);
+        for (size_t step = 0;
+             a >= 0 && step < count && !(underActive && underInactive);
              ++step, a = parentOf(size_t(a))) {
             for (size_t g = 0; g < groupCount; ++g) {
                 if (slots[g] < 0) {
@@ -86,6 +91,6 @@ inline void RigExecResolveJointGroups(size_t count, ParentOf &&parentOf,
     }
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_MATH_JOINT_GROUP_KERNEL_H
+#endif // RIGEXEC_MATH_JOINT_GROUP_KERNEL_H
