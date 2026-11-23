@@ -44,7 +44,10 @@ struct RigExecWindowPacket {
                 std::memcmp(points.data(), o.points.data(),
                             points.size() * sizeof(float)) == 0);
     }
-    bool operator!=(const RigExecWindowPacket &o) const { return !(*this == o); }
+    bool operator!=(const RigExecWindowPacket &o) const
+    {
+        return !(*this == o);
+    }
 };
 
 /// Null when the operation captured nothing at that tick (an unusable
@@ -60,8 +63,10 @@ inline bool
 RigExecWindowPacketsEqual(const RigExecWindowPacketPtr &a,
                           const RigExecWindowPacketPtr &b)
 {
-    if (a == b) return true;
-    if (!a || !b) return false;
+    if (a == b)
+        return true;
+    if (!a || !b)
+        return false;
     return *a == *b;
 }
 
@@ -69,9 +74,11 @@ RigExecWindowPacketsEqual(const RigExecWindowPacketPtr &a,
 inline bool
 RigExecWindowRingsEqual(const RigExecWindowRing &a, const RigExecWindowRing &b)
 {
-    if (a.size() != b.size()) return false;
+    if (a.size() != b.size())
+        return false;
     for (size_t k = 0; k < a.size(); ++k)
-        if (!RigExecWindowPacketsEqual(a[k], b[k])) return false;
+        if (!RigExecWindowPacketsEqual(a[k], b[k]))
+            return false;
     return true;
 }
 
@@ -108,25 +115,28 @@ struct RigExecWindowLayout {
     std::vector<char> mask;
 };
 
-/// Settles \p out from \p graph's predecessors and each windowed op's
-/// canonical op in \p ops (UINT32_MAX for an op the graph set aside, which
-/// joins no mask). Linear in the ops each windowed op depends on.
+/// Settles \p out over \p opCount canonical ops whose predecessors
+/// \p predecessors(op) lists, and each windowed op's canonical op in \p ops
+/// (UINT32_MAX for an op the graph set aside, which joins no mask). Linear in
+/// the ops each windowed op depends on.
+template <class Predecessors>
 inline void
-RigExecSettleWindowLayout(const RigExecCompiledGraph &graph,
+RigExecSettleWindowLayout(size_t opCount, const Predecessors &predecessors,
                           const std::vector<uint32_t> &ops,
                           RigExecWindowLayout *out)
 {
-    const size_t opCount = graph.ops.size();
     out->inner.assign(ops.size(), {});
     out->feedsWindow.assign(ops.size(), 0);
     out->mask.assign(opCount, 0);
     std::vector<uint32_t> windowOfOp(opCount, UINT32_MAX);
     for (size_t w = 0; w < ops.size(); ++w)
-        if (ops[w] < opCount) windowOfOp[ops[w]] = uint32_t(w);
+        if (ops[w] < opCount)
+            windowOfOp[ops[w]] = uint32_t(w);
     std::vector<char> seen;
     std::vector<uint32_t> stack;
     for (size_t w = 0; w < ops.size(); ++w) {
-        if (ops[w] >= opCount) continue;
+        if (ops[w] >= opCount)
+            continue;
         seen.assign(opCount, 0);
         stack.assign(1, ops[w]);
         seen[ops[w]] = 1;
@@ -134,17 +144,34 @@ RigExecSettleWindowLayout(const RigExecCompiledGraph &graph,
             const uint32_t c = stack.back();
             stack.pop_back();
             out->mask[c] = 1;
-            for (const uint32_t p : graph.ops[c].predecessors) {
-                if (p >= opCount || seen[p]) continue;
+            for (const uint32_t p : predecessors(c)) {
+                if (p >= opCount || seen[p])
+                    continue;
                 seen[p] = 1;
                 stack.push_back(p);
-                if (windowOfOp[p] != UINT32_MAX) out->inner[w].push_back(windowOfOp[p]);
+                if (windowOfOp[p] != UINT32_MAX)
+                    out->inner[w].push_back(windowOfOp[p]);
             }
         }
         std::sort(out->inner[w].begin(), out->inner[w].end());
     }
     for (const auto &inner : out->inner)
-        for (const uint32_t y : inner) out->feedsWindow[y] = 1;
+        for (const uint32_t y : inner)
+            out->feedsWindow[y] = 1;
+}
+
+/// Settles \p out from \p graph's predecessors.
+inline void
+RigExecSettleWindowLayout(const RigExecCompiledGraph &graph,
+                          const std::vector<uint32_t> &ops,
+                          RigExecWindowLayout *out)
+{
+    RigExecSettleWindowLayout(
+        graph.ops.size(),
+        [&graph](uint32_t c) -> const std::vector<uint32_t> & {
+            return graph.ops[c].predecessors;
+        },
+        ops, out);
 }
 
 /// How many earlier ticks a full history reaches back: every windowed op
@@ -160,17 +187,26 @@ RigExecWindowHistoryDepth(const std::vector<uint32_t> &frames,
     for (bool moved = true; moved;) {
         moved = false;
         for (size_t x = 0; x < n && x < inner.size(); ++x) {
-            if (hi[x] < lo[x]) continue;
+            if (hi[x] < lo[x])
+                continue;
             for (const uint32_t y : inner[x]) {
-                if (y >= n) continue;
+                if (y >= n)
+                    continue;
                 const uint32_t needLo = lo[x] + 1, needHi = hi[x] + frames[y];
-                if (needLo < lo[y]) { lo[y] = needLo; moved = true; }
-                if (needHi > hi[y]) { hi[y] = needHi; moved = true; }
+                if (needLo < lo[y]) {
+                    lo[y] = needLo;
+                    moved = true;
+                }
+                if (needHi > hi[y]) {
+                    hi[y] = needHi;
+                    moved = true;
+                }
             }
         }
     }
     uint32_t deepest = 0;
-    for (const uint32_t h : hi) deepest = std::max(deepest, h);
+    for (const uint32_t h : hi)
+        deepest = std::max(deepest, h);
     return deepest;
 }
 
@@ -183,11 +219,14 @@ RigExecWindowUsableTail(const RigExecWindowRing &ring,
 {
     out->clear();
     size_t begin = ring.size();
-    while (begin > 0 && ring[begin - 1]) --begin;
-    for (size_t k = begin; k < ring.size(); ++k) out->push_back(ring[k].get());
-    if (current) out->push_back(current);
+    while (begin > 0 && ring[begin - 1])
+        --begin;
+    for (size_t k = begin; k < ring.size(); ++k)
+        out->push_back(ring[k].get());
+    if (current)
+        out->push_back(current);
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_GRAPH_WINDOW_HISTORY_H
+#endif // RIGEXEC_GRAPH_WINDOW_HISTORY_H
