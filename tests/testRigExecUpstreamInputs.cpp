@@ -1101,7 +1101,7 @@ TestAnOracleReadInput()
         const UsdStageRefPtr stage = UsdStage::Open(stagePath);
         auto evaluator = Make(stage, SdfPath("/Asset/Rig"));
         const RigExecBakedProgram *program = evaluator->GetBakedProgram();
-        CHECK(program && program->GetUpstreamOracle().count(scale));
+        CHECK(program && program->GetUpstreamWeightFieldReads().count(scale));
     }
     // At frame 5, where the driver has left 0 and the scale matters.
     RunCase("oracle input inputs:scale", stagePath, SdfPath("/Asset/Rig"), 5,
@@ -2966,12 +2966,13 @@ CheckSetsAgainstTheExporter(const std::string &stagePath, double t)
             mark(input);
         }
     }
-    if (oracle != program->GetUpstreamOracle()) {
+    if (oracle != program->GetUpstreamWeightFieldReads()) {
         std::printf("FAIL %s: oracle set (%zu) != exporter's (%zu)\n",
-                    stagePath.c_str(), program->GetUpstreamOracle().size(),
+                    stagePath.c_str(),
+                    program->GetUpstreamWeightFieldReads().size(),
                     oracle.size());
     }
-    CHECK(oracle == program->GetUpstreamOracle());
+    CHECK(oracle == program->GetUpstreamWeightFieldReads());
     std::printf("  %s: %zu admissible, %zu oracle\n", stagePath.c_str(),
                 admissible.size(), oracle.size());
 }

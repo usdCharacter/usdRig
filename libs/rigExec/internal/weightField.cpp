@@ -52,12 +52,12 @@ TF_DEFINE_PRIVATE_TOKENS(_weightFieldTokens,
     ((inputsScaleZNeg, rigExec::SchemaAttrText::inputsScaleZNeg))
     ((inputsExtentU, rigExec::SchemaAttrText::inputsExtentU))
     ((inputsExtentV, rigExec::SchemaAttrText::inputsExtentV))
-    ((rigExecFrozenOracleLeaf0, "rigExecFrozen:oracle:leaf0"))
-    ((rigExecFrozenOracleLeaf1, "rigExecFrozen:oracle:leaf1"))
-    ((rigExecFrozenOracleLeaf2, "rigExecFrozen:oracle:leaf2"))
-    ((rigExecFrozenOracleLeaf3, "rigExecFrozen:oracle:leaf3"))
-    ((rigExecFrozenOracleLeaf4, "rigExecFrozen:oracle:leaf4"))
-    ((rigExecFrozenOracleLeaf5, "rigExecFrozen:oracle:leaf5")));
+    ((frozenWeightFieldLeaf0, "frozenWeightField:leaf0"))
+    ((frozenWeightFieldLeaf1, "frozenWeightField:leaf1"))
+    ((frozenWeightFieldLeaf2, "frozenWeightField:leaf2"))
+    ((frozenWeightFieldLeaf3, "frozenWeightField:leaf3"))
+    ((frozenWeightFieldLeaf4, "frozenWeightField:leaf4"))
+    ((frozenWeightFieldLeaf5, "frozenWeightField:leaf5")));
 
 namespace rigExec {
 namespace {
@@ -100,19 +100,19 @@ PointsPath(const UsdStageRefPtr &stage, const UsdPrim &prim,
 }
 // The frozen run's per-leaf sample keys, interned once at load. A weight
 // Volumes also declare the sampled falloff input beside the point sets and tokens.
-const std::array<TfToken, 6> _oracleLeafKeys = {
-    _weightFieldTokens->rigExecFrozenOracleLeaf0,
-    _weightFieldTokens->rigExecFrozenOracleLeaf1,
-    _weightFieldTokens->rigExecFrozenOracleLeaf2,
-    _weightFieldTokens->rigExecFrozenOracleLeaf3,
-    _weightFieldTokens->rigExecFrozenOracleLeaf4,
-    _weightFieldTokens->rigExecFrozenOracleLeaf5};
+const std::array<TfToken, 6> _fieldLeafKeys = {
+    _weightFieldTokens->frozenWeightFieldLeaf0,
+    _weightFieldTokens->frozenWeightFieldLeaf1,
+    _weightFieldTokens->frozenWeightFieldLeaf2,
+    _weightFieldTokens->frozenWeightFieldLeaf3,
+    _weightFieldTokens->frozenWeightFieldLeaf4,
+    _weightFieldTokens->frozenWeightFieldLeaf5};
 TfToken
-OracleLeafKey(size_t k)
+FieldLeafKey(size_t k)
 {
-    return k < _oracleLeafKeys.size()
-               ? _oracleLeafKeys[k]
-               : TfToken("rigExecFrozen:oracle:leaf" + std::to_string(k));
+    return k < _fieldLeafKeys.size()
+               ? _fieldLeafKeys[k]
+               : TfToken("frozenWeightField:leaf" + std::to_string(k));
 }
 float
 Scalar(const Baked &B, const Field &field, int object, int member,
@@ -123,7 +123,7 @@ Scalar(const Baked &B, const Field &field, int object, int member,
         key < field.scalarReadIndex.size()) {
         const int read = field.scalarReadIndex[key];
         if (read >= 0)
-            return RigExecBakedReadOracleScalar(
+            return RigExecBakedReadWeightScalar(
                 B, field.scalarReads[size_t(read)], field.availableChains,
                 fallback);
     }
@@ -141,24 +141,24 @@ RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator,
     // GetString() interns a path and reads a static on an empty token.
     RigExecPathText pathText;
     for (auto &object : B.weightObjects) {
-        RigExecBakedDescribeWeightOracle(evaluator, object.path,
-                                         RigExecBakedProbeTime(B.stage),
-                                         &object.oracleFacts);
-        object.oracleName = pathText(object.path);
+        RigExecBakedDescribeWeightFieldFacts(evaluator, object.path,
+                                             RigExecBakedProbeTime(B.stage),
+                                             &object.fieldFacts);
+        object.fieldName = pathText(object.path);
         const std::string type = object.type.GetText();
-        object.oracleKind = type == SchemaTypeName::RigExecStaticWeight    ? 0
-                            : type == SchemaTypeName::RigExecDynamicWeight ? 1
-                            : type == SchemaTypeName::RigExecCombineWeight ? 2
-                            : type == SchemaTypeName::RigExecSphereWeight  ? 3
-                            : type == SchemaTypeName::RigExecPlaneWeight   ? 4
-                            : type == SchemaTypeName::RigExecCurveWeight   ? 5
-                                                                           : -1;
-        object.oracleRepresentation =
+        object.fieldKind = type == SchemaTypeName::RigExecStaticWeight    ? 0
+                           : type == SchemaTypeName::RigExecDynamicWeight ? 1
+                           : type == SchemaTypeName::RigExecCombineWeight ? 2
+                           : type == SchemaTypeName::RigExecSphereWeight  ? 3
+                           : type == SchemaTypeName::RigExecPlaneWeight   ? 4
+                           : type == SchemaTypeName::RigExecCurveWeight   ? 5
+                                                                          : -1;
+        object.fieldRepresentation =
             object.representation == _weightFieldTokens->constant ? 0
             : object.representation == _weightFieldTokens->dense  ? 1
             : object.representation == _weightFieldTokens->sparse ? 2
                                                                   : -1;
-        object.oracleClamp = object.rangePolicy == _weightFieldTokens->clamp;
+        object.fieldClamp = object.rangePolicy == _weightFieldTokens->clamp;
         const std::string modes[] = {
             SchemaValueText::multiply, SchemaValueText::add,
             SchemaValueText::subtract, SchemaValueText::max,
@@ -167,80 +167,80 @@ RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator,
         const std::string combine = object.combineMode.GetText();
         for (int i = 0; i < 7; ++i)
             if (combine == modes[i])
-                object.oracleCombineMode = i;
-        object.oracleAxisName = object.oracleFacts.planeAxis.GetText();
-        object.oracleBoundsName = object.oracleFacts.planeBounds.GetText();
-        object.oracleAxis = object.oracleAxisName == SchemaValueText::x   ? 0
-                            : object.oracleAxisName == SchemaValueText::y ? 1
-                            : object.oracleAxisName == SchemaValueText::z ? 2
-                                                                          : -1;
-        object.oracleBounded =
-            object.oracleBoundsName == SchemaValueText::bounded;
-        object.oracleUnbounded =
-            object.oracleBoundsName == SchemaValueText::unbounded;
+                object.fieldCombineMode = i;
+        object.fieldAxisName = object.fieldFacts.planeAxis.GetText();
+        object.fieldBoundsName = object.fieldFacts.planeBounds.GetText();
+        object.fieldAxis = object.fieldAxisName == SchemaValueText::x   ? 0
+                           : object.fieldAxisName == SchemaValueText::y ? 1
+                           : object.fieldAxisName == SchemaValueText::z ? 2
+                                                                        : -1;
+        object.fieldBounded =
+            object.fieldBoundsName == SchemaValueText::bounded;
+        object.fieldUnbounded =
+            object.fieldBoundsName == SchemaValueText::unbounded;
         const auto prim = B.stage->GetPrimAtPath(object.path);
-        object.oracleAxisAttribute =
+        object.fieldAxisAttribute =
             bool(prim.GetAttribute(_weightFieldTokens->planeAxis));
-        object.oracleBoundsAttribute =
+        object.fieldBoundsAttribute =
             bool(prim.GetAttribute(_weightFieldTokens->planeBounds));
-        object.oracleLeaves.decl.keys.clear();
+        object.fieldLeaves.decl.keys.clear();
         for (const TfToken *name :
              {&_weightFieldTokens->sampleSource,
               &_weightFieldTokens->weightTarget, &_weightFieldTokens->curve}) {
-            object.oracleLeaves.decl.Add({PointsPath(B.stage, prim, *name),
-                                          RigExecRevisionLeafType::Vec3fArray,
-                                          RigExecRevisionLeafTime::AtTime,
-                                          RigExecRevisionLeafFlavour::Raw,
-                                          VtValue()});
+            object.fieldLeaves.decl.Add({PointsPath(B.stage, prim, *name),
+                                         RigExecRevisionLeafType::Vec3fArray,
+                                         RigExecRevisionLeafTime::AtTime,
+                                         RigExecRevisionLeafFlavour::Raw,
+                                         VtValue()});
         }
         for (const TfToken *name : {&_weightFieldTokens->planeAxis,
                                     &_weightFieldTokens->planeBounds}) {
-            object.oracleLeaves.decl.Add({object.path.AppendProperty(*name),
-                                          RigExecRevisionLeafType::Token,
-                                          RigExecRevisionLeafTime::AtTime,
-                                          RigExecRevisionLeafFlavour::Raw,
-                                          VtValue()});
+            object.fieldLeaves.decl.Add({object.path.AppendProperty(*name),
+                                         RigExecRevisionLeafType::Token,
+                                         RigExecRevisionLeafTime::AtTime,
+                                         RigExecRevisionLeafFlavour::Raw,
+                                         VtValue()});
         }
-        object.oracleFalloffSamplesLeaf = -1;
-        if (object.oracleKind >= 3 && object.oracleKind <= 5) {
-            object.oracleFalloffSamplesLeaf =
-                int(object.oracleLeaves.decl.keys.size());
-            object.oracleLeaves.decl.Add(
+        object.fieldFalloffSamplesLeaf = -1;
+        if (object.fieldKind >= 3 && object.fieldKind <= 5) {
+            object.fieldFalloffSamplesLeaf =
+                int(object.fieldLeaves.decl.keys.size());
+            object.fieldLeaves.decl.Add(
                 {object.path.AppendProperty(_weightFieldTokens->falloffSamples),
                  RigExecRevisionLeafType::FloatArray,
                  RigExecRevisionLeafTime::AtTime,
                  RigExecRevisionLeafFlavour::ResolvedOnly,
                  VtValue(VtFloatArray())});
         }
-        object.oracleFrozenKeys.clear();
-        for (size_t k = 0; k < object.oracleLeaves.decl.keys.size(); ++k)
-            object.oracleFrozenKeys.push_back(
-                object.path.AppendProperty(OracleLeafKey(k)));
-        RigExecBakedBindPathLeaves(B.stage, &object.oracleLeaves);
+        object.fieldFrozenKeys.clear();
+        for (size_t k = 0; k < object.fieldLeaves.decl.keys.size(); ++k)
+            object.fieldFrozenKeys.push_back(
+                object.path.AppendProperty(FieldLeafKey(k)));
+        RigExecBakedBindPathLeaves(B.stage, &object.fieldLeaves);
         RigExecWeightRecord record;
-        record.name = object.oracleName;
-        record.kind = object.oracleKind;
-        record.representation = object.oracleRepresentation;
-        record.combineMode = object.oracleCombineMode;
+        record.name = object.fieldName;
+        record.kind = object.fieldKind;
+        record.representation = object.fieldRepresentation;
+        record.combineMode = object.fieldCombineMode;
         record.type = object.type;
         record.representationToken = object.representation;
         record.rangePolicy = object.rangePolicy;
         record.combineToken = object.combineMode;
         record.planeAxis = object.planeAxis;
         record.planeBounds = object.planeBounds;
-        record.clamp = object.oracleClamp;
+        record.clamp = object.fieldClamp;
         record.base = object.base;
         record.inputs = object.inputs;
         record.values = object.values;
         record.indices = object.indices;
         record.falloffCurve = object.falloffCurve;
-        record.staticError = object.oracleFacts.staticError;
-        record.phaseError = object.oracleFacts.phaseError;
-        record.samplesInFlight = object.oracleFacts.samplesInFlight;
+        record.staticError = object.fieldFacts.staticError;
+        record.phaseError = object.fieldFacts.phaseError;
+        record.samplesInFlight = object.fieldFacts.samplesInFlight;
         B.weightProgram.push_back(std::move(record));
     }
     std::string placementError;
-    RigExecBakedOracleReadIndex oracleIndex;
+    RigExecBakedWeightScalarReadIndex readIndex;
     const auto add = [&](const SdfPath &path, Field::Form form, int consumer,
                          int part) {
         const auto found = B.weightIndex.find(path);
@@ -280,7 +280,7 @@ RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator,
         field.placementPhase = placement.kind == RigExecReadPhaseKind::Final
                                    ? Field::PlacementPhase::Final
                                    : Field::PlacementPhase::Base;
-        // Oracle reads observe the generation publication boundary,
+        // Weight-field reads observe the generation publication boundary,
         // not every retained final in the canonical graph. Property envelopes
         // run before their own chain finishes; only earlier semantic chains
         // have published. Rest-tier consumers observe the completed head tier.
@@ -303,21 +303,21 @@ RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator,
             for (int member = 0; member < 19; ++member) {
                 const bool used =
                     member == 0 ||
-                    (weight.oracleKind == 1 && member >= 1 && member <= 3) ||
-                    (weight.oracleKind == 2 && (member == 4 || member == 5)) ||
-                    (weight.oracleKind == 3 && member >= 4 && member <= 16) ||
-                    (weight.oracleKind == 4 &&
+                    (weight.fieldKind == 1 && member >= 1 && member <= 3) ||
+                    (weight.fieldKind == 2 && (member == 4 || member == 5)) ||
+                    (weight.fieldKind == 3 && member >= 4 && member <= 16) ||
+                    (weight.fieldKind == 4 &&
                      ((member >= 4 && member <= 7) || member >= 17)) ||
-                    (weight.oracleKind == 5 && member >= 4 && member <= 10);
+                    (weight.fieldKind == 5 && member >= 4 && member <= 10);
                 if (!used)
                     continue;
                 field.scalarReadIndex[size_t(object) * 19 + size_t(member)] =
                     int(field.scalarReads.size());
                 field.scalarObjects.push_back(object);
                 field.scalarMembers.push_back(member);
-                field.scalarReads.push_back(RigExecBakedBuildOracleRead(
+                field.scalarReads.push_back(RigExecBakedBuildWeightScalarRead(
                     &B, prim.GetAttribute(ScalarNames[member]),
-                    field.availableChains, &oracleIndex));
+                    field.availableChains, &readIndex));
             }
         };
         visit(visit, field.object);
@@ -429,15 +429,15 @@ RigExecBakedDeclareWeightField(Baked *program, RigExecBakedStep *step)
             if (program->headLeaves[leaf].varying)
                 step->varyingInputs = true;
     }
-    // Raw oracle arrays participate in the same numbered leaf census as
+    // Raw field arrays participate in the same numbered leaf census as
     // revision inputs, including private sampled arrays and failed reads.
     for (size_t i = 0; i < program->pathLeafRefs.size(); ++i) {
         const auto &ref = program->pathLeafRefs[i];
-        if (ref.owner != RigExecBakedPathLeafOwner::WeightOracle ||
+        if (ref.owner != RigExecBakedPathLeafOwner::WeightField ||
             std::find(field.scalarObjects.begin(), field.scalarObjects.end(),
                       int(ref.a)) == field.scalarObjects.end())
             continue;
-        const auto &leaves = program->weightObjects[ref.a].oracleLeaves;
+        const auto &leaves = program->weightObjects[ref.a].fieldLeaves;
         step->bindingLeaves.push_back(uint32_t(program->leafRefs.size() + i));
         if (ref.key < leaves.varying.size() && leaves.varying[ref.key]) {
             step->varyingInputs = true;
@@ -528,14 +528,13 @@ RigExecBakedCaptureWeightFieldInputs(
         input = RigExecWeightFieldInputs{};
         input.blocked =
             id < B.weightCycleBlocked.size() && B.weightCycleBlocked[id];
-        const int samplesLeaf = object.oracleFalloffSamplesLeaf;
+        const int samplesLeaf = object.fieldFalloffSamplesLeaf;
         if (samplesLeaf >= 0 &&
-            size_t(samplesLeaf) < object.oracleLeaves.values.size() &&
-            object.oracleLeaves.values[size_t(samplesLeaf)]
+            size_t(samplesLeaf) < object.fieldLeaves.values.size() &&
+            object.fieldLeaves.values[size_t(samplesLeaf)]
                 .IsHolding<VtFloatArray>()) {
-            const auto &samples =
-                object.oracleLeaves.values[size_t(samplesLeaf)]
-                    .UncheckedGet<VtFloatArray>();
+            const auto &samples = object.fieldLeaves.values[size_t(samplesLeaf)]
+                                      .UncheckedGet<VtFloatArray>();
             input.falloffSamples = samples.cdata();
             input.falloffSampleCount = samples.size();
         }
@@ -547,10 +546,10 @@ RigExecBakedCaptureWeightFieldInputs(
                 RigExecBakedReadWeightPointInput(B, index, int(id), key);
             input.phasedPoints[size_t(key)] = {
                 chosen.declared, chosen.available, chosen.data, chosen.count};
-            if (size_t(key) < object.oracleLeaves.values.size() &&
-                object.oracleLeaves.values[size_t(key)]
+            if (size_t(key) < object.fieldLeaves.values.size() &&
+                object.fieldLeaves.values[size_t(key)]
                     .IsHolding<VtVec3fArray>()) {
-                const auto &points = object.oracleLeaves.values[size_t(key)]
+                const auto &points = object.fieldLeaves.values[size_t(key)]
                                          .UncheckedGet<VtVec3fArray>();
                 input.rawPoints[size_t(key)] = {false, true, points.data(),
                                                 points.size()};
@@ -558,16 +557,16 @@ RigExecBakedCaptureWeightFieldInputs(
         }
         // GetString() on an empty token reads a function-local static.
         const auto token = [&](size_t key, bool exists, const char *fallback) {
-            const auto &values = object.oracleLeaves.values;
+            const auto &values = object.fieldLeaves.values;
             if (key < values.size() && values[key].IsHolding<TfToken>()) {
                 const TfToken &value = values[key].UncheckedGet<TfToken>();
                 return value.IsEmpty() ? std::string() : value.GetString();
             }
             return exists ? std::string() : std::string(fallback);
         };
-        input.axis = token(3, object.oracleAxisAttribute, SchemaValueText::x);
+        input.axis = token(3, object.fieldAxisAttribute, SchemaValueText::x);
         input.bounds =
-            token(4, object.oracleBoundsAttribute, SchemaValueText::unbounded);
+            token(4, object.fieldBoundsAttribute, SchemaValueText::unbounded);
         const auto &placements =
             field.placementPhase == Field::PlacementPhase::Base
                 ? B.volumePlacementBase

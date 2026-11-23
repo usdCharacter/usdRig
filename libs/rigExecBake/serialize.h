@@ -27,7 +27,7 @@ class RigExecBakePools;
 /// pose and geometry tables with every read in the field it was collected
 /// for (each registered read, the geometry assembly's blend weight,
 /// activation and default weight reads), the weight objects with their
-/// oracle facts, the property chains and the phased consumers. Skin
+/// field facts, the property chains and the phased consumers. Skin
 /// topologies are written sparse. \p pools is seeded with \p inputs'
 /// values and points first, so the ids its tables hold stand. The static
 /// data a run leaves (RigExecBakeCaptureStatics), the external movers and
@@ -39,6 +39,6 @@ bool RigExecBakeFillFile(const RigExecBakedProgramImpl &program,
                          RigExecBakePathTable *paths, RigExecBakePools *pools,
                          fb::RigExecWireFile *file, std::string *error);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_BAKE_SERIALIZE_H
+#endif // RIGEXEC_BAKE_SERIALIZE_H

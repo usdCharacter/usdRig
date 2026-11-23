@@ -3057,8 +3057,9 @@ private:
                     return _Bad(who + ": invalid or duplicate scalar member");
                 if (field.scalarReads[r].tag != InputTag::Float ||
                     field.scalarReads[r].mode != ReadMode::Resolved)
-                    return _Bad(who + ": scalar read has a non-oracle origin");
-                _oracleScalarContexts.emplace(&field.scalarReads[r],
+                    return _Bad(who +
+                                ": scalar read is not a resolved float read");
+                _weightScalarContexts.emplace(&field.scalarReads[r],
                                               &field.availableChains);
                 if (!_Read(&field.scalarReads[r], -1, _Resolved, who,
                            "scalar_reads", long(r)))
@@ -3086,8 +3087,9 @@ private:
                                         fb::SlotDomain::PropertyResult,
                                         chain.versionBase +
                                             uint32_t(chain.revisions.size())))
-                                    return _Bad(who + ": missing contextual "
-                                                      "oracle chain read");
+                                    return _Bad(who +
+                                                ": missing contextual "
+                                                "weight field chain read");
                                 for (const auto &record : _f.phasedConsumers)
                                     if (record.chain == available &&
                                         _f.inputs[record.consumer].name() ==
@@ -3098,7 +3100,7 @@ private:
                                             record.version))
                                         return _Bad(who +
                                                     ": missing contextual "
-                                                    "oracle record read");
+                                                    "weight field record read");
                             }
             }
             for (int32_t slot : field.volumes)
@@ -4796,14 +4798,14 @@ private:
                     : -1;
             // Property revisions own entering phases and suppress later target overlays.
             // Ordinary readers retain conditional Final fallbacks after typed records.
-            const auto oracle = _oracleScalarContexts.find(input);
-            const auto oracleKind = [&](uint32_t slot) {
+            const auto scalar = _weightScalarContexts.find(input);
+            const auto fieldKind = [&](uint32_t slot) {
                 auto kind = fb::PropertyCandidateKind::SlotOnly;
-                if (oracle == _oracleScalarContexts.end())
+                if (scalar == _weightScalarContexts.end())
                     return kind;
-                // Oracle overlays are per-consumer publication contexts, in
+                // Weight-field overlays are per-consumer publication contexts, in
                 // chain target/record order, distinct from ordinary bindings.
-                for (int32_t c : *oracle->second) {
+                for (int32_t c : *scalar->second) {
                     if (_f.propertyChains[size_t(c)].target == slot)
                         kind = fb::PropertyCandidateKind::ChainFinal;
                     for (const auto &record : _f.phasedConsumers)
@@ -4813,7 +4815,7 @@ private:
                 }
                 return kind;
             };
-            // Resolved oracle/path reads consult the publication overlay at
+            // Resolved weight-field/path reads consult the publication overlay at
             // every hop; their target Final remains a valid later fallback.
             using CandidateKind = fb::PropertyCandidateKind;
             std::map<uint32_t, CandidateKind> expectedProperty, expectedDouble;
@@ -4835,8 +4837,8 @@ private:
                 const bool record =
                     slot.phased() >= 0 &&
                     (!boundWalk || input->mode != ReadMode::Pinned);
-                const auto kind = oracle != _oracleScalarContexts.end()
-                                      ? oracleKind(slotId)
+                const auto kind = scalar != _weightScalarContexts.end()
+                                      ? fieldKind(slotId)
                                   : sourceOnly ? CandidateKind::SlotOnly
                                   : chain      ? CandidateKind::ChainFinal
                                   : record     ? CandidateKind::PhasedRecord
@@ -7894,10 +7896,10 @@ private:
                 !_PathId(w.combineMode, _TokenOrZero, row, "combine_mode") ||
                 !_PathId(w.planeAxis, _TokenOrZero, row, "plane_axis") ||
                 !_PathId(w.planeBounds, _TokenOrZero, row, "plane_bounds") ||
-                !_PathId(w.oraclePlaneAxis, _TokenOrZero, row,
-                         "oracle_plane_axis") ||
-                !_PathId(w.oraclePlaneBounds, _TokenOrZero, row,
-                         "oracle_plane_bounds") ||
+                !_PathId(w.fieldPlaneAxis, _TokenOrZero, row,
+                         "field_plane_axis") ||
+                !_PathId(w.fieldPlaneBounds, _TokenOrZero, row,
+                         "field_plane_bounds") ||
                 !_PathIds(w.combineTargetPoints, _AnyPath, row,
                           "combine_target_points") ||
                 !_PathIds(w.targetPoints, _AnyPath, row, "target_points") ||
@@ -7919,19 +7921,19 @@ private:
                 !_Index(w.providerSlot, _slots, true, row, "provider_slot")) {
                 return false;
             }
-            // The painted arrays and the oracle's points, as input slots:
+            // The painted arrays and the weight field's points, as input slots:
             // typed, with pool defaults; the painted ones are the object's
-            // own attributes. The oracle's attribute is the one the stage
+            // own attributes. The field's attribute is the one the stage
             // resolves its relationship to, which the file does not hold.
             const std::tuple<int32_t, InputTag, const char *, const char *>
                 slots[] = {{w.valuesSlot, InputTag::FloatArray, "values_slot",
                             SchemaAttrText::rigExecValues},
                            {w.indicesSlot, InputTag::IntArray, "indices_slot",
                             SchemaAttrText::rigExecIndices},
-                           {w.oracleSamplesSlot, InputTag::Vec3fArray,
-                            "oracle_samples_slot", nullptr},
-                           {w.oracleCurveSlot, InputTag::Vec3fArray,
-                            "oracle_curve_slot", nullptr}};
+                           {w.fieldSamplesSlot, InputTag::Vec3fArray,
+                            "field_samples_slot", nullptr},
+                           {w.fieldCurveSlot, InputTag::Vec3fArray,
+                            "field_curve_slot", nullptr}};
             for (const auto &[slot, tag, field, attribute] : slots) {
                 if (!_InputSlotOf(slot, tag, row, field)) {
                     return false;
@@ -7948,9 +7950,9 @@ private:
                 }
             }
             for (const auto &entry :
-                 {std::make_pair(w.oraclePlaneAxisSlot,
+                 {std::make_pair(w.fieldPlaneAxisSlot,
                                  SchemaAttrText::rigExecPlaneAxis),
-                  std::make_pair(w.oraclePlaneBoundsSlot,
+                  std::make_pair(w.fieldPlaneBoundsSlot,
                                  SchemaAttrText::rigExecPlaneBounds)}) {
                 const int32_t slot = entry.first;
                 if (!_InputSlotOf(slot, InputTag::Token, row, entry.second))
@@ -7958,10 +7960,11 @@ private:
                 if (slot >= 0 && (!_SlotIs(slot, w.path, entry.second) ||
                                   (_f.inputs[size_t(slot)].flags() &
                                    uint8_t(fb::InputSlotFlags::Listed))))
-                    return _Bad(row + ": oracle token must be its private raw "
-                                      "attribute slot");
+                    return _Bad(row +
+                                ": weight field token must be its private raw "
+                                "attribute slot");
             }
-            // Dependency order bounds the oracle's recursion.
+            // Dependency order bounds the weight field's recursion.
             if (!_Index(w.base, _weights, true, row, "base") ||
                 !_Indices(w.inputs, _weights, false, row, "inputs")) {
                 return false;
@@ -9119,7 +9122,7 @@ private:
     std::set<const RigExecWireInput *> _sampledLeafReads;
     std::set<const RigExecWireInput *> _boundWalkReads;
     std::map<const RigExecWireInput *, const std::vector<int32_t> *>
-        _oracleScalarContexts;
+        _weightScalarContexts;
     /// Per path node: 0 for paths[0], else its parent's depth plus one.
     std::vector<uint32_t> _depth;
     /// The steps in playback order, and each step's position in it.

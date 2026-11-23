@@ -948,10 +948,10 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
         }
         c.enabled = bind(prim, _tokens->inputsEnabled, true);
         c.defaultWeight = bind(prim, _tokens->inputsDefaultWeight, 1.0f);
-        // The envelope object, resolved per frame by the oracle and not
+        // The envelope object, resolved per frame by the weight field and not
         // captured here: what the bake records is only that the constraint
         // HAS one, and enough of the invalidation index to notice the object
-        // changing. Every read the oracle makes goes through the
+        // changing. Every read the weight field makes goes through the
         // generation's resolved inputs, so the prim is routed rather than
         // bound -- an interactive override on any property of it reaches the
         // next generation with nothing to place.
@@ -3450,7 +3450,7 @@ RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
         for (size_t k = 0; k < leaves.decl.keys.size(); ++k) {
             const auto &key = leaves.decl.keys[k];
             using F = RigExecRevisionLeafFlavour;
-            if (ref.owner != RigExecBakedPathLeafOwner::WeightOracle &&
+            if (ref.owner != RigExecBakedPathLeafOwner::WeightField &&
                 key.time == RigExecRevisionLeafTime::AtTime &&
                 key.flavour != F::Raw) {
                 for (size_t r = 0; r < B.propertyRecords.size(); ++r) {
@@ -3499,8 +3499,8 @@ RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
     for (size_t w = 0; w < B.weightObjects.size(); ++w) {
         number(B.weightObjects[w].pointLeaves,
                {RigExecBakedPathLeafOwner::Weight, uint32_t(w), 0, 0});
-        number(B.weightObjects[w].oracleLeaves,
-               {RigExecBakedPathLeafOwner::WeightOracle, uint32_t(w), 0, 0});
+        number(B.weightObjects[w].fieldLeaves,
+               {RigExecBakedPathLeafOwner::WeightField, uint32_t(w), 0, 0});
     }
     // The SkinTopology ops' layout leaves, chain by chain.
     for (size_t c = 0; c < B.chains.size(); ++c) {
@@ -3655,7 +3655,7 @@ RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
             declareExact(B.weightObjects[size_t(step.object)].pointLeaves,
                          &step);
     }
-    // Oracle path leaves are allocated by field capture after the initial
+    // Weight-field path leaves are allocated by field capture after the initial
     // census; bind field memo IDs only against this final numbered census.
     for (auto &step : B.steps)
         if (step.kind == RigExecBakedStepKind::WeightField) {

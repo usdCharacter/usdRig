@@ -15,7 +15,7 @@
 
 // The shape types and plane bounds the packet builders dispatch on. A table
 // rather than function-local statics: these run inside step bodies and the
-// weight oracle on workers, and Build touches the table on the owning thread
+// weight field on workers, and Build touches the table on the owning thread
 // (RigExecWeightPacketsTouchTokens).
 TF_DEFINE_PRIVATE_TOKENS(
     _weightTokens,

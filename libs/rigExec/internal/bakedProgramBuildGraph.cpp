@@ -595,7 +595,7 @@ RigExecBakedProgram::_BuildInvalidationIndex(_BuildAttempt &build)
     }
     // The property revisions as head-tier ops, ordered by what they read and
     // refused when that order cannot be trusted.
-    // Envelope objects retain their own oracle consumers and do not produce
+    // Envelope objects retain their own weight field consumers and do not produce
     // mover packets. Register their bindings after the bindings registered
     // above.
     const size_t packetObjects = B.weightObjects.size();

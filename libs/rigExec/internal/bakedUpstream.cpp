@@ -1,6 +1,6 @@
 // The baked program's upstream layer: admitted upstream values placed by
 // path, compared by value from run to run, and the two sets that admit them
-// (the attributes a bake lists as inputs, and those the weight oracle reads).
+// (the attributes a bake lists as inputs, and those the weight field reads).
 
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/api/bakedProgram.h"
@@ -329,7 +329,7 @@ RigExecBakedProgram::DescribeUpstreamArrays(const RigExecRigEvaluator &E)
     const TfToken &combineType = _tokens->rigExecCombineWeight;
     // Visits every object \p seeds reach through composition and hands
     // \p point each array its packet gathers (authored property targets)
-    // and, as `true`, the one target the oracle reads, canonicalized.
+    // and, as `true`, the one target the weight field reads, canonicalized.
     const auto visitPoints = [&](const std::set<SdfPath> &seeds,
                                  const auto &point) {
         std::set<SdfPath> visited;
@@ -384,8 +384,8 @@ RigExecBakedProgram::DescribeUpstreamArrays(const RigExecRigEvaluator &E)
             }
         }
     };
-    visitPoints(weightObjects, [&](const SdfPath &path, bool oracle) {
-        add(path, Time::AtTime, oracle ? "weight oracle" : "weight packet");
+    visitPoints(weightObjects, [&](const SdfPath &path, bool field) {
+        add(path, Time::AtTime, field ? "weight field" : "weight packet");
     });
     // Exec reads a computed packet's points element by element, and an exec
     // value override cannot replace such a read with an array: those
@@ -437,9 +437,9 @@ _AddWalk(const RigExecBakedProgramImpl &B, const UsdAttribute &head,
     paths->insert(walk.begin(), walk.end());
 }
 
-// Builds `upstreamAdmissible` and `upstreamOracle`, restating the reads the
+// Builds `upstreamAdmissible` and `upstreamWeightFieldReads`, restating the reads the
 // .rigexec exporter lists as input slots (rigExecBake computedCapture.cpp)
-// over the program's own tables, and the oracle-resolved objects its
+// over the program's own tables, and the field-resolved objects its
 // descending pass marks. Owning thread.
 void
 _BuildUpstreamSets(RigExecBakedProgramImpl *program)
@@ -674,7 +674,7 @@ _BuildUpstreamSets(RigExecBakedProgramImpl *program)
         B.upstreamAdmissible.erase(path);
     }
 
-    // The objects the volatile oracle resolves, over the exporter's index
+    // The objects the volatile weight field resolves, over the exporter's index
     // space (step-backed objects, then the envelope list): constraint and
     // property-mover envelopes and current-phase fields, then whatever they
     // compose, in one descending pass.
@@ -715,7 +715,7 @@ _BuildUpstreamSets(RigExecBakedProgramImpl *program)
             }
         }
     }
-    B.upstreamOracle.clear();
+    B.upstreamWeightFieldReads.clear();
     for (size_t i = total; i-- > 0;) {
         if (!resolved[i]) {
             continue;
@@ -745,7 +745,7 @@ _BuildUpstreamSets(RigExecBakedProgramImpl *program)
                 mark(input);
             }
         }
-        B.upstreamOracle.insert(hops.begin(), hops.end());
+        B.upstreamWeightFieldReads.insert(hops.begin(), hops.end());
     }
     B.upstreamSetsBuilt = true;
 }
@@ -762,16 +762,17 @@ RigExecBakedProgram::GetUpstreamAdmissible() const
 }
 
 const std::set<SdfPath> &
-RigExecBakedProgram::GetUpstreamOracle() const
+RigExecBakedProgram::GetUpstreamWeightFieldReads() const
 {
     if (!_impl->upstreamSetsBuilt) {
         _BuildUpstreamSets(_impl.get());
     }
-    return _impl->upstreamOracle;
+    return _impl->upstreamWeightFieldReads;
 }
 
 void
-RigExecBakedPlaceUpstream(RigExecBakedProgramImpl *program, bool placeOracle)
+RigExecBakedPlaceUpstream(RigExecBakedProgramImpl *program,
+                          bool placeWeightFieldReads)
 {
     RigExecBakedProgramImpl &B = *program;
     if (B.upstreamMovedThisRun) {
@@ -829,16 +830,17 @@ RigExecBakedPlaceUpstream(RigExecBakedProgramImpl *program, bool placeOracle)
         }
         B.lastUpstream = B.upstream;
     }
-    // The oracle reads the generation's resolved inputs and the stage, so a
-    // value on one of its paths is placed there too, beneath any interactive
-    // override placed after it and any chain result published over it.
-    if (placeOracle && !B.upstream.empty()) {
+    // The weight field reads the generation's resolved inputs and the stage,
+    // so a value on one of its paths is placed there too, beneath any
+    // interactive override placed after it and any chain result published
+    // over it.
+    if (placeWeightFieldReads && !B.upstream.empty()) {
         if (!B.upstreamSetsBuilt) {
             _BuildUpstreamSets(&B);
         }
-        const std::set<SdfPath> &oracle = B.upstreamOracle;
+        const std::set<SdfPath> &fieldReads = B.upstreamWeightFieldReads;
         for (const auto &[path, value] : B.upstream) {
-            if (oracle.count(path)) {
+            if (fieldReads.count(path)) {
                 B.resolvedInputs->SetProperty(path, value);
             }
         }

@@ -1024,7 +1024,7 @@ PartitionAtBuild(const RigExecBakedProgramImpl &B,
 
 /// Declares WeightFrames[slot] for every volume in weight object \p object's
 /// composition closure (its baseWeight and inputWeights, recursively): the
-/// placements the oracle reads when it resolves that object. A closure
+/// placements the weight field reads when it resolves that object. A closure
 /// member outside the table, or a volume slot that has no placement step,
 /// should be unreachable; it falls back to every volume slot.
 void
@@ -5233,7 +5233,7 @@ RigExecBakedRunGeometryPrologue(RigExecBakedProgramImpl *program,
     // generation accounting is consumed before the declared graph operations.
     for (auto &object : B.weightObjects) {
         RigExecBakedSamplePathLeaves(&B, &object.pointLeaves, time, all);
-        RigExecBakedSamplePathLeaves(&B, &object.oracleLeaves, time, all);
+        RigExecBakedSamplePathLeaves(&B, &object.fieldLeaves, time, all);
     }
     for (auto &chain : B.chains) {
         chain.sampledBase = VtVec3fArray();

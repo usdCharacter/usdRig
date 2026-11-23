@@ -424,7 +424,7 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
     // slots, leaves and outputs hold those values, so a job diffs its own
     // table against `lastUpstream` (rule 8) before it runs.
     D.upstreamAdmissible = src.upstreamAdmissible;
-    D.upstreamOracle = src.upstreamOracle;
+    D.upstreamWeightFieldReads = src.upstreamWeightFieldReads;
     D.upstreamSetsBuilt = src.upstreamSetsBuilt;
     D.upstream = src.upstream;
     D.lastUpstream = src.lastUpstream;

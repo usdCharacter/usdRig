@@ -2703,10 +2703,10 @@ TestWeightFieldTokenProducer()
     for (const auto &object :
          rigExec::RigExecBakedProgramAccess::StepGraph(*baked.GetBakedProgram())
              .weightObjects) {
-        CHECK(object.oracleFrozenKeys.size() ==
-              object.oracleLeaves.decl.keys.size());
+        CHECK(object.fieldFrozenKeys.size() ==
+              object.fieldLeaves.decl.keys.size());
         std::set<SdfPath> keys;
-        for (const auto &key : object.oracleFrozenKeys) {
+        for (const auto &key : object.fieldFrozenKeys) {
             CHECK(!key.IsEmpty());
             CHECK(keys.insert(key).second);
         }

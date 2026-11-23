@@ -1166,7 +1166,7 @@ _BinaryCheckInputs(const RigExecBakedProgramImpl &program,
          file.geometry->weightObjects) {
         stepBacked += object.envelopeOnly ? 0 : 1;
         inFlight += object.samplesInFlight ? 1 : 0;
-        staticErrors += object.oracleStaticError.empty() ? 0 : 1;
+        staticErrors += object.fieldStaticError.empty() ? 0 : 1;
     }
     CHECK(stepBacked == program.weightObjects.size());
     std::string previous;
@@ -1945,8 +1945,8 @@ TestComputedEnvelopeBake()
                                  ? 1
                                  : 0;
             CHECK(producers == 1);
-            CHECK(object.oracleStaticError.empty());
-            CHECK(object.oraclePhaseError.empty());
+            CHECK(object.fieldStaticError.empty());
+            CHECK(object.fieldPhaseError.empty());
             CHECK(object.defaultWeight->mode == fb::ReadMode::Baked);
             const bool dynamic = RigExecFormatPathText(*file, object.type) ==
                                  "RigExecDynamicWeight";
@@ -2087,9 +2087,9 @@ TestComputedCurrentPhaseBake()
         }
         CHECK(!found->envelopeOnly);
         CHECK(found->samplesInFlight);
-        CHECK(found->oracleSamplesSlot == -1);
-        CHECK(found->oraclePhaseError.empty());
-        CHECK(found->oracleStaticError.empty());
+        CHECK(found->fieldSamplesSlot == -1);
+        CHECK(found->fieldPhaseError.empty());
+        CHECK(found->fieldStaticError.empty());
         CHECK(found->falloffMax->mode == fb::ReadMode::Baked);
         CHECK(found->falloffMax->walk.size() == 1);
         if (found->falloffMax->walk.size() == 1) {
@@ -2152,7 +2152,7 @@ _ChainScalarEnvelopes(const fb::RigExecWireFile &file)
                        : fallback;
         };
         std::string painted;
-        CHECK(!object.envelopeOnly && object.oracleStaticError.empty() &&
+        CHECK(!object.envelopeOnly && object.fieldStaticError.empty() &&
               object.base < 0 && object.inputs.empty() &&
               representation == "constant" &&
               (object.valuesSlot < 0 ||
@@ -4141,7 +4141,7 @@ TestBake(const std::string &fixture, const std::vector<double> &tableFrames,
                     file->geometry->pathReads.size(), stats.readRows,
                     stats.valueRows, stats.enumeratedKeys, stats.topologies,
                     stats.droppedEntries, stats.samples, stats.bases,
-                    stats.propertyChains, stats.oracleFacts, failed);
+                    stats.propertyChains, stats.fieldFacts, failed);
         std::printf("  array inputs: %zu (%zu live rows, %zu rest rows, %zu "
                     "blend samples, %zu layout pairs, %zu chain bases, %zu "
                     "painted arrays, %zu oracle points)\n",

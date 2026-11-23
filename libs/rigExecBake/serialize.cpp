@@ -1785,7 +1785,7 @@ _FileFill::_Geometry(fb::RigExecWireDomainGeometry *geometry)
     geometry->chainChunkBegin = _ToI32s(program.chainChunkBegin);
     geometry->chainChunkEnd = _ToI32s(program.chainChunkEnd);
     // The step-backed objects in the program's order, then the envelope-
-    // only ones, each with its reads and oracle facts as collected.
+    // only ones, each with its reads and field facts as collected.
     geometry->weightObjects = _inputs.weightObjects;
     geometry->weightFields = _inputs.weightFields;
     for (size_t f = 0; f < geometry->weightFields.size(); ++f) {

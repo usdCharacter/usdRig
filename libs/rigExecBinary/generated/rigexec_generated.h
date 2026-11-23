@@ -17074,16 +17074,16 @@ struct RigExecWireWeightObject : public ::flatbuffers::NativeTable {
   std::vector<float> falloffCurve{};
   bool envelopeOnly = false;
   bool samplesInFlight = false;
-  uint32_t oraclePlaneAxis = 0;
-  uint32_t oraclePlaneBounds = 0;
-  std::string oraclePhaseError{};
-  std::string oracleStaticError{};
+  uint32_t fieldPlaneAxis = 0;
+  uint32_t fieldPlaneBounds = 0;
+  std::string fieldPhaseError{};
+  std::string fieldStaticError{};
   int32_t valuesSlot = -1;
   int32_t indicesSlot = -1;
-  int32_t oracleSamplesSlot = -1;
-  int32_t oracleCurveSlot = -1;
-  int32_t oraclePlaneAxisSlot = -1;
-  int32_t oraclePlaneBoundsSlot = -1;
+  int32_t fieldSamplesSlot = -1;
+  int32_t fieldCurveSlot = -1;
+  int32_t fieldPlaneAxisSlot = -1;
+  int32_t fieldPlaneBoundsSlot = -1;
   RigExecWireWeightObject() = default;
   RigExecWireWeightObject(const RigExecWireWeightObject &o);
   RigExecWireWeightObject(RigExecWireWeightObject&&) FLATBUFFERS_NOEXCEPT = default;
@@ -17091,7 +17091,7 @@ struct RigExecWireWeightObject : public ::flatbuffers::NativeTable {
 };
 
 /// One weight object: its composition by value, its scalar reads, and the
-/// facts the runtime's port of the weight oracle needs. `base` and `inputs`
+/// facts the runtime's weight field needs. `base` and `inputs`
 /// index lower entries of the same table (dependency order).
 struct WeightObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef RigExecWireWeightObject NativeTableType;
@@ -17142,16 +17142,16 @@ struct WeightObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_FALLOFFCURVE = 84,
     VT_ENVELOPEONLY = 86,
     VT_SAMPLESINFLIGHT = 88,
-    VT_ORACLEPLANEAXIS = 94,
-    VT_ORACLEPLANEBOUNDS = 96,
-    VT_ORACLEPHASEERROR = 98,
-    VT_ORACLESTATICERROR = 100,
+    VT_FIELDPLANEAXIS = 94,
+    VT_FIELDPLANEBOUNDS = 96,
+    VT_FIELDPHASEERROR = 98,
+    VT_FIELDSTATICERROR = 100,
     VT_VALUESSLOT = 102,
     VT_INDICESSLOT = 104,
-    VT_ORACLESAMPLESSLOT = 106,
-    VT_ORACLECURVESLOT = 108,
-    VT_ORACLEPLANEAXISSLOT = 110,
-    VT_ORACLEPLANEBOUNDSSLOT = 112
+    VT_FIELDSAMPLESSLOT = 106,
+    VT_FIELDCURVESLOT = 108,
+    VT_FIELDPLANEAXISSLOT = 110,
+    VT_FIELDPLANEBOUNDSSLOT = 112
   };
   uint32_t path() const {
     return GetField<uint32_t>(VT_PATH, 0);
@@ -17256,8 +17256,8 @@ struct WeightObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t planeBounds() const {
     return GetField<uint32_t>(VT_PLANEBOUNDS, 0);
   }
-  /// Oracle objects retain the full authored weightTarget cardinality.
-  /// Canonical prim targets have valid=0: raw oracle fallback reads them,
+  /// Field-resolved objects retain the full authored weightTarget cardinality.
+  /// Canonical prim targets have valid=0: raw field fallback reads them,
   /// while packet gathering skips them, preserving native gather semantics.
   const ::flatbuffers::Vector<uint32_t> *targetPoints() const {
     return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_TARGETPOINTS);
@@ -17291,29 +17291,29 @@ struct WeightObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return GetField<uint8_t>(VT_SAMPLESINFLIGHT, 0) != 0;
   }
   /// A plane volume's rigExec:planeAxis and rigExec:planeBounds as the
-  /// oracle reads them (the fallback only when the attribute is absent);
+  /// weight field reads them (the fallback only when the attribute is absent);
   /// Token path ids, 0 for every other type.
-  uint32_t oraclePlaneAxis() const {
-    return GetField<uint32_t>(VT_ORACLEPLANEAXIS, 0);
+  uint32_t fieldPlaneAxis() const {
+    return GetField<uint32_t>(VT_FIELDPLANEAXIS, 0);
   }
-  uint32_t oraclePlaneBounds() const {
-    return GetField<uint32_t>(VT_ORACLEPLANEBOUNDS, 0);
+  uint32_t fieldPlaneBounds() const {
+    return GetField<uint32_t>(VT_FIELDPLANEBOUNDS, 0);
   }
-  /// The oracle's error text when the read-phase check fails, else empty.
-  const ::flatbuffers::String *oraclePhaseError() const {
-    return GetPointer<const ::flatbuffers::String *>(VT_ORACLEPHASEERROR);
+  /// The field's error text when the read-phase check fails, else empty.
+  const ::flatbuffers::String *fieldPhaseError() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_FIELDPHASEERROR);
   }
-  /// The oracle's error text for the object's first structural failure,
+  /// The field's error text for the object's first structural failure,
   /// which precedes every per-run read of it; else empty.
-  const ::flatbuffers::String *oracleStaticError() const {
-    return GetPointer<const ::flatbuffers::String *>(VT_ORACLESTATICERROR);
+  const ::flatbuffers::String *fieldStaticError() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_FIELDSTATICERROR);
   }
   /// Input slots, -1 for none: the painted rigExec:values (FloatArray)
   /// and rigExec:indices (IntArray), whose defaults are their values at
-  /// Default; and, for an object the oracle resolves, the points a volume
+  /// Default; and, for an object the weight field resolves, the points a volume
   /// not in flight samples (rigExec:sampleSource, else
   /// rigExec:weightTarget) and a curve volume's rigExec:curve points
-  /// (Vec3fArray, each at the attribute the oracle resolves its
+  /// (Vec3fArray, each at the attribute the weight field resolves its
   /// relationship to), read at the time.
   int32_t valuesSlot() const {
     return GetField<int32_t>(VT_VALUESSLOT, -1);
@@ -17321,19 +17321,19 @@ struct WeightObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int32_t indicesSlot() const {
     return GetField<int32_t>(VT_INDICESSLOT, -1);
   }
-  int32_t oracleSamplesSlot() const {
-    return GetField<int32_t>(VT_ORACLESAMPLESSLOT, -1);
+  int32_t fieldSamplesSlot() const {
+    return GetField<int32_t>(VT_FIELDSAMPLESSLOT, -1);
   }
-  int32_t oracleCurveSlot() const {
-    return GetField<int32_t>(VT_ORACLECURVESLOT, -1);
+  int32_t fieldCurveSlot() const {
+    return GetField<int32_t>(VT_FIELDCURVESLOT, -1);
   }
   /// Raw token transport; -1 distinguishes an absent attribute's default
   /// from an existing attribute whose sampled Get fails.
-  int32_t oraclePlaneAxisSlot() const {
-    return GetField<int32_t>(VT_ORACLEPLANEAXISSLOT, -1);
+  int32_t fieldPlaneAxisSlot() const {
+    return GetField<int32_t>(VT_FIELDPLANEAXISSLOT, -1);
   }
-  int32_t oraclePlaneBoundsSlot() const {
-    return GetField<int32_t>(VT_ORACLEPLANEBOUNDSSLOT, -1);
+  int32_t fieldPlaneBoundsSlot() const {
+    return GetField<int32_t>(VT_FIELDPLANEBOUNDSSLOT, -1);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -17408,18 +17408,18 @@ struct WeightObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVector(falloffCurve()) &&
            VerifyField<uint8_t>(verifier, VT_ENVELOPEONLY, 1) &&
            VerifyField<uint8_t>(verifier, VT_SAMPLESINFLIGHT, 1) &&
-           VerifyField<uint32_t>(verifier, VT_ORACLEPLANEAXIS, 4) &&
-           VerifyField<uint32_t>(verifier, VT_ORACLEPLANEBOUNDS, 4) &&
-           VerifyOffset(verifier, VT_ORACLEPHASEERROR) &&
-           verifier.VerifyString(oraclePhaseError()) &&
-           VerifyOffset(verifier, VT_ORACLESTATICERROR) &&
-           verifier.VerifyString(oracleStaticError()) &&
+           VerifyField<uint32_t>(verifier, VT_FIELDPLANEAXIS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_FIELDPLANEBOUNDS, 4) &&
+           VerifyOffset(verifier, VT_FIELDPHASEERROR) &&
+           verifier.VerifyString(fieldPhaseError()) &&
+           VerifyOffset(verifier, VT_FIELDSTATICERROR) &&
+           verifier.VerifyString(fieldStaticError()) &&
            VerifyField<int32_t>(verifier, VT_VALUESSLOT, 4) &&
            VerifyField<int32_t>(verifier, VT_INDICESSLOT, 4) &&
-           VerifyField<int32_t>(verifier, VT_ORACLESAMPLESSLOT, 4) &&
-           VerifyField<int32_t>(verifier, VT_ORACLECURVESLOT, 4) &&
-           VerifyField<int32_t>(verifier, VT_ORACLEPLANEAXISSLOT, 4) &&
-           VerifyField<int32_t>(verifier, VT_ORACLEPLANEBOUNDSSLOT, 4) &&
+           VerifyField<int32_t>(verifier, VT_FIELDSAMPLESSLOT, 4) &&
+           VerifyField<int32_t>(verifier, VT_FIELDCURVESLOT, 4) &&
+           VerifyField<int32_t>(verifier, VT_FIELDPLANEAXISSLOT, 4) &&
+           VerifyField<int32_t>(verifier, VT_FIELDPLANEBOUNDSSLOT, 4) &&
            verifier.EndTable();
   }
   RigExecWireWeightObject *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -17554,17 +17554,17 @@ struct WeightObjectBuilder {
   void add_samplesInFlight(bool samplesInFlight) {
     fbb_.AddElement<uint8_t>(WeightObject::VT_SAMPLESINFLIGHT, static_cast<uint8_t>(samplesInFlight), 0);
   }
-  void add_oraclePlaneAxis(uint32_t oraclePlaneAxis) {
-    fbb_.AddElement<uint32_t>(WeightObject::VT_ORACLEPLANEAXIS, oraclePlaneAxis, 0);
+  void add_fieldPlaneAxis(uint32_t fieldPlaneAxis) {
+    fbb_.AddElement<uint32_t>(WeightObject::VT_FIELDPLANEAXIS, fieldPlaneAxis, 0);
   }
-  void add_oraclePlaneBounds(uint32_t oraclePlaneBounds) {
-    fbb_.AddElement<uint32_t>(WeightObject::VT_ORACLEPLANEBOUNDS, oraclePlaneBounds, 0);
+  void add_fieldPlaneBounds(uint32_t fieldPlaneBounds) {
+    fbb_.AddElement<uint32_t>(WeightObject::VT_FIELDPLANEBOUNDS, fieldPlaneBounds, 0);
   }
-  void add_oraclePhaseError(::flatbuffers::Offset<::flatbuffers::String> oraclePhaseError) {
-    fbb_.AddOffset(WeightObject::VT_ORACLEPHASEERROR, oraclePhaseError);
+  void add_fieldPhaseError(::flatbuffers::Offset<::flatbuffers::String> fieldPhaseError) {
+    fbb_.AddOffset(WeightObject::VT_FIELDPHASEERROR, fieldPhaseError);
   }
-  void add_oracleStaticError(::flatbuffers::Offset<::flatbuffers::String> oracleStaticError) {
-    fbb_.AddOffset(WeightObject::VT_ORACLESTATICERROR, oracleStaticError);
+  void add_fieldStaticError(::flatbuffers::Offset<::flatbuffers::String> fieldStaticError) {
+    fbb_.AddOffset(WeightObject::VT_FIELDSTATICERROR, fieldStaticError);
   }
   void add_valuesSlot(int32_t valuesSlot) {
     fbb_.AddElement<int32_t>(WeightObject::VT_VALUESSLOT, valuesSlot, -1);
@@ -17572,17 +17572,17 @@ struct WeightObjectBuilder {
   void add_indicesSlot(int32_t indicesSlot) {
     fbb_.AddElement<int32_t>(WeightObject::VT_INDICESSLOT, indicesSlot, -1);
   }
-  void add_oracleSamplesSlot(int32_t oracleSamplesSlot) {
-    fbb_.AddElement<int32_t>(WeightObject::VT_ORACLESAMPLESSLOT, oracleSamplesSlot, -1);
+  void add_fieldSamplesSlot(int32_t fieldSamplesSlot) {
+    fbb_.AddElement<int32_t>(WeightObject::VT_FIELDSAMPLESSLOT, fieldSamplesSlot, -1);
   }
-  void add_oracleCurveSlot(int32_t oracleCurveSlot) {
-    fbb_.AddElement<int32_t>(WeightObject::VT_ORACLECURVESLOT, oracleCurveSlot, -1);
+  void add_fieldCurveSlot(int32_t fieldCurveSlot) {
+    fbb_.AddElement<int32_t>(WeightObject::VT_FIELDCURVESLOT, fieldCurveSlot, -1);
   }
-  void add_oraclePlaneAxisSlot(int32_t oraclePlaneAxisSlot) {
-    fbb_.AddElement<int32_t>(WeightObject::VT_ORACLEPLANEAXISSLOT, oraclePlaneAxisSlot, -1);
+  void add_fieldPlaneAxisSlot(int32_t fieldPlaneAxisSlot) {
+    fbb_.AddElement<int32_t>(WeightObject::VT_FIELDPLANEAXISSLOT, fieldPlaneAxisSlot, -1);
   }
-  void add_oraclePlaneBoundsSlot(int32_t oraclePlaneBoundsSlot) {
-    fbb_.AddElement<int32_t>(WeightObject::VT_ORACLEPLANEBOUNDSSLOT, oraclePlaneBoundsSlot, -1);
+  void add_fieldPlaneBoundsSlot(int32_t fieldPlaneBoundsSlot) {
+    fbb_.AddElement<int32_t>(WeightObject::VT_FIELDPLANEBOUNDSSLOT, fieldPlaneBoundsSlot, -1);
   }
   explicit WeightObjectBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
@@ -17657,28 +17657,28 @@ inline ::flatbuffers::Offset<WeightObject> CreateWeightObject(
     ::flatbuffers::Offset<::flatbuffers::Vector<float>> falloffCurve = 0,
     bool envelopeOnly = false,
     bool samplesInFlight = false,
-    uint32_t oraclePlaneAxis = 0,
-    uint32_t oraclePlaneBounds = 0,
-    ::flatbuffers::Offset<::flatbuffers::String> oraclePhaseError = 0,
-    ::flatbuffers::Offset<::flatbuffers::String> oracleStaticError = 0,
+    uint32_t fieldPlaneAxis = 0,
+    uint32_t fieldPlaneBounds = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> fieldPhaseError = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> fieldStaticError = 0,
     int32_t valuesSlot = -1,
     int32_t indicesSlot = -1,
-    int32_t oracleSamplesSlot = -1,
-    int32_t oracleCurveSlot = -1,
-    int32_t oraclePlaneAxisSlot = -1,
-    int32_t oraclePlaneBoundsSlot = -1) {
+    int32_t fieldSamplesSlot = -1,
+    int32_t fieldCurveSlot = -1,
+    int32_t fieldPlaneAxisSlot = -1,
+    int32_t fieldPlaneBoundsSlot = -1) {
   WeightObjectBuilder builder_(_fbb);
   builder_.add_costElements(costElements);
-  builder_.add_oraclePlaneBoundsSlot(oraclePlaneBoundsSlot);
-  builder_.add_oraclePlaneAxisSlot(oraclePlaneAxisSlot);
-  builder_.add_oracleCurveSlot(oracleCurveSlot);
-  builder_.add_oracleSamplesSlot(oracleSamplesSlot);
+  builder_.add_fieldPlaneBoundsSlot(fieldPlaneBoundsSlot);
+  builder_.add_fieldPlaneAxisSlot(fieldPlaneAxisSlot);
+  builder_.add_fieldCurveSlot(fieldCurveSlot);
+  builder_.add_fieldSamplesSlot(fieldSamplesSlot);
   builder_.add_indicesSlot(indicesSlot);
   builder_.add_valuesSlot(valuesSlot);
-  builder_.add_oracleStaticError(oracleStaticError);
-  builder_.add_oraclePhaseError(oraclePhaseError);
-  builder_.add_oraclePlaneBounds(oraclePlaneBounds);
-  builder_.add_oraclePlaneAxis(oraclePlaneAxis);
+  builder_.add_fieldStaticError(fieldStaticError);
+  builder_.add_fieldPhaseError(fieldPhaseError);
+  builder_.add_fieldPlaneBounds(fieldPlaneBounds);
+  builder_.add_fieldPlaneAxis(fieldPlaneAxis);
   builder_.add_falloffCurve(falloffCurve);
   builder_.add_curveValid(curveValid);
   builder_.add_curvePoints(curvePoints);
@@ -17770,16 +17770,16 @@ inline ::flatbuffers::Offset<WeightObject> CreateWeightObjectDirect(
     const std::vector<float> *falloffCurve = nullptr,
     bool envelopeOnly = false,
     bool samplesInFlight = false,
-    uint32_t oraclePlaneAxis = 0,
-    uint32_t oraclePlaneBounds = 0,
-    const char *oraclePhaseError = nullptr,
-    const char *oracleStaticError = nullptr,
+    uint32_t fieldPlaneAxis = 0,
+    uint32_t fieldPlaneBounds = 0,
+    const char *fieldPhaseError = nullptr,
+    const char *fieldStaticError = nullptr,
     int32_t valuesSlot = -1,
     int32_t indicesSlot = -1,
-    int32_t oracleSamplesSlot = -1,
-    int32_t oracleCurveSlot = -1,
-    int32_t oraclePlaneAxisSlot = -1,
-    int32_t oraclePlaneBoundsSlot = -1) {
+    int32_t fieldSamplesSlot = -1,
+    int32_t fieldCurveSlot = -1,
+    int32_t fieldPlaneAxisSlot = -1,
+    int32_t fieldPlaneBoundsSlot = -1) {
   auto inputs__ = inputs ? _fbb.CreateVector<int32_t>(*inputs) : 0;
   auto combineTargetPoints__ = combineTargetPoints ? _fbb.CreateVector<uint32_t>(*combineTargetPoints) : 0;
   auto combineTargetValid__ = combineTargetValid ? _fbb.CreateVector<uint8_t>(*combineTargetValid) : 0;
@@ -17790,8 +17790,8 @@ inline ::flatbuffers::Offset<WeightObject> CreateWeightObjectDirect(
   auto curvePoints__ = curvePoints ? _fbb.CreateVector<uint32_t>(*curvePoints) : 0;
   auto curveValid__ = curveValid ? _fbb.CreateVector<uint8_t>(*curveValid) : 0;
   auto falloffCurve__ = falloffCurve ? _fbb.CreateVector<float>(*falloffCurve) : 0;
-  auto oraclePhaseError__ = oraclePhaseError ? _fbb.CreateString(oraclePhaseError) : 0;
-  auto oracleStaticError__ = oracleStaticError ? _fbb.CreateString(oracleStaticError) : 0;
+  auto fieldPhaseError__ = fieldPhaseError ? _fbb.CreateString(fieldPhaseError) : 0;
+  auto fieldStaticError__ = fieldStaticError ? _fbb.CreateString(fieldStaticError) : 0;
   return rigExec::fb::CreateWeightObject(
       _fbb,
       path,
@@ -17835,16 +17835,16 @@ inline ::flatbuffers::Offset<WeightObject> CreateWeightObjectDirect(
       falloffCurve__,
       envelopeOnly,
       samplesInFlight,
-      oraclePlaneAxis,
-      oraclePlaneBounds,
-      oraclePhaseError__,
-      oracleStaticError__,
+      fieldPlaneAxis,
+      fieldPlaneBounds,
+      fieldPhaseError__,
+      fieldStaticError__,
       valuesSlot,
       indicesSlot,
-      oracleSamplesSlot,
-      oracleCurveSlot,
-      oraclePlaneAxisSlot,
-      oraclePlaneBoundsSlot);
+      fieldSamplesSlot,
+      fieldCurveSlot,
+      fieldPlaneAxisSlot,
+      fieldPlaneBoundsSlot);
 }
 
 ::flatbuffers::Offset<WeightObject> CreateWeightObject(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireWeightObject *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -17860,7 +17860,7 @@ struct RigExecWireWeightFieldPointRead : public ::flatbuffers::NativeTable {
   RigExecWireWeightFieldPointRead &operator=(RigExecWireWeightFieldPointRead o) FLATBUFFERS_NOEXCEPT;
 };
 
-/// One actual native per-consumer oracle context; never shared by object alone.
+/// One per-consumer weight field context; never shared by object alone.
 struct WeightFieldPointRead FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef RigExecWireWeightFieldPointRead NativeTableType;
   typedef WeightFieldPointReadBuilder Builder;
@@ -27354,16 +27354,16 @@ inline RigExecWireWeightObject::RigExecWireWeightObject(const RigExecWireWeightO
         falloffCurve(o.falloffCurve),
         envelopeOnly(o.envelopeOnly),
         samplesInFlight(o.samplesInFlight),
-        oraclePlaneAxis(o.oraclePlaneAxis),
-        oraclePlaneBounds(o.oraclePlaneBounds),
-        oraclePhaseError(o.oraclePhaseError),
-        oracleStaticError(o.oracleStaticError),
+        fieldPlaneAxis(o.fieldPlaneAxis),
+        fieldPlaneBounds(o.fieldPlaneBounds),
+        fieldPhaseError(o.fieldPhaseError),
+        fieldStaticError(o.fieldStaticError),
         valuesSlot(o.valuesSlot),
         indicesSlot(o.indicesSlot),
-        oracleSamplesSlot(o.oracleSamplesSlot),
-        oracleCurveSlot(o.oracleCurveSlot),
-        oraclePlaneAxisSlot(o.oraclePlaneAxisSlot),
-        oraclePlaneBoundsSlot(o.oraclePlaneBoundsSlot) {
+        fieldSamplesSlot(o.fieldSamplesSlot),
+        fieldCurveSlot(o.fieldCurveSlot),
+        fieldPlaneAxisSlot(o.fieldPlaneAxisSlot),
+        fieldPlaneBoundsSlot(o.fieldPlaneBoundsSlot) {
 }
 
 inline RigExecWireWeightObject &RigExecWireWeightObject::operator=(RigExecWireWeightObject o) FLATBUFFERS_NOEXCEPT {
@@ -27408,16 +27408,16 @@ inline RigExecWireWeightObject &RigExecWireWeightObject::operator=(RigExecWireWe
   std::swap(falloffCurve, o.falloffCurve);
   std::swap(envelopeOnly, o.envelopeOnly);
   std::swap(samplesInFlight, o.samplesInFlight);
-  std::swap(oraclePlaneAxis, o.oraclePlaneAxis);
-  std::swap(oraclePlaneBounds, o.oraclePlaneBounds);
-  std::swap(oraclePhaseError, o.oraclePhaseError);
-  std::swap(oracleStaticError, o.oracleStaticError);
+  std::swap(fieldPlaneAxis, o.fieldPlaneAxis);
+  std::swap(fieldPlaneBounds, o.fieldPlaneBounds);
+  std::swap(fieldPhaseError, o.fieldPhaseError);
+  std::swap(fieldStaticError, o.fieldStaticError);
   std::swap(valuesSlot, o.valuesSlot);
   std::swap(indicesSlot, o.indicesSlot);
-  std::swap(oracleSamplesSlot, o.oracleSamplesSlot);
-  std::swap(oracleCurveSlot, o.oracleCurveSlot);
-  std::swap(oraclePlaneAxisSlot, o.oraclePlaneAxisSlot);
-  std::swap(oraclePlaneBoundsSlot, o.oraclePlaneBoundsSlot);
+  std::swap(fieldSamplesSlot, o.fieldSamplesSlot);
+  std::swap(fieldCurveSlot, o.fieldCurveSlot);
+  std::swap(fieldPlaneAxisSlot, o.fieldPlaneAxisSlot);
+  std::swap(fieldPlaneBoundsSlot, o.fieldPlaneBoundsSlot);
   return *this;
 }
 
@@ -27471,16 +27471,16 @@ inline void WeightObject::UnPackTo(RigExecWireWeightObject *_o, const ::flatbuff
   { auto _e = falloffCurve(); if (_e) { _o->falloffCurve.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->falloffCurve[_i] = _e->Get(_i); } } else { _o->falloffCurve.resize(0); } }
   { auto _e = envelopeOnly(); _o->envelopeOnly = _e; }
   { auto _e = samplesInFlight(); _o->samplesInFlight = _e; }
-  { auto _e = oraclePlaneAxis(); _o->oraclePlaneAxis = _e; }
-  { auto _e = oraclePlaneBounds(); _o->oraclePlaneBounds = _e; }
-  { auto _e = oraclePhaseError(); if (_e) _o->oraclePhaseError = _e->str(); }
-  { auto _e = oracleStaticError(); if (_e) _o->oracleStaticError = _e->str(); }
+  { auto _e = fieldPlaneAxis(); _o->fieldPlaneAxis = _e; }
+  { auto _e = fieldPlaneBounds(); _o->fieldPlaneBounds = _e; }
+  { auto _e = fieldPhaseError(); if (_e) _o->fieldPhaseError = _e->str(); }
+  { auto _e = fieldStaticError(); if (_e) _o->fieldStaticError = _e->str(); }
   { auto _e = valuesSlot(); _o->valuesSlot = _e; }
   { auto _e = indicesSlot(); _o->indicesSlot = _e; }
-  { auto _e = oracleSamplesSlot(); _o->oracleSamplesSlot = _e; }
-  { auto _e = oracleCurveSlot(); _o->oracleCurveSlot = _e; }
-  { auto _e = oraclePlaneAxisSlot(); _o->oraclePlaneAxisSlot = _e; }
-  { auto _e = oraclePlaneBoundsSlot(); _o->oraclePlaneBoundsSlot = _e; }
+  { auto _e = fieldSamplesSlot(); _o->fieldSamplesSlot = _e; }
+  { auto _e = fieldCurveSlot(); _o->fieldCurveSlot = _e; }
+  { auto _e = fieldPlaneAxisSlot(); _o->fieldPlaneAxisSlot = _e; }
+  { auto _e = fieldPlaneBoundsSlot(); _o->fieldPlaneBoundsSlot = _e; }
 }
 
 inline ::flatbuffers::Offset<WeightObject> CreateWeightObject(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireWeightObject *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -27532,16 +27532,16 @@ inline ::flatbuffers::Offset<WeightObject> WeightObject::Pack(::flatbuffers::Fla
   auto _falloffCurve = _o->falloffCurve.size() ? _fbb.CreateVector(_o->falloffCurve) : 0;
   auto _envelopeOnly = _o->envelopeOnly;
   auto _samplesInFlight = _o->samplesInFlight;
-  auto _oraclePlaneAxis = _o->oraclePlaneAxis;
-  auto _oraclePlaneBounds = _o->oraclePlaneBounds;
-  auto _oraclePhaseError = _o->oraclePhaseError.empty() ? 0 : _fbb.CreateString(_o->oraclePhaseError);
-  auto _oracleStaticError = _o->oracleStaticError.empty() ? 0 : _fbb.CreateString(_o->oracleStaticError);
+  auto _fieldPlaneAxis = _o->fieldPlaneAxis;
+  auto _fieldPlaneBounds = _o->fieldPlaneBounds;
+  auto _fieldPhaseError = _o->fieldPhaseError.empty() ? 0 : _fbb.CreateString(_o->fieldPhaseError);
+  auto _fieldStaticError = _o->fieldStaticError.empty() ? 0 : _fbb.CreateString(_o->fieldStaticError);
   auto _valuesSlot = _o->valuesSlot;
   auto _indicesSlot = _o->indicesSlot;
-  auto _oracleSamplesSlot = _o->oracleSamplesSlot;
-  auto _oracleCurveSlot = _o->oracleCurveSlot;
-  auto _oraclePlaneAxisSlot = _o->oraclePlaneAxisSlot;
-  auto _oraclePlaneBoundsSlot = _o->oraclePlaneBoundsSlot;
+  auto _fieldSamplesSlot = _o->fieldSamplesSlot;
+  auto _fieldCurveSlot = _o->fieldCurveSlot;
+  auto _fieldPlaneAxisSlot = _o->fieldPlaneAxisSlot;
+  auto _fieldPlaneBoundsSlot = _o->fieldPlaneBoundsSlot;
   return rigExec::fb::CreateWeightObject(
       _fbb,
       _path,
@@ -27585,16 +27585,16 @@ inline ::flatbuffers::Offset<WeightObject> WeightObject::Pack(::flatbuffers::Fla
       _falloffCurve,
       _envelopeOnly,
       _samplesInFlight,
-      _oraclePlaneAxis,
-      _oraclePlaneBounds,
-      _oraclePhaseError,
-      _oracleStaticError,
+      _fieldPlaneAxis,
+      _fieldPlaneBounds,
+      _fieldPhaseError,
+      _fieldStaticError,
       _valuesSlot,
       _indicesSlot,
-      _oracleSamplesSlot,
-      _oracleCurveSlot,
-      _oraclePlaneAxisSlot,
-      _oraclePlaneBoundsSlot);
+      _fieldSamplesSlot,
+      _fieldCurveSlot,
+      _fieldPlaneAxisSlot,
+      _fieldPlaneBoundsSlot);
 }
 
 inline RigExecWireWeightFieldPointRead::RigExecWireWeightFieldPointRead(const RigExecWireWeightFieldPointRead &o)

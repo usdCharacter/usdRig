@@ -1490,7 +1490,7 @@ TestBulkValueKeyBytes()
     step.kind = RigExecBakedStepKind::WeightField;
     step.object = 0;
     const auto fieldKey = [&](const VtVec3fArray &leaf) {
-        W.weightObjects[0].oracleLeaves.values = {VtValue(leaf)};
+        W.weightObjects[0].fieldLeaves.values = {VtValue(leaf)};
         std::string key;
         std::vector<uint32_t> covered;
         CHECK(RigExecBakedOpEffectiveInputKey(W, step, &key, &covered));

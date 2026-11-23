@@ -24,9 +24,9 @@
 
 namespace rigExec {
 
-// One weight object's token fields as the oracle branches on
+// One weight object's token fields as the weight field branches on
 // them, classified once at Open so no call compares text.
-struct RrWeightOracleKind {
+struct RrWeightFieldKind {
     enum class Type : uint8_t {
         Static,
         Dynamic,
@@ -90,13 +90,13 @@ struct RrWeightScratch {
     std::vector<RrWeightPacketScratch> packets;
     std::vector<RrWeightFieldScratch> fields;
     // Per weight object, its classified tokens.
-    std::vector<RrWeightOracleKind> oracleKinds;
-    std::vector<uint8_t> oracleBlocked;
-    // Per weight object, the volume slot whose placement the oracle reads:
+    std::vector<RrWeightFieldKind> fieldKinds;
+    std::vector<uint8_t> fieldBlocked;
+    // Per weight object, the volume slot whose placement the weight field reads:
     // the no_scale_avars slot whose path is the object's own, else -1.
     std::vector<int32_t> volumeSlot;
     // Raw weightTarget slots used only after a failed primary Get.
-    std::vector<int32_t> oracleFallbackSlots;
+    std::vector<int32_t> fieldFallbackSlots;
 };
 
 bool
@@ -116,15 +116,15 @@ RrWeightSizeScratch(RrProgram *program, std::string *error)
         field.children.resize(program->geometry->weightObjects.size() + 1);
         field.supports.resize(program->geometry->weightObjects.size());
     }
-    scratch->oracleFallbackSlots =
-        RigExecStageOracleFallbackSlots(*program->inputState.file);
+    scratch->fieldFallbackSlots =
+        RigExecStageWeightFieldFallbackSlots(*program->inputState.file);
     const auto &file = *program->inputState.file;
-    scratch->oracleBlocked.assign(program->geometry->weightObjects.size(), 0);
+    scratch->fieldBlocked.assign(program->geometry->weightObjects.size(), 0);
     if (file.commonGraph)
         for (uint64_t id : file.commonGraph->excludedValues) {
             const auto &value = file.commonGraph->valueSpecs[size_t(id)];
             if (value.domain == uint32_t(RigExecWireSlotDomain::WeightPacket))
-                scratch->oracleBlocked[value.slot] = 1;
+                scratch->fieldBlocked[value.slot] = 1;
         }
     auto &store = program->store;
     store.weightFieldResults.assign(program->geometry->weightFields.size(), {});
@@ -158,7 +158,7 @@ RrWeightSizeScratch(RrProgram *program, std::string *error)
             }
         }
     }
-    using Kind = RrWeightOracleKind;
+    using Kind = RrWeightFieldKind;
     const std::vector<RigExecWireWeightObject> &objects =
         program->geometry->weightObjects;
     // Every gather's point sources: the live path-read row of the
@@ -209,7 +209,7 @@ RrWeightSizeScratch(RrProgram *program, std::string *error)
                 scratch->falloffRows.emplace(object.path, found->second);
         }
     }
-    scratch->oracleKinds.reserve(objects.size());
+    scratch->fieldKinds.reserve(objects.size());
     for (const RigExecWireWeightObject &object : objects) {
         const std::string type = program->TextOrEmpty(object.type);
         const std::string representation =
@@ -218,11 +218,11 @@ RrWeightSizeScratch(RrProgram *program, std::string *error)
             program->TextOrEmpty(object.rangePolicy);
         const std::string combineMode =
             program->TextOrEmpty(object.combineMode);
-        // The plane tokens as the oracle reads them, not the composition's.
+        // The plane tokens as the weight field reads them, not the composition's.
         const std::string planeAxis =
-            program->TextOrEmpty(object.oraclePlaneAxis);
+            program->TextOrEmpty(object.fieldPlaneAxis);
         const std::string planeBounds =
-            program->TextOrEmpty(object.oraclePlaneBounds);
+            program->TextOrEmpty(object.fieldPlaneBounds);
         Kind kind;
         kind.type =
             type == SchemaTypeName::RigExecStaticWeight    ? Kind::Type::Static
@@ -258,7 +258,7 @@ RrWeightSizeScratch(RrProgram *program, std::string *error)
                                                            : -1;
         kind.bounded = planeBounds == SchemaValueText::bounded;
         kind.unbounded = planeBounds == SchemaValueText::unbounded;
-        scratch->oracleKinds.push_back(kind);
+        scratch->fieldKinds.push_back(kind);
     }
     // A path names at most one slot, so an object has at most one volume.
     // A hand-assembled program may carry no slot tables: no object then
@@ -619,16 +619,16 @@ _RrPainted(const RrProgram *program, int32_t slot, const std::vector<T> &none,
     return read ? *read : none;
 }
 
-struct _RrOracleFieldContext {
+struct _RrWeightFieldContext {
     const RigExecWireWeightField *field;
-    const RrOracleReadContext *reads;
+    const RrWeightScalarReadContext *reads;
     const std::vector<RrMat4d> *placements;
     const std::vector<char> *placed;
 };
 
 const std::vector<RrVec3f> *
 _RrFieldPoints(const RrProgram *program, size_t object, int leaf,
-               const _RrOracleFieldContext *context, bool *declared)
+               const _RrWeightFieldContext *context, bool *declared)
 {
     *declared = false;
     if (!context)
@@ -642,11 +642,11 @@ _RrFieldPoints(const RrProgram *program, size_t object, int leaf,
         program, *context->field->pointReads[found->second].binding);
 }
 
-// The points the oracle reads raw at the evaluation time (its samples, or
+// The points the weight field reads raw at the evaluation time (its samples, or
 // a curve's points): input slot \p slot's elements when the file lists
 // one and it holds a value; null when it reads none.
 const std::vector<RrVec3f> *
-_RrOraclePoints(const RrProgram *program, int32_t slot)
+_RrWeightFieldPoints(const RrProgram *program, int32_t slot)
 {
     return slot >= 0 && RrInputHasValue(program, uint32_t(slot))
                ? RrInputArray<RrVec3f>(program, uint32_t(slot))
@@ -680,7 +680,7 @@ struct RrWeightMath {
 
 struct RrWeightInputs {
     const RrProgram *program;
-    const _RrOracleFieldContext *context = nullptr;
+    const _RrWeightFieldContext *context = nullptr;
     const RrPointFrame *frame = nullptr;
     RrWeightFieldScratch *work = nullptr;
     const RigExecWireWeightObject &wire(size_t i) const
@@ -691,11 +691,11 @@ struct RrWeightInputs {
     {
         const auto &w = wire(i);
         const auto &s = *_RrScratch(program);
-        const auto &k = s.oracleKinds[i];
+        const auto &k = s.fieldKinds[i];
         eval::WeightObjectFacts f;
-        f.kind = k.type == RrWeightOracleKind::Type::Unknown ? -1 : int(k.type);
+        f.kind = k.type == RrWeightFieldKind::Type::Unknown ? -1 : int(k.type);
         f.representation =
-            k.representation == RrWeightOracleKind::Representation::Other
+            k.representation == RrWeightFieldKind::Representation::Other
                 ? -1
                 : int(k.representation);
         f.rangePolicy = k.clamp    ? eval::kWeightPolicyClamp
@@ -708,7 +708,7 @@ struct RrWeightInputs {
         f.inputCount = w.inputs.size();
         f.inputIndices = w.inputs.data();
         f.samplesInFlight = w.samplesInFlight;
-        f.blocked = s.oracleBlocked[i];
+        f.blocked = s.fieldBlocked[i];
         f.checkDynamicSupport = w.indicesSlot >= 0;
         return f;
     }
@@ -726,11 +726,11 @@ struct RrWeightInputs {
     }
     const std::string &weightStaticError(size_t i) const
     {
-        return wire(i).oracleStaticError;
+        return wire(i).fieldStaticError;
     }
     const std::string &weightPhaseError(size_t i) const
     {
-        return wire(i).oraclePhaseError;
+        return wire(i).fieldPhaseError;
     }
 
     bool dynamicSupportMatches(size_t i, size_t base) const
@@ -765,7 +765,7 @@ struct RrWeightInputs {
             const auto found = reads.scalarReadIndices.find({int32_t(i), m});
             return found == reads.scalarReadIndices.end()
                        ? fallback
-                       : RrReadOracleFloat(
+                       : RrReadWeightScalar(
                              program,
                              context->field->scalarReads[found->second], reads,
                              fallback);
@@ -813,13 +813,13 @@ struct RrWeightInputs {
         if (phased) {
             points = _RrFieldPoints(program, i, leaf, context, &declared);
         } else {
-            const auto &fallback = _RrScratch(program)->oracleFallbackSlots;
+            const auto &fallback = _RrScratch(program)->fieldFallbackSlots;
             const auto &w = wire(i);
-            const int32_t slot = leaf == 0             ? w.oracleSamplesSlot
-                                 : leaf == 2           ? w.oracleCurveSlot
+            const int32_t slot = leaf == 0             ? w.fieldSamplesSlot
+                                 : leaf == 2           ? w.fieldCurveSlot
                                  : i < fallback.size() ? fallback[i]
                                                        : -1;
-            points = _RrOraclePoints(program, slot);
+            points = _RrWeightFieldPoints(program, slot);
         }
         return {declared, points != nullptr, points ? points->data() : nullptr,
                 points ? points->size() : 0};
@@ -833,10 +833,10 @@ struct RrWeightInputs {
     {
         const auto &w = wire(i);
         const int32_t slot =
-            bounds ? w.oraclePlaneBoundsSlot : w.oraclePlaneAxisSlot;
+            bounds ? w.fieldPlaneBoundsSlot : w.fieldPlaneAxisSlot;
         if (!context || slot < 0)
-            return program->TextOrEmpty(bounds ? w.oraclePlaneBounds
-                                               : w.oraclePlaneAxis);
+            return program->TextOrEmpty(bounds ? w.fieldPlaneBounds
+                                               : w.fieldPlaneAxis);
         const auto &state = program->inputState;
         return state.slotHasValue[size_t(slot)]
                    ? program->TextOrEmpty(
@@ -1016,7 +1016,7 @@ struct RrWeightHost {
 bool
 _RrResolveField(const RrProgram *program, size_t object, size_t count,
                 const std::vector<RrVec3f> *current, std::vector<float> *values,
-                std::string *error, const _RrOracleFieldContext *context,
+                std::string *error, const _RrWeightFieldContext *context,
                 RrWeightFieldScratch &work)
 {
     RrWeightHost host{{program, context, nullptr, &work},
@@ -1048,8 +1048,8 @@ _RrRunWeightPacket(RrProgram *program, size_t step, std::string *error)
         program->geometry->weightObjects[index];
     RrWeightScratch *scratch = _RrScratch(program);
 
-    const auto type = scratch->oracleKinds[index].type;
-    using Type = RrWeightOracleKind::Type;
+    const auto type = scratch->fieldKinds[index].type;
+    using Type = RrWeightFieldKind::Type;
     const RrPointFrame *frame = nullptr;
     if (type != Type::Static && type != Type::Dynamic &&
         index >= scratch->gathers.size()) {
@@ -1121,9 +1121,9 @@ _RrRunVolumePlacements(RrProgram *program, size_t step, std::string *error)
 } // namespace
 
 bool
-RrResolveWeightOracle(const RrProgram *program, size_t object, size_t count,
-                      const std::vector<RrVec3f> *current,
-                      std::vector<float> *weights, std::string *error)
+RrResolveWeightField(const RrProgram *program, size_t object, size_t count,
+                     const std::vector<RrVec3f> *current,
+                     std::vector<float> *weights, std::string *error)
 {
     std::string unused;
     std::string *why = error ? error : &unused;
@@ -1132,17 +1132,17 @@ RrResolveWeightOracle(const RrProgram *program, size_t object, size_t count,
         return false;
     }
     const RrWeightScratch *scratch = program ? _RrScratch(program) : nullptr;
-    // A wire violation, not an oracle answer: Open checked every index the
+    // A wire violation, not a weight field answer: Open checked every index the
     // pose and geometry tables hand in, and the file keeps each entry's
     // composition below the entry itself.
     if (!scratch || object >= program->geometry->weightObjects.size() ||
-        object >= scratch->oracleKinds.size()) {
+        object >= scratch->fieldKinds.size()) {
         *why = "the file holds no weight object " + std::to_string(object);
         return false;
     }
     RrWeightFieldScratch work;
-    work.children.resize(scratch->oracleKinds.size() + 1);
-    work.supports.resize(scratch->oracleKinds.size());
+    work.children.resize(scratch->fieldKinds.size() + 1);
+    work.supports.resize(scratch->fieldKinds.size());
     const bool ok = _RrResolveField(program, object, count, current, weights,
                                     why, nullptr, work);
     if (!ok)
@@ -1157,7 +1157,7 @@ RrResolveDeclaredWeightField(RrProgram *program, size_t fieldIndex,
     const auto &field = program->geometry->weightFields[fieldIndex];
     const bool base =
         field.placementPhase == fb::WeightFieldPlacementPhase::Base;
-    const _RrOracleFieldContext context{
+    const _RrWeightFieldContext context{
         &field, &program->store.weightFieldContexts[fieldIndex],
         base ? &program->store.volumePlacementBase
              : &program->store.volumePlacement,
@@ -1184,7 +1184,7 @@ RrWeightFieldEffectiveInputMemo(const RrProgram *program, uint32_t fieldIndex,
                                 std::string *key,
                                 std::vector<uint32_t> *covered)
 {
-    using Kind = RrWeightOracleKind;
+    using Kind = RrWeightFieldKind;
     const auto &field = program->geometry->weightFields[fieldIndex];
     const auto &reads = program->store.weightFieldContexts[fieldIndex];
     const auto append = [&](const auto &value) {
@@ -1219,7 +1219,7 @@ RrWeightFieldEffectiveInputMemo(const RrProgram *program, uint32_t fieldIndex,
     for (size_t i = 0; i < field.scalarReads.size(); ++i) {
         const auto &input = field.scalarReads[i];
         const size_t member = size_t(field.scalarMembers[i]);
-        append(RrReadOracleFloat(program, input, reads, defaults[member]));
+        append(RrReadWeightScalar(program, input, reads, defaults[member]));
         for (const auto *segment :
              {&input.propertyCandidates, &input.doubleCandidates})
             for (const auto &hop : *segment) {
@@ -1262,24 +1262,24 @@ RrWeightFieldEffectiveInputMemo(const RrProgram *program, uint32_t fieldIndex,
             }
         // Field evaluation reads the compiled rig cycle gate, independently of
         // ordinary packet publication and its geometry consumer.
-        append(bool(scratch->oracleBlocked[size_t(object)]));
-        const auto &kind = scratch->oracleKinds[size_t(object)];
+        append(bool(scratch->fieldBlocked[size_t(object)]));
+        const auto &kind = scratch->fieldKinds[size_t(object)];
         if (kind.type != Kind::Type::Plane && kind.type != Kind::Type::Sphere &&
             kind.type != Kind::Type::Curve)
             continue;
         bool declared = false;
-        const _RrOracleFieldContext context{&field, &reads, nullptr, nullptr};
+        const _RrWeightFieldContext context{&field, &reads, nullptr, nullptr};
         const auto *selected =
             _RrFieldPoints(program, size_t(object), 1, &context, &declared);
         if (!declared && !wire.samplesInFlight) {
             selected =
                 _RrFieldPoints(program, size_t(object), 0, &context, &declared);
             if (!declared)
-                selected = _RrOraclePoints(program, wire.oracleSamplesSlot);
+                selected = _RrWeightFieldPoints(program, wire.fieldSamplesSlot);
             if (!selected &&
-                size_t(object) < scratch->oracleFallbackSlots.size())
-                selected = _RrOraclePoints(
-                    program, scratch->oracleFallbackSlots[size_t(object)]);
+                size_t(object) < scratch->fieldFallbackSlots.size())
+                selected = _RrWeightFieldPoints(
+                    program, scratch->fieldFallbackSlots[size_t(object)]);
         }
         if (wire.samplesInFlight && !declared) {
             if (count && !current)
@@ -1295,12 +1295,12 @@ RrWeightFieldEffectiveInputMemo(const RrProgram *program, uint32_t fieldIndex,
         const auto *curve = _RrFieldPoints(program, size_t(object), 2, &context,
                                            &curveDeclared);
         if (!curveDeclared)
-            curve = _RrOraclePoints(program, wire.oracleCurveSlot);
+            curve = _RrWeightFieldPoints(program, wire.fieldCurveSlot);
         if (kind.type == Kind::Type::Curve)
             points(curve);
         if (kind.type == Kind::Type::Plane)
             for (int32_t slot :
-                 {wire.oraclePlaneAxisSlot, wire.oraclePlaneBoundsSlot})
+                 {wire.fieldPlaneAxisSlot, wire.fieldPlaneBoundsSlot})
                 if (slot >= 0) {
                     RigExecWireInput raw;
                     raw.tag = RigExecWireInputTag::Token;
@@ -1333,7 +1333,7 @@ RrRunWeightStep(RrProgram *program, size_t step, std::string *error)
         } else {
             RrResolveDeclaredWeightField(program, fieldIndex, 1, nullptr);
         }
-        // Oracle failure is a published field outcome consumed by the
+        // Field failure is a published field outcome consumed by the
         // original consumer's failure policy, not an executor failure.
         return true;
     }

@@ -406,7 +406,7 @@ struct _BinaryCompareStats {
     size_t defaults = 0;
     size_t overrideNumbers = 0;
     size_t propertyChains = 0;
-    size_t oracleFacts = 0;
+    size_t fieldFacts = 0;
     size_t frameRecords = 0;
     size_t recordLists = 0;
     size_t pointBindings = 0;
@@ -1305,7 +1305,7 @@ _BinaryCompareHeadMemo(const rigExec::RigExecBakedProgramImpl &program,
             if (!leaves || ref.key >= leaves->decl.keys.size())
                 continue;
             const auto &key = leaves->decl.keys[ref.key];
-            if (ref.owner == rigExec::RigExecBakedPathLeafOwner::WeightOracle) {
+            if (ref.owner == rigExec::RigExecBakedPathLeafOwner::WeightField) {
                 const auto a = program.stage->GetAttributeAtPath(key.path);
                 if (a)
                     expected.insert(key.path.GetString());
@@ -2893,7 +2893,7 @@ _BinaryCompareWeightObject(
     _BinaryCompareInput(live.extentV, wire.extentV, file);
     CHECK(live.planeAxis.GetString() == _BinaryText(file, wire.planeAxis));
     CHECK(live.planeBounds.GetString() == _BinaryText(file, wire.planeBounds));
-    if (wire.oracleSamplesSlot >= 0) {
+    if (wire.fieldSamplesSlot >= 0) {
         SdfPathVector targets;
         const auto prim = stage->GetPrimAtPath(live.path);
         if (const auto rel =
@@ -2939,7 +2939,7 @@ _BinaryCompareWeightObject(
 /// constraint's envelope, a property revision's envelope, a current-phase
 /// revision's field, and every base and input of one it resolves.
 std::vector<char>
-_BinaryOracleResolved(const _BinaryFile &file)
+_BinaryWeightFieldResolved(const _BinaryFile &file)
 {
     const size_t n = file.geometry ? file.geometry->weightObjects.size() : 0;
     std::vector<char> resolved(n, 0);
@@ -2982,14 +2982,14 @@ _BinaryOracleResolved(const _BinaryFile &file)
 }
 
 void
-_BinaryCompareOracleFacts(const rigExec::RigExecRigEvaluator &evaluator,
-                          const rigExec::fb::RigExecWireWeightObject &wire,
-                          double t, bool resolved, const _BinaryFile &file)
+_BinaryCompareWeightFieldFacts(const rigExec::RigExecRigEvaluator &evaluator,
+                               const rigExec::fb::RigExecWireWeightObject &wire,
+                               double t, bool resolved, const _BinaryFile &file)
 {
     const SdfPath path(_BinaryText(file, wire.path));
-    rigExec::RigExecWeightOracleFacts facts;
-    rigExec::RigExecBakedDescribeWeightOracle(evaluator, path, UsdTimeCode(t),
-                                              &facts);
+    rigExec::RigExecWeightFieldFacts facts;
+    rigExec::RigExecBakedDescribeWeightFieldFacts(evaluator, path,
+                                                  UsdTimeCode(t), &facts);
     CHECK(facts.samplesInFlight == wire.samplesInFlight);
     // The points the oracle samples, and a curve weight's curve, are
     // inputs holding the facts' points. An entry the runtime's oracle
@@ -2997,15 +2997,16 @@ _BinaryCompareOracleFacts(const rigExec::RigExecRigEvaluator &evaluator,
     // samples points it reads, and its curve wherever it reads a non-empty
     // one; any other entry names neither.
     const bool reached = resolved && facts.phaseError.empty();
-    CHECK(wire.oracleSamplesSlot < 0 || (reached && !facts.samplesInFlight));
+    CHECK(wire.fieldSamplesSlot < 0 || (reached && !facts.samplesInFlight));
     const auto present = [&](int32_t slot) {
         return slot >= 0 && size_t(slot) < file.inputs.size() &&
                (file.inputs[size_t(slot)].flags() &
                 uint8_t(rigExec::fb::InputSlotFlags::HasValue)) != 0;
     };
-    int32_t samplesSlot = wire.oracleSamplesSlot;
+    int32_t samplesSlot = wire.fieldSamplesSlot;
     if (!present(samplesSlot)) {
-        const auto fallback = rigExec::RigExecStageOracleFallbackSlots(file);
+        const auto fallback =
+            rigExec::RigExecStageWeightFieldFallbackSlots(file);
         const size_t object =
             size_t(&wire - file.geometry->weightObjects.data());
         if (object < fallback.size())
@@ -3013,35 +3014,35 @@ _BinaryCompareOracleFacts(const rigExec::RigExecRigEvaluator &evaluator,
     }
     CHECK((reached && !facts.samplesInFlight && facts.haveSamples) ==
           present(samplesSlot));
-    CHECK(wire.oracleCurveSlot < 0 ||
+    CHECK(wire.fieldCurveSlot < 0 ||
           (reached && _BinaryText(file, wire.type) == "RigExecCurveWeight"));
-    CHECK(!(reached && facts.haveCurve) || wire.oracleCurveSlot >= 0);
+    CHECK(!(reached && facts.haveCurve) || wire.fieldCurveSlot >= 0);
     std::string bytes;
     if (present(samplesSlot)) {
         CHECK(_BinarySlotBytes(file, samplesSlot, &bytes) &&
               bytes == _BinaryBytesOf(facts.samples));
     }
-    if (wire.oracleCurveSlot >= 0) {
-        CHECK(_BinarySlotBytes(file, wire.oracleCurveSlot, &bytes) &&
+    if (wire.fieldCurveSlot >= 0) {
+        CHECK(_BinarySlotBytes(file, wire.fieldCurveSlot, &bytes) &&
               bytes == (facts.haveCurve ? _BinaryBytesOf(facts.curve)
                                         : std::string()));
     }
     if (_binaryStats) {
-        _binaryStats->arrayOracle += (wire.oracleSamplesSlot >= 0 ? 1 : 0) +
-                                     (wire.oracleCurveSlot >= 0 ? 1 : 0);
+        _binaryStats->arrayOracle += (wire.fieldSamplesSlot >= 0 ? 1 : 0) +
+                                     (wire.fieldCurveSlot >= 0 ? 1 : 0);
     }
     if (_BinaryText(file, wire.type) == "RigExecPlaneWeight") {
         CHECK(facts.planeAxis.GetString() ==
-              _BinaryText(file, wire.oraclePlaneAxis));
+              _BinaryText(file, wire.fieldPlaneAxis));
         CHECK(facts.planeBounds.GetString() ==
-              _BinaryText(file, wire.oraclePlaneBounds));
+              _BinaryText(file, wire.fieldPlaneBounds));
     } else {
-        CHECK(wire.oraclePlaneAxis == 0 && wire.oraclePlaneBounds == 0);
+        CHECK(wire.fieldPlaneAxis == 0 && wire.fieldPlaneBounds == 0);
     }
-    CHECK(facts.phaseError == wire.oraclePhaseError);
-    CHECK(facts.staticError == wire.oracleStaticError);
+    CHECK(facts.phaseError == wire.fieldPhaseError);
+    CHECK(facts.staticError == wire.fieldStaticError);
     if (_binaryStats) {
-        ++_binaryStats->oracleFacts;
+        ++_binaryStats->fieldFacts;
     }
 }
 
@@ -3152,7 +3153,7 @@ _BinaryCompareDomainGeometry(
     // used only by scalar/frame envelopes. Each consuming field has its own
     // oracle-origin reads and immutable publication context.
     CHECK(geometry.weightObjects.size() == program.weightObjects.size());
-    const std::vector<char> resolved = _BinaryOracleResolved(file);
+    const std::vector<char> resolved = _BinaryWeightFieldResolved(file);
     for (size_t i = 0; i < geometry.weightObjects.size(); ++i) {
         const rigExec::fb::RigExecWireWeightObject &wire =
             geometry.weightObjects[i];
@@ -3165,9 +3166,9 @@ _BinaryCompareDomainGeometry(
             _binaryStats->arrayPainted += (wire.valuesSlot >= 0 ? 1 : 0) +
                                           (wire.indicesSlot >= 0 ? 1 : 0);
         }
-        _BinaryCompareOracleFacts(evaluator, wire, file.bakeTime,
-                                  i < resolved.size() && resolved[i] != 0,
-                                  file);
+        _BinaryCompareWeightFieldFacts(evaluator, wire, file.bakeTime,
+                                       i < resolved.size() && resolved[i] != 0,
+                                       file);
     }
     CHECK(geometry.weightFields.size() == program.weightFields.size());
     for (size_t f = 0;
@@ -4139,7 +4140,7 @@ _BinaryArrayOwners(const rigExec::RigExecRigEvaluator &evaluator,
                     "derived base");
         }
     }
-    std::set<uint32_t> oracleRefs;
+    std::set<uint32_t> fieldRefs;
     for (const auto &step : program.steps)
         for (uint32_t id : step.bindingLeaves) {
             if (id < program.leafRefs.size())
@@ -4148,10 +4149,10 @@ _BinaryArrayOwners(const rigExec::RigExecRigEvaluator &evaluator,
             CHECK(index < program.pathLeafRefs.size());
             if (index < program.pathLeafRefs.size() &&
                 program.pathLeafRefs[index].owner ==
-                    rigExec::RigExecBakedPathLeafOwner::WeightOracle)
-                oracleRefs.insert(uint32_t(index));
+                    rigExec::RigExecBakedPathLeafOwner::WeightField)
+                fieldRefs.insert(uint32_t(index));
         }
-    for (uint32_t index : oracleRefs) {
+    for (uint32_t index : fieldRefs) {
         const auto &ref = program.pathLeafRefs[index];
         const auto *leaves = rigExec::RigExecBakedPathLeavesOf(program, ref);
         CHECK(leaves && ref.key < leaves->decl.keys.size());
@@ -4161,9 +4162,9 @@ _BinaryArrayOwners(const rigExec::RigExecRigEvaluator &evaluator,
                 "oracle raw declaration");
         }
     }
-    std::set<int> oracleObjects;
+    std::set<int> fieldObjects;
     for (const auto &field : program.weightFields)
-        oracleObjects.insert(field.objects.begin(), field.objects.end());
+        fieldObjects.insert(field.objects.begin(), field.objects.end());
     for (size_t index = 0; index < program.weightObjects.size(); ++index) {
         const auto &object = program.weightObjects[index];
         keys(object.pointLeaves, "packet points " + object.path.GetString());
@@ -4171,9 +4172,9 @@ _BinaryArrayOwners(const rigExec::RigExecRigEvaluator &evaluator,
             add(object.path.AppendProperty(TfToken(name)), false,
                 "painted " + object.path.GetString());
         // The reference oracle canonicalizes singleton prim targets to .points.
-        const auto &facts = object.oracleFacts;
+        const auto &facts = object.fieldFacts;
         const auto prim = program.stage->GetPrimAtPath(object.path);
-        if (oracleObjects.count(int(index)) && facts.phaseError.empty() &&
+        if (fieldObjects.count(int(index)) && facts.phaseError.empty() &&
             (object.type == "RigExecSphereWeight" ||
              object.type == "RigExecPlaneWeight" ||
              object.type == "RigExecCurveWeight")) {

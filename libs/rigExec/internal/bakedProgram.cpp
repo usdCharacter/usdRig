@@ -440,7 +440,7 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
         B.resolvedInputs->Clear();
 
         // Upstream values: what moved since the last run marks the leaves
-        // it reaches, and the oracle's paths take their values.
+        // it reaches, and the weight field's paths take their values.
         RigExecBakedPlaceUpstream(&B);
         // Interactive overrides are applied before the property chains, as
         // the source boundary requires: a drag on a chain's target is its
@@ -463,7 +463,7 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
             // at its time; every other run re-runs only what moved, and the
             // publication refills the results and the overlay either way.
             for (auto &object : B.weightObjects) {
-                RigExecBakedSamplePathLeaves(&B, &object.oracleLeaves, time,
+                RigExecBakedSamplePathLeaves(&B, &object.fieldLeaves, time,
                                              fullRunRequested);
             }
             RigExecBakedSampleHeadLeaves(&B, time, fullRunRequested);

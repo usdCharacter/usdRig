@@ -30,11 +30,11 @@ enum class RigExecBakeArrayConsumer : uint8_t {
     ChainBase,
     /// A weight object's rigExec:values or rigExec:indices.
     Painted,
-    /// The points the weight oracle samples, and a curve weight's curve.
-    OracleSamples,
+    /// The points the weight field samples, and a curve weight's curve.
+    FieldSamples,
     /// Raw weightTarget fallback; its canonical path is already in the object.
-    OracleFallback,
-    OracleCurve,
+    FieldFallback,
+    FieldCurve,
     /// An API4 declared input, owned by the revision's typed leaf descriptor.
     Declared,
 };
@@ -69,9 +69,9 @@ struct RigExecBakeArrayRead {
 struct RigExecBakeArrayObject {
     PXR_NS::SdfPath path;
     PXR_NS::TfToken type;
-    /// The weight oracle resolves the entry: a constraint's or a property
+    /// The weight field resolves the entry: a constraint's or a property
     /// mover's envelope, a current-phase field, or an object one composes.
-    bool oracle = false;
+    bool fieldResolves = false;
     /// A volume whose samples are the points in flight.
     bool samplesInFlight = false;
 };
@@ -79,13 +79,14 @@ struct RigExecBakeArrayObject {
 /// Every array read of \p program at \p time, the bake time, in program
 /// order: each chain's revisions then derived targets (assembly rows, blend
 /// sample points, layouts), the weight objects' gathers, the chain bases,
-/// then per entry of \p objects its painted arrays and oracle points. False
+/// then per entry of \p objects its painted arrays and field points. False
 /// with the reason for an array leaf no site of the file reads.
-bool RigExecBakeListArrayReads(
-    const RigExecBakedProgramImpl &program,
-    const std::vector<RigExecBakeArrayObject> &objects, double time,
-    std::vector<RigExecBakeArrayRead> *reads, std::string *error);
+bool
+RigExecBakeListArrayReads(const RigExecBakedProgramImpl &program,
+                          const std::vector<RigExecBakeArrayObject> &objects,
+                          double time, std::vector<RigExecBakeArrayRead> *reads,
+                          std::string *error);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_BAKE_ARRAY_READS_H
+#endif // RIGEXEC_BAKE_ARRAY_READS_H

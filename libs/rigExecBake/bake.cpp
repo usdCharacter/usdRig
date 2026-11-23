@@ -361,7 +361,7 @@ RigExecBakeToBinary(RigExecRigEvaluator &evaluator, const RigExecBakeOpts &opts,
 
     // The input list, from the standing program: the slots every read
     // takes, with their values at the bake time as the defaults, every read
-    // in its table field, and the facts the oracle needs. Facts of an
+    // in its table field, and the facts the weight field needs. Facts of an
     // animated attribute hold their value at the bake time, which
     // RigExecBakeStaticReport names. Paths and tokens intern in the order
     // this visits them, then the tables', so two bakes write the same ids.

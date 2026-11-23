@@ -324,7 +324,7 @@ enum class RigExecBakedPathLeafOwner : uint8_t {
     Revision,
     Derived,
     Weight,
-    WeightOracle,
+    WeightField,
     /// The layout leaves of a chain revision's or a derived target's
     /// SkinTopology op.
     RevisionLayout,
@@ -420,7 +420,7 @@ struct RigExecBakedSourceLeafIndex {
     std::vector<uint32_t> alwaysRunOps;
 };
 
-struct RigExecWeightOracleFacts {
+struct RigExecWeightFieldFacts {
     /// _VolumeWeightSamplesInFlight: a volume whose rigExec:weightTarget
     /// reads `preceding`.
     bool samplesInFlight = false;
@@ -432,18 +432,18 @@ struct RigExecWeightOracleFacts {
     bool haveCurve = false;
     std::vector<GfVec3f> curve;
     /// A plane volume's rigExec:planeAxis and rigExec:planeBounds as the
-    /// oracle reads them: Get at the time, the fallback only when the
+    /// weight field reads them: Get at the time, the fallback only when the
     /// attribute is absent. Empty for every other type.
     TfToken planeAxis, planeBounds;
     /// The first attribute whose answer these facts hold at one time while
-    /// the oracle reads it at every evaluation time -- the points a volume
+    /// the weight field reads it at every evaluation time -- the points a volume
     /// not in flight samples, a curve volume's curve points, a plane's axis
     /// and bounds -- when it is animated (time samples, or a value that
     /// might vary); empty otherwise.
     SdfPath timeVarying;
-    /// The oracle's whole error text when the read-phase check fails.
+    /// The field's whole error text when the read-phase check fails.
     std::string phaseError;
-    /// The oracle's whole error text for the object's first structural
+    /// The field's whole error text for the object's first structural
     /// failure: an unknown type, combine mode or range policy, a dynamic
     /// weight's operation, base, target, representation or sparse-support
     /// rule, or a static field carrying time samples or connections. Each
@@ -735,12 +735,12 @@ struct RigExecBakedReaderWalk {
     std::vector<std::pair<uint32_t, uint32_t>> shadowed;
 };
 
-/// What RigExecBakedBuildOracleRead indexes over the whole program, kept
+/// What RigExecBakedBuildWeightScalarRead indexes over the whole program, kept
 /// across the reads of one build. Head leaves and override slots only grow
 /// between those reads and chains and records do not change, so each read
 /// indexes only what came after the previous one. Without an index a read
 /// indexes the whole program, which is quadratic over a build's weight reads.
-struct RigExecBakedOracleReadIndex {
+struct RigExecBakedWeightScalarReadIndex {
     std::map<std::pair<SdfPath, int>, uint32_t> leafOf;
     size_t leavesIndexed = 0;
     size_t leavesFrozen = 0;
@@ -1810,10 +1810,10 @@ struct RigExecBakedConstraint {
     TfToken type;
     /// rigExec:weightObject, empty when the constraint binds none.
     ///
-    /// Path, not index: resolved by the oracle from the stage.
+    /// Path, not index: resolved by the weight field from the stage.
     SdfPath weightObject;
     int weightField = -1;
-    /// The one float the oracle resolves into, and the string it would
+    /// The one float the weight field resolves into, and the string it would
     /// report. Sized at Build so the step body allocates neither.
     std::vector<float> weightScratch;
     std::string weightError;

@@ -518,13 +518,13 @@ RigExecBakedBindWeightPointInputs(RigExecBakedProgramImpl *program,
                     return false;
                 if (phase.IsBase())
                     continue;
-                if (size_t(leaf) >= weight.oracleLeaves.decl.keys.size())
+                if (size_t(leaf) >= weight.fieldLeaves.decl.keys.size())
                     continue;
                 RigExecBakedProgramImpl::WeightField::PointInput input;
                 input.object = object;
                 input.leaf = leaf;
                 input.binding = RigExecBakedBindPointInput(
-                    B, weight.oracleLeaves.decl.keys[size_t(leaf)].path, phase,
+                    B, weight.fieldLeaves.decl.keys[size_t(leaf)].path, phase,
                     reader);
                 field.pointReads.push_back(std::move(input));
             }
@@ -567,8 +567,7 @@ RigExecBakedReadWeightPointInput(const RigExecBakedProgramImpl &B, int field,
         // checkpoint remains unavailable rather than substituting raw data.
         if (input.binding.phase.kind == RigExecReadPhaseKind::AtPrim)
             return value;
-        const auto &values =
-            B.weightObjects[size_t(object)].oracleLeaves.values;
+        const auto &values = B.weightObjects[size_t(object)].fieldLeaves.values;
         if (leaf >= 0 && size_t(leaf) < values.size() &&
             values[size_t(leaf)].IsHolding<VtVec3fArray>()) {
             const auto &array =

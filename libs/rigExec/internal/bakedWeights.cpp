@@ -187,7 +187,7 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx, const SdfPath &path)
             if (const UsdAttribute a = B.stage->GetAttributeAtPath(target)) {
                 // A terminal opinion of another type cannot contribute to a
                 // typed point gather. Keep connected walks and missing values
-                // on actual point-array attributes; raw oracle relationship
+                // on actual point-array attributes; raw field relationship
                 // facts retain the target and its unavailable typed value.
                 if (a.GetTypeName().GetType() !=
                         SdfValueTypeNames->Float3Array.GetType() &&
@@ -327,15 +327,15 @@ struct PacketInputs {
             return;
         const auto &w = *o;
         auto &f = facts;
-        f.kind = w.oracleKind;
-        f.representation = w.oracleRepresentation;
-        f.rangePolicy = w.oracleClamp ? eval::kWeightPolicyClamp
+        f.kind = w.fieldKind;
+        f.representation = w.fieldRepresentation;
+        f.rangePolicy = w.fieldClamp ? eval::kWeightPolicyClamp
                         : w.rangePolicy == SchemaValueText::strict
                             ? eval::kWeightPolicyStrict
                             : eval::kWeightPolicyUnknown;
-        f.strict = !w.oracleClamp;
-        f.clamp = w.oracleClamp;
-        f.combineMode = w.oracleCombineMode;
+        f.strict = !w.fieldClamp;
+        f.clamp = w.fieldClamp;
+        f.combineMode = w.fieldCombineMode;
         f.base = w.base;
         f.inputCount = w.inputs.size();
         f.inputIndices = w.inputs.data();
@@ -579,7 +579,7 @@ RigExecBakedBuildWeightSteps(RigExecBakedProgramImpl *program)
     // Where each volume weight ended up: one step per volume slot, writing
     // that slot of the program's volumePlacement table (WeightFrames[slot]).
     // The table has two readers. pose.weightFrames is one (the epilogue
-    // publishes it); the other is the ORACLE, handed the table as a
+    // publishes it); the other is the weight field, handed the table as a
     // RigExecVolumePlacementView, which a current-phase field resolves
     // through and which declares WeightFrames for exactly the volumes of its
     // object's closure. The geometry walk runs after every pose commit, so a

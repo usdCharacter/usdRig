@@ -50,17 +50,17 @@ struct RigExecFrozenSamplerMemo {
     /// RIGEXEC_VERIFY_FROZEN_STATIC, copied from the program.
     bool verify = false;
     /// Every held read's sample, read when the state changed: the provider
-    /// and weight-oracle leaves, the source-backed bindings, the chain and
+    /// and weight-field leaves, the source-backed bindings, the chain and
     /// derived bases and the blend channel reads.
     std::shared_ptr<const RigExecFrozenStaticSamples> samples;
     /// Per provider leaf, its `samples` entry, kPerFrame or kNoSample.
     std::vector<int32_t> providerEntries;
     std::vector<uint64_t> providerEditSerial;
-    /// Per weight object and oracle key, its entry or kPerFrame, and the
+    /// Per weight object and field leaf key, its entry or kPerFrame, and the
     /// paths its read can reach (served only while no override or upstream
     /// value stands on one).
-    std::vector<std::vector<int32_t>> oracleEntries;
-    std::vector<std::vector<std::vector<SdfPath>>> oracleHops;
+    std::vector<std::vector<int32_t>> fieldEntries;
+    std::vector<std::vector<std::vector<SdfPath>>> fieldHops;
     /// Per revision, derived target and layout row: each key's
     /// classification, its value once read, and the paths its read can
     /// reach.
@@ -908,7 +908,7 @@ _FrozenReadWeightArray(const RigExecResolvedInputs *refreshed,
 // packet build reads. Roles with no attributes sample nothing; the worker
 // answers those as empty, which is what the live gather yields. Failed
 // reads contribute nothing to a concatenation, matching the live arms.
-// The oracle leaves of weight object \p objectIndex that \p memo holds
+// The field leaves of weight object \p objectIndex that \p memo holds
 // time-invariant are served from it while no \p touched path stands on
 // their reads.
 void
@@ -936,30 +936,30 @@ _SampleWeightArrays(const RigExecBakedProgramImpl::WeightObject &object,
         out->Add(_FrozenWeightArrayKey(object.path, role), VtValue(gathered),
                  /*hasValue=*/true);
     };
-    for (size_t k = 0; k < object.oracleLeaves.decl.keys.size(); ++k) {
-        const auto &key = object.oracleLeaves.decl.keys[k];
+    for (size_t k = 0; k < object.fieldLeaves.decl.keys.size(); ++k) {
+        const auto &key = object.fieldLeaves.decl.keys[k];
         if (key.path.IsEmpty())
             continue;
-        const int32_t entry = objectIndex < memo.oracleEntries.size() &&
-                                      k < memo.oracleEntries[objectIndex].size()
-                                  ? memo.oracleEntries[objectIndex][k]
+        const int32_t entry = objectIndex < memo.fieldEntries.size() &&
+                                      k < memo.fieldEntries[objectIndex].size()
+                                  ? memo.fieldEntries[objectIndex][k]
                                   : RigExecFrozenSamplerMemo::kPerFrame;
         const bool served =
             entry >= 0 &&
-            !_HopsTouched(memo.oracleHops[objectIndex][k], touched);
+            !_HopsTouched(memo.fieldHops[objectIndex][k], touched);
         if (served) {
             out->values.push_back(memo.samples->samples[size_t(entry)]);
             if (!verify)
                 continue;
         }
         const VtValue value = RigExecSampleRevisionLeaf(
-            key, object.oracleLeaves.attributes[k], refreshed, time, layer);
+            key, object.fieldLeaves.attributes[k], refreshed, time, layer);
         if (!served) {
-            out->Add(object.oracleFrozenKeys[k], value, !value.IsEmpty());
+            out->Add(object.fieldFrozenKeys[k], value, !value.IsEmpty());
             continue;
         }
         RigExecSampledInput fresh;
-        fresh.path = object.oracleFrozenKeys[k];
+        fresh.path = object.fieldFrozenKeys[k];
         fresh.value = value;
         fresh.hasValue = !value.IsEmpty();
         _VerifyServedSample(out->values.back(), fresh);
@@ -1143,7 +1143,7 @@ _SampleAttribute(const SdfPath &key, const UsdAttribute &attribute,
 // \p B's sampler memo for the state \p time samples under (see
 // RigExecFrozenSamplerMemo). Past a change of that state the transport
 // rows are forgotten and the held reads are taken again: each provider and
-// weight-oracle leaf, source-backed binding, chain or derived base and
+// weight-field leaf, source-backed binding, chain or derived base and
 // blend channel read whose read cannot move with the time, asked as the
 // live samplers ask it (RigExecRevisionLeafHops, or the query's own
 // variance), is read once here, at \p time and with no override or
@@ -1166,7 +1166,7 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
     // rather than indexed past the memo's end.
     const bool shaped =
         memo.providerEntries.size() == B.providerFrozenKeys.size() &&
-        memo.oracleEntries.size() == B.weightObjects.size() &&
+        memo.fieldEntries.size() == B.weightObjects.size() &&
         memo.revisionRows.size() == B.revisionIndex.size() &&
         memo.derivedRows.size() == B.derivedIndex.size() &&
         memo.sourceDouble.size() == B.leaves.Of<double>().value.size() &&
@@ -1192,8 +1192,8 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
     const auto oldSamples = memo.samples;
     const auto oldProviderEntries = std::move(memo.providerEntries);
     const auto oldProviderSerial = std::move(memo.providerEditSerial);
-    const auto oldOracleEntries = std::move(memo.oracleEntries);
-    const auto oldOracleHops = std::move(memo.oracleHops);
+    const auto oldFieldEntries = std::move(memo.fieldEntries);
+    const auto oldFieldHops = std::move(memo.fieldHops);
     const auto oldChainBase = std::move(memo.chainBase);
     const auto oldDerivedBase = std::move(memo.derivedBase);
     const auto oldBlend = std::move(memo.blend);
@@ -1269,40 +1269,40 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
         _SampleAttribute(B.providerFrozenKeys[k], attribute, time, &read);
         memo.providerEntries[k] = add(std::move(read.values.back()));
     }
-    memo.oracleEntries.assign(B.weightObjects.size(), {});
-    memo.oracleHops.assign(B.weightObjects.size(), {});
+    memo.fieldEntries.assign(B.weightObjects.size(), {});
+    memo.fieldHops.assign(B.weightObjects.size(), {});
     for (size_t o = 0; o < B.weightObjects.size(); ++o) {
         const RigExecBakedProgramImpl::WeightObject &object =
             B.weightObjects[o];
-        const RigExecBakedPathLeaves &leaves = object.oracleLeaves;
+        const RigExecBakedPathLeaves &leaves = object.fieldLeaves;
         const size_t n = leaves.decl.keys.size();
-        memo.oracleEntries[o].assign(n, Memo::kPerFrame);
-        memo.oracleHops[o].assign(n, std::vector<SdfPath>());
-        const bool keepObject = keepUnedited && o < oldOracleEntries.size() &&
-                                oldOracleEntries[o].size() == n &&
-                                oldOracleHops[o].size() == n;
+        memo.fieldEntries[o].assign(n, Memo::kPerFrame);
+        memo.fieldHops[o].assign(n, std::vector<SdfPath>());
+        const bool keepObject = keepUnedited && o < oldFieldEntries.size() &&
+                                oldFieldEntries[o].size() == n &&
+                                oldFieldHops[o].size() == n;
         for (size_t k = 0; k < n; ++k) {
             const RigExecRevisionLeafKey &key = leaves.decl.keys[k];
             if (key.path.IsEmpty() ||
                 key.flavour != RigExecRevisionLeafFlavour::Raw) {
                 continue;
             }
-            if (keepObject && !_HopsTouched(oldOracleHops[o][k], edited)) {
-                memo.oracleEntries[o][k] = keep(oldOracleEntries[o][k]);
-                memo.oracleHops[o][k] = oldOracleHops[o][k];
+            if (keepObject && !_HopsTouched(oldFieldHops[o][k], edited)) {
+                memo.fieldEntries[o][k] = keep(oldFieldEntries[o][k]);
+                memo.fieldHops[o][k] = oldFieldHops[o][k];
                 continue;
             }
             bool varying = false;
             RigExecRevisionLeafHops(key, leaves.attributes[k],
-                                    &memo.oracleHops[o][k], &varying);
+                                    &memo.fieldHops[o][k], &varying);
             if (varying) {
                 continue;
             }
             const VtValue value = RigExecSampleRevisionLeaf(
                 key, leaves.attributes[k], nullptr, time, nullptr);
             read.values.clear();
-            read.Add(object.oracleFrozenKeys[k], value, !value.IsEmpty());
-            memo.oracleEntries[o][k] = add(std::move(read.values.back()));
+            read.Add(object.fieldFrozenKeys[k], value, !value.IsEmpty());
+            memo.fieldEntries[o][k] = add(std::move(read.values.back()));
         }
     }
     // Source-backed bindings: _SampleBinding's query read, a single-hop

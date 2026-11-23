@@ -767,7 +767,7 @@ RigExecBakedResolveWalk(const RigExecBakedProgramImpl &B,
     case Flavour::Connected:
         for (const RigExecBakedWalkHop &hop : walk.hops) {
             // An interpolator publication stands where it is met, as in
-            // RigExecBakedReadOracleScalar.
+            // RigExecBakedReadWeightScalar.
             if constexpr (std::is_same_v<T, float>) {
                 if (hop.poseWeight >= 0 &&
                     size_t(hop.poseWeight) < B.poseWeights.size()) {
@@ -1120,13 +1120,13 @@ RigExecBakedSampleWalkedPathLeaf(const RigExecBakedProgramImpl &B,
 }
 
 RigExecBakedReaderWalk
-RigExecBakedBuildOracleRead(RigExecBakedProgramImpl *program,
-                            const UsdAttribute &attribute,
-                            const std::vector<int> &available,
-                            RigExecBakedOracleReadIndex *index)
+RigExecBakedBuildWeightScalarRead(RigExecBakedProgramImpl *program,
+                                  const UsdAttribute &attribute,
+                                  const std::vector<int> &available,
+                                  RigExecBakedWeightScalarReadIndex *index)
 {
-    RigExecBakedOracleReadIndex fresh;
-    RigExecBakedOracleReadIndex &I = index ? *index : fresh;
+    RigExecBakedWeightScalarReadIndex fresh;
+    RigExecBakedWeightScalarReadIndex &I = index ? *index : fresh;
     RigExecBakedProgramImpl &B = *program;
     // The index is only valid while the program grows under it.
     if (I.leavesIndexed > B.headLeaves.size() ||
@@ -1134,7 +1134,7 @@ RigExecBakedBuildOracleRead(RigExecBakedProgramImpl *program,
         I.slotsNamed > B.headOverrideSlots.size() ||
         (I.versionsBuilt && (I.versionChains != B.propertyChains.size() ||
                              I.versionRecords != B.propertyRecords.size()))) {
-        I = RigExecBakedOracleReadIndex();
+        I = RigExecBakedWeightScalarReadIndex();
     }
     // First leaf wins per (path, type), in leaf order.
     for (size_t i = I.leavesIndexed; i < B.headLeaves.size(); ++i) {
@@ -1205,7 +1205,7 @@ RigExecBakedBuildOracleRead(RigExecBakedProgramImpl *program,
         if (leaf.typeMatches && leaf.frozenKey.IsEmpty() &&
             leaf.path.IsPropertyPath())
             leaf.frozenKey = leaf.path.GetPrimPath().AppendProperty(
-                TfToken("frozenOracleHop:" + leaf.path.GetName()));
+                TfToken("frozenWeightHop:" + leaf.path.GetName()));
     }
     I.leavesFrozen = B.headLeaves.size();
     for (const SdfPath &path : newSlots) {
@@ -1219,7 +1219,7 @@ RigExecBakedBuildOracleRead(RigExecBakedProgramImpl *program,
 }
 
 float
-RigExecBakedReadOracleScalar(const RigExecBakedProgramImpl &B,
+RigExecBakedReadWeightScalar(const RigExecBakedProgramImpl &B,
                              const RigExecBakedReaderWalk &read,
                              const std::vector<int> &available, float fallback)
 {

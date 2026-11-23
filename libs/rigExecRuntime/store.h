@@ -8,7 +8,7 @@
 // input slots (inputs.h); every other stage value it reads is static data
 // the bake captured into the file, read through RrStatic. Family .cpps own
 // their private scratch (solver live rests, revision packets, weight
-// oracles) behind the extension points on RrProgram, and implement the
+// fields) behind the extension points on RrProgram, and implement the
 // pipeline functions declared here. The framework implements
 // Open/closure/walk/publish.
 #ifndef RIGEXEC_RUNTIME_STORE_H
@@ -336,7 +336,7 @@ struct RrChainPublish {
 
 // One resolved weight field publication.
 // Per-consumer pure weight field result, preserved when its producer skips.
-struct RrOracleReadContext {
+struct RrWeightScalarReadContext {
     std::map<uint32_t, std::vector<int32_t>> versionsBySlot;
     std::map<std::pair<int32_t, int32_t>, size_t> scalarReadIndices;
     std::map<std::pair<int32_t, int32_t>, size_t> pointReadIndices;
@@ -460,7 +460,7 @@ struct RrStore {
     // Per provider slot, what that volume's VolumePlacements step last
     // wrote (the program's slot-indexed volumePlacement) and whether it has
     // run. Sized at Open and never cleared, so a step the closure skipped
-    // keeps its placement. The oracle and the published weight frames
+    // keeps its placement. The weight field and the published weight frames
     // read them.
     std::vector<RrMat4d> volumePlacement;
     std::vector<char> volumePlaced;
@@ -512,7 +512,7 @@ struct RrStore {
     std::map<uint32_t, RrWeightFieldPublish> weightFields;
     std::vector<RrWeightFieldResult> weightFieldResults;
     std::vector<char> weightFieldChanged;
-    std::vector<RrOracleReadContext> weightFieldContexts;
+    std::vector<RrWeightScalarReadContext> weightFieldContexts;
     std::vector<RrMat4d> volumePlacementBase;
     std::vector<char> volumePlacedBase;
     std::vector<char> jointMatrixPublished;
@@ -1061,17 +1061,16 @@ bool RrResolveDeclaredWeightField(RrProgram *program, size_t fieldIndex,
                                   const std::vector<RrVec3f> *current);
 void RrSkipGeometryStep(RrProgram *program, size_t step);
 
-/// RigExecRigEvaluator::_ResolveWeights (rigEvaluatorGeometry.cpp) over the
-/// file's weight objects: the field a constraint envelope
+/// The weight field resolution over the file's weight objects: the field a constraint envelope
 /// (count 1) and a current-phase revision (count = the entering points,
 /// passed as \p current) copy, as the baked program does
 /// (bakedWeights.cpp). \p object indexes geometry.weight_objects.
-/// False with the oracle's own error text, checked in the oracle's order;
+/// False with the field's own error text, checked in the field's order;
 /// \p weights is then unspecified. Pure: reads slot values, the run's
 /// property-chain results, the weight placements and static tables only.
-bool RrResolveWeightOracle(const RrProgram *program, size_t object,
-                           size_t count, const std::vector<RrVec3f> *current,
-                           std::vector<float> *weights, std::string *error);
+bool RrResolveWeightField(const RrProgram *program, size_t object, size_t count,
+                          const std::vector<RrVec3f> *current,
+                          std::vector<float> *weights, std::string *error);
 
 // Executor and epilogue (framework). The closure dirties what the inputs
 // set since the last run reach; RrStore::animatedTouched stands for a

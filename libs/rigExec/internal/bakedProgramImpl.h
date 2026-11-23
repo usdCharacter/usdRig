@@ -451,11 +451,10 @@ RigExecBakedOpName(RigExecRevisionOp op)
     return "unknown";
 }
 
-RigExecBakedReaderWalk
-RigExecBakedBuildOracleRead(RigExecBakedProgramImpl *, const UsdAttribute &,
-                            const std::vector<int> &,
-                            RigExecBakedOracleReadIndex *index = nullptr);
-float RigExecBakedReadOracleScalar(const RigExecBakedProgramImpl &,
+RigExecBakedReaderWalk RigExecBakedBuildWeightScalarRead(
+    RigExecBakedProgramImpl *, const UsdAttribute &, const std::vector<int> &,
+    RigExecBakedWeightScalarReadIndex *index = nullptr);
+float RigExecBakedReadWeightScalar(const RigExecBakedProgramImpl &,
                                    const RigExecBakedReaderWalk &,
                                    const std::vector<int> &, float);
 bool RigExecBakedResolveWalkValue(const RigExecBakedProgramImpl &,
@@ -1045,16 +1044,16 @@ struct RigExecBakedWeightObject {
     TfToken type;
     TfToken representation, rangePolicy;
     bool envelopeOnly = false;
-    RigExecWeightOracleFacts oracleFacts;
-    RigExecBakedPathLeaves oracleLeaves;
-    std::vector<SdfPath> oracleFrozenKeys;
-    /// oracleLeaves index of a volume's inputs:falloffSamples, else -1.
-    int oracleFalloffSamplesLeaf = -1;
-    int oracleKind = -1, oracleRepresentation = -1, oracleCombineMode = -1;
-    int oracleAxis = -1;
-    bool oracleAxisAttribute = false, oracleBoundsAttribute = false;
-    bool oracleClamp = false, oracleBounded = false, oracleUnbounded = false;
-    std::string oracleName, oracleAxisName, oracleBoundsName;
+    RigExecWeightFieldFacts fieldFacts;
+    RigExecBakedPathLeaves fieldLeaves;
+    std::vector<SdfPath> fieldFrozenKeys;
+    /// fieldLeaves index of a volume's inputs:falloffSamples, else -1.
+    int fieldFalloffSamplesLeaf = -1;
+    int fieldKind = -1, fieldRepresentation = -1, fieldCombineMode = -1;
+    int fieldAxis = -1;
+    bool fieldAxisAttribute = false, fieldBoundsAttribute = false;
+    bool fieldClamp = false, fieldBounded = false, fieldUnbounded = false;
+    std::string fieldName, fieldAxisName, fieldBoundsName;
     // RigExecStaticWeight: every field is uniform, so all three fold --
     // but they are still REGISTERED, so a drag on a painted weight can
     // be placed.
@@ -1109,8 +1108,8 @@ struct RigExecBakedWeightObject {
     /// The compiled rig's resampled falloff remap, copied from falloffLuts.
     std::vector<float> falloffCurve;
     /// pointLeaves index of a volume's inputs:falloffSamples, else -1.
-    /// Packets read this leaf; the field reads oracleFalloffSamplesLeaf,
-    /// because the property pass samples oracle leaves before the
+    /// Packets read this leaf; the field reads fieldFalloffSamplesLeaf,
+    /// because the property pass samples field leaves before the
     /// geometry prologue samples point leaves.
     int falloffSamplesLeaf = -1;
     std::array<VtVec3fArray, 3> packetPointViews;
@@ -1991,8 +1990,8 @@ struct RigExecBakedProgramImpl {
     std::map<SdfPath, int> weightIndex;
     /// Per provider slot, where the volume at that slot is placed: the
     /// output of that slot's VolumePlacements step (WeightFrames[slot]), read
-    /// by the oracle and by pose.weightFrames. Every noScaleAvars slot has
-    /// a live and a frozen step; the oracle and every publication (live and
+    /// by the weight field and by pose.weightFrames. Every noScaleAvars slot has
+    /// a live and a frozen step; the weight field and every publication (live and
     /// frozen) read only the placedVolumes slots. Non-volume slots stay
     /// identity and are never read. Kept across runs like deltaValues, and
     /// carried by a retained frozen workspace: an operation that
@@ -2002,7 +2001,7 @@ struct RigExecBakedProgramImpl {
     /// of the evaluator's _volumeWeightMatrixTaps). A subset of
     /// noScaleAvars: a volume outside the rig that only a constraint names
     /// is a provider but is not tapped, so the walk neither places nor
-    /// publishes it, and neither do the oracle view and pose.weightFrames.
+    /// publishes it, and neither do the weight field view and pose.weightFrames.
     std::vector<char> placedVolumes;
     /// Weight objects whose field is measured against the points AS THEY
     /// STAND at the revision that binds them, rather than the authored base
@@ -2099,10 +2098,10 @@ struct RigExecBakedProgramImpl {
     std::vector<char> upstreamChanged;
     /// Something in `upstream` moved this run.
     bool upstreamMovedThisRun = false;
-    /// RigExecBakedProgram::GetUpstreamAdmissible and GetUpstreamOracle,
+    /// RigExecBakedProgram::GetUpstreamAdmissible and GetUpstreamWeightFieldReads,
     /// built on first use (`upstreamSetsBuilt`).
     std::map<SdfPath, TfType> upstreamAdmissible;
-    std::set<SdfPath> upstreamOracle;
+    std::set<SdfPath> upstreamWeightFieldReads;
     bool upstreamSetsBuilt = false;
     /// Leaves re-read by every sample so far, Build's included. Test
     /// observable; written only by the sampler.
@@ -2372,9 +2371,9 @@ RigExecBakedPathLeavesOf(RigExecBakedProgramImpl *program,
             return &program->weightObjects[ref.a].pointLeaves;
         }
         return nullptr;
-    case RigExecBakedPathLeafOwner::WeightOracle:
+    case RigExecBakedPathLeafOwner::WeightField:
         return ref.a < program->weightObjects.size()
-                   ? &program->weightObjects[ref.a].oracleLeaves
+                   ? &program->weightObjects[ref.a].fieldLeaves
                    : nullptr;
     case RigExecBakedPathLeafOwner::RevisionLayout:
         if (ref.a < program->chains.size() &&
@@ -2632,14 +2631,14 @@ enum class RigExecBakedLeafPass : uint8_t { All, BeforeHead, ChainRouted };
 /// with `lastUpstream` by value; for every path placed, moved or lifted
 /// (rule 8) it marks the leaves `leafByPath` files there and sets
 /// `upstreamChanged` for the override numbers filed there, and it rebuilds
-/// `upstreamOn`. Then places every value on an `upstreamOracle` path into
+/// `upstreamOn`. Then places every value on an `upstreamWeightFieldReads` path into
 /// the resolved inputs. `upstreamChanged` holds this run's moves only.
 /// Runs on the thread that owns \p program: live's owning thread, or a
-/// frozen worker over its private clone, which passes \p placeOracle false:
+/// frozen worker over its private clone, which passes \p placeWeightFieldReads false:
 /// it builds no admission set (that reads the stage), and the freeze
-/// refuses every rig with an object the oracle resolves.
+/// refuses every rig with an object the weight field resolves.
 void RigExecBakedPlaceUpstream(RigExecBakedProgramImpl *program,
-                               bool placeOracle = true);
+                               bool placeWeightFieldReads = true);
 
 /// Re-reads, through RigExecBakedRead at \p time, every leaf that one of
 /// these says can have moved since it was last sampled, and sets its
@@ -3960,26 +3959,26 @@ RigExecBakedWeightPacket(const RigExecBakedProgramImpl &program,
 /// time code when it authors a time-code range, else 0. Never Default.
 UsdTimeCode RigExecBakedProbeTime(const UsdStageRefPtr &stage);
 
-/// What a port of RigExecRigEvaluator::_ResolveWeights needs beyond a
-/// weight object's composition and its scalar reads: the answers the oracle
+/// What the weight field resolution needs beyond a
+/// weight object's composition and its scalar reads: the answers the field
 /// takes from the stage alone. Read at one time.
 /// Fills \p facts for the weight object at \p path, reading the stage as
-/// the oracle does at \p time.
+/// the weight field does at \p time.
 inline void
-RigExecBakedDescribeWeightOracle(const RigExecRigEvaluator &evaluator,
-                                 const SdfPath &path, UsdTimeCode time,
-                                 RigExecWeightOracleFacts *facts)
+RigExecBakedDescribeWeightFieldFacts(const RigExecRigEvaluator &evaluator,
+                                     const SdfPath &path, UsdTimeCode time,
+                                     RigExecWeightFieldFacts *facts)
 {
-    RigExecBakedProgram::DescribeWeightOracle(evaluator, path, time, facts);
+    RigExecBakedProgram::DescribeWeightFieldFacts(evaluator, path, time, facts);
 }
 
-/// A weight object the oracle reaches that no WeightPacket step bakes: a
+/// A weight object the weight field reaches that no WeightPacket step bakes: a
 /// constraint's or a property mover's envelope, or an object one composes
 /// (the constraint step's envelope arm, bakedPose.cpp). Composed as
 /// RigExecBakedBakeWeightObject composes, and registered nowhere: the
-/// oracle reads its scalars through the
+/// weight field reads its scalars through the
 /// generation's resolved inputs (_ResolvedRead), so each read is kept as
-/// the attribute that walk starts from plus the oracle's fallback.
+/// the attribute that walk starts from plus the field's fallback.
 struct RigExecBakedEnvelopeObject {
     struct Read {
         UsdAttribute head; ///< invalid when the prim has no such attribute
@@ -3990,7 +3989,7 @@ struct RigExecBakedEnvelopeObject {
     std::vector<float> values;
     std::vector<int> indices;
     /// rigExec:baseWeight's first target and rigExec:inputWeights in
-    /// authored order, as indices into the oracle's table: below
+    /// authored order, as indices into the field's table: below
     /// program.weightObjects.size() a step-backed object, else
     /// weightObjects.size() plus an index into the envelope list.
     int base = -1;
@@ -4002,8 +4001,8 @@ struct RigExecBakedEnvelopeObject {
 /// no points target) or a property mover's rigExec:weightObject[0] reaches
 /// through rigExec:baseWeight and rigExec:inputWeights that \p program
 /// does not already bake, depth first, so the list is in dependency order.
-/// \p index maps each composed path to its oracle-table index. False with
-/// the reason on what the oracle could not resolve structurally -- a
+/// \p index maps each composed path to its field-table index. False with
+/// the reason on what the weight field could not resolve structurally -- a
 /// missing prim, a type that is no weight object or is volumetric, an
 /// unknown token, a second base, a cycle -- which Compile rejects first.
 inline bool

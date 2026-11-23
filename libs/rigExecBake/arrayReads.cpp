@@ -336,7 +336,7 @@ struct _Lister {
     // _ReadTargetPoints' attribute: the relationship's one target, as
     // _ResolveGeometryInput resolves it. A typed missing value still needs
     // storage so later successful stage samples can recover.
-    SdfPath OraclePoints(const UsdPrim &prim, const char *relationship) const
+    SdfPath FieldPointsPath(const UsdPrim &prim, const char *relationship) const
     {
         SdfPathVector targets;
         if (const UsdRelationship rel =
@@ -353,7 +353,7 @@ struct _Lister {
     }
 
     // One weight object entry: its painted arrays, read at Default, and,
-    // where the oracle resolves it, the points its volume samples and a
+    // where the weight field resolves it, the points its volume samples and a
     // curve weight's curve, read raw at the time.
     void Object(const RigExecBakeArrayObject &object, uint32_t index) const
     {
@@ -379,7 +379,7 @@ struct _Lister {
         const bool volume =
             curve || object.type == SchemaTypeName::RigExecSphereWeight ||
             object.type == SchemaTypeName::RigExecPlaneWeight;
-        if (!object.oracle || !volume) {
+        if (!object.fieldResolves || !volume) {
             return;
         }
         const auto add = [&](const SdfPath &path, Consumer consumer) {
@@ -392,18 +392,18 @@ struct _Lister {
         };
         if (!object.samplesInFlight) {
             SdfPath samples =
-                OraclePoints(prim, SchemaAttrText::rigExecSampleSource);
+                FieldPointsPath(prim, SchemaAttrText::rigExecSampleSource);
             if (samples.IsEmpty()) {
                 samples =
-                    OraclePoints(prim, SchemaAttrText::rigExecWeightTarget);
+                    FieldPointsPath(prim, SchemaAttrText::rigExecWeightTarget);
             }
-            add(samples, Consumer::OracleSamples);
-            add(OraclePoints(prim, SchemaAttrText::rigExecWeightTarget),
-                Consumer::OracleFallback);
+            add(samples, Consumer::FieldSamples);
+            add(FieldPointsPath(prim, SchemaAttrText::rigExecWeightTarget),
+                Consumer::FieldFallback);
         }
         if (curve) {
-            add(OraclePoints(prim, SchemaAttrText::rigExecCurve),
-                Consumer::OracleCurve);
+            add(FieldPointsPath(prim, SchemaAttrText::rigExecCurve),
+                Consumer::FieldCurve);
         }
     }
 };

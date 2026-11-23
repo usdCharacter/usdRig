@@ -84,7 +84,7 @@ libs/rigExec/internal/bakedProgramBuild.cpp | env | TfGetenvBool("RIGEXEC_VERIFY
 libs/rigExec/internal/bakedProgramBuild.cpp | env | B.sparseSampling = TfGetenvBool("RIGEXEC_SPARSE_SAMPLING", true);
 libs/rigExec/internal/bakedProgramBuild.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_SPARSE_SAMPLING", false);
 
-libs/rigExec/internal/bakedProperties.cpp | token-text | TfToken("frozenOracleHop:" + leaf.path.GetName()));
+libs/rigExec/internal/bakedProperties.cpp | token-text | TfToken("frozenWeightHop:" + leaf.path.GetName()));
 
 libs/rigExec/internal/bakedSchedule.cpp | env | return TfGetenv("RIGEXEC_BAKED_SCHEDULE", "parallel") == "parallel"
 libs/rigExec/internal/bakedSchedule.cpp | env | return TfGetenvBool("RIGEXEC_BAKED_SCHEDULE_REPORT", false);
@@ -212,7 +212,7 @@ libs/rigExec/internal/taskListCache.cpp | lock | std::lock_guard<std::mutex> loc
 
 libs/rigExec/internal/taskListCache.h | lock | mutable std::mutex _mutex;
 
-libs/rigExec/internal/weightField.cpp | token-text | : TfToken("rigExecFrozen:oracle:leaf" + std::to_string(k));
+libs/rigExec/internal/weightField.cpp | token-text | : TfToken("frozenWeightField:leaf" + std::to_string(k));
 
 libs/rigExecRuntime/closure.cpp | env | const char *value = std::getenv(name);
 

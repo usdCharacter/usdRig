@@ -30,7 +30,7 @@ namespace eval {
 // The weight-object kind, representation, range policy, combine mode,
 // plane axis and plane bounds as the integer codes both adapters already
 // classify to at Build/Open (the baked weightProgram record's kind and
-// representation codes, the runtime's RrWeightOracleKind): the bodies
+// representation codes, the runtime's RrWeightFieldKind): the bodies
 // never compare token text.
 enum WeightKindCode : int {
     kWeightKindUnknown = -1,
@@ -1008,7 +1008,7 @@ BuildVolumePacket(Host &host, size_t index,
 }
 
 // ---------------------------------------------------------------------
-// The weight-field (oracle) resolution. One body: the structural
+// The weight-field resolution. One body: the structural
 // failures first, then the combine fold / volume measurement, then the
 // dynamic remap or the static table, with the range policy last.
 // ---------------------------------------------------------------------

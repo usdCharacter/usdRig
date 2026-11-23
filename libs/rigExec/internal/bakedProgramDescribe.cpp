@@ -101,18 +101,17 @@ TF_DEFINE_PRIVATE_TOKENS(
 
 } // namespace
 
-// The structural half of RigExecRigEvaluator::_ResolveWeights and
-// _ResolveVolumeWeights (rigEvaluatorGeometry.cpp), statement for
-// statement: the same reads, the same fallbacks, the same error text. What
-// depends on a run -- placement, counts, scalar values, recursion into the
-// objects this one composes -- is left to the port.
+// The structural half of the weight field resolution: its reads, its
+// fallbacks and its error text. What depends on a run -- placement, counts,
+// scalar values, recursion into the objects this one composes -- is left to
+// the field.
 void
-RigExecBakedProgram::DescribeWeightOracle(const RigExecRigEvaluator &evaluator,
-                                          const SdfPath &path, UsdTimeCode time,
-                                          RigExecWeightOracleFacts *facts)
+RigExecBakedProgram::DescribeWeightFieldFacts(
+    const RigExecRigEvaluator &evaluator, const SdfPath &path, UsdTimeCode time,
+    RigExecWeightFieldFacts *facts)
 {
     const RigExecRigEvaluator &E = evaluator;
-    *facts = RigExecWeightOracleFacts();
+    *facts = RigExecWeightFieldFacts();
     const UsdPrim prim = E._stage->GetPrimAtPath(path);
     if (!prim) {
         facts->staticError = "missing weight object " + path.GetString();
@@ -162,7 +161,7 @@ RigExecBakedProgram::DescribeWeightOracle(const RigExecRigEvaluator &evaluator,
         }
         facts->samplesInFlight =
             targetPhase.kind == RigExecReadPhaseKind::Preceding;
-        // What the facts below hold at `time` only, while the oracle reads
+        // What the facts below hold at `time` only, while the weight field reads
         // it at every evaluation time.
         const auto noteAnimated = [&](const UsdAttribute &a) {
             if (facts->timeVarying.IsEmpty() && a &&

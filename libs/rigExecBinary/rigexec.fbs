@@ -20,8 +20,8 @@
 //    Step.head_input_reads bindings,
 //    PropertyChain.target, PhasedConsumer.consumer, PhasedConsumer.hops,
 //    Chain.base_slot, Revision.joint_indices_slot and joint_weights_slot,
-//    and WeightObject.values_slot, indices_slot, oracle_samples_slot and
-//    oracle_curve_slot hold them.
+//    and WeightObject.values_slot, indices_slot, field_samples_slot and
+//    field_curve_slot hold them.
 //    Provider slots index slot_meta.paths: SpaceSwitch.slot,
 //    AncestorRead.slot, FrameRecord.slot, FrameVersion.anchor and
 //    recompose, Commit.slots, every other *_slot and *_slots field, and
@@ -1453,7 +1453,7 @@ table Chain {
   base_slot: int = -1;
 }
 /// One weight object: its composition by value, its scalar reads, and the
-/// facts the runtime's port of the weight oracle needs. `base` and `inputs`
+/// facts the runtime's weight field needs. `base` and `inputs`
 /// index lower entries of the same table (dependency order).
 table WeightObject {
   path: uint;
@@ -1498,8 +1498,8 @@ table WeightObject {
   plane_axis: uint;
   /// Token.
   plane_bounds: uint;
-  /// Oracle objects retain the full authored weightTarget cardinality.
-  /// Canonical prim targets have valid=0: raw oracle fallback reads them,
+  /// Field-resolved objects retain the full authored weightTarget cardinality.
+  /// Canonical prim targets have valid=0: raw field fallback reads them,
   /// while packet gathering skips them, preserving native gather semantics.
   target_points: [uint];
   target_valid: [ubyte];
@@ -1508,41 +1508,41 @@ table WeightObject {
   curve_points: [uint];
   curve_valid: [ubyte];
   falloff_curve: [float];
-  // The oracle facts (RigExecRigEvaluator::_ResolveWeights).
+  // The weight field facts.
   /// Appended for a constraint or property-mover envelope; no WeightPacket
   /// step builds it.
   envelope_only: bool;
   /// A volume whose rigExec:weightTarget reads `preceding`: it samples the
   /// points entering the revision that binds it.
   samples_in_flight: bool;
-  /// Replaced by oracle_samples_slot and oracle_curve_slot.
-  oracle_samples: int = -1 (deprecated);
-  oracle_curve: int = -1 (deprecated);
+  /// Replaced by field_samples_slot and field_curve_slot.
+  field_samples: int = -1 (deprecated);
+  field_curve: int = -1 (deprecated);
   /// A plane volume's rigExec:planeAxis and rigExec:planeBounds as the
-  /// oracle reads them (the fallback only when the attribute is absent);
+  /// weight field reads them (the fallback only when the attribute is absent);
   /// Token path ids, 0 for every other type.
-  oracle_plane_axis: uint;
-  oracle_plane_bounds: uint;
-  /// The oracle's error text when the read-phase check fails, else empty.
-  oracle_phase_error: string;
-  /// The oracle's error text for the object's first structural failure,
+  field_plane_axis: uint;
+  field_plane_bounds: uint;
+  /// The field's error text when the read-phase check fails, else empty.
+  field_phase_error: string;
+  /// The field's error text for the object's first structural failure,
   /// which precedes every per-run read of it; else empty.
-  oracle_static_error: string;
+  field_static_error: string;
   /// Input slots, -1 for none: the painted rigExec:values (FloatArray)
   /// and rigExec:indices (IntArray), whose defaults are their values at
-  /// Default; and, for an object the oracle resolves, the points a volume
+  /// Default; and, for an object the weight field resolves, the points a volume
   /// not in flight samples (rigExec:sampleSource, else
   /// rigExec:weightTarget) and a curve volume's rigExec:curve points
-  /// (Vec3fArray, each at the attribute the oracle resolves its
+  /// (Vec3fArray, each at the attribute the weight field resolves its
   /// relationship to), read at the time.
   values_slot: int = -1;
   indices_slot: int = -1;
-  oracle_samples_slot: int = -1;
-  oracle_curve_slot: int = -1;
+  field_samples_slot: int = -1;
+  field_curve_slot: int = -1;
   /// Raw token transport; -1 distinguishes an absent attribute's default
   /// from an existing attribute whose sampled Get fails.
-  oracle_plane_axis_slot: int = -1;
-  oracle_plane_bounds_slot: int = -1;
+  field_plane_axis_slot: int = -1;
+  field_plane_bounds_slot: int = -1;
 }
 enum WeightFieldScalarMember : ubyte {
   DefaultWeight = 0, Driver, Scale, Bias, Strength, Invert, FalloffMin, FalloffMax,
@@ -1551,7 +1551,7 @@ enum WeightFieldScalarMember : ubyte {
 }
 enum WeightFieldForm : ubyte { EnvelopeProperty = 0, EnvelopeConstraint, Revision }
 enum WeightFieldPlacementPhase : ubyte { Final = 0, Base }
-/// One actual native per-consumer oracle context; never shared by object alone.
+/// One per-consumer weight field context; never shared by object alone.
 table WeightFieldPointRead { object: int; leaf: int; binding: PointsBinding (required); }
 table WeightField {
   form: WeightFieldForm;

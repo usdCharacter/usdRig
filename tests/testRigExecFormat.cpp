@@ -818,7 +818,7 @@ _RichFileBody()
           &weight.extentU, &weight.extentV}) {
         *read = _In(InputTag::Float);
     }
-    weight.oracleStaticError = "static note";
+    weight.fieldStaticError = "static note";
     g.weightObjects.push_back(std::move(weight));
     g.falloffPaths = {_pWeight};
     g.falloffLuts.resize(1);
@@ -1451,7 +1451,7 @@ TestBitExactness()
     CHECK(_Same(o->geometry->deltaBaseMatrix, file.geometry->deltaBaseMatrix));
     const fb::RigExecWireWeightObject &w = o->geometry->weightObjects[0];
     CHECK(_Same(w.falloffCurve, file.geometry->weightObjects[0].falloffCurve));
-    CHECK(w.oracleStaticError == "static note");
+    CHECK(w.fieldStaticError == "static note");
     CHECK(
         _Same(o->geometry->falloffLuts[0].v, file.geometry->falloffLuts[0].v));
     const fb::RigExecWirePropertyRevision &pr =
@@ -5353,8 +5353,8 @@ _ArrayFile()
     fb::RigExecWireWeightObject &weight = g.weightObjects[0];
     weight.valuesSlot = int32_t(_sValues);
     weight.indicesSlot = int32_t(_sIndices);
-    weight.oracleSamplesSlot = int32_t(_sSamples);
-    weight.oracleCurveSlot = int32_t(_sCurve);
+    weight.fieldSamplesSlot = int32_t(_sSamples);
+    weight.fieldCurveSlot = int32_t(_sCurve);
 
     const auto read = [&](uint32_t path, bool rest, InputTag tag, ReadMode mode,
                           uint32_t at, uint32_t constant) {
@@ -5432,8 +5432,8 @@ TestArrayInputs()
         const fb::RigExecWireWeightObject &w = o->geometry->weightObjects[0];
         CHECK(w.valuesSlot == int32_t(_sValues) &&
               w.indicesSlot == int32_t(_sIndices) &&
-              w.oracleSamplesSlot == int32_t(_sSamples) &&
-              w.oracleCurveSlot == int32_t(_sCurve));
+              w.fieldSamplesSlot == int32_t(_sSamples) &&
+              w.fieldCurveSlot == int32_t(_sCurve));
         const auto &rows = o->geometry->pathReads;
         CHECK(rows.size() == 9);
         if (rows.size() == 9) {
@@ -5776,10 +5776,10 @@ TestArrayInputs()
                    int32_t(_sJointIndices);
            });
     expect("an oracle curve slot of another tag",
-           weight + ".oracle_curve_slot: slot " + at(_sValues) +
+           weight + ".field_curve_slot: slot " + at(_sValues) +
                " is not a float3[] input",
            [](F &f) {
-               f.geometry->weightObjects[0].oracleCurveSlot = int32_t(_sValues);
+               f.geometry->weightObjects[0].fieldCurveSlot = int32_t(_sValues);
            });
     expect("a painted default that is a layout",
            weight + ".indices_slot: its default is not a pool array",

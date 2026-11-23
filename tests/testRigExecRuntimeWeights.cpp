@@ -1686,7 +1686,7 @@ _TestComputedReadsAndOracle()
     objects[5].invert = fixed(0.25f);
     objects[5].strength = fixed(0.75f);
     objects.push_back(object(6, tokStatic, tokConstant, tokStrict));
-    objects[6].oracleStaticError = "unknown rangePolicy on /W6";
+    objects[6].fieldStaticError = "unknown rangePolicy on /W6";
     objects.push_back(object(7, tokCombine, tokDense, tokStrict));
     objects[7].combineMode = tokMax;
     objects[7].inputs = {6};
@@ -1841,8 +1841,8 @@ _TestComputedReadsAndOracle()
                              const std::vector<RrVec3f> *current,
                              std::vector<float> *weights) {
         error.clear();
-        return RrResolveWeightOracle(&program, index, count, current, weights,
-                                     &error);
+        return RrResolveWeightField(&program, index, count, current, weights,
+                                    &error);
     };
     std::vector<float> w;
     CHECK(resolve(0, 1, nullptr, &w) && w == std::vector<float>{0.5f});
@@ -2050,8 +2050,8 @@ _TestVolumePlacementSkip()
         RrVec3f(0.0f), RrVec3f(0.0f, 0.5f, 0.0f), RrVec3f(0.25f, 0.0f, 0.0f)};
     const auto resolve = [&](std::vector<float> *weights) {
         error.clear();
-        return RrResolveWeightOracle(&program, 1, samples.size(), &samples,
-                                     weights, &error);
+        return RrResolveWeightField(&program, 1, samples.size(), &samples,
+                                    weights, &error);
     };
 
     // No step has run: no placement.

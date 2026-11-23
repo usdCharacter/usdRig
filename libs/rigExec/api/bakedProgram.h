@@ -109,7 +109,7 @@ struct RigExecUpstreamArrayRow {
     TfType type;
     Time time = Time::AtTime;
     /// The readers, comma separated: "chain base", "revision", "derived",
-    /// "skin layout", "blend sample", "weight packet", "weight oracle".
+    /// "skin layout", "blend sample", "weight packet", "weight field".
     std::string consumer;
 };
 
@@ -122,7 +122,7 @@ class RigExecRigEvaluator;
 /// coordinates, rest points, pin points, lattice cages, wire curves, order,
 /// knots and driver weights, skin jointIndices and jointWeights); dense blend
 /// sample points; the point arrays a weight object's packet gathers, by
-/// relationship target; and the point arrays the weight oracle reads, by
+/// relationship target; and the point arrays the weight field reads, by
 /// canonical attribute. Structural arrays are absent (painted weight
 /// values and indices, solver and SplineIk arrays, constraint arrays,
 /// property curve keys and tangents, ribbon solver points, derived bases,
@@ -141,7 +141,7 @@ struct RigExecRigPose;
 struct RigExecBakedProgramImpl;
 /// The same compiled rig as a sealed read-only view (compiledProgram.h).
 class RigExecCompiledProgram;
-struct RigExecWeightOracleFacts;
+struct RigExecWeightFieldFacts;
 struct RigExecBakedEnvelopeObject;
 struct RigExecBakedPropertyChainDesc;
 
@@ -244,16 +244,16 @@ public:
     static std::unique_ptr<RigExecBakedProgram>
     Build(RigExecRigEvaluator *evaluator, std::vector<std::string> *reasons);
 
-    /// Bake-time facts for a port of the evaluator's weight oracle, the
+    /// Bake-time facts for the weight field resolution, the
     /// envelope objects no WeightPacket step bakes, and the property
     /// chains. Members only because the evaluator's friendship reaches
-    /// this class; called as RigExecBakedDescribeWeightOracle,
+    /// this class; called as RigExecBakedDescribeWeightFieldFacts,
     /// RigExecBakedComposeEnvelopeObjects and
     /// RigExecBakedDescribePropertyChains (bakedProgramImpl.h), which
     /// document them.
-    static void DescribeWeightOracle(const RigExecRigEvaluator &evaluator,
-                                     const SdfPath &path, UsdTimeCode time,
-                                     RigExecWeightOracleFacts *facts);
+    static void DescribeWeightFieldFacts(const RigExecRigEvaluator &evaluator,
+                                         const SdfPath &path, UsdTimeCode time,
+                                         RigExecWeightFieldFacts *facts);
     static bool
     ComposeEnvelopeObjects(const RigExecRigEvaluator &evaluator,
                            const RigExecBakedProgramImpl &program,
@@ -473,11 +473,11 @@ public:
     /// Built on first use, on the owning thread, and kept for the program.
     const std::map<SdfPath, TfType> &GetUpstreamAdmissible() const;
     /// Every hop of every scalar read of a weight object the volatile
-    /// oracle resolves (a constraint or property-mover envelope, a
+    /// weight field resolves (a constraint or property-mover envelope, a
     /// current-phase field, and every object those compose). An upstream
     /// value at one of these paths is placed into the generation's resolved
-    /// inputs too, which is what the oracle reads. Built with the above.
-    const std::set<SdfPath> &GetUpstreamOracle() const;
+    /// inputs too, which is what the weight field reads. Built with the above.
+    const std::set<SdfPath> &GetUpstreamWeightFieldReads() const;
 
     /// Export mode: the attribute paths of the reads the program's Range
     /// roles and gates rest on (method, element size and joint indices of a

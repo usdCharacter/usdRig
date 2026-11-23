@@ -3338,7 +3338,7 @@ TestOraclePointsSet()
              file->geometry->weightObjects) {
             if (RigExecFormatPathText(*file, object.path) ==
                 "/Asset/Rig/Weights/Plane") {
-                listed += object.oracleSamplesSlot == slot ? 1 : 0;
+                listed += object.fieldSamplesSlot == slot ? 1 : 0;
             }
         }
         const fb::RigExecWirePathRead *row =
@@ -3443,7 +3443,7 @@ TestOracleSlotIsCanonical()
                 samples < int64_t(file->inputs.size()) && gathered >= 0 &&
                 (file->inputs[size_t(samples)].flags() &
                  uint8_t(fb::InputSlotFlags::Listed)) == 0 &&
-                samples != gathered && object.oracleSamplesSlot == samples &&
+                samples != gathered && object.fieldSamplesSlot == samples &&
                 object.samplePoints.empty() &&
                 !RigExecTestPathReadRow(file.get(), sampler, false) && row &&
                 row->read &&
@@ -3610,8 +3610,8 @@ TestStageArrayOracleAndChain()
                 if (RigExecFormatPathText(*file, object.path) ==
                     (curveOracle ? "/Asset/Rig/Weights/Curve"
                                  : "/Asset/Rig/Weights/Plane")) {
-                    bound += (curveOracle ? object.oracleCurveSlot
-                                          : object.oracleSamplesSlot) == slot
+                    bound += (curveOracle ? object.fieldCurveSlot
+                                          : object.fieldSamplesSlot) == slot
                                  ? 1
                                  : 0;
                 }

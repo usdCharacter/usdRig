@@ -584,9 +584,9 @@ struct RigExecBakeComputedCapture::_State {
         return true;
     }
 
-    bool OracleRead(const RigExecBakedReaderWalk &read,
-                    const std::vector<int> &available, float fallback,
-                    fb::RigExecWireInput *out, std::string *error)
+    bool WeightScalarRead(const RigExecBakedReaderWalk &read,
+                          const std::vector<int> &available, float fallback,
+                          fb::RigExecWireInput *out, std::string *error)
     {
         *out = fb::RigExecWireInput();
         out->tag = InputTag::Float;
@@ -595,7 +595,7 @@ struct RigExecBakeComputedCapture::_State {
         const auto capture = [&](const auto &hops, auto *candidates) {
             for (const auto &hop : hops) {
                 RigExecWirePropertyInputCandidate candidate;
-                if (!Slot(hop.path, "weight field oracle", &candidate.slot,
+                if (!Slot(hop.path, "weight field scalar", &candidate.slot,
                           error))
                     return false;
                 candidate.raw = hop.leaf >= 0;
@@ -640,7 +640,7 @@ struct RigExecBakeComputedCapture::_State {
         return true;
     }
 
-    // Oracle/path reads use GetAttribute's published overlay, not a
+    // Weight-field/path reads use GetAttribute's published overlay, not a
     // patchable binding's phased walk. Freeze that traversal independently;
     // runtime gates its version candidates by this generation's publication.
     bool ResolvedCandidates(const UsdAttribute &head, fb::RigExecWireInput *out,
@@ -788,7 +788,7 @@ struct RigExecBakeComputedCapture::_State {
     }
 
     /// RigExecResolvedInputs::GetAttribute from \p head, typed and falling
-    /// back as \p fallback: the oracle's _ResolvedRead, and every assembly
+    /// back as \p fallback: the weight field's resolved read, and every assembly
     /// read that resolves through the generation's inputs.
     bool Resolved(const UsdAttribute &head,
                   const fb::RigExecWireValue &fallback,
@@ -806,7 +806,7 @@ struct RigExecBakeComputedCapture::_State {
                ResolvedCandidates(head, out, error);
     }
 
-    /// An envelope read, as the oracle's _ResolvedRead resolves it.
+    /// An envelope read, as the weight field's resolved read resolves it.
     bool Resolved(const UsdAttribute &head, float fallback,
                   fb::RigExecWireInput *out, std::string *error)
     {
@@ -946,8 +946,8 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
         C.weightObjects.push_back(std::move(wire));
     }
 
-    // The envelope-only objects, read as the oracle reads them. A scalar
-    // object reads none of the volume fields; they carry the oracle's
+    // The envelope-only objects, read as the weight field reads them. A scalar
+    // object reads none of the volume fields; they carry the field's
     // fallbacks over an empty walk so every entry has one shape.
     for (const RigExecBakedEnvelopeObject &object : envelopes) {
         fb::RigExecWireWeightObject wire = _NewWeightObject();
@@ -992,12 +992,12 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
         C.weightObjects.push_back(std::move(wire));
     }
 
-    // The oracle facts, for every entry; the points it samples are input
+    // The field facts, for every entry; the points it samples are input
     // slots, listed with the other array reads below.
     std::vector<SdfPath> objectPaths(C.weightObjects.size());
     std::vector<TfToken> objectTypes(C.weightObjects.size());
     std::vector<SdfPath> timeVarying(C.weightObjects.size());
-    std::vector<RigExecWeightOracleFacts> oracleFacts(C.weightObjects.size());
+    std::vector<RigExecWeightFieldFacts> fieldFacts(C.weightObjects.size());
     for (size_t i = 0; i < C.weightObjects.size(); ++i) {
         const bool stepBacked = i < B.weightObjects.size();
         const SdfPath &path = stepBacked
@@ -1006,23 +1006,25 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
         const TfToken &type = stepBacked
                                   ? B.weightObjects[i].type
                                   : envelopes[i - B.weightObjects.size()].type;
-        RigExecWeightOracleFacts &facts = oracleFacts[i];
-        RigExecBakedDescribeWeightOracle(evaluator, path, S.bakeTime, &facts);
+        RigExecWeightFieldFacts &facts = fieldFacts[i];
+        RigExecBakedDescribeWeightFieldFacts(evaluator, path, S.bakeTime,
+                                             &facts);
         fb::RigExecWireWeightObject &wire = C.weightObjects[i];
         wire.samplesInFlight = facts.samplesInFlight;
         if (type == TfToken(SchemaTypeName::RigExecPlaneWeight)) {
-            wire.oraclePlaneAxis = token(facts.planeAxis);
-            wire.oraclePlaneBounds = token(facts.planeBounds);
+            wire.fieldPlaneAxis = token(facts.planeAxis);
+            wire.fieldPlaneBounds = token(facts.planeBounds);
             const auto prim = B.stage->GetPrimAtPath(path);
             for (const auto &entry :
                  {std::make_pair(SchemaAttrText::rigExecPlaneAxis,
-                                 &wire.oraclePlaneAxisSlot),
+                                 &wire.fieldPlaneAxisSlot),
                   std::make_pair(SchemaAttrText::rigExecPlaneBounds,
-                                 &wire.oraclePlaneBoundsSlot)}) {
+                                 &wire.fieldPlaneBoundsSlot)}) {
                 const auto attr = prim.GetAttribute(TfToken(entry.first));
                 if (attr) {
                     uint32_t slot = 0;
-                    if (!S.Slot(attr.GetPath(), "oracle token", &slot, &why)) {
+                    if (!S.Slot(attr.GetPath(), "weight field token", &slot,
+                                &why)) {
                         Fail(why);
                         return;
                     }
@@ -1031,8 +1033,8 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
                 }
             }
         }
-        wire.oraclePhaseError = facts.phaseError;
-        wire.oracleStaticError = facts.staticError;
+        wire.fieldPhaseError = facts.phaseError;
+        wire.fieldStaticError = facts.staticError;
         objectPaths[i] = path;
         objectTypes[i] = type;
         timeVarying[i] = facts.timeVarying;
@@ -1155,8 +1157,8 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
                 member == 0 || member == 3 || member == 5 || member == 6 ? 0.0f
                                                                          : 1.0f;
             fb::RigExecWireInput read;
-            if (!S.OracleRead(field.scalarReads[r], field.availableChains,
-                              fallback, &read, &why)) {
+            if (!S.WeightScalarRead(field.scalarReads[r], field.availableChains,
+                                    fallback, &read, &why)) {
                 Fail(why);
                 return;
             }
@@ -1834,21 +1836,21 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
 
     // The array reads, as RigExecBakeListArrayReads chooses them: a slot
     // per attribute they reach, and the site each binds. An entry the
-    // oracle resolves names the points it samples unless its read phases
+    // weight field resolves names the points it samples unless its read phases
     // fail it first.
     std::vector<RigExecBakeArrayObject> arrayObjects(C.weightObjects.size());
     for (size_t i = 0; i < C.weightObjects.size(); ++i) {
         RigExecBakeArrayObject &object = arrayObjects[i];
         object.path = objectPaths[i];
         object.type = objectTypes[i];
-        object.oracle = resolved[i] && oracleFacts[i].phaseError.empty();
-        object.samplesInFlight = oracleFacts[i].samplesInFlight;
-        if (object.oracle && !object.samplesInFlight &&
+        object.fieldResolves = resolved[i] && fieldFacts[i].phaseError.empty();
+        object.samplesInFlight = fieldFacts[i].samplesInFlight;
+        if (object.fieldResolves && !object.samplesInFlight &&
             (object.type == TfToken(SchemaTypeName::RigExecSphereWeight) ||
              object.type == TfToken(SchemaTypeName::RigExecPlaneWeight) ||
              object.type == TfToken(SchemaTypeName::RigExecCurveWeight))) {
             // Preserve full raw relationship cardinality. Prim targets are
-            // oracle-only: packets ignore them.
+            // field-only: packets ignore them.
             SdfPathVector targets;
             const auto prim = B.stage->GetPrimAtPath(object.path);
             if (const auto rel = prim.GetRelationship(
@@ -1888,7 +1890,7 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
     std::map<std::pair<uint32_t, bool>, size_t> rowAt;
     std::map<std::pair<uint32_t, uint32_t>, size_t> layoutAt;
     C.chainBaseSlots.assign(B.chains.size(), -1);
-    std::vector<int32_t> oracleFallbackSlots(C.weightObjects.size(), -1);
+    std::vector<int32_t> fieldFallbackSlots(C.weightObjects.size(), -1);
     for (const RigExecBakeArrayRead &read : arrayReads) {
         fb::RigExecWireInput input;
         input.tag = read.tag;
@@ -1978,18 +1980,18 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
                     int32_t(head);
             }
             break;
-        case RigExecBakeArrayConsumer::OracleSamples:
+        case RigExecBakeArrayConsumer::FieldSamples:
             if (object) {
-                object->oracleSamplesSlot = int32_t(head);
+                object->fieldSamplesSlot = int32_t(head);
             }
             break;
-        case RigExecBakeArrayConsumer::OracleFallback:
+        case RigExecBakeArrayConsumer::FieldFallback:
             if (object)
-                oracleFallbackSlots[read.object] = int32_t(head);
+                fieldFallbackSlots[read.object] = int32_t(head);
             break;
-        case RigExecBakeArrayConsumer::OracleCurve:
+        case RigExecBakeArrayConsumer::FieldCurve:
             if (object) {
-                object->oracleCurveSlot = int32_t(head);
+                object->fieldCurveSlot = int32_t(head);
             }
             break;
         }
@@ -2433,9 +2435,9 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
                 fb::RigExecWireExternalDeclaredInput sample;
                 if (!captureLeafSite(*leaves, ref.key, &sample))
                     return;
-                // Raw oracle arrays/tokens retain direct slot sampling. Ordinary
+                // Raw field arrays/tokens retain direct slot sampling. Ordinary
                 // leaves retain their complete raw connection traversal instead.
-                if (ref.owner == RigExecBakedPathLeafOwner::WeightOracle) {
+                if (ref.owner == RigExecBakedPathLeafOwner::WeightField) {
                     for (uint32_t slot : sample.read->walk)
                         slots.push_back(slot);
                 } else {
@@ -2485,7 +2487,7 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
     }
     {
         // The painted arrays are stored once, in their inputs, whose
-        // defaults (read at Default) are what Build folded; the oracle's
+        // defaults (read at Default) are what Build folded; the field's
         // points are its inputs' values at the time, as the facts hold them.
         const auto painted = [&](int32_t slot, const auto &folded) {
             using Element = typename std::decay_t<decltype(folded)>::value_type;
@@ -2524,32 +2526,32 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
                      " are not its arrays at Default");
                 return;
             }
-            const RigExecWeightOracleFacts &facts = oracleFacts[i];
-            const bool samples = arrayObjects[i].oracle &&
+            const RigExecWeightFieldFacts &facts = fieldFacts[i];
+            const bool samples = arrayObjects[i].fieldResolves &&
                                  !facts.samplesInFlight && facts.haveSamples;
             const auto present = [&](int32_t slot) {
                 VtVec3fArray held;
                 return slot >= 0 &&
                        S.slots[size_t(slot)].Get(&held, S.bakeTime);
             };
-            int32_t sampleSlot = wire.oracleSamplesSlot;
+            int32_t sampleSlot = wire.fieldSamplesSlot;
             if (!present(sampleSlot))
-                sampleSlot = oracleFallbackSlots[i];
+                sampleSlot = fieldFallbackSlots[i];
             if (samples != present(sampleSlot) ||
                 (samples && !points(sampleSlot, facts.samples))) {
-                Fail("the oracle's sample points of " + path +
+                Fail("the weight field's sample points of " + path +
                      " are not its input's");
                 return;
             }
-            const bool curve = arrayObjects[i].oracle && facts.haveCurve;
+            const bool curve = arrayObjects[i].fieldResolves && facts.haveCurve;
             VtVec3fArray curveValue;
-            const bool haveCurve = wire.oracleCurveSlot >= 0 &&
-                                   S.slots[size_t(wire.oracleCurveSlot)].Get(
+            const bool haveCurve = wire.fieldCurveSlot >= 0 &&
+                                   S.slots[size_t(wire.fieldCurveSlot)].Get(
                                        &curveValue, S.bakeTime) &&
                                    !curveValue.empty();
             if (curve != haveCurve ||
-                (curve && !points(wire.oracleCurveSlot, facts.curve))) {
-                Fail("the oracle's curve points of " + path +
+                (curve && !points(wire.fieldCurveSlot, facts.curve))) {
+                Fail("the weight field's curve points of " + path +
                      " are not its input's");
                 return;
             }
@@ -2557,7 +2559,7 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
             // base's on every run over their indices inputs: the facts'
             // error stands only where those inputs at their defaults would
             // not report it.
-            if (wire.oracleStaticError == support + path &&
+            if (wire.fieldStaticError == support + path &&
                 wire.indicesSlot >= 0 && wire.base >= 0 &&
                 size_t(wire.base) < C.weightObjects.size()) {
                 const int32_t baseSlot =
@@ -2572,7 +2574,7 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
                 if (!mine.empty() &&
                     std::set<int>(mine.begin(), mine.end()) !=
                         std::set<int>(theirs.begin(), theirs.end())) {
-                    wire.oracleStaticError.clear();
+                    wire.fieldStaticError.clear();
                 }
             }
         }
@@ -2760,10 +2762,10 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
     for (fb::RigExecWireWeightObject &object : C.weightObjects) {
         remapField(&object.valuesSlot);
         remapField(&object.indicesSlot);
-        remapField(&object.oracleSamplesSlot);
-        remapField(&object.oracleCurveSlot);
-        remapField(&object.oraclePlaneAxisSlot);
-        remapField(&object.oraclePlaneBoundsSlot);
+        remapField(&object.fieldSamplesSlot);
+        remapField(&object.fieldCurveSlot);
+        remapField(&object.fieldPlaneAxisSlot);
+        remapField(&object.fieldPlaneBoundsSlot);
     }
     for (const auto &[id, slot] : arraySlots) {
         RigExecBakeArraySlot entry = slot;

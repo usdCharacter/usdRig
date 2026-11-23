@@ -229,7 +229,7 @@ RigExecBakeStaticReport(RigExecRigEvaluator &evaluator,
     }
     // The input collection reads the standing program and the stage; it
     // never evaluates. It names the reads the slots evaluate and the
-    // oracle facts of the objects the runtime resolves.
+    // field facts of the objects the runtime resolves.
     RigExecBakePathTable paths;
     std::string why;
     RigExecBakeComputedCapture computed(evaluator, probe, &paths, &why);
@@ -369,11 +369,11 @@ RigExecBakeStaticReport(RigExecRigEvaluator &evaluator,
         }
     }
 
-    // The oracle facts of the objects the runtime resolves.
+    // The field facts of the objects the runtime resolves.
     for (const RigExecBakeTimeVaryingFact &fact :
          computed.GetTimeVaryingFacts()) {
         if (!slotDriven(SdfPath(fact.attribute))) {
-            found.emplace("weight object " + fact.object + " oracle",
+            found.emplace("weight object " + fact.object + " field",
                           fact.attribute);
         }
     }

@@ -322,9 +322,9 @@ _FrozenPrologue(_FrozenWorker *worker, const RigExecFrozenProgram &snapshot,
     // Place property source leaves after explicit overrides. Operations and
     // publication remain in the common graph and its joined epilogue.
     for (auto &object : B.weightObjects) {
-        auto &leaves = object.oracleLeaves;
+        auto &leaves = object.fieldLeaves;
         for (size_t k = 0; k < leaves.decl.keys.size(); ++k) {
-            const auto found = index.find(object.oracleFrozenKeys[k]);
+            const auto found = index.find(object.fieldFrozenKeys[k]);
             VtValue value =
                 found != index.end() && inputs.values[found->second].hasValue
                     ? inputs.values[found->second].value
@@ -714,7 +714,7 @@ _FrozenPlaceUpstream(RigExecBakedProgramImpl *program,
     for (const RigExecUpstreamValue &value : inputs.upstream) {
         B.upstream[value.path] = value.value;
     }
-    RigExecBakedPlaceUpstream(&B, /*placeOracle=*/false);
+    RigExecBakedPlaceUpstream(&B, /*placeWeightFieldReads=*/false);
 }
 
 // Defined below, beside the executor.
