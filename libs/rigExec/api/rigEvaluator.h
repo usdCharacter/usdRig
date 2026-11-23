@@ -824,6 +824,53 @@ private:
     bool _CompileRigAttempt(std::vector<std::string> *errors,
                             _CompileFailure *failure);
 
+    /// The state one compile attempt's steps share.
+    struct _CompileAttempt;
+
+    // The steps of _CompileRigAttempt, in the order it runs them. A step
+    // that returns false has recorded the attempt's failure.
+    void _CompileRetireProgram(_CompileAttempt &attempt);
+    void _CompileDeriveStartFrames(_CompileAttempt &attempt);
+    void _CompileDispatchDigest(_CompileAttempt &attempt);
+    bool _CompileDiscoverOutputs(_CompileAttempt &attempt);
+    bool _CompileDiscoverProviders(_CompileAttempt &attempt);
+    void _CompileAggregateProviders(_CompileAttempt &attempt);
+    bool _CompileDiscoverMovers(_CompileAttempt &attempt);
+    bool _CompileCheckOutputs(_CompileAttempt &attempt);
+    bool _CompileBindSolverJoints(_CompileAttempt &attempt);
+    void _CompileSolverDag(_CompileAttempt &attempt);
+    void _CompileArmInvalidation(_CompileAttempt &attempt);
+    void _CompileVolumeWeights(_CompileAttempt &attempt);
+    bool _CompilePoseConstraints(_CompileAttempt &attempt);
+    bool _CompilePropertyChains(_CompileAttempt &attempt);
+    bool _CompilePointGraph(_CompileAttempt &attempt);
+    void _CompileSampleReads(_CompileAttempt &attempt);
+    bool _CompileDerivedMaintenance(_CompileAttempt &attempt);
+    bool _CompilePoseDag(_CompileAttempt &attempt);
+    void _CompileRequiredSolvers(_CompileAttempt &attempt);
+    void _CompileConstraintDependencies(_CompileAttempt &attempt);
+    bool _CompileFrameInheritance(_CompileAttempt &attempt);
+    void _CompilePoseReady(_CompileAttempt &attempt);
+    bool _CompileSpaceSwitches(_CompileAttempt &attempt);
+    bool _CompileProviderClosure(_CompileAttempt &attempt);
+    bool _CompileSolverBatches(_CompileAttempt &attempt);
+    void _CompileRestConstancy(_CompileAttempt &attempt);
+    bool _CompileValidatePhases(_CompileAttempt &attempt);
+    void _CompilePublish(_CompileAttempt &attempt);
+    bool _CompileCommit(_CompileAttempt &attempt);
+
+    // Questions the compile steps ask of the stage and of the attempt.
+    bool _IsFrameProviderPath(const SdfPath &path) const;
+    bool _RegisterVolumeWeights(_CompileAttempt &attempt,
+                                const SdfPath &weightPath);
+    std::set<SdfPath> _ComputePoseProviderClosure(_CompileAttempt &attempt,
+                                                  const SdfPath &input);
+    const std::set<SdfPath> &_PoseProviderClosure(_CompileAttempt &attempt,
+                                                  const SdfPath &input);
+    void _SeedRestCompiledRigProvider(_CompileAttempt &attempt, SdfPath path);
+    void _SeedProvider(_CompileAttempt &attempt, SdfPath path,
+                       bool restCompiledRig = true);
+
     /// RigExecSurfaceProjector prims and the points property each rides.
     /// Compile turns each into derived matrix targets on that chain
     /// (RigExecRevisionOp::SurfaceProjector / ShaderDials).

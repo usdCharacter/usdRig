@@ -2,6 +2,7 @@
 
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/internal/rigEvaluatorInternal.h"
+#include "rigExec/internal/rigEvaluatorCompileAttempt.h"
 #include "rigExec/internal/crossDomainInputs.h"
 #include "rigExec/internal/inputReplay.h"
 #include "rigExec/internal/moverGraph.h"
@@ -277,23 +278,201 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // Exec preparation may load Python plugins on a worker. Release the GIL
     // through dispatcher destruction too, since early returns still join tasks.
     TF_PY_ALLOW_THREADS_IN_SCOPE();
-    // Sequential region stamps: Compile is flat code with early returns,
-    // so RAII scopes cannot span its phases; each stamp closes the
-    // previous region and opens the next. One branch when disabled.
-    // The clock starts on the FIRST line of the body rather than beside the
-    // first stamped phase, so the time between the Compile scope opening and
-    // DiscoverValidate.Validate starting goes to Compile.Prologue below
-    // instead of being lost in the parent scope.
-    const bool profileCompile = _profiler.IsEnabled();
-    uint64_t compileRegionStart = profileCompile ? RigExecProfiler::NowUs() : 0;
-    auto stampCompileRegion = [&](const char *name) {
-        if (!profileCompile) {
-            return;
-        }
-        const uint64_t now = RigExecProfiler::NowUs();
-        _profiler.Record(name, "compile", compileRegionStart, now);
-        compileRegionStart = now;
-    };
+    _CompileAttempt attempt(*this, errors, failure, compileSerial);
+    _CompileRetireProgram(attempt);
+    attempt.StampCompileRegion("Compile.Prologue");
+    _CompileDeriveStartFrames(attempt);
+    attempt.StampCompileRegion("Compile.DerivedStartFrames");
+    _CompileDispatchDigest(attempt);
+    // Zero-width when the digest is dispatched, which is the point: it marks
+    // WHERE the digest was launched so the trace can be read against the
+    // worker row. With RIGEXEC_ENABLE_PARALLEL_EVAL=0 the call above ran
+    // inline and this stamp measures the whole of it.
+    attempt.StampCompileRegion("Compile.StructureDigest");
+
+    RigExecProfilePhases &blocks = attempt.compileBlocks;
+    blocks.Next("DiscoverValidate.Validate");
+    if (!_CompileDiscoverOutputs(attempt)) {
+        return false;
+    }
+    blocks.Next("DiscoverValidate.WarmupDispatch");
+    blocks.Next("DiscoverValidate.Providers");
+    if (!_CompileDiscoverProviders(attempt)) {
+        return false;
+    }
+    blocks.Next("DiscoverValidate.AggregateProviders");
+    _CompileAggregateProviders(attempt);
+    blocks.Next("DiscoverValidate.MoverDiscovery");
+    if (!_CompileDiscoverMovers(attempt)) {
+        return false;
+    }
+    blocks.Next("DiscoverValidate.OutputCheck");
+    if (!_CompileCheckOutputs(attempt)) {
+        return false;
+    }
+    blocks.Next("DiscoverValidate.SolverJointBinding");
+    if (!_CompileBindSolverJoints(attempt)) {
+        return false;
+    }
+    blocks.Next("DiscoverValidate.SolverDag");
+    _CompileSolverDag(attempt);
+    blocks.Close();
+    attempt.StampCompileRegion("Compile.DiscoverValidate");
+    blocks.Next("SolverSchedule.ReplacementRequests");
+    _CompileArmInvalidation(attempt);
+    blocks.Next("SolverSchedule.VolumeWeights");
+    _CompileVolumeWeights(attempt);
+    blocks.Next("SolverSchedule.PoseConstraints");
+    if (!_CompilePoseConstraints(attempt)) {
+        return false;
+    }
+    blocks.Next("SolverSchedule.PropertyChains");
+    if (!_CompilePropertyChains(attempt)) {
+        return false;
+    }
+    blocks.Next("SolverSchedule.PointGraph");
+    if (!_CompilePointGraph(attempt)) {
+        return false;
+    }
+    blocks.Next("SolverSchedule.SampleReads");
+    _CompileSampleReads(attempt);
+    blocks.Next("SolverSchedule.DerivedMaintenance");
+    if (!_CompileDerivedMaintenance(attempt)) {
+        return false;
+    }
+    blocks.Next("SolverSchedule.PoseDag");
+    if (!_CompilePoseDag(attempt)) {
+        return false;
+    }
+    blocks.Next("SolverSchedule.RequiredSolvers");
+    _CompileRequiredSolvers(attempt);
+    blocks.Next("SolverSchedule.ConstraintDeps");
+    _CompileConstraintDependencies(attempt);
+    blocks.Next("SolverSchedule.FrameInheritance");
+    if (!_CompileFrameInheritance(attempt)) {
+        return false;
+    }
+    blocks.Next("SolverSchedule.PoseReady");
+    _CompilePoseReady(attempt);
+    blocks.Next("PrepareRequests.SpaceSwitches");
+    if (!_CompileSpaceSwitches(attempt)) {
+        return false;
+    }
+    blocks.Next("PrepareRequests.ProviderClosure");
+    if (!_CompileProviderClosure(attempt)) {
+        return false;
+    }
+    blocks.Next("SolverSchedule.SolverBatches");
+    if (!_CompileSolverBatches(attempt)) {
+        return false;
+    }
+    blocks.Close();
+    attempt.StampCompileRegion("Compile.SolverSchedule");
+    _CompileRestConstancy(attempt);
+    blocks.Close();
+    attempt.StampCompileRegion("Compile.PrepareRequests");
+    if (!_CompileValidatePhases(attempt)) {
+        return false;
+    }
+    attempt.StampCompileRegion("Compile.ChainOrderValidate");
+    _CompilePublish(attempt);
+    attempt.StampCompileRegion("Compile.Commit");
+    return _CompileCommit(attempt);
+}
+
+RigExecRigEvaluator::_CompileAttempt::_CompileAttempt(
+    RigExecRigEvaluator &evaluator, std::vector<std::string> *errors,
+    _CompileFailure *failure, uint64_t compileSerial)
+    : evaluator(evaluator), errors(errors), failure(failure),
+      compileSerial(compileSerial),
+      profileCompile(evaluator._profiler.IsEnabled()),
+      compileRegionStart(profileCompile ? RigExecProfiler::NowUs() : 0),
+      verifyDigestOnEarlyReturn([this]() {
+          if (!digestJoined && this->evaluator._stage &&
+              _DigestSplitVerifyRequested()) {
+              digestDispatcher.Wait();
+              this->evaluator._JoinStructureDigest(digestParts);
+          }
+      }),
+      compileBlocks(&evaluator._profiler, "compile")
+{
+}
+
+RigExecRigEvaluator::_CompileAttempt::~_CompileAttempt() = default;
+
+bool
+RigExecRigEvaluator::_CompileAttempt::Fail(const std::string &message,
+                                           SdfPathVector operations)
+{
+    *failure = {message, std::move(operations)};
+    if (errors) {
+        errors->push_back(message);
+    }
+    if (invalidateCompiledRig)
+        invalidateCompiledRig();
+    return false;
+}
+
+void
+RigExecRigEvaluator::_CompileAttempt::StampCompileRegion(const char *name)
+{
+    if (!profileCompile) {
+        return;
+    }
+    const uint64_t now = RigExecProfiler::NowUs();
+    evaluator._profiler.Record(name, "compile", compileRegionStart, now);
+    compileRegionStart = now;
+}
+
+// A chain's rigExec:startFrame with no composed targets reads the
+// provider its policy derived, exactly where an authored target would.
+void
+RigExecRigEvaluator::_CompileAttempt::AppendDerivedStart(
+    const UsdRelationship &rel, SdfPathVector *targets) const
+{
+    if (!targets->empty() || rel.GetName() != RigExecStartFrameRelName) {
+        return;
+    }
+    const auto derived = derivedStartFrames.find(rel.GetPrimPath());
+    if (derived != derivedStartFrames.end()) {
+        targets->push_back(derived->second);
+    }
+}
+
+// Strictly before, in the stack restricted to solvers. solverStackOrdinal
+// is the reverse composed pre-order of the whole rig, so its restriction
+// to the solvers IS the unified pose stack restricted to them; the
+// constraint half only interleaves between them and cannot reorder a
+// solver pair.
+// Only a READER that is itself a stack step consults it. A PRODUCER has no
+// position for the comparison to be about, so it keeps the unconditional
+// "wait for every writer of what I read" edge -- which is
+// its data-flow meaning, and which leaves a genuine loop among producers
+// (two of them reading each other's joints) a cycle, reported as one.
+bool
+RigExecRigEvaluator::_CompileAttempt::StackBefore(const SdfPath &a,
+                                                  const SdfPath &b) const
+{
+    const auto ia = solverStackOrdinal.find(a);
+    const auto ib = solverStackOrdinal.find(b);
+    if (ia == solverStackOrdinal.end() || ib == solverStackOrdinal.end()) {
+        return false;
+    }
+    return ia->second < ib->second;
+}
+
+// Ordinal or "no position": a producer sorts before every stack step and
+// is deterministic about it, which is all the emission order needs.
+int
+RigExecRigEvaluator::_CompileAttempt::StackOrdinalOf(const SdfPath &path) const
+{
+    const auto it = poseStackOrdinal.find(path);
+    return it == poseStackOrdinal.end() ? -1 : it->second;
+}
+
+void
+RigExecRigEvaluator::_CompileRetireProgram(_CompileAttempt &attempt)
+{
     // The program describes the compiled rig this call is about to replace, so it
     // stops being the rig's program here: a Compile that fails and restores
     // the previous compiled rig returns before the rebuild at the tail, this local
@@ -302,8 +481,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // state (which node ran with which packet) is not about the compiled rig: the
     // dynamic path keeps its _liveGraphs across a recompile and reconnects
     // whichever nodes survive, and the rebuild below does the same.
-    std::unique_ptr<RigExecBakedProgram> retiringBakedProgram =
-        std::move(_bakedProgram);
+    attempt.retiringBakedProgram = std::move(_bakedProgram);
     // A new compiled rig is a new question: whatever refused the last one said
     // nothing about this one, and whatever made its program bail neither.
     _programState.Transition(_ProgramState::Edge::CompileBegan);
@@ -316,7 +494,13 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     _rigState.digestGate = _DigestGate();
     _rigState.certainCandidates.clear();
     _rigState.certainCandidatesOverflowed = false;
-    stampCompileRegion("Compile.Prologue");
+}
+
+void
+RigExecRigEvaluator::_CompileDeriveStartFrames(_CompileAttempt &attempt)
+{
+    std::vector<std::string> *errors = attempt.errors;
+    auto &derivedStartFrames = attempt.derivedStartFrames;
     // rigExec:startFramePolicy, resolved once per compile into chain ->
     // provider. Every solver-input walk below reads a chain's start frame
     // through this map when it has no authored target; the baked program
@@ -325,23 +509,20 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // joints, their namespace ancestry). Warnings go to both channels, like
     // the transform-authority pass: TF_WARN is what a host surfaces to the
     // author, the errors vector is what a test can read.
-    std::map<SdfPath, SdfPath> derivedStartFrames;
     for (const std::string &message : _DeriveStartFrames(&derivedStartFrames)) {
         if (errors) {
             errors->push_back("warning: " + message);
         }
         TF_WARN("%s", message.c_str());
     }
-    stampCompileRegion("Compile.DerivedStartFrames");
+}
 
-    // Digest: 3 tasks (_DigestSegment), stage read-only, joined before commit;
-    // the join concatenates segments in order and hashes. digestParts is
-    // declared after retiringBakedProgram and before the dispatcher, whose
-    // destructor joins; tasks capture only `this`, &digestParts and
-    // &digestFootprints.
-    std::string digestParts[_DigestSegmentCount];
-    _DigestFootprint digestFootprints[_DigestSegmentCount];
-    WorkDispatcher digestDispatcher;
+void
+RigExecRigEvaluator::_CompileDispatchDigest(_CompileAttempt &attempt)
+{
+    auto &digestParts = attempt.digestParts;
+    auto &digestFootprints = attempt.digestFootprints;
+    auto &digestDispatcher = attempt.digestDispatcher;
     const auto computeDigestPart = [this, &digestParts,
                                     &digestFootprints](size_t i) {
         if (_stage) {
@@ -357,67 +538,31 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             computeDigestPart(i);
         }
     }
-    // A compile that returns early discards the digest unread, but the
-    // split verifier still checks it there: the rigs Compile rejects
-    // include the ones whose pose inputs close a cycle, where the Solvers
-    // segment's bytes depend on its walk order. Declared after the
-    // dispatcher, so it runs first and waits for the tasks itself.
-    bool digestJoined = false;
-    const TfScoped<> verifyDigestOnEarlyReturn(
-        [this, &digestJoined, &digestDispatcher, &digestParts]() {
-            if (!digestJoined && _stage && _DigestSplitVerifyRequested()) {
-                digestDispatcher.Wait();
-                _JoinStructureDigest(digestParts);
-            }
-        });
-    // Zero-width when the digest is dispatched, which is the point: it marks
-    // WHERE the digest was launched so the trace can be read against the
-    // worker row. With RIGEXEC_ENABLE_PARALLEL_EVAL=0 the call above ran
-    // inline and this stamp measures the whole of it.
-    stampCompileRegion("Compile.StructureDigest");
+}
 
-    // The parts WITHIN those regions, for the same reason and on the same
-    // clock: a phase that takes a fifth of the compile says nothing about
-    // which of its passes to go and look at. Strictly nested inside the
-    // stamps above, so the trace shows them as children rather than as a
-    // second, competing set of rows. Closed at each phase boundary so no
-    // block spans two phases, and on destruction so an early return
-    // cannot leave one open.
-    RigExecProfilePhases compileBlocks(&_profiler, "compile");
-
-    std::function<void()> invalidateCompiledRig;
-    auto fail = [errors, failure, &invalidateCompiledRig](
-                    const std::string &message, SdfPathVector operations = {}) {
-        *failure = {message, std::move(operations)};
-        if (errors) {
-            errors->push_back(message);
-        }
-        if (invalidateCompiledRig)
-            invalidateCompiledRig();
-        return false;
-    };
-
-    compileBlocks.Next("DiscoverValidate.Validate");
-
+bool
+RigExecRigEvaluator::_CompileDiscoverOutputs(_CompileAttempt &attempt)
+{
     if (!_stage) {
-        return fail("no stage; nothing to compile");
+        return attempt.Fail("no stage; nothing to compile");
     }
 
-    const UsdPrim rig = _stage->GetPrimAtPath(_rigPath);
+    auto &rig = attempt.rig;
+    rig = _stage->GetPrimAtPath(_rigPath);
     if (!rig) {
-        return fail("Rig prim not found: " + _rigPath.GetString());
+        return attempt.Fail("Rig prim not found: " + _rigPath.GetString());
     }
     // Prototype-hosted rigs fail validation (a rig in a
     // prototype or otherwise unable to deinstance is rejected).
     if (rig.IsInstanceProxy() || rig.IsInPrototype()) {
-        return fail("Rig is instance-proxy/prototype hosted: " +
-                    _rigPath.GetString());
+        return attempt.Fail("Rig is instance-proxy/prototype hosted: " +
+                            _rigPath.GetString());
     }
     // Phase A: validation into locals. Nothing below mutates evaluator
     // state until every check passes, so a failed structural edit keeps
     // the previous compiled rig publishable.
-    std::vector<SdfPath> newJointPaths =
-        _DiscoverJointOutputs(_stage, _rigPath, _skippedOperations);
+    auto &newJointPaths = attempt.newJointPaths;
+    newJointPaths = _DiscoverJointOutputs(_stage, _rigPath, _skippedOperations);
     // A rig with no joints is legal: a mover writes an exact target, and a
     // target is a points array, a plain UsdGeomXformable's transform, or a
     // scalar property just as readily as it is a joint frame -- three output
@@ -428,45 +573,50 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // Controls and placed volumes are discovered alongside the joints. Zero
     // of either kind is ordinary; the combined output gate below decides
     // whether the whole rig is genuinely empty.
-    std::vector<SdfPath> newControlPaths = _DiscoverControls(_stage, _rigPath);
-    std::vector<SdfPath> newVolumeWeightPaths =
-        _DiscoverVolumeWeights(_stage, _rigPath);
+    auto &newControlPaths = attempt.newControlPaths;
+    newControlPaths = _DiscoverControls(_stage, _rigPath);
+    auto &newVolumeWeightPaths = attempt.newVolumeWeightPaths;
+    newVolumeWeightPaths = _DiscoverVolumeWeights(_stage, _rigPath);
     // Every aggregate frame provider, wherever the author placed it: their
     // computePointFrameArray results are published (and drawn as guides by
     // the imaging chain, like OpenExec's IrJointScope guides). Discovered
     // here, with the other providers, because it is the last thing the exec
     // lane below needs before it can start.
-    std::vector<UsdPrim> aggregateSolvers =
-        _DiscoverAggregateSolvers(_stage, _rigPath);
+    auto &aggregateSolvers = attempt.aggregateSolvers;
+    aggregateSolvers = _DiscoverAggregateSolvers(_stage, _rigPath);
     aggregateSolvers.erase(
         std::remove_if(aggregateSolvers.begin(), aggregateSolvers.end(),
                        [this](const UsdPrim &solver) {
                            return _IsSkippedOperation(solver.GetPath());
                        }),
         aggregateSolvers.end());
-    std::vector<SdfPath> solverArrayPaths;
+    auto &solverArrayPaths = attempt.solverArrayPaths;
     solverArrayPaths.reserve(aggregateSolvers.size());
     for (const UsdPrim &solver : aggregateSolvers) {
         solverArrayPaths.push_back(solver.GetPath());
     }
+    return true;
+}
 
-    compileBlocks.Next("DiscoverValidate.WarmupDispatch");
-    // Dispatched after provider discovery: lane task is compile's critical
-    // path. Warm-up prepares every eager request into the shared exec network
-    // in one parallel round. Nothing is read from it; a request that fails to
-    // build is left to the real preparation to report.
-    compileBlocks.Next("DiscoverValidate.Providers");
-
+bool
+RigExecRigEvaluator::_CompileDiscoverProviders(_CompileAttempt &attempt)
+{
+    std::vector<std::string> *errors = attempt.errors;
+    auto &newJointPaths = attempt.newJointPaths;
+    auto &newControlPaths = attempt.newControlPaths;
+    auto &newVolumeWeightPaths = attempt.newVolumeWeightPaths;
+    auto &solverArrayPaths = attempt.solverArrayPaths;
     // Pose interpolators, discovered and SOLVED here. Solving is the whole
     // reason this is compile-time work: inverting the matrix of every pose's
     // kernel value at every other pose is a constant of the authored data,
     // and doing it per frame would be inverting the same matrix 326 times a
     // second to be handed the same answer.
-    std::unique_ptr<RigExecSceneDescriptors> compileScene;
-    const UsdStageWeakPtr compileSceneStage(_stage);
-    uint64_t compileSceneSerial = 0;
-    bool compileSceneReusable = false;
-    std::vector<_PoseInterpolator> newPoseInterpolators;
+    auto &compileScene = attempt.compileScene;
+    auto &compileSceneStage = attempt.compileSceneStage;
+    compileSceneStage = _stage;
+    auto &compileSceneSerial = attempt.compileSceneSerial;
+    auto &compileSceneReusable = attempt.compileSceneReusable;
+    auto &newPoseInterpolators = attempt.newPoseInterpolators;
     {
         RIGEXEC_PROFILE_SCOPE_CAT(
             _profiler, "Compile.Providers.PoseInterpolators", "compile");
@@ -478,7 +628,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 newJointPaths, newControlPaths, &newPoseInterpolators, errors,
                 &interpolatorError, &interpolatorOperation, compileScene.get(),
                 &_profiler)) {
-            return fail(interpolatorError, {interpolatorOperation});
+            return attempt.Fail(interpolatorError, {interpolatorOperation});
         }
         // No interpolators means no capture. Translation reads use the fresh
         // Default snapshot.
@@ -618,8 +768,15 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         }
     }
 
-    std::map<SdfPath, SdfPath> newRibbonDriverPoints;
-    compileBlocks.Next("DiscoverValidate.AggregateProviders");
+    auto &newRibbonDriverPoints = attempt.newRibbonDriverPoints;
+    return true;
+}
+
+void
+RigExecRigEvaluator::_CompileAggregateProviders(_CompileAttempt &attempt)
+{
+    auto &aggregateSolvers = attempt.aggregateSolvers;
+    auto &newRibbonDriverPoints = attempt.newRibbonDriverPoints;
     for (const UsdPrim &child : aggregateSolvers) {
         // A ribbon's driver-curve points, resolved to the exact native
         // attribute. This replaces the compiler's last authoring pass:
@@ -640,25 +797,40 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
         }
     }
+}
 
-    compileBlocks.Next("DiscoverValidate.MoverDiscovery");
-    std::vector<RigExecMoverRecord> newMovers;
-    SdfPathVector inertMovers;
-    std::vector<_SurfaceProjectorRecord> newSurfaceProjectors;
+bool
+RigExecRigEvaluator::_CompileDiscoverMovers(_CompileAttempt &attempt)
+{
+    std::vector<std::string> *errors = attempt.errors;
+    _CompileFailure *failure = attempt.failure;
+    auto &newMovers = attempt.newMovers;
+    auto &inertMovers = attempt.inertMovers;
+    auto &newSurfaceProjectors = attempt.newSurfaceProjectors;
     if (!_DiscoverMovers(newMovers, newSurfaceProjectors, inertMovers, errors,
                          failure)) {
-        return fail(failure->message, failure->operations);
+        return attempt.Fail(failure->message, failure->operations);
     }
+    return true;
+}
 
-    compileBlocks.Next("DiscoverValidate.OutputCheck");
+bool
+RigExecRigEvaluator::_CompileCheckOutputs(_CompileAttempt &attempt)
+{
+    auto &newJointPaths = attempt.newJointPaths;
+    auto &newControlPaths = attempt.newControlPaths;
+    auto &newVolumeWeightPaths = attempt.newVolumeWeightPaths;
+    auto &newMovers = attempt.newMovers;
+    auto &inertMovers = attempt.inertMovers;
     // Error only when no control, joint, volume or mover exists. An inert mover
     // counts.
     if (newControlPaths.empty() && newJointPaths.empty() &&
         newVolumeWeightPaths.empty() && newMovers.empty() &&
         inertMovers.empty()) {
-        return fail("Rig publishes no outputs: " + _rigPath.GetString() +
-                    " has no RigExecControl, RigExecJoint, or placed volume "
-                    "weight prims and no movers");
+        return attempt.Fail(
+            "Rig publishes no outputs: " + _rigPath.GetString() +
+            " has no RigExecControl, RigExecJoint, or placed volume "
+            "weight prims and no movers");
     }
 
     // Multiple writers of one target are an ordinary stack, not an error.
@@ -730,7 +902,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 const auto it = lastFrameWriterOrdinal.find(provider);
                 if (it != lastFrameWriterOrdinal.end() &&
                     it->second > m.ordinal) {
-                    return fail(
+                    return attempt.Fail(
                         "Unsatisfied final read: " + m.moverPath.GetString() +
                             " reads final of " + provider.GetString() +
                             " but a writer with a later ordinal exists "
@@ -740,8 +912,14 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
         }
     }
+    return true;
+}
 
-    compileBlocks.Next("DiscoverValidate.SolverJointBinding");
+bool
+RigExecRigEvaluator::_CompileBindSolverJoints(_CompileAttempt &attempt)
+{
+    auto &rig = attempt.rig;
+    auto &aggregateSolvers = attempt.aggregateSolvers;
     // Validates solver->joint bindings before teardown, so a bad binding keeps
     // the previous compiled rig. Authored-conflict checks read _stage.
     // Value: joint -> ordered writer stack (solver, element); index 0 writes
@@ -759,7 +937,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // different scopes are ordered by where their scopes sit, and a nested
     // solver comes before its ancestor. Must match the digest's solver walk
     // (the aggregate-solver segment of the digest).
-    std::map<SdfPath, int> solverStackOrdinal;
+    auto &solverStackOrdinal = attempt.solverStackOrdinal;
     {
         int ordinal = 0;
         for (auto it = orderedSolvers.rbegin(); it != orderedSolvers.rend();
@@ -767,7 +945,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             solverStackOrdinal[it->GetPath()] = ordinal++;
         }
     }
-    std::map<SdfPath, std::vector<std::pair<SdfPath, int>>> newJointBinding;
+    auto &newJointBinding = attempt.newJointBinding;
     {
         {
             const std::vector<UsdPrim> &solvers = orderedSolvers;
@@ -789,7 +967,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                     for (const TfToken &name : lengthAttrs) {
                         const UsdAttribute a = solver.GetAttribute(name);
                         if (a && a.HasAuthoredValueOpinion()) {
-                            return fail(
+                            return attempt.Fail(
                                 solver.GetPath().GetString() + ": " +
                                     name.GetString() +
                                     " was removed from the schema; bone "
@@ -818,7 +996,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 for (const TfToken &name : cardinalityAttrs) {
                     const UsdAttribute a = solver.GetAttribute(name);
                     if (a && a.GetNumTimeSamples() > 0) {
-                        return fail(
+                        return attempt.Fail(
                             solver.GetTypeName().GetString() + " " +
                                 solver.GetPath().GetString() + ": " +
                                 name.GetString() +
@@ -865,10 +1043,11 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                             // namespace order.
                             const SdfPath targetPrim = target.GetPrimPath();
                             if (_IsSkippedOperation(targetPrim)) {
-                                return fail(solver.GetPath().GetString() +
-                                                " reads skipped operation " +
-                                                targetPrim.GetString(),
-                                            {solver.GetPath()});
+                                return attempt.Fail(
+                                    solver.GetPath().GetString() +
+                                        " reads skipped operation " +
+                                        targetPrim.GetString(),
+                                    {solver.GetPath()});
                             }
                             if (targetPrim != solver.GetPath() &&
                                 solverPaths.count(targetPrim)) {
@@ -923,10 +1102,10 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                     // otherwise pass, and the binding would name a prim with no
                     // aggregate computation to extract an element from.
                     if (!_IsAggregateSolverType(solver.GetTypeName())) {
-                        return fail(who() +
-                                        " authors rigExec:joints but is not a "
-                                        "recognized aggregate solver type",
-                                    {solver.GetPath()});
+                        return attempt.Fail(
+                            who() + " authors rigExec:joints but is not a "
+                                    "recognized aggregate solver type",
+                            {solver.GetPath()});
                     }
 
                     // jointElements parallel-array shape: empty, or exactly one
@@ -936,20 +1115,21 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                             _tokens->rigExecJointElements)) {
                         std::vector<double> times;
                         if (a.GetTimeSamples(&times) && !times.empty()) {
-                            return fail(who() +
-                                            ": rigExec:jointElements must not "
-                                            "carry time samples",
-                                        {solver.GetPath()});
+                            return attempt.Fail(
+                                who() + ": rigExec:jointElements must not "
+                                        "carry time samples",
+                                {solver.GetPath()});
                         }
                         a.Get(&jointElements);
                     }
                     if (!jointElements.empty() &&
                         jointElements.size() != jointTargets.size()) {
-                        return fail(who() + ": rigExec:jointElements length " +
-                                        std::to_string(jointElements.size()) +
-                                        " must equal rigExec:joints length " +
-                                        std::to_string(jointTargets.size()),
-                                    {solver.GetPath()});
+                        return attempt.Fail(
+                            who() + ": rigExec:jointElements length " +
+                                std::to_string(jointElements.size()) +
+                                " must equal rigExec:joints length " +
+                                std::to_string(jointTargets.size()),
+                            {solver.GetPath()});
                     }
 
                     // Knowable aggregate element count per solver type
@@ -1004,7 +1184,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                             for (int e : jointElements) {
                                 if (e >= 0 && e < knownCount) {
                                     if (filled[e]) {
-                                        return fail(
+                                        return attempt.Fail(
                                             who() +
                                                 ": rigExec:jointElements "
                                                 "fills chain slot " +
@@ -1021,7 +1201,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                             a.Get(&weights);
                             if (!weights.empty() &&
                                 weights.size() != jointTargets.size()) {
-                                return fail(
+                                return attempt.Fail(
                                     who() + ": rigExec:volumeWeights length " +
                                         std::to_string(weights.size()) +
                                         " must equal rigExec:joints length " +
@@ -1035,11 +1215,11 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                         // position is its element, never a remap.
                         knownCount = static_cast<int>(jointTargets.size());
                         if (!jointElements.empty()) {
-                            return fail(who() +
-                                            ": rigExec:jointElements is not "
-                                            "read by a 2D skeleton; a bone's "
-                                            "list position is its element",
-                                        {solver.GetPath()});
+                            return attempt.Fail(
+                                who() + ": rigExec:jointElements is not "
+                                        "read by a 2D skeleton; a bone's "
+                                        "list position is its element",
+                                {solver.GetPath()});
                         }
                     }
 
@@ -1049,13 +1229,14 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                                                 ? jointElements[i]
                                                 : static_cast<int>(i);
                         if (element < 0) {
-                            return fail(who() + ": negative element index " +
-                                            std::to_string(element) + " for " +
-                                            jointPath.GetString(),
-                                        {solver.GetPath()});
+                            return attempt.Fail(
+                                who() + ": negative element index " +
+                                    std::to_string(element) + " for " +
+                                    jointPath.GetString(),
+                                {solver.GetPath()});
                         }
                         if (knownCount >= 0 && element >= knownCount) {
-                            return fail(
+                            return attempt.Fail(
                                 who() + ": element " + std::to_string(element) +
                                     " for " + jointPath.GetString() +
                                     " is out of range (solver produces " +
@@ -1065,15 +1246,16 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                         const UsdPrim jointPrim =
                             _stage->GetPrimAtPath(jointPath);
                         if (!jointPrim) {
-                            return fail(who() +
-                                            " rigExec:joints targets missing "
-                                            "prim " +
-                                            jointPath.GetString(),
-                                        {solver.GetPath()});
+                            return attempt.Fail(
+                                who() +
+                                    " rigExec:joints targets missing "
+                                    "prim " +
+                                    jointPath.GetString(),
+                                {solver.GetPath()});
                         }
                         if (jointPrim.GetTypeName() !=
                             SchemaTypeName::RigExecJoint) {
-                            return fail(
+                            return attempt.Fail(
                                 who() + " rigExec:joints target " +
                                     jointPath.GetString() + " is a " +
                                     jointPrim.GetTypeName().GetString() +
@@ -1087,12 +1269,13 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                         // prototype-hosted joint up front.
                         if (jointPrim.IsInstanceProxy() ||
                             jointPrim.IsInPrototype()) {
-                            return fail(who() + " rigExec:joints target " +
-                                            jointPath.GetString() +
-                                            " is instance-proxy/prototype "
-                                            "hosted and cannot "
-                                            "receive a solver binding",
-                                        {solver.GetPath()});
+                            return attempt.Fail(
+                                who() + " rigExec:joints target " +
+                                    jointPath.GetString() +
+                                    " is instance-proxy/prototype "
+                                    "hosted and cannot "
+                                    "receive a solver binding",
+                                {solver.GetPath()});
                         }
                         // Exclusive ownership: a solver-posed joint must not
                         // also author its own posed:space connection (the solver
@@ -1106,7 +1289,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                                 const SdfPathVector conns =
                                     _AuthoredConnections(posed);
                                 if (!conns.empty()) {
-                                    return fail(
+                                    return attempt.Fail(
                                         who() + ": joint " +
                                             jointPath.GetString() +
                                             " also connects posed:space",
@@ -1134,10 +1317,11 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                             newJointBinding[jointPath];
                         for (const auto &[writer, writerElement] : writers) {
                             if (writer == solver.GetPath()) {
-                                return fail(who() + ": rigExec:joints names " +
-                                                jointPath.GetString() +
-                                                " more than once",
-                                            {solver.GetPath()});
+                                return attempt.Fail(
+                                    who() + ": rigExec:joints names " +
+                                        jointPath.GetString() +
+                                        " more than once",
+                                    {solver.GetPath()});
                             }
                         }
                         writers.emplace_back(solver.GetPath(), element);
@@ -1175,12 +1359,18 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                              return ordinalOf(a.first) < ordinalOf(b.first);
                          });
     }
+    return true;
+}
 
-    compileBlocks.Next("DiscoverValidate.SolverDag");
+void
+RigExecRigEvaluator::_CompileSolverDag(_CompileAttempt &attempt)
+{
+    const std::vector<UsdPrim> &orderedSolvers = attempt.aggregateSolvers;
+    auto &newJointBinding = attempt.newJointBinding;
     // A switch on a 2D skeleton's bone is read by that skeleton, not stepped;
     // its sources outside the skeleton become the solve's frame inputs.
-    std::set<SdfPath> skeleton2dBones;
-    std::map<SdfPath, SdfPathVector> skeleton2dSwitchSources;
+    auto &skeleton2dBones = attempt.skeleton2dBones;
+    auto &skeleton2dSwitchSources = attempt.skeleton2dSwitchSources;
     {
         std::map<SdfPath, SdfPath> skeletonOf;
         std::map<SdfPath, std::set<SdfPath>> bonesOf;
@@ -1222,19 +1412,6 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
         }
     }
-    // A chain's rigExec:startFrame with no composed targets reads the
-    // provider its policy derived, exactly where an authored target would.
-    const auto appendDerivedStart = [&derivedStartFrames](
-                                        const UsdRelationship &rel,
-                                        SdfPathVector *targets) {
-        if (!targets->empty() || rel.GetName() != RigExecStartFrameRelName) {
-            return;
-        }
-        const auto derived = derivedStartFrames.find(rel.GetPrimPath());
-        if (derived != derivedStartFrames.end()) {
-            targets->push_back(derived->second);
-        }
-    };
     // Compile the solver DAG, including frame inputs carried by a posed
     // namespace ancestor. Rest inputs are independent of posed outputs and
     // therefore never introduce a feedback edge (IK -> blend is legal).
@@ -1262,7 +1439,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
         }
     }
-    std::set<SdfPath> jointWritingSolvers;
+    auto &jointWritingSolvers = attempt.jointWritingSolvers;
     for (const auto &[joint, writers] : newJointBinding) {
         for (const auto &[writer, element] : writers) {
             if (aggregateProducers.count(writer))
@@ -1270,25 +1447,6 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             jointWritingSolvers.insert(writer);
         }
     }
-    // Strictly before, in the stack restricted to solvers. solverStackOrdinal
-    // is the reverse composed pre-order of the whole rig, so its restriction
-    // to the solvers IS the unified pose stack restricted to them; the
-    // constraint half only interleaves between them and cannot reorder a
-    // solver pair.
-    // Only a READER that is itself a stack step consults it. A PRODUCER has no
-    // position for the comparison to be about, so it keeps the unconditional
-    // "wait for every writer of what I read" edge -- which is
-    // its data-flow meaning, and which leaves a genuine loop among producers
-    // (two of them reading each other's joints) a cycle, reported as one.
-    const auto stackBefore = [&solverStackOrdinal](const SdfPath &a,
-                                                   const SdfPath &b) {
-        const auto ia = solverStackOrdinal.find(a);
-        const auto ib = solverStackOrdinal.find(b);
-        if (ia == solverStackOrdinal.end() || ib == solverStackOrdinal.end()) {
-            return false;
-        }
-        return ia->second < ib->second;
-    };
     // "A writer waits on an EARLIER READER." The new edge class the unified
     // pose stack needs: a step that reads a provider from BELOW
     // its writer reads the version standing before that write, and without an
@@ -1298,11 +1456,11 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // resolved and applied once poseDependencies exists, because the two
     // halves are found on opposite sides of the constraint pass.
     // (waiter, waited-on): poseDependencies[first].insert(second).
-    std::vector<std::pair<SdfPath, SdfPath>> poseReverseEdges;
-    std::map<SdfPath, std::set<SdfPath>> newSolverDependencies;
+    auto &poseReverseEdges = attempt.poseReverseEdges;
+    auto &newSolverDependencies = attempt.newSolverDependencies;
     // Aggregate reads bind a producer's same-frame output. Pose frame reads
     // select authored checkpoints; the common graph schedules both classes.
-    std::map<SdfPath, std::set<SdfPath>> newSolverAggregateReads;
+    auto &newSolverAggregateReads = attempt.newSolverAggregateReads;
     {
         const std::vector<UsdPrim> &solvers = orderedSolvers;
         std::set<SdfPath> solverPaths;
@@ -1320,7 +1478,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 }
                 SdfPathVector targets;
                 rel.GetTargets(&targets);
-                appendDerivedStart(rel, &targets);
+                attempt.AppendDerivedStart(rel, &targets);
                 reads.push_back(std::move(targets));
             }
             const auto switchSources =
@@ -1359,7 +1517,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                                 }
                                 if (jointWritingSolvers.count(
                                         solver.GetPath()) &&
-                                    stackBefore(solver.GetPath(), writer)) {
+                                    attempt.StackBefore(solver.GetPath(),
+                                                        writer)) {
                                     // The writer stands ABOVE this solver, so
                                     // the solver reads the version before that
                                     // write -- and the writer has to wait, or
@@ -1381,11 +1540,12 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
         }
     }
+}
 
-    compileBlocks.Close();
-    stampCompileRegion("Compile.DiscoverValidate");
-
-    compileBlocks.Next("SolverSchedule.ReplacementRequests");
+void
+RigExecRigEvaluator::_CompileArmInvalidation(_CompileAttempt &attempt)
+{
+    auto &invalidateCompiledRig = attempt.invalidateCompiledRig;
     // Prepare replacement requests while retaining the previous requests and
     // their shared compiler context. The stock network handles changed USD
     // bindings incrementally; no whole execution-system replacement is needed.
@@ -1393,12 +1553,155 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     invalidateCompiledRig = [&]() {
         _rigState.Transition(_CompiledRigState::Edge::Invalidated);
     };
+}
 
-    compileBlocks.Next("SolverSchedule.VolumeWeights");
+// Returns true when this weight object, or anything it composes,
+// samples the in-flight points.
+// The answer has to propagate UP: the graph build loop tests the
+// weight object a mover actually binds, which for a composed field is
+// the combine, not the sphere inside it. Recording only the leaf left
+// exec applying the reference-phase packet while the CPU oracle
+// reached a leaf with no in-flight points and failed.
+bool
+RigExecRigEvaluator::_RegisterVolumeWeights(_CompileAttempt &attempt,
+                                            const SdfPath &weightPath)
+{
+    auto &newFalloffLutOverrides = attempt.newFalloffLutOverrides;
+    auto &newCurrentPhaseWeights = attempt.newCurrentPhaseWeights;
+    auto &newVolumeWeightProviders = attempt.newVolumeWeightProviders;
+    auto &volumeWeightError = attempt.volumeWeightError;
+    auto &visiting = attempt.visiting;
+    const UsdPrim w = _stage->GetPrimAtPath(weightPath);
+    if (!w) {
+        return false;
+    }
+    if (!visiting.insert(weightPath).second)
+        return false;
+    struct Pop {
+        std::set<SdfPath> &s;
+        const SdfPath &p;
+        ~Pop()
+        {
+            s.erase(p);
+        }
+    } pop{visiting, weightPath};
+
+    if (newVolumeWeightProviders.count(weightPath) ||
+        newCurrentPhaseWeights.count(weightPath)) {
+        // Already walked through another consumer; its answer stands.
+        return newCurrentPhaseWeights.count(weightPath) != 0;
+    }
+    bool isCurrent = false;
+    if (_IsVolumeWeightType(w.GetTypeName())) {
+        auto requireTargets = [&](const TfToken &rel, size_t exact,
+                                  const char *what) {
+            SdfPathVector targets;
+            if (UsdRelationship r = w.GetRelationship(rel)) {
+                r.GetTargets(&targets);
+            }
+            if (targets.size() > exact) {
+                volumeWeightError = weightPath.GetString() + ": " +
+                                    rel.GetString() + " must name " + what;
+            }
+            return targets.size();
+        };
+        // At most one sampling override; exactly one curve for a
+        // curve weight.
+        requireTargets(_tokens->rigExecSampleSource, 1,
+                       "at most one points source");
+        if (w.GetTypeName() == SchemaTypeName::RigExecCurveWeight) {
+            SdfPathVector curves;
+            if (const UsdRelationship rel =
+                    w.GetRelationship(_tokens->rigExecCurve)) {
+                rel.GetTargets(&curves);
+            }
+            if (curves.size() != 1) {
+                volumeWeightError =
+                    weightPath.GetString() +
+                    ": rigExec:curve must name exactly one points source";
+            } else {
+                const SdfPath pointsPath =
+                    curves[0].IsPropertyPath()
+                        ? curves[0]
+                        : curves[0].AppendProperty(_tokens->points);
+                const UsdAttribute points =
+                    _stage->GetAttributeAtPath(pointsPath);
+                if (!points ||
+                    points.GetTypeName() != SdfValueTypeNames->Point3fArray) {
+                    volumeWeightError =
+                        weightPath.GetString() + ": rigExec:curve target " +
+                        curves[0].GetString() +
+                        " must resolve to a point3f[] points source";
+                }
+            }
+        }
+    }
+    if (_IsVolumeWeightType(w.GetTypeName())) {
+        // computePointFrame, NOT computeMatrix: the latter is the
+        // rest->posed map, so an unanimated volume's is the identity
+        // and its field would land at the origin however the prim is
+        // placed. See _RigidWorldToLocal in moverKernels.cpp.
+        newVolumeWeightProviders.insert(weightPath);
+
+        RigExecValueOverride lutOverride;
+        lutOverride.prim = weightPath;
+        lutOverride.computation = _computeFalloffLut;
+        RigExecFalloffLut lut;
+        lut.samples = _BakeFalloffLut(w);
+        lutOverride.value = VtValue(lut);
+        newFalloffLutOverrides.push_back(std::move(lutOverride));
+
+        // Which points the field measures is the read phase declared
+        // on rigExec:weightTarget; the per-mover attribute is refused
+        // rather than composing as an inert custom attribute.
+        bool inFlight = false;
+        std::string phaseError;
+        const UsdAttribute old = w.GetAttribute(_removedSamplePhase);
+        if (old && old.HasAuthoredValue()) {
+            volumeWeightError =
+                weightPath.GetString() +
+                " authors rigExec:samplePhase, which was replaced by "
+                "rigExecReadPhase metadata on rigExec:weightTarget "
+                "(reference is base, current is preceding)";
+        } else if (!_VolumeWeightSamplesInFlight(w, &inFlight, &phaseError)) {
+            volumeWeightError = phaseError;
+        } else if (inFlight) {
+            newCurrentPhaseWeights.insert(weightPath);
+            isCurrent = true;
+        }
+    }
+    for (const TfToken &rel :
+         {_tokens->rigExecInputWeights, _tokens->rigExecBaseWeight}) {
+        SdfPathVector targets;
+        if (UsdRelationship r = w.GetRelationship(rel)) {
+            r.GetTargets(&targets);
+        }
+        for (const SdfPath &t : targets) {
+            // Not short-circuited: every reachable weight object
+            // still needs its matrix tap and LUT override, so the
+            // walk must complete even once the answer is known.
+            if (_RegisterVolumeWeights(attempt, t)) {
+                isCurrent = true;
+            }
+        }
+    }
+    // A composed field is current-phase if anything inside it is, so
+    // that the combine a mover actually binds tests true.
+    if (isCurrent) {
+        newCurrentPhaseWeights.insert(weightPath);
+    }
+    return isCurrent;
+}
+
+void
+RigExecRigEvaluator::_CompileVolumeWeights(_CompileAttempt &attempt)
+{
+    auto &newVolumeWeightPaths = attempt.newVolumeWeightPaths;
+    auto &newMovers = attempt.newMovers;
     // Volumetric weight compiled rig state.
-    std::vector<RigExecValueOverride> newFalloffLutOverrides;
-    std::set<SdfPath> newCurrentPhaseWeights;
-    std::set<SdfPath> newVolumeWeightProviders;
+    auto &newFalloffLutOverrides = attempt.newFalloffLutOverrides;
+    auto &newCurrentPhaseWeights = attempt.newCurrentPhaseWeights;
+    auto &newVolumeWeightProviders = attempt.newVolumeWeightProviders;
 
     // Walks a weight object and everything it composes, gathering what
     // the volumetric types need beyond their computeWeightPacket tap.
@@ -1415,150 +1718,18 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // spurious segment joining them, while the CPU oracle reads targets
     // explicitly and rejects the pair. Catching it here means neither
     // path ever sees the ambiguous authoring.
-    std::string volumeWeightError;
+    auto &volumeWeightError = attempt.volumeWeightError;
 
     // Descriptor discovery terminates recursive composition here. The common
     // operation graph retains producer edges and diagnoses actual cycles.
-    std::set<SdfPath> visiting;
-
-    // Returns true when this weight object, or anything it composes,
-    // samples the in-flight points.
-    // The answer has to propagate UP: the graph build loop tests the
-    // weight object a mover actually binds, which for a composed field is
-    // the combine, not the sphere inside it. Recording only the leaf left
-    // exec applying the reference-phase packet while the CPU oracle
-    // reached a leaf with no in-flight points and failed.
-    std::function<bool(const SdfPath &)> registerVolumeWeights =
-        [&](const SdfPath &weightPath) -> bool {
-        const UsdPrim w = _stage->GetPrimAtPath(weightPath);
-        if (!w) {
-            return false;
-        }
-        if (!visiting.insert(weightPath).second)
-            return false;
-        struct Pop {
-            std::set<SdfPath> &s;
-            const SdfPath &p;
-            ~Pop()
-            {
-                s.erase(p);
-            }
-        } pop{visiting, weightPath};
-
-        if (newVolumeWeightProviders.count(weightPath) ||
-            newCurrentPhaseWeights.count(weightPath)) {
-            // Already walked through another consumer; its answer stands.
-            return newCurrentPhaseWeights.count(weightPath) != 0;
-        }
-        bool isCurrent = false;
-        if (_IsVolumeWeightType(w.GetTypeName())) {
-            auto requireTargets = [&](const TfToken &rel, size_t exact,
-                                      const char *what) {
-                SdfPathVector targets;
-                if (UsdRelationship r = w.GetRelationship(rel)) {
-                    r.GetTargets(&targets);
-                }
-                if (targets.size() > exact) {
-                    volumeWeightError = weightPath.GetString() + ": " +
-                                        rel.GetString() + " must name " + what;
-                }
-                return targets.size();
-            };
-            // At most one sampling override; exactly one curve for a
-            // curve weight.
-            requireTargets(_tokens->rigExecSampleSource, 1,
-                           "at most one points source");
-            if (w.GetTypeName() == SchemaTypeName::RigExecCurveWeight) {
-                SdfPathVector curves;
-                if (const UsdRelationship rel =
-                        w.GetRelationship(_tokens->rigExecCurve)) {
-                    rel.GetTargets(&curves);
-                }
-                if (curves.size() != 1) {
-                    volumeWeightError =
-                        weightPath.GetString() +
-                        ": rigExec:curve must name exactly one points source";
-                } else {
-                    const SdfPath pointsPath =
-                        curves[0].IsPropertyPath()
-                            ? curves[0]
-                            : curves[0].AppendProperty(_tokens->points);
-                    const UsdAttribute points =
-                        _stage->GetAttributeAtPath(pointsPath);
-                    if (!points || points.GetTypeName() !=
-                                       SdfValueTypeNames->Point3fArray) {
-                        volumeWeightError =
-                            weightPath.GetString() + ": rigExec:curve target " +
-                            curves[0].GetString() +
-                            " must resolve to a point3f[] points source";
-                    }
-                }
-            }
-        }
-        if (_IsVolumeWeightType(w.GetTypeName())) {
-            // computePointFrame, NOT computeMatrix: the latter is the
-            // rest->posed map, so an unanimated volume's is the identity
-            // and its field would land at the origin however the prim is
-            // placed. See _RigidWorldToLocal in moverKernels.cpp.
-            newVolumeWeightProviders.insert(weightPath);
-
-            RigExecValueOverride lutOverride;
-            lutOverride.prim = weightPath;
-            lutOverride.computation = _computeFalloffLut;
-            RigExecFalloffLut lut;
-            lut.samples = _BakeFalloffLut(w);
-            lutOverride.value = VtValue(lut);
-            newFalloffLutOverrides.push_back(std::move(lutOverride));
-
-            // Which points the field measures is the read phase declared
-            // on rigExec:weightTarget; the per-mover attribute is refused
-            // rather than composing as an inert custom attribute.
-            bool inFlight = false;
-            std::string phaseError;
-            const UsdAttribute old = w.GetAttribute(_removedSamplePhase);
-            if (old && old.HasAuthoredValue()) {
-                volumeWeightError =
-                    weightPath.GetString() +
-                    " authors rigExec:samplePhase, which was replaced by "
-                    "rigExecReadPhase metadata on rigExec:weightTarget "
-                    "(reference is base, current is preceding)";
-            } else if (!_VolumeWeightSamplesInFlight(w, &inFlight,
-                                                     &phaseError)) {
-                volumeWeightError = phaseError;
-            } else if (inFlight) {
-                newCurrentPhaseWeights.insert(weightPath);
-                isCurrent = true;
-            }
-        }
-        for (const TfToken &rel :
-             {_tokens->rigExecInputWeights, _tokens->rigExecBaseWeight}) {
-            SdfPathVector targets;
-            if (UsdRelationship r = w.GetRelationship(rel)) {
-                r.GetTargets(&targets);
-            }
-            for (const SdfPath &t : targets) {
-                // Not short-circuited: every reachable weight object
-                // still needs its matrix tap and LUT override, so the
-                // walk must complete even once the answer is known.
-                if (registerVolumeWeights(t)) {
-                    isCurrent = true;
-                }
-            }
-        }
-        // A composed field is current-phase if anything inside it is, so
-        // that the combine a mover actually binds tests true.
-        if (isCurrent) {
-            newCurrentPhaseWeights.insert(weightPath);
-        }
-        return isCurrent;
-    };
+    auto &visiting = attempt.visiting;
 
     // A placed volume is a guide output even before it is bound to a mover.
     // Register every discovered volume first; the recursive consumer walks
     // below naturally deduplicate against this map. This also applies the same
     // CurveWeight cardinality validation to standalone and consumed volumes.
     for (const SdfPath &volumePath : newVolumeWeightPaths) {
-        registerVolumeWeights(volumePath);
+        _RegisterVolumeWeights(attempt, volumePath);
     }
 
     // Gather volumetric compiled rig state for every common mover envelope, not only
@@ -1577,38 +1748,40 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             rel.GetTargets(&objects);
         }
         if (objects.size() == 1) {
-            registerVolumeWeights(objects[0]);
+            _RegisterVolumeWeights(attempt, objects[0]);
         }
     }
+}
 
-    compileBlocks.Next("SolverSchedule.PoseConstraints");
+bool
+RigExecRigEvaluator::_CompilePoseConstraints(_CompileAttempt &attempt)
+{
+    std::vector<std::string> *errors = attempt.errors;
+    auto &newJointPaths = attempt.newJointPaths;
+    auto &newMovers = attempt.newMovers;
+    const std::vector<UsdPrim> &orderedSolvers = attempt.aggregateSolvers;
+    auto &newJointBinding = attempt.newJointBinding;
+    auto &jointWritingSolvers = attempt.jointWritingSolvers;
     // Pose-domain constraints, compiled to in-memory structural wiring. Aim,
     // Position, Rotation, Scale, and Parent revise one transform provider;
     // SingleChainIK revises its inferred joint chain atomically. Values stay
     // authored on the mover and are sampled during Evaluate().
-    std::vector<_FrameConstraint> newFrameConstraints;
-    std::map<SdfPath, std::vector<SdfPath>> newFrameChains;
-
-    auto getTargets = [](const UsdPrim &prim, const TfToken &name) {
-        SdfPathVector paths;
-        if (const UsdRelationship rel = prim.GetRelationship(name)) {
-            rel.GetTargets(&paths);
-        }
-        return paths;
-    };
+    auto &newFrameConstraints = attempt.newFrameConstraints;
+    auto &newFrameChains = attempt.newFrameChains;
 
     auto bindFrameSource = [&](const SdfPath &operation,
                                const SdfPath &authored, const std::string &role,
                                _FrameSourceBinding *binding) {
         if (!authored.IsPrimPath()) {
-            return fail(role + " must target a prim, got " +
-                            authored.GetString(),
-                        {operation});
+            return attempt.Fail(role + " must target a prim, got " +
+                                    authored.GetString(),
+                                {operation});
         }
         const UsdPrim sourcePrim = _stage->GetPrimAtPath(authored);
         if (!sourcePrim) {
-            return fail(role + " targets missing prim " + authored.GetString(),
-                        {operation});
+            return attempt.Fail(role + " targets missing prim " +
+                                    authored.GetString(),
+                                {operation});
         }
         binding->sourcePath = authored;
         const TfToken sourceType = sourcePrim.GetTypeName();
@@ -1620,10 +1793,11 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             binding->xformPath = authored;
             return true;
         }
-        return fail(role + " targets " + authored.GetString() +
-                        ", which is neither a RigExec transform provider nor "
-                        "a UsdGeomXformable",
-                    {operation});
+        return attempt.Fail(
+            role + " targets " + authored.GetString() +
+                ", which is neither a RigExec transform provider nor "
+                "a UsdGeomXformable",
+            {operation});
     };
 
     // Every property-domain target a math mover revises. A mask attribute in
@@ -1659,8 +1833,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         _FrameConstraint constraint;
         constraint.moverPath = mover.moverPath;
         constraint.schemaType = mover.schemaType;
-        const SdfPathVector commonWeights =
-            getTargets(moverPrim, _tokens->rigExecWeightObject);
+        const SdfPathVector commonWeights = _CompileRelationshipTargets(
+            moverPrim, _tokens->rigExecWeightObject);
         if (!commonWeights.empty()) {
             // Phase-A validation already established at-most-one and the
             // exact domain: the moved prim for a source constraint, or this
@@ -1681,17 +1855,17 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 }
                 constraint.radialBlend = blend == "radial";
             }
-            const SdfPathVector xf =
-                getTargets(moverPrim, _tokens->rigExecTransform);
+            const SdfPathVector xf = _CompileRelationshipTargets(
+                moverPrim, _tokens->rigExecTransform);
             if (xf.size() != 1) {
-                return fail(
+                return attempt.Fail(
                     mover.moverPath.GetString() +
                         ": a transform-domain MatrixMover needs exactly "
                         "one rigExec:transform",
                     {mover.moverPath});
             }
-            const SdfPathVector space =
-                getTargets(moverPrim, _tokens->rigExecTransformSpace);
+            const SdfPathVector space = _CompileRelationshipTargets(
+                moverPrim, _tokens->rigExecTransformSpace);
             for (const SdfPath &one : {xf[0]}) {
                 _FrameSourceBinding binding;
                 if (!bindFrameSource(mover.moverPath, one,
@@ -1729,17 +1903,18 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
 
             SdfPathVector sources =
-                getTargets(moverPrim, _tokens->rigExecSources);
+                _CompileRelationshipTargets(moverPrim, _tokens->rigExecSources);
             if (sources.empty() &&
                 mover.schemaType == SchemaTypeName::RigExecAimConstraint) {
                 // Single-source spelling; sources list is the ordered form.
-                sources = getTargets(moverPrim, _tokens->rigExecAimTarget);
+                sources = _CompileRelationshipTargets(
+                    moverPrim, _tokens->rigExecAimTarget);
             }
             if (sources.empty()) {
-                return fail(mover.schemaType.GetString() + " " +
-                                mover.moverPath.GetString() +
-                                " has no constraint sources",
-                            {mover.moverPath});
+                return attempt.Fail(mover.schemaType.GetString() + " " +
+                                        mover.moverPath.GetString() +
+                                        " has no constraint sources",
+                                    {mover.moverPath});
             }
             for (const SdfPath &source : sources) {
                 _FrameSourceBinding binding;
@@ -1758,13 +1933,13 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             // and so the two whose answer turns with an outer rotation.
             if (mover.schemaType == SchemaTypeName::RigExecRotationConstraint ||
                 mover.schemaType == SchemaTypeName::RigExecParentConstraint) {
-                const SdfPathVector space =
-                    getTargets(moverPrim, _tokens->rigExecSpace);
+                const SdfPathVector space = _CompileRelationshipTargets(
+                    moverPrim, _tokens->rigExecSpace);
                 if (space.size() > 1) {
-                    return fail(mover.schemaType.GetString() + " " +
-                                    mover.moverPath.GetString() +
-                                    " has more than one rigExec:space",
-                                {mover.moverPath});
+                    return attempt.Fail(mover.schemaType.GetString() + " " +
+                                            mover.moverPath.GetString() +
+                                            " has more than one rigExec:space",
+                                        {mover.moverPath});
                 }
                 // A space that is not a frame provider is dropped rather
                 // than reported, exactly as the space switch drops it: "no
@@ -1802,13 +1977,13 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
 
             if (mover.schemaType == SchemaTypeName::RigExecAimConstraint) {
-                const SdfPathVector upObjects =
-                    getTargets(moverPrim, _tokens->rigExecWorldUpObject);
+                const SdfPathVector upObjects = _CompileRelationshipTargets(
+                    moverPrim, _tokens->rigExecWorldUpObject);
                 if (upObjects.size() > 1) {
-                    return fail("RigExecAimConstraint " +
-                                    mover.moverPath.GetString() +
-                                    " has more than one world-up object",
-                                {mover.moverPath});
+                    return attempt.Fail(
+                        "RigExecAimConstraint " + mover.moverPath.GetString() +
+                            " has more than one world-up object",
+                        {mover.moverPath});
                 }
                 if (!upObjects.empty() &&
                     !bindFrameSource(mover.moverPath, upObjects[0],
@@ -1826,12 +2001,12 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             // frame is dropped as the rotation constraint drops one.
             constraint.targets = mover.targets;
             const SdfPathVector space =
-                getTargets(moverPrim, _tokens->rigExecSpace);
+                _CompileRelationshipTargets(moverPrim, _tokens->rigExecSpace);
             if (space.size() > 1) {
-                return fail("RigExecHarmonicsConstraint " +
-                                mover.moverPath.GetString() +
-                                " has more than one rigExec:space",
-                            {mover.moverPath});
+                return attempt.Fail("RigExecHarmonicsConstraint " +
+                                        mover.moverPath.GetString() +
+                                        " has more than one rigExec:space",
+                                    {mover.moverPath});
             }
             if (!space.empty()) {
                 const UsdPrim spacePrim = _stage->GetPrimAtPath(space[0]);
@@ -1850,12 +2025,14 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             // three joints, the IK root, the effector, then its controls --
             // IK control, pole, the three FK controls.
             const auto one = [&](const TfToken &name, SdfPath *out) {
-                const SdfPathVector rows = getTargets(moverPrim, name);
+                const SdfPathVector rows =
+                    _CompileRelationshipTargets(moverPrim, name);
                 if (rows.size() != 1 || !rows[0].IsPrimPath()) {
-                    return fail("RigExecIkFkMatchConstraint " +
-                                    mover.moverPath.GetString() +
-                                    " requires exactly one " + name.GetString(),
-                                {mover.moverPath});
+                    return attempt.Fail("RigExecIkFkMatchConstraint " +
+                                            mover.moverPath.GetString() +
+                                            " requires exactly one " +
+                                            name.GetString(),
+                                        {mover.moverPath});
                 }
                 *out = rows[0];
                 return true;
@@ -1867,31 +2044,32 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 !one(_tokens->rigExecEffector, &effector)) {
                 return false;
             }
-            const SdfPathVector fk =
-                getTargets(moverPrim, _tokens->rigExecFkControls);
-            const SdfPathVector joints =
-                getTargets(moverPrim, _tokens->rigExecLimbJoints);
+            const SdfPathVector fk = _CompileRelationshipTargets(
+                moverPrim, _tokens->rigExecFkControls);
+            const SdfPathVector joints = _CompileRelationshipTargets(
+                moverPrim, _tokens->rigExecLimbJoints);
             if (fk.size() != 3 || joints.size() != 3) {
-                return fail("RigExecIkFkMatchConstraint " +
-                                mover.moverPath.GetString() +
-                                " requires three FK controls and three joints",
-                            {mover.moverPath});
+                return attempt.Fail(
+                    "RigExecIkFkMatchConstraint " +
+                        mover.moverPath.GetString() +
+                        " requires three FK controls and three joints",
+                    {mover.moverPath});
             }
             const SdfPathVector controls = {ik, pole, fk[0], fk[1], fk[2]};
             for (const SdfPath &target : controls) {
                 const UsdPrim control = _stage->GetPrimAtPath(target);
                 if (!control ||
                     control.GetTypeName() != SchemaTypeName::RigExecControl) {
-                    return fail("RigExecIkFkMatchConstraint " +
-                                    mover.moverPath.GetString() + " revises " +
-                                    target.GetString() +
-                                    ", which is not a RigExecControl",
-                                {mover.moverPath});
+                    return attempt.Fail("RigExecIkFkMatchConstraint " +
+                                            mover.moverPath.GetString() +
+                                            " revises " + target.GetString() +
+                                            ", which is not a RigExecControl",
+                                        {mover.moverPath});
                 }
             }
             if (std::set<SdfPath>(mover.targets.begin(), mover.targets.end()) !=
                 std::set<SdfPath>(controls.begin(), controls.end())) {
-                return fail(
+                return attempt.Fail(
                     "RigExecIkFkMatchConstraint " +
                         mover.moverPath.GetString() +
                         " rigExec:moves must name exactly its IK control, "
@@ -1910,7 +2088,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                     return false;
                 }
                 if (!binding.xformPath.IsEmpty()) {
-                    return fail(
+                    return attempt.Fail(
                         "RigExecIkFkMatchConstraint " +
                             mover.moverPath.GetString() + " reads " +
                             read.GetString() +
@@ -1920,12 +2098,12 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 constraint.sources.push_back(binding);
             }
             const SdfPathVector space =
-                getTargets(moverPrim, _tokens->rigExecSpace);
+                _CompileRelationshipTargets(moverPrim, _tokens->rigExecSpace);
             if (space.size() > 1) {
-                return fail("RigExecIkFkMatchConstraint " +
-                                mover.moverPath.GetString() +
-                                " has more than one rigExec:space",
-                            {mover.moverPath});
+                return attempt.Fail("RigExecIkFkMatchConstraint " +
+                                        mover.moverPath.GetString() +
+                                        " has more than one rigExec:space",
+                                    {mover.moverPath});
             }
             if (!space.empty()) {
                 const UsdPrim spacePrim = _stage->GetPrimAtPath(space[0]);
@@ -1941,30 +2119,32 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             // RigExec joint hierarchy is namespace nesting, so the exact
             // chain is inferred by walking End Joint's ancestors to First
             // Joint. rigExec:moves must declare that complete set.
-            const SdfPathVector first =
-                getTargets(moverPrim, _tokens->rigExecFirstJoint);
-            const SdfPathVector end =
-                getTargets(moverPrim, _tokens->rigExecEndJoint);
-            const SdfPathVector effector =
-                getTargets(moverPrim, _tokens->rigExecEffector);
+            const SdfPathVector first = _CompileRelationshipTargets(
+                moverPrim, _tokens->rigExecFirstJoint);
+            const SdfPathVector end = _CompileRelationshipTargets(
+                moverPrim, _tokens->rigExecEndJoint);
+            const SdfPathVector effector = _CompileRelationshipTargets(
+                moverPrim, _tokens->rigExecEffector);
             if (first.size() != 1 || end.size() != 1 || effector.size() != 1 ||
                 !first[0].IsPrimPath() || !end[0].IsPrimPath()) {
-                return fail("RigExecSingleChainIkConstraint " +
-                                mover.moverPath.GetString() +
-                                " requires exactly one firstJoint, endJoint, "
-                                "and effector prim",
-                            {mover.moverPath});
+                return attempt.Fail(
+                    "RigExecSingleChainIkConstraint " +
+                        mover.moverPath.GetString() +
+                        " requires exactly one firstJoint, endJoint, "
+                        "and effector prim",
+                    {mover.moverPath});
             }
             SdfPath cursor = end[0];
             while (!cursor.IsEmpty() && cursor != SdfPath::AbsoluteRootPath()) {
                 const UsdPrim joint = _stage->GetPrimAtPath(cursor);
                 if (!joint ||
                     joint.GetTypeName() != SchemaTypeName::RigExecJoint) {
-                    return fail("RigExecSingleChainIkConstraint " +
-                                    mover.moverPath.GetString() +
-                                    " endpoint ancestry contains non-joint " +
-                                    cursor.GetString(),
-                                {mover.moverPath});
+                    return attempt.Fail(
+                        "RigExecSingleChainIkConstraint " +
+                            mover.moverPath.GetString() +
+                            " endpoint ancestry contains non-joint " +
+                            cursor.GetString(),
+                        {mover.moverPath});
                 }
                 constraint.ikChain.push_back(cursor);
                 if (cursor == first[0]) {
@@ -1974,7 +2154,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
             if (constraint.ikChain.empty() ||
                 constraint.ikChain.back() != first[0]) {
-                return fail(
+                return attempt.Fail(
                     "RigExecSingleChainIkConstraint " +
                         mover.moverPath.GetString() + ": endJoint " +
                         end[0].GetString() +
@@ -1984,17 +2164,17 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
             std::reverse(constraint.ikChain.begin(), constraint.ikChain.end());
             if (constraint.ikChain.size() < 2) {
-                return fail("RigExecSingleChainIkConstraint " +
-                                mover.moverPath.GetString() +
-                                " needs at least two joints",
-                            {mover.moverPath});
+                return attempt.Fail("RigExecSingleChainIkConstraint " +
+                                        mover.moverPath.GetString() +
+                                        " needs at least two joints",
+                                    {mover.moverPath});
             }
             std::set<SdfPath> declared(mover.targets.begin(),
                                        mover.targets.end());
             std::set<SdfPath> inferred(constraint.ikChain.begin(),
                                        constraint.ikChain.end());
             if (declared != inferred) {
-                return fail(
+                return attempt.Fail(
                     "RigExecSingleChainIkConstraint " +
                         mover.moverPath.GetString() +
                         " rigExec:moves must equal the complete inferred "
@@ -2016,8 +2196,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 a.Get(&solverMode);
             }
             if (solverMode == "rotatePlane") {
-                for (const SdfPath &pole :
-                     getTargets(moverPrim, _tokens->rigExecPoleVectorObjects)) {
+                for (const SdfPath &pole : _CompileRelationshipTargets(
+                         moverPrim, _tokens->rigExecPoleVectorObjects)) {
                     _FrameSourceBinding binding;
                     if (!bindFrameSource(mover.moverPath, pole,
                                          "RigExecSingleChainIkConstraint " +
@@ -2114,7 +2294,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // authors and why they are unchanged.
     // Producers absent (see jointWritingSolvers): use find(), never
     // operator[].
-    std::map<SdfPath, int> poseStackOrdinal;
+    auto &poseStackOrdinal = attempt.poseStackOrdinal;
     {
         std::set<SdfPath> stackSteps = jointWritingSolvers;
         for (const _FrameConstraint &constraint : newFrameConstraints) {
@@ -2132,12 +2312,6 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
         }
     }
-    // Ordinal or "no position": a producer sorts before every stack step and
-    // is deterministic about it, which is all the emission order needs.
-    const auto stackOrdinalOf = [&poseStackOrdinal](const SdfPath &path) {
-        const auto it = poseStackOrdinal.find(path);
-        return it == poseStackOrdinal.end() ? -1 : it->second;
-    };
     // A startFrame read is positional: a chain ordered before
     // its provider's writer reads the pre-write frame, and for a rest
     // provider that is the rest pose -- the chain then hangs from nothing
@@ -2153,11 +2327,11 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             solver.GetRelationship(RigExecStartFrameRelName);
         SdfPathVector starts;
         startRel.GetTargets(&starts);
-        appendDerivedStart(startRel, &starts);
+        attempt.AppendDerivedStart(startRel, &starts);
         if (starts.empty()) {
             continue;
         }
-        const int here = stackOrdinalOf(solver.GetPath());
+        const int here = attempt.StackOrdinalOf(solver.GetPath());
         if (here < 0) {
             continue; // Guide-only: exec re-derives the order.
         }
@@ -2167,7 +2341,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         if (owned != newJointBinding.end()) {
             for (const auto &entry : owned->second) {
                 if (entry.first != solver.GetPath() &&
-                    stackOrdinalOf(entry.first) > here) {
+                    attempt.StackOrdinalOf(entry.first) > here) {
                     culprit = entry.first;
                     break;
                 }
@@ -2178,7 +2352,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             if (revised != newFrameChains.end()) {
                 for (const SdfPath &writer : revised->second) {
                     if (writer != solver.GetPath() &&
-                        stackOrdinalOf(writer) > here) {
+                        attempt.StackOrdinalOf(writer) > here) {
                         culprit = writer;
                         break;
                     }
@@ -2205,7 +2379,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // plain UsdGeomXformable has no exec computation at all, so its frame
     // comes from its own USD transform and its revised matrix is published
     // back onto the prim for Hydra to inherit.
-    std::set<SdfPath> newXformDerivedProviders;
+    auto &newXformDerivedProviders = attempt.newXformDerivedProviders;
     for (const auto &[provider, revisions] : newFrameChains) {
         if (std::find(newJointPaths.begin(), newJointPaths.end(), provider) !=
             newJointPaths.end()) {
@@ -2219,15 +2393,23 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         } else if (providerPrim && UsdGeomXformable(providerPrim)) {
             newXformDerivedProviders.insert(provider);
         } else {
-            return fail(
+            return attempt.Fail(
                 "constraint target " + provider.GetString() +
                     " is neither a RigExec transform provider nor a "
                     "UsdGeomXformable; nothing can carry the revised frame",
                 revisions);
         }
     }
+    return true;
+}
 
-    compileBlocks.Next("SolverSchedule.PropertyChains");
+bool
+RigExecRigEvaluator::_CompilePropertyChains(_CompileAttempt &attempt)
+{
+    _CompileFailure *failure = attempt.failure;
+    auto &newMovers = attempt.newMovers;
+    auto &inertMovers = attempt.inertMovers;
+    const std::vector<UsdPrim> &orderedSolvers = attempt.aggregateSolvers;
     // Property-domain chains, from the same mover execution walk.
     // Nothing to bind and nothing to tap: a math mover's inputs are all
     // authored on itself, and the chain's base is the target attribute's own
@@ -2236,20 +2418,26 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // value override -- which is how a clamped weight actually reaches the
     // solver that reads it instead of being reimplemented inside that
     // solver's kernel.
-    std::map<SdfPath, std::vector<_PropertyRevision>> newPropertyChains;
-    std::vector<SdfPath> newPropertyChainOrder;
-    std::vector<RigExecPhasedConnection> newPhasedConnections;
+    auto &newPropertyChains = attempt.newPropertyChains;
+    auto &newPropertyChainOrder = attempt.newPropertyChainOrder;
+    auto &newPhasedConnections = attempt.newPhasedConnections;
     if (!_CompilePropertyChains(newMovers, newPropertyChains,
                                 newPropertyChainOrder, newPhasedConnections,
                                 orderedSolvers, inertMovers, failure)) {
-        return fail(failure->message, failure->operations);
+        return attempt.Fail(failure->message, failure->operations);
     }
+    return true;
+}
 
-    compileBlocks.Next("SolverSchedule.PointGraph");
+bool
+RigExecRigEvaluator::_CompilePointGraph(_CompileAttempt &attempt)
+{
+    auto &newMovers = attempt.newMovers;
+    auto &newPropertyChains = attempt.newPropertyChains;
     // Bind the persistent point graph from the composed execution walk.
     // Geometry constraints contribute solved matrix packets to this same
     // chain. Compilation resolves bindings without authoring scene data.
-    std::map<SdfPath, std::vector<_GraphRevision>> newGraphChains;
+    auto &newGraphChains = attempt.newGraphChains;
     for (const RigExecMoverRecord &mover : newMovers) {
         const UsdPrim moverPrim = _stage->GetPrimAtPath(mover.moverPath);
         if (!moverPrim) {
@@ -2272,11 +2460,12 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 for (const SdfPath &target : mover.targets) {
                     if (target.IsPropertyPath() &&
                         target.GetNameToken() == "points") {
-                        return fail(mover.schemaType.GetString() + " " +
-                                        mover.moverPath.GetString() +
-                                        " resolves no point op for mode '" +
-                                        curveMode.GetString() + "'",
-                                    {mover.moverPath});
+                        return attempt.Fail(
+                            mover.schemaType.GetString() + " " +
+                                mover.moverPath.GetString() +
+                                " resolves no point op for mode '" +
+                                curveMode.GetString() + "'",
+                            {mover.moverPath});
                     }
                 }
             }
@@ -2307,7 +2496,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 revision.transformPosedPoints = pointFrame == "posed";
             }
             if (!revision.binding.weightObject.IsEmpty()) {
-                registerVolumeWeights(revision.binding.weightObject);
+                _RegisterVolumeWeights(attempt, revision.binding.weightObject);
             }
             // Declared leaves capture blend samples. A computeBlendChannel
             // request here would duplicate that sampling.
@@ -2344,8 +2533,14 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             newGraphChains[target].push_back(revision);
         }
     }
+    return true;
+}
 
-    compileBlocks.Next("SolverSchedule.SampleReads");
+void
+RigExecRigEvaluator::_CompileSampleReads(_CompileAttempt &attempt)
+{
+    auto &newMovers = attempt.newMovers;
+    auto &newGraphChains = attempt.newGraphChains;
     // Resolve sample-relative preceding reads against the global mover walk.
     // Samples can belong to a different chain, or multiple blend applications;
     // each application gets its own checkpoint, independent of sample identity.
@@ -2377,8 +2572,13 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
         }
     }
+}
 
-    compileBlocks.Next("SolverSchedule.DerivedMaintenance");
+bool
+RigExecRigEvaluator::_CompileDerivedMaintenance(_CompileAttempt &attempt)
+{
+    auto &newSurfaceProjectors = attempt.newSurfaceProjectors;
+    auto &newGraphChains = attempt.newGraphChains;
     // Derived maintenance, mirroring SolverSchedule.PointGraph: for every
     // moved points target whose gprim authors normals or extent, synthesize
     // the recompute revision. There is no authored mover, so the gprim itself
@@ -2386,7 +2586,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // static topology reads and has no inputs:enabled, so the revision is
     // enabled. Vertex-normal recomputation is mesh-only; the compiler already
     // rejects authored normals on a non-mesh points target.
-    std::map<SdfPath, std::vector<_GraphRevision>> newGraphDerivedChains;
+    auto &newGraphDerivedChains = attempt.newGraphDerivedChains;
     for (const auto &[pointsTarget, revisions] : newGraphChains) {
         const SdfPath ownerPath = pointsTarget.GetPrimPath();
         const UsdPrim owner = _stage->GetPrimAtPath(ownerPath);
@@ -2417,7 +2617,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             // would break the automatic-maintenance contract, so reject the
             // configuration rather than skip it.
             if (isNormals && !UsdGeomMesh(owner)) {
-                return fail(
+                return attempt.Fail(
                     "authored normals on non-mesh points target " +
                     ownerPath.GetString() +
                     " cannot be maintained (vertex-normal recomputation is "
@@ -2450,7 +2650,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                                 _tokens->primvarsNormals &&
                             normalsIndices && normalsIndices.HasAuthoredValue(),
                         orientation, &derived.binding, &why)) {
-                    return fail(why);
+                    return attempt.Fail(why);
                 }
                 // A walk only for a topology no frame can change: unsampled
                 // and unconnected. An edit of it recompiles (the digest
@@ -2496,10 +2696,11 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         const SdfPath meshPath = projector.target.GetPrimPath();
         const UsdPrim mesh = _stage->GetPrimAtPath(meshPath);
         if (!prim || !mesh || !UsdGeomMesh(mesh)) {
-            return fail(projector.path.GetString() +
-                            ": a surface projector must move one mesh's "
-                            "points",
-                        {projector.path});
+            return attempt.Fail(
+                projector.path.GetString() +
+                    ": a surface projector must move one mesh's "
+                    "points",
+                {projector.path});
         }
         if (!newGraphChains.count(projector.target)) {
             TF_WARN("%s projects onto %s, which no mover deforms; it "
@@ -2513,12 +2714,13 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         for (UsdPrim p = mesh; p && !p.IsPseudoRoot(); p = p.GetParent()) {
             if (const UsdGeomXformable xformable{p}) {
                 if (xformable.TransformMightBeTimeVarying()) {
-                    return fail(projector.path.GetString() + " projects onto " +
-                                    meshPath.GetString() +
-                                    ", whose transform is animated; a surface "
-                                    "projector needs a static surface "
-                                    "transform",
-                                {projector.path});
+                    return attempt.Fail(
+                        projector.path.GetString() + " projects onto " +
+                            meshPath.GetString() +
+                            ", whose transform is animated; a surface "
+                            "projector needs a static surface "
+                            "transform",
+                        {projector.path});
                 }
             }
         }
@@ -2535,22 +2737,23 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         // frame provider: bound as the transform, transformSpace and carry
         // providers, which every evaluator already reads per phase.
         const auto oneProvider = [&](const TfToken &name, SdfPath *out) {
-            const SdfPathVector targets = getTargets(prim, name);
+            const SdfPathVector targets =
+                _CompileRelationshipTargets(prim, name);
             if (targets.size() > 1) {
-                return fail(projector.path.GetString() +
-                                " has more than "
-                                "one " +
-                                name.GetString(),
-                            {projector.path});
+                return attempt.Fail(projector.path.GetString() +
+                                        " has more than "
+                                        "one " +
+                                        name.GetString(),
+                                    {projector.path});
             }
             if (!targets.empty()) {
                 if (!_IsFrameProvider(
                         _stage->GetPrimAtPath(targets[0].GetPrimPath()))) {
-                    return fail(projector.path.GetString() + " " +
-                                    name.GetString() + " target " +
-                                    targets[0].GetString() +
-                                    " is not a RigExec frame provider",
-                                {projector.path});
+                    return attempt.Fail(projector.path.GetString() + " " +
+                                            name.GetString() + " target " +
+                                            targets[0].GetString() +
+                                            " is not a RigExec frame provider",
+                                        {projector.path});
                 }
                 *out = targets[0].GetPrimPath();
             }
@@ -2604,13 +2807,14 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             derived.binding.topologyCounts = SdfPath();
             derived.binding.topologyIndices = SdfPath();
             derived.op = RigExecRevisionOp::ShaderDials;
-            for (const SdfPath &dial :
-                 getTargets(prim, _tokens->rigExecShaderDialSources)) {
+            for (const SdfPath &dial : _CompileRelationshipTargets(
+                     prim, _tokens->rigExecShaderDialSources)) {
                 if (!dial.IsPropertyPath()) {
-                    return fail(projector.path.GetString() +
-                                    " rigExec:shaderDialSources names " +
-                                    dial.GetString() + ", not a property",
-                                {projector.path});
+                    return attempt.Fail(
+                        projector.path.GetString() +
+                            " rigExec:shaderDialSources names " +
+                            dial.GetString() + ", not a property",
+                        {projector.path});
                 }
                 if (derived.binding.shaderDials.size() == 16) {
                     TF_WARN("%s names more than sixteen shader dials; the "
@@ -2645,7 +2849,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                     revision.op == RigExecRevisionOp::ShaderDials
                         ? revision.moverPath
                         : found->second.second;
-                return fail(
+                return attempt.Fail(
                     "shader matrix output " + revision.target.GetString() +
                         " is a spatial SurfaceProjector frame from " +
                         spatial.GetString() + " and packed ShaderDials from " +
@@ -2657,16 +2861,105 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
         }
     }
+    return true;
+}
 
-    compileBlocks.Next("SolverSchedule.PoseDag");
+bool
+RigExecRigEvaluator::_IsFrameProviderPath(const SdfPath &path) const
+{
+    const UsdPrim prim = _stage->GetPrimAtPath(path);
+    return _IsFrameProvider(prim);
+}
+
+std::set<SdfPath>
+RigExecRigEvaluator::_ComputePoseProviderClosure(_CompileAttempt &attempt,
+                                                 const SdfPath &input)
+{
+    auto &newJointBinding = attempt.newJointBinding;
+    auto &newPoseInputInfo = attempt.newPoseInputInfo;
+    auto &poseInfoPrefetch = attempt.poseInfoPrefetch;
+    auto &poseInputGraph = attempt.poseInputGraph;
+    auto &isBoundJoint = attempt.isBoundJoint;
+    std::set<SdfPath> closure;
+    std::vector<SdfPath> pending{input};
+    while (!pending.empty()) {
+        const SdfPath path = pending.back();
+        pending.pop_back();
+        if (path.IsEmpty() || !closure.insert(path).second)
+            continue;
+        if (newJointBinding.count(path)) {
+            newPoseInputInfo[path];
+            continue;
+        }
+        auto it = newPoseInputInfo.find(path);
+        if (it == newPoseInputInfo.end()) {
+            // Same value either way: the prefetch ran the same function
+            // on the same prim of the same stage. Only newPoseInputInfo
+            // records that this path was REACHED.
+            // MOVED out, not copied: a path lands in newPoseInputInfo
+            // at most once (this branch is the find() miss), so nothing
+            // reads the prefetch entry again, and leaving the sets
+            // behind would hold every closure's inputs on the heap
+            // TWICE for the rest of compile, and the batch pass that runs
+            // after it would pay for that in allocator and locality cost.
+            // A prim the prefetch did not ask about is asked about now,
+            // through the same graph, so every closure of this compile
+            // materializes its attributes the same way.
+            auto warm = poseInfoPrefetch.find(path);
+            if (warm == poseInfoPrefetch.end()) {
+                poseInputGraph->Extend(_stage, {path}, isBoundJoint,
+                                       RigExecParallelEvaluationEnabled(),
+                                       _profiler, &poseInfoPrefetch);
+                warm = poseInfoPrefetch.find(path);
+            }
+            it = newPoseInputInfo
+                     .emplace(path, warm != poseInfoPrefetch.end()
+                                        ? std::move(warm->second)
+                                        : _CollectPoseInputInfo(
+                                              _stage->GetPrimAtPath(path)))
+                     .first;
+        }
+        pending.insert(pending.end(), it->second.providers.begin(),
+                       it->second.providers.end());
+        if (!_IsFrameProviderPath(path)) {
+            const UsdPrim parent =
+                _NamespaceFrameProvider(_stage->GetPrimAtPath(path));
+            if (parent)
+                pending.push_back(parent.GetPath());
+        }
+    }
+    return closure;
+}
+
+const std::set<SdfPath> &
+RigExecRigEvaluator::_PoseProviderClosure(_CompileAttempt &attempt,
+                                          const SdfPath &input)
+{
+    auto &poseClosureCache = attempt.poseClosureCache;
+    auto it = poseClosureCache.find(input);
+    if (it == poseClosureCache.end()) {
+        it = poseClosureCache
+                 .emplace(input, _ComputePoseProviderClosure(attempt, input))
+                 .first;
+    }
+    return it->second;
+}
+
+bool
+RigExecRigEvaluator::_CompilePoseDag(_CompileAttempt &attempt)
+{
+    auto &newJointPaths = attempt.newJointPaths;
+    auto &newControlPaths = attempt.newControlPaths;
+    auto &newJointBinding = attempt.newJointBinding;
+    auto &skeleton2dSwitchSources = attempt.skeleton2dSwitchSources;
+    auto &jointWritingSolvers = attempt.jointWritingSolvers;
+    auto &poseReverseEdges = attempt.poseReverseEdges;
+    auto &newSolverDependencies = attempt.newSolverDependencies;
+    auto &newFrameConstraints = attempt.newFrameConstraints;
     // Compile one pose DAG. Constraints retain authored preceding order;
     // solvers read the final constrained state of each declared frame input.
     // Bound joints replace their namespace callback, cutting ancestor edges.
-    auto isFrameProvider = [&](const SdfPath &path) {
-        const UsdPrim prim = _stage->GetPrimAtPath(path);
-        return _IsFrameProvider(prim);
-    };
-    std::map<SdfPath, _PoseInputInfo> newPoseInputInfo;
+    auto &newPoseInputInfo = attempt.newPoseInputInfo;
     // A stage closure that the schedule and request passes below ask for
     // over and over about the same prims: the pose-provider closure of one
     // input path. The same joint is an input to many solvers, many
@@ -2676,8 +2969,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // this compile has already decided above; neither changes while a compile
     // runs, so a memoized answer is the answer a recomputation would give.
     // Compile-local; must not share the digest's caches.
-    std::unordered_map<SdfPath, std::set<SdfPath>, SdfPath::Hash>
-        poseClosureCache;
+    auto &poseClosureCache = attempt.poseClosureCache;
     // The per-prim half of the pose closure, computed ahead of the walks
     // that need it by the pose-input graph, for every prim those walks will
     // ask about (see the prefetch below). A prim's closure is a pure read of
@@ -2686,75 +2978,17 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // instead of paying for it in line.
     // Separate from newPoseInputInfo, which must hold only reached prims.
     // This one may overshoot.
-    std::unordered_map<SdfPath, _PoseInputInfo, SdfPath::Hash> poseInfoPrefetch;
+    auto &poseInfoPrefetch = attempt.poseInfoPrefetch;
     // Shared, not local: a deferred compiled rig hands it to
     // _RealizeDeferredExecPrep, which materializes the attribute sets the
     // solver-input index reads from it.
-    const auto poseInputGraph = std::make_shared<_PoseInputGraph>();
-    const std::function<bool(const SdfPath &)> isBoundJoint =
-        [&](const SdfPath &path) { return newJointBinding.count(path) != 0; };
-    auto computePoseProviderClosure = [&](const SdfPath &input) {
-        std::set<SdfPath> closure;
-        std::vector<SdfPath> pending{input};
-        while (!pending.empty()) {
-            const SdfPath path = pending.back();
-            pending.pop_back();
-            if (path.IsEmpty() || !closure.insert(path).second)
-                continue;
-            if (newJointBinding.count(path)) {
-                newPoseInputInfo[path];
-                continue;
-            }
-            auto it = newPoseInputInfo.find(path);
-            if (it == newPoseInputInfo.end()) {
-                // Same value either way: the prefetch ran the same function
-                // on the same prim of the same stage. Only newPoseInputInfo
-                // records that this path was REACHED.
-                // MOVED out, not copied: a path lands in newPoseInputInfo
-                // at most once (this branch is the find() miss), so nothing
-                // reads the prefetch entry again, and leaving the sets
-                // behind would hold every closure's inputs on the heap
-                // TWICE for the rest of compile, and the batch pass that runs
-                // after it would pay for that in allocator and locality cost.
-                // A prim the prefetch did not ask about is asked about now,
-                // through the same graph, so every closure of this compile
-                // materializes its attributes the same way.
-                auto warm = poseInfoPrefetch.find(path);
-                if (warm == poseInfoPrefetch.end()) {
-                    poseInputGraph->Extend(_stage, {path}, isBoundJoint,
-                                           RigExecParallelEvaluationEnabled(),
-                                           _profiler, &poseInfoPrefetch);
-                    warm = poseInfoPrefetch.find(path);
-                }
-                it = newPoseInputInfo
-                         .emplace(path, warm != poseInfoPrefetch.end()
-                                            ? std::move(warm->second)
-                                            : _CollectPoseInputInfo(
-                                                  _stage->GetPrimAtPath(path)))
-                         .first;
-            }
-            pending.insert(pending.end(), it->second.providers.begin(),
-                           it->second.providers.end());
-            if (!isFrameProvider(path)) {
-                const UsdPrim parent =
-                    _NamespaceFrameProvider(_stage->GetPrimAtPath(path));
-                if (parent)
-                    pending.push_back(parent.GetPath());
-            }
-        }
-        return closure;
+    auto &poseInputGraph = attempt.poseInputGraph;
+    poseInputGraph = std::make_shared<_PoseInputGraph>();
+    auto &isBoundJoint = attempt.isBoundJoint;
+    isBoundJoint = [&](const SdfPath &path) {
+        return newJointBinding.count(path) != 0;
     };
-    auto poseProviderClosure =
-        [&](const SdfPath &input) -> const std::set<SdfPath> & {
-        auto it = poseClosureCache.find(input);
-        if (it == poseClosureCache.end()) {
-            it = poseClosureCache
-                     .emplace(input, computePoseProviderClosure(input))
-                     .first;
-        }
-        return it->second;
-    };
-    std::map<SdfPath, std::set<SdfPath>> solverFrameInputs;
+    auto &solverFrameInputs = attempt.solverFrameInputs;
     // The read phase a solver declares on an input relationship, through the
     // same optional rigExecReadPhase metadata a mover input uses. Without
     // one the hierarchy decides: a constraint ABOVE the solver
@@ -2770,11 +3004,11 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         for (const TfToken &removed : _removedRibbonPhases) {
             const UsdAttribute old = prim.GetAttribute(removed);
             if (old && old.HasAuthoredValue()) {
-                return fail(solver.GetString() + " authors " +
-                                removed.GetString() +
-                                ", which was replaced by rigExecReadPhase "
-                                "metadata on the input relationship",
-                            {solver});
+                return attempt.Fail(
+                    solver.GetString() + " authors " + removed.GetString() +
+                        ", which was replaced by rigExecReadPhase "
+                        "metadata on the input relationship",
+                    {solver});
             }
         }
         for (const UsdRelationship &rel : prim.GetRelationships()) {
@@ -2784,15 +3018,16 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             RigExecReadPhase phase;
             std::string phaseError;
             if (!RigExecResolveReadPhase(rel, &phase, &phaseError)) {
-                return fail(solver.GetString() + " " +
-                                rel.GetName().GetString() + ": " + phaseError,
-                            {solver});
+                return attempt.Fail(solver.GetString() + " " +
+                                        rel.GetName().GetString() + ": " +
+                                        phaseError,
+                                    {solver});
             }
             const bool phased = phase.kind == RigExecReadPhaseKind::Final ||
                                 phase.kind == RigExecReadPhaseKind::AtPrim;
             SdfPathVector targets;
             rel.GetTargets(&targets);
-            appendDerivedStart(rel, &targets);
+            attempt.AppendDerivedStart(rel, &targets);
             for (const SdfPath &target : targets) {
                 // Ribbon driverCurve is a geometry value, not a frame
                 // relationship. Its exact Base/Preceding/AtPrim/Final points
@@ -2809,7 +3044,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                         (!input ||
                          input.GetTypeName().GetType() !=
                              SdfValueTypeNames->Float3Array.GetType())) {
-                        return fail(
+                        return attempt.Fail(
                             solver.GetString() +
                                 " rigExec:driverCurve declares "
                                 "rigExecReadPhase '" +
@@ -2820,7 +3055,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                     }
                     continue;
                 }
-                if (isFrameProvider(target.GetPrimPath())) {
+                if (_IsFrameProviderPath(target.GetPrimPath())) {
                     solverFrameInputs[solver].insert(target.GetPrimPath());
                     if (phased) {
                         solverInputPhases[solver][target.GetPrimPath()]
@@ -2829,7 +3064,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 } else if (phased) {
                     // A solver reads a phase only through a provider's
                     // frame chain; anything else would read base silently.
-                    return fail(
+                    return attempt.Fail(
                         solver.GetString() + " " + rel.GetName().GetString() +
                             " declares rigExecReadPhase '" +
                             phase.GetAsString() + "' on " + target.GetString() +
@@ -2844,7 +3079,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         const auto switchSources = skeleton2dSwitchSources.find(solver);
         if (switchSources != skeleton2dSwitchSources.end()) {
             for (const SdfPath &source : switchSources->second) {
-                if (isFrameProvider(source.GetPrimPath())) {
+                if (_IsFrameProviderPath(source.GetPrimPath())) {
                     solverFrameInputs[solver].insert(source.GetPrimPath());
                 }
             }
@@ -2868,7 +3103,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             for (SdfPath a = path.GetParentPath();
                  !a.IsEmpty() && a != SdfPath::AbsoluteRootPath();
                  a = a.GetParentPath()) {
-                if (isFrameProvider(a))
+                if (_IsFrameProviderPath(a))
                     seeds.push_back(a);
             }
         };
@@ -2900,16 +3135,16 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                                RigExecParallelEvaluationEnabled(), _profiler,
                                &poseInfoPrefetch);
     }
-    std::map<SdfPath, std::set<SdfPath>> solverPoseReads;
+    auto &solverPoseReads = attempt.solverPoseReads;
     // solverInputPhases spread over each input's pose closure, so the walk
     // that visits closure members finds the phase of the input that reached
     // them.
-    std::map<SdfPath, std::map<SdfPath, std::vector<RigExecReadPhase>>>
-        solverClosurePhases;
+    auto &solverClosurePhases = attempt.solverClosurePhases;
     for (const auto &[solver, inputs] : solverFrameInputs) {
         const auto declared = solverInputPhases.find(solver);
         for (const SdfPath &input : inputs) {
-            const std::set<SdfPath> &closure = poseProviderClosure(input);
+            const std::set<SdfPath> &closure =
+                _PoseProviderClosure(attempt, input);
             solverPoseReads[solver].insert(closure.begin(), closure.end());
             if (declared != solverInputPhases.end()) {
                 const auto phases = declared->second.find(input);
@@ -2938,7 +3173,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                             continue;
                         }
                         if (jointWritingSolvers.count(solver) &&
-                            stackBefore(solver, writer)) {
+                            attempt.StackBefore(solver, writer)) {
                             poseReverseEdges.emplace_back(writer, solver);
                             continue;
                         }
@@ -2954,8 +3189,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // the stack must not order differently. So the stack order is settled
     // ONCE, against the finished graph, just before the schedule is built --
     // see "the stack order" block below SolverSchedule.FrameInheritance.
-    std::map<SdfPath, std::vector<std::pair<SdfPath, int>>> newSolverJoints;
-    std::set<SdfPath> requiredSolvers;
+    auto &newSolverJoints = attempt.newSolverJoints;
+    auto &requiredSolvers = attempt.requiredSolvers;
     for (const auto &[joint, writers] : newJointBinding) {
         for (const auto &[solver, element] : writers) {
             newSolverJoints[solver].emplace_back(joint, element);
@@ -2966,7 +3201,16 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // because the passes are quite different work -- set closure, constraint
     // reads through the pose closure, an ancestor walk, a counting pass, and
     // the batch BFS that talks to exec.
-    compileBlocks.Next("SolverSchedule.RequiredSolvers");
+    return true;
+}
+
+void
+RigExecRigEvaluator::_CompileRequiredSolvers(_CompileAttempt &attempt)
+{
+    auto &newSolverDependencies = attempt.newSolverDependencies;
+    auto &newGraphChains = attempt.newGraphChains;
+    auto &newGraphDerivedChains = attempt.newGraphDerivedChains;
+    auto &requiredSolvers = attempt.requiredSolvers;
     // Geometry aggregate consumers are authoritative even without joints.
     for (const auto &[target, revisions] : newGraphChains) {
         for (const _GraphRevision &revision : revisions) {
@@ -2992,16 +3236,26 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
         }
     }
-    std::map<SdfPath, std::set<SdfPath>> poseDependencies;
-    std::map<SdfPath, size_t> constraintIndices;
+    auto &poseDependencies = attempt.poseDependencies;
+    auto &constraintIndices = attempt.constraintIndices;
     for (const SdfPath &solver : requiredSolvers) {
         poseDependencies[solver] = newSolverDependencies[solver];
     }
-    compileBlocks.Next("SolverSchedule.ConstraintDeps");
+}
+
+void
+RigExecRigEvaluator::_CompileConstraintDependencies(_CompileAttempt &attempt)
+{
+    auto &newJointBinding = attempt.newJointBinding;
+    auto &poseReverseEdges = attempt.poseReverseEdges;
+    auto &newFrameConstraints = attempt.newFrameConstraints;
+    auto &poseStackOrdinal = attempt.poseStackOrdinal;
+    auto &poseDependencies = attempt.poseDependencies;
+    auto &constraintIndices = attempt.constraintIndices;
     // Collected in the constraint loop, consumed by the upward walk just
     // below it. See the comment there for why the cross product this
     // replaces had to be turned inside out.
-    std::map<SdfPath, std::vector<SdfPath>> constraintsByTarget;
+    auto &constraintsByTarget = attempt.constraintsByTarget;
     // Constraint -> constraint frame edges. A frame constraint writes its
     // target's final frame and, through commitConstraintFrames, every
     // namespace descendant up to an independently solved joint; a native
@@ -3064,7 +3318,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         // and the schedule decides it by accident. A missed edge here does not
         // fail loudly; it silently reads the wrong version.
         const bool positional = poseStackOrdinal.count(path) > 0;
-        const int here = stackOrdinalOf(path);
+        const int here = attempt.StackOrdinalOf(path);
         // Constraint writers of what this one reads, each ordered once, by
         // the same positional rule as a solver writer. A geometry-domain
         // constraint has no ordinal and keeps the place its mover index gives
@@ -3077,7 +3331,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                     continue;
                 const SdfPath &writer = newFrameConstraints[w].moverPath;
                 const bool above =
-                    positional ? stackOrdinalOf(writer) > here : w > i;
+                    positional ? attempt.StackOrdinalOf(writer) > here : w > i;
                 if (above) {
                     poseReverseEdges.emplace_back(writer, path);
                 } else {
@@ -3087,11 +3341,13 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         };
         auto dependOnFrame = [&](const SdfPath &input,
                                  bool nativeSource = false) {
-            for (const SdfPath &provider : poseProviderClosure(input)) {
+            for (const SdfPath &provider :
+                 _PoseProviderClosure(attempt, input)) {
                 const auto owner = newJointBinding.find(provider);
                 if (owner != newJointBinding.end()) {
                     for (const auto &[writer, element] : owner->second) {
-                        if (positional && stackOrdinalOf(writer) > here) {
+                        if (positional &&
+                            attempt.StackOrdinalOf(writer) > here) {
                             poseReverseEdges.emplace_back(writer, path);
                             continue;
                         }
@@ -3132,7 +3388,21 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             constraintsByTarget[target].push_back(path);
         }
     }
-    compileBlocks.Next("SolverSchedule.FrameInheritance");
+}
+
+bool
+RigExecRigEvaluator::_CompileFrameInheritance(_CompileAttempt &attempt)
+{
+    auto &newJointBinding = attempt.newJointBinding;
+    auto &jointWritingSolvers = attempt.jointWritingSolvers;
+    auto &poseReverseEdges = attempt.poseReverseEdges;
+    auto &newFrameConstraints = attempt.newFrameConstraints;
+    auto &poseStackOrdinal = attempt.poseStackOrdinal;
+    auto &solverPoseReads = attempt.solverPoseReads;
+    auto &solverClosurePhases = attempt.solverClosurePhases;
+    auto &requiredSolvers = attempt.requiredSolvers;
+    auto &poseDependencies = attempt.poseDependencies;
+    auto &constraintsByTarget = attempt.constraintsByTarget;
     // Which solvers wait on which frame constraints: for each pose a solver
     // reads, walk up to the rig root collecting the constraints on each
     // ancestor. input inherits target's frame iff input.HasPrefix(target) and
@@ -3168,7 +3438,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         if (phases == bySolver->second.end()) {
             return false;
         }
-        const int at = stackOrdinalOf(constraint);
+        const int at = attempt.StackOrdinalOf(constraint);
         for (const RigExecReadPhase &phase : phases->second) {
             if (phase.kind == RigExecReadPhaseKind::Final ||
                 (phase.kind == RigExecReadPhaseKind::AtPrim &&
@@ -3196,10 +3466,11 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                         // one: it reads the frame as the constraint left it.
                         const bool positional =
                             poseStackOrdinal.count(solver) > 0;
-                        const int here = stackOrdinalOf(solver);
+                        const int here = attempt.StackOrdinalOf(solver);
                         for (const SdfPath &constraint : it->second) {
                             const bool above =
-                                positional && stackOrdinalOf(constraint) > here;
+                                positional &&
+                                attempt.StackOrdinalOf(constraint) > here;
                             const bool declared =
                                 above && readsAfter(solver, input, constraint);
                             if (declared) {
@@ -3213,7 +3484,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                                          writers->second) {
                                         if (writer != solver)
                                             continue;
-                                        return fail(
+                                        return attempt.Fail(
                                             solver.GetString() +
                                                 " declares a read phase that "
                                                 "reads " +
@@ -3252,17 +3523,17 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     std::map<SdfPath, std::vector<SdfPath>> jointWriterChain;
     /// solver -> (joint -> the step that wrote the joint just before it), the
     /// compile-side half of "the incoming frame is the solver's rest".
-    std::map<SdfPath, std::map<SdfPath, SdfPath>> solverRestPredecessor;
+    auto &solverRestPredecessor = attempt.solverRestPredecessor;
     {
         for (auto &[joint, writers] : newJointBinding) {
             if (writers.size() < 2)
                 continue;
-            std::stable_sort(
-                writers.begin(), writers.end(),
-                [&stackOrdinalOf](const std::pair<SdfPath, int> &a,
-                                  const std::pair<SdfPath, int> &b) {
-                    return stackOrdinalOf(a.first) < stackOrdinalOf(b.first);
-                });
+            std::stable_sort(writers.begin(), writers.end(),
+                             [&attempt](const std::pair<SdfPath, int> &a,
+                                        const std::pair<SdfPath, int> &b) {
+                                 return attempt.StackOrdinalOf(a.first) <
+                                        attempt.StackOrdinalOf(b.first);
+                             });
         }
         // Which pose-domain constraints move each provider. Geometry-domain
         // constraints are excluded: they revise points, carry no stack
@@ -3289,13 +3560,14 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             const auto solvers = newJointBinding.find(joint);
             if (solvers != newJointBinding.end()) {
                 for (const auto &[writer, element] : solvers->second) {
-                    chain.emplace_back(stackOrdinalOf(writer), writer);
+                    chain.emplace_back(attempt.StackOrdinalOf(writer), writer);
                 }
             }
             const auto constraints = frameWritingConstraints.find(joint);
             if (constraints != frameWritingConstraints.end()) {
                 for (const SdfPath &constraint : constraints->second) {
-                    chain.emplace_back(stackOrdinalOf(constraint), constraint);
+                    chain.emplace_back(attempt.StackOrdinalOf(constraint),
+                                       constraint);
                 }
             }
             std::sort(chain.begin(), chain.end());
@@ -3360,83 +3632,111 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             continue;
         poseDependencies[waiter].insert(waitedOn);
     }
+    return true;
+}
 
-    compileBlocks.Next("SolverSchedule.PoseReady");
-    struct NativePoseOwner {
-        bool solverBatch;
-        size_t index;
-    };
-    std::vector<NativePoseOwner> nativePoseOwners;
-    std::vector<_SolverBatch> newSolverBatches;
+void
+RigExecRigEvaluator::_SeedRestCompiledRigProvider(_CompileAttempt &attempt,
+                                                  SdfPath path)
+{
+    auto &newRestCompiledRigProviders = attempt.newRestCompiledRigProviders;
+    for (; !path.IsEmpty() && path != SdfPath::AbsoluteRootPath();
+         path = path.GetParentPath()) {
+        if (newRestCompiledRigProviders.count(path))
+            break;
+        if (!_IsFrameProviderPath(path))
+            continue;
+        newRestCompiledRigProviders.insert(path);
+    }
+}
+
+void
+RigExecRigEvaluator::_SeedProvider(_CompileAttempt &attempt, SdfPath path,
+                                   bool restCompiledRig)
+{
+    auto &newNativeProviderPaths = attempt.newNativeProviderPaths;
+    if (restCompiledRig)
+        _SeedRestCompiledRigProvider(attempt, path);
+    for (; !path.IsEmpty() && path != SdfPath::AbsoluteRootPath();
+         path = path.GetParentPath()) {
+        if (newNativeProviderPaths.count(path))
+            break;
+        if (!_IsFrameProviderPath(path))
+            continue;
+        newNativeProviderPaths.insert(path);
+    }
+}
+
+void
+RigExecRigEvaluator::_CompilePoseReady(_CompileAttempt &attempt)
+{
+    auto &newJointPaths = attempt.newJointPaths;
+    auto &newControlPaths = attempt.newControlPaths;
+    auto &newVolumeWeightProviders = attempt.newVolumeWeightProviders;
+    auto &newFrameConstraints = attempt.newFrameConstraints;
+    auto &newGraphChains = attempt.newGraphChains;
+    auto &newGraphDerivedChains = attempt.newGraphDerivedChains;
+    auto &newPoseInputInfo = attempt.newPoseInputInfo;
+    auto &solverFrameInputs = attempt.solverFrameInputs;
+    using NativePoseOwner = _CompileAttempt::NativePoseOwner;
+    auto &nativePoseOwners = attempt.nativePoseOwners;
+    auto &newSolverBatches = attempt.newSolverBatches;
     // Provider identities include every required namespace ancestor.
-    std::set<SdfPath> newNativeProviderPaths;
-    std::set<SdfPath> newRestCompiledRigProviders;
-    const auto seedRestCompiledRigProvider = [&](SdfPath path) {
-        for (; !path.IsEmpty() && path != SdfPath::AbsoluteRootPath();
-             path = path.GetParentPath()) {
-            if (newRestCompiledRigProviders.count(path))
-                break;
-            if (!isFrameProvider(path))
-                continue;
-            newRestCompiledRigProviders.insert(path);
-        }
-    };
+    auto &newNativeProviderPaths = attempt.newNativeProviderPaths;
+    auto &newRestCompiledRigProviders = attempt.newRestCompiledRigProviders;
     // Preserve the already-reached connected-read keys, without seeding their
     // namespace ancestors until PrepareRequests.ProviderClosure.
-    std::set<SdfPath> restLatePoseInputs;
+    auto &restLatePoseInputs = attempt.restLatePoseInputs;
     for (const auto &entry : newPoseInputInfo)
         restLatePoseInputs.insert(entry.first);
-    auto seedProvider = [&](SdfPath path, bool restCompiledRig = true) {
-        if (restCompiledRig)
-            seedRestCompiledRigProvider(path);
-        for (; !path.IsEmpty() && path != SdfPath::AbsoluteRootPath();
-             path = path.GetParentPath()) {
-            if (newNativeProviderPaths.count(path))
-                break;
-            if (!isFrameProvider(path))
-                continue;
-            newNativeProviderPaths.insert(path);
-        }
-    };
     for (const SdfPath &path : newJointPaths)
-        seedProvider(path);
+        _SeedProvider(attempt, path);
     for (const SdfPath &path : newControlPaths)
-        seedProvider(path);
+        _SeedProvider(attempt, path);
     for (const SdfPath &path : newVolumeWeightProviders)
-        seedProvider(path);
+        _SeedProvider(attempt, path);
     const auto seedGeometryProviders = [&](const auto &chains) {
         for (const auto &[target, revisions] : chains)
             for (const _GraphRevision &revision : revisions) {
-                seedProvider(revision.binding.transform, false);
-                seedProvider(revision.binding.transformSpace, false);
-                seedProvider(revision.binding.carrySpace, false);
+                _SeedProvider(attempt, revision.binding.transform, false);
+                _SeedProvider(attempt, revision.binding.transformSpace, false);
+                _SeedProvider(attempt, revision.binding.carrySpace, false);
                 for (const SdfPath &provider : revision.binding.influences)
-                    seedProvider(provider, false);
+                    _SeedProvider(attempt, provider, false);
             }
     };
     seedGeometryProviders(newGraphChains);
     seedGeometryProviders(newGraphDerivedChains);
     for (const auto &[solver, frames] : solverFrameInputs) {
         for (const SdfPath &path : frames)
-            seedProvider(path);
+            _SeedProvider(attempt, path);
     }
     for (const _FrameConstraint &constraint : newFrameConstraints) {
         for (const SdfPath &target : constraint.targets)
-            seedProvider(target);
+            _SeedProvider(attempt, target);
         for (const auto &source : constraint.sources)
-            seedProvider(source.sourcePath);
-        seedProvider(constraint.worldUpObject.sourcePath);
-        seedProvider(constraint.spacePath);
-        seedProvider(constraint.effector.sourcePath);
+            _SeedProvider(attempt, source.sourcePath);
+        _SeedProvider(attempt, constraint.worldUpObject.sourcePath);
+        _SeedProvider(attempt, constraint.spacePath);
+        _SeedProvider(attempt, constraint.effector.sourcePath);
         for (const auto &pole : constraint.poleObjects)
-            seedProvider(pole.sourcePath);
+            _SeedProvider(attempt, pole.sourcePath);
     }
-    compileBlocks.Next("PrepareRequests.SpaceSwitches");
+}
+
+bool
+RigExecRigEvaluator::_CompileSpaceSwitches(_CompileAttempt &attempt)
+{
+    auto &compileScene = attempt.compileScene;
+    auto &compileSceneStage = attempt.compileSceneStage;
+    auto &compileSceneSerial = attempt.compileSceneSerial;
+    auto &compileSceneReusable = attempt.compileSceneReusable;
+    auto &skeleton2dBones = attempt.skeleton2dBones;
     // RigExecSpaceSwitch: a labelled parent-space list for one xformable.
     //
     // Detached switch records provide structure; every current frame read is
     // bound by the common graph after provider closure and SSA assignment.
-    std::vector<_SpaceSwitch> newSpaceSwitches;
+    auto &newSpaceSwitches = attempt.newSpaceSwitches;
     if (const UsdPrim rig = _stage->GetPrimAtPath(_rigPath)) {
         std::set<SdfPath> targets;
         for (const UsdPrim &prim : UsdPrimRange(rig)) {
@@ -3464,7 +3764,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 if (!RigExecDispatchCaptureSceneDescriptors(
                         _stage, _rigPath, {UsdTimeCode::Default()},
                         compileScene.get(), &error))
-                    return fail(error);
+                    return attempt.Fail(error);
                 // A notice during capture makes the snapshot ineligible for
                 // later reuse; the switch translation still runs here.
                 compileSceneSerial = before;
@@ -3475,30 +3775,38 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             std::string error;
             if (!RigExecDispatchTranslateSceneSpaceSwitch(
                     *compileScene, path, captured.get(), &error))
-                return fail(error);
+                return attempt.Fail(error);
             if (!targets.insert(captured->target).second)
-                return fail(captured->target.GetString() +
-                            " is the target of more than one space switch");
+                return attempt.Fail(
+                    captured->target.GetString() +
+                    " is the target of more than one space switch");
             _SpaceSwitch record;
             record.descriptor = captured;
             record.switchPath = path;
             record.target = captured->target;
             record.spacePath = captured->space;
-            seedProvider(record.target);
+            _SeedProvider(attempt, record.target);
             if (!record.spacePath.IsEmpty())
-                seedProvider(record.spacePath);
+                _SeedProvider(attempt, record.spacePath);
             for (const auto &path : captured->sources) {
                 _SpaceSwitch::Source source;
                 source.path = path;
                 if (!path.IsEmpty())
-                    seedProvider(path);
+                    _SeedProvider(attempt, path);
                 record.sources.push_back(std::move(source));
             }
             newSpaceSwitches.push_back(std::move(record));
         }
     }
+    return true;
+}
 
-    compileBlocks.Next("PrepareRequests.ProviderClosure");
+bool
+RigExecRigEvaluator::_CompileProviderClosure(_CompileAttempt &attempt)
+{
+    auto &newNativeProviderPaths = attempt.newNativeProviderPaths;
+    auto &newRestCompiledRigProviders = attempt.newRestCompiledRigProviders;
+    auto &restLatePoseInputs = attempt.restLatePoseInputs;
     // Warming the closure over the seeded set is what grows newPoseInputInfo,
     // which the pass after this one iterates -- so the two are timed apart:
     // this one is stage walking, that one is exec prepares.
@@ -3506,30 +3814,53 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     for (const SdfPath &provider : newNativeProviderPaths)
         seedPaths.push_back(provider);
     for (const SdfPath &provider : seedPaths)
-        for (const SdfPath &member : poseProviderClosure(provider))
-            seedProvider(member, false);
+        for (const SdfPath &member : _PoseProviderClosure(attempt, provider))
+            _SeedProvider(attempt, member, false);
     // Close exactly the first-frame/rest provider roots, separately
     // from native geometry-only source roots. This adds no operation or tap.
     const std::vector<SdfPath> restSeedPaths(
         newRestCompiledRigProviders.begin(), newRestCompiledRigProviders.end());
     for (const SdfPath &provider : restSeedPaths) {
-        const auto &closure = poseProviderClosure(provider);
+        const auto &closure = _PoseProviderClosure(attempt, provider);
         restLatePoseInputs.insert(closure.begin(), closure.end());
     }
     // Seed reached connected inputs and ancestors after explicit roots;
     // close once.
     for (const SdfPath &input : restLatePoseInputs)
-        seedRestCompiledRigProvider(input);
+        _SeedRestCompiledRigProvider(attempt, input);
     // The first-frame/rest request admits only valid USD providers.
     // Geometry-only inputs are not roots
     // of this request and retain their independent availability policy.
     for (const SdfPath &path : newRestCompiledRigProviders) {
         const UsdPrim provider = _stage->GetPrimAtPath(path);
         if (!provider || !UsdPrimDefaultPredicate(provider)) {
-            return fail("failed to prepare pose provider inputs");
+            return attempt.Fail("failed to prepare pose provider inputs");
         }
     }
-    compileBlocks.Next("SolverSchedule.SolverBatches");
+    return true;
+}
+
+bool
+RigExecRigEvaluator::_CompileSolverBatches(_CompileAttempt &attempt)
+{
+    std::vector<std::string> *errors = attempt.errors;
+    auto &newJointBinding = attempt.newJointBinding;
+    auto &newSolverDependencies = attempt.newSolverDependencies;
+    auto &newSolverAggregateReads = attempt.newSolverAggregateReads;
+    auto &newFrameConstraints = attempt.newFrameConstraints;
+    auto &newFrameChains = attempt.newFrameChains;
+    auto &poseStackOrdinal = attempt.poseStackOrdinal;
+    auto &newGraphChains = attempt.newGraphChains;
+    auto &newGraphDerivedChains = attempt.newGraphDerivedChains;
+    auto &solverFrameInputs = attempt.solverFrameInputs;
+    auto &newSolverJoints = attempt.newSolverJoints;
+    auto &requiredSolvers = attempt.requiredSolvers;
+    auto &poseDependencies = attempt.poseDependencies;
+    auto &constraintIndices = attempt.constraintIndices;
+    auto &solverRestPredecessor = attempt.solverRestPredecessor;
+    using NativePoseOwner = _CompileAttempt::NativePoseOwner;
+    auto &nativePoseOwners = attempt.nativePoseOwners;
+    auto &newSolverBatches = attempt.newSolverBatches;
     // Capture native domain descriptors in authored stack order. Scheduling
     // belongs to the single graph built after every domain is translated.
     std::vector<SdfPath> authoredPose;
@@ -3537,7 +3868,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         authoredPose.push_back(entry.first);
     std::sort(authoredPose.begin(), authoredPose.end(),
               [&](const SdfPath &a, const SdfPath &b) {
-                  const int oa = stackOrdinalOf(a), ob = stackOrdinalOf(b);
+                  const int oa = attempt.StackOrdinalOf(a),
+                            ob = attempt.StackOrdinalOf(b);
                   return oa != ob ? oa < ob : a < b;
               });
     for (const auto &path : authoredPose) {
@@ -3594,7 +3926,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             for (const auto &source : aggregates->second)
                 if (numericalAggregates.count(source) &&
                     poseStackOrdinal.count(source) &&
-                    stackOrdinalOf(source) >= stackOrdinalOf(path)) {
+                    attempt.StackOrdinalOf(source) >=
+                        attempt.StackOrdinalOf(path)) {
                     const std::string warning =
                         path.GetString() +
                         " formerly read the loop-carried aggregate of " +
@@ -3619,7 +3952,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             for (const _GraphRevision &revision : revisions) {
                 const SdfPath &driver = revision.binding.driverFrames;
                 if (!driver.IsEmpty() && !admittedAggregates.count(driver))
-                    return fail(
+                    return attempt.Fail(
                         "driver frames " + driver.GetString() +
                             " is not a solver of this rig; mover set aside",
                         {revision.moverPath});
@@ -3672,14 +4005,20 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             newFrameChains[joint] = chain;
         }
     }
+    return true;
+}
 
-    compileBlocks.Close();
-    stampCompileRegion("Compile.SolverSchedule");
+void
+RigExecRigEvaluator::_CompileRestConstancy(_CompileAttempt &attempt)
+{
+    auto &newPropertyChains = attempt.newPropertyChains;
+    auto &newPoseInputInfo = attempt.newPoseInputInfo;
+    auto &newRestCompiledRigProviders = attempt.newRestCompiledRigProviders;
     // Close the provider universe from connected-expression facts. Values
     // are composed by native domain operations after all producers exist.
     for (const auto &[provider, info] : newPoseInputInfo)
-        seedProvider(provider, false);
-    bool newCompiledRigRestsConstant = true;
+        _SeedProvider(attempt, provider, false);
+    auto &newCompiledRigRestsConstant = attempt.newCompiledRigRestsConstant;
     std::set<SdfPath> restChainTargets;
     for (const auto &entry : newPropertyChains)
         restChainTargets.insert(entry.first);
@@ -3690,20 +4029,59 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             break;
         }
     }
+}
 
-    compileBlocks.Close();
-    stampCompileRegion("Compile.PrepareRequests");
-    std::map<SdfPath, std::set<SdfPath>> newPhaseCheckpoints;
+bool
+RigExecRigEvaluator::_CompileValidatePhases(_CompileAttempt &attempt)
+{
+    auto &newMovers = attempt.newMovers;
+    auto &volumeWeightError = attempt.volumeWeightError;
+    auto &newFrameChains = attempt.newFrameChains;
+    auto &newGraphChains = attempt.newGraphChains;
+    auto &newPhaseCheckpoints = attempt.newPhaseCheckpoints;
     _CompileFailure chainFailure;
     if (!_ValidateNativePhases(newGraphChains, newFrameChains, newMovers,
                                &newPhaseCheckpoints, &chainFailure)) {
-        return fail(chainFailure.message, std::move(chainFailure.operations));
+        return attempt.Fail(chainFailure.message,
+                            std::move(chainFailure.operations));
     }
     if (!volumeWeightError.empty()) {
-        return fail(volumeWeightError);
+        return attempt.Fail(volumeWeightError);
     }
-    stampCompileRegion("Compile.ChainOrderValidate");
+    return true;
+}
 
+void
+RigExecRigEvaluator::_CompilePublish(_CompileAttempt &attempt)
+{
+    auto &newJointPaths = attempt.newJointPaths;
+    auto &newControlPaths = attempt.newControlPaths;
+    auto &solverArrayPaths = attempt.solverArrayPaths;
+    auto &newPoseInterpolators = attempt.newPoseInterpolators;
+    auto &newRibbonDriverPoints = attempt.newRibbonDriverPoints;
+    auto &newMovers = attempt.newMovers;
+    auto &newJointBinding = attempt.newJointBinding;
+    auto &newSolverDependencies = attempt.newSolverDependencies;
+    auto &newFalloffLutOverrides = attempt.newFalloffLutOverrides;
+    auto &newCurrentPhaseWeights = attempt.newCurrentPhaseWeights;
+    auto &newVolumeWeightProviders = attempt.newVolumeWeightProviders;
+    auto &newFrameConstraints = attempt.newFrameConstraints;
+    auto &newFrameChains = attempt.newFrameChains;
+    auto &poseStackOrdinal = attempt.poseStackOrdinal;
+    auto &newXformDerivedProviders = attempt.newXformDerivedProviders;
+    auto &newPropertyChains = attempt.newPropertyChains;
+    auto &newPropertyChainOrder = attempt.newPropertyChainOrder;
+    auto &newPhasedConnections = attempt.newPhasedConnections;
+    auto &newGraphChains = attempt.newGraphChains;
+    auto &newGraphDerivedChains = attempt.newGraphDerivedChains;
+    auto &newSolverJoints = attempt.newSolverJoints;
+    auto &poseDependencies = attempt.poseDependencies;
+    auto &newSolverBatches = attempt.newSolverBatches;
+    auto &newNativeProviderPaths = attempt.newNativeProviderPaths;
+    auto &newRestCompiledRigProviders = attempt.newRestCompiledRigProviders;
+    auto &newSpaceSwitches = attempt.newSpaceSwitches;
+    auto &newCompiledRigRestsConstant = attempt.newCompiledRigRestsConstant;
+    auto &newPhaseCheckpoints = attempt.newPhaseCheckpoints;
     // Publish descriptor facts atomically before native graph translation.
     _movers = std::move(newMovers);
     _jointPaths = std::move(newJointPaths);
@@ -3845,8 +4223,21 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // The bindings describe the chains entry for entry, so a recompile that
     // replaced them has replaced what the bindings are about.
     _propertyChainBindings.reset();
+}
 
-    stampCompileRegion("Compile.Commit");
+bool
+RigExecRigEvaluator::_CompileCommit(_CompileAttempt &attempt)
+{
+    auto &compileSerial = attempt.compileSerial;
+    auto &retiringBakedProgram = attempt.retiringBakedProgram;
+    auto &digestParts = attempt.digestParts;
+    auto &digestFootprints = attempt.digestFootprints;
+    auto &digestDispatcher = attempt.digestDispatcher;
+    auto &digestJoined = attempt.digestJoined;
+    auto &compileScene = attempt.compileScene;
+    auto &compileSceneStage = attempt.compileSceneStage;
+    auto &compileSceneSerial = attempt.compileSceneSerial;
+    auto &compileSceneReusable = attempt.compileSceneReusable;
     _rigState.Transition(_CompiledRigState::Edge::Committed);
 
     // Build the dense provider universe once per compile compiled rig. _providerPaths
