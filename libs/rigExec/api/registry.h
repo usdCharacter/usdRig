@@ -29,7 +29,7 @@ inline constexpr uint32_t kRigExecInvalidIndex = 0xffffffffu;
 /// Version of the descriptor structs below. Each library records the version
 /// it was built with, and Initialize rejects one built with another. Raise
 /// it whenever a descriptor's layout changes.
-inline constexpr uint32_t kRigExecRegistryAbiVersion = 5;
+inline constexpr uint32_t kRigExecRegistryAbiVersion = 6;
 
 /// Refers to one registered data type. A type library defines one per type
 /// with RIGEXEC_DEFINE_TYPE_HANDLE, and Initialize gives it its index; read
@@ -129,6 +129,8 @@ struct RigExecTypeDesc {
     bool (*equal)(const void *a, const void *b, RigExecEqualMode) = nullptr;
     RigExecHashClass hashClass = RigExecHashClass::Unhashable;
     uint64_t (*hash)(const void *value) = nullptr;
+    /// For an array type: how many elements \p value holds.
+    size_t (*count)(const void *value) = nullptr;
 };
 
 /// Whether a port is an input or an output, and how it may be fed.
@@ -292,6 +294,62 @@ using RigExecOpRunFn = bool (*)(const void *payload, void *state,
                                 const RigExecOpIo &io, std::string *error);
 
 struct RigExecOpDesc;
+class RigExecFieldValues;
+
+/// How many values a declared field holds for one node.
+enum class RigExecFieldExtent : uint8_t {
+    /// One value.
+    Scalar,
+    /// RigExecFieldDesc::count values.
+    Fixed,
+    /// As many values as the one-value payload field `source` says; that
+    /// field holds an unsigned integer.
+    FromField,
+    /// As many values as input `port`, an array, holds elements when the
+    /// node runs.
+    FromInput,
+};
+
+/// One declared value, or run of values, of an op's settings (payload) or
+/// working state. Kernels refer to a field by its position in the op's
+/// list.
+struct RigExecFieldDesc {
+    /// For messages and saved-file listings only.
+    const char *name = "";
+    /// A registered, trivially copyable value type without elements or
+    /// members, aligned to at most 64 bytes. Saved files hold its bytes as
+    /// they are in memory.
+    const RigExecTypeHandle *type = nullptr;
+    RigExecFieldExtent extent = RigExecFieldExtent::Scalar;
+    /// Fixed only.
+    uint32_t count = 0;
+    /// FromField only: the payload field's position.
+    uint32_t source = kRigExecInvalidIndex;
+    /// FromInput only.
+    const RigExecPortHandle *port = nullptr;
+    /// For a payload field of an unsigned integer type: the largest value
+    /// it may hold, such as an enum's last value or 1 for a flag.
+    uint64_t limit = UINT64_MAX;
+};
+
+/// A field whose count varies: one node's values and their count.
+template <class Byte> struct RigExecFieldRunOf {
+    Byte *data = nullptr;
+    size_t count = 0;
+};
+
+/// One declared field across a batch. A Scalar or Fixed field is a column:
+/// instance k's `count` values start at base + k * stride. Any other
+/// field has one run per instance in `runs`.
+template <class Byte> struct RigExecFieldColumnOf {
+    Byte *base = nullptr;
+    size_t stride = 0;
+    size_t count = 0;
+    const RigExecFieldRunOf<Byte> *runs = nullptr;
+};
+
+using RigExecPayloadColumn = RigExecFieldColumnOf<const std::byte>;
+using RigExecStateColumn = RigExecFieldColumnOf<std::byte>;
 
 /// What an op's batch function receives: several nodes of the op that run
 /// together, called instances, numbered 0 to count - 1 in the order the
@@ -314,6 +372,10 @@ struct RigExecOpBatch {
     void *const *outputs = nullptr;
     /// For a Windowed op, each instance's history record; null otherwise.
     const RigExecWindowRun *const *windows = nullptr;
+    /// One per declared payload field and per declared state field, in
+    /// the op's order; null when it declares none (see opFields.h).
+    const RigExecPayloadColumn *payloadFields = nullptr;
+    const RigExecStateColumn *stateFields = nullptr;
 };
 
 /// Runs every active instance of \p batch, in instance order. On a failure
@@ -376,9 +438,27 @@ struct RigExecOpDesc {
     RigExecOpPayloadHandling payload;
     RigExecOpStateHandling state;
     /// Windowed ops only, and required there: how many earlier frames a
-    /// node reads, given its payload (null when it has none).
+    /// node reads, given its payload (null when it has none), or for an op
+    /// that declares payload fields its RigExecFieldValues.
     uint32_t (*windowFrames)(const void *payload) = nullptr;
     RigExecOpBatchFn runBatch = nullptr;
+    /// Settings declared as fields, in place of payload handling: the
+    /// library lays them out, copies, compares, saves and reads them. An
+    /// op that declares fields provides runBatch.
+    const RigExecFieldDesc *payloadFields = nullptr;
+    size_t payloadFieldCount = 0;
+    /// Saved ahead of the declared settings and checked when they are
+    /// read; 0 saves none.
+    uint32_t payloadVersion = 0;
+    /// Fills \p out with the field values of \p payload, the settings
+    /// struct a host passes to RigExecRigDescBuilder::AddOp. Optional.
+    void (*payloadValues)(const void *payload,
+                          RigExecFieldValues &out) = nullptr;
+    /// Working state declared as fields, in place of state handling: each
+    /// value is constructed when an evaluator binds the program and kept
+    /// from one evaluation to the next.
+    const RigExecFieldDesc *stateFields = nullptr;
+    size_t stateFieldCount = 0;
 };
 
 /// Receives a type library's types during Initialize.
@@ -449,6 +529,9 @@ struct RigExecRegisteredOp {
     const RigExecOpHandle *handle = nullptr;
     /// The op's runBatch, or RigExecRunEachInstance when it has none.
     RigExecOpBatchFn runBatch = nullptr;
+    /// Type index per declared payload and state field, in field order.
+    std::vector<uint32_t> payloadFieldTypes;
+    std::vector<uint32_t> stateFieldTypes;
 };
 
 /// The one registry of the process. Initialize builds it once at startup;

@@ -1,5 +1,7 @@
 #include "rigExecRuntime/opNodes.h"
 
+#include "rigExec/api/opFields.h"
+
 #include "rigExecRuntime/inputs.h"
 #include "rigExecRuntime/runtime.h"
 #include "rigExecRuntime/store.h"
@@ -298,6 +300,17 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
         const RigExecOpPayloadHandling &handling = op.desc->payload;
         const std::string where =
             "node " + std::to_string(n) + " (" + op.desc->name + ")";
+        if (op.desc->payloadFieldCount) {
+            RigExecFieldValues values;
+            std::string why;
+            if (!RigExecDecodePayloadFields(*op.desc, node.payload.data(),
+                                            node.payload.size(), &values,
+                                            &why) ||
+                !RigExecCheckPayloadFields(*op.desc, values, &why))
+                return Fail(error, where + ": settings do not decode: " + why);
+            builder.AddOp(*op.handle, values);
+            continue;
+        }
         if (!handling.size) {
             if (!node.payload.empty())
                 return Fail(error, where + " has settings its op does not "

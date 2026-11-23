@@ -1,7 +1,9 @@
 #include "rigExecOps/property/mathOps.h"
 
+#include "rigExec/api/opFields.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
+
+#include <cstdint>
 #include <iterator>
 #include <string>
 
@@ -33,7 +35,12 @@ RIGEXEC_DEFINE_PORT_HANDLE(MatrixOut)
 
 namespace {
 
+using rigExec::RigExecBatchActive;
+using rigExec::RigExecBatchInstance;
+using rigExec::RigExecOpBatch;
 using rigExec::RigExecOpIo;
+using rigExec::RigExecPayloadColumnOf;
+using rigExec::RigExecPayloadField;
 using rigExec::RigExecPortHandle;
 using rigExecStd::Mat4d;
 using rigExecStd::Vec2f;
@@ -64,40 +71,80 @@ OpName(RigExecPropertyOp op)
     return "unknown";
 }
 
-bool
-RunFloat(const void *payload, void *, const RigExecOpIo &io, std::string *error)
+/// The math payload's declared fields, in saved order. A count field
+/// holds the length of the list after it.
+enum MathField : uint32_t {
+    kOp,
+    kKeyCount,
+    kKeys,
+    kTangentCount,
+    kTangents,
+    kPathValid,
+    kPathBasis,
+    kPathPinned,
+    kPathPlanar,
+    kPathComponent,
+    kPathOffsetX,
+    kPathOffsetZ,
+    kPathHeadingOffset,
+};
+
+/// Instance \p k's path settings.
+rigExec::RigExecPathSettings
+PathAt(const RigExecOpBatch &batch, size_t k)
 {
-    const MathPayload &p = *static_cast<const MathPayload *>(payload);
+    rigExec::RigExecPathSettings path;
+    path.valid = RigExecPayloadColumnOf<uint8_t>(batch, kPathValid)[k] != 0;
+    path.basis = rigExec::RigExecPathBasis(
+        RigExecPayloadColumnOf<uint32_t>(batch, kPathBasis)[k]);
+    path.pinned = RigExecPayloadColumnOf<uint8_t>(batch, kPathPinned)[k] != 0;
+    path.planar = RigExecPayloadColumnOf<uint8_t>(batch, kPathPlanar)[k] != 0;
+    path.component = rigExec::RigExecPathComponent(
+        RigExecPayloadColumnOf<uint32_t>(batch, kPathComponent)[k]);
+    path.offsetX = RigExecPayloadColumnOf<float>(batch, kPathOffsetX)[k];
+    path.offsetZ = RigExecPayloadColumnOf<float>(batch, kPathOffsetZ)[k];
+    path.headingOffset =
+        RigExecPayloadColumnOf<float>(batch, kPathHeadingOffset)[k];
+    return path;
+}
+
+bool
+FloatOne(const RigExecOpBatch &batch, size_t k, RigExecPropertyOp op,
+         std::string *error)
+{
+    const RigExecOpIo io = RigExecBatchInstance(batch, k);
     rigExec::RigExecPropertyMathKernelParams<float, Vec2f> params;
-    params.op = p.op;
+    params.op = op;
     params.value = InOr(io, FloatValue(), 0.0f);
     params.min = InOr(io, FloatMin(), 0.0f);
     params.max = InOr(io, FloatMax(), 0.0f);
     params.weight = *In<float>(io, FloatWeight());
-    if (p.op == RigExecPropertyOp::Curve) {
-        if (p.keys.empty() ||
-            !rigExec::RigExecValidateLinearKeysKernel(p.keys.data(),
-                                                      p.keys.size()) ||
-            (!p.tangents.empty() && p.tangents.size() != p.keys.size()))
+    if (op == RigExecPropertyOp::Curve) {
+        const auto keys = RigExecPayloadField<Vec2f>(batch, kKeys, k);
+        const auto tangents = RigExecPayloadField<Vec2f>(batch, kTangents, k);
+        if (keys.Empty() ||
+            !rigExec::RigExecValidateLinearKeysKernel(keys.data, keys.Size()) ||
+            (!tangents.Empty() && tangents.Size() != keys.Size()))
             return Fail(error, "FloatMath",
                         "curve needs finite, strictly increasing keys and "
                         "no tangents or one per key");
-        params.keys = p.keys.data();
-        params.keyCount = p.keys.size();
-        params.tangents = p.tangents.empty() ? nullptr : p.tangents.data();
-        params.tangentCount = p.tangents.size();
+        params.keys = keys.data;
+        params.keyCount = keys.Size();
+        params.tangents = tangents.Empty() ? nullptr : tangents.data;
+        params.tangentCount = tangents.Size();
     }
-    if (p.op == RigExecPropertyOp::Path) {
+    if (op == RigExecPropertyOp::Path) {
+        const rigExec::RigExecPathSettings path = PathAt(batch, k);
         const auto *points =
             In<rigExecStd::RigExecArray<Vec3f>>(io, FloatPathPoints());
         params.path.points =
             points && !points->Empty() ? points->Data()[0]._data : nullptr;
         params.path.pointCount = points ? points->Size() : 0;
-        params.path.basis = p.path.basis;
-        params.path.pinned = p.path.pinned;
-        params.path.planar = p.path.planar;
-        params.pathSettings = p.path;
-        if (!p.path.valid || !rigExec::RigExecPathCurveValid(params.path))
+        params.path.basis = path.basis;
+        params.path.pinned = path.pinned;
+        params.path.planar = path.planar;
+        params.pathSettings = path;
+        if (!path.valid || !rigExec::RigExecPathCurveValid(params.path))
             return Fail(error, "FloatMath", "path has no valid curve");
     }
     Out<float>(io, FloatOut()) =
@@ -106,81 +153,126 @@ RunFloat(const void *payload, void *, const RigExecOpIo &io, std::string *error)
 }
 
 bool
-RunVec3f(const void *payload, void *, const RigExecOpIo &io, std::string *error)
+RunFloat(const RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
-    const MathPayload &p = *static_cast<const MathPayload *>(payload);
-    switch (p.op) {
-    case RigExecPropertyOp::Curve:
-    case RigExecPropertyOp::Quantize:
-    case RigExecPropertyOp::Path:
-        return Fail(error, "Vec3fMath",
-                    std::string(OpName(p.op)) + " is float-only");
-    default:
-        break;
+    const uint32_t *ops = RigExecPayloadColumnOf<uint32_t>(batch, kOp);
+    for (size_t k = 0; k < batch.count; ++k) {
+        if (RigExecBatchActive(batch, k) &&
+            !FloatOne(batch, k, RigExecPropertyOp(ops[k]), error)) {
+            *failed = k;
+            return false;
+        }
     }
-    const Vec3f zero(0.0f, 0.0f, 0.0f);
-    rigExec::RigExecPropertyMathKernelParams<Vec3f, Vec2f> params;
-    params.op = p.op;
-    params.value = InOr(io, Vec3fValue(), zero);
-    params.min = InOr(io, Vec3fMin(), zero);
-    params.max = InOr(io, Vec3fMax(), zero);
-    params.weight = *In<float>(io, Vec3fWeight());
-    Out<Vec3f>(io, Vec3fOut()) =
-        rigExec::RigExecApplyVec3fMathKernel(*In<Vec3f>(io, Vec3fIn()), params);
     return true;
 }
 
 bool
-RunMatrix(const void *payload, void *, const RigExecOpIo &io,
-          std::string *error)
+RunVec3f(const RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
-    const MathPayload &p = *static_cast<const MathPayload *>(payload);
-    const Mat4d *value = In<Mat4d>(io, MatrixValue());
-    const Mat4d identity(1.0);
-    if (!rigExec::RigExecApplyMatrixMathKernel(
-            *In<Mat4d>(io, MatrixIn()), p.op, value ? *value : identity,
-            *In<float>(io, MatrixWeight()), &Out<Mat4d>(io, MatrixOut())))
-        return Fail(error, "MatrixMath",
-                    std::string(OpName(p.op)) + " has no matrix meaning");
+    const uint32_t *ops = RigExecPayloadColumnOf<uint32_t>(batch, kOp);
+    const Vec3f zero(0.0f, 0.0f, 0.0f);
+    for (size_t k = 0; k < batch.count; ++k) {
+        if (!RigExecBatchActive(batch, k))
+            continue;
+        const RigExecPropertyOp op = RigExecPropertyOp(ops[k]);
+        if (op == RigExecPropertyOp::Curve ||
+            op == RigExecPropertyOp::Quantize ||
+            op == RigExecPropertyOp::Path) {
+            *failed = k;
+            return Fail(error, "Vec3fMath",
+                        std::string(OpName(op)) + " is float-only");
+        }
+        const RigExecOpIo io = RigExecBatchInstance(batch, k);
+        rigExec::RigExecPropertyMathKernelParams<Vec3f, Vec2f> params;
+        params.op = op;
+        params.value = InOr(io, Vec3fValue(), zero);
+        params.min = InOr(io, Vec3fMin(), zero);
+        params.max = InOr(io, Vec3fMax(), zero);
+        params.weight = *In<float>(io, Vec3fWeight());
+        Out<Vec3f>(io, Vec3fOut()) = rigExec::RigExecApplyVec3fMathKernel(
+            *In<Vec3f>(io, Vec3fIn()), params);
+    }
     return true;
 }
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
-void
-Save(Writer &w, const MathPayload &p)
+bool
+RunMatrix(const RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
-    w.Version(1);
-    w.Enum(p.op);
-    payloadIo::PutList(w, p.keys);
-    payloadIo::PutList(w, p.tangents);
-    w.Bool(p.path.valid);
-    w.Enum(p.path.basis);
-    w.Bool(p.path.pinned);
-    w.Bool(p.path.planar);
-    w.Enum(p.path.component);
-    w.F32(p.path.offsetX);
-    w.F32(p.path.offsetZ);
-    w.F32(p.path.headingOffset);
+    const uint32_t *ops = RigExecPayloadColumnOf<uint32_t>(batch, kOp);
+    const Mat4d identity(1.0);
+    for (size_t k = 0; k < batch.count; ++k) {
+        if (!RigExecBatchActive(batch, k))
+            continue;
+        const RigExecPropertyOp op = RigExecPropertyOp(ops[k]);
+        const RigExecOpIo io = RigExecBatchInstance(batch, k);
+        const Mat4d *value = In<Mat4d>(io, MatrixValue());
+        if (!rigExec::RigExecApplyMatrixMathKernel(
+                *In<Mat4d>(io, MatrixIn()), op, value ? *value : identity,
+                *In<float>(io, MatrixWeight()), &Out<Mat4d>(io, MatrixOut()))) {
+            *failed = k;
+            return Fail(error, "MatrixMath",
+                        std::string(OpName(op)) + " has no matrix meaning");
+        }
+    }
+    return true;
 }
 
 void
-Load(Reader &r, MathPayload &p)
+MathValues(const void *payload, rigExec::RigExecFieldValues &out)
 {
-    r.Version(1);
-    p.op = r.Enum(RigExecPropertyOp::Path);
-    payloadIo::GetList(r, p.keys);
-    payloadIo::GetList(r, p.tangents);
-    p.path.valid = r.Bool();
-    p.path.basis = r.Enum(rigExec::RigExecPathBasis::CatmullRom);
-    p.path.pinned = r.Bool();
-    p.path.planar = r.Bool();
-    p.path.component = r.Enum(rigExec::RigExecPathComponent::End);
-    p.path.offsetX = r.F32();
-    p.path.offsetZ = r.F32();
-    p.path.headingOffset = r.F32();
+    const MathPayload &p = *static_cast<const MathPayload *>(payload);
+    out.Set(kOp, uint32_t(p.op));
+    out.Set(kKeyCount, uint64_t(p.keys.size()));
+    out.Set(kKeys, p.keys);
+    out.Set(kTangentCount, uint64_t(p.tangents.size()));
+    out.Set(kTangents, p.tangents);
+    out.Set(kPathValid, uint8_t(p.path.valid));
+    out.Set(kPathBasis, uint32_t(p.path.basis));
+    out.Set(kPathPinned, uint8_t(p.path.pinned));
+    out.Set(kPathPlanar, uint8_t(p.path.planar));
+    out.Set(kPathComponent, uint32_t(p.path.component));
+    out.Set(kPathOffsetX, p.path.offsetX);
+    out.Set(kPathOffsetZ, p.path.offsetZ);
+    out.Set(kPathHeadingOffset, p.path.headingOffset);
 }
+
+rigExec::RigExecFieldDesc
+Field(const char *name, const rigExec::RigExecTypeHandle &type,
+      uint64_t limit = UINT64_MAX)
+{
+    rigExec::RigExecFieldDesc f;
+    f.name = name;
+    f.type = &type;
+    f.limit = limit;
+    return f;
+}
+
+rigExec::RigExecFieldDesc
+ListField(const char *name, uint32_t countField)
+{
+    rigExec::RigExecFieldDesc f = Field(name, rigExecStd::Vec2fType());
+    f.extent = rigExec::RigExecFieldExtent::FromField;
+    f.source = countField;
+    return f;
+}
+
+const rigExec::RigExecFieldDesc kMathFields[] = {
+    Field("op", rigExecStd::UIntType(), uint64_t(RigExecPropertyOp::Path)),
+    Field("keyCount", rigExecStd::UInt64Type()),
+    ListField("keys", kKeyCount),
+    Field("tangentCount", rigExecStd::UInt64Type()),
+    ListField("tangents", kTangentCount),
+    Field("pathValid", rigExecStd::BoolType(), 1),
+    Field("pathBasis", rigExecStd::UIntType(),
+          uint64_t(rigExec::RigExecPathBasis::CatmullRom)),
+    Field("pathPinned", rigExecStd::BoolType(), 1),
+    Field("pathPlanar", rigExecStd::BoolType(), 1),
+    Field("pathComponent", rigExecStd::UIntType(),
+          uint64_t(rigExec::RigExecPathComponent::End)),
+    Field("pathOffsetX", rigExecStd::FloatType()),
+    Field("pathOffsetZ", rigExecStd::FloatType()),
+    Field("pathHeadingOffset", rigExecStd::FloatType()),
+};
 
 rigExec::RigExecOpDesc
 MathDesc(const char *name, const rigExec::RigExecPortDesc *ports,
@@ -192,8 +284,11 @@ MathDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.ports = ports;
     d.portCount = portCount;
     d.runBatch = runBatch;
+    d.payloadFields = kMathFields;
+    d.payloadFieldCount = std::size(kMathFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &MathValues;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<MathPayload, &Save, &Load>();
     return d;
 }
 
@@ -233,16 +328,13 @@ const rigExec::RigExecPortDesc kMatrixPorts[] = {
 };
 
 const rigExec::RigExecOpDesc kFloatDesc =
-    MathDesc("FloatMath", kFloatPorts, std::size(kFloatPorts),
-             &opIo::RunBatch<&RunFloat>);
+    MathDesc("FloatMath", kFloatPorts, std::size(kFloatPorts), &RunFloat);
 
 const rigExec::RigExecOpDesc kVec3fDesc =
-    MathDesc("Vec3fMath", kVec3fPorts, std::size(kVec3fPorts),
-             &opIo::RunBatch<&RunVec3f>);
+    MathDesc("Vec3fMath", kVec3fPorts, std::size(kVec3fPorts), &RunVec3f);
 
 const rigExec::RigExecOpDesc kMatrixDesc =
-    MathDesc("MatrixMath", kMatrixPorts, std::size(kMatrixPorts),
-             &opIo::RunBatch<&RunMatrix>);
+    MathDesc("MatrixMath", kMatrixPorts, std::size(kMatrixPorts), &RunMatrix);
 
 } // namespace
 

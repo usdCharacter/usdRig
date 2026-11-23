@@ -1,6 +1,7 @@
 #ifndef RIGEXEC_INTERNAL_COMPILE_RIG_DESC_DATA_H
 #define RIGEXEC_INTERNAL_COMPILE_RIG_DESC_DATA_H
 
+#include "rigExec/api/opFields.h"
 #include "rigExec/api/rigDesc.h"
 #include "rigExec/internal/program/alignedBuffer.h"
 
@@ -16,6 +17,8 @@ struct RigExecDescNode {
     /// Holds a payload copy; empty for an op without a payload.
     RigExecAlignedBuffer payload;
     bool hasPayload = false;
+    /// The values of an op's declared payload fields.
+    RigExecFieldValues fields;
 };
 
 struct RigExecDescPort {

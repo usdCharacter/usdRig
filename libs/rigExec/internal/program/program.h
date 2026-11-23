@@ -50,6 +50,26 @@ struct RigExecProgramWindow {
     bool feedsWindow = false;
 };
 
+/// One declared field across a batch: a column of `count` values per
+/// instance at offset + k * stride, or, for a count that varies, one run
+/// per instance in payloadRuns or stateRuns from firstRun.
+struct RigExecProgramColumn {
+    uint32_t type = kRigExecInvalidIndex;
+    size_t offset = 0;
+    size_t stride = 0;
+    size_t count = 0;
+    uint32_t firstRun = kRigExecInvalidIndex;
+    /// A state field an evaluator sizes from an input when the node runs.
+    bool fromInput = false;
+};
+
+/// One instance's values of a field whose count varies; offset is
+/// SIZE_MAX until an evaluator sizes a field from an input.
+struct RigExecProgramRun {
+    size_t offset = SIZE_MAX;
+    size_t count = 0;
+};
+
 /// Nodes of one op at one level, run together by one call of the op's
 /// batch function. Its nodes' ports, payloads and states are each laid out
 /// contiguously in batch order.
@@ -66,6 +86,9 @@ struct RigExecProgramBatch {
     size_t payloadStride = 0;
     size_t stateOffset = SIZE_MAX;
     size_t stateStride = 0;
+    /// Into payloadColumns and stateColumns, one per declared field.
+    uint32_t firstPayloadColumn = kRigExecInvalidIndex;
+    uint32_t firstStateColumn = kRigExecInvalidIndex;
 };
 
 class RigExecProgram {
@@ -118,6 +141,12 @@ public:
     size_t arenaSize = 0;
     size_t stateSize = 0;
     RigExecAlignedBuffer payloads;
+    /// Declared fields, batch by batch: payload columns live in payloads,
+    /// state columns in each evaluator's state arena.
+    std::vector<RigExecProgramColumn> payloadColumns;
+    std::vector<RigExecProgramRun> payloadRuns;
+    std::vector<RigExecProgramColumn> stateColumns;
+    std::vector<RigExecProgramRun> stateRuns;
 };
 
 } // namespace rigExec

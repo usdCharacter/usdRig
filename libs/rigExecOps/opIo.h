@@ -31,27 +31,6 @@ ToVector(const rigExecStd::RigExecArray<T> &a)
     return std::vector<T>(a.begin(), a.end());
 }
 
-/// A batch function that runs \p Run on each active instance in order, a
-/// direct call per instance.
-template <bool (*Run)(const void *, void *, const rigExec::RigExecOpIo &,
-                      std::string *)>
-bool
-RunBatch(const rigExec::RigExecOpBatch &batch, size_t *failed,
-         std::string *error)
-{
-    for (size_t k = 0; k < batch.count; ++k) {
-        if (!rigExec::RigExecBatchActive(batch, k))
-            continue;
-        if (!Run(rigExec::RigExecBatchPayload(batch, k),
-                 rigExec::RigExecBatchState(batch, k),
-                 rigExec::RigExecBatchInstance(batch, k), error)) {
-            *failed = k;
-            return false;
-        }
-    }
-    return true;
-}
-
 inline bool
 Fail(std::string *error, const char *op, const std::string &why)
 {

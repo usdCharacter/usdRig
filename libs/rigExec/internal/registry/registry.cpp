@@ -41,6 +41,21 @@ Text(const char *text)
     return text ? std::string(text) : std::string();
 }
 
+bool
+LittleEndian()
+{
+    const uint16_t one = 1;
+    uint8_t first = 0;
+    std::memcpy(&first, &one, 1);
+    return first == 1;
+}
+
+bool
+IntegerSize(size_t size)
+{
+    return size == 1 || size == 2 || size == 4 || size == 8;
+}
+
 std::string
 QualifiedName(const char *nameSpace, const char *name)
 {
@@ -90,6 +105,8 @@ private:
 
     bool _FreezeTypes(const RigExecRegistryInit &init);
     bool _FreezeOps(const RigExecRegistryInit &init);
+    void _CheckFields(const std::string &op, const RigExecOpDesc &d,
+                      bool payload);
     void _Error(std::string message)
     {
         _errors.push_back(std::move(message));
@@ -286,6 +303,8 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
             _Error("op " + name +
                    ": Windowed threading and windowFrames go together");
         }
+        _CheckFields(name, d, true);
+        _CheckFields(name, d, false);
     }
     if (!_errors.empty()) {
         return false;
@@ -315,6 +334,12 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
         op.handle = e.handle;
         op.runBatch =
             e.desc->runBatch ? e.desc->runBatch : &RigExecRunEachInstance;
+        for (size_t f = 0; f < e.desc->payloadFieldCount; ++f)
+            op.payloadFieldTypes.push_back(
+                _typeIndex.at(e.desc->payloadFields[f].type));
+        for (size_t f = 0; f < e.desc->stateFieldCount; ++f)
+            op.stateFieldTypes.push_back(
+                _typeIndex.at(e.desc->stateFields[f].type));
         for (size_t p = 0; p < e.desc->portCount; ++p) {
             op.portTypes.push_back(_typeIndex.at(e.desc->ports[p].type));
             _portIndex.emplace_back(e.desc->ports[p].port, uint32_t(p));
@@ -328,6 +353,89 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
     }
     r._fingerprint = fingerprint;
     return true;
+}
+
+void
+RigExecRegistryBuilder::_CheckFields(const std::string &op,
+                                     const RigExecOpDesc &d, bool payload)
+{
+    const RigExecFieldDesc *fields = payload ? d.payloadFields : d.stateFields;
+    const size_t count = payload ? d.payloadFieldCount : d.stateFieldCount;
+    if (!count)
+        return;
+    const std::string kind = payload ? "payload" : "state";
+    if (!fields || (payload && d.payload.size) || (!payload && d.state.size))
+        _Error("op " + op + ": declares " + kind +
+               " fields and needs them in place of its " + kind + " handling");
+    if (!d.runBatch)
+        _Error("op " + op + ": declares fields but has no batch function");
+    if (!LittleEndian())
+        _Error("op " + op + ": declared fields need a little-endian machine");
+    if (!fields)
+        return;
+    const auto sizeOf = [&](const RigExecTypeHandle *type) -> size_t {
+        const auto found = _typeIndex.find(type);
+        return found == _typeIndex.end()
+                   ? 0
+                   : _typeEntries[found->second].desc->size;
+    };
+    std::set<std::string> names;
+    for (size_t f = 0; f < count; ++f) {
+        const RigExecFieldDesc &field = fields[f];
+        const std::string name =
+            "op " + op + ": " + kind + " field " + Text(field.name);
+        if (!field.name || !*field.name || !names.insert(field.name).second)
+            _Error(name + " has no name or a repeated one");
+        const auto type = _typeIndex.find(field.type);
+        if (type == _typeIndex.end()) {
+            _Error(name + " uses a type that is not registered");
+            continue;
+        }
+        const RigExecTypeDesc &t = *_typeEntries[type->second].desc;
+        if (!t.triviallyCopyable || t.element || t.fieldCount || t.align > 64)
+            _Error(name + " is not of a plain value type");
+        if (field.limit != UINT64_MAX && (!payload || !IntegerSize(t.size)))
+            _Error(name + " has a limit but is no payload integer");
+        switch (field.extent) {
+        case RigExecFieldExtent::Scalar:
+            break;
+        case RigExecFieldExtent::Fixed:
+            if (!field.count)
+                _Error(name + " has a fixed count of 0");
+            break;
+        case RigExecFieldExtent::FromField: {
+            const size_t earlier = payload ? f : d.payloadFieldCount;
+            if (field.source >= earlier || !d.payloadFields) {
+                _Error(name + " takes its count from a field that is not an "
+                              "earlier payload field");
+                break;
+            }
+            const RigExecFieldDesc &source = d.payloadFields[field.source];
+            if (source.extent != RigExecFieldExtent::Scalar ||
+                !IntegerSize(sizeOf(source.type)))
+                _Error(name + " takes its count from a field that is not "
+                              "one unsigned integer");
+            break;
+        }
+        case RigExecFieldExtent::FromInput: {
+            size_t p = 0;
+            while (p < d.portCount && d.ports[p].port != field.port)
+                ++p;
+            if (p == d.portCount || !(d.ports[p].flags & kRigExecPortInput) ||
+                (d.ports[p].flags & kRigExecPortArray)) {
+                _Error(name + " takes its count from something that is not "
+                              "an input of the op");
+                break;
+            }
+            const auto input = _typeIndex.find(d.ports[p].type);
+            if (input != _typeIndex.end() &&
+                !_typeEntries[input->second].desc->count)
+                _Error(name + " takes its count from an input whose type "
+                              "has no element count");
+            break;
+        }
+        }
+    }
 }
 
 bool

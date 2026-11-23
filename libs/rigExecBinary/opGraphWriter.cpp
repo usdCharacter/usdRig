@@ -1,5 +1,7 @@
 #include "rigExecBinary/opGraphWriter.h"
 
+#include "rigExec/api/opFields.h"
+
 #include <algorithm>
 #include <set>
 #include <utility>
@@ -85,15 +87,8 @@ RigExecOpGraphWriter::AddNode(const RigExecOpHandle &op, const void *payload)
     const RigExecRegisteredOp &registered = RigExecRegistry::Get().Op(op);
     const RigExecOpDesc &desc = *registered.desc;
     auto wire = std::make_unique<fb::RigExecWireOpNode>();
-    if (desc.payload.size) {
-        if (!payload || !desc.payload.encode) {
-            _error =
-                std::string("op ") + desc.name +
-                (payload ? " cannot save its settings" : " needs its settings");
-            return node;
-        }
-        desc.payload.encode(payload, wire->payload);
-    }
+    if (!RigExecEncodeOpPayload(desc, payload, wire->payload, &_error))
+        return node;
     bool added = false;
     wire->op = IndexOf(&_coreOps, registered.index, &added);
     if (added)

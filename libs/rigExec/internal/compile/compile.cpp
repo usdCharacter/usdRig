@@ -4,6 +4,7 @@
 #include "rigExecGraph/windowHistory.h"
 
 #include <algorithm>
+#include <cstring>
 #include <numeric>
 #include <string>
 #include <tuple>
@@ -308,8 +309,10 @@ SettleWindows(CompileState &s)
         const RigExecDescNode &node = s.data.nodes[n];
         RigExecProgramWindow window;
         window.node = n;
-        window.frames =
-            d.windowFrames(node.hasPayload ? node.payload.Data() : nullptr);
+        window.frames = d.windowFrames(
+            d.payloadFieldCount ? static_cast<const void *>(&node.fields)
+            : node.hasPayload   ? node.payload.Data()
+                                : nullptr);
         program.windowOfNode[n] = uint32_t(windowed.size());
         windowed.push_back(uint32_t(graph.canonicalIndex[n]));
         program.windowedNodes.push_back(std::move(window));
@@ -424,9 +427,115 @@ PlaceRun(size_t *end, size_t size, size_t align, size_t count, size_t *stride)
     return first;
 }
 
+/// Places a column of \p bytes from \p end on 64 bytes, or on 256 from
+/// 4 KiB; returns its offset and moves \p end past it.
+size_t
+PlaceColumn(size_t *end, size_t bytes)
+{
+    const size_t align = bytes >= 4096 ? 256 : 64;
+    const size_t first = (*end + align - 1) / align * align;
+    *end = first + bytes;
+    return first;
+}
+
+/// Columns hold whole groups of this many instances.
+constexpr size_t kColumnLanes = 16;
+
+/// The unsigned integer field \p field of \p values holds.
+uint64_t
+UnsignedField(const RigExecFieldValues &values, size_t field)
+{
+    uint64_t value = 0;
+    const std::byte *data = values.Data(field);
+    for (size_t i = 0; i < values.ByteSize(field); ++i)
+        value |= uint64_t(data[i]) << (8 * i);
+    return value;
+}
+
+/// Lays out one batch's declared payload or state fields from \p end.
+void
+PlaceFields(const CompileState &s, const RigExecProgramBatch &batch,
+            bool payload, size_t *end,
+            std::vector<RigExecProgramColumn> *columns,
+            std::vector<RigExecProgramRun> *runs)
+{
+    const RigExecRegisteredOp &op = s.registry.OpAt(batch.op);
+    const RigExecOpDesc &d = *op.desc;
+    const RigExecFieldDesc *fields = payload ? d.payloadFields : d.stateFields;
+    const size_t fieldCount = payload ? d.payloadFieldCount : d.stateFieldCount;
+    const uint32_t *nodes = s.program.batchNodes.data() + batch.firstNode;
+    for (size_t f = 0; f < fieldCount; ++f) {
+        const RigExecFieldDesc &field = fields[f];
+        RigExecProgramColumn column;
+        column.type = payload ? op.payloadFieldTypes[f] : op.stateFieldTypes[f];
+        const RigExecTypeDesc &t = *s.registry.TypeAt(column.type).desc;
+        if (field.extent == RigExecFieldExtent::Scalar ||
+            field.extent == RigExecFieldExtent::Fixed) {
+            column.count =
+                field.extent == RigExecFieldExtent::Scalar ? 1 : field.count;
+            column.stride = column.count * t.size;
+            const size_t lanes = (batch.nodeCount + kColumnLanes - 1) /
+                                 kColumnLanes * kColumnLanes;
+            column.offset = PlaceColumn(end, lanes * column.stride);
+            columns->push_back(column);
+            continue;
+        }
+        column.firstRun = uint32_t(runs->size());
+        if (!payload && field.extent == RigExecFieldExtent::FromInput) {
+            column.fromInput = true;
+            runs->resize(runs->size() + batch.nodeCount);
+            columns->push_back(column);
+            continue;
+        }
+        size_t pool = 0;
+        for (uint32_t k = 0; k < batch.nodeCount; ++k) {
+            const RigExecFieldValues &values = s.data.nodes[nodes[k]].fields;
+            RigExecProgramRun run;
+            run.count = payload ? values.Count(f)
+                                : size_t(UnsignedField(values, field.source));
+            pool = (pool + t.align - 1) / t.align * t.align;
+            run.offset = pool;
+            pool += run.count * t.size;
+            runs->push_back(run);
+        }
+        column.offset = PlaceColumn(end, pool);
+        for (uint32_t k = 0; k < batch.nodeCount; ++k)
+            (*runs)[column.firstRun + k].offset += column.offset;
+        columns->push_back(column);
+    }
+}
+
+/// Copies each node's declared payload values into its batch's columns.
+void
+FillPayloadFields(CompileState &s)
+{
+    RigExecProgram &program = s.program;
+    for (const RigExecProgramBatch &batch : program.batches) {
+        if (batch.firstPayloadColumn == kRigExecInvalidIndex)
+            continue;
+        const RigExecOpDesc &d = *s.registry.OpAt(batch.op).desc;
+        const uint32_t *nodes = program.batchNodes.data() + batch.firstNode;
+        for (size_t f = 0; f < d.payloadFieldCount; ++f) {
+            const RigExecProgramColumn &column =
+                program.payloadColumns[batch.firstPayloadColumn + f];
+            for (uint32_t k = 0; k < batch.nodeCount; ++k) {
+                const RigExecFieldValues &values =
+                    s.data.nodes[nodes[k]].fields;
+                const size_t offset =
+                    column.firstRun == kRigExecInvalidIndex
+                        ? column.offset + k * column.stride
+                        : program.payloadRuns[column.firstRun + k].offset;
+                if (values.ByteSize(f))
+                    std::memcpy(program.payloads.Data() + offset,
+                                values.Data(f), values.ByteSize(f));
+            }
+        }
+    }
+}
+
 /// Places each batch's payloads in the payload blob and its states in the
-/// state arena, one evenly spaced run per batch, and copies the payloads
-/// in.
+/// state arena, one evenly spaced run per batch, then its declared fields,
+/// and copies the payloads in.
 void
 LayoutPayloadsAndState(CompileState &s)
 {
@@ -452,6 +561,16 @@ LayoutPayloadsAndState(CompileState &s)
                 program.nodes[nodes[k]].stateOffset =
                     batch.stateOffset + k * batch.stateStride;
         }
+        if (d.payloadFieldCount) {
+            batch.firstPayloadColumn = uint32_t(program.payloadColumns.size());
+            PlaceFields(s, batch, true, &payloadSize, &program.payloadColumns,
+                        &program.payloadRuns);
+        }
+        if (d.stateFieldCount) {
+            batch.firstStateColumn = uint32_t(program.stateColumns.size());
+            PlaceFields(s, batch, false, &stateSize, &program.stateColumns,
+                        &program.stateRuns);
+        }
     }
     program.stateSize = stateSize;
     if (!payloadSize)
@@ -464,6 +583,7 @@ LayoutPayloadsAndState(CompileState &s)
                                      program.nodes[n].payloadOffset,
                                  s.data.nodes[n].payload.Data());
     }
+    FillPayloadFields(s);
 }
 
 } // namespace

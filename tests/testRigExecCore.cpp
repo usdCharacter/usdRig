@@ -5,6 +5,7 @@
 #include "registryFixture/fakeTypes.h"
 #include "rigExec/api/compile.h"
 #include "rigExec/api/evaluator.h"
+#include "rigExec/api/opFields.h"
 #include "rigExec/api/registry.h"
 #include "rigExec/api/rigDesc.h"
 #include "rigExec/internal/program/program.h"
@@ -1366,6 +1367,433 @@ TestCanonicalOrder()
     CHECK((program->historyMask == std::vector<char>{0, 1, 0, 0, 1, 1, 0, 0}));
 }
 
+// Declared fields: a test type library with an unsigned integer and a short
+// float array, and an op that declares payload and state fields of every
+// extent.
+struct Floats8 {
+    uint32_t n = 0;
+    float v[8] = {};
+};
+
+RIGEXEC_DEFINE_TYPE_HANDLE(U32Type)
+RIGEXEC_DEFINE_TYPE_HANDLE(Floats8Type)
+
+const RigExecTypeDesc kU32Desc = [] {
+    RigExecTypeDesc d;
+    d.nameSpace = "test";
+    d.name = "U32";
+    d.size = sizeof(uint32_t);
+    d.align = alignof(uint32_t);
+    d.triviallyCopyable = true;
+    return d;
+}();
+
+const RigExecTypeDesc kFloats8Desc = [] {
+    RigExecTypeDesc d;
+    d.nameSpace = "test";
+    d.name = "Floats8";
+    d.size = sizeof(Floats8);
+    d.align = alignof(Floats8);
+    d.triviallyCopyable = true;
+    d.count = [](const void *value) {
+        return size_t(static_cast<const Floats8 *>(value)->n);
+    };
+    return d;
+}();
+
+void
+RegisterFieldTypes(RigExecTypeRegistrar &registrar)
+{
+    registrar.Add(U32Type(), kU32Desc);
+    registrar.Add(Floats8Type(), kFloats8Desc);
+}
+
+const RigExecTypeLibraryDesc kFieldTypes = [] {
+    RigExecTypeLibraryDesc d;
+    d.name = "testFieldTypes";
+    d.registerTypes = &RegisterFieldTypes;
+    return d;
+}();
+
+RIGEXEC_DEFINE_OP_HANDLE(Fields)
+RIGEXEC_DEFINE_PORT_HANDLE(FieldsIn)
+RIGEXEC_DEFINE_PORT_HANDLE(FieldsOut)
+
+enum FieldsPayload : uint32_t { kScale, kBias, kN, kWeights, kGains };
+enum FieldsState : uint32_t { kRuns, kLast, kScratch, kPerItem };
+
+std::atomic<uint32_t> fieldsRuns{0};
+
+// One step of a Fields node, for the kernel and for the test's own model.
+Vec3
+FieldsStep(float scale, const float *bias, const float *weights, size_t n,
+           const float *gains, const Floats8 &in, uint32_t &runs, float *last,
+           float *scratch, float *perItem)
+{
+    float sum = bias[0] + bias[1];
+    for (uint32_t i = 0; i < in.n; ++i)
+        sum += scale * in.v[i] * gains[i];
+    for (size_t j = 0; j < n; ++j) {
+        sum += weights[j];
+        scratch[j] += weights[j];
+    }
+    ++runs;
+    last[2] = last[1];
+    last[1] = last[0];
+    last[0] = sum;
+    float items = 0.0f;
+    for (uint32_t i = 0; i < in.n; ++i) {
+        perItem[i] += in.v[i];
+        items += perItem[i];
+    }
+    float accumulated = 0.0f;
+    for (size_t j = 0; j < n; ++j)
+        accumulated += scratch[j];
+    return Vec3{sum + last[1], float(runs), items + accumulated};
+}
+
+bool
+RunFields(const RigExecOpBatch &batch, size_t *, std::string *)
+{
+    const float *scale = RigExecPayloadColumnOf<float>(batch, kScale);
+    const float *bias = RigExecPayloadColumnOf<float>(batch, kBias);
+    uint32_t *runs = RigExecStateColumnOf<uint32_t>(batch, kRuns);
+    float *last = RigExecStateColumnOf<float>(batch, kLast);
+    for (size_t k = 0; k < batch.count; ++k) {
+        if (!RigExecBatchActive(batch, k))
+            continue;
+        fieldsRuns.fetch_add(1);
+        const RigExecOpIo io = RigExecBatchInstance(batch, k);
+        const Floats8 &in =
+            *static_cast<const Floats8 *>(io.inputs[FieldsIn().Index()]);
+        const auto weights = RigExecPayloadField<float>(batch, kWeights, k);
+        const auto gains = RigExecPayloadField<float>(batch, kGains, k);
+        const auto scratch = RigExecStateField<float>(batch, kScratch, k);
+        const auto perItem = RigExecStateField<float>(batch, kPerItem, k);
+        *static_cast<Vec3 *>(io.outputs[FieldsOut().Index()]) = FieldsStep(
+            scale[k], bias + 2 * k, weights.data, weights.Size(), gains.data,
+            in, runs[k], last + 3 * k, scratch.data, perItem.data);
+    }
+    return true;
+}
+
+RigExecFieldDesc
+FieldOf(const char *name, const RigExecTypeHandle &type,
+        RigExecFieldExtent extent = RigExecFieldExtent::Scalar)
+{
+    RigExecFieldDesc f;
+    f.name = name;
+    f.type = &type;
+    f.extent = extent;
+    return f;
+}
+
+const RigExecFieldDesc kFieldsPayload[] = {
+    FieldOf("scale", fakeTypes::Float()),
+    [] {
+        RigExecFieldDesc f =
+            FieldOf("bias", fakeTypes::Float(), RigExecFieldExtent::Fixed);
+        f.count = 2;
+        return f;
+    }(),
+    [] {
+        RigExecFieldDesc f = FieldOf("n", U32Type());
+        f.limit = 8;
+        return f;
+    }(),
+    [] {
+        RigExecFieldDesc f = FieldOf("weights", fakeTypes::Float(),
+                                     RigExecFieldExtent::FromField);
+        f.source = kN;
+        return f;
+    }(),
+    [] {
+        RigExecFieldDesc f =
+            FieldOf("gains", fakeTypes::Float(), RigExecFieldExtent::FromInput);
+        f.port = &FieldsIn();
+        return f;
+    }(),
+};
+
+const RigExecFieldDesc kFieldsState[] = {
+    FieldOf("runs", U32Type()),
+    [] {
+        RigExecFieldDesc f =
+            FieldOf("last", fakeTypes::Float(), RigExecFieldExtent::Fixed);
+        f.count = 3;
+        return f;
+    }(),
+    [] {
+        RigExecFieldDesc f = FieldOf("scratch", fakeTypes::Float(),
+                                     RigExecFieldExtent::FromField);
+        f.source = kN;
+        return f;
+    }(),
+    [] {
+        RigExecFieldDesc f = FieldOf("perItem", fakeTypes::Float(),
+                                     RigExecFieldExtent::FromInput);
+        f.port = &FieldsIn();
+        return f;
+    }(),
+};
+
+void
+RegisterFields(RigExecOpRegistrar &registrar)
+{
+    static const RigExecPortDesc ports[] = {
+        {&FieldsIn(), &Floats8Type(), kRigExecPortInput, "in"},
+        {&FieldsOut(), &fakeTypes::Vec3Type(), kRigExecPortOutput, "out"},
+    };
+    static const RigExecOpDesc desc = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "Fields";
+        d.ports = ports;
+        d.portCount = 2;
+        d.runBatch = &RunFields;
+        d.payloadFields = kFieldsPayload;
+        d.payloadFieldCount = std::size(kFieldsPayload);
+        d.payloadVersion = 3;
+        d.stateFields = kFieldsState;
+        d.stateFieldCount = std::size(kFieldsState);
+        return d;
+    }();
+    registrar.Add(Fields(), desc);
+}
+
+const RigExecOpLibraryDesc kFieldsLibrary = [] {
+    RigExecOpLibraryDesc d;
+    d.name = "testFields";
+    d.registerOps = &RegisterFields;
+    return d;
+}();
+
+// One Fields node's settings and the state the test keeps for it.
+struct FieldsModel {
+    float scale = 0.0f;
+    float bias[2] = {};
+    std::vector<float> weights, gains;
+    uint32_t inCount = 0;
+    uint32_t runs = 0;
+    float last[3] = {};
+    std::vector<float> scratch, perItem;
+
+    RigExecFieldValues Values() const
+    {
+        RigExecFieldValues values(std::size(kFieldsPayload));
+        values.Set(kScale, scale);
+        values.Set(kBias, bias, 2);
+        values.Set(kN, uint32_t(weights.size()));
+        values.Set(kWeights, weights);
+        values.Set(kGains, gains);
+        return values;
+    }
+    Vec3 Step(const Floats8 &in)
+    {
+        scratch.resize(weights.size());
+        perItem.resize(in.n);
+        return FieldsStep(scale, bias, weights.data(), weights.size(),
+                          gains.data(), in, runs, last, scratch.data(),
+                          perItem.data());
+    }
+};
+
+FieldsModel
+FieldsNode(size_t i)
+{
+    FieldsModel m;
+    m.scale = 1.5f - 0.1f * float(i);
+    m.bias[0] = 0.5f * float(i);
+    m.bias[1] = -1.0f;
+    for (size_t j = 0; j < i % 4; ++j)
+        m.weights.push_back(0.25f * float(j + 1) + float(i));
+    m.inCount = uint32_t(1 + i % 5);
+    for (uint32_t g = 0; g < m.inCount; ++g)
+        m.gains.push_back(0.5f + 0.125f * float(g));
+    return m;
+}
+
+Floats8
+FieldsInput(const FieldsModel &m, int frame, size_t i)
+{
+    Floats8 in;
+    in.n = m.inCount;
+    for (uint32_t g = 0; g < in.n; ++g)
+        in.v[g] = 0.3f * float(frame) + float(g) - 0.2f * float(i);
+    return in;
+}
+
+// Thirteen Fields nodes of every extent run as batches of each size on
+// every thread count, frame after frame, and give the model's bits.
+void
+TestDeclaredFields()
+{
+    const size_t nodes = 13;
+    const int frames = 4;
+    std::vector<Vec3> reference;
+    {
+        std::vector<FieldsModel> models;
+        for (size_t i = 0; i < nodes; ++i)
+            models.push_back(FieldsNode(i));
+        for (int f = 0; f < frames; ++f)
+            for (size_t i = 0; i < nodes; ++i)
+                reference.push_back(
+                    models[i].Step(FieldsInput(models[i], f, i)));
+    }
+    for (const size_t threads : ThreadCounts()) {
+        auto tasks = RigExecCreateThreadTaskSystem(threads);
+        for (const size_t limit : kBatchSizes) {
+            RigExecRigDescBuilder builder;
+            std::vector<FieldsModel> models;
+            std::vector<RigExecInputId> inputs;
+            std::vector<RigExecOutputId> outputs;
+            for (size_t i = 0; i < nodes; ++i) {
+                models.push_back(FieldsNode(i));
+                const RigExecNodeId node =
+                    builder.AddOp(Fields(), models.back().Values());
+                inputs.push_back(builder.BindInput(node, FieldsIn()));
+                outputs.push_back(builder.BindOutput(node, FieldsOut()));
+            }
+            std::string error;
+            auto program = Compile(builder, limit, &error);
+            CHECK(program);
+            if (!program) {
+                std::printf("fields: %s\n", error.c_str());
+                continue;
+            }
+            RigExecEvaluatorOptions options;
+            options.tasks = tasks.get();
+            auto evaluator = RigExecEvaluator::Create(program, options);
+            std::vector<Vec3> got;
+            for (int f = 0; f < frames; ++f) {
+                for (size_t i = 0; i < nodes; ++i) {
+                    const Floats8 in = FieldsInput(models[i], f, i);
+                    evaluator->SetInput(inputs[i], &in);
+                }
+                CHECK(evaluator->Evaluate(&error));
+                for (const RigExecOutputId out : outputs)
+                    got.push_back(
+                        *static_cast<const Vec3 *>(evaluator->GetOutput(out)));
+            }
+            const bool same = SameAll(got, reference);
+            CHECK(same);
+            if (!same)
+                std::printf("fields: threads %zu batch %zu differ\n", threads,
+                            limit);
+        }
+    }
+}
+
+// Values that do not fit their fields are refused when added, and a payload
+// field sized from an input fails the node whose input disagrees.
+void
+TestDeclaredFieldErrors()
+{
+    std::string error;
+    {
+        RigExecRigDescBuilder builder;
+        FieldsModel m = FieldsNode(2);
+        RigExecFieldValues values = m.Values();
+        const float three[3] = {1.0f, 2.0f, 3.0f};
+        values.Set(kBias, three, 3);
+        builder.AddOp(Fields(), values);
+        CHECK(!builder.Build(&error));
+        CHECK(Contains(error, "Fields field bias holds 3 values, not 2"));
+    }
+    {
+        RigExecRigDescBuilder builder;
+        RigExecFieldValues values = FieldsNode(3).Values();
+        values.Set(kN, uint32_t(9));
+        builder.AddOp(Fields(), values);
+        CHECK(!builder.Build(&error));
+        CHECK(Contains(error, "field n: a value is out of range"));
+    }
+    {
+        RigExecRigDescBuilder builder;
+        RigExecFieldValues values = FieldsNode(3).Values();
+        values.Set(kN, uint32_t(1));
+        builder.AddOp(Fields(), values);
+        CHECK(!builder.Build(&error));
+        CHECK(Contains(error, "Fields field weights holds 3 values, not 1"));
+    }
+    {
+        RigExecRigDescBuilder builder;
+        const float x = 1.0f;
+        builder.AddOp(Fields(), &x);
+        CHECK(!builder.Build(&error));
+        CHECK(Contains(error, "needs its field values"));
+    }
+    {
+        // Node 1 has two gains for three input values: node 0, before it
+        // in the batch, still runs.
+        RigExecRigDescBuilder builder;
+        FieldsModel good = FieldsNode(2), bad = FieldsNode(2);
+        bad.gains.resize(2);
+        const RigExecNodeId a = builder.AddOp(Fields(), good.Values());
+        const RigExecNodeId b = builder.AddOp(Fields(), bad.Values());
+        const RigExecInputId aIn = builder.BindInput(a, FieldsIn());
+        const RigExecInputId bIn = builder.BindInput(b, FieldsIn());
+        const RigExecOutputId aOut = builder.BindOutput(a, FieldsOut());
+        auto program = Compile(builder, 0, &error);
+        CHECK(program && program->batches.size() == 1);
+        if (!program)
+            return;
+        auto evaluator = RigExecEvaluator::Create(program);
+        const Floats8 in = FieldsInput(good, 0, 2);
+        CHECK(evaluator->SetInput(aIn, &in) && evaluator->SetInput(bIn, &in));
+        CHECK(!evaluator->Evaluate(&error));
+        CHECK(Contains(error, "node 1 (test:Fields) failed: field gains "
+                              "holds 2 values for 3 input elements"));
+        const Vec3 expected = good.Step(in);
+        CHECK(Same(*static_cast<const Vec3 *>(evaluator->GetOutput(aOut)),
+                   expected));
+    }
+}
+
+// A history tick runs only the Fields node a window depends on, with the
+// history run's own state; the evaluator's state is untouched.
+void
+TestDeclaredFieldMask()
+{
+    RigExecRigDescBuilder builder;
+    const RingPayload two{2};
+    FieldsModel feedsModel = FieldsNode(1), asideModel = FieldsNode(4);
+    const RigExecNodeId feeds = builder.AddOp(Fields(), feedsModel.Values());
+    const RigExecNodeId aside = builder.AddOp(Fields(), asideModel.Values());
+    const RigExecNodeId ring = builder.AddOp(RingSum(), &two);
+    builder.Connect(feeds, FieldsOut(), ring, RingSumIn());
+    const RigExecInputId feedsIn = builder.BindInput(feeds, FieldsIn());
+    const RigExecInputId asideIn = builder.BindInput(aside, FieldsIn());
+    const RigExecOutputId feedsOut = builder.BindOutput(feeds, FieldsOut());
+    const RigExecOutputId asideOut = builder.BindOutput(aside, FieldsOut());
+    std::string error;
+    auto program = Compile(builder, 0, &error);
+    CHECK(program && program->batches[0].nodeCount == 2);
+    if (!program)
+        return;
+    auto evaluator = RigExecEvaluator::Create(program);
+    const auto frame = [&](int f) {
+        const Floats8 a = FieldsInput(feedsModel, f, 1);
+        const Floats8 b = FieldsInput(asideModel, f, 4);
+        CHECK(evaluator->SetInput(feedsIn, &a) &&
+              evaluator->SetInput(asideIn, &b));
+    };
+    frame(0);
+    CHECK(evaluator->Evaluate(&error));
+    fieldsRuns = 0;
+    frame(1);
+    CHECK(evaluator->EvaluateHistory(&error));
+    CHECK(fieldsRuns.load() == 1);
+    frame(2);
+    CHECK(evaluator->Evaluate(&error));
+    feedsModel.Step(FieldsInput(feedsModel, 0, 1));
+    asideModel.Step(FieldsInput(asideModel, 0, 4));
+    CHECK(Same(*static_cast<const Vec3 *>(evaluator->GetOutput(feedsOut)),
+               feedsModel.Step(FieldsInput(feedsModel, 2, 1))));
+    CHECK(Same(*static_cast<const Vec3 *>(evaluator->GetOutput(asideOut)),
+               asideModel.Step(FieldsInput(asideModel, 2, 4))));
+}
+
 } // namespace
 
 int
@@ -1373,6 +1801,8 @@ main()
 {
     RigExecRegistryInit init = RigExecLinkedRegistrations();
     init.opLibraries.push_back(&kCheckLibrary);
+    init.typeLibraries.push_back(&kFieldTypes);
+    init.opLibraries.push_back(&kFieldsLibrary);
     std::vector<std::string> errors;
     if (!RigExecRegistry::Initialize(init, &errors)) {
         for (const std::string &e : errors)
@@ -1398,6 +1828,9 @@ main()
     TestBatchCalls();
     TestBatchHistoryMask();
     TestCanonicalOrder();
+    TestDeclaredFields();
+    TestDeclaredFieldErrors();
+    TestDeclaredFieldMask();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

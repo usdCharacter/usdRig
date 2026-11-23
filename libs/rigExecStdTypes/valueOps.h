@@ -289,6 +289,10 @@ TypeDescFor(const char *nameSpace, const char *name,
     d.equal = &TypeOps<T>::Equal;
     d.hashClass = rigExec::RigExecHashClass::Exact;
     d.hash = &TypeOps<T>::Hash;
+    if constexpr (IsArray<T>::value)
+        d.count = [](const void *value) {
+            return static_cast<const T *>(value)->Size();
+        };
     return d;
 }
 

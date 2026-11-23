@@ -74,6 +74,15 @@ RigExecRigDescBuilder::AddOp(const RigExecOpHandle &op, const void *payload)
         return 0;
     }
     const RigExecOpDesc &d = *RigExecRegistry::Get().Op(op).desc;
+    if (d.payloadFieldCount) {
+        if (!payload || !d.payloadValues) {
+            _Fail("AddOp: " + OpName(d) + " needs its field values");
+            return 0;
+        }
+        RigExecFieldValues values(d.payloadFieldCount);
+        d.payloadValues(payload, values);
+        return AddOp(op, values);
+    }
     const RigExecNodeId id = RigExecNodeId(_data->nodes.size());
     RigExecDescNode &node = _data->nodes.emplace_back();
     node.op = op.Index();
@@ -86,6 +95,33 @@ RigExecRigDescBuilder::AddOp(const RigExecOpHandle &op, const void *payload)
         d.payload.copy(node.payload.Data(), payload);
         node.hasPayload = true;
     }
+    return id;
+}
+
+RigExecNodeId
+RigExecRigDescBuilder::AddOp(const RigExecOpHandle &op,
+                             const RigExecFieldValues &values)
+{
+    if (!_data || !_error.empty())
+        return 0;
+    if (!op.IsValid() || op.Index() >= RigExecRegistry::Get().OpCount()) {
+        _Fail("AddOp: op handle is not registered");
+        return 0;
+    }
+    const RigExecOpDesc &d = *RigExecRegistry::Get().Op(op).desc;
+    std::string why;
+    if (!d.payloadFieldCount)
+        why = "declares no payload fields";
+    else
+        RigExecCheckPayloadFields(d, values, &why);
+    if (!why.empty()) {
+        _Fail("AddOp: " + OpName(d) + ": " + why);
+        return 0;
+    }
+    const RigExecNodeId id = RigExecNodeId(_data->nodes.size());
+    RigExecDescNode &node = _data->nodes.emplace_back();
+    node.op = op.Index();
+    node.fields = values;
     return id;
 }
 

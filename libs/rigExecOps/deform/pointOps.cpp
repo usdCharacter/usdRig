@@ -42,7 +42,7 @@ StrengthOr1(const float *strength)
 }
 
 bool
-RunSmooth(const void *, void *, const RigExecOpIo &io, std::string *error)
+SmoothOne(const RigExecOpIo &io, std::string *error)
 {
     const Points &in = *In<Points>(io, SmoothPoints());
     const auto &counts = *In<RigExecArray<int>>(io, SmoothCounts());
@@ -71,8 +71,7 @@ RunSmooth(const void *, void *, const RigExecOpIo &io, std::string *error)
 }
 
 bool
-RunVolumeCorrect(const void *, void *, const RigExecOpIo &io,
-                 std::string *error)
+VolumeCorrectOne(const RigExecOpIo &io, std::string *error)
 {
     const Points &in = *In<Points>(io, VolumeCorrectPoints());
     std::vector<Vec3f> points = ToVector(in);
@@ -84,16 +83,45 @@ RunVolumeCorrect(const void *, void *, const RigExecOpIo &io,
                        "VolumeCorrect", error);
 }
 
+bool
+RunSmooth(const rigExec::RigExecOpBatch &batch, size_t *failed,
+          std::string *error)
+{
+    for (size_t k = 0; k < batch.count; ++k) {
+        if (rigExec::RigExecBatchActive(batch, k) &&
+            !SmoothOne(rigExec::RigExecBatchInstance(batch, k), error)) {
+            *failed = k;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool
+RunVolumeCorrect(const rigExec::RigExecOpBatch &batch, size_t *failed,
+                 std::string *error)
+{
+    for (size_t k = 0; k < batch.count; ++k) {
+        if (rigExec::RigExecBatchActive(batch, k) &&
+            !VolumeCorrectOne(rigExec::RigExecBatchInstance(batch, k), error)) {
+            *failed = k;
+            return false;
+        }
+    }
+    return true;
+}
+
 rigExec::RigExecOpDesc
 PointDesc(const char *name, const rigExec::RigExecPortDesc *ports,
-          size_t portCount, rigExec::RigExecOpRunFn run, uint32_t capabilities)
+          size_t portCount, rigExec::RigExecOpBatchFn runBatch,
+          uint32_t capabilities)
 {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = name;
     d.ports = ports;
     d.portCount = portCount;
-    d.run = run;
+    d.runBatch = runBatch;
     d.capabilities = rigExec::kRigExecOpBakeable |
                      rigExec::kRigExecOpFreezable |
                      rigExec::kRigExecOpFromLeaves | capabilities;
@@ -136,13 +164,9 @@ const rigExec::RigExecOpDesc kSmoothDesc =
               rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
                   rigExec::kRigExecOpGate);
 
-const rigExec::RigExecOpDesc kVolumeDesc = [] {
-    rigExec::RigExecOpDesc d =
-        PointDesc("VolumeCorrect", kVolumePorts, std::size(kVolumePorts),
-                  nullptr, rigExec::kRigExecOpSeparateBlend);
-    d.runBatch = &opIo::RunBatch<&RunVolumeCorrect>;
-    return d;
-}();
+const rigExec::RigExecOpDesc kVolumeDesc =
+    PointDesc("VolumeCorrect", kVolumePorts, std::size(kVolumePorts),
+              &RunVolumeCorrect, rigExec::kRigExecOpSeparateBlend);
 
 } // namespace
 

@@ -1,4 +1,5 @@
 #include "rigExec/api/evaluator.h"
+#include "rigExec/api/opFields.h"
 #include "rigExec/internal/program/program.h"
 
 #include <algorithm>
@@ -77,6 +78,13 @@ struct RigExecRunState {
     std::vector<RigExecWindowRun> windows;
     /// Per batchNodes entry: its window record, or null.
     std::vector<const RigExecWindowRun *> batchWindows;
+    /// Declared fields as batch functions see them, and the storage of the
+    /// state fields sized from an input, per state run.
+    std::vector<RigExecPayloadColumn> payloadColumns;
+    std::vector<RigExecFieldRunOf<const std::byte>> payloadRuns;
+    std::vector<RigExecStateColumn> stateColumns;
+    std::vector<RigExecFieldRunOf<std::byte>> stateRuns;
+    std::vector<RigExecAlignedBuffer> stateBuffers;
 
     RigExecRunState() = default;
     RigExecRunState(const RigExecRunState &) = delete;
@@ -151,6 +159,114 @@ struct RigExecRunState {
             if (w != kRigExecInvalidIndex)
                 batchWindows[i] = &windows[w];
         }
+        BindFields(p);
+    }
+
+    void BindFields(const RigExecProgram &p)
+    {
+        payloadRuns.resize(p.payloadRuns.size());
+        for (size_t i = 0; i < p.payloadRuns.size(); ++i)
+            payloadRuns[i] = {p.payloads.Data() + p.payloadRuns[i].offset,
+                              p.payloadRuns[i].count};
+        payloadColumns.resize(p.payloadColumns.size());
+        for (size_t i = 0; i < p.payloadColumns.size(); ++i) {
+            const RigExecProgramColumn &c = p.payloadColumns[i];
+            payloadColumns[i] = {
+                p.payloads.Data() + c.offset, c.stride, c.count,
+                c.firstRun == kRigExecInvalidIndex ? nullptr
+                                                   : &payloadRuns[c.firstRun]};
+        }
+        stateRuns.resize(p.stateRuns.size());
+        stateBuffers.resize(p.stateRuns.size());
+        for (size_t i = 0; i < p.stateRuns.size(); ++i) {
+            const RigExecProgramRun &r = p.stateRuns[i];
+            stateRuns[i] = {r.offset == SIZE_MAX ? nullptr
+                                                 : opState.Data() + r.offset,
+                            r.offset == SIZE_MAX ? 0 : r.count};
+        }
+        stateColumns.resize(p.stateColumns.size());
+        for (size_t i = 0; i < p.stateColumns.size(); ++i) {
+            const RigExecProgramColumn &c = p.stateColumns[i];
+            const bool runs = c.firstRun != kRigExecInvalidIndex;
+            stateColumns[i] = {opState.Data() + c.offset, c.stride, c.count,
+                               runs ? &stateRuns[c.firstRun] : nullptr};
+        }
+        for (const RigExecProgramBatch &batch : p.batches) {
+            if (batch.firstStateColumn == kRigExecInvalidIndex)
+                continue;
+            const size_t fields = OpOf(batch.op).stateFieldCount;
+            for (size_t i = batch.firstStateColumn;
+                 i < batch.firstStateColumn + fields; ++i) {
+                const RigExecTypeDesc &t = TypeOf(p.stateColumns[i].type);
+                if (!t.construct || p.stateColumns[i].fromInput)
+                    continue;
+                for (uint32_t k = 0; k < batch.nodeCount; ++k) {
+                    const RigExecFieldView<std::byte> values =
+                        RigExecFieldAt<std::byte>(stateColumns[i], k);
+                    for (size_t v = 0; v < values.count; ++v)
+                        t.construct(values.data + v * t.size);
+                }
+            }
+        }
+    }
+
+    /// Sizes the batch's state fields that take their count from an input
+    /// to that input, constructing their values, and checks the payload
+    /// fields that do. Returns the first active instance whose payload
+    /// field does not match, with the reason in \p error, or count.
+    size_t SizeFromInputs(const RigExecOpBatch &view,
+                          const RigExecProgramBatch &batch,
+                          const RigExecRegisteredOp &op, std::string *error)
+    {
+        const RigExecOpDesc &d = *op.desc;
+        if (!d.payloadFieldCount && !d.stateFieldCount)
+            return view.count;
+        for (size_t k = 0; k < view.count; ++k) {
+            if (!RigExecBatchActive(view, k))
+                continue;
+            for (int payload = 1; payload >= 0; --payload) {
+                const RigExecFieldDesc *fields =
+                    payload ? d.payloadFields : d.stateFields;
+                const size_t count =
+                    payload ? d.payloadFieldCount : d.stateFieldCount;
+                for (size_t f = 0; f < count; ++f) {
+                    const RigExecFieldDesc &field = fields[f];
+                    if (field.extent != RigExecFieldExtent::FromInput)
+                        continue;
+                    const uint32_t port = field.port->Index();
+                    const void *value = view.inputs[k * view.portCount + port];
+                    const size_t elements =
+                        value ? TypeOf(op.portTypes[port]).count(value) : 0;
+                    if (payload) {
+                        const RigExecPayloadColumn &column =
+                            view.payloadFields[f];
+                        if (column.runs[k].count == elements)
+                            continue;
+                        if (error)
+                            *error = std::string("field ") + field.name +
+                                     " holds " +
+                                     std::to_string(column.runs[k].count) +
+                                     " values for " + std::to_string(elements) +
+                                     " input elements";
+                        return k;
+                    }
+                    const RigExecProgramColumn &c =
+                        program->stateColumns[batch.firstStateColumn + f];
+                    RigExecFieldRunOf<std::byte> &run =
+                        stateRuns[c.firstRun + k];
+                    if (run.data && run.count == elements)
+                        continue;
+                    const RigExecTypeDesc &t = TypeOf(c.type);
+                    RigExecAlignedBuffer &buffer = stateBuffers[c.firstRun + k];
+                    buffer.Allocate(elements * t.size);
+                    if (t.construct)
+                        for (size_t v = 0; v < elements; ++v)
+                            t.construct(buffer.Data() + v * t.size);
+                    run = {buffer.Data(), elements};
+                }
+            }
+        }
+        return view.count;
     }
 };
 
@@ -216,10 +332,24 @@ struct RigExecEvaluatorState {
         view.outputs = run.outputs.data() + batch.firstPort;
         if (d.threading == RigExecOpThreading::Windowed)
             view.windows = run.batchWindows.data() + batch.firstNode;
+        if (d.payloadFieldCount)
+            view.payloadFields =
+                run.payloadColumns.data() + batch.firstPayloadColumn;
+        if (d.stateFieldCount)
+            view.stateFields = run.stateColumns.data() + batch.firstStateColumn;
         size_t at = 0;
         std::string error;
-        if (op.runBatch(view, &at, &error))
-            return;
+        const size_t ready = run.SizeFromInputs(view, batch, op, &error);
+        if (ready == view.count) {
+            if (op.runBatch(view, &at, &error))
+                return;
+        } else {
+            at = ready;
+            std::string before;
+            view.count = ready;
+            if (ready && !op.runBatch(view, &at, &before))
+                error = std::move(before);
+        }
         const uint32_t n = program->batchNodes[batch.firstNode + at];
         const uint32_t w = program->windowOfNode[n];
         if (w != kRigExecInvalidIndex)

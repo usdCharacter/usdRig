@@ -55,6 +55,8 @@ const rigExec::RigExecTypeHandle &Mat3dArray();
 const rigExec::RigExecTypeHandle &Mat4dArray();
 const rigExec::RigExecTypeHandle &QuatdArray();
 
+const rigExec::RigExecTypeHandle &UInt64Type(); // uint64_t
+
 } // namespace rigExecStd
 
 /// The library, for type libraries that compose standard types.

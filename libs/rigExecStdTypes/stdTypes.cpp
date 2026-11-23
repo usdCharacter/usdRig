@@ -31,6 +31,7 @@ RIGEXEC_DEFINE_TYPE_HANDLE(Vec3iArray)
 RIGEXEC_DEFINE_TYPE_HANDLE(Mat3dArray)
 RIGEXEC_DEFINE_TYPE_HANDLE(Mat4dArray)
 RIGEXEC_DEFINE_TYPE_HANDLE(QuatdArray)
+RIGEXEC_DEFINE_TYPE_HANDLE(UInt64Type)
 
 namespace {
 
@@ -86,6 +87,7 @@ const Entry kEntries[] = {
     {Mat3dArray(), ArrayDesc<Mat3d>("Mat3dArray", Mat3dType())},
     {Mat4dArray(), ArrayDesc<Mat4d>("Mat4dArray", Mat4dType())},
     {QuatdArray(), ArrayDesc<Quatd>("QuatdArray", QuatdType())},
+    {UInt64Type(), ValueDesc<uint64_t>("UInt64")},
 };
 
 void

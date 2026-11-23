@@ -71,6 +71,12 @@ public:
     {
         U64(uint64_t(n));
     }
+    /// \p size bytes as they are in memory.
+    void Bytes(const void *data, size_t size)
+    {
+        const auto *from = static_cast<const uint8_t *>(data);
+        _bytes.insert(_bytes.end(), from, from + size);
+    }
     /// A list: its length, then \p each(writer, item) per item.
     template <class T, class Fn> void List(const std::vector<T> &items, Fn each)
     {
@@ -176,6 +182,16 @@ public:
             return E{};
         }
         return E(v);
+    }
+    /// Copies the next \p size bytes to \p out.
+    void Bytes(void *out, size_t size)
+    {
+        if (_Take(size) && size)
+            std::memcpy(out, _bytes + _at - size, size);
+    }
+    size_t Remaining() const
+    {
+        return _size - _at;
     }
     /// A list length, refused when the remaining bytes cannot hold that
     /// many items of at least \p minItemBytes each.

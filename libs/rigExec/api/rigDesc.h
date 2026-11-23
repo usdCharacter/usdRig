@@ -6,6 +6,7 @@
 /// reads. Build one with RigExecRigDescBuilder, then pass it to
 /// RigExecCompile.
 
+#include "rigExec/api/opFields.h"
 #include "rigExec/api/registry.h"
 
 #include <cstdint>
@@ -70,6 +71,10 @@ public:
     /// is copied; pass null for an op that has no settings.
     RigExecNodeId AddOp(const RigExecOpHandle &op,
                         const void *payload = nullptr);
+    /// Adds a node that runs \p op, which declares its payload fields, with
+    /// \p values (see opFields.h).
+    RigExecNodeId AddOp(const RigExecOpHandle &op,
+                        const RigExecFieldValues &values);
     /// Feeds input \p in of node \p to with output \p out of node \p from.
     /// An input that takes many values gets one more value per call.
     void Connect(RigExecNodeId from, const RigExecPortHandle &out,

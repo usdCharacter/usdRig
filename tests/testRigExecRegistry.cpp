@@ -195,6 +195,124 @@ RegisterBatchOnly(RigExecOpRegistrar &registrar)
     registrar.Add(BatchOnlyOp(), desc);
 }
 
+// An op whose declared fields each case sets before validating.
+RIGEXEC_DEFINE_OP_HANDLE(FieldOp)
+RIGEXEC_DEFINE_PORT_HANDLE(FieldOpIn)
+RIGEXEC_DEFINE_PORT_HANDLE(FieldOpOut)
+
+const RigExecPortDesc kFieldOpPorts[] = {
+    {&FieldOpIn(), &fakeTypes::Float(), kRigExecPortInput, "in"},
+    {&FieldOpOut(), &fakeTypes::Float(), kRigExecPortOutput, "out"}};
+
+RigExecOpDesc gFieldOp;
+
+void
+RegisterFieldOp(RigExecOpRegistrar &registrar)
+{
+    registrar.Add(FieldOp(), gFieldOp);
+}
+
+RigExecFieldDesc
+FieldNamed(const char *name, const RigExecTypeHandle &type,
+           RigExecFieldExtent extent = RigExecFieldExtent::Scalar)
+{
+    RigExecFieldDesc f;
+    f.name = name;
+    f.type = &type;
+    f.extent = extent;
+    return f;
+}
+
+/// The errors Validate reports for an op declaring \p payload and
+/// \p state fields.
+std::vector<std::string>
+FieldErrors(const RigExecRegistryInit &good,
+            const std::vector<RigExecFieldDesc> &payload,
+            const std::vector<RigExecFieldDesc> &state = {}, bool batch = true,
+            bool handling = false)
+{
+    gFieldOp = RigExecOpDesc();
+    gFieldOp.nameSpace = "test";
+    gFieldOp.name = "FieldOp";
+    gFieldOp.ports = kFieldOpPorts;
+    gFieldOp.portCount = 2;
+    gFieldOp.run = &NoRun;
+    if (batch)
+        gFieldOp.runBatch = &NoBatch;
+    if (handling)
+        gFieldOp.payload = RigExecPayloadHandlingFor<UnsavedPayload>();
+    gFieldOp.payloadFields = payload.data();
+    gFieldOp.payloadFieldCount = payload.size();
+    gFieldOp.stateFields = state.data();
+    gFieldOp.stateFieldCount = state.size();
+    RigExecOpLibraryDesc library;
+    library.name = "fieldOp";
+    library.registerOps = &RegisterFieldOp;
+    RigExecRegistryInit init = good;
+    init.opLibraries.push_back(&library);
+    std::vector<std::string> errors;
+    RigExecRegistry::Validate(init, &errors);
+    return errors;
+}
+
+void
+TestFieldValidation(const RigExecRegistryInit &good)
+{
+    const RigExecFieldDesc scalar = FieldNamed("a", fakeTypes::Float());
+    CHECK(FieldErrors(good, {scalar}, {scalar}).empty());
+    CHECK(Mentions(
+        FieldErrors(good, {FieldNamed("a", fakeTypes::Unregistered())}),
+        "op test:FieldOp: payload field a uses a type that is not "
+        "registered"));
+    CHECK(Mentions(FieldErrors(good, {FieldNamed("a", fakeTypes::Vec3Type())}),
+                   "payload field a is not of a plain value type"));
+    CHECK(Mentions(FieldErrors(good, {scalar, scalar}),
+                   "payload field a has no name or a repeated one"));
+    CHECK(Mentions(FieldErrors(good, {FieldNamed("a", fakeTypes::Float(),
+                                                 RigExecFieldExtent::Fixed)}),
+                   "payload field a has a fixed count of 0"));
+    {
+        RigExecFieldDesc list = FieldNamed("list", fakeTypes::Float(),
+                                           RigExecFieldExtent::FromField);
+        list.source = 1;
+        CHECK(Mentions(FieldErrors(good, {list, scalar}),
+                       "payload field list takes its count from a field that "
+                       "is not an earlier payload field"));
+        RigExecFieldDesc pair =
+            FieldNamed("pair", fakeTypes::Float(), RigExecFieldExtent::Fixed);
+        pair.count = 2;
+        list.source = 0;
+        CHECK(Mentions(FieldErrors(good, {pair, list}),
+                       "takes its count from a field that is not one unsigned "
+                       "integer"));
+        CHECK(FieldErrors(good, {scalar}, {list}).empty());
+    }
+    {
+        RigExecFieldDesc sized = FieldNamed("sized", fakeTypes::Float(),
+                                            RigExecFieldExtent::FromInput);
+        sized.port = &FieldOpOut();
+        CHECK(Mentions(FieldErrors(good, {sized}),
+                       "takes its count from something that is not an input"));
+        sized.port = &FieldOpIn();
+        CHECK(Mentions(FieldErrors(good, {}, {sized}),
+                       "state field sized takes its count from an input whose "
+                       "type has no element count"));
+    }
+    {
+        RigExecFieldDesc limited = scalar;
+        limited.limit = 3;
+        CHECK(FieldErrors(good, {limited}).empty());
+        CHECK(Mentions(FieldErrors(good, {}, {limited}),
+                       "state field a has a limit but is no payload integer"));
+    }
+    CHECK(Mentions(FieldErrors(good, {scalar}, {}, false),
+                   "declares fields but has no batch function"));
+    CHECK(Mentions(FieldErrors(good, {scalar}, {}, true, true),
+                   "declares payload fields and needs them in place of its "
+                   "payload handling"));
+    CHECK(!fakeTypes::Float().IsValid());
+}
+
 void
 TestValidateErrors(const RigExecRegistryInit &good)
 {
@@ -357,6 +475,7 @@ main()
     CHECK(init.typeLibraries.size() == 1);
     CHECK(init.opLibraries.size() == 1);
     TestValidateErrors(init);
+    TestFieldValidation(init);
     TestInitialize(init);
     if (failures) {
         std::printf("%d failure(s)\n", failures);

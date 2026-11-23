@@ -180,6 +180,7 @@ target_sources(rigExecScene INTERFACE
 find_package(Threads REQUIRED)
 add_library(rigExecOpCore SHARED
     libs/rigExec/internal/registry/registry.cpp
+    libs/rigExec/internal/registry/opFields.cpp
     libs/rigExec/internal/compile/rigDesc.cpp
     libs/rigExec/internal/compile/compile.cpp
     libs/rigExec/internal/exec/addressWait.cpp

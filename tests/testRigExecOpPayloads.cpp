@@ -1,5 +1,6 @@
 // Every op payload saves and reads back equal, and bytes that cannot be a
 // saved payload are refused without reading past them.
+#include "rigExec/api/opFields.h"
 #include "rigExec/api/registry.h"
 #include "rigExecOps/constraint/autoClavicleOps.h"
 #include "rigExecOps/constraint/constraintOps.h"
@@ -93,11 +94,89 @@ Decodes(const RigExecOpPayloadHandling &h, const std::vector<uint8_t> &bytes,
     return h.decode(bytes.data(), bytes.size(), box.Data(), error);
 }
 
+bool
+FieldsDecode(const RigExecOpDesc &op, const std::vector<uint8_t> &bytes,
+             std::string *error = nullptr)
+{
+    RigExecFieldValues values;
+    return RigExecDecodePayloadFields(op, bytes.data(), bytes.size(), &values,
+                                      error);
+}
+
+/// The declared-field form of CheckRoundTrip, on \p values.
+void
+CheckFieldsRoundTrip(const RigExecOpDesc &op, const RigExecFieldValues &values)
+{
+    const std::string name = op.name;
+    std::string error;
+    CHECK(RigExecCheckPayloadFields(op, values, &error));
+    std::vector<uint8_t> bytes;
+    RigExecEncodePayloadFields(op, values, bytes);
+    CHECK(bytes.size() >= 4);
+    RigExecFieldValues decoded;
+    const bool ok = RigExecDecodePayloadFields(op, bytes.data(), bytes.size(),
+                                               &decoded, &error);
+    if (!ok)
+        std::printf("%s: %s\n", name.c_str(), error.c_str());
+    CHECK(ok && decoded == values);
+    std::vector<uint8_t> again;
+    RigExecEncodePayloadFields(op, decoded, again);
+    CHECK(again == bytes);
+    for (size_t n = 0; n < bytes.size(); ++n) {
+        const std::vector<uint8_t> cut(bytes.begin(), bytes.begin() + n);
+        if (FieldsDecode(op, cut)) {
+            std::printf("%s: %zu of %zu bytes decoded\n", name.c_str(), n,
+                        bytes.size());
+            CHECK(false);
+        }
+    }
+    std::vector<uint8_t> longer = bytes;
+    longer.push_back(0);
+    CHECK(!FieldsDecode(op, longer, &error));
+    CHECK(error.find("left after") != std::string::npos);
+    std::vector<uint8_t> newer = bytes;
+    newer[0] = uint8_t(newer[0] + 1);
+    CHECK(!FieldsDecode(op, newer, &error));
+    CHECK(error.find("version") != std::string::npos);
+    RigExecFieldValues none;
+    CHECK(!RigExecDecodePayloadFields(op, nullptr, 0, &none, &error));
+}
+
+/// Zero for every one-value and fixed field, and empty lists.
+RigExecFieldValues
+DefaultFields(const RigExecOpDesc &op)
+{
+    RigExecFieldValues values(op.payloadFieldCount);
+    for (size_t f = 0; f < op.payloadFieldCount; ++f) {
+        const RigExecFieldDesc &field = op.payloadFields[f];
+        const size_t size = RigExecRegistry::Get().Type(*field.type).desc->size;
+        size_t count = 0;
+        if (field.extent == RigExecFieldExtent::Scalar)
+            count = 1;
+        else if (field.extent == RigExecFieldExtent::Fixed)
+            count = field.count;
+        const std::vector<uint8_t> zero(count * size, 0);
+        values.SetBytes(f, zero.data(), count, size);
+    }
+    return values;
+}
+
 /// Saves \p payload, reads it back, and checks the result is equal and
 /// saves to the same bytes; then checks damaged copies are refused.
 void
 CheckRoundTrip(const RigExecRegisteredOp &op, const void *payload)
 {
+    if (op.desc->payloadFieldCount) {
+        std::vector<uint8_t> bytes;
+        CHECK(RigExecEncodeOpPayload(*op.desc, payload, bytes));
+        RigExecFieldValues values(op.desc->payloadFieldCount);
+        op.desc->payloadValues(payload, values);
+        CheckFieldsRoundTrip(*op.desc, values);
+        std::vector<uint8_t> direct;
+        RigExecEncodePayloadFields(*op.desc, values, direct);
+        CHECK(direct == bytes);
+        return;
+    }
     const RigExecOpPayloadHandling &h = op.desc->payload;
     const std::string name = op.desc->name;
     std::vector<uint8_t> bytes;
@@ -157,6 +236,11 @@ TestEveryOp()
     for (size_t i = 0; i < registry.OpCount(); ++i) {
         const RigExecRegisteredOp &op = registry.OpAt(uint32_t(i));
         const RigExecOpPayloadHandling &h = op.desc->payload;
+        if (op.desc->payloadFieldCount) {
+            ++withPayload;
+            CheckFieldsRoundTrip(*op.desc, DefaultFields(*op.desc));
+            continue;
+        }
         if (!h.size)
             continue;
         ++withPayload;
@@ -429,6 +513,72 @@ TestFilledPayloads()
     }
 }
 
+std::vector<uint8_t>
+Hex(const char *text)
+{
+    const auto nibble = [](char h) {
+        return uint8_t(h <= '9' ? h - '0' : h - 'a' + 10);
+    };
+    std::vector<uint8_t> bytes;
+    std::string digits;
+    for (const char *c = text; *c; ++c)
+        if (*c != ' ')
+            digits += *c;
+    for (size_t i = 0; i + 1 < digits.size(); i += 2)
+        bytes.push_back(
+            uint8_t(nibble(digits[i]) << 4 | nibble(digits[i + 1])));
+    return bytes;
+}
+
+/// The bytes the math ops saved before their fields were declared, written
+/// as they were: the declared fields save the same.
+void
+TestMathBytes()
+{
+    const RigExecOpDesc &op = *Op(FloatMath()).desc;
+    MathPayload p;
+    std::vector<uint8_t> bytes;
+    CHECK(RigExecEncodeOpPayload(op, &p, bytes));
+    CHECK(bytes == Hex("01000000 00000000 0000000000000000 0000000000000000 "
+                       "00 00000000 00 00 00000000 00000000 00000000 "
+                       "00000000"));
+    p.op = RigExecPropertyOp::Path;
+    p.keys = {Vec2f(0.0f, 1.0f), Vec2f(1.0f, 0.0f)};
+    p.tangents = {Vec2f(0.5f, 0.5f), Vec2f(-0.5f, 2.0f)};
+    p.path.valid = true;
+    p.path.basis = RigExecPathBasis::CatmullRom;
+    p.path.component = RigExecPathComponent::Heading;
+    p.path.headingOffset = 90.0f;
+    CHECK(RigExecEncodeOpPayload(op, &p, bytes));
+    CHECK(bytes == Hex("01000000 07000000 0200000000000000 "
+                       "00000000 0000803f 0000803f 00000000 "
+                       "0200000000000000 "
+                       "0000003f 0000003f 000000bf 00000040 "
+                       "01 03000000 00 00 03000000 00000000 00000000 "
+                       "0000b442"));
+    for (const RigExecOpHandle *math : {&Vec3fMath(), &MatrixMath()}) {
+        std::vector<uint8_t> same;
+        CHECK(RigExecEncodeOpPayload(*Op(*math).desc, &p, same));
+        CHECK(same == bytes);
+    }
+
+    // An operation past the last one is refused.
+    std::vector<uint8_t> bad = bytes;
+    bad[4] = 8;
+    std::string error;
+    CHECK(!FieldsDecode(op, bad, &error));
+    CHECK(error.find("field op: a value is out of range") != std::string::npos);
+    bad = bytes;
+    bad[56] = 2;
+    CHECK(!FieldsDecode(op, bad, &error));
+    CHECK(error.find("pathValid") != std::string::npos);
+    // A key count past the bytes left is refused before reading keys.
+    bad = bytes;
+    bad[15] = 0x7f;
+    CHECK(!FieldsDecode(op, bad, &error));
+    CHECK(error.find("longer than") != std::string::npos);
+}
+
 /// Values a writer cannot produce are refused.
 void
 TestCorruptValues()
@@ -476,6 +626,7 @@ main()
     TestEveryOp();
     TestFilledPayloads();
     TestCorruptValues();
+    TestMathBytes();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;
