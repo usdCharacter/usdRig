@@ -67,22 +67,21 @@ copying them.
 
 ## The installed boundary
 
-The sealed compiled-program view (`libs/rigExec/compiledProgram.h`) is the SDK
-surface for a compiled rig: counts, the records still lent by index in the
-order the program runs them, the operation graph, the declared reads and
-writes, the bound paths and the overridden inputs. Chains, revisions and
-weight objects answer with facts — path, type, target — never with the builder
-record, so a consumer cannot reach the scratch a solver fills. A pose
-interpolator's record keeps the solve's output buffer, so the view lends no
-pose-interpolator accessor at all. The builder
-state itself (`bakedProgramImpl.h`, `bakedSchedule.h`, `bakedOpGraph.h`,
-`frozenProgram.h`, `frozenContextInternal.h`) stays out of the install; internal
-access to it goes through `RigExecBakedProgramAccess`. Detached replay freezes a
-copy of that program for a worker, and the snapshot boundary drops the scratch
-those records carry before the job runs.
-`tests/testRigExecInstalledSeal.cpp` compiles an SDK-only consumer that fails
-if the step graph, a solver record, or an impl type becomes reachable from the
-installed headers.
+The installed SDK ships `rigExec/api/` and the internal headers that
+`tools/rigexec_installed_internal.txt` lists because installed headers still
+include them; nothing else under `rigExec/`. A host reads a compiled rig
+through `RigExecProgramView` (`api/programView.h`), which lends the standing
+program read-only and answers its queries (cluster count, last evaluated time).
+The builder state (`compiledProgram.h`, `bakedProgramImpl.h`,
+`bakedSchedule.h`, `bakedOpGraph.h`, `frozenProgram.h`,
+`frozenContextInternal.h`) and the op core's program and compile records stay
+out of the install; internal access to them goes through
+`RigExecBakedProgramAccess`. Detached replay freezes a copy of that program for
+a worker, and the snapshot boundary drops the scratch those records carry
+before the job runs. `tests/testRigExecInstalledSeal.cpp` builds an SDK-only
+consumer from the install: it fails if the step graph or an impl type becomes
+reachable, if the installed header set differs from `api/` plus that list, or
+if an op-core API header does not compile on its own.
 
 ## Optional independent judges
 
