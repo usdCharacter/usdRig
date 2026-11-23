@@ -75,6 +75,8 @@ struct RigExecRunState {
     /// Per window: this run's capture, and the record its node is handed.
     std::vector<RigExecWindowPacketPtr> captures;
     std::vector<RigExecWindowRun> windows;
+    /// Per batchNodes entry: its window record, or null.
+    std::vector<const RigExecWindowRun *> batchWindows;
 
     RigExecRunState() = default;
     RigExecRunState(const RigExecRunState &) = delete;
@@ -143,6 +145,12 @@ struct RigExecRunState {
             windows[w].ring = &rings[w];
             windows[w].capture = &captures[w];
         }
+        batchWindows.assign(p.batchNodes.size(), nullptr);
+        for (size_t i = 0; i < p.batchNodes.size(); ++i) {
+            const uint32_t w = p.windowOfNode[p.batchNodes[i]];
+            if (w != kRigExecInvalidIndex)
+                batchWindows[i] = &windows[w];
+        }
     }
 };
 
@@ -167,9 +175,10 @@ struct RigExecEvaluatorState {
     RigExecRunState main;
     /// Bound on the first EvaluateHistory.
     std::unique_ptr<RigExecRunState> history;
-    /// The run in progress, and the nodes it runs (null runs all).
+    /// The run in progress, and the nodes it runs by batchNodes entry (null
+    /// runs all).
     RigExecRunState *current = nullptr;
-    const std::vector<char> *active = nullptr;
+    const char *active = nullptr;
     /// Per batch run: whether it failed and why.
     std::vector<uint8_t> failed;
     std::vector<std::string> errors;
@@ -188,37 +197,38 @@ struct RigExecEvaluatorState {
     {
         RigExecRunState &run = *current;
         const RigExecProgramBatch &batch = program->batches[b];
-        const RigExecOpDesc &d = OpOf(batch.op);
-        for (uint32_t i = 0; i < batch.nodeCount; ++i) {
-            const uint32_t n = program->batchNodes[batch.firstNode + i];
-            if (active && !(*active)[n])
-                continue;
-            const RigExecProgramNode &node = program->nodes[n];
-            const uint32_t w = program->windowOfNode[n];
-            RigExecOpIo io;
-            io.inputs = run.inputs.data() + node.firstPort;
-            io.outputs = run.outputs.data() + node.firstPort;
-            io.portCount = node.portCount;
-            io.window = w == kRigExecInvalidIndex ? nullptr : &run.windows[w];
-            const void *payload =
-                node.payloadOffset == SIZE_MAX
-                    ? nullptr
-                    : program->payloads.Data() + node.payloadOffset;
-            void *state = node.stateOffset == SIZE_MAX
-                              ? nullptr
-                              : run.opState.Data() + node.stateOffset;
-            std::string error;
-            if (!d.run(payload, state, io, &error)) {
-                if (w != kRigExecInvalidIndex)
-                    run.captures[w].reset();
-                failed[b] = 1;
-                errors[b] = "node " + std::to_string(n) + " (" +
-                            (d.nameSpace ? d.nameSpace : "") + ":" +
-                            (d.name ? d.name : "") + ") failed" +
-                            (error.empty() ? "" : ": " + error);
-                return;
-            }
+        const RigExecRegisteredOp &op = RigExecRegistry::Get().OpAt(batch.op);
+        const RigExecOpDesc &d = *op.desc;
+        RigExecOpBatch view;
+        view.op = &d;
+        view.count = batch.nodeCount;
+        view.active = active ? active + batch.firstNode : nullptr;
+        if (batch.payloadOffset != SIZE_MAX) {
+            view.payloads = program->payloads.Data() + batch.payloadOffset;
+            view.payloadStride = batch.payloadStride;
         }
+        if (batch.stateOffset != SIZE_MAX) {
+            view.states = run.opState.Data() + batch.stateOffset;
+            view.stateStride = batch.stateStride;
+        }
+        view.portCount = d.portCount;
+        view.inputs = run.inputs.data() + batch.firstPort;
+        view.outputs = run.outputs.data() + batch.firstPort;
+        if (d.threading == RigExecOpThreading::Windowed)
+            view.windows = run.batchWindows.data() + batch.firstNode;
+        size_t at = 0;
+        std::string error;
+        if (op.runBatch(view, &at, &error))
+            return;
+        const uint32_t n = program->batchNodes[batch.firstNode + at];
+        const uint32_t w = program->windowOfNode[n];
+        if (w != kRigExecInvalidIndex)
+            run.captures[w].reset();
+        failed[b] = 1;
+        errors[b] = "node " + std::to_string(n) + " (" +
+                    (d.nameSpace ? d.nameSpace : "") + ":" +
+                    (d.name ? d.name : "") + ") failed" +
+                    (error.empty() ? "" : ": " + error);
     }
 
     static bool RunTask(void *context, uint32_t b)
@@ -246,10 +256,10 @@ struct RigExecEvaluatorState {
         }
     }
 
-    /// Runs \p run over \p mask (null runs every node). A failed run leaves
-    /// every capture null.
-    bool Run(RigExecRunState &run, const std::vector<char> *mask,
-             bool historyTick, RigExecTaskSystem *tasks, std::string *error)
+    /// Runs \p run over every node, or on a history tick over the nodes the
+    /// windowed nodes depend on. A failed run leaves every capture null.
+    bool Run(RigExecRunState &run, bool historyTick, RigExecTaskSystem *tasks,
+             std::string *error)
     {
         const RigExecProgram &p = *program;
         for (size_t w = 0; w < run.windows.size(); ++w) {
@@ -258,7 +268,7 @@ struct RigExecEvaluatorState {
                 historyTick && !p.windowedNodes[w].feedsWindow;
         }
         current = &run;
-        active = mask;
+        active = historyTick ? p.batchHistoryMask.data() : nullptr;
         std::fill(failed.begin(), failed.end(), uint8_t(0));
         RigExecTaskSchedule schedule;
         schedule.levelCount = sharedStart.size() - 1;
@@ -370,7 +380,7 @@ RigExecEvaluator::Evaluate(std::string *error)
 {
     _AssertOwnerThread();
     RigExecEvaluatorState &s = *_state;
-    if (!s.Run(s.main, nullptr, false, _options.tasks, error))
+    if (!s.Run(s.main, false, _options.tasks, error))
         return false;
     if (s.tapCallback) {
         const RigExecProgram &p = *s.program;
@@ -464,8 +474,7 @@ RigExecEvaluator::EvaluateHistory(std::string *error)
         else
             std::memcpy(dst, src, t.size);
     }
-    const bool ran =
-        s.Run(*s.history, &p.historyMask, true, _options.tasks, error);
+    const bool ran = s.Run(*s.history, true, _options.tasks, error);
     for (size_t w = 0; w < s.rings.size(); ++w)
         PushTick(&s.rings[w], s.history->captures[w],
                  p.windowedNodes[w].frames);

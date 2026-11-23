@@ -184,14 +184,14 @@ Load(Reader &r, MathPayload &p)
 
 rigExec::RigExecOpDesc
 MathDesc(const char *name, const rigExec::RigExecPortDesc *ports,
-         size_t portCount, rigExec::RigExecOpRunFn run)
+         size_t portCount, rigExec::RigExecOpBatchFn runBatch)
 {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = name;
     d.ports = ports;
     d.portCount = portCount;
-    d.run = run;
+    d.runBatch = runBatch;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payload = rigExec::RigExecPayloadHandlingFor<MathPayload, &Save, &Load>();
     return d;
@@ -233,13 +233,16 @@ const rigExec::RigExecPortDesc kMatrixPorts[] = {
 };
 
 const rigExec::RigExecOpDesc kFloatDesc =
-    MathDesc("FloatMath", kFloatPorts, std::size(kFloatPorts), &RunFloat);
+    MathDesc("FloatMath", kFloatPorts, std::size(kFloatPorts),
+             &opIo::RunBatch<&RunFloat>);
 
 const rigExec::RigExecOpDesc kVec3fDesc =
-    MathDesc("Vec3fMath", kVec3fPorts, std::size(kVec3fPorts), &RunVec3f);
+    MathDesc("Vec3fMath", kVec3fPorts, std::size(kVec3fPorts),
+             &opIo::RunBatch<&RunVec3f>);
 
 const rigExec::RigExecOpDesc kMatrixDesc =
-    MathDesc("MatrixMath", kMatrixPorts, std::size(kMatrixPorts), &RunMatrix);
+    MathDesc("MatrixMath", kMatrixPorts, std::size(kMatrixPorts),
+             &opIo::RunBatch<&RunMatrix>);
 
 } // namespace
 

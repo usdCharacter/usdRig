@@ -81,9 +81,12 @@ RIGEXEC_DEFINE_OP_HANDLE(Check)
 RIGEXEC_DEFINE_PORT_HANDLE(CheckIn)
 RIGEXEC_DEFINE_PORT_HANDLE(CheckOut)
 
+std::atomic<uint32_t> checkRuns{0};
+
 bool
 RunCheck(const void *, void *, const RigExecOpIo &io, std::string *error)
 {
+    checkRuns.fetch_add(1);
     const Vec3 &in = *static_cast<const Vec3 *>(io.inputs[CheckIn().Index()]);
     if (in.x < 0.0f) {
         *error = "negative x " + std::to_string(int(in.x));
@@ -174,6 +177,47 @@ RunRingSum(const void *, void *, const RigExecOpIo &io, std::string *error)
     return true;
 }
 
+// A batch function that calls Run on each active instance.
+template <bool (*Run)(const void *, void *, const RigExecOpIo &, std::string *)>
+bool
+BatchOf(const RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    for (size_t k = 0; k < batch.count; ++k) {
+        if (!RigExecBatchActive(batch, k))
+            continue;
+        if (!Run(RigExecBatchPayload(batch, k), RigExecBatchState(batch, k),
+                 RigExecBatchInstance(batch, k), error)) {
+            *failed = k;
+            return false;
+        }
+    }
+    return true;
+}
+
+// A batch-only op that copies in to out and counts its calls and the
+// instances it ran.
+RIGEXEC_DEFINE_OP_HANDLE(Tally)
+RIGEXEC_DEFINE_PORT_HANDLE(TallyIn)
+RIGEXEC_DEFINE_PORT_HANDLE(TallyOut)
+
+std::atomic<uint32_t> tallyCalls{0};
+std::atomic<uint32_t> tallyRuns{0};
+
+bool
+RunTally(const RigExecOpBatch &batch, size_t *, std::string *)
+{
+    tallyCalls.fetch_add(1);
+    for (size_t k = 0; k < batch.count; ++k) {
+        if (!RigExecBatchActive(batch, k))
+            continue;
+        tallyRuns.fetch_add(1);
+        const RigExecOpIo io = RigExecBatchInstance(batch, k);
+        *static_cast<Vec3 *>(io.outputs[TallyOut().Index()]) =
+            *static_cast<const Vec3 *>(io.inputs[TallyIn().Index()]);
+    }
+    return true;
+}
+
 void
 RegisterCheck(RigExecOpRegistrar &registrar)
 {
@@ -216,8 +260,11 @@ RegisterCheck(RigExecOpRegistrar &registrar)
         d.run = run;
         return d;
     };
-    static const RigExecOpDesc weighted =
-        op("Weighted", weightedPorts, &RunWeighted);
+    static const RigExecOpDesc weighted = [&] {
+        RigExecOpDesc d = op("Weighted", weightedPorts, nullptr);
+        d.runBatch = &BatchOf<&RunWeighted>;
+        return d;
+    }();
     static const RigExecOpDesc required =
         op("Required", requiredPorts, &RunWeighted);
     static const RigExecOpDesc norm = op("Norm", normPorts, &RunNorm);
@@ -235,13 +282,28 @@ RegisterCheck(RigExecOpRegistrar &registrar)
         d.name = "RingSum";
         d.ports = ringPorts;
         d.portCount = 2;
-        d.run = &RunRingSum;
+        d.runBatch = &BatchOf<&RunRingSum>;
         d.threading = RigExecOpThreading::Windowed;
         d.windowFrames = &RingFrames;
         d.payload = RigExecPayloadHandlingFor<RingPayload>();
         return d;
     }();
     registrar.Add(RingSum(), ring);
+
+    static const RigExecPortDesc tallyPorts[] = {
+        {&TallyIn(), &fakeTypes::Vec3Type(), kRigExecPortInput, "in"},
+        {&TallyOut(), &fakeTypes::Vec3Type(), kRigExecPortOutput, "out"},
+    };
+    static const RigExecOpDesc tally = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "Tally";
+        d.ports = tallyPorts;
+        d.portCount = 2;
+        d.runBatch = &RunTally;
+        return d;
+    }();
+    registrar.Add(Tally(), tally);
 }
 
 const RigExecOpLibraryDesc kCheckLibrary = [] {
@@ -535,6 +597,8 @@ RunWide(const Wide &wide, RigExecTaskSystem *tasks, int frames,
     return results;
 }
 
+const size_t kBatchSizes[] = {0, 1, 2, 3, 7};
+
 // 1, 2 and 3 threads and every hardware thread.
 std::vector<size_t>
 ThreadCounts()
@@ -554,8 +618,7 @@ TestDeterminism()
     }
     for (const size_t threads : ThreadCounts()) {
         auto tasks = RigExecCreateThreadTaskSystem(threads);
-        for (const size_t batch :
-             {size_t(0), size_t(1), size_t(2), size_t(7)}) {
+        for (const size_t batch : kBatchSizes) {
             const Wide wide = BuildWide(chains, batch);
             CHECK(wide.program);
             std::string error;
@@ -577,7 +640,7 @@ TestFailureOrder()
 {
     for (const size_t threads : ThreadCounts()) {
         auto tasks = RigExecCreateThreadTaskSystem(threads);
-        for (const size_t batch : {size_t(0), size_t(1), size_t(3)}) {
+        for (const size_t batch : kBatchSizes) {
             const Wide wide = BuildWide(16, batch);
             RigExecEvaluatorOptions options;
             options.tasks = tasks.get();
@@ -638,8 +701,7 @@ TestListDeterminism()
     CHECK(reference.size() == lists * 4);
     for (const size_t threads : ThreadCounts()) {
         auto tasks = RigExecCreateThreadTaskSystem(threads);
-        for (const size_t batch :
-             {size_t(0), size_t(1), size_t(2), size_t(7)}) {
+        for (const size_t batch : kBatchSizes) {
             const Wide wide = BuildWideLists(lists, batch);
             CHECK(wide.program);
             const std::vector<Vec3> got = RunWide(wide, tasks.get(), 4, &error);
@@ -921,8 +983,7 @@ TestWindowDeterminism()
     CHECK(reference.size() == chains * 4 * 8);
     for (const size_t threads : ThreadCounts()) {
         auto tasks = RigExecCreateThreadTaskSystem(threads);
-        for (const size_t batch :
-             {size_t(0), size_t(1), size_t(2), size_t(7)}) {
+        for (const size_t batch : kBatchSizes) {
             const bool same = SameAll(run(tasks.get(), batch), reference);
             CHECK(same);
             if (!same)
@@ -1087,6 +1148,105 @@ TestScheduleOrder()
     }
 }
 
+// One call per batch for a batch-only op, one run per node for a run-only
+// op, at every batch size and thread count.
+void
+TestBatchCalls()
+{
+    for (const size_t threads : ThreadCounts()) {
+        auto tasks = RigExecCreateThreadTaskSystem(threads);
+        for (const size_t limit : kBatchSizes) {
+            RigExecRigDescBuilder builder;
+            std::vector<RigExecInputId> inputs;
+            std::vector<RigExecOutputId> outputs;
+            std::vector<RigExecNodeId> first;
+            for (size_t i = 0; i < 10; ++i) {
+                const RigExecNodeId node = builder.AddOp(Tally());
+                first.push_back(node);
+                inputs.push_back(builder.BindInput(node, TallyIn()));
+                outputs.push_back(builder.BindOutput(node, TallyOut()));
+            }
+            for (size_t i = 0; i < 4; ++i) {
+                const RigExecNodeId node = builder.AddOp(Tally());
+                const RigExecNodeId check = builder.AddOp(Check());
+                builder.Connect(first[i], TallyOut(), node, TallyIn());
+                builder.Connect(node, TallyOut(), check, CheckIn());
+                outputs.push_back(builder.BindOutput(check, CheckOut()));
+            }
+            std::string error;
+            auto program = Compile(builder, limit, &error);
+            CHECK(program);
+            if (!program)
+                continue;
+            const auto per = [&](size_t nodes) {
+                return limit ? (nodes + limit - 1) / limit : size_t(1);
+            };
+            size_t tallyBatches = 0;
+            for (const RigExecProgramBatch &batch : program->batches)
+                tallyBatches += batch.op == Tally().Index();
+            CHECK(tallyBatches == per(10) + per(4));
+            CHECK(program->batches.size() == tallyBatches + per(4));
+            RigExecEvaluatorOptions options;
+            options.tasks = tasks.get();
+            auto evaluator = RigExecEvaluator::Create(program, options);
+            for (size_t i = 0; i < inputs.size(); ++i) {
+                const Vec3 value{float(i), 1.0f, 2.0f};
+                evaluator->SetInput(inputs[i], &value);
+            }
+            tallyCalls = 0;
+            tallyRuns = 0;
+            checkRuns = 0;
+            CHECK(evaluator->Evaluate(&error));
+            CHECK(tallyCalls.load() == tallyBatches);
+            CHECK(tallyRuns.load() == 14);
+            CHECK(checkRuns.load() == 4);
+            for (size_t i = 0; i < outputs.size(); ++i) {
+                const Vec3 expected{float(i % 10), 1.0f, 2.0f};
+                const auto *out =
+                    static_cast<const Vec3 *>(evaluator->GetOutput(outputs[i]));
+                CHECK(out && Same(*out, expected));
+            }
+        }
+    }
+}
+
+// A history tick hands a batch its whole instance range with the nodes no
+// windowed node depends on masked off; their outputs keep their values.
+void
+TestBatchHistoryMask()
+{
+    RigExecRigDescBuilder builder;
+    const RingPayload two{2};
+    const RigExecNodeId feeds = builder.AddOp(Tally());
+    const RigExecNodeId aside = builder.AddOp(Tally());
+    const RigExecNodeId ring = builder.AddOp(RingSum(), &two);
+    builder.Connect(feeds, TallyOut(), ring, RingSumIn());
+    const RigExecInputId feedsIn = builder.BindInput(feeds, TallyIn());
+    const RigExecInputId asideIn = builder.BindInput(aside, TallyIn());
+    const RigExecOutputId asideOut = builder.BindOutput(aside, TallyOut());
+    std::string error;
+    auto program = Compile(builder, 0, &error);
+    CHECK(program);
+    if (!program)
+        return;
+    CHECK((program->historyMask == std::vector<char>{1, 0, 1}));
+    CHECK(program->batches.size() == 2 && program->batches[0].nodeCount == 2);
+    auto evaluator = RigExecEvaluator::Create(program);
+    const Vec3 x{1.0f, 2.0f, 3.0f}, y{4.0f, 5.0f, 6.0f}, z{7.0f, 8.0f, 9.0f};
+    CHECK(evaluator->SetInput(feedsIn, &x) && evaluator->SetInput(asideIn, &y));
+    CHECK(evaluator->Evaluate(&error));
+    CHECK(evaluator->SetInput(asideIn, &z));
+    tallyCalls = 0;
+    tallyRuns = 0;
+    CHECK(evaluator->EvaluateHistory(&error));
+    CHECK(tallyCalls.load() == 1);
+    CHECK(tallyRuns.load() == 1);
+    const auto *out = static_cast<const Vec3 *>(evaluator->GetOutput(asideOut));
+    CHECK(out && Same(*out, y));
+    CHECK(evaluator->GetWindowRings()[0].size() == 1 &&
+          evaluator->GetWindowRings()[0][0]);
+}
+
 } // namespace
 
 int
@@ -1116,6 +1276,8 @@ main()
     TestTaskSystemStress();
     TestTaskSystemLifetimes();
     TestScheduleOrder();
+    TestBatchCalls();
+    TestBatchHistoryMask();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

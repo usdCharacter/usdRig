@@ -343,6 +343,37 @@ BuildBatches(CompileState &s, size_t limit)
         ++batch->nodeCount;
     }
     program.levelBatches.push_back(uint32_t(program.batches.size()));
+    if (program.historyMask.empty())
+        return;
+    program.batchHistoryMask.resize(s.nodeCount);
+    for (uint32_t i = 0; i < s.nodeCount; ++i)
+        program.batchHistoryMask[i] = program.historyMask[order[i]];
+}
+
+/// Renumbers the node ports in batch order, so each batch's ports are one
+/// run: node by node, each node's ports in port order.
+void
+PlacePortsInBatchOrder(CompileState &s)
+{
+    RigExecProgram &program = s.program;
+    std::vector<uint32_t> portSlots;
+    portSlots.reserve(program.portSlots.size());
+    std::vector<uint32_t> moved(program.portSlots.size());
+    for (const uint32_t n : program.batchNodes) {
+        RigExecProgramNode &node = program.nodes[n];
+        const uint32_t first = uint32_t(portSlots.size());
+        for (uint32_t p = 0; p < node.portCount; ++p) {
+            moved[node.firstPort + p] = first + p;
+            portSlots.push_back(program.portSlots[node.firstPort + p]);
+        }
+        node.firstPort = first;
+    }
+    program.portSlots = std::move(portSlots);
+    for (RigExecProgramList &list : program.lists)
+        list.port = moved[list.port];
+    for (RigExecProgramBatch &batch : program.batches)
+        batch.firstPort =
+            program.nodes[program.batchNodes[batch.firstNode]].firstPort;
 }
 
 /// Places every slot in the value arena, in slot order.
@@ -359,27 +390,45 @@ LayoutArena(CompileState &s)
     s.program.arenaSize = offset;
 }
 
-/// Places each node's payload in the payload blob and its state in the
-/// state arena, in node order, and copies the payloads in.
+/// Places \p count values of \p size and \p align from \p end, one every
+/// \p stride bytes; returns the first one's offset and moves \p end past
+/// the last.
+size_t
+PlaceRun(size_t *end, size_t size, size_t align, size_t count, size_t *stride)
+{
+    *stride = RigExecPlaceValue(size, size, align);
+    const size_t first = RigExecPlaceValue(*end, size, align);
+    *end = first + count * *stride;
+    return first;
+}
+
+/// Places each batch's payloads in the payload blob and its states in the
+/// state arena, one evenly spaced run per batch, and copies the payloads
+/// in.
 void
 LayoutPayloadsAndState(CompileState &s)
 {
     RigExecProgram &program = s.program;
     size_t payloadSize = 0;
     size_t stateSize = 0;
-    for (uint32_t n = 0; n < s.nodeCount; ++n) {
-        const RigExecOpDesc &d = s.OpDesc(n);
-        if (s.data.nodes[n].hasPayload) {
-            payloadSize =
-                RigExecPlaceValue(payloadSize, d.payload.size, d.payload.align);
-            program.nodes[n].payloadOffset = payloadSize;
-            payloadSize += d.payload.size;
+    for (RigExecProgramBatch &batch : program.batches) {
+        const RigExecOpDesc &d = *s.registry.OpAt(batch.op).desc;
+        const uint32_t *nodes = program.batchNodes.data() + batch.firstNode;
+        if (d.payload.size) {
+            batch.payloadOffset =
+                PlaceRun(&payloadSize, d.payload.size, d.payload.align,
+                         batch.nodeCount, &batch.payloadStride);
+            for (uint32_t k = 0; k < batch.nodeCount; ++k)
+                program.nodes[nodes[k]].payloadOffset =
+                    batch.payloadOffset + k * batch.payloadStride;
         }
         if (d.state.size) {
-            stateSize =
-                RigExecPlaceValue(stateSize, d.state.size, d.state.align);
-            program.nodes[n].stateOffset = stateSize;
-            stateSize += d.state.size;
+            batch.stateOffset =
+                PlaceRun(&stateSize, d.state.size, d.state.align,
+                         batch.nodeCount, &batch.stateStride);
+            for (uint32_t k = 0; k < batch.nodeCount; ++k)
+                program.nodes[nodes[k]].stateOffset =
+                    batch.stateOffset + k * batch.stateStride;
         }
     }
     program.stateSize = stateSize;
@@ -426,6 +475,7 @@ RigExecCompile(const RigExecRigDesc &desc, const RigExecCompileOptions &options,
         return nullptr;
     SettleWindows(s);
     BuildBatches(s, options.maxBatchNodes);
+    PlacePortsInBatchOrder(s);
     LayoutArena(s);
     LayoutPayloadsAndState(s);
     return program;

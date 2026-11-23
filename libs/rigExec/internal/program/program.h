@@ -49,12 +49,22 @@ struct RigExecProgramWindow {
     bool feedsWindow = false;
 };
 
-/// Nodes of one op at one level, run in node order.
+/// Nodes of one op at one level, run together by one call of the op's
+/// batch function. Its nodes' ports, payloads and states are each laid out
+/// contiguously in batch order.
 struct RigExecProgramBatch {
     uint32_t op = kRigExecInvalidIndex;
+    /// Into batchNodes.
     uint32_t firstNode = 0;
     uint32_t nodeCount = 0;
     bool ownerThread = false;
+    /// Into portSlots.
+    uint32_t firstPort = 0;
+    /// Into the payload blob and the state arena; SIZE_MAX without one.
+    size_t payloadOffset = SIZE_MAX;
+    size_t payloadStride = 0;
+    size_t stateOffset = SIZE_MAX;
+    size_t stateStride = 0;
 };
 
 class RigExecProgram {
@@ -78,8 +88,8 @@ public:
     uint64_t registryFingerprint = 0;
     std::vector<RigExecProgramSlot> slots;
     std::vector<RigExecProgramNode> nodes;
-    /// Slot per node port; kRigExecInvalidIndex for an unfed optional input
-    /// and for an array input.
+    /// Slot per node port, nodes in batch order; kRigExecInvalidIndex for
+    /// an unfed optional input and for an array input.
     std::vector<uint32_t> portSlots;
     /// One per array input, in node then port order.
     std::vector<RigExecProgramList> lists;
@@ -96,6 +106,8 @@ public:
     /// Per node: 1 for the windowed nodes and every node one depends on.
     /// Empty without windowed nodes.
     std::vector<char> historyMask;
+    /// historyMask in batchNodes order.
+    std::vector<char> batchHistoryMask;
     /// Per node: its index in windowedNodes, or kRigExecInvalidIndex.
     std::vector<uint32_t> windowOfNode;
     size_t arenaSize = 0;

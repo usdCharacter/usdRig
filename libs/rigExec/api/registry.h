@@ -29,7 +29,7 @@ inline constexpr uint32_t kRigExecInvalidIndex = 0xffffffffu;
 /// Version of the descriptor structs below. Each library records the version
 /// it was built with, and Initialize rejects one built with another. Raise
 /// it whenever a descriptor's layout changes.
-inline constexpr uint32_t kRigExecRegistryAbiVersion = 4;
+inline constexpr uint32_t kRigExecRegistryAbiVersion = 5;
 
 /// Refers to one registered data type. A type library defines one per type
 /// with RIGEXEC_DEFINE_TYPE_HANDLE, and Initialize gives it its index; read
@@ -291,9 +291,76 @@ struct RigExecOpIo {
 using RigExecOpRunFn = bool (*)(const void *payload, void *state,
                                 const RigExecOpIo &io, std::string *error);
 
-/// Describes one op: its name and version, its ports, its run function,
-/// where it may run, what it costs, and how to handle its settings and
-/// working state.
+struct RigExecOpDesc;
+
+/// What an op's batch function receives: several nodes of the op that run
+/// together, called instances, numbered 0 to count - 1 in the order the
+/// program runs them. Instance k's payload is at payloads + k *
+/// payloadStride and its state at states + k * stateStride (null when the
+/// op has none). Its port values are the portCount entries of inputs and
+/// outputs starting at k * portCount, laid out as in RigExecOpIo.
+struct RigExecOpBatch {
+    const RigExecOpDesc *op = nullptr;
+    size_t count = 0;
+    /// Per instance: zero for one this run skips, as a history tick skips
+    /// the nodes no windowed op depends on. Null runs every instance.
+    const char *active = nullptr;
+    const std::byte *payloads = nullptr;
+    size_t payloadStride = 0;
+    std::byte *states = nullptr;
+    size_t stateStride = 0;
+    size_t portCount = 0;
+    const void *const *inputs = nullptr;
+    void *const *outputs = nullptr;
+    /// For a Windowed op, each instance's history record; null otherwise.
+    const RigExecWindowRun *const *windows = nullptr;
+};
+
+/// Runs every active instance of \p batch, in instance order. On a failure
+/// it stops, sets \p failed to that instance and may leave a message in
+/// \p error, and returns false; the instances before it keep their results.
+using RigExecOpBatchFn = bool (*)(const RigExecOpBatch &batch, size_t *failed,
+                                  std::string *error);
+
+inline bool
+RigExecBatchActive(const RigExecOpBatch &batch, size_t k)
+{
+    return !batch.active || batch.active[k];
+}
+
+inline const void *
+RigExecBatchPayload(const RigExecOpBatch &batch, size_t k)
+{
+    return batch.payloads ? batch.payloads + k * batch.payloadStride : nullptr;
+}
+
+inline void *
+RigExecBatchState(const RigExecOpBatch &batch, size_t k)
+{
+    return batch.states ? batch.states + k * batch.stateStride : nullptr;
+}
+
+/// Instance \p k's ports, as its run function would receive them.
+inline RigExecOpIo
+RigExecBatchInstance(const RigExecOpBatch &batch, size_t k)
+{
+    RigExecOpIo io;
+    io.inputs = batch.inputs + k * batch.portCount;
+    io.outputs = batch.outputs + k * batch.portCount;
+    io.portCount = batch.portCount;
+    io.window = batch.windows ? batch.windows[k] : nullptr;
+    return io;
+}
+
+/// The batch function of an op that provides only run: calls run once per
+/// active instance, in order.
+bool RigExecRunEachInstance(const RigExecOpBatch &batch, size_t *failed,
+                            std::string *error);
+
+/// Describes one op: its name and version, its ports, how it runs, where
+/// it may run, what it costs, and how to handle its settings and working
+/// state. An op provides run, runBatch or both; the evaluator calls
+/// runBatch once per batch when there is one.
 struct RigExecOpDesc {
     uint32_t structSize = sizeof(RigExecOpDesc);
     const char *nameSpace = "";
@@ -311,6 +378,7 @@ struct RigExecOpDesc {
     /// Windowed ops only, and required there: how many earlier frames a
     /// node reads, given its payload (null when it has none).
     uint32_t (*windowFrames)(const void *payload) = nullptr;
+    RigExecOpBatchFn runBatch = nullptr;
 };
 
 /// Receives a type library's types during Initialize.
@@ -379,6 +447,8 @@ struct RigExecRegisteredOp {
     /// The op's handle, for a reader that finds the op by its name in a
     /// saved file.
     const RigExecOpHandle *handle = nullptr;
+    /// The op's runBatch, or RigExecRunEachInstance when it has none.
+    RigExecOpBatchFn runBatch = nullptr;
 };
 
 /// The one registry of the process. Initialize builds it once at startup;

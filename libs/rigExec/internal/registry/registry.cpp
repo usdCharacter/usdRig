@@ -246,8 +246,8 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
                  .second) {
             _Error("op " + name + ": registered by two libraries");
         }
-        if (!d.run) {
-            _Error("op " + name + ": no run function");
+        if (!d.run && !d.runBatch) {
+            _Error("op " + name + ": no run or batch function");
         }
         std::set<const RigExecPortHandle *> ports;
         for (size_t p = 0; p < d.portCount; ++p) {
@@ -313,6 +313,8 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
         op.library = e.library;
         op.index = uint32_t(i);
         op.handle = e.handle;
+        op.runBatch =
+            e.desc->runBatch ? e.desc->runBatch : &RigExecRunEachInstance;
         for (size_t p = 0; p < e.desc->portCount; ++p) {
             op.portTypes.push_back(_typeIndex.at(e.desc->ports[p].type));
             _portIndex.emplace_back(e.desc->ports[p].port, uint32_t(p));
@@ -353,6 +355,25 @@ RigExecRegistryBuilder::Publish()
     }
     // Immortal: handles and descriptors outlive static destruction.
     gRegistry.store(_registry.release(), std::memory_order_release);
+}
+
+bool
+RigExecRunEachInstance(const RigExecOpBatch &batch, size_t *failed,
+                       std::string *error)
+{
+    const RigExecOpRunFn run = batch.op->run;
+    for (size_t k = 0; k < batch.count; ++k) {
+        if (!RigExecBatchActive(batch, k))
+            continue;
+        if (error)
+            error->clear();
+        if (!run(RigExecBatchPayload(batch, k), RigExecBatchState(batch, k),
+                 RigExecBatchInstance(batch, k), error)) {
+            *failed = k;
+            return false;
+        }
+    }
+    return true;
 }
 
 bool

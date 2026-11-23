@@ -136,9 +136,13 @@ const rigExec::RigExecOpDesc kSmoothDesc =
               rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
                   rigExec::kRigExecOpGate);
 
-const rigExec::RigExecOpDesc kVolumeDesc =
-    PointDesc("VolumeCorrect", kVolumePorts, std::size(kVolumePorts),
-              &RunVolumeCorrect, rigExec::kRigExecOpSeparateBlend);
+const rigExec::RigExecOpDesc kVolumeDesc = [] {
+    rigExec::RigExecOpDesc d =
+        PointDesc("VolumeCorrect", kVolumePorts, std::size(kVolumePorts),
+                  nullptr, rigExec::kRigExecOpSeparateBlend);
+    d.runBatch = &opIo::RunBatch<&RunVolumeCorrect>;
+    return d;
+}();
 
 } // namespace
 

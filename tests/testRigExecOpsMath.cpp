@@ -317,6 +317,67 @@ TestMatrix()
     CHECK(bad.evaluator && !bad.Run({&in, &weight}, &error));
 }
 
+/// Twelve FloatMath nodes of every operation in one program, run in batches
+/// of each size, give each node the bits of its own apply.
+void
+TestBatches()
+{
+    using namespace rigExecOps;
+    struct Node {
+        RigExecPropertyOp op;
+        std::vector<RigExecInputId> inputs;
+        RigExecOutputId out;
+    };
+    std::mt19937 rng(29);
+    for (const size_t limit : {size_t(0), size_t(1), size_t(3)}) {
+        RigExecRigDescBuilder b;
+        std::vector<Node> nodes;
+        for (size_t i = 0; i < 12; ++i) {
+            MathPayload payload;
+            payload.op = kAllOps[i % std::size(kAllOps)];
+            const RigExecNodeId n = b.AddOp(FloatMath(), &payload);
+            Node node{payload.op, {}, {}};
+            for (const RigExecPortHandle *port :
+                 {&FloatIn(), &FloatValue(), &FloatMin(), &FloatMax(),
+                  &FloatWeight()})
+                node.inputs.push_back(b.BindInput(n, *port));
+            node.out = b.BindOutput(n, FloatOut());
+            nodes.push_back(node);
+        }
+        std::string error;
+        auto desc = b.Build(&error);
+        RigExecCompileOptions options;
+        options.maxBatchNodes = limit;
+        auto program = desc ? RigExecCompile(*desc, options, &error) : nullptr;
+        auto e =
+            program ? RigExecEvaluator::Create(program, {}, &error) : nullptr;
+        CHECK(e);
+        if (!e)
+            continue;
+        for (int round = 0; round < 50; ++round) {
+            std::vector<std::vector<float>> values;
+            for (const Node &node : nodes) {
+                values.push_back(
+                    {Pick(rng), Pick(rng), Pick(rng), Pick(rng), Pick(rng)});
+                for (size_t k = 0; k < 5; ++k)
+                    CHECK(e->SetInput(node.inputs[k], &values.back()[k]));
+            }
+            CHECK(e->Evaluate(&error));
+            for (size_t i = 0; i < nodes.size(); ++i) {
+                RigExecPropertyMathParams<float> params;
+                params.op = nodes[i].op;
+                params.value = values[i][1];
+                params.min = values[i][2];
+                params.max = values[i][3];
+                params.weight = values[i][4];
+                CHECK(SameBits(
+                    *static_cast<const float *>(e->GetOutput(nodes[i].out)),
+                    RigExecApplyFloatMath(values[i][0], params)));
+            }
+        }
+    }
+}
+
 /// Add then clamp, wired port to port, is the two applies in sequence.
 void
 TestChain()
@@ -367,6 +428,7 @@ main()
     TestVec3f();
     TestMatrix();
     TestChain();
+    TestBatches();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

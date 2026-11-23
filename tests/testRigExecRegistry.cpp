@@ -149,9 +149,75 @@ RegisterUnsaved(RigExecOpRegistrar &registrar)
     registrar.Add(UnsavedOp(), desc);
 }
 
+// An op with neither a run nor a batch function, and one with only a
+// batch function.
+RIGEXEC_DEFINE_OP_HANDLE(IdleOp)
+RIGEXEC_DEFINE_PORT_HANDLE(IdlePort)
+RIGEXEC_DEFINE_OP_HANDLE(BatchOnlyOp)
+RIGEXEC_DEFINE_PORT_HANDLE(BatchOnlyPort)
+
+bool
+NoBatch(const RigExecOpBatch &, size_t *, std::string *)
+{
+    return true;
+}
+
+RigExecOpDesc
+FloatOutDesc(const char *name, const RigExecPortDesc *ports)
+{
+    RigExecOpDesc d;
+    d.nameSpace = "test";
+    d.name = name;
+    d.ports = ports;
+    d.portCount = 1;
+    return d;
+}
+
+void
+RegisterIdle(RigExecOpRegistrar &registrar)
+{
+    static const RigExecPortDesc ports[] = {
+        {&IdlePort(), &fakeTypes::Float(), kRigExecPortOutput, "out"}};
+    static const RigExecOpDesc desc = FloatOutDesc("Idle", ports);
+    registrar.Add(IdleOp(), desc);
+}
+
+void
+RegisterBatchOnly(RigExecOpRegistrar &registrar)
+{
+    static const RigExecPortDesc ports[] = {
+        {&BatchOnlyPort(), &fakeTypes::Float(), kRigExecPortOutput, "out"}};
+    static const RigExecOpDesc desc = [] {
+        RigExecOpDesc d = FloatOutDesc("BatchOnly", ports);
+        d.runBatch = &NoBatch;
+        return d;
+    }();
+    registrar.Add(BatchOnlyOp(), desc);
+}
+
 void
 TestValidateErrors(const RigExecRegistryInit &good)
 {
+    {
+        RigExecOpLibraryDesc bad;
+        bad.name = "idle";
+        bad.registerOps = &RegisterIdle;
+        RigExecRegistryInit init = good;
+        init.opLibraries.push_back(&bad);
+        std::vector<std::string> errors;
+        CHECK(!RigExecRegistry::Validate(init, &errors));
+        CHECK(Mentions(errors, "op test:Idle: no run or batch function"));
+    }
+    {
+        RigExecOpLibraryDesc batchOnly;
+        batchOnly.name = "batchOnly";
+        batchOnly.registerOps = &RegisterBatchOnly;
+        RigExecRegistryInit init = good;
+        init.opLibraries.push_back(&batchOnly);
+        std::vector<std::string> errors;
+        CHECK(RigExecRegistry::Validate(init, &errors));
+        CHECK(errors.empty());
+    }
     {
         RigExecOpLibraryDesc bad;
         bad.name = "unsaved";
@@ -258,6 +324,24 @@ TestInitialize(const RigExecRegistryInit &init)
     CHECK(
         offset.desc->run(nullptr, nullptr, {offsetIn, offsetOut, 2}, nullptr));
     CHECK(out.x == 3.0f && out.y == 5.0f && out.z == 7.0f);
+
+    // An op with only run is driven per instance by the library's batch
+    // loop, which skips inactive instances.
+    fakeTypes::Vec3 first{}, second{};
+    const void *batchIn[4] = {&in, nullptr, &mid, nullptr};
+    void *batchOut[4] = {nullptr, &first, nullptr, &second};
+    const char active[2] = {1, 0};
+    RigExecOpBatch batch;
+    batch.op = offset.desc;
+    batch.count = 2;
+    batch.active = active;
+    batch.portCount = 2;
+    batch.inputs = batchIn;
+    batch.outputs = batchOut;
+    size_t failed = 0;
+    CHECK(offset.runBatch && offset.runBatch(batch, &failed, nullptr));
+    CHECK(first.x == 2.0f && first.y == 3.0f && first.z == 4.0f);
+    CHECK(second.x == 0.0f && second.y == 0.0f && second.z == 0.0f);
 
     std::vector<std::string> again;
     CHECK(!RigExecRegistry::Initialize(init, &again));
