@@ -98,8 +98,9 @@ PointsPath(const UsdStageRefPtr &stage, const UsdPrim &prim,
     }
     return paths[0];
 }
-// The frozen run's per-leaf sample keys, interned once at load. A weight
-// Volumes also declare the sampled falloff input beside the point sets and tokens.
+// The frozen run's per-leaf sample keys, interned once at load: one per
+// field leaf, the three point sets, the two plane tokens and a volume's
+// sampled falloff.
 const std::array<TfToken, 6> _fieldLeafKeys = {
     _weightFieldTokens->frozenWeightFieldLeaf0,
     _weightFieldTokens->frozenWeightFieldLeaf1,
@@ -107,13 +108,6 @@ const std::array<TfToken, 6> _fieldLeafKeys = {
     _weightFieldTokens->frozenWeightFieldLeaf3,
     _weightFieldTokens->frozenWeightFieldLeaf4,
     _weightFieldTokens->frozenWeightFieldLeaf5};
-TfToken
-FieldLeafKey(size_t k)
-{
-    return k < _fieldLeafKeys.size()
-               ? _fieldLeafKeys[k]
-               : TfToken("frozenWeightField:leaf" + std::to_string(k));
-}
 float
 Scalar(const Baked &B, const Field &field, int object, int member,
        float fallback)
@@ -215,7 +209,7 @@ RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator,
         object.fieldFrozenKeys.clear();
         for (size_t k = 0; k < object.fieldLeaves.decl.keys.size(); ++k)
             object.fieldFrozenKeys.push_back(
-                object.path.AppendProperty(FieldLeafKey(k)));
+                object.path.AppendProperty(_fieldLeafKeys[k]));
         RigExecBakedBindPathLeaves(B.stage, &object.fieldLeaves);
         RigExecWeightRecord record;
         record.name = object.fieldName;

@@ -647,8 +647,9 @@ struct RigExecBakedHeadLeaf {
     uint64_t editSerial = 0;
     /// The key a frozen job samples it under, set at Build for a leaf whose
     /// type matches (`<prim>.frozenChainOwn:<name>` for a chain target's own
-    /// value, `<prim>.frozenChainHop:<name>` otherwise); empty for a leaf
-    /// that never holds a value. Never `path`: a reader binding whose head
+    /// value, `<prim>.frozenChainHop:<name>` for another chain read, and
+    /// `<attribute>[/frozenWeightHop]` for a weight scalar read's leaf);
+    /// empty for a leaf that never holds a value. Never `path`: a reader binding whose head
     /// is a chain target samples the chain's result at that path, and
     /// first-wins lookup would serve one to the other.
     SdfPath frozenKey;

@@ -70,6 +70,9 @@ const TfToken kKeys(SchemaAttrText::inputsKeys);
 const TfToken kTangents(SchemaAttrText::inputsTangents);
 const TfToken kWeightObject(SchemaAttrText::rigExecWeightObject);
 const TfToken kInputElement(RigExecInputElementMetadataName);
+const TfToken kFrozenWeightHopName("frozenWeightHop");
+const SdfPath kFrozenWeightHop =
+    SdfPath::AbsoluteRootPath().AppendChild(kFrozenWeightHopName);
 
 using HeadType = RigExecBakedHeadValueType;
 using Chain = RigExecBakedPropertyChain;
@@ -1204,8 +1207,7 @@ RigExecBakedBuildWeightScalarRead(RigExecBakedProgramImpl *program,
         auto &leaf = B.headLeaves[i];
         if (leaf.typeMatches && leaf.frozenKey.IsEmpty() &&
             leaf.path.IsPropertyPath())
-            leaf.frozenKey = leaf.path.GetPrimPath().AppendProperty(
-                TfToken("frozenWeightHop:" + leaf.path.GetName()));
+            leaf.frozenKey = leaf.path.AppendTarget(kFrozenWeightHop);
     }
     I.leavesFrozen = B.headLeaves.size();
     for (const SdfPath &path : newSlots) {
