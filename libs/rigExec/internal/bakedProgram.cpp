@@ -7,6 +7,7 @@
 #include "rigExec/internal/inputReplay.h"
 
 #include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedBuildAttempt.h"
 #include "rigExec/internal/projectorCaptureNotice.h"
 #include "rigExec/api/sceneDispatch.h"
 #include "rigExec/internal/oracleDispatch.h"
@@ -3080,6 +3081,19 @@ RigExecBakedProgram::_BuildWithSceneCapture(
     }
 }
 
+namespace {
+
+template <class Input>
+void
+_RenumberOverride(Input *input, int first)
+{
+    if (input->overrideIndex >= 0) {
+        input->overrideIndex += first;
+    }
+}
+
+} // namespace
+
 std::unique_ptr<RigExecBakedProgram>
 RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     RigExecRigEvaluator *evaluator, std::vector<std::string> *reasons,
@@ -3094,31 +3108,93 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     if (!evaluator) {
         return nullptr;
     }
-    RigExecRigEvaluator &E = *evaluator;
-    std::map<SdfPath, std::set<SdfPath>> nativeCheckpoints;
+    _BuildAttempt build(*evaluator, &evaluator->_profiler, reasons, scene,
+                        sceneStage, sceneSerial, excludedPoseWriters,
+                        excludedSolverBodies, exclusionProof, cycleSkipReasons);
+    if (!_BuildCheckBakeable(build)) {
+        return nullptr;
+    }
+    _BuildCreateProgram(build);
+    // Where Build spends its time, part by part. The parts run one
+    // after another in this block rather than nested, so they are
+    // marked rather than scoped; see RigExecProfilePhases.
+    build.phases.Next("Bake.entry");
+    _BuildEntry(build);
+    build.phases.Next("Bake.dense_provider_slots");
+    _BuildProviderSlots(build);
+    build.phases.Next("Bake.the_rest_chain_and_the_default-space_ladder");
+    if (!_BuildLadder(build)) {
+        return nullptr;
+    }
+    build.phases.Next("Bake.the_input_binding_table");
+    _BuildInputTable(build);
+    build.phases.Next("Bake.pose_descriptors");
+    _BuildPoseDescriptors(build);
+    build.phases.Next("Bake.publication");
+    _BuildPublication(build);
+    build.phases.Next("Bake.geometry");
+    build.phases.Next("Bake.pose_interpolators");
+    if (!_BuildPoseInterpolators(build)) {
+        return nullptr;
+    }
+    _BuildGeometry(build);
+    build.phases.Next("Bake.the_rest_of_the_invalidation_index");
+    if (!_BuildInvalidationIndex(build)) {
+        return nullptr;
+    }
+    build.phases.Next("Bake.the_step_graph");
+    return _BuildStepGraph(build);
+}
+
+RigExecBakedProgram::_BuildAttempt::_BuildAttempt(
+    RigExecRigEvaluator &E, RigExecProfiler *profiler,
+    std::vector<std::string> *reasons, const RigExecSceneDescriptors *scene,
+    const UsdStageWeakPtr &sceneStage, uint64_t sceneSerial,
+    const std::set<SdfPath> &excludedPoseWriters,
+    const std::set<SdfPath> &excludedSolverBodies,
+    const RigExecOpExclusionProof &exclusionProof,
+    const std::map<SdfPath, std::string> &cycleSkipReasons)
+    : E(E), evaluator(&E), reasons(reasons), scene(scene),
+      sceneStage(sceneStage), sceneSerial(sceneSerial),
+      excludedPoseWriters(excludedPoseWriters),
+      excludedSolverBodies(excludedSolverBodies),
+      exclusionProof(exclusionProof), cycleSkipReasons(cycleSkipReasons),
+      phases(profiler, "compile"), bindPhases(profiler, "compile")
+{
+}
+
+bool
+RigExecBakedProgram::_SnapshotAfter(const RigExecRigEvaluator &E,
+                                    const SdfPath &target,
+                                    const SdfPath &writer)
+{
+    const auto wanted = E._nativePhaseCheckpoints.find(target);
+    return wanted != E._nativePhaseCheckpoints.end() &&
+           wanted->second.count(writer) > 0;
+}
+
+bool
+RigExecBakedProgram::_BuildCheckBakeable(_BuildAttempt &build)
+{
+    auto &reasons = build.reasons;
+    auto &phases = build.phases;
+    auto &bakeableLane = build.bakeableLane;
+    RigExecRigEvaluator &E = build.E;
+    auto &nativeCheckpoints = build.nativeCheckpoints;
     for (const auto &[target, writers] : E._frameChains)
         nativeCheckpoints[target].insert(writers.begin(), writers.end());
-    // Bound here, ahead of IsBakeable, so the profiler exists before the
-    // refusal walk runs. A rig that refuses still costs whatever
-    // IsBakeable spends deciding why, and with `phases` opened only after
-    // that call the cost had nowhere to attribute to -- it showed up as a
-    // gap between Compile.Bake opening and the first Bake.* mark. Marking
-    // it here costs the one branch per mark every other phase already pays.
-    RigExecProfilePhases phases(&E._profiler, "compile");
     // Bakeability walk is a task joined before the ladder commit (which hands
     // out override indices); work before the join writes only the program and
     // `ctx`, discarded on refusal. Refusals in a separate vector, merged in
     // program order; on a refusal only the walk's reasons are returned.
     // Inline when parallel eval is off, in a frozen run, or uncompiled.
-    const bool bakeableBeside = E._rigState.Compiled() &&
-                                RigExecParallelEvaluationEnabled() &&
-                                !RigExecFrozenSerialActive();
-    bool bakeable = true;
-    std::vector<std::string> bakeableReasons;
-    std::vector<std::string> buildReasons;
-    // Declared after everything the task writes, so an exit from anywhere
-    // below destroys the dispatcher, which joins it, before those die.
-    WorkDispatcher bakeableLane;
+    auto &bakeableBeside = build.bakeableBeside;
+    bakeableBeside = E._rigState.Compiled() &&
+                     RigExecParallelEvaluationEnabled() &&
+                     !RigExecFrozenSerialActive();
+    auto &bakeable = build.bakeable;
+    auto &bakeableReasons = build.bakeableReasons;
+    auto &buildReasons = build.buildReasons;
     if (bakeableBeside) {
         bakeableLane.Run([&E, &bakeable, &bakeableReasons] {
             RigExecProfileScope scope(&E._profiler, "Bake.IsBakeable",
@@ -3128,10 +3204,19 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     } else {
         phases.Next("Bake.IsBakeable");
         if (!IsBakeable(E, reasons)) {
-            return nullptr;
+            return false;
         }
     }
-    auto impl = std::make_unique<RigExecBakedProgramImpl>();
+    return true;
+}
+
+void
+RigExecBakedProgram::_BuildCreateProgram(_BuildAttempt &build)
+{
+    auto &evaluator = build.evaluator;
+    RigExecRigEvaluator &E = build.E;
+    auto &impl = build.impl;
+    impl = std::make_unique<RigExecBakedProgramImpl>();
     RigExecBakedProgramImpl &B = *impl;
     B.evaluator = evaluator;
     B.stage = E._stage;
@@ -3167,10 +3252,19 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     B.resolvedInputs = &E._resolvedInputs;
 
     B.profiler = &E._profiler;
-    // Where Build spends its time, part by part. The parts run one
-    // after another in this block rather than nested, so they are
-    // marked rather than scoped; see RigExecProfilePhases.
-    phases.Next("Bake.entry");
+}
+
+void
+RigExecBakedProgram::_BuildEntry(_BuildAttempt &build)
+{
+    auto &reasons = build.reasons;
+    auto &excludedPoseWriters = build.excludedPoseWriters;
+    auto &exclusionProof = build.exclusionProof;
+    auto &cycleSkipReasons = build.cycleSkipReasons;
+    RigExecRigEvaluator &E = build.E;
+    auto &bakeableBeside = build.bakeableBeside;
+    auto &buildReasons = build.buildReasons;
+    RigExecBakedProgramImpl &B = *build.impl;
     B.interactiveOverrides = &E._interactiveOverrides;
     // The roles a range chain's revisions take, and what the geometry Build
     // classifies them from: the standing overrides above and the admitted
@@ -3217,7 +3311,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
         }
     }
 
-    RigExecBakedBuildContext ctx;
+    auto &ctx = build.ctx;
     ctx.program = &B;
     ctx.stage = B.stage;
     ctx.capture = UsdTimeCode::Default();
@@ -3238,12 +3332,9 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     for (const auto &[solverPath, dependencies] : E._solverDependencies) {
         ctx.aggregateSolvers.insert(ctx.aggregateSolvers.end(), solverPath);
     }
-    const UsdTimeCode capture = ctx.capture;
+    auto &capture = build.capture;
+    capture = ctx.capture;
     const std::set<SdfPath> &chainTargets = ctx.chainTargets;
-    auto refuse = [&](const std::string &what, const SdfPath &where) {
-        ctx.Refuse(what, where);
-    };
-    auto slotOf = [&](const SdfPath &path) { return ctx.SlotOf(path); };
 
     // Stage metadata, which arrives as a changed-info notice on the
     // pseudo-root: the up axis an aim constraint resolves against, and the
@@ -3253,8 +3344,14 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     // What a plain Xformable's transform is measured relative to, which is
     // the one prim rigEvaluator.cpp's pose walk measures against too.
     B.assetRoot = B.stage->GetPrimAtPath(B.assetRootPath);
+}
 
-    phases.Next("Bake.dense_provider_slots");
+void
+RigExecBakedProgram::_BuildProviderSlots(_BuildAttempt &build)
+{
+    RigExecRigEvaluator &E = build.E;
+    RigExecBakedProgramImpl &B = *build.impl;
+    auto &ctx = build.ctx;
     // The ordered union of the two families, which is the set the dynamic
     // walk's frame maps hold: the exec-seeded providers and the plain
     // Xformables a constraint targets. Both are already in SdfPath order, so
@@ -3286,7 +3383,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
         }
         B.pathTexts = RigExecBakedSpellPathTexts(B.paths);
     }
-    const int N = int(B.paths.size());
+    auto &N = build.N;
+    N = int(B.paths.size());
     B.parent.assign(N, -1);
     B.propParent.assign(N, -1);
     for (int i = 0; i < N; ++i) {
@@ -3311,11 +3409,29 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
             }
         }
         if (B.parent[i] >= i) {
-            refuse("provider slots are not in namespace DFS order", B.paths[i]);
+            ctx.Refuse("provider slots are not in namespace DFS order",
+                       B.paths[i]);
         }
     }
+}
 
-    phases.Next("Bake.the_rest_chain_and_the_default-space_ladder");
+bool
+RigExecBakedProgram::_BuildLadder(_BuildAttempt &build)
+{
+    auto &reasons = build.reasons;
+    auto &scene = build.scene;
+    auto &sceneStage = build.sceneStage;
+    auto &sceneSerial = build.sceneSerial;
+    auto &bakeableLane = build.bakeableLane;
+    RigExecRigEvaluator &E = build.E;
+    auto &bakeableBeside = build.bakeableBeside;
+    auto &bakeable = build.bakeable;
+    auto &bakeableReasons = build.bakeableReasons;
+    auto &buildReasons = build.buildReasons;
+    RigExecBakedProgramImpl &B = *build.impl;
+    auto &ctx = build.ctx;
+    auto &capture = build.capture;
+    auto &N = build.N;
     // computations.cpp resolves both per provider per evaluation through
     // eight computations. Every channel feeding them is BOUND here, not
     // folded: an ordinary rig binds fifteen constants per provider and the
@@ -3350,7 +3466,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     // typed. Each chunk records into its own shard (RigExecBakedRecordBind) in
     // slot-then-channel order; shards merge in chunk order after the
     // bakeability join, and a refused rig never merges.
-    RigExecProfilePhases bindPhases(&E._profiler, "compile");
+    auto &bindPhases = build.bindPhases;
     bindPhases.Next("Bake.ladder.resolve");
     struct _LadderResolution {
         RigExecBakedInput<GfMatrix4d> posedSpace;
@@ -3381,9 +3497,9 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     // work is cut, never what the merge produces, so it is tuned for cost
     // alone: large enough that a shard's sort has something to amortize,
     // small enough to spread a character's few hundred slots over the pool.
-    const size_t commitChunkSlots = 8;
-    const size_t commitChunks =
-        (size_t(N) + commitChunkSlots - 1) / commitChunkSlots;
+    auto &commitChunkSlots = build.commitChunkSlots;
+    auto &commitChunks = build.commitChunks;
+    commitChunks = (size_t(N) + commitChunkSlots - 1) / commitChunkSlots;
     std::vector<RigExecBakedCommitShard> ladderShards(commitChunks);
     const auto resolveLadderChunks = [&](size_t beginChunk, size_t endChunk) {
         for (size_t k = beginChunk; k < endChunk; ++k) {
@@ -3488,7 +3604,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
                 reasons->insert(reasons->end(), bakeableReasons.begin(),
                                 bakeableReasons.end());
             }
-            return nullptr;
+            return false;
         }
         // The walk passed, so it added nothing; what the slots refused
         // follows it, in the order a serial Build appends them.
@@ -3503,11 +3619,6 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     // override number, which every input the chunk numbered is moved up by.
     const std::vector<int> ladderFirst =
         RigExecBakedMergeCommitShards(&B, &ladderShards);
-    const auto renumber = [](auto *input, int first) {
-        if (input->overrideIndex >= 0) {
-            input->overrideIndex += first;
-        }
-    };
     for (int i = 0; i < N; ++i) {
         if (B.slotKind[size_t(i)] != RigExecBakedSlotKind::FirstFramePose) {
             // An xform-derived slot has no rest chain and no default-space
@@ -3535,21 +3646,21 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
         _LadderResolution &out = ladderResolved[size_t(i)];
         const int first = ladderFirst[size_t(i) / commitChunkSlots];
         RigExecBakedProgramImpl::Ladder &ladder = B.ladders[size_t(i)];
-        renumber(&out.posedSpace, first);
+        _RenumberOverride(&out.posedSpace, first);
         ladder.posedSpace = std::move(out.posedSpace);
-        renumber(&out.restSpace, first);
+        _RenumberOverride(&out.restSpace, first);
         ladder.restSpace = std::move(out.restSpace);
-        renumber(&out.defaultSpace, first);
+        _RenumberOverride(&out.defaultSpace, first);
         ladder.defaultSpace = std::move(out.defaultSpace);
-        renumber(&out.parentSpace, first);
+        _RenumberOverride(&out.parentSpace, first);
         ladder.parentSpace = std::move(out.parentSpace);
-        renumber(&out.parentDefaultSpace, first);
+        _RenumberOverride(&out.parentDefaultSpace, first);
         ladder.parentDefaultSpace = std::move(out.parentDefaultSpace);
-        renumber(&out.avarDefaultSpace, first);
+        _RenumberOverride(&out.avarDefaultSpace, first);
         ladder.avarDefaultSpace = std::move(out.avarDefaultSpace);
-        renumber(&out.posedDefaultSpace, first);
+        _RenumberOverride(&out.posedDefaultSpace, first);
         ladder.posedDefaultSpace = std::move(out.posedDefaultSpace);
-        renumber(&out.rotationSign, first);
+        _RenumberOverride(&out.rotationSign, first);
         ladder.rotationSign = std::move(out.rotationSign);
         const UsdPrim provider = B.stage->GetPrimAtPath(B.paths[size_t(i)]);
         const auto connected = [&provider](const TfToken &name) {
@@ -3568,12 +3679,12 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
         ladder.parentDefaultSpaceConnected = connected(kParentDefaultSpace);
         ladder.avarDefaultSpaceConnected = connected(kAvarDefaultSpace);
         ladder.posedDefaultSpaceConnected = connected(kPosedDefaultSpace);
-        renumber(&out.rotationOrder, first);
+        _RenumberOverride(&out.rotationOrder, first);
         ladder.rotationOrder = std::move(out.rotationOrder);
         for (int c = 0; c < 6; ++c) {
-            renumber(&out.restAvars[c], first);
+            _RenumberOverride(&out.restAvars[c], first);
             ladder.restAvars[c] = std::move(out.restAvars[c]);
-            renumber(&out.defaultAvars[c], first);
+            _RenumberOverride(&out.defaultAvars[c], first);
             ladder.defaultAvars[c] = std::move(out.defaultAvars[c]);
         }
     }
@@ -3640,7 +3751,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     // reads leaves, as the prologue does, so the ones bound so far are
     // numbered and sampled first; the end of Build numbers them all again.
     for (const SdfPath &provider : E._interveningXformProviders) {
-        const int slot = slotOf(provider);
+        const int slot = ctx.SlotOf(provider);
         if (slot < 0)
             continue;
         B.interveningSlots.push_back(slot);
@@ -3658,9 +3769,9 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
         std::string error;
         if (!RigExecBakedBuildSpaces(&B, capture, &error, scene, sceneStage,
                                      sceneSerial)) {
-            refuse("provider expressions could not translate: " + error,
-                   E._rigPath);
-            return nullptr;
+            ctx.Refuse("provider expressions could not translate: " + error,
+                       E._rigPath);
+            return false;
         }
     }
     RigExecBakedNumberLeaves(&B);
@@ -3690,8 +3801,18 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     // against.
     B.xformBase.assign(B.xformSlots.size(), GfMatrix4d(1.0));
     B.lastXformBase.assign(B.xformSlots.size(), GfMatrix4d(1.0));
+    return true;
+}
 
-    phases.Next("Bake.the_input_binding_table");
+void
+RigExecBakedProgram::_BuildInputTable(_BuildAttempt &build)
+{
+    RigExecBakedProgramImpl &B = *build.impl;
+    auto &ctx = build.ctx;
+    auto &N = build.N;
+    auto &bindPhases = build.bindPhases;
+    auto &commitChunkSlots = build.commitChunkSlots;
+    auto &commitChunks = build.commitChunks;
     B.avarConstants.assign(size_t(N) * 11, 0.0);
     // Eleven channels on every provider, each an independent read of the
     // composed stage, and on a character this is one of the two loops Build
@@ -3766,7 +3887,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
         for (int c = 0; c < 11; ++c) {
             const size_t slot = size_t(i) * 11 + size_t(c);
             _AvarResolution &out = resolved[slot];
-            renumber(&out.input, first);
+            _RenumberOverride(&out.input, first);
             B.avarConstants[slot] = out.input.constant;
             if (out.input.varying) {
                 B.avarBindings.push_back({slot, std::move(out.input)});
@@ -3782,17 +3903,18 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     RigExecBakedIndexAvarBindings(&B);
     B.avars = B.avarConstants;
     bindPhases.Close();
+}
 
-    phases.Next("Bake.pose_descriptors");
+void
+RigExecBakedProgram::_BuildPoseDescriptors(_BuildAttempt &build)
+{
+    auto &excludedPoseWriters = build.excludedPoseWriters;
+    RigExecRigEvaluator &E = build.E;
+    RigExecBakedProgramImpl &B = *build.impl;
+    auto &ctx = build.ctx;
     // Every writer owns a pose version. Matrix checkpoints expose only the
     // named pairs requested by consumers, preserving their skipped-record fallback.
-    const auto snapshotAfter = [&E](const SdfPath &target,
-                                    const SdfPath &writer) {
-        const auto wanted = E._nativePhaseCheckpoints.find(target);
-        return wanted != E._nativePhaseCheckpoints.end() &&
-               wanted->second.count(writer) > 0;
-    };
-    std::vector<RigExecBakedWalkEntry> walk;
+    auto &walk = build.walk;
     struct PoseDomainEntry {
         bool solverBatch;
         size_t index;
@@ -3836,7 +3958,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
                 std::vector<char> snapshotJoints;
                 for (const auto &[joint, element] : entry.solverJoints.back()) {
                     snapshotJoints.push_back(
-                        snapshotAfter(joint, solverPath) ? 1 : 0);
+                        _SnapshotAfter(E, joint, solverPath) ? 1 : 0);
                 }
                 entry.solverSnapshotJoints.push_back(std::move(snapshotJoints));
                 // The live-rest half of the same binding, carried across so
@@ -3869,7 +3991,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
             entry.constraint.targets = fc.targets;
             for (const SdfPath &target : fc.targets) {
                 entry.constraint.snapshotTargets.push_back(
-                    snapshotAfter(target, fc.moverPath) ? 1 : 0);
+                    _SnapshotAfter(E, target, fc.moverPath) ? 1 : 0);
             }
             entry.constraint.pointsTarget = fc.pointsTarget;
             entry.constraint.ikChain = fc.ikChain;
@@ -3929,21 +4051,27 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     B.lastNativeFrames = B.nativeFrames;
     B.nativeFrameOk.assign(B.nativeSources.size(), 0);
     B.lastNativeFrameOk = B.nativeFrameOk;
+}
 
-    phases.Next("Bake.publication");
+void
+RigExecBakedProgram::_BuildPublication(_BuildAttempt &build)
+{
+    RigExecRigEvaluator &E = build.E;
+    RigExecBakedProgramImpl &B = *build.impl;
+    auto &ctx = build.ctx;
     for (const SdfPath &joint : E._jointPaths) {
-        B.jointSlots.push_back(slotOf(joint));
+        B.jointSlots.push_back(ctx.SlotOf(joint));
         B.jointPaths.push_back(joint);
     }
     for (const SdfPath &control : E._controlPaths) {
-        B.controlSlots.push_back(slotOf(control));
+        B.controlSlots.push_back(ctx.SlotOf(control));
         B.controlPaths.push_back(control);
     }
     for (const SdfPath &solverPath : E._nativeGuideSolvers) {
         const auto it = B.solverIndex.find(solverPath);
         if (it == B.solverIndex.end()) {
             // Walk + guide pass cover this map exactly.
-            refuse("solver publishes guides but was not baked", solverPath);
+            ctx.Refuse("solver publishes guides but was not baked", solverPath);
             continue;
         }
         B.solverArrays.emplace_back(solverPath, it->second);
@@ -3986,9 +4114,14 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     B.solverArraysAscending = publishOrder(solverPaths, &B.solverPublishOrder);
     // Sized at Build so the epilogue's two passes allocate nothing.
     B.jointMatrixPublished.assign(B.jointPaths.size(), 0);
+}
 
-    phases.Next("Bake.geometry");
-    phases.Next("Bake.pose_interpolators");
+bool
+RigExecBakedProgram::_BuildPoseInterpolators(_BuildAttempt &build)
+{
+    RigExecRigEvaluator &E = build.E;
+    RigExecBakedProgramImpl &B = *build.impl;
+    auto &ctx = build.ctx;
     // Geometry readers bind these compiled weight output identities.
     RigExecPathText interpolatorText;
     for (const RigExecRigEvaluator::_PoseInterpolator &record :
@@ -4113,17 +4246,19 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
         const auto &captured = *sw.descriptor;
         RigExecBakedProgramImpl::SpaceSwitch out;
         out.kernelRecord = captured.record;
-        out.slot = slotOf(captured.target);
+        out.slot = ctx.SlotOf(captured.target);
         if (out.slot < 0)
             continue;
         for (size_t k = 0; k < captured.sources.size(); ++k) {
             const auto &source = captured.sources[k];
-            out.sourceSlots.push_back(source.IsEmpty() ? -1 : slotOf(source));
+            out.sourceSlots.push_back(source.IsEmpty() ? -1
+                                                       : ctx.SlotOf(source));
             out.filters.push_back(
                 RigExecRotationFilter(captured.record.filters[k]));
         }
         out.twistAxis = captured.record.twistAxis;
-        out.spaceSlot = captured.space.IsEmpty() ? -1 : slotOf(captured.space);
+        out.spaceSlot =
+            captured.space.IsEmpty() ? -1 : ctx.SlotOf(captured.space);
         for (size_t axis = 0; axis < 3; ++axis) {
             out.affectTranslation[axis] =
                 captured.record.affectTranslation[axis];
@@ -4186,15 +4321,16 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
             ctx.Fold(prim, name);
         const auto targets =
             source.Targets(path.AppendProperty(_tokens->rigExecTarget));
-        if (targets.size() != 1 || slotOf(targets.front()) < 0) {
-            refuse("auto clavicle requires one provider target", path);
-            return nullptr;
+        if (targets.size() != 1 || ctx.SlotOf(targets.front()) < 0) {
+            ctx.Refuse("auto clavicle requires one provider target", path);
+            return false;
         }
         RigExecBakedProgramImpl::AutoClavicle ac;
-        ac.slot = slotOf(targets.front());
+        ac.slot = ctx.SlotOf(targets.front());
         if (B.autoClavicleBySlot[size_t(ac.slot)] >= 0) {
-            refuse("multiple auto clavicles target the same provider", path);
-            return nullptr;
+            ctx.Refuse("multiple auto clavicles target the same provider",
+                       path);
+            return false;
         }
         RigExecValueId next = 1;
         RigExecSceneGraphBindingContext link;
@@ -4204,7 +4340,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
                            RigExecValueId &id, std::string *why) {
             id = next++;
             if (request.domain == RigExecSceneValueDomain::Pose) {
-                const int slot = slotOf(request.source);
+                const int slot = ctx.SlotOf(request.source);
                 if (slot < 0) {
                     if (why)
                         *why = "missing auto clavicle frame: " +
@@ -4257,8 +4393,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
         if (!RigExecDispatchBindAutoClavicle(*B.sceneDescriptors, path, link, 0,
                                              UINT64_MAX, &ac.operation,
                                              &invalid)) {
-            refuse(invalid, path);
-            return nullptr;
+            ctx.Refuse(invalid, path);
+            return false;
         }
         ac.operation.output = next++;
         ac.values = RigExecTypedValueStore(size_t(next));
@@ -4270,14 +4406,23 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     {
         std::string invalid;
         if (!RigExecBakedBindSpaceSwitchVersions(&B, &invalid)) {
-            refuse(invalid, E._rigPath);
-            return nullptr;
+            ctx.Refuse(invalid, E._rigPath);
+            return false;
         }
     }
+    return true;
+}
 
+void
+RigExecBakedProgram::_BuildGeometry(_BuildAttempt &build)
+{
+    auto &excludedSolverBodies = build.excludedSolverBodies;
+    RigExecRigEvaluator &E = build.E;
+    RigExecBakedProgramImpl &B = *build.impl;
+    auto &ctx = build.ctx;
     std::vector<RigExecBakedChainSpec> chainSpecs;
     const auto revisionSpec =
-        [&snapshotAfter](const RigExecRigEvaluator::_GraphRevision &r) {
+        [&E](const RigExecRigEvaluator::_GraphRevision &r) {
             RigExecBakedRevisionSpec spec;
             spec.moverPath = r.moverPath;
             spec.target = r.target;
@@ -4286,7 +4431,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
             spec.transformFinalPhase = r.transformFinalPhase;
             spec.transformPosedPoints = r.transformPosedPoints;
             spec.skinTopologyFixed = r.skinTopologyFixed;
-            spec.snapshotAfter = snapshotAfter(r.target, r.moverPath);
+            spec.snapshotAfter = _SnapshotAfter(E, r.target, r.moverPath);
             return spec;
         };
     const auto keepRevision =
@@ -4325,8 +4470,16 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
         chainSpecs.push_back(std::move(spec));
     }
     RigExecBakedBuildGeometry(&ctx, chainSpecs);
+}
 
-    phases.Next("Bake.the_rest_of_the_invalidation_index");
+bool
+RigExecBakedProgram::_BuildInvalidationIndex(_BuildAttempt &build)
+{
+    RigExecRigEvaluator &E = build.E;
+    auto &nativeCheckpoints = build.nativeCheckpoints;
+    RigExecBakedProgramImpl &B = *build.impl;
+    auto &ctx = build.ctx;
+    auto &N = build.N;
     // Property chains run INSIDE the program, off the authored stage through
     // the generation's resolved inputs, so their movers are read live like a
     // geometry mover: nothing captured, and an override on one places itself.
@@ -4383,14 +4536,14 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
          ++object)
         B.weightObjects[object].envelopeOnly = true;
     if (!ctx.ok)
-        return nullptr;
+        return false;
     _BindPropertyChains(E, &B);
     {
         std::string error;
         if (!RigExecBakedBindOwnPropertySpaces(&B, &error)) {
-            refuse("own property space delivery could not bind: " + error,
-                   E._rigPath);
-            return nullptr;
+            ctx.Refuse("own property space delivery could not bind: " + error,
+                       E._rigPath);
+            return false;
         }
     }
     RigExecBakedBuildPropertySteps(&B);
@@ -4409,8 +4562,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     {
         std::string invalid;
         if (!RigExecBakedBuildWeightFields(E, &B, &invalid)) {
-            refuse(invalid, E._rigPath);
-            return nullptr;
+            ctx.Refuse(invalid, E._rigPath);
+            return false;
         }
     }
     // Bakeability accepted every intervening-Xform candidate BECAUSE the
@@ -4441,7 +4594,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     B.base.resize(N);
     B.fin.resize(N);
     if (!ctx.ok) {
-        return nullptr;
+        return false;
     }
 
     // The volumes this program places and publishes: the walk's, at their
@@ -4459,7 +4612,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
         }
         for (const SdfPath &path : _WalkVolumesWithoutASlot(
                  programVolumes, E._nativeVolumeProviders)) {
-            refuse("a volume weight the walk places has no program slot", path);
+            ctx.Refuse("a volume weight the walk places has no program slot",
+                       path);
         }
     }
     // The mirror of IsBakeable's solver-checkpoint guard, so a forced bake
@@ -4467,27 +4621,36 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     for (const SdfPath &solver : _SolverCheckpointsWithoutAnOutput(
              nativeCheckpoints, E._solverDependencies, E._solverJoints,
              _BatchedSolvers(E._solverBatches))) {
-        refuse("read phase names a solver checkpoint the walk does not commit "
-               "for that joint",
-               solver);
+        ctx.Refuse(
+            "read phase names a solver checkpoint the walk does not commit "
+            "for that joint",
+            solver);
     }
     if (!ctx.ok)
-        return nullptr;
+        return false;
 
     for (const auto &chain : B.chains) {
         for (const auto &revision : chain.revisions)
             if (!revision.leaves.decl.assembles)
-                refuse("mover has no declared stage-free API4 assembly",
-                       revision.moverPath);
+                ctx.Refuse("mover has no declared stage-free API4 assembly",
+                           revision.moverPath);
         for (const auto &derived : chain.derived)
             if (!derived.revision.leaves.decl.assembles)
-                refuse("mover has no declared stage-free API4 assembly",
-                       derived.revision.moverPath);
+                ctx.Refuse("mover has no declared stage-free API4 assembly",
+                           derived.revision.moverPath);
     }
     if (!ctx.ok)
-        return nullptr;
+        return false;
+    return true;
+}
 
-    phases.Next("Bake.the_step_graph");
+std::unique_ptr<RigExecBakedProgram>
+RigExecBakedProgram::_BuildStepGraph(_BuildAttempt &build)
+{
+    RigExecRigEvaluator &E = build.E;
+    auto &impl = build.impl;
+    RigExecBakedProgramImpl &B = *build.impl;
+    auto &ctx = build.ctx;
     // Last, because it is derived from everything above: the steps are the
     // straight line's pieces in the straight line's order, and the edges
     // between them follow from the slot ranges each piece declares. Built
@@ -4498,9 +4661,9 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     graphPhases.Next("Bake.the_step_graph.pose_steps");
     RigExecBakedBuildPoseSteps(&B);
     if (!B.providerRefreshError.empty()) {
-        refuse("connected provider refresh could not bind: " +
-                   B.providerRefreshError,
-               E._rigPath);
+        ctx.Refuse("connected provider refresh could not bind: " +
+                       B.providerRefreshError,
+                   E._rigPath);
         return nullptr;
     }
     // The rest and ladder composes as head ops, one pair per compose group,
@@ -4527,7 +4690,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     {
         std::string invalid;
         if (!RigExecBakedPruneProviderProgram(&B, &invalid)) {
-            refuse("provider pruning failed: " + invalid, E._rigPath);
+            ctx.Refuse("provider pruning failed: " + invalid, E._rigPath);
             return nullptr;
         }
     }
@@ -4542,7 +4705,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     {
         std::string invalid;
         if (!RigExecBakedFinalizeCrossDomainReads(&B, &invalid)) {
-            refuse("cross-domain input could not bind: " + invalid, E._rigPath);
+            ctx.Refuse("cross-domain input could not bind: " + invalid,
+                       E._rigPath);
             return nullptr;
         }
     }
@@ -4794,7 +4958,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     {
         std::string invalid;
         if (!RigExecBakedCompileOpGraph(&B, &invalid)) {
-            refuse("native operation graph is invalid: " + invalid, E._rigPath);
+            ctx.Refuse("native operation graph is invalid: " + invalid,
+                       E._rigPath);
             return nullptr;
         }
         for (size_t i = 0; i < B.steps.size(); ++i) {
@@ -4805,14 +4970,15 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
         }
         RigExecBakedAssignStepCosts(&B);
         if (!RigExecBakedTranslateOpGraph(&B, &invalid)) {
-            refuse("native operation clusters could not translate: " + invalid,
-                   E._rigPath);
+            ctx.Refuse("native operation clusters could not translate: " +
+                           invalid,
+                       E._rigPath);
             return nullptr;
         }
         RigExecBakedBuildCones(&B);
         if (!RigExecBakedSettleWindowedOps(&B, &invalid)) {
-            refuse("windowed operations could not settle: " + invalid,
-                   E._rigPath);
+            ctx.Refuse("windowed operations could not settle: " + invalid,
+                       E._rigPath);
             return nullptr;
         }
     }

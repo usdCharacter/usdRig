@@ -567,6 +567,28 @@ private:
         const std::set<SdfPath> &excludedSolverBodies,
         const RigExecOpExclusionProof &exclusionProof,
         const std::map<SdfPath, std::string> &cycleSkipReasons);
+
+    /// The state one build's steps share.
+    struct _BuildAttempt;
+
+    // The steps of _BuildWithSceneCaptureAttempt, in the order it runs them.
+    // A step that returns false has refused the build.
+    static bool _BuildCheckBakeable(_BuildAttempt &build);
+    static void _BuildCreateProgram(_BuildAttempt &build);
+    static void _BuildEntry(_BuildAttempt &build);
+    static void _BuildProviderSlots(_BuildAttempt &build);
+    static bool _BuildLadder(_BuildAttempt &build);
+    static void _BuildInputTable(_BuildAttempt &build);
+    static void _BuildPoseDescriptors(_BuildAttempt &build);
+    static void _BuildPublication(_BuildAttempt &build);
+    static bool _BuildPoseInterpolators(_BuildAttempt &build);
+    static void _BuildGeometry(_BuildAttempt &build);
+    static bool _BuildInvalidationIndex(_BuildAttempt &build);
+    static std::unique_ptr<RigExecBakedProgram>
+    _BuildStepGraph(_BuildAttempt &build);
+    /// Whether the compiled rig asked for \p writer's version of \p target.
+    static bool _SnapshotAfter(const RigExecRigEvaluator &E,
+                               const SdfPath &target, const SdfPath &writer);
     /// Binds \p evaluator's property chains into \p program's head tier
     /// (bakedProperties.cpp): chains, records, walks, head leaves and
     /// override slots. Build only.
