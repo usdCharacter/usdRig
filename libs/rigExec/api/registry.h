@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace rigExec {
@@ -163,7 +165,15 @@ struct RigExecOpPayloadHandling {
     bool (*equal)(const void *a, const void *b) = nullptr;
 };
 
-/// Payload handling for a copyable \p T (no hash or equality).
+template <class T, class = void>
+struct RigExecPayloadComparable : std::false_type {};
+template <class T>
+struct RigExecPayloadComparable<
+    T, std::void_t<decltype(std::declval<const T &>() ==
+                            std::declval<const T &>())>> : std::true_type {};
+
+/// Payload handling for a copyable \p T: equality where \p T has
+/// operator==, no hash.
 template <class T>
 RigExecOpPayloadHandling
 RigExecPayloadHandlingFor()
@@ -179,6 +189,10 @@ RigExecPayloadHandlingFor()
                                   static_cast<T *>(dst));
     };
     h.destroy = [](void *dst) { std::destroy_at(static_cast<T *>(dst)); };
+    if constexpr (RigExecPayloadComparable<T>::value)
+        h.equal = [](const void *a, const void *b) {
+            return *static_cast<const T *>(a) == *static_cast<const T *>(b);
+        };
     return h;
 }
 

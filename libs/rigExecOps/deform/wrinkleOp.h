@@ -14,6 +14,11 @@ namespace rigExecOps {
 /// What a wrinkle is configured with at compile.
 struct WrinklePayload {
     rigExec::RigExecWrinkleSettings settings;
+
+    bool operator==(const WrinklePayload &o) const
+    {
+        return settings == o.settings;
+    }
 };
 
 const rigExec::RigExecOpHandle &Wrinkle();

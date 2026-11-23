@@ -15,6 +15,11 @@ namespace rigExecOps {
 /// What a surface projection is configured with at compile.
 struct SurfaceProjectPayload {
     rigExec::RigExecSurfaceSnapSettings settings;
+
+    bool operator==(const SurfaceProjectPayload &o) const
+    {
+        return settings == o.settings;
+    }
 };
 
 const rigExec::RigExecOpHandle &SurfaceProject();

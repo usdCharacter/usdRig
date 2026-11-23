@@ -17,6 +17,11 @@ struct SkinPayload {
     SkinMethod method = SkinMethod::ClassicLinear;
     /// Influence slots per point.
     int elementSize = 1;
+
+    bool operator==(const SkinPayload &o) const
+    {
+        return method == o.method && elementSize == o.elementSize;
+    }
 };
 
 const rigExec::RigExecOpHandle &Skin();

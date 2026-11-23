@@ -56,6 +56,9 @@ RigExecRunGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
                      RigExecGeometryOpRunner &runner,
                      std::vector<GfVec3f> &points, std::string *error)
 {
+    if (!runner.payloadScratch)
+        runner.payloadScratch = RigExecMakeGeometryPayloadScratch();
+    RigExecGeometryPayloadScratch *scratch = runner.payloadScratch.get();
     const bool ready = Ready(
         runner, runner.evaluator && runner.node.op == op,
         [&](RigExecRigDescBuilder &builder) {
@@ -70,12 +73,14 @@ RigExecRunGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
             return channels
                        ? RigExecWriteGeometryBlendInputs(
                              *channels, p, runner.node, base, &points,
-                             points.size(), e, error)
+                             points.size(), e, error, scratch)
                        : RigExecWriteGeometryOpInputs(p, runner.node, &points,
-                                                      points.size(), e, error);
+                                                      points.size(), e, error,
+                                                      scratch);
         },
         [&] {
-            return RigExecGeometryOpNodeStale(op, p, channels, runner.node);
+            return RigExecGeometryOpNodeStale(op, p, channels, runner.node,
+                                              scratch);
         },
         error);
     if (!ready || !runner.evaluator->Evaluate(error))

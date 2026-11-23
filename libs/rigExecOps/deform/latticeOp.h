@@ -20,6 +20,11 @@ namespace rigExecOps {
 struct LatticePayload {
     std::array<int, 3> divisions = {2, 2, 2};
     rigExec::RigExecLatticeSettings settings;
+
+    bool operator==(const LatticePayload &o) const
+    {
+        return divisions == o.divisions && settings == o.settings;
+    }
 };
 
 const rigExec::RigExecOpHandle &Lattice();

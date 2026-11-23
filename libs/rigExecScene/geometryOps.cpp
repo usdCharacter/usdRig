@@ -14,15 +14,20 @@
 #include "rigExecOps/deform/wrinkleOp.h"
 #include "rigExecRigTypes/rigTypes.h"
 
+#include "rigExec/api/registry.h"
+
 #include "pxr/base/tf/staticTokens.h"
 
 #include <algorithm>
+#include <memory>
+#include <optional>
 
 namespace rigExec {
 
 namespace {
 
-TF_DEFINE_PRIVATE_TOKENS(_tokens, (sparse)(strict)(clamp));
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+                         (sparse)(strict)(clamp)(classicLinear)(dualQuaternion));
 
 using rigExecStd::Mat4d;
 using rigExecStd::RigExecArray;
@@ -135,53 +140,132 @@ SkinElementSize(const RigExecMoverParameters &p)
     return p.skinTopology ? p.skinTopology->elementSize : p.skinElementSize;
 }
 
-/// The fields of \p p that \p op's payload or port choice reads.
-RigExecMoverParameters
-PayloadFields(RigExecRevisionOp op, const RigExecMoverParameters &p)
+} // namespace
+
+/// One payload of each op that has one, filled from a packet by
+/// BuildPayload.
+struct RigExecGeometryPayloadScratch {
+    rigExecOps::MatrixDeformPayload matrix;
+    rigExecOps::SkinPayload skin;
+    rigExecOps::DeltaMushPayload mush;
+    rigExecOps::WrinklePayload wrinkle;
+    rigExecOps::LatticePayload lattice;
+    rigExecOps::SurfaceProjectPayload surface;
+    rigExecOps::WirePayload wire;
+    rigExecOps::NormalsPayload normals;
+    rigExecOps::BlendShapePayload blend;
+};
+
+void
+RigExecGeometryPayloadScratchDeleter::operator()(
+    RigExecGeometryPayloadScratch *scratch) const
 {
-    RigExecMoverParameters f;
+    std::default_delete<RigExecGeometryPayloadScratch>()(scratch);
+}
+
+RigExecGeometryPayloadScratchPtr
+RigExecMakeGeometryPayloadScratch()
+{
+    return RigExecGeometryPayloadScratchPtr(
+        std::make_unique<RigExecGeometryPayloadScratch>().release());
+}
+
+namespace {
+
+/// Sets \p payload to \p op's payload from \p p, kept in \p s, or to null
+/// for an op without one. False for a skinning method the op does not
+/// know. A blend shape's channels are not filled.
+bool
+BuildPayload(RigExecRevisionOp op, const RigExecMoverParameters &p,
+             RigExecGeometryPayloadScratch &s, const void **payload)
+{
+    *payload = nullptr;
     switch (op) {
     case RigExecRevisionOp::Matrix:
-        f.radialWeight = p.radialWeight;
+        s.matrix.radial = p.radialWeight;
+        *payload = &s.matrix;
         break;
     case RigExecRevisionOp::Skin:
-        f.skinningMethod = p.skinningMethod;
-        f.skinElementSize = SkinElementSize(p);
+        if (p.skinningMethod == _tokens->classicLinear)
+            s.skin.method = rigExecOps::SkinMethod::ClassicLinear;
+        else if (p.skinningMethod == _tokens->dualQuaternion)
+            s.skin.method = rigExecOps::SkinMethod::DualQuaternion;
+        else
+            return false;
+        s.skin.elementSize = SkinElementSize(p);
+        *payload = &s.skin;
         break;
     case RigExecRevisionOp::DeltaMush:
-        f.mushIterations = p.mushIterations;
-        f.mushStep = p.mushStep;
-        f.mushPinBorders = p.mushPinBorders;
-        f.mushDistanceWeight = p.mushDistanceWeight;
-        f.mushDisplacement = p.mushDisplacement;
-        f.mushSettings = p.mushSettings;
+        s.mush.iterations = p.mushIterations;
+        s.mush.step = p.mushStep;
+        s.mush.pinBorders = p.mushPinBorders;
+        s.mush.distanceWeight = p.mushDistanceWeight;
+        s.mush.displacement = p.mushDisplacement;
+        s.mush.settings = p.mushSettings;
+        *payload = &s.mush;
         break;
     case RigExecRevisionOp::Wrinkle:
-        f.wrinkleSettings = p.wrinkleSettings;
+        s.wrinkle.settings = p.wrinkleSettings;
+        *payload = &s.wrinkle;
         break;
     case RigExecRevisionOp::Lattice:
-        f.divisions = p.divisions;
-        f.latticeSettings = p.latticeSettings;
+        s.lattice.divisions = {p.divisions[0], p.divisions[1], p.divisions[2]};
+        s.lattice.settings = p.latticeSettings;
+        *payload = &s.lattice;
         break;
     case RigExecRevisionOp::SurfaceProject:
-        f.surfaceSettings = p.surfaceSettings;
+        s.surface.settings = p.surfaceSettings;
+        *payload = &s.surface;
         break;
     case RigExecRevisionOp::Wire:
-        f.curveOrder = p.curveOrder;
-        f.curveKnots = p.curveKnots;
-        f.dropoffDistance = p.dropoffDistance;
+        s.wire.order = p.curveOrder;
+        s.wire.knots = p.curveKnots;
+        s.wire.dropoffDistance = p.dropoffDistance;
+        *payload = &s.wire;
         break;
     case RigExecRevisionOp::RecomputeNormals:
-        f.normalsPerCorner = p.normalsPerCorner;
-        f.normalsLeftHanded = p.normalsLeftHanded;
+        s.normals.perCorner = p.normalsPerCorner;
+        s.normals.leftHanded = p.normalsLeftHanded;
+        *payload = &s.normals;
         break;
     case RigExecRevisionOp::BlendShape:
-        f.blendSurfaceFrame = p.blendSurfaceFrame;
+        s.blend.surfaceFrame = p.blendSurfaceFrame;
+        *payload = &s.blend;
         break;
     default:
         break;
     }
-    return f;
+    return true;
+}
+
+/// Whether \p p builds the payload \p node was built with.
+bool
+SamePayload(RigExecRevisionOp op, const RigExecMoverParameters &p,
+            const RigExecGeometryOpNode &node,
+            RigExecGeometryPayloadScratch *scratch)
+{
+    std::optional<RigExecGeometryPayloadScratch> local;
+    if (!scratch)
+        scratch = &local.emplace();
+    const void *candidate = nullptr;
+    if (!BuildPayload(op, p, *scratch, &candidate))
+        return false;
+    if (!candidate || !node.payload)
+        return !candidate && !node.payload;
+    const RigExecOpHandle *handle = RigExecGeometryOpHandle(op);
+    const auto equal = RigExecRegistry::Get().Op(*handle).desc->payload.equal;
+    return equal && equal(candidate, node.payload.get());
+}
+
+/// Whether a write of \p p into \p node would refuse moved settings.
+bool
+SettingsMoved(const RigExecMoverParameters &p,
+              const RigExecGeometryOpNode &node,
+              RigExecGeometryPayloadScratch *scratch)
+{
+    return !SamePayload(node.op, p, node, scratch) ||
+           (node.op == RigExecRevisionOp::Wire &&
+            Valid(node.weightIndices) != WireSparse(p.weights));
 }
 
 } // namespace
@@ -245,12 +329,14 @@ RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
         return Fail(error, "null geometry op destination");
     RigExecGeometryOpNode result;
     result.op = op;
+    auto kept = std::make_shared<RigExecGeometryPayloadScratch>();
+    const void *payload = nullptr;
+    if (!BuildPayload(op, p, *kept, &payload))
+        return Fail(error, "skin: unknown skinning method");
     const RigExecPortHandle *in = nullptr, *out = nullptr, *envelope = nullptr;
     switch (op) {
     case RigExecRevisionOp::Matrix: {
-        rigExecOps::MatrixDeformPayload payload;
-        payload.radial = p.radialWeight;
-        result.node = builder->AddOp(rigExecOps::MatrixDeform(), &payload);
+        result.node = builder->AddOp(rigExecOps::MatrixDeform(), payload);
         in = &rigExecOps::MatrixDeformPoints();
         out = &rigExecOps::MatrixDeformOut();
         envelope = &rigExecOps::MatrixDeformEnvelope();
@@ -259,16 +345,7 @@ RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
         break;
     }
     case RigExecRevisionOp::Skin: {
-        rigExecOps::SkinPayload payload;
-        // The authored method token is read once, here.
-        if (p.skinningMethod == "classicLinear")
-            payload.method = rigExecOps::SkinMethod::ClassicLinear;
-        else if (p.skinningMethod == "dualQuaternion")
-            payload.method = rigExecOps::SkinMethod::DualQuaternion;
-        else
-            return Fail(error, "skin: unknown skinning method");
-        payload.elementSize = SkinElementSize(p);
-        result.node = builder->AddOp(rigExecOps::Skin(), &payload);
+        result.node = builder->AddOp(rigExecOps::Skin(), payload);
         in = &rigExecOps::SkinPoints();
         out = &rigExecOps::SkinOut();
         envelope = &rigExecOps::SkinEnvelope();
@@ -303,14 +380,7 @@ RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
             builder->BindInput(result.node, rigExecOps::SmoothStrength());
         break;
     case RigExecRevisionOp::DeltaMush: {
-        rigExecOps::DeltaMushPayload payload;
-        payload.iterations = p.mushIterations;
-        payload.step = p.mushStep;
-        payload.pinBorders = p.mushPinBorders;
-        payload.distanceWeight = p.mushDistanceWeight;
-        payload.displacement = p.mushDisplacement;
-        payload.settings = p.mushSettings;
-        result.node = builder->AddOp(rigExecOps::DeltaMush(), &payload);
+        result.node = builder->AddOp(rigExecOps::DeltaMush(), payload);
         in = &rigExecOps::DeltaMushPoints();
         out = &rigExecOps::DeltaMushOut();
         envelope = &rigExecOps::DeltaMushEnvelope();
@@ -325,9 +395,7 @@ RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
         break;
     }
     case RigExecRevisionOp::Wrinkle: {
-        rigExecOps::WrinklePayload payload;
-        payload.settings = p.wrinkleSettings;
-        result.node = builder->AddOp(rigExecOps::Wrinkle(), &payload);
+        result.node = builder->AddOp(rigExecOps::Wrinkle(), payload);
         in = &rigExecOps::WrinklePoints();
         out = &rigExecOps::WrinkleOut();
         envelope = &rigExecOps::WrinkleEnvelope();
@@ -340,10 +408,7 @@ RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
         break;
     }
     case RigExecRevisionOp::Lattice: {
-        rigExecOps::LatticePayload payload;
-        payload.divisions = {p.divisions[0], p.divisions[1], p.divisions[2]};
-        payload.settings = p.latticeSettings;
-        result.node = builder->AddOp(rigExecOps::Lattice(), &payload);
+        result.node = builder->AddOp(rigExecOps::Lattice(), payload);
         in = &rigExecOps::LatticePoints();
         out = &rigExecOps::LatticeOut();
         envelope = &rigExecOps::LatticeEnvelope();
@@ -365,9 +430,7 @@ RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
         break;
     }
     case RigExecRevisionOp::SurfaceProject: {
-        rigExecOps::SurfaceProjectPayload payload;
-        payload.settings = p.surfaceSettings;
-        result.node = builder->AddOp(rigExecOps::SurfaceProject(), &payload);
+        result.node = builder->AddOp(rigExecOps::SurfaceProject(), payload);
         in = &rigExecOps::SurfaceProjectPoints();
         out = &rigExecOps::SurfaceProjectOut();
         envelope = &rigExecOps::SurfaceProjectEnvelope();
@@ -406,11 +469,7 @@ RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
             builder->BindInput(result.node, rigExecOps::GuidePointsFrames());
         break;
     case RigExecRevisionOp::Wire: {
-        rigExecOps::WirePayload payload;
-        payload.order = p.curveOrder;
-        payload.knots = p.curveKnots;
-        payload.dropoffDistance = p.dropoffDistance;
-        result.node = builder->AddOp(rigExecOps::Wire(), &payload);
+        result.node = builder->AddOp(rigExecOps::Wire(), payload);
         in = &rigExecOps::WirePoints();
         out = &rigExecOps::WireOut();
         result.rest =
@@ -430,10 +489,7 @@ RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
         break;
     }
     case RigExecRevisionOp::RecomputeNormals: {
-        rigExecOps::NormalsPayload payload;
-        payload.perCorner = p.normalsPerCorner;
-        payload.leftHanded = p.normalsLeftHanded;
-        result.node = builder->AddOp(rigExecOps::RecomputeNormals(), &payload);
+        result.node = builder->AddOp(rigExecOps::RecomputeNormals(), payload);
         in = &rigExecOps::RecomputeNormalsAuthored();
         out = &rigExecOps::RecomputeNormalsOut();
         envelope = &rigExecOps::RecomputeNormalsEnvelope();
@@ -466,7 +522,8 @@ RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
         result.envelope = builder->BindInput(result.node, *envelope);
     result.outPort = out;
     result.out = builder->BindOutput(result.node, *out);
-    result.payloadFields = PayloadFields(op, p);
+    if (payload)
+        result.payload = std::shared_ptr<const void>(std::move(kept), payload);
     *node = result;
     return true;
 }
@@ -476,13 +533,12 @@ RigExecWriteGeometryOpInputs(const RigExecMoverParameters &p,
                              const RigExecGeometryOpNode &node,
                              const std::vector<GfVec3f> *points,
                              size_t pointCount, RigExecEvaluator *evaluator,
-                             std::string *error)
+                             std::string *error,
+                             RigExecGeometryPayloadScratch *scratch)
 {
     if (!evaluator)
         return Fail(error, "null evaluator");
-    if (!(PayloadFields(node.op, p) == node.payloadFields) ||
-        (node.op == RigExecRevisionOp::Wire &&
-         Valid(node.weightIndices) != WireSparse(p.weights)))
+    if (SettingsMoved(p, node, scratch))
         return Fail(error, "op settings changed");
     if (Valid(node.envelope)) {
         std::vector<float> resolved;
@@ -853,7 +909,10 @@ RigExecAddGeometryBlendOp(const std::vector<RigExecBlendChannel> &channels,
     result.envelope = builder->BindInput(n, rigExecOps::BlendShapeEnvelope());
     result.outPort = &rigExecOps::BlendShapeOut();
     result.out = builder->BindOutput(n, *result.outPort);
-    result.payloadFields = PayloadFields(result.op, p);
+    auto kept = std::make_shared<RigExecGeometryPayloadScratch>();
+    const void *settings = nullptr;
+    BuildPayload(result.op, p, *kept, &settings);
+    result.payload = std::shared_ptr<const void>(std::move(kept), settings);
     *node = std::move(result);
     return true;
 }
@@ -863,7 +922,8 @@ RigExecWriteGeometryBlendInputs(
     const std::vector<RigExecBlendChannel> &channels,
     const RigExecMoverParameters &p, const RigExecGeometryOpNode &node,
     const std::vector<GfVec3f> &base, const std::vector<GfVec3f> *points,
-    size_t pointCount, RigExecEvaluator *evaluator, std::string *error)
+    size_t pointCount, RigExecEvaluator *evaluator, std::string *error,
+    RigExecGeometryPayloadScratch *scratch)
 {
     if (node.op != RigExecRevisionOp::BlendShape)
         return Fail(error, "not a blend shape node");
@@ -879,7 +939,7 @@ RigExecWriteGeometryBlendInputs(
                 return Fail(error, "blend samples changed");
     }
     if (!RigExecWriteGeometryOpInputs(p, node, points, pointCount, evaluator,
-                                      error))
+                                      error, scratch))
         return false;
     RigExecArray<float> weights(channels.size());
     for (size_t c = 0; c < channels.size(); ++c)
@@ -893,11 +953,10 @@ bool
 RigExecGeometryOpNodeStale(RigExecRevisionOp op,
                            const RigExecMoverParameters &p,
                            const std::vector<RigExecBlendChannel> *channels,
-                           const RigExecGeometryOpNode &node)
+                           const RigExecGeometryOpNode &node,
+                           RigExecGeometryPayloadScratch *scratch)
 {
-    if (node.op != op || !(PayloadFields(op, p) == node.payloadFields) ||
-        (op == RigExecRevisionOp::Wire &&
-         Valid(node.weightIndices) != WireSparse(p.weights)))
+    if (node.op != op || SettingsMoved(p, node, scratch))
         return true;
     if (!channels)
         return false;

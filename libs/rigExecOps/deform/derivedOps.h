@@ -16,6 +16,11 @@ namespace rigExecOps {
 struct NormalsPayload {
     bool perCorner = false;  // one per face corner, via Indices
     bool leftHanded = false; // negated
+
+    bool operator==(const NormalsPayload &o) const
+    {
+        return perCorner == o.perCorner && leftHanded == o.leftHanded;
+    }
 };
 
 const rigExec::RigExecOpHandle &RecomputeNormals();

@@ -19,6 +19,7 @@ struct RigExecGeometryOpRunner {
     std::unique_ptr<RigExecEvaluator> evaluator;
     RigExecGeometryOpNode node;
     RigExecGeometryMatrixNode matrix;
+    RigExecGeometryPayloadScratchPtr payloadScratch;
 };
 
 /// Loads the built-in op library. False with \p error when it cannot.

@@ -17,6 +17,12 @@ struct WirePayload {
     int order = 4;
     std::vector<double> knots; // control point count + order
     double dropoffDistance = 0.0;
+
+    bool operator==(const WirePayload &o) const
+    {
+        return order == o.order && knots == o.knots &&
+               dropoffDistance == o.dropoffDistance;
+    }
 };
 
 const rigExec::RigExecOpHandle &Wire();

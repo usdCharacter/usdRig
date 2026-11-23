@@ -20,6 +20,14 @@ struct DeltaMushPayload {
     double distanceWeight = 0.0;
     double displacement = 1.0;
     rigExec::RigExecDeltaMushSettings settings;
+
+    bool operator==(const DeltaMushPayload &o) const
+    {
+        return iterations == o.iterations && step == o.step &&
+               pinBorders == o.pinBorders &&
+               distanceWeight == o.distanceWeight &&
+               displacement == o.displacement && settings == o.settings;
+    }
 };
 
 const rigExec::RigExecOpHandle &DeltaMush();

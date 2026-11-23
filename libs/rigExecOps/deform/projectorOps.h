@@ -21,6 +21,15 @@ struct SurfaceProjectorPayload {
     /// authored ray and reports the missing space.
     bool sourceSpaceNamed = false;
     bool spaceNamed = false;
+
+    bool operator==(const SurfaceProjectorPayload &o) const
+    {
+        return rayOrigin == o.rayOrigin && rayDirection == o.rayDirection &&
+               rayUp == o.rayUp && shaderOffset == o.shaderOffset &&
+               reproject == o.reproject &&
+               sourceSpaceNamed == o.sourceSpaceNamed &&
+               spaceNamed == o.spaceNamed;
+    }
 };
 
 /// The projector's target-local shader matrix: shaderOffset carried by its

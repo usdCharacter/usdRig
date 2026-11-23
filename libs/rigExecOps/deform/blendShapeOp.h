@@ -24,11 +24,28 @@ struct BlendShapeSample {
     float activation = 1.0f;
     std::vector<rigExecStd::Vec3f> points;
     std::shared_ptr<const BlendShapeLayout> layout;
+
+    bool operator==(const BlendShapeSample &o) const
+    {
+        if (activation != o.activation || points != o.points)
+            return false;
+        if (layout == o.layout)
+            return true;
+        return layout && o.layout && layout->offsets == o.layout->offsets &&
+               layout->indices == o.layout->indices &&
+               layout->pointCount == o.layout->pointCount &&
+               layout->valid == o.layout->valid;
+    }
 };
 
 struct BlendShapeChannel {
     /// Sorted by activation, each above zero and distinct.
     std::vector<BlendShapeSample> samples;
+
+    bool operator==(const BlendShapeChannel &o) const
+    {
+        return samples == o.samples;
+    }
 };
 
 /// What a blend shape is configured with at compile.
@@ -36,6 +53,11 @@ struct BlendShapePayload {
     std::vector<BlendShapeChannel> channels;
     /// Carry the deltas from Rest's surface frames to the incoming points'.
     bool surfaceFrame = false;
+
+    bool operator==(const BlendShapePayload &o) const
+    {
+        return channels == o.channels && surfaceFrame == o.surfaceFrame;
+    }
 };
 
 const rigExec::RigExecOpHandle &BlendShape();

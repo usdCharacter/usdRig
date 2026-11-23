@@ -880,6 +880,166 @@ TestRefusals(const Grid &grid)
     CHECK(error.find("settings") != std::string::npos);
 }
 
+// Every setting baked into a payload makes its node stale when it moves,
+// with or without a reused scratch; a per-frame value does not.
+void
+TestStaleSettings(const Grid &grid)
+{
+    using Op = RigExecRevisionOp;
+    using Edit = void (*)(RigExecMoverParameters &);
+    struct Case {
+        const char *label;
+        Op op;
+        const char *kind;
+        Edit setup, moved, perFrame;
+    };
+    const Case cases[] = {
+        {"matrix", Op::Matrix, "matrix", [](RigExecMoverParameters &) {},
+         [](RigExecMoverParameters &p) { p.radialWeight = true; },
+         [](RigExecMoverParameters &p) {
+             p.transform.SetTranslate(GfVec3d(1, 0, 0));
+         }},
+        {"skin method", Op::Skin, "skin",
+         [](RigExecMoverParameters &p) {
+             p.skinningMethod = TfToken("classicLinear");
+             p.skinElementSize = 2;
+         },
+         [](RigExecMoverParameters &p) {
+             p.skinningMethod = TfToken("dualQuaternion");
+         },
+         [](RigExecMoverParameters &p) { p.skinTransforms.resize(3); }},
+        {"skin unknown method", Op::Skin, "skin",
+         [](RigExecMoverParameters &p) {
+             p.skinningMethod = TfToken("classicLinear");
+         },
+         [](RigExecMoverParameters &p) { p.skinningMethod = TfToken("bogus"); },
+         [](RigExecMoverParameters &p) { p.skinWeights = {1.0f}; }},
+        {"skin element size", Op::Skin, "skin",
+         [](RigExecMoverParameters &p) {
+             p.skinningMethod = TfToken("classicLinear");
+             p.skinElementSize = 2;
+         },
+         [](RigExecMoverParameters &p) { p.skinElementSize = 3; },
+         [](RigExecMoverParameters &p) { p.skinIndices = {0, 1}; }},
+        {"deltaMush step", Op::DeltaMush, "deltaMush",
+         [](RigExecMoverParameters &) {},
+         [](RigExecMoverParameters &p) { p.mushStep = 0.25f; },
+         [](RigExecMoverParameters &p) { p.strength = 0.5f; }},
+        {"deltaMush settings", Op::DeltaMush, "deltaMush",
+         [](RigExecMoverParameters &) {},
+         [](RigExecMoverParameters &p) { p.mushSettings.edges = {0, 1}; },
+         [](RigExecMoverParameters &p) {
+             p.mushComputationToTarget.SetTranslate(GfVec3d(0, 1, 0));
+         }},
+        {"wrinkle", Op::Wrinkle, "wrinkle", [](RigExecMoverParameters &) {},
+         [](RigExecMoverParameters &p) {
+             p.wrinkleSettings.bendStiffness = 0.3f;
+         },
+         [](RigExecMoverParameters &p) { p.restPoints.resize(2); }},
+        {"lattice divisions", Op::Lattice, "lattice",
+         [](RigExecMoverParameters &p) { p.divisions = GfVec3i(2, 3, 2); },
+         [](RigExecMoverParameters &p) { p.divisions = GfVec3i(2, 2, 2); },
+         [](RigExecMoverParameters &p) { p.auxPointsB.resize(12); }},
+        {"lattice settings", Op::Lattice, "lattice",
+         [](RigExecMoverParameters &p) { p.divisions = GfVec3i(2, 2, 2); },
+         [](RigExecMoverParameters &p) { p.latticeSettings.strength = 0.5f; },
+         [](RigExecMoverParameters &p) { p.auxPoints.resize(8); }},
+        {"surfaceProject", Op::SurfaceProject, "surfaceProject",
+         [](RigExecMoverParameters &) {},
+         [](RigExecMoverParameters &p) { p.surfaceSettings.offset = 0.1f; },
+         [](RigExecMoverParameters &p) {
+             p.targetToSurface.SetTranslate(GfVec3d(0, 0, 1));
+         }},
+        {"wire knots", Op::Wire, "wire",
+         [](RigExecMoverParameters &p) {
+             p.curveOrder = 2;
+             p.curveKnots = {0, 0, 1, 1};
+         },
+         [](RigExecMoverParameters &p) { p.curveKnots = {0, 0, 2, 2}; },
+         [](RigExecMoverParameters &p) { p.auxPoints.resize(2); }},
+        {"wire order", Op::Wire, "wire",
+         [](RigExecMoverParameters &p) { p.curveOrder = 2; },
+         [](RigExecMoverParameters &p) { p.curveOrder = 3; },
+         [](RigExecMoverParameters &p) { p.restPoints.resize(2); }},
+        {"wire dropoff", Op::Wire, "wire", [](RigExecMoverParameters &) {},
+         [](RigExecMoverParameters &p) { p.dropoffDistance = 0.5; },
+         [](RigExecMoverParameters &p) {
+             p.weights = RigExecWeightPacket::Constant(0.5f);
+         }},
+        {"normals", Op::RecomputeNormals, "recomputeNormals",
+         [](RigExecMoverParameters &) {},
+         [](RigExecMoverParameters &p) { p.normalsLeftHanded = true; },
+         [](RigExecMoverParameters &p) { p.auxPoints.resize(3); }},
+        {"normals per corner", Op::RecomputeNormals, "recomputeNormals",
+         [](RigExecMoverParameters &) {},
+         [](RigExecMoverParameters &p) { p.normalsPerCorner = true; },
+         [](RigExecMoverParameters &p) { p.topologyCounts = {3}; }},
+    };
+    RigExecGeometryPayloadScratchPtr scratch =
+        RigExecMakeGeometryPayloadScratch();
+    for (const Case &c : cases) {
+        RigExecMoverParameters p = Packet(c.kind);
+        c.setup(p);
+        RigExecRigDescBuilder builder;
+        RigExecGeometryOpNode node;
+        std::string error;
+        const bool added =
+            RigExecAddGeometryOp(c.op, p, &builder, nullptr, &node, &error);
+        CHECK(added);
+        if (!added) {
+            std::printf("%s: %s\n", c.label, error.c_str());
+            continue;
+        }
+        RigExecMoverParameters moved = p, perFrame = p;
+        c.moved(moved);
+        c.perFrame(perFrame);
+        for (RigExecGeometryPayloadScratch *s :
+             {static_cast<RigExecGeometryPayloadScratch *>(nullptr),
+              scratch.get()}) {
+            const bool same =
+                !RigExecGeometryOpNodeStale(c.op, p, nullptr, node, s);
+            const bool stale =
+                RigExecGeometryOpNodeStale(c.op, moved, nullptr, node, s);
+            const bool kept =
+                !RigExecGeometryOpNodeStale(c.op, perFrame, nullptr, node, s);
+            CHECK(same && stale && kept);
+            if (!(same && stale && kept))
+                std::printf("%s: same %d stale %d kept %d\n", c.label,
+                            int(same), int(stale), int(kept));
+        }
+    }
+
+    // An op without a payload is never stale from its settings.
+    RigExecMoverParameters volume = Packet("volumeCorrect");
+    RigExecRigDescBuilder builder;
+    RigExecGeometryOpNode node;
+    CHECK(RigExecAddGeometryOp(Op::VolumeCorrect, volume, &builder, nullptr,
+                               &node));
+    CHECK(!node.payload);
+    volume.strength = 0.25f;
+    volume.referenceVolume = 2.0;
+    CHECK(!RigExecGeometryOpNodeStale(Op::VolumeCorrect, volume, nullptr, node,
+                                      scratch.get()));
+    CHECK(RigExecGeometryOpNodeStale(Op::Smooth, volume, nullptr, node));
+
+    // A blend shape's surface frame is a payload setting.
+    std::vector<RigExecBlendChannel> channels(1);
+    RigExecBlendSampleData sample;
+    sample.points = grid.rest;
+    channels[0].samples = {sample};
+    RigExecMoverParameters blend = Packet("blendShape");
+    RigExecGeometryOpNode blendNode;
+    CHECK(RigExecAddGeometryBlendOp(channels, blend, &builder, nullptr,
+                                    &blendNode));
+    CHECK(!RigExecGeometryOpNodeStale(Op::BlendShape, blend, &channels,
+                                      blendNode, scratch.get()));
+    blend.blendSurfaceFrame = true;
+    CHECK(RigExecGeometryOpNodeStale(Op::BlendShape, blend, &channels,
+                                     blendNode, scratch.get()));
+    CHECK(RigExecGeometryOpNodeStale(Op::BlendShape, blend, &channels,
+                                     blendNode));
+}
+
 rigExecRig::PointWeights
 ToPointWeights(const RigExecWeightPacket &w)
 {
@@ -1225,6 +1385,7 @@ main()
     TestBlendShape(grid);
     TestChain(grid);
     TestRefusals(grid);
+    TestStaleSettings(grid);
     TestCombineWeights();
     TestCapabilityFlags();
     if (failures) {

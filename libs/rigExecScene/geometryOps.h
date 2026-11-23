@@ -17,6 +17,17 @@
 
 namespace rigExec {
 
+/// Reused storage for the payload a write rebuilds from its packet to
+/// compare with the node's.
+struct RigExecGeometryPayloadScratch;
+struct RigExecGeometryPayloadScratchDeleter {
+    void operator()(RigExecGeometryPayloadScratch *scratch) const;
+};
+using RigExecGeometryPayloadScratchPtr =
+    std::unique_ptr<RigExecGeometryPayloadScratch,
+                    RigExecGeometryPayloadScratchDeleter>;
+RigExecGeometryPayloadScratchPtr RigExecMakeGeometryPayloadScratch();
+
 /// One deform op node and its host-written ports. Ports the op lacks keep
 /// an invalid id.
 struct RigExecGeometryOpNode {
@@ -49,9 +60,11 @@ struct RigExecGeometryOpNode {
         std::shared_ptr<const RigExecBlendSampleLayout> layout;
     };
     std::vector<std::vector<BlendSample>> blendSamples;
-    /// The packet fields baked into the payload, the rest left default, to
-    /// refuse a frame whose settings moved.
-    RigExecMoverParameters payloadFields;
+    /// The payload the node was built with, compared with the packet's
+    /// through the op's payload equality to refuse a frame whose settings
+    /// moved; null for an op without one. A blend shape's channels are
+    /// left out of it and kept in blendSamples.
+    std::shared_ptr<const void> payload;
     RigExecOutputId out;
     /// The op's output port, for a downstream node to connect to.
     const RigExecPortHandle *outPort = nullptr;
@@ -79,13 +92,12 @@ bool RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
 /// envelope is \p p's weights resolved at \p pointCount. False, writing
 /// nothing more, where the packet's envelope does not resolve, or where a
 /// setting baked into the payload differs from compile: the node must then
-/// be rebuilt.
-bool RigExecWriteGeometryOpInputs(const RigExecMoverParameters &p,
-                                  const RigExecGeometryOpNode &node,
-                                  const std::vector<GfVec3f> *points,
-                                  size_t pointCount,
-                                  RigExecEvaluator *evaluator,
-                                  std::string *error = nullptr);
+/// be rebuilt. \p scratch, when given, holds the payload rebuilt to compare.
+bool RigExecWriteGeometryOpInputs(
+    const RigExecMoverParameters &p, const RigExecGeometryOpNode &node,
+    const std::vector<GfVec3f> *points, size_t pointCount,
+    RigExecEvaluator *evaluator, std::string *error = nullptr,
+    RigExecGeometryPayloadScratch *scratch = nullptr);
 
 /// Adds a blend shape whose payload is \p channels' samples; \p p gives
 /// its delta space, and the points chain as for RigExecAddGeometryOp.
@@ -104,7 +116,8 @@ bool RigExecWriteGeometryBlendInputs(
     const RigExecMoverParameters &p, const RigExecGeometryOpNode &node,
     const std::vector<GfVec3f> &base, const std::vector<GfVec3f> *points,
     size_t pointCount, RigExecEvaluator *evaluator,
-    std::string *error = nullptr);
+    std::string *error = nullptr,
+    RigExecGeometryPayloadScratch *scratch = nullptr);
 
 /// A derived matrix op (surface projector or shader dials) and its
 /// host-written ports.
@@ -150,7 +163,8 @@ bool
 RigExecGeometryOpNodeStale(RigExecRevisionOp op,
                            const RigExecMoverParameters &p,
                            const std::vector<RigExecBlendChannel> *channels,
-                           const RigExecGeometryOpNode &node);
+                           const RigExecGeometryOpNode &node,
+                           RigExecGeometryPayloadScratch *scratch = nullptr);
 
 /// RigExecGeometryOpNodeStale for a derived matrix node.
 bool RigExecGeometryMatrixNodeStale(RigExecRevisionOp op,

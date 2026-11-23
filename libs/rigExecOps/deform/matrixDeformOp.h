@@ -16,6 +16,11 @@ struct MatrixDeformPayload {
     /// Fractional weights take a fraction of the rotation about the
     /// transform's screw axis, not of the position.
     bool radial = false;
+
+    bool operator==(const MatrixDeformPayload &o) const
+    {
+        return radial == o.radial;
+    }
 };
 
 const rigExec::RigExecOpHandle &MatrixDeform();
