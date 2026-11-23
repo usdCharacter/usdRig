@@ -11,16 +11,21 @@
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecGraph/windowHistory.h"
 #include "rigExec/internal/frameExtraction.h"
+#include "rigExec/internal/solverKernels.h"
 #include "rigExecMath/harmonicsKernel.h"
 #include "rigExecMath/spaceMatchKernel.h"
+#include "rigExecMath/switchMathKernel.h"
 #include "rigExecOps/constraint/matchOps.h"
 #include "rigExecMath/splineIk.h"
 #include "rigExecScene/constraintGraphBinding.h"
+#include "rigExecScene/constraintProgram.h"
 #include "rigExecScene/solverGraphBinding.h"
 #include "rigExecSceneProgramDrive.h"
 #include "rigExecSchema/schemaNames.h"
 
+#include "pxr/base/gf/matrix3d.h"
 #include "pxr/base/gf/rotation.h"
+#include "pxr/base/gf/transform.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"
 #include "pxr/usd/sdf/layer.h"
@@ -1166,6 +1171,223 @@ Placement(const GfVec3d &axis, double degrees, const GfVec3d &at,
     return s * r * t;
 }
 
+/// GfTransform's decomposition and recomposition, GfLerp and GfSlerp: the
+/// blend, filter and mask the native space switch ran before the shared
+/// kernel (rigExecMath/switchMathKernel.h).
+namespace gfReference {
+
+struct Parts {
+    GfVec3d translation, scale;
+    GfQuatd rotation;
+};
+
+Parts
+Decompose(const GfMatrix4d &m)
+{
+    const GfTransform transform(m);
+    return {transform.GetTranslation(), transform.GetScale(),
+            transform.GetRotation().GetQuat()};
+}
+
+GfMatrix4d
+Recompose(const Parts &d)
+{
+    GfTransform transform;
+    transform.SetScale(d.scale);
+    transform.SetRotation(GfRotation(d.rotation));
+    transform.SetTranslation(d.translation);
+    return transform.GetMatrix();
+}
+
+GfMatrix4d
+Blend(const GfMatrix4d &a, const GfMatrix4d &b, double weight)
+{
+    if (!(weight > 0.0))
+        return a;
+    if (weight >= 1.0)
+        return b;
+    const Parts da = Decompose(a), db = Decompose(b);
+    Parts out;
+    out.translation = GfLerp(weight, da.translation, db.translation);
+    out.scale = GfLerp(weight, da.scale, db.scale);
+    GfQuatd target = db.rotation;
+    if (GfDot(da.rotation, target) < 0.0)
+        target = GfQuatd(-target.GetReal(), -target.GetImaginary());
+    out.rotation = GfSlerp(weight, da.rotation, target).GetNormalized();
+    return Recompose(out);
+}
+
+GfMatrix4d
+Filter(const GfMatrix4d &m, const GfVec3d &axis, int filter)
+{
+    if (filter != 1 && filter != 2)
+        return m;
+    const double length = axis.GetLength();
+    if (length < 1e-12)
+        return m;
+    const GfVec3d a = axis / length;
+    Parts d = Decompose(m);
+    const GfQuatd q = d.rotation.GetNormalized();
+    const double along = GfDot(q.GetImaginary(), a);
+    GfQuatd twist(q.GetReal(), along * a);
+    const double norm = std::sqrt(twist.GetReal() * twist.GetReal() +
+                                  twist.GetImaginary().GetLengthSq());
+    twist = norm < 1e-12
+                ? GfQuatd::GetIdentity()
+                : GfQuatd(twist.GetReal() / norm, twist.GetImaginary() / norm);
+    d.rotation = filter == 1 ? twist : (q * twist.GetInverse()).GetNormalized();
+    return Recompose(d);
+}
+
+GfMatrix4d
+Mask(const GfMatrix4d &m, const bool translation[3], const bool rotation[3],
+     const bool scale[3])
+{
+    Parts d = Decompose(m);
+    for (int axis = 0; axis < 3; ++axis) {
+        if (!translation[axis])
+            d.translation[axis] = 0.0;
+        if (!scale[axis])
+            d.scale[axis] = 1.0;
+    }
+    if (!rotation[0] || !rotation[1] || !rotation[2]) {
+        const GfMatrix4d r(GfRotation(d.rotation), GfVec3d(0));
+        double x = 0.0, y = 0.0, z = 0.0;
+        const double sinY = GfClamp(r[0][2], -1.0, 1.0);
+        y = std::asin(sinY);
+        if (std::abs(sinY) < 1.0 - 1e-9) {
+            x = std::atan2(r[1][2], r[2][2]);
+            z = std::atan2(r[0][1], r[0][0]);
+        } else {
+            x = std::atan2(-r[2][1], r[1][1]);
+            z = 0.0;
+        }
+        const GfVec3d axes[3] = {GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
+                                 GfVec3d(0, 0, 1)};
+        const double angles[3] = {GfRadiansToDegrees(x), GfRadiansToDegrees(y),
+                                  GfRadiansToDegrees(z)};
+        GfMatrix4d composed(1.0);
+        for (int axis = 0; axis < 3; ++axis) {
+            if (!rotation[axis] || angles[axis] == 0.0)
+                continue;
+            composed =
+                composed *
+                GfMatrix4d(GfRotation(axes[axis], angles[axis]), GfVec3d(0));
+        }
+        d.rotation = composed.ExtractRotationQuat();
+    }
+    return Recompose(d);
+}
+
+} // namespace gfReference
+
+/// The shared switch kernel over Gf gives GfTransform's bits, and over the
+/// runtime's mirror types the same bits: sheared, reflected, scaled,
+/// signed-zero and degenerate matrices, every filter and mask.
+void
+TestSwitchMath()
+{
+    std::vector<GfMatrix4d> matrices = {
+        GfMatrix4d(1.0), Placement(GfVec3d(0, 0, 1), 0.0, GfVec3d(0)),
+        Placement(GfVec3d(1, 0, 0), 180.0, GfVec3d(-0.0, 0.0, -0.0)),
+        Placement(GfVec3d(0.3, 1, 0.2), 47.0, GfVec3d(1, -2, 3), 0.7),
+        Placement(GfVec3d(1, 1, 0), 89.9999999, GfVec3d(0.5), 2.0)};
+    GfMatrix4d sheared(1.0);
+    sheared[1][0] = 0.4;
+    sheared[2][1] = -0.25;
+    sheared[3][2] = 1.5;
+    matrices.push_back(sheared * matrices[3]);
+    GfMatrix4d reflected(1.0);
+    reflected[0][0] = -1.0;
+    matrices.push_back(reflected * matrices[3]);
+    GfMatrix4d flat = matrices[3];
+    flat[2][0] = flat[2][1] = flat[2][2] = 0.0;
+    matrices.push_back(flat);
+    GfMatrix4d negativeZero(1.0);
+    negativeZero[0][1] = negativeZero[1][0] = -0.0;
+    negativeZero[3][0] = -0.0;
+    matrices.push_back(negativeZero);
+    uint64_t state = 0x9e3779b97f4a7c15ull;
+    const auto next = [&state] {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        return double(state >> 11) / double(1ull << 53) * 2.0 - 1.0;
+    };
+    for (int k = 0; k < 24; ++k)
+        matrices.push_back(Placement(
+            GfVec3d(next(), next(), next()), 180.0 * next(),
+            GfVec3d(next(), next(), next()) * 3.0, 1.0 + 0.5 * next()));
+    const auto same = [](const GfMatrix4d &a, const rigExecStd::Mat4d &b) {
+        return Bits(a.data(), &b._mtx[0][0], sizeof(double) * 16);
+    };
+    const auto bits = [](const GfMatrix4d &a, const GfMatrix4d &b) {
+        return Bits(a.data(), b.data(), sizeof(double) * 16);
+    };
+    const auto rrSlerp = [](double t, const RrQuatd &a, const RrQuatd &b) {
+        return RrSlerp(t, a, b);
+    };
+    const GfVec3d axis(0.2, 1.0, -0.1);
+    const RrVec3d rrAxis(0.2, 1.0, -0.1);
+    int compared = 0;
+    for (size_t i = 0; i < matrices.size(); ++i) {
+        const GfMatrix4d &a = matrices[i];
+        const GfMatrix4d &b = matrices[(i * 7 + 3) % matrices.size()];
+        const rigExecStd::Mat4d ra = StdMatrix(a), rb = StdMatrix(b);
+        for (const double w : {0.0, 0.25, 0.5, 0.875, 1.0}) {
+            const GfMatrix4d native = RigExecBlendTransforms(a, b, w);
+            CHECK(bits(native, gfReference::Blend(a, b, w)));
+            CHECK(same(native, RigExecBlendTransformsT(ra, rb, w, rrSlerp)));
+            ++compared;
+        }
+        for (const int filter : {0, 1, 2, 3}) {
+            const GfMatrix4d native = RigExecFilterSpaceRotation(
+                a, axis, RigExecRotationFilter(filter));
+            CHECK(bits(native, gfReference::Filter(a, axis, filter)));
+            CHECK(
+                same(native, RigExecFilterSpaceRotationT(ra, rrAxis, filter)));
+            ++compared;
+        }
+        for (int mask = 0; mask < 512; mask += 37) {
+            bool t[3], r[3], s[3];
+            for (int axisIndex = 0; axisIndex < 3; ++axisIndex) {
+                t[axisIndex] = mask & (1 << axisIndex);
+                r[axisIndex] = mask & (1 << (3 + axisIndex));
+                s[axisIndex] = mask & (1 << (6 + axisIndex));
+            }
+            const GfMatrix4d native = RigExecMaskTransform(a, t, r, s);
+            CHECK(bits(native, gfReference::Mask(a, t, r, s)));
+            CHECK(same(native, RigExecMaskTransformT(ra, t, r, s)));
+            ++compared;
+        }
+        GfMatrix4d roundTrip(1.0);
+        RigExecPointsToMatrix(RigExecIdentityLandmarks(),
+                              RigExecFrameFromMatrix(a).points, &roundTrip);
+        CHECK(bits(RigExecRoundTripT<GfMatrix3d, GfVec3d>(a), roundTrip));
+        CHECK(same(roundTrip, RigExecRoundTripT<RrMat3d, RrVec3d>(ra)));
+    }
+    std::printf("switch math: %d comparisons\n", compared);
+}
+
+/// A non-finite landmark: the shared kernel keeps the first non-finite
+/// landmark and leaves the later ones at identity. The IK/FK match (op
+/// and scene) and the runtime space match refuse such a frame; the baked
+/// space match and the SpaceMatch op do not check, and agree bit for bit.
+void
+TestNonFiniteLandmarks()
+{
+    GfMatrix4d m(1.0);
+    m[3][1] = std::numeric_limits<double>::infinity();
+    std::array<GfVec3d, 4> points;
+    CHECK(!RigExecMatrixLandmarksT(m, &points));
+    CHECK(std::isinf(points[0][1]));
+    CHECK(points[1] == GfVec3d(1, 0, 0) && points[3] == GfVec3d(0, 0, 1));
+    const RigExecPointFrame frame = RigExecFrameFromMatrix(m);
+    CHECK(frame.IsDegenerate() && !RigExecConstraintFrameUsable(frame));
+    GfMatrix4d matrix;
+    CHECK(RigExecPointsToMatrix(RigExecIdentityLandmarks(), frame.points,
+                                &matrix));
+    CHECK(!std::isfinite(matrix[3][1]));
+}
+
 /// The SpaceMatch op against the baked space match, bit for bit, over
 /// rotation filters, axis masks, a carry, a world source and channels in
 /// several orders, signs, spins and scales.
@@ -1174,7 +1396,7 @@ TestSpaceMatch()
 {
     using namespace rigExecOps;
     int solved = 0;
-    for (int variant = 0; variant < 6; ++variant) {
+    for (int variant = 0; variant < 7; ++variant) {
         RigExecSpaceSwitchRecord record;
         if (variant == 1)
             record.filters = {1, 2, 0};
@@ -1206,6 +1428,10 @@ TestSpaceMatch()
                 GfVec3d(1, 0.4, 0.2), 20.0 + 11.0 * double(k),
                 GfVec3d(double(k), 0.5 * double(k), -1.0), 1.0 + 0.1 * k);
         }
+        // A space whose posed frame is not finite: neither checks it.
+        if (variant == 6)
+            input.sources[2].posedSpace[3][0] =
+                std::numeric_limits<double>::infinity();
         RigExecIkFkMatchChannels channels;
         const char *orders[3] = {"XYZ", "ZXY", "YZX"};
         std::copy(orders[variant % 3], orders[variant % 3] + 3, channels.order);
@@ -1662,6 +1888,8 @@ main(int argc, char **argv)
     TestSingleChainIk();
     TestAutoClavicle();
     TestHarmonics();
+    TestSwitchMath();
+    TestNonFiniteLandmarks();
     TestSpaceMatch();
     // Each kind's comparisons include solved frames, not only empty ones.
     for (const char *kind : {"fk", "two-bone", "blend", "twist", "ribbon",

@@ -42,6 +42,7 @@
 #include "rigExecMath/propertyMath.h"
 #include "rigExecMath/rbf.h"
 #include "rigExecMath/singleChainIk.h"
+#include "rigExecMath/switchMathKernel.h"
 #include "rigExecMath/solvers.h"
 #include "rigExecMath/splineIk.h"
 #include "rigExecMath/surfaceKernelCache.h"
@@ -145,10 +146,7 @@ RigExecBakedParseEulerOrder(const TfToken &t)
 inline GfMatrix4d
 RigExecBakedRoundTrip(const GfMatrix4d &m)
 {
-    GfMatrix4d out(1.0);
-    RigExecPointsToMatrix(RigExecIdentityLandmarks(),
-                          RigExecFrameFromMatrix(m).points, &out);
-    return out;
+    return RigExecRoundTripT<GfMatrix3d, GfVec3d>(m);
 }
 
 inline bool

@@ -1,6 +1,8 @@
 #include "poseProgram.h"
 #include "constraintProgram.h"
 #include "rigExecMath/providerArithmeticKernel.h"
+#include "rigExecMath/switchMathKernel.h"
+#include "pxr/base/gf/matrix3d.h"
 #include "pxr/base/gf/rotation.h"
 #include <cmath>
 #include <limits>
@@ -24,10 +26,7 @@ struct PoseMath {
     }
     static Matrix RoundTrip(const Matrix &matrix)
     {
-        Matrix result(1.0);
-        RigExecPointsToMatrix(RigExecIdentityLandmarks(),
-                              RigExecFrameFromMatrix(matrix).points, &result);
-        return result;
+        return RigExecRoundTripT<GfMatrix3d, GfVec3d>(matrix);
     }
     static Matrix RoundTripCheckpoint(const Matrix &matrix)
     {

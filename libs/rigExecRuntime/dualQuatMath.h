@@ -5,6 +5,7 @@
 #define RIGEXEC_RUNTIME_DUAL_QUAT_MATH_H
 
 #include "rigExecMath/dualQuatKernel.h"
+#include "rigExecMath/switchMathKernel.h"
 #include "rigExecRuntime/runtimeMath.h"
 
 #include <algorithm>
@@ -17,19 +18,13 @@ namespace rigExec {
 inline double
 RrDualQuatFrameEpsilon(const std::array<RrVec3d, 4> &restPoints)
 {
-    const double lx = (restPoints[1] - restPoints[0]).GetLength();
-    const double ly = (restPoints[2] - restPoints[0]).GetLength();
-    const double lz = (restPoints[3] - restPoints[0]).GetLength();
-    return 1e-10 * std::max({1.0, lx, ly, lz});
+    return RigExecFrameEpsilonT(restPoints);
 }
 
 inline RrMat3d
 RrDualQuatRowBasis(const std::array<RrVec3d, 4> &pts)
 {
-    return RrMat3d(
-        pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2],
-        pts[2][0] - pts[0][0], pts[2][1] - pts[0][1], pts[2][2] - pts[0][2],
-        pts[3][0] - pts[0][0], pts[3][1] - pts[0][1], pts[3][2] - pts[0][2]);
+    return RigExecRowBasisT<RrMat3d>(pts);
 }
 
 /// RigExecPointsToMatrix: the affine map taking rest to pose; identity and
@@ -39,23 +34,7 @@ RrDualQuatPointsToMatrix(const std::array<RrVec3d, 4> &restPoints,
                          const std::array<RrVec3d, 4> &posePoints,
                          RrMat4d *matrix)
 {
-    const RrMat3d mq = RrDualQuatRowBasis(restPoints);
-    const RrMat3d mp = RrDualQuatRowBasis(posePoints);
-    const double det = mq.GetDeterminant();
-    const double eps = RrDualQuatFrameEpsilon(restPoints);
-    if (std::abs(det) < eps * eps * eps) {
-        if (matrix)
-            matrix->SetIdentity();
-        return false;
-    }
-    const RrMat3d m3 = mq.GetInverse() * mp;
-    const RrVec3d t = posePoints[0] - restPoints[0] * m3;
-    if (matrix) {
-        *matrix = RrMat4d(m3[0][0], m3[0][1], m3[0][2], 0.0, m3[1][0], m3[1][1],
-                          m3[1][2], 0.0, m3[2][0], m3[2][1], m3[2][2], 0.0,
-                          t[0], t[1], t[2], 1.0);
-    }
-    return true;
+    return RigExecPointsToMatrixT<RrMat3d>(restPoints, posePoints, matrix);
 }
 
 inline std::array<RrVec3d, 4>

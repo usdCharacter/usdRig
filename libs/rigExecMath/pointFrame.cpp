@@ -2,6 +2,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "pointFrame.h"
 #include "dualQuat.h"
+#include "switchMathKernel.h"
 
 #include "pxr/base/gf/matrix3d.h"
 #include "pxr/base/gf/rotation.h"
@@ -38,30 +39,15 @@ RigExecParseAxis(const TfToken &token, RigExecAxis fallback)
 double
 RigExecFrameEpsilon(const std::array<GfVec3d, 4> &restPoints)
 {
-    const double lx = (restPoints[1] - restPoints[0]).GetLength();
-    const double ly = (restPoints[2] - restPoints[0]).GetLength();
-    const double lz = (restPoints[3] - restPoints[0]).GetLength();
-    return 1e-10 * std::max({1.0, lx, ly, lz});
+    return RigExecFrameEpsilonT(restPoints);
 }
 
 namespace {
 
-// Row-basis matrix [q1-q0; q2-q0; q3-q0]. With Gf's row-vector convention
-// this is B^T of the spec's column-basis matrix B.
 GfMatrix3d
 _RowBasis(const std::array<GfVec3d, 4> &pts)
 {
-    return GfMatrix3d(
-        pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2],
-        pts[2][0] - pts[0][0], pts[2][1] - pts[0][1], pts[2][2] - pts[0][2],
-        pts[3][0] - pts[0][0], pts[3][1] - pts[0][1], pts[3][2] - pts[0][2]);
-}
-
-GfVec3d
-_TransformDir(const GfVec3d &v, const GfMatrix3d &m)
-{
-    // Row-vector convention: v * m.
-    return v * m;
+    return RigExecRowBasisT<GfMatrix3d>(pts);
 }
 
 } // namespace
@@ -71,30 +57,7 @@ RigExecPointsToMatrix(const std::array<GfVec3d, 4> &restPoints,
                       const std::array<GfVec3d, 4> &posePoints,
                       GfMatrix4d *matrix)
 {
-    // Column convention: L = B_P B_Q^-1, t = po - L qo.
-    // Row-vector storage: M3 = L^T = (B_Q^T)^-1 B_P^T = MQ^-1 * MP,
-    // where MQ/MP are the row-basis matrices.
-    const GfMatrix3d mq = _RowBasis(restPoints);
-    const GfMatrix3d mp = _RowBasis(posePoints);
-
-    const double det = mq.GetDeterminant();
-    const double eps = RigExecFrameEpsilon(restPoints);
-    if (std::abs(det) < eps * eps * eps) {
-        if (matrix) {
-            matrix->SetIdentity();
-        }
-        return false;
-    }
-
-    const GfMatrix3d m3 = mq.GetInverse() * mp;
-    const GfVec3d t = posePoints[0] - _TransformDir(restPoints[0], m3);
-
-    if (matrix) {
-        *matrix = GfMatrix4d(m3[0][0], m3[0][1], m3[0][2], 0.0, m3[1][0],
-                             m3[1][1], m3[1][2], 0.0, m3[2][0], m3[2][1],
-                             m3[2][2], 0.0, t[0], t[1], t[2], 1.0);
-    }
-    return true;
+    return RigExecPointsToMatrixT<GfMatrix3d>(restPoints, posePoints, matrix);
 }
 
 bool

@@ -3,9 +3,9 @@
 #include "rigExecMath/ikFkMatchKernel.h"
 #include "rigExecMath/poseArithmeticKernel.h"
 #include "rigExecMath/spaceMatchKernel.h"
+#include "rigExecMath/switchMathKernel.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecOps/payloadIo.h"
-#include "rigExecRuntime/switchMath.h"
 
 #include <cmath>
 #include <iterator>
@@ -77,20 +77,25 @@ struct SwitchMath {
     using Matrix = Mat4d;
     static Matrix RoundTrip(const Matrix &m)
     {
-        return rigExec::RrSwitchRoundTrip(m);
+        return rigExec::RigExecRoundTripT<rigExec::RrMat3d, Vec3d>(m);
     }
     static Matrix Filter(const Matrix &m, const Vec3d &axis, int filter)
     {
-        return rigExec::RrSwitchFilter(m, axis, filter);
+        return rigExec::RigExecFilterSpaceRotationT(m, axis, filter);
     }
     static Matrix Blend(const Matrix &a, const Matrix &b, double t)
     {
-        return rigExec::RrSwitchBlend(a, b, t);
+        return rigExec::RigExecBlendTransformsT(
+            a, b, t,
+            [](double w, const rigExec::RrQuatd &q0,
+               const rigExec::RrQuatd &q1) {
+                return rigExec::RrSlerp(w, q0, q1);
+            });
     }
     static Matrix Mask(const Matrix &m, const bool *t, const bool *r,
                        const bool *s)
     {
-        return rigExec::RrSwitchMask(m, t, r, s);
+        return rigExec::RigExecMaskTransformT(m, t, r, s);
     }
 };
 
@@ -132,10 +137,10 @@ RunSwitch(const SwitchRecord &record, const SwitchInputs &input, bool usable,
                                                               &composed))
         return false;
     std::array<Vec3d, 4> points;
-    const bool finite = rigExec::RrSwitchLandmarks(composed, &points);
+    const bool finite = rigExec::RigExecMatrixLandmarksT(composed, &points);
     return (finite || !usable) &&
-           rigExec::RrDualQuatPointsToMatrix(
-               rigExec::kRrSwitchIdentityLandmarks, points, out);
+           rigExec::RigExecPointsToMatrixT<rigExec::RrMat3d>(
+               rigExec::RigExecIdentityLandmarksT<Vec3d>(), points, out);
 }
 
 /// The switch's inputs from its ports; false when the sources and the setup

@@ -5,7 +5,7 @@
 #include "rigExecRuntime/store.h"
 
 #include "rigExecRuntime/dualQuatMath.h"
-#include "rigExecRuntime/switchMath.h"
+#include "rigExecMath/switchMathKernel.h"
 
 #include <algorithm>
 #include <cmath>
@@ -16,8 +16,9 @@ RrPointFrame
 RrFrameFromMatrix(const RrMat4d &m)
 {
     RrPointFrame frame;
-    frame.flags = RrSwitchLandmarks(m, &frame.points) ? RrPointFrameValid
-                                                      : RrPointFrameDegenerate;
+    frame.flags = RigExecMatrixLandmarksT(m, &frame.points)
+                      ? RrPointFrameValid
+                      : RrPointFrameDegenerate;
     return frame;
 }
 
@@ -130,7 +131,7 @@ RrExtractElementFrame(const RrPointFrameArray *source, size_t index)
 RrMat4d
 RrRoundTrip(const RrMat4d &m)
 {
-    return RrSwitchRoundTrip(m);
+    return RigExecRoundTripT<RrMat3d, RrVec3d>(m);
 }
 
 namespace {
@@ -185,21 +186,24 @@ RrFrameTranslation(const RrPointFrame &driverFinal,
 RrMat4d
 RrBlendTransforms(const RrMat4d &a, const RrMat4d &b, double weight)
 {
-    return RrSwitchBlend(a, b, weight);
+    return RigExecBlendTransformsT(
+        a, b, weight, [](double t, const RrQuatd &q0, const RrQuatd &q1) {
+            return RrSlerp(t, q0, q1);
+        });
 }
 
 RrMat4d
 RrFilterSpaceRotation(const RrMat4d &m, const RrVec3d &axis,
                       RrRotationFilter filter)
 {
-    return RrSwitchFilter(m, axis, int(filter));
+    return RigExecFilterSpaceRotationT(m, axis, int(filter));
 }
 
 RrMat4d
 RrMaskTransform(const RrMat4d &m, const bool translation[3],
                 const bool rotation[3], const bool scale[3])
 {
-    return RrSwitchMask(m, translation, rotation, scale);
+    return RigExecMaskTransformT(m, translation, rotation, scale);
 }
 
 } // namespace rigExec

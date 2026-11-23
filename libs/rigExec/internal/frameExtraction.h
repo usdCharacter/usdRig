@@ -10,6 +10,7 @@
 #define RIGEXEC_FRAME_EXTRACTION_H
 
 #include "rigExec/api/types.h"
+#include "rigExecMath/switchMathKernel.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec4d.h"
@@ -40,17 +41,9 @@ inline RigExecPointFrame
 RigExecFrameFromMatrix(const GfMatrix4d &m)
 {
     RigExecPointFrame frame;
-    const std::array<GfVec3d, 4> &identity = RigExecIdentityLandmarks();
-    for (size_t i = 0; i < 4; ++i) {
-        frame.points[i] = m.TransformAffine(identity[i]);
-        for (int a = 0; a < 3; ++a) {
-            if (!std::isfinite(frame.points[i][a])) {
-                frame.flags = RigExecPointFrameDegenerate;
-                return frame;
-            }
-        }
-    }
-    frame.flags = RigExecPointFrameValid;
+    frame.flags = RigExecMatrixLandmarksT(m, &frame.points)
+                      ? RigExecPointFrameValid
+                      : RigExecPointFrameDegenerate;
     return frame;
 }
 
