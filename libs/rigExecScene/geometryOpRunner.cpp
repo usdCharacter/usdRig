@@ -8,6 +8,14 @@ namespace rigExec {
 
 namespace {
 
+bool
+Fail(std::string *error, const std::string &message)
+{
+    if (error)
+        *error = message;
+    return false;
+}
+
 using rigExecStd::Mat4d;
 using rigExecStd::RigExecArray;
 using rigExecStd::Vec3f;
@@ -105,9 +113,11 @@ RigExecRunExternalOp(const RigExecRevisionBinding &binding,
                      const RigExecMoverParameters &p,
                      const RigExecExternalOpValues &values,
                      RigExecGeometryOpRunner &runner,
-                     std::vector<GfVec3f> &points, std::string *error)
+                     std::vector<GfVec3f> &points, std::string *error,
+                     RigExecWindowRun *window)
 {
     const RigExecOpHandle *op = RigExecExternalOpHandle(binding);
+    bool envelopeResolved = true;
     const bool ready =
         op && Ready(
                   runner, runner.evaluator && runner.external.op == op,
@@ -118,17 +128,44 @@ RigExecRunExternalOp(const RigExecRevisionBinding &binding,
                   [&] {
                       return RigExecWriteExternalOpInputs(
                           binding, values, p.weights, points, runner.external,
-                          runner.evaluator.get(), error);
+                          runner.evaluator.get(), error, &envelopeResolved);
                   },
                   [&] {
                       return RigExecExternalOpNodeStale(binding, values,
                                                         runner.external);
                   },
                   error);
-    if (!ready || !runner.evaluator->Evaluate(error))
+    if (!ready)
         return false;
+    RigExecEvaluator &evaluator = *runner.evaluator;
+    if (!runner.external.windowed) {
+        if (!evaluator.Evaluate(error))
+            return false;
+    } else {
+        if (!window || !window->ring || !window->capture)
+            return Fail(error, "a windowed op runs only with a window");
+        if (!evaluator.SetWindowRings({*window->ring}, error))
+            return false;
+        if (window->captureOnly) {
+            // A history tick that only records: the points pass through.
+            if (!evaluator.EvaluateHistory(error))
+                return false;
+            const RigExecWindowRing &pushed = evaluator.GetWindowRings()[0];
+            *window->capture = pushed.empty() ? nullptr : pushed.back();
+            return envelopeResolved;
+        }
+        if (!evaluator.Evaluate(error))
+            return false;
+        *window->capture = evaluator.GetWindowCaptures()[0];
+        const auto *status = static_cast<const uint32_t *>(
+            evaluator.GetOutput(runner.external.status));
+        if (!status || *status != runner.external.solved)
+            return Fail(error, "the windowed op did not solve");
+    }
+    if (!envelopeResolved)
+        return Fail(error, "envelope does not resolve over the points");
     const auto *out = static_cast<const RigExecArray<Vec3f> *>(
-        runner.evaluator->GetOutput(runner.external.out));
+        evaluator.GetOutput(runner.external.out));
     if (!out || out->Size() != points.size()) {
         if (error)
             *error = "external op changed the point count";

@@ -12,6 +12,7 @@
 #include "rigExec/internal/gpuCloth.h"
 #include "rigExec/internal/gpuDeformTranslation.h"
 #include "rigExecBinary/clothPlayback.h"
+#include "rigExecScene/clothDeclaredInputs.h"
 #include "rigExecScene/sceneDescriptors.h"
 #include "rigExecScene/sceneCompileInputs.h"
 
@@ -232,16 +233,6 @@ LeftHanded(const VtValue &value)
     return false;
 }
 
-float
-FloatOr(const VtValue &value, float fallback)
-{
-    if (value.IsHolding<float>())
-        return value.UncheckedGet<float>();
-    if (value.IsHolding<double>())
-        return float(value.UncheckedGet<double>());
-    return fallback;
-}
-
 // The stage's time codes per second the binding carries, else 24.
 double
 StageRate(const RigExecRevisionBinding &binding)
@@ -313,28 +304,13 @@ Payload(const std::vector<VtValue> &in, const RigExecRevisionBinding &binding,
     As(in[RigExecClothIterations], &iterations);
     As(in[RigExecClothTethers], &tethers);
     As(in[RigExecClothFrameRate], &frameRate);
-    const float slack = FloatOr(in[RigExecClothTetherSlack], kTetherSlack);
+    const float slack =
+        RigExecClothFloatOr(in[RigExecClothTetherSlack], kTetherSlack);
     const double rate = frameRate > 0.0 && std::isfinite(frameRate)
                             ? frameRate
                             : StageRate(binding);
-    const RigExecClothParameters fallback;
-    VtFloatArray params(RigExecClothParameterCount);
-    params[0] =
-        FloatOr(in[RigExecClothStretchCompliance], fallback.stretchCompliance);
-    params[1] =
-        FloatOr(in[RigExecClothBendCompliance], fallback.bendCompliance);
-    GfVec3f gravity(fallback.gravity[0], fallback.gravity[1],
-                    fallback.gravity[2]);
-    As(in[RigExecClothGravity], &gravity);
-    params[2] = gravity[0];
-    params[3] = gravity[1];
-    params[4] = gravity[2];
-    params[5] = FloatOr(in[RigExecClothDamping], fallback.damping);
-    params[6] = FloatOr(in[RigExecClothAttract], fallback.attract);
-    params[7] = FloatOr(in[RigExecClothThickness], fallback.thickness);
-    params[8] =
-        FloatOr(in[RigExecClothCollisionDepth], fallback.collisionDepth);
-    params[9] = FloatOr(in[RigExecClothFriction], fallback.friction);
+    const auto values = RigExecClothParameterValues(in);
+    const VtFloatArray params(values.begin(), values.end());
     VtDictionary d;
     d["counts"] = VtValue(counts);
     d["indices"] = VtValue(indices);
@@ -349,10 +325,7 @@ Payload(const std::vector<VtValue> &in, const RigExecRevisionBinding &binding,
     d["tetherSlack"] = VtValue(slack);
     d["frameSeconds"] = VtValue(1.0 / rate);
     d["params"] = VtValue(params);
-    const size_t colliders =
-        layout ? size_t(cloth_inputs::Index(*layout, "colliderCount"))
-               : (in.size() - RigExecClothFirstCollider) /
-                     RigExecClothInputsPerCollider;
+    const size_t colliders = RigExecClothColliderCount(layout, in.size());
     if (colliders >
         (in.size() - RigExecClothFirstCollider) / RigExecClothInputsPerCollider)
         return false;
@@ -649,24 +622,19 @@ CaptureWindow(const VtValue &data, const std::vector<GfVec3f> &entering,
     const auto *colliders = Get<std::vector<VtValue>>(d, "colliderPoints");
     if (!params || params->size() != RigExecClothParameterCount || !colliders)
         return false;
-    size_t total = 3 * entering.size();
-    for (const VtValue &value : *colliders) {
+    std::vector<const float *> points(colliders->size());
+    std::vector<size_t> counts(colliders->size());
+    for (size_t k = 0; k < colliders->size(); ++k) {
+        const VtValue &value = (*colliders)[k];
         if (!value.IsHolding<VtVec3fArray>())
             return false;
-        total += 3 * value.UncheckedGet<VtVec3fArray>().size();
-    }
-    packet->points.resize(total);
-    float *at = packet->points.data();
-    if (!entering.empty())
-        std::memcpy(at, entering.data(), 3 * entering.size() * sizeof(float));
-    at += 3 * entering.size();
-    for (const VtValue &value : *colliders) {
         const VtVec3fArray &p = value.UncheckedGet<VtVec3fArray>();
-        if (!p.empty())
-            std::memcpy(at, p.cdata(), 3 * p.size() * sizeof(float));
-        at += 3 * p.size();
+        points[k] = reinterpret_cast<const float *>(p.cdata());
+        counts[k] = p.size();
     }
-    packet->scalars.assign(params->begin(), params->end());
+    RigExecClothCapturePacket(reinterpret_cast<const float *>(entering.data()),
+                              entering.size(), points.data(), counts.data(),
+                              points.size(), params->cdata(), packet);
     return true;
 }
 

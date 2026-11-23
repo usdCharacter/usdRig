@@ -39,14 +39,17 @@ bool RigExecRunGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
                           std::string *error = nullptr);
 
 /// \p binding's External mover over \p points as its op's node, \p p
-/// giving the envelope. False with \p error, \p points untouched, where
-/// the op refuses.
+/// giving the envelope. A windowed mover reads \p window's ring and leaves
+/// its tick's record in \p window's capture, also when the run then
+/// refuses. False with \p error, \p points untouched, where the op
+/// refuses.
 bool RigExecRunExternalOp(const RigExecRevisionBinding &binding,
                           const RigExecMoverParameters &p,
                           const RigExecExternalOpValues &values,
                           RigExecGeometryOpRunner &runner,
                           std::vector<GfVec3f> &points,
-                          std::string *error = nullptr);
+                          std::string *error = nullptr,
+                          RigExecWindowRun *window = nullptr);
 
 /// The derived matrix op (surface projector, shader dials) for one frame.
 /// A refused projection sets \p diagnostic to the line

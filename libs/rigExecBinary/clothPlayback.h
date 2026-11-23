@@ -465,6 +465,34 @@ RigExecClothPacket(const RigExecClothCompiledData &compiledRig,
     return true;
 }
 
+/// What a windowed cloth records for one tick: the \p enteringCount
+/// entering points, then each of the \p colliderCount colliders' points in
+/// order, and the RigExecClothParameterCount \p parameters widened to
+/// double. The counts are not checked here: a tick of another shape ends
+/// the history at RigExecClothTicksFromPackets.
+inline void
+RigExecClothCapturePacket(const float *entering, size_t enteringCount,
+                          const float *const *colliders,
+                          const size_t *colliderCounts, size_t colliderCount,
+                          const float *parameters, RigExecWindowPacket *packet)
+{
+    size_t total = 3 * enteringCount;
+    for (size_t k = 0; k < colliderCount; ++k)
+        total += 3 * colliderCounts[k];
+    packet->points.resize(total);
+    float *at = packet->points.data();
+    if (enteringCount)
+        std::memcpy(at, entering, 3 * enteringCount * sizeof(float));
+    at += 3 * enteringCount;
+    for (size_t k = 0; k < colliderCount; ++k) {
+        if (colliderCounts[k])
+            std::memcpy(at, colliders[k],
+                        3 * colliderCounts[k] * sizeof(float));
+        at += 3 * colliderCounts[k];
+    }
+    packet->scalars.assign(parameters, parameters + RigExecClothParameterCount);
+}
+
 /// The window a solve reads from packets \p ticks (oldest first, the last
 /// the current frame, each a RigExecClothPacket): a null tick or one of
 /// another shape ends the history before it, at most

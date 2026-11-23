@@ -10,19 +10,18 @@ Fail(std::string *error, const std::string &message)
         *error = message;
     return false;
 }
-// Decided up front: false for a windowed revision, an External mover without
-// an op and a scalar-mode request for a deform op; the deform ops run SIMD
-// kernels only. An External mover's op has no SIMD form.
+// Decided up front: false for an External mover without an op, a windowed
+// deform revision and a scalar-mode request for a deform op; the deform ops
+// run SIMD kernels only. An External mover's op has no SIMD form and keeps
+// its window, if it has one.
 bool
 RunsOnOps(const RigExecSceneGeometryOp &op)
 {
     const auto kind = op.binding.descriptor.record.op;
-    if (op.windowFrames)
-        return false;
     if (kind == RigExecRevisionOp::External)
         return RigExecExternalOpHandle(op.binding.descriptor.record.binding) !=
                nullptr;
-    if (!op.useSimd)
+    if (op.windowFrames || !op.useSimd)
         return false;
     if (op.binding.descriptor.matrixOutput)
         return RigExecGeometryMatrixOpSupported(kind);
@@ -69,7 +68,8 @@ NeedsOpCore(const RigExecSceneOperation &operation)
 bool
 RunExternalOp(const RigExecGeometryRecord &record,
               const RigExecGeometryInputs &inputs,
-              RigExecSceneOperationWorkspace &workspace)
+              RigExecSceneOperationWorkspace &workspace,
+              RigExecWindowRun *window)
 {
     const auto params = RigExecGatherExternalGeometryInputs(
         record, inputs, &workspace.externalInputs);
@@ -80,7 +80,8 @@ RunExternalOp(const RigExecGeometryRecord &record,
     values.basePoints = &inputs.basePoints;
     return RigExecGeometryPacketMatches(record.op, params) &&
            RigExecRunExternalOp(record.binding, params, values,
-                                workspace.opRunner, workspace.points);
+                                workspace.opRunner, workspace.points, nullptr,
+                                window);
 }
 } // namespace
 bool
@@ -493,7 +494,7 @@ RigExecSceneProgramRuntime::Run(const RigExecSceneProgram &program,
                 if (op.pointsFinal != UINT64_MAX &&
                     !readPoints(op.pointsFinal, &workspace.finalPoints))
                     return failed("geometry final points unavailable");
-                const bool opCore = !window && RunsOnOps(op);
+                const bool opCore = RunsOnOps(op);
                 if (descriptor.matrixOutput) {
                     RigExecSurfaceProjectorFrames frames;
                     RigExecProjectorReads reads;
@@ -573,7 +574,8 @@ RigExecSceneProgramRuntime::Run(const RigExecSceneProgram &program,
                     return true;
                 };
                 if (opCore && kind == RigExecRevisionOp::External) {
-                    if (!RunExternalOp(descriptor.record, inputs, workspace))
+                    if (!RunExternalOp(descriptor.record, inputs, workspace,
+                                       window))
                         return failed(
                             "geometry input/cardinality validation failed");
                     return publish();

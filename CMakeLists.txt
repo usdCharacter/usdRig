@@ -296,6 +296,7 @@ rigexec_add_op_library(rigExecOps
         libs/rigExecOps/deform/patchOp.cpp
         libs/rigExecOps/deform/surfaceBindingOp.cpp
         libs/rigExecOps/deform/layeredSkinOp.cpp
+        libs/rigExecOps/deform/clothOp.cpp
         libs/rigExecOps/constraint/autoClavicleOps.cpp
         libs/rigExecOps/constraint/constraintOps.cpp
         libs/rigExecOps/constraint/harmonicsOps.cpp
@@ -999,6 +1000,11 @@ target_compile_definitions(testRigExecCloth PRIVATE
     ${_rigexec_schema_resource_define}
     RIGEXEC_CLOTH_EXAMPLE="${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/cloth_mover.usda")
 add_test(NAME testRigExecCloth COMMAND testRigExecCloth)
+add_executable(testRigExecSceneClothOp tests/testRigExecSceneClothOp.cpp)
+target_link_libraries(testRigExecSceneClothOp PRIVATE rigExec rigExecScene)
+target_compile_definitions(testRigExecSceneClothOp PRIVATE
+    ${_rigexec_schema_resource_define})
+add_test(NAME testRigExecSceneClothOp COMMAND testRigExecSceneClothOp)
 
 add_executable(testRigExecConstraints tests/testRigExecConstraints.cpp)
 target_link_libraries(testRigExecConstraints PRIVATE rigExec rigExecBake rigExecRuntime rigExecSampler)

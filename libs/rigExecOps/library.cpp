@@ -33,6 +33,7 @@ Register(rigExec::RigExecOpRegistrar &registrar)
     RegisterPatchOps(registrar);
     RegisterSurfaceBindingOps(registrar);
     RegisterLayeredSkinOps(registrar);
+    RegisterClothOps(registrar);
 }
 
 const rigExec::RigExecOpLibraryDesc kLibrary = [] {

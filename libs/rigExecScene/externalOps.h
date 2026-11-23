@@ -43,6 +43,12 @@ struct RigExecExternalOpNode {
     /// refuses, and the node must be rebuilt.
     std::shared_ptr<const void> payload;
     RigExecOutputId out;
+    /// A windowed op's run status output and the status that means it
+    /// solved, and the declared inputs its payload was built from.
+    RigExecOutputId status;
+    uint32_t solved = 0;
+    bool windowed = false;
+    std::vector<VtValue> source;
 };
 
 /// The op \p binding's mover runs as, or null for a mover with none.
@@ -62,14 +68,16 @@ bool RigExecAddExternalOp(const RigExecRevisionBinding &binding,
 /// resolves over them. False, with nothing written to \p evaluator past
 /// the failure, where \p values do not translate, the envelope does not
 /// resolve, or the payload or a many-valued input's count differs from
-/// \p node's.
+/// \p node's. A windowed node takes a full envelope where \p weights does
+/// not resolve, so its tick records, and \p envelopeResolved says so.
 bool RigExecWriteExternalOpInputs(const RigExecRevisionBinding &binding,
                                   const RigExecExternalOpValues &values,
                                   const RigExecWeightPacket &weights,
                                   const std::vector<GfVec3f> &points,
                                   const RigExecExternalOpNode &node,
                                   RigExecEvaluator *evaluator,
-                                  std::string *error = nullptr);
+                                  std::string *error = nullptr,
+                                  bool *envelopeResolved = nullptr);
 
 /// Whether \p values translate to another payload or input count than
 /// \p node was built with: its write then refuses, and it must be rebuilt.

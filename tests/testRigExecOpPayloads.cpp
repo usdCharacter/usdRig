@@ -6,6 +6,7 @@
 #include "rigExecOps/constraint/harmonicsOps.h"
 #include "rigExecOps/constraint/matchOps.h"
 #include "rigExecOps/deform/blendShapeOp.h"
+#include "rigExecOps/deform/clothOp.h"
 #include "rigExecOps/deform/deltaMushOp.h"
 #include "rigExecOps/deform/derivedOps.h"
 #include "rigExecOps/deform/latticeOp.h"
@@ -406,6 +407,25 @@ TestFilledPayloads()
         p.elementSize = 4;
         p.dualQuaternion = true;
         CheckRoundTrip(Op(LayeredSkin()), &p);
+    }
+    {
+        ClothPayload p;
+        rigExec::RigExecClothCompiledData &c = p.compiledRig;
+        c.pointCount = 3;
+        c.counts = {3};
+        c.indices = {0, 1, 2};
+        c.leftHanded = true;
+        c.rest = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+        c.pins = {1, 0, 0.5f};
+        c.settings.substeps = 7;
+        c.frameSeconds = 1.0 / 30.0;
+        rigExec::RigExecClothColliderTopology collider;
+        collider.path = "/Box.points";
+        collider.pointCount = 3;
+        collider.counts = {3};
+        collider.indices = {2, 1, 0};
+        c.colliders.push_back(collider);
+        CheckRoundTrip(Op(Cloth()), &p);
     }
 }
 

@@ -163,7 +163,14 @@ way: `PushHistory` after a frame played in order, and on a jump
 earlier frames, oldest first. Its history ticks run the temporal operations
 and what they depend on on a runtime of their own, and it matches the native
 evaluator bit for bit. A temporal mover plugin supplies `windowFramesScene`,
-the window from captured scene facts, for it.
+the window from captured scene facts, for it. The scene program runs the
+cloth mover as the op core's windowed `Cloth` op, on the CPU: the op records
+each tick and solves the window with the same kernel, while the history rings
+stay the scene program's.
+
+The CPU solve is the same bits at any thread count: one solve runs on one
+thread, and a constraint color's members share no particle, so their order
+cannot change a result.
 
 ## Cloth materials and bindings
 

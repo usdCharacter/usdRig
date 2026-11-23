@@ -6,6 +6,7 @@
 #include "rigExec/api/moverRegistry.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/moverGraph.h"
+#include "rigExecBinary/clothPlayback.h"
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecSchema/schemaTokens.h"
 #include "rigExecScene/externalOps.h"
@@ -436,6 +437,277 @@ TestPatch()
             CHECK(RunOp(r, full, runner, &op));
             CHECK(SameBits(native, op));
         }
+    }
+}
+
+// --- Cloth ------------------------------------------------------------------
+
+/// A cloth mover's declared inputs (rigExecBinary/clothPlayback.h's
+/// RigExecClothInput) with no constraint-set layout: a 5 x 4 curtain
+/// pinned along its top row, and colliders below it.
+struct ClothInputs {
+    VtIntArray counts, indices;
+    VtVec3fArray rest;
+    VtFloatArray pins;
+    int windowFrames = 5, maxWindowFrames = 5, substeps = 3, iterations = 1;
+    bool tethers = true;
+    float tetherSlack = 0.05f;
+    double frameRate = 24.0;
+    float damping = 2.0f, attract = 0.05f;
+    GfVec3f gravity = GfVec3f(0.0f, -9.81f, 0.0f);
+    struct Collider {
+        VtVec3fArray points;
+        VtIntArray counts{4}, indices{0, 1, 2, 3};
+    };
+    std::vector<Collider> colliders;
+
+    ClothInputs()
+    {
+        for (int y = 0; y < 4; ++y)
+            for (int x = 0; x < 5; ++x) {
+                rest.push_back(
+                    GfVec3f(0.25f * float(x), -0.25f * float(y), 0.0f));
+                pins.push_back(y == 0 ? 1.0f : 0.0f);
+            }
+        for (int y = 0; y + 1 < 4; ++y)
+            for (int x = 0; x + 1 < 5; ++x) {
+                const int a = y * 5 + x;
+                counts.push_back(4);
+                for (int i : {a, a + 1, a + 6, a + 5})
+                    indices.push_back(i);
+            }
+        Collider floor;
+        floor.points = {GfVec3f(-1, -0.6f, -1), GfVec3f(2, -0.6f, -1),
+                        GfVec3f(2, -0.6f, 1), GfVec3f(-1, -0.6f, 1)};
+        colliders.push_back(floor);
+    }
+
+    /// The cloth at frame \p t: the curtain's entering points swing, the
+    /// colliders rise and the damping changes.
+    Revision Make(int t) const
+    {
+        std::vector<RigExecRevisionLeafKey> keys;
+        std::vector<VtValue> values;
+        const auto add = [&](Type type, VtValue value) {
+            RigExecRevisionLeafKey key;
+            key.path = SdfPath("/Rig/Mover.in" + std::to_string(keys.size()));
+            key.type = type;
+            key.flavour = RigExecRevisionLeafFlavour::Resolved;
+            keys.push_back(key);
+            values.push_back(std::move(value));
+        };
+        add(Type::IntArray, VtValue(counts));
+        add(Type::IntArray, VtValue(indices));
+        add(Type::Token, VtValue(TfToken("rightHanded")));
+        add(Type::Vec3fArray, VtValue(rest));
+        add(Type::FloatArray, VtValue(pins));
+        add(Type::Int, VtValue(windowFrames));
+        add(Type::Int, VtValue(maxWindowFrames));
+        add(Type::Int, VtValue(substeps));
+        add(Type::Int, VtValue(iterations));
+        add(Type::Bool, VtValue(tethers));
+        add(Type::Float, VtValue(tetherSlack));
+        add(Type::Double, VtValue(frameRate));
+        add(Type::Float, VtValue(0.0f));
+        add(Type::Float, VtValue(1.0e-3f));
+        add(Type::Vec3f, VtValue(gravity));
+        add(Type::Float, VtValue(damping + 0.1f * float(t % 4)));
+        add(Type::Float, VtValue(attract));
+        add(Type::Float, VtValue(0.02f));
+        add(Type::Float, VtValue(0.05f));
+        add(Type::Float, VtValue(0.3f));
+        for (const Collider &c : colliders) {
+            VtVec3fArray moved = c.points;
+            for (GfVec3f &p : moved)
+                p[1] += 0.03f * float(t);
+            add(Type::Vec3fArray, VtValue(moved));
+            add(Type::IntArray, VtValue(c.counts));
+            add(Type::IntArray, VtValue(c.indices));
+            add(Type::Token, VtValue(TfToken("rightHanded")));
+        }
+        Revision r(SchemaType::RigExecClothMover, std::move(keys),
+                   std::move(values));
+        r.record.binding.externalCompileData = VtValue(24.0);
+        const float swing = 0.2f * std::sin(0.7f * float(t));
+        for (const GfVec3f &p : rest)
+            r.points.push_back(GfVec3f(p[0] + swing, p[1], p[2]));
+        return r;
+    }
+};
+
+/// One evaluator's history of a windowed revision.
+struct History {
+    RigExecWindowRing ring;
+    RigExecWindowPacketPtr capture;
+    std::shared_ptr<const void> cache;
+    size_t frames = 0;
+
+    RigExecWindowRun Run(bool captureOnly)
+    {
+        RigExecWindowRun run;
+        run.ring = &ring;
+        run.capture = &capture;
+        run.cache = &cache;
+        run.captureOnly = captureOnly;
+        return run;
+    }
+    /// The scene runtime's PushHistory for this window.
+    void Push()
+    {
+        ring.push_back(capture);
+        while (ring.size() > frames)
+            ring.erase(ring.begin());
+    }
+};
+
+bool
+RunNativeWindow(const Revision &r, const RigExecWeightPacket &weights,
+                History &history, bool captureOnly, std::vector<GfVec3f> *out)
+{
+    const std::vector<VtValue> leaves = r.Leaves();
+    const RigExecGeometryInputs in = r.Inputs(leaves, weights);
+    RigExecExternalRevision external;
+    const RigExecMoverParameters p =
+        RigExecAssembleGeometry(r.record, in, &external);
+    RigExecWindowRun run = history.Run(captureOnly);
+    external.window = &run;
+    RigExecGeometryWorkspace workspace;
+    *out = r.points;
+    return RigExecGeometryPacketMatches(r.record.op, p) &&
+           RigExecRunGeometry(r.record, p, &workspace, out, true, &external);
+}
+
+bool
+RunOpWindow(const Revision &r, const RigExecWeightPacket &weights,
+            History &history, bool captureOnly, RigExecGeometryOpRunner &runner,
+            std::vector<GfVec3f> *out, std::string *error)
+{
+    const std::vector<VtValue> leaves = r.Leaves();
+    const RigExecGeometryInputs in = r.Inputs(leaves, weights);
+    std::vector<VtValue> declared;
+    const RigExecMoverParameters p =
+        RigExecGatherExternalGeometryInputs(r.record, in, &declared);
+    RigExecExternalOpValues values;
+    values.inputs = &declared;
+    values.basePoints = &in.basePoints;
+    RigExecWindowRun run = history.Run(captureOnly);
+    *out = r.points;
+    return RigExecGeometryPacketMatches(r.record.op, p) &&
+           RigExecRunExternalOp(r.record.binding, p, values, runner, *out,
+                                error, &run);
+}
+
+/// The native cloth and its op played side by side: \p ticks lists each
+/// tick's frame, negative for a jump to minus it (the history cleared, then
+/// rebuilt from the frames before it by record-only ticks), and each tick
+/// must give the same success, points and record. \p edit, when set, changes
+/// the inputs before the tick it names. Returns how many ticks solved.
+int
+PlayCloth(const char *name, ClothInputs inputs, const std::vector<int> &ticks,
+          const RigExecWeightPacket &weights,
+          const std::function<void(int, ClothInputs &)> &edit = {})
+{
+    History native, op;
+    native.frames = op.frames = size_t(RigExecClothHistoryFrames(
+        RigExecClothSettings{inputs.windowFrames, inputs.maxWindowFrames}));
+    RigExecGeometryOpRunner runner;
+    int solved = 0;
+    const auto tick = [&](int t, bool captureOnly) {
+        if (edit)
+            edit(t, inputs);
+        const Revision r = inputs.Make(t);
+        std::vector<GfVec3f> a, b;
+        std::string error;
+        const bool nativeOk =
+            RunNativeWindow(r, weights, native, captureOnly, &a);
+        const bool opOk =
+            RunOpWindow(r, weights, op, captureOnly, runner, &b, &error);
+        const bool same = nativeOk == opOk && (!nativeOk || SameBits(a, b)) &&
+                          RigExecWindowPacketsEqual(native.capture, op.capture);
+        if (!same) {
+            std::printf("%s, t=%d%s: native %d, op %d (%s)\n", name, t,
+                        captureOnly ? " (record only)" : "", int(nativeOk),
+                        int(opOk), error.c_str());
+            CHECK(false);
+        }
+        solved += nativeOk && !captureOnly ? 1 : 0;
+        native.Push();
+        op.Push();
+    };
+    for (const int t : ticks) {
+        if (t >= 0) {
+            tick(t, false);
+            continue;
+        }
+        native.ring.clear();
+        op.ring.clear();
+        for (int k = int(native.frames); k >= 1; --k)
+            tick(-t - k, true);
+        tick(-t, false);
+    }
+    return solved;
+}
+
+void
+TestCloth()
+{
+    const ClothInputs inputs;
+    const std::vector<int> play = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    const size_t n = inputs.rest.size();
+    for (const auto &[envelope, weights] : Envelopes(n)) {
+        const std::string name = std::string("cloth / ") + envelope;
+        CHECK(PlayCloth(name.c_str(), inputs, play, weights) > 0);
+    }
+    const RigExecWeightPacket full = RigExecWeightPacket::Constant(1.0f);
+    CHECK(PlayCloth("cloth, jumps", inputs, {3, 4, -9, 10, -2, 3, 4}, full) >
+          0);
+    {
+        ClothInputs bare = inputs;
+        bare.colliders.clear();
+        bare.pins = {};
+        bare.tethers = false;
+        CHECK(PlayCloth("cloth, no colliders or pins", bare, play, full) > 0);
+    }
+    {
+        ClothInputs two = inputs;
+        ClothInputs::Collider wall;
+        wall.points = {GfVec3f(1.2f, -1, -1), GfVec3f(1.2f, 1, -1),
+                       GfVec3f(1.2f, 1, 1), GfVec3f(1.2f, -1, 1)};
+        two.colliders.push_back(wall);
+        two.windowFrames = 3;
+        two.maxWindowFrames = 8;
+        CHECK(PlayCloth("cloth, two colliders, reaching back", two, play,
+                        full) > 0);
+    }
+    // Settings that move mid-playback rebuild the op's compiled rig; the
+    // history stays the host's.
+    CHECK(PlayCloth("cloth, substeps change", inputs, play, full,
+                    [](int t, ClothInputs &in) {
+                        if (t == 6)
+                            in.substeps = 5;
+                    }) > 0);
+    CHECK(PlayCloth("cloth, pins change", inputs, play, full,
+                    [](int t, ClothInputs &in) {
+                        if (t == 5)
+                            in.pins[7] = 1.0f;
+                    }) > 0);
+    // Refusals: a record that cannot be made, an unusable mesh and an
+    // envelope that does not resolve still match tick by tick.
+    CHECK(PlayCloth("cloth, collider points missing", inputs, play, full,
+                    [](int t, ClothInputs &in) {
+                        if (t == 4)
+                            in.colliders[0].points = {GfVec3f(0)};
+                    }) > 0);
+    {
+        ClothInputs broken = inputs;
+        broken.counts[0] = 9;
+        CHECK(PlayCloth("cloth, unusable mesh", broken, {0, 1, 2}, full) == 0);
+    }
+    {
+        RigExecWeightPacket bad = Dense(n);
+        bad.values.pop_back();
+        CHECK(PlayCloth("cloth, envelope does not resolve", inputs,
+                        {0, 1, 2, 3}, bad) == 0);
     }
 }
 
@@ -923,7 +1195,8 @@ TestCapabilities()
     const RigExecRegistry &registry = RigExecRegistry::Get();
     for (const TfToken *schema : {&SchemaType::RigExecPatchMover,
                                   &SchemaType::RigExecSurfaceBindingMover,
-                                  &SchemaType::RigExecLayeredSkinMover}) {
+                                  &SchemaType::RigExecLayeredSkinMover,
+                                  &SchemaType::RigExecClothMover}) {
         RigExecRevisionBinding binding;
         binding.externalSchema = *schema;
         const RigExecOpHandle *handle = RigExecExternalOpHandle(binding);
@@ -934,7 +1207,9 @@ TestCapabilities()
         const auto has = [&](uint32_t bit) {
             return (desc.capabilities & bit) != 0;
         };
-        CHECK(desc.threading == RigExecOpThreading::Pure);
+        CHECK(desc.threading == (*schema == SchemaType::RigExecClothMover
+                                     ? RigExecOpThreading::Windowed
+                                     : RigExecOpThreading::Pure));
         CHECK(RigExecRevisionTakesSeparateBlend(Op::External,
                                                 RigExecWeightPacket()) ==
               has(kRigExecOpSeparateBlend));
@@ -966,6 +1241,7 @@ main()
     TestPatch();
     TestSurfaceBinding();
     TestLayeredSkin();
+    TestCloth();
 #ifdef RIGEXEC_SCHEMA_RESOURCE_DIR
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     TestLayeredSkinScene();

@@ -1,10 +1,13 @@
 #include "rigExecScene/externalOps.h"
 
+#include "rigExec/api/moverRegistry.h"
 #include "rigExec/api/registry.h"
+#include "rigExecOps/deform/clothOp.h"
 #include "rigExecOps/deform/layeredSkinOp.h"
 #include "rigExecOps/deform/patchOp.h"
 #include "rigExecOps/deform/surfaceBindingOp.h"
 #include "rigExecSchema/schemaTokens.h"
+#include "rigExecScene/clothDeclaredInputs.h"
 #include "rigExecScene/layeredSkinInputs.h"
 #include "rigExecScene/patchInputs.h"
 #include "rigExecScene/surfaceBindingInputs.h"
@@ -602,6 +605,172 @@ LayeredSkinStale(const RigExecRevisionBinding &binding,
     return ReadLayeredSkinFor(binding, values, node, &v, &moved) && moved;
 }
 
+// --- Cloth -----------------------------------------------------------------
+
+/// Whether \p input is one of the per-tick inputs, which reach the op as
+/// ports rather than its compiled rig: the parameters, and a collider's
+/// points, whose count alone the compiled rig reads.
+bool
+PerTick(size_t input, size_t colliders, bool *countOnly)
+{
+    *countOnly = false;
+    if (input >= RigExecClothStretchCompliance && input <= RigExecClothFriction)
+        return true;
+    if (input >= RigExecClothFirstCollider &&
+        input < RigExecClothFirstCollider +
+                    colliders * RigExecClothInputsPerCollider &&
+        (input - RigExecClothFirstCollider) % RigExecClothInputsPerCollider ==
+            0) {
+        *countOnly = true;
+        return true;
+    }
+    return false;
+}
+
+/// Whether \p in builds the compiled rig \p kept built: every input equal
+/// but the per-tick ones, of which a collider's point count must hold.
+bool
+SameClothRig(const std::vector<VtValue> &in, const std::vector<VtValue> &kept,
+             size_t colliders)
+{
+    if (in.size() != kept.size())
+        return false;
+    for (size_t k = 0; k < in.size(); ++k) {
+        bool countOnly = false;
+        if (!PerTick(k, colliders, &countOnly)) {
+            if (in[k] != kept[k])
+                return false;
+        } else if (countOnly) {
+            if (!in[k].IsHolding<VtVec3fArray>() ||
+                !kept[k].IsHolding<VtVec3fArray>() ||
+                in[k].UncheckedGet<VtVec3fArray>().size() !=
+                    kept[k].UncheckedGet<VtVec3fArray>().size())
+                return false;
+        }
+    }
+    return true;
+}
+
+/// One tick's values: the parameters and each collider's points.
+struct ClothTick {
+    RigExecArray<float> parameters;
+    std::vector<RigExecArray<Vec3f>> colliders;
+};
+
+bool
+ReadClothTick(const RigExecRevisionBinding &binding,
+              const std::vector<VtValue> &in, ClothTick *out)
+{
+    if (in.size() < RigExecClothFirstCollider)
+        return false;
+    const size_t colliders = RigExecClothColliderCount(
+        RigExecClothLayout(binding.externalCompileData), in.size());
+    if (colliders >
+        (in.size() - RigExecClothFirstCollider) / RigExecClothInputsPerCollider)
+        return false;
+    const auto parameters = RigExecClothParameterValues(in);
+    out->parameters = RigExecArray<float>(parameters.data(), parameters.size());
+    out->colliders.resize(colliders);
+    for (size_t k = 0; k < colliders; ++k) {
+        VtVec3fArray points;
+        if (!As(in[RigExecClothFirstCollider +
+                   k * RigExecClothInputsPerCollider],
+                &points))
+            return false;
+        out->colliders[k] = ToStd(points);
+    }
+    return true;
+}
+
+/// The cloth's compiled rig, as the mover's compile-time assembly builds and
+/// saves it for playback. False where the declared inputs do not assemble;
+/// an assembled rig that does not compile leaves the default, which records
+/// ticks and solves none.
+bool
+ClothRig(const RigExecRevisionBinding &binding, const std::vector<VtValue> &in,
+         rigExecOps::ClothPayload *payload)
+{
+    const RigExecMoverHandler *handler = binding.handler;
+    if (!handler || !handler->assembleExternal || !handler->encodeExternal)
+        return false;
+    const RigExecProviderValues none;
+    const RigExecExternalProviderValues providers(none);
+    const RigExecExternalInputContext context{binding, providers, in};
+    VtValue data;
+    if (!handler->assembleExternal(context, &data))
+        return false;
+    std::vector<uint8_t> bytes, frame;
+    RigExecClothCompiledData compiledRig;
+    if (handler->encodeExternal(data, binding, &bytes, &frame) &&
+        RigExecDecodeClothCompiledData(bytes.data(), bytes.size(), &compiledRig,
+                                       nullptr))
+        payload->compiledRig = std::move(compiledRig);
+    return true;
+}
+
+bool
+AddCloth(const RigExecRevisionBinding &binding,
+         const RigExecExternalOpValues &values, RigExecRigDescBuilder &builder,
+         RigExecExternalOpNode &node, std::string *error)
+{
+    const std::vector<VtValue> &in = *values.inputs;
+    rigExecOps::ClothPayload payload;
+    ClothTick tick;
+    if (!ReadClothTick(binding, in, &tick) || !ClothRig(binding, in, &payload))
+        return Fail(error, "cloth mover inputs do not translate");
+    node.node = builder.AddOp(rigExecOps::Cloth(), &payload);
+    node.inputs.push_back(
+        builder.BindInput(node.node, rigExecOps::ClothParameters()));
+    for (size_t k = 0; k < tick.colliders.size(); ++k)
+        node.inputs.push_back(
+            builder.BindInput(node.node, rigExecOps::ClothColliders()));
+    node.points = builder.BindInput(node.node, rigExecOps::ClothPoints());
+    node.envelope = builder.BindInput(node.node, rigExecOps::ClothEnvelope());
+    node.out = builder.BindOutput(node.node, rigExecOps::ClothOut());
+    node.status = builder.BindOutput(node.node, rigExecOps::ClothStatusOut());
+    node.solved = uint32_t(rigExecOps::ClothStatus::Solved);
+    node.windowed = true;
+    node.source = in;
+    return true;
+}
+
+bool
+ClothMoved(const RigExecRevisionBinding &binding,
+           const RigExecExternalOpValues &values,
+           const RigExecExternalOpNode &node, ClothTick *tick)
+{
+    return !ReadClothTick(binding, *values.inputs, tick) ||
+           node.inputs.size() != 1 + tick->colliders.size() ||
+           !SameClothRig(*values.inputs, node.source, tick->colliders.size());
+}
+
+bool
+WriteCloth(const RigExecRevisionBinding &binding,
+           const RigExecExternalOpValues &values,
+           const RigExecExternalOpNode &node, RigExecEvaluator &evaluator,
+           std::string *error)
+{
+    ClothTick tick;
+    if (ClothMoved(binding, values, node, &tick))
+        return Fail(error, "cloth settings changed");
+    if (!evaluator.SetInput(node.inputs[0], &tick.parameters, error))
+        return false;
+    for (size_t k = 0; k < tick.colliders.size(); ++k)
+        if (!evaluator.SetInput(node.inputs[1 + k], &tick.colliders[k], error))
+            return false;
+    return true;
+}
+
+bool
+ClothStale(const RigExecRevisionBinding &binding,
+           const RigExecExternalOpValues &values,
+           const RigExecExternalOpNode &node)
+{
+    ClothTick tick;
+    return ReadClothTick(binding, *values.inputs, &tick) &&
+           ClothMoved(binding, values, node, &tick);
+}
+
 // --- Table ----------------------------------------------------------------
 
 /// One built-in External mover: its schema, its op, and how its declared
@@ -628,6 +797,8 @@ const ExternalOp kExternalOps[] = {
      &AddSurfaceBinding, &WriteSurfaceBinding, &SurfaceBindingStale},
     {&SchemaType::RigExecLayeredSkinMover, &rigExecOps::LayeredSkin,
      &AddLayeredSkin, &WriteLayeredSkin, &LayeredSkinStale},
+    {&SchemaType::RigExecClothMover, &rigExecOps::Cloth, &AddCloth, &WriteCloth,
+     &ClothStale},
 };
 
 const ExternalOp *
@@ -673,7 +844,8 @@ RigExecWriteExternalOpInputs(const RigExecRevisionBinding &binding,
                              const RigExecWeightPacket &weights,
                              const std::vector<GfVec3f> &points,
                              const RigExecExternalOpNode &node,
-                             RigExecEvaluator *evaluator, std::string *error)
+                             RigExecEvaluator *evaluator, std::string *error,
+                             bool *envelopeResolved)
 {
     const ExternalOp *op = Find(binding);
     if (!op || node.op != &op->op())
@@ -683,8 +855,15 @@ RigExecWriteExternalOpInputs(const RigExecRevisionBinding &binding,
     if (!op->write(binding, values, node, *evaluator, error))
         return false;
     std::vector<float> resolved;
-    if (!weights.ResolveAll(points.size(), &resolved))
-        return Fail(error, "envelope does not resolve over the points");
+    const bool resolves = weights.ResolveAll(points.size(), &resolved);
+    if (envelopeResolved)
+        *envelopeResolved = resolves;
+    if (!resolves) {
+        if (!node.windowed)
+            return Fail(error, "envelope does not resolve over the points");
+        // The tick still records; the run's result is refused.
+        resolved.assign(points.size(), 1.0f);
+    }
     const RigExecArray<float> envelope(resolved.data(), resolved.size());
     const RigExecArray<Vec3f> in = ToStd(points.data(), points.size());
     return (!Valid(node.envelope) ||
