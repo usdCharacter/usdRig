@@ -1077,6 +1077,44 @@ private:
     /// RIGEXEC_ENABLE_PARALLEL_EVAL=0), then joined. With \p gate, also the
     /// gate form of what they read.
     size_t _SettleStructureDigest(_DigestGate *gate = nullptr) const;
+    /// One notice's classification, decided before anything moves: what it
+    /// changed under the compiled rig and how the standing program takes
+    /// it. _OnObjectsChanged applies it.
+    struct _NoticeVerdict {
+        /// Shows or hides prims only: nothing the rig holds is touched.
+        bool displayOnly = false;
+        /// Moved a projector's captured mesh transform.
+        bool captureMoved = false;
+        /// Nothing but values on the numeric avar channels.
+        bool avarValuesOnly = false;
+        /// One of those avars is one a property chain reads.
+        bool chainReadsAvar = false;
+        /// Could move the structure digest.
+        bool structureSuspect = false;
+        /// ClassifyNoticeDisposition's answer and paths.
+        RigExecNoticeDisposition disposition = RigExecNoticeDisposition::None;
+        std::vector<SdfPath> patchedPaths;
+
+        bool Structural() const
+        {
+            return captureMoved || structureSuspect;
+        }
+        bool Patched() const
+        {
+            return disposition == RigExecNoticeDisposition::Patched;
+        }
+        bool ValueEdits() const
+        {
+            return disposition == RigExecNoticeDisposition::Edited;
+        }
+        /// Whatever the program does not absorb as a value edit.
+        bool BumpsStructureSerial() const
+        {
+            return !Patched() && !ValueEdits();
+        }
+    };
+    _NoticeVerdict
+    _ClassifyNotice(const UsdNotice::ObjectsChanged &notice) const;
     void _OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
                            const UsdStageWeakPtr &sender);
     /// Resolves rigExec:startFramePolicy for every RigExecFkChain under the

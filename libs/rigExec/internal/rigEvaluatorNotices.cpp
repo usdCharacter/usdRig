@@ -664,19 +664,76 @@ RigExecRigEvaluator::_EditIsCertainlyStructural() const
     return false;
 }
 
+RigExecRigEvaluator::_NoticeVerdict
+RigExecRigEvaluator::_ClassifyNotice(
+    const UsdNotice::ObjectsChanged &notice) const
+{
+    _NoticeVerdict verdict;
+    // The same query the registry's notice adapter consumes: the handler's
+    // branch and the adapter's retire/re-resolve decision read one
+    // disposition.
+    verdict.disposition =
+        ClassifyNoticeDisposition(notice, &verdict.patchedPaths);
+    // Showing or hiding prims: no step reads visibility, so nothing the rig
+    // holds is touched -- above all not the controls' parent transform,
+    // which the bake reads whole.
+    verdict.displayOnly = RigExecNoticeIsDisplayOnly(notice);
+    if (verdict.displayOnly) {
+        return verdict;
+    }
+    // Rebuild the immutable raw Default meshWorldInverse capture, not
+    // unrelated sampled provider xforms. The new compile also rechecks the
+    // static-transform admission when time samples are added or removed.
+    for (const auto &entry : _graphDerivedChains)
+        for (const auto &revision : entry.second)
+            if ((revision.op == RigExecRevisionOp::SurfaceProjector ||
+                 revision.op == RigExecRevisionOp::ShaderDials) &&
+                RigExecProjectorMeshCaptureAffected(notice,
+                                                    revision.binding.base))
+                verdict.captureMoved = true;
+    verdict.avarValuesOnly = _NoticeIsAvarValuesOnly(notice);
+    // ... unless the avar the notice names is one a property chain READS.
+    //
+    // A chain's inputs:value may be connected to a control's avar -- that is
+    // how every "distance from rest, from the control's own translate" chain
+    // in this rig is built -- and a binding that was resolved before the
+    // avar moved is resolved against a stale number. The bindings' own dirty
+    // test watches interactive overrides and upstream chains, not authored
+    // values, so without this a drag would update such a chain and
+    // AUTHORING the same avar would not.
+    verdict.chainReadsAvar =
+        verdict.avarValuesOnly && !_propertyChainInputs.empty() &&
+        [this, &notice]() {
+            for (const SdfPath &path : notice.GetResyncedPaths()) {
+                if (_propertyChainInputs.count(path))
+                    return true;
+            }
+            for (const SdfPath &path : notice.GetChangedInfoOnlyPaths()) {
+                if (_propertyChainInputs.count(path))
+                    return true;
+            }
+            return false;
+        }();
+    // A notice that moves only values the digest never writes -- a switch,
+    // a dial, a space index on a control -- cannot move it, so it is not
+    // suspect even inside the rig, where every other notice is: a suspect
+    // notice's settle recomputes the whole digest, which would dominate a
+    // switch flip.
+    verdict.structureSuspect = !verdict.avarValuesOnly &&
+                               !_NoticeIsDigestValueNeutral(notice) &&
+                               _NoticeIsDigestSuspect(notice);
+    return verdict;
+}
+
 void
 RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
                                        const UsdStageWeakPtr &)
 {
     RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "Notice.Evaluator", "notice");
-    // Showing or hiding prims: no step reads visibility, so nothing the rig
-    // holds is touched -- above all not the controls' parent transform,
-    // which the bake reads whole.
-    if (RigExecNoticeIsDisplayOnly(notice)) {
-        _rigState.lastNoticeDisposition = _bakedProgram
-                                              ? RigExecNoticeDisposition::Edited
-                                              : RigExecNoticeDisposition::None;
-        _rigState.lastNoticePatchedPaths.clear();
+    _NoticeVerdict verdict = _ClassifyNotice(notice);
+    _rigState.lastNoticeDisposition = verdict.disposition;
+    _rigState.lastNoticePatchedPaths = std::move(verdict.patchedPaths);
+    if (verdict.displayOnly) {
         return;
     }
     ++_stageEditSerial;
@@ -710,56 +767,17 @@ RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
     // writes because of its type, a relationship whose targets it writes, a
     // connection inside a pose-input closure. When one of them has changed,
     // the digest has moved, and the settle compiles without computing it.
-    // Rebuild the immutable raw Default meshWorldInverse capture, not
-    // unrelated sampled provider xforms. The new compile also rechecks the
-    // static-transform admission when time samples are added or removed.
-    bool projectorCaptureChanged = false;
-    for (const auto &entry : _graphDerivedChains)
-        for (const auto &revision : entry.second)
-            if ((revision.op == RigExecRevisionOp::SurfaceProjector ||
-                 revision.op == RigExecRevisionOp::ShaderDials) &&
-                RigExecProjectorMeshCaptureAffected(notice,
-                                                    revision.binding.base))
-                projectorCaptureChanged = true;
-    if (projectorCaptureChanged) {
+    if (verdict.captureMoved) {
         _rigState.Transition(_CompiledRigState::Edge::CaptureMoved);
     }
-    const bool avarValuesOnly = _NoticeIsAvarValuesOnly(notice);
-    // ... unless the avar the notice names is one a property chain READS.
-    //
-    // A chain's inputs:value may be connected to a control's avar -- that is
-    // how every "distance from rest, from the control's own translate" chain
-    // in this rig is built -- and a binding that was resolved before the
-    // avar moved is resolved against a stale number. The bindings' own dirty
-    // test watches interactive overrides and upstream chains, not authored
-    // values, so without this a drag would update such a chain and
-    // AUTHORING the same avar would not.
-    const bool chainReadsAnEditedAvar =
-        avarValuesOnly && !_propertyChainInputs.empty() && [this, &notice]() {
-            for (const SdfPath &path : notice.GetResyncedPaths()) {
-                if (_propertyChainInputs.count(path))
-                    return true;
-            }
-            for (const SdfPath &path : notice.GetChangedInfoOnlyPaths()) {
-                if (_propertyChainInputs.count(path))
-                    return true;
-            }
-            return false;
-        }();
-    if (chainReadsAnEditedAvar) {
+    if (verdict.chainReadsAvar) {
         // The one thing an avar-only notice CAN invalidate, dropped on its
         // own so the rest of the fast path is untouched: an Avar Editor tick
         // still skips the skin layouts, the blend samples and the rest.
         _propertyChainBindings.reset();
     }
-    // A notice that moves only values the digest never writes -- a switch,
-    // a dial, a space index on a control -- cannot move it, so it is not
-    // suspect even inside the rig, where every other notice is: a suspect
-    // notice's settle recomputes the whole digest, which would dominate a
-    // switch flip.
-    if (!avarValuesOnly) {
-        if (!_NoticeIsDigestValueNeutral(notice) &&
-            _NoticeIsDigestSuspect(notice)) {
+    if (!verdict.avarValuesOnly) {
+        if (verdict.structureSuspect) {
             _rigState.Transition(_CompiledRigState::Edge::StructureSuspect);
             _NoteCertainStructuralCandidates(notice);
         } else if (!_rigState.StructureDirty() && _rigState.Compiled() &&
@@ -777,16 +795,10 @@ RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
     // anything it moved -- and only that: dropping them whole on every
     // notice would re-bind and re-read, on the first frame after any edit,
     // chains, layouts and shapes the edit never touched.
-    _ClearValueCaches(notice, avarValuesOnly);
+    _ClearValueCaches(notice, verdict.avarValuesOnly);
     // Signature excludes values; the bake read-index decides rebuilds.
     if (_bakedProgram) {
-        // Classified first, through the same query the registry's notice
-        // adapter consumes: the branch below and the adapter's
-        // retire/re-resolve decision read one verdict.
-        _rigState.lastNoticeDisposition = ClassifyNoticeDisposition(
-            notice, &_rigState.lastNoticePatchedPaths);
-        if (_rigState.lastNoticeDisposition ==
-            RigExecNoticeDisposition::Patched) {
+        if (verdict.Patched()) {
             // Patched in place: the program's avar table already holds the
             // new constants, and its by-value slot comparison re-runs only
             // their cone. No rebuild, and no stamp bump -- the bump would
@@ -798,8 +810,7 @@ RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
             if (!_bakedProgram->ApplyAvarValueEdits(notice)) {
                 _bakedProgram->BumpProgramStamp();
             }
-        } else if (_rigState.lastNoticeDisposition ==
-                   RigExecNoticeDisposition::Edited) {
+        } else if (verdict.ValueEdits()) {
             // Routed like an override placed for one run and lifted: the
             // inputs the edit reached are marked, and the next run re-runs
             // the cone of the steps that read them instead of everything.
@@ -812,8 +823,7 @@ RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
                 !_bakedProgram->ApplyValueEdits(notice)) {
                 _bakedProgram->BumpProgramStamp();
             }
-        } else if (_rigState.lastNoticeDisposition ==
-                   RigExecNoticeDisposition::Stale) {
+        } else if (verdict.disposition == RigExecNoticeDisposition::Stale) {
             // The rebuild is allowed to refuse where the standing program did
             // not, and a refusal remembered from before this notice would
             // otherwise answer for a stage that has since changed.
@@ -821,7 +831,6 @@ RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
             // Input sampling may precede the lazy rebuild. Retire held raw
             // reads too; a structural notice has no routed leaf edits.
             _bakedProgram->BumpProgramStamp();
-
         } else {
             // The other half of the same index, and the reason the program
             // may skip work at all. A notice that misses the index and that
@@ -834,12 +843,10 @@ RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
             // sources by value from then on.
             _bakedProgram->BumpProgramStamp();
         }
-    } else {
-        _rigState.lastNoticeDisposition = RigExecNoticeDisposition::None;
-        _rigState.lastNoticePatchedPaths.clear();
     }
-    if (_rigState.lastNoticeDisposition != RigExecNoticeDisposition::Patched &&
-        _rigState.lastNoticeDisposition != RigExecNoticeDisposition::Edited) {
+    // The serial moves on the verdict alone: whatever the program does not
+    // absorb as a value edit is a structure edit to a consumer.
+    if (verdict.BumpsStructureSerial()) {
         ++_stageStructureSerial;
     }
     _LogValueEdit(notice);
