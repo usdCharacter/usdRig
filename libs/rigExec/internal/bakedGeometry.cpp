@@ -12,6 +12,7 @@
 // with the dynamic walk were captured into RigExecBakedProgramImpl at Build.
 #include "rigExec/internal/bakedOpValues.h"
 #include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedSlotDomains.h"
 #include "rigExec/api/sceneDispatch.h"
 #include "rigExec/internal/bakedSchedule.h"
 
@@ -7246,168 +7247,265 @@ RigExecBakedVerifyRangeChains(RigExecBakedProgramImpl *program)
     return mismatches;
 }
 
+namespace {
+
 void
-RigExecBakedResetSetAsideGeometryValue(RigExecBakedProgramImpl *program,
-                                       RigExecBakedSlotDomain domain,
-                                       uint32_t slot)
+ResetChainValue(RigExecBakedProgramImpl &B, uint32_t slot, bool base)
 {
-    auto &B = *program;
-    if (domain == RigExecBakedSlotDomain::ChainBase ||
-        domain == RigExecBakedSlotDomain::ChainPoints) {
-        if (slot >= B.chains.size())
-            return;
-        auto &chain = B.chains[slot];
-        // An excluded writer never runs, so clearing is the only way the
-        // points move: the content version moves with them.
-        if (domain == RigExecBakedSlotDomain::ChainBase) {
-            chain.haveBase = false;
-            if (!chain.lastBase.empty())
-                ++chain.baseVersion;
-            chain.lastBase.clear();
-            // The base groups go with it; their versions never go down.
-            for (auto &group : chain.baseGroups) {
-                RigExecResetGroup(&group);
-                group.published = RigExecPointsRef<GfVec3f>();
-            }
-            chain.baseOwner.reset();
-        } else {
-            chain.haveResult = false;
-            if (!chain.result.empty())
-                ++chain.resultVersion;
-            chain.result.clear();
-            chain.resultIds.clear();
+    if (slot >= B.chains.size())
+        return;
+    auto &chain = B.chains[slot];
+    // An excluded writer never runs, so clearing is the only way the
+    // points move: the content version moves with them.
+    if (base) {
+        chain.haveBase = false;
+        if (!chain.lastBase.empty())
+            ++chain.baseVersion;
+        chain.lastBase.clear();
+        // The base groups go with it; their versions never go down.
+        for (auto &group : chain.baseGroups) {
+            RigExecResetGroup(&group);
+            group.published = RigExecPointsRef<GfVec3f>();
         }
-        return;
-    }
-    if (domain == RigExecBakedSlotDomain::DerivedOut) {
-        if (slot >= B.derivedIndex.size())
-            return;
-        const auto [chain, part] = B.derivedIndex[slot];
-        auto &derived = B.chains[size_t(chain)].derived[size_t(part)];
-        derived.haveResult = false;
-        derived.haveMatrix = false;
-        if (!derived.result.empty())
-            ++derived.resultVersion;
-        derived.result.clear();
-        derived.revision.output.clear();
-        derived.revision.ran = false;
-        return;
-    }
-    if (domain == RigExecBakedSlotDomain::SkinTopology &&
-        slot >= B.revisionIndex.size()) {
-        const size_t derivedSlot = slot - B.revisionIndex.size();
-        if (derivedSlot >= B.derivedIndex.size())
-            return;
-        const auto [chain, part] = B.derivedIndex[derivedSlot];
-        auto &revision = B.chains[size_t(chain)].derived[size_t(part)].revision;
-        revision.layoutHandle.reset();
-        revision.topology.reset();
-        revision.topologyResolved = false;
-        revision.layoutUsable = false;
-        return;
-    }
-    if (domain == RigExecBakedSlotDomain::RevisionOut) {
-        for (size_t revisionIndex = 0; revisionIndex < B.revisionIndex.size();
-             ++revisionIndex) {
-            const int first = B.revisionChunkBase[revisionIndex];
-            const int count = B.revisionChunkCount[revisionIndex];
-            if (slot < uint32_t(first) || slot >= uint32_t(first + count))
-                continue;
-            const auto [chain, part] = B.revisionIndex[revisionIndex];
-            const auto &owner = B.chains[size_t(chain)];
-            auto &revision = B.chains[size_t(chain)].revisions[size_t(part)];
-            const size_t at = size_t(slot - uint32_t(first));
-            if (revision.rangeRole) {
-                // A set-aside group makes the revision pass the base through,
-                // as an excluded whole fuse does: every reader of a version
-                // past it resolves to the base groups (RigExecBakedGroupAt),
-                // never to this slot. The slot itself holds the base group,
-                // refused; its join publishes the base ids and
-                // ChainInputs leaves the source alone.
-                if (at < revision.groups.size()) {
-                    revision.groups[at].ok = false;
-                    PassSetAsideBaseGroup(owner, at, &revision.groups[at]);
-                }
-                if (at < revision.chunks.size())
-                    revision.chunks[at].ok = false;
-                revision.rangeSetAside = true;
-                revision.currentSource = -1;
-                return;
-            }
-            if (owner.groupBounds.size() >= 2 && at >= revision.chunks.size()) {
-                // A Whole revision's published group: its fuse is set aside,
-                // and passes the base groups through as a set-aside join does.
-                const size_t g = at - revision.chunks.size();
-                if (g < revision.groups.size()) {
-                    PassSetAsideBaseGroup(owner, g, &revision.groups[g]);
-                }
-                revision.rangeSetAside = true;
-                revision.currentSource = -1;
-                return;
-            }
-            revision.stagingOutput.clear();
-            revision.stagingFresh = false;
-            // The excluded writer owns the full retained staging output;
-            // invalidate every chunk opinion along with its cleared bytes,
-            // and a Whole revision's speculative group answers with them.
-            for (auto &chunk : revision.chunks)
-                chunk.ok = false;
-            if (owner.groupBounds.size() >= 2) {
-                for (auto &group : revision.groups)
-                    group.ok = false;
-            }
-            return;
-        }
-        return;
-    }
-    if (slot >= B.revisionIndex.size())
-        return;
-    const auto [chain, part] = B.revisionIndex[slot];
-    auto &revision = B.chains[size_t(chain)].revisions[size_t(part)];
-    switch (domain) {
-    case RigExecBakedSlotDomain::RevisionPacket:
-        revision.parameters.valid = false;
-        revision.acceptance = RigExecRevisionAcceptance::Refuses;
-        break;
-    case RigExecBakedSlotDomain::RevisionTransforms:
-        revision.influencesValid = false;
-        break;
-    case RigExecBakedSlotDomain::RevisionOut:
-        revision.output.clear();
-        break;
-    case RigExecBakedSlotDomain::RevisionDone:
-    case RigExecBakedSlotDomain::ChainDirty: {
-        revision.ran = false;
-        revision.executed = false;
-        revision.resultStatus = _tokens->operationCycle;
-        revision.currentSource = -1;
-        const auto &owner = B.chains[size_t(chain)];
-        if (owner.groupBounds.size() >= 2) {
-            // A join or Whole fuse of a chain cut into groups, set aside:
-            // readers past it resolve to the base groups, and its version
-            // follows their ids, which is the base it passes through.
-            revision.rangeSetAside = true;
-            PassSetAsideBaseGroups(owner, &revision);
-            break;
-        }
-        // A range-pipelined revision set aside passes the base through
-        // exactly as a whole one does; its ranges' buffer is then read by
-        // no one, and ChainInputs leaves the source alone.
-        if (revision.rangeRole)
-            revision.rangeSetAside = true;
-        // An excluded fuse never runs, so the version follows the base it
-        // passes through, against the copy of the base it last carried.
-        PassBaseThrough(owner.lastBase, &revision);
-        break;
-    }
-    case RigExecBakedSlotDomain::SkinTopology:
-        revision.layoutHandle.reset();
-        revision.topology.reset();
-        revision.topologyResolved = false;
-        revision.layoutUsable = false;
-        break;
-    default:
-        break;
+        chain.baseOwner.reset();
+    } else {
+        chain.haveResult = false;
+        if (!chain.result.empty())
+            ++chain.resultVersion;
+        chain.result.clear();
+        chain.resultIds.clear();
     }
 }
+
+RigExecBakedGeomRevision *
+SetAsideRevision(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    if (slot >= B.revisionIndex.size())
+        return nullptr;
+    const auto [chain, part] = B.revisionIndex[slot];
+    return &B.chains[size_t(chain)].revisions[size_t(part)];
+}
+
+void
+ResetRevisionTopology(RigExecBakedGeomRevision *revision)
+{
+    revision->layoutHandle.reset();
+    revision->topology.reset();
+    revision->topologyResolved = false;
+    revision->layoutUsable = false;
+}
+
+/// Appends the chain target, mover path and index that name revision
+/// \p r of \p B.
+void
+AppendRevisionIdentity(const RigExecBakedProgramImpl &B, size_t r,
+                       RigExecPathText &text, std::string *out)
+{
+    const auto &index = B.revisionIndex[r];
+    const auto &chain = B.chains[size_t(index.first)];
+    const auto &revision = chain.revisions[size_t(index.second)];
+    *out += text(chain.target) + ":" + text(revision.moverPath) + ":" +
+            std::to_string(index.second);
+}
+
+} // namespace
+
+void
+RigExecBakedResetChainBase(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    ResetChainValue(B, slot, true);
+}
+
+void
+RigExecBakedResetChainPoints(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    ResetChainValue(B, slot, false);
+}
+
+void
+RigExecBakedResetDerivedOut(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    if (slot >= B.derivedIndex.size())
+        return;
+    const auto [chain, part] = B.derivedIndex[slot];
+    auto &derived = B.chains[size_t(chain)].derived[size_t(part)];
+    derived.haveResult = false;
+    derived.haveMatrix = false;
+    if (!derived.result.empty())
+        ++derived.resultVersion;
+    derived.result.clear();
+    derived.revision.output.clear();
+    derived.revision.ran = false;
+}
+
+void
+RigExecBakedResetSkinTopology(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    if (slot < B.revisionIndex.size()) {
+        ResetRevisionTopology(SetAsideRevision(B, slot));
+        return;
+    }
+    const size_t derivedSlot = slot - B.revisionIndex.size();
+    if (derivedSlot >= B.derivedIndex.size())
+        return;
+    const auto [chain, part] = B.derivedIndex[derivedSlot];
+    ResetRevisionTopology(
+        &B.chains[size_t(chain)].derived[size_t(part)].revision);
+}
+
+void
+RigExecBakedResetRevisionOut(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    for (size_t revisionIndex = 0; revisionIndex < B.revisionIndex.size();
+         ++revisionIndex) {
+        const int first = B.revisionChunkBase[revisionIndex];
+        const int count = B.revisionChunkCount[revisionIndex];
+        if (slot < uint32_t(first) || slot >= uint32_t(first + count))
+            continue;
+        const auto [chain, part] = B.revisionIndex[revisionIndex];
+        const auto &owner = B.chains[size_t(chain)];
+        auto &revision = B.chains[size_t(chain)].revisions[size_t(part)];
+        const size_t at = size_t(slot - uint32_t(first));
+        if (revision.rangeRole) {
+            // A set-aside group makes the revision pass the base through,
+            // as an excluded whole fuse does: every reader of a version
+            // past it resolves to the base groups (RigExecBakedGroupAt),
+            // never to this slot. The slot itself holds the base group,
+            // refused; its join publishes the base ids and
+            // ChainInputs leaves the source alone.
+            if (at < revision.groups.size()) {
+                revision.groups[at].ok = false;
+                PassSetAsideBaseGroup(owner, at, &revision.groups[at]);
+            }
+            if (at < revision.chunks.size())
+                revision.chunks[at].ok = false;
+            revision.rangeSetAside = true;
+            revision.currentSource = -1;
+            return;
+        }
+        if (owner.groupBounds.size() >= 2 && at >= revision.chunks.size()) {
+            // A Whole revision's published group: its fuse is set aside,
+            // and passes the base groups through as a set-aside join does.
+            const size_t g = at - revision.chunks.size();
+            if (g < revision.groups.size()) {
+                PassSetAsideBaseGroup(owner, g, &revision.groups[g]);
+            }
+            revision.rangeSetAside = true;
+            revision.currentSource = -1;
+            return;
+        }
+        revision.stagingOutput.clear();
+        revision.stagingFresh = false;
+        // The excluded writer owns the full retained staging output;
+        // invalidate every chunk opinion along with its cleared bytes,
+        // and a Whole revision's speculative group answers with them.
+        for (auto &chunk : revision.chunks)
+            chunk.ok = false;
+        if (owner.groupBounds.size() >= 2) {
+            for (auto &group : revision.groups)
+                group.ok = false;
+        }
+        return;
+    }
+}
+
+void
+RigExecBakedResetRevisionPacket(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    if (auto *revision = SetAsideRevision(B, slot)) {
+        revision->parameters.valid = false;
+        revision->acceptance = RigExecRevisionAcceptance::Refuses;
+    }
+}
+
+void
+RigExecBakedResetRevisionTransforms(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    if (auto *revision = SetAsideRevision(B, slot))
+        revision->influencesValid = false;
+}
+
+void
+RigExecBakedResetRevisionDone(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    auto *revision = SetAsideRevision(B, slot);
+    if (!revision)
+        return;
+    revision->ran = false;
+    revision->executed = false;
+    revision->resultStatus = _tokens->operationCycle;
+    revision->currentSource = -1;
+    const auto &owner = B.chains[size_t(B.revisionIndex[slot].first)];
+    if (owner.groupBounds.size() >= 2) {
+        // A join or Whole fuse of a chain cut into groups, set aside:
+        // readers past it resolve to the base groups, and its version
+        // follows their ids, which is the base it passes through.
+        revision->rangeSetAside = true;
+        PassSetAsideBaseGroups(owner, revision);
+        return;
+    }
+    // A range-pipelined revision set aside passes the base through
+    // exactly as a whole one does; its ranges' buffer is then read by
+    // no one, and ChainInputs leaves the source alone.
+    if (revision->rangeRole)
+        revision->rangeSetAside = true;
+    // An excluded fuse never runs, so the version follows the base it
+    // passes through, against the copy of the base it last carried.
+    PassBaseThrough(owner.lastBase, revision);
+}
+
+bool
+RigExecBakedChainIdentity(const RigExecBakedProgramImpl &B, uint32_t slot,
+                          RigExecPathText &text, std::string *out)
+{
+    if (slot >= B.chains.size())
+        return false;
+    *out += text(B.chains[slot].target);
+    return true;
+}
+
+bool
+RigExecBakedRevisionIdentity(const RigExecBakedProgramImpl &B, uint32_t slot,
+                             RigExecPathText &text, std::string *out)
+{
+    if (slot >= B.revisionIndex.size())
+        return false;
+    AppendRevisionIdentity(B, slot, text, out);
+    return true;
+}
+
+bool
+RigExecBakedRevisionOutIdentity(const RigExecBakedProgramImpl &B, uint32_t slot,
+                                RigExecPathText &text, std::string *out)
+{
+    for (size_t r = 0; r < B.revisionChunkBase.size(); ++r) {
+        const int base = B.revisionChunkBase[r],
+                  count = B.revisionChunkCount[r];
+        if (base < 0 || count < 0 || slot < uint32_t(base) ||
+            uint64_t(slot) - uint32_t(base) >= uint32_t(count))
+            continue;
+        const auto &index = B.revisionIndex[r];
+        const auto &chain = B.chains[size_t(index.first)];
+        const auto &revision = chain.revisions[size_t(index.second)];
+        const size_t part = size_t(slot - uint32_t(base));
+        AppendRevisionIdentity(B, r, text, out);
+        *out += ":";
+        if (part < revision.chunks.size()) {
+            const auto &chunk = revision.chunks[part];
+            *out +=
+                std::to_string(chunk.begin) + ":" + std::to_string(chunk.end);
+            return true;
+        }
+        // A Whole revision's published group, past its chunks.
+        const size_t g = part - revision.chunks.size();
+        if (g + 1 >= chain.groupBounds.size())
+            return false;
+        *out += "group:" + std::to_string(g) + ":" +
+                std::to_string(chain.groupBounds[g]) + ":" +
+                std::to_string(chain.groupBounds[g + 1]);
+        return true;
+    }
+    return false;
+}
+
 } // namespace rigExec

@@ -1,5 +1,6 @@
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedSlotDomains.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/rigEvaluatorDependencies.h"
 #include "rigExec/internal/crossDomainInputs.h"
@@ -1896,6 +1897,22 @@ RigExecBakedPresentSpaceMatches(const RigExecBakedProgramImpl &B,
             kMatchValues)] = VtValue(VtDoubleArray(sw.matchValues.begin(),
                                                    sw.matchValues.end()));
     }
+}
+
+} // namespace rigExec
+
+namespace rigExec {
+
+void
+RigExecBakedResetSpaceValue(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    auto &value = B.providerValues.values[slot];
+    value.value = std::monostate();
+    value.initialized = false;
+    value.authoritative = false;
+    value.blocked = true;
+    value.count = 0;
+    value.error = "operation cycle";
 }
 
 } // namespace rigExec

@@ -4449,8 +4449,6 @@ const std::vector<VtValue> &
 RigExecBakedResolvePathLeaves(const RigExecBakedProgramImpl &,
                               const RigExecBakedPathLeaves &);
 void RigExecBakedResetWeightField(RigExecBakedProgramImpl *, int);
-void RigExecBakedResetSetAsideGeometryValue(RigExecBakedProgramImpl *,
-                                            RigExecBakedSlotDomain, uint32_t);
 
 /// RigExecIkFkMatchConstraint (bakedIkFkMatch.cpp): one run of its step
 /// -- \p scalars are inputs:switch, stretch, softDistance, upperScale,

@@ -7,6 +7,7 @@
 // captured into RigExecBakedProgramImpl at Build (see bakedProgramImpl.h),
 // and the compiled walk arrives restated as RigExecBakedWalkEntry.
 #include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedSlotDomains.h"
 #include "rigExec/internal/bakedExecCrossCheckRows.h"
 #include "bakedProgramImpl.h"
 #include "bakedExecCrossCheckRows.h"
@@ -5648,6 +5649,150 @@ RigExecBakedPublishPose(RigExecBakedProgramImpl *program, RigExecRigPose *pose)
         pose->movedProperties[B.poseWeightPaths[k]] = value;
         B.resolvedInputs->SetProperty(B.poseWeightPaths[k], value);
     }
+    return true;
+}
+
+} // namespace rigExec
+
+namespace rigExec {
+
+void
+RigExecBakedResetAvars(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    std::fill(B.avars.begin() + size_t(slot) * 11,
+              B.avars.begin() + (size_t(slot) + 1) * 11, 0.0);
+}
+
+void
+RigExecBakedResetPoseBase(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    B.base[slot] = RigExecBakedSetAsideFrame();
+}
+
+void
+RigExecBakedResetPoseFin(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    B.fin[slot] = RigExecBakedSetAsideFrame();
+}
+
+void
+RigExecBakedResetPosedM(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    B.posedM[slot] = RigExecBakedSetAsideMatrix();
+}
+
+void
+RigExecBakedResetFinalMatrix(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    B.finalMatrix[slot] = RigExecBakedSetAsideMatrix();
+}
+
+void
+RigExecBakedResetBaseMatrix(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    B.baseMatrix[slot] = RigExecBakedSetAsideMatrix();
+}
+
+void
+RigExecBakedResetSwitchFrame(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    B.switchFrames[slot] = RigExecBakedSetAsideMatrix();
+}
+
+void
+RigExecBakedResetAggregate(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    B.aggregates[slot] = {};
+}
+
+void
+RigExecBakedResetCandidates(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    std::fill(B.solvers[slot].outPresent.begin(),
+              B.solvers[slot].outPresent.end(), char(0));
+    std::fill(B.solvers[slot].outFrames.begin(),
+              B.solvers[slot].outFrames.end(), RigExecBakedSetAsideFrame());
+}
+
+void
+RigExecBakedResetCommitTable(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    auto &commit = B.commits[slot];
+    commit.abandoned = true;
+    std::fill(commit.present.begin(), commit.present.end(), char(0));
+    std::fill(commit.frames.begin(), commit.frames.end(),
+              RigExecBakedSetAsideFrame());
+}
+
+void
+RigExecBakedResetCommitDelta(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    std::fill(B.commits[slot].deltaOk.begin(), B.commits[slot].deltaOk.end(),
+              char(0));
+}
+
+void
+RigExecBakedResetCommitStaging(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    for (auto &commit : B.commits)
+        if (commit.split && slot >= uint32_t(commit.stagingBase) &&
+            uint64_t(slot) - uint32_t(commit.stagingBase) <
+                commit.staged.size()) {
+            const auto i = slot - uint32_t(commit.stagingBase);
+            commit.staged[i] = RigExecBakedSetAsideFrame();
+            commit.outcome[i] =
+                uint8_t(RigExecBakedPropagateOutcome::NoCandidate);
+            return;
+        }
+}
+
+void
+RigExecBakedResetConstraintDelta(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    B.deltaPresent[slot] = 0;
+    B.deltaValues[slot] = GfMatrix4d(1);
+}
+
+void
+RigExecBakedResetPoseWeight(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    B.poseWeights[slot] = 0;
+}
+
+void
+RigExecBakedResetFrameMatrix(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    B.frameMatrixValid[slot] = 0;
+    B.frameMatrix[slot] = GfMatrix4d(1);
+}
+
+void
+RigExecBakedResetRest(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    B.restFrames[slot] = RigExecBakedSetAsideFrame();
+    B.restM[slot] = GfMatrix4d(1);
+    B.restPts[slot] = {};
+}
+
+void
+RigExecBakedResetLadder(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    B.selfD[slot] = B.parentDinv[slot] = B.restRoundTrip[slot] =
+        B.defaultRoundTrip[slot] = GfMatrix4d(1);
+    B.posedAuthored[slot] = B.parentSpaceAuthored[slot] = 0;
+    B.posedAuthoredM[slot] = B.posedD[slot] = B.parentSpaceM[slot] =
+        GfMatrix4d(1);
+    B.rotOrder[slot] = TfToken();
+    B.rotationSign[slot] = 0;
+}
+
+bool
+RigExecBakedPathIdentity(const RigExecBakedProgramImpl &B, uint32_t slot,
+                         RigExecPathText &text, std::string *out)
+{
+    if (slot >= B.paths.size())
+        return false;
+    *out += text(B.paths[slot]);
     return true;
 }
 

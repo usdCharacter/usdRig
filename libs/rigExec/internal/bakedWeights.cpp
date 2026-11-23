@@ -4,6 +4,7 @@
 // explicitly bound placement phase. Both scheduled adapters use EvalCore.
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedSlotDomains.h"
 
 #include "rigExec/api/types.h"
 #include "rigExec/internal/weightPackets.h"
@@ -681,6 +682,34 @@ RigExecBakedPublishVolumePlacements(const RigExecBakedProgramImpl &program,
                                  program.volumePlacement[i]);
         }
     }
+}
+
+} // namespace rigExec
+
+namespace rigExec {
+
+void
+RigExecBakedResetWeightPacket(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    B.weightPackets[slot] = {};
+}
+
+void
+RigExecBakedResetWeightFrames(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    B.volumePlacement[slot] = RigExecBakedSetAsideMatrix();
+}
+
+void
+RigExecBakedResetWeightFramesBase(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    B.volumePlacementBase[slot] = RigExecBakedSetAsideMatrix();
+}
+
+void
+RigExecBakedResetWeightFieldSlot(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    RigExecBakedResetWeightField(&B, int(slot));
 }
 
 } // namespace rigExec

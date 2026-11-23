@@ -13,6 +13,7 @@ add_library(rigExecEval OBJECT
     libs/rigExec/internal/bakedWeights.cpp
     libs/rigExec/internal/bakedUpstream.cpp
     libs/rigExec/internal/bakedSchedule.cpp
+    libs/rigExec/internal/bakedSlotDomains.cpp
     libs/rigExec/internal/bakedTrace.cpp
     libs/rigExec/internal/moverGraph.cpp
     libs/rigExec/internal/moverKernels.cpp

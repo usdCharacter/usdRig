@@ -3,6 +3,7 @@
 // The baked program's scheduler: edges, executors and the report.
 // See bakedSchedule.h for what belongs here and what belongs with a domain.
 #include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/internal/bakedSlotDomains.h"
 #include "rigExec/internal/bakedOpGraph.h"
 #include "bakedSchedule.h"
 #include "bakedOpGraph.h"
@@ -53,90 +54,20 @@ std::string StepLabel(const RigExecBakedProgramImpl &, const RigExecBakedStep &,
 const TfToken _elementSizeToken(SchemaAttrText::rigExecElementSize);
 } // namespace
 
-const char *
-RigExecBakedSlotDomainName(RigExecBakedSlotDomain domain)
+bool
+RigExecBakedStageFramesIdentity(const RigExecBakedProgramImpl &B, uint32_t slot,
+                                RigExecPathText &text, std::string *out)
 {
-    switch (domain) {
-    case RigExecBakedSlotDomain::Avars:
-        return "Avars";
-    case RigExecBakedSlotDomain::PoseBase:
-        return "PoseBase";
-    case RigExecBakedSlotDomain::PoseFin:
-        return "PoseFin";
-    case RigExecBakedSlotDomain::PosedM:
-        return "PosedM";
-    case RigExecBakedSlotDomain::FinalMatrix:
-        return "FinalMatrix";
-    case RigExecBakedSlotDomain::BaseMatrix:
-        return "BaseMatrix";
-    case RigExecBakedSlotDomain::Aggregate:
-        return "Aggregate";
-    case RigExecBakedSlotDomain::SolverPoints:
-        return "SolverPoints";
-    case RigExecBakedSlotDomain::Candidates:
-        return "Candidates";
-    case RigExecBakedSlotDomain::CommitTable:
-        return "CommitTable";
-    case RigExecBakedSlotDomain::CommitDelta:
-        return "CommitDelta";
-    case RigExecBakedSlotDomain::CommitStaging:
-        return "CommitStaging";
-    case RigExecBakedSlotDomain::ConstraintDelta:
-        return "ConstraintDelta";
-    case RigExecBakedSlotDomain::PropertyResult:
-        return "PropertyResult";
-    case RigExecBakedSlotDomain::ChainBase:
-        return "ChainBase";
-    case RigExecBakedSlotDomain::RevisionPacket:
-        return "RevisionPacket";
-    case RigExecBakedSlotDomain::RevisionTransforms:
-        return "RevisionTransforms";
-    case RigExecBakedSlotDomain::RevisionOut:
-        return "RevisionOut";
-    case RigExecBakedSlotDomain::RevisionDone:
-        return "RevisionDone";
-    case RigExecBakedSlotDomain::ChainDirty:
-        return "ChainDirty";
-    case RigExecBakedSlotDomain::ChainPoints:
-        return "ChainPoints";
-    case RigExecBakedSlotDomain::DerivedOut:
-        return "DerivedOut";
-    case RigExecBakedSlotDomain::WeightPacket:
-        return "WeightPacket";
-    case RigExecBakedSlotDomain::WeightFrames:
-        return "WeightFrames";
-    case RigExecBakedSlotDomain::PoseWeight:
-        return "PoseWeight";
-    case RigExecBakedSlotDomain::Snapshots:
-        return "Snapshots";
-    case RigExecBakedSlotDomain::FrameMatrix:
-        return "FrameMatrix";
-    case RigExecBakedSlotDomain::Rest:
-        return "Rest";
-    case RigExecBakedSlotDomain::Ladder:
-        return "Ladder";
-    case RigExecBakedSlotDomain::SkinTopology:
-        return "SkinTopology";
-    case RigExecBakedSlotDomain::WeightField:
-        return "WeightField";
-    case RigExecBakedSlotDomain::WeightFramesBase:
-        return "WeightFramesBase";
-    case RigExecBakedSlotDomain::SpaceValue:
-        return "SpaceValue";
-    case RigExecBakedSlotDomain::SpaceLeaf:
-        return "SpaceLeaf";
-    case RigExecBakedSlotDomain::DerivedBase:
-        return "DerivedBase";
-    case RigExecBakedSlotDomain::ChainInput:
-        return "ChainInput";
-    case RigExecBakedSlotDomain::ConstraintInputs:
-        return "ConstraintInputs";
-    case RigExecBakedSlotDomain::SwitchFrame:
-        return "SwitchFrame";
-    case RigExecBakedSlotDomain::RequiredStageFramesAdmission:
-        return "RequiredStageFramesAdmission";
+    if (slot != 0)
+        return false;
+    *out += "request";
+    for (const int xformSlot : B.xformSlots) {
+        if (xformSlot < 0 || size_t(xformSlot) >= B.paths.size())
+            return false;
+        const auto &path = text(B.paths[size_t(xformSlot)]);
+        *out += ":" + std::to_string(path.size()) + ":" + path;
     }
-    return "unknown";
+    return true;
 }
 
 const char *

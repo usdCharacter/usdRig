@@ -4,6 +4,7 @@
 #include "rigExecScene/propertyProgram.h"
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedSlotDomains.h"
 #include "rigExec/internal/bodyPurity.h"
 #include "rigExec/internal/frozenContextInternal.h"
 #include "rigExec/api/moverRegistry.h"
@@ -2295,6 +2296,22 @@ RigExecBakedPublishPropertyChains(RigExecBakedProgramImpl *program,
                 B.propertyResults[record.consumer] = B.recordValues[r];
             B.resolvedInputs->SetProperty(record.consumer, B.recordValues[r]);
         }
+    }
+}
+
+} // namespace rigExec
+
+namespace rigExec {
+
+void
+RigExecBakedResetPropertyResult(RigExecBakedProgramImpl &B, uint32_t slot)
+{
+    B.propertyVersionValid[slot] = 0;
+    B.propertyValues[slot] = {};
+    if (slot < B.propertyRecordById.size() && B.propertyRecordById[slot] >= 0) {
+        const size_t record = size_t(B.propertyRecordById[slot]);
+        B.recordValues[record] = VtValue();
+        B.recordStoodAside[record] = 1;
     }
 }
 

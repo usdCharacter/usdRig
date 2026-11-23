@@ -1,6 +1,7 @@
 #include "rigExec/internal/bakedOpGraph.h"
 #include "rigExec/internal/bakedOpValues.h"
 #include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/internal/bakedSlotDomains.h"
 #include "rigExec/internal/weightField.h"
 #include "rigExec/internal/scalarReferenceAdapter.h"
 #include "rigExec/internal/parallel.h"
@@ -39,128 +40,10 @@ void
 ResetExcludedValue(RigExecBakedProgramImpl *program, uint32_t domain,
                    uint32_t slot)
 {
-    auto &B = *program;
-    using D = RigExecBakedSlotDomain;
-    RigExecPointFrame invalidFrame;
-    invalidFrame.flags = 0;
-    GfMatrix4d invalidMatrix(1);
-    invalidMatrix[3][0] = std::numeric_limits<double>::quiet_NaN();
-    switch (D(domain)) {
-    case D::Avars:
-        std::fill(B.avars.begin() + size_t(slot) * 11,
-                  B.avars.begin() + (size_t(slot) + 1) * 11, 0.0);
-        break;
-    case D::PoseBase:
-        B.base[slot] = invalidFrame;
-        break;
-    case D::PoseFin:
-        B.fin[slot] = invalidFrame;
-        break;
-    case D::PosedM:
-        B.posedM[slot] = invalidMatrix;
-        break;
-    case D::FinalMatrix:
-        B.finalMatrix[slot] = invalidMatrix;
-        break;
-    case D::BaseMatrix:
-        B.baseMatrix[slot] = invalidMatrix;
-        break;
-    case D::SwitchFrame:
-        B.switchFrames[slot] = invalidMatrix;
-        break;
-    case D::Aggregate:
-        B.aggregates[slot] = {};
-        break;
-    case D::Candidates:
-        std::fill(B.solvers[slot].outPresent.begin(),
-                  B.solvers[slot].outPresent.end(), char(0));
-        std::fill(B.solvers[slot].outFrames.begin(),
-                  B.solvers[slot].outFrames.end(), invalidFrame);
-        break;
-    case D::CommitTable: {
-        auto &commit = B.commits[slot];
-        commit.abandoned = true;
-        std::fill(commit.present.begin(), commit.present.end(), char(0));
-        std::fill(commit.frames.begin(), commit.frames.end(), invalidFrame);
-        break;
-    }
-    case D::CommitDelta:
-        std::fill(B.commits[slot].deltaOk.begin(),
-                  B.commits[slot].deltaOk.end(), char(0));
-        break;
-    case D::CommitStaging:
-        for (auto &commit : B.commits)
-            if (commit.split && slot >= uint32_t(commit.stagingBase) &&
-                uint64_t(slot) - uint32_t(commit.stagingBase) <
-                    commit.staged.size()) {
-                const auto i = slot - uint32_t(commit.stagingBase);
-                commit.staged[i] = invalidFrame;
-                commit.outcome[i] =
-                    uint8_t(RigExecBakedPropagateOutcome::NoCandidate);
-                break;
-            }
-        break;
-    case D::ConstraintDelta:
-        B.deltaPresent[slot] = 0;
-        B.deltaValues[slot] = GfMatrix4d(1);
-        break;
-    case D::PropertyResult:
-        B.propertyVersionValid[slot] = 0;
-        B.propertyValues[slot] = {};
-        if (slot < B.propertyRecordById.size() &&
-            B.propertyRecordById[slot] >= 0) {
-            const size_t record = size_t(B.propertyRecordById[slot]);
-            B.recordValues[record] = VtValue();
-            B.recordStoodAside[record] = 1;
-        }
-        break;
-    case D::WeightPacket:
-        B.weightPackets[slot] = {};
-        break;
-    case D::WeightFrames:
-        B.volumePlacement[slot] = invalidMatrix;
-        break;
-    case D::WeightFramesBase:
-        B.volumePlacementBase[slot] = invalidMatrix;
-        break;
-    case D::PoseWeight:
-        B.poseWeights[slot] = 0;
-        break;
-    case D::FrameMatrix:
-        B.frameMatrixValid[slot] = 0;
-        B.frameMatrix[slot] = GfMatrix4d(1);
-        break;
-    case D::Rest:
-        B.restFrames[slot] = invalidFrame;
-        B.restM[slot] = GfMatrix4d(1);
-        B.restPts[slot] = {};
-        break;
-    case D::Ladder:
-        B.selfD[slot] = B.parentDinv[slot] = B.restRoundTrip[slot] =
-            B.defaultRoundTrip[slot] = GfMatrix4d(1);
-        B.posedAuthored[slot] = B.parentSpaceAuthored[slot] = 0;
-        B.posedAuthoredM[slot] = B.posedD[slot] = B.parentSpaceM[slot] =
-            GfMatrix4d(1);
-        B.rotOrder[slot] = TfToken();
-        B.rotationSign[slot] = 0;
-        break;
-    case D::WeightField:
-        RigExecBakedResetWeightField(&B, int(slot));
-        break;
-    case D::SpaceValue: {
-        auto &value = B.providerValues.values[slot];
-        value.value = std::monostate();
-        value.initialized = false;
-        value.authoritative = false;
-        value.blocked = true;
-        value.count = 0;
-        value.error = "operation cycle";
-        break;
-    }
-    default:
-        RigExecBakedResetSetAsideGeometryValue(&B, D(domain), slot);
-        break;
-    }
+    const auto &ops =
+        RigExecBakedSlotDomainOpsOf(RigExecBakedSlotDomain(domain));
+    if (ops.reset)
+        ops.reset(*program, slot);
 }
 } // namespace
 
@@ -241,77 +124,12 @@ std::string
 SkinValueIdentity(const RigExecBakedProgramImpl &B,
                   const RigExecOpValueState &v, RigExecPathText &text)
 {
-    using D = RigExecBakedSlotDomain;
+    const auto &ops =
+        RigExecBakedSlotDomainOpsOf(RigExecBakedSlotDomain(v.domain));
     std::string result = std::to_string(v.domain) + ":";
-    switch (D(v.domain)) {
-    case D::RequiredStageFramesAdmission:
-        if (v.slot != 0)
-            return {};
-        result += "request";
-        for (const int slot : B.xformSlots) {
-            if (slot < 0 || size_t(slot) >= B.paths.size())
-                return {};
-            const auto &path = text(B.paths[size_t(slot)]);
-            result += ":" + std::to_string(path.size()) + ":" + path;
-        }
-        return result;
-    case D::PoseBase:
-    case D::PoseFin:
-    case D::PosedM:
-    case D::FinalMatrix:
-    case D::BaseMatrix:
-        return v.slot < B.paths.size() ? result + text(B.paths[v.slot])
-                                       : std::string();
-    case D::ChainBase:
-    case D::ChainPoints:
-    case D::ChainInput:
-        return v.slot < B.chains.size() ? result + text(B.chains[v.slot].target)
-                                        : std::string();
-    case D::SkinTopology:
-    case D::RevisionPacket:
-    case D::RevisionTransforms:
-    case D::RevisionDone:
-    case D::ChainDirty:
-        if (v.slot < B.revisionIndex.size()) {
-            const auto &index = B.revisionIndex[v.slot];
-            const auto &chain = B.chains[size_t(index.first)];
-            const auto &revision = chain.revisions[size_t(index.second)];
-            return result + text(chain.target) + ":" +
-                   text(revision.moverPath) + ":" +
-                   std::to_string(index.second);
-        }
+    if (!ops.identity || !ops.identity(B, v.slot, text, &result))
         return {};
-    case D::RevisionOut:
-        for (size_t r = 0; r < B.revisionChunkBase.size(); ++r) {
-            const int base = B.revisionChunkBase[r],
-                      count = B.revisionChunkCount[r];
-            if (base < 0 || count < 0 || v.slot < uint32_t(base) ||
-                uint64_t(v.slot) - uint32_t(base) >= uint32_t(count))
-                continue;
-            const auto &index = B.revisionIndex[r];
-            const auto &chain = B.chains[size_t(index.first)];
-            const auto &revision = chain.revisions[size_t(index.second)];
-            const size_t part = size_t(v.slot - uint32_t(base));
-            const std::string prefix = result + text(chain.target) + ":" +
-                                       text(revision.moverPath) + ":" +
-                                       std::to_string(index.second) + ":";
-            if (part < revision.chunks.size()) {
-                const auto &chunk = revision.chunks[part];
-                return prefix + std::to_string(chunk.begin) + ":" +
-                       std::to_string(chunk.end);
-            }
-            // A Whole revision's published group, past its chunks.
-            const size_t g = part - revision.chunks.size();
-            if (g + 1 >= chain.groupBounds.size())
-                return {};
-            return prefix + "group:" + std::to_string(g) + ":" +
-                   std::to_string(chain.groupBounds[g]) + ":" +
-                   std::to_string(chain.groupBounds[g + 1]);
-        }
-        return {};
-    default:
-        return {};
-    }
+    return result;
 }
 
 bool

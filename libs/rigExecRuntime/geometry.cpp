@@ -8787,7 +8787,7 @@ RrResetExcludedGeometryValue(RrProgram *program, RigExecWireSlotDomain domain,
             // through, as an excluded fuse does: its successors and every
             // reader of its version read the live base groups, never this
             // slot; its join or fuse publishes that version (native
-            // RigExecBakedResetSetAsideGeometryValue).
+            // RigExecBakedResetRevisionOut).
             const size_t g = revision.role == RrGeoRole::Range
                                  ? k
                                  : k - revision.chunks.size();
