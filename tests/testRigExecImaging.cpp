@@ -7084,8 +7084,8 @@ _CheckUpstreamFrozen(const _UpstreamImaging &imaging,
     context.frozen = frozen.get();
     RigExecFrozenRunReport report;
     const RigExecRigPose job = RigExecEvaluateFrozen(
-        context, inputs, RigExecMakeProductionStepRunner(), nullptr, SdfPath(),
-        &report);
+        context, inputs, RigExecMakeProductionStepRunner(),
+        RigExecCancellationToken(), &report);
     CHECK(job.valid);
     CHECK(report.ran);
     // The reference: a baked evaluator over a stage authoring the values.

@@ -30,6 +30,7 @@
 #define RIGEXEC_FROZEN_CONTEXT_H
 
 #include "rigExec/internal/bakedTrace.h"
+#include "rigExec/api/cancellation.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/scalarReferenceAdapter.h"
 
@@ -57,7 +58,6 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExec {
 
-class RigExecBackgroundScheduler;
 using RigExecFrameGeneration = uint64_t;
 
 /// A worker-safe snapshot tied to a compiled rig, built on the UI
@@ -468,8 +468,8 @@ struct RigExecFrozenEvalContext {
     /// edit bumps it) plus the compiled rig cache. A retained workspace also
     /// requires every job to carry its initially bound compiled rig.
     uint64_t compiledRigSignature = 0;
-    /// The scheduler generation the job was enqueued under. Rechecked before
-    /// publish; a mismatch drops the result.
+    /// The generation the job was enqueued under. The cancellation token the
+    /// job runs with names the same serial.
     uint64_t generation = 0;
     /// Provider slots the worker sizes its private arena for.
     size_t slotCount = 0;
@@ -639,24 +639,21 @@ using RigExecFrozenStepRunner = std::function<bool(
 /// caller then evaluates live.
 ///
 /// The checks, in order: the context must carry an admitted program; the
-/// input vector's count must equal the context's sampled count; when \p
-/// scheduler is given, the generation must be current (start check); the
-/// runner executes under a serial scope against a private arena sized from
-/// the context, with \p pose->time preset to the inputs' time; when \p
-/// scheduler is given, the generation must STILL be current (publish check).
-/// Any failure -- including a null runner, a runner that returns false, or
-/// one that leaves valid down -- answers invalid at the requested time.
-///
-/// \p rig names the rig the generation belongs to. It is a plain value, not
-/// a handle: naming the fence is not touching the stage.
+/// input vector's count must equal the context's sampled count; \p cancel
+/// must not be canceled (start check); the runner executes under a serial
+/// scope against a private arena sized from the context, with \p pose->time
+/// preset to the inputs' time; \p cancel must STILL not be canceled (publish
+/// check). Any failure -- including a null runner, a runner that returns
+/// false, or one that leaves valid down -- answers invalid at the requested
+/// time.
 ///
 /// \p report, when given, is cleared and then filled by a production runner
 /// that ran the job (RigExecFrozenRunReport).
 RigExecRigPose RigExecEvaluateFrozen(
     const RigExecFrozenEvalContext &context, const RigExecFrameInputs &inputs,
     RigExecFrozenStepRunner runner,
-    const RigExecBackgroundScheduler *scheduler = nullptr,
-    const SdfPath &rig = SdfPath(), RigExecFrozenRunReport *report = nullptr);
+    const RigExecCancellationToken &cancel = RigExecCancellationToken(),
+    RigExecFrozenRunReport *report = nullptr);
 
 /// Evaluates \p inputs under \p context, reading nothing else. The returned
 /// pose is bit-identical to a live evaluation of the same inputs. Returns an

@@ -4852,8 +4852,8 @@ struct ConstraintsSourcePlayback {
         context.varyingInputCount = inputs.values.size();
         RigExecFrozenRunReport report;
         const auto detached = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(), nullptr,
-            SdfPath(), &report);
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
         CHECK(detached.valid);
         rigExecTest::CompareEveryMap(&failures, "source frozen", native,
                                      detached);
@@ -5210,7 +5210,7 @@ TestDirectStaticNumericSources()
                 RigExecFrozenRunReport report;
                 const auto frozen = RigExecEvaluateFrozen(
                     playback.context, inputs, RigExecMakeProductionStepRunner(),
-                    nullptr, SdfPath(), &report);
+                    RigExecCancellationToken(), &report);
                 CHECK(frozen.valid);
                 rigExecTest::CompareEveryMap(
                     &failures, "source override frozen", native, frozen);

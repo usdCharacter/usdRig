@@ -1378,8 +1378,7 @@ RunGoldenProtocol(const UsdStageRefPtr &stage, const SdfPath &rigPath,
             context.frozen = frozen.get();
             context.workspace = workspace.get();
             pose = rigExec::RigExecEvaluateFrozen(
-                context, inputs, rigExec::RigExecMakeProductionStepRunner(),
-                nullptr, rigPath);
+                context, inputs, rigExec::RigExecMakeProductionStepRunner());
         }
         std::vector<rigExec::RigExecGoldenValue> values;
         std::string error;

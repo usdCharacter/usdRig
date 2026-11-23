@@ -187,8 +187,8 @@ RigExecRigPose
 RigExecEvaluateFrozen(const RigExecFrozenEvalContext &context,
                       const RigExecFrameInputs &inputs,
                       RigExecFrozenStepRunner runner,
-                      const RigExecBackgroundScheduler *scheduler,
-                      const SdfPath &rig, RigExecFrozenRunReport *report)
+                      const RigExecCancellationToken &cancel,
+                      RigExecFrozenRunReport *report)
 {
     // Background lanes record nothing; see RigExecFrozenProgram.
     std::optional<RigExecInputReplayComparisonScope> replayComparison;
@@ -218,8 +218,7 @@ RigExecEvaluateFrozen(const RigExecFrozenEvalContext &context,
     if (!runner) {
         return declined;
     }
-    if (scheduler &&
-        !RigExecGenerationCheckAtStart(*scheduler, rig, context.generation)) {
+    if (!RigExecGenerationCheckAtStart(cancel)) {
         return declined;
     }
     RigExecFrozenArena arena;
@@ -258,8 +257,7 @@ RigExecEvaluateFrozen(const RigExecFrozenEvalContext &context,
         return declined;
     }
     pose.time = inputs.time;
-    if (scheduler && !RigExecGenerationCheckBeforePublish(*scheduler, rig,
-                                                          context.generation)) {
+    if (!RigExecGenerationCheckBeforePublish(cancel)) {
         return declined;
     }
     return pose;

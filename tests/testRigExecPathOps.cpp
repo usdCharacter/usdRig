@@ -12,7 +12,7 @@
 // jobs (the worker's snapshot) publish what the live program publishes.
 #include "rigExecRuntimeDrive.h"
 
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExec/api/cancellation.h"
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/api/frozenContext.h"
@@ -420,15 +420,16 @@ CheckFrozen(const char *what, RigExecRigEvaluator *evaluator, double time,
     RigExecFrameInputs inputs;
     CHECK(RigExecSampleFrameInputs(*evaluator, UsdTimeCode(time), overrides,
                                    &inputs, &error));
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     RigExecFrozenEvalContext context;
     context.compiledRigSignature = evaluator->GetCompiledRigSignature();
-    context.generation = scheduler.CurrentGeneration(kRig);
+    context.generation = cancellation.Serial();
     context.slotCount = evaluator->GetBakedProgram()->GetProviderCount();
     context.varyingInputCount = inputs.values.size();
     context.frozen = frozen.get();
     const RigExecRigPose warmed = RigExecEvaluateFrozen(
-        context, inputs, RigExecMakeProductionStepRunner(), &scheduler, kRig);
+        context, inputs, RigExecMakeProductionStepRunner(),
+        cancellation.Token(context.generation));
     if (!warmed.valid) {
         ++failures;
         std::printf("FAIL %s: the frozen job was declined\n", what);

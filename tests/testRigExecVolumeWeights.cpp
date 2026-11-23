@@ -2756,8 +2756,8 @@ TestWeightFieldTokenProducer()
             context.workspace = workspace.get();
             RigExecFrozenRunReport report;
             const auto frozen = RigExecEvaluateFrozen(
-                context, inputs, RigExecMakeProductionStepRunner(), nullptr,
-                SdfPath(), &report);
+                context, inputs, RigExecMakeProductionStepRunner(),
+                RigExecCancellationToken(), &report);
             CHECK(report.ran);
             CHECK(frozen.valid == got.valid);
             CHECK(frozen.diagnostics == got.diagnostics);

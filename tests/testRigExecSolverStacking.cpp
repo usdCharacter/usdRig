@@ -27,7 +27,7 @@
 #include "rigExecGraphDependencyCheck.h"
 #include "rigExecPoseCompare.h"
 
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExec/api/cancellation.h"
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/api/frozenContext.h"
@@ -888,10 +888,10 @@ WarmFrozen(const std::string &what, RigExecRigEvaluator *evaluator,
                     error.c_str());
         return RigExecRigPose();
     }
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     RigExecFrozenEvalContext context;
     context.compiledRigSignature = evaluator->GetCompiledRigSignature();
-    context.generation = scheduler.CurrentGeneration(rig);
+    context.generation = cancellation.Serial();
     context.slotCount = evaluator->GetBakedProgram()->GetProviderCount();
     context.programDigest = 0;
     context.varyingInputCount = inputs.values.size();
@@ -903,8 +903,9 @@ WarmFrozen(const std::string &what, RigExecRigEvaluator *evaluator,
         context.flags |= kRigExecFrozenSolverGuidesEnabled;
     }
     context.frozen = frozen.get();
-    return RigExecEvaluateFrozen(
-        context, inputs, RigExecMakeProductionStepRunner(), &scheduler, rig);
+    return RigExecEvaluateFrozen(context, inputs,
+                                 RigExecMakeProductionStepRunner(),
+                                 cancellation.Token(context.generation));
 }
 
 /// One checkpoint rig run through live and frozen canonical programs.

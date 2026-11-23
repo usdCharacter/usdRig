@@ -367,7 +367,10 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
         result.detail = detail;
         return result;
     };
-    if (!_scheduler || !_scheduler->IsGenerationCurrent(rig, generation)) {
+    const RigExecCancellationToken cancel =
+        _scheduler ? _scheduler->CancellationToken(rig, generation)
+                   : RigExecCancellationToken();
+    if (!_scheduler || cancel.IsCanceled()) {
         return RigExecWarmFactoryResult();
     }
     const RigExecRigEvaluator &evaluator = session->bridge->GetEvaluator();
@@ -557,8 +560,8 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
     std::shared_ptr<const RigExecFrameInputs> jobInputs =
         std::make_shared<RigExecFrameInputs>(std::move(inputs));
     RigExecWarmWork work = [jobInputs, context, key, cache, scheduler, rig,
-                            runner, frozen, frozenPatch, workspaces, warmIndex,
-                            retained, retainedBytes, provenance,
+                            cancel, runner, frozen, frozenPatch, workspaces,
+                            warmIndex, retained, retainedBytes, provenance,
                             progressPublication, publishObserver](
                                const RigExecWarmRequest &request) {
         // Phase marks go to the scheduler's per-run timings (null unless
@@ -593,8 +596,8 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
         }
         laneContext.avarPatch = frozenPatch.get();
         workerPhase("Warm.WorkerLane");
-        const RigExecRigPose pose = RigExecEvaluateFrozen(
-            laneContext, *jobInputs, runner, scheduler, rig);
+        const RigExecRigPose pose =
+            RigExecEvaluateFrozen(laneContext, *jobInputs, runner, cancel);
         workerPhase("Warm.WorkerEvaluate");
         // Stale at publish means an edit landed mid-run -- a generation
         // bump or a scoped purge that moved this time's fence token (the

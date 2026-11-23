@@ -4166,8 +4166,8 @@ TestAFrozenCloneKeepsSparseSourceKeys(const std::string &examples)
             context.workspace = lane;
             RigExecFrozenRunReport report;
             const RigExecRigPose pose = RigExecEvaluateFrozen(
-                context, inputs, RigExecMakeProductionStepRunner(), nullptr,
-                f.rig, &report);
+                context, inputs, RigExecMakeProductionStepRunner(),
+                RigExecCancellationToken(), &report);
             CHECK(pose.valid && report.ran);
             if (report.sourceKeyMismatches) {
                 std::printf("FAIL %s: %zu kept source key(s) moved\n",
@@ -4281,8 +4281,8 @@ WatchFrozenJob(const RigExecRigEvaluator &evaluator,
     context.frozen = snapshot.get();
     context.workspace = lane;
     return RigExecEvaluateFrozen(context, inputs,
-                                 RigExecMakeProductionStepRunner(), nullptr,
-                                 rig, report);
+                                 RigExecMakeProductionStepRunner(),
+                                 RigExecCancellationToken(), report);
 }
 
 // The sparse source watch compares only what can have moved, and its

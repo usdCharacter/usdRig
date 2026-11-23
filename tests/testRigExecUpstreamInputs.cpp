@@ -366,8 +366,8 @@ RunSampled(const RigExecRigEvaluator &evaluator,
     }
     context.frozen = snapshot.get();
     job.pose = RigExecEvaluateFrozen(context, job.inputs,
-                                     RigExecMakeProductionStepRunner(), nullptr,
-                                     SdfPath(), &job.report);
+                                     RigExecMakeProductionStepRunner(),
+                                     RigExecCancellationToken(), &job.report);
     // Accepted: the worker ran it from samples alone.
     CHECK(!job.inputs.HasChainResolvedInputs());
     CHECK(job.pose.valid);

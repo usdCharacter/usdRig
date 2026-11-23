@@ -28,6 +28,7 @@
 #ifndef RIGEXEC_BACKGROUND_SCHEDULER_H
 #define RIGEXEC_BACKGROUND_SCHEDULER_H
 
+#include "rigExec/api/cancellation.h"
 #include "rigExec/api/profiler.h"
 
 #include "pxr/usd/sdf/path.h"
@@ -466,6 +467,13 @@ public:
     /// under. Zero for a rig the scheduler has never seen.
     RigExecFrameGeneration CurrentGeneration(const SdfPath &rig) const;
 
+    /// A token that reads canceled once the rig's generation moves past
+    /// \p generation. A frozen evaluation polls it in place of asking the
+    /// scheduler.
+    RigExecCancellationToken
+    CancellationToken(const SdfPath &rig,
+                      RigExecFrameGeneration generation) const;
+
     /// Queued plus running jobs for the rig (0 for a rig with none in
     /// flight). The registry's activation consults this to skip its commit
     /// cancel when idle -- an idle bump retires nothing and would orphan
@@ -690,6 +698,8 @@ private:
     {
         return _clock ? _clock() : RigExecProfiler::NowUs();
     }
+    // The rig's generation source, entered at generation zero on first use.
+    RigExecCancellationSource _GenerationSource(const SdfPath &rig) const;
     // Notes the queue's shape after every mutation, so the depth and running
     // maxima cannot miss a change. Call with _mutex held.
     void _RecordQueueStateLocked();
@@ -772,7 +782,7 @@ private:
     std::condition_variable _cv;
     // Fixed at construction: workers and triggers read it without a lock.
     const RigExecSchedulerClock _clock;
-    std::map<SdfPath, RigExecFrameGeneration> _generations;
+    mutable std::map<SdfPath, RigExecCancellationSource> _generations;
     std::map<_QueueKey, _QueuedJob> _queue;
     // Coalescing index: (rig, time value) -> queue key. Queued jobs only;
     // a popped job leaves the index, so a re-enqueue while it runs queues

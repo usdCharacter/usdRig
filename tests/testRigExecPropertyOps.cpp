@@ -4,7 +4,7 @@
 // input/target/checkpoint drags, malformed inputs and source capture failure.
 // argv[1] = path to the examples directory.
 #include "rigExec/internal/inputReplay.h"
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExec/api/cancellation.h"
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/bakedTrace.h"
@@ -2046,15 +2046,16 @@ CheckFrozenJob(RigExecRigEvaluator *evaluator, const SdfPath &rig,
     CHECK(
         RigExecSampleFrameInputs(*evaluator, time, overrides, &inputs, &error));
     CHECK(!inputs.HasChainResolvedInputs());
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     RigExecFrozenEvalContext context;
     context.compiledRigSignature = evaluator->GetCompiledRigSignature();
-    context.generation = scheduler.CurrentGeneration(rig);
+    context.generation = cancellation.Serial();
     context.slotCount = evaluator->GetBakedProgram()->GetProviderCount();
     context.varyingInputCount = inputs.values.size();
     context.frozen = frozen.get();
     const RigExecRigPose warmed = RigExecEvaluateFrozen(
-        context, inputs, RigExecMakeProductionStepRunner(), &scheduler, rig);
+        context, inputs, RigExecMakeProductionStepRunner(),
+        cancellation.Token(context.generation));
     if (!warmed.valid) {
         ++failures;
         std::printf("FAIL %s: the frozen job was declined\n", what.c_str());

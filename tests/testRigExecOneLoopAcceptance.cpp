@@ -691,8 +691,8 @@ TestBackendKernelsAndBinaryCycle(const std::string &fixturesDir)
         context.frozen = frozen.get();
         RigExecFrozenRunReport report;
         const auto pose = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(), nullptr,
-            kCrossRig, &report);
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
         CHECK(pose.valid && report.ran);
         checkNative(report.region);
         const auto liveAt6 = E.Evaluate(UsdTimeCode(6));

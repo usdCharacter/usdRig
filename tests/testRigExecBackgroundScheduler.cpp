@@ -240,6 +240,26 @@ TestRigsAreIndependent()
     CHECK(scheduler.IsGenerationCurrent(second, 0));
 }
 
+// A rig's cancellation token reads canceled once its generation moves on,
+// including a token taken before the rig's first edit.
+void
+TestCancellationTokensFollowTheGeneration()
+{
+    RigExecBackgroundScheduler scheduler(/*workerCount=*/0);
+    const SdfPath rig("/Asset/Rig");
+    const SdfPath other("/Asset/Other");
+    const RigExecCancellationToken unseen = scheduler.CancellationToken(rig, 0);
+    const RigExecCancellationToken otherRig =
+        scheduler.CancellationToken(other, 0);
+    CHECK(!unseen.IsCanceled());
+    CHECK(scheduler.CancellationToken(rig, 1).IsCanceled());
+    scheduler.CancelGeneration(rig);
+    CHECK(unseen.IsCanceled());
+    CHECK(!otherRig.IsCanceled());
+    CHECK(!scheduler.CancellationToken(rig, 1).IsCanceled());
+    CHECK(!RigExecCancellationToken().IsCanceled());
+}
+
 // A job enqueued under a superseded token is refused for staleness: the edit
 // it was sampled for is gone, and warming the old inputs would publish a
 // pose no frame asks for anymore.
@@ -1860,6 +1880,7 @@ main()
     TestCancelBumpsMonotonically();
     TestRigsAreIndependent();
     TestAStaleJobIsRefused();
+    TestCancellationTokensFollowTheGeneration();
     TestFrameCacheModeParses();
     TestWarmingGateTruthTable();
     TestFrameCacheModeReadsLiveFromTheEnvironment();

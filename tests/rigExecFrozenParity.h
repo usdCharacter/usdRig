@@ -4,7 +4,7 @@
 #ifndef RIGEXEC_TEST_FROZEN_PARITY_H
 #define RIGEXEC_TEST_FROZEN_PARITY_H
 
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExec/api/cancellation.h"
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/api/frozenContext.h"
 #include "rigExec/api/rigEvaluator.h"
@@ -37,10 +37,10 @@ RigExecFrozenMatchesLive(rigExec::RigExecRigEvaluator *evaluator,
         *why = "sampling refused: " + error;
         return false;
     }
-    RigExecBackgroundScheduler scheduler(0);
+    RigExecCancellationSource cancellation;
     RigExecFrozenEvalContext context;
     context.compiledRigSignature = evaluator->GetCompiledRigSignature();
-    context.generation = scheduler.CurrentGeneration(rig);
+    context.generation = cancellation.Serial();
     context.slotCount = evaluator->GetBakedProgram()->GetProviderCount();
     context.varyingInputCount = inputs.values.size();
     if (evaluator->GetPublishWeightFields()) {
@@ -51,7 +51,8 @@ RigExecFrozenMatchesLive(rigExec::RigExecRigEvaluator *evaluator,
     }
     context.frozen = frozen.get();
     const RigExecRigPose warmed = RigExecEvaluateFrozen(
-        context, inputs, RigExecMakeProductionStepRunner(), &scheduler, rig);
+        context, inputs, RigExecMakeProductionStepRunner(),
+        cancellation.Token(context.generation));
     if (!warmed.valid) {
         *why = "the warming job was declined";
         return false;

@@ -1405,8 +1405,8 @@ TestRecomposedVersionSeedsSparseReuse()
         const RigExecRigPose live = evaluator.Evaluate(time);
         RigExecFrozenRunReport report;
         const RigExecRigPose pose = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(), nullptr, rig,
-            &report);
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
         CHECK(live.valid && pose.valid && report.ran);
         RigExecRigPose diff;
         RigExecComparePoses(live, pose, &diff);

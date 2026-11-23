@@ -24,7 +24,7 @@
 // path was checked against.
 #include "rigExec/api/frozenContext.h"
 #include "rigExec/internal/frozenContextInternal.h"
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExec/api/cancellation.h"
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/api/frameCache.h"
@@ -603,11 +603,11 @@ static RigExecRigPose
 RunWarmingJob(RigExecRigEvaluator *evaluator, const SdfPath &rig,
               const std::shared_ptr<const RigExecFrozenProgram> &frozen,
               const RigExecFrameInputs &inputs,
-              RigExecBackgroundScheduler *scheduler, bool *ran)
+              RigExecCancellationSource *cancellation, bool *ran)
 {
     RigExecFrozenEvalContext context;
     context.compiledRigSignature = evaluator->GetCompiledRigSignature();
-    context.generation = scheduler->CurrentGeneration(rig);
+    context.generation = cancellation->Serial();
     context.slotCount = evaluator->GetBakedProgram()->GetProviderCount();
     // programDigest is unchecked by the runner (it has no standing program
     // to compare against); the generation fence is what retires a job whose
@@ -623,7 +623,8 @@ RunWarmingJob(RigExecRigEvaluator *evaluator, const SdfPath &rig,
     }
     context.frozen = frozen.get();
     RigExecRigPose pose = RigExecEvaluateFrozen(
-        context, inputs, RigExecMakeProductionStepRunner(), scheduler, rig);
+        context, inputs, RigExecMakeProductionStepRunner(),
+        cancellation->Token(context.generation));
     if (ran) {
         *ran = pose.valid;
     }
@@ -802,14 +803,14 @@ TestNestedSpaceSwitchesWarmBitIdentical()
                     error.c_str());
         return;
     }
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
     RigExecFrameInputs at3;
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(3.0), noOverrides,
                                    &at3, &error));
     bool ran = false;
     const RigExecRigPose warmed3 =
-        RunWarmingJob(&evaluator, rig, frozen, at3, &scheduler, &ran);
+        RunWarmingJob(&evaluator, rig, frozen, at3, &cancellation, &ran);
     CHECK(ran);
     const RigExecRigPose live3 = evaluator.Evaluate(UsdTimeCode(3.0));
     CHECK(live3.valid);
@@ -830,7 +831,7 @@ TestNestedSpaceSwitchesWarmBitIdentical()
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(4.0), {drag},
                                    &dragged, &error));
     const RigExecRigPose warmedDragged =
-        RunWarmingJob(&evaluator, rig, frozen, dragged, &scheduler, &ran);
+        RunWarmingJob(&evaluator, rig, frozen, dragged, &cancellation, &ran);
     CHECK(ran);
     const RigExecRigPose liveDragged = evaluator.Evaluate(UsdTimeCode(4.0));
     CHECK(liveDragged.valid);
@@ -878,10 +879,10 @@ TestAHeldFrameJobServesItsOwnDrag()
     const RigExecValueOverride other = dragTo(0.75);
     RigExecFrameInputs inputs;
     CHECK(RigExecSampleFrameInputs(evaluator, held, {other}, &inputs, &error));
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     bool ran = false;
     const RigExecRigPose warmed =
-        RunWarmingJob(&evaluator, rig, frozen, inputs, &scheduler, &ran);
+        RunWarmingJob(&evaluator, rig, frozen, inputs, &cancellation, &ran);
     CHECK(ran);
     walk.SetInteractiveOverrides({other});
     CheckPosesBitIdentical("held-frame job against the walk",
@@ -915,7 +916,7 @@ TestProductionRunnerIsBitIdenticalToLive()
     std::string error;
     CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
     CHECK(frozen != nullptr);
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
 
     RigExecFrameInputs at3;
@@ -923,7 +924,7 @@ TestProductionRunnerIsBitIdenticalToLive()
                                    &at3, &error));
     CHECK(!at3.HasChainResolvedInputs());
     const RigExecRigPose warmed3 =
-        RunWarmingJob(&evaluator, rig, frozen, at3, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at3, &cancellation, nullptr);
     const RigExecRigPose live3 = evaluator.Evaluate(UsdTimeCode(3.0));
     CHECK(live3.valid);
     CheckPosesBitIdentical("warmed frame 3", live3, warmed3);
@@ -935,7 +936,7 @@ TestProductionRunnerIsBitIdenticalToLive()
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(4.0), noOverrides,
                                    &at4, &error));
     const RigExecRigPose warmed4 =
-        RunWarmingJob(&evaluator, rig, frozen, at4, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at4, &cancellation, nullptr);
     const RigExecRigPose live4 = evaluator.Evaluate(UsdTimeCode(4.0));
     CHECK(live4.valid);
     CheckPosesBitIdentical("warmed frame 4", live4, warmed4);
@@ -951,8 +952,8 @@ TestProductionRunnerIsBitIdenticalToLive()
     RigExecFrameInputs dragged3;
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(3.0), {drag},
                                    &dragged3, &error));
-    const RigExecRigPose warmedDragged =
-        RunWarmingJob(&evaluator, rig, frozen, dragged3, &scheduler, nullptr);
+    const RigExecRigPose warmedDragged = RunWarmingJob(
+        &evaluator, rig, frozen, dragged3, &cancellation, nullptr);
     const RigExecRigPose liveDragged = evaluator.Evaluate(UsdTimeCode(3.0));
     CHECK(liveDragged.valid);
     CheckPosesBitIdentical("warmed frame 3 under a drag", liveDragged,
@@ -989,7 +990,7 @@ TestChainedRigWarmsBitIdentical()
     std::shared_ptr<const RigExecFrozenProgram> frozen;
     CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
     CHECK(frozen != nullptr);
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
 
     // Frame 3, which live has not run: the job's head leaves, not frame 2's
@@ -1024,7 +1025,7 @@ TestChainedRigWarmsBitIdentical()
               factor->Get<float>() == 1.5f);
     }
     const RigExecRigPose warmed3 =
-        RunWarmingJob(&evaluator, rig, frozen, at3, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at3, &cancellation, nullptr);
     const RigExecRigPose live3 = evaluator.Evaluate(UsdTimeCode(3.0));
     CHECK(live3.valid);
     CheckPosesBitIdentical("warmed chained frame 3", live3, warmed3);
@@ -1048,7 +1049,7 @@ TestChainedRigWarmsBitIdentical()
                                    &at4, &error));
     CHECK(!at4.HasChainResolvedInputs());
     const RigExecRigPose warmed4 =
-        RunWarmingJob(&evaluator, rig, frozen, at4, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at4, &cancellation, nullptr);
     const RigExecRigPose live4 = evaluator.Evaluate(UsdTimeCode(4.0));
     CHECK(live4.valid);
     CheckPosesBitIdentical("warmed chained frame 4", live4, warmed4);
@@ -1074,7 +1075,7 @@ TestChainedRigWarmsBitIdentical()
                                        &dragged, &error));
         CHECK(!dragged.HasChainResolvedInputs());
         const RigExecRigPose warmedDragged = RunWarmingJob(
-            &evaluator, rig, frozen, dragged, &scheduler, nullptr);
+            &evaluator, rig, frozen, dragged, &cancellation, nullptr);
         const RigExecRigPose liveDragged = evaluator.Evaluate(UsdTimeCode(3.0));
         CHECK(liveDragged.valid);
         CheckPosesBitIdentical(arm == 0 ? "chained drag on the target"
@@ -1163,7 +1164,7 @@ TestPhasedReadsWarmBitIdentical()
     std::string error;
     CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
     CHECK(frozen != nullptr);
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
 
     const SdfPath txPath("/Asset/Rig/AlongX.avars:tx");
     double authored = 0.0;
@@ -1173,7 +1174,7 @@ TestPhasedReadsWarmBitIdentical()
                                    &error));
     CHECK(!at3.HasChainResolvedInputs());
     const RigExecRigPose warmed3 =
-        RunWarmingJob(&evaluator, rig, frozen, at3, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at3, &cancellation, nullptr);
     const RigExecRigPose live3 = evaluator.Evaluate(UsdTimeCode(3.0));
     CHECK(live3.valid);
     CheckPosesBitIdentical("phased reads, frame 3", live3, warmed3);
@@ -1225,7 +1226,7 @@ TestPhasedReadsWarmBitIdentical()
         CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(3.0),
                                        {drag.override}, &dragged, &error));
         const RigExecRigPose warmed = RunWarmingJob(
-            &evaluator, rig, frozen, dragged, &scheduler, nullptr);
+            &evaluator, rig, frozen, dragged, &cancellation, nullptr);
         const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(3.0));
         CHECK(live.valid);
         CheckPosesBitIdentical(drag.what, live, warmed);
@@ -1259,8 +1260,8 @@ TestPhasedReadsWarmBitIdentical()
     RigExecFrameInputs released3;
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(3.0), {}, &released3,
                                    &error));
-    const RigExecRigPose warmedReleased =
-        RunWarmingJob(&evaluator, rig, frozen, released3, &scheduler, nullptr);
+    const RigExecRigPose warmedReleased = RunWarmingJob(
+        &evaluator, rig, frozen, released3, &cancellation, nullptr);
     const RigExecRigPose liveReleased = evaluator.Evaluate(UsdTimeCode(3.0));
     CheckPosesBitIdentical("released target drag", liveReleased,
                            warmedReleased);
@@ -1399,7 +1400,7 @@ TestBlinkDragWarmsAsReleased()
     CHECK(evaluator.GetSkippedOperations().empty());
     CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
     CHECK(evaluator.Evaluate(UsdTimeCode(2.0)).valid);
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::shared_ptr<const RigExecFrozenProgram> frozen;
     std::string error;
 
@@ -1412,8 +1413,8 @@ TestBlinkDragWarmsAsReleased()
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(3.0), {drag},
                                    &dragged3, &error));
     CHECK(!dragged3.HasChainResolvedInputs());
-    const RigExecRigPose warmed =
-        RunWarmingJob(&evaluator, rig, frozen, dragged3, &scheduler, nullptr);
+    const RigExecRigPose warmed = RunWarmingJob(
+        &evaluator, rig, frozen, dragged3, &cancellation, nullptr);
     const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(3.0));
     CheckPosesBitIdentical("blink drag", live, warmed);
     CheckJobAccepted("blink drag", dragged3, warmed);
@@ -1432,8 +1433,8 @@ TestBlinkDragWarmsAsReleased()
     RigExecFrameInputs released3;
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(3.0), {}, &released3,
                                    &error));
-    const RigExecRigPose warmedReleased =
-        RunWarmingJob(&evaluator, rig, frozen, released3, &scheduler, nullptr);
+    const RigExecRigPose warmedReleased = RunWarmingJob(
+        &evaluator, rig, frozen, released3, &cancellation, nullptr);
     const RigExecRigPose liveReleased = evaluator.Evaluate(UsdTimeCode(3.0));
     CheckPosesBitIdentical("blink released", liveReleased, warmedReleased);
     CheckJobAccepted("blink released", released3, warmedReleased);
@@ -1467,7 +1468,7 @@ TestBlinkDragEdgesWarmBitIdentical()
         CHECK(evaluator.GetSkippedOperations().empty());
         CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
         CHECK(evaluator.Evaluate(UsdTimeCode(2.0)).valid);
-        RigExecBackgroundScheduler scheduler;
+        RigExecCancellationSource cancellation;
         std::shared_ptr<const RigExecFrozenProgram> frozen;
         std::string error;
         const RigExecValueOverride drag{blink.GetPrimPath(), TfToken(),
@@ -1478,7 +1479,7 @@ TestBlinkDragEdgesWarmBitIdentical()
                                        &out.inputs, &error));
         CHECK(!out.inputs.HasChainResolvedInputs());
         out.warmed = RunWarmingJob(&evaluator, rig, frozen, out.inputs,
-                                   &scheduler, nullptr);
+                                   &cancellation, nullptr);
         out.live = evaluator.Evaluate(UsdTimeCode(3.0));
         CHECK(out.live.valid);
         CheckPosesBitIdentical(what, out.live, out.warmed);
@@ -1578,7 +1579,7 @@ TestAPropertyEnvelopeFreezes()
     CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
     CHECK(frozen != nullptr);
     CHECK(evaluator.Evaluate(UsdTimeCode(2.0)).valid);
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     if (frozen) {
         CHECK(frozen->program->weightFields.size() == 1);
         if (frozen->program->weightFields.size() == 1) {
@@ -1593,7 +1594,7 @@ TestAPropertyEnvelopeFreezes()
                                        &at3, &error));
         CHECK(!at3.HasChainResolvedInputs());
         const RigExecRigPose warmed =
-            RunWarmingJob(&evaluator, rig, frozen, at3, &scheduler, nullptr);
+            RunWarmingJob(&evaluator, rig, frozen, at3, &cancellation, nullptr);
         CheckJobAccepted("bound envelope warmed frame 3", at3, warmed);
         const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(3.0));
         CheckPosesBitIdentical("bound envelope frame 3", live, warmed);
@@ -1622,7 +1623,7 @@ TestAPropertyEnvelopeFreezes()
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(2.0), noOverrides,
                                    &unbound, &error));
     const RigExecRigPose warmed =
-        RunWarmingJob(&evaluator, rig, frozen, unbound, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, unbound, &cancellation, nullptr);
     CheckJobAccepted("unbound envelope warmed frame 2", unbound, warmed);
     const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(2.0));
     CheckPosesBitIdentical("unbound envelope frame 2", live, warmed);
@@ -1770,7 +1771,7 @@ TestPhasedReadDragRulesFrozen()
     CHECK(evaluator.Compile(&errors));
     CHECK(evaluator.GetSkippedOperations().empty());
     CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     const UsdTimeCode time(2.0);
     for (const Case &c : cases) {
         evaluator.SetInteractiveOverrides(c.overrides);
@@ -1784,8 +1785,8 @@ TestPhasedReadDragRulesFrozen()
         RigExecFrameInputs inputs;
         CHECK(RigExecSampleFrameInputs(evaluator, time, c.overrides, &inputs,
                                        &error));
-        const RigExecRigPose warmed =
-            RunWarmingJob(&evaluator, rig, frozen, inputs, &scheduler, nullptr);
+        const RigExecRigPose warmed = RunWarmingJob(
+            &evaluator, rig, frozen, inputs, &cancellation, nullptr);
         const RigExecRigPose live = evaluator.Evaluate(time);
         CHECK(live.valid);
         CheckPosesBitIdentical(c.what, live, warmed);
@@ -1896,9 +1897,9 @@ TestAChainTargetOwnValueKeyIsDistinct()
         }
         CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(3.0), {},
                                        &job.inputs, &error));
-        RigExecBackgroundScheduler scheduler;
+        RigExecCancellationSource cancellation;
         job.warmed = RunWarmingJob(&evaluator, rig, frozen, job.inputs,
-                                   &scheduler, nullptr);
+                                   &cancellation, nullptr);
         job.live = evaluator.Evaluate(UsdTimeCode(3.0));
         CHECK(job.live.valid);
         CheckPosesBitIdentical("own-value key", job.live, job.warmed);
@@ -1962,7 +1963,7 @@ TestAChainMoverInputMovesTheDigest()
                     error.c_str());
         return;
     }
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     RigExecFrameInputs at3, at4;
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(3.0), {}, &at3,
                                    &error));
@@ -1982,13 +1983,13 @@ TestAChainMoverInputMovesTheDigest()
     CHECK(RigExecControlStateDigest(WithoutHeadLeaves(at3), {}) ==
           RigExecControlStateDigest(WithoutHeadLeaves(at4), {}));
     const RigExecRigPose warmed3 =
-        RunWarmingJob(&evaluator, rig, frozen, at3, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at3, &cancellation, nullptr);
     const RigExecRigPose live3 = evaluator.Evaluate(UsdTimeCode(3.0));
     CheckPosesBitIdentical("chain mover input, frame 3", live3, warmed3);
     CheckJobAccepted("chain mover input, frame 3", at3, warmed3);
     CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
     const RigExecRigPose warmed4 =
-        RunWarmingJob(&evaluator, rig, frozen, at4, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at4, &cancellation, nullptr);
     const RigExecRigPose live4 = evaluator.Evaluate(UsdTimeCode(4.0));
     CheckPosesBitIdentical("chain mover input, frame 4", live4, warmed4);
     CheckJobAccepted("chain mover input, frame 4", at4, warmed4);
@@ -2344,8 +2345,8 @@ CheckFrozenWeightFramesMatchLive(RigExecRigEvaluator *evaluator,
     for (int repeat = 0; repeat < 2; ++repeat) {
         RigExecFrozenRunReport report;
         const auto pose = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(), nullptr, rig,
-            &report);
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
         CHECK(report.ran && pose.valid);
         CheckWeightFramesEqual(what, "a held common-graph job",
                                live.weightFrames, pose.weightFrames);
@@ -2561,15 +2562,15 @@ def Xform "Asset"
         completedContext.varyingInputCount = held.values.size();
         RigExecFrozenRunReport completedReport;
         const auto completed = RigExecEvaluateFrozen(
-            completedContext, held, RigExecMakeProductionStepRunner(), nullptr,
-            rig, &completedReport);
+            completedContext, held, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &completedReport);
         CHECK(completedReport.ran && completed.valid);
         CHECK(completedReport.region.empty());
         completedContext.varyingInputCount = moved.values.size();
         RigExecFrozenRunReport independentReport;
         const auto independent = RigExecEvaluateFrozen(
-            completedContext, moved, RigExecMakeProductionStepRunner(), nullptr,
-            rig, &independentReport);
+            completedContext, moved, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &independentReport);
         CHECK(independentReport.ran && independent.valid);
         for (const auto &entry : independentReport.region)
             CHECK(!placementSteps.count(entry.step));
@@ -2601,7 +2602,7 @@ def Xform "Asset"
     RigExecFrozenRunReport coldReport;
     const auto cold =
         RigExecEvaluateFrozen(context, held, RigExecMakeProductionStepRunner(),
-                              nullptr, rig, &coldReport);
+                              RigExecCancellationToken(), &coldReport);
     CHECK(coldReport.ran && cold.valid);
     std::set<size_t> coldPlacements;
     for (const auto &entry : coldReport.region)
@@ -2615,8 +2616,8 @@ def Xform "Asset"
         context.varyingInputCount = inputs->values.size();
         RigExecFrozenRunReport report;
         const auto retained = RigExecEvaluateFrozen(
-            context, *inputs, RigExecMakeProductionStepRunner(), nullptr, rig,
-            &report);
+            context, *inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
         CHECK(report.ran && retained.valid);
         for (const auto &entry : report.region)
             CHECK(!placementSteps.count(entry.step));
@@ -2624,17 +2625,17 @@ def Xform "Asset"
                                cold.weightFrames, retained.weightFrames);
     }
 
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     bool ran = false;
     const RigExecRigPose poisonedHeld =
-        RunWarmingJob(&evaluator, rig, poisoned, held, &scheduler, &ran);
+        RunWarmingJob(&evaluator, rig, poisoned, held, &cancellation, &ran);
     CHECK(ran);
     const auto poisonAt3 = poisonedHeld.weightFrames.find(guide);
     CHECK(poisonAt3 != poisonedHeld.weightFrames.end() &&
           poisonAt3->second.ExtractTranslation()[1] == 3.0);
     ran = false;
     const RigExecRigPose poisonedMoved =
-        RunWarmingJob(&evaluator, rig, poisoned, moved, &scheduler, &ran);
+        RunWarmingJob(&evaluator, rig, poisoned, moved, &cancellation, &ran);
     CHECK(ran);
     const auto poisonAt1 = poisonedMoved.weightFrames.find(guide);
     CHECK(poisonAt1 != poisonedMoved.weightFrames.end() &&
@@ -2642,11 +2643,11 @@ def Xform "Asset"
 
     ran = false;
     const RigExecRigPose skipped =
-        RunWarmingJob(&evaluator, rig, frozen, held, &scheduler, &ran);
+        RunWarmingJob(&evaluator, rig, frozen, held, &cancellation, &ran);
     CHECK(ran);
     ran = false;
     const RigExecRigPose placed =
-        RunWarmingJob(&evaluator, rig, frozen, moved, &scheduler, &ran);
+        RunWarmingJob(&evaluator, rig, frozen, moved, &cancellation, &ran);
     CHECK(ran);
 
     evaluator.ClearProfile();
@@ -2668,7 +2669,7 @@ def Xform "Asset"
 
     ran = false;
     const auto repeated =
-        RunWarmingJob(&evaluator, rig, frozen, held, &scheduler, &ran);
+        RunWarmingJob(&evaluator, rig, frozen, held, &cancellation, &ran);
     CHECK(ran);
     CheckWeightFramesEqual(label, "a repeated held common-graph job",
                            live3.weightFrames, repeated.weightFrames);
@@ -2693,7 +2694,7 @@ TestBurstCacheWarmsBitIdentical()
     std::string error;
     CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
     CHECK(frozen != nullptr);
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
 
     RigExecBurstSampleCache cache;
@@ -2705,7 +2706,7 @@ TestBurstCacheWarmsBitIdentical()
         evaluator, UsdTimeCode(3.0), noOverrides, &cache, &at3, &error));
     CHECK(!at3.HasChainResolvedInputs());
     const RigExecRigPose warmed3 =
-        RunWarmingJob(&evaluator, rig, frozen, at3, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at3, &cancellation, nullptr);
     const RigExecRigPose live3 = evaluator.Evaluate(UsdTimeCode(3.0));
     CHECK(live3.valid);
     CheckPosesBitIdentical("cached warmed frame 3", live3, warmed3);
@@ -2715,7 +2716,7 @@ TestBurstCacheWarmsBitIdentical()
     CHECK(RigExecSampleFrameInputsWithBurstCache(
         evaluator, UsdTimeCode(4.0), noOverrides, &cache, &at4, &error));
     const RigExecRigPose warmed4 =
-        RunWarmingJob(&evaluator, rig, frozen, at4, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at4, &cancellation, nullptr);
     const RigExecRigPose live4 = evaluator.Evaluate(UsdTimeCode(4.0));
     CHECK(live4.valid);
     CheckPosesBitIdentical("cached warmed frame 4", live4, warmed4);
@@ -2733,8 +2734,8 @@ TestBurstCacheWarmsBitIdentical()
     RigExecFrameInputs dragged3;
     CHECK(RigExecSampleFrameInputsWithBurstCache(
         evaluator, UsdTimeCode(3.0), {drag}, &dragged, &dragged3, &error));
-    const RigExecRigPose warmedDragged =
-        RunWarmingJob(&evaluator, rig, frozen, dragged3, &scheduler, nullptr);
+    const RigExecRigPose warmedDragged = RunWarmingJob(
+        &evaluator, rig, frozen, dragged3, &cancellation, nullptr);
     const RigExecRigPose liveDragged = evaluator.Evaluate(UsdTimeCode(3.0));
     CHECK(liveDragged.valid);
     CheckPosesBitIdentical("cached warmed frame 3 under a drag", liveDragged,
@@ -2953,8 +2954,8 @@ TestUnavailableTargetSamplesLocalInvalidRoles(const std::string &examplesDir)
     context.compiledRigSignature = evaluator.GetCompiledRigSignature();
     context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
     context.varyingInputCount = before.values.size();
-    const auto valid = RigExecEvaluateFrozen(
-        context, before, RigExecMakeProductionStepRunner(), nullptr, rig);
+    const auto valid = RigExecEvaluateFrozen(context, before,
+                                             RigExecMakeProductionStepRunner());
     CHECK(valid.valid);
     CHECK(valid.providerXforms.count(target) == 1);
     const auto validPoints = valid.movedProperties.find(pointsPath);
@@ -3033,8 +3034,7 @@ TestUnavailableTargetSamplesLocalInvalidRoles(const std::string &examplesDir)
             runnerReturned = production(c, i, arena, pose);
             refused = *pose;
             return runnerReturned;
-        },
-        nullptr, rig);
+        });
     CHECK(!runnerReturned);
     CHECK(!refused.valid);
     CHECK(unavailable.diagnostics.empty());
@@ -3196,14 +3196,14 @@ TestStillCurrentDetectsConstantEdit()
     std::string error;
     std::shared_ptr<const RigExecFrozenProgram> frozen;
     CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
     RigExecFrameInputs at2;
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(2.0), noOverrides,
                                    &at2, &error));
     CHECK(!at2.HasChainResolvedInputs());
     const RigExecRigPose warmed2 =
-        RunWarmingJob(&evaluator, rig, frozen, at2, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at2, &cancellation, nullptr);
     const RigExecRigPose live2 = evaluator.Evaluate(UsdTimeCode(2.0));
     CHECK(live2.valid);
     CheckPosesBitIdentical("warmed frame 2 under edited pins", live2, warmed2);
@@ -3289,9 +3289,9 @@ TestConstantHeadLeavesRideASharedTable()
     CHECK(RigExecFrozenControlDigest(edited3) !=
           RigExecFrozenControlDigest(at3));
 
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     const RigExecRigPose warmed =
-        RunWarmingJob(&evaluator, rig, before, edited3, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, before, edited3, &cancellation, nullptr);
     const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(3.0));
     CHECK(live.valid);
     CheckPosesBitIdentical("constant head leaf edited after the freeze", live,
@@ -4044,9 +4044,9 @@ TestOverridePathsTravelWithTheJob()
     CHECK(dragged.overrides.size() == 1);
     CHECK(dragged.overridePaths.size() == 1 &&
           dragged.overridePaths[0] == SdfPath("/Asset/Rig/AlongX.avars:tx"));
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     const RigExecRigPose warmed =
-        RunWarmingJob(&evaluator, rig, frozen, dragged, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, dragged, &cancellation, nullptr);
     const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(3.0));
     CHECK(live.valid);
     CheckPosesBitIdentical("drag placed from the job's paths", live, warmed);
@@ -4054,7 +4054,7 @@ TestOverridePathsTravelWithTheJob()
     RigExecFrameInputs pathless = dragged;
     pathless.overridePaths.clear();
     bool ran = true;
-    RunWarmingJob(&evaluator, rig, frozen, pathless, &scheduler, &ran);
+    RunWarmingJob(&evaluator, rig, frozen, pathless, &cancellation, &ran);
     CHECK(!ran);
     evaluator.SetInteractiveOverrides({});
 }
@@ -4092,7 +4092,7 @@ TestPatchFrozenAvarConstants()
     CHECK(liveProgram != nullptr);
     CHECK(RigExecFrozenAvarRegionDigest(*liveProgram) != regionBefore);
 
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
     RigExecFrameInputs at3;
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(3.0), noOverrides,
@@ -4103,7 +4103,7 @@ TestPatchFrozenAvarConstants()
     // The stale snapshot warms the old constant: mismatches, as it must.
     {
         const RigExecRigPose stale =
-            RunWarmingJob(&evaluator, rig, frozen, at3, &scheduler, nullptr);
+            RunWarmingJob(&evaluator, rig, frozen, at3, &cancellation, nullptr);
         CHECK(stale.valid);
         RigExecRigPose diff;
         RigExecComparePoses(live3, stale, &diff);
@@ -4122,7 +4122,7 @@ TestPatchFrozenAvarConstants()
     CHECK(patched->avarPatch && patched->avarPatch->basis == patched.get());
     CHECK(!frozen->avarPatch);
     const RigExecRigPose warmed3 =
-        RunWarmingJob(&evaluator, rig, patched, at3, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, patched, at3, &cancellation, nullptr);
     CheckPosesBitIdentical("warmed frame 3 under patched constants", live3,
                            warmed3);
 
@@ -4142,8 +4142,8 @@ TestPatchFrozenAvarConstants()
     worker.join();
     CHECK(applied && detached);
     if (detached) {
-        const auto queued =
-            RunWarmingJob(&evaluator, rig, detached, at3, &scheduler, nullptr);
+        const auto queued = RunWarmingJob(&evaluator, rig, detached, at3,
+                                          &cancellation, nullptr);
         CheckPosesBitIdentical("detached patch preserves queued values", live3,
                                queued);
     }
@@ -4158,16 +4158,16 @@ TestPatchFrozenAvarConstants()
     CHECK(repatched && repatched->bindings == frozen->bindings);
     if (repatched) {
         CHECK(!RigExecFrozenSnapshotOwesLiveEdits(*repatched, *liveProgram));
-        const auto result =
-            RunWarmingJob(&evaluator, rig, repatched, at3, &scheduler, nullptr);
+        const auto result = RunWarmingJob(&evaluator, rig, repatched, at3,
+                                          &cancellation, nullptr);
         CheckPosesBitIdentical("successive snapshot patches", newerLive,
                                result);
-        const auto retained =
-            RunWarmingJob(&evaluator, rig, patched, at3, &scheduler, nullptr);
+        const auto retained = RunWarmingJob(&evaluator, rig, patched, at3,
+                                            &cancellation, nullptr);
         CheckPosesBitIdentical("retained patched snapshot", live3, retained);
     }
     const auto original =
-        RunWarmingJob(&evaluator, rig, frozen, at3, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at3, &cancellation, nullptr);
     auto workspace = RigExecCreateFrozenWorkspace(frozen);
     RigExecFrozenEvalContext context;
     context.frozen = frozen.get();
@@ -4183,7 +4183,7 @@ TestPatchFrozenAvarConstants()
                               const RigExecRigPose &expected) {
         context.avarPatch = value;
         const auto result = RigExecEvaluateFrozen(
-            context, at3, RigExecMakeProductionStepRunner(), nullptr, rig);
+            context, at3, RigExecMakeProductionStepRunner());
         CheckPosesBitIdentical("retained lane places detached edits", expected,
                                result);
     };
@@ -4212,31 +4212,33 @@ TestProductionRunnerDeclinesWithoutProof()
     RigExecFrameInputs at2;
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(2.0), noOverrides,
                                    &at2));
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
 
     // No program: decline.
     {
         RigExecFrozenEvalContext context;
         context.compiledRigSignature = evaluator.GetCompiledRigSignature();
-        context.generation = scheduler.CurrentGeneration(rig);
+        context.generation = cancellation.Serial();
         context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
         context.varyingInputCount = at2.values.size();
         context.frozen = nullptr;
         const RigExecRigPose pose = RigExecEvaluateFrozen(
-            context, at2, RigExecMakeProductionStepRunner(), &scheduler, rig);
+            context, at2, RigExecMakeProductionStepRunner(),
+            cancellation.Token(context.generation));
         CHECK(!pose.valid);
     }
     // Refusal flag: decline even with a program.
     {
         RigExecFrozenEvalContext context;
         context.compiledRigSignature = evaluator.GetCompiledRigSignature();
-        context.generation = scheduler.CurrentGeneration(rig);
+        context.generation = cancellation.Serial();
         context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
         context.varyingInputCount = at2.values.size();
         context.flags = kRigExecFrozenBakeRefused;
         context.frozen = frozen.get();
         const RigExecRigPose pose = RigExecEvaluateFrozen(
-            context, at2, RigExecMakeProductionStepRunner(), &scheduler, rig);
+            context, at2, RigExecMakeProductionStepRunner(),
+            cancellation.Token(context.generation));
         CHECK(!pose.valid);
     }
     // A stale chain mark: decline.
@@ -4247,7 +4249,7 @@ TestProductionRunnerDeclinesWithoutProof()
         CHECK(stale.HasChainResolvedInputs());
         bool ran = true;
         const RigExecRigPose pose =
-            RunWarmingJob(&evaluator, rig, frozen, stale, &scheduler, &ran);
+            RunWarmingJob(&evaluator, rig, frozen, stale, &cancellation, &ran);
         CHECK(!pose.valid);
         CHECK(!ran);
     }
@@ -4258,7 +4260,7 @@ TestProductionRunnerDeclinesWithoutProof()
         mistyped.values[0].value = VtValue(TfToken("not-a-number"));
         mistyped.values[0].hasValue = true;
         const RigExecRigPose pose = RunWarmingJob(
-            &evaluator, rig, frozen, mistyped, &scheduler, nullptr);
+            &evaluator, rig, frozen, mistyped, &cancellation, nullptr);
         CHECK(!pose.valid);
     }
 }
@@ -4442,36 +4444,39 @@ TestInconsistentRequestsDecline()
 void
 TestGenerationFenceDropsStaleJobs()
 {
-    const SdfPath rig("/Asset/Rig");
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     const RigExecFrameInputs inputs = TestInputs();
 
     RigExecFrozenEvalContext context = TestContext(inputs);
-    context.generation = scheduler.CurrentGeneration(rig);
-    CHECK(RigExecEvaluateFrozen(context, inputs, TestKernel, &scheduler, rig)
+    context.generation = cancellation.Serial();
+    CHECK(RigExecEvaluateFrozen(context, inputs, TestKernel,
+                                cancellation.Token(context.generation))
               .valid);
 
-    scheduler.CancelGeneration(rig);
-    CHECK(!RigExecEvaluateFrozen(context, inputs, TestKernel, &scheduler, rig)
+    cancellation.Cancel();
+    CHECK(!RigExecEvaluateFrozen(context, inputs, TestKernel,
+                                 cancellation.Token(context.generation))
                .valid);
 
     RigExecFrozenEvalContext fresh = TestContext(inputs);
-    fresh.generation = scheduler.CurrentGeneration(rig);
+    fresh.generation = cancellation.Serial();
     bool runnerRan = false;
     auto bumping = [&](const RigExecFrozenEvalContext &ctx,
                        const RigExecFrameInputs &in, RigExecFrozenArena &arena,
                        RigExecRigPose *pose) {
         runnerRan = true;
-        scheduler.CancelGeneration(rig);
+        cancellation.Cancel();
         return TestKernel(ctx, in, arena, pose);
     };
-    CHECK(
-        !RigExecEvaluateFrozen(fresh, inputs, bumping, &scheduler, rig).valid);
+    CHECK(!RigExecEvaluateFrozen(fresh, inputs, bumping,
+                                 cancellation.Token(fresh.generation))
+               .valid);
     CHECK(runnerRan);
 
     RigExecFrozenEvalContext newest = TestContext(inputs);
-    newest.generation = scheduler.CurrentGeneration(rig);
-    CHECK(RigExecEvaluateFrozen(newest, inputs, TestKernel, &scheduler, rig)
+    newest.generation = cancellation.Serial();
+    CHECK(RigExecEvaluateFrozen(newest, inputs, TestKernel,
+                                cancellation.Token(newest.generation))
               .valid);
 }
 
@@ -4744,7 +4749,7 @@ TestBipedWarmsBitIdentical(const std::string &examplesDir,
     if (!frozen) {
         return;
     }
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
     const std::string what3 = "warmed " + stageFile + " frame 3";
     const std::string what4 = "warmed " + stageFile + " frame 4";
@@ -4767,7 +4772,7 @@ TestBipedWarmsBitIdentical(const std::string &examplesDir,
     }
     CHECK(headSamples > 0);
     const RigExecRigPose warmed3 =
-        RunWarmingJob(&evaluator, rig, frozen, at3, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at3, &cancellation, nullptr);
     const RigExecRigPose live3 = evaluator.Evaluate(UsdTimeCode(3.0));
     CHECK(live3.valid);
     CheckPosesBitIdentical(what3.c_str(), live3, warmed3);
@@ -4779,7 +4784,7 @@ TestBipedWarmsBitIdentical(const std::string &examplesDir,
                                    &at4, &error));
     CHECK(!at4.HasChainResolvedInputs());
     const RigExecRigPose warmed4 =
-        RunWarmingJob(&evaluator, rig, frozen, at4, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at4, &cancellation, nullptr);
     const RigExecRigPose live4 = evaluator.Evaluate(UsdTimeCode(4.0));
     CHECK(live4.valid);
     CheckPosesBitIdentical(what4.c_str(), live4, warmed4);
@@ -4904,14 +4909,14 @@ TestKeyedOperatorInputsWarmBitIdentical(const std::string &examplesDir)
                     error.c_str());
         return;
     }
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
     for (const double frame : {3.0, 4.0}) {
         RigExecFrameInputs inputs;
         CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame),
                                        noOverrides, &inputs, &error));
-        const RigExecRigPose warmed =
-            RunWarmingJob(&evaluator, rig, frozen, inputs, &scheduler, nullptr);
+        const RigExecRigPose warmed = RunWarmingJob(
+            &evaluator, rig, frozen, inputs, &cancellation, nullptr);
         const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
         CHECK(live.valid);
         if (live.referenceMismatches != 0) {
@@ -5025,9 +5030,9 @@ TestSparseRawDefaultFrozenLifecycle()
         RigExecFrameInputs inputs;
         CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(1), {}, &inputs,
                                        &error));
-        RigExecBackgroundScheduler scheduler;
-        const auto warm =
-            RunWarmingJob(&evaluator, rig, frozen, inputs, &scheduler, nullptr);
+        RigExecCancellationSource cancellation;
+        const auto warm = RunWarmingJob(&evaluator, rig, frozen, inputs,
+                                        &cancellation, nullptr);
         CheckPosesBitIdentical("sparse rawDefault frozen", live, warm);
         CHECK(warm.executedOpCount == 0);
         const auto held = evaluator.Evaluate(UsdTimeCode(1));
@@ -5046,9 +5051,9 @@ TestSparseRawDefaultFrozenLifecycle()
                                    &editError));
     CHECK(RigExecFrozenControlDigest(beforeInputs) !=
           RigExecFrozenControlDigest(afterInputs));
-    RigExecBackgroundScheduler editScheduler;
-    const auto editedWarm = RunWarmingJob(&evaluator, rig, beforeEdit,
-                                          afterInputs, &editScheduler, nullptr);
+    RigExecCancellationSource editCancellation;
+    const auto editedWarm = RunWarmingJob(
+        &evaluator, rig, beforeEdit, afterInputs, &editCancellation, nullptr);
     CHECK(points(editedWarm) ==
           VtVec3fArray({{2, 0, 0}, {1, 0, 0}, {1, 1, 1}, {0, 1, 0}}));
     check(VtVec3fArray{{2, 0, 0}, {1, 0, 0}, {1, 1, 1}, {0, 1, 0}});
@@ -5090,9 +5095,9 @@ TestSparseRawDefaultFrozenLifecycle()
         CHECK(sampled.upstream[0].path == kSparseFrozenTarget);
         CHECK(sampled.upstream[0].value == VtValue(upstreamPoints));
     }
-    RigExecBackgroundScheduler scheduler;
-    const auto upstream =
-        RunWarmingJob(&evaluator, rig, snapshot, sampled, &scheduler, nullptr);
+    RigExecCancellationSource cancellation;
+    const auto upstream = RunWarmingJob(&evaluator, rig, snapshot, sampled,
+                                        &cancellation, nullptr);
     CHECK(points(upstream) == VtVec3fArray({{2, 0, 0}, {1, 0, 0}, {1, 1, 1}}));
     CHECK(basePoints.Set(
         VtVec3fArray{{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}));
@@ -5267,13 +5272,13 @@ TestRangeChainWarmsBitIdentical()
         }
         return k == liveGroups.size();
     };
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     const std::vector<RigExecValueOverride> noOverrides;
     RigExecFrameInputs at1;
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(1.0), noOverrides,
                                    &at1, &error));
     const RigExecRigPose warm1 =
-        RunWarmingJob(&evaluator, rig, frozen, at1, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at1, &cancellation, nullptr);
     CheckPosesBitIdentical("range chain frame 1", live1, warm1);
     CheckJobAccepted("range chain frame 1", at1, warm1);
     CHECK(warm1.executedOpCount == 0);
@@ -5281,7 +5286,7 @@ TestRangeChainWarmsBitIdentical()
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(2.0), noOverrides,
                                    &at2, &error));
     const RigExecRigPose warm2 =
-        RunWarmingJob(&evaluator, rig, frozen, at2, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at2, &cancellation, nullptr);
     // The frozen job wrote the groups M0's driver moved into its own
     // buffers: live's published groups are where and what they were.
     CHECK(liveUnchanged());
@@ -5377,19 +5382,19 @@ _BindDetachedFrozenJob(RigExecRigEvaluator &evaluator, const SdfPath &rig,
 
 static RigExecRigPose
 _RunDetachedFrozenJob(const _DetachedFrozenJob &job,
-                      RigExecBackgroundScheduler *scheduler)
+                      RigExecCancellationSource *cancellation)
 {
     RigExecFrozenEvalContext context;
     context.compiledRigSignature = job.compiledRigSignature;
-    context.generation = scheduler->CurrentGeneration(job.rig);
+    context.generation = cancellation->Serial();
     context.slotCount = job.slotCount;
     context.programDigest = 0;
     context.varyingInputCount = job.inputs.values.size();
     context.flags = job.flags;
     context.frozen = job.frozen.get();
     return RigExecEvaluateFrozen(context, job.inputs,
-                                 RigExecMakeProductionStepRunner(), scheduler,
-                                 job.rig);
+                                 RigExecMakeProductionStepRunner(),
+                                 cancellation->Token(context.generation));
 }
 
 // A value edit patches the standing program, so a held view keeps its facts
@@ -5477,7 +5482,7 @@ TestAHeldFactsViewAndJobSurviveAValueEdit()
     CHECK(!after.empty());
     CHECK(after != expected);
 
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     _DetachedFrozenJob postEdit;
     const bool postBound =
         _BindDetachedFrozenJob(evaluator, rig, UsdTimeCode(2.0), postEdit);
@@ -5494,12 +5499,14 @@ TestAHeldFactsViewAndJobSurviveAValueEdit()
     // The detached job carries its own driver sample, so its answer cannot
     // come from the patched program.
     CHECK(preDriver->Get<double>() != postDriver->Get<double>());
-    const RigExecRigPose warmed = _RunDetachedFrozenJob(postEdit, &scheduler);
+    const RigExecRigPose warmed =
+        _RunDetachedFrozenJob(postEdit, &cancellation);
     CheckPosesBitIdentical("job bound after the value edit", liveAfter, warmed);
     CheckJobAccepted("job bound after the value edit", postEdit.inputs, warmed);
     CHECK(_PublishedPointBytes(warmed, target) == after);
 
-    const RigExecRigPose heldRun = _RunDetachedFrozenJob(preEdit, &scheduler);
+    const RigExecRigPose heldRun =
+        _RunDetachedFrozenJob(preEdit, &cancellation);
     CheckJobAccepted("held pre-edit job", preEdit.inputs, heldRun);
     CheckSameReadings("held pre-edit job", liveBefore, heldRun);
     const std::vector<std::byte> heldBytes =
@@ -5644,7 +5651,7 @@ TestAHeldFactsViewAndJobSurviveAStructuralRebuild()
     CHECK(after != expected);
     CHECK(_PublishedPointBytes(rebuilt, target) == after);
 
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     _DetachedFrozenJob postEdit;
     const bool postBound =
         _BindDetachedFrozenJob(evaluator, rig, UsdTimeCode(2.0), postEdit);
@@ -5652,7 +5659,8 @@ TestAHeldFactsViewAndJobSurviveAStructuralRebuild()
     if (!postBound) {
         return;
     }
-    const RigExecRigPose warmed = _RunDetachedFrozenJob(postEdit, &scheduler);
+    const RigExecRigPose warmed =
+        _RunDetachedFrozenJob(postEdit, &cancellation);
     CheckPosesBitIdentical("job bound after the structural edit", liveAfter,
                            warmed);
     CheckJobAccepted("job bound after the structural edit", postEdit.inputs,
@@ -5660,7 +5668,8 @@ TestAHeldFactsViewAndJobSurviveAStructuralRebuild()
     CHECK(_PublishedPointBytes(warmed, target) == after);
     CHECK(!_PublishedPointBytes(warmed, second).empty());
 
-    const RigExecRigPose heldRun = _RunDetachedFrozenJob(preEdit, &scheduler);
+    const RigExecRigPose heldRun =
+        _RunDetachedFrozenJob(preEdit, &cancellation);
     CheckJobAccepted("held pre-edit job across the rebuild", preEdit.inputs,
                      heldRun);
     CheckSameReadings("held pre-edit job across the rebuild", liveBefore,
@@ -5719,7 +5728,7 @@ TestBlendFaceWarmsBitIdentical(const std::string &examplesDir)
     if (!frozen) {
         return;
     }
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
     const SdfPath faceTarget("/FaceAsset/Geom/FaceCard.points");
 
@@ -5739,8 +5748,8 @@ TestBlendFaceWarmsBitIdentical(const std::string &examplesDir)
         CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame),
                                        noOverrides, &inputs, &error));
         CHECK(!inputs.HasChainResolvedInputs());
-        const RigExecRigPose warmed =
-            RunWarmingJob(&evaluator, rig, frozen, inputs, &scheduler, nullptr);
+        const RigExecRigPose warmed = RunWarmingJob(
+            &evaluator, rig, frozen, inputs, &cancellation, nullptr);
         const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
         CHECK(live.valid);
         CheckPosesBitIdentical(
@@ -5802,7 +5811,7 @@ CheckExampleWarmsBitIdentical(const std::string &stagePath,
     if (!frozen) {
         return;
     }
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
     VtVec3fArray previousPoints;
     for (double frame : frames) {
@@ -5810,8 +5819,8 @@ CheckExampleWarmsBitIdentical(const std::string &stagePath,
         CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame),
                                        noOverrides, &inputs, &error));
         CHECK(!inputs.HasChainResolvedInputs());
-        const RigExecRigPose warmed =
-            RunWarmingJob(&evaluator, rig, frozen, inputs, &scheduler, nullptr);
+        const RigExecRigPose warmed = RunWarmingJob(
+            &evaluator, rig, frozen, inputs, &cancellation, nullptr);
         const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
         CHECK(live.valid);
         CheckPosesBitIdentical(
@@ -5943,7 +5952,7 @@ TestIterativeMoversWarmBitIdentical()
         CHECK(RigExecBuildBurstSampleCache(
             *evaluator.GetBakedProgram(), bindings, {},
             RigExecFrameCacheCompiledRigSignature(evaluator), &cache, &error));
-        RigExecBackgroundScheduler scheduler;
+        RigExecCancellationSource cancellation;
         uint64_t previousDigest = 0;
         VtVec3fArray previousPoints;
         for (double frame : {3.0, 2.0, 1.0, 3.0}) {
@@ -5958,7 +5967,7 @@ TestIterativeMoversWarmBitIdentical()
             CHECK(digest != previousDigest);
             previousDigest = digest;
             const auto warmed = RunWarmingJob(&evaluator, rig, frozen, burst,
-                                              &scheduler, nullptr);
+                                              &cancellation, nullptr);
             const auto live = evaluator.Evaluate(UsdTimeCode(frame));
             CheckPosesBitIdentical(wrinkle ? "wrinkle" : "delta mush", live,
                                    warmed);
@@ -5984,7 +5993,7 @@ TestIterativeMoversWarmBitIdentical()
                                        &overridden, &error));
         CHECK(RigExecControlStateDigest(overridden) != previousDigest);
         const auto warmed = RunWarmingJob(&evaluator, rig, frozen, overridden,
-                                          &scheduler, nullptr);
+                                          &cancellation, nullptr);
         const auto live = evaluator.Evaluate(UsdTimeCode(3.0));
         CheckPosesBitIdentical("iterative mover override", live, warmed);
     }
@@ -6068,7 +6077,7 @@ TestFrozenAssemblesFromLeaves(const std::string &examplesDir)
                           TfToken("frozenWeight:combineTargetCount")));
             }
         }
-        RigExecBackgroundScheduler scheduler;
+        RigExecCancellationSource cancellation;
         for (const double frame : {start, start + 4.0}) {
             RigExecFrameInputs inputs;
             CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame), {},
@@ -6142,7 +6151,7 @@ TestFrozenAssemblesFromLeaves(const std::string &examplesDir)
                         B.chains[size_t(c)].derived[size_t(i)].revision);
             }
             const RigExecRigPose job = RunWarmingJob(
-                &evaluator, rig, frozen, inputs, &scheduler, nullptr);
+                &evaluator, rig, frozen, inputs, &cancellation, nullptr);
             const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
             CHECK(live.valid);
             CheckPosesBitIdentical(TfStringPrintf("frozen leaves %s frame %g",
@@ -6229,7 +6238,7 @@ TestSurfaceSnapWarmsBitIdentical()
     CHECK(evaluator.Compile(&errors));
     CHECK(errors.empty());
     CHECK(evaluator.Evaluate(UsdTimeCode(1)).valid);
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     const std::vector<RigExecValueOverride> noOverrides;
     for (double time : {2.0, 3.0, 1.0}) {
         std::shared_ptr<const RigExecFrozenProgram> frozen;
@@ -6250,10 +6259,10 @@ TestSurfaceSnapWarmsBitIdentical()
                                        noOverrides, &plain, &error));
         CHECK(RigExecSampleFrameInputsWithBurstCache(
             evaluator, UsdTimeCode(time), noOverrides, &cache, &burst, &error));
-        const auto warmed =
-            RunWarmingJob(&evaluator, root, frozen, plain, &scheduler, nullptr);
-        const auto cached =
-            RunWarmingJob(&evaluator, root, frozen, burst, &scheduler, nullptr);
+        const auto warmed = RunWarmingJob(&evaluator, root, frozen, plain,
+                                          &cancellation, nullptr);
+        const auto cached = RunWarmingJob(&evaluator, root, frozen, burst,
+                                          &cancellation, nullptr);
         const auto live = evaluator.Evaluate(UsdTimeCode(time));
         CHECK(live.valid);
         CheckPosesBitIdentical("surface snap frozen", live, warmed);
@@ -6314,7 +6323,7 @@ TestRegularLatticeWarmsBitIdentical()
     for (const auto &error : errors)
         std::printf("lattice compile: %s\n", error.c_str());
     CHECK(evaluator.Evaluate(UsdTimeCode(1)).valid);
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     for (double time : {2.0, 3.0, 1.0}) {
         std::shared_ptr<const RigExecFrozenProgram> frozen;
         std::string error;
@@ -6334,10 +6343,10 @@ TestRegularLatticeWarmsBitIdentical()
                                        &error));
         CHECK(RigExecSampleFrameInputsWithBurstCache(
             evaluator, UsdTimeCode(time), {}, &cache, &burst, &error));
-        const auto warmed =
-            RunWarmingJob(&evaluator, root, frozen, plain, &scheduler, nullptr);
-        const auto cached =
-            RunWarmingJob(&evaluator, root, frozen, burst, &scheduler, nullptr);
+        const auto warmed = RunWarmingJob(&evaluator, root, frozen, plain,
+                                          &cancellation, nullptr);
+        const auto cached = RunWarmingJob(&evaluator, root, frozen, burst,
+                                          &cancellation, nullptr);
         const auto live = evaluator.Evaluate(UsdTimeCode(time));
         CHECK(live.valid);
         CheckPosesBitIdentical("regular lattice frozen", live, warmed);
@@ -6449,8 +6458,8 @@ TestPointFinalAvailabilitySurvivesRetainedJobs(const std::string &examplesDir)
         CHECK(live.valid && evaluator.GetCompiledRigSignature() == compiledRig);
         RigExecFrozenRunReport report;
         const auto pose = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(), nullptr, rig,
-            &report);
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
         CHECK(report.ran && pose.valid);
         CheckSameReadings("retained point Final availability", live, pose);
         CHECK((std::find(pose.diagnostics.begin(), pose.diagnostics.end(),
@@ -6473,8 +6482,8 @@ TestPointFinalAvailabilitySurvivesRetainedJobs(const std::string &examplesDir)
         }
         RigExecFrozenRunReport heldReport;
         const auto held = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(), nullptr, rig,
-            &heldReport);
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &heldReport);
         CHECK(heldReport.ran && held.valid && heldReport.region.empty());
         CheckSameReadings("held retained point Final availability", pose, held);
     }
@@ -6569,7 +6578,7 @@ CheckConstraintStageWarmsBitIdentical(const std::string &stagePath,
     if (!frozen) {
         return;
     }
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     RigExecStageFrameSeeds previousSeeds;
     RigExecRigPose previousLive;
     bool havePreviousLive = false;
@@ -6589,8 +6598,8 @@ CheckConstraintStageWarmsBitIdentical(const std::string &stagePath,
               RigExecFrozenControlDigest(burst));
         CHECK(RigExecControlStateDigestWithBurstCache(burst, {}, &cache) ==
               RigExecControlStateDigest(burst, {}));
-        const RigExecRigPose warmed =
-            RunWarmingJob(&evaluator, rig, frozen, plain, &scheduler, nullptr);
+        const RigExecRigPose warmed = RunWarmingJob(
+            &evaluator, rig, frozen, plain, &cancellation, nullptr);
         const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
         CHECK(live.valid);
         CheckPosesBitIdentical(
@@ -6801,10 +6810,10 @@ TestAFrozenRewarmAfterAReleasedOverrideCarriesTheEdit(
     CHECK(frozen->program->lastTime == held);
     RigExecFrameInputs at;
     CHECK(RigExecSampleFrameInputs(evaluator, held, {}, &at, &error));
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     bool ran = false;
     const RigExecRigPose warmed =
-        RunWarmingJob(&evaluator, rig, frozen, at, &scheduler, &ran);
+        RunWarmingJob(&evaluator, rig, frozen, at, &cancellation, &ran);
     CHECK(ran);
     const RigExecRigPose live = evaluator.Evaluate(held);
     CHECK(live.valid);
@@ -6874,11 +6883,11 @@ TestAStandingSnapshotPatchedAfterALiveRunCarriesTheEdit(
 
     RigExecFrameInputs at;
     CHECK(RigExecSampleFrameInputs(evaluator, held, {}, &at, &error));
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     // The pre-edit source vector remains immutable after the live edit.
     bool ran = false;
     const RigExecRigPose oldInputs =
-        RunWarmingJob(&evaluator, rig, standing, preEdit, &scheduler, &ran);
+        RunWarmingJob(&evaluator, rig, standing, preEdit, &cancellation, &ran);
     CHECK(ran);
     CheckPosesBitIdentical("standing snapshot with pre-edit inputs", before,
                            oldInputs);
@@ -6887,7 +6896,7 @@ TestAStandingSnapshotPatchedAfterALiveRunCarriesTheEdit(
     CHECK(stale.comparisonMismatches != 0);
     ran = false;
     const RigExecRigPose unpatched =
-        RunWarmingJob(&evaluator, rig, standing, at, &scheduler, &ran);
+        RunWarmingJob(&evaluator, rig, standing, at, &cancellation, &ran);
     CHECK(ran);
     CheckPosesBitIdentical("standing snapshot with fresh inputs", live,
                            unpatched);
@@ -6906,7 +6915,7 @@ TestAStandingSnapshotPatchedAfterALiveRunCarriesTheEdit(
     CHECK(!RigExecFrozenSnapshotOwesLiveEdits(*patched, *program));
     ran = false;
     const RigExecRigPose warmed =
-        RunWarmingJob(&evaluator, rig, patched, at, &scheduler, &ran);
+        RunWarmingJob(&evaluator, rig, patched, at, &cancellation, &ran);
     CHECK(ran);
     CheckPosesBitIdentical("patched standing snapshot after a live run",
                            evaluator.Evaluate(held), warmed);
@@ -6981,10 +6990,10 @@ TestPoseConstraintWeightFieldFreezes()
     RigExecFrameInputs inputs;
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(1), {}, &inputs,
                                    &error));
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     bool ran = false;
     const auto pose = RunWarmingJob(&evaluator, builder.GetRootPath(), frozen,
-                                    inputs, &scheduler, &ran);
+                                    inputs, &cancellation, &ran);
     CHECK(ran);
     CheckPosesBitIdentical("constraint field frozen",
                            evaluator.Evaluate(UsdTimeCode(1)), pose);
@@ -7050,8 +7059,8 @@ TestUnboundConstraintArrayKeysIgnoreEmptyRows()
     const auto run = [&](const char *label, bool expectConstraint) {
         RigExecFrozenRunReport report;
         const auto pose = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(), nullptr,
-            builder.GetRootPath(), &report);
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
         CHECK(report.ran && pose.valid);
         const bool executed = std::any_of(
             report.region.begin(), report.region.end(),
@@ -7241,7 +7250,7 @@ Test9MeshWarmsBitIdentical()
     if (!frozen) {
         return;
     }
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
 
     RigExecFrameInputs at3;
@@ -7252,7 +7261,7 @@ Test9MeshWarmsBitIdentical()
                 at3.values.size(), SkinLayouts(at3));
     CHECK(SkinLayouts(at3) == k9MeshCount);
     const RigExecRigPose warmed3 =
-        RunWarmingJob(&evaluator, rig, frozen, at3, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at3, &cancellation, nullptr);
     const RigExecRigPose live3 = evaluator.Evaluate(UsdTimeCode(3.0));
     CHECK(live3.valid);
     CheckAll9MeshesPublished("warmed 9mesh frame 3", live3);
@@ -7268,7 +7277,7 @@ Test9MeshWarmsBitIdentical()
     // itself.
     CHECK(RigExecFrozenControlDigest(at3) != RigExecFrozenControlDigest(at4));
     const RigExecRigPose warmed4 =
-        RunWarmingJob(&evaluator, rig, frozen, at4, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at4, &cancellation, nullptr);
     const RigExecRigPose live4 = evaluator.Evaluate(UsdTimeCode(4.0));
     CHECK(live4.valid);
     CheckAll9MeshesPublished("warmed 9mesh frame 4", live4);
@@ -7286,8 +7295,8 @@ Test9MeshWarmsBitIdentical()
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(3.0), {drag},
                                    &dragged3, &error));
     CHECK(!dragged3.HasChainResolvedInputs());
-    const RigExecRigPose warmedDragged =
-        RunWarmingJob(&evaluator, rig, frozen, dragged3, &scheduler, nullptr);
+    const RigExecRigPose warmedDragged = RunWarmingJob(
+        &evaluator, rig, frozen, dragged3, &cancellation, nullptr);
     const RigExecRigPose liveDragged = evaluator.Evaluate(UsdTimeCode(3.0));
     CHECK(liveDragged.valid);
     CheckAll9MeshesPublished("warmed 9mesh frame 3 under a drag", liveDragged);
@@ -7327,7 +7336,7 @@ Check9MeshWarmsBitIdenticalAt(double frame)
     if (!frozen) {
         return;
     }
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
 
     RigExecFrameInputs probed;
@@ -7336,7 +7345,7 @@ Check9MeshWarmsBitIdenticalAt(double frame)
     CHECK(!probed.HasChainResolvedInputs());
     CHECK(SkinLayouts(probed) == k9MeshCount);
     const RigExecRigPose warmed =
-        RunWarmingJob(&evaluator, rig, frozen, probed, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, probed, &cancellation, nullptr);
     const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
     CHECK(live.valid);
     const std::string what = "warmed 9mesh frame " + std::to_string(int(frame));
@@ -7389,7 +7398,7 @@ TestBipedWarmsBitIdenticalAtSweepDistance(
     if (!frozen) {
         return;
     }
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
 
     const double sweepFrame = stage->GetEndTimeCode() + 32.0;
@@ -7398,7 +7407,7 @@ TestBipedWarmsBitIdenticalAtSweepDistance(
                                    noOverrides, &atSweep, &error));
     CHECK(!atSweep.HasChainResolvedInputs());
     const RigExecRigPose warmedSweep =
-        RunWarmingJob(&evaluator, rig, frozen, atSweep, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, atSweep, &cancellation, nullptr);
     const RigExecRigPose liveSweep =
         evaluator.Evaluate(UsdTimeCode(sweepFrame));
     CHECK(liveSweep.valid);
@@ -7521,7 +7530,7 @@ TestProjectorSpacesMatchDynamic(const std::string &examplesDir)
         }
     };
     checkLive(1.0, RigExecRigPose());
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
     std::string error;
     for (double frame : {4.0, 7.0, 10.0}) {
@@ -7538,7 +7547,7 @@ TestProjectorSpacesMatchDynamic(const std::string &examplesDir)
                                        noOverrides, &inputs, &error));
         bool ran = false;
         const RigExecRigPose warmed =
-            RunWarmingJob(&evaluator, rig, frozen, inputs, &scheduler, &ran);
+            RunWarmingJob(&evaluator, rig, frozen, inputs, &cancellation, &ran);
         CHECK(ran);
         checkLive(frame, warmed);
     }
@@ -7572,7 +7581,7 @@ TestFrameRecordFallbacksFreeze(const std::string &examplesDir)
     CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
     CHECK(walk.Evaluate(UsdTimeCode(1.0)).valid);
 
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
     for (const double frame : {4.0, 8.0}) {
         std::shared_ptr<const RigExecFrozenProgram> frozen;
@@ -7588,7 +7597,7 @@ TestFrameRecordFallbacksFreeze(const std::string &examplesDir)
                                        noOverrides, &inputs, &error));
         bool ran = false;
         const RigExecRigPose warmed =
-            RunWarmingJob(&evaluator, rig, frozen, inputs, &scheduler, &ran);
+            RunWarmingJob(&evaluator, rig, frozen, inputs, &cancellation, &ran);
         CHECK(ran);
         const size_t before = evaluator.GetBakedGenerationCount();
         const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
@@ -7629,7 +7638,7 @@ TestSolverCheckpointFreezes(const std::string &examplesDir)
     CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
     CHECK(walk.Evaluate(UsdTimeCode(1.0)).valid);
 
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
     for (const double frame : {5.0, 9.0}) {
         std::shared_ptr<const RigExecFrozenProgram> frozen;
@@ -7645,7 +7654,7 @@ TestSolverCheckpointFreezes(const std::string &examplesDir)
                                        noOverrides, &inputs, &error));
         bool ran = false;
         const RigExecRigPose warmed =
-            RunWarmingJob(&evaluator, rig, frozen, inputs, &scheduler, &ran);
+            RunWarmingJob(&evaluator, rig, frozen, inputs, &cancellation, &ran);
         CHECK(ran);
         const size_t before = evaluator.GetBakedGenerationCount();
         const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
@@ -7690,7 +7699,7 @@ TestPrecedingOwnChainFreezes(const std::string &examplesDir)
     CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
     CHECK(walk.Evaluate(UsdTimeCode(1.0)).valid);
 
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
     for (const double frame : {5.0, 9.0}) {
         std::shared_ptr<const RigExecFrozenProgram> frozen;
@@ -7728,7 +7737,7 @@ TestPrecedingOwnChainFreezes(const std::string &examplesDir)
                                        noOverrides, &inputs, &error));
         bool ran = false;
         const RigExecRigPose warmed =
-            RunWarmingJob(&evaluator, rig, frozen, inputs, &scheduler, &ran);
+            RunWarmingJob(&evaluator, rig, frozen, inputs, &cancellation, &ran);
         CHECK(ran);
         const size_t before = evaluator.GetBakedGenerationCount();
         const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
@@ -7817,9 +7826,9 @@ TestPrecedingOwnChainFreezes(const std::string &examplesDir)
     auto workspace = RigExecCreateFrozenWorkspace(frozen);
     context.workspace = workspace.get();
     RigExecFrozenRunReport liftedReport;
-    const auto full = RigExecEvaluateFrozen(context, liftedInputs,
-                                            RigExecMakeProductionStepRunner(),
-                                            nullptr, rig, &liftedReport);
+    const auto full = RigExecEvaluateFrozen(
+        context, liftedInputs, RigExecMakeProductionStepRunner(),
+        RigExecCancellationToken(), &liftedReport);
     CHECK(liftedReport.ran && full.valid);
     sameBox("a held common-graph job under the lift", lifted, full);
     coned.SetInteractiveOverrides({weight});
@@ -7829,9 +7838,9 @@ TestPrecedingOwnChainFreezes(const std::string &examplesDir)
                            coneWalk.Evaluate(at9), weighted);
     context.varyingInputCount = weightedInputs.values.size();
     RigExecFrozenRunReport weightedReport;
-    const auto cone = RigExecEvaluateFrozen(context, weightedInputs,
-                                            RigExecMakeProductionStepRunner(),
-                                            nullptr, rig, &weightedReport);
+    const auto cone = RigExecEvaluateFrozen(
+        context, weightedInputs, RigExecMakeProductionStepRunner(),
+        RigExecCancellationToken(), &weightedReport);
     CHECK(weightedReport.ran && cone.valid);
     bool echoRan = false;
     for (const auto &entry : weightedReport.region) {
@@ -7881,10 +7890,10 @@ TestVolumePlacementsFixtureFreezes(const std::string &examplesDir)
             RigExecFrameInputs inputs;
             CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(1), {},
                                            &inputs, &error));
-            RigExecBackgroundScheduler scheduler;
+            RigExecCancellationSource cancellation;
             bool ran = false;
             const auto pose = RunWarmingJob(&evaluator, rig, frozen, inputs,
-                                            &scheduler, &ran);
+                                            &cancellation, &ran);
             CHECK(ran);
             CheckPosesBitIdentical("current-phase field frozen",
                                    evaluator.Evaluate(UsdTimeCode(1)), pose);
@@ -7914,7 +7923,7 @@ TestVolumePlacementsFixtureFreezes(const std::string &examplesDir)
     CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
     CHECK(walk.Evaluate(UsdTimeCode(1.0)).valid);
 
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     std::vector<RigExecValueOverride> noOverrides;
     for (const double frame : {5.0, 10.0}) {
         std::shared_ptr<const RigExecFrozenProgram> frozen;
@@ -7929,7 +7938,7 @@ TestVolumePlacementsFixtureFreezes(const std::string &examplesDir)
                                        noOverrides, &inputs, &error));
         bool ran = false;
         const RigExecRigPose warmed =
-            RunWarmingJob(&evaluator, rig, frozen, inputs, &scheduler, &ran);
+            RunWarmingJob(&evaluator, rig, frozen, inputs, &cancellation, &ran);
         CHECK(ran);
         const size_t before = evaluator.GetBakedGenerationCount();
         const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
@@ -8230,7 +8239,7 @@ CheckRecomposingLadderFreezes(const _RecomposingLadderCase &c)
         return;
     CHECK(RigExecCanFreezeProgram(evaluator, &error));
 
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     const auto warm = [&](const std::string &where, double frame,
                           const std::vector<RigExecValueOverride> &overrides)
         -> RigExecRigPose {
@@ -8246,7 +8255,7 @@ CheckRecomposingLadderFreezes(const _RecomposingLadderCase &c)
         CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame), overrides,
                                        &inputs, &error));
         const RigExecRigPose warmed = RunWarmingJob(
-            &evaluator, c.rig, frozen, inputs, &scheduler, nullptr);
+            &evaluator, c.rig, frozen, inputs, &cancellation, nullptr);
         CheckJobAccepted(where.c_str(), inputs, warmed);
         evaluator.SetInteractiveOverrides(overrides);
         const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
@@ -8365,7 +8374,7 @@ CheckRecomposingLadderFreezes(const _RecomposingLadderCase &c)
                                                UsdTimeCode(job.frame),
                                                job.overrides, &inputs, &error));
                 const RigExecRigPose warmed = RunWarmingJob(
-                    &evaluator, c.rig, frozen, inputs, &scheduler, nullptr);
+                    &evaluator, c.rig, frozen, inputs, &cancellation, nullptr);
                 CheckJobAccepted(what.c_str(), inputs, warmed);
                 evaluator.SetInteractiveOverrides(job.overrides);
                 const RigExecRigPose live =
@@ -8655,8 +8664,8 @@ TestFrozenPropertySkinLayoutRecovery()
         context.varyingInputCount = inputs.values.size();
         RigExecFrozenRunReport report;
         const auto detached = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(), nullptr, rig,
-            &report);
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
         const auto live = evaluator.Evaluate(UsdTimeCode(frame));
         CHECK(report.ran && detached.valid && live.valid);
         CheckPosesBitIdentical("skin property/layout recovery", live, detached);
@@ -8688,8 +8697,8 @@ TestFrozenPropertySkinLayoutRecovery()
         // stale previous-frame property opinions or change a clean result.
         RigExecFrozenRunReport heldReport;
         const auto held = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(), nullptr, rig,
-            &heldReport);
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &heldReport);
         CHECK(heldReport.ran);
         CheckPosesBitIdentical("skin held detached", detached, held);
         for (const auto &entry : heldReport.region) {
@@ -8736,8 +8745,8 @@ TestFrozenEnvelopeVolumesRecovery(const std::string &examples)
         context.varyingInputCount = inputs.values.size();
         RigExecFrozenRunReport report;
         const auto pose = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(), nullptr, rig,
-            &report);
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
         const auto live = evaluator.Evaluate(UsdTimeCode(frame));
         CHECK(report.ran && pose.valid && live.valid);
         CheckPosesBitIdentical("envelope volume phase recovery", live, pose);
@@ -8750,8 +8759,8 @@ TestFrozenEnvelopeVolumesRecovery(const std::string &examples)
                 VtValue(frame == 1 || frame == 3 || frame == 6 ? 10.0f : 0.0f));
         RigExecFrozenRunReport heldReport;
         const auto held = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(), nullptr, rig,
-            &heldReport);
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &heldReport);
         CHECK(heldReport.ran);
         CheckPosesBitIdentical("held envelope volume", pose, held);
         const auto &graph = rigExec::RigExecBakedProgramAccess::StepGraph(
@@ -8972,7 +8981,7 @@ TestAWorkspaceInheritsTheVerdict()
     options.staticTx = true;
     const SdfPath rig("/Asset/Rig");
     std::string error;
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
 
     UsdStageRefPtr stage = MakeTinyRigWith(options);
     RigExecRigEvaluator evaluator(stage, rig);
@@ -9017,7 +9026,7 @@ TestAWorkspaceInheritsTheVerdict()
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(3.0), {}, &at3,
                                    &error));
     const RigExecRigPose warmed3 =
-        RunWarmingJob(&evaluator, rig, frozen, at3, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at3, &cancellation, nullptr);
     auto workspace = RigExecCreateFrozenWorkspace(frozen);
     CHECK(workspace);
     RigExecRigPose laned3;
@@ -9028,8 +9037,8 @@ TestAWorkspaceInheritsTheVerdict()
         context.compiledRigSignature = evaluator.GetCompiledRigSignature();
         context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
         context.varyingInputCount = at3.values.size();
-        laned3 = RigExecEvaluateFrozen(
-            context, at3, RigExecMakeProductionStepRunner(), nullptr, rig);
+        laned3 = RigExecEvaluateFrozen(context, at3,
+                                       RigExecMakeProductionStepRunner());
     }
     const RigExecRigPose live3 = evaluator.Evaluate(UsdTimeCode(3.0));
     CHECK(live3.valid);
@@ -9127,7 +9136,7 @@ TestAWorkspaceInheritsTheVerdict()
         CHECK(inherited->cloneVerdictMismatches == 0);
     }
     const RigExecRigPose patchedWarm3 = RunWarmingJob(
-        &patchEvaluator, rig, patched, patchedAt3, &scheduler, nullptr);
+        &patchEvaluator, rig, patched, patchedAt3, &cancellation, nullptr);
     CheckPosesBitIdentical("a patched snapshot's job, frame 3", patchedLive3,
                            patchedWarm3);
 }
@@ -9249,12 +9258,12 @@ TestAClonesDropsIdleScratch(const std::string &examplesDir)
         CHECK(_RevisionOf(*clone, mover) != nullptr);
         CHECK(_HeldScratch(*clone) == 0);
     }
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     RigExecFrameInputs at4;
     CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(4.0), {}, &at4,
                                    &error));
     const RigExecRigPose warmed4 =
-        RunWarmingJob(&evaluator, rig, frozen, at4, &scheduler, nullptr);
+        RunWarmingJob(&evaluator, rig, frozen, at4, &cancellation, nullptr);
     const RigExecRigPose live4 = evaluator.Evaluate(UsdTimeCode(4.0));
     CHECK(live4.valid);
     CheckPosesBitIdentical("a clone without its idle scratch, frame 4", live4,
@@ -9302,7 +9311,7 @@ def RigExecRoot "Rig" {
     std::vector<std::string> errors;
     CHECK(evaluator.Compile(&errors));
     CHECK(evaluator.Evaluate(UsdTimeCode(1)).valid);
-    RigExecBackgroundScheduler scheduler;
+    RigExecCancellationSource cancellation;
     for (double time : {2.0, 3.0, 1.0}) {
         std::shared_ptr<const RigExecFrozenProgram> frozen;
         std::string error;
@@ -9315,7 +9324,7 @@ def RigExecRoot "Rig" {
         CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(time), {},
                                        &inputs, &error));
         const auto warmed = RunWarmingJob(&evaluator, root, frozen, inputs,
-                                          &scheduler, nullptr);
+                                          &cancellation, nullptr);
         const auto live = evaluator.Evaluate(UsdTimeCode(time));
         CHECK(live.valid && live.diagnostics.empty());
         CheckPosesBitIdentical("normals layout frozen", live, warmed);

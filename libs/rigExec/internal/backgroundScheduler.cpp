@@ -306,15 +306,24 @@ RigExecBackgroundScheduler::_ReportTransitionLocked(
     _transitionHook(transition);
 }
 
+RigExecCancellationSource
+RigExecBackgroundScheduler::_GenerationSource(const SdfPath &rig) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _generations[rig];
+}
+
 RigExecFrameGeneration
 RigExecBackgroundScheduler::CurrentGeneration(const SdfPath &rig) const
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-    const auto found = _generations.find(rig);
-    if (found == _generations.end()) {
-        return 0;
-    }
-    return found->second;
+    return _GenerationSource(rig).Serial();
+}
+
+RigExecCancellationToken
+RigExecBackgroundScheduler::CancellationToken(
+    const SdfPath &rig, RigExecFrameGeneration generation) const
+{
+    return _GenerationSource(rig).Token(generation);
 }
 
 size_t
@@ -331,7 +340,7 @@ RigExecBackgroundScheduler::CancelGeneration(const SdfPath &rig)
     std::unique_lock<std::mutex> lock(_mutex);
     // A rig never seen before enters at 1: generation 0 means "no edit yet",
     // so the first edit must move it.
-    _generations[rig] += 1;
+    _generations[rig].Cancel();
     // Purge the rig's queued jobs under the same lock as the bump: nothing
     // queued can be stale afterwards, so the pre-run check below only ever
     // fires for the pop race (a worker that popped just ahead of this bump).
@@ -493,7 +502,7 @@ RigExecBackgroundScheduler::IsWarmRequestCurrent(
     std::lock_guard<std::mutex> lock(_mutex);
     const auto current = _generations.find(rig);
     const RigExecFrameGeneration currentGeneration =
-        current == _generations.end() ? 0 : current->second;
+        current == _generations.end() ? 0 : current->second.Serial();
     if (currentGeneration != generation) {
         return false;
     }
@@ -580,7 +589,7 @@ RigExecBackgroundScheduler::Enqueue(const SdfPath &rig, UsdTimeCode time,
     // std::mutex does not nest.
     const auto current = _generations.find(rig);
     const RigExecFrameGeneration currentGeneration =
-        current == _generations.end() ? 0 : current->second;
+        current == _generations.end() ? 0 : current->second.Serial();
     if (currentGeneration != generation) {
         _NoteDeclineLocked(RigExecWarmDeclineReason::StaleGeneration);
         return false;
@@ -1050,7 +1059,7 @@ RigExecBackgroundScheduler::_EnqueueTriggerTime(
         sampleToken = _CurrentFenceTokenLocked(rig, timeValue);
         const auto current = _generations.find(rig);
         const RigExecFrameGeneration currentGeneration =
-            current == _generations.end() ? 0 : current->second;
+            current == _generations.end() ? 0 : current->second.Serial();
         if (_stopping || currentGeneration != generation) {
             _NoteTriggerStopLocked(_StopCause::Stale);
             return _TriggerOutcome::Stop;
@@ -1125,7 +1134,7 @@ RigExecBackgroundScheduler::_EnqueueTriggerTime(
     // queued -- so a miss here still inserts honestly beside a running twin.)
     const auto current = _generations.find(rig);
     const RigExecFrameGeneration currentGeneration =
-        current == _generations.end() ? 0 : current->second;
+        current == _generations.end() ? 0 : current->second.Serial();
     if (_stopping || currentGeneration != generation) {
         _NoteTriggerStopLocked(_StopCause::Stale);
         return _TriggerOutcome::Stop;
