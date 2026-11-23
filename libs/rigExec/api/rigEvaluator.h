@@ -752,11 +752,11 @@ public:
     /// last notice found no program.
     RigExecNoticeDisposition GetLastNoticeDisposition() const
     {
-        return _lastNoticeDisposition;
+        return _rigState.lastNoticeDisposition;
     }
     const std::vector<SdfPath> &GetLastNoticePatchedPaths() const
     {
-        return _lastNoticePatchedPaths;
+        return _rigState.lastNoticePatchedPaths;
     }
 
     /// The timing harness. Events accumulate across evaluations until
@@ -845,9 +845,9 @@ private:
     }
 
     /// The settle path's compile. A compile that failed is answered from
-    /// _failedCompile, without compiling, for as long as its key matches:
-    /// its errors are appended to \p diagnostics as the compile appended
-    /// them, and false is returned. Otherwise it compiles, and memoizes a
+    /// _rigState.failedCompile, without compiling, for as long as its key
+    /// matches: its errors are appended to \p diagnostics as the compile
+    /// appended them, and false is returned. Otherwise it compiles, and memoizes a
     /// failure or forgets the memo on success.
     ///
     /// While the stage stays broken the compile's TF_WARNs therefore reach
@@ -856,7 +856,7 @@ private:
     /// exactly as a real compile would write them.
     bool _CompileUnlessKnownBroken(std::vector<std::string> *diagnostics);
 
-    /// Whether _failedCompile holds a failure of the stage this
+    /// Whether _rigState.failedCompile holds a failure of the stage this
     /// compile would read now.
     bool _FailedCompileMemoMatches() const;
     /// Applies the standing interactive overrides to \p resolved -- the
@@ -1058,7 +1058,7 @@ private:
     /// footprint or when the candidates overflowed.
     bool _EditIsCertainlyStructural() const;
     /// Whether \p notice could move the structure digest: the prim-granular
-    /// gate, read against _digestGate. Without a committed
+    /// gate, read against _rigState.digestGate. Without a committed
     /// footprint every notice is suspect.
     bool _NoticeIsDigestSuspect(const UsdNotice::ObjectsChanged &notice) const;
     /// RIGEXEC_VERIFY_DIGEST_GATE=1: recomputes the digest after a notice
@@ -1163,10 +1163,6 @@ private:
     /// The providers whose rest channels _SettleCompiledRig has to re-classify
     /// (_CompiledRigRestsMightVary), consumed by the next settle.
     std::set<SdfPath> _restEditedProviders;
-    /// _compiledRigRestFrames no longer holds what the stage says. Consumed by
-    /// the owning-thread compiled rig settle before the graph reads captured rest
-    /// facts. A failed refresh leaves it set.
-    bool _compiledRigRestFramesStale = false;
     /// The time the compiled rig's rests were pulled at, and the time the first-frame-pose
     /// request is warmed at: the stage's start time code, always a real
     /// frame rather than Default (see Compile).
@@ -1349,8 +1345,6 @@ private:
     /// exactly where the cache itself is, so the two can never disagree
     /// about which compiled rig's connections they describe.
     mutable std::set<SdfPath> _skinLayoutInputs;
-    mutable bool _skinLayoutInputsValid = false;
-    bool _skinTopologyObservationPending = false;
     /// Fills _skinLayoutInputs from the standing mover order.
     void _ResolveSkinLayoutInputs() const;
     /// Whether any override in \p overrides can change a cached skin layout.
@@ -1370,14 +1364,13 @@ private:
     /// the UsdSkelBlendShape prim it names, and the points property of the
     /// chain it is applied to, whose length the layout was range-checked
     /// against. Derived from _graphChains, so it is rebuilt lazily after
-    /// every commit (_blendSampleSourcesValid).
+    /// every commit (_rigState.blendSampleSourcesValid).
     struct _BlendSampleSource {
         SdfPath sample;
         SdfPath blendShape;
         SdfPath points;
     };
     std::vector<_BlendSampleSource> _blendSampleSources;
-    bool _blendSampleSourcesValid = false;
 
     /// Drops what \p notice could have made stale in the value caches that
     /// outlive a generation -- the static inputs, the property chain
@@ -1570,7 +1563,7 @@ private:
     bool _IkUsesAnimatedTs(const std::vector<SdfPath> &chain) const;
 
     /// Re-pulls the compiled rig's rest frames after a stage edit no recompile
-    /// covered, and clears _compiledRigRestFramesStale. Returns false when the
+    /// covered, and clears _rigState.restFramesStale. Returns false when the
     /// request could not produce them, and leaves the flag set.
     /// Whether any of \p providers has a rest channel that can no longer be
     /// held as a compiled rig constant.
@@ -1695,20 +1688,6 @@ private:
     bool _lastGenerationRanProgram = false;
 
     size_t _structureDigest = 0;
-    /// What the digest in _structureDigest read outside the rig, which is
-    /// what decides whether a notice sets _structureDirty. Committed with
-    /// the digest at the end of Compile and again by every settle whose
-    /// recomputed digest came out equal; invalid from the head of a Compile
-    /// until its digest is joined, so a notice that arrives in between is
-    /// treated as suspect.
-    _DigestGate _digestGate;
-    /// Paths of the digest-suspect notices since the last settle that could
-    /// make the edit certainly structural (_NoteCertainStructuralCandidates),
-    /// judged against _digestGate by the next settle and dropped wherever
-    /// _structureDirty is cleared or the gate is. Past a bound the list
-    /// stops growing and the flag says the edit is not judged at all.
-    std::vector<SdfPath> _certainCandidates;
-    bool _certainCandidatesOverflowed = false;
     /// See GetStageEditSerial.
     uint64_t _stageEditSerial = 0;
     /// See GetStageStructureSerial.
@@ -1736,19 +1715,77 @@ private:
         uint64_t stageEditSerial = 0;
         std::vector<std::string> errors;
     };
-    _FailedCompileMemo _failedCompile;
+    /// The compile side's state of the compiled rig. Owner thread only.
+    /// `compiled` and `structureDirty` change only through Transition,
+    /// which checks the edge in debug builds.
+    class _CompiledRigState {
+    public:
+        enum class Edge : uint8_t {
+            /// A compile dropped the standing rig.
+            Invalidated,
+            /// A notice moved what the compiled rig captured.
+            CaptureMoved,
+            /// A notice may have moved the structure digest.
+            StructureSuspect,
+            /// A compile committed its rig.
+            Committed,
+            /// The committed compile's digest stands, dirty when a notice
+            /// landed during the compile.
+            CommitJoined,
+            /// A settle found the structure unchanged since it began.
+            Settled,
+        };
+        void Transition(Edge edge, bool dirty = false);
+        bool Compiled() const
+        {
+            return _compiled;
+        }
+        bool StructureDirty() const
+        {
+            return _structureDirty;
+        }
+
+        /// What the digest in _structureDigest read outside the rig, which
+        /// is what decides whether a notice sets the structure dirty.
+        /// Committed with the digest at the end of Compile and again by
+        /// every settle whose recomputed digest came out equal; invalid from
+        /// the head of a Compile until its digest is joined, so a notice that
+        /// arrives in between is treated as suspect.
+        _DigestGate digestGate;
+        /// Paths of the digest-suspect notices since the last settle that
+        /// could make the edit certainly structural
+        /// (_NoteCertainStructuralCandidates), judged against digestGate by
+        /// the next settle and dropped wherever the structure is settled or
+        /// the gate is. Past a bound the list stops growing and the flag says
+        /// the edit is not judged at all.
+        std::vector<SdfPath> certainCandidates;
+        bool certainCandidatesOverflowed = false;
+        _FailedCompileMemo failedCompile;
+        /// _compiledRigRestFrames no longer holds what the stage says.
+        /// Consumed by the owning-thread compiled rig settle before the graph
+        /// reads captured rest facts. A failed refresh leaves it set.
+        bool restFramesStale = false;
+        /// Whether _skinLayoutInputs describes the standing mover order.
+        mutable bool skinLayoutInputsValid = false;
+        bool skinTopologyObservationPending = false;
+        /// Whether _blendSampleSources describes the standing chains.
+        bool blendSampleSourcesValid = false;
+        /// The last notice's disposition and patched paths. Written by the
+        /// notice handler on its own thread; read by the registry's notice
+        /// adapter on the same thread (USD delivers notices synchronously),
+        /// so no lock guards them.
+        RigExecNoticeDisposition lastNoticeDisposition =
+            RigExecNoticeDisposition::None;
+        std::vector<SdfPath> lastNoticePatchedPaths;
+
+    private:
+        bool _structureDirty = true;
+        bool _compiled = false;
+    };
+    _CompiledRigState _rigState;
     /// See GetSkippedOperations. Rebuilt by every compile.
     std::map<SdfPath, std::string> _skippedOperations;
-    /// The last notice's disposition and patched paths. Written by the
-    /// notice handler on its own thread; read by the registry's notice
-    /// adapter on the same thread (USD delivers notices synchronously),
-    /// so no lock guards them.
-    RigExecNoticeDisposition _lastNoticeDisposition =
-        RigExecNoticeDisposition::None;
-    std::vector<SdfPath> _lastNoticePatchedPaths;
     TfNotice::Key _noticeKey;
-    bool _structureDirty = true;
-    bool _compiled = false;
     /// Scoped phase timings for Compile and Evaluate. Off unless profiling
     /// is enabled; see SetProfilingEnabled.
     RigExecProfiler _profiler;

@@ -370,9 +370,9 @@ RigExecRigEvaluator::_ClearValueCachesWholesale(bool avarValuesOnly)
     // Dropped as answers and kept as candidates (see the caches' Clear), so
     // a re-read that finds the same arrays keeps the same pointer.
     _skinTopologies.Clear();
-    _skinTopologyObservationPending = true;
+    _rigState.skinTopologyObservationPending = true;
     _blendSampleShapes.Clear();
-    _skinLayoutInputsValid = false;
+    _rigState.skinLayoutInputsValid = false;
 }
 
 void
@@ -455,8 +455,8 @@ RigExecRigEvaluator::_ClearValueCaches(const UsdNotice::ObjectsChanged &notice,
     // stage as the notice left it: a layout attribute itself is a member
     // whatever its connections say, and a connection edit is a notice on the
     // member that carries it.
-    if (_skinLayoutInputsValid || GetSkinTopologyCacheSize() > 0) {
-        if (!_skinLayoutInputsValid) {
+    if (_rigState.skinLayoutInputsValid || GetSkinTopologyCacheSize() > 0) {
+        if (!_rigState.skinLayoutInputsValid) {
             _ResolveSkinLayoutInputs();
         }
         bool hit = std::any_of(
@@ -473,8 +473,8 @@ RigExecRigEvaluator::_ClearValueCaches(const UsdNotice::ObjectsChanged &notice,
         }
         if (hit) {
             _skinTopologies.Clear();
-            _skinTopologyObservationPending = true;
-            _skinLayoutInputsValid = false;
+            _rigState.skinTopologyObservationPending = true;
+            _rigState.skinLayoutInputsValid = false;
         }
     }
     // A blend sample shape is read from the UsdSkelBlendShape its sample
@@ -483,7 +483,7 @@ RigExecRigEvaluator::_ClearValueCaches(const UsdNotice::ObjectsChanged &notice,
     // the blend shape prim (by prefix) or those points -- one sample at a
     // time, the rest keeping their pointers.
     if (_blendSampleShapes.GetSize() > 0) {
-        if (!_blendSampleSourcesValid) {
+        if (!_rigState.blendSampleSourcesValid) {
             _blendSampleSources.clear();
             for (const auto &[target, revisions] : _graphChains) {
                 for (const _GraphRevision &revision : revisions) {
@@ -500,7 +500,7 @@ RigExecRigEvaluator::_ClearValueCaches(const UsdNotice::ObjectsChanged &notice,
                     }
                 }
             }
-            _blendSampleSourcesValid = true;
+            _rigState.blendSampleSourcesValid = true;
         }
         for (const _BlendSampleSource &source : _blendSampleSources) {
             if (reach.ReachesPrim(source.sample) ||
@@ -568,7 +568,7 @@ RigExecRigEvaluator::SetInteractiveOverrides(
     // the re-read and not the deformation.
     if (touchesLayout) {
         _skinTopologies.Clear();
-        _skinTopologyObservationPending = true;
+        _rigState.skinTopologyObservationPending = true;
     }
     // The same rule for the blend sample shapes, which are the other cache a
     // drag must not pay to rebuild: see _OverridesReachBlendShapes.
@@ -601,7 +601,7 @@ RigExecRigEvaluator::ClearInteractiveOverrides()
     // there is nothing of the drag's in it to forget.
     if (touchesLayout) {
         _skinTopologies.Clear();
-        _skinTopologyObservationPending = true;
+        _rigState.skinTopologyObservationPending = true;
     }
     // The same rule for the blend sample shapes, which are the other cache a
     // drag must not pay to rebuild: see _OverridesReachBlendShapes.
@@ -763,7 +763,7 @@ RigExecRigEvaluator::_SetUpstreamAdmitted(
     }
     if (_OverridesReachSkinLayout(moved)) {
         _skinTopologies.Clear();
-        _skinTopologyObservationPending = true;
+        _rigState.skinTopologyObservationPending = true;
     }
     if (_OverridesReachBlendShapes(moved)) {
         _blendSampleShapes.Clear();

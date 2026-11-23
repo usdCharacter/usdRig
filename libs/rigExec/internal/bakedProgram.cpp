@@ -468,7 +468,7 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
         out.push_back(what + ": " + where.GetString());
     };
 
-    if (!E._compiled) {
+    if (!E._rigState.Compiled()) {
         out.push_back("the rig is not compiled");
         return false;
     }
@@ -3110,7 +3110,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
     // `ctx`, discarded on refusal. Refusals in a separate vector, merged in
     // program order; on a refusal only the walk's reasons are returned.
     // Inline when parallel eval is off, in a frozen run, or uncompiled.
-    const bool bakeableBeside = E._compiled &&
+    const bool bakeableBeside = E._rigState.Compiled() &&
                                 RigExecParallelEvaluationEnabled() &&
                                 !RigExecFrozenSerialActive();
     bool bakeable = true;

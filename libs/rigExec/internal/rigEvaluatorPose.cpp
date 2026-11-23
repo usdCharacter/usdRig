@@ -466,7 +466,7 @@ RigExecRigEvaluator::_NoteRestEdits(const UsdNotice::ObjectsChanged &notice)
         noteProperty(path);
     }
     if (reached) {
-        _compiledRigRestFramesStale = true;
+        _rigState.restFramesStale = true;
     }
 }
 

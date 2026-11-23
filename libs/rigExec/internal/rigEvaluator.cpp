@@ -274,8 +274,8 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
     // the existing rebuild below remains the sole binding rebuild.
     const size_t buildsBeforeSettle = _bakedProgramBuilds;
     bool restBecameVarying = false;
-    if (_compiled && _compiledRigRestsConstant && _bakedProgramStale &&
-        !_restEditedProviders.empty()) {
+    if (_rigState.Compiled() && _compiledRigRestsConstant &&
+        _bakedProgramStale && !_restEditedProviders.empty()) {
         std::set<SdfPath> chainTargets;
         for (const auto &entry : _propertyChains)
             chainTargets.insert(entry.first);
@@ -306,7 +306,7 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
                 "rest channel became time-varying: compiled rig rebuilt");
         }
     }
-    if (_compiled && !_bakedProgram &&
+    if (_rigState.Compiled() && !_bakedProgram &&
         (!_bakeRefused || _bakeRefusedSerial != _stageEditSerial)) {
         _RebuildBakedProgram();
     }
@@ -388,7 +388,7 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
     }
     _bakedProgram->AdoptBlendSampleLayouts(&_blendSampleShapes);
     _NoteWindowCaptures(time);
-    _skinTopologyObservationPending = false;
+    _rigState.skinTopologyObservationPending = false;
     ++_bakedGenerations;
     _bakedProgramPublished = true;
     _lastGenerationRanProgram = true;

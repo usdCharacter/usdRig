@@ -159,7 +159,7 @@ RigExecRigEvaluator::Compile(std::vector<std::string> *errors)
     // settle path last concluded about it: nothing the memo remembers may
     // answer for this call, and whatever this call concludes is the caller's
     // to read, not the settle path's to replay.
-    _failedCompile = _FailedCompileMemo();
+    _rigState.failedCompile = _FailedCompileMemo();
     // Element selection is an authored input contract, not a recoverable
     // operation cycle.
     const UsdPrim inputRoot =
@@ -314,9 +314,9 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // notice is suspect.
     // The candidates noted against it go with it: this compile reads the
     // stage they describe.
-    _digestGate = _DigestGate();
-    _certainCandidates.clear();
-    _certainCandidatesOverflowed = false;
+    _rigState.digestGate = _DigestGate();
+    _rigState.certainCandidates.clear();
+    _rigState.certainCandidatesOverflowed = false;
     stampCompileRegion("Compile.Prologue");
     // rigExec:startFramePolicy, resolved once per compile into chain ->
     // provider. Every solver-input walk below reads a chain's start frame
@@ -1391,7 +1391,9 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // their shared compiler context. The stock network handles changed USD
     // bindings incrementally; no whole execution-system replacement is needed.
 
-    invalidateCompiledRig = [&]() { _compiled = false; };
+    invalidateCompiledRig = [&]() {
+        _rigState.Transition(_CompiledRigState::Edge::Invalidated);
+    };
 
     compileBlocks.Next("SolverSchedule.VolumeWeights");
     // Volumetric weight compiled rig state.
@@ -3779,9 +3781,9 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // influence table a layout was range-checked against and the base points
     // a source holds are both things a recompile can have changed.
     _skinTopologies.Clear();
-    _skinLayoutInputsValid = false;
+    _rigState.skinLayoutInputsValid = false;
     _blendSampleShapes.Clear();
-    _blendSampleSourcesValid = false;
+    _rigState.blendSampleSourcesValid = false;
     // Derived results are keyed by target like the live graphs, and the
     // walk may read them from several tasks at once: every entry exists
     // before a generation starts, so no task ever inserts into the map.
@@ -3846,7 +3848,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     _propertyChainBindings.reset();
 
     stampCompileRegion("Compile.Commit");
-    _compiled = true;
+    _rigState.Transition(_CompiledRigState::Edge::Committed);
 
     // Build the dense provider universe once per compile compiled rig. _providerPaths
     // is SdfPath-sorted, so ascending live-index iteration is SdfPath key
@@ -3918,7 +3920,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         }
     }
     // A notice that landed during this compile still stands.
-    _structureDirty = _stageEditSerial != compileSerial;
+    _rigState.Transition(_CompiledRigState::Edge::CommitJoined,
+                         _stageEditSerial != compileSerial);
     // Compile the complete native domain graph for this compiled rig.
     _RebuildBakedProgram(std::move(retiringBakedProgram),
                          compileSceneReusable ? compileScene.get() : nullptr,
@@ -3937,7 +3940,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     }
     if (_stage) {
         RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "Compile.DigestGate", "compile");
-        _digestGate = _MakeDigestGate(digestFootprints);
+        _rigState.digestGate = _MakeDigestGate(digestFootprints);
     }
     return true;
 }
@@ -3945,8 +3948,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
 bool
 RigExecRigEvaluator::_FailedCompileMemoMatches() const
 {
-    return _failedCompile.valid &&
-           _failedCompile.stageEditSerial == _stageEditSerial;
+    return _rigState.failedCompile.valid &&
+           _rigState.failedCompile.stageEditSerial == _stageEditSerial;
 }
 
 bool
@@ -3977,8 +3980,8 @@ RigExecRigEvaluator::_CompileUnlessKnownBroken(
         RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "Settle.KnownBroken", "evaluate");
         if (diagnostics) {
             diagnostics->insert(diagnostics->end(),
-                                _failedCompile.errors.begin(),
-                                _failedCompile.errors.end());
+                                _rigState.failedCompile.errors.begin(),
+                                _rigState.failedCompile.errors.end());
         }
         return false;
     }
@@ -3992,17 +3995,17 @@ RigExecRigEvaluator::_CompileUnlessKnownBroken(
         diagnostics->insert(diagnostics->end(), errors.begin(), errors.end());
     }
     if (ok) {
-        _failedCompile = _FailedCompileMemo();
+        _rigState.failedCompile = _FailedCompileMemo();
         return true;
     }
     // Keyed AFTER the compile, on what the next frame will compare against:
     // the compile authors its derived start frames under a notice block, so
     // the serial it leaves is the stage it read, and the mode is read the
     // same way the next settle reads it.
-    _failedCompile.valid = true;
-    _failedCompile.stageEditSerial = _stageEditSerial;
+    _rigState.failedCompile.valid = true;
+    _rigState.failedCompile.stageEditSerial = _stageEditSerial;
 
-    _failedCompile.errors = std::move(errors);
+    _rigState.failedCompile.errors = std::move(errors);
     return false;
 }
 
@@ -4010,7 +4013,7 @@ bool
 RigExecRigEvaluator::_SettleCompiledRig(std::vector<std::string> *diagnostics)
 {
     const uint64_t settleSerial = _stageEditSerial;
-    if (!_compiled && !_CompileUnlessKnownBroken(diagnostics)) {
+    if (!_rigState.Compiled() && !_CompileUnlessKnownBroken(diagnostics)) {
         return false;
     }
     // Recompile iff the topology digest changed; a failure memo with the same
@@ -4021,7 +4024,7 @@ RigExecRigEvaluator::_SettleCompiledRig(std::vector<std::string> *diagnostics)
     bool digestMoved = false;
     bool certain = false;
     bool replayed = false;
-    if (_structureDirty) {
+    if (_rigState.StructureDirty()) {
         replayed = _FailedCompileMemoMatches();
         digestMoved = replayed;
         if (!digestMoved) {
@@ -4036,7 +4039,7 @@ RigExecRigEvaluator::_SettleCompiledRig(std::vector<std::string> *diagnostics)
                 _DigestGate gate;
                 digestMoved = _SettleStructureDigest(&gate) != _structureDigest;
                 if (!digestMoved) {
-                    _digestGate = std::move(gate);
+                    _rigState.digestGate = std::move(gate);
                 }
             }
         }
@@ -4065,12 +4068,40 @@ RigExecRigEvaluator::_SettleCompiledRig(std::vector<std::string> *diagnostics)
         }
     }
     if (_stageEditSerial == settleSerial) {
-        _structureDirty = false;
-        _certainCandidates.clear();
-        _certainCandidatesOverflowed = false;
+        _rigState.Transition(_CompiledRigState::Edge::Settled);
     }
     _restEditedProviders.clear();
     return true;
+}
+
+void
+RigExecRigEvaluator::_CompiledRigState::Transition(Edge edge, bool dirty)
+{
+    switch (edge) {
+    case Edge::Invalidated:
+        _compiled = false;
+        break;
+    case Edge::CaptureMoved:
+        _compiled = false;
+        _structureDirty = true;
+        break;
+    case Edge::StructureSuspect:
+        _structureDirty = true;
+        break;
+    case Edge::Committed:
+        _compiled = true;
+        break;
+    case Edge::CommitJoined:
+        assert(_compiled);
+        _structureDirty = dirty;
+        break;
+    case Edge::Settled:
+        assert(_compiled);
+        _structureDirty = false;
+        certainCandidates.clear();
+        certainCandidatesOverflowed = false;
+        break;
+    }
 }
 
 } // namespace rigExec

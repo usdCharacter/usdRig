@@ -255,7 +255,7 @@ bool
 RigExecRigEvaluator::_NoticeIsDigestSuspect(
     const UsdNotice::ObjectsChanged &notice) const
 {
-    if (!_digestGate.valid ||
+    if (!_rigState.digestGate.valid ||
         !notice.GetResolvedAssetPathsResyncedPaths().empty()) {
         return true;
     }
@@ -286,7 +286,7 @@ RigExecRigEvaluator::_NoticeIsDigestSuspect(
             return true;
         }
         // On or above a prim the digest read or walked through.
-        if (_digestGate.covered.count(prim)) {
+        if (_rigState.digestGate.covered.count(prim)) {
             return true;
         }
         // Under a prim it read. Not under an ancestor it only walked
@@ -294,7 +294,7 @@ RigExecRigEvaluator::_NoticeIsDigestSuspect(
         for (SdfPath above = prim.GetParentPath();
              !above.IsEmpty() && !above.IsAbsoluteRootPath();
              above = above.GetParentPath()) {
-            if (_digestGate.read.count(above)) {
+            if (_rigState.digestGate.read.count(above)) {
                 return true;
             }
         }
@@ -317,7 +317,7 @@ bool
 RigExecRigEvaluator::_NoticeIsDigestValueNeutral(
     const UsdNotice::ObjectsChanged &notice) const
 {
-    if (!_digestGate.valid || !_stage ||
+    if (!_rigState.digestGate.valid || !_stage ||
         !notice.GetResolvedAssetPathsResyncedPaths().empty()) {
         return false;
     }
@@ -328,7 +328,7 @@ RigExecRigEvaluator::_NoticeIsDigestValueNeutral(
     const TfToken &kCustom = _tokens->custom;
     const TfToken &kVariability = _tokens->variability;
     const auto valueRead = [this](const SdfPath &path) {
-        for (const _CertainFootprint &certain : _digestGate.certain) {
+        for (const _CertainFootprint &certain : _rigState.digestGate.certain) {
             if (certain.valueReads.count(path)) {
                 return true;
             }
@@ -343,7 +343,7 @@ RigExecRigEvaluator::_NoticeIsDigestValueNeutral(
                                      const std::vector<TfToken> &fields,
                                      const UsdAttribute &attribute) {
         const TfToken &kSamples = _tokens->timeSamples;
-        for (const _CertainFootprint &certain : _digestGate.certain) {
+        for (const _CertainFootprint &certain : _rigState.digestGate.certain) {
             const auto found = certain.sampleCountReads.find(path);
             if (found == certain.sampleCountReads.end()) {
                 continue;
@@ -365,7 +365,7 @@ RigExecRigEvaluator::_NoticeIsDigestValueNeutral(
     const auto listed = [this](const SdfPath &path, const TfToken **type) {
         *type = nullptr;
         bool prim = false;
-        for (const _CertainFootprint &certain : _digestGate.certain) {
+        for (const _CertainFootprint &certain : _rigState.digestGate.certain) {
             prim = prim || certain.closurePrims.count(path.GetPrimPath()) > 0;
             const auto found = certain.closureAttributes.find(path);
             if (found != certain.closureAttributes.end()) {
@@ -468,7 +468,7 @@ RigExecRigEvaluator::_NoteCertainStructuralCandidates(
 {
     // Judged against the committed footprint, so there is nothing to note
     // without one: the settle computes the digest either way.
-    if (!_digestGate.valid || _certainCandidatesOverflowed) {
+    if (!_rigState.digestGate.valid || _rigState.certainCandidatesOverflowed) {
         return;
     }
     // A bound on what one settle judges. An edit past it -- a layer swap, a
@@ -476,12 +476,12 @@ RigExecRigEvaluator::_NoteCertainStructuralCandidates(
     // sure of anything, and it gets exactly that.
     static constexpr size_t kMaxCandidates = 256;
     const auto note = [this](const SdfPath &path) {
-        if (_certainCandidates.size() == kMaxCandidates) {
-            _certainCandidatesOverflowed = true;
-            _certainCandidates.clear();
+        if (_rigState.certainCandidates.size() == kMaxCandidates) {
+            _rigState.certainCandidatesOverflowed = true;
+            _rigState.certainCandidates.clear();
             return false;
         }
-        _certainCandidates.push_back(path);
+        _rigState.certainCandidates.push_back(path);
         return true;
     };
     // Whether the committed footprint recorded anything the property could
@@ -490,7 +490,7 @@ RigExecRigEvaluator::_NoteCertainStructuralCandidates(
     const auto recorded = [this](const SdfPath &property) {
         const _CertainFootprint::PropertyKey key{property.GetPrimPath(),
                                                  property.GetNameToken()};
-        for (const _CertainFootprint &certain : _digestGate.certain) {
+        for (const _CertainFootprint &certain : _rigState.digestGate.certain) {
             if (certain.targets.count(key) ||
                 certain.jointElements.count(key.prim) ||
                 certain.closurePrims.count(key.prim)) {
@@ -530,8 +530,8 @@ RigExecRigEvaluator::_NoteCertainStructuralCandidates(
 bool
 RigExecRigEvaluator::_EditIsCertainlyStructural() const
 {
-    if (!_digestGate.valid || _certainCandidatesOverflowed ||
-        _certainCandidates.empty() || !_stage) {
+    if (!_rigState.digestGate.valid || _rigState.certainCandidatesOverflowed ||
+        _rigState.certainCandidates.empty() || !_stage) {
         return false;
     }
     // The digest walks the rig with the default predicate, so a rig that no
@@ -577,14 +577,15 @@ RigExecRigEvaluator::_EditIsCertainlyStructural() const
         const std::optional<TfToken> now = stateNow(path);
         return now && *now != recorded;
     };
-    for (const SdfPath &path : _certainCandidates) {
+    for (const SdfPath &path : _rigState.certainCandidates) {
         if (path.IsPrimPath()) {
             // The resynced prim and every recorded prim below it: a prim
             // resync recomposes the whole subtree, so it can remove, retype
             // or deactivate anything the last digest listed there. A prim
             // it creates below itself is not looked for.
             bool recordedHere = false;
-            for (const _CertainFootprint &certain : _digestGate.certain) {
+            for (const _CertainFootprint &certain :
+                 _rigState.digestGate.certain) {
                 for (auto it = certain.prims.lower_bound(path);
                      it != certain.prims.end() && it->first.HasPrefix(path);
                      ++it) {
@@ -607,7 +608,7 @@ RigExecRigEvaluator::_EditIsCertainlyStructural() const
         }
         const _CertainFootprint::PropertyKey key{path.GetPrimPath(),
                                                  path.GetNameToken()};
-        for (const _CertainFootprint &certain : _digestGate.certain) {
+        for (const _CertainFootprint &certain : _rigState.digestGate.certain) {
             const auto targets = certain.targets.find(key);
             if (targets != certain.targets.end()) {
                 SdfPathVector now;
@@ -672,10 +673,10 @@ RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
     // holds is touched -- above all not the controls' parent transform,
     // which the bake reads whole.
     if (RigExecNoticeIsDisplayOnly(notice)) {
-        _lastNoticeDisposition = _bakedProgram
-                                     ? RigExecNoticeDisposition::Edited
-                                     : RigExecNoticeDisposition::None;
-        _lastNoticePatchedPaths.clear();
+        _rigState.lastNoticeDisposition = _bakedProgram
+                                              ? RigExecNoticeDisposition::Edited
+                                              : RigExecNoticeDisposition::None;
+        _rigState.lastNoticePatchedPaths.clear();
         return;
     }
     ++_stageEditSerial;
@@ -721,8 +722,7 @@ RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
                                                     revision.binding.base))
                 projectorCaptureChanged = true;
     if (projectorCaptureChanged) {
-        _compiled = false;
-        _structureDirty = true;
+        _rigState.Transition(_CompiledRigState::Edge::CaptureMoved);
     }
     const bool avarValuesOnly = _NoticeIsAvarValuesOnly(notice);
     // ... unless the avar the notice names is one a property chain READS.
@@ -760,9 +760,9 @@ RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
     if (!avarValuesOnly) {
         if (!_NoticeIsDigestValueNeutral(notice) &&
             _NoticeIsDigestSuspect(notice)) {
-            _structureDirty = true;
+            _rigState.Transition(_CompiledRigState::Edge::StructureSuspect);
             _NoteCertainStructuralCandidates(notice);
-        } else if (!_structureDirty && _compiled &&
+        } else if (!_rigState.StructureDirty() && _rigState.Compiled() &&
                    _kDigestGateVerifyRequested) {
             _VerifyNeutralNotice(notice);
         }
@@ -783,9 +783,10 @@ RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
         // Classified first, through the same query the registry's notice
         // adapter consumes: the branch below and the adapter's
         // retire/re-resolve decision read one verdict.
-        _lastNoticeDisposition =
-            ClassifyNoticeDisposition(notice, &_lastNoticePatchedPaths);
-        if (_lastNoticeDisposition == RigExecNoticeDisposition::Patched) {
+        _rigState.lastNoticeDisposition = ClassifyNoticeDisposition(
+            notice, &_rigState.lastNoticePatchedPaths);
+        if (_rigState.lastNoticeDisposition ==
+            RigExecNoticeDisposition::Patched) {
             // Patched in place: the program's avar table already holds the
             // new constants, and its by-value slot comparison re-runs only
             // their cone. No rebuild, and no stamp bump -- the bump would
@@ -797,7 +798,8 @@ RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
             if (!_bakedProgram->ApplyAvarValueEdits(notice)) {
                 _bakedProgram->BumpProgramStamp();
             }
-        } else if (_lastNoticeDisposition == RigExecNoticeDisposition::Edited) {
+        } else if (_rigState.lastNoticeDisposition ==
+                   RigExecNoticeDisposition::Edited) {
             // Routed like an override placed for one run and lifted: the
             // inputs the edit reached are marked, and the next run re-runs
             // the cone of the steps that read them instead of everything.
@@ -810,7 +812,8 @@ RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
                 !_bakedProgram->ApplyValueEdits(notice)) {
                 _bakedProgram->BumpProgramStamp();
             }
-        } else if (_lastNoticeDisposition == RigExecNoticeDisposition::Stale) {
+        } else if (_rigState.lastNoticeDisposition ==
+                   RigExecNoticeDisposition::Stale) {
             _bakedProgramStale = true;
             // Input sampling may precede the lazy rebuild. Retire held raw
             // reads too; a structural notice has no routed leaf edits.
@@ -834,11 +837,11 @@ RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
             _bakedProgram->BumpProgramStamp();
         }
     } else {
-        _lastNoticeDisposition = RigExecNoticeDisposition::None;
-        _lastNoticePatchedPaths.clear();
+        _rigState.lastNoticeDisposition = RigExecNoticeDisposition::None;
+        _rigState.lastNoticePatchedPaths.clear();
     }
-    if (_lastNoticeDisposition != RigExecNoticeDisposition::Patched &&
-        _lastNoticeDisposition != RigExecNoticeDisposition::Edited) {
+    if (_rigState.lastNoticeDisposition != RigExecNoticeDisposition::Patched &&
+        _rigState.lastNoticeDisposition != RigExecNoticeDisposition::Edited) {
         ++_stageStructureSerial;
     }
     _LogValueEdit(notice);
@@ -849,8 +852,8 @@ RigExecRigEvaluator::_LogValueEdit(const UsdNotice::ObjectsChanged &notice)
 {
     constexpr size_t kMaxValueEdits = 64;
     const bool absorbed =
-        _lastNoticeDisposition == RigExecNoticeDisposition::Patched ||
-        _lastNoticeDisposition == RigExecNoticeDisposition::Edited;
+        _rigState.lastNoticeDisposition == RigExecNoticeDisposition::Patched ||
+        _rigState.lastNoticeDisposition == RigExecNoticeDisposition::Edited;
     _ValueEdit edit;
     edit.serial = _stageEditSerial;
     // A property resync -- a spec appearing or going away under a value, as

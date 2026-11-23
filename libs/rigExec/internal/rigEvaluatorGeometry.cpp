@@ -143,7 +143,7 @@ void
 RigExecRigEvaluator::_ResolveSkinLayoutInputs() const
 {
     _skinLayoutInputs.clear();
-    _skinLayoutInputsValid = true;
+    _rigState.skinLayoutInputsValid = true;
     for (const RigExecMoverRecord &record : _movers) {
         const RigExecMoverHandler *layoutHandler = record.handler;
         if (!layoutHandler || layoutHandler->layoutAttributes.empty()) {
@@ -192,7 +192,7 @@ RigExecRigEvaluator::_OverridesReachSkinLayout(
     if (overrides.empty()) {
         return false;
     }
-    if (!_skinLayoutInputsValid) {
+    if (!_rigState.skinLayoutInputsValid) {
         _ResolveSkinLayoutInputs();
     }
     for (const RigExecValueOverride &o : overrides) {
@@ -211,7 +211,7 @@ RigExecRigEvaluator::_OverridesReachSkinLayout(
 size_t
 RigExecRigEvaluator::GetSkinTopologyCacheSize() const
 {
-    if (!_bakedProgram || _skinTopologyObservationPending)
+    if (!_bakedProgram || _rigState.skinTopologyObservationPending)
         return 0;
     const auto &program =
         rigExec::RigExecBakedProgramAccess::StepGraph(*_bakedProgram);
