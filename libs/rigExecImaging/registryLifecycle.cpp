@@ -13,7 +13,7 @@
 
 #include "registryInternal.h"
 
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
 #include "rigExec/api/frameCache.h"
 #include "rigExecSchema/schemaTokens.h"
 

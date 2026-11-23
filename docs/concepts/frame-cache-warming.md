@@ -97,7 +97,7 @@ activates. To apply a change to rigs that are already active, call
 ## Implementation
 
 See [architecture](../specs/spec.md), `libs/rigExec/internal/frameCache.cpp`, and
-`libs/rigExec/internal/backgroundScheduler.cpp` for cache ownership and scheduling.
+`libs/rigExecPlayback/backgroundScheduler.cpp` for cache ownership and scheduling.
 The owning thread samples a job's inputs before dispatch; the job runs on a
 worker-owned arena and publishes only while its generation and time fence are
 current. Value edits retire the affected times, structural edits retire every

@@ -19,7 +19,7 @@
 #ifndef RIGEXEC_IMAGING_WARM_INDEX_H
 #define RIGEXEC_IMAGING_WARM_INDEX_H
 
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
 #include "rigExec/api/frameCache.h"
 
 #include <atomic>

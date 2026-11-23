@@ -36,7 +36,7 @@ INSTALLED_LIBS = (
     "rigExecGraph rigExecEvalCore rigExecScene rigExecMath rigExec "
     "rigExecSchema rigExecStandalone rigExecAuthoring rigExecImaging "
     "rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler "
-    "rigExecStdTypes rigExecRigTypes rigExecBuiltins"
+    "rigExecStdTypes rigExecRigTypes rigExecBuiltins rigExecPlayback"
 ).split()
 NOT_INSTALLED = {"guideBoundsInternal.h", "registryInternal.h",
                  "evaluatorTesting.h"}

@@ -5,10 +5,10 @@
 // hold -- so each job runs under a RigExecFrozenSerialScope instead, and the
 // OS priority call sits behind the one function the plan's risk table asks
 // for, with a logged no-op fallback.
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
 
 #include "rigExec/api/frozenContext.h"
-#include "rigExec/internal/parallel.h"
+#include "rigExec/api/parallel.h"
 
 #include "pxr/base/tf/diagnostic.h"
 #include "pxr/base/tf/getenv.h"

@@ -8,7 +8,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "registry.h"
 
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
 #include "rigExec/internal/bakedClusters.h"
 #include "rigExec/api/frameCache.h"
 #include "rigExec/api/frozenContext.h"

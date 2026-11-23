@@ -3,7 +3,6 @@
 # boundary, not a shipped library: the objects are composed into librigExec
 # by the root list, and this target is never installed, exported or linked.
 add_library(rigExecSchedule OBJECT
-    libs/rigExec/internal/backgroundScheduler.cpp
     libs/rigExec/internal/frameCache.cpp
     libs/rigExec/internal/frameCacheSparsity.cpp
     libs/rigExec/internal/taskListCache.cpp

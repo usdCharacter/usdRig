@@ -193,6 +193,7 @@ throw `std::runtime_error`.
 | `libs/rigExecGpu` | OpenGL compute path for per-vertex deformation and cloth |
 | `libs/rigExecBake`, `libs/rigExecBinary`, `libs/rigExecRuntime` | Binary export, format, and playback |
 | `libs/rigExecSampler` | Stage values copied into binary-runtime inputs |
+| `libs/rigExecPlayback` | Background scheduler that warms the frame cache |
 | `libs/rigExecStandalone` | Experimental stage-free scene runtime and rigpack backend |
 | `python` | Python bindings and authoring helpers |
 | `plugin` | Schema resources and optional viewer tools |

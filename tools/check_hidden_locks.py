@@ -3,8 +3,8 @@
 
 usage: tools/check_hidden_locks.py [--root DIR] [--write-allowlist]
 
-Scans the compile, runtime, graph, math, and sampler libraries for the
-calls AGENTS.md lists under "Hidden locks": a TfToken built from text, a
+Scans the compile, runtime, graph, math, sampler, and playback libraries for
+the calls AGENTS.md lists under "Hidden locks": a TfToken built from text, a
 function-local static with dynamic initialization, an environment read, and
 an explicit lock. Every hit must appear in tools/hidden_locks_allowlist.txt;
 a hit that does not fails the check. Entries match by file, kind, and the
@@ -32,6 +32,7 @@ SCANNED_DIRS = [
     "libs/rigExecMath",
     "libs/rigExecRuntime",
     "libs/rigExecSampler",
+    "libs/rigExecPlayback",
 ]
 SUFFIXES = {".cpp", ".h"}
 ALLOWLIST = "tools/hidden_locks_allowlist.txt"

@@ -25,8 +25,8 @@
 // every Enqueue declines and every trigger enqueues nothing, so the caller
 // evaluates live -- the fail-closed answer -- while the generation fence
 // keeps working: edits still bump, tokens still compare.
-#ifndef RIGEXEC_BACKGROUND_SCHEDULER_H
-#define RIGEXEC_BACKGROUND_SCHEDULER_H
+#ifndef RIGEXEC_PLAYBACK_BACKGROUND_SCHEDULER_H
+#define RIGEXEC_PLAYBACK_BACKGROUND_SCHEDULER_H
 
 #include "rigExec/api/cancellation.h"
 #include "rigExec/api/profiler.h"
@@ -879,4 +879,4 @@ private:
 
 } // namespace rigExec
 
-#endif // RIGEXEC_BACKGROUND_SCHEDULER_H
+#endif // RIGEXEC_PLAYBACK_BACKGROUND_SCHEDULER_H

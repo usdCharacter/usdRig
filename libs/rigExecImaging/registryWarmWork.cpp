@@ -8,7 +8,7 @@
 // live here.
 #include "registry.h"
 
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
 #include "rigExec/api/frameCache.h"
 #include "rigExec/internal/frameCacheSparsity.h"
 #include "rigExec/api/frozenContext.h"

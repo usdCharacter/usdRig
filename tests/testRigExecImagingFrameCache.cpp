@@ -108,7 +108,7 @@
 #include "rigExecImaging/bridge.h"
 #include "rigExecImaging/registry.h"
 #include "rigExecBake/bake.h"
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/api/frameCache.h"

@@ -15,7 +15,7 @@
 // an explicit off is honored and the commit half says it enqueued nothing)
 // and RIGEXEC_ENABLE_PARALLEL_EVAL (the process default).
 #include "rigExecImaging/registry.h"
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/api/frameCache.h"

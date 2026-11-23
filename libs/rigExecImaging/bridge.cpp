@@ -8,7 +8,7 @@
 #include "bridgeSnapshot.h"
 
 #include "rigExecMath/pointFrame.h"
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
 #include "rigExec/internal/frameCacheSparsity.h"
 #include "rigExec/internal/parallel.h"
 #include "rigExecScene/authoredRestSpace.h"

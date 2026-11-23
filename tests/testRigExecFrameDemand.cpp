@@ -29,7 +29,7 @@
 #include "rigExecImaging/sceneIndices.h"
 #include "rigExecImaging/snapshotStore.h"
 #include "rigExecBake/bake.h"
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
 #include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/plug/registry.h"

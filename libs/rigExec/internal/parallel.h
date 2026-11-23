@@ -1,25 +1,14 @@
-// The one switch every parallel region in rigExec is behind.
+// rigExec's parallel regions: the frozen serial flag, the caller-environment
+// parallel loop and the range runner handed to kernels.
 #ifndef RIGEXEC_PARALLEL_H
 #define RIGEXEC_PARALLEL_H
 
+#include "rigExec/api/parallel.h"
 #include "rigExecMath/rangeRunner.h"
 
 #include <cstddef>
 
 namespace rigExec {
-
-/// Whether rigExec may spread its own work across threads.
-///
-/// Backed by the TfEnvSetting RIGEXEC_ENABLE_PARALLEL_EVAL, default true.
-/// Every parallel region this library opens -- the compile-time structure
-/// digest and attribute prefetch, the Build-time resolution and bakeability
-/// tasks, the parallel op-graph schedule, the per-point geometry kernels,
-/// program retirement and background warming -- asks here first, so a
-/// threading regression can be bisected to rigExec by one setting.
-/// PXR_WORK_THREAD_LIMIT cannot answer that question: it also
-/// serialises exec's own compilation and scheduling, so a run with it set
-/// differs from the one being diagnosed in more ways than the one under test.
-bool RigExecParallelEvaluationEnabled();
 
 /// Whether this thread is running a frozen frame inside a frozen serial
 /// scope. Frozen workers take the serial variant of every parallel region

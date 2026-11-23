@@ -5,7 +5,7 @@
 #ifndef RIGEXEC_IMAGING_BRIDGE_WARM_PUBLICATION_H
 #define RIGEXEC_IMAGING_BRIDGE_WARM_PUBLICATION_H
 
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
 #include "rigExec/api/frameCache.h"
 
 #include <cstddef>

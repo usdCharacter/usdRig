@@ -33,7 +33,7 @@
 // imply. The busy-work latency load is synthetic by label: a calibrated
 // ~3.1 ms spin standing in for one biped serial frame (report section 2),
 // so the on-vs-off p95 answers the contention question on any rig.
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/api/frameCache.h"

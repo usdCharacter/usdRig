@@ -370,6 +370,19 @@ target_link_libraries(rigExecGpu PUBLIC rigExec tf gf)
 target_link_libraries(rigExecGpu PRIVATE garch)
 include(cmake/WindowsArchiveLinks.cmake)
 
+# rigExecPlayback: the background scheduler that warms the frame cache on
+# its own worker threads. The engine does not link it: frozen evaluation
+# polls the cancellation token the scheduler hands out. Imaging links it
+# publicly because its registry header names the scheduler.
+add_library(rigExecPlayback SHARED libs/rigExecPlayback/backgroundScheduler.cpp)
+target_compile_features(rigExecPlayback PUBLIC cxx_std_17)
+target_include_directories(rigExecPlayback PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
+    $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
+target_link_libraries(rigExecPlayback PUBLIC rigExec tf sdf usd)
+set_target_properties(rigExecPlayback PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_library(rigExec::rigExecPlayback ALIAS rigExecPlayback)
+
 # rigExecImaging: Hydra 2.0 scene-index publication (spec §10).
 # The registry coordination domains compile into private object libraries
 # below and compose into the one shared library. The domain translation
@@ -442,6 +455,7 @@ foreach(_rigexec_imaging_obj IN ITEMS
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>)
     target_link_libraries(${_rigexec_imaging_obj} PUBLIC
         rigExec
+        rigExecPlayback
         hd
         usdImaging
         usdUtils
@@ -499,6 +513,7 @@ target_link_libraries(rigExecImaging PRIVATE
     rigExecImagingQueries rigExecImagingHost)
 target_link_libraries(rigExecImaging PUBLIC
     rigExec
+    rigExecPlayback
     hd
     usdImaging
     usdUtils
@@ -2309,7 +2324,7 @@ target_link_libraries(testRigExecFrozenContext PRIVATE rigExec rigExecAuthoring 
 add_test(NAME testRigExecFrozenContext COMMAND testRigExecFrozenContext "${CMAKE_CURRENT_SOURCE_DIR}/examples")
 
 add_executable(testRigExecBackgroundScheduler tests/testRigExecBackgroundScheduler.cpp)
-target_link_libraries(testRigExecBackgroundScheduler PRIVATE rigExec)
+target_link_libraries(testRigExecBackgroundScheduler PRIVATE rigExecPlayback)
 add_test(NAME testRigExecBackgroundScheduler COMMAND testRigExecBackgroundScheduler)
 
 add_executable(testRigExecFrameCacheSparsity tests/testRigExecFrameCacheSparsity.cpp)
@@ -2356,7 +2371,7 @@ target_compile_definitions(benchFrameCache PRIVATE
     ${_rigexec_schema_resource_define})
 
 add_executable(benchFrameCacheWarm tests/benchFrameCacheWarm.cpp)
-target_link_libraries(benchFrameCacheWarm PRIVATE rigExec)
+target_link_libraries(benchFrameCacheWarm PRIVATE rigExec rigExecPlayback)
 target_compile_definitions(benchFrameCacheWarm PRIVATE
     ${_rigexec_schema_resource_define})
 
@@ -3187,7 +3202,7 @@ if (MSVC AND NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
     # of the USD-facing libraries. The imaging object libraries carry the
     # same compile options and definitions as rigExecImaging, so they
     # reuse the same PCH.
-    set(_rigexec_pch_users rigExec rigExecScene rigExecOracle rigExecImaging
+    set(_rigexec_pch_users rigExec rigExecScene rigExecOracle rigExecPlayback rigExecImaging
         rigExecImagingContext rigExecImagingFrames
         rigExecImagingInteraction rigExecImagingQueries rigExecImagingHost
         rigExecCompile rigExecEval rigExecSchedule rigExecVerify
@@ -3199,7 +3214,7 @@ if (MSVC AND NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
         if (_type STREQUAL "EXECUTABLE" AND _links AND
             _target MATCHES "^(test|bench|probe)")
             foreach(_lib rigExec rigExecBake rigExecImaging rigExecAuthoring
-                    rigExecSampler rigExecStandalone)
+                    rigExecSampler rigExecStandalone rigExecPlayback)
                 if (_lib IN_LIST _links)
                     list(APPEND _rigexec_pch_users ${_target})
                     break()
@@ -3282,7 +3297,7 @@ set(RIGEXEC_INSTALL_TARGETS
     rigExecLzma rigExecGraph rigExecEvalCore rigExecMath rigExec rigExecScene
     rigExecOracle rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu
     rigExecFlatBuffers rigExecBinary rigExecBake rigExecRuntime rigExecSampler
-    rigExecBuiltins rigExecOpCore)
+    rigExecBuiltins rigExecOpCore rigExecPlayback)
 install(TARGETS ${RIGEXEC_INSTALL_TARGETS}
     EXPORT rigExecTargets
     RUNTIME DESTINATION "${RIGEXEC_INSTALL_LIBDIR}"
@@ -3304,7 +3319,7 @@ install(FILES libs/rigExecOracle/registerOracle.h
     DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/rigExecOracle")
 
 # FILES_MATCHING still walks -- and recreates -- every subdirectory it passes
-foreach(_lib rigExecGraph rigExecEvalCore rigExecScene rigExecMath rigExec rigExecSchema rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler rigExecStdTypes rigExecRigTypes rigExecBuiltins)
+foreach(_lib rigExecGraph rigExecEvalCore rigExecScene rigExecMath rigExec rigExecSchema rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler rigExecStdTypes rigExecRigTypes rigExecBuiltins rigExecPlayback)
     install(DIRECTORY "libs/${_lib}/"
         DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/${_lib}"
         FILES_MATCHING

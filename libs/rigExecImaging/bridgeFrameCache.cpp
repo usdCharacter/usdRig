@@ -7,7 +7,7 @@
 #include "bridgeSampling.h"
 #include "warmIndex.h"
 
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
 #include "rigExec/internal/frameCacheSparsity.h"
 #include "rigExec/api/frozenContext.h"
 #include "rigExec/api/rigEvaluator.h"

@@ -38,6 +38,9 @@
 #if __has_include("rigExec/internal/program/program.h")
 #error "internal/program/program.h is shipped to installed consumers"
 #endif
+#if __has_include("rigExec/api/backgroundScheduler.h")
+#error "the background scheduler is shipped in the engine, not rigExecPlayback"
+#endif
 #if __has_include("rigExec/internal/program/alignedBuffer.h")
 #error "internal/program/alignedBuffer.h is shipped to installed consumers"
 #endif

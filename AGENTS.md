@@ -92,6 +92,13 @@ starting its workflow, and keep this list current when adding or changing skills
   tests run the CPU path alone when no GPU device is available.
 - `libs/rigExecSampler`: copies stage values into runtime inputs. This is
   the USD boundary in front of playback.
+- `libs/rigExecPlayback`: the background scheduler that warms the frame
+  cache: its worker threads, the warm-job queue, the generation and per-time
+  fences, and the publish fence (`RigExecPublishFence`). Built as
+  `librigExecPlayback.so`, linking `rigExec` publicly; imaging links it
+  publicly. The engine does not link it: frozen evaluation polls a
+  `RigExecCancellationToken` (`rigExec/api/cancellation.h`) that the
+  scheduler hands out.
 - `libs/rigExecSchema/schema.usda`: source schema. Resources under
   `plugin/rigExecSchema/resources` are generated and checked in; regenerate
   with `bin/gen_schema.sh` or `bin/gen_schema.bat` after schema edits and
@@ -281,8 +288,9 @@ mutable arenas and must not access the live stage, evaluator, or imaging
 registry. Solve sharing through immutable snapshots and explicit ownership,
 not by wrapping a live evaluator or stage in a new mutex.
 
-Existing scheduler, cache-publication, and registry locks belong to their
-documented coordination boundaries. Preserve their lock order and generation
+The background scheduler's locks (`rigExecPlayback`), and the
+cache-publication and registry locks, belong to their documented
+coordination boundaries. Preserve their lock order and generation
 fences; do not extend their scope into computation or add locks to hide an
 ownership violation. Keep authoring and UI callbacks on their owner thread.
 A queued UI callback still blocks that thread while it runs: offload only
@@ -343,8 +351,9 @@ Before reporting a change, search every added line for these calls and for
 and anything merged or ported into it, not only the last diff.
 `tools/check_hidden_locks.py` runs in CI and fails on a new text-built
 token, guarded static, environment read, or lock in the compile, graph,
-math, runtime, and sampler sources. It cannot see path text or locks inside
-library calls. List a deliberate site in `tools/hidden_locks_allowlist.txt`.
+math, runtime, sampler, and playback sources. It cannot see path text or
+locks inside library calls. List a deliberate site in
+`tools/hidden_locks_allowlist.txt`.
 Do not convert a `static` table into a local rebuilt per call on a hot path:
 build it once at namespace scope instead.
 

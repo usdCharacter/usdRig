@@ -50,6 +50,16 @@ set_tests_properties(testRigExecInstalledSeal PROPERTIES
     ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:${rigExec_LIBRARY_DIR};PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/bin;PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;LD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};LD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib")
 
+# The background scheduler links from rigExecPlayback, not from the engine.
+add_executable(testRigExecInstalledPlayback ../testRigExecInstalledPlayback.cpp)
+target_compile_features(testRigExecInstalledPlayback PRIVATE cxx_std_17)
+target_link_libraries(testRigExecInstalledPlayback PRIVATE
+    rigExec::rigExecPlayback)
+add_test(NAME testRigExecInstalledPlayback COMMAND testRigExecInstalledPlayback)
+set_tests_properties(testRigExecInstalledPlayback PROPERTIES
+    ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:${rigExec_LIBRARY_DIR};PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/bin;PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;LD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};LD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib")
+
 # Each op-core API header compiles on its own against the installed op core,
 # which carries no OpenUSD include path.
 set(_rigexec_op_core_tus)

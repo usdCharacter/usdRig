@@ -5,7 +5,7 @@
 
 #include "bridgeFreshness.h"
 
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
 #include "rigExec/api/frameCache.h"
 #include "rigExec/api/frozenContext.h"
 #include "rigExec/internal/outputAffectedIndex.h"

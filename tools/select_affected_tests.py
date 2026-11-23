@@ -708,6 +708,7 @@ PROJECT_LIBS = {
     "rigExecScene", "rigExecOracle", "rigExecRuntime", "rigExecMath",
     "rigExecGraph", "rigExecBinary", "rigExecBake", "rigExecImaging",
     "rigExecAuthoring", "rigExecStandalone", "rigExecSampler", "rigExecLzma",
+    "rigExecPlayback",
 }
 
 

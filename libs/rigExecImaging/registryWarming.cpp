@@ -7,7 +7,7 @@
 // the cursor sweep and the skip/budget accessors live here.
 #include "registry.h"
 
-#include "rigExec/api/backgroundScheduler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
 #include "rigExec/api/frameCache.h"
 #include "rigExec/internal/parallel.h"
 #include "rigExec/api/profiler.h"
