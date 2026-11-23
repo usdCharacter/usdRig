@@ -1847,8 +1847,7 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
             (object.type == TfToken(SchemaTypeName::RigExecSphereWeight) ||
              object.type == TfToken(SchemaTypeName::RigExecPlaneWeight) ||
              object.type == TfToken(SchemaTypeName::RigExecCurveWeight))) {
-            // Preserve full raw relationship cardinality. Prim targets are
-            // oracle-only: packets ignore them, as their native gather does.
+            // Preserve full raw relationship cardinality.
             SdfPathVector targets;
             const auto prim = B.stage->GetPrimAtPath(object.path);
             if (const auto rel = prim.GetRelationship(
@@ -2414,7 +2413,7 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
             memoConvert[ordinal](bindingReads);
         for (const auto leaf : step.bindingLeaves) {
             // Topology heads already capture their exact raw layout slots
-            // below. Native path IDs must not add a second read form.
+            // below.
             if (step.kind == RigExecBakedStepKind::SkinTopology)
                 continue;
             if (leaf >= B.leafRefs.size()) {

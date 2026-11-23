@@ -1,6 +1,6 @@
 // The runtime's dual-quaternion math policy (dualQuatKernel.h) over
-// runtimeMath.h's Gf mirror. Header-only and store-free, so the ops can
-// skin with it. USD-free.
+// runtimeMath.h's Gf mirror. Header-only and store-free, so the ops can skin
+// with it.
 #ifndef RIGEXEC_RUNTIME_DUAL_QUAT_MATH_H
 #define RIGEXEC_RUNTIME_DUAL_QUAT_MATH_H
 
@@ -99,11 +99,6 @@ RrMat3Orthonormalize(RrMat3d *m)
     m->SetRow(2, r2);
 }
 
-/// GfMatrix3d::ExtractRotationQuaternion (matrix3d.cpp, transcribed verbatim
-/// including the int-typed 4 in the else arm), followed by the GfRotation
-/// round trip ExtractRotation().GetQuat() performs: SetQuat's length gate
-/// and axis/angle extraction, then GetQuat's half-angle sine and cosine with
-/// one normalization (rotation.cpp).
 inline RrQuatd
 RrMat3ExtractRotationQuaternion(const RrMat3d &m)
 {
@@ -135,8 +130,6 @@ RrMat3ExtractRotationQuaternion(const RrMat3d &m)
     return rotation.GetQuat();
 }
 
-/// GfDot(const GfQuatd&, const GfQuatd&), verbatim from quatd.h: the
-/// imaginary dot first, then the real product.
 inline double
 RrQuatDot(const RrQuatd &a, const RrQuatd &b)
 {

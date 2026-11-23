@@ -1268,8 +1268,8 @@ private:
             ++_stepBacked;
         }
         _overrideCount = _f.pose->overrideCount;
-        // A windowed op names a step, and reads at most the longest window
-        // any windowed operation may ask for. Older formats hold none.
+        // A windowed op names a step, and reads at most the longest window any
+        // windowed operation may ask for.
         if (_f.formatVersion < 25 && !_f.windowedOps.empty())
             return _Bad("windowed_ops in a format older than 25");
         for (size_t w = 0; w < _f.windowedOps.size(); ++w) {
@@ -1281,8 +1281,8 @@ private:
                 return _Bad(_At("windowed_ops", "frames", long(w)) +
                             ": out of range");
         }
-        // Format 31 adds published scalar primvars: they name distinct float
-        // or double property chains; older formats hold none.
+        // Format 31 adds published scalar primvars: they name distinct float or
+        // double property chains.
         if (_f.formatVersion < 31 && !_f.scalarPrimvarChains.empty())
             return _Bad("scalar_primvar_chains in a format older than 31");
         {
@@ -9412,7 +9412,6 @@ RigExecFormatWrite(const fb::RigExecWireFile &file, std::vector<uint8_t> *bytes,
         if (!RigExecFormatValidate(file, &why)) {
             return _Fail(error, "invalid .rigexec: " + why);
         }
-        // Readable older versions open, but every file written is current.
         if (file.formatVersion != RigExecFormatVersion) {
             return _Fail(error, "invalid .rigexec: format_version is " +
                                     _N(file.formatVersion) +

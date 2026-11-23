@@ -6,9 +6,9 @@
 // inputs its solve reads, nothing computed from earlier ticks. The packets of
 // the earlier ticks travel to the body as a ring, oldest first, placed before
 // the generation like any sampled leaf. Earlier ticks are generations of the
-// same compiled graph at those times, masked to the ops the windowed ops
-// depend on (RigExecOpCallbacks::active), so history is produced by the one
-// loop, never beside it. USD-free: the runtime keeps rings of its own ticks.
+// same compiled graph at those times, masked to the ops the windowed ops depend
+// on (RigExecOpCallbacks::active), so history is produced by the one loop,
+// never beside it. The runtime keeps rings of its own ticks.
 #ifndef RIGEXEC_GRAPH_WINDOW_HISTORY_H
 #define RIGEXEC_GRAPH_WINDOW_HISTORY_H
 

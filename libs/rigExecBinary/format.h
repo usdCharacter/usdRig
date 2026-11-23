@@ -1,12 +1,12 @@
 // The .rigexec file format: one FlatBuffer, schema libs/rigExecBinary/
-// rigexec.fbs, file identifier "REXB". The generated object API types live
-// in namespace rigExec::fb with the RigExecWire prefix (RigExecWireFile,
-// RigExecWireSolver, ...) and are aliased into namespace rigExec under the
-// same names; the schema's math and POD structs map onto the value types
-// of rigExecBinary/wireTypes.h through the Pack/UnPack pairs declared
-// here. Open is the decoder and Write the encoder: there is no
-// hand-written schema codec. An optional versioned lossless transport wraps
-// the same validated FlatBuffer; raw files remain accepted. USD-free.
+// rigexec.fbs, file identifier "REXB". The generated object API types live in
+// namespace rigExec::fb with the RigExecWire prefix (RigExecWireFile,
+// RigExecWireSolver, ...) and are aliased into namespace rigExec under the same
+// names; the schema's math and POD structs map onto the value types of
+// rigExecBinary/wireTypes.h through the Pack/UnPack pairs declared here. Open
+// is the decoder and Write the encoder: there is no hand-written schema codec.
+// An optional versioned lossless transport wraps the same validated FlatBuffer;
+// raw files remain accepted.
 #ifndef RIGEXEC_BINARY_FORMAT_H
 #define RIGEXEC_BINARY_FORMAT_H
 
@@ -529,10 +529,8 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
     uint8_t(fb::ConstraintFlags::PreserveJointOrientation);
 
-/// The format version every writer writes; every change to rigexec.fbs or
-/// to what its records mean bumps it. Open reads it and every version from
-/// RigExecFormatOldestReadable on; it refuses older versions with an S3
-/// re-export message and unknown future versions with a rebake message.
+/// The format version every writer writes; every change to rigexec.fbs or to
+/// what its records mean bumps it.
 ///
 /// Format 21 adds the extended Delta Mush, lattice and surface settings
 /// (RigExecFormatExtendedSettingNames): mover attributes the revision reads
@@ -546,19 +544,17 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 ///
 /// Format 23 adds the property movers' quantize and path operations: a path
 /// revision names its curve's points slot and carries its uniform settings
-/// (PropertyRevision.path_*). Older files hold neither operation.
+/// (PropertyRevision.path_*).
 ///
 /// Format 24 adds RigLogic's radial-basis solves to PoseInterpolator (method
-/// and its extra driver slots) and three pose-solver kernels to RbfKernel,
-/// and two more solves to the same table: an ML mover's network (network,
-/// mask, float value inputs, any number of them) and animated maps (maps,
-/// primvar_slots, primvar_sources). Older files hold none of them, so every
-/// interpolator plays the pose solve.
+/// and its extra driver slots) and three pose-solver kernels to RbfKernel, and
+/// two more solves to the same table: an ML mover's network (network, mask,
+/// float value inputs, any number of them) and animated maps (maps,
+/// primvar_slots, primvar_sources).
 ///
-/// Format 25 adds windowed operations (File.windowed_ops, whose solve reads
-/// the inputs it captured over earlier ticks) and the harmonics constraint's
-/// fields to Constraint (harmonics and the harmonics_* fields, window).
-/// Older files hold neither.
+/// Format 25 adds windowed operations (File.windowed_ops, whose solve reads the
+/// inputs it captured over earlier ticks) and the harmonics constraint's fields
+/// to Constraint (harmonics and the harmonics_* fields, window).
 ///
 /// Format 26 changes the cloth mover's external revision
 /// (rigExecBinary/clothPlayback.h): its compiled rig is RCL3, which adds
@@ -570,46 +566,42 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// window and no material model. The tables are unchanged.
 ///
 /// Format 27 admits volume falloff sample arrays through the existing typed
-/// path-read rows. Older files use their compiled falloff table.
+/// path-read rows.
 ///
-/// Format 28 admits Smooth and DeltaMush as Range ops: a group step for part
-/// k also reads the groups of its entering version holding a point group k's
-/// results read (its halo: a smooth's edge neighbours, a delta mush's
-/// smoothing region), declared as their RevisionOut slots. Older files hold
-/// neither as a Range revision. Format 29 lets sparse target-space blends
-/// carry channel keys on chunks and read those weights at each chunk.
-/// Format 30 admits Range DQ skins and independent Range status summaries.
+/// Format 28 admits Smooth and DeltaMush as Range ops: a group step for part k
+/// also reads the groups of its entering version holding a point group k's
+/// results read (its halo: a smooth's edge neighbours, a delta mush's smoothing
+/// region), declared as their RevisionOut slots. Format 29 lets sparse
+/// target-space blends carry channel keys on chunks and read those weights at
+/// each chunk. Format 30 admits Range DQ skins and independent Range status
+/// summaries.
 ///
 /// Format 31 adds 2D skeletons, joint groups, unclamped animated maps and
 /// scalar primvar chains: Solver.skeleton2d (a RigExecSkeleton2d over nested
-/// RigExecJoint bones with RigExecBone2dAPI: the per-bone setup in solve
-/// order, child-joint tips, space-switch parent spaces, target candidates,
-/// control bones and factors, and its channel and switch selector inputs;
-/// its start frame is the row's start and its outside parent spaces are the
-/// row's controls), Solver.joint_groups with joint_group_members,
+/// RigExecJoint bones with RigExecBone2dAPI: the per-bone setup in solve order,
+/// child-joint tips, space-switch parent spaces, target candidates, control
+/// bones and factors, and its channel and switch selector inputs; its start
+/// frame is the row's start and its outside parent spaces are the row's
+/// controls), Solver.joint_groups with joint_group_members,
 /// joint_group_selectors and joint_group_parents (the RigExecJointGroupAPI
-/// groups of a RigExecFkChain or RigExecSkeleton2d and one active-member
-/// read each), AnimatedMaps.map_unclamped (one byte per map, 1 where
+/// groups of a RigExecFkChain or RigExecSkeleton2d and one active-member read
+/// each), AnimatedMaps.map_unclamped (one byte per map, 1 where
 /// rigExec:clampOutput is false; absent when every map clamps) and
 /// File.scalar_primvar_chains (the property chains published as constant
-/// primvars). Older files hold none of them.
+/// primvars).
 ///
-/// Format 32 adds RevisionBinding.normals_per_corner and
-/// normals_left_handed: a RecomputeNormals target's faceVarying layout and
-/// leftHanded orientation. Older files hold neither.
+/// Format 32 adds RevisionBinding.normals_per_corner and normals_left_handed: a
+/// RecomputeNormals target's faceVarying layout and leftHanded orientation.
 ///
-/// Format 33 adds File.manifest: the stable id of every revision op,
-/// property op, provider op and value type ordinal (rigExecBinary/manifest.h).
-/// Open maps a file's ordinals to this build's through it, and gives older
-/// files the format-32 table.
+/// Format 33 adds File.manifest: the stable id of every revision op, property
+/// op, provider op and value type ordinal (rigExecBinary/manifest.h).
 ///
-/// Format 34 adds ConstraintFlags.PreserveJointOrientation: a
-/// SingleChainIK constraint's rigExec:orientationMode "preserve". Older
-/// files hold none, so their constraints aim X.
+/// Format 34 adds ConstraintFlags.PreserveJointOrientation: a SingleChainIK
+/// constraint's rigExec:orientationMode "preserve".
 ///
-/// Format 35 adds File.op_graph, op nodes the op core runs as one OpGraph
-/// step that reads only the stage-frame admission, and Manifest.core_ops and core_types, which name the ops and types
-/// those nodes use. Older files hold no op nodes.
+/// Format 35 adds File.op_graph, op nodes the op core runs as one OpGraph step
+/// that reads only the stage-frame admission, and Manifest.core_ops and
+/// core_types, which name the ops and types those nodes use.
 inline constexpr uint32_t RigExecFormatVersion = 35;
 
 /// The first format version that may hold op nodes.
@@ -842,13 +834,9 @@ bool RigExecFormatSparseTopology(const std::vector<int32_t> &indices,
                                  fb::RigExecWireSkinTopology *out,
                                  std::string *error);
 
-/// The canonical form of a skin layout the evaluators resolved: the sparse
-/// form (RigExecFormatSparseTopology) when \p indices and \p weights are
-/// rows of an element size in [0, 65535] (none at element size 0), else
-/// the raw form, which holds the arrays verbatim with \p validated as
-/// given. False with the reason, and \p out untouched, when the sparse form
-/// refuses, or when \p pointCount is not what the evaluators give a raw
-/// layout: its rows when it is rows of an element size of at least 1, else
+/// False with the reason, and \p out untouched, when the sparse form refuses,
+/// or when \p pointCount is not what the evaluators give a raw layout: its rows
+/// when it is rows of an element size of at least 1, else
 /// 0. RigExecFormatValidate holds validated to the evaluator's layout
 /// rules in either form.
 bool RigExecFormatTopology(const std::vector<int32_t> &indices,
@@ -858,10 +846,7 @@ bool RigExecFormatTopology(const std::vector<int32_t> &indices,
                            fb::RigExecWireSkinTopology *out,
                            std::string *error);
 
-/// The arrays a layout the validator accepts stands for: a raw layout's
-/// own, verbatim; a sparse layout's dense rows, each point's kept entries
-/// in order, then (0, +0.0f) up to element_size. Either way, the arrays
-/// the layout was written from, bit for bit.
+/// Either way, the arrays the layout was written from, bit for bit.
 void RigExecFormatExpandTopology(const fb::RigExecWireSkinTopology &topology,
                                  std::vector<int32_t> *indices,
                                  std::vector<float> *weights);

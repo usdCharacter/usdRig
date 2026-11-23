@@ -1,7 +1,7 @@
 // The runtime's math policies for the shared kernels in rigExecMath: the Gf
 // operations the affine frame expressions (affineFrameKernel.h) and the
 // dual-quaternion skinning kernels (dualQuatKernel.h) use, spelled through
-// runtimeMath.h's bit-identical mirror. USD-free.
+// runtimeMath.h's bit-identical mirror.
 #ifndef RIGEXEC_RUNTIME_AFFINE_MATH_H
 #define RIGEXEC_RUNTIME_AFFINE_MATH_H
 

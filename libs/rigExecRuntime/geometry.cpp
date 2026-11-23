@@ -7,18 +7,17 @@
 #include "rigExecMath/blendRangeKernel.h"
 #include "rigExecMath/dualQuatKernel.h"
 #include "rigExecMath/envelope.h"
-// rigExecRuntime geometry family:RevisionStatic, InfluenceFold,
-// RevisionChunk, RevisionFuse, ChainStatus, Derived.
-// A zero-USD port of the baked geometry loop (libs/rigExec/bakedGeometry.cpp
-// driven by the movers in libs/rigExec/moverGraph.cpp and the kernels in
-// libs/rigExecMath). The scalars an assembler reads through their
-// connections, blend channel weights and default weights are read over the
-// input slots, and so is every array the file lists as an input (path-read
-// array rows, blend sample points, chain bases, fixed skin layouts); the
-// remaining stage reads replay from the bake's captured path reads
-// (RrStatic); compiled rig state (skin layouts, blend shapes, partitions) replays
-// from the wire geometry tables. Bitwise: same ops in the same order, float
-// stays float.
+// rigExecRuntime geometry family:RevisionStatic, InfluenceFold, RevisionChunk,
+// RevisionFuse, ChainStatus, Derived. A port of the baked geometry loop
+// (libs/rigExec/bakedGeometry.cpp driven by the movers in
+// libs/rigExec/moverGraph.cpp and the kernels in libs/rigExecMath). The scalars
+// an assembler reads through their connections, blend channel weights and
+// default weights are read over the input slots, and so is every array the file
+// lists as an input (path-read array rows, blend sample points, chain bases,
+// fixed skin layouts); the remaining stage reads replay from the bake's
+// captured path reads (RrStatic); compiled rig state (skin layouts, blend
+// shapes, partitions) replays from the wire geometry tables. Bitwise: same ops
+// in the same order, float stays float.
 
 #include "rigExecRuntime/affineMath.h"
 #include "rigExecRuntime/labels.h"
@@ -1859,9 +1858,7 @@ RrGeoRevisionKernelAcceptance(int op, const RrGeoMoverParameters &p,
         }
         return RrGeoAcceptance::Applies;
     case RrGeoOpSmooth:
-        // The kernel never refuses (an invalid topology passes through); only
-        // the "apply once" envelope can fail the revision, validated here as
-        // the native acceptance does.
+        // The kernel never refuses (an invalid topology passes through).
         if (!RrGeoEnvelopeIsFullStrength(p.weights) &&
             !p.weights.ResolvesAll(count)) {
             return RrGeoAcceptance::Refuses;
@@ -8568,9 +8565,7 @@ RrGeometryPublishChainInputs(RrProgram *program)
     auto *scratch = static_cast<RrGeometryScratch *>(program->geo.get());
     if (!scratch)
         return;
-    // As the native PublishLeaves: the version moves exactly when the
-    // sampled bytes differ from the ones last published. A base no prologue
-    // wrote since is the one last published.
+    // A base no prologue wrote since is the one last published.
     for (auto &chain : scratch->chains) {
         if (!chain.sampledMoved)
             continue;
