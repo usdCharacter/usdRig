@@ -75,7 +75,7 @@ RunGuidePoints(const void *, void *, const RigExecOpIo &io, std::string *error)
 
 rigExec::RigExecOpDesc
 FrameDesc(const char *name, const rigExec::RigExecPortDesc *ports,
-          size_t portCount, rigExec::RigExecOpRunFn run)
+          size_t portCount, rigExec::RigExecOpRunFn run, uint32_t capabilities)
 {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -83,7 +83,9 @@ FrameDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.ports = ports;
     d.portCount = portCount;
     d.run = run;
-    d.capabilities = rigExec::kRigExecOpBakeable;
+    d.capabilities = rigExec::kRigExecOpBakeable |
+                     rigExec::kRigExecOpFreezable |
+                     rigExec::kRigExecOpFromLeaves | capabilities;
     return d;
 }
 
@@ -116,9 +118,11 @@ RegisterRibbonOps(rigExec::RigExecOpRegistrar &registrar)
         {&GuidePointsOut(), &points, kRigExecPortOutput, "out"},
     };
     static const rigExec::RigExecOpDesc ribbonDesc =
-        FrameDesc("Ribbon", ports, std::size(ports), &RunRibbon);
-    static const rigExec::RigExecOpDesc guideDesc = FrameDesc(
-        "GuidePoints", guidePorts, std::size(guidePorts), &RunGuidePoints);
+        FrameDesc("Ribbon", ports, std::size(ports), &RunRibbon,
+                  rigExec::kRigExecOpSeparateBlend);
+    static const rigExec::RigExecOpDesc guideDesc =
+        FrameDesc("GuidePoints", guidePorts, std::size(guidePorts),
+                  &RunGuidePoints, rigExec::kRigExecOpSeparateBlend);
     registrar.Add(Ribbon(), ribbonDesc);
     registrar.Add(GuidePoints(), guideDesc);
 }

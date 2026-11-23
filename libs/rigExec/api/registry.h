@@ -133,13 +133,23 @@ struct RigExecPortDesc {
 
 enum class RigExecOpThreading : uint8_t { Pure, OwnerThread, Device, Windowed };
 
+/// What the evaluators may do with an op. A point op's bits mirror the
+/// lists its RigExecRevisionOp is still classified by; a test keeps them
+/// equal.
 enum RigExecOpCapabilities : uint32_t {
     kRigExecOpBakeable = 1u << 0,
     kRigExecOpFreezable = 1u << 1,
     kRigExecOpGpu = 1u << 2,
+    /// A gated sparse zero-default envelope leaves unlisted points at their
+    /// entering bytes.
     kRigExecOpGate = 1u << 3,
+    /// The envelope is blended back over the entering points after the run,
+    /// rather than folded into the op's arithmetic.
     kRigExecOpSeparateBlend = 1u << 4,
+    /// Runs one vertex group at a time.
     kRigExecOpRanged = 1u << 5,
+    /// The scene assembles its inputs from declared leaf reads.
+    kRigExecOpFromLeaves = 1u << 6,
 };
 
 /// Opaque compile-time configuration an op owns. Not a data type.

@@ -186,27 +186,53 @@ PayloadFields(RigExecRevisionOp op, const RigExecMoverParameters &p)
 
 } // namespace
 
-bool
-RigExecGeometryOpSupported(RigExecRevisionOp op)
+const RigExecOpHandle *
+RigExecGeometryOpHandle(RigExecRevisionOp op)
 {
     switch (op) {
     case RigExecRevisionOp::Matrix:
+        return &rigExecOps::MatrixDeform();
     case RigExecRevisionOp::Skin:
+        return &rigExecOps::Skin();
+    case RigExecRevisionOp::BlendShape:
+        return &rigExecOps::BlendShape();
     case RigExecRevisionOp::VolumeCorrect:
+        return &rigExecOps::VolumeCorrect();
     case RigExecRevisionOp::Smooth:
-    case RigExecRevisionOp::DeltaMush:
-    case RigExecRevisionOp::Wrinkle:
+        return &rigExecOps::Smooth();
     case RigExecRevisionOp::Lattice:
+        return &rigExecOps::Lattice();
     case RigExecRevisionOp::SurfaceProject:
+        return &rigExecOps::SurfaceProject();
     case RigExecRevisionOp::Ribbon:
-    case RigExecRevisionOp::EmitGuidePoints:
+        return &rigExecOps::Ribbon();
     case RigExecRevisionOp::Wire:
+        return &rigExecOps::Wire();
+    case RigExecRevisionOp::EmitGuidePoints:
+        return &rigExecOps::GuidePoints();
     case RigExecRevisionOp::RecomputeNormals:
+        return &rigExecOps::RecomputeNormals();
     case RigExecRevisionOp::RecomputeExtent:
-        return true;
-    default:
-        return false;
+        return &rigExecOps::RecomputeExtent();
+    case RigExecRevisionOp::DeltaMush:
+        return &rigExecOps::DeltaMush();
+    case RigExecRevisionOp::Wrinkle:
+        return &rigExecOps::Wrinkle();
+    case RigExecRevisionOp::SurfaceProjector:
+        return &rigExecOps::SurfaceProjector();
+    case RigExecRevisionOp::ShaderDials:
+        return &rigExecOps::ShaderDials();
+    case RigExecRevisionOp::External:
+        return nullptr;
     }
+    return nullptr;
+}
+
+bool
+RigExecGeometryOpSupported(RigExecRevisionOp op)
+{
+    return op != RigExecRevisionOp::BlendShape &&
+           !RigExecIsDerivedMatrixOp(op) && RigExecGeometryOpHandle(op);
 }
 
 bool
@@ -632,8 +658,7 @@ Fed(const RigExecSurfaceProjectorFrames &frames, int k)
 bool
 RigExecGeometryMatrixOpSupported(RigExecRevisionOp op)
 {
-    return op == RigExecRevisionOp::SurfaceProjector ||
-           op == RigExecRevisionOp::ShaderDials;
+    return RigExecIsDerivedMatrixOp(op) && RigExecGeometryOpHandle(op);
 }
 
 bool

@@ -85,7 +85,8 @@ RegisterSingleChainIkOps(rigExec::RigExecOpRegistrar &registrar)
         d.ports = ports;
         d.portCount = std::size(ports);
         d.run = &RunSingleChainIk;
-        d.capabilities = rigExec::kRigExecOpBakeable;
+        d.capabilities =
+            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
         d.payload = rigExec::RigExecPayloadHandlingFor<SingleChainIkPayload>();
         return d;
     }();

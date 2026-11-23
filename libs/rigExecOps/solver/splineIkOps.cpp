@@ -166,7 +166,8 @@ RegisterSplineIkOps(rigExec::RigExecOpRegistrar &registrar)
         d.ports = ports;
         d.portCount = std::size(ports);
         d.run = &RunSplineIk;
-        d.capabilities = rigExec::kRigExecOpBakeable;
+        d.capabilities =
+            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
         d.payload = rigExec::RigExecPayloadHandlingFor<SplineIkPayload>();
         return d;
     }();

@@ -128,7 +128,10 @@ RegisterSkinOps(rigExec::RigExecOpRegistrar &registrar)
         d.ports = ports;
         d.portCount = std::size(ports);
         d.run = &Run;
-        d.capabilities = rigExec::kRigExecOpBakeable;
+        d.capabilities =
+            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
+            rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
+            rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
         d.payload = rigExec::RigExecPayloadHandlingFor<SkinPayload>();
         return d;
     }();

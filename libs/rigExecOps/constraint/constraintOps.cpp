@@ -263,7 +263,7 @@ ConstraintDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.ports = ports;
     d.portCount = portCount;
     d.run = run;
-    d.capabilities = rigExec::kRigExecOpBakeable;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payload = rigExec::RigExecPayloadHandlingFor<ConstraintPayload>();
     return d;
 }

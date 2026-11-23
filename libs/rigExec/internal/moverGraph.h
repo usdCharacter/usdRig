@@ -1030,6 +1030,14 @@ bool RigExecRevisionLeafRoleIsTopology(RigExecRevisionLeafRole role);
 /// a leaf the caller samples (RigExecRevisionLeafView::external).
 bool RigExecRevisionOpAssemblesFromLeaves(RigExecRevisionOp op);
 
+/// Whether the baked program runs \p op in a point chain, or with
+/// \p derived in a derived chain (RigExecBakedProgram::IsBakeable).
+bool RigExecRevisionOpBakes(RigExecRevisionOp op, bool derived);
+
+/// Whether the frozen executor runs \p op in a point chain, or with
+/// \p derived in a derived chain (RigExecCanFreezeProgram).
+bool RigExecRevisionOpFreezes(RigExecRevisionOp op, bool derived);
+
 /// Declares every read RigExecAssembleParameters can make for \p op on the
 /// mover at \p moverPath -- a superset of what one call reads, whichever
 /// branch its values take -- with the read site's flavour, time policy and

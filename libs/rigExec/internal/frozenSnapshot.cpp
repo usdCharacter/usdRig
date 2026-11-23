@@ -554,6 +554,36 @@ _SettleCloneVerdict(RigExecBakedProgramImpl *program)
 } // namespace frozenDetail
 
 bool
+RigExecRevisionOpFreezes(RigExecRevisionOp op, bool derived)
+{
+    if (derived) {
+        return op == RigExecRevisionOp::RecomputeNormals ||
+               op == RigExecRevisionOp::RecomputeExtent ||
+               RigExecIsDerivedMatrixOp(op);
+    }
+    switch (op) {
+    case RigExecRevisionOp::Skin:
+    case RigExecRevisionOp::RecomputeNormals:
+    case RigExecRevisionOp::RecomputeExtent:
+    case RigExecRevisionOp::Matrix:
+    case RigExecRevisionOp::Wire:
+    case RigExecRevisionOp::BlendShape:
+    case RigExecRevisionOp::VolumeCorrect:
+    case RigExecRevisionOp::Smooth:
+    case RigExecRevisionOp::DeltaMush:
+    case RigExecRevisionOp::Wrinkle:
+    case RigExecRevisionOp::Lattice:
+    case RigExecRevisionOp::SurfaceProject:
+    case RigExecRevisionOp::Ribbon:
+    case RigExecRevisionOp::EmitGuidePoints:
+    case RigExecRevisionOp::External:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool
 RigExecCanFreezeProgram(const RigExecRigEvaluator &evaluator,
                         std::string *error)
 {
@@ -614,21 +644,7 @@ RigExecCanFreezeProgram(const RigExecRigEvaluator &evaluator,
     for (const RigExecBakedProgramImpl::GeomChain &chain : B.chains) {
         for (const RigExecBakedProgramImpl::GeomRevision &revision :
              chain.revisions) {
-            if (revision.op != RigExecRevisionOp::Skin &&
-                revision.op != RigExecRevisionOp::RecomputeNormals &&
-                revision.op != RigExecRevisionOp::RecomputeExtent &&
-                revision.op != RigExecRevisionOp::Matrix &&
-                revision.op != RigExecRevisionOp::Wire &&
-                revision.op != RigExecRevisionOp::BlendShape &&
-                revision.op != RigExecRevisionOp::VolumeCorrect &&
-                revision.op != RigExecRevisionOp::Smooth &&
-                revision.op != RigExecRevisionOp::DeltaMush &&
-                revision.op != RigExecRevisionOp::Wrinkle &&
-                revision.op != RigExecRevisionOp::Lattice &&
-                revision.op != RigExecRevisionOp::SurfaceProject &&
-                revision.op != RigExecRevisionOp::Ribbon &&
-                revision.op != RigExecRevisionOp::EmitGuidePoints &&
-                revision.op != RigExecRevisionOp::External) {
+            if (!RigExecRevisionOpFreezes(revision.op, /* derived = */ false)) {
                 return fail("revision " + revision.moverPath.GetString() +
                             " runs op '" +
                             RigExecRevisionKindToken(revision.op).GetString() +
@@ -661,9 +677,8 @@ RigExecCanFreezeProgram(const RigExecRigEvaluator &evaluator,
         }
         for (const RigExecBakedProgramImpl::GeomChain::Derived &derived :
              chain.derived) {
-            if (derived.revision.op != RigExecRevisionOp::RecomputeNormals &&
-                derived.revision.op != RigExecRevisionOp::RecomputeExtent &&
-                !RigExecIsDerivedMatrixOp(derived.revision.op)) {
+            if (!RigExecRevisionOpFreezes(derived.revision.op,
+                                          /* derived = */ true)) {
                 return fail("derived target " + derived.target.GetString() +
                             " runs an op the frozen executor does not "
                             "implement");

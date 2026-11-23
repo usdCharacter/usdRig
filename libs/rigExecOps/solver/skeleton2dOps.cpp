@@ -168,7 +168,8 @@ RegisterSkeleton2dOps(rigExec::RigExecOpRegistrar &registrar)
         d.ports = ports;
         d.portCount = std::size(ports);
         d.run = &RunSkeleton2d;
-        d.capabilities = rigExec::kRigExecOpBakeable;
+        d.capabilities =
+            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
         d.payload = rigExec::RigExecPayloadHandlingFor<Skeleton2dPayload>();
         d.state.size = sizeof(Skeleton2dState);
         d.state.align = alignof(Skeleton2dState);

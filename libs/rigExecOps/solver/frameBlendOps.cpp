@@ -129,7 +129,8 @@ RegisterFrameBlendOps(rigExec::RigExecOpRegistrar &registrar)
         d.ports = blendPorts;
         d.portCount = std::size(blendPorts);
         d.run = &RunBlendFrames;
-        d.capabilities = rigExec::kRigExecOpBakeable;
+        d.capabilities =
+            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
         d.payload = rigExec::RigExecPayloadHandlingFor<BlendFramesPayload>();
         return d;
     }();
@@ -140,7 +141,8 @@ RegisterFrameBlendOps(rigExec::RigExecOpRegistrar &registrar)
         d.ports = twistPorts;
         d.portCount = std::size(twistPorts);
         d.run = &RunDistributeTwist;
-        d.capabilities = rigExec::kRigExecOpBakeable;
+        d.capabilities =
+            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
         return d;
     }();
     registrar.Add(BlendFrames(), blend);

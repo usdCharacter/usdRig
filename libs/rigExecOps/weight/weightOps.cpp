@@ -419,7 +419,8 @@ RegisterWeightOps(rigExec::RigExecOpRegistrar &registrar)
         d.ports = ports;
         d.portCount = count;
         d.run = run;
-        d.capabilities = rigExec::kRigExecOpBakeable;
+        d.capabilities =
+            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
         d.payload = rigExec::RigExecPayloadHandlingFor<WeightFieldPayload>();
         return d;
     };
@@ -446,7 +447,8 @@ RegisterWeightOps(rigExec::RigExecOpRegistrar &registrar)
         d.ports = combinePorts;
         d.portCount = std::size(combinePorts);
         d.run = &RunCombineWeights;
-        d.capabilities = rigExec::kRigExecOpBakeable;
+        d.capabilities =
+            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
         d.payload = rigExec::RigExecPayloadHandlingFor<CombineWeightsPayload>();
         d.state.size = sizeof(CombineState);
         d.state.align = alignof(CombineState);

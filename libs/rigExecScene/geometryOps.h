@@ -57,6 +57,9 @@ struct RigExecGeometryOpNode {
     const RigExecPortHandle *outPort = nullptr;
 };
 
+/// The registered op \p op maps to, or null where none does (External).
+const RigExecOpHandle *RigExecGeometryOpHandle(RigExecRevisionOp op);
+
 /// True for the revision ops this bridge maps. A blend shape is added with
 /// RigExecAddGeometryBlendOp.
 bool RigExecGeometryOpSupported(RigExecRevisionOp op);

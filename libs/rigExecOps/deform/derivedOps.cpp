@@ -96,7 +96,8 @@ RunExtent(const void *, void *, const RigExecOpIo &io, std::string *error)
 
 rigExec::RigExecOpDesc
 DerivedDesc(const char *name, const rigExec::RigExecPortDesc *ports,
-            size_t portCount, rigExec::RigExecOpRunFn run)
+            size_t portCount, rigExec::RigExecOpRunFn run,
+            uint32_t capabilities)
 {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -104,7 +105,9 @@ DerivedDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.ports = ports;
     d.portCount = portCount;
     d.run = run;
-    d.capabilities = rigExec::kRigExecOpBakeable;
+    d.capabilities = rigExec::kRigExecOpBakeable |
+                     rigExec::kRigExecOpFreezable |
+                     rigExec::kRigExecOpFromLeaves | capabilities;
     return d;
 }
 
@@ -141,12 +144,12 @@ RegisterDerivedOps(rigExec::RigExecOpRegistrar &registrar)
     static const rigExec::RigExecOpDesc normalsDesc = [] {
         rigExec::RigExecOpDesc d =
             DerivedDesc("RecomputeNormals", normalsPorts,
-                        std::size(normalsPorts), &RunNormals);
+                        std::size(normalsPorts), &RunNormals, 0);
         d.payload = rigExec::RigExecPayloadHandlingFor<NormalsPayload>();
         return d;
     }();
     static const rigExec::RigExecOpDesc extentDesc = DerivedDesc(
-        "RecomputeExtent", extentPorts, std::size(extentPorts), &RunExtent);
+        "RecomputeExtent", extentPorts, std::size(extentPorts), &RunExtent, 0);
     registrar.Add(RecomputeNormals(), normalsDesc);
     registrar.Add(RecomputeExtent(), extentDesc);
 }

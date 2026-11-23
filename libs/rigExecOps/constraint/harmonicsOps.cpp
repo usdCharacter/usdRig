@@ -193,7 +193,8 @@ RegisterHarmonicsOps(rigExec::RigExecOpRegistrar &registrar)
         op.run = &RunHarmonics;
         op.threading = rigExec::RigExecOpThreading::Windowed;
         op.windowFrames = &HarmonicsFrames;
-        op.capabilities = rigExec::kRigExecOpBakeable;
+        op.capabilities =
+            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
         op.payload = rigExec::RigExecPayloadHandlingFor<HarmonicsPayload>();
         return op;
     }();

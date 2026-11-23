@@ -418,6 +418,38 @@ _SampleIntervening(RigExecBakedProgramImpl *program, UsdTimeCode time)
 } // namespace
 
 bool
+RigExecRevisionOpBakes(RigExecRevisionOp op, bool derived)
+{
+    if (derived) {
+        return op == RigExecRevisionOp::RecomputeExtent ||
+               op == RigExecRevisionOp::RecomputeNormals ||
+               RigExecIsDerivedMatrixOp(op);
+    }
+    // Every operation whose whole packet the per-frame assembler reads off
+    // the stage: the program hands RigExecAssembleParameters the same binding
+    // and resolved inputs the dynamic walk does, and RigExecRunRevisionKernel
+    // is the same kernel.
+    switch (op) {
+    case RigExecRevisionOp::Skin:
+    case RigExecRevisionOp::Matrix:
+    case RigExecRevisionOp::BlendShape:
+    case RigExecRevisionOp::External:
+    case RigExecRevisionOp::EmitGuidePoints:
+    case RigExecRevisionOp::Ribbon:
+    case RigExecRevisionOp::Wire:
+    case RigExecRevisionOp::VolumeCorrect:
+    case RigExecRevisionOp::Smooth:
+    case RigExecRevisionOp::DeltaMush:
+    case RigExecRevisionOp::Wrinkle:
+    case RigExecRevisionOp::Lattice:
+    case RigExecRevisionOp::SurfaceProject:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool
 RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
                                 std::vector<std::string> *reasons)
 {
@@ -683,32 +715,7 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
 
     auto checkRevision = [&](const RigExecRigEvaluator::_GraphRevision &r,
                              bool derived) {
-        const bool supported =
-            derived ? (r.op == RigExecRevisionOp::RecomputeExtent ||
-                       r.op == RigExecRevisionOp::RecomputeNormals ||
-                       RigExecIsDerivedMatrixOp(r.op))
-                    : (r.op == RigExecRevisionOp::Skin ||
-                       r.op == RigExecRevisionOp::Matrix ||
-                       // Every operation whose whole packet the per-frame
-                       // assembler reads off the stage: the program hands
-                       // RigExecAssembleParameters the same binding and the
-                       // same resolved inputs the dynamic walk hands it, and
-                       // RigExecRunRevisionKernel is the same kernel. What
-                       // separates these from the ones still refused below is
-                       // that none of them needs a value the pose walk has
-                       // not already produced.
-                       r.op == RigExecRevisionOp::BlendShape ||
-                       r.op == RigExecRevisionOp::External ||
-                       r.op == RigExecRevisionOp::EmitGuidePoints ||
-                       r.op == RigExecRevisionOp::Ribbon ||
-                       r.op == RigExecRevisionOp::Wire ||
-                       r.op == RigExecRevisionOp::VolumeCorrect ||
-                       r.op == RigExecRevisionOp::Smooth ||
-                       r.op == RigExecRevisionOp::DeltaMush ||
-                       r.op == RigExecRevisionOp::Wrinkle ||
-                       r.op == RigExecRevisionOp::Lattice ||
-                       r.op == RigExecRevisionOp::SurfaceProject);
-        if (!supported) {
+        if (!RigExecRevisionOpBakes(r.op, derived)) {
             say(std::string("mover operation not baked (") +
                     RigExecBakedOpName(r.op) + ")",
                 r.moverPath);

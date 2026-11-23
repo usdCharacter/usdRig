@@ -472,7 +472,8 @@ RegisterMatchOps(rigExec::RigExecOpRegistrar &registrar)
         op.ports = ikFkPorts;
         op.portCount = std::size(ikFkPorts);
         op.run = &RunIkFkMatch;
-        op.capabilities = rigExec::kRigExecOpBakeable;
+        op.capabilities =
+            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
         op.payload = rigExec::RigExecPayloadHandlingFor<IkFkMatchPayload>();
         return op;
     }();
@@ -497,7 +498,8 @@ RegisterMatchOps(rigExec::RigExecOpRegistrar &registrar)
         op.ports = spacePorts;
         op.portCount = std::size(spacePorts);
         op.run = &RunSpaceMatch;
-        op.capabilities = rigExec::kRigExecOpBakeable;
+        op.capabilities =
+            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
         op.payload = rigExec::RigExecPayloadHandlingFor<SpaceMatchPayload>();
         return op;
     }();

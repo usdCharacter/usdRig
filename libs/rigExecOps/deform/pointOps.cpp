@@ -86,7 +86,7 @@ RunVolumeCorrect(const void *, void *, const RigExecOpIo &io,
 
 rigExec::RigExecOpDesc
 PointDesc(const char *name, const rigExec::RigExecPortDesc *ports,
-          size_t portCount, rigExec::RigExecOpRunFn run)
+          size_t portCount, rigExec::RigExecOpRunFn run, uint32_t capabilities)
 {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -94,7 +94,9 @@ PointDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.ports = ports;
     d.portCount = portCount;
     d.run = run;
-    d.capabilities = rigExec::kRigExecOpBakeable;
+    d.capabilities = rigExec::kRigExecOpBakeable |
+                     rigExec::kRigExecOpFreezable |
+                     rigExec::kRigExecOpFromLeaves | capabilities;
     return d;
 }
 
@@ -129,10 +131,12 @@ RegisterPointOps(rigExec::RigExecOpRegistrar &registrar)
         {&VolumeCorrectOut(), &points, kRigExecPortOutput, "out"},
     };
     static const rigExec::RigExecOpDesc smoothDesc =
-        PointDesc("Smooth", smoothPorts, std::size(smoothPorts), &RunSmooth);
+        PointDesc("Smooth", smoothPorts, std::size(smoothPorts), &RunSmooth,
+                  rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
+                      rigExec::kRigExecOpGate);
     static const rigExec::RigExecOpDesc volumeDesc =
         PointDesc("VolumeCorrect", volumePorts, std::size(volumePorts),
-                  &RunVolumeCorrect);
+                  &RunVolumeCorrect, rigExec::kRigExecOpSeparateBlend);
     registrar.Add(Smooth(), smoothDesc);
     registrar.Add(VolumeCorrect(), volumeDesc);
 }

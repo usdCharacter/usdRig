@@ -195,7 +195,8 @@ RegisterChainSolverOps(rigExec::RigExecOpRegistrar &registrar)
         d.ports = fkPorts;
         d.portCount = std::size(fkPorts);
         d.run = &RunFkChain;
-        d.capabilities = rigExec::kRigExecOpBakeable;
+        d.capabilities =
+            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
         d.payload = rigExec::RigExecPayloadHandlingFor<FkChainPayload>();
         return d;
     }();
@@ -206,7 +207,8 @@ RegisterChainSolverOps(rigExec::RigExecOpRegistrar &registrar)
         d.ports = ikPorts;
         d.portCount = std::size(ikPorts);
         d.run = &RunTwoBoneIk;
-        d.capabilities = rigExec::kRigExecOpBakeable;
+        d.capabilities =
+            rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
         d.payload = rigExec::RigExecPayloadHandlingFor<TwoBoneIkPayload>();
         return d;
     }();

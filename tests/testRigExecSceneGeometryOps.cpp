@@ -7,6 +7,7 @@
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecScene/geometryOps.h"
 #include "rigExecScene/geometryProgram.h"
+#include "rigExec/internal/moverGraph.h"
 #include "rigExec/internal/weightPackets.h"
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecMath/weightFieldKernel.h"
@@ -1132,6 +1133,74 @@ TestCombineWeights()
     CHECK(result.valid && result.values.Size() == n);
 }
 
+// Each revision op's registered op carries, as capability bits, the answer
+// every evaluator list still gives for it.
+void
+TestCapabilityFlags()
+{
+    using Op = RigExecRevisionOp;
+    const Op ops[] = {Op::Matrix,
+                      Op::Skin,
+                      Op::BlendShape,
+                      Op::VolumeCorrect,
+                      Op::Smooth,
+                      Op::Lattice,
+                      Op::SurfaceProject,
+                      Op::Ribbon,
+                      Op::Wire,
+                      Op::EmitGuidePoints,
+                      Op::RecomputeNormals,
+                      Op::RecomputeExtent,
+                      Op::DeltaMush,
+                      Op::Wrinkle,
+                      Op::External,
+                      Op::SurfaceProjector,
+                      Op::ShaderDials};
+    RigExecMoverParameters gated;
+    gated.weights.valid = true;
+    gated.weights.representation = TfToken("sparse");
+    gated.weights.defaultWeight = 0.0f;
+    gated.skinningMethod = TfToken("classicLinear");
+    const RigExecRegistry &registry = RigExecRegistry::Get();
+    int mapped = 0;
+    for (const Op op : ops) {
+        const RigExecOpHandle *handle = RigExecGeometryOpHandle(op);
+        if (!handle) {
+            CHECK(op == Op::External);
+            continue;
+        }
+        ++mapped;
+        CHECK(handle->IsValid());
+        const uint32_t caps = registry.Op(*handle).desc->capabilities;
+        const auto has = [caps](uint32_t bit) { return (caps & bit) != 0; };
+        const bool derived = op == Op::RecomputeNormals ||
+                             op == Op::RecomputeExtent ||
+                             RigExecIsDerivedMatrixOp(op);
+        CHECK(RigExecRevisionTakesSeparateBlend(op, RigExecWeightPacket()) ==
+              has(kRigExecOpSeparateBlend));
+        CHECK(RigExecRevisionIsRangeOp(op) == has(kRigExecOpRanged));
+        CHECK(RigExecRevisionGateHolds(op, gated) == has(kRigExecOpGate));
+        CHECK(RigExecRevisionOpAssemblesFromLeaves(op) ==
+              has(kRigExecOpFromLeaves));
+        CHECK(RigExecRevisionOpBakes(op, derived) == has(kRigExecOpBakeable));
+        CHECK(RigExecRevisionOpFreezes(op, derived) ==
+              has(kRigExecOpFreezable));
+        CHECK(RigExecGeometryOpSupported(op) !=
+              (op == Op::BlendShape || RigExecIsDerivedMatrixOp(op)));
+        CHECK(RigExecGeometryMatrixOpSupported(op) ==
+              RigExecIsDerivedMatrixOp(op));
+    }
+    CHECK(mapped == 16);
+    // A sparse walk folds the wire's envelope into its own motion.
+    CHECK(!RigExecRevisionTakesSeparateBlend(Op::Wire, gated.weights));
+    CHECK(!RigExecGeometryOpSupported(Op::External) &&
+          !RigExecGeometryMatrixOpSupported(Op::External));
+    for (size_t k = 0; k < registry.OpCount(); ++k) {
+        const uint32_t caps = registry.OpAt(k).desc->capabilities;
+        CHECK((caps & kRigExecOpBakeable) && (caps & kRigExecOpFreezable));
+    }
+}
+
 } // namespace
 
 int
@@ -1157,6 +1226,7 @@ main()
     TestChain(grid);
     TestRefusals(grid);
     TestCombineWeights();
+    TestCapabilityFlags();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

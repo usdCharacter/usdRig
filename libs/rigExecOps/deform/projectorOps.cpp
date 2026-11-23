@@ -120,7 +120,8 @@ RunShaderDials(const void *, void *, const RigExecOpIo &io, std::string *)
 
 rigExec::RigExecOpDesc
 ProjectorDesc(const char *name, const rigExec::RigExecPortDesc *ports,
-              size_t portCount, rigExec::RigExecOpRunFn run)
+              size_t portCount, rigExec::RigExecOpRunFn run,
+              uint32_t capabilities)
 {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -128,7 +129,9 @@ ProjectorDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.ports = ports;
     d.portCount = portCount;
     d.run = run;
-    d.capabilities = rigExec::kRigExecOpBakeable;
+    d.capabilities = rigExec::kRigExecOpBakeable |
+                     rigExec::kRigExecOpFreezable |
+                     rigExec::kRigExecOpFromLeaves | capabilities;
     return d;
 }
 
@@ -168,15 +171,16 @@ RegisterProjectorOps(rigExec::RigExecOpRegistrar &registrar)
         {&ShaderDialsOut(), &m, kRigExecPortOutput, "out"},
     };
     static const rigExec::RigExecOpDesc projectorDesc = [] {
-        rigExec::RigExecOpDesc d =
-            ProjectorDesc("SurfaceProjector", projectorPorts,
-                          std::size(projectorPorts), &RunSurfaceProjector);
+        rigExec::RigExecOpDesc d = ProjectorDesc(
+            "SurfaceProjector", projectorPorts, std::size(projectorPorts),
+            &RunSurfaceProjector, rigExec::kRigExecOpSeparateBlend);
         d.payload =
             rigExec::RigExecPayloadHandlingFor<SurfaceProjectorPayload>();
         return d;
     }();
-    static const rigExec::RigExecOpDesc dialDesc = ProjectorDesc(
-        "ShaderDials", dialPorts, std::size(dialPorts), &RunShaderDials);
+    static const rigExec::RigExecOpDesc dialDesc =
+        ProjectorDesc("ShaderDials", dialPorts, std::size(dialPorts),
+                      &RunShaderDials, rigExec::kRigExecOpSeparateBlend);
     registrar.Add(SurfaceProjector(), projectorDesc);
     registrar.Add(ShaderDials(), dialDesc);
 }
