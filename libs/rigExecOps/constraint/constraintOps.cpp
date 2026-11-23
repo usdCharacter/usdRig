@@ -1,7 +1,7 @@
 #include "rigExecOps/constraint/constraintOps.h"
 
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 #include "rigExecMath/constraintKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecRuntime/dualQuatMath.h"
@@ -52,6 +52,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(AimConstraintOut)
 
 namespace {
 
+using rigExec::RigExecOpBatch;
 using rigExec::RigExecOpIo;
 using rigExec::RigExecPortHandle;
 using rigExecRig::PointFrame;
@@ -61,6 +62,63 @@ using rigExecStd::RigExecArray;
 using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 using namespace opIo;
+using namespace fieldIo;
+
+/// The constraint payload's declared fields, in saved order.
+enum ConstraintField : uint32_t {
+    kOffset,
+    kAffect,
+    kTranslationAxes,
+    kRotationAxes,
+    kScaleAxes,
+    kTranslationOffsetCount,
+    kTranslationOffsets,
+    kRotationOffsetCount,
+    kRotationOffsets,
+    kRotationOrder,
+    kBlendShear,
+    kLocalAimVector,
+    kLocalUpVector,
+    kPreserveInputUp,
+};
+
+/// One instance's ConstraintPayload, its offset lists read in place.
+struct ConstraintSettings {
+    Vec3d offset;
+    ConstraintAxes affect, translationAxes, rotationAxes, scaleAxes;
+    rigExec::RigExecFieldView<const Vec3d> translationOffsets;
+    rigExec::RigExecFieldView<const Vec3d> rotationOffsetsDegrees;
+    ConstraintEulerOrder rotationOrder = ConstraintEulerOrder::XYZ;
+    bool blendShear = false;
+    Vec3d localAimVector, localUpVector;
+    bool preserveInputUp = true;
+};
+
+ConstraintAxes
+AxesAt(const RigExecOpBatch &batch, uint32_t field, size_t k)
+{
+    const auto axes = rigExec::RigExecPayloadField<uint8_t>(batch, field, k);
+    return {axes[0] != 0, axes[1] != 0, axes[2] != 0};
+}
+
+ConstraintSettings
+SettingsAt(const RigExecOpBatch &batch, size_t k)
+{
+    ConstraintSettings p;
+    p.offset = ValueAt<Vec3d>(batch, kOffset, k);
+    p.affect = AxesAt(batch, kAffect, k);
+    p.translationAxes = AxesAt(batch, kTranslationAxes, k);
+    p.rotationAxes = AxesAt(batch, kRotationAxes, k);
+    p.scaleAxes = AxesAt(batch, kScaleAxes, k);
+    p.translationOffsets = ListAt<Vec3d>(batch, kTranslationOffsets, k);
+    p.rotationOffsetsDegrees = ListAt<Vec3d>(batch, kRotationOffsets, k);
+    p.rotationOrder = EnumAt<ConstraintEulerOrder>(batch, kRotationOrder, k);
+    p.blendShear = FlagAt(batch, kBlendShear, k);
+    p.localAimVector = ValueAt<Vec3d>(batch, kLocalAimVector, k);
+    p.localUpVector = ValueAt<Vec3d>(batch, kLocalUpVector, k);
+    p.preserveInputUp = FlagAt(batch, kPreserveInputUp, k);
+    return p;
+}
 
 struct Source {
     PointFrame frame;
@@ -114,8 +172,8 @@ struct AimParams {
 /// The sources with their weights and Parent offsets, or false with
 /// \p error set when a parallel array has the wrong length.
 bool
-GatherSources(const char *op, const ConstraintPayload &p, const RigExecOpIo &io,
-              const RigExecPortHandle &sourcesPort,
+GatherSources(const char *op, const ConstraintSettings &p,
+              const RigExecOpIo &io, const RigExecPortHandle &sourcesPort,
               const RigExecPortHandle &weightsPort, bool withOffsets,
               std::vector<Source> *sources, std::string *error)
 {
@@ -125,18 +183,18 @@ GatherSources(const char *op, const ConstraintPayload &p, const RigExecOpIo &io,
     if (weights && weights->Size() != n)
         return Fail(error, op, "needs one source weight per source");
     if (withOffsets &&
-        ((!p.translationOffsets.empty() && p.translationOffsets.size() != n) ||
-         (!p.rotationOffsetsDegrees.empty() &&
-          p.rotationOffsetsDegrees.size() != n)))
+        ((!p.translationOffsets.Empty() && p.translationOffsets.Size() != n) ||
+         (!p.rotationOffsetsDegrees.Empty() &&
+          p.rotationOffsetsDegrees.Size() != n)))
         return Fail(error, op, "needs no offsets or one per source");
     sources->resize(n);
     for (size_t i = 0; i < n; ++i) {
         Source &s = (*sources)[i];
         s.frame = frames[i];
         s.normalizedWeight = weights ? (*weights)[i] : 1.0;
-        if (withOffsets && !p.translationOffsets.empty())
+        if (withOffsets && !p.translationOffsets.Empty())
             s.translationOffset = p.translationOffsets[i];
-        if (withOffsets && !p.rotationOffsetsDegrees.empty())
+        if (withOffsets && !p.rotationOffsetsDegrees.Empty())
             s.rotationOffsetDegrees = p.rotationOffsetsDegrees[i];
     }
     return true;
@@ -151,10 +209,10 @@ Commit(const PointFrame &, const PointFrame &solved, PointFrame *out)
 }
 
 bool
-RunPosition(const void *payload, void *, const RigExecOpIo &io,
-            std::string *error)
+PositionOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
-    const auto &p = *static_cast<const ConstraintPayload *>(payload);
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const ConstraintSettings p = SettingsAt(batch, k);
     std::vector<Source> sources;
     if (!GatherSources("PositionConstraint", p, io, PositionConstraintSources(),
                        PositionConstraintSourceWeights(), false, &sources,
@@ -171,10 +229,17 @@ RunPosition(const void *payload, void *, const RigExecOpIo &io,
 }
 
 bool
-RunRotation(const void *payload, void *, const RigExecOpIo &io,
-            std::string *error)
+RunPosition(const RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
-    const auto &p = *static_cast<const ConstraintPayload *>(payload);
+    return EachInstance(batch, failed,
+                        [&](size_t k) { return PositionOne(batch, k, error); });
+}
+
+bool
+RotationOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const ConstraintSettings p = SettingsAt(batch, k);
     std::vector<Source> sources;
     if (!GatherSources("RotationConstraint", p, io, RotationConstraintSources(),
                        RotationConstraintSourceWeights(), false, &sources,
@@ -192,9 +257,17 @@ RunRotation(const void *payload, void *, const RigExecOpIo &io,
 }
 
 bool
-RunScale(const void *payload, void *, const RigExecOpIo &io, std::string *error)
+RunRotation(const RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
-    const auto &p = *static_cast<const ConstraintPayload *>(payload);
+    return EachInstance(batch, failed,
+                        [&](size_t k) { return RotationOne(batch, k, error); });
+}
+
+bool
+ScaleOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const ConstraintSettings p = SettingsAt(batch, k);
     std::vector<Source> sources;
     if (!GatherSources("ScaleConstraint", p, io, ScaleConstraintSources(),
                        ScaleConstraintSourceWeights(), false, &sources, error))
@@ -211,10 +284,17 @@ RunScale(const void *payload, void *, const RigExecOpIo &io, std::string *error)
 }
 
 bool
-RunParent(const void *payload, void *, const RigExecOpIo &io,
-          std::string *error)
+RunScale(const RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
-    const auto &p = *static_cast<const ConstraintPayload *>(payload);
+    return EachInstance(batch, failed,
+                        [&](size_t k) { return ScaleOne(batch, k, error); });
+}
+
+bool
+ParentOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const ConstraintSettings p = SettingsAt(batch, k);
     std::vector<Source> sources;
     if (!GatherSources("ParentConstraint", p, io, ParentConstraintSources(),
                        ParentConstraintSourceWeights(), true, &sources, error))
@@ -235,9 +315,17 @@ RunParent(const void *payload, void *, const RigExecOpIo &io,
 }
 
 bool
-RunAim(const void *payload, void *, const RigExecOpIo &io, std::string *)
+RunParent(const RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
-    const auto &p = *static_cast<const ConstraintPayload *>(payload);
+    return EachInstance(batch, failed,
+                        [&](size_t k) { return ParentOne(batch, k, error); });
+}
+
+bool
+AimOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const ConstraintSettings p = SettingsAt(batch, k);
     const PointFrame &in = *In<PointFrame>(io, AimConstraintIn());
     const AimParams params{p.localAimVector,
                            p.localUpVector,
@@ -254,74 +342,72 @@ RunAim(const void *payload, void *, const RigExecOpIo &io, std::string *)
     return true;
 }
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
-void
-PutAxes(Writer &w, const ConstraintAxes &a)
+bool
+RunAim(const RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
-    w.Bool(a.x);
-    w.Bool(a.y);
-    w.Bool(a.z);
+    return EachInstance(batch, failed,
+                        [&](size_t k) { return AimOne(batch, k, error); });
 }
 
 void
-GetAxes(Reader &r, ConstraintAxes &a)
+SetAxes(RigExecFieldValues &values, uint32_t field, const ConstraintAxes &a)
 {
-    a.x = r.Bool();
-    a.y = r.Bool();
-    a.z = r.Bool();
+    const uint8_t axes[3] = {uint8_t(a.x), uint8_t(a.y), uint8_t(a.z)};
+    values.Set(field, axes, 3);
 }
 
 void
-Save(Writer &w, const ConstraintPayload &p)
+ConstraintValues(const void *payload, RigExecFieldValues &out)
 {
-    w.Version(1);
-    payloadIo::Put(w, p.offset);
-    PutAxes(w, p.affect);
-    PutAxes(w, p.translationAxes);
-    PutAxes(w, p.rotationAxes);
-    PutAxes(w, p.scaleAxes);
-    payloadIo::PutList(w, p.translationOffsets);
-    payloadIo::PutList(w, p.rotationOffsetsDegrees);
-    w.Enum(p.rotationOrder);
-    w.Bool(p.blendShear);
-    payloadIo::Put(w, p.localAimVector);
-    payloadIo::Put(w, p.localUpVector);
-    w.Bool(p.preserveInputUp);
+    const auto &p = *static_cast<const ConstraintPayload *>(payload);
+    out.Set(kOffset, p.offset);
+    SetAxes(out, kAffect, p.affect);
+    SetAxes(out, kTranslationAxes, p.translationAxes);
+    SetAxes(out, kRotationAxes, p.rotationAxes);
+    SetAxes(out, kScaleAxes, p.scaleAxes);
+    SetList(out, kTranslationOffsetCount, p.translationOffsets);
+    SetList(out, kRotationOffsetCount, p.rotationOffsetsDegrees);
+    SetEnum(out, kRotationOrder, p.rotationOrder);
+    SetFlag(out, kBlendShear, p.blendShear);
+    out.Set(kLocalAimVector, p.localAimVector);
+    out.Set(kLocalUpVector, p.localUpVector);
+    SetFlag(out, kPreserveInputUp, p.preserveInputUp);
 }
 
-void
-Load(Reader &r, ConstraintPayload &p)
-{
-    r.Version(1);
-    payloadIo::Get(r, p.offset);
-    GetAxes(r, p.affect);
-    GetAxes(r, p.translationAxes);
-    GetAxes(r, p.rotationAxes);
-    GetAxes(r, p.scaleAxes);
-    payloadIo::GetList(r, p.translationOffsets);
-    payloadIo::GetList(r, p.rotationOffsetsDegrees);
-    p.rotationOrder = r.Enum(ConstraintEulerOrder::ZYX);
-    p.blendShear = r.Bool();
-    payloadIo::Get(r, p.localAimVector);
-    payloadIo::Get(r, p.localUpVector);
-    p.preserveInputUp = r.Bool();
-}
+const rigExec::RigExecFieldDesc kConstraintFields[] = {
+    Value("offset", rigExecStd::Vec3dType()),
+    Fixed(Flag("affect"), 3),
+    Fixed(Flag("translationAxes"), 3),
+    Fixed(Flag("rotationAxes"), 3),
+    Fixed(Flag("scaleAxes"), 3),
+    Count("translationOffsetCount"),
+    Items("translationOffsets", rigExecStd::Vec3dType(),
+          kTranslationOffsetCount),
+    Count("rotationOffsetCount"),
+    Items("rotationOffsetsDegrees", rigExecStd::Vec3dType(),
+          kRotationOffsetCount),
+    Enum("rotationOrder", ConstraintEulerOrder::ZYX),
+    Flag("blendShear"),
+    Value("localAimVector", rigExecStd::Vec3dType()),
+    Value("localUpVector", rigExecStd::Vec3dType()),
+    Flag("preserveInputUp"),
+};
 
 rigExec::RigExecOpDesc
 ConstraintDesc(const char *name, const rigExec::RigExecPortDesc *ports,
-               size_t portCount, rigExec::RigExecOpRunFn run)
+               size_t portCount, rigExec::RigExecOpBatchFn runBatch)
 {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = name;
     d.ports = ports;
     d.portCount = portCount;
-    d.run = run;
+    d.runBatch = runBatch;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload =
-        rigExec::RigExecPayloadHandlingFor<ConstraintPayload, &Save, &Load>();
+    d.payloadFields = kConstraintFields;
+    d.payloadFieldCount = std::size(kConstraintFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &ConstraintValues;
     return d;
 }
 

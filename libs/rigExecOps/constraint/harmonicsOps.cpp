@@ -1,11 +1,12 @@
 #include "rigExecOps/constraint/harmonicsOps.h"
 
 #include "rigExecGraph/windowHistory.h"
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 #include "rigExecRigTypes/rigTypes.h"
 
 #include <cmath>
+#include <cstring>
 #include <iterator>
 #include <memory>
 #include <string>
@@ -28,6 +29,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(HarmonicsStatusOut)
 
 namespace {
 
+using rigExec::RigExecOpBatch;
 using rigExec::RigExecOpIo;
 using rigExec::RigExecWindowPacket;
 using rigExec::RigExecWindowPacketPtr;
@@ -36,6 +38,18 @@ using rigExecRig::PointFrame;
 using rigExecStd::Mat4d;
 using rigExecStd::Vec3d;
 using namespace opIo;
+using namespace fieldIo;
+
+/// The harmonics payload's declared fields, in saved order.
+enum HarmonicsField : uint32_t {
+    kWaves,
+    kWaveLength,
+    kFrequency,
+    kIgnoreFirstFrame,
+    kMatchVelocity,
+    kHasSpace,
+    kFrames,
+};
 
 bool
 Usable(const PointFrame &frame)
@@ -51,10 +65,16 @@ Usable(const PointFrame &frame)
 }
 
 bool
-RunHarmonics(const void *payload, void *, const RigExecOpIo &io,
-             std::string *error)
+HarmonicsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
-    const auto &p = *static_cast<const HarmonicsPayload *>(payload);
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    HarmonicsPayload p;
+    p.settings.waves = ValueAt<double>(batch, kWaves, k);
+    p.settings.waveLength = ValueAt<double>(batch, kWaveLength, k);
+    p.settings.frequency = ValueAt<double>(batch, kFrequency, k);
+    p.settings.ignoreFirstFrame = FlagAt(batch, kIgnoreFirstFrame, k);
+    p.matchVelocity = FlagAt(batch, kMatchVelocity, k);
+    p.hasSpace = FlagAt(batch, kHasSpace, k);
     const PointFrame &in = *In<PointFrame>(io, HarmonicsIn());
     PointFrame &out = Out<PointFrame>(io, HarmonicsOut());
     uint32_t &status = Out<uint32_t>(io, HarmonicsStatusOut());
@@ -152,10 +172,23 @@ RunHarmonics(const void *payload, void *, const RigExecOpIo &io,
     return true;
 }
 
-uint32_t
-HarmonicsFrames(const void *payload)
+bool
+RunHarmonics(const RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
-    return payload ? static_cast<const HarmonicsPayload *>(payload)->frames : 0;
+    return EachInstance(
+        batch, failed, [&](size_t k) { return HarmonicsOne(batch, k, error); });
+}
+
+uint32_t
+HarmonicsFrames(const void *values)
+{
+    if (!values)
+        return 0;
+    uint32_t frames = 0;
+    std::memcpy(&frames,
+                static_cast<const RigExecFieldValues *>(values)->Data(kFrames),
+                sizeof(frames));
+    return frames;
 }
 
 } // namespace
@@ -186,34 +219,28 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "status"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
 void
-Save(Writer &w, const HarmonicsPayload &p)
+HarmonicsValues(const void *payload, RigExecFieldValues &out)
 {
-    w.Version(1);
-    w.F64(p.settings.waves);
-    w.F64(p.settings.waveLength);
-    w.F64(p.settings.frequency);
-    w.Bool(p.settings.ignoreFirstFrame);
-    w.Bool(p.matchVelocity);
-    w.Bool(p.hasSpace);
-    w.U32(p.frames);
+    const auto &p = *static_cast<const HarmonicsPayload *>(payload);
+    out.Set(kWaves, p.settings.waves);
+    out.Set(kWaveLength, p.settings.waveLength);
+    out.Set(kFrequency, p.settings.frequency);
+    SetFlag(out, kIgnoreFirstFrame, p.settings.ignoreFirstFrame);
+    SetFlag(out, kMatchVelocity, p.matchVelocity);
+    SetFlag(out, kHasSpace, p.hasSpace);
+    out.Set(kFrames, p.frames);
 }
 
-void
-Load(Reader &r, HarmonicsPayload &p)
-{
-    r.Version(1);
-    p.settings.waves = r.F64();
-    p.settings.waveLength = r.F64();
-    p.settings.frequency = r.F64();
-    p.settings.ignoreFirstFrame = r.Bool();
-    p.matchVelocity = r.Bool();
-    p.hasSpace = r.Bool();
-    p.frames = r.U32();
-}
+const rigExec::RigExecFieldDesc kFields[] = {
+    Value("waves", rigExecStd::DoubleType()),
+    Value("waveLength", rigExecStd::DoubleType()),
+    Value("frequency", rigExecStd::DoubleType()),
+    Flag("ignoreFirstFrame"),
+    Flag("matchVelocity"),
+    Flag("hasSpace"),
+    Value("frames", rigExecStd::UIntType()),
+};
 
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc op;
@@ -221,13 +248,15 @@ const rigExec::RigExecOpDesc kDesc = [] {
     op.name = "Harmonics";
     op.ports = kPorts;
     op.portCount = std::size(kPorts);
-    op.run = &RunHarmonics;
+    op.runBatch = &RunHarmonics;
     op.threading = rigExec::RigExecOpThreading::Windowed;
     op.windowFrames = &HarmonicsFrames;
     op.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    op.payload =
-        rigExec::RigExecPayloadHandlingFor<HarmonicsPayload, &Save, &Load>();
+    op.payloadFields = kFields;
+    op.payloadFieldCount = std::size(kFields);
+    op.payloadVersion = 1;
+    op.payloadValues = &HarmonicsValues;
     return op;
 }();
 
