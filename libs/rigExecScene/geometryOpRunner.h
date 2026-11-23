@@ -22,6 +22,7 @@ struct RigExecGeometryOpRunner {
     RigExecGeometryMatrixNode matrix;
     RigExecExternalOpNode external;
     RigExecGeometryPayloadScratchPtr payloadScratch;
+    RigExecCompileOptions compile;
 };
 
 /// Loads the built-in op library. False with \p error when it cannot.

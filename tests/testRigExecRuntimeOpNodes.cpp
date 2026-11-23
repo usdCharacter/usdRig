@@ -269,9 +269,10 @@ Expected(const Values &values, const Mesh &mesh)
     return out;
 }
 
-/// The same nodes through the op core alone.
+/// The same nodes through the op core alone, compiled with batches of at
+/// most \p maxBatchNodes nodes.
 Results
-Direct(const Values &values, const Mesh &mesh)
+Direct(const Values &values, const Mesh &mesh, size_t maxBatchNodes)
 {
     using namespace rigExecOps;
     Results out;
@@ -300,7 +301,9 @@ Direct(const Values &values, const Mesh &mesh)
     const auto volumeOut = b.BindOutput(volume, VolumeCorrectOut());
     std::string error;
     auto desc = b.Build(&error);
-    auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
+    RigExecCompileOptions options;
+    options.maxBatchNodes = maxBatchNodes;
+    auto program = desc ? RigExecCompile(*desc, options, &error) : nullptr;
     auto evaluator =
         program ? RigExecEvaluator::Create(program, {}, &error) : nullptr;
     CHECK(evaluator);
@@ -390,8 +393,8 @@ TestPlayback()
     CHECK(expected.math > 0.0f && expected.math < 1.0f);
     const Results got = FromRuntime(*reader);
     CheckSame(got, expected);
-    {
-        const Results direct = Direct(values, mesh);
+    for (const size_t batch : {size_t(0), size_t(1), size_t(3)}) {
+        const Results direct = Direct(values, mesh, batch);
         CheckSame(direct, expected);
         CheckSame(direct, got);
     }
@@ -404,7 +407,8 @@ TestPlayback()
     CHECK(reader->Execute(&error));
     const Results moved = Expected(values, mesh);
     CheckSame(FromRuntime(*reader), moved);
-    CheckSame(Direct(values, mesh), moved);
+    for (const size_t batch : {size_t(0), size_t(1), size_t(3)})
+        CheckSame(Direct(values, mesh, batch), moved);
     CHECK(!SameBits(moved.volume, expected.volume));
 
     // The written file reads back as written.

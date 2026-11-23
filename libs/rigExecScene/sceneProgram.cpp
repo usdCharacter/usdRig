@@ -263,6 +263,9 @@ RigExecSceneProgramRuntime::Prepare(const RigExecSceneProgram &program,
         auto &workspace = _workspaces[i];
         workspace.opRunner = RigExecGeometryOpRunner();
         workspace.poseRunner = RigExecPoseOpRunner();
+        workspace.opRunner.compile = opCompile;
+        workspace.poseRunner.compile = opCompile;
+        workspace.weight.combine.compile = opCompile;
         workspace.poseOnOps = RunsPoseOnOps(_operations[i]);
     }
     _windows.assign(program.windowedOps.size(), Window());

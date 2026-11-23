@@ -29,7 +29,7 @@ using rigExecRig::WeightRepresentation;
 RigExecCombineOpNode *
 Ready(std::vector<std::unique_ptr<RigExecCombineOpNode>> &nodes, size_t record,
       const CombineWeightsPayload &payload, size_t inputCount,
-      std::string *error)
+      const RigExecCompileOptions &options, std::string *error)
 {
     if (nodes.size() <= record)
         nodes.resize(record + 1);
@@ -54,7 +54,7 @@ Ready(std::vector<std::unique_ptr<RigExecCombineOpNode>> &nodes, size_t record,
     node->invert = builder.BindInput(id, rigExecOps::CombineWeightsInvert());
     node->out = builder.BindOutput(id, rigExecOps::CombineWeightsOut());
     const auto desc = builder.Build(error);
-    const auto program = desc ? RigExecCompile(*desc, {}, error) : nullptr;
+    const auto program = desc ? RigExecCompile(*desc, options, error) : nullptr;
     node->evaluator =
         program ? RigExecEvaluator::Create(program, {}, error) : nullptr;
     if (!node->evaluator)
@@ -106,7 +106,7 @@ RigExecWeightCombineOps::Combine(size_t record, const RigExecWeightRecord &r,
     payload.inputs = rigExecOps::WeightCombineInputs::Fields;
     payload.clamp = r.clamp;
     RigExecCombineOpNode *node =
-        Ready(_nodes, record, payload, r.inputs.size(), error);
+        Ready(_nodes, record, payload, r.inputs.size(), compile, error);
     if (!node)
         return false;
     PointWeights &field = node->scratch;
@@ -147,7 +147,7 @@ RigExecWeightCombineOps::CombinePackets(
     payload.mode = rigExecOps::WeightCombineMode(r.combineMode);
     payload.clamp = r.clamp;
     RigExecCombineOpNode *node =
-        Ready(_nodes, record, payload, inputs.size(), nullptr);
+        Ready(_nodes, record, payload, inputs.size(), compile, nullptr);
     if (!node)
         return RigExecWeightPacket();
     PointWeights &w = node->scratch;

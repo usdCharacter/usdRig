@@ -5,6 +5,7 @@
 /// per record, built on first use and rebuilt when the payload or the input
 /// count baked into it moved. Owner-thread state of the scene runtime.
 
+#include "rigExec/api/compile.h"
 #include "rigExecScene/weightProgram.h"
 
 #include <memory>
@@ -33,6 +34,8 @@ public:
     CombinePackets(size_t record, const RigExecWeightRecord &,
                    const std::vector<const RigExecWeightPacket *> &inputs,
                    size_t targetCount, float strength, float invert);
+
+    RigExecCompileOptions compile;
 
 private:
     std::vector<std::unique_ptr<RigExecCombineOpNode>> _nodes;

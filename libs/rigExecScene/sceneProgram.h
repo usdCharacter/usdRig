@@ -133,6 +133,9 @@ struct RigExecSceneOperationWorkspace {
 class RigExecSceneProgramRuntime {
 public:
     RigExecTypedValueStore values;
+    /// How Prepare has the op core compile the programs this runtime
+    /// builds. Results are the same for any value.
+    RigExecCompileOptions opCompile;
     RigExecOpExecution execution;
     bool Prepare(const RigExecSceneProgram &, std::string *error = nullptr);
     bool Evaluate(const RigExecSceneProgram &, size_t identity,

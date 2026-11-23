@@ -31,7 +31,8 @@ Ready(RigExecPoseOpRunner &runner, bool built, const Add &add,
     if (!add(builder))
         return false;
     const auto desc = builder.Build(error);
-    const auto program = desc ? RigExecCompile(*desc, {}, error) : nullptr;
+    const auto program =
+        desc ? RigExecCompile(*desc, runner.compile, error) : nullptr;
     runner.evaluator =
         program ? RigExecEvaluator::Create(program, {}, error) : nullptr;
     return runner.evaluator && write(error);

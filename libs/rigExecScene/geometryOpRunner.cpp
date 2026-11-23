@@ -17,7 +17,8 @@ Compile(RigExecRigDescBuilder &builder, RigExecGeometryOpRunner &runner,
         std::string *error)
 {
     const auto desc = builder.Build(error);
-    const auto program = desc ? RigExecCompile(*desc, {}, error) : nullptr;
+    const auto program =
+        desc ? RigExecCompile(*desc, runner.compile, error) : nullptr;
     runner.evaluator =
         program ? RigExecEvaluator::Create(program, {}, error) : nullptr;
     return runner.evaluator != nullptr;
