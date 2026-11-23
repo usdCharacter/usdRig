@@ -41,7 +41,6 @@ include(cmake/rigexec_flags.cmake)
 rigexec_get_exact_fp_directory_flags(_rigexec_fp_directory_flags)
 add_compile_options(${_rigexec_fp_directory_flags})
 include(cmake/installManifests.cmake)
-
 set(RIGEXEC_INSTALL_LIBDIR     "lib"
     CACHE STRING "Install directory for libraries, relative to the prefix")
 set(RIGEXEC_INSTALL_INCLUDEDIR "include"
@@ -556,7 +555,7 @@ target_include_directories(rigExecRuntime PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rigExecRuntime PUBLIC rigExecBinary rigExecGraph rigExecEvalCore
-    rigExecOpCore)
+    PRIVATE rigExecOpCore)
 set_target_properties(rigExecRuntime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # Installed names, so a mover plugin's tests can export and replay its rigs
 # the same way inside this build and against an installed SDK.
@@ -569,12 +568,23 @@ rigexec_add_mover(ClothMover BUILTIN
     SCHEMA libs/rigExecSchema/schema.usda
     SCHEMA_TYPE RigExecClothMover)
 # The standalone compiler check consumes the same generated module sources.
+# Snapshot SOURCES at configure time: the generator expression is evaluated
+# at generate time, when MSVC precompiled-header support has injected the
+# synthetic cmake_pch.cxx, and that compiler-generated unit must not reach
+# a manifest a separate consumer root builds. Generated mover units are
+# present here because rigexec_add_mover adds them with target_sources.
+get_property(_rigexec_runtime_manifest_sources TARGET rigExecRuntime PROPERTY SOURCES)
+list(FILTER _rigexec_runtime_manifest_sources EXCLUDE REGEX "(^|/|\\\\)(CMakeFiles/|cmake_pch\\.(cxx|cpp|c)$)")
+list(JOIN _rigexec_runtime_manifest_sources "\n" _rigexec_runtime_manifest_text)
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/runtimeSources.txt"
-    CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecRuntime,SOURCES>,\n>\n")
+    CONTENT "${_rigexec_runtime_manifest_text}\n")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/runtimeIncludes.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecRuntime,INCLUDE_DIRECTORIES>,\n>\n")
+get_property(_rigexec_evalcore_manifest_sources TARGET rigExecEvalCore PROPERTY SOURCES)
+list(FILTER _rigexec_evalcore_manifest_sources EXCLUDE REGEX "(^|/|\\\\)(CMakeFiles/|cmake_pch\\.(cxx|cpp|c)$)")
+list(JOIN _rigexec_evalcore_manifest_sources "\n" _rigexec_evalcore_manifest_text)
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreSources.txt"
-    CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,SOURCES>,\n>\n")
+    CONTENT "${_rigexec_evalcore_manifest_text}\n")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreIncludes.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,INCLUDE_DIRECTORIES>,\n>\n")
 # The op core, the type libraries and the op libraries, for
@@ -590,8 +600,11 @@ rigexec_add_sdk_manifest_export(
 
 # What a host that builds these USD-free sources outside CMake needs: the
 # exact-FP flag list and the same source and include manifests this build
-# checks. The installed copies come from the same generated files, with paths
-# made relative to this checkout so a consumer joins them with its own root.
+# checks. The installed copies come from the same generated files under the
+# installed-manifest grammar stated in cmake/rigExecConfig.cmake.in: entries
+# for generated translation units keep the reserved runtime-generated/
+# component and join the installed data directory, the rest join the
+# consumer's matching checkout.
 rigexec_get_exact_fp_flags(_rigexec_exact_fp_flags)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_LIST_DIR}/cmake/rigexec_flags.cmake")
@@ -631,6 +644,13 @@ add_test(NAME testRigExecExactFpCompiler
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/exactFpCompilerWitness.cmake")
 set_tests_properties(testRigExecExactFpCompiler PROPERTIES TIMEOUT 300
     ENVIRONMENT "CMAKE_BUILD_PARALLEL_LEVEL=2")
+add_test(NAME testRigExecSdkInstallSpaces
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+        "-DSCRATCH_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdkInstallSpacesCheck"
+        "-DINSTALL_DATADIR=${RIGEXEC_INSTALL_DATADIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/checkSdkInstallSpaces.cmake")
 
 # rigExecSampler: hands a .rigexec's Animated inputs the values a stage holds
 # at each new time (RigExecInputSampler), for every consumer that plays the
@@ -854,7 +874,7 @@ add_test(NAME testRigExecRuntimeFixture COMMAND testRigExecRuntimeFixture
 add_executable(testRigExecRuntimeOpCore tests/testRigExecRuntimeOpCore.cpp)
 target_include_directories(testRigExecRuntimeOpCore PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests")
-target_link_libraries(testRigExecRuntimeOpCore PRIVATE rigExecRuntime)
+target_link_libraries(testRigExecRuntimeOpCore PRIVATE rigExecRuntime rigExecOpCore)
 add_test(NAME testRigExecRuntimeOpCore COMMAND testRigExecRuntimeOpCore
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal.rigexec")
 set_tests_properties(testRigExecRuntimeOpCore PROPERTIES
@@ -3380,16 +3400,16 @@ install(FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generateMoverSchema.py"
     DESTINATION "${RIGEXEC_INSTALL_CMAKEDIR}")
 
-# The exact-FP flags this tree was built with, and the USD-free file lists
-# relocated to this prefix, for a host that compiles those sources without
-# CMake (the Godot and Unreal extensions).
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/exactFpFlags.txt"
-    DESTINATION "${RIGEXEC_INSTALL_DATADIR}")
+# What a host that compiles the USD-free sources without CMake (the Godot and
+# Unreal extensions) needs: the relocated manifests, the generated runtime
+# translation units they name, and the exact-FP flags this tree was built with.
+# rigexec_install_sdk_manifests stages all three under one destination so
+# DESTDIR keeps them together.
 rigexec_install_sdk_manifests(BUILD_DIR "${RIGEXEC_SDK_MANIFEST_DIR}"
     INPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}"
     SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}"
-    DESTINATION "${RIGEXEC_INSTALL_DATADIR}")
-
+    DESTINATION "${RIGEXEC_INSTALL_DATADIR}"
+    FLAGS_FILE "${CMAKE_CURRENT_BINARY_DIR}/exactFpFlags.txt")
 install(FILES LICENSE NOTICE THIRD_PARTY_NOTICES.md
     DESTINATION "share/rigExec")
 install(FILES plugin/usdNoodles/LICENSE.txt

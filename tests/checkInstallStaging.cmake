@@ -383,8 +383,15 @@ set(_lostInputs "${SCRATCH_DIR}/lostInputs")
 set(_keptStaged "${SCRATCH_DIR}/keptStaged")
 foreach (_manifest IN LISTS _manifests)
     file(COPY "${_staged}/${_manifest}.txt" DESTINATION "${_keptStaged}")
-    file(COPY "${BINARY_DIR}/${_manifest}.txt" DESTINATION "${_lostInputs}")
+    # The copied inputs are a snapshot build tree: their producer paths move
+    # with it, payload included, so the only inconsistency is the deleted file.
+    file(READ "${BINARY_DIR}/${_manifest}.txt" _input_text)
+    string(REPLACE "${BINARY_DIR}" "${_lostInputs}" _input_text "${_input_text}")
+    file(WRITE "${_lostInputs}/${_manifest}.txt" "${_input_text}")
 endforeach()
+if (EXISTS "${BINARY_DIR}/runtime-generated")
+    file(COPY "${BINARY_DIR}/runtime-generated" DESTINATION "${_lostInputs}")
+endif()
 file(REMOVE "${_lostInputs}/${_vanished}.txt")
 _configure_fixture("${SCRATCH_DIR}/lostBuild" "${_keptStaged}"
     "-DRIGEXEC_MANIFEST_INPUT_DIR=${_lostInputs}")
@@ -405,7 +412,15 @@ message(STATUS "vanished input: pass (cmake --install exited ${_rc} naming ${_va
 set(_gInputs "${SCRATCH_DIR}/refreshInputs")
 set(_gStage "${SCRATCH_DIR}/refreshStaged")
 function(_produce_manifests inputs_dir stage_dir tag)
-    file(WRITE "${inputs_dir}/runtimeSources.txt" "libs/rigExecMath/${tag}.cpp\n")
+    # The fixture snapshot is a build tree, so it carries the reserved payload
+    # root the install rule stages, including a nested mover directory.
+    file(MAKE_DIRECTORY "${inputs_dir}/runtime-generated/${tag}")
+    file(WRITE "${inputs_dir}/runtime-generated/${tag}Catalog.cpp"
+        "// staged payload for ${tag}\n")
+    file(WRITE "${inputs_dir}/runtime-generated/${tag}/moverSchema.h"
+        "// staged payload header for ${tag}\n")
+    file(WRITE "${inputs_dir}/runtimeSources.txt"
+        "libs/rigExecMath/${tag}.cpp\n${inputs_dir}/runtime-generated/${tag}Catalog.cpp\n")
     file(WRITE "${inputs_dir}/runtimeIncludes.txt" "include/${tag}/runtime\n")
     file(WRITE "${inputs_dir}/evalCoreSources.txt" "libs/rigExecMath/${tag}Core.cpp\n")
     file(WRITE "${inputs_dir}/evalCoreIncludes.txt" "include/${tag}/evalCore\n")
@@ -460,8 +475,12 @@ if (_broot)
     set(_gInputs2 "${SCRATCH_DIR}/refreshInputs2")
     foreach (_pair runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
         file(COPY "${_gStage}/${_pair}.txt" DESTINATION "${_gStage2}")
-        file(COPY "${_gInputs}/${_pair}.txt" DESTINATION "${_gInputs2}")
+        # The snapshot build tree moves, so its input paths move with it.
+        file(READ "${_gInputs}/${_pair}.txt" _moved_input)
+        string(REPLACE "${_gInputs}" "${_gInputs2}" _moved_input "${_moved_input}")
+        file(WRITE "${_gInputs2}/${_pair}.txt" "${_moved_input}")
     endforeach()
+    file(COPY "${_gInputs}/runtime-generated" DESTINATION "${_gInputs2}")
     _configure_fixture("${SCRATCH_DIR}/refreshDest" "${_gStage2}"
         "-DRIGEXEC_MANIFEST_INPUT_DIR=${_gInputs2}")
     set(ENV{DESTDIR} "${_gdStage}")

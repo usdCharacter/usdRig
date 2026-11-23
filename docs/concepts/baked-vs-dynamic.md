@@ -59,10 +59,13 @@ Every translation unit that instantiates the kernels compiles with the
 settings named by `cmake/rigexec_flags.cmake`: `/fp:precise` on MSVC,
 `-fno-fast-math -ffp-contract=off` elsewhere. Without them the compiler fuses
 `a*b+c` into an FMA and the baked, frozen and `.rigexec` results drift an ulp
-from each other and from the goldens. That fragment and the USD-free source
-and include manifests install under `lib/cmake/rigExec` and `share/rigExec`,
-the manifests with paths relative to the checkout, so a host building those
-sources with its own tool reads the flag list and the file list instead of
+from each other and from the goldens. That fragment installs under
+`lib/cmake/rigExec`, and the same flags install as `exactFpFlags.txt` beside
+the USD-free source and include manifests in the SDK's data directory
+(`share/rigExec` by default), the manifests with paths relative to the
+checkout. One directory supplies the whole set -- the four manifests and
+`exactFpFlags.txt` -- so a host building those sources with its own tool
+reads the flag list and the file list from one installed layout instead of
 copying them.
 
 ## The installed boundary
