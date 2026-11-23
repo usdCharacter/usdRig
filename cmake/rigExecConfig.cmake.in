@@ -55,9 +55,19 @@ include("${CMAKE_CURRENT_LIST_DIR}/rigExecMoverPlugin.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/rigexec_flags.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/rigExecMover.cmake")
 
-# The USD-free file lists, with paths relative to the usdRig checkout that
-# supplies them, and the exact-FP flags this SDK was built with, for a host
-# that compiles those sources with its own build tool instead of CMake.
+# The USD-free file lists and the exact-FP flags this SDK was built with,
+# for a host that compiles those sources with its own build tool instead of
+# CMake. One path per line, order preserved, and the first path component is
+# reserved: let M be the directory holding these manifests (rigExec_DATA_DIR)
+# and C the matching usdRig checkout. An entry starting "runtime-generated/"
+# resolves under M -- the generated mover kernels, mover schemas, mover
+# registrations and moverCatalog.cpp this SDK ships beside the manifests --
+# and every other entry, such as libs/rigExecRuntime/open.cpp, resolves
+# under C. Never search both roots for a missing entry. Installed entries
+# are never absolute and never carry a '..' segment. A third-party reader
+# that joins every line to the checkout must dispatch on this component;
+# the build/*.txt copies in a configured build tree keep their absolute
+# spelling, so no producer path reaches a consumer through these lists.
 set(rigExec_EXACT_FP_FLAGS_FILE "${rigExec_DATA_DIR}/exactFpFlags.txt")
 set(rigExec_RUNTIME_SOURCES "${rigExec_DATA_DIR}/runtimeSources.txt")
 set(rigExec_RUNTIME_INCLUDES "${rigExec_DATA_DIR}/runtimeIncludes.txt")

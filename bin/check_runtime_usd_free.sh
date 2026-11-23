@@ -2,17 +2,75 @@
 # Compile the runtime, the EvalCore step table, the op scheduler, and the
 # binary format with no OpenUSD include path. Fails if a translation unit
 # needs a pxr header, or if an undefined symbol is an OpenUSD type.
+#
+# Usage: bin/check_runtime_usd_free.sh [BUILD_DIR | --sdk MANIFEST_DIR]
+#        [--list-objects prints one line per distinct object target]
+# With a build directory (default: this checkout's build/) the manifests and
+# exact-FP flags come from that configured build tree, exactly as CMake
+# generates them, and entries keep the spellings CMake wrote. With --sdk,
+# the argument is an installed SDK's manifest directory M and the
+# installed-manifest grammar applies: entries whose first path component
+# is runtime-generated resolve under M, every other relative entry under
+# this checkout (never both), and an absolute or '..' entry marks a
+# producer-dependent layout that cannot be checked from a consumer.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUILD="${1:-$ROOT/build}"
-if [[ ! -f "$BUILD/runtimeSources.txt" || ! -f "$BUILD/runtimeIncludes.txt" ||
-      ! -f "$BUILD/evalCoreSources.txt" || ! -f "$BUILD/evalCoreIncludes.txt" ]]; then
-    echo "configure and build rigExecRuntime first (missing source manifest in $BUILD)" >&2
+usage() {
+    echo "usage: ${0##*/} [--list-objects] [BUILD_DIR | --sdk MANIFEST_DIR]" >&2
+    exit 2
+}
+BUILD=""
+SDK=""
+list_objects=0
+_rest=()
+for _arg in "$@"; do
+    if [[ "$_arg" == "--list-objects" ]]; then
+        list_objects=1
+    else
+        _rest+=("$_arg")
+    fi
+done
+set -- "${_rest[@]+"${_rest[@]}"}"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --sdk)
+            [[ $# -eq 2 && -n "$2" && -z "$SDK" && -z "$BUILD" ]] || usage
+            SDK="$2"; shift 2 ;;
+        --build)
+            [[ $# -eq 2 && -n "$2" && -z "$BUILD" && -z "$SDK" ]] || usage
+            BUILD="$2"; shift 2 ;;
+        -h|--help)
+            echo "usage: ${0##*/} [--list-objects] [BUILD_DIR | --sdk MANIFEST_DIR]" >&2
+            exit 0 ;;
+        *)
+            [[ $# -eq 1 && -n "$1" && -z "$BUILD" && -z "$SDK" ]] || usage
+            BUILD="$1"; shift ;;
+    esac
+done
+BUILD="${BUILD:-$ROOT/build}"
+installed=0
+if [[ -n "$SDK" ]]; then
+    installed=1
+    [[ "$SDK" = /* ]] || SDK="$PWD/$SDK"
+    SDK="${SDK%/}"
+    MANIFESTS="$SDK"
+else
+    [[ "$BUILD" = /* ]] || BUILD="$PWD/$BUILD"
+    BUILD="${BUILD%/}"
+    MANIFESTS="$BUILD"
+fi
+if [[ ! -f "$MANIFESTS/runtimeSources.txt" || ! -f "$MANIFESTS/runtimeIncludes.txt" ||
+      ! -f "$MANIFESTS/evalCoreSources.txt" || ! -f "$MANIFESTS/evalCoreIncludes.txt" ]]; then
+    if [[ $installed -eq 1 ]]; then
+        echo "no SDK manifests in $MANIFESTS: expected runtimeSources.txt, runtimeIncludes.txt, evalCoreSources.txt and evalCoreIncludes.txt there (install the SDK from a matching build)" >&2
+    else
+        echo "configure and build rigExecRuntime first (missing source manifest in $MANIFESTS)" >&2
+    fi
     exit 1
 fi
-if [[ ! -s "$BUILD/exactFpFlags.txt" ]]; then
-    echo "configure first: $BUILD/exactFpFlags.txt names the exact-FP flags" >&2
+if [[ ! -s "$MANIFESTS/exactFpFlags.txt" ]]; then
+    echo "configure first: $MANIFESTS/exactFpFlags.txt names the exact-FP flags" >&2
     exit 1
 fi
 WORK="$(mktemp -d)"
@@ -25,9 +83,9 @@ while IFS= read -r flag; do
     flag="${flag%$'\r'}"
     [[ -z "$flag" ]] && continue
     fp_flags+=("$flag")
-done < "$BUILD/exactFpFlags.txt"
+done < "$MANIFESTS/exactFpFlags.txt"
 if [[ ${#fp_flags[@]} -eq 0 ]]; then
-    echo "no exact-FP flags in $BUILD/exactFpFlags.txt" >&2
+    echo "no exact-FP flags in $MANIFESTS/exactFpFlags.txt" >&2
     exit 1
 fi
 for flag in "${fp_flags[@]}"; do
@@ -37,6 +95,9 @@ for flag in "${fp_flags[@]}"; do
     fi
 done
 
+# The exact-FP list is the language-neutral floating-point contract from
+# cmake/rigexec_flags.cmake (/fp:precise, or -fno-fast-math -ffp-contract=off),
+# so it goes to the C units as well; everything else stays per language.
 CXXFLAGS=(
     -std=c++17 -O2 "${fp_flags[@]}" -pthread
     -I "$ROOT/libs"
@@ -44,31 +105,88 @@ CXXFLAGS=(
     -I "$ROOT/thirdparty/lzma/C"
 )
 CFLAGS=(
-    -std=c11 -O2 -DZ7_ST -DRIGEXEC_LZMA_PORTABLE_SCALAR
+    -std=c11 -O2 "${fp_flags[@]}" -DZ7_ST -DRIGEXEC_LZMA_PORTABLE_SCALAR
     -I "$ROOT/thirdparty/lzma/C"
 )
+resolve_manifest_entry() {
+    # Prints the path an installed-manifest entry ($2) resolves under: the
+    # reserved runtime-generated component joins the manifest directory, a
+    # bare relative entry joins this checkout, and never both. Absolute
+    # entries and '..' segments are producer-dependent spellings.
+    local manifest="$1" entry="$2" root
+    case "$entry" in
+        /*|..|../*|*/..|*/../*)
+            echo "$manifest: $entry: installed entries are relative without '..' segments (this manifest came from a producer build tree: install the SDK from a matching build)" >&2
+            return 1
+            ;;
+    esac
+    case "$entry" in
+        runtime-generated|runtime-generated/*) root="$SDK" ;;
+        *) root="$ROOT" ;;
+    esac
+    printf '%s' "$root/$entry"
+}
+
 for manifest in runtimeIncludes.txt evalCoreIncludes.txt; do
     while IFS= read -r include_dir; do
         include_dir="${include_dir%$'\r'}"
         [[ -z "$include_dir" ]] && continue
-        [[ "$include_dir" = /* ]] || include_dir="$ROOT/$include_dir"
+        spelling="$include_dir"
+        if [[ $installed -eq 1 ]]; then
+            include_dir="$(resolve_manifest_entry "$manifest" "$include_dir")" || exit 1
+            if [[ ! -d "$include_dir" ]]; then
+                echo "$manifest: $spelling: no such include directory $include_dir" >&2
+                exit 1
+            fi
+        else
+            [[ "$include_dir" = /* ]] || include_dir="$ROOT/$include_dir"
+        fi
         if [[ -d "$include_dir/pxr" ]]; then
             echo "runtime/EvalCore include directories expose OpenUSD: $include_dir" >&2
             exit 1
         fi
+        # The include manifest is a compile input for every unit the source
+        # manifests name, C included, not a C++-only setting.
         CXXFLAGS+=(-I "$include_dir")
-    done < "$BUILD/$manifest"
+        CFLAGS+=(-I "$include_dir")
+    done < "$MANIFESTS/$manifest"
 done
 
 objs=()
+declare -A object_of=()  # object key -> the source that claimed it
+# Each manifest entry is a translation unit: C for .c, C++ for the other final
+# suffixes cmake/exportManifests.cmake accepts. The list is case-sensitive here,
+# in the exporter, and in the Godot example's SConstruct. Anything else is a
+# producer bug and stops the check rather than being skipped.
 compile_one() {
-    local src="$1"
-    local obj="$WORK/${#objs[@]}_$(basename "${src%.*}").o"
-    if [[ "$src" == *.c ]]; then
-        gcc "${CFLAGS[@]}" -c "$src" -o "$obj"
-    else
-        g++ "${CXXFLAGS[@]}" -c "$src" -o "$obj"
+    local src="$1" key obj extension
+    extension="${src##*.}"
+    # The object key carries the whole manifest spelling with '/' folded, so
+    # mesh.cpp, a mesh.cxx beside it and a mesh.scalar.cxx each get their own
+    # object, and one unit named by two manifests compiles once.
+    key="${src#"$ROOT"/}"
+    if [[ -n "$SDK" ]]; then
+        key="${key#"$SDK"/}"
     fi
+    key="${key//\//@}"
+    obj="$WORK/$key.o"
+    if [[ -n "${object_of[$key]+set}" ]]; then
+        if [[ "${object_of[$key]}" != "$src" ]]; then
+            echo "${object_of[$key]} and $src would share object $obj: manifest sources must stay distinct" >&2
+            exit 1
+        fi
+        return 0
+    fi
+    object_of["$key"]="$src"
+    case "$extension" in
+        c)
+            gcc "${CFLAGS[@]}" -c "$src" -o "$obj" ;;
+        cc|cxx|cpp|c++)
+            g++ "${CXXFLAGS[@]}" -c "$src" -o "$obj" ;;
+        *)
+            echo "$src: not a translation unit (supported: .c .cc .cxx .cpp .c++)" >&2
+            exit 1 ;;
+    esac
     objs+=("$obj")
 }
 
@@ -77,10 +195,20 @@ for manifest in runtimeSources.txt evalCoreSources.txt; do
     while IFS= read -r src; do
         src="${src%$'\r'}"
         [[ -z "$src" ]] && continue
-        [[ "$src" = *.cpp || "$src" = *.c ]] || continue
-        [[ "$src" = /* ]] || src="$ROOT/$src"
+        spelling="$src"
+        if [[ $installed -eq 1 ]]; then
+            # The installed grammar constrains every entry: resolve and
+            # validate before compilation.
+            src="$(resolve_manifest_entry "$manifest" "$src")" || exit 1
+            if [[ ! -f "$src" ]]; then
+                echo "$manifest: $spelling: no such source $src" >&2
+                exit 1
+            fi
+        else
+            [[ "$src" = /* ]] || src="$ROOT/$src"
+        fi
         sources+=("$src")
-    done < "$BUILD/$manifest"
+    done < "$MANIFESTS/$manifest"
 done
 sources+=(
     "$ROOT/libs/rigExecGraph/opGraph.cpp"
@@ -99,6 +227,12 @@ done
 if nm -uC "${objs[@]}" | grep -E 'pxr::|[^A-Za-z0-9_](Gf|Usd|Sdf|Vt|Tf|Hd|Exec)[A-Za-z0-9_]*' ; then
     echo "runtime link line names an OpenUSD symbol" >&2
     exit 1
+fi
+
+if [[ $list_objects -eq 1 ]]; then
+    for key in "${!object_of[@]}"; do
+        printf 'object: %s.o\n' "$key"
+    done | sort
 fi
 
 echo "runtime compiled with no pxr include path (${#objs[@]} objects)"

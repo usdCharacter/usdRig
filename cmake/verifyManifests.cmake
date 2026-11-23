@@ -4,7 +4,8 @@
 # the staged copy: a staged list that no longer matches its inputs is stale,
 # and the install names it instead of shipping it. No build runs here.
 # The installer sets RIGEXEC_VERIFY_SOURCE_ROOT, RIGEXEC_VERIFY_INPUT_DIR and
-# RIGEXEC_VERIFY_STAGED_DIR before include().
+# RIGEXEC_VERIFY_STAGED_DIR before include(). The inputs' own build tree is
+# the root of the generated payload they name.
 include("${CMAKE_CURRENT_LIST_DIR}/manifestRelocate.cmake")
 
 foreach (_manifest IN ITEMS runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
@@ -22,7 +23,14 @@ foreach (_manifest IN ITEMS runtimeSources runtimeIncludes evalCoreSources evalC
             "Build the rigexecSdkManifests target before installing.")
     endif ()
     file(STRINGS "${_input}" _entries)
-    rigexec_relocate_manifest_text("${RIGEXEC_VERIFY_SOURCE_ROOT}" _expected _entries)
+    if (_manifest MATCHES "Includes$")
+        set(_is_directory TRUE)
+    else ()
+        set(_is_directory FALSE)
+    endif ()
+    rigexec_relocate_manifest_text("${RIGEXEC_VERIFY_SOURCE_ROOT}"
+        "${RIGEXEC_VERIFY_INPUT_DIR}" _entries ${_is_directory}
+        _expected _entries_expected)
     file(READ "${_staged}" _actual)
     if (NOT _actual STREQUAL _expected)
         message(FATAL_ERROR

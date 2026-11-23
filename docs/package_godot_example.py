@@ -1,9 +1,12 @@
 """Package the sibling Godot tutorial for docs; omit caches and stale binaries.
 
 The packaged SConstruct ships from this checkout (docs/godot_example/SConstruct):
-it consumes the SDK's installed cmake/rigexec_flags.cmake fragment and the
-share/rigExec source and include manifests, which this repository owns, so the
-build-surface contract stays with the build it describes.
+it consumes the manifest set the SDK installs in one directory -- the four
+source and include manifests plus exactFpFlags.txt, in the data directory the
+SDK's own rigExecConfig.cmake names -- which this repository owns, so the
+build-surface contract stays with the build it describes. That set reserves
+the first path component: runtime-generated/ entries resolve under the manifest
+directory, every other entry under the matching usdRig checkout.
 """
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -33,10 +36,15 @@ git -C thirdparty/godot-cpp checkout 507ed9d840c01a3c5b2a39af8bb4000bfac30bf5
 git -C thirdparty/godot-cpp submodule update --init --recursive
 python demo/setup_rolling.py --build
 The SConstruct takes its exact-FP flags and its USD-free source and include
-lists from the installed SDK (lib/cmake/rigExec/rigexec_flags.cmake and
-share/rigExec/runtimeSources.txt, evalCoreSources.txt, runtimeIncludes.txt
-and evalCoreIncludes.txt); pass sdk_root=<usd-install> if it is not the
-sibling usd-install.
+lists from one directory of the installed SDK: exactFpFlags.txt with
+runtimeSources.txt, evalCoreSources.txt, runtimeIncludes.txt and
+evalCoreIncludes.txt, in the data directory the SDK names as rigExec_DATA_DIR
+in its installed package file. A manifest entry starting
+runtime-generated/ resolves beside the manifests; every other entry
+resolves under the usdRig checkout. With no installed SDK the same five
+files are read from a configured usdRig build tree. Pass
+sdk_root=<usd-install>, usdrig_root=<usdRig> or manifest_dir=<that
+directory> when those siblings are not the right pair.
 
 No Godot cache, editor state, credentials, or platform binaries other than
 the tested Windows x86-64 pair are included. Source is included; other
@@ -99,7 +107,8 @@ def main():
     members = {name: path for name, path, _ in legal}
     members.update({_member(path.relative_to(PLUGIN).as_posix()): path for path in payload})
     # The packer ships the SConstruct owned by this checkout; it reads the SDK's
-    # flag fragment and manifests instead of spelling flags or file lists out.
+    # flag fragment and manifests, which resolve generated entries under the
+    # manifest directory and the rest under the checkout.
     members[_member("SConstruct")] = SCONSTRUCT
     # The demo folder ships the add-on again so the demo opens standalone;
     # the manifest already names the legal copies it needs.

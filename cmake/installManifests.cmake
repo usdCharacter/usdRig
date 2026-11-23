@@ -1,5 +1,6 @@
-# SDK manifests are staged install inputs, so DESTDIR and CMAKE_STAGING_PREFIX
-# apply to them like every other installed file.
+# The SDK manifest set, its flags file and the generated payload they name are
+# staged install inputs, so DESTDIR and CMAKE_STAGING_PREFIX apply to them like
+# every other installed file.
 
 function(rigexec_add_sdk_manifest_export)
     cmake_parse_arguments(RIGEXEC_MANIFEST_EXPORT ""
@@ -41,7 +42,8 @@ endfunction()
 # rewrites the skipped copy.
 function(rigexec_install_sdk_manifests)
     cmake_parse_arguments(RIGEXEC_MANIFEST_INSTALL ""
-        "BUILD_DIR;INPUT_DIR;SOURCE_ROOT;DESTINATION" "" ${ARGN})
+        "BUILD_DIR;INPUT_DIR;SOURCE_ROOT;DESTINATION;FLAGS_FILE"
+        "" ${ARGN})
     foreach (_required BUILD_DIR INPUT_DIR SOURCE_ROOT DESTINATION)
         if (NOT RIGEXEC_MANIFEST_INSTALL_${_required})
             message(FATAL_ERROR
@@ -60,12 +62,24 @@ include(\"${CMAKE_CURRENT_FUNCTION_LIST_DIR}/verifyManifests.cmake\")")
         "${_staged}/evalCoreSources.txt"
         "${_staged}/evalCoreIncludes.txt"
         DESTINATION "${RIGEXEC_MANIFEST_INSTALL_DESTINATION}")
+    if (RIGEXEC_MANIFEST_INSTALL_FLAGS_FILE)
+        install(FILES "${RIGEXEC_MANIFEST_INSTALL_FLAGS_FILE}"
+            DESTINATION "${RIGEXEC_MANIFEST_INSTALL_DESTINATION}")
+    endif ()
+
+    # install(DIRECTORY) reads the root when the install runs, so units a
+    # build generates after configure still travel; a missing root fails the
+    # install, and the verify gate above refuses a manifest naming a generated
+    # unit this root no longer holds.
+    install(DIRECTORY "${RIGEXEC_MANIFEST_INSTALL_INPUT_DIR}/runtime-generated"
+        DESTINATION "${RIGEXEC_MANIFEST_INSTALL_DESTINATION}")
+
     install(CODE "
 set(_staged \"${_staged}\")
 set(_dest \"${RIGEXEC_MANIFEST_INSTALL_DESTINATION}\")
 # file(INSTALL) prepends DESTDIR itself; the generated script only knows the
-# logical prefix. With DESTDIR set the effective destination is the staged
-# tree only, never the logical prefix.
+# logical prefix. CMAKE_STAGING_PREFIX rewrites that prefix, so only DESTDIR
+# needs naming here.
 if (DEFINED ENV{DESTDIR} AND NOT \"\$ENV{DESTDIR}\" STREQUAL \"\")
     string(REGEX REPLACE \"^[A-Za-z]:\" \"\" _stripped \"\${CMAKE_INSTALL_PREFIX}\")
     set(_candidates
