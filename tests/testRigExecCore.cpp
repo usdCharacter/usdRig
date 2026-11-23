@@ -10,10 +10,13 @@
 #include "rigExec/internal/program/program.h"
 #include "rigExecGraph/windowHistory.h"
 
+#include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <memory>
 #include <string>
+#include <thread>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -532,6 +535,13 @@ RunWide(const Wide &wide, RigExecTaskSystem *tasks, int frames,
     return results;
 }
 
+// 1, 2 and 3 threads and every hardware thread.
+std::vector<size_t>
+ThreadCounts()
+{
+    return {1, 2, 3, std::max<size_t>(1, std::thread::hardware_concurrency())};
+}
+
 void
 TestDeterminism()
 {
@@ -542,7 +552,7 @@ TestDeterminism()
         reference = RunWide(BuildWide(chains, 0), nullptr, 5, &error);
         CHECK(reference.size() == chains * 5);
     }
-    for (const size_t threads : {size_t(1), size_t(2), size_t(4)}) {
+    for (const size_t threads : ThreadCounts()) {
         auto tasks = RigExecCreateThreadTaskSystem(threads);
         for (const size_t batch :
              {size_t(0), size_t(1), size_t(2), size_t(7)}) {
@@ -565,7 +575,7 @@ TestDeterminism()
 void
 TestFailureOrder()
 {
-    for (const size_t threads : {size_t(1), size_t(4)}) {
+    for (const size_t threads : ThreadCounts()) {
         auto tasks = RigExecCreateThreadTaskSystem(threads);
         for (const size_t batch : {size_t(0), size_t(1), size_t(3)}) {
             const Wide wide = BuildWide(16, batch);
@@ -626,7 +636,7 @@ TestListDeterminism()
     const std::vector<Vec3> reference =
         RunWide(BuildWideLists(lists, 0), nullptr, 4, &error);
     CHECK(reference.size() == lists * 4);
-    for (const size_t threads : {size_t(1), size_t(2), size_t(4)}) {
+    for (const size_t threads : ThreadCounts()) {
         auto tasks = RigExecCreateThreadTaskSystem(threads);
         for (const size_t batch :
              {size_t(0), size_t(1), size_t(2), size_t(7)}) {
@@ -884,25 +894,32 @@ TestWindowRingRoundTrip()
     CHECK(RigExecWindowRingsEqual(hosted->GetWindowRings()[1], rings[1]));
 }
 
+// Plays 7 frames of a window rig, then jumps to frame 11.
+std::vector<Vec3>
+RunWindowRig(size_t chains, RigExecTaskSystem *tasks, size_t batch)
+{
+    const WindowRig rig = BuildWindowRig(chains, batch);
+    RigExecEvaluatorOptions options;
+    options.tasks = tasks;
+    auto evaluator = RigExecEvaluator::Create(rig.program, options);
+    std::vector<Vec3> all;
+    for (const auto &frame : Play(rig, *evaluator, 7))
+        all.insert(all.end(), frame.begin(), frame.end());
+    const std::vector<Vec3> jumped = Jump(rig, *evaluator, 11);
+    all.insert(all.end(), jumped.begin(), jumped.end());
+    return all;
+}
+
 void
 TestWindowDeterminism()
 {
     const size_t chains = 23;
     const auto run = [&](RigExecTaskSystem *tasks, size_t batch) {
-        const WindowRig rig = BuildWindowRig(chains, batch);
-        RigExecEvaluatorOptions options;
-        options.tasks = tasks;
-        auto evaluator = RigExecEvaluator::Create(rig.program, options);
-        std::vector<Vec3> all;
-        for (const auto &frame : Play(rig, *evaluator, 7))
-            all.insert(all.end(), frame.begin(), frame.end());
-        const std::vector<Vec3> jumped = Jump(rig, *evaluator, 11);
-        all.insert(all.end(), jumped.begin(), jumped.end());
-        return all;
+        return RunWindowRig(chains, tasks, batch);
     };
     const std::vector<Vec3> reference = run(nullptr, 0);
     CHECK(reference.size() == chains * 4 * 8);
-    for (const size_t threads : {size_t(1), size_t(2), size_t(4)}) {
+    for (const size_t threads : ThreadCounts()) {
         auto tasks = RigExecCreateThreadTaskSystem(threads);
         for (const size_t batch :
              {size_t(0), size_t(1), size_t(2), size_t(7)}) {
@@ -912,6 +929,161 @@ TestWindowDeterminism()
                 std::printf("windows: threads %zu batch %zu differ\n", threads,
                             batch);
         }
+    }
+}
+
+// Three rig descriptions compiled and evaluated side by side on their own
+// threads, sharing one task system; each matches its single-threaded run.
+void
+TestSharedTaskSystem()
+{
+    std::string error;
+    const std::vector<Vec3> wideRef =
+        RunWide(BuildWide(53, 0), nullptr, 40, &error);
+    const std::vector<Vec3> listRef =
+        RunWide(BuildWideLists(37, 0), nullptr, 40, &error);
+    const std::vector<Vec3> windowRef = RunWindowRig(19, nullptr, 0);
+    CHECK(wideRef.size() == 53 * 40 && listRef.size() == 37 * 40);
+    for (const size_t threads : ThreadCounts()) {
+        auto tasks = RigExecCreateThreadTaskSystem(threads);
+        for (int round = 0; round < 4; ++round) {
+            std::vector<Vec3> wideGot, listGot, windowGot;
+            std::string wideError, listError;
+            std::thread wide([&] {
+                wideGot =
+                    RunWide(BuildWide(53, 3), tasks.get(), 40, &wideError);
+            });
+            std::thread lists([&] {
+                listGot =
+                    RunWide(BuildWideLists(37, 2), tasks.get(), 40, &listError);
+            });
+            std::thread window(
+                [&] { windowGot = RunWindowRig(19, tasks.get(), 1); });
+            wide.join();
+            lists.join();
+            window.join();
+            CHECK(SameAll(wideGot, wideRef));
+            CHECK(SameAll(listGot, listRef));
+            CHECK(SameAll(windowGot, windowRef));
+        }
+    }
+}
+
+// Thousands of tiny frames, from one thread and from two at once, so a
+// lost wakeup hangs or a torn level shows as a wrong value.
+void
+TestTaskSystemStress()
+{
+    const int frames = 3000;
+    std::string error;
+    const std::vector<Vec3> reference =
+        RunWide(BuildWide(4, 1), nullptr, frames, &error);
+    CHECK(reference.size() == 4 * size_t(frames));
+    auto tasks = RigExecCreateThreadTaskSystem(
+        std::max<size_t>(2, std::thread::hardware_concurrency()));
+    const Wide wide = BuildWide(4, 1);
+    CHECK(SameAll(RunWide(wide, tasks.get(), frames, &error), reference));
+    std::vector<Vec3> first, second;
+    std::string firstError, secondError;
+    std::thread a(
+        [&] { first = RunWide(wide, tasks.get(), frames, &firstError); });
+    std::thread b(
+        [&] { second = RunWide(wide, tasks.get(), frames, &secondError); });
+    a.join();
+    b.join();
+    CHECK(SameAll(first, reference));
+    CHECK(SameAll(second, reference));
+}
+
+// Pools made and destroyed over and over, idle or after a frame.
+void
+TestTaskSystemLifetimes()
+{
+    std::string error;
+    const Wide wide = BuildWide(6, 1);
+    const std::vector<Vec3> reference = RunWide(wide, nullptr, 1, &error);
+    for (size_t i = 0; i < 200; ++i) {
+        auto tasks = RigExecCreateThreadTaskSystem(1 + i % 6);
+        if (i % 2)
+            CHECK(SameAll(RunWide(wide, tasks.get(), 1, &error), reference));
+    }
+}
+
+struct ScheduleProbe {
+    static constexpr uint32_t kLevels = 40;
+    static constexpr uint32_t kShared = 9;
+    std::vector<uint32_t> sharedStart, shared, callerStart, caller;
+    /// Per level: tasks finished, and tasks that started before the level
+    /// below had finished.
+    std::unique_ptr<std::atomic<uint32_t>[]> done;
+    std::atomic<uint32_t> early{0};
+    std::atomic<uint32_t> foreignCaller{0};
+    std::atomic<uint32_t> ran{0};
+    std::thread::id owner;
+    uint32_t failAt = UINT32_MAX;
+
+    ScheduleProbe() : done(std::make_unique<std::atomic<uint32_t>[]>(kLevels))
+    {
+        sharedStart.push_back(0);
+        callerStart.push_back(0);
+        for (uint32_t level = 0; level < kLevels; ++level) {
+            done[level].store(0);
+            for (uint32_t k = 0; k < kShared; ++k)
+                shared.push_back(level * 100 + k);
+            caller.push_back(level * 100 + 99);
+            sharedStart.push_back(uint32_t(shared.size()));
+            callerStart.push_back(uint32_t(caller.size()));
+        }
+    }
+
+    static bool Run(void *context, uint32_t task)
+    {
+        auto *self = static_cast<ScheduleProbe *>(context);
+        const uint32_t level = task / 100;
+        if (level > 0 && self->done[level - 1].load() != kShared + 1)
+            self->early.fetch_add(1);
+        if (task % 100 == 99 && std::this_thread::get_id() != self->owner)
+            self->foreignCaller.fetch_add(1);
+        self->ran.fetch_add(1);
+        self->done[level].fetch_add(1);
+        return task != self->failAt;
+    }
+
+    RigExecTaskSchedule Schedule()
+    {
+        RigExecTaskSchedule s;
+        s.levelCount = kLevels;
+        s.sharedStart = sharedStart.data();
+        s.shared = shared.data();
+        s.callerStart = callerStart.data();
+        s.caller = caller.data();
+        s.run = &ScheduleProbe::Run;
+        s.context = this;
+        return s;
+    }
+};
+
+// Levels run in order, caller tasks stay on the calling thread, and a
+// failure stops the schedule after its level.
+void
+TestScheduleOrder()
+{
+    for (const size_t threads : ThreadCounts()) {
+        auto tasks = RigExecCreateThreadTaskSystem(threads);
+        for (int round = 0; round < 20; ++round) {
+            ScheduleProbe probe;
+            probe.owner = std::this_thread::get_id();
+            CHECK(tasks->Run(probe.Schedule()));
+            CHECK(probe.early.load() == 0);
+            CHECK(probe.foreignCaller.load() == 0);
+            CHECK(probe.ran.load() ==
+                  ScheduleProbe::kLevels * (ScheduleProbe::kShared + 1));
+        }
+        ScheduleProbe failing;
+        failing.owner = std::this_thread::get_id();
+        failing.failAt = 7 * 100 + 3;
+        CHECK(!tasks->Run(failing.Schedule()));
+        CHECK(failing.ran.load() == 8 * (ScheduleProbe::kShared + 1));
     }
 }
 
@@ -940,6 +1112,10 @@ main()
     TestWindowHistory();
     TestWindowRingRoundTrip();
     TestWindowDeterminism();
+    TestSharedTaskSystem();
+    TestTaskSystemStress();
+    TestTaskSystemLifetimes();
+    TestScheduleOrder();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

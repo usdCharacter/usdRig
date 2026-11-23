@@ -1,6 +1,7 @@
 #include "rigExec/api/evaluator.h"
 #include "rigExec/internal/program/program.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <cstring>
@@ -172,8 +173,12 @@ struct RigExecEvaluatorState {
     /// Per batch run: whether it failed and why.
     std::vector<uint8_t> failed;
     std::vector<std::string> errors;
-    /// Pure batches of the level being run.
-    std::vector<uint32_t> parallel;
+    /// The program's batches by level, as the task system takes them:
+    /// owner-thread batches run on the caller, the rest anywhere.
+    std::vector<uint32_t> sharedStart;
+    std::vector<uint32_t> shared;
+    std::vector<uint32_t> callerStart;
+    std::vector<uint32_t> caller;
     RigExecTapList tapSet;
     std::vector<ResolvedTap> taps;
     RigExecTapCallback tapCallback = nullptr;
@@ -216,10 +221,29 @@ struct RigExecEvaluatorState {
         }
     }
 
-    static void RunParallel(void *context, size_t i)
+    static bool RunTask(void *context, uint32_t b)
     {
         auto *self = static_cast<RigExecEvaluatorState *>(context);
-        self->RunBatch(self->parallel[i]);
+        self->RunBatch(b);
+        return !self->failed[b];
+    }
+
+    void BuildSchedule()
+    {
+        const RigExecProgram &p = *program;
+        const size_t levelCount =
+            p.levelBatches.empty() ? 0 : p.levelBatches.size() - 1;
+        sharedStart.assign(1, 0);
+        callerStart.assign(1, 0);
+        shared.clear();
+        caller.clear();
+        for (size_t level = 0; level < levelCount; ++level) {
+            for (uint32_t b = p.levelBatches[level];
+                 b < p.levelBatches[level + 1]; ++b)
+                (p.batches[b].ownerThread ? caller : shared).push_back(b);
+            sharedStart.push_back(uint32_t(shared.size()));
+            callerStart.push_back(uint32_t(caller.size()));
+        }
     }
 
     /// Runs \p run over \p mask (null runs every node). A failed run leaves
@@ -235,36 +259,29 @@ struct RigExecEvaluatorState {
         }
         current = &run;
         active = mask;
-        const size_t levelCount =
-            p.levelBatches.empty() ? 0 : p.levelBatches.size() - 1;
-        for (size_t level = 0; level < levelCount; ++level) {
-            const uint32_t first = p.levelBatches[level];
-            const uint32_t last = p.levelBatches[level + 1];
-            parallel.clear();
-            for (uint32_t b = first; b < last; ++b) {
-                failed[b] = 0;
-                if (p.batches[b].ownerThread || !tasks)
-                    RunBatch(b);
-                else
-                    parallel.push_back(b);
-            }
-            if (parallel.size() == 1)
-                RunBatch(parallel.front());
-            else if (!parallel.empty())
-                tasks->ParallelFor(parallel.size(),
-                                   &RigExecEvaluatorState::RunParallel, this);
-            // The first failure in batch order, whichever thread hit it.
-            for (uint32_t b = first; b < last; ++b) {
-                if (failed[b]) {
-                    if (error)
-                        *error = errors[b];
-                    for (RigExecWindowPacketPtr &capture : run.captures)
-                        capture.reset();
-                    return false;
-                }
+        std::fill(failed.begin(), failed.end(), uint8_t(0));
+        RigExecTaskSchedule schedule;
+        schedule.levelCount = sharedStart.size() - 1;
+        schedule.sharedStart = sharedStart.data();
+        schedule.shared = shared.data();
+        schedule.callerStart = callerStart.data();
+        schedule.caller = caller.data();
+        schedule.run = &RigExecEvaluatorState::RunTask;
+        schedule.context = this;
+        if (tasks ? tasks->Run(schedule)
+                  : RigExecRunTaskScheduleInline(schedule))
+            return true;
+        // The first failure in batch order, whichever thread hit it.
+        for (size_t b = 0; b < p.batches.size(); ++b) {
+            if (failed[b]) {
+                if (error)
+                    *error = errors[b];
+                break;
             }
         }
-        return true;
+        for (RigExecWindowPacketPtr &capture : run.captures)
+            capture.reset();
+        return false;
     }
 };
 
@@ -322,6 +339,7 @@ RigExecEvaluator::_Bind(std::shared_ptr<const RigExecProgram> program,
     state->failed.assign(p.batches.size(), 0);
     state->errors.assign(p.batches.size(), std::string());
     state->program = std::move(program);
+    state->BuildSchedule();
     _state = std::move(state);
     return true;
 }

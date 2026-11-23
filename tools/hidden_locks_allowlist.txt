@@ -104,14 +104,6 @@ libs/rigExec/internal/bakedVerify.cpp | env | TfGetenvBool("RIGEXEC_BAKED_VERIFY
 libs/rigExec/internal/compileGolden.h | env | const char *mode = std::getenv("RIGEXEC_COMPILE_GOLDEN");
 libs/rigExec/internal/compileGolden.h | env | const char *unit = std::getenv("RIGEXEC_GOLDEN_SUITE_NAME");
 
-libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
-libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
-libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::unique_lock<std::mutex> lock(_mutex);
-libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::unique_lock<std::mutex> lock(_mutex);
-libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
-libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::mutex _mutex;
-libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::condition_variable _wake;
-libs/rigExec/internal/exec/threadTaskSystem.cpp | lock | std::condition_variable _done;
 
 libs/rigExec/internal/frameCache.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_FROZEN_STATIC", false);
 libs/rigExec/internal/frameCache.cpp | lock | std::lock_guard<std::mutex> lock(_callbackMutex);

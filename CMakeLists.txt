@@ -181,6 +181,7 @@ add_library(rigExecOpCore SHARED
     libs/rigExec/internal/registry/registry.cpp
     libs/rigExec/internal/compile/rigDesc.cpp
     libs/rigExec/internal/compile/compile.cpp
+    libs/rigExec/internal/exec/addressWait.cpp
     libs/rigExec/internal/exec/evaluator.cpp
     libs/rigExec/internal/exec/threadTaskSystem.cpp)
 target_compile_features(rigExecOpCore PUBLIC cxx_std_17)

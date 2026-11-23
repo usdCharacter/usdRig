@@ -21,8 +21,9 @@ struct RigExecEvaluatorState;
 
 struct RigExecEvaluatorOptions {
     /// Worker threads that ops with no dependency on each other can run on.
-    /// The evaluator borrows them, so they must outlive it. Leave null to
-    /// run everything on the calling thread.
+    /// The evaluator borrows them, so they must outlive it; evaluators on
+    /// different threads may share one. Leave null to run everything on the
+    /// calling thread.
     RigExecTaskSystem *tasks = nullptr;
 };
 

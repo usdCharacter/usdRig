@@ -13,4 +13,6 @@ if (WIN32)
         rigExecEvalCore)
     # The GPU worker's hidden OpenGL context.
     target_link_libraries(rigExecGpu PRIVATE opengl32 user32 gdi32)
+    # WaitOnAddress and WakeByAddressAll for the op core's task system.
+    target_link_libraries(rigExecOpCore PRIVATE synchronization)
 endif()
