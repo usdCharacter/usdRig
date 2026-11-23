@@ -590,6 +590,9 @@ def TestSharedLayerPythonLeavesIndependentField():
 
 
 def TestInterleavedEditorHistory():
+    """A commit from the editor between two of a reply's changes keeps the
+    history in the order the changes were made: the reply writes after the
+    editor, so its later change is the newest step."""
     stage = _Stage()
     root = stage.GetRootLayer()
     container = _CountingContainer()
@@ -607,14 +610,16 @@ def TestInterleavedEditorHistory():
     text, failed = box.call('change_stage', {'changes': [
         {'action': 'set_attr', 'path': '/Char/Ctl', 'name': 'x',
          'value': 4.0}]})
-    _Check(failed and len(container.stack.pushed) == 2,
-           'interleaved editor write did not close reply: %s' % text)
-    container.stack.Undo()
-    _Check(stage.GetAttributeAtPath(path).Get() == 2.0,
-           'undo editor did not restore Assistant value')
-    container.stack.Undo()
-    _Check(stage.GetAttributeAtPath(path).Get() == 1.0,
-           'undo Assistant did not restore original value')
+    _Check(not failed and len(container.stack.pushed) == 3,
+           'the change after the editor commit is not its own step: %s'
+           % text)
+    _Check(len(container.stack.LastEdit().edits) == 1,
+           'the reply later change is not a step of its own')
+    for expected in (3.0, 2.0, 1.0):
+        container.stack.Undo()
+        _Check(stage.GetAttributeAtPath(path).Get() == expected,
+               'undo took back the wrong change, expected %g' % expected)
+    _Check(not container.stack.CanUndo(), 'the reply left extra steps')
 
 
 def TestReferencedMoves():
