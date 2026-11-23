@@ -1,30 +1,28 @@
-// rigExecRuntime loader conformance: bake representative baking fixtures in-process
-// at the probe time, open the bytes with the zero-USD reader, and check
-// every step's label as the reader names it in error text against the
-// program's, and malformed-input refusal, including a truncated file, the
-// old container, another file identifier or format version, a step graph
-// with a predecessor after its step, step and cluster indices past their
-// tables, a cluster graph with a cycle, static tables that do not match
-// the program, and point bindings out of range, of another count or input,
-// or read by a step that does not declare them. The phase fixtures under
-// tests/fixtures (frame records, solver records, per-volume placements)
-// bake at time 1 with every label matching, and refuse frame records and
-// record lists out of range, out of order or undeclared, the retired
-// snapshot domain and step, the whole-map placement, a placement of a slot
-// that is no volume, and the previous format version with its re-export
-// message. Skin layouts the sparse form cannot hold are stored raw, with
-// their authored arrays, and play back as live baked runs them; Open
-// refuses layouts and chunk tables edited out of their forms. Then: a
-// fresh reader's defaults against a fresh evaluator at the bake time
-// (every output, the diagnostics and the counters), twice,
-// and the input API -- the inputs' names, lookup and defaults, the table's
-// control avar and operator input found as inputs, refusals, a set that
-// moves the outputs, a reset, and token text the file lacks or holds as
-// the empty token. Last, on a bake at the table's first frame:
-// the input sampler drives a fresh reader along the table's frames (an
-// `inputs` row) or at the bake time (a `static` row), each run against a
-// fresh evaluator's generation at that time, actual operation counts and diagnostics
-// included.
+// rigExecRuntime loader conformance: bake representative baking fixtures
+// in-process at the probe time, open the bytes with the reader, and check every
+// step's label as the reader names it in error text against the program's, and
+// malformed-input refusal, including a truncated file, the old container,
+// another file identifier or format version, a step graph with a predecessor
+// after its step, step and cluster indices past their tables, a cluster graph
+// with a cycle, static tables that do not match the program, and point bindings
+// out of range, of another count or input, or read by a step that does not
+// declare them. The phase fixtures under tests/fixtures (frame records, solver
+// records, per-volume placements) bake at time 1 with every label matching, and
+// refuse frame records and record lists out of range, out of order or
+// undeclared, the retired snapshot domain and step, the whole-map placement, a
+// placement of a slot that is no volume, and the previous format version with
+// its re-export message. Skin layouts the sparse form cannot hold are stored
+// raw, with their authored arrays, and play back as live baked runs them; Open
+// refuses layouts and chunk tables edited out of their forms. Then: a fresh
+// reader's defaults against a fresh evaluator at the bake time (every output,
+// the diagnostics and the counters), twice, and the input API -- the inputs'
+// names, lookup and defaults, the table's control avar and operator input found
+// as inputs, refusals, a set that moves the outputs, a reset, and token text
+// the file lacks or holds as the empty token. Last, on a bake at the table's
+// first frame: the input sampler drives a fresh reader along the table's frames
+// (an `inputs` row) or at the bake time (a `static` row), each run against a
+// fresh evaluator's generation at that time, actual operation counts and
+// diagnostics included.
 #include "rigExecBake/bake.h"
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"

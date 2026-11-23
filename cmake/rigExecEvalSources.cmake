@@ -1,8 +1,6 @@
-# rigExecEval: the evaluation layer. Domain bodies, mover and solver
-# execution, weight packets, upstream and windowed reads, and the GPU
-# translation jobs until they move to rigExecGpu. A build boundary, not a
-# shipped library: the objects are composed into librigExec by the root
-# list, and this target is never installed, exported or linked.
+# rigExecEval: the evaluation layer. A build boundary, not a shipped library:
+# the objects are composed into librigExec by the root list, and this target is
+# never installed, exported or linked.
 add_library(rigExecEval OBJECT
     libs/rigExec/internal/bakedGeometry.cpp
     libs/rigExec/internal/bakedHarmonics.cpp

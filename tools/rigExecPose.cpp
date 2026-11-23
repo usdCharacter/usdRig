@@ -960,8 +960,6 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
         }
     }
 
-    // Every frame: the stage's values of the binary's Animated inputs at
-    // t, then the run, against the native evaluator's generation at t.
     size_t matched = 0;
     _SampledCheck sampled;
     for (UsdTimeCode frame : frames) {

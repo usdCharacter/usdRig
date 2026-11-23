@@ -4646,9 +4646,9 @@ TestSingleChainIkOwnInputsMoveOverTimeAndUnderDrag()
     }
 }
 
-// rigExec:orientationMode "preserve" reaches the baked runtime: the
-// .rigexec file carries it, and the zero-USD solve keeps each joint's
-// orientation relative to its bone as the native solve does.
+// rigExec:orientationMode "preserve" reaches the baked runtime: the .rigexec
+// file carries it, and the solve keeps each joint's orientation relative to its
+// bone as the native solve does.
 static void
 TestSingleChainIkPreserveOrientationBaked()
 {

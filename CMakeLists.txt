@@ -1411,7 +1411,6 @@ add_test(NAME testRigExecOpPayloads COMMAND testRigExecOpPayloads)
 set_tests_properties(testRigExecOpPayloads PROPERTIES LABELS "fast")
 
 # Host-side bridge from translated USD properties to op nodes; not installed.
-# Step 10 folds it into rigExecUsd.
 add_library(rigExecSceneOps STATIC libs/rigExecScene/propertyOps.cpp)
 target_link_libraries(rigExecSceneOps PUBLIC rigExec rigExecScene
     rigExecBuiltins PRIVATE rigExecMath)
@@ -1572,7 +1571,6 @@ target_compile_definitions(testRigExecRuntimeLoader PRIVATE
 add_test(NAME testRigExecRuntimeLoader COMMAND testRigExecRuntimeLoader
     "${CMAKE_CURRENT_SOURCE_DIR}/examples")
 
-# Compare native graph and runtime publications for each domain.
 add_executable(testRigExecRuntimePose tests/testRigExecRuntimePose.cpp)
 target_link_libraries(testRigExecRuntimePose PRIVATE rigExecRuntime rigExecBake rigExecSampler)
 target_include_directories(testRigExecRuntimePose PRIVATE
@@ -1627,12 +1625,6 @@ add_test(NAME testRigExecRuntimeGeometryFineClusters
 set_tests_properties(testRigExecRuntimeGeometryFineClusters PROPERTIES
     ENVIRONMENT "RIGEXEC_BAKED_GRAIN_US=0")
 
-# Inputs set on a binary against the same values authored in the session
-# layer in native graph evaluation: example inputs, held
-# space-switch indices and a ladder input a switch recomposes from; and
-# the array inputs the export lists (lattice cage, rest points, chain base,
-# skin layout, painted weights, topology, bind coordinates, blend sample
-# points, a gathered curve), authored and sampled.
 add_executable(testRigExecRuntimeInputs tests/testRigExecRuntimeInputs.cpp)
 target_link_libraries(testRigExecRuntimeInputs PRIVATE
     rigExec rigExecBake rigExecRuntime rigExecSampler)
@@ -1669,16 +1661,11 @@ target_compile_definitions(testRigExecBinary PRIVATE
 add_test(NAME testRigExecBinary COMMAND testRigExecBinary
     "${CMAKE_CURRENT_SOURCE_DIR}/examples")
 
-# RIG names a stage under examples/, STAGE any other stage by full path.
-# The test bakes the stage once, at TIME (default: the first of FRAMES), and
-# compares binary and native graph publications: defaults at TIME, then
-# every frame of FRAMES with the binary's Animated inputs sampled from the
-# stage, then two drags of each input DRAGS names (a comma-separated list of
-# <prim>.<attr>) against the same value authored in the session layer.
-# CLASS is `inputs` (every animated source is an input, so the binary
-# follows the stage at every frame) or `static` (an animated source is
-# static data the binary holds at TIME, so it verifies at TIME alone, plus
-# the drags); see tests/exampleFixtures.cmake.
+# RIG names a stage under examples/, STAGE any other stage by full path. CLASS
+# is `inputs` (every animated source is an input, so the binary follows the
+# stage at every frame) or `static` (an animated source is static data the
+# binary holds at TIME, so it verifies at TIME alone, plus the drags); see
+# tests/exampleFixtures.cmake.
 function(rigexec_add_verify_binary_test)
     cmake_parse_arguments(A ""
         "NAME;RIG;STAGE;FRAMES;TIME;CLASS;DRAGS"
@@ -1841,10 +1828,8 @@ rigexec_add_verify_binary_test(NAME volume_placements
     FRAMES 1,5,10 CLASS inputs
     DRAGS "/PlacementAsset/Rig/Controls/ACtl.avars:rz,/PlacementAsset/Rig/Controls/BCtl.avars:rz")
 
-# AtPrim read phases on rigExec:transform, read in the fold through the
-# FrameMatrix steps' records: a constraint's record, a disabled exit that
-# still records, and lists that fall through to an older record. A drag on
-# Dial moves one reader's weight; a drag on Late re-runs C3's record alone.
+# A drag on Dial moves one reader's weight; a drag on Late re-runs C3's record
+# alone.
 rigexec_add_verify_binary_test(NAME frame_record_fallbacks
     STAGE "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/frame_record_fallbacks.usda"
     FRAMES 1,4,8 CLASS inputs
@@ -1951,7 +1936,6 @@ add_executable(testRigExecWeightFields tests/testRigExecWeightFields.cpp)
 target_link_libraries(testRigExecWeightFields PRIVATE rigExecMath)
 add_test(NAME testRigExecWeightFields COMMAND testRigExecWeightFields)
 
-# The baked evaluation mode against the dynamic path, on the shipped biped.
 add_executable(testRigExecBakedMode tests/testRigExecBakedMode.cpp)
 target_link_libraries(testRigExecBakedMode PRIVATE rigExec)
 target_compile_definitions(testRigExecBakedMode PRIVATE ${_rigexec_schema_resource_define})
@@ -2431,12 +2415,6 @@ add_test(NAME testRigExecRestOps COMMAND testRigExecRestOps
 rigexec_add_graph_test(testRigExecRestOps CONE_VERIFY
     "${CMAKE_CURRENT_SOURCE_DIR}/examples")
 
-# Upstream inputs through the evaluator API: authored-level values in the
-# dynamic walk and the baked program, each equal to a stage authoring the
-# value and back to the authored pose once lifted; the dropped keys; the
-# interim bake guard; the admission sets equal to the exporter's listed
-# inputs and oracle-read objects; and a .rigexec playback session admitting,
-# dropping and publishing as live does.
 add_executable(testRigExecUpstreamInputs tests/testRigExecUpstreamInputs.cpp)
 target_link_libraries(testRigExecUpstreamInputs PRIVATE
     rigExecBake rigExecImaging rigExecRuntime rigExecSampler)

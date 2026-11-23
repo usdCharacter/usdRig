@@ -1,9 +1,8 @@
-// USD-free playback of the checked-in minimal program. With
-// RIGEXEC_UPDATE_FIXTURES=1 it rewrites minimal.rigexec instead.
-// The bytes are the smallest file the format validator accepts: empty
-// tables, rig path /Rig, no steps. This test rebuilds that file and
-// compares it to the fixture, opens and executes the fixture, and checks
-// that malformed buffers are refused.
+// Playback of the checked-in minimal program. With RIGEXEC_UPDATE_FIXTURES=1 it
+// rewrites minimal.rigexec instead. The bytes are the smallest file the format
+// validator accepts: empty tables, rig path /Rig, no steps. This test rebuilds
+// that file and compares it to the fixture, opens and executes the fixture, and
+// checks that malformed buffers are refused.
 #include "rigExecBinary/format.h"
 #include "rigExecBinary/manifest.h"
 #include "rigExecRuntime/runtime.h"

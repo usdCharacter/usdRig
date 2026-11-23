@@ -8650,17 +8650,15 @@ TestClothConstraintGuides()
 }
 
 // QUERY CONTRACT. SnapshotAtTimeWithoutPublishing (frames on demand,
-// docs/specs/frames-on-demand.md) answers one frame's pose WITHOUT
-// publishing it: the store keeps the generation it had, the generation
-// counter is not consumed, the results index delivers no notice, the GPU
-// deform history is not touched, and the query's own snapshot carries no
-// generation stamp (its Describes() is false -- stamping is the
-// publisher's, and the query's miss on it is a preserved quirk). The
-// 'evaluated' flag says truthfully whether the evaluator ran: false on a
-// cache serve, true on the live query, and a miss with evaluate=false
-// answers false without evaluating. Interactive overrides refuse the
-// query outright. These pins run through the public surface only, so the
-// bridge decomposition must keep them green.
+// docs/specs/frames-on-demand.md) answers one frame's pose WITHOUT publishing
+// it: the store keeps the generation it had, the generation counter is not
+// consumed, the results index delivers no notice, the GPU deform history is not
+// touched, and the query's own snapshot carries no generation stamp (its
+// Describes() is false. The 'evaluated' flag says truthfully whether the
+// evaluator ran: false on a cache serve, true on the live query, and a miss
+// with evaluate=false answers false without evaluating. Interactive overrides
+// refuse the query outright. These pins run through the public surface only, so
+// the bridge decomposition must keep them green.
 static UsdStageRefPtr
 _MakeQueryRig()
 {
@@ -8824,9 +8822,7 @@ TestQuerySnapshotPublicationIsolation()
     CHECK(evaluated);
     CHECK(snap != nullptr);
     if (snap) {
-        // No generation is minted or stamped for a query; the published
-        // generation counter is untouched, so the query snapshot carries
-        // generation 0 and Describes() nothing (preserved quirk).
+        // No generation is minted or stamped for a query.
         CHECK(snap->generation == 0);
         CHECK(!snap->Describes(stage, UsdTimeCode(3.0)));
         CHECK(snap->prims.count(meshPath) == 1);

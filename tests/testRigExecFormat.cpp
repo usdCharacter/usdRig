@@ -1,29 +1,27 @@
-// testRigExecFormat: the single-FlatBuffer .rigexec format on hand-built
-// files. Write -> Open -> Write is byte-identical and keeps every stored bit
-// (signed zeros, NaN payloads, denormals) of every floating-point field
-// kind, value, pool and struct; Open refuses short buffers, the old
-// container, a wrong file identifier, buffers the verifier rejects and
-// other format versions, and buffers whose objects are shared or overlap,
-// takes bytes at any address and keeps none of them, refuses every
-// truncated tail and the named defects, and survives every single-byte
-// flip, vtable flips and many random multi-byte corruptions; writing is
-// deterministic; the validator refuses a smoke set of rule violations, a
-// step or cluster graph playback could not walk, the retired snapshot
-// step and domain, space switches out of resolution order, VolumePlacements
-// steps that do not place one volume each, a failed plugin assembly
-// holding frame bytes, and a presentation without its identifier, orders
-// listed inputs as their composed texts, and handles a path tree 100000
-// prims deep; step labels match the program's; sparse skin topologies
-// encode losslessly and expand back to the layout bit for bit, every layout
-// the sparse form cannot hold is stored raw and verbatim, and the validated
-// flag holds to the evaluator's rules in both directions, in either form;
-// chunk tables hold to the shape the bake cuts, a chain with groups'
-// (format 20: Range and Whole revisions, gates and the private constants
-// they rest on) among them; array inputs (slots of each
-// array tag, their pool and layout defaults, the reads bound to them, and
-// the chain base, layout, painted and oracle slots) round-trip bit for bit,
-// and each rule of theirs refuses its violation with its exact message.
-// USD-free, like the format.
+// testRigExecFormat: the single-FlatBuffer .rigexec format on hand-built files.
+// Write -> Open -> Write is byte-identical and keeps every stored bit (signed
+// zeros, NaN payloads, denormals) of every floating-point field kind, value,
+// pool and struct; Open refuses short buffers, the old container, a wrong file
+// identifier, buffers the verifier rejects and other format versions, and
+// buffers whose objects are shared or overlap, takes bytes at any address and
+// keeps none of them, refuses every truncated tail and the named defects, and
+// survives every single-byte flip, vtable flips and many random multi-byte
+// corruptions; writing is deterministic; the validator refuses a smoke set of
+// rule violations, a step or cluster graph playback could not walk, the retired
+// snapshot step and domain, space switches out of resolution order,
+// VolumePlacements steps that do not place one volume each, a failed plugin
+// assembly holding frame bytes, and a presentation without its identifier,
+// orders listed inputs as their composed texts, and handles a path tree 100000
+// prims deep; step labels match the program's; sparse skin topologies encode
+// losslessly and expand back to the layout bit for bit, every layout the sparse
+// form cannot hold is stored raw and verbatim, and the validated flag holds to
+// the evaluator's rules in both directions, in either form; chunk tables hold
+// to the shape the bake cuts, a chain with groups' (format 20: Range and Whole
+// revisions, gates and the private constants they rest on) among them; array
+// inputs (slots of each array tag, their pool and layout defaults, the reads
+// bound to them, and the chain base, layout, painted and oracle slots)
+// round-trip bit for bit, and each rule of theirs refuses its violation with
+// its exact message.
 #include "rigExecBinary/format.h"
 #include "rigExecBinary/manifest.h"
 #include "rigExecBinary/stepGraph.h"

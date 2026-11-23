@@ -1,6 +1,3 @@
-// The .rigexec manifest (format 33): a file's op ordinals are read through
-// its manifest, older files get the format-32 table, and an id this build
-// does not know is refused at Open.
 #include "rigExecBinary/format.h"
 #include "rigExecBinary/manifest.h"
 
@@ -133,7 +130,6 @@ TestRefusals()
         CHECK(!RigExecManifestValidate(file, &error));
     }
     {
-        // Older files need none, and a writer refuses a foreign one.
         fb::RigExecWireFile file = Permuted();
         file.formatVersion = 32;
         CHECK(!RigExecManifestValidate(file, &error));
