@@ -2,10 +2,25 @@
 // Installed/custom observation hosts opt in by compiling this maintained file.
 #include "rigExec/internal/observerHost.h"
 #include "rigExec/internal/oracleDispatch.h"
+
+#include "pxr/base/work/detachedTask.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 namespace {
+// OpenUSD destroys layer data on detached tasks. On Windows, ExitProcess kills
+// a worker mid-destroy while it holds heap or C runtime locks that DLL teardown
+// and its stdio flush then wait on: the process hangs, or ends with its
+// buffered output lost.
+void
+WaitForDetachedWork()
+{
+    PXR_WORK_IMPL_NAMESPACE_USING_DIRECTIVE;
+    pxr::WorkTBB_GetDetachedDispatcher().Wait();
+}
+// Registered first, so it runs after the observers complete.
+const bool detachedWorkJoined = std::atexit(WaitForDetachedWork) == 0;
 void
 CompleteObservers()
 {
