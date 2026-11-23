@@ -38,9 +38,6 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExec {
 
-// Named only: the first two are defined in types.h, the third in
-// moverPacket.h, RigExecWireBasis in rigExecMath/geometryKernels.h; the
-// caches hold them by pointer or reference.
 struct RigExecSkinTopology;
 struct RigExecBlendSampleLayout;
 struct RigExecMoverParameters;

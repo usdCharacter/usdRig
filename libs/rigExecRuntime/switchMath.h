@@ -2,8 +2,8 @@
 // GfTransform's decomposition, transform blending, the twist and swing
 // rotation filters, axis masks and the round trip through point landmarks.
 // Bit-identical ports of the native program's (solverKernels.cpp,
-// rigExecMath/pointFrame.cpp). Header-only and USD-free, so the runtime and
-// the op libraries run one definition.
+// rigExecMath/pointFrame.cpp). Header-only, so the runtime and the op
+// libraries run one definition.
 #ifndef RIGEXEC_RUNTIME_SWITCH_MATH_H
 #define RIGEXEC_RUNTIME_SWITCH_MATH_H
 
