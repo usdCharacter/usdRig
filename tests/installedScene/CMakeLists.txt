@@ -137,7 +137,7 @@ add_dependencies(testRigExecInstalledOpPlugins testOffsetOps)
 add_test(NAME testRigExecInstalledOpPlugins
     COMMAND testRigExecInstalledOpPlugins good "${installedOffsetOpsResources}"
         "$<TARGET_FILE:testOffsetOps>"
-        "${CMAKE_CURRENT_BINARY_DIR}/testRigExecInstalledOpPlugins")
+        "${CMAKE_CURRENT_BINARY_DIR}/testRigExecInstalledOpPlugins-scratch")
 set_tests_properties(testRigExecInstalledOpPlugins PROPERTIES
     ENVIRONMENT "PXR_PLUGINPATH_NAME=${rigExec_PLUGIN_DIR}/rigExecSchema/resources"
     ENVIRONMENT_MODIFICATION

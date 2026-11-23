@@ -17,6 +17,7 @@
 /// its libraries to RigExecRegistry::Initialize itself.
 
 #include <string>
+#include <vector>
 
 namespace rigExec {
 
@@ -26,7 +27,12 @@ namespace rigExec {
 /// ABI it was not built for, a library that does not load, an entry symbol
 /// it lacks, libraries the registry refuses, a binder for a schema type
 /// another already binds, or a registry initialized before discovery.
+/// The error ends with the plugins discovery considered.
 bool RigExecEnsureSceneOpRegistry(std::string *error = nullptr);
+
+/// Each plugin discovery considered, as "<name> at <library path>", in
+/// discovery order; empty before the first RigExecEnsureSceneOpRegistry.
+std::vector<std::string> RigExecSceneOpPluginsConsidered();
 
 } // namespace rigExec
 

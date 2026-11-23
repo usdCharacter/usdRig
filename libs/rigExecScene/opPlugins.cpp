@@ -24,9 +24,11 @@ using OpEntry = const RigExecOpLibraryDesc *(*)();
 using TypeEntry = const RigExecTypeLibraryDesc *(*)();
 using BinderEntry = const RigExecExternalOpBinderTable *(*)();
 
-/// What discovery found: the plugins' libraries, in plugin order, the names
-/// of their op libraries, and why any plugin could not join.
+/// What discovery found: the plugins it considered, their libraries, in
+/// plugin order, the names of their op libraries, and why any plugin could
+/// not join.
 struct Discovery {
+    std::vector<std::string> considered;
     RigExecRegistryInit libraries;
     std::vector<std::string> opLibraries;
     std::vector<std::string> errors;
@@ -150,6 +152,8 @@ Discover(Discovery *out)
         if (info == metadata.end())
             continue;
         const std::string who = "op plugin " + plugin->GetName();
+        out->considered.push_back(plugin->GetName() + " at " +
+                                  plugin->GetPath());
         if (!info->second.IsObject()) {
             out->errors.push_back(who + ": " + kKey + " is not an object");
             continue;
@@ -226,8 +230,19 @@ RigExecEnsureSceneOpRegistry(std::string *error)
         error->clear();
         for (const std::string &e : errors)
             *error += (error->empty() ? "" : "; ") + e;
+        std::string considered;
+        for (const std::string &plugin : gDiscovery.considered)
+            considered += (considered.empty() ? "" : ", ") + plugin;
+        *error += "; op plugins considered: " +
+                  (considered.empty() ? std::string("none") : considered);
     }
     return false;
+}
+
+std::vector<std::string>
+RigExecSceneOpPluginsConsidered()
+{
+    return gDiscovery.considered;
 }
 
 } // namespace rigExec

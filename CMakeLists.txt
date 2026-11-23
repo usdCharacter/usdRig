@@ -811,7 +811,7 @@ foreach(_mode good abi symbol late)
         ${_mode}
         "$<TARGET_GENEX_EVAL:testOffsetOps,$<TARGET_PROPERTY:testOffsetOps,RIGEXEC_PLUGIN_RESOURCE_DIR>>"
         "$<TARGET_FILE:testOffsetOps>"
-        "${CMAKE_CURRENT_BINARY_DIR}/testRigExecOpPlugins/${_mode}")
+        "${CMAKE_CURRENT_BINARY_DIR}/testRigExecOpPlugins-scratch/${_mode}")
 endforeach()
 add_executable(testRigExecOpPluginScene tests/testRigExecOpPluginScene.cpp)
 target_link_libraries(testRigExecOpPluginScene PRIVATE rigExec rigExecScene

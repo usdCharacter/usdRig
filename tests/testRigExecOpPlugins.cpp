@@ -15,6 +15,7 @@
 #include "rigExecScene/opPlugins.h"
 #include "rigExecStdTypes/stdTypes.h"
 
+#include "pxr/base/plug/plugin.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/fileUtils.h"
 #include "pxr/usd/usd/schemaRegistry.h"
@@ -38,19 +39,26 @@ int failures = 0;
 
 const char *kSchemaType = "TestOffsetMover";
 
-/// A plugInfo naming \p library with \p abi and \p entry, in \p dir.
+/// A plugInfo naming \p library with \p abi and \p entry, in \p dir,
+/// registered with OpenUSD.
 void
-WritePlugInfo(const std::string &dir, const std::string &library, int abi,
-              const std::string &entry)
+RegisterBroken(const std::string &dir, const std::string &library, int abi,
+               const std::string &entry)
 {
-    TfMakeDirs(dir, -1, true);
-    std::ofstream out(dir + "/plugInfo.json");
-    out << "{\"Plugins\": [{\"Type\": \"library\", \"Name\": "
-           "\"brokenOffsetOps\", \"Root\": \".\", \"ResourcePath\": \".\", "
-           "\"LibraryPath\": \""
-        << library
-        << "\", \"Info\": {\"RigExecOpLibrary\": {\"abiVersion\": " << abi
-        << ", \"entry\": \"" << entry << "\"}}}]}\n";
+    CHECK(TfMakeDirs(dir, -1, true) && TfIsDir(dir));
+    {
+        std::ofstream out(dir + "/plugInfo.json");
+        out << "{\"Plugins\": [{\"Type\": \"library\", \"Name\": "
+               "\"brokenOffsetOps\", \"Root\": \".\", \"ResourcePath\": "
+               "\".\", \"LibraryPath\": \""
+            << library
+            << "\", \"Info\": {\"RigExecOpLibrary\": {\"abiVersion\": " << abi
+            << ", \"entry\": \"" << entry << "\"}}}]}\n";
+        CHECK(out.good());
+    }
+    const PlugPluginPtrVector added =
+        PlugRegistry::GetInstance().RegisterPlugins(dir);
+    CHECK(added.size() == 1 && added[0]->GetName() == "brokenOffsetOps");
 }
 
 /// The op named \p name in the registry, or null.
@@ -122,6 +130,9 @@ Refused(const char *why)
     std::string error;
     CHECK(!RigExecEnsureSceneOpRegistry(&error));
     std::printf("reported: %s\n", error.c_str());
+    for (const std::string &plugin : RigExecSceneOpPluginsConsidered())
+        std::printf("considered: %s\n", plugin.c_str());
+    CHECK(error.find("op plugins considered: ") != std::string::npos);
     CHECK(error.find("brokenOffsetOps") != std::string::npos ||
           error.find("testOffsetOps") != std::string::npos);
     CHECK(error.find(why) != std::string::npos);
@@ -145,14 +156,12 @@ main(int argc, char **argv)
         PlugRegistry::GetInstance().RegisterPlugins(resources);
         Good();
     } else if (mode == "abi") {
-        WritePlugInfo(scratch + "/abi", library, 999,
-                      "testOffsetOps_RigExecOpLibrary");
-        PlugRegistry::GetInstance().RegisterPlugins(scratch + "/abi");
+        RegisterBroken(scratch + "/abi", library, 999,
+                       "testOffsetOps_RigExecOpLibrary");
         Refused("registry ABI");
     } else if (mode == "symbol") {
-        WritePlugInfo(scratch + "/symbol", library,
-                      int(kRigExecRegistryAbiVersion), "noSuchEntry");
-        PlugRegistry::GetInstance().RegisterPlugins(scratch + "/symbol");
+        RegisterBroken(scratch + "/symbol", library,
+                       int(kRigExecRegistryAbiVersion), "noSuchEntry");
         Refused("noSuchEntry");
     } else if (mode == "late") {
         CHECK(RigExecEnsureBuiltinRegistry());
