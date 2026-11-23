@@ -228,6 +228,7 @@ fi
 sources+=(
     "$ROOT/libs/rigExecGraph/opGraph.cpp"
     "$ROOT/libs/rigExecBinary/format.cpp"
+    "$ROOT/libs/rigExecBinary/manifest.cpp"
     "$ROOT/libs/rigExecBinary/transport.cpp"
     "$ROOT/thirdparty/lzma/C/LzmaEnc.c"
     "$ROOT/thirdparty/lzma/C/LzmaDec.c"

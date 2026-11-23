@@ -295,19 +295,21 @@ for name in ("runtimeIncludes.txt", "evalCoreIncludes.txt"):
 # extension. These are the same additions bin/check_runtime_usd_free.sh
 # compiles on top of the two source manifests.
 format_source = os.path.join(usdrig_libs, "rigExecBinary", "format.cpp")
+manifest_source = os.path.join(usdrig_libs, "rigExecBinary", "manifest.cpp")
 transport_source = os.path.join(usdrig_libs, "rigExecBinary", "transport.cpp")
 graph_source = os.path.join(usdrig_libs, "rigExecGraph", "opGraph.cpp")
 lzma_dir = os.path.join(usdrig_root, "thirdparty", "lzma", "C")
 lzma_sources = [os.path.join(lzma_dir, name) for name in
                 ("LzmaEnc.c", "LzmaDec.c", "LzFind.c", "CpuArch.c")]
 if not all(os.path.isfile(source)
-           for source in (format_source, transport_source, graph_source,
-                          *lzma_sources)):
+           for source in (format_source, manifest_source, transport_source,
+                          graph_source, *lzma_sources)):
     print("missing the format reader, portable operation graph, or LZMA "
           "sources under " + usdrig_root)
     raise SystemExit(1)
 runtime_sources.extend((source, False) for source in
-                       (format_source, transport_source, graph_source))
+                       (format_source, manifest_source, transport_source,
+                        graph_source))
 env.Append(CPPPATH=[usdrig_libs, flatbuffers_include, lzma_dir] + include_dirs)
 addon_dir = os.path.join("addons", "rigexec", "src")
 addon_sources = sorted(os.path.join(addon_dir, name)
