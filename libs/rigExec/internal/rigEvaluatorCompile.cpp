@@ -303,11 +303,9 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // whichever nodes survive, and the rebuild below does the same.
     std::unique_ptr<RigExecBakedProgram> retiringBakedProgram =
         std::move(_bakedProgram);
-    _bakedProgramStale = false;
     // A new compiled rig is a new question: whatever refused the last one said
     // nothing about this one, and whatever made its program bail neither.
-    _bakeRefused = false;
-    _bakeRefusalReasons.clear();
+    _programState.Transition(_ProgramState::Edge::CompileBegan);
 
     // The committed footprint answers for the committed digest, and this
     // call is about to replace both: until its own digest is joined, every

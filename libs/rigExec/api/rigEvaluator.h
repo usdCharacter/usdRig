@@ -1659,33 +1659,81 @@ private:
     /// Records the last generation's captures as the history at \p time,
     /// when it read the authored stage (no interactive overrides).
     void _NoteWindowCaptures(UsdTimeCode time);
-    /// Whether _bakedProgram has published a generation.
-    ///
-    /// What a rebuild inherits from its predecessor is the predecessor's
-    /// REPORTED state -- which geometry nodes a consumer has already been
-    /// told were created, what each of them last ran with -- so a program
-    /// that never ran has nothing to hand over, and handing it over anyway
-    /// makes the replacement's first generation claim less work than the
-    /// dynamic path does. See _RebuildBakedProgram.
-    bool _bakedProgramPublished = false;
-    bool _bakedProgramStale = false;
+    /// The exec side's state of _bakedProgram. Owner thread only; changes
+    /// only through Transition, which checks the edge in debug builds.
+    class _ProgramState {
+    public:
+        enum class Edge : uint8_t {
+            /// A generation began; nothing of it ran through the program yet.
+            GenerationBegan,
+            /// The program completed and published a generation.
+            Published,
+            /// A rebuild began: no program of the evaluator has published.
+            RebuildBegan,
+            /// A rebuild ended with \p built, at \p serial, with \p reasons.
+            RebuildEnded,
+            /// What Build reads moved; the program is to be rebuilt.
+            Staled,
+            /// A notice staled the program: an earlier refusal answers for a
+            /// stage that has since changed.
+            NoticeStaled,
+            /// Evaluate took the stale program up for its rebuild.
+            StaleTaken,
+            /// A compile replaces the rig the program described.
+            CompileBegan,
+        };
+        void Transition(Edge edge);
+        void Transition(Edge edge, bool built, uint64_t serial,
+                        std::vector<std::string> reasons);
+        /// Whether the program has published a generation.
+        ///
+        /// What a rebuild inherits from its predecessor is the predecessor's
+        /// REPORTED state -- which geometry nodes a consumer has already
+        /// been told were created, what each of them last ran with -- so a
+        /// program that never ran has nothing to hand over, and handing it
+        /// over anyway makes the replacement's first generation claim less
+        /// work than the dynamic path does. See _RebuildBakedProgram.
+        bool Published() const
+        {
+            return _published;
+        }
+        bool Stale() const
+        {
+            return _stale;
+        }
+        /// Whether the last generation's region ran through the program.
+        bool LastGenerationRanProgram() const
+        {
+            return _lastGenerationRanProgram;
+        }
+        /// Whether a build may run at stage edit serial \p serial: the last
+        /// was refused at another serial or not at all. Compile clears it.
+        bool MayBuildAt(uint64_t serial) const
+        {
+            return !_refused || _refusedSerial != serial;
+        }
+        /// Concrete admission reasons retained for the refused compiled rig.
+        const std::vector<std::string> &RefusalReasons() const
+        {
+            return _refusalReasons;
+        }
+
+    private:
+        bool _published = false;
+        bool _stale = false;
+        bool _lastGenerationRanProgram = false;
+        bool _refused = false;
+        uint64_t _refusedSerial = 0;
+        std::vector<std::string> _refusalReasons;
+    };
+    _ProgramState _programState;
     /// What Build gives range-chain revisions (SetBakedRoleMode): Live but
     /// for the bake, which holds Export with its keep-set.
     RigExecBakedRoleMode _bakedRoleMode = RigExecBakedRoleMode::Live;
     std::set<SdfPath> _bakedExportKeep;
-    /// The last program build was refused at this stage edit serial.
-    /// Evaluate retries only once the serial moves; Compile clears it.
-    bool _bakeRefused = false;
-    uint64_t _bakeRefusedSerial = 0;
-    /// Why it refused, when anyone asked to be told.
-    ///
-    /// Concrete admission reasons retained for the failed compiled rig.
-    std::vector<std::string> _bakeRefusalReasons;
     size_t _bakedProgramBuilds = 0;
     size_t _bakedProgramBuildAttempts = 0;
     size_t _bakedGenerations = 0;
-    /// Whether the last generation's region ran through _bakedProgram.
-    bool _lastGenerationRanProgram = false;
 
     size_t _structureDigest = 0;
     /// See GetStageEditSerial.

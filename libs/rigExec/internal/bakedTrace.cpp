@@ -375,7 +375,7 @@ RigExecBakedProgram::_GetCycleSkips(
 std::vector<RigExecOpTraceEntry>
 RigExecRigEvaluator::GetLastOpTrace() const
 {
-    if (!_lastGenerationRanProgram || !_bakedProgram) {
+    if (!_programState.LastGenerationRanProgram() || !_bakedProgram) {
         return {};
     }
     return _bakedProgram->GetLastOpTrace();

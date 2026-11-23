@@ -18,6 +18,7 @@
 #include "pxr/usd/usd/prim.h"
 
 #include <algorithm>
+#include <cassert>
 
 namespace rigExec {
 
@@ -223,7 +224,7 @@ RigExecRigEvaluator::SetBakedRoleMode(RigExecBakedRoleMode mode,
     _bakedRoleMode = mode;
     _bakedExportKeep = std::move(exportKeep);
     // Build reads both; the standing program was classified without them.
-    _bakedProgramStale = true;
+    _programState.Transition(_ProgramState::Edge::Staled);
 }
 
 RigExecScopedBakedRoleMode::RigExecScopedBakedRoleMode(
@@ -254,7 +255,7 @@ RigExecRigPose
 RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
 {
     TF_PY_ALLOW_THREADS_IN_SCOPE();
-    _lastGenerationRanProgram = false;
+    _programState.Transition(_ProgramState::Edge::GenerationBegan);
     RIGEXEC_PROFILE_SCOPE_CAT(
         _profiler,
         time.IsDefault() ? std::string("Evaluate@default")
@@ -275,7 +276,7 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
     const size_t buildsBeforeSettle = _bakedProgramBuilds;
     bool restBecameVarying = false;
     if (_rigState.Compiled() && _compiledRigRestsConstant &&
-        _bakedProgramStale && !_restEditedProviders.empty()) {
+        _programState.Stale() && !_restEditedProviders.empty()) {
         std::set<SdfPath> chainTargets;
         for (const auto &entry : _propertyChains)
             chainTargets.insert(entry.first);
@@ -292,11 +293,11 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
         if (!_SettleCompiledRig(&pose.diagnostics))
             return pose;
     }
-    if (_bakedProgramStale) {
+    if (_programState.Stale()) {
         // A full structural recompile already published its own compiled rig reason.
         const bool restTransition =
             restBecameVarying && _bakedProgramBuilds == buildsBeforeSettle;
-        _bakedProgramStale = false;
+        _programState.Transition(_ProgramState::Edge::StaleTaken);
         _RebuildBakedProgram(std::move(_bakedProgram));
         if (restTransition && _bakedProgram) {
             // Rest channels become per-frame after the first varying
@@ -307,7 +308,7 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
         }
     }
     if (_rigState.Compiled() && !_bakedProgram &&
-        (!_bakeRefused || _bakeRefusedSerial != _stageEditSerial)) {
+        _programState.MayBuildAt(_stageEditSerial)) {
         _RebuildBakedProgram();
     }
     if (!_upstreamRequested.empty() || !_upstreamAdmitted.empty()) {
@@ -319,9 +320,10 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
     const auto unavailable = [&]() {
         pose.diagnostics.push_back(
             "native program unavailable for compiled rig");
-        pose.diagnostics.insert(pose.diagnostics.end(),
-                                _bakeRefusalReasons.begin(),
-                                _bakeRefusalReasons.end());
+        const std::vector<std::string> &reasons =
+            _programState.RefusalReasons();
+        pose.diagnostics.insert(pose.diagnostics.end(), reasons.begin(),
+                                reasons.end());
     };
     if (!_bakedProgram) {
         unavailable();
@@ -390,8 +392,7 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
     _NoteWindowCaptures(time);
     _rigState.skinTopologyObservationPending = false;
     ++_bakedGenerations;
-    _bakedProgramPublished = true;
-    _lastGenerationRanProgram = true;
+    _programState.Transition(_ProgramState::Edge::Published);
     return pose;
 }
 
@@ -404,11 +405,10 @@ RigExecRigEvaluator::_RebuildBakedProgram(
     // Read before anything can replace the program it describes, and cleared
     // here because from this line on no program of this evaluator has
     // published anything.
-    const bool outgoingPublished = _bakedProgramPublished;
-    _bakedProgramPublished = false;
     // The replacement has answered no generation, so the op trace and op
     // graph accessors describe none until it runs one.
-    _lastGenerationRanProgram = false;
+    const bool outgoingPublished = _programState.Published();
+    _programState.Transition(_ProgramState::Edge::RebuildBegan);
     RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "Compile.Bake", "compile");
     ++_bakedProgramBuildAttempts;
     // An edit during the build makes a refusal transient: key it on the
@@ -446,11 +446,9 @@ RigExecRigEvaluator::_RebuildBakedProgram(
             _bakedProgram->AdoptGeometryStateFrom(*outgoing);
         }
     }
-    // Remembered per stage edit serial so Evaluate does not rebuild per
-    // frame; Evaluate reports the reasons on each frame without a program.
-    _bakeRefused = !_bakedProgram;
-    _bakeRefusedSerial = buildSerial;
-    _bakeRefusalReasons = std::move(reasons);
+    _programState.Transition(_ProgramState::Edge::RebuildEnded,
+                             _bakedProgram != nullptr, buildSerial,
+                             std::move(reasons));
     // Last, once the replacement has taken what it adopts from it.
     _RetireBakedProgram(std::move(outgoing));
 }
@@ -471,6 +469,59 @@ size_t
 RigExecRigEvaluator::GetBakedClustersRunLastGeneration() const
 {
     return _bakedProgram ? _bakedProgram->GetClustersRunLastGeneration() : 0;
+}
+
+void
+RigExecRigEvaluator::_ProgramState::Transition(Edge edge)
+{
+    switch (edge) {
+    case Edge::GenerationBegan:
+        _lastGenerationRanProgram = false;
+        break;
+    case Edge::Published:
+        assert(!_lastGenerationRanProgram);
+        _published = true;
+        _lastGenerationRanProgram = true;
+        break;
+    case Edge::RebuildBegan:
+        _published = false;
+        _lastGenerationRanProgram = false;
+        break;
+    case Edge::RebuildEnded:
+        assert(false && "RebuildEnded carries its outcome");
+        break;
+    case Edge::Staled:
+        _stale = true;
+        break;
+    case Edge::NoticeStaled:
+        _stale = true;
+        _refused = false;
+        _refusalReasons.clear();
+        break;
+    case Edge::StaleTaken:
+        assert(_stale);
+        _stale = false;
+        break;
+    case Edge::CompileBegan:
+        _stale = false;
+        _refused = false;
+        _refusalReasons.clear();
+        break;
+    }
+}
+
+void
+RigExecRigEvaluator::_ProgramState::Transition(Edge edge, bool built,
+                                               uint64_t serial,
+                                               std::vector<std::string> reasons)
+{
+    assert(edge == Edge::RebuildEnded);
+    (void)edge;
+    // Remembered per stage edit serial so Evaluate does not rebuild per
+    // frame; Evaluate reports the reasons on each frame without a program.
+    _refused = !built;
+    _refusedSerial = serial;
+    _refusalReasons = std::move(reasons);
 }
 
 } // namespace rigExec
