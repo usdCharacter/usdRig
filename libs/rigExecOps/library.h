@@ -29,6 +29,8 @@ void RegisterFrameBlendOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterRibbonFramesOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterSplineIkOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterSingleChainIkOps(rigExec::RigExecOpRegistrar &registrar);
+void RegisterSkeleton2dOps(rigExec::RigExecOpRegistrar &registrar);
+void RegisterAutoClavicleOps(rigExec::RigExecOpRegistrar &registrar);
 
 } // namespace rigExecOps
 

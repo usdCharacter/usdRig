@@ -26,6 +26,8 @@ Register(rigExec::RigExecOpRegistrar &registrar)
     RegisterRibbonFramesOps(registrar);
     RegisterSplineIkOps(registrar);
     RegisterSingleChainIkOps(registrar);
+    RegisterSkeleton2dOps(registrar);
+    RegisterAutoClavicleOps(registrar);
 }
 
 const rigExec::RigExecOpLibraryDesc kLibrary = [] {

@@ -24,8 +24,8 @@ RunsOnOps(const RigExecSceneGeometryOp &op)
     return kind == RigExecRevisionOp::BlendShape ||
            RigExecGeometryOpSupported(kind);
 }
-// Decided up front: kinds without an op, a degenerate record and a
-// windowed constraint run natively.
+// Decided up front: a record without an op (a degenerate one, a joint
+// group FK chain), an IK/FK match and a windowed constraint run natively.
 bool
 RunsPoseOnOps(const RigExecSceneOperation &operation)
 {
@@ -34,7 +34,7 @@ RunsPoseOnOps(const RigExecSceneOperation &operation)
     if (const auto *op = std::get_if<RigExecConstraintGraphBinding>(&operation))
         return RigExecConstraintOpSupported(op->structural.record.kind) &&
                !op->match && !op->windowFrames;
-    return false;
+    return std::holds_alternative<RigExecBoundAutoClavicle>(operation);
 }
 // Weight combines always run on the op core.
 bool
@@ -333,7 +333,9 @@ RigExecSceneProgramRuntime::Run(const RigExecSceneProgram &program,
                                      diagnostic);
                 return true;
             } else if constexpr (std::is_same_v<T, RigExecBoundAutoClavicle>)
-                return RigExecRunAutoClavicle(op, &values, error);
+                return RigExecRunAutoClavicle(
+                    op, &values, error,
+                    workspace.poseOnOps ? &workspace.poseRunner : nullptr);
             else if constexpr (std::is_same_v<T, RigExecSceneProviderOp>)
                 return RigExecRunProviderOp(program.layout.providers,
                                             op.originalIndex, &values, error);

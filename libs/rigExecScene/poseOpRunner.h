@@ -1,7 +1,7 @@
 #ifndef RIGEXEC_SCENE_POSE_OP_RUNNER_H
 #define RIGEXEC_SCENE_POSE_OP_RUNNER_H
 
-/// One scene solver or constraint run through the op core. Built on first
+/// One scene solver, constraint or auto clavicle run through the op core. Built on first
 /// use and rebuilt when a setting baked into it moved, so stale settings
 /// never run. Owner-thread state of the scene runtime.
 
@@ -14,10 +14,12 @@
 namespace rigExec {
 
 struct RigExecPoseOpRunner {
+    enum class Built { None, Solver, Constraint, AutoClavicle };
     std::unique_ptr<RigExecEvaluator> evaluator;
-    bool builtSolver = false;
+    Built built = Built::None;
     RigExecSolverOpNode solver;
     RigExecConstraintOpNode constraint;
+    RigExecAutoClavicleOpNode clavicle;
     RigExecPoseOpScratch scratch;
 };
 
@@ -36,6 +38,14 @@ bool RigExecRunConstraintOp(const RigExecConstraintRecord &record,
                             RigExecPoseOpRunner &runner,
                             RigExecConstraintResult *result,
                             std::string *error = nullptr);
+
+/// RigExecAutoClavicleShift on the op core: the shift in \p delta and the
+/// target frame moved by it in \p shifted.
+bool RigExecRunAutoClavicleOp(const RigExecAutoClavicleConstants &constants,
+                              const RigExecAutoClavicleOpInputs &input,
+                              RigExecPoseOpRunner &runner, double delta[3],
+                              GfMatrix4d *shifted,
+                              std::string *error = nullptr);
 
 } // namespace rigExec
 

@@ -274,12 +274,14 @@ rigexec_add_op_library(rigExecOps
         libs/rigExecOps/deform/wireOp.cpp
         libs/rigExecOps/deform/ribbonOp.cpp
         libs/rigExecOps/deform/projectorOps.cpp
+        libs/rigExecOps/constraint/autoClavicleOps.cpp
         libs/rigExecOps/constraint/constraintOps.cpp
         libs/rigExecOps/weight/weightOps.cpp
         libs/rigExecOps/solver/chainSolverOps.cpp
         libs/rigExecOps/solver/frameBlendOps.cpp
         libs/rigExecOps/solver/ribbonFramesOps.cpp
         libs/rigExecOps/solver/singleChainIkOps.cpp
+        libs/rigExecOps/solver/skeleton2dOps.cpp
         libs/rigExecOps/solver/splineIkOps.cpp
     USES_TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes)
 target_link_libraries(rigExecOps PRIVATE rigExecEvalCore)

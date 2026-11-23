@@ -8,9 +8,11 @@
 
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/rigDesc.h"
+#include "rigExecMath/autoClavicleKernel.h"
 #include "rigExecScene/constraintProgram.h"
 #include "rigExecScene/solverProgram.h"
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -29,7 +31,9 @@ struct RigExecSolverOpNode {
     RigExecInputId posed, restCurve, jointRests, jointRestLive;
     RigExecInputId restJoints, restRoot, restMid, restEnd, mid, volumeWeights,
         preserveVolume, midFollow, roll;
-    RigExecOutputId out;
+    RigExecInputId startPose, externalRests, externalPoses, channels, selectors,
+        groupSelectors;
+    RigExecOutputId out, result;
     /// A frame blend: one node per element.
     struct Blend {
         RigExecInputId a, b, rest, weight, outRest;
@@ -44,12 +48,16 @@ struct RigExecSolverOpNode {
     bool restLengthChain = false, aimRootTangent = false, logScale = false;
     std::vector<char> blendLive;
     int sampleCount = 0;
+    bool hasStart = false;
+    std::vector<uint32_t> bone2dOrder;
+    std::vector<RigExecBone2dSetup> bone2dSetup;
+    std::vector<int32_t> spaceSources, targetCandidates, groupMembers;
+    std::vector<RigExecJointGroup> groups;
 };
 
 /// True for the solver records this bridge maps. The others, and a
-/// degenerate record, run natively: Skeleton2d, an FK chain with joint
-/// groups, a frame blend whose rotation blend was refused and a spline IK
-/// without joints.
+/// degenerate record, run natively: an FK chain with joint groups, a frame
+/// blend whose rotation blend was refused and a spline IK without joints.
 bool RigExecSolverOpSupported(const RigExecSolverRecord &record);
 
 /// Host-side port values, kept between frames so a write reuses their
@@ -103,12 +111,15 @@ bool RigExecWriteSolverOpInputs(const RigExecSolverRecord &record,
                                 RigExecEvaluator *evaluator,
                                 std::string *error = nullptr);
 
-/// Reads the evaluated nodes into \p output, as RigExecRunSolver gives it.
+/// Reads the evaluated nodes into \p output, as RigExecRunSolver gives it,
+/// with its validity in \p valid and, where invalid, its reason in
+/// \p error. False where the nodes have no output.
 bool RigExecReadSolverOpOutput(const RigExecSolverRecord &record,
                                const RigExecSolverInputs &input,
                                const RigExecSolverOpNode &node,
                                const RigExecEvaluator &evaluator,
-                               RigExecPointFrameArray *output);
+                               RigExecPointFrameArray *output, bool *valid,
+                               std::string *error = nullptr);
 
 /// A constraint's op node and its host-written ports.
 struct RigExecConstraintOpNode {
@@ -149,6 +160,52 @@ bool RigExecReadConstraintOpOutput(const RigExecConstraintRecord &record,
                                    const RigExecConstraintOpNode &node,
                                    const RigExecEvaluator &evaluator,
                                    RigExecConstraintResult *result);
+
+/// One frame of an auto clavicle as RigExecRunAutoClavicle reads it: its
+/// frames as matrices in RigExecBoundAutoClavicle::frames order, null where
+/// unbound, and its scalars with their fallbacks applied.
+struct RigExecAutoClavicleOpInputs {
+    std::array<const GfMatrix4d *, 13> frames{};
+    double ikBlend = 0.0, amount = 1.0;
+    bool hasLimb = false;
+    double stretch = 1.0, pin = 0.0, upperScale = 1.0, lowerScale = 1.0,
+           softDistance = 0.0, scaleCalibration = 0.0, twistDegrees = 0.0,
+           upperOffset = 0.0, lowerOffset = 0.0;
+};
+
+/// An auto clavicle's op node and its host-written ports.
+struct RigExecAutoClavicleOpNode {
+    RigExecInputId target, pivot, anchor, anchorDefault, fkPosed, fkDefault,
+        ikTarget, pole, ikBlend, amount, limbRests, stretch, pin, upperScale,
+        lowerScale, softDistance, scaleCalibration, twist, upperOffset,
+        lowerOffset;
+    RigExecOutputId delta, out;
+    /// The settings baked into the payload and the bound ports.
+    RigExecAutoClavicleConstants constants;
+    bool hasLimb = false, hasIkTarget = false, hasPole = false;
+};
+
+/// Adds the auto clavicle's op node, its payload from \p constants and the
+/// limb and optional frames \p input binds.
+bool RigExecAddAutoClavicleOp(const RigExecAutoClavicleConstants &constants,
+                              const RigExecAutoClavicleOpInputs &input,
+                              RigExecRigDescBuilder *builder,
+                              RigExecAutoClavicleOpNode *node,
+                              std::string *error = nullptr);
+
+/// Writes one frame's values. False, writing nothing, where a setting
+/// baked into the node differs: the node must then be rebuilt.
+bool RigExecWriteAutoClavicleOpInputs(
+    const RigExecAutoClavicleConstants &constants,
+    const RigExecAutoClavicleOpInputs &input,
+    const RigExecAutoClavicleOpNode &node, RigExecPoseOpScratch *scratch,
+    RigExecEvaluator *evaluator, std::string *error = nullptr);
+
+/// The shift RigExecAutoClavicleShift gives, and the target frame moved by
+/// it. False where the node has no output.
+bool RigExecReadAutoClavicleOpOutput(const RigExecAutoClavicleOpNode &node,
+                                     const RigExecEvaluator &evaluator,
+                                     double delta[3], GfMatrix4d *shifted);
 
 } // namespace rigExec
 

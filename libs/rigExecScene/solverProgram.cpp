@@ -207,8 +207,7 @@ RigExecRunSolver(const RigExecSolverRecord &s, const RigExecSolverInputs &input,
             input.bone2dChannels.size() != n ||
             input.controls.size() != s.controlRests.size()) {
             if (error)
-                *error = "2D skeleton bone, rest, channel and parent-space "
-                         "counts differ";
+                *error = kRigExecSkeleton2dCountsDiffer;
             return false;
         }
         const RigExecSkeleton2dStatic extra = RigExecSkeleton2dStaticOf(
@@ -238,22 +237,18 @@ RigExecRunSolver(const RigExecSolverRecord &s, const RigExecSolverInputs &input,
             RigExecPointFrameValid, &scratch->bone2d, &aggregate.frames);
         if (result == RigExecSkeleton2dResult::Malformed) {
             if (error)
-                *error = "2D skeleton solve order is malformed";
+                *error = kRigExecSkeleton2dMalformed;
             return false;
         }
         aggregate.rests = s.jointRests;
         if (result == RigExecSkeleton2dResult::NotPlanar) {
             if (error)
-                *error = "a 2D bone's rest (its rest:space, or the frame a "
-                         "pose step below the skeleton wrote) or parent space "
-                         "is not a rotation about +Z in the skeleton's plane; "
-                         "publishing the rests";
+                *error = kRigExecSkeleton2dNotPlanar;
             return false;
         }
         if (result == RigExecSkeleton2dResult::NotFinite) {
             if (error)
-                *error = "2D skeleton solve failed (a non-finite channel); "
-                         "publishing setup frames";
+                *error = kRigExecSkeleton2dNotFinite;
             return false;
         }
         return true;

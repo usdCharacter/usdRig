@@ -54,12 +54,13 @@ RigExecRunSolverOp(const RigExecSolverRecord &record,
     case RigExecSolverOpAnswer::Run:
         break;
     }
-    const bool built = runner.evaluator && runner.builtSolver &&
+    const bool built = runner.evaluator &&
+                       runner.built == RigExecPoseOpRunner::Built::Solver &&
                        runner.solver.kind == record.kind;
     const bool ready = Ready(
         runner, built,
         [&](RigExecRigDescBuilder &builder) {
-            runner.builtSolver = true;
+            runner.built = RigExecPoseOpRunner::Built::Solver;
             return RigExecAddSolverOp(record, input, &builder, &runner.solver,
                                       error);
         },
@@ -75,17 +76,15 @@ RigExecRunSolverOp(const RigExecSolverRecord &record,
     if (!runner.evaluator->Evaluate(&why)) {
         // A curve or twist that does not solve: native's empty aggregate.
         if (record.kind == RigExecSolverKind::Ribbon ||
-            record.kind == RigExecSolverKind::TwistDistribution) {
-            if (error)
-                error->clear();
+            record.kind == RigExecSolverKind::TwistDistribution)
             return true;
-        }
         return Fail(error, why);
     }
+    bool valid = true;
     if (!RigExecReadSolverOpOutput(record, input, runner.solver,
-                                   *runner.evaluator, output))
+                                   *runner.evaluator, output, &valid, error))
         return Fail(error, "solver op has no output");
-    return true;
+    return valid;
 }
 
 bool
@@ -98,12 +97,13 @@ RigExecRunConstraintOp(const RigExecConstraintRecord &record,
         return Fail(error, "null constraint output");
     result->chain.clear();
     result->frame = input.incoming;
-    const bool built = runner.evaluator && !runner.builtSolver &&
+    const bool built = runner.evaluator &&
+                       runner.built == RigExecPoseOpRunner::Built::Constraint &&
                        runner.constraint.kind == record.kind;
     const bool ready = Ready(
         runner, built,
         [&](RigExecRigDescBuilder &builder) {
-            runner.builtSolver = false;
+            runner.built = RigExecPoseOpRunner::Built::Constraint;
             return RigExecAddConstraintOp(record, input, &builder,
                                           &runner.constraint, error);
         },
@@ -118,6 +118,35 @@ RigExecRunConstraintOp(const RigExecConstraintRecord &record,
     if (!RigExecReadConstraintOpOutput(record, input, runner.constraint,
                                        *runner.evaluator, result))
         return Fail(error, "constraint op has no output");
+    return true;
+}
+
+bool
+RigExecRunAutoClavicleOp(const RigExecAutoClavicleConstants &constants,
+                         const RigExecAutoClavicleOpInputs &input,
+                         RigExecPoseOpRunner &runner, double delta[3],
+                         GfMatrix4d *shifted, std::string *error)
+{
+    const bool built = runner.evaluator &&
+                       runner.built == RigExecPoseOpRunner::Built::AutoClavicle;
+    const bool ready = Ready(
+        runner, built,
+        [&](RigExecRigDescBuilder &builder) {
+            runner.built = RigExecPoseOpRunner::Built::AutoClavicle;
+            return RigExecAddAutoClavicleOp(constants, input, &builder,
+                                            &runner.clavicle, error);
+        },
+        [&](std::string *why) {
+            return RigExecWriteAutoClavicleOpInputs(
+                constants, input, runner.clavicle, &runner.scratch,
+                runner.evaluator.get(), why);
+        },
+        error);
+    if (!ready || !runner.evaluator->Evaluate(error))
+        return false;
+    if (!RigExecReadAutoClavicleOpOutput(runner.clavicle, *runner.evaluator,
+                                         delta, shifted))
+        return Fail(error, "auto clavicle op has no output");
     return true;
 }
 

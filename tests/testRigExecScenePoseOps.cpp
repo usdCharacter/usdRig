@@ -448,6 +448,44 @@ TestSplineIk()
                 }
 }
 
+/// A one-bone 2D skeleton: solved, with a non-finite channel, out of the
+/// plane, with a malformed order and with a channel missing.
+void
+TestSkeleton2d()
+{
+    RigExecSolverRecord s;
+    s.kind = RigExecSolverKind::Skeleton2d;
+    s.bone2dSetup.resize(2);
+    s.bone2dSetup[1].parent = 0;
+    s.jointRests = {Frame(GfVec3d(0, 0, 0), GfVec3d(0, 0, 1), 0).points,
+                    Frame(GfVec3d(2, 0, 0), GfVec3d(0, 0, 1), 30).points};
+    s.bone2dOrder = {0, 1};
+    RigExecSolverInputs in;
+    in.bone2dChannels.resize(2);
+    in.bone2dChannels[0].rz = 25;
+    in.bone2dChannels[1].rz = -40;
+    in.bone2dChannels[1].tx = 0.5;
+    in.bone2dChannels[1].sx = 1.3;
+    RigExecPoseOpRunner runner;
+    CompareSolver("skeleton2d", s, in, runner);
+    s.hasStart = true;
+    s.startRest = RestAt(GfVec3d(0), 0);
+    in.start = Frame(GfVec3d(1, 2, 0), GfVec3d(0, 0, 1), 15);
+    CompareSolver("skeleton2d start", s, in, runner);
+    RigExecSolverInputs nan = in;
+    nan.bone2dChannels[1].rz = std::numeric_limits<double>::quiet_NaN();
+    CompareSolver("skeleton2d nan", s, nan, runner);
+    RigExecSolverRecord tilted = s;
+    tilted.jointRests[1] = Frame(GfVec3d(2, 0, 0), GfVec3d(1, 0, 0), 30).points;
+    CompareSolver("skeleton2d tilted", tilted, in, runner);
+    RigExecSolverRecord malformed = s;
+    malformed.bone2dOrder = {0, 7};
+    CompareSolver("skeleton2d malformed", malformed, in, runner);
+    RigExecSolverInputs missing = in;
+    missing.bone2dChannels.pop_back();
+    CompareSolver("skeleton2d counts", s, missing, runner);
+}
+
 /// A node built from one record refuses a write whose baked settings moved,
 /// and the runner rebuilds it.
 void
@@ -479,11 +517,11 @@ TestStaleSettings()
     CompareSolver("rebuilt ik", IkRecord(true, false),
                   IkInputs(GfVec3d(4, 1, 0), false), runner);
     // A record the bridge does not map is refused at build.
-    RigExecSolverRecord skeleton;
-    skeleton.kind = RigExecSolverKind::Skeleton2d;
-    CHECK(!RigExecSolverOpSupported(skeleton));
+    RigExecSolverRecord degenerate = fk;
+    degenerate.degenerate = true;
+    CHECK(!RigExecSolverOpSupported(degenerate));
     RigExecRigDescBuilder other;
-    CHECK(!RigExecAddSolverOp(skeleton, RigExecSolverInputs(), &other, &node,
+    CHECK(!RigExecAddSolverOp(degenerate, RigExecSolverInputs(), &other, &node,
                               &error));
 }
 
@@ -838,6 +876,61 @@ SamePublish(RigExecTypedValueStore &store,
     return same;
 }
 
+/// An auto clavicle's publish, natively and on the op core, over its
+/// optional frames, the limb, a zero shift and an unusable frame.
+void
+TestAutoClavicle()
+{
+    for (const bool ik : {false, true})
+        for (const bool limb : {false, true})
+            for (const double gain : {0.0, 1.0}) {
+                RigExecBoundAutoClavicle op;
+                const size_t count = limb ? 13 : ik ? 10 : 8;
+                for (size_t i = 0; i < count; ++i)
+                    op.frames[i] = i;
+                if (!ik)
+                    op.frames[8] = op.frames[9] = UINT64_MAX;
+                op.hasLimb = limb;
+                op.output = 13;
+                op.unavailable = "unavailable";
+                op.constants.gain = gain;
+                op.constants.swings = {1, 0, 0, 0, 0.9238795, 0, 0.3826834, 0};
+                op.constants.widths = {10, 0.8};
+                op.constants.gains = {1, 0.5};
+                op.constants.weights = {1, 0.2, 0.2, 1};
+                RigExecTypedValueStore values(14);
+                values.Publish(0, Frame(GfVec3d(1, 0, 0)));
+                values.Publish(1, Frame(GfVec3d(0.5, 0.2, 0)));
+                values.Publish(2,
+                               Frame(GfVec3d(0, 0.3, 0), GfVec3d(0, 1, 0), 10));
+                values.Publish(3, Frame(GfVec3d(0, 0.3, 0)));
+                values.Publish(4,
+                               Frame(GfVec3d(1, 0, 0), GfVec3d(0, 0, 1), 70));
+                for (size_t k = 0; k < 3; ++k)
+                    values.Publish(5 + k, Frame(GfVec3d(1.0 + 2.0 * k, 0, 0)));
+                values.Publish(8,
+                               Frame(GfVec3d(3, 3, 1), GfVec3d(0, 1, 0), 20));
+                values.Publish(9, Frame(GfVec3d(2, 0, -3)));
+                for (size_t k = 0; k < 3; ++k)
+                    values.Publish(10 + k,
+                                   Frame(GfVec3d(1.0 + 2.1 * k, 0.1, 0)));
+                RigExecPoseOpRunner runner;
+                const auto run = [&](RigExecPoseOpRunner *ops) {
+                    std::string error;
+                    RigExecRunAutoClavicle(op, &values, &error, ops);
+                };
+                run(nullptr);
+                const bool same = SamePublish(values, {op.output}, runner, run);
+                if (!same)
+                    std::printf("auto clavicle %d%d%g differs\n", int(ik),
+                                int(limb), gain);
+                CHECK(same);
+                values.values[1].blocked = true;
+                run(nullptr);
+                CHECK(SamePublish(values, {op.output}, runner, run));
+            }
+}
+
 void
 CompareRig(const std::string &label, const UsdStageRefPtr &stage,
            const SdfPath &rig, int first, int last)
@@ -871,6 +964,18 @@ CompareRig(const std::string &label, const UsdStageRefPtr &stage,
                                 t);
                 CHECK(same);
                 ++sceneSolvers[SolverName(op->record.kind)];
+            } else if (const auto *op = std::get_if<RigExecBoundAutoClavicle>(
+                           &operations[i])) {
+                const bool same = SamePublish(store, {op->output}, runners[i],
+                                              [&](RigExecPoseOpRunner *ops) {
+                                                  std::string error;
+                                                  RigExecRunAutoClavicle(
+                                                      *op, &store, &error, ops);
+                                              });
+                if (!same)
+                    std::printf("%s: auto clavicle %zu differs at %d\n",
+                                label.c_str(), i, t);
+                CHECK(same);
             } else if (const auto *op =
                            std::get_if<RigExecConstraintGraphBinding>(
                                &operations[i])) {
@@ -947,6 +1052,8 @@ TestAuthoredRigs(const std::string &examples)
     CHECK(layer->ImportFromString(kSingleChainRig));
     CompareStage("single-chain rig", UsdStage::Open(layer));
 
+    // The scene program refuses RigExecBone2dAPI stages; TestSkeleton2d
+    // compares the 2D skeleton's records.
     for (const char *kind : {"FkChain", "TwoBoneIk", "BlendPointFrames",
                              "TwistDistribution", "Ribbon", "SplineIk"}) {
         std::printf("scene %s solvers compared: %d\n", kind,
@@ -987,12 +1094,14 @@ main(int argc, char **argv)
     TestTwist();
     TestRibbon();
     TestSplineIk();
+    TestSkeleton2d();
     TestStaleSettings();
     TestConstraints();
     TestSingleChainIk();
+    TestAutoClavicle();
     // Each kind's comparisons include solved frames, not only empty ones.
     for (const char *kind : {"fk", "two-bone", "blend", "twist", "ribbon",
-                             "spline", "constraint"}) {
+                             "spline", "skeleton2d", "constraint"}) {
         std::printf("%s: %d solved comparisons\n", kind, solvedFrames[kind]);
         CHECK(solvedFrames[kind] > 0);
     }

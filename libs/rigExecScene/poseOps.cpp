@@ -6,6 +6,8 @@
 #include "rigExecOps/solver/frameBlendOps.h"
 #include "rigExecOps/solver/ribbonFramesOps.h"
 #include "rigExecOps/solver/singleChainIkOps.h"
+#include "rigExecOps/solver/skeleton2dOps.h"
+#include "rigExecOps/constraint/autoClavicleOps.h"
 #include "rigExecOps/solver/splineIkOps.h"
 #include "rigExecRigTypes/rigTypes.h"
 
@@ -23,6 +25,7 @@ struct RigExecPoseOpScratch::Values {
     rigExecStd::RigExecArray<double> doubles;
     rigExecStd::RigExecArray<uint8_t> live;
     rigExecStd::RigExecArray<rigExecStd::Vec3f> posed, rest;
+    rigExecStd::RigExecArray<rigExecStd::Mat4d> matrices;
 };
 
 RigExecPoseOpScratch::RigExecPoseOpScratch()
@@ -241,6 +244,49 @@ WriteLive(const RigExecSolverRecord &s, const RigExecSolverOpNode &node,
            Set(e, node.jointRestLive, v.live, error);
 }
 
+bool
+SameSetup(const RigExecBone2dSetup &a, const RigExecBone2dSetup &b)
+{
+    return a.parent == b.parent && a.flags == b.flags &&
+           Same(a.minAngle, b.minAngle) && Same(a.maxAngle, b.maxAngle) &&
+           a.scaling == b.scaling && Same(a.squashFactor, b.squashFactor) &&
+           Same(a.maxStretch, b.maxStretch) && a.tipBone == b.tipBone &&
+           Same(a.tipX, b.tipX) && Same(a.tipY, b.tipY) &&
+           a.spaceBegin == b.spaceBegin && a.spaceCount == b.spaceCount &&
+           a.spaceSelector == b.spaceSelector &&
+           a.targetBegin == b.targetBegin && a.targetCount == b.targetCount &&
+           a.angleController == b.angleController &&
+           a.posController == b.posController &&
+           a.scaleController == b.scaleController &&
+           Same(a.angleFactor, b.angleFactor) &&
+           Same(a.posFactorX, b.posFactorX) &&
+           Same(a.posFactorY, b.posFactorY) &&
+           Same(a.scaleFactor, b.scaleFactor);
+}
+
+/// Whether \p node was built from \p s's skeleton.
+bool
+SameSkeleton(const RigExecSolverRecord &s, const RigExecSolverOpNode &node)
+{
+    if (!SameVector(s.bone2dOrder, node.bone2dOrder) ||
+        !SameVector(s.bone2dSpaceSources, node.spaceSources) ||
+        !SameVector(s.bone2dTargetCandidates, node.targetCandidates) ||
+        !SameVector(s.jointGroupMembers, node.groupMembers) ||
+        s.bone2dSetup.size() != node.bone2dSetup.size() ||
+        s.jointGroups.size() != node.groups.size())
+        return false;
+    for (size_t k = 0; k < s.bone2dSetup.size(); ++k)
+        if (!SameSetup(s.bone2dSetup[k], node.bone2dSetup[k]))
+            return false;
+    for (size_t k = 0; k < s.jointGroups.size(); ++k) {
+        const RigExecJointGroup &a = s.jointGroups[k], &b = node.groups[k];
+        if (a.memberBegin != b.memberBegin || a.memberCount != b.memberCount ||
+            a.enabled != b.enabled)
+            return false;
+    }
+    return true;
+}
+
 // Constraints.
 
 rigExecOps::ConstraintPayload
@@ -369,7 +415,7 @@ RigExecSolverOpSupported(const RigExecSolverRecord &s)
     case RigExecSolverKind::SplineIk:
         return s.splineCount > 0;
     case RigExecSolverKind::Skeleton2d:
-        return false;
+        return true;
     }
     return false;
 }
@@ -385,6 +431,15 @@ RigExecAnswerSolverOp(const RigExecSolverRecord &s,
         input.controls.size() != s.controlRests.size()) {
         Fail(error, "FK control/rest cardinality mismatch");
         return RigExecSolverOpAnswer::Failed;
+    }
+    if (s.kind == RigExecSolverKind::Skeleton2d) {
+        const size_t n = s.bone2dOrder.size();
+        if (s.jointRests.size() != n || s.bone2dSetup.size() != n ||
+            input.bone2dChannels.size() != n ||
+            input.controls.size() != s.controlRests.size()) {
+            Fail(error, kRigExecSkeleton2dCountsDiffer);
+            return RigExecSolverOpAnswer::Failed;
+        }
     }
     if (s.kind != RigExecSolverKind::BlendPointFrames)
         return RigExecSolverOpAnswer::Run;
@@ -520,8 +575,37 @@ RigExecAddSolverOp(const RigExecSolverRecord &s,
         r.out = b.BindOutput(id, SplineIkOut());
         break;
     }
-    case RigExecSolverKind::Skeleton2d:
-        return Fail(error, "solver kind has no op");
+    case RigExecSolverKind::Skeleton2d: {
+        using namespace rigExecOps;
+        Skeleton2dPayload payload;
+        payload.order = s.bone2dOrder;
+        payload.setup = s.bone2dSetup;
+        payload.spaceSources = s.bone2dSpaceSources;
+        payload.targetCandidates = s.bone2dTargetCandidates;
+        payload.groups = s.jointGroups;
+        payload.groupMembers = s.jointGroupMembers;
+        r.hasStart = s.hasStart;
+        r.bone2dOrder = payload.order;
+        r.bone2dSetup = payload.setup;
+        r.spaceSources = payload.spaceSources;
+        r.targetCandidates = payload.targetCandidates;
+        r.groups = payload.groups;
+        r.groupMembers = payload.groupMembers;
+        const RigExecNodeId id = b.AddOp(Skeleton2d(), &payload);
+        r.rests = b.BindInput(id, Skeleton2dRests());
+        if (r.hasStart) {
+            r.startRest = b.BindInput(id, Skeleton2dStartRest());
+            r.startPose = b.BindInput(id, Skeleton2dStartPose());
+        }
+        r.externalRests = b.BindInput(id, Skeleton2dExternalRests());
+        r.externalPoses = b.BindInput(id, Skeleton2dExternalPoses());
+        r.channels = b.BindInput(id, Skeleton2dChannels());
+        r.selectors = b.BindInput(id, Skeleton2dSelectors());
+        r.groupSelectors = b.BindInput(id, Skeleton2dGroupSelectors());
+        r.out = b.BindOutput(id, Skeleton2dOut());
+        r.result = b.BindOutput(id, Skeleton2dResult());
+        break;
+    }
     }
     *node = std::move(r);
     return true;
@@ -679,8 +763,51 @@ RigExecWriteSolverOpInputs(const RigExecSolverRecord &s,
                Set(e, node.twist, GfDegreesToRadians(input.twistDegrees),
                    error);
     }
-    case RigExecSolverKind::Skeleton2d:
-        break;
+    case RigExecSolverKind::Skeleton2d: {
+        if (node.hasStart != s.hasStart || !SameSkeleton(s, node))
+            return Fail(error, "2D skeleton settings moved");
+        Landmarks(s.jointRests, &v.landmarks);
+        if (!Set(e, node.rests, v.landmarks, error))
+            return false;
+        if (s.hasStart &&
+            (!Set(e, node.startRest, ToStd(s.startRest), error) ||
+             !Set(e, node.startPose, ToStd(input.start.points), error)))
+            return false;
+        Landmarks(s.controlRests, &v.landmarks);
+        v.jointRests.Resize(input.controls.size());
+        for (size_t k = 0; k < input.controls.size(); ++k)
+            v.jointRests[k] = ToStd(input.controls[k].points);
+        if (!Set(e, node.externalRests, v.landmarks, error) ||
+            !Set(e, node.externalPoses, v.jointRests, error))
+            return false;
+        const size_t channels = rigExec::kRigExecBone2dChannelCount;
+        v.doubles.Resize(input.bone2dChannels.size() * channels);
+        for (size_t j = 0; j < input.bone2dChannels.size(); ++j) {
+            const RigExecBone2dChannels &c = input.bone2dChannels[j];
+            double *x = v.doubles.Data() + j * channels;
+            const double values[] = {c.tx,
+                                     c.ty,
+                                     c.rz,
+                                     c.sx,
+                                     double(c.sideFlip),
+                                     double(c.endFlip),
+                                     double(c.lock),
+                                     c.lockX,
+                                     c.lockY,
+                                     c.lockAngle,
+                                     c.offsetX,
+                                     c.offsetY,
+                                     c.targetIndex};
+            std::memcpy(x, values, sizeof(values));
+        }
+        if (!Set(e, node.channels, v.doubles, error))
+            return false;
+        Assign(input.bone2dSelectors, &v.doubles);
+        if (!Set(e, node.selectors, v.doubles, error))
+            return false;
+        Assign(input.jointGroupSelectors, &v.doubles);
+        return Set(e, node.groupSelectors, v.doubles, error);
+    }
     }
     return Fail(error, "solver kind has no op");
 }
@@ -690,10 +817,12 @@ RigExecReadSolverOpOutput(const RigExecSolverRecord &s,
                           const RigExecSolverInputs &input,
                           const RigExecSolverOpNode &node,
                           const RigExecEvaluator &e,
-                          RigExecPointFrameArray *output)
+                          RigExecPointFrameArray *output, bool *valid,
+                          std::string *error)
 {
     output->frames.clear();
     output->rests.clear();
+    *valid = true;
     if (s.kind == RigExecSolverKind::BlendPointFrames) {
         const RigExecPointFrameArray &a = *input.blendA;
         for (size_t k = 0; k < node.blend.size(); ++k) {
@@ -716,6 +845,28 @@ RigExecReadSolverOpOutput(const RigExecSolverRecord &s,
     // Native publishes the unspaced joint rests.
     if (s.kind == RigExecSolverKind::SplineIk)
         output->rests = s.splineJointRests;
+    if (s.kind == RigExecSolverKind::Skeleton2d) {
+        const auto *result =
+            static_cast<const uint32_t *>(e.GetOutput(node.result));
+        if (!result)
+            return false;
+        switch (RigExecSkeleton2dResult(*result)) {
+        case RigExecSkeleton2dResult::Solved:
+            break;
+        case RigExecSkeleton2dResult::Malformed:
+            *valid = false;
+            Fail(error, kRigExecSkeleton2dMalformed);
+            break;
+        case RigExecSkeleton2dResult::NotPlanar:
+            *valid = false;
+            Fail(error, kRigExecSkeleton2dNotPlanar);
+            break;
+        case RigExecSkeleton2dResult::NotFinite:
+            *valid = false;
+            Fail(error, kRigExecSkeleton2dNotFinite);
+            break;
+        }
+    }
     return true;
 }
 
@@ -926,6 +1077,130 @@ RigExecReadConstraintOpOutput(const RigExecConstraintRecord &r,
     if (!out)
         return false;
     result->frame = FromStd(*out);
+    return true;
+}
+
+bool
+RigExecAddAutoClavicleOp(const RigExecAutoClavicleConstants &constants,
+                         const RigExecAutoClavicleOpInputs &input,
+                         RigExecRigDescBuilder *builder,
+                         RigExecAutoClavicleOpNode *node, std::string *error)
+{
+    if (!builder || !node)
+        return Fail(error, "null auto clavicle op destination");
+    using namespace rigExecOps;
+    RigExecRigDescBuilder &b = *builder;
+    RigExecAutoClavicleOpNode n;
+    n.constants = constants;
+    n.hasLimb = input.hasLimb;
+    n.hasIkTarget = input.frames[8] != nullptr;
+    n.hasPole = input.frames[9] != nullptr;
+    AutoClavicleOpPayload payload;
+    payload.constants = constants;
+    payload.hasLimb = n.hasLimb;
+    const RigExecNodeId id = b.AddOp(AutoClavicle(), &payload);
+    n.target = b.BindInput(id, AutoClavicleTarget());
+    n.pivot = b.BindInput(id, AutoClaviclePivot());
+    n.anchor = b.BindInput(id, AutoClavicleAnchor());
+    n.anchorDefault = b.BindInput(id, AutoClavicleAnchorDefault());
+    n.fkPosed = b.BindInput(id, AutoClavicleFkPosed());
+    n.fkDefault = b.BindInput(id, AutoClavicleFkDefault());
+    if (n.hasIkTarget)
+        n.ikTarget = b.BindInput(id, AutoClavicleIkTarget());
+    if (n.hasPole)
+        n.pole = b.BindInput(id, AutoClaviclePole());
+    n.ikBlend = b.BindInput(id, AutoClavicleIkBlend());
+    n.amount = b.BindInput(id, AutoClavicleAmount());
+    if (n.hasLimb) {
+        n.limbRests = b.BindInput(id, AutoClavicleLimbRests());
+        n.stretch = b.BindInput(id, AutoClavicleStretch());
+        n.pin = b.BindInput(id, AutoClaviclePin());
+        n.upperScale = b.BindInput(id, AutoClavicleUpperScale());
+        n.lowerScale = b.BindInput(id, AutoClavicleLowerScale());
+        n.softDistance = b.BindInput(id, AutoClavicleSoftDistance());
+        n.scaleCalibration = b.BindInput(id, AutoClavicleScaleCalibration());
+        n.twist = b.BindInput(id, AutoClavicleTwist());
+        n.upperOffset = b.BindInput(id, AutoClavicleUpperOffset());
+        n.lowerOffset = b.BindInput(id, AutoClavicleLowerOffset());
+    }
+    n.delta = b.BindOutput(id, AutoClavicleDelta());
+    n.out = b.BindOutput(id, AutoClavicleOut());
+    *node = std::move(n);
+    return true;
+}
+
+bool
+RigExecWriteAutoClavicleOpInputs(const RigExecAutoClavicleConstants &c,
+                                 const RigExecAutoClavicleOpInputs &input,
+                                 const RigExecAutoClavicleOpNode &node,
+                                 RigExecPoseOpScratch *scratch,
+                                 RigExecEvaluator *e, std::string *error)
+{
+    if (!e || !scratch || !scratch->values)
+        return Fail(error, "auto clavicle op node has no evaluator");
+    const RigExecAutoClavicleConstants &n = node.constants;
+    if (node.hasLimb != input.hasLimb ||
+        node.hasIkTarget != (input.frames[8] != nullptr) ||
+        node.hasPole != (input.frames[9] != nullptr) ||
+        std::memcmp(c.basis, n.basis, sizeof(c.basis)) != 0 ||
+        !Same(c.ikValue, n.ikValue) || !Same(c.gain, n.gain) ||
+        c.kernel != n.kernel || c.normalize != n.normalize ||
+        !SameVector(c.swings, n.swings) || !SameVector(c.widths, n.widths) ||
+        !SameVector(c.gains, n.gains) || !SameVector(c.weights, n.weights))
+        return Fail(error, "auto clavicle settings moved");
+    for (size_t i = 0; i < 8; ++i)
+        if (!input.frames[i])
+            return Fail(error, "auto clavicle frame missing");
+    RigExecPoseOpScratch::Values &v = *scratch->values;
+    const auto frames = [&](size_t first) -> const RigExecArray<Mat4d> & {
+        v.matrices.Resize(3);
+        for (size_t k = 0; k < 3; ++k)
+            v.matrices[k] = ToStd(*input.frames[first + k]);
+        return v.matrices;
+    };
+    if (!Set(e, node.target, ToStd(*input.frames[0]), error) ||
+        !Set(e, node.pivot, ToStd(*input.frames[1]), error) ||
+        !Set(e, node.anchor, ToStd(*input.frames[2]), error) ||
+        !Set(e, node.anchorDefault, ToStd(*input.frames[3]), error) ||
+        !Set(e, node.fkPosed, ToStd(*input.frames[4]), error) ||
+        !Set(e, node.fkDefault, frames(5), error) ||
+        (node.hasIkTarget &&
+         !Set(e, node.ikTarget, ToStd(*input.frames[8]), error)) ||
+        (node.hasPole && !Set(e, node.pole, ToStd(*input.frames[9]), error)) ||
+        !Set(e, node.ikBlend, input.ikBlend, error) ||
+        !Set(e, node.amount, input.amount, error))
+        return false;
+    if (!node.hasLimb)
+        return true;
+    for (size_t i = 10; i < 13; ++i)
+        if (!input.frames[i])
+            return Fail(error, "auto clavicle limb rest missing");
+    return Set(e, node.limbRests, frames(10), error) &&
+           Set(e, node.stretch, input.stretch, error) &&
+           Set(e, node.pin, input.pin, error) &&
+           Set(e, node.upperScale, input.upperScale, error) &&
+           Set(e, node.lowerScale, input.lowerScale, error) &&
+           Set(e, node.softDistance, input.softDistance, error) &&
+           Set(e, node.scaleCalibration, input.scaleCalibration, error) &&
+           Set(e, node.twist, input.twistDegrees, error) &&
+           Set(e, node.upperOffset, input.upperOffset, error) &&
+           Set(e, node.lowerOffset, input.lowerOffset, error);
+}
+
+bool
+RigExecReadAutoClavicleOpOutput(const RigExecAutoClavicleOpNode &node,
+                                const RigExecEvaluator &e, double delta[3],
+                                GfMatrix4d *shifted)
+{
+    const auto *d = static_cast<const Vec3d *>(e.GetOutput(node.delta));
+    const auto *m = static_cast<const Mat4d *>(e.GetOutput(node.out));
+    if (!d || !m)
+        return false;
+    for (int k = 0; k < 3; ++k)
+        delta[k] = (*d)[k];
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            (*shifted)[r][c] = m->_mtx[r][c];
     return true;
 }
 

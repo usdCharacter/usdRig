@@ -5,22 +5,34 @@
 #include <array>
 
 namespace rigExec {
+struct RigExecPoseOpRunner;
 struct RigExecBoundAutoClavicle {
     RigExecAutoClavicleConstants constants;
     // Target, pivot, anchor, anchor default, FK posed, three FK defaults,
     // optional IK target and pole, and optional three solver rest frames.
-    std::array<RigExecValueId,13> frames;
-    std::array<RigExecGraphTypedRead,11> scalars;
-    bool hasLimb=false;
-    RigExecValueId output=UINT64_MAX;
+    std::array<RigExecValueId, 13> frames;
+    std::array<RigExecGraphTypedRead, 11> scalars;
+    bool hasLimb = false;
+    RigExecValueId output = UINT64_MAX;
     std::vector<RigExecValueId> reads;
     std::string unavailable;
-    RigExecBoundAutoClavicle() { frames.fill(UINT64_MAX); }
+    RigExecBoundAutoClavicle()
+    {
+        frames.fill(UINT64_MAX);
+    }
 };
-bool RigExecBindAutoClavicle(const RigExecSceneDescriptors &,const SdfPath &,
-    const RigExecSceneGraphBindingContext &,RigExecValueId incoming,
-    RigExecValueId output,RigExecBoundAutoClavicle *,std::string *error=nullptr);
+bool RigExecBindAutoClavicle(const RigExecSceneDescriptors &, const SdfPath &,
+                             const RigExecSceneGraphBindingContext &,
+                             RigExecValueId incoming, RigExecValueId output,
+                             RigExecBoundAutoClavicle *,
+                             std::string *error = nullptr);
 bool RigExecRunAutoClavicle(const RigExecBoundAutoClavicle &,
-    RigExecTypedValueStore *,std::string *error=nullptr);
-}
+                            RigExecTypedValueStore *,
+                            std::string *error = nullptr);
+/// \p ops runs the shift on the op core (poseOpRunner.h); null runs it
+/// natively.
+bool RigExecRunAutoClavicle(const RigExecBoundAutoClavicle &,
+                            RigExecTypedValueStore *, std::string *error,
+                            RigExecPoseOpRunner *ops);
+} // namespace rigExec
 #endif
