@@ -167,9 +167,6 @@ void RigExecPlaneWeightField(const std::vector<GfVec3f> &points,
                              std::vector<float> *weights,
                              const RigExecPlaneBounds *bounds = nullptr);
 
-/// \p curvePoints are taken in the SAME space as \p points (they are a
-/// native geometry property read off the stage, not a property of the
-/// volume prim), so both are transformed by \p worldToLocal together.
 void RigExecCurveWeightField(const std::vector<GfVec3f> &points,
                              const std::vector<GfVec3f> &curvePoints,
                              const GfMatrix4d &worldToLocal,

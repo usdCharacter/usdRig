@@ -2,9 +2,9 @@
 // joints, shared by RigExecFkChain and RigExecSkeleton2d in native, frozen
 // and .rigexec evaluation.
 //
-// USD-free and header-only: the runtime instantiates it. No locks, statics
-// or diagnostics. The rule has no public source (docs/references.md, "2D
-// skeleton rules without a public source").
+// Header-only: the runtime instantiates it. No locks, statics or diagnostics.
+// The rule has no public source (docs/references.md, "2D skeleton rules without
+// a public source").
 #ifndef RIGEXEC_MATH_JOINT_GROUP_KERNEL_H
 #define RIGEXEC_MATH_JOINT_GROUP_KERNEL_H
 

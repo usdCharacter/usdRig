@@ -31,11 +31,10 @@
 
 namespace rigExec {
 
-/// The concrete delta-mush rest state the evaluator caches: GfVec3f
-/// points, GfVec3d working frames -- the instantiation every USD-side
-/// caller shares. (The binary runtime instantiates the same templates
-/// over its own vector types; the alias lives here, with USD, rather
-/// than in the USD-free kernel header.)
+/// The concrete delta-mush rest state the evaluator caches: GfVec3f points,
+/// GfVec3d working frames -- the instantiation every USD-side caller shares.
+/// (The binary runtime instantiates the same templates over its own vector
+/// types; the alias lives here, with USD, rather than in the kernel header.)
 using RigExecDeltaMushRest = RigExecDeltaMushRestData<GfVec3f, GfVec3d>;
 
 /// The concrete transport rest state every USD-side caller shares:

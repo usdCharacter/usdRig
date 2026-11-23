@@ -1,8 +1,8 @@
 // 2D skeleton solve: the one numerical body behind RigExecSkeleton2d in
 // native, frozen and .rigexec evaluation.
 //
-// USD-free and header-only: the runtime instantiates it. No locks, statics
-// or diagnostics; the workspace is owned by the calling operation.
+// Header-only: the runtime instantiates it. No locks, statics or diagnostics;
+// the workspace is owned by the calling operation.
 //
 // Plane and units: bones lie in the XY plane of the skeleton's start frame
 // (the rig's asset space without one), angles are degrees about its +Z,

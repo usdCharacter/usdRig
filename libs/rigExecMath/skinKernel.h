@@ -1,9 +1,9 @@
 // Linear blend skinning (scalar and SSE2) over a jointIndices/jointWeights
 // layout; the scale-aware dual quaternion blend is dualQuatKernel.h's. One
-// definition for native evaluation, the runtime and the ops. V is a float point, D its double
-// twin, M a double 4x4 with Gf's operators, L any layout with transforms,
-// transformCount, indices, elementSize, pointCount, Transform(i, k) and
-// Weight(i, k). USD-free.
+// definition for native evaluation, the runtime and the ops. V is a float
+// point, D its double twin, M a double 4x4 with Gf's operators, L any layout
+// with transforms, transformCount, indices, elementSize, pointCount,
+// Transform(i, k) and Weight(i, k).
 #ifndef RIGEXEC_MATH_SKIN_KERNEL_H
 #define RIGEXEC_MATH_SKIN_KERNEL_H
 

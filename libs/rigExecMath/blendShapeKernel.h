@@ -1,6 +1,6 @@
-// Blend-shape channel sum: each channel's weight picks its in-between pair
-// and lerps their deltas. One definition for native evaluation, the runtime
-// and the ops. USD-free.
+// Blend-shape channel sum: each channel's weight picks its in-between pair and
+// lerps their deltas. One definition for native evaluation, the runtime and the
+// ops.
 #ifndef RIGEXEC_MATH_BLEND_SHAPE_KERNEL_H
 #define RIGEXEC_MATH_BLEND_SHAPE_KERNEL_H
 

@@ -1,6 +1,4 @@
-// Shared, USD-free arithmetic of RigExecAutoClavicle. The dynamic evaluator,
-// the baked program and the binary runtime all call RigExecAutoClavicleShift,
-// so the three agree by construction.
+// Shared arithmetic of RigExecAutoClavicle.
 //
 // Conventions: frames are 16 doubles, row-major, row vectors (a point maps as
 // p * M; the three handle vectors are rows 0-2 and the origin is row 3), as

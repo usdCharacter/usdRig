@@ -1,12 +1,12 @@
 #ifndef RIGEXEC_MATH_DUALQUAT_KERNEL_H
 #define RIGEXEC_MATH_DUALQUAT_KERNEL_H
 
-/// The dual-quaternion skinning numerics, header-only and USD-free: the one
-/// numeric definition shared by the Gf core (rigExecMath/dualQuat.h) and the
-/// zero-USD runtime (rigExecRuntime/geometry.cpp), so both paths agree bit
-/// for bit. Conventions, the scale/shear policy and the degenerate-case rules
-/// are documented at the host's instantiations; the method reference is
-/// Kavan et al. (2008), https://users.cs.utah.edu/~ladislav/dq/index.html.
+/// The dual-quaternion skinning numerics, \1: the one numeric definition shared
+/// by the Gf core (rigExecMath/dualQuat.h) and the runtime
+/// (rigExecRuntime/geometry.cpp), so both paths agree bit for bit. Conventions,
+/// the scale/shear policy and the degenerate-case rules are documented at the
+/// host's instantiations; the method reference is Kavan et al. (2008),
+/// https://users.cs.utah.edu/~ladislav/dq/index.html.
 ///
 /// The host hook RigExecDualQuatMath<Point, Double> names the affine types
 /// and conversions the polar split reads, following the <Point, Double>

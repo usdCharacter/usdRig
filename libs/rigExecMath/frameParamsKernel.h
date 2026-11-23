@@ -1,7 +1,6 @@
-// The SRT decomposition of a four-point frame and its inverse, shared by
-// the native (Gf) frame math, the dual-quaternion split, the zero-USD
-// runtime and the ops. Header-only and USD-free; the host types come from
-// RigExecDualQuatMath<Point, Double>.
+// The SRT decomposition of a four-point frame and its inverse, shared by the
+// native (Gf) frame math, the dual-quaternion split, the runtime and the ops.
+// \1; the host types come from RigExecDualQuatMath<Point, Double>.
 #ifndef RIGEXEC_MATH_FRAME_PARAMS_KERNEL_H
 #define RIGEXEC_MATH_FRAME_PARAMS_KERNEL_H
 

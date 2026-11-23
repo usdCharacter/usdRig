@@ -1,15 +1,14 @@
 // RigExec dual-quaternion skinning primitives: the Gf instantiation of
-// dualQuatKernel.h, the one numeric definition shared with the zero-USD
-// runtime. Conventions, scale policy and degenerate rules: read here.
-// A unit dual quaternion q^ = qr + eps*qd encodes a rigid motion: the real
-// part qr is a unit quaternion carrying the rotation, and the dual part
-// qd = 1/2 * t * qr carries the translation t (as a pure quaternion, on the
-// LEFT of qr, so t is a world-space offset applied after the rotation).
-// These are the building blocks for dual-quaternion skinning (DQS, Kavan
-// et al., "Geometric Skinning with Approximate Dual Quaternion Blending",
-// ACM TOG 27(4), 2008): blend N weighted joint motions, normalise once,
-// apply to a point.
-// Conventions (state them, then trust them):
+// dualQuatKernel.h, the one numeric definition shared with the runtime.
+// Conventions, scale policy and degenerate rules: read here. A unit dual
+// quaternion q^ = qr + eps*qd encodes a rigid motion: the real part qr is a
+// unit quaternion carrying the rotation, and the dual part qd = 1/2 * t * qr
+// carries the translation t (as a pure quaternion, on the LEFT of qr, so t is a
+// world-space offset applied after the rotation). These are the building blocks
+// for dual-quaternion skinning (DQS, Kavan et al., "Geometric Skinning with
+// Approximate Dual Quaternion Blending", ACM TOG 27(4), 2008): blend N weighted
+// joint motions, normalise once, apply to a point. Conventions (state them,
+// then trust them):
 //   * Matrices follow the GfMatrix4d row-vector convention used throughout
 //     RigExec: points are row vectors, p' = p * M, the upper 3x3 rows are the
 //     images of the basis vectors, and the translation lives in row 3. The

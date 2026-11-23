@@ -1,5 +1,5 @@
 // RigExec arbitrary-length single-chain IK. The kernel is
-// singleChainIkKernel.h, shared with the zero-USD runtime and the ops.
+// singleChainIkKernel.h, shared with the runtime and the ops.
 #include "singleChainIk.h"
 #include "dualQuat.h"
 #include "singleChainIkKernel.h"

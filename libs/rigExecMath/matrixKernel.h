@@ -1,8 +1,8 @@
-// The weighted-matrix movement: p' = q + w (T q - q), or with radial
-// weights a fraction of T's rotation about its screw axis. One definition
-// for native evaluation, the runtime and the ops. V is a float point
-// (GfVec3f, RrVec3f), D its double twin and M a double 4x4 (GfMatrix4d,
-// RrMat4d), whose operators share Gf's semantics. USD-free.
+// The weighted-matrix movement: p' = q + w (T q - q), or with radial weights a
+// fraction of T's rotation about its screw axis. One definition for native
+// evaluation, the runtime and the ops. V is a float point (GfVec3f, RrVec3f), D
+// its double twin and M a double 4x4 (GfMatrix4d, RrMat4d), whose operators
+// share Gf's semantics.
 #ifndef RIGEXEC_MATH_MATRIX_KERNEL_H
 #define RIGEXEC_MATH_MATRIX_KERNEL_H
 

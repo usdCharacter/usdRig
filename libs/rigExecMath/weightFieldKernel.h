@@ -1,7 +1,7 @@
-// Volumetric weight fields and their composition over borrowed ranges,
-// shared by the native (Gf) path, the zero-USD runtime (Rr) and the weight
-// ops. Header-only and USD-free. V is a float vector whose `*` is the dot
-// product, D its double peer and M a row-vector double matrix.
+// Volumetric weight fields and their composition over borrowed ranges, shared
+// by the native (Gf) path, the runtime (Rr) and the weight ops. V is a float
+// vector whose `*` is the dot product, D its double peer and M a row-vector
+// double matrix.
 #ifndef RIGEXEC_MATH_WEIGHT_FIELD_KERNEL_H
 #define RIGEXEC_MATH_WEIGHT_FIELD_KERNEL_H
 
