@@ -1,7 +1,7 @@
 #include "rigExecOps/weight/weightOps.h"
 
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 #include "rigExecEvalCore/weights.h"
 #include "rigExecMath/spatialAccel.h"
 #include "rigExecMath/weightFieldKernel.h"
@@ -54,6 +54,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(CurveWeightCurve)
 
 namespace {
 
+using rigExec::RigExecOpBatch;
 using rigExec::RigExecOpIo;
 using rigExec::RigExecPortHandle;
 using rigExecStd::Mat4d;
@@ -61,6 +62,37 @@ using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 using Weights = rigExecStd::RigExecArray<float>;
 using namespace opIo;
+using namespace fieldIo;
+
+/// The weight field payload's declared fields, in saved order.
+enum WeightField : uint32_t {
+    kFalloffCount,
+    kFalloffCurve,
+    kClamp,
+    kPlaneAxis,
+    kPlaneBounded,
+};
+/// CombineWeights'.
+enum CombineField : uint32_t { kMode, kInputs, kCombineClamp };
+
+/// One instance's WeightFieldPayload, its falloff curve read in place.
+struct WeightFieldSettings {
+    rigExec::RigExecFieldView<const float> falloffCurve;
+    bool clamp = false;
+    WeightFieldAxis planeAxis = WeightFieldAxis::Z;
+    bool planeBounded = false;
+};
+
+WeightFieldSettings
+SettingsAt(const RigExecOpBatch &batch, size_t k)
+{
+    WeightFieldSettings p;
+    p.falloffCurve = ListAt<float>(batch, kFalloffCurve, k);
+    p.clamp = FlagAt(batch, kClamp, k);
+    p.planeAxis = EnumAt<WeightFieldAxis>(batch, kPlaneAxis, k);
+    p.planeBounded = FlagAt(batch, kPlaneBounded, k);
+    return p;
+}
 
 /// One op's shared ports.
 struct FieldPorts {
@@ -84,7 +116,7 @@ struct Field {
 };
 
 bool
-BeginField(const WeightFieldPayload &p, const RigExecOpIo &io,
+BeginField(const WeightFieldSettings &p, const RigExecOpIo &io,
            const FieldPorts &ports, const char *op, std::string *error,
            Field *field)
 {
@@ -100,8 +132,8 @@ BeginField(const WeightFieldPayload &p, const RigExecOpIo &io,
     f.invert = InOr(io, ports.invert, 0.0f);
     f.strength = InOr(io, ports.strength, 1.0f);
     const Weights *samples = In<Weights>(io, ports.falloffSamples);
-    f.curve = samples ? samples->Data() : p.falloffCurve.data();
-    f.curveCount = samples ? samples->Size() : p.falloffCurve.size();
+    f.curve = samples ? samples->Data() : p.falloffCurve.data;
+    f.curveCount = samples ? samples->Size() : p.falloffCurve.Size();
     Out<Weights>(io, ports.out).Resize(field->points->Size());
     return true;
 }
@@ -132,7 +164,7 @@ ApplyScale(const RigExecOpIo &io, const RigExecPortHandle &port, const char *op,
 }
 
 bool
-FinishField(const WeightFieldPayload &p, const RigExecOpIo &io,
+FinishField(const WeightFieldSettings &p, const RigExecOpIo &io,
             const FieldPorts &ports, const char *op, std::string *error)
 {
     for (float &w : Out<Weights>(io, ports.out))
@@ -143,10 +175,10 @@ FinishField(const WeightFieldPayload &p, const RigExecOpIo &io,
 }
 
 bool
-RunSphereWeight(const void *payload, void *, const RigExecOpIo &io,
-                std::string *error)
+SphereWeightOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
-    const auto &p = *static_cast<const WeightFieldPayload *>(payload);
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const WeightFieldSettings p = SettingsAt(batch, k);
     const FieldPorts ports = RIGEXEC_FIELD_PORTS(SphereWeight);
     Field f;
     if (!BeginField(p, io, ports, "SphereWeight", error, &f) ||
@@ -165,10 +197,18 @@ RunSphereWeight(const void *payload, void *, const RigExecOpIo &io,
 }
 
 bool
-RunPlaneWeight(const void *payload, void *, const RigExecOpIo &io,
-               std::string *error)
+RunSphereWeight(const RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
-    const auto &p = *static_cast<const WeightFieldPayload *>(payload);
+    return EachInstance(batch, failed, [&](size_t k) {
+        return SphereWeightOne(batch, k, error);
+    });
+}
+
+bool
+PlaneWeightOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const WeightFieldSettings p = SettingsAt(batch, k);
     const FieldPorts ports = RIGEXEC_FIELD_PORTS(PlaneWeight);
     Field f;
     if (!BeginField(p, io, ports, "PlaneWeight", error, &f))
@@ -188,10 +228,18 @@ RunPlaneWeight(const void *payload, void *, const RigExecOpIo &io,
 }
 
 bool
-RunCurveWeight(const void *payload, void *, const RigExecOpIo &io,
-               std::string *error)
+RunPlaneWeight(const RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
-    const auto &p = *static_cast<const WeightFieldPayload *>(payload);
+    return EachInstance(batch, failed, [&](size_t k) {
+        return PlaneWeightOne(batch, k, error);
+    });
+}
+
+bool
+CurveWeightOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const WeightFieldSettings p = SettingsAt(batch, k);
     const FieldPorts ports = RIGEXEC_FIELD_PORTS(CurveWeight);
     Field f;
     if (!BeginField(p, io, ports, "CurveWeight", error, &f) ||
@@ -232,6 +280,14 @@ RunCurveWeight(const void *payload, void *, const RigExecOpIo &io,
             out);
     }
     return FinishField(p, io, ports, "CurveWeight", error);
+}
+
+bool
+RunCurveWeight(const RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return CurveWeightOne(batch, k, error);
+    });
 }
 
 using rigExecRig::PointWeights;
@@ -307,12 +363,16 @@ WriteDense(const std::vector<float> &values, const CombineWeightsPayload &p,
 }
 
 bool
-RunCombineWeights(const void *payload, void *state, const RigExecOpIo &io,
-                  std::string *error)
+CombineWeightsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
     namespace eval = rigExec::eval;
-    const auto &p = *static_cast<const CombineWeightsPayload *>(payload);
-    auto &s = *static_cast<CombineState *>(state);
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    CombineWeightsPayload p;
+    p.mode = EnumAt<WeightCombineMode>(batch, kMode, k);
+    p.inputs = EnumAt<WeightCombineInputs>(batch, kInputs, k);
+    p.clamp = FlagAt(batch, kCombineClamp, k);
+    auto &s =
+        *static_cast<CombineState *>(rigExec::RigExecBatchState(batch, k));
     const WeightList inputs(io, CombineWeightsInputs());
     const size_t targetCount =
         size_t(InOr(io, CombineWeightsTargetCount(), uint32_t(0)));
@@ -366,6 +426,15 @@ RunCombineWeights(const void *payload, void *state, const RigExecOpIo &io,
     return true;
 }
 
+bool
+RunCombineWeights(const RigExecOpBatch &batch, size_t *failed,
+                  std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return CombineWeightsOne(batch, k, error);
+    });
+}
+
 using rigExec::kRigExecPortInput;
 using rigExec::kRigExecPortOptional;
 using rigExec::kRigExecPortOutput;
@@ -409,60 +478,54 @@ const RigExecPortDesc kCurvePorts[] = {
 };
 #undef RIGEXEC_FIELD_PORT_DESCS
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
 void
-Save(Writer &w, const WeightFieldPayload &p)
+FieldValues(const void *payload, RigExecFieldValues &out)
 {
-    w.Version(1);
-    payloadIo::PutList(w, p.falloffCurve);
-    w.Bool(p.clamp);
-    w.Enum(p.planeAxis);
-    w.Bool(p.planeBounded);
+    const auto &p = *static_cast<const WeightFieldPayload *>(payload);
+    SetList(out, kFalloffCount, p.falloffCurve);
+    SetFlag(out, kClamp, p.clamp);
+    SetEnum(out, kPlaneAxis, p.planeAxis);
+    SetFlag(out, kPlaneBounded, p.planeBounded);
 }
 
 void
-Load(Reader &r, WeightFieldPayload &p)
+CombineValues(const void *payload, RigExecFieldValues &out)
 {
-    r.Version(1);
-    payloadIo::GetList(r, p.falloffCurve);
-    p.clamp = r.Bool();
-    p.planeAxis = r.Enum(WeightFieldAxis::Z);
-    p.planeBounded = r.Bool();
+    const auto &p = *static_cast<const CombineWeightsPayload *>(payload);
+    SetEnum(out, kMode, p.mode);
+    SetEnum(out, kInputs, p.inputs);
+    SetFlag(out, kCombineClamp, p.clamp);
 }
 
-void
-Save(Writer &w, const CombineWeightsPayload &p)
-{
-    w.Version(1);
-    w.Enum(p.mode);
-    w.Enum(p.inputs);
-    w.Bool(p.clamp);
-}
+const rigExec::RigExecFieldDesc kFieldFields[] = {
+    Count("falloffCount"),
+    Items("falloffCurve", rigExecStd::FloatType(), kFalloffCount),
+    Flag("clamp"),
+    Enum("planeAxis", WeightFieldAxis::Z),
+    Flag("planeBounded"),
+};
 
-void
-Load(Reader &r, CombineWeightsPayload &p)
-{
-    r.Version(1);
-    p.mode = r.Enum(WeightCombineMode::Overlay);
-    p.inputs = r.Enum(WeightCombineInputs::Fields);
-    p.clamp = r.Bool();
-}
+const rigExec::RigExecFieldDesc kCombineFields[] = {
+    Enum("mode", WeightCombineMode::Overlay),
+    Enum("inputs", WeightCombineInputs::Fields),
+    Flag("clamp"),
+};
 
 rigExec::RigExecOpDesc
 FieldDesc(const char *name, const RigExecPortDesc *ports, size_t count,
-          rigExec::RigExecOpRunFn run)
+          rigExec::RigExecOpBatchFn runBatch)
 {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = name;
     d.ports = ports;
     d.portCount = count;
-    d.run = run;
+    d.runBatch = runBatch;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload =
-        rigExec::RigExecPayloadHandlingFor<WeightFieldPayload, &Save, &Load>();
+    d.payloadFields = kFieldFields;
+    d.payloadFieldCount = std::size(kFieldFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &FieldValues;
     return d;
 }
 
@@ -491,10 +554,12 @@ const rigExec::RigExecOpDesc kCombine = [] {
     d.name = "CombineWeights";
     d.ports = kCombinePorts;
     d.portCount = std::size(kCombinePorts);
-    d.run = &RunCombineWeights;
+    d.runBatch = &RunCombineWeights;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<CombineWeightsPayload, &Save,
-                                                   &Load>();
+    d.payloadFields = kCombineFields;
+    d.payloadFieldCount = std::size(kCombineFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &CombineValues;
     d.state.size = sizeof(CombineState);
     d.state.align = alignof(CombineState);
     d.state.create = [](void *dst) {
