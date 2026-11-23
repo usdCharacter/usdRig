@@ -393,7 +393,6 @@ class UndoStack(object):
         self._undo = []
         self._redo = []
         self._listeners = []
-        self._before_push = []
         self._flushers = []
         self._replaying = False
 
@@ -403,13 +402,6 @@ class UndoStack(object):
     def RemoveListener(self, fn):
         if fn in self._listeners:
             self._listeners.remove(fn)
-
-    def AddBeforePush(self, fn):
-        self._before_push.append(fn)
-
-    def RemoveBeforePush(self, fn):
-        if fn in self._before_push:
-            self._before_push.remove(fn)
 
     def AddFlusher(self, fn):
         """`fn()` runs before every Undo and Redo, so an editor holding
@@ -427,8 +419,6 @@ class UndoStack(object):
     def Push(self, edit):
         if self._replaying:
             raise RuntimeError("Cannot record an edit during undo or redo")
-        for fn in list(self._before_push):
-            fn()
         self._undo.append(edit)
         del self._undo[:-self.LIMIT]
         self._redo = []
