@@ -1291,8 +1291,9 @@ jobs:
 
 
           # Named evidence: both generated TUs, under the generated/ key, in both builds.
-          # Expected keys come from the C3 contract in docs/godot_example/SConstruct and
-          # are asserted here against the actual files SCons produced.
+          # Expected keys follow the object-key contract stated in
+          # docs/godot_example/SConstruct and are asserted here against the
+          # actual files SCons produced.
           for needle in ("ClothMoverKernel", "moverCatalog"):
               in_debug = sorted(p for p in debug if needle in p)
               in_release = sorted(p for p in release if needle in p)
@@ -1325,7 +1326,7 @@ jobs:
           check(not missing, "every manifest TU has an object in both configs%s"
                 % (": " + ", ".join(missing[:6]) if missing else ""))
 
-          # C3 key hygiene on every actual target: no drive, absolute segment or '..'.
+          # Object-key hygiene on every actual target: no drive, absolute segment or '..'.
           bad = [p for p in debug | release
                  if p.startswith("/") or ".." in p.split("/") or p.split("/")[0].endswith(":")]
           check(not bad, "object keys carry no drive, absolute segment or '..'%s"
