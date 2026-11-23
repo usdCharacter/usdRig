@@ -1,8 +1,8 @@
 // A scene solver or constraint run as rigExecOps' pose ops gives the bits
 // RigExecRunSolver and RigExecRunConstraint give: per kind over its
 // settings, through refusals and a moved setting's rebuild, and per
-// operation of authored rigs, where the scene program's native publish and
-// the op publish are compared value for value.
+// operation of authored rigs, where the scene program's own publish, a
+// native rerun and an op rerun are compared value for value.
 #include "rigExecScene/poseOpRunner.h"
 #include "rigExecScene/poseOps.h"
 
@@ -812,7 +812,8 @@ SameState(const RigExecTypedValueState &a, const RigExecTypedValueState &b)
 }
 
 /// Runs \p run twice from the same store, natively and with \p runner, and
-/// compares what each published to \p writes.
+/// compares what each published to \p writes, and what the scene program
+/// itself published there.
 template <class Run>
 bool
 SamePublish(RigExecTypedValueStore &store,
@@ -830,7 +831,8 @@ SamePublish(RigExecTypedValueStore &store,
     run(&runner);
     bool same = true;
     for (size_t k = 0; k < writes.size(); ++k) {
-        same = same && SameState(native[k], store.values[size_t(writes[k])]);
+        same = same && SameState(native[k], saved[k]) &&
+               SameState(native[k], store.values[size_t(writes[k])]);
         store.values[size_t(writes[k])] = saved[k];
     }
     return same;

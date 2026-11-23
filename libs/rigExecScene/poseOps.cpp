@@ -7,6 +7,7 @@
 #include "rigExecOps/solver/ribbonFramesOps.h"
 #include "rigExecOps/solver/singleChainIkOps.h"
 #include "rigExecOps/solver/splineIkOps.h"
+#include "rigExecRigTypes/rigTypes.h"
 
 #include "pxr/base/gf/math.h"
 
@@ -14,6 +15,25 @@
 #include <cstring>
 
 namespace rigExec {
+
+struct RigExecPoseOpScratch::Values {
+    rigExecRig::PointFrameArray frames;
+    rigExecStd::RigExecArray<rigExecRig::PointLandmarks> landmarks, jointRests;
+    rigExecStd::RigExecArray<rigExecRig::PointFrame> frameList;
+    rigExecStd::RigExecArray<double> doubles;
+    rigExecStd::RigExecArray<uint8_t> live;
+    rigExecStd::RigExecArray<rigExecStd::Vec3f> posed, rest;
+};
+
+RigExecPoseOpScratch::RigExecPoseOpScratch()
+    : values(std::make_unique<Values>())
+{
+}
+RigExecPoseOpScratch::~RigExecPoseOpScratch() = default;
+RigExecPoseOpScratch::RigExecPoseOpScratch(RigExecPoseOpScratch &&) noexcept =
+    default;
+RigExecPoseOpScratch &
+RigExecPoseOpScratch::operator=(RigExecPoseOpScratch &&) noexcept = default;
 
 namespace {
 
@@ -212,19 +232,21 @@ WriteLive(const RigExecSolverRecord &s, const RigExecSolverOpNode &node,
           RigExecPoseOpScratch *scratch, RigExecEvaluator *e,
           std::string *error)
 {
-    Landmarks(s.jointRests, &scratch->jointRests);
-    scratch->live.Resize(s.restIsLive.size());
+    RigExecPoseOpScratch::Values &v = *scratch->values;
+    Landmarks(s.jointRests, &v.jointRests);
+    v.live.Resize(s.restIsLive.size());
     for (size_t k = 0; k < s.restIsLive.size(); ++k)
-        scratch->live[k] = s.restIsLive[k] ? 1 : 0;
-    return Set(e, node.jointRests, scratch->jointRests, error) &&
-           Set(e, node.jointRestLive, scratch->live, error);
+        v.live[k] = s.restIsLive[k] ? 1 : 0;
+    return Set(e, node.jointRests, v.jointRests, error) &&
+           Set(e, node.jointRestLive, v.live, error);
 }
 
 // Constraints.
 
 rigExecOps::ConstraintPayload
 ConstraintPayloadOf(const RigExecConstraintRecord &r,
-                    const RigExecConstraintInputs &input)
+                    const std::vector<GfVec3d> &translationOffsets,
+                    const std::vector<GfVec3d> &rotationOffsets)
 {
     rigExecOps::ConstraintPayload p;
     switch (r.kind) {
@@ -248,11 +270,10 @@ ConstraintPayloadOf(const RigExecConstraintRecord &r,
         p.scaleAxes = Axes(r.parent.scaleAxes);
         p.rotationOrder = Order(r.parent.rotationOrder);
         p.blendShear = r.parent.blendShear;
-        for (const RigExecConstraintSource &source : input.sources) {
-            p.translationOffsets.push_back(ToStd(source.translationOffset));
-            p.rotationOffsetsDegrees.push_back(
-                ToStd(source.rotationOffsetDegrees));
-        }
+        for (const GfVec3d &offset : translationOffsets)
+            p.translationOffsets.push_back(ToStd(offset));
+        for (const GfVec3d &offset : rotationOffsets)
+            p.rotationOffsetsDegrees.push_back(ToStd(offset));
         break;
     case RigExecConstraintKind::Aim:
         p.offset = ToStd(r.aim.rotationOffsetDegrees);
@@ -284,7 +305,25 @@ SamePayload(const rigExecOps::ConstraintPayload &a,
            a.preserveInputUp == b.preserveInputUp;
 }
 
-/// Whether \p kind reads the carry, and \p r's world-up presence.
+/// Whether \p input's Parent offsets are those \p node was built with.
+bool
+SameOffsets(const RigExecConstraintOpNode &node,
+            const RigExecConstraintInputs &input)
+{
+    if (node.kind != RigExecConstraintKind::Parent)
+        return true;
+    if (node.translationOffsets.size() != input.sources.size())
+        return false;
+    for (size_t k = 0; k < input.sources.size(); ++k)
+        if (!Same(node.translationOffsets[k],
+                  input.sources[k].translationOffset) ||
+            !Same(node.rotationOffsets[k],
+                  input.sources[k].rotationOffsetDegrees))
+            return false;
+    return true;
+}
+
+/// Whether \p kind reads the carry.
 bool
 TakesSpace(RigExecConstraintKind kind)
 {
@@ -376,16 +415,21 @@ RigExecAddSolverOp(const RigExecSolverRecord &s,
     RigExecRigDescBuilder &b = *builder;
     switch (s.kind) {
     case RigExecSolverKind::FkChain: {
-        r.fk = FkPayload(s);
-        const RigExecNodeId id = b.AddOp(rigExecOps::FkChain(), &r.fk);
+        const rigExecOps::FkChainPayload payload = FkPayload(s);
+        r.parents = payload.parentIndices;
+        r.scaleSegments = payload.scaleSegments;
+        const RigExecNodeId id = b.AddOp(rigExecOps::FkChain(), &payload);
         r.controls = b.BindInput(id, rigExecOps::FkChainControls());
         r.outRests = b.BindInput(id, rigExecOps::FkChainOutRests());
         r.out = b.BindOutput(id, rigExecOps::FkChainOut());
         break;
     }
     case RigExecSolverKind::TwoBoneIk: {
-        r.ik = IkPayload(s);
-        const RigExecNodeId id = b.AddOp(rigExecOps::TwoBoneIk(), &r.ik);
+        const rigExecOps::TwoBoneIkPayload payload = IkPayload(s);
+        r.softDistancePolicy = payload.softDistancePolicy;
+        r.scaleSegments = payload.scaleSegments;
+        r.scaleCalibration = payload.scaleCalibration;
+        const RigExecNodeId id = b.AddOp(rigExecOps::TwoBoneIk(), &payload);
         using namespace rigExecOps;
         r.root = b.BindInput(id, TwoBoneIkRoot());
         r.effector = b.BindInput(id, TwoBoneIkEffector());
@@ -456,8 +500,11 @@ RigExecAddSolverOp(const RigExecSolverRecord &s,
     }
     case RigExecSolverKind::SplineIk: {
         using namespace rigExecOps;
-        r.spline = SplinePayload(s, input);
-        const RigExecNodeId id = b.AddOp(SplineIk(), &r.spline);
+        const SplineIkPayload payload = SplinePayload(s, input);
+        r.restLengthChain = payload.restLengthChain;
+        r.minLengthRatio = payload.minLengthRatio;
+        r.aimRootTangent = payload.aimRootTangent;
+        const RigExecNodeId id = b.AddOp(SplineIk(), &payload);
         r.restJoints = b.BindInput(id, SplineIkRestJoints());
         r.restRoot = b.BindInput(id, SplineIkRestRoot());
         r.restMid = b.BindInput(id, SplineIkRestMid());
@@ -487,43 +534,44 @@ RigExecWriteSolverOpInputs(const RigExecSolverRecord &s,
                            RigExecPoseOpScratch *scratch, RigExecEvaluator *e,
                            std::string *error)
 {
-    if (!e || !scratch || node.kind != s.kind)
+    if (!e || !scratch || !scratch->values || node.kind != s.kind)
         return Fail(error, "solver op node does not match the record");
+    RigExecPoseOpScratch::Values &v = *scratch->values;
     switch (s.kind) {
     case RigExecSolverKind::FkChain: {
         const rigExecOps::FkChainPayload payload = FkPayload(s);
-        if (!SameVector(payload.parentIndices, node.fk.parentIndices) ||
-            payload.scaleSegments != node.fk.scaleSegments)
+        if (!SameVector(payload.parentIndices, node.parents) ||
+            payload.scaleSegments != node.scaleSegments)
             return Fail(error, "FK chain settings moved");
         // The start frame leads as a root control; its output is dropped.
         const size_t base = s.hasStart ? 1 : 0, n = input.controls.size();
         const bool jointBasis = s.jointRests.size() == n;
-        PointFrameArray &controls = scratch->frames;
+        PointFrameArray &controls = v.frames;
         controls.frames.Resize(n + base);
         controls.rests.Resize(n + base);
-        scratch->landmarks.Resize(n + base);
+        v.landmarks.Resize(n + base);
         if (base) {
             controls.frames[0] = ToStd(input.start);
             controls.rests[0] = ToStd(s.startRest);
-            scratch->landmarks[0] = controls.rests[0];
+            v.landmarks[0] = controls.rests[0];
         }
         for (size_t k = 0; k < n; ++k) {
             controls.frames[k + base] = ToStd(input.controls[k]);
             controls.rests[k + base] = ToStd(s.controlRests[k]);
             const bool live =
                 jointBasis && k < s.restIsLive.size() && s.restIsLive[k];
-            scratch->landmarks[k + base] =
+            v.landmarks[k + base] =
                 live ? ToStd(s.jointRests[k]) : controls.rests[k + base];
         }
         return Set(e, node.controls, controls, error) &&
-               Set(e, node.outRests, scratch->landmarks, error);
+               Set(e, node.outRests, v.landmarks, error);
     }
     case RigExecSolverKind::TwoBoneIk: {
         const rigExecOps::TwoBoneIkPayload payload = IkPayload(s);
         if (!input.refreshIkParams ||
-            payload.softDistancePolicy != node.ik.softDistancePolicy ||
-            payload.scaleSegments != node.ik.scaleSegments ||
-            !Same(payload.scaleCalibration, node.ik.scaleCalibration))
+            payload.softDistancePolicy != node.softDistancePolicy ||
+            payload.scaleSegments != node.scaleSegments ||
+            !Same(payload.scaleCalibration, node.scaleCalibration))
             return Fail(error, "two-bone IK settings moved");
         GfMatrix4d space = input.ikSpace;
         if (input.hasSpace) {
@@ -531,13 +579,13 @@ RigExecWriteSolverOpInputs(const RigExecSolverRecord &s,
             if (RigExecPointsToMatrix(input.spaceRest, input.space, &delta))
                 space = delta * space;
         }
-        scratch->landmarks.Resize(3);
+        v.landmarks.Resize(3);
         for (size_t k = 0; k < 3; ++k)
-            scratch->landmarks[k] = ToStd(s.ikRests[k]);
+            v.landmarks[k] = ToStd(s.ikRests[k]);
         return Set(e, node.root, ToStd(input.root), error) &&
                Set(e, node.effector, ToStd(input.end), error) &&
                Set(e, node.pole, ToStd(input.pole), error) &&
-               Set(e, node.rests, scratch->landmarks, error) &&
+               Set(e, node.rests, v.landmarks, error) &&
                Set(e, node.space, ToStd(space), error) &&
                Set(e, node.bend, input.bend, error) &&
                Set(e, node.upperOffset, input.upperOffset, error) &&
@@ -572,12 +620,12 @@ RigExecWriteSolverOpInputs(const RigExecSolverRecord &s,
         return true;
     }
     case RigExecSolverKind::TwistDistribution: {
-        Assign(s.twistWeights, &scratch->doubles);
+        Assign(s.twistWeights, &v.doubles);
         return Set(e, node.start, ToStd(input.root), error) &&
                Set(e, node.end, ToStd(input.end), error) &&
                Set(e, node.startRest, ToStd(s.twistStartRest), error) &&
                Set(e, node.endRest, ToStd(s.twistEndRest), error) &&
-               Set(e, node.weights, scratch->doubles, error) &&
+               Set(e, node.weights, v.doubles, error) &&
                Set(e, node.turns, input.twistTurns, error) &&
                WriteLive(s, node, scratch, e, error);
     }
@@ -590,18 +638,18 @@ RigExecWriteSolverOpInputs(const RigExecSolverRecord &s,
             for (size_t i = 0; i < v.size(); ++i)
                 (*out)[i] = Vec3f(v[i][0], v[i][1], v[i][2]);
         };
-        points(input.ribbonPoints, &scratch->posed);
-        points(s.ribbonRestPoints, &scratch->rest);
-        return Set(e, node.posed, scratch->posed, error) &&
-               Set(e, node.restCurve, scratch->rest, error) &&
+        points(input.ribbonPoints, &v.posed);
+        points(s.ribbonRestPoints, &v.rest);
+        return Set(e, node.posed, v.posed, error) &&
+               Set(e, node.restCurve, v.rest, error) &&
                WriteLive(s, node, scratch, e, error);
     }
     case RigExecSolverKind::SplineIk: {
         const rigExecOps::SplineIkPayload payload = SplinePayload(s, input);
         if (!input.refreshSplineParams ||
-            payload.restLengthChain != node.spline.restLengthChain ||
-            !Same(payload.minLengthRatio, node.spline.minLengthRatio) ||
-            payload.aimRootTangent != node.spline.aimRootTangent)
+            payload.restLengthChain != node.restLengthChain ||
+            !Same(payload.minLengthRatio, node.minLengthRatio) ||
+            payload.aimRootTangent != node.aimRootTangent)
             return Fail(error, "spline IK settings moved");
         // The rests carried by the space's rest-to-pose map, as native does.
         GfMatrix4d delta(1.0);
@@ -612,18 +660,18 @@ RigExecWriteSolverOpInputs(const RigExecSolverRecord &s,
         const auto rest = [&](const RigExecPointFrame &frame) {
             return ToStd(spaced ? RigExecTransformFrame(frame, delta) : frame);
         };
-        scratch->frameList.Resize(s.splineRestFrames.size());
+        v.frameList.Resize(s.splineRestFrames.size());
         for (size_t k = 0; k < s.splineRestFrames.size(); ++k)
-            scratch->frameList[k] = rest(s.splineRestFrames[k]);
-        Assign(s.splineRestWeights, &scratch->doubles);
-        return Set(e, node.restJoints, scratch->frameList, error) &&
+            v.frameList[k] = rest(s.splineRestFrames[k]);
+        Assign(s.splineRestWeights, &v.doubles);
+        return Set(e, node.restJoints, v.frameList, error) &&
                Set(e, node.restRoot, rest(s.splineRootRest), error) &&
                Set(e, node.restMid, rest(s.splineMidRest), error) &&
                Set(e, node.restEnd, rest(s.splineEndRest), error) &&
                Set(e, node.root, ToStd(input.root), error) &&
                Set(e, node.mid, ToStd(input.mid), error) &&
                Set(e, node.end, ToStd(input.end), error) &&
-               Set(e, node.volumeWeights, scratch->doubles, error) &&
+               Set(e, node.volumeWeights, v.doubles, error) &&
                Set(e, node.preserveVolume, input.preserveVolume, error) &&
                Set(e, node.midFollow, input.midFollowWeight, error) &&
                Set(e, node.roll, GfDegreesToRadians(input.rollDegrees),
@@ -709,8 +757,7 @@ RigExecAddConstraintOp(const RigExecConstraintRecord &r,
             r.singleChain.mode == RigExecSingleChainIkMode::SingleChain;
         payload.preserveJointOrientation =
             r.singleChain.preserveJointOrientation;
-        n.singleChain = payload.singleChain;
-        n.preserveJointOrientation = payload.preserveJointOrientation;
+        n.settings = r;
         const RigExecNodeId id = b.AddOp(SingleChainIk(), &payload);
         n.chain = b.BindInput(id, SingleChainIkChain());
         n.effector = b.BindInput(id, SingleChainIkEffector());
@@ -722,7 +769,14 @@ RigExecAddConstraintOp(const RigExecConstraintRecord &r,
         *node = std::move(n);
         return true;
     }
-    n.payload = ConstraintPayloadOf(r, input);
+    n.settings = r;
+    if (r.kind == RigExecConstraintKind::Parent)
+        for (const RigExecConstraintSource &source : input.sources) {
+            n.translationOffsets.push_back(source.translationOffset);
+            n.rotationOffsets.push_back(source.rotationOffsetDegrees);
+        }
+    const rigExecOps::ConstraintPayload payload =
+        ConstraintPayloadOf(r, n.translationOffsets, n.rotationOffsets);
     n.hasSpace = TakesSpace(r.kind) && input.carry.has_value();
     n.hasWorldUp = r.kind == RigExecConstraintKind::Aim &&
                    r.aim.worldUpDirection.has_value();
@@ -775,7 +829,7 @@ RigExecAddConstraintOp(const RigExecConstraintRecord &r,
     default:
         return Fail(error, "constraint kind has no op");
     }
-    const RigExecNodeId id = b.AddOp(*op, &n.payload);
+    const RigExecNodeId id = b.AddOp(*op, &payload);
     n.in = b.BindInput(id, *in);
     n.weight = b.BindInput(id, *weight);
     if (sources) {
@@ -801,15 +855,16 @@ RigExecWriteConstraintOpInputs(const RigExecConstraintRecord &r,
                                RigExecPoseOpScratch *scratch,
                                RigExecEvaluator *e, std::string *error)
 {
-    if (!e || !scratch || node.kind != r.kind)
+    if (!e || !scratch || !scratch->values || node.kind != r.kind)
         return Fail(error, "constraint op node does not match the record");
+    RigExecPoseOpScratch::Values &v = *scratch->values;
     if (r.kind == RigExecConstraintKind::SingleChainIk) {
         const RigExecSingleChainIkParams &p = r.singleChain;
-        if (node.singleChain !=
-                (p.mode == RigExecSingleChainIkMode::SingleChain) ||
-            node.preserveJointOrientation != p.preserveJointOrientation)
+        if (node.settings.singleChain.mode != p.mode ||
+            node.settings.singleChain.preserveJointOrientation !=
+                p.preserveJointOrientation)
             return Fail(error, "single-chain IK settings moved");
-        PointFrameArray &chain = scratch->frames;
+        PointFrameArray &chain = v.frames;
         chain.frames.Resize(input.chain.size());
         chain.rests.Resize(0);
         for (size_t k = 0; k < input.chain.size(); ++k)
@@ -821,7 +876,9 @@ RigExecWriteConstraintOpInputs(const RigExecConstraintRecord &r,
                Set(e, node.weight, p.weight, error) &&
                Set(e, node.stretch, p.stretch, error);
     }
-    if (!SamePayload(node.payload, ConstraintPayloadOf(r, input)) ||
+    if (!SamePayload(ConstraintPayloadOf(node.settings, {}, {}),
+                     ConstraintPayloadOf(r, {}, {})) ||
+        !SameOffsets(node, input) ||
         node.hasSpace != (TakesSpace(r.kind) && input.carry.has_value()) ||
         node.hasWorldUp != (r.kind == RigExecConstraintKind::Aim &&
                             r.aim.worldUpDirection.has_value()))
@@ -835,16 +892,16 @@ RigExecWriteConstraintOpInputs(const RigExecConstraintRecord &r,
         return Set(e, node.target, ToStd(input.aimTarget), error) &&
                (!node.hasWorldUp ||
                 Set(e, node.worldUp, ToStd(*r.aim.worldUpDirection), error));
-    PointFrameArray &sources = scratch->frames;
+    PointFrameArray &sources = v.frames;
     sources.frames.Resize(input.sources.size());
     sources.rests.Resize(0);
-    scratch->doubles.Resize(input.sources.size());
+    v.doubles.Resize(input.sources.size());
     for (size_t k = 0; k < input.sources.size(); ++k) {
         sources.frames[k] = ToStd(input.sources[k].frame);
-        scratch->doubles[k] = input.sources[k].normalizedWeight;
+        v.doubles[k] = input.sources[k].normalizedWeight;
     }
     return Set(e, node.sources, sources, error) &&
-           Set(e, node.sourceWeights, scratch->doubles, error);
+           Set(e, node.sourceWeights, v.doubles, error);
 }
 
 bool

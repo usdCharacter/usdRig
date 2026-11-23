@@ -8,13 +8,10 @@
 
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/rigDesc.h"
-#include "rigExecOps/constraint/constraintOps.h"
-#include "rigExecOps/solver/chainSolverOps.h"
-#include "rigExecOps/solver/splineIkOps.h"
-#include "rigExecRigTypes/rigTypes.h"
 #include "rigExecScene/constraintProgram.h"
 #include "rigExecScene/solverProgram.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -41,10 +38,10 @@ struct RigExecSolverOpNode {
     std::vector<Blend> blend;
     /// The settings baked into the payloads and the node layout, to refuse
     /// a frame whose settings moved.
-    rigExecOps::FkChainPayload fk;
-    rigExecOps::TwoBoneIkPayload ik;
-    rigExecOps::SplineIkPayload spline;
-    bool logScale = false;
+    std::vector<int> parents;
+    bool scaleSegments = false, softDistancePolicy = false;
+    double scaleCalibration = 0.0, minLengthRatio = 0.0;
+    bool restLengthChain = false, aimRootTangent = false, logScale = false;
     std::vector<char> blendLive;
     int sampleCount = 0;
 };
@@ -57,13 +54,15 @@ bool RigExecSolverOpSupported(const RigExecSolverRecord &record);
 
 /// Host-side port values, kept between frames so a write reuses their
 /// storage.
-struct RigExecPoseOpScratch {
-    rigExecRig::PointFrameArray frames;
-    rigExecStd::RigExecArray<rigExecRig::PointLandmarks> landmarks, jointRests;
-    rigExecStd::RigExecArray<rigExecRig::PointFrame> frameList;
-    rigExecStd::RigExecArray<double> doubles;
-    rigExecStd::RigExecArray<uint8_t> live;
-    rigExecStd::RigExecArray<rigExecStd::Vec3f> posed, rest;
+class RigExecPoseOpScratch {
+public:
+    RigExecPoseOpScratch();
+    ~RigExecPoseOpScratch();
+    RigExecPoseOpScratch(RigExecPoseOpScratch &&) noexcept;
+    RigExecPoseOpScratch &operator=(RigExecPoseOpScratch &&) noexcept;
+
+    struct Values;
+    std::unique_ptr<Values> values;
 };
 
 /// How a solver frame is answered before any op runs.
@@ -117,9 +116,10 @@ struct RigExecConstraintOpNode {
     RigExecInputId in, sources, sourceWeights, weight, space, target, worldUp;
     RigExecInputId chain, effector, pole, twist, stretch;
     RigExecOutputId out;
-    /// The settings baked into the payload and the bound ports.
-    rigExecOps::ConstraintPayload payload;
-    bool singleChain = false, preserveJointOrientation = false;
+    /// The record and Parent offsets the payload was built from, and the
+    /// bound ports, to refuse a frame whose settings moved.
+    RigExecConstraintRecord settings;
+    std::vector<GfVec3d> translationOffsets, rotationOffsets;
     bool hasSpace = false, hasWorldUp = false;
 };
 

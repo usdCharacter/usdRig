@@ -7,6 +7,7 @@
 #include "weightGraphBinding.h"
 #include "geometryGraphBinding.h"
 #include "geometryOpRunner.h"
+#include "poseOpRunner.h"
 #include "poseGraphBinding.h"
 #include "poseCommit.h"
 #include "autoClavicleGraph.h"
@@ -121,6 +122,9 @@ struct RigExecSceneOperationWorkspace {
     std::vector<std::string> geometryDiagnostics;
     std::vector<RigExecBlendChannel> blendChannels;
     RigExecGeometryOpRunner opRunner;
+    /// Set at Prepare for a solver or constraint the op core runs.
+    bool poseOnOps = false;
+    RigExecPoseOpRunner poseRunner;
 };
 /// Retained values, domain scratch, and readiness workspace. No source access,
 /// metadata decisions or path-based version lookup occurs in operation bodies.

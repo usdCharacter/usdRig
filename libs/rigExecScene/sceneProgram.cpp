@@ -24,6 +24,18 @@ RunsOnOps(const RigExecSceneGeometryOp &op)
     return kind == RigExecRevisionOp::BlendShape ||
            RigExecGeometryOpSupported(kind);
 }
+// Decided up front: kinds without an op, a degenerate record and a
+// windowed constraint run natively.
+bool
+RunsPoseOnOps(const RigExecSceneOperation &operation)
+{
+    if (const auto *op = std::get_if<RigExecSolverGraphBinding>(&operation))
+        return RigExecSolverOpSupported(op->record);
+    if (const auto *op = std::get_if<RigExecConstraintGraphBinding>(&operation))
+        return RigExecConstraintOpSupported(op->structural.record.kind) &&
+               !op->match && !op->windowFrames;
+    return false;
+}
 // Weight combines always run on the op core.
 bool
 CombinesWeights(const RigExecWeightGraphBinding &binding)
@@ -41,7 +53,7 @@ NeedsOpCore(const RigExecSceneOperation &operation)
         return CombinesWeights(op->binding);
     if (const auto *op = std::get_if<RigExecSceneFieldOp>(&operation))
         return CombinesWeights(op->binding);
-    return false;
+    return RunsPoseOnOps(operation);
 }
 } // namespace
 bool
@@ -220,8 +232,12 @@ RigExecSceneProgramRuntime::Prepare(const RigExecSceneProgram &program,
     _operations = program.operations;
     _workspaces.resize(_operations.size());
     _ran = false;
-    for (auto &workspace : _workspaces)
+    for (size_t i = 0; i < _workspaces.size(); ++i) {
+        auto &workspace = _workspaces[i];
         workspace.opRunner = RigExecGeometryOpRunner();
+        workspace.poseRunner = RigExecPoseOpRunner();
+        workspace.poseOnOps = RunsPoseOnOps(_operations[i]);
+    }
     _windows.assign(program.windowedOps.size(), Window());
     _windowOfOperation.assign(_operations.size(), -1);
     for (size_t w = 0; w < program.windowedOps.size(); ++w)
@@ -327,11 +343,15 @@ RigExecSceneProgramRuntime::Run(const RigExecSceneProgram &program,
             else if constexpr (std::is_same_v<T, RigExecPropertyGraphBinding>)
                 return RigExecRunBoundProperty(op, &values, error);
             else if constexpr (std::is_same_v<T, RigExecSolverGraphBinding>) {
-                RigExecRunSolverGraph(op, &values, &workspace.solver, error);
+                RigExecRunSolverGraph(
+                    op, &values, &workspace.solver, error,
+                    workspace.poseOnOps ? &workspace.poseRunner : nullptr);
                 return true;
             } else if constexpr (std::is_same_v<
                                      T, RigExecConstraintGraphBinding>) {
-                RigExecRunConstraintGraph(op, &values, error, window);
+                RigExecRunConstraintGraph(
+                    op, &values, error, window,
+                    workspace.poseOnOps ? &workspace.poseRunner : nullptr);
                 return true;
             } else if constexpr (std::is_same_v<T, RigExecSceneExtractOp>) {
                 VtValue aggregate;
