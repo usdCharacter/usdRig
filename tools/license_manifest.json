@@ -36,10 +36,10 @@
       },
       {
         "archive": "docs/examples/godot_rolling_ball.zip",
-        "blob": "aa86f604665d9a368388271d431fc82edb71f342",
+        "blob": "1af08c6d85e4567a7685f9c87abdf1c853660f8d",
         "members": 94,
         "legal_members": 27,
-        "refresh_note": "repacked with the single-directory SConstruct from docs/godot_example/SConstruct in this checkout, which names each compiled object by its whole source filename, so a mesh.cpp, a mesh.cxx beside it and a mesh.scalar.cxx reach three distinct targets, and reads its manifest set from the data directory the installed SDK's own rigExecConfig.cmake declares wherever the configured RIGEXEC_INSTALL_CMAKEDIR placed that package file. No sibling godot_rigExec checkout was present, so the add-on payload was re-read from the previous pack's own members, and the godot-cpp text the manifest names as ../godot_rigExec/thirdparty/godot-cpp/LICENSE.md was read from the member that carries it (godot_rigExec/LICENSE-godot-cpp), not invented. Only SConstruct and package_manifest.json changed; the other 92 members are byte-identical to the previous pack including both prebuilt Windows DLLs, and all 27 mapped legal members match their recorded sources. The recorded blob is this packed archive's; the manifest snapshot inside it is one pack behind, the same self-reference the usdview entry records.",
+        "refresh_note": "repacked with the current docs/godot_example/SConstruct, which also compiles rigExecBinary/manifest.cpp and the opCoreSources.txt manifest, and with the add-on source and Windows DLLs rebuilt from it. The add-on tree was its commit c06ed0c plus uncommitted edits to the player and presentation sources, the add-on README and the generated presentation Python; the DLLs were built from that tree against this checkout and an installed SDK. The member set is unchanged (94 members, 27 legal members mapped, all present); 15 members changed. The recorded blob is this packed archive's; the manifest snapshot inside it is one pack behind, the same self-reference the usdview entry records.",
         "legal_members_mapped": 27
       },
       {
