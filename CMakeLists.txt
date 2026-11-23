@@ -797,6 +797,13 @@ foreach(_mode good abi symbol late)
         "$<TARGET_FILE:testOffsetOps>"
         "${CMAKE_CURRENT_BINARY_DIR}/testRigExecOpPlugins/${_mode}")
 endforeach()
+add_executable(testRigExecOpPluginScene tests/testRigExecOpPluginScene.cpp)
+target_link_libraries(testRigExecOpPluginScene PRIVATE rigExec rigExecScene
+    plug usd)
+add_dependencies(testRigExecOpPluginScene testExternalMover testQuadraticOps)
+add_test(NAME testRigExecOpPluginScene COMMAND testRigExecOpPluginScene
+    "$<TARGET_GENEX_EVAL:testExternalMover,$<TARGET_PROPERTY:testExternalMover,RIGEXEC_PLUGIN_RESOURCE_DIR>>"
+    "$<TARGET_GENEX_EVAL:testQuadraticOps,$<TARGET_PROPERTY:testQuadraticOps,RIGEXEC_PLUGIN_RESOURCE_DIR>>")
 add_executable(testRigExecExternalMovers tests/testRigExecExternalMovers.cpp)
 target_link_libraries(testRigExecExternalMovers PRIVATE
     rigExec rigExecAuthoring rigExecBake rigExecRuntime usd usdGeom plug)

@@ -496,7 +496,10 @@ movers' binders in `libs/rigExecScene/externalOps.cpp`. `TYPE_LIBRARIES`
 lists type library entries the plugin also defines, and `SCHEMA` with
 `SCHEMA_TYPE` adds a codeless schema the same way `rigexec_add_mover` does.
 Keep the arithmetic in one kernel that the mover's callbacks and the op both
-call, so the two paths give the same bits.
+call, so the two paths give the same bits. The test fixture's
+`tests/externalMovers/quadraticOps.cpp` is a complete example: the
+`ExternalQuadraticMover` from the mover plugin above runs on its
+`Quadratic` op in the scene program, with the mover's own kernel.
 
 The generated `plugInfo.json` marks the library with
 

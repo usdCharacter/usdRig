@@ -15,3 +15,11 @@ rigexec_add_mover(testExternalMover NO_INSTALL
     FACTORY RigExecQuadraticUsdAdapter
     SCHEMA schema.usda
     SCHEMA_TYPE ExternalQuadraticMover)
+
+# The same mover as an op plugin: its op runs the mover's kernel, and its
+# binder lets the scene program run the mover on the op.
+rigexec_add_op_plugin(testQuadraticOps NO_INSTALL BINDERS
+    PLUGIN_ROOT "${CMAKE_BINARY_DIR}/test-op-plugins"
+    SOURCES quadraticOps.cpp
+    LIBRARIES testExternalMoverKernel)
+target_include_directories(testQuadraticOps PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

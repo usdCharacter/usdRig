@@ -133,6 +133,30 @@ set_tests_properties(testRigExecInstalledOpPlugins PROPERTIES
     ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:${rigExec_LIBRARY_DIR};PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/bin;PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;LD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};LD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib")
 
+# The fixture mover's op plugin, built against the installed SDK beside the
+# mover: the installed scene program runs the mover on its op.
+rigexec_add_op_plugin(testQuadraticOps NO_INSTALL BINDERS
+    PLUGIN_ROOT "${CMAKE_BINARY_DIR}/test-op-plugins"
+    SOURCES ../externalMovers/quadraticOps.cpp
+    LIBRARIES testExternalMoverKernel)
+target_include_directories(testQuadraticOps PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../externalMovers")
+get_target_property(installedQuadraticOpsResources testQuadraticOps
+                    RIGEXEC_PLUGIN_RESOURCE_DIR)
+add_executable(testRigExecInstalledOpPluginScene ../testRigExecOpPluginScene.cpp)
+target_compile_features(testRigExecInstalledOpPluginScene PRIVATE cxx_std_17)
+target_link_libraries(testRigExecInstalledOpPluginScene PRIVATE
+    rigExec::rigExec rigExec::rigExecScene plug usd)
+add_dependencies(testRigExecInstalledOpPluginScene testExternalMover
+    testQuadraticOps)
+add_test(NAME testRigExecInstalledOpPluginScene
+    COMMAND testRigExecInstalledOpPluginScene
+        "${installedExternalMoverResources}" "${installedQuadraticOpsResources}")
+set_tests_properties(testRigExecInstalledOpPluginScene PROPERTIES
+    ENVIRONMENT "PXR_PLUGINPATH_NAME=${rigExec_PLUGIN_DIR}/rigExecSchema/resources"
+    ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:${rigExec_LIBRARY_DIR};PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/bin;PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;LD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};LD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib")
+
 foreach(_test testRigExecInstalledScene testRigExecExplicitScene testRigExecInstalledSceneMissing)
     add_test(NAME ${_test} COMMAND ${_test}
         "${rigExec_PLUGIN_DIR}/rigExecSchema/resources")
