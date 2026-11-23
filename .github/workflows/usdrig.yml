@@ -1,5 +1,6 @@
-# Release C++ coverage on Linux, Windows and macOS. Python, usdview and
-# interactive graphics remain workstation checks. Cache unchanged OpenUSD
+# Release C++ coverage on Linux, Windows and macOS. Python and usdview run
+# headless for the usdNoodles and Assistant jobs; the remaining interactive
+# graphics stay workstation checks. Cache unchanged OpenUSD
 # separately from the project; retain test logs even when CTest fails.
 
 name: usdRig
@@ -662,6 +663,110 @@ jobs:
           path: |
             build/Testing/Temporary/
             noodles-driver-*.log
+
+  # --------------------------------------------------------------------------
+  # Assistant coverage: the two headless Assistant suites, and the live
+  # usdview driver that runs Assistant replies, their undo steps, and the
+  # stage fence against the real host. plugin/ is pruned from the change
+  # selector, so no other job reaches this code. The driver needs the
+  # Python bindings and the imaging plugin, so this tree builds the editor
+  # with RIGEXEC_BUILD_PYTHON=ON; the C++ tests stay with build-release.
+  # --------------------------------------------------------------------------
+  assistant-suite:
+    name: Assistant suites + usdview driver
+    runs-on: ubuntu-24.04
+    needs: openusd-py
+    timeout-minutes: 90
+    steps:
+      - name: Checkout usdRig
+        uses: actions/checkout@v4
+
+      # The same set the usdNoodles job installs: the Qt xcb platform plugin
+      # is unloadable without the system XCB libraries, and xvfb plus Mesa
+      # give the driver a GLX display.
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build ccache libgl1-mesa-dev xorg-dev python3-dev xvfb \
+            libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
+            libxcb-xkb1 libxkbcommon0 libxkbcommon-x11-0 libglib2.0-0t64 \
+            libdbus-1-3
+
+      - name: ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-assistant-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-assistant-${{ runner.os }}-
+
+      - name: Python environment for the suites
+        run: |
+          python3 -m venv assistant-venv
+          assistant-venv/bin/python -m pip install --disable-pip-version-check \
+            PySide6 PyOpenGL numpy pybind11
+
+      - name: Download OpenUSD prefix
+        uses: actions/download-artifact@v4
+        with:
+          name: usd-install-py.tar
+
+      - name: Extract OpenUSD prefix
+        run: |
+          mkdir -p usd-install
+          tar -C usd-install -xf usd-install-py.tar
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DUSD_INSTALL_DIR="${GITHUB_WORKSPACE}/usd-install" \
+            -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/usd-install" \
+            -DPython3_EXECUTABLE="${GITHUB_WORKSPACE}/assistant-venv/bin/python3" \
+            -DRIGEXEC_BUILD_PYTHON=ON \
+            -DRIGEXEC_BUILD_TESTS=OFF
+
+      - name: Build the editor and Python bindings
+        run: cmake --build build -j"$(nproc)"
+
+      # The panel suites import Qt, so they run on the offscreen platform;
+      # they never open a window or a GL context.
+      - name: Run the Assistant suites
+        run: |
+          export USD="${GITHUB_WORKSPACE}/usd-install"
+          export VENV="${GITHUB_WORKSPACE}/assistant-venv"
+          export QT_QPA_PLATFORM=offscreen
+          source bin/_env.sh
+          bash bin/test/run_python_tests.sh test_assistant test_assistant_panel_undo
+
+      # GraphView's widget is unsupported on the Qt offscreen platform, so
+      # the driver gets a GLX display and Mesa software rendering.
+      - name: Run the Assistant usdview driver
+        run: |
+          export USD="${GITHUB_WORKSPACE}/usd-install"
+          export VENV="${GITHUB_WORKSPACE}/assistant-venv"
+          source bin/_env.sh
+          export PXR_PLUGINPATH_NAME="$PWD/build/usd/rigExecSchema/resources:$PWD/build/usd/rigExecImaging/resources:$PWD/build/usd/rigExecMoverPlugins"
+          export LIBGL_ALWAYS_SOFTWARE=1
+          log=assistant-driver.log
+          rc=0
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            bash bin/test/run_testusdview_assistant.sh > "$log" 2>&1 || rc=$?
+          if [ "$rc" -ne 0 ] || ! grep -q RIGEXEC_ASSISTANT_OK "$log"; then
+            echo "FAIL: run_testusdview_assistant.sh (exit ${rc}, no RIGEXEC_ASSISTANT_OK)"
+            tail -n 40 "$log"
+            exit 1
+          fi
+          echo "ok: RIGEXEC_ASSISTANT_OK"
+
+      - name: Upload driver log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assistant-suite
+          path: assistant-driver.log
 
   # --------------------------------------------------------------------------
   # Install tree: cmake --install into a scratch prefix, then verify the

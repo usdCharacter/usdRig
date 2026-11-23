@@ -128,6 +128,9 @@ class AiAssistant(QtWidgets.QDockWidget):
         self._reply_version = 0
         # The reply whose text arrived while its own calls are still running
         self._settling = None
+        # The Send whose turn has not been recorded yet, so abandoning a
+        # reply can take the turn back out of the chat.
+        self._pending_turn = None
         self.memory = Memory(self.prefs)
         # Folders the user let the assistant read in this chat only.
         self.chat_folders = set()
@@ -221,7 +224,8 @@ class AiAssistant(QtWidgets.QDockWidget):
         self.apply_button = _button('Run Code', 'aiGhost')
         self.apply_button.setToolTip(
             'Run the last Python block in the reply in usdview. Needs "Run '
-            'code" on. Ctrl+Z undoes what it changed on the edit target.')
+            'code" on. What it changed on the layers the stage was already '
+            'using becomes one undo step; files it saved stay saved.')
         self.apply_button.clicked.connect(self.apply_code)
         code_row.addWidget(self.apply_button)
         self.copy_button = _button('Copy Code', 'aiGhost')
@@ -302,9 +306,9 @@ class AiAssistant(QtWidgets.QDockWidget):
         self.edit_check = _chip(
             'Edit stage', 'The assistant can pose and key controls, and '
             'make, change and delete prims, attributes, connections and '
-            'layers on the edit target, and save layers. The changes go on '
-            'the undo history in the order they were made, so Ctrl+Z takes '
-            'them back.')
+            'layers on the edit target, and save layers. The changes a '
+            'reply makes are one undo step; what it saved, selected, or '
+            'switched the edit target to is not.')
         self.edit_check.setChecked(bool(self.prefs.get(
             host.USER_PREF.AI_ALLOW_EDITS, True)))
         self.edit_check.toggled.connect(self.on_edit_toggled)
@@ -350,6 +354,7 @@ class AiAssistant(QtWidgets.QDockWidget):
             except (RuntimeError, TypeError, AttributeError):
                 pass
         self.session = session
+        self._document_generation += 1
         if session is not None:
             try:
                 session.api.dataModel.selection.signalPrimSelectionChanged \
@@ -766,6 +771,42 @@ class AiAssistant(QtWidgets.QDockWidget):
             loop.quit()
             self.ask_frame.hide()
 
+    def end_tools(self):
+        """Close one reply's transaction: its changes are one undo step.
+        close() is terminal, so this cannot open a second step, and a change
+        still in flight settles the step when it hands off its delta."""
+        # The reply whose fence is running is still the active writer after
+        # it leaves the panel's slot, so a close during it reaches the fence
+        # actions that have not run yet.
+        toolbox = self.toolbox if self.toolbox is not None else self._settling
+        self.toolbox = None
+        if toolbox is not None:
+            toolbox.close()
+        return toolbox
+
+    @staticmethod
+    def _detach(thread):
+        """Stop a reply that is over from feeding the panel any more."""
+        if thread is None:
+            return
+        for signal in (thread.chunk, thread.failed, thread.tools_dropped,
+                       thread.finished):
+            try:
+                signal.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+
+    @staticmethod
+    def _outcomes(toolbox, message):
+        """What a finished reply changed, what no undo takes back, and
+        what it could not. Read after finish(), which is where a stack
+        problem is reported."""
+        if toolbox is None or message is None:
+            return
+        message['done'] = list(toolbox.done)
+        message['failed'] = list(toolbox.failed)
+        message['effects'] = list(toolbox.effects)
+
     @staticmethod
     def tools_record(events):
         return [{'label': e['label'], 'kind': e['kind'],
@@ -783,12 +824,16 @@ class AiAssistant(QtWidgets.QDockWidget):
         if toolbox.done or failed:
             message['done'] = list(toolbox.done)
             message['failed'] = failed
+        if toolbox.effects:
+            message['effects'] = list(toolbox.effects)
 
     @QtCore.Slot()
     def on_finished(self):
+        """The reply's thread is done. Called without a sender it settles
+        the reply the panel is holding, the way the queued signal does."""
         worker = self.sender()
         try:
-            if worker is not None and worker is self.thread:
+            if worker is None or worker is self.thread:
                 self._complete_reply(self.toolbox)
         finally:
             if worker in self.left_threads:
@@ -836,6 +881,7 @@ class AiAssistant(QtWidgets.QDockWidget):
         if self.toolbox is not toolbox:
             return
         toolbox.cancel()
+        toolbox.close()
         if not self._current_reply(toolbox):
             if self.toolbox is toolbox:
                 self._abandon_reply()
@@ -1057,6 +1103,7 @@ class AiAssistant(QtWidgets.QDockWidget):
             self.thread.cancel()
         else:
             toolbox.cancel()
+        toolbox.close()
         save = False
         turn = self._pending_turn
         self._pending_turn = None
@@ -1156,12 +1203,17 @@ class AiAssistant(QtWidgets.QDockWidget):
         return ''
 
     def apply_code(self):
-        """Run the reply's last Python block in usdview."""
+        """Run the reply's last Python block in usdview, as one undo step of
+        its own."""
         code = context.last_code_block(self.last_reply())
         if code is None or not self.can_run:
             return
+        stage, generation = self.stage, self._document_generation
         toolbox = tools.Toolbox(self.session, can_run=True, parent=self,
-                                memory=self.memory)
+                                memory=self.memory,
+                                document_current=lambda: (
+                                    self._document_generation == generation
+                                    and self.stage is stage))
         text, failed = toolbox.call('run_python', {'code': code})
         try:
             result = json.loads(text)
@@ -1171,6 +1223,10 @@ class AiAssistant(QtWidgets.QDockWidget):
             lines = (result.get('error') or text).strip().splitlines()
             self.show_error('The code failed: {}'.format(
                 lines[-1] if lines else ''))
+            return
+        if toolbox.failed:
+            self.show_error('The code ran, but its changes may have no undo '
+                            'step: {}'.format('; '.join(toolbox.failed)))
             return
         self.clear_error()
         printed = (result.get('printed') or '').strip().splitlines()
@@ -1211,5 +1267,34 @@ class AiAssistant(QtWidgets.QDockWidget):
             self.refresh_providers()
 
     def closeEvent(self, event):
-        self._abandon_reply('Stopped when you closed the Assistant.')
+        toolbox = self.toolbox
+        reply, speaker, reply_time = (self.reply, self.speaker,
+                                      self.reply_time)
+        reply_tools = self.tools_record(self.reply_tools)
+        if toolbox is not None:
+            def save_outcome():
+                if not (toolbox.done or toolbox.failed or toolbox.effects):
+                    return
+                message = {'role': 'assistant', 'content': reply,
+                           'who': speaker, 'time': reply_time or time.time(),
+                           'note': 'The assistant closed with changes made.'}
+                if reply_tools:
+                    message['tools'] = reply_tools
+                self._record_outcomes(message, toolbox)
+                self.messages.append(message)
+                self.save_chat()
+                logger.info('AI Assistant closed with %d change(s), '
+                            '%d effect(s), %d problem(s): %s',
+                            len(toolbox.done), len(toolbox.effects),
+                            len(toolbox.failed),
+                            '; '.join(toolbox.done + toolbox.effects +
+                                      toolbox.failed))
+
+            # Register before the reply is abandoned: a close while a
+            # change is in flight settles only when its delta lands, and
+            # the outcomes are recorded then.
+            toolbox.when_settled(save_outcome)
+        self.stop()
+        if toolbox is not None:
+            toolbox.close()
         super(AiAssistant, self).closeEvent(event)

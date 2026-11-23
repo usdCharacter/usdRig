@@ -25,7 +25,6 @@ import io
 import json
 import logging
 import os
-import sys
 import threading
 import time
 import traceback
@@ -46,12 +45,26 @@ MAX_TEXT = 20000
 MAX_LOG_LINES = 400
 CALL_TIMEOUT = 600
 _STOPPED = 'The user stopped the reply.'
-_STALE = 'The reply belongs to a document that is no longer current.'
+_STALE = ('The reply belongs to a document that is no longer current: the '
+          'stage changed, or it was opened again as a new document.')
 _PENDING_EXPIRY = ('The tool expired before it started; it did not run.', True)
 _RUNNING_EXPIRY = ('The tool already started; its outcome is unknown. '
                    'Do not retry automatically.', True)
 RIG_ROOT = 'RigExecRoot'
 CAPTURE_DIR = os.path.join(host.PREF_DIR, 'captures')
+# Said plainly when a reply changed the stage and had nowhere to record it:
+# the change stands and Ctrl+Z does not take it back.
+NO_UNDO_STACK = ('There is no undo stack, so these changes cannot be '
+                 'taken back')
+NO_UNDO_PUSH = ('The undo stack went away while the reply was working, so '
+                'these changes may have no usable undo')
+# The label for the undo edit covering what arbitrary Python authored.
+PYTHON_UNDO_LABEL = 'AI Assistant Python'
+PYTHON_UNDO_NOTE = ('Undo takes back {} with the rest of this reply; it does '
+                    'not cover saved files, the Python environment, or the '
+                    'viewport')
+PYTHON_UNCOVERED = ('Python used layers this reply did not start with, so '
+                    'changes to them are not covered by undo: {}')
 
 INSTRUCTIONS = '''
 You have tools for the stage and rigs open in usdview. Look before you
@@ -269,7 +282,8 @@ class Toolbox(QtCore.QObject):
 
     def __init__(self, session, can_edit=False, can_run=False, parent=None,
                  memory=None, chat_folders=None, ask_access=None,
-                 document_current=None, edit_allowed=None, run_allowed=None):
+                 document_current=None, edit_allowed=None,
+                 run_allowed=None):
         super(Toolbox, self).__init__(parent)
         self.session = session
         self._origin_stage = session.stage if session is not None else None
@@ -291,11 +305,31 @@ class Toolbox(QtCore.QObject):
         self._jobs = set()
         self.done = []
         self.failed = []
+        # What the reply did that no undo step can take back: what it
+        # saved, selected, or switched the edit target to.
+        self.effects = []
         # The reply's undo step on the editor's history: the first change
         # opens it and the ones after join it while it is still the newest
         # thing there. It reaches the stack only once a change is in it.
         self._history_step = None
         self._history_pushed = False
+        # The reply's transaction is bound to the history it started
+        # on: the host undo stack at the moment the reply was submitted,
+        # kept for the whole reply, so all of a reply's changes land on
+        # one stack even if the host swaps it partway through. There is
+        # no Assistant stack of our own to fall back to.
+        try:
+            self._stack = (session.undo_stack() if session is not None
+                           else None)
+        except RuntimeError:
+            self._stack = None
+        self._finished = False
+        # Set when the reply is being closed: nothing new may author, and
+        # a change already in flight settles the step as soon as its
+        # delta is recorded.
+        self._closing = False
+        self._writing = False
+        self._settled = []
         self.calls = 0
         self._running = False
         self._namespace = None
@@ -321,10 +355,10 @@ class Toolbox(QtCore.QObject):
         return stage is self._origin_stage
 
     def _require_current(self):
-        if self.cancelled.is_set():
-            raise ToolError(_STOPPED)
         if not self.is_current():
             raise ToolError(_STALE)
+        if self.cancelled.is_set():
+            raise ToolError(_STOPPED)
 
     def may_edit(self):
         """Edit consent: granted at Send and still on. Asked on the owner
@@ -503,7 +537,17 @@ class Toolbox(QtCore.QObject):
             except Exception:
                 label = name
         try:
+            # A reply whose document is gone is stale whoever stopped it: the
+            # stage it was submitted against is no longer the one in view.
             self._require_current()
+            if self.cancelled.is_set():
+                raise ToolError(_STOPPED)
+            if tool and tool.kind in (EDIT, RUN) and (self._finished or
+                                                      self._closing):
+                text = ('This reply is closed, so it cannot change the stage '
+                        'any more.')
+                self._tell(call_id, tool, label, 'failed', text)
+                return text, True
             if not offered or (tool.kind == EDIT and not self.may_edit()) \
                     or (tool.kind == RUN and not self.may_run()):
                 if tool and tool.kind == EDIT:
@@ -520,9 +564,10 @@ class Toolbox(QtCore.QObject):
                     # Offered at Send, revoked since: the reply records it.
                     self.failed.append(text)
                 raise ToolError(text)
-            self._tell(call_id, tool, label, 'running')
-            self._require_current()
-            result = tool.handler(args)
+            with self.writing():
+                self._tell(call_id, tool, label, 'running')
+                self._require_current()
+                result = tool.handler(args)
         except (ToolError, stage_actions.ActionError) as err:
             self._tell(call_id, tool, label, 'failed', str(err))
             return str(err), True
@@ -545,6 +590,84 @@ class Toolbox(QtCore.QObject):
                             'kind': tool.kind if tool else READ,
                             'label': label, 'state': state,
                             'detail': detail})
+
+    def undo_stack(self):
+        """The host undo stack this reply's steps go on, taken when the
+        reply was submitted and kept for the whole reply, so all of a
+        reply's changes land on one stack even if the host swaps it
+        partway through. None means there is nothing to undo against;
+        there is no Assistant stack to fall back to.
+        """
+        if self._stack is None:
+            if NO_UNDO_STACK not in self.failed:
+                self._warn(NO_UNDO_STACK)
+        elif self.session is not None:
+            try:
+                live = self.session.undo_stack()
+            except RuntimeError:
+                live = self._stack
+            if live is not self._stack and NO_UNDO_PUSH not in self.failed:
+                # The host replaced its history: the reply keeps
+                # recording on the stack it started with, and says so.
+                self._warn(NO_UNDO_PUSH)
+        return self._stack
+
+    @contextlib.contextmanager
+    def writing(self):
+        """Hold the reply's transaction while work that is not a tool
+        call runs, so a close during it settles the step when the
+        change's delta lands, not the moment the work was asked for.
+
+        A tool call takes this itself; the reply's action block uses it.
+        """
+        self._writing = True
+        try:
+            yield
+        finally:
+            self._writing = False
+            # The reply was closed while this was working: it settles
+            # here if its delta did not reach _record.
+            if self._closing and not self._finished:
+                self.finish()
+
+    def close(self):
+        """Close the reply's transaction, settling it once its writer
+        is done. Called when the reply is over or the panel closes:
+        nothing new may author after this, and a change already in
+        flight settles the step as soon as its delta is recorded.
+        """
+        self._closing = True
+        if not self._writing:
+            self.finish()
+
+    def when_settled(self, callback):
+        if self._finished:
+            callback()
+        else:
+            self._settled.append(callback)
+
+    def finish(self):
+        """Close the reply's transaction. Only the first call does
+        anything, and after it no call may author again.
+
+        Each change already went on the host history when it was made:
+        the first opened the reply's step and the rest joined it while
+        it stayed the newest thing there, so the reply is one undo
+        step without a push here. What is left is to report what had
+        nowhere to be recorded and release the settle callbacks.
+        """
+        if self._finished:
+            return
+        self._finished = True
+        self._closing = True
+        if self._history_pushed:
+            # The reply recorded on a stack; say so if the host replaced it
+            # after the step went on it.
+            self.undo_stack()
+        self._forget_step()
+        for callback in self._settled:
+            callback()
+        self._settled = []
 
     def cancel(self):
         with self._job_lock:
@@ -645,16 +768,6 @@ class Toolbox(QtCore.QObject):
             prim = prim.GetParent()
         return None
 
-    def _undo_stack(self):
-        """The editor's history, or None when it cannot be reached."""
-        if self.session is None:
-            return None
-        try:
-            return self.session.undo_stack()
-        except RuntimeError:
-            logger.warning('Could not reach the undo stack', exc_info=True)
-            return None
-
     def _groups_edits(self, stack):
         """Grouping needs both newest-step identity and redo visibility;
         the documented host protocol requires neither."""
@@ -672,18 +785,23 @@ class Toolbox(QtCore.QObject):
     def _push(self, stack, step):
         try:
             stack.Push(step)
-        except RuntimeError:
-            logger.warning('Could not add the assistant\'s changes to '
-                           'the undo stack', exc_info=True)
+        except RuntimeError as error:
+            self._warn('Could not add the changes to the undo stack: '
+                       '{}'.format(error))
             # The step is lost: later changes open their own rather than
             # piling into one that never reached the history.
             self._forget_step()
 
+    def _can_author(self):
+        """A reply stops changing the stage once it is closed."""
+        return not self._closing
+
     def _open_step(self, stack, label):
-        """Open the step one tool call's changes share, before it authors.
+        """Open the step one reply's changes share, before it authors.
         Nothing goes on the stack yet: a call that turns out to change
         nothing records nothing, and leaves the history and its redo
-        branch as they were. Unsupported hosts receive one push per edit."""
+        branch as they were. Unsupported hosts receive one push per
+        edit."""
         if stack is None:
             return None
         if not self._groups_edits(stack):
@@ -702,8 +820,8 @@ class Toolbox(QtCore.QObject):
     def _close_step(self, stack, step, edit):
         """Record the change made inside the open step, while it is still
         newest, so a commit arriving from a notice the write fires keeps
-        the authored order. `edit` is None when the write touched nothing,
-        and then nothing is recorded at all."""
+        the authored order. `edit` is None when the write touched
+        nothing, and then nothing is recorded at all."""
         if stack is None:
             return
         if step is _UNGROUPED:
@@ -717,44 +835,57 @@ class Toolbox(QtCore.QObject):
                 self._forget_step()
             return
         if self._history_pushed and not self._step_is_open(stack, step):
-            # Another producer committed while this call was open, so the
-            # step is no longer newest and this change needs its own.
+            # Another producer committed while this change was open, so
+            # the step is no longer newest and this one needs its own.
             self._forget_step()
             self._push(stack, edit)
             return
+        if step.label != edit.label:
+            # The step now spans kinds of change, so it carries the reply's
+            # own label instead of the first tool's.
+            step.label = stage_actions.UNDO_LABEL
         step.edits.append(edit)
         if not self._history_pushed:
             self._history_pushed = True
             self._push(stack, step)
 
     @contextlib.contextmanager
-    def _authored_edit(self, stack, paths, label, defer_notice=False):
-        """One change: its history step is opened before the write and
-        filled in when the change is made, so a commit arriving from a
-        notice the write fires keeps the authored order. A change that
-        turns out to touch nothing records no undo."""
-        import rigExecUndo
-        step = self._open_step(stack, label)
-        scope = rigExecUndo.SpecScope(self.stage, paths, None, label)
-        closed = False
-        scope.__enter__()
-        try:
-            # Begin maps edit-target paths before the block; commit and
-            # record before its notice can dispatch another editor write.
-            block = Sdf.ChangeBlock() if defer_notice else contextlib.nullcontext()
-            with block:
-                try:
-                    yield scope
-                except BaseException:
-                    scope.__exit__(*sys.exc_info())
-                    raise
-                else:
-                    scope.__exit__(None, None, None)
-                    self._close_step(stack, step, scope.edit)
-                    closed = True
-        finally:
-            if not closed:
-                self._close_step(stack, step, scope.edit)
+    def _defer_notice(self, defer_notice):
+        """Hold a write's USD notice until its change is recorded."""
+        block = Sdf.ChangeBlock() if defer_notice else \
+            contextlib.nullcontext()
+        with block:
+            yield
+
+    def _record(self, edit):
+        """Put one action's change on the reply's step on the history."""
+        if edit is None or self._finished:
+            return False
+        stack = self.undo_stack()
+        if stack is None:
+            return False
+        step = self._open_step(stack, stage_actions.UNDO_LABEL)
+        self._close_step(stack, step, edit)
+        return True
+
+    def _effect(self, text):
+        """Note what the reply did that undo will not take back."""
+        if text:
+            self.effects.append(text)
+
+    def _warn(self, text):
+        """Tell the chat and the log once, not once per attempt."""
+        if text not in self.failed:
+            self.failed.append(text)
+        logger.warning(text)
+
+    def _undo_note(self, made):
+        """The warning line a change tool adds when its change had no
+        undo stack to go on."""
+        if not made or self._stack is not None:
+            return ''
+        self._warn(NO_UNDO_STACK)
+        return 'Warning: ' + NO_UNDO_STACK
 
     # The tools
     def _all_tools(self):
@@ -948,8 +1079,11 @@ class Toolbox(QtCore.QObject):
                  'UsdGeom and rigexec are ready, and names you define are '
                  'kept for later runs in this reply. Print what you want '
                  'to see; the value of a last bare expression is given '
-                 'back too. Changes to the edit target can be undone with '
-                 'the rest of the reply; changes to other layers cannot.',
+                 'back too. Changes to the layers the stage already uses '
+                 'are undone with the rest of the reply; a layer the code '
+                 'opens is reported and not covered. Nothing here is '
+                 'undone on disk, in the Python environment, or in what '
+                 'the viewport shows.',
                  _obj({'code': {'type': 'string'}}, ['code']),
                  self.run_python, lambda a: 'Ran Python'),
             Tool('list_files', READ,
@@ -1424,9 +1558,12 @@ class Toolbox(QtCore.QObject):
         paths = [self.path({'path': p}) for p in paths]
         found = self._select(paths, frame=bool(args.get('frame')))
         missing = [str(p) for p in paths if str(p) not in found]
-        text = 'Selected {}.'.format(_short(found, 10))
+        made = 'Selected {}'.format(_short(found, 10))
+        text = made + '.'
         if missing:
             text += ' Not found: {}.'.format(', '.join(missing))
+        if found:
+            self._effect(made)
         return text
 
     def _select(self, paths, frame=False):
@@ -1487,7 +1624,7 @@ class Toolbox(QtCore.QObject):
         if not planned:
             raise ToolError('; '.join(problems))
         channels = [c for c, _ in planned]
-        stack = self._undo_stack()
+        stack = self.undo_stack()
         step = self._open_step(stack, 'AI Assistant pose')
         scope = model.EditScope(self.stage, channels, None,
                                'AI Assistant pose')
@@ -1504,6 +1641,7 @@ class Toolbox(QtCore.QObject):
         # The warnings read the composed stage, which waits for the block.
         warnings = [w for w in (model.PlanWarning(plan) for plan in plans)
                     if w]
+        note = self._undo_note(scope.edit is not None)
         when = '' if time_code.IsDefault() else ' at frame {:g}'.format(
             time_code.GetValue())
         for channel, value in planned:
@@ -1515,6 +1653,7 @@ class Toolbox(QtCore.QObject):
             ' as keys' if key else ' as defaults', when)]
         lines += ['Warning: ' + w for w in warnings]
         lines += ['Could not: ' + p for p in problems]
+        lines += [note] if note else []
         return '\n'.join(lines)
 
     def reset_avars(self, args):
@@ -1534,7 +1673,7 @@ class Toolbox(QtCore.QObject):
                          c.shortName in names]
         if not channels:
             raise ToolError('No avars to reset')
-        stack = self._undo_stack()
+        stack = self.undo_stack()
         step = self._open_step(stack, 'AI Assistant reset')
         scope = model.EditScope(self.stage, channels, None,
                                'AI Assistant reset')
@@ -1545,9 +1684,12 @@ class Toolbox(QtCore.QObject):
             with scope:
                 model.ApplyPlanWrites(plans)
             self._close_step(stack, step, scope.edit)
+        note = self._undo_note(scope.edit is not None)
         self.done.append('Reset {} avars on {}'.format(len(channels),
                                                         _short(paths)))
-        return 'Reset {} avars.'.format(len(channels))
+        lines = ['Reset {} avars.'.format(len(channels))]
+        lines += [note] if note else []
+        return '\n'.join(lines)
 
     def change_stage(self, args):
         changes = args.get('changes')
@@ -1555,25 +1697,32 @@ class Toolbox(QtCore.QObject):
             changes = [changes]
         if not isinstance(changes, list) or not changes:
             raise ToolError('"changes" must be a list of changes')
-        stack = self._undo_stack()
+        made = [False]
+
+        def record(edit):
+            if edit is not None:
+                made[0] = True
+            self._record(edit)
 
         def guard(change):
-            target = self.stage.GetEditTarget()
-            paths = _spec_paths([change], target, self.stage)
-            return self._authored_edit(
-                stack, paths, 'AI Assistant changes',
-                defer_notice=change.get('action') in
-                stage_actions.DEFER_NOTICE_ACTIONS)
+            # The step is pushed inside the block, before its notice can
+            # dispatch another editor write.
+            return self._defer_notice(
+                change.get('action') in stage_actions.DEFER_NOTICE_ACTIONS)
 
-        applier = stage_actions.Applier(self.stage, select=self._select,
-                                        revalidate=self.is_current,
-                                        bracket=guard)
+        applier = stage_actions.Applier(
+            self.stage, select=self._select, record=record,
+            effect=self._effect, can_write=self._can_author,
+            revalidate=self.is_current, bracket=guard)
+        effects = len(self.effects)
         done, failed = applier.apply(changes)
         self.done += done
         self.failed += failed
-        lines = ['Done: ' + d for d in done] + \
-            ['Could not: ' + f for f in failed]
-        return '\n'.join(lines) or 'Nothing changed.'
+        lines = ['Done: ' + d for d in done]
+        lines += ['Also: ' + e for e in self.effects[effects:]]
+        lines += ['Could not: ' + f for f in failed]
+        lines += [self._undo_note(made[0])]
+        return '\n'.join(line for line in lines if line) or 'Nothing changed.'
 
     def save_layers(self, args):
         stage = self.stage
@@ -1601,7 +1750,7 @@ class Toolbox(QtCore.QObject):
                 saved.append(layer.identifier)
             else:
                 problems.append('Could not save {}'.format(layer.identifier))
-        self.done += ['Saved ' + s for s in saved]
+        self.effects += ['Saved ' + s for s in saved]
         self.failed += problems
         lines = ['Saved ' + s for s in saved] + problems
         return '\n'.join(lines) or 'Nothing needed saving.'
@@ -1613,35 +1762,30 @@ class Toolbox(QtCore.QObject):
             raise ToolError('Give some code to run')
         if self._namespace is None:
             self._namespace = _namespace(self.session, self.stage)
-        layer = self.stage.GetEditTarget().GetLayer() if self.stage \
-            else None
-        before = session_module.snapshot(layer) if layer is not None \
-            else None
+        # What the stage reads before the code runs, so the reply can put
+        # those layers back. A layer the code brings in has no baseline and
+        # is reported rather than guessed at.
+        baseline = session_module.layer_baseline(self.stage)
         log = recent_log()
         mark = log.count
         started = time.time()
-        stack = self._undo_stack()
-        step = (self._open_step(stack, 'AI Assistant Python')
-                if before is not None else None)
         printed = io.StringIO()
         result = {}
-        with contextlib.redirect_stdout(printed), \
-                contextlib.redirect_stderr(printed):
-            try:
-                value = _exec(source, self._namespace)
-                if value is not None:
-                    result['value'] = _clip(repr(value), 4000)
-            except Exception:
-                result['error'] = traceback.format_exc(limit=8)
-        if before is not None:
-            after = session_module.snapshot(layer)
-            edit = None
-            if not session_module.same_content(before, after):
-                edit = session_module.LayerSnapshotEdit(
-                    'AI Assistant Python', layer, before, after)
-                self.done.append('Changed {} with Python'.format(
-                    layer.identifier))
-            self._close_step(stack, step, edit)
+        try:
+            with contextlib.redirect_stdout(printed), \
+                    contextlib.redirect_stderr(printed):
+                try:
+                    value = _exec(source, self._namespace)
+                    if value is not None:
+                        result['value'] = _clip(repr(value), 4000)
+                except Exception:
+                    result['error'] = traceback.format_exc(limit=8)
+        finally:
+            # Code that raised may have authored already, so the layers are
+            # compared either way.
+            note = self._record_python_layers(baseline)
+            if note:
+                result['undo'] = note
         result['seconds'] = round(time.time() - started, 2)
         text = printed.getvalue().strip()
         if text:
@@ -1652,6 +1796,40 @@ class Toolbox(QtCore.QObject):
         if self.is_current() and not self.cancelled.is_set():
             self.session.update_viewport()
         return result
+
+    def _record_python_layers(self, baseline):
+        """One undo edit per stage layer the code changed, built from the
+        specs that differ, and the warning for the layers it brought in that
+        have nothing to go back to. Gives back what the run should say about
+        undo.
+
+        The delta is per field, not a whole-layer restore: another stage may
+        share this layer and have written to it since the reply started, and
+        a layer-wide replay would overwrite that work.
+        """
+        changed, uncovered = [], []
+        for layer, before in baseline.items():
+            edit = stage_actions.LayerDelta(layer, before, PYTHON_UNDO_LABEL)
+            if edit is None:
+                continue
+            self._record(edit)
+            changed.append(layer.identifier)
+            self.done.append('Changed {} with Python'.format(
+                layer.identifier))
+        for layer in session_module.stage_layers(self.stage):
+            if layer not in baseline:
+                uncovered.append(layer.identifier)
+        if uncovered:
+            self._warn(PYTHON_UNCOVERED.format(', '.join(uncovered)))
+        note = self._undo_note(bool(changed))
+        if not changed:
+            return note
+        lines = [PYTHON_UNDO_NOTE.format(', '.join(changed))]
+        if uncovered:
+            lines.append(PYTHON_UNCOVERED.format(', '.join(uncovered)))
+        if note:
+            lines.append(note)
+        return ' '.join(lines)
 
     # Files and imports
     def list_files(self, args):
@@ -1704,76 +1882,9 @@ class Toolbox(QtCore.QObject):
         return 'Forgotten.'
 
 
-_PROPERTY_ACTIONS = ('set_attr', 'clear_attr', 'block_attr',
-                     'set_connections', 'set_relationship', 'set_metadata')
-
-
-def _spec_paths(changes, target, stage):
-    """Paths to snapshot before a write; target maps missing ancestors
-    to the layer where the write will create them, and stage names the
-    ancestors a write will promote to def."""
-    paths = set()
-
-    def add(text):
-        text = str(text or '').strip()
-        if text and not text.startswith('/'):
-            text = '/' + text
-        if text and Sdf.Path.IsValidPathString(text):
-            paths.add(Sdf.Path(text))
-            return Sdf.Path(text)
-        return None
-
-    for change in changes:
-        if not isinstance(change, dict):
-            continue
-        action = change.get('action')
-        name = str(change.get('name') or '')
-        if action in _PROPERTY_ACTIONS and name:
-            text = str(change.get('path') or '').strip()
-            if text and not text.startswith('/'):
-                text = '/' + text
-            if Sdf.Path.IsValidPathString(text) and \
-                    Sdf.Path.IsValidNamespacedIdentifier(name):
-                paths.add(Sdf.Path(text).AppendProperty(name))
-            continue
-        prim = add(change.get('path'))
-        if prim is not None and action == 'rename_prim' and change.get(
-                'name') and Sdf.Path.IsValidIdentifier(str(change['name'])):
-            paths.add(prim.GetParentPath().AppendChild(str(change['name'])))
-            paths.add(prim.GetParentPath())
-        if prim is not None and action == 'reparent_prim':
-            parent = add(change.get('parent'))
-            if parent is not None:
-                paths.add(parent.AppendChild(prim.name))
-            paths.add(prim.GetParentPath())
-        if prim is not None and target is not None and action in (
-                'define_prim', 'override_prim', 'set_active',
-                'add_reference'):
-            # Every ancestor the edit target's layer is missing is created
-            # inside the topmost one, so that one snapshot covers them.
-            top = prim
-            parent = prim.GetParentPath()
-            while parent != Sdf.Path.absoluteRootPath:
-                mapped = target.MapToSpecPath(parent)
-                if not mapped or target.GetLayer().GetPrimAtPath(
-                        mapped) is not None:
-                    break
-                top = parent
-                parent = parent.GetParentPath()
-            paths.add(top)
-            # define_prim also promotes every ancestor the stage does not
-            # compose as defined, so each of those needs its own snapshot.
-            # The other creation writers leave an existing ancestor alone:
-            # snapshotting it would undo opinions the artist authored later.
-            if action == 'define_prim':
-                paths.update(stage_actions.parents_to_define(stage, prim))
-    # A prim's snapshot holds its subtree, so its descendants need none.
-    kept = [p for p in paths
-            if not any(p != q and p.HasPrefix(q) for q in paths)]
-    return sorted(kept)
-
-
 def _namespace(session, stage):
+    """The globals one run_python call starts with, bound to the stage the
+    reply started on, not whatever the panel is showing now."""
     from pxr import Gf, Sdf as _Sdf, Usd as _Usd, UsdGeom as _UsdGeom, Vt
     names = {'__name__': '__usdrig_assistant__',
              'usdviewApi': session.api if session else None,
