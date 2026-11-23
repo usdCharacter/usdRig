@@ -314,6 +314,9 @@ struct RigExecProviderValues {
     /// When true the BlendShape arm swaps `blendDeltas` into the packet
     /// instead of copying them (the caller gives them up).
     bool lendBlendDeltas = false;
+    /// When true the consumer sums the channels itself: the BlendShape arm
+    /// then accepts a packet without `blendDeltas`.
+    bool blendFromChannels = false;
     /// When non-null and non-empty, the Lattice arm swaps it into
     /// `restPoints` instead of copying the base; the caller guarantees it
     /// holds the base's bytes (the chain base version did not move).

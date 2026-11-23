@@ -591,9 +591,7 @@ RigExecSceneProgramRuntime::Run(const RigExecSceneProgram &program,
                             "geometry input/cardinality validation failed");
                     return publish();
                 }
-                // The op sums the blend deltas from the channels.
-                if (opCore && blend)
-                    inputs.blendDeltas.assign(1, GfVec3f(0.0f));
+                inputs.blendFromChannels = opCore && blend;
                 RigExecExternalRevision external;
                 auto params = RigExecAssembleGeometry(descriptor.record, inputs,
                                                       &external);

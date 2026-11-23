@@ -27,6 +27,7 @@ ProvidersOf(const RigExecGeometryInputs &inputs)
     providers.skinTopology = inputs.skinTopology;
     providers.basePoints = inputs.basePoints;
     providers.blendDeltas = inputs.blendDeltas;
+    providers.blendFromChannels = inputs.blendFromChannels;
     return providers;
 }
 } // namespace

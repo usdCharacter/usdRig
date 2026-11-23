@@ -3058,7 +3058,7 @@ RigExecAssembleParameters(const UsdPrim &moverPrim, RigExecRevisionOp op,
             if (params.topologyCounts.empty())
                 break;
         }
-        params.valid = !params.blendDeltas.empty();
+        params.valid = values.blendFromChannels || !params.blendDeltas.empty();
         break;
     }
 
@@ -4447,7 +4447,7 @@ RigExecAssembleFromLeaves(RigExecRevisionOp op,
             if (params.topologyCounts.empty())
                 break;
         }
-        params.valid = !params.blendDeltas.empty();
+        params.valid = values.blendFromChannels || !params.blendDeltas.empty();
         break;
     }
     case RigExecRevisionOp::VolumeCorrect:

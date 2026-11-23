@@ -67,6 +67,30 @@ main()
     // Missing transform is a failed packet, never an invented identity.
     inputs.transform = nullptr;
     CHECK(!RigExecAssembleGeometry(record, inputs).valid);
+    // A blend shape needs its summed deltas, unless its consumer sums the
+    // channels itself; an unknown delta space refuses either way.
+    RigExecGeometryRecord blendRecord;
+    blendRecord.op = RigExecRevisionOp::BlendShape;
+    blendRecord.binding = record.binding;
+    RigExecDeclareRevisionLeaves(blendRecord.op, blendRecord.binding.moverPath,
+                                 blendRecord.binding, &blendRecord.leaves);
+    std::vector<VtValue> blendFallbacks;
+    for (const auto &key : blendRecord.leaves.keys)
+        blendFallbacks.push_back(key.fallback);
+    RigExecGeometryInputs blendInputs;
+    blendInputs.leaves = &blendFallbacks;
+    CHECK(!RigExecAssembleGeometry(blendRecord, blendInputs).valid);
+    blendInputs.blendFromChannels = true;
+    const auto fromChannels = RigExecAssembleGeometry(blendRecord, blendInputs);
+    CHECK(fromChannels.valid && fromChannels.blendDeltas.empty());
+    bool namedSpace = false;
+    for (size_t i = 0; i < blendRecord.leaves.keys.size(); ++i)
+        if (blendRecord.leaves.keys[i].path.GetName() == "rigExec:deltaSpace") {
+            blendFallbacks[i] = VtValue(TfToken("sideways"));
+            namedSpace = true;
+        }
+    CHECK(namedSpace);
+    CHECK(!RigExecAssembleGeometry(blendRecord, blendInputs).valid);
     RigExecSceneGeometryDescriptor blendDescriptor;
     RigExecSceneGeometryBlendChannel blendChannel;
     blendChannel.weight = 0;

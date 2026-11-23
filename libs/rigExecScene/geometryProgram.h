@@ -26,6 +26,8 @@ struct RigExecGeometryInputs {
     const RigExecPointFrameArray *driverFrames = nullptr;
     const std::shared_ptr<const RigExecSkinTopology> *skinTopology = nullptr;
     std::vector<GfVec3f> basePoints, blendDeltas;
+    /// The consumer sums the blend channels itself, so no blendDeltas.
+    bool blendFromChannels = false;
 };
 struct RigExecGeometryWorkspace {
     RigExecWireBasisCache wire;
