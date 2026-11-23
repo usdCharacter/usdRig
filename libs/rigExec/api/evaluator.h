@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace rigExec {
@@ -87,8 +88,13 @@ private:
     bool _Bind(std::shared_ptr<const RigExecProgram> program,
                std::string *error);
 
+    /// Debug builds check that the entry points run on the thread that
+    /// created the evaluator.
+    void _AssertOwnerThread() const;
+
     RigExecEvaluatorOptions _options;
     std::unique_ptr<RigExecEvaluatorState> _state;
+    std::thread::id _ownerThread = std::this_thread::get_id();
 };
 
 } // namespace rigExec

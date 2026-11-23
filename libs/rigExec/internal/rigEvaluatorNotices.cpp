@@ -729,6 +729,7 @@ void
 RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
                                        const UsdStageWeakPtr &)
 {
+    _AssertOwnerThread();
     RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "Notice.Evaluator", "notice");
     _NoticeVerdict verdict = _ClassifyNotice(notice);
     _rigState.lastNoticeDisposition = verdict.disposition;

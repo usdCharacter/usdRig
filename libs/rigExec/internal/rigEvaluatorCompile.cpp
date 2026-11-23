@@ -147,6 +147,7 @@ const TfToken _removedRibbonPhases[] = {_tokens->rigExecDriverCurveReadPhase,
 bool
 RigExecRigEvaluator::Compile(std::vector<std::string> *errors)
 {
+    _AssertOwnerThread();
     RigExecInputReplayCompileCall compileCall;
     if (_inputReplayObserver) {
         _inputReplayObserver->Options(_solverGuidesEnabled,

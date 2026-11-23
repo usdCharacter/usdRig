@@ -26,6 +26,7 @@
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usdGeom/xformCache.h"
 
+#include <cassert>
 #include <list>
 #include <map>
 #include <set>
@@ -33,6 +34,7 @@
 #include <unordered_set>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace rigExec {
@@ -1115,6 +1117,13 @@ private:
     };
     _NoticeVerdict
     _ClassifyNotice(const UsdNotice::ObjectsChanged &notice) const;
+    /// The thread that built the evaluator. Debug builds check that the
+    /// public entry points and the notice handler run on it.
+    std::thread::id _ownerThread = std::this_thread::get_id();
+    void _AssertOwnerThread() const
+    {
+        assert(std::this_thread::get_id() == _ownerThread);
+    }
     void _OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
                            const UsdStageWeakPtr &sender);
     /// Resolves rigExec:startFramePolicy for every RigExecFkChain under the

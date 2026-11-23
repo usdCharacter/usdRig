@@ -516,6 +516,7 @@ void
 RigExecRigEvaluator::SetInteractiveOverrides(
     std::vector<RigExecValueOverride> overrides)
 {
+    _AssertOwnerThread();
     if (_inputReplayObserver)
         _inputReplayObserver->Interactive(overrides);
     if (_scopedClearShadow) {
@@ -585,6 +586,7 @@ RigExecRigEvaluator::SetInteractiveOverrides(
 void
 RigExecRigEvaluator::ClearInteractiveOverrides()
 {
+    _AssertOwnerThread();
     if (_inputReplayObserver)
         _inputReplayObserver->ClearInteractive();
     if (_scopedClearShadow) {
@@ -643,6 +645,7 @@ RigExecRigEvaluator::_RebuildValueInputs()
 void
 RigExecRigEvaluator::SetUpstreamInputs(std::vector<RigExecValueOverride> inputs)
 {
+    _AssertOwnerThread();
     if (_inputReplayObserver)
         _inputReplayObserver->Upstream(inputs);
     if (_scopedClearShadow) {

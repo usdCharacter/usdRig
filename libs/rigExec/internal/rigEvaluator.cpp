@@ -178,6 +178,7 @@ RigExecRigEvaluator::_VerifyScopedClears(UsdTimeCode time, RigExecRigPose *pose)
 RigExecRigPose
 RigExecRigEvaluator::Evaluate(UsdTimeCode time)
 {
+    _AssertOwnerThread();
     if (_inputReplayObserver) {
         _inputReplayObserver->Options(_solverGuidesEnabled,
                                       _publishWeightFields);
@@ -204,6 +205,7 @@ RigExecRigEvaluator::Evaluate(UsdTimeCode time)
 void
 RigExecRigEvaluator::SetPublishWeightFields(bool publish)
 {
+    _AssertOwnerThread();
     if (_inputReplayObserver)
         _inputReplayObserver->Options(_solverGuidesEnabled, publish);
     _publishWeightFields = publish;
@@ -215,6 +217,7 @@ void
 RigExecRigEvaluator::SetBakedRoleMode(RigExecBakedRoleMode mode,
                                       std::set<SdfPath> exportKeep)
 {
+    _AssertOwnerThread();
     if (_scopedClearShadow) {
         _scopedClearShadow->SetBakedRoleMode(mode, exportKeep);
     }
@@ -244,6 +247,7 @@ RigExecScopedBakedRoleMode::~RigExecScopedBakedRoleMode()
 void
 RigExecRigEvaluator::SetSolverGuidesEnabled(bool enabled)
 {
+    _AssertOwnerThread();
     if (_inputReplayObserver)
         _inputReplayObserver->Options(enabled, _publishWeightFields);
     _solverGuidesEnabled = enabled;

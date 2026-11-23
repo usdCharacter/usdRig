@@ -1,6 +1,7 @@
 #include "rigExec/api/evaluator.h"
 #include "rigExec/internal/program/program.h"
 
+#include <cassert>
 #include <cstddef>
 #include <cstring>
 #include <utility>
@@ -277,6 +278,12 @@ RigExecEvaluator::RigExecEvaluator(
 
 RigExecEvaluator::~RigExecEvaluator() = default;
 
+void
+RigExecEvaluator::_AssertOwnerThread() const
+{
+    assert(std::this_thread::get_id() == _ownerThread);
+}
+
 std::unique_ptr<RigExecEvaluator>
 RigExecEvaluator::Create(std::shared_ptr<const RigExecProgram> program,
                          const RigExecEvaluatorOptions &options,
@@ -323,6 +330,7 @@ bool
 RigExecEvaluator::SetInput(RigExecInputId input, const void *value,
                            std::string *error)
 {
+    _AssertOwnerThread();
     const RigExecProgram &p = *_state->program;
     if (input.index >= p.inputSlots.size() || !value) {
         if (error)
@@ -342,6 +350,7 @@ RigExecEvaluator::SetInput(RigExecInputId input, const void *value,
 bool
 RigExecEvaluator::Evaluate(std::string *error)
 {
+    _AssertOwnerThread();
     RigExecEvaluatorState &s = *_state;
     if (!s.Run(s.main, nullptr, false, _options.tasks, error))
         return false;
@@ -370,6 +379,7 @@ bool
 RigExecEvaluator::SwapProgram(std::shared_ptr<const RigExecProgram> program,
                               std::string *error)
 {
+    _AssertOwnerThread();
     if (!program ||
         program->registryFingerprint != RigExecRegistry::Get().Fingerprint()) {
         if (error)
@@ -385,6 +395,7 @@ RigExecEvaluator::SetTaps(const RigExecTapList &taps,
                           RigExecTapCallback callback, void *context,
                           std::string *error)
 {
+    _AssertOwnerThread();
     std::vector<ResolvedTap> resolved;
     if (!ResolveTaps(*_state->program, taps, &resolved, error))
         return false;
@@ -398,6 +409,7 @@ RigExecEvaluator::SetTaps(const RigExecTapList &taps,
 void
 RigExecEvaluator::PushHistory()
 {
+    _AssertOwnerThread();
     RigExecEvaluatorState &s = *_state;
     for (size_t w = 0; w < s.rings.size(); ++w)
         PushTick(&s.rings[w], s.main.captures[w],
@@ -407,6 +419,7 @@ RigExecEvaluator::PushHistory()
 void
 RigExecEvaluator::ClearHistory()
 {
+    _AssertOwnerThread();
     for (RigExecWindowRing &ring : _state->rings)
         ring.clear();
 }
@@ -414,6 +427,7 @@ RigExecEvaluator::ClearHistory()
 bool
 RigExecEvaluator::EvaluateHistory(std::string *error)
 {
+    _AssertOwnerThread();
     RigExecEvaluatorState &s = *_state;
     const RigExecProgram &p = *s.program;
     if (p.windowedNodes.empty())
@@ -462,6 +476,7 @@ bool
 RigExecEvaluator::SetWindowRings(const std::vector<RigExecWindowRing> &rings,
                                  std::string *error)
 {
+    _AssertOwnerThread();
     RigExecEvaluatorState &s = *_state;
     if (rings.size() != s.rings.size()) {
         if (error)
