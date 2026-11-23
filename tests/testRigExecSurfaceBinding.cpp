@@ -4,6 +4,7 @@
 #include "pxr/usd/usdGeom/mesh.h"
 #include <cstdio>
 #include <cmath>
+#include <cstring>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 using namespace rigExec;
@@ -17,6 +18,7 @@ static int failures = 0;
     } while (0)
 #include "rigExecFrozenParity.h"
 #include "rigExecRuntimeDrive.h"
+#include "rigExecSceneProgramDrive.h"
 const char *fixture = R"USD(#usda 1.0
 def RigExecRoot "Rig" {
  def RigExecControl "Driver" { }
@@ -63,6 +65,27 @@ Evaluate(RigExecRigEvaluator &rig)
     CHECK(i != p.movedProperties.end());
     return i == p.movedProperties.end() ? VtVec3fArray()
                                         : i->second.Get<VtVec3fArray>();
+}
+// The scene program, which runs the binding as its op, gives the native
+// evaluator's bits.
+void
+Scene(const UsdStageRefPtr &s, const char *what)
+{
+    RigExecRigEvaluator rig(s, SdfPath("/Rig"));
+    const VtVec3fArray native = Evaluate(rig);
+    rigExecSceneProgramDrive::SceneRun scene(s, SdfPath("/Rig"), 0, 0);
+    const bool ran = scene.ok && scene.Evaluate(0);
+    CHECK(ran);
+    const VtValue value = scene.Final(SdfPath("/Rig/Target.points"),
+                                      RigExecSceneValueDomain::Points);
+    const bool same =
+        value.IsHolding<VtVec3fArray>() &&
+        value.UncheckedGet<VtVec3fArray>().size() == native.size() &&
+        std::memcmp(value.UncheckedGet<VtVec3fArray>().cdata(), native.cdata(),
+                    native.size() * sizeof(GfVec3f)) == 0;
+    if (!same)
+        std::printf("%s: the scene program differs from native\n", what);
+    CHECK(same);
 }
 // The frame-cache worker reproduces live evaluation bit for bit.
 void
@@ -155,6 +178,30 @@ main()
 {
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     Runtime(Stage(), "polygon", SdfPath("/Rig/Driver.avars:rz"), 90.0);
+    Scene(Stage(), "scene");
+    {
+        auto s = Stage();
+        CHECK(s->GetAttributeAtPath(SdfPath("/Rig/Driver.avars:rz")).Set(30.0));
+        auto bind = s->GetPrimAtPath(SdfPath("/Rig/Movers/Bind"));
+        CHECK(bind.GetAttribute(TfToken("rigExec:deltaMultiplier")).Set(-2.f));
+        CHECK(bind.GetAttribute(TfToken("inputs:defaultWeight")).Set(.5f));
+        Scene(s, "scene, posed, multiplied, half weight");
+    }
+    {
+        auto s = Stage();
+        s->DefinePrim(SdfPath("/Rig/SurfaceFrame"), TfToken("RigExecControl"));
+        s->DefinePrim(SdfPath("/Rig/TargetFrame"), TfToken("RigExecControl"));
+        CHECK(s->GetPrimAtPath(SdfPath("/Rig/TargetFrame"))
+                  .GetAttribute(TfToken("avars:ty"))
+                  .Set(.5));
+        auto bind = s->GetPrimAtPath(SdfPath("/Rig/Movers/Bind"));
+        CHECK(bind.GetRelationship(TfToken("rigExec:frames"))
+                  .SetTargets({SdfPath("/Rig/SurfaceFrame"),
+                               SdfPath("/Rig/TargetFrame")}));
+        CHECK(bind.GetAttribute(TfToken("rigExec:normalMode"))
+                  .Set(TfToken("smooth")));
+        Scene(s, "scene, framed, smooth");
+    }
     {
         // Framed by two controls, surface then target, with smooth normals.
         auto s = Stage();

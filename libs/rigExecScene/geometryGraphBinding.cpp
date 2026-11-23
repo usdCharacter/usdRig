@@ -264,7 +264,8 @@ RigExecReadGeometryGraphInputs(const RigExecGeometryGraphBinding &binding,
     out->leaves = &workspace->leaves;
     out->transform = &workspace->transform;
     out->carry = &workspace->carry;
-    out->influenceTransforms = &workspace->influences;
+    out->influenceTransforms =
+        workspace->influences.empty() ? nullptr : &workspace->influences;
     out->weights = nullptr;
     out->driverFrames = nullptr;
     workspace->weights = VtValue();

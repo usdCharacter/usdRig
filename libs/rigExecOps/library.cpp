@@ -31,6 +31,7 @@ Register(rigExec::RigExecOpRegistrar &registrar)
     RegisterHarmonicsOps(registrar);
     RegisterMatchOps(registrar);
     RegisterPatchOps(registrar);
+    RegisterSurfaceBindingOps(registrar);
 }
 
 const rigExec::RigExecOpLibraryDesc kLibrary = [] {

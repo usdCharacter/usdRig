@@ -9,6 +9,7 @@
 #include "rigExecMath/envelope.h"
 #include "rigExecStdTypes/stdTypes.h"
 
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,17 @@ Fail(std::string *error, const char *op, const std::string &why)
     if (error)
         *error = std::string(op) + ": " + why;
     return false;
+}
+
+/// Whether every point is finite.
+inline bool
+AllFinite(const std::vector<rigExecStd::Vec3f> &points)
+{
+    for (const rigExecStd::Vec3f &p : points)
+        if (!std::isfinite(p[0]) || !std::isfinite(p[1]) ||
+            !std::isfinite(p[2]))
+            return false;
+    return true;
 }
 
 /// Blends \p out back toward \p in by \p envelope; null is 1 everywhere.

@@ -13,6 +13,7 @@
 #include "rigExecOps/deform/patchOp.h"
 #include "rigExecOps/deform/projectorOps.h"
 #include "rigExecOps/deform/skinOp.h"
+#include "rigExecOps/deform/surfaceBindingOp.h"
 #include "rigExecOps/deform/surfaceProjectOp.h"
 #include "rigExecOps/deform/wireOp.h"
 #include "rigExecOps/deform/wrinkleOp.h"
@@ -392,6 +393,12 @@ TestFilledPayloads()
         p.vOrder = 16;
         p.uPeriodic = true;
         CheckRoundTrip(Op(Patch()), &p);
+    }
+    {
+        SurfaceBindingPayload p;
+        p.limit = true;
+        p.framed = true;
+        CheckRoundTrip(Op(SurfaceBinding()), &p);
     }
 }
 

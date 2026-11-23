@@ -6,11 +6,12 @@
 #include "rigExec/api/moverRegistry.h"
 #include "rigExec/internal/moverGraph.h"
 #include "rigExecBuiltins/builtins.h"
-#include "rigExecOps/deform/patchOp.h"
 #include "rigExecSchema/schemaTokens.h"
 #include "rigExecScene/externalOps.h"
 #include "rigExecScene/geometryOpRunner.h"
 #include "rigExecScene/geometryProgram.h"
+
+#include "pxr/base/gf/rotation.h"
 
 #include <cmath>
 #include <cstdio>
@@ -72,8 +73,10 @@ struct Revision {
     RigExecGeometryRecord record;
     std::vector<VtValue> declared;
     std::vector<GfVec3f> points, base;
-    const GfMatrix4d *transform = nullptr;
-    const std::vector<GfMatrix4d> *influences = nullptr;
+    /// The provider transform and influence transforms, fed when set.
+    bool transformed = false, framed = false;
+    GfMatrix4d transform;
+    std::vector<GfMatrix4d> influences;
 
     Revision(const TfToken &schema, std::vector<RigExecRevisionLeafKey> keys,
              std::vector<VtValue> values)
@@ -109,8 +112,8 @@ struct Revision {
     {
         RigExecGeometryInputs in;
         in.leaves = &leaves;
-        in.transform = transform;
-        in.influenceTransforms = influences;
+        in.transform = transformed ? &transform : nullptr;
+        in.influenceTransforms = framed ? &influences : nullptr;
         in.weights = &weights;
         in.basePoints = base.empty() ? points : base;
         return in;
@@ -432,6 +435,234 @@ TestPatch()
 }
 
 /// The ops' capabilities mirror the External revision's classification.
+// --- SurfaceBinding ---------------------------------------------------------
+
+/// A surface binding mover's declared inputs
+/// (rigExecScene/surfaceBindingInputs.h): four of eight target points
+/// bound by two polygon or limit stencils each on a 4 x 3 grid surface.
+struct SurfaceBindingInputs {
+    VtIntArray vertices{1, 3, 4, 6}, vertexOffsets{0, 2, 4, 6, 8};
+    VtIntArray polygonOffsets, pointIndices, limitOffsets, limitIndices;
+    VtFloatArray barycentric, bindingWeights, mask, deltaMultipliers;
+    VtFloatArray limitWeights, limitDu, limitDv;
+    VtVec3fArray offsets;
+    VtValue mode = VtValue(TfToken("polygon"));
+    VtValue normal = VtValue(TfToken("geometric"));
+    float strength = 1.0f, deltaMultiplier = 1.0f;
+    GfMatrix4d surfaceRest, targetRest, surfaceToBinding;
+    VtVec3fArray surface;
+    VtIntArray counts, indices;
+    std::vector<GfMatrix4d> frames;
+    bool framed = false;
+
+    SurfaceBindingInputs()
+    {
+        for (int y = 0; y < 3; ++y)
+            for (int x = 0; x < 4; ++x)
+                surface.push_back(GfVec3f(float(x), float(y),
+                                          0.2f * float((x * 5 + y * 3) % 4)));
+        for (int y = 0; y + 1 < 3; ++y)
+            for (int x = 0; x + 1 < 4; ++x) {
+                const int a = y * 4 + x;
+                counts.push_back(4);
+                for (int i : {a, a + 1, a + 5, a + 4})
+                    indices.push_back(i);
+            }
+        polygonOffsets.push_back(0);
+        limitOffsets.push_back(0);
+        for (int s = 0; s < 8; ++s) {
+            const int face = (s * 5) % 6;
+            for (int k = 0; k < 4; ++k) {
+                pointIndices.push_back(indices[size_t(face * 4 + k)]);
+                limitIndices.push_back(indices[size_t(face * 4 + (k + s) % 4)]);
+                barycentric.push_back(k == 0 ? 0.4f : 0.2f);
+                limitWeights.push_back(0.1f + 0.2f * float(k));
+                limitDu.push_back(k < 2 ? -0.5f : 0.5f);
+                limitDv.push_back(k % 2 ? 0.5f : -0.5f);
+            }
+            polygonOffsets.push_back(int(pointIndices.size()));
+            limitOffsets.push_back(int(limitIndices.size()));
+            bindingWeights.push_back(s % 2 ? 0.35f : 0.65f);
+            offsets.push_back(GfVec3f(0.1f * float(s), -0.05f, 0.3f));
+        }
+        surfaceRest.SetTranslate(GfVec3d(0.5, -0.25, 1.0));
+        targetRest.SetRotate(GfRotation(GfVec3d(0, 0, 1), 30.0));
+        surfaceToBinding.SetScale(GfVec3d(1.0, 2.0, 0.5));
+        frames = {GfMatrix4d().SetTranslate(GfVec3d(0.0, 0.5, 0.0)),
+                  GfMatrix4d().SetRotate(GfRotation(GfVec3d(1, 0, 0), 15.0))};
+    }
+
+    Revision Make(const std::vector<GfVec3f> &points) const
+    {
+        std::vector<RigExecRevisionLeafKey> keys;
+        std::vector<VtValue> values;
+        const auto add = [&](Type type, VtValue value) {
+            RigExecRevisionLeafKey key;
+            key.path = SdfPath("/Rig/Mover.in" + std::to_string(keys.size()));
+            key.type = type;
+            key.flavour = RigExecRevisionLeafFlavour::Resolved;
+            keys.push_back(key);
+            values.push_back(std::move(value));
+        };
+        for (const VtIntArray *a :
+             {&vertices, &vertexOffsets, &polygonOffsets, &pointIndices,
+              &limitOffsets, &limitIndices})
+            add(Type::IntArray, VtValue(*a));
+        for (const VtFloatArray *a :
+             {&barycentric, &bindingWeights, &mask, &deltaMultipliers,
+              &limitWeights, &limitDu, &limitDv})
+            add(Type::FloatArray, VtValue(*a));
+        add(Type::Vec3fArray, VtValue(offsets));
+        add(Type::Token, mode);
+        add(Type::Token, normal);
+        add(Type::Float, VtValue(strength));
+        add(Type::Float, VtValue(deltaMultiplier));
+        add(Type::Matrix4d, VtValue(surfaceRest));
+        add(Type::Matrix4d, VtValue(targetRest));
+        add(Type::Matrix4d, VtValue(surfaceToBinding));
+        add(Type::Vec3fArray, VtValue(surface));
+        add(Type::IntArray, VtValue(counts));
+        add(Type::IntArray, VtValue(indices));
+        Revision r(SchemaType::RigExecSurfaceBindingMover, std::move(keys),
+                   std::move(values));
+        r.points = points;
+        r.framed = framed;
+        r.influences = frames;
+        return r;
+    }
+};
+
+void
+TestSurfaceBinding()
+{
+    const std::vector<GfVec3f> points = GridPoints(4, 2);
+    const auto ran = [&](const char *name, const SurfaceBindingInputs &in) {
+        CHECK(Compare(name, in.Make(points)) == 4);
+    };
+    const auto refused = [&](const char *name, const SurfaceBindingInputs &in) {
+        Refused(name, in.Make(points));
+    };
+    for (const char *mode : {"polygon", "limit"})
+        for (const char *normal : {"geometric", "smooth"}) {
+            SurfaceBindingInputs in;
+            in.mode = VtValue(TfToken(mode));
+            in.normal = VtValue(std::string(normal));
+            const std::string name =
+                std::string("surface binding, ") + mode + ", " + normal;
+            ran(name.c_str(), in);
+            in.framed = true;
+            ran((name + ", framed").c_str(), in);
+        }
+    {
+        SurfaceBindingInputs in;
+        in.mask = VtFloatArray(points.size(), 0.5f);
+        in.mask[3] = 0.0f;
+        in.mask[4] = 1.0f;
+        in.deltaMultipliers = VtFloatArray(points.size(), 1.5f);
+        in.strength = 0.75f;
+        in.deltaMultiplier = -0.5f;
+        ran("surface binding, mask and multipliers", in);
+    }
+    {
+        SurfaceBindingInputs in;
+        in.vertices = {};
+        in.vertexOffsets = {0};
+        in.polygonOffsets = {0};
+        in.pointIndices = {};
+        in.barycentric = {};
+        in.bindingWeights = {};
+        in.offsets = {};
+        ran("surface binding, nothing bound", in);
+    }
+
+    {
+        SurfaceBindingInputs in;
+        in.vertices[2] = int(points.size());
+        refused("surface binding, vertex out of range", in);
+        in.vertices[2] = 1;
+        refused("surface binding, vertex bound twice", in);
+    }
+    {
+        SurfaceBindingInputs in;
+        in.vertexOffsets[1] = 0;
+        refused("surface binding, empty stencil row", in);
+    }
+    {
+        SurfaceBindingInputs in;
+        in.pointIndices[5] = int(in.surface.size());
+        refused("surface binding, surface point out of range", in);
+    }
+    {
+        SurfaceBindingInputs in;
+        in.bindingWeights.pop_back();
+        refused("surface binding, binding weight count", in);
+    }
+    {
+        SurfaceBindingInputs in;
+        in.mask = VtFloatArray(points.size(), 1.5f);
+        refused("surface binding, mask above one", in);
+        in.mask = VtFloatArray(2, 0.5f);
+        refused("surface binding, mask count", in);
+    }
+    {
+        SurfaceBindingInputs in;
+        in.offsets[2][1] = std::numeric_limits<float>::quiet_NaN();
+        refused("surface binding, NaN offset", in);
+    }
+    {
+        SurfaceBindingInputs in;
+        in.barycentric[0] = std::numeric_limits<float>::infinity();
+        refused("surface binding, infinite weight", in);
+    }
+    {
+        SurfaceBindingInputs in;
+        in.surfaceRest.SetScale(GfVec3d(0.0, 1.0, 1.0));
+        refused("surface binding, singular surface rest", in);
+    }
+    {
+        SurfaceBindingInputs in;
+        in.framed = true;
+        in.frames.pop_back();
+        refused("surface binding, one frame", in);
+    }
+    {
+        SurfaceBindingInputs in;
+        in.normal = VtValue(TfToken("smooth"));
+        in.counts[0] = 2;
+        refused("surface binding, two-sided face", in);
+    }
+    {
+        SurfaceBindingInputs in;
+        in.mode = VtValue(TfToken("subdivided"));
+        refused("surface binding, unknown mode", in);
+        in.mode = VtValue(TfToken("limit"));
+        in.limitOffsets[1] = 0;
+        refused("surface binding, empty limit row", in);
+    }
+    {
+        SurfaceBindingInputs in;
+        in.strength = std::numeric_limits<float>::infinity();
+        refused("surface binding, infinite strength", in);
+    }
+
+    // Settings that move between frames rebuild the node.
+    {
+        RigExecGeometryOpRunner runner;
+        const RigExecWeightPacket full = RigExecWeightPacket::Constant(1.0f);
+        std::vector<SurfaceBindingInputs> frames(4);
+        frames[1].mode = VtValue(TfToken("limit"));
+        frames[2].normal = VtValue(TfToken("smooth"));
+        frames[3].framed = true;
+        for (const SurfaceBindingInputs &in : frames) {
+            const Revision r = in.Make(points);
+            std::vector<GfVec3f> native, op;
+            CHECK(RunNative(r, full, &native));
+            CHECK(RunOp(r, full, runner, &op));
+            CHECK(SameBits(native, op));
+        }
+    }
+}
+
 void
 TestCapabilities()
 {
@@ -441,7 +672,8 @@ TestCapabilities()
     gated.weights.representation = TfToken("sparse");
     gated.weights.defaultWeight = 0.0f;
     const RigExecRegistry &registry = RigExecRegistry::Get();
-    for (const TfToken *schema : {&SchemaType::RigExecPatchMover}) {
+    for (const TfToken *schema : {&SchemaType::RigExecPatchMover,
+                                  &SchemaType::RigExecSurfaceBindingMover}) {
         RigExecRevisionBinding binding;
         binding.externalSchema = *schema;
         const RigExecOpHandle *handle = RigExecExternalOpHandle(binding);
@@ -482,6 +714,7 @@ main()
         return 1;
     }
     TestPatch();
+    TestSurfaceBinding();
     TestCapabilities();
     if (failures) {
         std::printf("%d failure(s)\n", failures);

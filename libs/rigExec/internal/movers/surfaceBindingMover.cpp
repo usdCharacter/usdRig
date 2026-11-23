@@ -4,7 +4,9 @@
 #include "rigExec/internal/movers/externalPlayback.h"
 #include "rigExec/internal/parallel.h"
 #include "rigExec/internal/pathText.h"
+#include "rigExecMath/surfaceBindingKernel.h"
 #include "rigExecScene/sceneDescriptors.h"
+#include "rigExecScene/surfaceBindingInputs.h"
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/vt/dictionary.h"
 #include "pxr/base/work/loops.h"
@@ -67,6 +69,9 @@ const char *const _floatArrays[] = {
     "limitWeights",       "limitDuWeights", "limitDvWeights"};
 constexpr size_t _intCount = sizeof(_intArrays) / sizeof(_intArrays[0]);
 constexpr size_t _floatCount = sizeof(_floatArrays) / sizeof(_floatArrays[0]);
+static_assert(_intCount == surfaceBindingInputs::kIntArrays &&
+                  _floatCount == surfaceBindingInputs::kFloatArrays,
+              "declared inputs out of step with surfaceBindingInputs.h");
 // The arrays' attribute names, interned once at load in the same order.
 const std::array<TfToken, _intCount> _intArrayNames = {
     _bindingTokens->rigExecVertices,       _bindingTokens->rigExecVertexOffsets,
@@ -80,22 +85,7 @@ const std::array<TfToken, _floatCount> _floatArrayNames = {
     _bindingTokens->rigExecLimitWeights,
     _bindingTokens->rigExecLimitDuWeights,
     _bindingTokens->rigExecLimitDvWeights};
-enum Input : size_t {
-    FirstInt = 0,
-    FirstFloat = FirstInt + _intCount,
-    OffsetVectors = FirstFloat + _floatCount,
-    SurfaceMode,
-    NormalMode,
-    Strength,
-    DeltaMultiplier,
-    SurfaceRestMatrix,
-    TargetRestMatrix,
-    SurfaceToBinding,
-    SurfacePoints,
-    SurfaceCounts,
-    SurfaceIndices,
-    InputCount
-};
+using namespace surfaceBindingInputs;
 
 // Every read is through the resolved inputs at the evaluated time, over the
 // schema fallback; the surface's points carry the rigExec:surface phase.
@@ -192,40 +182,58 @@ Is(const char *token, const char *text)
 {
     return std::strcmp(token, text) == 0;
 }
-bool
-Finite(const GfVec3f &v)
+template <class T>
+RigExecSurfaceBindingList<T>
+List(const VtArray<T> &a)
 {
-    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
+    return {a.cdata(), a.size()};
 }
-bool
-Offsets(const VtIntArray &a, size_t rows, size_t elements, int minimum)
+// The surface binding the payload \p d holds, as the kernel reads it.
+// Its arrays stay owned by \p d.
+RigExecSurfaceBinding<GfVec3f>
+View(const VtDictionary &d)
 {
-    if (a.size() != rows + 1 || a[0] != 0 || a.back() < 0 ||
-        size_t(a.back()) != elements)
-        return false;
-    for (size_t i = 1; i < a.size(); ++i)
-        if (a[i] < a[i - 1] || a[i] - a[i - 1] < minimum)
-            return false;
-    return true;
+    RigExecSurfaceBinding<GfVec3f> b;
+    RigExecSurfaceBindingList<int> *ints[] = {
+        &b.vertices,     &b.vertexOffsets, &b.polygonOffsets,
+        &b.pointIndices, &b.limitOffsets,  &b.limitIndices};
+    RigExecSurfaceBindingList<float> *floats[] = {
+        &b.barycentricWeights, &b.bindingWeights, &b.mask,
+        &b.deltaMultipliers,   &b.limitWeights,   &b.limitDuWeights,
+        &b.limitDvWeights};
+    for (size_t i = 0; i < _intCount; ++i)
+        if (const auto *a = Get<VtIntArray>(d, _intArrays[i]))
+            *ints[i] = List(*a);
+    for (size_t i = 0; i < _floatCount; ++i)
+        if (const auto *a = Get<VtFloatArray>(d, _floatArrays[i]))
+            *floats[i] = List(*a);
+    if (const auto *a = Get<VtVec3fArray>(d, "offsets"))
+        b.offsets = List(*a);
+    if (const auto *x = Get<bool>(d, "limit"))
+        b.limit = *x;
+    if (const auto *x = Get<bool>(d, "smooth"))
+        b.smooth = *x;
+    if (const auto *x = Get<float>(d, "strength"))
+        b.strength = *x;
+    if (const auto *x = Get<float>(d, "deltaMultiplier"))
+        b.deltaMultiplier = *x;
+    return b;
 }
-// Whether pred(i) holds for every i in [0, n). The checks are independent,
-// so a large range is split across threads; the answer is the same.
-template <class Pred>
-bool
-AllOf(size_t n, const Pred &pred)
+// The bind loop's runner: split across threads in the caller's
+// floating-point environment whenever parallel evaluation is on and this
+// thread is not in a frozen serial scope. The kernel decides by the
+// stencil work whether to split at all.
+void
+RunInCallerEnvironment(size_t count, size_t grain, const RigExecRangeBody &body)
 {
-    std::atomic<bool> ok(true);
-    RigExecRunRanges(RigExecGeometryRanges(), n, 4096,
-                     [&](size_t begin, size_t end) {
-                         for (size_t i = begin; i < end; ++i) {
-                             if (!pred(i)) {
-                                 ok.store(false, std::memory_order_relaxed);
-                                 return;
-                             }
-                         }
-                     });
-    return ok.load();
+    if (RigExecParallelEvaluationEnabled() && !RigExecFrozenSerialActive())
+        RigExecParallelForInCallerEnvironment(count, grain, body);
+    else
+        body(0, count);
 }
+// Built at load: a function-local static would run its initialization
+// guard on every call.
+const RigExecRangeRunner _bindRanges(&RunInCallerEnvironment);
 void
 Bind(const RigExecMoverBindContext &ctx)
 {
@@ -288,8 +296,9 @@ CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
     binding->externalInputs = DeclaredInputs(mover, surface);
     return true;
 }
-// The payload from the declared inputs and the provider values. Pure: no
-// stage, registry or shared state.
+// The payload from the declared inputs and the provider values: the
+// binding's arrays and settings, the surface's points in binding space and
+// the map to the target. Pure: no stage, registry or shared state.
 bool
 Payload(const std::vector<VtValue> &in, const RigExecExternalProviderValues &v,
         VtValue *out)
@@ -307,26 +316,17 @@ Payload(const std::vector<VtValue> &in, const RigExecExternalProviderValues &v,
         VtFloatArray a;
         if (!As(in[FirstFloat + i], &a))
             return false;
-        const float *x = a.cdata();
-        if (!AllOf(a.size(), [x](size_t k) { return std::isfinite(x[k]); }))
-            return false;
         d[_floatArrays[i]] = VtValue(a);
     }
     VtVec3fArray offsets;
     if (!As(in[OffsetVectors], &offsets))
         return false;
-    {
-        const GfVec3f *x = offsets.cdata();
-        if (!AllOf(offsets.size(), [x](size_t k) { return Finite(x[k]); }))
-            return false;
-    }
     d["offsets"] = VtValue(offsets);
     const char *mode = nullptr, *normal = nullptr;
     float strength = 0, deltaMultiplier = 0;
     if (!Text(in[SurfaceMode], &mode) || !Text(in[NormalMode], &normal) ||
-        !As(in[Strength], &strength) || !std::isfinite(strength) ||
+        !As(in[Strength], &strength) ||
         !As(in[DeltaMultiplier], &deltaMultiplier) ||
-        !std::isfinite(deltaMultiplier) ||
         (!Is(mode, "polygon") && !Is(mode, "limit")) ||
         (!Is(normal, "geometric") && !Is(normal, "smooth")))
         return false;
@@ -336,118 +336,29 @@ Payload(const std::vector<VtValue> &in, const RigExecExternalProviderValues &v,
     d["strength"] = VtValue(strength);
     d["deltaMultiplier"] = VtValue(deltaMultiplier);
     VtVec3fArray points;
-    if (!As(in[SurfacePoints], &points))
-        return false;
     GfMatrix4d sourceRest, targetRest, bind;
-    if (!As(in[SurfaceRestMatrix], &sourceRest) ||
+    if (!As(in[SurfacePoints], &points) ||
+        !As(in[SurfaceRestMatrix], &sourceRest) ||
         !As(in[TargetRestMatrix], &targetRest) ||
         !As(in[SurfaceToBinding], &bind))
         return false;
-    if (v.influenceTransforms) {
-        if (v.influenceTransforms->size() != 2)
-            return false;
-        sourceRest *= (*v.influenceTransforms)[0];
-        targetRest *= (*v.influenceTransforms)[1];
-    }
-    if (std::abs(sourceRest.GetDeterminant()) < 1e-14)
+    if (v.influenceTransforms && v.influenceTransforms->size() != 2)
         return false;
-    const GfMatrix4d toBinding = sourceRest.GetInverse() * bind;
-    {
-        // Each point independently; a non-finite one fails the payload
-        // whichever thread meets it.
-        GfVec3f *const moved = points.data();
-        std::atomic<bool> finite(true);
-        RigExecRunRanges(
-            RigExecGeometryRanges(), points.size(), 2048,
-            [&](size_t begin, size_t end) {
-                for (size_t k = begin; k < end; ++k) {
-                    moved[k] = GfVec3f(toBinding.Transform(GfVec3d(moved[k])));
-                    if (!Finite(moved[k])) {
-                        finite.store(false, std::memory_order_relaxed);
-                        return;
-                    }
-                }
-            });
-        if (!finite.load())
-            return false;
-    }
-    d["points"] = VtValue(points);
-    d["toTarget"] = VtValue(targetRest);
     VtIntArray counts, indices;
-    if (smooth) {
-        if (!As(in[SurfaceCounts], &counts) ||
-            !As(in[SurfaceIndices], &indices))
-            return false;
-        size_t count = 0;
-        for (int n : counts) {
-            if (n < 3)
-                return false;
-            count += n;
-        }
-        if (count != indices.size())
-            return false;
-        {
-            const int *x = indices.cdata();
-            const size_t n = points.size();
-            if (!AllOf(indices.size(), [x, n](size_t k) {
-                    return x[k] >= 0 && size_t(x[k]) < n;
-                }))
-                return false;
-        }
-    }
+    if (smooth &&
+        (!As(in[SurfaceCounts], &counts) || !As(in[SurfaceIndices], &indices)))
+        return false;
+    GfMatrix4d toTarget;
+    if (!RigExecPrepareSurfaceBinding<GfVec3f, GfVec3d, GfMatrix4d>(
+            View(d), v.basePoints.size(), sourceRest, targetRest, bind,
+            v.influenceTransforms ? v.influenceTransforms->data() : nullptr,
+            List(counts), List(indices), points.data(), points.size(),
+            &toTarget, RigExecGeometryRanges()))
+        return false;
+    d["points"] = VtValue(points);
+    d["toTarget"] = VtValue(toTarget);
     d["counts"] = VtValue(counts);
     d["topology"] = VtValue(indices);
-    const auto &vertices = *Get<VtIntArray>(d, "vertices");
-    const auto &pi = *Get<VtIntArray>(d, "pointIndices");
-    const auto &mask = *Get<VtFloatArray>(d, "mask");
-    const auto &multipliers = *Get<VtFloatArray>(d, "deltaMultipliers");
-    // Every bound vertex in range and named once (Apply writes each from
-    // its own thread).
-    {
-        std::vector<char> seen(v.basePoints.size(), 0);
-        for (int i : vertices)
-            if (i < 0 || size_t(i) >= v.basePoints.size() || seen[size_t(i)]++)
-                return false;
-    }
-    {
-        const int *x = pi.cdata();
-        const size_t n = points.size();
-        if (!AllOf(pi.size(),
-                   [x, n](size_t k) { return x[k] >= 0 && size_t(x[k]) < n; }))
-            return false;
-    }
-    if (!Offsets(*Get<VtIntArray>(d, "vertexOffsets"), vertices.size(),
-                 offsets.size(), 1) ||
-        !Offsets(*Get<VtIntArray>(d, "polygonOffsets"), offsets.size(),
-                 pi.size(), 3) ||
-        Get<VtFloatArray>(d, "barycentricWeights")->size() != pi.size() ||
-        Get<VtFloatArray>(d, "bindingWeights")->size() != offsets.size() ||
-        (!mask.empty() && mask.size() != v.basePoints.size()) ||
-        (!multipliers.empty() && multipliers.size() != v.basePoints.size()))
-        return false;
-    {
-        const float *x = mask.cdata();
-        if (!AllOf(mask.size(),
-                   [x](size_t k) { return !(x[k] < 0 || x[k] > 1); }))
-            return false;
-    }
-    if (limit) {
-        const auto &li = *Get<VtIntArray>(d, "limitIndices");
-        {
-            const int *x = li.cdata();
-            const size_t n = points.size();
-            if (!AllOf(li.size(), [x, n](size_t k) {
-                    return x[k] >= 0 && size_t(x[k]) < n;
-                }))
-                return false;
-        }
-        if (!Offsets(*Get<VtIntArray>(d, "limitOffsets"), offsets.size(),
-                     li.size(), 1) ||
-            Get<VtFloatArray>(d, "limitWeights")->size() != li.size() ||
-            Get<VtFloatArray>(d, "limitDuWeights")->size() != li.size() ||
-            Get<VtFloatArray>(d, "limitDvWeights")->size() != li.size())
-            return false;
-    }
     *out = VtValue(d);
     return true;
 }
@@ -456,152 +367,32 @@ Assemble(const RigExecExternalInputContext &ctx, VtValue *out)
 {
     return Payload(ctx.inputs, ctx.values, out);
 }
-GfVec3f
-PolygonNormal(const VtVec3fArray &p, const int *indices, size_t n)
-{
-    GfVec3f normal(0);
-    for (size_t i = 0; i < n; ++i) {
-        const auto &a = p[indices[i]], &b = p[indices[(i + 1) % n]];
-        normal[0] += (a[1] - b[1]) * (a[2] + b[2]);
-        normal[1] += (a[2] - b[2]) * (a[0] + b[0]);
-        normal[2] += (a[0] - b[0]) * (a[1] + b[1]);
-    }
-    return normal;
-}
 bool
 Apply(const VtValue &data, std::vector<GfVec3f> *output)
 {
     if (!data.IsHolding<VtDictionary>())
         return false;
     const auto &d = data.UncheckedGet<VtDictionary>();
-    const auto *points = Get<VtVec3fArray>(d, "points"),
-               *offsetsEntry = Get<VtVec3fArray>(d, "offsets");
-    const auto *verticesEntry = Get<VtIntArray>(d, "vertices"),
-               *voEntry = Get<VtIntArray>(d, "vertexOffsets");
-    const auto *poEntry = Get<VtIntArray>(d, "polygonOffsets"),
-               *piEntry = Get<VtIntArray>(d, "pointIndices");
-    const auto *weightsEntry = Get<VtFloatArray>(d, "barycentricWeights"),
-               *bwEntry = Get<VtFloatArray>(d, "bindingWeights");
-    const auto *maskEntry = Get<VtFloatArray>(d, "mask"),
-               *multipliersEntry = Get<VtFloatArray>(d, "deltaMultipliers");
-    const auto *limitEntry = Get<bool>(d, "limit"),
-               *smoothEntry = Get<bool>(d, "smooth");
-    const auto *strength = Get<float>(d, "strength"),
-               *deltaMultiplierEntry = Get<float>(d, "deltaMultiplier");
+    const auto *points = Get<VtVec3fArray>(d, "points");
     const auto *toTarget = Get<GfMatrix4d>(d, "toTarget");
-    const auto *countsEntry = Get<VtIntArray>(d, "counts"),
-               *topologyEntry = Get<VtIntArray>(d, "topology");
-    const auto *lo = Get<VtIntArray>(d, "limitOffsets"),
-               *li = Get<VtIntArray>(d, "limitIndices");
-    const auto *lw = Get<VtFloatArray>(d, "limitWeights"),
-               *du = Get<VtFloatArray>(d, "limitDuWeights"),
-               *dv = Get<VtFloatArray>(d, "limitDvWeights");
-    if (!points || !offsetsEntry || !verticesEntry || !voEntry || !poEntry ||
-        !piEntry || !weightsEntry || !bwEntry || !maskEntry ||
-        !multipliersEntry || !limitEntry || !smoothEntry || !strength ||
-        !deltaMultiplierEntry || !toTarget || !countsEntry || !topologyEntry ||
-        !lo || !li || !lw || !du || !dv)
+    const auto *counts = Get<VtIntArray>(d, "counts"),
+               *topology = Get<VtIntArray>(d, "topology");
+    if (!points || !toTarget || !counts || !topology)
         return false;
-    const auto &p = *points, &offsets = *offsetsEntry;
-    const auto &vertices = *verticesEntry, &vo = *voEntry, &po = *poEntry,
-               &pi = *piEntry;
-    const auto &weights = *weightsEntry, &bw = *bwEntry, &mask = *maskEntry,
-               &multipliers = *multipliersEntry;
-    const bool limit = *limitEntry, smooth = *smoothEntry;
-    VtVec3fArray normals(p.size(), GfVec3f(0));
-    if (smooth) {
-        const auto &counts = *countsEntry, &indices = *topologyEntry;
-        size_t start = 0;
-        for (int n : counts) {
-            auto normal = PolygonNormal(p, indices.data() + start, n);
-            for (int j = 0; j < n; ++j)
-                normals[indices[start + j]] += normal;
-            start += n;
-        }
-        for (auto &n : normals)
-            n.Normalize();
-    }
-    auto candidate = *output;
-    // Payload proved every bound vertex distinct, so each one is read and
-    // written by exactly one iteration and the loop may be split. The work
-    // is the stencil, not the vertex count: a harmonic-coordinate binding
-    // carries hundreds of surface points per vertex.
-    const size_t work = limit ? li->size() : pi.size();
-    const size_t grain = std::max<size_t>(
-        1, std::min<size_t>(512, 1536 * vertices.size() /
-                                     std::max<size_t>(work, 1)));
-    std::atomic<bool> good(true);
-    // Read-only from here: a non-const VtArray subscript is a detach check.
-    const VtVec3fArray &smoothNormals = normals;
-    const auto bindRange = [&](size_t begin, size_t end) {
-        for (size_t v = begin; v < end; ++v) {
-            if (!good.load(std::memory_order_relaxed))
-                return;
-            const int vertex = vertices[v];
-            if (vertex < 0 || size_t(vertex) >= candidate.size()) {
-                good = false;
-                return;
-            }
-            const float deltaMultiplier =
-                *deltaMultiplierEntry *
-                (multipliers.empty() ? 1 : multipliers[vertex]);
-            GfVec3f position(0);
-            for (int b = vo[v]; b < vo[v + 1]; ++b) {
-                GfVec3f base(0), normal(0), tangent(0);
-                if (limit) {
-                    GfVec3f bitangent(0);
-                    for (int k = (*lo)[b]; k < (*lo)[b + 1]; ++k) {
-                        base += p[(*li)[k]] * (*lw)[k];
-                        tangent += p[(*li)[k]] * (*du)[k];
-                        bitangent += p[(*li)[k]] * (*dv)[k];
-                    }
-                    normal = GfCross(tangent, bitangent);
-                } else {
-                    for (int k = po[b]; k < po[b + 1]; ++k)
-                        base += p[pi[k]] * weights[k];
-                    normal =
-                        PolygonNormal(p, pi.data() + po[b], po[b + 1] - po[b]);
-                    for (int k = po[b] + 1; k < po[b + 1]; ++k) {
-                        tangent = p[pi[k]] - p[pi[po[b]]];
-                        if (tangent.GetLengthSq() > 1e-20f)
-                            break;
-                    }
-                }
-                if (smooth) {
-                    normal = GfVec3f(0);
-                    for (int k = po[b]; k < po[b + 1]; ++k)
-                        normal += smoothNormals[pi[k]] * weights[k];
-                }
-                normal.Normalize();
-                tangent -= normal * GfDot(normal, tangent);
-                tangent.Normalize();
-                const auto bitangent = GfCross(normal, tangent);
-                const auto transported = tangent * offsets[b][0] +
-                                         bitangent * offsets[b][1] +
-                                         normal * offsets[b][2];
-                position += (base + deltaMultiplier * transported) * bw[b];
-            }
-            const float weight = *strength * (mask.empty() ? 1 : mask[vertex]);
-            const auto bound = GfVec3f(toTarget->Transform(GfVec3d(position)));
-            candidate[vertex] += weight * (bound - candidate[vertex]);
-            if (!Finite(candidate[vertex])) {
-                good = false;
-                return;
-            }
-        }
-    };
-    // Gated on the stencil work rather than the vertex count, which is what
-    // RigExecGeometryRanges looks at.
-    if (work >= RigExecGeometryParallelThreshold && vertices.size() > grain &&
-        RigExecParallelEvaluationEnabled() && !RigExecFrozenSerialActive())
-        RigExecParallelForInCallerEnvironment(vertices.size(), grain,
-                                              bindRange);
-    else
-        bindRange(0, vertices.size());
-    if (!good.load())
-        return false;
-    *output = std::move(candidate);
-    return true;
+    for (const char *key :
+         {"offsets", "limit", "smooth", "strength", "deltaMultiplier"})
+        if (d.find(key) == d.end())
+            return false;
+    for (const char *key : _intArrays)
+        if (!Get<VtIntArray>(d, key))
+            return false;
+    for (const char *key : _floatArrays)
+        if (!Get<VtFloatArray>(d, key))
+            return false;
+    return RigExecApplySurfaceBinding<GfVec3f, GfVec3d, GfMatrix4d>(
+        View(d), points->cdata(), points->size(), List(*counts),
+        List(*topology), *toTarget, output->data(), output->size(),
+        &_bindRanges);
 }
 // .rigexec playback: the compiled rig is a format tag and the bound surface's
 // points path, and the frame bytes are empty. The kernel assembles and

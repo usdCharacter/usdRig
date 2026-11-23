@@ -2,8 +2,10 @@
 
 #include "rigExec/api/registry.h"
 #include "rigExecOps/deform/patchOp.h"
+#include "rigExecOps/deform/surfaceBindingOp.h"
 #include "rigExecSchema/schemaTokens.h"
 #include "rigExecScene/patchInputs.h"
+#include "rigExecScene/surfaceBindingInputs.h"
 #include "rigExecStdTypes/stdTypes.h"
 
 #include "pxr/base/tf/token.h"
@@ -17,6 +19,7 @@ namespace rigExec {
 
 namespace {
 
+using rigExecStd::Mat4d;
 using rigExecStd::RigExecArray;
 using rigExecStd::Vec3f;
 
@@ -279,6 +282,204 @@ PatchStale(const RigExecRevisionBinding &binding,
     return ReadPatchFor(binding, values, node, &v, &moved) && moved;
 }
 
+// --- SurfaceBinding --------------------------------------------------------
+
+Mat4d
+ToStd(const GfMatrix4d &m)
+{
+    Mat4d out;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            out._mtx[r][c] = m[r][c];
+    return out;
+}
+
+struct SurfaceBindingValues {
+    rigExecOps::SurfaceBindingPayload payload;
+    RigExecArray<int> ints[surfaceBindingInputs::kIntArrays];
+    RigExecArray<float> floats[surfaceBindingInputs::kFloatArrays];
+    RigExecArray<Vec3f> offsets, surface;
+    float strength = 0.0f, deltaMultiplier = 0.0f;
+    Mat4d surfaceRest, targetRest, surfaceToBinding;
+    RigExecArray<Mat4d> frames;
+    RigExecArray<int> counts, indices;
+};
+
+/// The surface binding mover's declared inputs and frames as the op's
+/// payload and inputs.
+bool
+ReadSurfaceBinding(const RigExecRevisionBinding &,
+                   const RigExecExternalOpValues &values,
+                   SurfaceBindingValues *out)
+{
+    using namespace surfaceBindingInputs;
+    const std::vector<VtValue> &in = *values.inputs;
+    if (in.size() != InputCount)
+        return false;
+    for (size_t i = 0; i < kIntArrays; ++i) {
+        VtIntArray a;
+        if (!As(in[FirstInt + i], &a))
+            return false;
+        out->ints[i] = ToArray(a);
+    }
+    for (size_t i = 0; i < kFloatArrays; ++i) {
+        VtFloatArray a;
+        if (!As(in[FirstFloat + i], &a))
+            return false;
+        out->floats[i] = ToArray(a);
+    }
+    VtVec3fArray offsets, surface;
+    const char *mode = nullptr, *normal = nullptr;
+    GfMatrix4d surfaceRest, targetRest, surfaceToBinding;
+    if (!As(in[OffsetVectors], &offsets) || !Text(in[SurfaceMode], &mode) ||
+        !Text(in[NormalMode], &normal) || !As(in[Strength], &out->strength) ||
+        !As(in[DeltaMultiplier], &out->deltaMultiplier) ||
+        (!Is(mode, "polygon") && !Is(mode, "limit")) ||
+        (!Is(normal, "geometric") && !Is(normal, "smooth")) ||
+        !As(in[SurfacePoints], &surface) ||
+        !As(in[SurfaceRestMatrix], &surfaceRest) ||
+        !As(in[TargetRestMatrix], &targetRest) ||
+        !As(in[SurfaceToBinding], &surfaceToBinding))
+        return false;
+    rigExecOps::SurfaceBindingPayload &p = out->payload;
+    p.limit = Is(mode, "limit");
+    p.smooth = Is(normal, "smooth");
+    p.framed = values.influenceTransforms != nullptr;
+    out->offsets = ToStd(offsets);
+    out->surface = ToStd(surface);
+    out->surfaceRest = ToStd(surfaceRest);
+    out->targetRest = ToStd(targetRest);
+    out->surfaceToBinding = ToStd(surfaceToBinding);
+    if (p.framed) {
+        const std::vector<GfMatrix4d> &frames = *values.influenceTransforms;
+        out->frames = RigExecArray<Mat4d>(frames.size());
+        for (size_t k = 0; k < frames.size(); ++k)
+            out->frames[k] = ToStd(frames[k]);
+    }
+    // Faces are read for smooth normals only.
+    if (p.smooth) {
+        VtIntArray counts, indices;
+        if (!As(in[SurfaceCounts], &counts) ||
+            !As(in[SurfaceIndices], &indices))
+            return false;
+        out->counts = ToArray(counts);
+        out->indices = ToArray(indices);
+    }
+    return true;
+}
+
+/// The binding's inputs, in the order the binding writes them; Frames
+/// last, written when framed.
+const RigExecPortHandle &(*const kSurfaceBindingPorts[])() = {
+    &rigExecOps::SurfaceBindingVertices,
+    &rigExecOps::SurfaceBindingVertexOffsets,
+    &rigExecOps::SurfaceBindingPolygonOffsets,
+    &rigExecOps::SurfaceBindingPointIndices,
+    &rigExecOps::SurfaceBindingLimitOffsets,
+    &rigExecOps::SurfaceBindingLimitIndices,
+    &rigExecOps::SurfaceBindingBarycentricWeights,
+    &rigExecOps::SurfaceBindingBindingWeights,
+    &rigExecOps::SurfaceBindingMask,
+    &rigExecOps::SurfaceBindingDeltaMultipliers,
+    &rigExecOps::SurfaceBindingLimitWeights,
+    &rigExecOps::SurfaceBindingLimitDuWeights,
+    &rigExecOps::SurfaceBindingLimitDvWeights,
+    &rigExecOps::SurfaceBindingOffsets,
+    &rigExecOps::SurfaceBindingStrength,
+    &rigExecOps::SurfaceBindingDeltaMultiplier,
+    &rigExecOps::SurfaceBindingSurfaceRest,
+    &rigExecOps::SurfaceBindingTargetRest,
+    &rigExecOps::SurfaceBindingSurfaceToBinding,
+    &rigExecOps::SurfaceBindingSurface,
+    &rigExecOps::SurfaceBindingCounts,
+    &rigExecOps::SurfaceBindingIndices};
+
+bool
+AddSurfaceBinding(const RigExecRevisionBinding &binding,
+                  const RigExecExternalOpValues &values,
+                  RigExecRigDescBuilder &builder, RigExecExternalOpNode &node,
+                  std::string *error)
+{
+    SurfaceBindingValues v;
+    if (!ReadSurfaceBinding(binding, values, &v))
+        return Fail(error, "surface binding inputs do not translate");
+    node.node = builder.AddOp(rigExecOps::SurfaceBinding(), &v.payload);
+    for (const auto port : kSurfaceBindingPorts)
+        node.inputs.push_back(builder.BindInput(node.node, port()));
+    if (v.payload.framed)
+        node.inputs.push_back(
+            builder.BindInput(node.node, rigExecOps::SurfaceBindingFrames()));
+    node.points =
+        builder.BindInput(node.node, rigExecOps::SurfaceBindingPoints());
+    node.envelope =
+        builder.BindInput(node.node, rigExecOps::SurfaceBindingEnvelope());
+    node.out = builder.BindOutput(node.node, rigExecOps::SurfaceBindingOut());
+    node.payload =
+        std::make_shared<rigExecOps::SurfaceBindingPayload>(v.payload);
+    return true;
+}
+
+bool
+ReadSurfaceBindingFor(const RigExecRevisionBinding &binding,
+                      const RigExecExternalOpValues &values,
+                      const RigExecExternalOpNode &node,
+                      SurfaceBindingValues *v, bool *moved)
+{
+    if (!ReadSurfaceBinding(binding, values, v))
+        return false;
+    const auto *kept = static_cast<const rigExecOps::SurfaceBindingPayload *>(
+        node.payload.get());
+    *moved = !kept || !(*kept == v->payload);
+    return true;
+}
+
+bool
+WriteSurfaceBinding(const RigExecRevisionBinding &binding,
+                    const RigExecExternalOpValues &values,
+                    const RigExecExternalOpNode &node,
+                    RigExecEvaluator &evaluator, std::string *error)
+{
+    SurfaceBindingValues v;
+    bool moved = false;
+    if (!ReadSurfaceBindingFor(binding, values, node, &v, &moved))
+        return Fail(error, "surface binding inputs do not translate");
+    if (moved)
+        return Fail(error, "surface binding settings changed");
+    std::vector<const void *> ordered;
+    for (const RigExecArray<int> &a : v.ints)
+        ordered.push_back(&a);
+    for (const RigExecArray<float> &a : v.floats)
+        ordered.push_back(&a);
+    for (const void *value : {static_cast<const void *>(&v.offsets),
+                              static_cast<const void *>(&v.strength),
+                              static_cast<const void *>(&v.deltaMultiplier),
+                              static_cast<const void *>(&v.surfaceRest),
+                              static_cast<const void *>(&v.targetRest),
+                              static_cast<const void *>(&v.surfaceToBinding),
+                              static_cast<const void *>(&v.surface),
+                              static_cast<const void *>(&v.counts),
+                              static_cast<const void *>(&v.indices)})
+        ordered.push_back(value);
+    if (v.payload.framed)
+        ordered.push_back(&v.frames);
+    if (ordered.size() != node.inputs.size())
+        return Fail(error, "surface binding inputs changed");
+    for (size_t i = 0; i < ordered.size(); ++i)
+        if (!evaluator.SetInput(node.inputs[i], ordered[i], error))
+            return false;
+    return true;
+}
+
+bool
+SurfaceBindingStale(const RigExecRevisionBinding &binding,
+                    const RigExecExternalOpValues &values,
+                    const RigExecExternalOpNode &node)
+{
+    SurfaceBindingValues v;
+    bool moved = false;
+    return ReadSurfaceBindingFor(binding, values, node, &v, &moved) && moved;
+}
+
 // --- Table ----------------------------------------------------------------
 
 /// One built-in External mover: its schema, its op, and how its declared
@@ -301,6 +502,8 @@ struct ExternalOp {
 const ExternalOp kExternalOps[] = {
     {&SchemaType::RigExecPatchMover, &rigExecOps::Patch, &AddPatch, &WritePatch,
      &PatchStale},
+    {&SchemaType::RigExecSurfaceBindingMover, &rigExecOps::SurfaceBinding,
+     &AddSurfaceBinding, &WriteSurfaceBinding, &SurfaceBindingStale},
 };
 
 const ExternalOp *
