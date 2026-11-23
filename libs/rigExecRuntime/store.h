@@ -17,6 +17,7 @@
 #include "rigExecBinary/external.h"
 #include "rigExecBinary/format.h"
 #include "rigExecRuntime/inputs.h"
+#include "rigExecRuntime/opNodes.h"
 #include "rigExecRuntime/values.h"
 #include "rigExecGraph/opValues.h"
 #include "rigExecGraph/providerRecords.h"
@@ -707,6 +708,8 @@ struct RrProgram {
     fb::RigExecWireRequiredStageFramesAdmission requiredStageFramesAdmission;
     bool requiredStageFramesFullOwed = false;
     RigExecCompiledGraph opGraph;
+    /// File.op_graph's nodes, compiled at Open; null without them.
+    std::unique_ptr<RrOpNodes> opNodes;
     /// The windowed operations, settled from the common graph at compile
     /// (RigExecSettleWindowLayout), and the canonical-op mask of a history
     /// tick.

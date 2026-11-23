@@ -132,6 +132,8 @@ RigExecBakedStepKindName(RigExecBakedStepKind kind)
         return "SpaceCheckpoint";
     case RigExecBakedStepKind::ProviderRefresh:
         return "ProviderRefresh";
+    case RigExecBakedStepKind::OpGraph:
+        return "OpGraph";
     }
     return "unknown";
 }
@@ -209,8 +211,7 @@ struct StepCostConstants {
     double perUnitUs = 0;
 };
 
-constexpr size_t kStepKindCount =
-    size_t(RigExecBakedStepKind::ProviderRefresh) + 1;
+constexpr size_t kStepKindCount = size_t(RigExecBakedStepKind::OpGraph) + 1;
 
 // Indexed by RigExecBakedStepKind, in the enum's order. Deduced extent +
 // static_assert: a missing row fails to compile.
@@ -244,6 +245,7 @@ constexpr StepCostConstants kStepCosts[] = {
     {0.04, 0.0},         // AvarInputs
     {0.04, 0.087594},    // SpaceCheckpoint: ordinary compose per carried slot
     {0.04, 0.016869},    // ProviderRefresh: one provider and namespace carries
+    {0.04, 0.0},         // OpGraph
 };
 static_assert(sizeof(kStepCosts) / sizeof(kStepCosts[0]) == kStepKindCount,
               "rigExec: every baked step kind needs a cost row");
@@ -416,6 +418,7 @@ StepSize(const RigExecBakedProgramImpl &B, LazyGeometrySizes &geometry,
     case RigExecBakedStepKind::SpaceExpression:
     case RigExecBakedStepKind::ChainInputs:
     case RigExecBakedStepKind::AvarInputs:
+    case RigExecBakedStepKind::OpGraph:
         return 1;
     case RigExecBakedStepKind::SpaceCheckpoint:
         return double(B.switchFrameContexts[object].recompose.size());

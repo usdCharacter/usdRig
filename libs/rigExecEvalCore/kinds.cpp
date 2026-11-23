@@ -15,7 +15,9 @@ static_assert(static_cast<uint8_t>(fb::StepKind::ChainInputs) == 25,
 static_assert(static_cast<uint8_t>(fb::StepKind::AvarInputs) == 26,
               "AvarInputs keeps its ordinal");
 static_assert(static_cast<uint8_t>(fb::StepKind::ProviderRefresh) == 28,
-              "ProviderRefresh is the last ordinal");
+              "ProviderRefresh keeps its ordinal");
+static_assert(static_cast<uint8_t>(fb::StepKind::OpGraph) == 29,
+              "OpGraph is the last ordinal");
 
 const char *
 StepKindName(StepKind kind)

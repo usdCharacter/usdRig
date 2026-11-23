@@ -12,9 +12,9 @@ it reads the exact-FP settings the producer built these units with from
 exactFpFlags.txt, the same file bin/check_runtime_usd_free.sh compiles with,
 which the SDK installs beside the manifests. The USD-free source and include
 lists come from the manifests the SDK installs beside exactFpFlags.txt --
-runtimeSources.txt, evalCoreSources.txt, runtimeIncludes.txt and
-evalCoreIncludes.txt -- or, when no SDK is installed, from the same files in a
-configured usdRig build tree. One directory supplies all five, so an
+runtimeSources.txt, evalCoreSources.txt, opCoreSources.txt, runtimeIncludes.txt
+and evalCoreIncludes.txt -- or, when no SDK is installed, from the same files
+in a configured usdRig build tree. One directory supplies all six, so an
 installed SDK and an in-place build tree are never mixed. That directory is
 the one the installed SDK's own package file names as rigExec_DATA_DIR,
 wherever that package file was installed, so a non-default install layout
@@ -41,7 +41,7 @@ Usage:
     scons platform=windows target=template_release api_version=4.7
     scons platform=windows usdrig_root=<usdRig checkout>
     scons platform=windows sdk_root=<usdRig install prefix, default ../usd-install>
-    scons platform=windows manifest_dir=<directory holding the five files>
+    scons platform=windows manifest_dir=<directory holding the six files>
 """
 
 import os
@@ -52,8 +52,8 @@ from SCons.Script import ARGUMENTS, Default, SConscript
 godot_cpp = os.path.join("thirdparty", "godot-cpp")
 
 MANIFEST_NAMES = ("runtimeSources.txt", "evalCoreSources.txt",
-                  "runtimeIncludes.txt", "evalCoreIncludes.txt",
-                  "exactFpFlags.txt")
+                  "opCoreSources.txt", "runtimeIncludes.txt",
+                  "evalCoreIncludes.txt", "exactFpFlags.txt")
 # The reserved first component of an installed manifest entry: the generated
 # mover payload shipped with the SDK (cmake/rigExecConfig.cmake.in).
 GENERATED_COMPONENT = "runtime-generated"
@@ -280,9 +280,12 @@ if not os.path.isfile(os.path.join(flatbuffers_include, "flatbuffers",
 
 # The USD-free translation units and include directories, exactly as the
 # manifests list them -- the same lists bin/check_runtime_usd_free.sh
-# compiles. The extension needs them all: the runtime links EvalCore.
+# compiles. The extension needs them all: the runtime links EvalCore, and
+# runs a file's op nodes through the op core and the built-in type and op
+# libraries (opCoreSources.txt).
 runtime_sources = (_manifest_paths("runtimeSources.txt", True)
-                   + _manifest_paths("evalCoreSources.txt", True))
+                   + _manifest_paths("evalCoreSources.txt", True)
+                   + _manifest_paths("opCoreSources.txt", True))
 if not runtime_sources:
     print("the manifests under " + manifest_dir + " name no source files")
     raise SystemExit(1)
@@ -324,6 +327,11 @@ if is_msvc:
     runtime_env.Append(CPPDEFINES=["_HAS_EXCEPTIONS=1"], CXXFLAGS=["/EHsc"])
 else:
     runtime_env.Append(CXXFLAGS=["-fexceptions"])
+# The op core's worker threads park on the platform's wait-on-address.
+if env["platform"] == "windows":
+    env.Append(LIBS=["synchronization"])
+elif env["platform"] == "linux":
+    env.Append(LIBS=["pthread"])
 
 # One object dir per build suffix, so debug and release coexist and
 # platforms whose object suffix omits it (.os) do not collide. Generated

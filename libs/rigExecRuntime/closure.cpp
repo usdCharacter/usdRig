@@ -743,6 +743,8 @@ RrRunOpBody(RrProgram *p, size_t i, std::string *error)
             }
             if (step.kind == RigExecWireStepKind::SpaceExpression)
                 return RrRunSpaceExpression(p, step, error);
+            if (step.kind == RigExecWireStepKind::OpGraph)
+                return RrRunOpNodes(p, error);
             if (_RrIsWeightKind(step.kind))
                 return RrRunWeightStep(p, i, error);
             if (_RrIsGeometryKind(step.kind))

@@ -165,8 +165,9 @@ starting its workflow, and keep this list current when adding or changing skills
   an unchanged public contract.
 - `libs/rigExecBake`, `libs/rigExecBinary`, `libs/rigExecRuntime`: export,
   binary layout, and playback. Check version compatibility when changing records.
-  `rigExecRuntime` links `rigExecBinary` and `rigExecGraph` and no OpenUSD
-  library. Do not include a `pxr/` header from a runtime translation unit or
+  `rigExecRuntime` links `rigExecBinary`, `rigExecGraph` and `rigExecOpCore`
+  and no OpenUSD library; a file's op nodes run through the op registry the
+  host registers or passes at `Open`. Do not include a `pxr/` header from a runtime translation unit or
   from a header-only kernel the runtime instantiates (the `rigExecGraph`
   headers and the `rigExecMath` kernel headers it includes).
 - `libs/rigExecStandalone`: experimental scene adapter and rigpack path;
@@ -448,7 +449,8 @@ scripts; their defaults look for a sibling dependency install.
    runs without a stage. `tests/fixtures/minimal.rigexec` is the checked-in
    program `testRigExecRuntimeFixture` opens; `minimal_format32.rigexec` is
    the same program before the manifest, which it and `testRigExecManifest`
-   open through the upgrade.
+   open through the upgrade, and `minimal_format34.rigexec` the same before
+   op nodes.
    `bin/build_rigexec.sh` writes `build/compile_commands.json` and uses
    ccache when it is on `PATH`. `.clangd` reads that database.
    `bin/check_runtime_usd_free.sh` compiles the runtime with no `pxr`

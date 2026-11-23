@@ -1,4 +1,5 @@
-// USD-free playback of the checked-in minimal program.
+// USD-free playback of the checked-in minimal program. With
+// RIGEXEC_UPDATE_FIXTURES=1 it rewrites minimal.rigexec instead.
 // The bytes are the smallest file the format validator accepts: empty
 // tables, rig path /Rig, no steps. This test rebuilds that file and
 // compares it to the fixture, opens and executes the fixture, and checks
@@ -8,6 +9,7 @@
 #include "rigExecRuntime/runtime.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -69,9 +71,9 @@ MinimalFile()
 int
 main(int argc, char **argv)
 {
-    if (argc != 3) {
-        std::cerr << "expected the minimal.rigexec and "
-                     "minimal_format32.rigexec fixtures\n";
+    if (argc != 4) {
+        std::cerr << "expected the minimal.rigexec, minimal_format32.rigexec "
+                     "and minimal_format34.rigexec fixtures\n";
         return 2;
     }
     std::ifstream file(argv[1], std::ios::binary);
@@ -83,6 +85,15 @@ main(int argc, char **argv)
                                        {}};
     std::vector<uint8_t> rebuilt;
     std::string error;
+    const char *update = std::getenv("RIGEXEC_UPDATE_FIXTURES");
+    if (update && *update == '1' &&
+        rigExec::RigExecFormatWrite(MinimalFile(), &rebuilt, &error)) {
+        std::ofstream(argv[1], std::ios::binary)
+            .write(reinterpret_cast<const char *>(rebuilt.data()),
+                   std::streamsize(rebuilt.size()));
+        std::cerr << "rewrote " << argv[1] << "\n";
+        return 0;
+    }
     if (!rigExec::RigExecFormatWrite(MinimalFile(), &rebuilt, &error) ||
         rebuilt != fixture) {
         std::cerr << "fixture is not the minimal program: " << error << "\n";
@@ -98,15 +109,16 @@ main(int argc, char **argv)
         std::cerr << "minimal program published outputs\n";
         return 1;
     }
-    // The same program baked before the manifest (format 32) still plays.
-    {
-        std::ifstream older(argv[2], std::ios::binary);
-        const std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(older),
+    // The same program baked before the manifest (format 32) and before
+    // op nodes (format 34) still plays.
+    for (const int older : {2, 3}) {
+        std::ifstream stream(argv[older], std::ios::binary);
+        const std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(stream),
                                          {}};
         auto upgraded = rigExec::RigExecRuntimeReader::Open(
             bytes.data(), bytes.size(), &error);
         if (!upgraded || !upgraded->Execute(&error)) {
-            std::cerr << "format-32 fixture: " << error << "\n";
+            std::cerr << argv[older] << ": " << error << "\n";
             return 1;
         }
     }

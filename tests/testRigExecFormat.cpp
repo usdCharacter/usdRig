@@ -1567,7 +1567,7 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 34 &&
+    static_assert(RigExecFormatVersion == 35 &&
                       RigExecFormatOldestReadable == 20,
                   "format 22 adds the IK/FK match, format 23 the property "
                   "movers' quantize and path operations, format 24 "
@@ -1578,7 +1578,8 @@ TestOpenRefusals()
                   "format 30 Range DQ and independent summaries and format 31 "
                   "the 2D skeleton, unclamped animated map and scalar primvar "
                   "records, format 32 the recomputed normals layout, format 33 "
-                  "the manifest, format 34 IK joint orientation; per-group "
+                  "the manifest, format 34 IK joint orientation, format 35 op "
+                  "nodes; per-group "
                   "range chains pin the oldest readable "
                   "format at 20");
     // Every format before 20, 19 among them, requires re-export: a chain

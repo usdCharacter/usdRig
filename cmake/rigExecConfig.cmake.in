@@ -73,5 +73,6 @@ set(rigExec_RUNTIME_SOURCES "${rigExec_DATA_DIR}/runtimeSources.txt")
 set(rigExec_RUNTIME_INCLUDES "${rigExec_DATA_DIR}/runtimeIncludes.txt")
 set(rigExec_EVALCORE_SOURCES "${rigExec_DATA_DIR}/evalCoreSources.txt")
 set(rigExec_EVALCORE_INCLUDES "${rigExec_DATA_DIR}/evalCoreIncludes.txt")
+set(rigExec_OPCORE_SOURCES "${rigExec_DATA_DIR}/opCoreSources.txt")
 
 check_required_components(rigExec)

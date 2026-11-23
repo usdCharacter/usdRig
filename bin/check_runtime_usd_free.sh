@@ -14,8 +14,9 @@
 # is runtime-generated resolve under M, every other relative entry under
 # this checkout (never both), and an absolute or '..' entry marks a
 # producer-dependent layout that cannot be checked from a consumer.
-# The op core and the type and op libraries come from the build tree's
-# opCoreSources.txt; an installed SDK ships them prebuilt, with no manifest.
+# The op core and the type and op libraries come from opCoreSources.txt,
+# which an installed SDK ships beside the other manifests; a build tree adds
+# libs/rigExecBuiltins/builtins.cpp.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -64,16 +65,13 @@ else
     MANIFESTS="$BUILD"
 fi
 if [[ ! -f "$MANIFESTS/runtimeSources.txt" || ! -f "$MANIFESTS/runtimeIncludes.txt" ||
-      ! -f "$MANIFESTS/evalCoreSources.txt" || ! -f "$MANIFESTS/evalCoreIncludes.txt" ]]; then
+      ! -f "$MANIFESTS/evalCoreSources.txt" || ! -f "$MANIFESTS/evalCoreIncludes.txt" ||
+      ! -f "$MANIFESTS/opCoreSources.txt" ]]; then
     if [[ $installed -eq 1 ]]; then
-        echo "no SDK manifests in $MANIFESTS: expected runtimeSources.txt, runtimeIncludes.txt, evalCoreSources.txt and evalCoreIncludes.txt there (install the SDK from a matching build)" >&2
+        echo "no SDK manifests in $MANIFESTS: expected runtimeSources.txt, runtimeIncludes.txt, evalCoreSources.txt, evalCoreIncludes.txt and opCoreSources.txt there (install the SDK from a matching build)" >&2
     else
         echo "configure and build rigExecRuntime first (missing source manifest in $MANIFESTS)" >&2
     fi
-    exit 1
-fi
-if [[ $installed -eq 0 && ! -f "$BUILD/opCoreSources.txt" ]]; then
-    echo "configure rigExecOpCore first (missing opCoreSources.txt in $BUILD)" >&2
     exit 1
 fi
 if [[ ! -s "$MANIFESTS/exactFpFlags.txt" ]]; then
@@ -198,7 +196,7 @@ compile_one() {
 }
 
 sources=()
-for manifest in runtimeSources.txt evalCoreSources.txt; do
+for manifest in runtimeSources.txt evalCoreSources.txt opCoreSources.txt; do
     while IFS= read -r src; do
         src="${src%$'\r'}"
         [[ -z "$src" ]] && continue
@@ -218,12 +216,7 @@ for manifest in runtimeSources.txt evalCoreSources.txt; do
     done < "$MANIFESTS/$manifest"
 done
 if [[ $installed -eq 0 ]]; then
-    while IFS= read -r src; do
-        src="${src%$'\r'}"
-        [[ -z "$src" ]] && continue
-        [[ "$src" = /* ]] || src="$ROOT/$src"
-        sources+=("$src")
-    done < "$BUILD/opCoreSources.txt"
+    sources+=("$ROOT/libs/rigExecBuiltins/builtins.cpp")
 fi
 sources+=(
     "$ROOT/libs/rigExecGraph/opGraph.cpp"

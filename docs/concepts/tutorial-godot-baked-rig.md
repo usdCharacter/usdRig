@@ -168,15 +168,17 @@ MSVC. If needed, append `--godot "C:/path/to/godot_console.exe"` to setup.
 The packaged `SConstruct` names no floating-point settings and no runtime
 file list: it imports the exact-FP settings from the SDK's installed
 `exactFpFlags.txt` (its own language and exception flags stay in the file),
-and the USD-free source and include lists from the four manifests
-`runtimeSources.txt`, `evalCoreSources.txt`, `runtimeIncludes.txt` and
-`evalCoreIncludes.txt`. One directory supplies all five files: the SDK's
+and the USD-free source and include lists from the five manifests
+`runtimeSources.txt`, `evalCoreSources.txt`, `opCoreSources.txt` (the op
+core and the built-in type and op libraries, which run a file's op nodes),
+`runtimeIncludes.txt` and `evalCoreIncludes.txt`. One directory supplies
+all six files: the SDK's
 data directory, which its own package file names as `rigExec_DATA_DIR`
 wherever that file was installed, or a configured usdRig build tree.
 A directory holding part of the set is refused by name; the build never
 completes it from the other root, and `manifest_dir=<directory>` picks the
 directory explicitly. Each holds one forward-slash path per line, in
-order; the two source manifests name files and the two include manifests
+order; the three source manifests name files and the two include manifests
 name directories. Let **M** be the directory holding those manifests and
 **C** the usdRig checkout that matches the SDK. The first path component
 is reserved: an entry starting `runtime-generated/` names payload the SDK
@@ -190,7 +192,7 @@ the same extensions the exporter compiles, and the unit is compiled with
 the language its extension names. Pass
 `sdk_root=<install prefix>` and `usdrig_root=<checkout>` when the sibling
 `usd-install` and `usdRig` defaults are not the right pair. With no
-installed SDK, the script reads the same five files from a configured
+installed SDK, the script reads the same six files from a configured
 usdRig build tree, where an absolute entry is accepted only inside that
 tree. Objects land in `build/obj/<configuration>/generated/` for payload
 units and `build/obj/<configuration>/checkout/` for checkout units, so one

@@ -119,7 +119,9 @@ enum StepKind : ubyte { ComposeSubtree = 0, Solve, SolverCommit, Constraint,
   CommitDelta, PropagateChunk, CommitApply, ProviderMatrix, SnapshotFinals,
   PoseInterpolator, VolumePlacements, WeightPacket, InfluenceFold,
   RevisionStatic, RevisionChunk, RevisionFuse, ChainStatus, Derived,
-  FrameMatrix, PropertyRevision, RestCompose, LadderCompose, SkinTopology, WeightField, SpaceExpression, ChainInputs, AvarInputs, SpaceCheckpoint, ProviderRefresh }
+  FrameMatrix, PropertyRevision, RestCompose, LadderCompose, SkinTopology, WeightField, SpaceExpression, ChainInputs, AvarInputs, SpaceCheckpoint, ProviderRefresh,
+  /// Format 35: runs File.op_graph through the op core.
+  OpGraph }
 
 /// RigExecBakedSlotKind.
 enum SlotKind : ubyte { FirstFramePose = 0, XformDerived = 1 }
@@ -1837,6 +1839,55 @@ table Manifest {
   provider_ops: [ManifestEntry];
   /// InputTag. Must match the reader's in order.
   value_types: [ManifestEntry];
+  /// Format 35: OpNode.op, the ops of the reader's op registry.
+  core_ops: [ManifestEntry];
+  /// Format 35: OpGraphOutput.type, the types of the reader's op registry.
+  core_types: [ManifestEntry];
+}
+
+// ---------------------------------------------------------------- op graph
+
+/// Format 35: what feeds one input port of an op node: another node's
+/// output port, or the value of an inputs[] slot (a listed slot is an input
+/// a host sets, an unlisted one a constant). Exactly one source is set.
+table OpNodeInput {
+  /// The fed port: its index in the op's port list.
+  port: uint;
+  /// The feeding node, or -1 when a slot feeds the port.
+  node: int = -1;
+  /// The feeding node's output port index.
+  output: uint;
+  /// The feeding inputs[] slot, or -1 when a node feeds the port.
+  slot: int = -1;
+}
+/// Format 35: one op instance. Its op and ports are named by index only;
+/// the names live in Manifest.core_ops.
+table OpNode {
+  /// Manifest.core_ops index.
+  op: uint;
+  /// The op's settings as its payload encode wrote them; empty for an op
+  /// without settings.
+  payload: [ubyte];
+  inputs: [OpNodeInput];
+}
+/// Format 35: an op node output published under a name.
+table OpGraphOutput {
+  node: uint;
+  /// The output port's index in the op's port list.
+  port: uint;
+  /// Manifest.core_types index of the port's type.
+  type: uint;
+  name: string (required);
+}
+/// Format 35: op nodes the op core runs as one OpGraph step of the common
+/// graph, which orders that step by its declared reads like any other.
+table OpGraph {
+  nodes: [OpNode];
+  /// (first, second) node pairs: first runs before second.
+  order: [IntPair];
+  outputs: [OpGraphOutput];
+  /// The steps[] index of the OpGraph step.
+  step: int = -1;
 }
 
 // -------------------------------------------------------------------- root
@@ -1890,6 +1941,8 @@ table File {
   scalar_primvar_chains: [uint];
   /// Format 33: the stable ids of the file's ordinals. Required from 33.
   manifest: Manifest;
+  /// Format 35: op nodes run through the op core.
+  op_graph: OpGraph;
 }
 
 root_type File;

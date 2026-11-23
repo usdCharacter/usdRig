@@ -511,7 +511,7 @@ _Has(const Table &table, int64_t index)
 
 // The step rules, the step labels and the step graph's domain names cover
 // every kind and domain up to these; an appended one needs its own.
-static_assert(fb::StepKind::MAX == fb::StepKind::ProviderRefresh &&
+static_assert(fb::StepKind::MAX == fb::StepKind::OpGraph &&
                   fb::SlotDomain::MAX ==
                       fb::SlotDomain::RequiredStageFramesAdmission,
               "a step kind or slot domain was appended: give it its rules");
@@ -554,7 +554,130 @@ private:
                _ProviderTables() && _PoseBodyDeclarations() && _HeadChecks() &&
                _StepGraph() && _SolverSemanticRequirements() &&
                _RequiredStageFrames() && _External() && _Overrides() &&
-               _Presentation();
+               _Presentation() && _OpGraph();
+    }
+
+    /// File.op_graph: every index in range, each node input fed by one
+    /// source, outputs named once, the nodes acyclic, and exactly one
+    /// OpGraph step, which reads and writes no slots and memoizes exactly
+    /// the slots its nodes read. What only the op registry knows (ports,
+    /// types, payloads) the runtime checks at Open.
+    bool _OpGraph()
+    {
+        const fb::RigExecWireOpGraph *graph = _f.opGraph.get();
+        const fb::RigExecWireManifest *manifest = _f.manifest.get();
+        const size_t coreOps = manifest ? manifest->coreOps.size() : 0;
+        const size_t coreTypes = manifest ? manifest->coreTypes.size() : 0;
+        int64_t opGraphStep = -1;
+        for (size_t i = 0; i < _f.steps.size(); ++i) {
+            if (_f.steps[i].kind != fb::StepKind::OpGraph)
+                continue;
+            if (opGraphStep >= 0)
+                return _Bad(_StepName(i) + ": a second OpGraph step");
+            opGraphStep = int64_t(i);
+        }
+        if (!graph) {
+            if (opGraphStep >= 0)
+                return _Bad(_StepName(size_t(opGraphStep)) +
+                            ": an OpGraph step without op_graph");
+            if (coreOps || coreTypes)
+                return _Bad("manifest core_ops or core_types without op_graph");
+            return true;
+        }
+        if (_f.formatVersion < RigExecFormatOpGraphVersion)
+            return _Bad("op_graph needs format " +
+                        _N(RigExecFormatOpGraphVersion));
+        const size_t nodes = graph->nodes.size();
+        if (!nodes)
+            return _Bad("op_graph holds no nodes");
+        std::set<uint32_t> slots;
+        std::vector<std::vector<uint32_t>> after(nodes);
+        for (size_t n = 0; n < nodes; ++n) {
+            const std::string row = "op_graph.nodes[" + _N(n) + "]";
+            if (!graph->nodes[n])
+                return _Bad(row + " is missing");
+            const fb::RigExecWireOpNode &node = *graph->nodes[n];
+            if (node.op >= coreOps)
+                return _Bad(row + ": op " + _N(node.op) +
+                            " is past manifest core_ops");
+            for (size_t k = 0; k < node.inputs.size(); ++k) {
+                const std::string at = row + ".inputs[" + _N(k) + "]";
+                if (!node.inputs[k])
+                    return _Bad(at + " is missing");
+                const fb::RigExecWireOpNodeInput &input = *node.inputs[k];
+                if ((input.node >= 0) == (input.slot >= 0))
+                    return _Bad(at + ": names both or neither of a node "
+                                     "and a slot");
+                if (input.node >= 0) {
+                    if (size_t(input.node) >= nodes)
+                        return _Bad(at + ": node " + _N(size_t(input.node)) +
+                                    " out of range");
+                    after[size_t(input.node)].push_back(uint32_t(n));
+                } else {
+                    if (size_t(input.slot) >= _f.inputs.size())
+                        return _Bad(at + ": slot " + _N(size_t(input.slot)) +
+                                    " out of range");
+                    slots.insert(uint32_t(input.slot));
+                }
+            }
+        }
+        for (size_t k = 0; k < graph->order.size(); ++k) {
+            const auto &pair = graph->order[k];
+            if (pair.first < 0 || size_t(pair.first) >= nodes ||
+                pair.second < 0 || size_t(pair.second) >= nodes ||
+                pair.first == pair.second)
+                return _Bad("op_graph.order[" + _N(k) +
+                            "] names no pair of distinct nodes");
+            after[size_t(pair.first)].push_back(uint32_t(pair.second));
+        }
+        std::vector<uint32_t> waiting(nodes, 0), ready;
+        for (const auto &next : after)
+            for (const uint32_t n : next)
+                ++waiting[n];
+        for (size_t n = 0; n < nodes; ++n)
+            if (!waiting[n])
+                ready.push_back(uint32_t(n));
+        for (size_t at = 0; at < ready.size(); ++at)
+            for (const uint32_t n : after[ready[at]])
+                if (--waiting[n] == 0)
+                    ready.push_back(n);
+        if (ready.size() != nodes)
+            return _Bad("op_graph: its nodes run in a cycle");
+        std::set<std::string> names;
+        for (size_t o = 0; o < graph->outputs.size(); ++o) {
+            const std::string row = "op_graph.outputs[" + _N(o) + "]";
+            if (!graph->outputs[o])
+                return _Bad(row + " is missing");
+            const fb::RigExecWireOpGraphOutput &output = *graph->outputs[o];
+            if (output.node >= nodes)
+                return _Bad(row + ": node " + _N(output.node) +
+                            " out of range");
+            if (output.type >= coreTypes)
+                return _Bad(row + ": type " + _N(output.type) +
+                            " is past manifest core_types");
+            if (output.name.empty() || !names.insert(output.name).second)
+                return _Bad(row + ": name is empty or repeated");
+        }
+        if (graph->step < 0 || graph->step != opGraphStep)
+            return _Bad("op_graph.step names no OpGraph step");
+        const fb::RigExecWireStep &step = _f.steps[size_t(graph->step)];
+        const bool admissionOnly =
+            step.reads.size() == 1 &&
+            step.reads[0].domain() ==
+                fb::SlotDomain::RequiredStageFramesAdmission;
+        if (step.object != 0 || step.part != -1 || !admissionOnly ||
+            !step.writes.empty() || step.isHead || step.isSource ||
+            step.externalReads || step.headAlwaysRuns ||
+            !step.headInputReads.empty() || !step.overrideInputs.empty())
+            return _Bad(_StepName(size_t(graph->step)) +
+                        ": an OpGraph step is object 0, part -1, reads only "
+                        "the stage-frame admission and writes nothing");
+        if (std::set<uint32_t>(step.headInputSlots.begin(),
+                               step.headInputSlots.end()) != slots)
+            return _Bad(_StepName(size_t(graph->step)) +
+                        ": OpGraph memo does not cover exactly the slots its "
+                        "nodes read");
+        return true;
     }
 
     bool _Bad(std::string what)
@@ -9412,6 +9535,8 @@ _StepKindName(fb::StepKind kind)
         return "SpaceCheckpoint";
     case fb::StepKind::ProviderRefresh:
         return "ProviderRefresh";
+    case fb::StepKind::OpGraph:
+        return "OpGraph";
     }
     return "unknown";
 }
@@ -9505,6 +9630,11 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
         if (!pose || !_Has(pose->providerRefreshes, object))
             return false;
         *out = pose->providerRefreshes[size_t(object)].key;
+        return true;
+    case fb::StepKind::OpGraph:
+        if (!file.opGraph)
+            return false;
+        *out = "op nodes";
         return true;
     case fb::StepKind::WeightField: {
         if (!geometry || !_Has(geometry->weightFields, object))

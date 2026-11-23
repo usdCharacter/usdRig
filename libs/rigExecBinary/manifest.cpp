@@ -240,7 +240,11 @@ RigExecManifestResolve(fb::RigExecWireFile *file, std::string *error)
             Remap(&op.kind, providerOps, current.providerOps.count);
         }
     }
-    file->manifest = RigExecManifestBuild(current);
+    // The op graph's ids resolve against the reader's op registry, at Open.
+    auto rebuilt = RigExecManifestBuild(current);
+    rebuilt->coreOps = std::move(file->manifest->coreOps);
+    rebuilt->coreTypes = std::move(file->manifest->coreTypes);
+    file->manifest = std::move(rebuilt);
     return true;
 }
 

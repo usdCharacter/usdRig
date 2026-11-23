@@ -62,6 +62,7 @@ file(WRITE "${_build_dir}/runtimeIncludes.txt"
 file(WRITE "${_build_dir}/evalCoreSources.txt" "${_source_root}/fixture.cpp\n")
 file(WRITE "${_build_dir}/evalCoreIncludes.txt"
     "${_source_root}/fixture include\n")
+file(WRITE "${_build_dir}/opCoreSources.txt" "${_source_root}/fixture.cxx\n")
 
 function(_configure_fixture build_dir data_dir)
     execute_process(
@@ -168,7 +169,8 @@ endfunction ()
 
 function(_assert_sdk root data_dir)
     set(_sdk "${root}/${data_dir}")
-    foreach (_name runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
+    foreach (_name runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes
+                   opCoreSources)
         if (NOT EXISTS "${_sdk}/${_name}.txt")
             _fail("install: ${_sdk}/${_name}.txt is missing")
         endif ()
@@ -190,6 +192,7 @@ _assert_manifest("${_install_prefix}" runtimeSources
 _assert_manifest("${_install_prefix}" runtimeIncludes "fixture include\n")
 _assert_manifest("${_install_prefix}" evalCoreSources "fixture.cpp\n")
 _assert_manifest("${_install_prefix}" evalCoreIncludes "fixture include\n")
+_assert_manifest("${_install_prefix}" opCoreSources "fixture.cxx\n")
 file(READ "${_install_prefix}/${INSTALL_DATADIR}/exactFpFlags.txt" _flags)
 if (NOT _flags MATCHES "fno-fast-math")
     _fail("install: exactFpFlags.txt holds [${_flags}]")

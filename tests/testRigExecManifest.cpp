@@ -72,8 +72,15 @@ void
 TestTranslate()
 {
     fb::RigExecWireFile file = Permuted();
+    file.manifest->coreOps.push_back(
+        std::make_unique<fb::RigExecWireManifestEntry>());
+    file.manifest->coreOps[0]->nameSpace = "studio";
+    file.manifest->coreOps[0]->name = "Twist";
     std::string error;
     CHECK(RigExecManifestResolve(&file, &error));
+    // The op graph's ids resolve against the reader's registry, later.
+    CHECK(file.manifest->coreOps.size() == 1 &&
+          file.manifest->coreOps[0]->name == "Twist");
     const auto &revisions = file.geometry->chains[0].revisions;
     CHECK(revisions[0].op == uint8_t(fb::RevisionOp::Skin));
     CHECK(revisions[1].op == uint8_t(fb::RevisionOp::Matrix));

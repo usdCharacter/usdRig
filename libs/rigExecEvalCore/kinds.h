@@ -20,7 +20,7 @@ using StepKind = RigExecWireStepKind;
 
 /// Every declared ordinal, the reserved one included.
 constexpr std::size_t StepKindCount =
-    static_cast<std::size_t>(fb::StepKind::ProviderRefresh) + 1;
+    static_cast<std::size_t>(fb::StepKind::OpGraph) + 1;
 
 /// The kind's name, spelled by the schema the wire enum is generated from.
 const char *StepKindName(StepKind kind);

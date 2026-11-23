@@ -23,7 +23,7 @@ int failures = 0;
 void
 CheckOrdinals()
 {
-    CHECK(eval::StepKindCount == 29);
+    CHECK(eval::StepKindCount == 30);
     for (size_t i = 0; i < eval::StepKindCount; ++i) {
         eval::StepKind kind = static_cast<eval::StepKind>(i);
         RigExecBakedStepKind baked = static_cast<RigExecBakedStepKind>(i);
@@ -38,6 +38,7 @@ CheckOrdinals()
     CHECK(static_cast<uint8_t>(eval::StepKind::ChainInputs) == 25);
     CHECK(static_cast<uint8_t>(eval::StepKind::AvarInputs) == 26);
     CHECK(static_cast<uint8_t>(eval::StepKind::ProviderRefresh) == 28);
+    CHECK(static_cast<uint8_t>(eval::StepKind::OpGraph) == 29);
 }
 
 void

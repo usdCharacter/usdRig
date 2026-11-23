@@ -359,12 +359,13 @@ struct RigExecRegistryInit {
     std::vector<const RigExecOpLibraryDesc *> opLibraries;
 };
 
-/// A registered type: its description, the library that added it and its
-/// index.
+/// A registered type: its description, the library that added it, its
+/// index and its handle.
 struct RigExecRegisteredType {
     const RigExecTypeDesc *desc = nullptr;
     const RigExecTypeLibraryDesc *library = nullptr;
     uint32_t index = kRigExecInvalidIndex;
+    const RigExecTypeHandle *handle = nullptr;
 };
 
 /// A registered op: its description, the library that added it, its index
@@ -375,6 +376,9 @@ struct RigExecRegisteredOp {
     uint32_t index = kRigExecInvalidIndex;
     /// Type index per port, in port order.
     std::vector<uint32_t> portTypes;
+    /// The op's handle, for a reader that finds the op by its name in a
+    /// saved file.
+    const RigExecOpHandle *handle = nullptr;
 };
 
 /// The one registry of the process. Initialize builds it once at startup;

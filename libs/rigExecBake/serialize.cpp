@@ -50,6 +50,7 @@ _RIGEXEC_BAKE_PIN_STEP(RestCompose);
 _RIGEXEC_BAKE_PIN_STEP(LadderCompose);
 _RIGEXEC_BAKE_PIN_STEP(SkinTopology);
 _RIGEXEC_BAKE_PIN_STEP(ProviderRefresh);
+_RIGEXEC_BAKE_PIN_STEP(OpGraph);
 #undef _RIGEXEC_BAKE_PIN_STEP
 
 #define _RIGEXEC_BAKE_PIN_DOMAIN(name)                                         \
@@ -89,7 +90,7 @@ _RIGEXEC_BAKE_PIN_DOMAIN(SkinTopology);
 #undef _RIGEXEC_BAKE_PIN_DOMAIN
 // The program's last enumerators are the wire's: a program kind or domain
 // appended without its wire value fails the build here.
-static_assert(uint8_t(RigExecBakedStepKind::ProviderRefresh) ==
+static_assert(uint8_t(RigExecBakedStepKind::OpGraph) ==
                   uint8_t(RigExecWireStepKind::MAX),
               "the wire step kinds end before the program's");
 static_assert(RigExecBakedSlotDomainCount ==

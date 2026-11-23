@@ -8,7 +8,8 @@
 # the root of the generated payload they name.
 include("${CMAKE_CURRENT_LIST_DIR}/manifestRelocate.cmake")
 
-foreach (_manifest IN ITEMS runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
+foreach (_manifest IN ITEMS runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes
+         opCoreSources)
     set(_input "${RIGEXEC_VERIFY_INPUT_DIR}/${_manifest}.txt")
     set(_staged "${RIGEXEC_VERIFY_STAGED_DIR}/${_manifest}.txt")
     if (NOT EXISTS "${_input}")

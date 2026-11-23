@@ -22,6 +22,7 @@
 #ifndef RIGEXEC_RUNTIME_H
 #define RIGEXEC_RUNTIME_H
 
+#include "rigExec/api/registry.h"
 #include "rigExecBinary/external.h"
 #include "rigExecBinary/moverDefinition.h"
 #include "rigExecRuntime/runtimeMath.h"
@@ -217,6 +218,16 @@ struct RigExecRuntimePropertyValue {
     RrPropertyValue value;
 };
 
+// An op node output the file publishes by name (File.op_graph): its value
+// as the last Execute computed it, of registered type `type` (an index into
+// RigExecRegistry), or null before the first Execute. The pointer stays
+// valid until the next Execute.
+struct RigExecRuntimeOpOutput {
+    std::string name;
+    uint32_t type = kRigExecInvalidIndex;
+    const void *value = nullptr;
+};
+
 // The generation's actual kernel invocations in the shared executor.
 struct RigExecRuntimeCounters {
     uint64_t executedOpCount = 0;
@@ -253,6 +264,23 @@ public:
          std::string *error);
     bool InstallMoverDefinitions(const RigExecMoverDefinition *movers,
                                  size_t moverCount, std::string *error);
+
+    // A file with op nodes (format 35) runs them through the op registry,
+    // which holds the type and op libraries the host built in. This Open
+    // registers \p opLibraries when the process has no registry yet;
+    // otherwise each of them must already be registered. Without a
+    // registry, Open refuses a file with op nodes.
+    static std::unique_ptr<RigExecRuntimeReader>
+    Open(const uint8_t *bytes, size_t size,
+         const RigExecMoverDefinition *movers, size_t moverCount,
+         const RigExecRegistryInit &opLibraries, std::string *error);
+
+    // The op node outputs the file publishes, in file order.
+    size_t GetOpOutputCount() const;
+    // Output \p index; false past the count.
+    bool GetOpOutput(size_t index, RigExecRuntimeOpOutput *out) const;
+    // The index of the output published as \p name.
+    bool FindOpOutput(const std::string &name, size_t *index) const;
 
     // The inputs: every attribute a read of the rig walks, sorted by path.
     size_t GetInputCount() const;

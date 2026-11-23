@@ -730,6 +730,9 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
         return fail(error ? *error
                           : std::string("common graph initialization failed"));
     }
+    if (!RrOpenOpNodes(&program, error)) {
+        return fail(error ? *error : std::string("op nodes failed to open"));
+    }
     // Unavailable compiled data retains the existing missing-kernel behavior.
     // Module declarations generate this catalog; the engine names no mover.
     size_t moverCount = 0;

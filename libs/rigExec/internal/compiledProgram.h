@@ -960,6 +960,8 @@ enum class RigExecBakedStepKind {
     SpaceCheckpoint = 27,
     ProviderRefresh = 28,
     ChainInputs = 25,
+    /// File.op_graph's op nodes, run through the op core.
+    OpGraph = 29,
 };
 
 /// The name of \p kind, for the schedule report.

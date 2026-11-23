@@ -19,7 +19,8 @@ foreach (_root SOURCE_ROOT BUILD_DIR)
     cmake_path(SET ${_root} NORMALIZE "${_root_path}")
 endforeach ()
 
-foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
+foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes
+         opCoreSources)
     set(_input "${BUILD_DIR}/${_manifest}.txt")
     if (NOT EXISTS "${_input}")
         message(FATAL_ERROR

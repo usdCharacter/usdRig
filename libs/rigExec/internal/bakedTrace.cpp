@@ -50,6 +50,8 @@ RigExecBakedStepDomainName(RigExecBakedStepKind kind)
     case RigExecBakedStepKind::Derived:
     case RigExecBakedStepKind::ChainInputs:
         return SchemaValueText::geometry;
+    case RigExecBakedStepKind::OpGraph:
+        return "op";
     }
     return "unknown";
 }

@@ -298,7 +298,7 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
     r._types.resize(_typeEntries.size());
     for (size_t i = 0; i < _typeEntries.size(); ++i) {
         const _TypeEntry &e = _typeEntries[i];
-        r._types[i] = {e.desc, e.library, uint32_t(i)};
+        r._types[i] = {e.desc, e.library, uint32_t(i), e.handle};
         fingerprint = MixText(fingerprint, e.desc->nameSpace);
         fingerprint = MixText(fingerprint, e.desc->name);
         fingerprint = Mix(fingerprint, e.desc->major);
@@ -312,6 +312,7 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
         op.desc = e.desc;
         op.library = e.library;
         op.index = uint32_t(i);
+        op.handle = e.handle;
         for (size_t p = 0; p < e.desc->portCount; ++p) {
             op.portTypes.push_back(_typeIndex.at(e.desc->ports[p].type));
             _portIndex.emplace_back(e.desc->ports[p].port, uint32_t(p));

@@ -606,7 +606,14 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// Format 34 adds ConstraintFlags.PreserveJointOrientation: a
 /// SingleChainIK constraint's rigExec:orientationMode "preserve". Older
 /// files hold none, so their constraints aim X.
-inline constexpr uint32_t RigExecFormatVersion = 34;
+///
+/// Format 35 adds File.op_graph, op nodes the op core runs as one OpGraph
+/// step that reads only the stage-frame admission, and Manifest.core_ops and core_types, which name the ops and types
+/// those nodes use. Older files hold no op nodes.
+inline constexpr uint32_t RigExecFormatVersion = 35;
+
+/// The first format version that may hold op nodes.
+inline constexpr uint32_t RigExecFormatOpGraphVersion = 35;
 
 /// The first format version whose constraints may carry
 /// PreserveJointOrientation.

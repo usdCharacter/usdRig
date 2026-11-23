@@ -524,13 +524,15 @@ set_target_properties(rigExecLzma PROPERTIES POSITION_INDEPENDENT_CODE ON
 add_library(rigExec::rigExecLzma ALIAS rigExecLzma)
 
 add_library(rigExecBinary STATIC libs/rigExecBinary/format.cpp
-    libs/rigExecBinary/manifest.cpp libs/rigExecBinary/transport.cpp)
+    libs/rigExecBinary/manifest.cpp libs/rigExecBinary/opGraphWriter.cpp
+    libs/rigExecBinary/transport.cpp)
 add_library(rigExec::rigExecBinary ALIAS rigExecBinary)
 target_include_directories(rigExecBinary PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_include_directories(rigExecBinary PRIVATE thirdparty/lzma/C)
-target_link_libraries(rigExecBinary PUBLIC rigExecFlatBuffers PRIVATE rigExecLzma)
+target_link_libraries(rigExecBinary PUBLIC rigExecFlatBuffers rigExecOpCore
+    PRIVATE rigExecLzma)
 set_target_properties(rigExecBinary PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(rigExecRuntime STATIC
@@ -549,13 +551,14 @@ add_library(rigExecRuntime STATIC
     libs/rigExecRuntime/weights.cpp
     libs/rigExecRuntime/inputs.cpp
     libs/rigExecRuntime/labels.cpp
+    libs/rigExecRuntime/opNodes.cpp
     libs/rigExecRuntime/properties.cpp
     libs/rigExecRuntime/spaces.cpp)
 target_include_directories(rigExecRuntime PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rigExecRuntime PUBLIC rigExecBinary rigExecGraph rigExecEvalCore
-    PRIVATE rigExecOpCore)
+    rigExecOpCore)
 set_target_properties(rigExecRuntime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # Installed names, so a mover plugin's tests can export and replay its rigs
 # the same way inside this build and against an installed SDK.
@@ -587,10 +590,12 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreSources.txt"
     CONTENT "${_rigexec_evalcore_manifest_text}\n")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/evalCoreIncludes.txt"
     CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecEvalCore,INCLUDE_DIRECTORIES>,\n>\n")
-# The op core, the type libraries and the op libraries, for
-# bin/check_runtime_usd_free.sh.
+# The op core and the built-in type and op libraries: a host that builds the
+# runtime from these manifests compiles them too, and passes the libraries'
+# entries (RIGEXEC_TYPE_LIBRARY_ENTRY, RIGEXEC_OP_LIBRARY_ENTRY) to
+# RigExecRuntimeReader::Open for files with op nodes.
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/opCoreSources.txt"
-    CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecOpCore,SOURCES>;$<TARGET_PROPERTY:rigExecStdTypes,SOURCES>;$<TARGET_PROPERTY:rigExecRigTypes,SOURCES>;$<TARGET_PROPERTY:rigExecOps,SOURCES>;libs/rigExecBuiltins/builtins.cpp,\n>\n")
+    CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecOpCore,SOURCES>;$<TARGET_PROPERTY:rigExecStdTypes,SOURCES>;$<TARGET_PROPERTY:rigExecRigTypes,SOURCES>;$<TARGET_PROPERTY:rigExecOps,SOURCES>,\n>\n")
 
 set(RIGEXEC_SDK_MANIFEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/sdkManifests")
 rigexec_add_sdk_manifest_export(
@@ -870,7 +875,8 @@ add_executable(testRigExecRuntimeFixture tests/testRigExecRuntimeFixture.cpp)
 target_link_libraries(testRigExecRuntimeFixture PRIVATE rigExecRuntime)
 add_test(NAME testRigExecRuntimeFixture COMMAND testRigExecRuntimeFixture
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal.rigexec"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal_format32.rigexec")
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal_format32.rigexec"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal_format34.rigexec")
 add_executable(testRigExecRuntimeOpCore tests/testRigExecRuntimeOpCore.cpp)
 target_include_directories(testRigExecRuntimeOpCore PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests")
@@ -878,6 +884,11 @@ target_link_libraries(testRigExecRuntimeOpCore PRIVATE rigExecRuntime rigExecOpC
 add_test(NAME testRigExecRuntimeOpCore COMMAND testRigExecRuntimeOpCore
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal.rigexec")
 set_tests_properties(testRigExecRuntimeOpCore PROPERTIES
+    LABELS "rigExecRuntime;rigExecOpCore;usd-free;fast")
+add_executable(testRigExecRuntimeOpNodes tests/testRigExecRuntimeOpNodes.cpp)
+target_link_libraries(testRigExecRuntimeOpNodes PRIVATE rigExecRuntime)
+add_test(NAME testRigExecRuntimeOpNodes COMMAND testRigExecRuntimeOpNodes)
+set_tests_properties(testRigExecRuntimeOpNodes PROPERTIES
     LABELS "rigExecRuntime;rigExecOpCore;usd-free;fast")
 add_executable(testRigExecManifest tests/testRigExecManifest.cpp)
 target_link_libraries(testRigExecManifest PRIVATE rigExecBinary)
@@ -1339,6 +1350,8 @@ rigexec_link_registrations(testRigExecRegistry
     TYPE_LIBRARIES rigExecTestFakeTypes OP_LIBRARIES rigExecTestFakeOps)
 rigexec_link_registrations(testRigExecRuntimeOpCore
     TYPE_LIBRARIES rigExecTestFakeTypes OP_LIBRARIES rigExecTestFakeOps)
+rigexec_link_registrations(testRigExecRuntimeOpNodes
+    TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 add_test(NAME testRigExecRegistry COMMAND testRigExecRegistry)
 
 add_executable(testRigExecCore tests/testRigExecCore.cpp)
