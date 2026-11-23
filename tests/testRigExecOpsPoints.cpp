@@ -1554,17 +1554,27 @@ TestSurfaceProjector()
     Mat4d actual(0.0);
     CHECK(bare.Run({&base, &posedArray, &counts, &indices}, &actual));
     CHECK(SameBits(expected, actual));
-    // A ray that misses the surface measures no frame.
+    // A ray that misses the surface measures no frame: the reason is the
+    // kernel's note, its ray and probe what the kernel reports.
     payload.rayOrigin = Vec3d(40.0, 40.0, 5.0);
-    Node miss(SurfaceProjector(),
-              {&SurfaceProjectorBasePoints(), &SurfaceProjectorPoints(),
-               &SurfaceProjectorCounts(), &SurfaceProjectorIndices()},
-              SurfaceProjectorOut(), &payload);
+    const std::vector<const RigExecPortHandle *> missInputs = {
+        &SurfaceProjectorBasePoints(), &SurfaceProjectorPoints(),
+        &SurfaceProjectorCounts(), &SurfaceProjectorIndices()};
+    const std::vector<const void *> missValues = {&base, &posedArray, &counts,
+                                                  &indices};
+    Node miss(SurfaceProjector(), missInputs, SurfaceProjectorOut(), &payload);
+    CHECK(miss.Run(missValues, &actual));
+    CHECK(SameBits(GfMatrix4d(1.0), actual));
+    uint32_t reason = 0, probe = 0;
+    Node missReason(SurfaceProjector(), missInputs, SurfaceProjectorReason(),
+                    &payload);
+    CHECK(missReason.Run(missValues, &reason));
+    CHECK(reason == uint32_t(RigExecSurfaceProjectorNote::Kind::NoFrame));
+    Node missProbe(SurfaceProjector(), missInputs, SurfaceProjectorProbe(),
+                   &payload);
+    CHECK(missProbe.Run(missValues, &probe));
+    CHECK(!(probe & kSurfaceProjectorCastHit));
     std::string error;
-    CHECK(!miss.Run({&base, &posedArray, &counts, &indices}, &actual, &error));
-    CHECK(error.find("cast=MISS") != std::string::npos);
-    CHECK(error.find("SurfaceProjector: SurfaceProjector") ==
-          std::string::npos);
     // Half a source is refused.
     Node half(SurfaceProjector(),
               {&SurfaceProjectorBasePoints(), &SurfaceProjectorPoints(),

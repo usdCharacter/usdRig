@@ -25,6 +25,9 @@ RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorSourceSpaceFinal)
 RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorSpaceFinal)
 RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorWorldToMesh)
 RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorOut)
+RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorReason)
+RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorRay)
+RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorProbe)
 
 RIGEXEC_DEFINE_PORT_HANDLE(ShaderDialsDials)
 RIGEXEC_DEFINE_PORT_HANDLE(ShaderDialsOut)
@@ -89,25 +92,34 @@ RunSurfaceProjector(const void *payload, void *, const RigExecOpIo &io,
         return rigExec::RigExecComputeMeshVertexNormalsKernel(points, counts,
                                                               indices);
     };
-    std::vector<std::string> diagnostics;
+    std::vector<rigExec::RigExecSurfaceProjectorNote> notes;
     Mat4d &out = Out<Mat4d>(io, SurfaceProjectorOut());
-    if (!rigExec::RigExecSolveSurfaceProjectorT(
+    uint32_t &reason = Out<uint32_t>(io, SurfaceProjectorReason());
+    RigExecArray<double> &ray =
+        Out<RigExecArray<double>>(io, SurfaceProjectorRay());
+    uint32_t &probe = Out<uint32_t>(io, SurfaceProjectorProbe());
+    reason = kSurfaceProjectorSolved;
+    ray = RigExecArray<double>();
+    probe = 0;
+    if (rigExec::RigExecSolveSurfaceProjectorNotesT(
             in, ToVector(*In<Points>(io, SurfaceProjectorBasePoints())),
             ToVector(*In<Points>(io, SurfaceProjectorPoints())),
             ToVector(*In<RigExecArray<int>>(io, SurfaceProjectorCounts())),
             ToVector(*In<RigExecArray<int>>(io, SurfaceProjectorIndices())),
-            normals, "", &out, &diagnostics)) {
-        // The kernel prefixes each line with its own name.
-        const std::string prefix = "SurfaceProjector : ";
-        std::string why;
-        for (const std::string &d : diagnostics)
-            why += (why.empty() ? "" : "; ") +
-                   (d.compare(0, prefix.size(), prefix) == 0
-                        ? d.substr(prefix.size())
-                        : d);
-        return Fail(error, "SurfaceProjector",
-                    why.empty() ? std::string("no frame measured") : why);
+            normals, &out, &notes))
+        return true;
+    out = Mat4d(1.0);
+    if (notes.empty()) {
+        reason = kSurfaceProjectorNoFrameNoted;
+        return true;
     }
+    const rigExec::RigExecSurfaceProjectorNote &first = notes.front();
+    reason = uint32_t(first.kind);
+    ray = RigExecArray<double>(first.ray, std::size(first.ray));
+    probe = (first.castHit ? kSurfaceProjectorCastHit : 0u) |
+            (first.recastHit ? kSurfaceProjectorRecastHit : 0u) |
+            (first.restFrame ? kSurfaceProjectorRestFrame : 0u) |
+            (first.posedFrame ? kSurfaceProjectorPosedFrame : 0u);
     return true;
 }
 
@@ -168,6 +180,12 @@ const rigExec::RigExecPortDesc kProjectorPorts[] = {
      "worldToMesh"},
     {&SurfaceProjectorOut(), &rigExecStd::Mat4dType(), kRigExecPortOutput,
      "out"},
+    {&SurfaceProjectorReason(), &rigExecStd::UIntType(), kRigExecPortOutput,
+     "reason"},
+    {&SurfaceProjectorRay(), &rigExecStd::DoubleArray(), kRigExecPortOutput,
+     "ray"},
+    {&SurfaceProjectorProbe(), &rigExecStd::UIntType(), kRigExecPortOutput,
+     "probe"},
 };
 
 const rigExec::RigExecPortDesc kDialPorts[] = {

@@ -5,12 +5,14 @@
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
 #include "rigExecBuiltins/builtins.h"
+#include "rigExecScene/geometryOpRunner.h"
 #include "rigExecScene/geometryOps.h"
 #include "rigExecScene/geometryProgram.h"
 #include "rigExec/internal/moverGraph.h"
 #include "rigExec/internal/weightPackets.h"
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecMath/weightFieldKernel.h"
+#include "rigExecOps/deform/projectorOps.h"
 #include "rigExecOps/weight/weightOps.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecStdTypes/stdTypes.h"
@@ -503,9 +505,31 @@ CompareMatrix(RigExecRevisionOp op, const RigExecRevisionBinding &binding,
 {
     GfMatrix4d expected(1.0);
     std::vector<std::string> diagnostics;
+    const std::string who = op == RigExecRevisionOp::SurfaceProjector
+                                ? RigExecGeometryMoverText(binding)
+                                : std::string();
     const bool nativeOk =
-        RigExecRunGeometryMatrix(op, binding, frames, reads, base, final, "",
+        RigExecRunGeometryMatrix(op, binding, frames, reads, base, final, who,
                                  &expected, &diagnostics, nullptr);
+
+    // The scene runner refuses with the native run's first diagnostic.
+    RigExecGeometryOpRunner runner;
+    GfMatrix4d ran(1.0);
+    std::string diagnostic;
+    const bool runnerOk = RigExecRunGeometryMatrixOp(
+        op, binding, frames, reads, base, final, runner, ran, diagnostic);
+    CHECK(runnerOk == nativeOk);
+    if (!nativeOk) {
+        const std::string first =
+            diagnostics.empty() ? std::string() : diagnostics.front();
+        if (diagnostic != first) {
+            std::printf("%s: native '%s' runner '%s'\n", label, first.c_str(),
+                        diagnostic.c_str());
+            CHECK(false);
+        }
+    } else {
+        CHECK(std::memcmp(&ran, &expected, sizeof(ran)) == 0);
+    }
 
     RigExecRigDescBuilder builder;
     RigExecGeometryMatrixNode node;
@@ -524,7 +548,13 @@ CompareMatrix(RigExecRevisionOp op, const RigExecRevisionBinding &binding,
     CHECK(evaluator);
     CHECK(RigExecWriteGeometryMatrixInputs(binding, frames, reads, base, final,
                                            node, evaluator.get(), &error));
-    const bool opOk = evaluator->Evaluate(&error);
+    bool opOk = evaluator->Evaluate(&error);
+    if (opOk && op == RigExecRevisionOp::SurfaceProjector) {
+        const auto *reason =
+            static_cast<const uint32_t *>(evaluator->GetOutput(node.reason));
+        CHECK(reason);
+        opOk = reason && *reason == rigExecOps::kSurfaceProjectorSolved;
+    }
     if (opOk != nativeOk) {
         std::printf("%s: native %d op %d (%s)\n", label, int(nativeOk),
                     int(opOk), error.c_str());
@@ -622,12 +652,26 @@ TestProjector(const Grid &grid)
                             frames, reads, grid.rest, grid.points, c.label));
     }
 
-    // A ray that misses: both refuse.
+    // A ray that misses: both refuse, with the same first diagnostic, also
+    // when an unresolved rig space is noted before the miss.
+    binding.moverPath = SdfPath("/Rig/Projector");
     RigExecProjectorReads miss = reads;
     miss.rayOrigin = GfVec3d(40.0, 40.0, 2.0);
+    for (const bool reproject : {false, true}) {
+        miss.reproject = reproject;
+        CHECK(!CompareMatrix(RigExecRevisionOp::SurfaceProjector, binding,
+                             RigExecSurfaceProjectorFrames(), miss, grid.rest,
+                             grid.points, "miss"));
+        RigExecSurfaceProjectorFrames unprovided;
+        unprovided.named[2] = true;
+        CHECK(!CompareMatrix(RigExecRevisionOp::SurfaceProjector, binding,
+                             unprovided, miss, grid.rest, grid.points,
+                             "miss, space not a provider"));
+    }
+    // No usable surface.
     CHECK(!CompareMatrix(RigExecRevisionOp::SurfaceProjector, binding,
-                         RigExecSurfaceProjectorFrames(), miss, grid.rest,
-                         grid.points, "miss"));
+                         RigExecSurfaceProjectorFrames(), reads, {}, {},
+                         "no surface"));
 
     RigExecProjectorReads dials;
     dials.dials = {0.5, -2.0, std::numeric_limits<double>::quiet_NaN(), 7.25,

@@ -17,10 +17,12 @@
 #include "surfaceKernelCache.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace rigExec {
@@ -80,6 +82,55 @@ Format3(const char *label, double x, double y, double z)
 }
 
 } // namespace surfaceProjectorDetail
+
+/// One thing a projector solve reports, in the order it meets them. A
+/// solve that fails reports a NoFrame note last: the ray it cast and which
+/// of its steps worked.
+struct RigExecSurfaceProjectorNote {
+    enum class Kind : uint32_t {
+        NoSurface = 1,
+        SpaceNotProvider,
+        RecastMissed,
+        NoFrame,
+    };
+    Kind kind = Kind::NoFrame;
+    /// The posed ray, origin, direction and up, for NoFrame.
+    double ray[9] = {};
+    bool castHit = false, recastHit = false;
+    bool restFrame = false, posedFrame = false;
+};
+
+/// \p note as the diagnostic line a projector named \p who reports.
+inline std::string
+RigExecSurfaceProjectorNoteText(const RigExecSurfaceProjectorNote &note,
+                                const std::string &who)
+{
+    using Kind = RigExecSurfaceProjectorNote::Kind;
+    using surfaceProjectorDetail::Format3;
+    const std::string head = "SurfaceProjector " + who + ": ";
+    switch (note.kind) {
+    case Kind::NoSurface:
+        return head + "surface has no usable points or topology";
+    case Kind::SpaceNotProvider:
+        return head +
+               "rigExec:space names a prim that is not a frame provider; "
+               "the rest ray keeps the masters and will miss once the rig "
+               "leaves its rest";
+    case Kind::RecastMissed:
+        return head + "the re-cast missed the deformed surface; falling back "
+                      "to the material point";
+    case Kind::NoFrame:
+        break;
+    }
+    const double *r = note.ray;
+    return head + "ray " + Format3("o", r[0], r[1], r[2]) + " " +
+           Format3("d", r[3], r[4], r[5]) + " " +
+           Format3("up", r[6], r[7], r[8]) +
+           " cast=" + (note.castHit ? "hit" : "MISS") +
+           " recast=" + (note.recastHit ? "hit" : "MISS") +
+           " restFrame=" + (note.restFrame ? "ok" : "FAILED") +
+           " posedFrame=" + (note.posedFrame ? "ok" : "FAILED");
+}
 
 /// Cast a ray at a prebuilt fan triangulation: the same Moller-Trumbore
 /// loop over caller-provided triangles, so one validation serves every
@@ -311,26 +362,25 @@ template <class Mat4, class Vec3d> struct RigExecSurfaceProjectorInputs {
 /// The projector's target-local shader matrix: rigExec:shaderOffset carried by the look
 /// of its source and by how the material point under its ray moved from the
 /// rest points to the posed points, scaled with the rig. False when no frame
-/// could be measured; \p diagnostics then says which step failed, prefixed
-/// with \p who.
+/// could be measured; \p notes then say which step failed.
 template <class Mat4, class Vec3d, class Vec3f, class Normals>
 bool
-RigExecSolveSurfaceProjectorT(
+RigExecSolveSurfaceProjectorNotesT(
     const RigExecSurfaceProjectorInputs<Mat4, Vec3d> &in,
     const std::vector<Vec3f> &basePoints, const std::vector<Vec3f> &posedPoints,
     const std::vector<int> &faceVertexCounts,
     const std::vector<int> &faceVertexIndices, Normals &&normalsOf,
-    const std::string &who, Mat4 *shaderMatrix,
-    std::vector<std::string> *diagnostics,
+    Mat4 *shaderMatrix, std::vector<RigExecSurfaceProjectorNote> *notes,
     RigExecSurfaceKernelCache<Vec3f, Vec3d> *cache = nullptr)
 {
-    using surfaceProjectorDetail::Format3;
+    using Note = RigExecSurfaceProjectorNote;
     using surfaceProjectorDetail::MeanRowLength;
     using surfaceProjectorDetail::Row;
     if (basePoints.empty() || faceVertexCounts.empty() ||
         posedPoints.size() != basePoints.size()) {
-        diagnostics->push_back("SurfaceProjector " + who +
-                               ": surface has no usable points or topology");
+        Note note;
+        note.kind = Note::Kind::NoSurface;
+        notes->push_back(note);
         return false;
     }
 
@@ -415,11 +465,9 @@ RigExecSolveSurfaceProjectorT(
                 spaceScale = carried / 3.0;
             }
         } else {
-            diagnostics->push_back(
-                "SurfaceProjector " + who +
-                ": rigExec:space names a prim that is not a frame provider; "
-                "the rest ray keeps the masters and will miss once the rig "
-                "leaves its rest");
+            Note note;
+            note.kind = Note::Kind::SpaceNotProvider;
+            notes->push_back(note);
         }
     }
 
@@ -457,10 +505,9 @@ RigExecSolveSurfaceProjectorT(
             ok = RigExecSurfaceFrameAtHitT<Mat4, Vec3d, Vec3f>(
                 posedPoints, hit, rayUp, posedNormals(), &posedFrame);
             if (ok) {
-                diagnostics->push_back(
-                    "SurfaceProjector " + who +
-                    ": the re-cast missed the deformed surface; falling back "
-                    "to the material point");
+                Note note;
+                note.kind = Note::Kind::RecastMissed;
+                notes->push_back(note);
             }
         }
     } else if (ok) {
@@ -484,15 +531,17 @@ RigExecSolveSurfaceProjectorT(
         const bool posedOk =
             castHit && RigExecSurfaceFrameAtHitT<Mat4, Vec3d, Vec3f>(
                            posedPoints, probe, rayUp, posedNormals(), &scratch);
-        diagnostics->push_back(
-            "SurfaceProjector " + who + ": ray " +
-            Format3("o", rayOrigin[0], rayOrigin[1], rayOrigin[2]) + " " +
-            Format3("d", rayDirection[0], rayDirection[1], rayDirection[2]) +
-            " " + Format3("up", rayUp[0], rayUp[1], rayUp[2]) +
-            " cast=" + (castHit ? "hit" : "MISS") +
-            " recast=" + (posedCast ? "hit" : "MISS") +
-            " restFrame=" + (restOk ? "ok" : "FAILED") +
-            " posedFrame=" + (posedOk ? "ok" : "FAILED"));
+        Note note;
+        for (int i = 0; i < 3; ++i) {
+            note.ray[i] = rayOrigin[i];
+            note.ray[3 + i] = rayDirection[i];
+            note.ray[6 + i] = rayUp[i];
+        }
+        note.castHit = castHit;
+        note.recastHit = posedCast;
+        note.restFrame = restOk;
+        note.posedFrame = posedOk;
+        notes->push_back(note);
         return false;
     }
 
@@ -546,6 +595,28 @@ RigExecSolveSurfaceProjectorT(
     }
     *shaderMatrix = in.shaderOffset * look * carried;
     return true;
+}
+
+/// RigExecSolveSurfaceProjectorNotesT with each note as the diagnostic line
+/// a projector named \p who reports.
+template <class Mat4, class Vec3d, class Vec3f, class Normals>
+bool
+RigExecSolveSurfaceProjectorT(
+    const RigExecSurfaceProjectorInputs<Mat4, Vec3d> &in,
+    const std::vector<Vec3f> &basePoints, const std::vector<Vec3f> &posedPoints,
+    const std::vector<int> &faceVertexCounts,
+    const std::vector<int> &faceVertexIndices, Normals &&normalsOf,
+    const std::string &who, Mat4 *shaderMatrix,
+    std::vector<std::string> *diagnostics,
+    RigExecSurfaceKernelCache<Vec3f, Vec3d> *cache = nullptr)
+{
+    std::vector<RigExecSurfaceProjectorNote> notes;
+    const bool solved = RigExecSolveSurfaceProjectorNotesT(
+        in, basePoints, posedPoints, faceVertexCounts, faceVertexIndices,
+        std::forward<Normals>(normalsOf), shaderMatrix, &notes, cache);
+    for (const RigExecSurfaceProjectorNote &note : notes)
+        diagnostics->push_back(RigExecSurfaceProjectorNoteText(note, who));
+    return solved;
 }
 
 /// Evaluate a resolved target with the shared vertex normals.

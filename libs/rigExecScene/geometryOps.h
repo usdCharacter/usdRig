@@ -132,6 +132,8 @@ struct RigExecGeometryMatrixNode {
     RigExecProjectorReads settings;
     RigExecOutputId out;
     const RigExecPortHandle *outPort = nullptr;
+    /// A surface projector's reason, and its first note's ray and probe.
+    RigExecOutputId reason, ray, probe;
 };
 
 /// True for the derived matrix ops this bridge maps.
