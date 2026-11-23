@@ -1,6 +1,7 @@
 #include "rigExec/api/compile.h"
 #include "rigExec/internal/compile/rigDescData.h"
 #include "rigExec/internal/program/program.h"
+#include "rigExecGraph/windowHistory.h"
 
 #include <algorithm>
 #include <numeric>
@@ -212,6 +213,42 @@ RigExecCompile(const RigExecRigDesc &desc, const RigExecCompileOptions &options,
                      "order cycle through " + NodeText(registry, data, n));
                 return nullptr;
             }
+        }
+    }
+
+    // Windowed nodes, settled over data and order predecessors as every
+    // evaluator settles its windowed ops.
+    program->windowOfNode.assign(nodeCount, kRigExecInvalidIndex);
+    std::vector<uint32_t> windowed;
+    for (uint32_t n = 0; n < nodeCount; ++n) {
+        const RigExecOpDesc &d = *registry.OpAt(data.nodes[n].op).desc;
+        if (d.threading != RigExecOpThreading::Windowed)
+            continue;
+        RigExecProgramWindow window;
+        window.node = n;
+        window.frames = d.windowFrames(
+            data.nodes[n].hasPayload ? data.nodes[n].payload.Data() : nullptr);
+        program->windowOfNode[n] = uint32_t(windowed.size());
+        windowed.push_back(n);
+        program->windowedNodes.push_back(std::move(window));
+    }
+    if (!windowed.empty()) {
+        std::vector<std::vector<uint32_t>> predecessors(nodeCount);
+        for (uint32_t n = 0; n < nodeCount; ++n) {
+            for (const uint32_t s : successors[n])
+                predecessors[s].push_back(n);
+        }
+        RigExecWindowLayout layout;
+        RigExecSettleWindowLayout(
+            nodeCount,
+            [&](uint32_t n) -> const std::vector<uint32_t> & {
+                return predecessors[n];
+            },
+            windowed, &layout);
+        program->historyMask = std::move(layout.mask);
+        for (size_t w = 0; w < windowed.size(); ++w) {
+            program->windowedNodes[w].inner = std::move(layout.inner[w]);
+            program->windowedNodes[w].feedsWindow = layout.feedsWindow[w] != 0;
         }
     }
 

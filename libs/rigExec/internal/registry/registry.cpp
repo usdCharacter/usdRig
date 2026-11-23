@@ -276,6 +276,11 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
         if (d.state.size && (!d.state.create || !d.state.destroy)) {
             _Error("op " + name + ": state needs create and destroy");
         }
+        if ((d.threading == RigExecOpThreading::Windowed) !=
+            (d.windowFrames != nullptr)) {
+            _Error("op " + name +
+                   ": Windowed threading and windowFrames go together");
+        }
     }
     if (!_errors.empty()) {
         return false;

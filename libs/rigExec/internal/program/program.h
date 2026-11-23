@@ -38,6 +38,17 @@ struct RigExecProgramList {
     uint32_t count = 0;
 };
 
+/// A Windowed node (rigExecGraph/windowHistory.h), in node order.
+struct RigExecProgramWindow {
+    uint32_t node = kRigExecInvalidIndex;
+    uint32_t frames = 0;
+    /// The windowed nodes among its ancestors, as indices into
+    /// windowedNodes, ascending.
+    std::vector<uint32_t> inner;
+    /// Some windowed node depends on it, so it solves at history ticks.
+    bool feedsWindow = false;
+};
+
 /// Nodes of one op at one level, run in node order.
 struct RigExecProgramBatch {
     uint32_t op = kRigExecInvalidIndex;
@@ -77,6 +88,12 @@ public:
     /// Slot per bound input and output, in binding order.
     std::vector<uint32_t> inputSlots;
     std::vector<uint32_t> outputSlots;
+    std::vector<RigExecProgramWindow> windowedNodes;
+    /// Per node: 1 for the windowed nodes and every node one depends on.
+    /// Empty without windowed nodes.
+    std::vector<char> historyMask;
+    /// Per node: its index in windowedNodes, or kRigExecInvalidIndex.
+    std::vector<uint32_t> windowOfNode;
     size_t arenaSize = 0;
     size_t stateSize = 0;
     RigExecAlignedBuffer payloads;

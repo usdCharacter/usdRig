@@ -79,9 +79,63 @@ RegisterArrayOut(RigExecOpRegistrar &registrar)
     registrar.Add(ArrayOutOp(), desc);
 }
 
+// Windowed threading without windowFrames, and windowFrames without it.
+RIGEXEC_DEFINE_OP_HANDLE(UnframedOp)
+RIGEXEC_DEFINE_PORT_HANDLE(UnframedPort)
+RIGEXEC_DEFINE_OP_HANDLE(FramedOp)
+RIGEXEC_DEFINE_PORT_HANDLE(FramedPort)
+
+uint32_t
+TwoFrames(const void *)
+{
+    return 2;
+}
+
+void
+RegisterWindowMismatch(RigExecOpRegistrar &registrar)
+{
+    static const RigExecPortDesc unframedPorts[] = {
+        {&UnframedPort(), &fakeTypes::Float(), kRigExecPortOutput, "out"}};
+    static const RigExecPortDesc framedPorts[] = {
+        {&FramedPort(), &fakeTypes::Float(), kRigExecPortOutput, "out"}};
+    static const RigExecOpDesc unframed = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "Unframed";
+        d.ports = unframedPorts;
+        d.portCount = 1;
+        d.run = &NoRun;
+        d.threading = RigExecOpThreading::Windowed;
+        return d;
+    }();
+    static const RigExecOpDesc framed = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "Framed";
+        d.ports = framedPorts;
+        d.portCount = 1;
+        d.run = &NoRun;
+        d.windowFrames = &TwoFrames;
+        return d;
+    }();
+    registrar.Add(UnframedOp(), unframed);
+    registrar.Add(FramedOp(), framed);
+}
+
 void
 TestValidateErrors(const RigExecRegistryInit &good)
 {
+    {
+        RigExecOpLibraryDesc bad;
+        bad.name = "windowMismatch";
+        bad.registerOps = &RegisterWindowMismatch;
+        RigExecRegistryInit init = good;
+        init.opLibraries.push_back(&bad);
+        std::vector<std::string> errors;
+        CHECK(!RigExecRegistry::Validate(init, &errors));
+        CHECK(Mentions(errors, "op test:Unframed: Windowed threading"));
+        CHECK(Mentions(errors, "op test:Framed: Windowed threading"));
+    }
     {
         RigExecOpLibraryDesc bad;
         bad.name = "arrayOut";

@@ -7,9 +7,12 @@
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
 #include "rigExec/api/rigDesc.h"
+#include "rigExec/internal/program/program.h"
+#include "rigExecGraph/windowHistory.h"
 
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -89,6 +92,53 @@ RunNorm(const void *, void *, const RigExecOpIo &io, std::string *)
     return true;
 }
 
+// A windowed op: captures its input; out sums the usable tail of its ring
+// and this tick, the k-th oldest weighted k + 1, so order shows. A history
+// tick that only captures passes its input through; a negative x declines.
+RIGEXEC_DEFINE_OP_HANDLE(RingSum)
+RIGEXEC_DEFINE_PORT_HANDLE(RingSumIn)
+RIGEXEC_DEFINE_PORT_HANDLE(RingSumOut)
+
+struct RingPayload {
+    uint32_t frames = 0;
+};
+
+uint32_t
+RingFrames(const void *payload)
+{
+    return payload ? static_cast<const RingPayload *>(payload)->frames : 0;
+}
+
+bool
+RunRingSum(const void *, void *, const RigExecOpIo &io, std::string *error)
+{
+    const Vec3 &in = *static_cast<const Vec3 *>(io.inputs[0]);
+    Vec3 &out = *static_cast<Vec3 *>(io.outputs[1]);
+    const RigExecWindowRun &window = *io.window;
+    if (in.x < 0.0f) {
+        *error = "declined";
+        return false;
+    }
+    auto packet = std::make_shared<RigExecWindowPacket>();
+    packet->scalars = {in.x, in.y, in.z};
+    *window.capture = packet;
+    if (window.captureOnly) {
+        out = in;
+        return true;
+    }
+    std::vector<const RigExecWindowPacket *> tail;
+    RigExecWindowUsableTail(*window.ring, packet.get(), &tail);
+    Vec3 sum{0.0f, 0.0f, 0.0f};
+    for (size_t k = 0; k < tail.size(); ++k) {
+        const float w = float(k + 1);
+        sum = Vec3{sum.x + w * float(tail[k]->scalars[0]),
+                   sum.y + w * float(tail[k]->scalars[1]),
+                   sum.z + w * float(tail[k]->scalars[2])};
+    }
+    out = sum;
+    return true;
+}
+
 void
 RegisterCheck(RigExecOpRegistrar &registrar)
 {
@@ -139,6 +189,24 @@ RegisterCheck(RigExecOpRegistrar &registrar)
     registrar.Add(Weighted(), weighted);
     registrar.Add(Required(), required);
     registrar.Add(Norm(), norm);
+
+    static const RigExecPortDesc ringPorts[] = {
+        {&RingSumIn(), &fakeTypes::Vec3Type(), kRigExecPortInput, "in"},
+        {&RingSumOut(), &fakeTypes::Vec3Type(), kRigExecPortOutput, "out"},
+    };
+    static const RigExecOpDesc ring = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "RingSum";
+        d.ports = ringPorts;
+        d.portCount = 2;
+        d.run = &RunRingSum;
+        d.threading = RigExecOpThreading::Windowed;
+        d.windowFrames = &RingFrames;
+        d.payload = RigExecPayloadHandlingFor<RingPayload>();
+        return d;
+    }();
+    registrar.Add(RingSum(), ring);
 }
 
 const RigExecOpLibraryDesc kCheckLibrary = [] {
@@ -541,6 +609,280 @@ TestListDeterminism()
     }
 }
 
+// Per chain: P (Offset) -> A (RingSum, 2 frames) -> B (RingSum, 3 frames)
+// -> C (Offset), and Q (Offset) ordered before A. Outputs A, B, C and Q.
+struct WindowRig {
+    std::shared_ptr<const RigExecProgram> program;
+    std::vector<RigExecInputId> inputs;
+    std::vector<RigExecOutputId> outputs;
+};
+
+WindowRig
+BuildWindowRig(size_t chains, size_t maxBatchNodes)
+{
+    WindowRig rig;
+    RigExecRigDescBuilder builder;
+    const RingPayload two{2}, three{3};
+    for (size_t i = 0; i < chains; ++i) {
+        const RigExecNodeId p = builder.AddOp(fakeOps::Offset());
+        const RigExecNodeId q = builder.AddOp(fakeOps::Offset());
+        const RigExecNodeId a = builder.AddOp(RingSum(), &two);
+        const RigExecNodeId b = builder.AddOp(RingSum(), &three);
+        const RigExecNodeId c = builder.AddOp(fakeOps::Offset());
+        builder.Connect(p, fakeOps::OffsetOut(), a, RingSumIn());
+        builder.Connect(a, RingSumOut(), b, RingSumIn());
+        builder.Connect(b, RingSumOut(), c, fakeOps::OffsetIn());
+        builder.Order(q, a);
+        rig.inputs.push_back(builder.BindInput(p, fakeOps::OffsetIn()));
+        rig.inputs.push_back(builder.BindInput(q, fakeOps::OffsetIn()));
+        rig.outputs.push_back(builder.BindOutput(a, RingSumOut()));
+        rig.outputs.push_back(builder.BindOutput(b, RingSumOut()));
+        rig.outputs.push_back(builder.BindOutput(c, fakeOps::OffsetOut()));
+        rig.outputs.push_back(builder.BindOutput(q, fakeOps::OffsetOut()));
+    }
+    std::string error;
+    rig.program = Compile(builder, maxBatchNodes, &error);
+    if (!rig.program)
+        std::printf("%s\n", error.c_str());
+    return rig;
+}
+
+Vec3
+FrameValue(int frame, size_t input)
+{
+    const float t = float(frame), i = float(input);
+    return Vec3{0.25f * t + i, 0.5f * t - 0.125f * i, 1.0f + 0.0625f * t};
+}
+
+void
+SetFrame(const WindowRig &rig, RigExecEvaluator &evaluator, int frame)
+{
+    for (size_t i = 0; i < rig.inputs.size(); ++i) {
+        const Vec3 value = FrameValue(frame, i);
+        evaluator.SetInput(rig.inputs[i], &value);
+    }
+}
+
+std::vector<Vec3>
+Outputs(const WindowRig &rig, const RigExecEvaluator &evaluator)
+{
+    std::vector<Vec3> values;
+    for (const RigExecOutputId out : rig.outputs)
+        values.push_back(*static_cast<const Vec3 *>(evaluator.GetOutput(out)));
+    return values;
+}
+
+bool
+SameAll(const std::vector<Vec3> &a, const std::vector<Vec3> &b)
+{
+    bool same = a.size() == b.size();
+    for (size_t i = 0; same && i < a.size(); ++i)
+        same = Same(a[i], b[i]);
+    return same;
+}
+
+/// Plays frames 0 .. frames - 1 in order; outputs per frame.
+std::vector<std::vector<Vec3>>
+Play(const WindowRig &rig, RigExecEvaluator &evaluator, int frames)
+{
+    std::vector<std::vector<Vec3>> played;
+    for (int f = 0; f < frames; ++f) {
+        SetFrame(rig, evaluator, f);
+        if (!evaluator.Evaluate())
+            return played;
+        evaluator.PushHistory();
+        played.push_back(Outputs(rig, evaluator));
+    }
+    return played;
+}
+
+/// Jumps to \p frame: a cleared history, every earlier tick it reaches,
+/// then the frame.
+std::vector<Vec3>
+Jump(const WindowRig &rig, RigExecEvaluator &evaluator, int frame)
+{
+    evaluator.ClearHistory();
+    for (int k = int(evaluator.GetHistoryDepth()); k >= 1; --k) {
+        SetFrame(rig, evaluator, frame - k);
+        CHECK(evaluator.EvaluateHistory());
+    }
+    SetFrame(rig, evaluator, frame);
+    CHECK(evaluator.Evaluate());
+    return Outputs(rig, evaluator);
+}
+
+void
+TestWindowLayout()
+{
+    const WindowRig rig = BuildWindowRig(1, 0);
+    CHECK(rig.program);
+    if (!rig.program)
+        return;
+    // Nodes: P 0, Q 1, A 2, B 3, C 4.
+    const RigExecProgram &p = *rig.program;
+    CHECK(p.windowedNodes.size() == 2);
+    if (p.windowedNodes.size() != 2)
+        return;
+    CHECK(p.windowedNodes[0].node == 2 && p.windowedNodes[0].frames == 2);
+    CHECK(p.windowedNodes[0].inner.empty() && p.windowedNodes[0].feedsWindow);
+    CHECK(p.windowedNodes[1].node == 3 && p.windowedNodes[1].frames == 3);
+    CHECK(p.windowedNodes[1].inner == std::vector<uint32_t>{0});
+    CHECK(!p.windowedNodes[1].feedsWindow);
+    CHECK((p.historyMask == std::vector<char>{1, 1, 1, 1, 0}));
+    CHECK((p.windowOfNode == std::vector<uint32_t>{kRigExecInvalidIndex,
+                                                   kRigExecInvalidIndex, 0, 1,
+                                                   kRigExecInvalidIndex}));
+    auto evaluator = RigExecEvaluator::Create(rig.program);
+    CHECK(evaluator->GetWindowCount() == 2);
+    // B reads 3 ticks; A's capture at each of those read its own 2.
+    CHECK(evaluator->GetHistoryDepth() == 5);
+}
+
+void
+TestWindowHistory()
+{
+    const WindowRig rig = BuildWindowRig(1, 0);
+    auto played = RigExecEvaluator::Create(rig.program);
+    const std::vector<std::vector<Vec3>> reference = Play(rig, *played, 10);
+    CHECK(reference.size() == 10);
+    if (reference.size() != 10)
+        return;
+    // Rings keep their newest frames.
+    const std::vector<RigExecWindowRing> &rings = played->GetWindowRings();
+    CHECK(rings.size() == 2 && rings[0].size() == 2 && rings[1].size() == 3);
+    // Frame 0 has no history: A is its input plus one, weighted 1.
+    CHECK(Same(reference[0][0], Vec3{1.0f, 1.0f, 2.0f}));
+
+    // A jump reaches every tick a played frame read.
+    auto jumped = RigExecEvaluator::Create(rig.program);
+    for (const int frame : {5, 7, 9})
+        CHECK(SameAll(Jump(rig, *jumped, frame), reference[size_t(frame)]));
+
+    // A history tick leaves the outputs as the last Evaluate left them.
+    const std::vector<Vec3> before = Outputs(rig, *jumped);
+    SetFrame(rig, *jumped, 3);
+    CHECK(jumped->EvaluateHistory());
+    CHECK(SameAll(Outputs(rig, *jumped), before));
+
+    // A declined tick leaves a null capture: A then reads only the tick
+    // after it.
+    std::string error;
+    jumped->ClearHistory();
+    for (int k = 5; k >= 1; --k) {
+        SetFrame(rig, *jumped, 9 - k);
+        if (k == 2) {
+            const Vec3 negative{-5.0f, 0.0f, 0.0f};
+            jumped->SetInput(rig.inputs[0], &negative);
+            CHECK(!jumped->EvaluateHistory(&error));
+            CHECK(Contains(error, "declined"));
+            CHECK(!jumped->GetWindowRings()[0].back());
+            CHECK(!jumped->GetWindowRings()[1].back());
+        } else {
+            CHECK(jumped->EvaluateHistory());
+        }
+    }
+    SetFrame(rig, *jumped, 9);
+    CHECK(jumped->Evaluate());
+    const Vec3 a8 = FrameValue(8, 0), a9 = FrameValue(9, 0);
+    const Vec3 in8{a8.x + 1.0f, a8.y + 1.0f, a8.z + 1.0f};
+    const Vec3 in9{a9.x + 1.0f, a9.y + 1.0f, a9.z + 1.0f};
+    Vec3 expected{0.0f, 0.0f, 0.0f};
+    expected = Vec3{expected.x + 1.0f * in8.x, expected.y + 1.0f * in8.y,
+                    expected.z + 1.0f * in8.z};
+    expected = Vec3{expected.x + 2.0f * in9.x, expected.y + 2.0f * in9.y,
+                    expected.z + 2.0f * in9.z};
+    CHECK(Same(Outputs(rig, *jumped)[0], expected));
+
+    // A failed run captures nothing.
+    const Vec3 negative{-5.0f, 0.0f, 0.0f};
+    jumped->SetInput(rig.inputs[0], &negative);
+    CHECK(!jumped->Evaluate());
+    const std::vector<RigExecWindowPacketPtr> none =
+        jumped->GetWindowCaptures();
+    CHECK(none.size() == 2 && !none[0] && !none[1]);
+
+    // A swap resets the history.
+    CHECK(played->SwapProgram(rig.program));
+    CHECK(played->GetWindowRings().size() == 2 &&
+          played->GetWindowRings()[0].empty() &&
+          played->GetWindowRings()[1].empty());
+    const std::vector<RigExecWindowPacketPtr> fresh =
+        played->GetWindowCaptures();
+    CHECK(fresh.size() == 2 && !fresh[0] && !fresh[1]);
+    SetFrame(rig, *played, 0);
+    CHECK(played->Evaluate());
+    CHECK(SameAll(Outputs(rig, *played), reference[0]));
+}
+
+// A host that keeps the rings itself gets the bits of one that pushes.
+void
+TestWindowRingRoundTrip()
+{
+    const WindowRig rig = BuildWindowRig(1, 0);
+    auto played = RigExecEvaluator::Create(rig.program);
+    const std::vector<std::vector<Vec3>> reference = Play(rig, *played, 8);
+    auto hosted = RigExecEvaluator::Create(rig.program);
+    std::vector<RigExecWindowRing> rings(2);
+    const size_t frames[] = {2, 3};
+    for (int f = 0; f < 8; ++f) {
+        CHECK(hosted->SetWindowRings(rings));
+        SetFrame(rig, *hosted, f);
+        CHECK(hosted->Evaluate());
+        CHECK(SameAll(Outputs(rig, *hosted), reference[size_t(f)]));
+        const std::vector<RigExecWindowPacketPtr> captures =
+            hosted->GetWindowCaptures();
+        CHECK(captures.size() == 2 && captures[0] && captures[1]);
+        for (size_t w = 0; w < 2 && w < captures.size(); ++w) {
+            rings[w].push_back(captures[w]);
+            if (rings[w].size() > frames[w])
+                rings[w].erase(rings[w].begin());
+        }
+    }
+    CHECK(RigExecWindowRingsEqual(rings[0], played->GetWindowRings()[0]));
+    CHECK(RigExecWindowRingsEqual(rings[1], played->GetWindowRings()[1]));
+
+    std::string error;
+    CHECK(!hosted->SetWindowRings({RigExecWindowRing()}, &error));
+    CHECK(Contains(error, "1 rings for 2 windows"));
+    // A long ring keeps its newest frames.
+    RigExecWindowRing longRing(rings[1]);
+    longRing.insert(longRing.begin(), RigExecWindowPacketPtr());
+    CHECK(hosted->SetWindowRings({longRing, longRing}));
+    CHECK(hosted->GetWindowRings()[0].size() == 2);
+    CHECK(RigExecWindowRingsEqual(hosted->GetWindowRings()[1], rings[1]));
+}
+
+void
+TestWindowDeterminism()
+{
+    const size_t chains = 23;
+    const auto run = [&](RigExecTaskSystem *tasks, size_t batch) {
+        const WindowRig rig = BuildWindowRig(chains, batch);
+        RigExecEvaluatorOptions options;
+        options.tasks = tasks;
+        auto evaluator = RigExecEvaluator::Create(rig.program, options);
+        std::vector<Vec3> all;
+        for (const auto &frame : Play(rig, *evaluator, 7))
+            all.insert(all.end(), frame.begin(), frame.end());
+        const std::vector<Vec3> jumped = Jump(rig, *evaluator, 11);
+        all.insert(all.end(), jumped.begin(), jumped.end());
+        return all;
+    };
+    const std::vector<Vec3> reference = run(nullptr, 0);
+    CHECK(reference.size() == chains * 4 * 8);
+    for (const size_t threads : {size_t(1), size_t(2), size_t(4)}) {
+        auto tasks = RigExecCreateThreadTaskSystem(threads);
+        for (const size_t batch :
+             {size_t(0), size_t(1), size_t(2), size_t(7)}) {
+            const bool same = SameAll(run(tasks.get(), batch), reference);
+            CHECK(same);
+            if (!same)
+                std::printf("windows: threads %zu batch %zu differ\n", threads,
+                            batch);
+        }
+    }
+}
+
 } // namespace
 
 int
@@ -562,6 +904,10 @@ main()
     TestListOrder();
     TestListErrors();
     TestListDeterminism();
+    TestWindowLayout();
+    TestWindowHistory();
+    TestWindowRingRoundTrip();
+    TestWindowDeterminism();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

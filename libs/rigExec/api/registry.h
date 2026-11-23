@@ -15,12 +15,14 @@ namespace rigExec {
 
 class RigExecRegistry;
 class RigExecRegistryBuilder;
+/// rigExecGraph/windowHistory.h.
+struct RigExecWindowRun;
 
 inline constexpr uint32_t kRigExecInvalidIndex = 0xffffffffu;
 
 /// Raises a library's ABI version on any layout change of the descriptors
 /// below.
-inline constexpr uint32_t kRigExecRegistryAbiVersion = 2;
+inline constexpr uint32_t kRigExecRegistryAbiVersion = 3;
 
 /// Dense index assigned at freeze. Constant-initialized at namespace scope
 /// by the RIGEXEC_DEFINE_*_HANDLE macros; read only after Initialize.
@@ -192,6 +194,9 @@ struct RigExecOpIo {
     const void *const *inputs = nullptr;
     void *const *outputs = nullptr;
     size_t portCount = 0;
+    /// A Windowed op's earlier ticks and capture slot; null for other ops.
+    /// The op writes only its own capture.
+    const RigExecWindowRun *window = nullptr;
 };
 
 using RigExecOpRunFn = bool (*)(const void *payload, void *state,
@@ -211,6 +216,9 @@ struct RigExecOpDesc {
     double costPerElement = 0.0;
     RigExecOpPayloadHandling payload;
     RigExecOpStateHandling state;
+    /// Required for Windowed threading, and only there: the earlier ticks a
+    /// node reads, from its payload (null without one). Fixed per program.
+    uint32_t (*windowFrames)(const void *payload) = nullptr;
 };
 
 /// Collects a type library's types during freeze.
