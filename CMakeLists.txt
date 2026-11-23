@@ -295,6 +295,7 @@ rigexec_add_op_library(rigExecOps
         libs/rigExecOps/deform/projectorOps.cpp
         libs/rigExecOps/deform/patchOp.cpp
         libs/rigExecOps/deform/surfaceBindingOp.cpp
+        libs/rigExecOps/deform/layeredSkinOp.cpp
         libs/rigExecOps/constraint/autoClavicleOps.cpp
         libs/rigExecOps/constraint/constraintOps.cpp
         libs/rigExecOps/constraint/harmonicsOps.cpp
@@ -1273,15 +1274,14 @@ rigexec_add_graph_test(testRigExecSurfaceSnap CONE_VERIFY)
 
 add_executable(testRigExecSurfaceBinding tests/testRigExecSurfaceBinding.cpp)
 target_link_libraries(testRigExecSurfaceBinding PRIVATE
-    rigExec rigExecBake rigExecRuntime rigExecSampler rigExecScene)
+    rigExec rigExecBake rigExecRuntime rigExecSampler)
 target_compile_definitions(testRigExecSurfaceBinding PRIVATE ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecSurfaceBinding COMMAND testRigExecSurfaceBinding)
 rigexec_add_graph_test(testRigExecSurfaceBinding CONE_VERIFY)
 
 add_executable(testRigExecPatchMover tests/testRigExecPatchMover.cpp)
 target_link_libraries(testRigExecPatchMover PRIVATE
-    rigExec rigExecAuthoring rigExecBake rigExecRuntime rigExecSampler
-    rigExecScene)
+    rigExec rigExecAuthoring rigExecBake rigExecRuntime rigExecSampler)
 target_compile_definitions(testRigExecPatchMover PRIVATE ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecPatchMover COMMAND testRigExecPatchMover)
 rigexec_add_graph_test(testRigExecPatchMover CONE_VERIFY)
@@ -1428,6 +1428,8 @@ add_test(NAME testRigExecSceneGeometryOps COMMAND testRigExecSceneGeometryOps)
 set_tests_properties(testRigExecSceneGeometryOps PROPERTIES LABELS "fast")
 add_executable(testRigExecSceneExternalOps tests/testRigExecSceneExternalOps.cpp)
 target_link_libraries(testRigExecSceneExternalOps PRIVATE rigExecSceneOps)
+target_compile_definitions(testRigExecSceneExternalOps PRIVATE
+    ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecSceneExternalOps COMMAND testRigExecSceneExternalOps)
 set_tests_properties(testRigExecSceneExternalOps PROPERTIES LABELS "fast")
 add_executable(testRigExecScenePoseOps tests/testRigExecScenePoseOps.cpp)

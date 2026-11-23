@@ -11,7 +11,9 @@
 #include "matrixKernel.h"
 #include "skinAcceptance.h"
 
+#include <cmath>
 #include <cstddef>
+#include <string>
 #include <vector>
 
 namespace rigExec {
@@ -35,6 +37,55 @@ template <class M> struct RigExecSkinLayoutOf {
         return weights[point * elementSize + slot];
     }
 };
+
+/// Shape and range check of a skin layout: at least one influence,
+/// elementSize >= 1, indexCount == pointCount * elementSize, every index in
+/// [0, transformCount), every weight finite and non-negative, and every
+/// transform finite and affine. Fills \p error on failure.
+template <class L>
+bool
+RigExecValidateSkinLayoutKernel(const L &layout, std::string *error = nullptr)
+{
+    const auto fail = [error](const std::string &why) {
+        if (error)
+            *error = why;
+        return false;
+    };
+    if (layout.elementSize < 1)
+        return fail("elementSize must be at least 1");
+    if (!layout.transforms || layout.transformCount == 0)
+        return fail("no influences");
+    if (layout.indexCount != layout.pointCount * layout.elementSize)
+        return fail("jointIndices/jointWeights length " +
+                    std::to_string(layout.indexCount) + " must equal " +
+                    std::to_string(layout.pointCount) +
+                    " points * elementSize " +
+                    std::to_string(layout.elementSize));
+    if (layout.indexCount && (!layout.indices || !layout.weights))
+        return fail("jointIndices and jointWeights are both required");
+    for (size_t t = 0; t < layout.transformCount; ++t) {
+        const auto &m = layout.transforms[t];
+        for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 4; ++c)
+                if (!std::isfinite(m[r][c]))
+                    return fail("influence " + std::to_string(t) +
+                                " has a non-finite matrix");
+        if (m[0][3] != 0 || m[1][3] != 0 || m[2][3] != 0 || m[3][3] != 1)
+            return fail("influence " + std::to_string(t) +
+                        " has a non-affine matrix");
+    }
+    for (size_t i = 0; i < layout.indexCount; ++i) {
+        if (layout.indices[i] < 0 ||
+            size_t(layout.indices[i]) >= layout.transformCount)
+            return fail("jointIndices[" + std::to_string(i) + "] = " +
+                        std::to_string(layout.indices[i]) + " is outside the " +
+                        std::to_string(layout.transformCount) + " influences");
+        if (!std::isfinite(layout.weights[i]) || layout.weights[i] < 0.0f)
+            return fail("jointWeights[" + std::to_string(i) +
+                        "] must be finite and non-negative");
+    }
+    return true;
+}
 
 /// p' = (1 - sum w) p + sum w T p; the complement stays with the rest point.
 template <class D, class L>

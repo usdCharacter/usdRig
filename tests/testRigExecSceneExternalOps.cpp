@@ -4,6 +4,7 @@
 // its settings move, and both refuse the same inputs.
 #include "rigExec/api/registry.h"
 #include "rigExec/api/moverRegistry.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/moverGraph.h"
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecSchema/schemaTokens.h"
@@ -11,7 +12,11 @@
 #include "rigExecScene/geometryOpRunner.h"
 #include "rigExecScene/geometryProgram.h"
 
+#include "rigExecSceneProgramDrive.h"
+
 #include "pxr/base/gf/rotation.h"
+#include "pxr/base/plug/registry.h"
+#include "pxr/usd/usd/stage.h"
 
 #include <cmath>
 #include <cstdio>
@@ -434,6 +439,81 @@ TestPatch()
     }
 }
 
+/// A layered skin rig: two control influences and an input transform.
+const char *kLayeredSkinRig = R"USD(#usda 1.0
+def RigExecRoot "Rig" {
+ def RigExecControl "A" {
+  double avars:tx = 2
+ }
+ def RigExecControl "B" {
+  double avars:rz = 30
+ }
+ def RigExecControl "C" {
+  double avars:ty = 0.5
+ }
+ def Points "Cloud" {
+  point3f[] points = [(0, 0, 0), (0, 1, 0), (1, 1, 0), (2, 0, 1)]
+ }
+ def Scope "Movers" {
+  def RigExecLayeredSkinMover "Skin" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+   rel rigExec:moves = </Rig/Cloud.points>
+   rel rigExec:influences = [</Rig/A>, </Rig/B>]
+   rel rigExec:transform = </Rig/C>
+   int[] rigExec:jointIndices = [0, 1, 1, 0, 0, 1, 1, 1]
+   float[] rigExec:jointWeights = [0.75, 0.25, 0.5, 0.5, 1, 0, 0.3, 0.6]
+   int rigExec:elementSize = 2
+   float[] inputs:mask = [1, 0.5, 0, 0.25]
+   bool inputs:transformInput = true
+  }
+ }
+}
+)USD";
+
+/// The scene program, which runs the layered skin as its op, gives the
+/// native evaluator's bits.
+void
+TestLayeredSkinScene()
+{
+    const SdfPath cloud("/Rig/Cloud.points");
+    const auto check = [&](const UsdStageRefPtr &stage, const char *what) {
+        RigExecRigEvaluator rig(stage, SdfPath("/Rig"));
+        const RigExecRigPose pose = rig.Evaluate(UsdTimeCode(1));
+        const auto moved = pose.movedProperties.find(cloud);
+        CHECK(pose.valid && moved != pose.movedProperties.end());
+        if (moved == pose.movedProperties.end())
+            return;
+        const VtVec3fArray &native = moved->second.Get<VtVec3fArray>();
+        rigExecSceneProgramDrive::SceneRun scene(stage, SdfPath("/Rig"), 1, 1);
+        const bool ran = scene.ok && scene.Evaluate(1);
+        CHECK(ran);
+        const VtValue value =
+            scene.Final(cloud, RigExecSceneValueDomain::Points);
+        const bool same =
+            value.IsHolding<VtVec3fArray>() &&
+            value.UncheckedGet<VtVec3fArray>().size() == native.size() &&
+            std::memcmp(value.UncheckedGet<VtVec3fArray>().cdata(),
+                        native.cdata(), native.size() * sizeof(GfVec3f)) == 0;
+        if (!same)
+            std::printf("%s: the scene program differs from native\n", what);
+        CHECK(same);
+    };
+    const auto stage = [] {
+        auto s = UsdStage::CreateInMemory();
+        CHECK(s->GetRootLayer()->ImportFromString(kLayeredSkinRig));
+        return s;
+    };
+    check(stage(), "layered skin scene");
+    {
+        auto s = stage();
+        const UsdPrim skin = s->GetPrimAtPath(SdfPath("/Rig/Movers/Skin"));
+        CHECK(skin.GetAttribute(TfToken("rigExec:skinningMethod"))
+                  .Set(TfToken("dualQuaternion")));
+        CHECK(skin.GetAttribute(TfToken("inputs:useBaseInput")).Set(true));
+        CHECK(skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(0.5f));
+        check(s, "layered skin scene, dual quaternion, from base, half weight");
+    }
+}
+
 /// The ops' capabilities mirror the External revision's classification.
 // --- SurfaceBinding ---------------------------------------------------------
 
@@ -663,6 +743,175 @@ TestSurfaceBinding()
     }
 }
 
+// --- LayeredSkin ------------------------------------------------------------
+
+/// A layered skin mover's declared inputs (rigExecScene/layeredSkinInputs.h)
+/// over three influences, two slots per point.
+struct LayeredSkinInputs {
+    VtIntArray indices;
+    VtFloatArray weights, mask;
+    int elementSize = 2;
+    VtValue method = VtValue(TfToken("classicLinear"));
+    bool useBase = false, transformInput = false;
+    std::vector<GfMatrix4d> influences;
+    GfMatrix4d transform;
+    bool framed = true, transformed = true;
+
+    explicit LayeredSkinInputs(size_t pointCount)
+    {
+        for (size_t i = 0; i < pointCount; ++i) {
+            indices.push_back(int(i % 3));
+            indices.push_back(int((i + 1) % 3));
+            const float w = 0.15f + 0.1f * float(i % 7);
+            weights.push_back(w);
+            weights.push_back(i % 5 == 0 ? 0.0f : 1.0f - w);
+        }
+        influences = {
+            GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 0, 1), 25.0)),
+            GfMatrix4d().SetTranslate(GfVec3d(0.5, -1.0, 2.0)),
+            GfMatrix4d(GfRotation(GfVec3d(1, 1, 0), -40.0), GfVec3d(1, 2, 3))};
+        transform = GfMatrix4d(GfRotation(GfVec3d(0, 1, 0), 10.0),
+                               GfVec3d(-0.25, 0.0, 0.5));
+    }
+
+    Revision Make(const std::vector<GfVec3f> &points) const
+    {
+        std::vector<RigExecRevisionLeafKey> keys;
+        std::vector<VtValue> values;
+        const auto add = [&](Type type, VtValue value) {
+            RigExecRevisionLeafKey key;
+            key.path = SdfPath("/Rig/Mover.in" + std::to_string(keys.size()));
+            key.type = type;
+            key.flavour = RigExecRevisionLeafFlavour::Resolved;
+            keys.push_back(key);
+            values.push_back(std::move(value));
+        };
+        add(Type::IntArray, VtValue(indices));
+        add(Type::FloatArray, VtValue(weights));
+        add(Type::Int, VtValue(elementSize));
+        add(Type::Token, method);
+        add(Type::FloatArray, VtValue(mask));
+        add(Type::Bool, VtValue(useBase));
+        add(Type::Bool, VtValue(transformInput));
+        Revision r(SchemaType::RigExecLayeredSkinMover, std::move(keys),
+                   std::move(values));
+        r.points = points;
+        for (const GfVec3f &p : points)
+            r.base.push_back(p * 0.5f + GfVec3f(0.1f, 0.2f, 0.3f));
+        r.framed = framed;
+        r.influences = influences;
+        r.transformed = transformed;
+        r.transform = transform;
+        return r;
+    }
+};
+
+void
+TestLayeredSkin()
+{
+    const std::vector<GfVec3f> points = GridPoints(5, 4);
+    const size_t n = points.size();
+    const auto ran = [&](const char *name, const LayeredSkinInputs &in) {
+        CHECK(Compare(name, in.Make(points)) == 4);
+    };
+    const auto refused = [&](const char *name, const LayeredSkinInputs &in) {
+        Refused(name, in.Make(points));
+    };
+    for (const char *method : {"classicLinear", "dualQuaternion"}) {
+        LayeredSkinInputs in(n);
+        in.method = VtValue(std::string(method));
+        const std::string name = std::string("layered skin, ") + method;
+        ran(name.c_str(), in);
+        in.useBase = true;
+        ran((name + ", from base").c_str(), in);
+        in.transformInput = true;
+        ran((name + ", from base, input transform").c_str(), in);
+        in.mask = VtFloatArray(n, 0.5f);
+        in.mask[0] = 0.0f;
+        in.mask[1] = 1.0f;
+        ran((name + ", masked").c_str(), in);
+    }
+    {
+        LayeredSkinInputs in(n);
+        in.elementSize = 1;
+        in.indices.resize(n);
+        in.weights.resize(n);
+        ran("layered skin, one slot", in);
+    }
+    {
+        LayeredSkinInputs in(n);
+        in.transformed = false;
+        ran("layered skin, no transform", in);
+    }
+
+    {
+        LayeredSkinInputs in(n);
+        in.weights.pop_back();
+        refused("layered skin, weight count", in);
+    }
+    {
+        LayeredSkinInputs in(n);
+        in.elementSize = 0;
+        refused("layered skin, no slots", in);
+        in.elementSize = 3;
+        refused("layered skin, slot count", in);
+    }
+    {
+        LayeredSkinInputs in(n);
+        in.indices[4] = 3;
+        refused("layered skin, index out of range", in);
+    }
+    {
+        LayeredSkinInputs in(n);
+        in.weights[2] = -0.25f;
+        refused("layered skin, negative weight", in);
+    }
+    {
+        LayeredSkinInputs in(n);
+        in.mask = VtFloatArray(n, 1.25f);
+        refused("layered skin, mask above one", in);
+        in.mask = VtFloatArray(3, 0.5f);
+        refused("layered skin, mask count", in);
+    }
+    {
+        LayeredSkinInputs in(n);
+        in.method = VtValue(TfToken("spline"));
+        refused("layered skin, unknown method", in);
+    }
+    {
+        LayeredSkinInputs in(n);
+        in.framed = false;
+        refused("layered skin, no influences", in);
+        in.framed = true;
+        in.influences[1][0][3] = 0.5;
+        refused("layered skin, projective influence", in);
+    }
+    {
+        LayeredSkinInputs in(n);
+        in.transformInput = true;
+        in.transformed = false;
+        refused("layered skin, input transform missing", in);
+    }
+
+    // Settings that move between frames rebuild the node.
+    {
+        RigExecGeometryOpRunner runner;
+        const RigExecWeightPacket full = RigExecWeightPacket::Constant(1.0f);
+        std::vector<LayeredSkinInputs> frames(3, LayeredSkinInputs(n));
+        frames[1].method = VtValue(TfToken("dualQuaternion"));
+        frames[2].elementSize = 1;
+        frames[2].indices.resize(n);
+        frames[2].weights.resize(n);
+        for (const LayeredSkinInputs &in : frames) {
+            const Revision r = in.Make(points);
+            std::vector<GfVec3f> native, op;
+            CHECK(RunNative(r, full, &native));
+            CHECK(RunOp(r, full, runner, &op));
+            CHECK(SameBits(native, op));
+        }
+    }
+}
+
 void
 TestCapabilities()
 {
@@ -673,7 +922,8 @@ TestCapabilities()
     gated.weights.defaultWeight = 0.0f;
     const RigExecRegistry &registry = RigExecRegistry::Get();
     for (const TfToken *schema : {&SchemaType::RigExecPatchMover,
-                                  &SchemaType::RigExecSurfaceBindingMover}) {
+                                  &SchemaType::RigExecSurfaceBindingMover,
+                                  &SchemaType::RigExecLayeredSkinMover}) {
         RigExecRevisionBinding binding;
         binding.externalSchema = *schema;
         const RigExecOpHandle *handle = RigExecExternalOpHandle(binding);
@@ -715,6 +965,11 @@ main()
     }
     TestPatch();
     TestSurfaceBinding();
+    TestLayeredSkin();
+#ifdef RIGEXEC_SCHEMA_RESOURCE_DIR
+    PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
+    TestLayeredSkinScene();
+#endif
     TestCapabilities();
     if (failures) {
         std::printf("%d failure(s)\n", failures);

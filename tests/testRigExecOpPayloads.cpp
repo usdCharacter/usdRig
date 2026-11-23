@@ -9,6 +9,7 @@
 #include "rigExecOps/deform/deltaMushOp.h"
 #include "rigExecOps/deform/derivedOps.h"
 #include "rigExecOps/deform/latticeOp.h"
+#include "rigExecOps/deform/layeredSkinOp.h"
 #include "rigExecOps/deform/matrixDeformOp.h"
 #include "rigExecOps/deform/patchOp.h"
 #include "rigExecOps/deform/projectorOps.h"
@@ -399,6 +400,12 @@ TestFilledPayloads()
         p.limit = true;
         p.framed = true;
         CheckRoundTrip(Op(SurfaceBinding()), &p);
+    }
+    {
+        LayeredSkinPayload p;
+        p.elementSize = 4;
+        p.dualQuaternion = true;
+        CheckRoundTrip(Op(LayeredSkin()), &p);
     }
 }
 

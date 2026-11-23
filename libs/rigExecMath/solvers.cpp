@@ -122,54 +122,7 @@ RigExecApplyWeightedMatrix(const GfVec3d &point, const GfMatrix4d &transform,
 bool
 RigExecSkinLayout::Validate(std::string *error) const
 {
-    auto fail = [error](const std::string &why) {
-        if (error) {
-            *error = why;
-        }
-        return false;
-    };
-    if (elementSize < 1) {
-        return fail("elementSize must be at least 1");
-    }
-    if (!transforms || transformCount == 0) {
-        return fail("no influences");
-    }
-    if (indexCount != pointCount * elementSize) {
-        return fail("jointIndices/jointWeights length " +
-                    std::to_string(indexCount) + " must equal " +
-                    std::to_string(pointCount) + " points * elementSize " +
-                    std::to_string(elementSize));
-    }
-    if (indexCount && (!indices || !weights)) {
-        return fail("jointIndices and jointWeights are both required");
-    }
-    for (size_t t = 0; t < transformCount; ++t) {
-        const GfMatrix4d &m = transforms[t];
-        for (int r = 0; r < 4; ++r) {
-            for (int c = 0; c < 4; ++c) {
-                if (!std::isfinite(m[r][c])) {
-                    return fail("influence " + std::to_string(t) +
-                                " has a non-finite matrix");
-                }
-            }
-        }
-        if (m[0][3] != 0 || m[1][3] != 0 || m[2][3] != 0 || m[3][3] != 1) {
-            return fail("influence " + std::to_string(t) +
-                        " has a non-affine matrix");
-        }
-    }
-    for (size_t i = 0; i < indexCount; ++i) {
-        if (indices[i] < 0 || size_t(indices[i]) >= transformCount) {
-            return fail("jointIndices[" + std::to_string(i) + "] = " +
-                        std::to_string(indices[i]) + " is outside the " +
-                        std::to_string(transformCount) + " influences");
-        }
-        if (!std::isfinite(weights[i]) || weights[i] < 0.0f) {
-            return fail("jointWeights[" + std::to_string(i) +
-                        "] must be finite and non-negative");
-        }
-    }
-    return true;
+    return RigExecValidateSkinLayoutKernel(*this, error);
 }
 
 GfVec3d

@@ -1,9 +1,11 @@
 #include "rigExecScene/externalOps.h"
 
 #include "rigExec/api/registry.h"
+#include "rigExecOps/deform/layeredSkinOp.h"
 #include "rigExecOps/deform/patchOp.h"
 #include "rigExecOps/deform/surfaceBindingOp.h"
 #include "rigExecSchema/schemaTokens.h"
+#include "rigExecScene/layeredSkinInputs.h"
 #include "rigExecScene/patchInputs.h"
 #include "rigExecScene/surfaceBindingInputs.h"
 #include "rigExecStdTypes/stdTypes.h"
@@ -480,6 +482,126 @@ SurfaceBindingStale(const RigExecRevisionBinding &binding,
     return ReadSurfaceBindingFor(binding, values, node, &v, &moved) && moved;
 }
 
+// --- LayeredSkin -----------------------------------------------------------
+
+struct LayeredSkinValues {
+    rigExecOps::LayeredSkinPayload payload;
+    RigExecArray<Mat4d> transforms;
+    RigExecArray<int> indices;
+    RigExecArray<float> weights, mask;
+    RigExecArray<Vec3f> base;
+    Mat4d inputTransform;
+};
+
+/// The layered skin mover's declared inputs, influences and transform as
+/// the op's payload and inputs.
+bool
+ReadLayeredSkin(const RigExecRevisionBinding &,
+                const RigExecExternalOpValues &values, LayeredSkinValues *out)
+{
+    using namespace layeredSkinInputs;
+    const std::vector<VtValue> &in = *values.inputs;
+    if (in.size() != kInputCount || !values.influenceTransforms ||
+        values.influenceTransforms->empty())
+        return false;
+    VtIntArray indices;
+    VtFloatArray weights, mask;
+    const char *method = nullptr;
+    bool fromBase = false, transformInput = false;
+    rigExecOps::LayeredSkinPayload &p = out->payload;
+    if (!As(in[kJointIndices], &indices) || !As(in[kJointWeights], &weights) ||
+        !As(in[kElementSize], &p.elementSize) ||
+        !Text(in[kSkinningMethod], &method) || !As(in[kMask], &mask) ||
+        !As(in[kUseBaseInput], &fromBase) ||
+        !As(in[kTransformInput], &transformInput))
+        return false;
+    if ((transformInput && !values.transform) ||
+        (!Is(method, "classicLinear") && !Is(method, "dualQuaternion")))
+        return false;
+    p.dualQuaternion = Is(method, "dualQuaternion");
+    const std::vector<GfMatrix4d> &transforms = *values.influenceTransforms;
+    out->transforms = RigExecArray<Mat4d>(transforms.size());
+    for (size_t k = 0; k < transforms.size(); ++k)
+        out->transforms[k] = ToStd(transforms[k]);
+    out->indices = ToArray(indices);
+    out->weights = ToArray(weights);
+    out->mask = ToArray(mask);
+    if (fromBase && values.basePoints)
+        out->base = ToStd(values.basePoints->data(), values.basePoints->size());
+    out->inputTransform =
+        ToStd(transformInput ? *values.transform : GfMatrix4d(1));
+    return true;
+}
+
+const RigExecPortHandle &(*const kLayeredSkinPorts[])() = {
+    &rigExecOps::LayeredSkinTransforms, &rigExecOps::LayeredSkinIndices,
+    &rigExecOps::LayeredSkinWeights,    &rigExecOps::LayeredSkinMask,
+    &rigExecOps::LayeredSkinBase,       &rigExecOps::LayeredSkinInputTransform};
+
+bool
+AddLayeredSkin(const RigExecRevisionBinding &binding,
+               const RigExecExternalOpValues &values,
+               RigExecRigDescBuilder &builder, RigExecExternalOpNode &node,
+               std::string *error)
+{
+    LayeredSkinValues v;
+    if (!ReadLayeredSkin(binding, values, &v))
+        return Fail(error, "layered skin inputs do not translate");
+    node.node = builder.AddOp(rigExecOps::LayeredSkin(), &v.payload);
+    for (const auto port : kLayeredSkinPorts)
+        node.inputs.push_back(builder.BindInput(node.node, port()));
+    node.points = builder.BindInput(node.node, rigExecOps::LayeredSkinPoints());
+    node.envelope =
+        builder.BindInput(node.node, rigExecOps::LayeredSkinEnvelope());
+    node.out = builder.BindOutput(node.node, rigExecOps::LayeredSkinOut());
+    node.payload = std::make_shared<rigExecOps::LayeredSkinPayload>(v.payload);
+    return true;
+}
+
+bool
+ReadLayeredSkinFor(const RigExecRevisionBinding &binding,
+                   const RigExecExternalOpValues &values,
+                   const RigExecExternalOpNode &node, LayeredSkinValues *v,
+                   bool *moved)
+{
+    if (!ReadLayeredSkin(binding, values, v))
+        return false;
+    const auto *kept =
+        static_cast<const rigExecOps::LayeredSkinPayload *>(node.payload.get());
+    *moved = !kept || !(*kept == v->payload);
+    return true;
+}
+
+bool
+WriteLayeredSkin(const RigExecRevisionBinding &binding,
+                 const RigExecExternalOpValues &values,
+                 const RigExecExternalOpNode &node, RigExecEvaluator &evaluator,
+                 std::string *error)
+{
+    LayeredSkinValues v;
+    bool moved = false;
+    if (!ReadLayeredSkinFor(binding, values, node, &v, &moved))
+        return Fail(error, "layered skin inputs do not translate");
+    if (moved)
+        return Fail(error, "layered skin settings changed");
+    const void *ordered[] = {&v.transforms, &v.indices, &v.weights,
+                             &v.mask,       &v.base,    &v.inputTransform};
+    for (size_t i = 0; i < std::size(ordered); ++i)
+        if (!evaluator.SetInput(node.inputs[i], ordered[i], error))
+            return false;
+    return true;
+}
+
+bool
+LayeredSkinStale(const RigExecRevisionBinding &binding,
+                 const RigExecExternalOpValues &values,
+                 const RigExecExternalOpNode &node)
+{
+    LayeredSkinValues v;
+    bool moved = false;
+    return ReadLayeredSkinFor(binding, values, node, &v, &moved) && moved;
+}
+
 // --- Table ----------------------------------------------------------------
 
 /// One built-in External mover: its schema, its op, and how its declared
@@ -504,6 +626,8 @@ const ExternalOp kExternalOps[] = {
      &PatchStale},
     {&SchemaType::RigExecSurfaceBindingMover, &rigExecOps::SurfaceBinding,
      &AddSurfaceBinding, &WriteSurfaceBinding, &SurfaceBindingStale},
+    {&SchemaType::RigExecLayeredSkinMover, &rigExecOps::LayeredSkin,
+     &AddLayeredSkin, &WriteLayeredSkin, &LayeredSkinStale},
 };
 
 const ExternalOp *

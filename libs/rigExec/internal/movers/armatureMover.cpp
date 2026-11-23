@@ -4,6 +4,8 @@
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/api/moverRegistry.h"
 #include "rigExec/internal/movers/externalPlayback.h"
+#include "rigExecMath/layeredSkinKernel.h"
+#include "rigExecScene/layeredSkinInputs.h"
 #include "rigExecScene/sceneDescriptors.h"
 #include "rigExecMath/solvers.h"
 #include "pxr/base/tf/staticTokens.h"
@@ -39,17 +41,7 @@ TF_DEFINE_PRIVATE_TOKENS(_armatureTokens,
     ((transform, rigExec::SchemaAttrText::rigExecTransform)));
 
 namespace {
-// The declared inputs, in this order: assembly reads them by position.
-enum Input {
-    kJointIndices,
-    kJointWeights,
-    kElementSize,
-    kSkinningMethod,
-    kMask,
-    kUseBaseInput,
-    kTransformInput,
-    kInputCount
-};
+using namespace layeredSkinInputs;
 
 // Every read is through the resolved inputs at the evaluated time, over
 // the schema fallback.
@@ -190,19 +182,13 @@ Payload(const std::vector<VtValue> &inputs,
     if (transformInput && !values.transform)
         return false;
     const bool dualQuaternion = Is(method, "dualQuaternion");
-    if (weights.size() != indices.size() || slots < 1 ||
-        (!mask.empty() && mask.size() != values.basePoints.size()) ||
-        (!Is(method, "classicLinear") && !dualQuaternion))
+    if (!Is(method, "classicLinear") && !dualQuaternion)
         return false;
-    for (float w : mask)
-        if (!std::isfinite(w) || w < 0 || w > 1)
-            return false;
     const auto &transforms = *values.influenceTransforms;
-    RigExecSkinLayout layout{transforms.data(),       transforms.size(),
-                             indices.data(),          weights.data(),
-                             indices.size(),          size_t(slots),
-                             values.basePoints.size()};
-    if (!layout.Validate())
+    if (!RigExecLayeredSkinAccepts(
+            transforms.data(), transforms.size(), indices.cdata(),
+            indices.size(), weights.cdata(), weights.size(), slots,
+            mask.cdata(), mask.size(), values.basePoints.size()))
         return false;
     VtDictionary payload;
     payload["matrices"] =
@@ -255,30 +241,14 @@ Apply(const VtValue &data, std::vector<GfVec3f> *points)
     if (!matrices || !indices || !weights || !mask || !base || !slots || !dq ||
         !inputMatrix)
         return false;
-    if ((!base->empty() && base->size() != points->size()) ||
-        (!mask->empty() && mask->size() != points->size()))
+    if (*slots < 1)
         return false;
-    RigExecSkinLayout layout{
-        matrices->data(), matrices->size(), indices->data(), weights->data(),
-        indices->size(),  size_t(*slots),   points->size()};
-    if (!layout.Validate())
-        return false;
-    std::vector<GfVec3f> candidate(points->size());
-    const auto *input = base->empty() ? points->data() : base->data();
-    if (*dq) {
-        if (!RigExecApplyDualQuatSkin(input, candidate.data(), layout))
-            return false;
-    } else
-        RigExecApplyLinearBlendSkin(input, candidate.data(), layout);
-    for (size_t i = 0; i < points->size(); ++i) {
-        (*points)[i] = GfVec3f(inputMatrix->Transform(GfVec3d((*points)[i])));
-        float w = mask->empty() ? 1.0f : (*mask)[i];
-        if (w == 1)
-            (*points)[i] = candidate[i];
-        else if (w != 0)
-            (*points)[i] += w * (candidate[i] - (*points)[i]);
-    }
-    return true;
+    const RigExecSkinLayout layout{
+        matrices->cdata(), matrices->size(), indices->cdata(), weights->cdata(),
+        indices->size(),   size_t(*slots),   points->size()};
+    return RigExecApplyLayeredSkinKernel<GfVec3f, GfVec3d, GfMatrix4d>(
+        layout, *dq, base->cdata(), base->size(), mask->cdata(), mask->size(),
+        *inputMatrix, points->data(), points->size());
 }
 
 // .rigexec playback: the compiled rig is a format tag and the frame bytes are
