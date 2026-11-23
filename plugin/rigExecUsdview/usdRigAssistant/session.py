@@ -6,47 +6,38 @@ import os
 
 from pxr import Sdf, Usd
 
+import rigExecUndo
+
 from . import host
 
 logger = logging.getLogger(host.LOGGER_NAME)
 
 
 class GroupEdit(object):
-    """Several rigExecUndo edits as one undo step: undone last first."""
+    """Several rigExecUndo edits as one undo step: undone last first.
+
+    The group replays as one host boundary: every layer is checked before
+    anything is written, and if a restore still fails the ones already made
+    are put back, so neither the stage nor the history cursor moves.
+    """
 
     def __init__(self, label, edits):
         self.label = label
         self.edits = list(edits)
 
-    def Undo(self):
-        for edit in reversed(self.edits):
-            edit.Undo()
-
-    def Redo(self):
-        for edit in self.edits:
-            edit.Redo()
-
-
-class LayerSnapshotEdit(object):
-    """Undo for code the assistant ran: the whole layer before and after,
-    since there is no telling which specs it touched."""
-
-    def __init__(self, label, layer, before, after):
-        self.label = label
-        self.layer = layer
-        self.before = before
-        self.after = after
-
-    def _restore(self, source):
-        if self.layer is None or self.layer.expired:
-            return
-        self.layer.TransferContent(source)
+    def _Plan(self, direction):
+        useAfter = direction == 'Redo'
+        members = self.edits if useAfter else reversed(self.edits)
+        plan = []
+        for edit in members:
+            plan.extend(edit.Snapshots(useAfter))
+        return plan
 
     def Undo(self):
-        self._restore(self.before)
+        rigExecUndo.ApplyPlan(self._Plan('Undo'))
 
     def Redo(self):
-        self._restore(self.after)
+        rigExecUndo.ApplyPlan(self._Plan('Redo'))
 
 
 def snapshot(layer):
@@ -55,8 +46,34 @@ def snapshot(layer):
     return copy
 
 
-def same_content(a, b):
-    return a.ExportToString() == b.ExportToString()
+def stage_layers(stage):
+    """Every layer a stage reads: the layers it uses, its session layer and
+    its edit target, each once."""
+    if stage is None:
+        return []
+    try:
+        layers = list(stage.GetUsedLayers())
+    except Exception:
+        logger.debug('Could not list the used layers', exc_info=True)
+        layers = []
+    for extra in (stage.GetSessionLayer(), stage.GetEditTarget().GetLayer()):
+        if extra is not None:
+            layers.append(extra)
+    seen = {}
+    for layer in layers:
+        if layer is not None and not layer.expired:
+            seen[layer] = None
+    return list(seen)
+
+
+def layer_baseline(stage):
+    """A content copy of every layer the stage reads now, keyed by layer.
+
+    Keyed by the layer handle and not its identifier: the copy has to go
+    back into this very layer, and an anonymous identifier only carries the
+    address of a layer that may already be gone. A layer the code brings in
+    afterwards has no entry here, so there is nothing to restore it to."""
+    return {layer: snapshot(layer) for layer in stage_layers(stage)}
 
 
 class Session(object):

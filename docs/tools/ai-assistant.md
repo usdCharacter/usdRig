@@ -49,16 +49,26 @@ you ask it something.
 
 Neither **Stop** nor replacing the stage rolls back changes already made or
 forcibly interrupts a tool that has started. When the changes can be recorded
-on the RigExec undo stack, they go on it as labelled ++ctrl+z++ steps ("AI
-Assistant changes", "AI Assistant pose", "AI Assistant Python") in the order
-the changes were made. Uninterrupted edits from one reply share a step when
-the host supports grouping. If an artist or another reply commits an edit
-between them, the next Assistant edit starts a new step so Undo and Redo follow
-the order of the writes. A new Assistant write after an Undo discards the redo
-branch. A call that changes nothing records no step, and leaves Undo and Redo
-as they were. Hosts without grouping support receive one undo step per edit. Python
-changes can be undone when they only affect the edit target. Undo entries
-from the old reply are not added to the replacement stage's stack.
+on the RigExec undo stack, they go on it in the order the changes were made,
+as labelled ++ctrl+z++ steps. Uninterrupted edits from one reply share one
+step ("AI Assistant changes"), so ++ctrl+z++ takes the whole reply back at
+once. If an artist or another reply commits an edit between them, the next
+Assistant edit starts a new step so Undo and Redo follow the order of the
+writes. A new Assistant write after an Undo discards the redo branch. A call
+that changes nothing records no step, and leaves Undo and Redo as they were.
+Hosts without grouping support receive one undo step per edit. A reply may
+only change the document it was asked about: if usdview opens another stage,
+or opens this one again, while the reply is still working, what it has not
+done yet is not done.
+
+Undo does not reach what a reply did outside the stage: the files it saved,
+the edit target it switched to, the prims it selected, the viewport, and the
+Python environment; those are listed under the reply as **Not undoable**,
+apart from the changes it authored. Each Python call records the fields it
+changed on the layers the stage was using when that call began, but cannot
+undo changes to a layer the call opened. Stopping a reply, or leaving its
+chat, does not roll back what it already made; those changes are kept and
+are the undo step.
 
 ## Signing in
 
