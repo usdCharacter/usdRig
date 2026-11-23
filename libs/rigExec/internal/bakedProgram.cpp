@@ -65,67 +65,6 @@ namespace rigExec {
 
 using namespace bakedProgramDetail;
 
-namespace {
-
-bool
-_AttributeIsIdentity(const UsdPrim &prim, const TfToken &name, bool *connected)
-{
-    const UsdAttribute a = prim.GetAttribute(name);
-    if (!a) {
-        return true;
-    }
-    SdfPathVector connections;
-    if (a.HasAuthoredConnections() && a.GetConnections(&connections) &&
-        !connections.empty()) {
-        *connected = true;
-        return false;
-    }
-    GfMatrix4d value(1.0);
-    return !a.Get(&value) || value == GfMatrix4d(1.0);
-}
-
-// The provider space attributes exec does NOT read off the stage. Five of
-// them carry a registered AttributeExpression (computations.cpp's
-// RIGEXEC_SPACE_EXPRESSION), and posed:space is fed to computePointFrame
-// through an explicit Connections input; on any of the six, the builtin
-// computeValue a connection resolves through is a COMPUTATION -- the space
-// expression that follows the namespace parent, or a posed frame -- not the
-// attribute's authored value. A connection that ENDS at one of them is
-// therefore outside the single-connection walk the binding table performs.
-const char *const kComputedSpaces[] = {
-    SchemaAttrText::defaultSpace,       SchemaAttrText::avarsDefaultSpace,
-    SchemaAttrText::posedDefaultSpace,  SchemaAttrText::parentSpace,
-    SchemaAttrText::parentDefaultSpace, SchemaAttrText::posedSpace};
-
-bool
-_ConnectionReachesComputedSpace(const UsdAttribute &attribute)
-{
-    // Stops on two conditions: a cycle, or a fan-out the walk cannot follow.
-    std::set<SdfPath> visiting;
-    UsdAttribute a = attribute;
-    bool first = true;
-    while (a && visiting.insert(a.GetPath()).second) {
-        if (!first) {
-            const std::string name = a.GetName().GetString();
-            for (const char *computed : kComputedSpaces) {
-                if (name == computed) {
-                    return true;
-                }
-            }
-        }
-        first = false;
-        SdfPathVector connections;
-        a.GetConnections(&connections);
-        if (connections.size() != 1) {
-            break;
-        }
-        a = a.GetPrim().GetStage()->GetAttributeAtPath(connections[0]);
-    }
-    return false;
-}
-
-} // namespace
-
 // The bake.
 
 RigExecBakedProgram::RigExecBakedProgram(
