@@ -1858,7 +1858,8 @@ RrGeoRevisionKernelAcceptance(int op, const RrGeoMoverParameters &p,
         }
         return RrGeoAcceptance::Applies;
     case RrGeoOpSmooth:
-        // The kernel never refuses (an invalid topology passes through).
+        // The kernel never refuses (an invalid topology passes through); only
+        // the "apply once" envelope can fail the revision, validated here.
         if (!RrGeoEnvelopeIsFullStrength(p.weights) &&
             !p.weights.ResolvesAll(count)) {
             return RrGeoAcceptance::Refuses;
@@ -8565,7 +8566,9 @@ RrGeometryPublishChainInputs(RrProgram *program)
     auto *scratch = static_cast<RrGeometryScratch *>(program->geo.get());
     if (!scratch)
         return;
-    // A base no prologue wrote since is the one last published.
+    // The version moves exactly when the sampled bytes differ from the ones
+    // last published. A base no prologue wrote since is the one last
+    // published.
     for (auto &chain : scratch->chains) {
         if (!chain.sampledMoved)
             continue;

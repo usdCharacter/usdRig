@@ -504,7 +504,9 @@ struct RigExecBakedGeomRevision {
     /// The rigExec:transformSpace provider's slot, or -1.
     int transformSpaceSlot = -1;
     /// The rigExec:space provider's slot, or -1: the prim whose own rest->pose
-    /// map carries the whole rig, normally a TRS master.
+    /// map carries the whole rig, normally a TRS master. Read out of the SAME
+    /// base/final matrix table as the two above, because that table is what
+    /// computeMatrix publishes.
     int carrySpaceSlot = -1;
     /// The geometry-domain constraint whose delta IS this revision's
     /// transform, as an index into the dense delta tables, or -1. Joined
@@ -591,7 +593,8 @@ struct RigExecBakedGeomRevision {
     std::vector<int> transformRecords;
     std::vector<std::vector<int>> influenceRecords;
     /// This node is new to the rig's geometry state and its creation has not
-    /// been reported yet.
+    /// been reported yet. Cleared by AdoptGeometryStateFrom for a node the
+    /// outgoing program already held.
     bool created = true;
 
     /// The influence table the PACKET carries, which for a skin revision
@@ -1183,6 +1186,12 @@ struct RigExecBakedProgramImpl {
     /// program, so this one is a captured constant and not a pointer.
     bool hasPropertyChains = false;
 
+    // The slot table is the ordered UNION of the two provider families: the
+    // RigExec providers exec seeds (_nativeProviderPaths) and the plain
+    // Xformables a constraint targets (_xformDerivedProviders). Both are keyed
+    // by SdfPath, whose order IS namespace DFS pre-order, so a provider's
+    // parent always has a lower slot and one forward pass composes the whole
+    // hierarchy.
     std::vector<SdfPath> paths;
     /// `paths` spelled once at Build on the owning thread, one text per slot.
     /// Step bodies and worker-side keys read this text: SdfPath::GetString
@@ -1197,6 +1206,8 @@ struct RigExecBakedProgramImpl {
     /// The compose ladder inherits from it, because exec's NamespaceAncestor
     /// resolves only RigExec provider types and skips anything else.
     std::vector<int> parent;
+    /// Nearest ancestor slot of ANY kind: the pure namespace climb that finds
+    /// the closest revised ancestor a propagated descendant rides.
     std::vector<int> propParent;
 
     // A plain Xformable a constraint targets has no rest chain and no avars:

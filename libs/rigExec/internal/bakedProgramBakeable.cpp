@@ -135,6 +135,8 @@ RigExecRevisionOpBakes(RigExecRevisionOp op, bool derived)
                op == RigExecRevisionOp::RecomputeNormals ||
                RigExecIsDerivedMatrixOp(op);
     }
+    // Every operation whose whole packet the per-frame assembler reads off the
+    // stage.
     switch (op) {
     case RigExecRevisionOp::Skin:
     case RigExecRevisionOp::Matrix:
@@ -291,6 +293,9 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
             // expression of the rule, in the place that needs its answer.
         }
     }
+    // An aggregate solver no batch runs is expressible: the program runs it as
+    // a Solve step after the walk, against the FINAL frames. Its TYPE still has
+    // to be one the program expresses, which the batch loop above never saw.
     for (const SdfPath &solverPath : E._nativeGuideSolvers) {
         if (batched.count(solverPath)) {
             continue;
@@ -366,7 +371,10 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
             continue;
         }
         // Either provider family: an exec-seeded one, or a plain Xformable the
-        // program seeds from the stage in its prologue.
+        // program seeds from the stage in its prologue; both take a slot in the
+        // same table. EVERY target, not only the first: a SingleChainIK revises
+        // its whole chain atomically, and every target of every constraint is
+        // recorded.
         for (const SdfPath &target : constraint.targets) {
             if (!E._nativeProviderPaths.count(target) &&
                 !E._xformDerivedProviders.count(target)) {

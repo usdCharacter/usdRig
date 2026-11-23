@@ -442,7 +442,11 @@ public:
     /// follow, returning false when one of them names something the program
     /// cannot place.
     ///
-    /// An override on a value folded into bake state (a rest, a default-space
+    /// A placeable override names an input the frame path reads (read through
+    /// the generation's resolved inputs while the override stands), or a
+    /// property whose only reader already reads through those resolved inputs:
+    /// a property-chain mover or a geometry mover. An override on a value
+    /// folded into bake state (a rest, a default-space
     /// ladder, a solver rest description) cannot be placed without rebaking,
     /// and a computation override names something that only exec can answer;
     /// both return false so the caller runs the generation dynamically. A wrong

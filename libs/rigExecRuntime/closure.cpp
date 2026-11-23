@@ -1333,6 +1333,8 @@ RrCompileOpGraph(RrProgram *p, std::string *error)
 {
     if (!RrCompileCommonGraph(p, error))
         return false;
+    // The windowed operations: canonical ops, inner ops and the history-tick
+    // mask, settled from the common graph.
     p->windowedOps.clear();
     if (p->file)
         for (const auto &row : p->file->windowedOps) {
@@ -1693,7 +1695,7 @@ RrExecuteOpGraph(RrProgram *p, bool force, std::string *error)
         return false;
     }
     // A windowed op whose history ring moved runs: the ring is a leaf its body
-    // reads.
+    // reads. A ring rebuilt with the same packets did not move.
     for (size_t w = 0;
          w < p->windowedOps.size() && w < s.windowRingChanged.size(); ++w) {
         const uint32_t c = p->windowedOps[w].op;

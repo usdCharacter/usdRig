@@ -1,6 +1,6 @@
 // The FBX-equivalent Position, Rotation, Scale, Parent and Aim constraints over
 // four-point frames, shared by the native (Gf) path, the runtime (Rr) and the
-// constraint ops.
+// constraint ops. Header-only.
 //
 // Host types come from RigExecDualQuatMath<Point, Double> plus
 // RigExecConstraintMath<Point, Double>, which names the rotation type and

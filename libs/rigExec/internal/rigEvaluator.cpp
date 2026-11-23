@@ -431,9 +431,14 @@ RigExecRigEvaluator::_RebuildBakedProgram(
              _bakedProgram->_GetCycleSkips(switchOwners))
             _skippedOperations.emplace(owner, reason);
         if (outgoing && outgoingPublished) {
-            // Without it a rebuilt program re-runs every per-point kernel and
+            // The replacement inherits the geometry nodes that survive. Without
+            // it a rebuilt program re-runs every per-point kernel and
             // publishes "created"/"schedule(s) built" counters, and the mover
-            // graph diagnostic, for nodes nothing rebuilt. The case is reached
+            // graph diagnostic, for nodes nothing rebuilt. Only from a program
+            // that PUBLISHED a generation: an unrun program carries only
+            // `created = false` on nodes whose creation no consumer has been
+            // told about, so adopting it would under-report work. That case is
+            // reached
             // by building at Compile and changing the mode afterwards, which is
             // what a rig carrying rigExec:baked does whenever a tool then asks
             // for the parity check.

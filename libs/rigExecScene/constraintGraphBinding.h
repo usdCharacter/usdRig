@@ -75,9 +75,10 @@ bool RigExecBindConstraintGraph(const RigExecSceneDescriptors &,
                                 const RigExecConstraintGraphTarget &,
                                 RigExecConstraintGraphBinding *,
                                 std::string *error = nullptr);
-/// \p window is the run of a windowed constraint (rigExecGraph/windowHistory.h)
-///    and null for every other one. \p ops runs the kernel on the op core
-///    (poseOpRunner.h).
+/// \p window is the run of a windowed constraint
+/// (rigExecGraph/windowHistory.h) and null for every other one. \p ops runs
+/// the kernel on the op core (poseOpRunner.h); null runs it without the op
+/// core.
 bool RigExecRunConstraintGraph(const RigExecConstraintGraphBinding &,
                                RigExecTypedValueStore *,
                                std::string *error = nullptr,

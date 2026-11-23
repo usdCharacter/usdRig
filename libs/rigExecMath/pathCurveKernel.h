@@ -1,7 +1,8 @@
-// RigExec path-curve kernel, one non-periodic curve of a UsdGeomBasisCurves
-// prim sampled by arc length, for the property movers' `path` operation
-// (propertyMathKernel.h). The evaluators and the runtime call these same inline
-// functions on plain float storage, so every adapter computes the same bits.
+// RigExec path-curve kernel, header-only: one non-periodic curve of a
+// UsdGeomBasisCurves prim sampled by arc length, for the property movers'
+// `path` operation (propertyMathKernel.h). The evaluators and the runtime call
+// these same inline functions on plain float storage, so every adapter computes
+// the same bits.
 //
 // Conventions:
 //   * Points are xyz triples of float (GfVec3f and the runtime's RrVec3f are

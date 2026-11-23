@@ -733,7 +733,8 @@ RigExecBlendEnvelopeAll(const GfVec3f *preceding, const float *envelope,
                                     RigExecGeometryRanges());
 }
 
-// One definition, so a second caller cannot drift into a different deformation.
+// The skin kernel has one definition for every caller, so none can drift into
+// a different deformation.
 // The skin kernel comes in three pieces, because a chunked caller needs the
 // per-vertex body without the decisions AROUND it -- and every one of those
 // decisions is a statement about the WHOLE array, not about a vertex: the

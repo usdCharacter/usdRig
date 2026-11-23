@@ -177,7 +177,9 @@ struct RigExecRigPose {
     /// The companion to weightFields, and published for the same consumer: an
     /// authoring tool that paints the influence overlay also has to DRAW the
     /// volume, and a falloff iso-surface can only be drawn in the space the
-    /// field was measured in.
+    /// field was measured in. It is the volume's own computeMatrix result;
+    /// draw with it rather than composing posed:space, rest offsets, avars and
+    /// rotation order again.
     std::map<SdfPath, GfMatrix4d> weightFrames;
 
     /// Pass-through, failure, and unimplemented-operation reports

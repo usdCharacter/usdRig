@@ -73,7 +73,10 @@ struct RigExecBakedProgramImpl;
 // resync, and a resync recompiles. Only the VALUES on it can move. So each
 // input is classified once: if nothing on its walk is written by a property
 // chain and nothing on it might vary with time, the value is a compiled rig
-// constant and the frame path never touches USD for it.
+// constant and the frame path never touches USD for it. Otherwise it is read
+// per frame: through a retained UsdAttributeQuery when USD alone can answer,
+// and through the generation's resolved inputs when a property chain is in the
+// way.
 
 template <class T> struct RigExecBakedInput {
     T constant{};
@@ -1451,7 +1454,9 @@ struct RigExecBakedRolePin {
     int weightObject = -1;
 };
 
-// inputs:sourceWeights and the parent offsets are read RAW off the attribute.
+// inputs:sourceWeights and the parent offsets are read RAW off the attribute:
+// no connection walk, no resolved input, no interactive override, because an
+// operator input is not a rig input.
 // The read is USD, so it is the PROLOGUE's, kept as compiled rig state
 // (`sampled` below) and taken again only where a read at the frame's time could
 // answer differently; the cardinality diagnostic belongs to the constraint
@@ -1563,8 +1568,12 @@ struct RigExecBakedLadder {
     RigExecBakedInput<TfToken> rotationOrder;
 };
 
-// The edges follow, and so does the cone -- a drag that cannot reach the driver
-// leaves every corrective it drives untouched.
+// A RigExecPoseInterpolator reads the FINAL pose of its driver and writes
+// floats the geometry chains consume. As a step it reads its driver's (and the
+// driver's parent's) last PoseFin version and writes a range of PoseWeight
+// slots, and a blend channel whose inputs:weight is connected to one of those
+// reads the slot. The edges follow, and so does the cone -- a drag that cannot
+// reach the driver leaves every corrective it drives untouched.
 struct RigExecBakedPoseInterpolator : RigExecPoseInterpolatorRecord {
     SdfPath path;
     /// `path` spelled at Build, for the body's diagnostics.
@@ -1740,9 +1749,11 @@ struct RigExecBakedSolver : RigExecSolverRecord {
     VtFloatArray execSplineWeights;
     int execTwistCount = 1;
     RigExecBakedInput<double> twistTurns;
-    // Ribbon. So they are read the same way -- but in the PROLOGUE, into the
-    // SolverPoints slot the Solve step declares, because a step body may not
-    // touch USD.
+    // Ribbon. The driver curve's points are the one solver input that is
+    // scene data rather than rig state: read straight off the stage, honouring
+    // neither connections nor the resolved inputs. They are read in the
+    // PROLOGUE, into the SolverPoints slot the Solve step declares, because a
+    // step body may not touch USD.
     SdfPath ribbonPointsPath;
     UsdAttributeQuery ribbonPointsQuery;
     RigExecReadPhase ribbonPointsPhase;
@@ -2090,7 +2101,8 @@ struct RigExecBakedGeomChunk {
 /// Float addition is not associative, so an order that differs from the
 /// dynamic walk's is a different last bit.
 struct RigExecBakedGeomBlendChannel {
-    /// `inputs:weight` on the RigExecBlendInput prim.
+    /// `inputs:weight` on the RigExecBlendInput prim. Invalid when the prim or
+    /// the attribute is absent, which reads as the channel's default.
     UsdAttribute weight;
     SdfPath weightPath;
     /// The PoseWeight slot `inputs:weight` resolves to through its

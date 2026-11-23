@@ -1,8 +1,8 @@
 #ifndef RIGEXEC_MATH_DUALQUAT_KERNEL_H
 #define RIGEXEC_MATH_DUALQUAT_KERNEL_H
 
-/// The dual-quaternion skinning numerics, \1: the one numeric definition shared
-/// by the Gf core (rigExecMath/dualQuat.h) and the runtime
+/// The dual-quaternion skinning numerics, header-only: the one numeric
+/// definition shared by the Gf core (rigExecMath/dualQuat.h) and the runtime
 /// (rigExecRuntime/geometry.cpp), so both paths agree bit for bit. Conventions,
 /// the scale/shear policy and the degenerate-case rules are documented at the
 /// host's instantiations; the method reference is Kavan et al. (2008),

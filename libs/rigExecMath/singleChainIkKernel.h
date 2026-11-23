@@ -1,5 +1,6 @@
 // Arbitrary-length single-chain IK (deterministic FABRIK) over four-point
 // frames, shared by the native (Gf) path, the runtime (Rr) and the solver ops.
+// Header-only.
 //
 // Host types come from RigExecDualQuatMath<Point, Double>. A frame is
 // duck-typed: `points` (four Double) and `flags`.

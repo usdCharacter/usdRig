@@ -348,7 +348,9 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
             B.fin[slot] = frame;
         }
         // And the target transform each geometry-domain constraint measures its
-        // delta against.
+        // delta against: a stage read even when the target is a RigExecJoint,
+        // because the delta is measured against the authored transform, not the
+        // rig frame.
         for (size_t k = 0; k < B.deltaBasePaths.size(); ++k) {
             GfMatrix4d matrix(1.0);
             B.deltaBaseOk[k] = E._FrameFromXformRelativeToAsset(
@@ -359,7 +361,9 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
         // stage half is settled here: the delta such a source rides is the
         // deepest revision above it, which is a frame the walk has not produced
         // yet, so the constraint step performs the ride out of the slots it
-        // declared. A source the stage cannot answer for is not a bail.
+        // declared. A source the stage cannot answer for is not a bail: the
+        // failure is recorded and carried into the step, which diagnoses it
+        // and passes that constraint through.
         for (size_t k = 0; k < B.nativeSources.size(); ++k) {
             RigExecPointFrame frame;
             B.nativeFrameOk[k] = E._FrameFromXformRelativeToAsset(

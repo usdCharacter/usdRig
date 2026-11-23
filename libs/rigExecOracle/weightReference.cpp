@@ -290,7 +290,8 @@ ResolveVolume(const RigExecWeightReferenceContext &context,
             *error = who() + ": unknown rigExec:planeAxis " + axis.GetString();
             return false;
         }
-        // Bounded clips the field to the in-plane rectangle.
+        // Bounded clips the field to the in-plane rectangle; the extents are
+        // read only in the bounded arm.
         TfToken boundsMode = _kGeoUnbounded;
         if (RigExecWeightReferenceAttribute a =
                 prim.GetAttribute(_kGeoPlaneBounds)) {

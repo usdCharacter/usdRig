@@ -134,6 +134,8 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx, const SdfPath &path)
         }
     }
 
+    // The structural tokens are read plainly, with no time and no resolution
+    // walk, and land in `folded`, so an edit to one rebuilds the program.
     object.representation =
         ctx->ReadToken(prim, _tokens->rigExecRepresentation, _tokens->constant);
     object.rangePolicy =

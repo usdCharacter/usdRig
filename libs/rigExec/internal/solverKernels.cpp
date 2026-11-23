@@ -25,8 +25,8 @@ const GfVec3d _affectAxes[3] = {GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
                                 GfVec3d(0, 0, 1)};
 }
 
-// One definition, so a second caller cannot drift into publishing frames where
-// this one publishes nothing.
+// The ribbon sampler has one definition for every caller, so none can drift
+// into publishing frames where this one publishes nothing.
 
 namespace {
 

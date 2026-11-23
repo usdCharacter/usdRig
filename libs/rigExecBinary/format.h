@@ -594,7 +594,8 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// RecomputeNormals target's faceVarying layout and leftHanded orientation.
 ///
 /// Format 33 adds File.manifest: the stable id of every revision op, property
-/// op, provider op and value type ordinal (rigExecBinary/manifest.h).
+/// op, provider op and value type ordinal (rigExecBinary/manifest.h). Open
+/// maps a file's ordinals to this build's through it.
 ///
 /// Format 34 adds ConstraintFlags.PreserveJointOrientation: a SingleChainIK
 /// constraint's rigExec:orientationMode "preserve".
@@ -834,7 +835,11 @@ bool RigExecFormatSparseTopology(const std::vector<int32_t> &indices,
                                  fb::RigExecWireSkinTopology *out,
                                  std::string *error);
 
-/// False with the reason, and \p out untouched, when the sparse form refuses,
+/// The canonical form of a skin layout the evaluators resolved: the sparse form
+/// (RigExecFormatSparseTopology) when \p indices and \p weights are rows of an
+/// element size in [0, 65535] (none at element size 0), else the raw form,
+/// which holds the arrays unchanged, with \p validated as given. False with the
+/// reason, and \p out untouched, when the sparse form refuses,
 /// or when \p pointCount is not what the evaluators give a raw layout: its rows
 /// when it is rows of an element size of at least 1, else
 /// 0. RigExecFormatValidate holds validated to the evaluator's layout
@@ -846,7 +851,10 @@ bool RigExecFormatTopology(const std::vector<int32_t> &indices,
                            fb::RigExecWireSkinTopology *out,
                            std::string *error);
 
-/// Either way, the arrays the layout was written from, bit for bit.
+/// The arrays a layout the validator accepts stands for: a raw layout's own; a
+/// sparse layout's dense rows, each point's kept entries in order, then
+/// (0, +0.0f) up to element_size. Either way, the arrays the layout was
+/// written from, bit for bit.
 void RigExecFormatExpandTopology(const fb::RigExecWireSkinTopology &topology,
                                  std::vector<int32_t> *indices,
                                  std::vector<float> *weights);

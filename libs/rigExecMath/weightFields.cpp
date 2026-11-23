@@ -238,6 +238,8 @@ RigExecCurveWeightField(RigExecWeightPointView points,
                 });
             return;
         }
+        // Build failed (non-finite curve points): fall through to the
+        // per-point loop below.
     }
     float *const out = weights->data();
     const RigExecFalloffKernelParams k = _KernelParams(params);

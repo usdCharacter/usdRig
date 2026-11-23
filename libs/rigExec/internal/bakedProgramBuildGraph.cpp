@@ -647,6 +647,8 @@ RigExecBakedProgram::_BuildInvalidationIndex(_BuildAttempt &build)
     }
     // Bakeability accepted every intervening-Xform candidate BECAUSE the Xforms
     // between it and its anchor compose to the identity and do not animate.
+    // The index records those Xforms here so that moving one rebuilds the
+    // program.
     {
         const UsdPrim assetRoot =
             B.stage->GetPrimAtPath(E._rigPath.GetParentPath());
@@ -674,7 +676,8 @@ RigExecBakedProgram::_BuildInvalidationIndex(_BuildAttempt &build)
     }
 
     // The volumes this program places and publishes: the walk's, at their
-    // slots. Same sentence.
+    // slots. A discovered volume with no slot is refused here as well, so a
+    // forced bake cannot skip IsBakeable's refusal.
     {
         std::set<SdfPath> programVolumes;
         B.placedVolumes.assign(B.noScaleAvars.size(), 0);
@@ -691,6 +694,7 @@ RigExecBakedProgram::_BuildInvalidationIndex(_BuildAttempt &build)
                        path);
         }
     }
+    // The solver-checkpoint guard again, so a forced bake cannot skip it.
     for (const SdfPath &solver : _SolverCheckpointsWithoutAnOutput(
              nativeCheckpoints, E._solverDependencies, E._solverJoints,
              _BatchedSolvers(E._solverBatches))) {

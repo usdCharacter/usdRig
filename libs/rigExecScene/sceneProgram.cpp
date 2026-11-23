@@ -10,7 +10,9 @@ Fail(std::string *error, const std::string &message)
         *error = message;
     return false;
 }
-// An External mover's op has no SIMD form.
+// Decided up front: false for a windowed revision, an External mover without
+// an op and a scalar-mode request for a deform op; the deform ops run SIMD
+// kernels only. An External mover's op has no SIMD form.
 bool
 RunsOnOps(const RigExecSceneGeometryOp &op)
 {
@@ -27,6 +29,8 @@ RunsOnOps(const RigExecSceneGeometryOp &op)
     return kind == RigExecRevisionOp::BlendShape ||
            RigExecGeometryOpSupported(kind);
 }
+// Decided up front: false for a record without an op (a degenerate one, a
+// joint-group FK chain).
 bool
 RunsPoseOnOps(const RigExecSceneOperation &operation)
 {

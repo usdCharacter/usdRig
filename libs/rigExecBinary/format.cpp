@@ -9412,6 +9412,7 @@ RigExecFormatWrite(const fb::RigExecWireFile &file, std::vector<uint8_t> *bytes,
         if (!RigExecFormatValidate(file, &why)) {
             return _Fail(error, "invalid .rigexec: " + why);
         }
+        // Every file written is the current format version.
         if (file.formatVersion != RigExecFormatVersion) {
             return _Fail(error, "invalid .rigexec: format_version is " +
                                     _N(file.formatVersion) +

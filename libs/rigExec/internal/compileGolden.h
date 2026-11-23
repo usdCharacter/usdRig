@@ -2,7 +2,8 @@
 #define RIGEXEC_COMPILE_GOLDEN_H
 
 // Passive metadata only. Caller arguments and actual returned results remain
-// distinct.
+// distinct. A matching negative attestation never changes an evaluation's
+// exit code.
 #include "rigExec/internal/heldProgramGolden.h"
 #include <cstdint>
 #include <map>

@@ -150,7 +150,8 @@ RigExecBakedProgram::_BuildPoseDescriptors(_BuildAttempt &build)
                         _SnapshotAfter(E, joint, solverPath) ? 1 : 0);
                 }
                 entry.solverSnapshotJoints.push_back(std::move(snapshotJoints));
-                // A restInputs entry with an EMPTY predecessor is a joint whose
+                // The live-rest half of the same binding. A restInputs entry
+                // with an EMPTY predecessor is a joint whose
                 // authored rest was merely pinned, not a live one.
                 SdfPathVector live;
                 for (const auto &[joint, predecessor] : batch.restInputs) {

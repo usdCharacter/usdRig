@@ -61,6 +61,7 @@ _ChainBoundInput(const RigExecChainSampleRevision &revision, size_t i)
 
 namespace frozenDetail {
 
+// Every math mover in mover order, each over its one exact property target.
 // Validation guarantees the shape for a compiled rig; anything else fails the
 // bind, never the evaluation.
 bool
@@ -88,8 +89,9 @@ _DiscoverChainMovers(const RigExecRigEvaluator &evaluator,
     return true;
 }
 
-// Same walk, same sets, same depth-first visit -- so the same order,
-// deterministically.
+// Producers first, over the dependency edges (every mover attribute's
+// connection walk, plus the weight prims behind rigExec:weightObject), visited
+// depth-first, so the order is deterministic.
 bool
 _OrderDiscoveredChains(
     const UsdStageRefPtr &stage,
@@ -202,7 +204,8 @@ _OrderDiscoveredChains(
     return true;
 }
 
-// Constants fold at Default rather than at the live path's first-run time; a
+// One chain input pinned, or empty when the mover authors none. Constants fold
+// at Default rather than at the live path's first-run time; a
 // constant reads identically at every time code, so the pins agree whatever
 // frame ran first.
 RigExecChainSampleInput

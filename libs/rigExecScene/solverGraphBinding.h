@@ -46,7 +46,8 @@ bool RigExecBindSolverGraph(const RigExecSceneSolverDescriptor &,
                             const RigExecSceneGraphBindingContext &,
                             RigExecValueId output, RigExecSolverGraphBinding *,
                             std::string *error = nullptr);
-/// \p ops runs the solve on the op core (poseOpRunner.h).
+/// \p ops runs the solve on the op core (poseOpRunner.h); null runs it
+/// without the op core.
 bool RigExecRunSolverGraph(const RigExecSolverGraphBinding &,
                            RigExecTypedValueStore *, RigExecSolverWorkspace *,
                            std::string *error = nullptr,

@@ -7,6 +7,9 @@
 // The baked program's geometry half: the chain/revision bake and the frame path
 // that runs those revisions and the derived maintenance behind them.
 // Geometry-domain bake and frame path; must agree on captured vs re-read state.
+// The evaluator is not visible here: compiled chains arrive as
+// RigExecBakedChainSpec, and shared caches are captured into
+// RigExecBakedProgramImpl at Build.
 #include "rigExec/internal/bakedOpValues.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/bakedSlotDomains.h"
@@ -199,7 +202,8 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
         out.skinTopologyFixed = r.skinTopologyFixed;
         out.snapshotAfter = r.snapshotAfter;
         // The geometry-domain constraint whose measured delta IS this
-        // revision's transform.
+        // revision's transform, joined on the mover path. The pose half is
+        // baked first, so the constraint is already here.
         for (const RigExecBakedProgramImpl::Constraint &constraint :
              B.constraints) {
             if (constraint.deltaBase >= 0 && constraint.path == r.moverPath) {
@@ -302,8 +306,9 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
             channel.weight = B.stage->GetAttributeAtPath(weightPath);
             channel.weightPath = weightPath;
             // A weight connected to a pose interpolator's output reads the
-            // interpolator's slot. The walk is the one RigExecResolvedInputs::
-            // GetAttribute makes.
+            // interpolator's slot. The walk is RigExecResolvedInputs::
+            // GetAttribute's: single authored connections, followed until one
+            // lands on a property the program publishes.
             {
                 std::set<SdfPath> visiting;
                 UsdAttribute a = channel.weight;
@@ -391,6 +396,8 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
                        r.binding.carrySpace);
             }
         }
+        // The solver whose aggregate supplies values.driverFrames, resolved
+        // once to an index: the solver table is built before the geometry half.
         if (!r.binding.driverFrames.IsEmpty()) {
             B.prims.insert(r.binding.driverFrames);
             const auto solver = B.solverIndex.find(r.binding.driverFrames);
@@ -419,6 +426,9 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
         if (out.weightObject >= 0) {
             // WHAT the published field says it weights, decided here because it
             // is a relationship read and a relationship is compiled rig state.
+            // Exactly one declared target that is this mover means the field
+            // weights the OPERATION and carries one element; anything else
+            // weights the chain's points.
             const UsdPrim weightPrim =
                 B.stage->GetPrimAtPath(r.binding.weightObject);
             const SdfPathVector declared =
@@ -2595,6 +2605,9 @@ RigExecBakedRolesStand(const RigExecBakedProgramImpl &B)
     return true;
 }
 
+// One frame, geometry half. A revision runs when its inputs changed and not
+// otherwise, through the four steps a revision is made of.
+
 namespace {
 
 /// The points of version \p version of \p chain (RigExecBakedPointVersion):
@@ -2644,6 +2657,7 @@ FoldInfluences(const RigExecBakedProgramImpl &B,
                 ? B.finalMatrix[size_t(revision->transformSlot)]
                 : B.baseMatrix[size_t(revision->transformSlot)];
     }
+    // rigExec:space, out of the same table at the same phase as the transform.
     // Held on the revision for the assemble, which may not read the tables
     // itself: the fold is the step that declared them.
     revision->haveCarry = revision->carrySpaceSlot >= 0;
@@ -2663,7 +2677,10 @@ FoldInfluences(const RigExecBakedProgramImpl &B,
     // that same constraint contributes. Find-guarded, and here rather than in
     // the assemble because the transform table is what this step declares --
     // the assemble only READS it, and a step that writes a slot it declared as
-    // a read is the declaration the executor trusts being wrong.
+    // a read is the declaration the executor trusts being wrong. Applied before
+    // the final-phase substitution; the order cannot matter, because a
+    // geometry-domain constraint's binding.transform is empty, which makes the
+    // delta the only source of the matrix.
     if (revision->constraintDelta >= 0 &&
         B.deltaPresent[size_t(revision->constraintDelta)]) {
         revision->transform = B.deltaValues[size_t(revision->constraintDelta)];
@@ -2672,9 +2689,13 @@ FoldInfluences(const RigExecBakedProgramImpl &B,
     // A read phase naming a POINT IN THE POSE WALK, which is the general form
     // `base`, `preceding` and `final` abbreviate: the provider's matrix as it
     // stood immediately after one named constraint, out of the frame records
-    // bound at Build instead of out of the dense tables. The first valid record
-    // of the list answers: the last record the walk made under the phase's
-    // prim.
+    // bound at Build instead of out of the dense tables. Applied after the
+    // delta; the two never both apply, since an AtPrim phase needs a bound
+    // rigExec:transform. The first valid record of the list answers: the last
+    // record the walk made under the phase's prim. A list with none valid
+    // leaves the dense-table value standing and says nothing: every named
+    // constraint under the prim declined to record this run (a geometry-domain
+    // exit, an unusable frame).
     const auto phased = [&B](const std::vector<int> &records,
                              GfMatrix4d *matrix) {
         for (const int record : records) {
@@ -3152,14 +3173,16 @@ RevisionValues(RigExecBakedProgramImpl &B,
     return values;
 }
 
-// The blend channels. Float addition is not associative, so a different order
-// is a different last bit of every point. The reads are the generation-wide
-// resolved inputs' and NOT this revision's phase overlay's: a sample's own
-// phase is looked up directly, which is what lets one blend sample read another
-// chain while the rest of the channel reads the stage. \p read answers each
-// one: the stage gather through the resolved inputs, the leaf gather from the
-// leaves the prologue sampled through them. \p record writes each dense
-// sample's `lastPoints`.
+// The blend channels. The order is the contract: channels in
+// `binding.blendInputs` order, which compile sorted, and each channel's samples
+// stable-sorted by activation. Float addition is not associative, so a
+// different order is a different last bit of every point. The reads are the
+// generation-wide resolved inputs' and NOT this revision's phase overlay's: a
+// sample's own phase is looked up directly, which is what lets one blend sample
+// read another chain while the rest of the channel reads the stage. \p read
+// answers each one: the stage gather through the resolved inputs, the leaf
+// gather from the leaves the prologue sampled through them. \p record writes
+// each dense sample's `lastPoints`.
 template <class Read>
 void
 GatherBlendChannels(RigExecBakedProgramImpl &B,
@@ -3176,6 +3199,9 @@ GatherBlendChannels(RigExecBakedProgramImpl &B,
         RigExecBakedProgramImpl::GeomBlendChannel &bound =
             revision->blendChannels[c];
         RigExecBlendChannel channel;
+        // A pose-driven weight reads this run's slot, unless an override stands
+        // on the weight itself; the resolved inputs answer that override before
+        // the connection is followed.
         if (revision->blendChunked && record) {
             channel.weight = 0.0f;
         } else if (bound.poseWeight >= 0 && !read.WeightHeld(bound)) {
@@ -3196,6 +3222,8 @@ GatherBlendChannels(RigExecBakedProgramImpl &B,
                 channel.samples.push_back(std::move(sample));
                 continue;
             }
+            // A phased sample reads the version it is bound to, and silently
+            // the resolved input when that chain read no base.
             const GfVec3f *phased = nullptr;
             size_t phasedCount = 0;
             const bool answered =

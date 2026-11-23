@@ -1,6 +1,6 @@
 // The spline-IK spine: the four-CV quadratic B-spline with its arc-length
 // table, the rest description, the CV posing and the solve, shared by the
-// native (Gf) path, the runtime (Rr) and the solver ops.
+// native (Gf) path, the runtime (Rr) and the solver ops. Header-only.
 //
 // Host types come from RigExecDualQuatMath<Point, Double>. Frames, rest,
 // controls, parameters and result are duck-typed after the

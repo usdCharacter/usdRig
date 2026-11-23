@@ -231,7 +231,9 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
             return Fail(error, "unsupported RigExec scene domain " +
                                    node.fact.type.GetString() + ": " +
                                    path.GetString());
-    // A RigExec API schema with no lowering refuses the program.
+    // A RigExec API schema with no lowering refuses the program; any other
+    // applied schema (physics, pipeline, material) is not the rig's and is
+    // ignored.
     const std::set<std::string> loweredRigExecApis{
         SchemaTypeName::RigExecMoverAPI, SchemaTypeName::RigExecControlAPI};
     for (const auto &[path, node] : scene.nodes)
@@ -302,6 +304,9 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
     }
     // Solver joint extraction is a producer in its own right. Register the
     // solver base before any relationship selects a pose read version.
+    // Several solvers writing one joint stack in stack order: each later
+    // writer's commit starts from the version the earlier one published, and
+    // the joint's solver base is the last of them.
     std::map<SdfPath, RigExecValueId> extracted;
     std::map<SdfPath, RigExecPoseCommitBinding> solverCommits;
     std::map<SdfPath, SdfPathVector> solverJointPaths, solverDescendantPaths;

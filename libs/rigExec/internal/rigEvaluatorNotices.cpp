@@ -786,6 +786,9 @@ RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
             _VerifyNeutralNotice(notice);
         }
     }
+    // The compiled rig's rest frames answer to their own gate, not to the
+    // digest: the digest reads no rest:* value, so a rest:rx edit is not a
+    // structural edit and never recompiles.
     _NoteRestEdits(notice);
     // The value caches that outlive a generation hold authored values and
     // where they come from, so an edit has to reach the very next read of

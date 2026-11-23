@@ -237,6 +237,8 @@ RigExecBakedProgram::DescribeUpstreamArrays(const RigExecRigEvaluator &E)
                type == RigExecRevisionLeafType::Vec3fArray;
     };
     std::set<SdfPath> weightObjects;
+    // The objects whose packet exec computes (a point revision's weight tap):
+    // seeds of the exec-read points below.
     std::set<SdfPath> execWeightObjects;
     const auto revisionRows = [&](const auto &revision, const char *owner) {
         RigExecRevisionLeafDecl decl;
@@ -385,6 +387,9 @@ RigExecBakedProgram::DescribeUpstreamArrays(const RigExecRigEvaluator &E)
     visitPoints(weightObjects, [&](const SdfPath &path, bool oracle) {
         add(path, Time::AtTime, oracle ? "weight oracle" : "weight packet");
     });
+    // Exec reads a computed packet's points element by element, and an exec
+    // value override cannot replace such a read with an array: those
+    // attributes are structural for every reader and in every backend.
     visitPoints(execWeightObjects,
                 [&rows](const SdfPath &path, bool) { rows.erase(path); });
 
@@ -824,6 +829,9 @@ RigExecBakedPlaceUpstream(RigExecBakedProgramImpl *program, bool placeOracle)
         }
         B.lastUpstream = B.upstream;
     }
+    // The oracle reads the generation's resolved inputs and the stage, so a
+    // value on one of its paths is placed there too, beneath any interactive
+    // override placed after it and any chain result published over it.
     if (placeOracle && !B.upstream.empty()) {
         if (!B.upstreamSetsBuilt) {
             _BuildUpstreamSets(&B);

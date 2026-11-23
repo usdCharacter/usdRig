@@ -477,6 +477,7 @@ RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
         result.curve = builder->BindInput(result.node, rigExecOps::WireCurve());
         result.bindCoords =
             builder->BindInput(result.node, rigExecOps::WireBindCoords());
+        // The field's shape picks the ports.
         if (WireSparse(p.weights)) {
             result.weightIndices = builder->BindInput(
                 result.node, rigExecOps::WireWeightIndices());

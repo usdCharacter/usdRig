@@ -119,6 +119,7 @@ RigExecRetainedSourcesBytes(const RigExecRetainedFrameState &state)
     for (const RigExecSampledInput &sampled : state.inputs.values) {
         total += ordered ? sizeof(bool)
                          : sampled.path.GetString().size() + sizeof(bool);
+        // A copy of a static table entry shares the table's payload.
         const bool fromTable =
             table && sampled.staticSample >= 0 &&
             size_t(sampled.staticSample) < table->samples.size() &&

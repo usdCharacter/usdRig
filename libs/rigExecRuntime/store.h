@@ -766,6 +766,8 @@ struct RrProgram {
     /// published point content version over the points' bytes and fails if
     /// the two disagree on a change.
     bool verifyChainVersions = false;
+    /// What the epilogue visits instead of every step: indexed with the op
+    /// graph (RrIndexEpilogue) and folded after each run (RrFoldHeldSteps).
     struct EpilogueIndex {
         /// Per solver, 1 where a Solve step publishes it.
         std::vector<char> aliveSolver;

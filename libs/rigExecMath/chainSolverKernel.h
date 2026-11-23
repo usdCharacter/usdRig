@@ -1,5 +1,5 @@
 // The FK chain and the analytic two-bone IK over four-point frames, shared by
-// the native (Gf) path, the runtime (Rr) and the solver ops.
+// the native (Gf) path, the runtime (Rr) and the solver ops. Header-only.
 //
 // Host types come from RigExecDualQuatMath<Point, Double>. Frames, chain
 // elements and IK parameters are duck-typed: a frame has `points` (four

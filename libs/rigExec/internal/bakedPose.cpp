@@ -302,7 +302,8 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             s.restRefs = restRefs;
             // The LIVE half: a rest ref whose joint a pose step BELOW this
             // solver already wrote is measured from the frame that step left,
-            // not from the authored rest.
+            // not from the authored rest. bindSolverReads binds it to a
+            // version: the frame is not known until the run reaches this place.
             std::set<int> liveSlots;
             for (const SdfPath &joint : liveRestJoints) {
                 const int slot = slotOf(joint);
@@ -653,7 +654,9 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             s.twistTurns = bind(prim, _tokens->inputsTwistTurns, 0.0);
         } else if (s.type == SchemaTypeName::RigExecRibbon) {
             // The driver curve's points, resolved by the compiler to the exact
-            // native attribute (a prim target becomes its .points).
+            // native attribute (a prim target becomes its .points). Not read
+            // through bind(): neither a connection on that attribute nor the
+            // generation's resolved inputs may answer for it.
             const auto found = ctx->ribbonDriverPoints.find(solverPath);
             if (found != ctx->ribbonDriverPoints.end()) {
                 s.ribbonPointsPath = found->second;
@@ -685,8 +688,9 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 }
                 // Registered BY PATH rather than through fold(prim, name): the
                 // driver curve is another prim entirely, and the target may be
-                // an arbitrary property path. Unresolved paths are not
-                // registered; property creation recompiles.
+                // an arbitrary property path. Folded: a value edit on the curve
+                // rebuilds, and an override on it cannot be placed. Unresolved
+                // paths are not registered; property creation recompiles.
                 B.rebuild.insert(s.ribbonPointsPath);
                 B.folded.insert(s.ribbonPointsPath);
                 B.named.insert(s.ribbonPointsPath);
@@ -1011,7 +1015,9 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             B.deltaBasePaths.push_back(fc.targets[0]);
             B.prims.insert(fc.targets[0]);
         }
-        // The evaluation mode's "autoDetect" is settled here because
+        // Three uniform tokens, read with a plain Get (no time), plus the two
+        // bindings resolved beside them. The evaluation mode's "autoDetect" is
+        // settled here because
         // _IkUsesAnimatedTs asks only structural questions -- a solver binding,
         // a time sample, a connection -- and the attributes it inspects are
         // folded for their SHAPE so that authoring one rebuilds the program
@@ -1062,6 +1068,9 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 c.poleObjects.push_back(slot);
                 c.poleObjectNatives.push_back(native);
             }
+            // Bound only in RotatePlane mode, the only mode that reads them:
+            // binding them everywhere would let an override on one place itself
+            // on a solve that ignores it.
             if (c.ikMode == RigExecSingleChainIkMode::RotatePlane) {
                 c.poleVector =
                     bind(prim, _tokens->inputsPoleVector, GfVec3d(0, 1, 0));
@@ -1361,10 +1370,13 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
     for (int i = 0; i < N; ++i) {
         ownedBySolver[i] = B.jointSolverBinding->count(B.paths[i]) > 0;
     }
+    // Every provider inherits its namespace pose: an authored or connected
+    // parent:space would have refused the bake above.
     auto buildPropagation = [&](const std::vector<int> &candidates,
                                 std::vector<std::pair<int, int>> *out) {
         const std::set<int> candidateSet(candidates.begin(), candidates.end());
         std::set<int> covered;
+        // Disjoint changed subtrees, in slot (== namespace) order.
         std::vector<int> roots(candidateSet.begin(), candidateSet.end());
         int coveredRoot = -1;
         for (int root : roots) {
@@ -1376,6 +1388,10 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             for (int j = root + 1; j < N; ++j) {
                 if (!B.paths[j].HasPrefix(B.paths[root]))
                     break;
+                // Only FirstFramePose slots are propagated to: a plain
+                // Xformable a constraint targets is only seeded and revised. It
+                // still takes a slot, so the scan passes over it rather than
+                // stopping at it.
                 if (B.slotKind[size_t(j)] !=
                     RigExecBakedSlotKind::FirstFramePose) {
                     continue;
@@ -1383,6 +1399,9 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 if (candidateSet.count(j) || !covered.insert(j).second) {
                     continue;
                 }
+                // The closest revised ancestor is a pure namespace climb, so it
+                // rides propParent and not parent: an xform-derived ancestor
+                // can be the revised one.
                 int closest = B.propParent[j];
                 while (closest >= 0 && !candidateSet.count(closest)) {
                     closest = B.propParent[closest];
@@ -1436,7 +1455,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             // target's frame as the input it solves from, which is the commit's
             // targetRead and not a candidate. A SingleChainIK revises its whole
             // chain atomically, so the propagation is built over all of it at
-            // once.
+            // once; buildPropagation collapses a nested chain to its root.
             if (baked.target >= 0 && baked.pointsTarget.IsEmpty()) {
                 buildPropagation(baked.singleChainIk
                                      ? baked.targetSlots
@@ -1449,7 +1468,9 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
 
     // The solvers no batch runs. A solver that binds no joint and that no mover
     // names on rigExec:driverFrames is not required, so the walk never reaches
-    // it. Baked here, in the dependency order Build resolved, and run as
+    // it. It is still an aggregate solver whose frames publish as guides,
+    // computed against the walk's FINAL provider frames. Baked here, in the
+    // dependency order Build resolved, and run as
     // ordinary Solve steps after the walk.
     for (const SdfPath &solverPath : ctx->guideOnlySolvers) {
         B.guideSolvers.push_back(bakeSolver(solverPath, {}, {}, {}));
@@ -1653,6 +1674,8 @@ BindPoseVersions(RigExecBakedProgramImpl *program)
             solver.endRead = readFin(solver.end);
             solver.poleRead = readFin(solver.pole);
             solver.spaceRead = readFin(solver.spaceSlot);
+            // The live joint rests, bound like the control reads: to the
+            // version standing where this batch begins.
             if (solver.hasLiveRest) {
                 solver.restReads.assign(solver.restRefs.size(), 0u);
                 for (size_t k = 0; k < solver.restRefs.size(); ++k) {
@@ -1879,6 +1902,8 @@ BindPoseVersions(RigExecBakedProgramImpl *program)
             ancestors(reads);
     }
 
+    // The guide-only solvers read every provider's FINAL frame, which is what
+    // liveFin holds now that the sweep is over.
     for (const int si : B.guideSolvers) {
         bindSolverReads(B.solvers[size_t(si)]);
     }
@@ -2847,6 +2872,8 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
         }
     }
 
+    // After the matrices: an interpolator reads the FINAL pose, every
+    // constraint included, and writes what the geometry chains consume.
     // One step per interpolator, reading the last version of its driver's slot
     // and of the parent's, writing its own range of weights.
     for (size_t k = 0; k < B.poseInterpolators.size(); ++k) {
@@ -4481,8 +4508,9 @@ RigExecBakedRunSolverSources(RigExecBakedProgramImpl *program, UsdTimeCode time)
         if (!s.ribbonPointsVarying || !s.ribbonPointsQuery.IsValid()) {
             continue;
         }
-        // The pinned query answers the same value the attribute does; only the
-        // resolve is cached.
+        // The driver attribute's value at this generation's time; a failed read
+        // leaves the array empty. The pinned query answers the same value the
+        // attribute does; only the resolve is cached.
         VtVec3fArray live;
         s.ribbonPointsQuery.Get(&live, time);
         s.lastRibbonPoints.swap(s.ribbonPoints);
@@ -4746,6 +4774,7 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         BakedPoseHost host(program, step);
         for (int i = group.begin; i < group.end; ++i) {
             if (!host.inputs().isPoseSlot(size_t(i))) {
+                // An xform-derived slot is not composed from avars.
                 continue;
             }
             host.state().beforeSlot(eval::StepKind::ComposeSubtree, group.begin,
@@ -5087,7 +5116,10 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         RigExecBakedProgramImpl::Constraint &c =
             B.constraints[size_t(B.walkSteps[size_t(step->object)].index)];
         c.matchValuesValid = false;
-        // A constraint that passed through still leaves its target standing at
+        // Every exit below leaves `recordAfter`/`recordEveryTarget` saying
+        // whether the target's frame is recorded there; the commit's
+        // FrameMatrix steps, which run after its write-back, read them. A
+        // constraint that passed through still leaves its target standing at
         // the point a phase names.
         const auto finish = [&] {
             if (commit.split) {
@@ -5115,7 +5147,9 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         // The GEOMETRY domain writes no transform: it measures a delta against
         // the target's authored transform and hands it to the Matrix revision
         // the same mover contributes. Both halves of what makes it different
-        // are set up here.
+        // are set up here: the delta is absent until this run produces one, and
+        // the target's frame is recorded for a read phase only on the exits
+        // that record it.
         const int deltaBase = c.deltaBase;
         commit.recordAfter = true;
         commit.recordEveryTarget = true;
@@ -5357,6 +5391,8 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         if (status == Status::Disabled)
             return;
         for (size_t i = 0; i < interpolator.poseSlots.size(); ++i) {
+            // float is load-bearing: a consumer reads inputs:weight as a float,
+            // and the published property must hold that type.
             B.poseWeights[size_t(interpolator.poseSlots[i])] =
                 static_cast<float>(interpolator.scratch[i]);
         }
@@ -5391,10 +5427,13 @@ RigExecBakedPublishPose(RigExecBakedProgramImpl *program, RigExecRigPose *pose)
     // world-up lines. They were pushed into the pose as the walk produced them;
     // they are replayed here instead, so that no step body ever touches the
     // generation and the order is program order rather than completion order.
+    // The pose interpolators' lines come after the joint block; replayed
+    // below.
     RigExecBakedAppendStepLines(&B, RigExecBakedStepLines::Walk,
                                 &pose->diagnostics);
 
-    // One line per failing writer, walk order, stable-sorted by joint. Merged
+    // One line per failing writer, walk order, stable-sorted by joint; "fell
+    // back to its rest chain" only when no writer published. Merged
     // here, not per step: the order belongs to the whole run. Paths come from
     // Build's texts: SdfPath::GetString() interns under a lock.
     struct FallbackJoint {
@@ -5451,7 +5490,10 @@ RigExecBakedPublishPose(RigExecBakedProgramImpl *program, RigExecRigPose *pose)
                  : "the joint keeps the frame " + *kept->second + " left"));
     }
 
-    // The plain Xformables a constraint targets, in slot (== path) order.
+    // The plain Xformables a constraint targets, in slot (== path) order,
+    // between the fallback-joint lines above and the joint publication's
+    // "degenerate final frame" lines below: diagnostics are compared in order,
+    // so the position of this loop is part of the answer.
     for (size_t k = 0; k < B.xformSlots.size(); ++k) {
         const size_t slot = size_t(B.xformSlots[k]);
         const RigExecPointFrame &frame = B.fin[size_t(B.finLast[slot])];
@@ -5537,7 +5579,8 @@ RigExecBakedPublishPose(RigExecBakedProgramImpl *program, RigExecRigPose *pose)
         RigExecBakedPresentSpaceMatches(B, pose);
     }
 
-    // Observational solver guides. Read from the aggregates HERE, under the
+    // Observational solver guides: the published array is the aggregate the
+    // walk produced. Read from the aggregates HERE, under the
     // runtime toggle, rather than cached in a step: either half of the toggle
     // can move without the compiled rig moving.
     if (*B.solverGuidesEnabled) {
@@ -5563,6 +5606,10 @@ RigExecBakedPublishPose(RigExecBakedProgramImpl *program, RigExecRigPose *pose)
         pose->movedProperties.emplace_hint(pose->movedProperties.end(), target,
                                            value);
     }
+    // The pose weights, published into both movedProperties, which makes the
+    // number observable to a host, a test and the picker, and the generation's
+    // resolved inputs, which a consumer outside the program (the standalone
+    // reader of a blend input's connection) resolves through after the frame.
     for (size_t k = 0; k < B.poseWeightPaths.size(); ++k) {
         const VtValue value(B.poseWeights[k]);
         pose->movedProperties[B.poseWeightPaths[k]] = value;

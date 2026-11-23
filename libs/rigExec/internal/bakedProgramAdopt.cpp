@@ -115,6 +115,10 @@ RigExecBakedProgram::AdoptGeometryStateFrom(RigExecBakedProgram &previous)
     // held. Everything here is a CACHE of the last run; the compiled
     // description around it comes from the compiled rig the new program was built
     // from and is left alone.
+    // \p keepRun says whether the cached RESULT may be kept as well as the
+    // node: a revision spliced into or out of a chain changes the point stream
+    // every revision after it reads, so from the first divergence on the node
+    // survives but its result does not.
     const auto adopt = [](RigExecBakedProgramImpl::GeomRevision *destination,
                           RigExecBakedProgramImpl::GeomRevision *source,
                           bool keepRun) {
@@ -142,8 +146,10 @@ RigExecBakedProgram::AdoptGeometryStateFrom(RigExecBakedProgram &previous)
         // A DERIVED revision's remembered input lives beside the packet rather
         // than inside it -- the chain's 315KB point buffer, held by handle with
         // `lastParameters.auxPoints` left empty -- so it has to travel with the
-        // packet it was split from. Exactly the failure lastDefaultWeight below
-        // describes, one field further along.
+        // packet it was split from. Left behind, the adopted node's `ran` would
+        // compare against an empty array and every derived revision would
+        // re-execute on the first generation after any edit: the failure
+        // lastDefaultWeight below describes, one field further along.
         destination->lastAuxPoints = std::move(source->lastAuxPoints);
         destination->lastStatus = source->lastStatus;
         destination->ran = source->ran;
@@ -189,6 +195,8 @@ RigExecBakedProgram::AdoptGeometryStateFrom(RigExecBakedProgram &previous)
     for (RigExecBakedProgramImpl::GeomChain &chain : B.chains) {
         const auto found = outgoing.find(chain.target);
         if (found == outgoing.end()) {
+            // A target the outgoing program did not drive: every revision of
+            // it is new.
             continue;
         }
         RigExecBakedProgramImpl::GeomChain &old = *found->second;

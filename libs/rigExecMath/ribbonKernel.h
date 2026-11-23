@@ -1,5 +1,5 @@
 // Rest-relative ribbon transport, shared by the native (Gf) path, the runtime
-// (Rr) and the Ribbon op.
+// (Rr) and the Ribbon op. Header-only.
 #ifndef RIGEXEC_MATH_RIBBON_KERNEL_H
 #define RIGEXEC_MATH_RIBBON_KERNEL_H
 

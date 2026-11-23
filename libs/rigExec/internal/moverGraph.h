@@ -940,6 +940,7 @@ bool RigExecRunProjectorTarget(
     GfMatrix4d *matrix, std::vector<std::string> *diagnostics,
     RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache = nullptr);
 
+/// RigExecReadProjectorTarget then RigExecRunProjectorTarget.
 bool RigExecEvaluateProjectorTarget(const UsdPrim &projectorPrim,
                                     RigExecRevisionOp op,
                                     const RigExecRevisionBinding &binding,

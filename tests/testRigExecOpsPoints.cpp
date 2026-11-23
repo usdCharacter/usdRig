@@ -2497,7 +2497,7 @@ TestRibbonFrames()
                 RigExecSampleCurveRMF(posedCurve, sampleCount);
             CHECK(posed.GetSize() == size_t(sampleCount));
 
-            // The instantiation matches the native one bit for bit.
+            // The runtime (Rr) instantiation matches the Gf one bit for bit.
             const auto rr = rigExec::RigExecSampleCurveRMFKernel(
                 posedPts.Data(), posedPts.Size(), sampleCount);
             CHECK(sameFloats(posed.positions, rr.positions));

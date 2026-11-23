@@ -99,6 +99,11 @@ RrMat3Orthonormalize(RrMat3d *m)
     m->SetRow(2, r2);
 }
 
+/// GfMatrix3d::ExtractRotationQuaternion (matrix3d.cpp, transcribed including
+/// the int-typed 4 in the else arm), followed by the GfRotation round trip
+/// ExtractRotation().GetQuat() performs: SetQuat's length gate and axis/angle
+/// extraction, then GetQuat's half-angle sine and cosine with one
+/// normalization (rotation.cpp).
 inline RrQuatd
 RrMat3ExtractRotationQuaternion(const RrMat3d &m)
 {
@@ -130,6 +135,8 @@ RrMat3ExtractRotationQuaternion(const RrMat3d &m)
     return rotation.GetQuat();
 }
 
+/// GfDot(const GfQuatd&, const GfQuatd&) from quatd.h: the imaginary dot
+/// first, then the real product.
 inline double
 RrQuatDot(const RrQuatd &a, const RrQuatd &b)
 {

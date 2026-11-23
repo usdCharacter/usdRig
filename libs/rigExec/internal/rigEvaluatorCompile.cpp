@@ -392,7 +392,9 @@ RigExecRigEvaluator::_CompileRetireProgram(_CompileAttempt &attempt)
     // it stops being the rig's program here: a Compile that fails and restores
     // the previous compiled rig returns before the rebuild at the tail, this
     // local goes out of scope, and the rig is left dynamic -- slower and never
-    // wrong.
+    // wrong. Retired rather than destroyed, because its persistent GEOMETRY
+    // state (which node ran with which packet) is not about the compiled rig:
+    // the rebuild below reconnects whichever nodes survive.
     attempt.retiringBakedProgram = std::move(_bakedProgram);
     // A new compiled rig is a new question: whatever refused the last one said
     // nothing about this one, and whatever made its program bail neither.

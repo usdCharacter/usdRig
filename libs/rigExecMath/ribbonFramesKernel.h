@@ -1,6 +1,6 @@
 // Ribbon frame sampling: rotation-minimizing frames along a cubic uniform
 // B-spline, and the re-base of aggregate elements onto joint rests. Shared by
-// the native (Gf) path, the runtime (Rr) and the solver ops.
+// the native (Gf) path, the runtime (Rr) and the solver ops. Header-only.
 //
 // V is a float vector whose `*` is the dot product and `^` the cross
 // product. Frames are duck-typed: `points` (four Double) and `flags`.

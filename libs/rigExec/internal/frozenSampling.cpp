@@ -3395,6 +3395,8 @@ RigExecBuildBurstSampleCache(const RigExecBakedProgram &program,
         return fail("no burst cache to build into");
     }
     cache->Clear();
+    // A rig the sampler would decline per frame fails the build once, with the
+    // sampler's messages, and the burst skips every frame up front.
     const RigExecBakedProgramImpl &B =
         rigExec::RigExecBakedProgramAccess::StepGraph(program);
     // No shape gate on xform slots, native sources, or delta bases: the

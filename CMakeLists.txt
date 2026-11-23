@@ -1661,11 +1661,15 @@ target_compile_definitions(testRigExecBinary PRIVATE
 add_test(NAME testRigExecBinary COMMAND testRigExecBinary
     "${CMAKE_CURRENT_SOURCE_DIR}/examples")
 
-# RIG names a stage under examples/, STAGE any other stage by full path. CLASS
-# is `inputs` (every animated source is an input, so the binary follows the
-# stage at every frame) or `static` (an animated source is static data the
-# binary holds at TIME, so it verifies at TIME alone, plus the drags); see
-# tests/exampleFixtures.cmake.
+# RIG names a stage under examples/, STAGE any other stage by full path.
+# The test bakes the stage once at TIME (default: the first of FRAMES) and
+# checks its publications at TIME, at every frame of FRAMES with the binary's
+# Animated inputs sampled from the stage, and for two drags of each input
+# DRAGS names (a comma-separated list of <prim>.<attr>) against the same value
+# authored in the session layer. CLASS is `inputs` (every animated source is an
+# input, so the binary follows the stage at every frame) or `static` (an
+# animated source is static data the binary holds at TIME, so it verifies at
+# TIME alone, plus the drags); see tests/exampleFixtures.cmake.
 function(rigexec_add_verify_binary_test)
     cmake_parse_arguments(A ""
         "NAME;RIG;STAGE;FRAMES;TIME;CLASS;DRAGS"
@@ -1828,8 +1832,10 @@ rigexec_add_verify_binary_test(NAME volume_placements
     FRAMES 1,5,10 CLASS inputs
     DRAGS "/PlacementAsset/Rig/Controls/ACtl.avars:rz,/PlacementAsset/Rig/Controls/BCtl.avars:rz")
 
-# A drag on Dial moves one reader's weight; a drag on Late re-runs C3's record
-# alone.
+# AtPrim read phases on rigExec:transform, read in the fold through the
+# FrameMatrix steps' records: a constraint's record, a disabled exit that
+# still records, and lists that fall through to an earlier record. A drag on
+# Dial moves one reader's weight; a drag on Late re-runs C3's record alone.
 rigexec_add_verify_binary_test(NAME frame_record_fallbacks
     STAGE "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/frame_record_fallbacks.usda"
     FRAMES 1,4,8 CLASS inputs

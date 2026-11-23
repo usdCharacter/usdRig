@@ -1,21 +1,24 @@
-// rigExecRuntime: .rigexec playback. Opens a baked .rigexec file (one
-// FlatBuffer, rigExecBinary/format.h), replays its cluster DAG over the inputs
-// the caller sets, and publishes joint matrices and deformed points -- no USD
-// headers, no USD library. The opened program is private to the library
-// (store.h); the math is runtimeMath.h (a bit-identical Gf mirror); the step
-// bodies are ports of the baked program's, one family per .cpp. Fidelity rule:
-// for the same input values, floating-point results must be bit-identical to
-// the baked path with those values authored. rigExecPose --verify-binary gates
-// every family on dynamic==baked==binary over the shipped examples. Threading:
-// Execute is serial over clusters unless the consumer hands it a dispatcher
-// (SetTaskDispatch), which then runs the clusters the DAG allows in parallel
-// (the OpenUSD side passes a WorkDispatcher, Godot its WorkerThreadPool). A
-// classicLinear or dualQuaternion skin of at least 4,096 points then splits at
-// a grain of 512: the skin's task drains the ranges itself and hands the
-// dispatcher helper tasks that claim from the same atomic counter. It never
-// waits on the dispatcher, only on ranges already claimed, and the helpers join
-// with Execute's wait. Successful points match the serial loop, including NaN
-// payloads. The reader holds no locks: one reader per thread, or external
+// rigExecRuntime: .rigexec playback.
+// Opens a baked .rigexec file (one FlatBuffer, rigExecBinary/format.h),
+// replays its cluster DAG over the inputs the caller sets, and publishes
+// joint matrices and deformed points -- no USD headers, no USD library. The
+// opened program is private to the library (store.h); the math is
+// runtimeMath.h (a bit-identical Gf mirror); the step bodies are ports of
+// the baked program's, one family per .cpp.
+// Fidelity rule: for the same input values, floating-point results must be
+// bit-identical to the baked path with those values authored. rigExecPose
+// --verify-binary gates every family on dynamic==baked==binary over the
+// shipped examples.
+// Threading: Execute is serial over clusters unless the consumer
+// hands it a dispatcher (SetTaskDispatch), which then runs the clusters the
+// DAG allows in parallel (the OpenUSD side passes a WorkDispatcher, Godot
+// its WorkerThreadPool). A classicLinear or dualQuaternion skin of at least
+// 4,096 points then splits at a grain of 512: the skin's task drains the
+// ranges itself and hands the dispatcher helper tasks that claim from the
+// same atomic counter. It never waits on the dispatcher, only on ranges
+// already claimed, and the helpers join with Execute's wait. Successful
+// points match the serial loop, including NaN payloads.
+// The reader holds no locks: one reader per thread, or external
 // synchronization.
 #ifndef RIGEXEC_RUNTIME_H
 #define RIGEXEC_RUNTIME_H

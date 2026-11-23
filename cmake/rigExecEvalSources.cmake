@@ -1,4 +1,6 @@
-# rigExecEval: the evaluation layer. A build boundary, not a shipped library:
+# rigExecEval: the evaluation layer: domain bodies, mover and solver
+# execution, weight packets, upstream and windowed reads, and the GPU
+# translation jobs. A build boundary, not a shipped library:
 # the objects are composed into librigExec by the root list, and this target is
 # never installed, exported or linked.
 add_library(rigExecEval OBJECT
