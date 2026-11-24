@@ -1506,8 +1506,8 @@ RunGoldenProtocol(const UsdStageRefPtr &stage, const SdfPath &rigPath,
 
 } // namespace
 
-int
-main(int argc, char **argv)
+static int
+RunPose(int argc, char **argv)
 {
     if (argc < 2) {
         std::printf("usage: rigExecPose <stage> [--rig <primPath>] "
@@ -1956,5 +1956,15 @@ main(int argc, char **argv)
             }
         }
     }
+    return status;
+}
+
+int
+main(int argc, char **argv)
+{
+    const int status = RunPose(argc, argv);
+    // The Windows C runtime flushes stdio only after ExitProcess has ended
+    // every other thread; flush while they still run.
+    std::fflush(nullptr);
     return status;
 }

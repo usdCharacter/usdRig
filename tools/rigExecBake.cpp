@@ -71,8 +71,8 @@ ParseTime(const char *text, double *out)
 
 } // namespace
 
-int
-main(int argc, char **argv)
+static int
+RunBake(int argc, char **argv)
 {
     if (argc < 2) {
         std::printf("usage: rigExecBake <stage> [--rig <primPath>] [--time T] "
@@ -188,4 +188,14 @@ main(int argc, char **argv)
         }
     }
     return 0;
+}
+
+int
+main(int argc, char **argv)
+{
+    const int status = RunBake(argc, argv);
+    // The Windows C runtime flushes stdio only after ExitProcess has ended
+    // every other thread; flush while they still run.
+    std::fflush(nullptr);
+    return status;
 }

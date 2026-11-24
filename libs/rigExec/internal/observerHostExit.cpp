@@ -9,18 +9,20 @@
 #include <cstdlib>
 #include <exception>
 namespace {
-// OpenUSD destroys layer data on detached tasks. On Windows, ExitProcess kills
-// a worker mid-destroy while it holds heap or C runtime locks that DLL teardown
-// and its stdio flush then wait on: the process hangs, or ends with its
-// buffered output lost.
+// The Windows C runtime flushes stdio only after ExitProcess has ended every
+// other thread, and DLL teardown waits on any heap or C runtime lock a thread
+// held when it ended: the process then hangs, or ends with its buffered output
+// lost. Flush while every thread still runs, then let OpenUSD's detached
+// destruction of layer data finish.
 void
-WaitForDetachedWork()
+FinishBeforeExitProcess()
 {
+    std::fflush(nullptr);
     PXR_WORK_IMPL_NAMESPACE_USING_DIRECTIVE;
     pxr::WorkTBB_GetDetachedDispatcher().Wait();
 }
 // Registered first, so it runs after the observers complete.
-const bool detachedWorkJoined = std::atexit(WaitForDetachedWork) == 0;
+const bool exitFinished = std::atexit(FinishBeforeExitProcess) == 0;
 void
 CompleteObservers()
 {

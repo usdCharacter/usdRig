@@ -8,8 +8,8 @@
 #include <vector>
 
 PXR_NAMESPACE_USING_DIRECTIVE
-int
-main(int argc, char **argv)
+static int
+RunReplay(int argc, char **argv)
 {
     if (argc < 3) {
         std::fprintf(stderr,
@@ -54,4 +54,14 @@ main(int argc, char **argv)
     std::printf("Input chronology and completeness replayed; numerical verdict "
                 "uses the independent G5 original judge\n");
     return 0;
+}
+
+int
+main(int argc, char **argv)
+{
+    const int status = RunReplay(argc, argv);
+    // The Windows C runtime flushes stdio only after ExitProcess has ended
+    // every other thread; flush while they still run.
+    std::fflush(nullptr);
+    return status;
 }
