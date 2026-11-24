@@ -5815,32 +5815,33 @@ TestIkFkMatchSceneProgramMatchesNative()
     CHECK(sawFk);
 }
 
-// One published value bit for bit, so that a NaN equals itself.
+// One published value bit for bit, any NaN equal to any NaN
+// (rigExecTest::SameBitsOrNaN).
 static bool
-SameValueBits(const VtValue &a, const VtValue &b)
+SameValueBits(const VtValue &a, const VtValue &b, const char *what)
 {
-    const auto bits = [](const void *x, const void *y, size_t size) {
-        return std::memcmp(x, y, size) == 0;
-    };
+    using rigExecTest::SameBitsOrNaN;
     if (a.IsHolding<VtDoubleArray>() && b.IsHolding<VtDoubleArray>()) {
         const VtDoubleArray &x = a.UncheckedGet<VtDoubleArray>();
         const VtDoubleArray &y = b.UncheckedGet<VtDoubleArray>();
         return x.size() == y.size() &&
-               (x.empty() || bits(x.cdata(), y.cdata(), x.size() * 8));
+               SameBitsOrNaN(x.cdata(), y.cdata(), x.size(), what);
     }
     if (a.IsHolding<double>() && b.IsHolding<double>())
-        return bits(&a.UncheckedGet<double>(), &b.UncheckedGet<double>(), 8);
+        return SameBitsOrNaN(&a.UncheckedGet<double>(),
+                             &b.UncheckedGet<double>(), 1, what);
     if (a.IsHolding<float>() && b.IsHolding<float>())
-        return bits(&a.UncheckedGet<float>(), &b.UncheckedGet<float>(), 4);
+        return SameBitsOrNaN(&a.UncheckedGet<float>(), &b.UncheckedGet<float>(),
+                             1, what);
     if (a.IsHolding<GfMatrix4d>() && b.IsHolding<GfMatrix4d>())
-        return bits(a.UncheckedGet<GfMatrix4d>().data(),
-                    b.UncheckedGet<GfMatrix4d>().data(), 128);
+        return SameBitsOrNaN(a.UncheckedGet<GfMatrix4d>().data(),
+                             b.UncheckedGet<GfMatrix4d>().data(), 16, what);
     return a == b;
 }
 
-// Two publications of one frame bit for bit: the ordered diagnostics, every
-// moved property and every base, final and control frame. Prints the first
-// difference.
+// Two publications of one frame: the ordered diagnostics and validity
+// exactly, every moved property and every base, final and control frame bit
+// for bit with any NaN equal to any NaN. Prints the first difference.
 static bool
 SamePublishedBits(const RigExecRigPose &a, const RigExecRigPose &b)
 {
@@ -5856,7 +5857,7 @@ SamePublishedBits(const RigExecRigPose &a, const RigExecRigPose &b)
     for (const auto &[path, value] : a.movedProperties) {
         const auto found = b.movedProperties.find(path);
         if (found == b.movedProperties.end() ||
-            !SameValueBits(value, found->second)) {
+            !SameValueBits(value, found->second, path.GetText())) {
             std::printf("    moved property %s differs\n", path.GetText());
             return false;
         }
@@ -5869,18 +5870,10 @@ SamePublishedBits(const RigExecRigPose &a, const RigExecRigPose &b)
         for (const auto &[path, frame] : x) {
             const auto found = y.find(path);
             if (found == y.end() || frame.flags != found->second.flags ||
-                std::memcmp(frame.points.data(), found->second.points.data(),
-                            sizeof(frame.points)) != 0) {
+                !rigExecTest::SameBitsOrNaN(frame.points[0].data(),
+                                            found->second.points[0].data(), 12,
+                                            path.GetText())) {
                 std::printf("    %s %s differs\n", what, path.GetText());
-                if (found != y.end())
-                    for (size_t p = 0; p < 4; ++p)
-                        std::printf("      %u (%g %g %g) vs %u (%g %g %g)\n",
-                                    frame.flags, frame.points[p][0],
-                                    frame.points[p][1], frame.points[p][2],
-                                    found->second.flags,
-                                    found->second.points[p][0],
-                                    found->second.points[p][1],
-                                    found->second.points[p][2]);
                 return false;
             }
         }

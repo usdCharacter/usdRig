@@ -20,6 +20,7 @@
 #include "rigExecScene/constraintGraphBinding.h"
 #include "rigExecScene/constraintProgram.h"
 #include "rigExecScene/solverGraphBinding.h"
+#include "rigExecPoseCompare.h"
 #include "rigExecSceneProgramDrive.h"
 #include "rigExecSchema/schemaNames.h"
 
@@ -28,6 +29,7 @@
 #include "pxr/base/gf/transform.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"
+#include "pxr/base/vt/types.h"
 #include "pxr/usd/sdf/layer.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/primRange.h"
@@ -845,35 +847,94 @@ ConstraintName(RigExecConstraintKind kind)
     }
 }
 
-/// Bit for bit, including the blocked flag, count and diagnostic.
+/// A frame bit for bit with any NaN equal to any NaN
+/// (rigExecTest::SameBitsOrNaN), for poisoned inputs.
 bool
-SameState(const RigExecTypedValueState &a, const RigExecTypedValueState &b)
+SameFrameOrNaN(const RigExecPointFrame &a, const RigExecPointFrame &b)
+{
+    return a.flags == b.flags &&
+           rigExecTest::SameBitsOrNaN(a.points[0].data(), b.points[0].data(),
+                                      12, "frame");
+}
+
+/// Bit for bit, including the blocked flag, count and diagnostic; with
+/// \p nanEqual, for poisoned inputs, any NaN equals any NaN.
+bool
+SameState(const RigExecTypedValueState &a, const RigExecTypedValueState &b,
+          bool nanEqual = false)
 {
     if (a.initialized != b.initialized || a.blocked != b.blocked ||
         a.count != b.count || a.error != b.error ||
         a.value.index() != b.value.index())
         return false;
+    const auto frame = nanEqual ? SameFrameOrNaN : SameFrame;
     if (const auto *x = std::get_if<RigExecPointFrame>(&a.value))
-        return SameFrame(*x, std::get<RigExecPointFrame>(b.value));
+        return frame(*x, std::get<RigExecPointFrame>(b.value));
     if (const auto *x = std::get_if<VtValue>(&a.value)) {
         const VtValue &y = std::get<VtValue>(b.value);
-        if (x->IsHolding<RigExecPointFrameArray>())
-            return y.IsHolding<RigExecPointFrameArray>() &&
-                   SameArray(x->UncheckedGet<RigExecPointFrameArray>(),
-                             y.UncheckedGet<RigExecPointFrameArray>());
+        if (x->IsHolding<RigExecPointFrameArray>()) {
+            if (!y.IsHolding<RigExecPointFrameArray>())
+                return false;
+            const auto &p = x->UncheckedGet<RigExecPointFrameArray>();
+            const auto &q = y.UncheckedGet<RigExecPointFrameArray>();
+            if (!nanEqual)
+                return SameArray(p, q);
+            if (p.frames.size() != q.frames.size() ||
+                p.rests.size() != q.rests.size())
+                return false;
+            for (size_t k = 0; k < p.frames.size(); ++k)
+                if (!frame(p.frames[k], q.frames[k]))
+                    return false;
+            for (size_t k = 0; k < p.rests.size(); ++k)
+                if (!rigExecTest::SameBitsOrNaN(
+                        p.rests[k][0].data(), q.rests[k][0].data(), 12, "rest"))
+                    return false;
+            return true;
+        }
+        if (nanEqual && x->IsHolding<VtDoubleArray>() &&
+            y.IsHolding<VtDoubleArray>()) {
+            const auto &p = x->UncheckedGet<VtDoubleArray>();
+            const auto &q = y.UncheckedGet<VtDoubleArray>();
+            return p.size() == q.size() &&
+                   rigExecTest::SameBitsOrNaN(p.cdata(), q.cdata(), p.size(),
+                                              "values");
+        }
+        if (nanEqual && x->IsHolding<VtMatrix4dArray>() &&
+            y.IsHolding<VtMatrix4dArray>()) {
+            const auto &p = x->UncheckedGet<VtMatrix4dArray>();
+            const auto &q = y.UncheckedGet<VtMatrix4dArray>();
+            return p.size() == q.size() &&
+                   (p.empty() || rigExecTest::SameBitsOrNaN(
+                                     p.cdata()->data(), q.cdata()->data(),
+                                     16 * p.size(), "matrices"));
+        }
         return RigExecTypedSame(*x, y);
+    }
+    if (nanEqual) {
+        if (const auto *x = std::get_if<double>(&a.value))
+            return rigExecTest::SameBitsOrNaN(x, &std::get<double>(b.value), 1,
+                                              "double");
+        if (const auto *x = std::get_if<float>(&a.value))
+            return rigExecTest::SameBitsOrNaN(x, &std::get<float>(b.value), 1,
+                                              "float");
+        if (const auto *x = std::get_if<GfVec3d>(&a.value))
+            return rigExecTest::SameBitsOrNaN(
+                x->data(), std::get<GfVec3d>(b.value).data(), 3, "vector");
+        if (const auto *x = std::get_if<GfMatrix4d>(&a.value))
+            return rigExecTest::SameBitsOrNaN(
+                x->data(), std::get<GfMatrix4d>(b.value).data(), 16, "matrix");
     }
     return a.value == b.value;
 }
 
 /// Runs \p run twice from the same store, natively and with \p runner, and
 /// compares what each published to \p writes, and what the scene program
-/// itself published there.
+/// itself published there (SameState, \p nanEqual for poisoned inputs).
 template <class Run>
 bool
 SamePublish(RigExecTypedValueStore &store,
             const std::vector<RigExecValueId> &writes,
-            RigExecPoseOpRunner &runner, const Run &run)
+            RigExecPoseOpRunner &runner, const Run &run, bool nanEqual = false)
 {
     std::vector<RigExecTypedValueState> saved, native;
     for (const RigExecValueId id : writes)
@@ -886,8 +947,8 @@ SamePublish(RigExecTypedValueStore &store,
     run(&runner);
     bool same = true;
     for (size_t k = 0; k < writes.size(); ++k) {
-        same = same && SameState(native[k], saved[k]) &&
-               SameState(native[k], store.values[size_t(writes[k])]);
+        same = same && SameState(native[k], saved[k], nanEqual) &&
+               SameState(native[k], store.values[size_t(writes[k])], nanEqual);
         store.values[size_t(writes[k])] = saved[k];
     }
     return same;
@@ -1605,7 +1666,7 @@ TestSpaceMatch()
 
 void
 CompareRig(const std::string &label, const UsdStageRefPtr &stage,
-           const SdfPath &rig, int first, int last)
+           const SdfPath &rig, int first, int last, bool nanEqual)
 {
     rigExecSceneProgramDrive::SceneRun scene(stage, rig, first, last);
     if (!scene.ok) {
@@ -1623,13 +1684,14 @@ CompareRig(const std::string &label, const UsdStageRefPtr &stage,
                 if (!RigExecSolverOpSupported(op->record))
                     continue;
                 RigExecSolverWorkspace workspace;
-                const bool same =
-                    SamePublish(store, {op->output}, runners[i],
-                                [&](RigExecPoseOpRunner *ops) {
-                                    std::string error;
-                                    RigExecRunSolverGraph(
-                                        *op, &store, &workspace, &error, ops);
-                                });
+                const bool same = SamePublish(
+                    store, {op->output}, runners[i],
+                    [&](RigExecPoseOpRunner *ops) {
+                        std::string error;
+                        RigExecRunSolverGraph(*op, &store, &workspace, &error,
+                                              ops);
+                    },
+                    nanEqual);
                 if (!same)
                     std::printf("%s: %s solver %zu differs at %d\n",
                                 label.c_str(), SolverName(op->record.kind), i,
@@ -1638,12 +1700,13 @@ CompareRig(const std::string &label, const UsdStageRefPtr &stage,
                 ++sceneSolvers[SolverName(op->record.kind)];
             } else if (const auto *op = std::get_if<RigExecBoundAutoClavicle>(
                            &operations[i])) {
-                const bool same = SamePublish(store, {op->output}, runners[i],
-                                              [&](RigExecPoseOpRunner *ops) {
-                                                  std::string error;
-                                                  RigExecRunAutoClavicle(
-                                                      *op, &store, &error, ops);
-                                              });
+                const bool same = SamePublish(
+                    store, {op->output}, runners[i],
+                    [&](RigExecPoseOpRunner *ops) {
+                        std::string error;
+                        RigExecRunAutoClavicle(*op, &store, &error, ops);
+                    },
+                    nanEqual);
                 if (!same)
                     std::printf("%s: auto clavicle %zu differs at %d\n",
                                 label.c_str(), i, t);
@@ -1666,13 +1729,14 @@ CompareRig(const std::string &label, const UsdStageRefPtr &stage,
                                                            store.values.size();
                                                 }),
                                  writes.end());
-                    const bool same =
-                        SamePublish(store, writes, runners[i],
-                                    [&](RigExecPoseOpRunner *ops) {
-                                        std::string error;
-                                        RigExecRunConstraintGraph(
-                                            *op, &store, &error, nullptr, ops);
-                                    });
+                    const bool same = SamePublish(
+                        store, writes, runners[i],
+                        [&](RigExecPoseOpRunner *ops) {
+                            std::string error;
+                            RigExecRunConstraintGraph(*op, &store, &error,
+                                                      nullptr, ops);
+                        },
+                        nanEqual);
                     if (!same)
                         std::printf("%s: IK/FK match %zu differs at %d\n",
                                     label.c_str(), i, t);
@@ -1710,11 +1774,13 @@ CompareRig(const std::string &label, const UsdStageRefPtr &stage,
                     if (id < store.values.size())
                         writes.push_back(id);
                 const bool same = SamePublish(
-                    store, writes, runners[i], [&](RigExecPoseOpRunner *ops) {
+                    store, writes, runners[i],
+                    [&](RigExecPoseOpRunner *ops) {
                         std::string error;
                         RigExecRunConstraintGraph(*op, &store, &error, nullptr,
                                                   ops);
-                    });
+                    },
+                    nanEqual);
                 if (!same)
                     std::printf("%s: %s constraint %zu differs at %d\n",
                                 label.c_str(), ConstraintName(kind), i, t);
@@ -1839,7 +1905,8 @@ IkFkMatchStage(bool poleRides)
 }
 
 void
-CompareStage(const std::string &label, const UsdStageRefPtr &stage)
+CompareStage(const std::string &label, const UsdStageRefPtr &stage,
+             bool nanEqual = false)
 {
     if (!stage) {
         std::printf("%s: stage did not open\n", label.c_str());
@@ -1854,7 +1921,7 @@ CompareStage(const std::string &label, const UsdStageRefPtr &stage)
     for (const UsdPrim &prim : stage->Traverse())
         if (prim.GetTypeName() == "RigExecRoot")
             CompareRig(label + " " + prim.GetPath().GetString(), stage,
-                       prim.GetPath(), first, last);
+                       prim.GetPath(), first, last, nanEqual);
 }
 
 void
@@ -1903,7 +1970,7 @@ TestAuthoredRigs(const std::string &examples)
                 ik.CreateAttribute(TfToken(channel), SdfValueTypeNames->Double)
                     .Set(poison);
             CompareStage(std::string("IK/FK match, non-finite ") + channel,
-                         stage);
+                         stage, true);
         }
     }
 

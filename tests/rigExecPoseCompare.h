@@ -10,7 +10,10 @@
 #include "pxr/usd/usd/stage.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <string>
 #include <vector>
@@ -18,6 +21,31 @@
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExecTest {
+
+/// \p n values of \p a and \p b bit for bit, except that any NaN equals any
+/// NaN: which NaN an operation yields (its sign and payload) depends on the
+/// instruction the compiler picks, so two code paths agree only that it is
+/// NaN. Prints both bit patterns of the first mismatch, after \p what.
+template <class T>
+bool
+SameBitsOrNaN(const T *a, const T *b, size_t n, const char *what)
+{
+    static_assert(sizeof(T) <= sizeof(uint64_t), "a scalar");
+    for (size_t i = 0; i < n; ++i) {
+        if (std::isnan(a[i]) && std::isnan(b[i]))
+            continue;
+        if (std::memcmp(&a[i], &b[i], sizeof(T)) != 0) {
+            uint64_t x = 0, y = 0;
+            std::memcpy(&x, &a[i], sizeof(T));
+            std::memcpy(&y, &b[i], sizeof(T));
+            std::printf("    %s[%zu]: %g (0x%016llx) vs %g (0x%016llx)\n", what,
+                        i, double(a[i]), (unsigned long long)x, double(b[i]),
+                        (unsigned long long)y);
+            return false;
+        }
+    }
+    return true;
+}
 
 /// Exact equality on one published frame: the flags and every point.
 ///
