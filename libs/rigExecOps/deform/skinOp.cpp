@@ -32,9 +32,6 @@ using Transforms = rigExecStd::RigExecArray<Mat4d>;
 using Indices = rigExecStd::RigExecArray<int32_t>;
 using Layout = rigExec::RigExecSkinLayoutOf<Mat4d>;
 
-// The programs' default; the SSE and scalar forms agree only to tolerance.
-constexpr bool kUseSimd = true;
-
 bool
 Usable(const Transforms &transforms)
 {
@@ -87,7 +84,7 @@ SkinOne(const rigExec::RigExecOpIo &io, SkinMethod method, int elementSize,
     Points &out = Out<Points>(io, SkinOut());
     out.Assign(in.Size());
     if (method == SkinMethod::ClassicLinear) {
-        if (kUseSimd)
+        if (io.useSimd)
             rigExec::RigExecApplyLinearBlendSkinSimdKernel<Vec3f, Vec3d>(
                 in.Data(), out.Data(), layout, nullptr);
         else

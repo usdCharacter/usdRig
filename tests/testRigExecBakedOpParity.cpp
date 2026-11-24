@@ -554,6 +554,7 @@ ProbeRevisions(const B &b)
                 }
             }
             RigExecGeometryOpRunner runner;
+            runner.compile.useSimd = b.useSimd;
             std::vector<GfVec3f> points = entering;
             std::string error;
             bool applied = p.valid && revision.status.AllowsApply() &&

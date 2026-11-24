@@ -382,8 +382,10 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
     }
     std::string why;
     std::shared_ptr<const RigExecRigDesc> desc = builder.Build(&why);
+    RigExecCompileOptions options;
+    options.useSimd = p->geoSettings.useSimd;
     if (desc)
-        nodes->program = RigExecCompile(*desc, {}, &why);
+        nodes->program = RigExecCompile(*desc, options, &why);
     if (nodes->program)
         nodes->evaluator = RigExecEvaluator::Create(nodes->program, {}, &why);
     if (!nodes->evaluator)

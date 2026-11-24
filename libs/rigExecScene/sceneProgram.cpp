@@ -11,10 +11,9 @@ Fail(std::string *error, const std::string &message)
         *error = message;
     return false;
 }
-// Decided up front: false for an External mover without an op, a windowed
-// deform revision and a scalar-mode request for a deform op; the deform ops
-// run SIMD kernels only. An External mover's op has no SIMD form and keeps
-// its window, if it has one.
+// Decided up front: false for an External mover without an op and a
+// windowed deform revision. An External mover's op keeps its window, if it
+// has one.
 bool
 RunsOnOps(const RigExecSceneGeometryOp &op)
 {
@@ -22,7 +21,7 @@ RunsOnOps(const RigExecSceneGeometryOp &op)
     if (kind == RigExecRevisionOp::External)
         return RigExecExternalOpHandle(op.binding.descriptor.record.binding) !=
                nullptr;
-    if (op.windowFrames || !op.useSimd)
+    if (op.windowFrames)
         return false;
     if (op.binding.descriptor.matrixOutput)
         return RigExecGeometryMatrixOpSupported(kind);
@@ -294,6 +293,9 @@ RigExecSceneProgramRuntime::Prepare(const RigExecSceneProgram &program,
         workspace.poseRunner.evaluate = opEvaluate;
         workspace.weight.combine.evaluate = opEvaluate;
         workspace.poseOnOps = RunsPoseOnOps(_operations[i]);
+        if (const auto *op =
+                std::get_if<RigExecSceneGeometryOp>(&_operations[i]))
+            workspace.opRunner.compile.useSimd = op->useSimd;
     }
     _windows.assign(program.windowedOps.size(), Window());
     _windowOfOperation.assign(_operations.size(), -1);

@@ -530,6 +530,7 @@ RigExecRun::_RunBatch(uint32_t b)
         view.stateStride = batch.stateStride;
     }
     view.portCount = d.portCount;
+    view.useSimd = program->useSimd;
     view.inputs = inputs.data() + batch.firstPort;
     view.outputs = outputs.data() + batch.firstPort;
     if (d.threading == RigExecOpThreading::Windowed)

@@ -148,6 +148,8 @@ public:
     RigExecProgram &operator=(const RigExecProgram &) = delete;
 
     uint64_t registryFingerprint = 0;
+    /// RigExecCompileOptions::useSimd.
+    bool useSimd = true;
     /// The nodes as the shared dependency compiler ordered them, one op
     /// per node keyed by node id, reading and writing slot ids. Its
     /// readers map each slot to the nodes that read it.

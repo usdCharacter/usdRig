@@ -818,6 +818,7 @@ RigExecCompile(const RigExecRigDesc &desc, const RigExecCompileOptions &options,
     auto program =
         std::make_shared<RigExecProgram>(RigExecProgram::_CompileKey(0));
     program->registryFingerprint = registry.Fingerprint();
+    program->useSimd = options.useSimd;
 
     CompileState s{registry, data, *program, error};
     s.nodeCount = uint32_t(data.nodes.size());

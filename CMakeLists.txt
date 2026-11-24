@@ -1497,7 +1497,7 @@ add_executable(testRigExecBakedOpParity tests/testRigExecBakedOpParity.cpp)
 target_link_libraries(testRigExecBakedOpParity PRIVATE rigExecSceneOps)
 target_compile_definitions(testRigExecBakedOpParity PRIVATE
     ${_rigexec_schema_resource_define})
-rigexec_add_test(NAME testRigExecBakedOpParity COMMAND testRigExecBakedOpParity
+set(_rigexec_op_parity_rigs
     "${CMAKE_CURRENT_SOURCE_DIR}/examples/01_FkChainTail.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/examples/02_TwoBoneIkLeg.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/examples/03_IkFkBlendClamp.usda"
@@ -1567,8 +1567,14 @@ rigexec_add_test(NAME testRigExecBakedOpParity COMMAND testRigExecBakedOpParity
     "${CMAKE_CURRENT_SOURCE_DIR}/examples/05_TwistRibbonSpine.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/examples/06_LatticeBulge.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/examples/ArmRig.usda")
+rigexec_add_test(NAME testRigExecBakedOpParity COMMAND testRigExecBakedOpParity
+    ${_rigexec_op_parity_rigs})
 set_tests_properties(testRigExecBakedOpParity PROPERTIES
     ENVIRONMENT "RIGEXEC_ENABLE_SIMD=1")
+rigexec_add_test(NAME testRigExecBakedOpParityScalar
+    COMMAND testRigExecBakedOpParity ${_rigexec_op_parity_rigs})
+set_tests_properties(testRigExecBakedOpParityScalar PROPERTIES
+    ENVIRONMENT "RIGEXEC_ENABLE_SIMD=0")
 
 add_executable(testRigExecSceneDeterminism tests/testRigExecSceneDeterminism.cpp)
 target_link_libraries(testRigExecSceneDeterminism PRIVATE rigExecSceneOps)

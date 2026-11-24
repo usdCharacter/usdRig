@@ -20,6 +20,11 @@ struct RigExecCompileOptions {
     /// limit. Smaller groups spread work across more threads. Results are
     /// the same for any value.
     size_t maxBatchNodes = 0;
+    /// Whether ops that have both an SSE2 form and a plain scalar form use
+    /// the SSE2 form. The two forms can differ in the last bit of a result,
+    /// so every evaluator of one rig must use the same setting; the scalar
+    /// form is the one the recorded fixtures use.
+    bool useSimd = true;
 };
 
 /// The compiled program, shared by any number of evaluators; it never

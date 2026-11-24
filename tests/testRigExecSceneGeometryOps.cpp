@@ -34,6 +34,8 @@ using namespace rigExec;
 
 namespace {
 int failures = 0;
+/// Whether the ops and the native kernels take their SSE2 forms.
+bool g_useSimd = true;
 #define CHECK(value)                                                           \
     do {                                                                       \
         if (!(value)) {                                                        \
@@ -154,7 +156,9 @@ struct Chain {
             nodes.push_back(node);
         }
         auto desc = builder.Build(&error);
-        auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
+        RigExecCompileOptions options;
+        options.useSimd = g_useSimd;
+        auto program = desc ? RigExecCompile(*desc, options, &error) : nullptr;
         evaluator =
             program ? RigExecEvaluator::Create(program, {}, &error) : nullptr;
         if (!evaluator)
@@ -181,13 +185,13 @@ struct Chain {
     }
 };
 
-/// The native answer over \p points.
+/// The native answer over \p points, in the mode the ops are compiled in.
 bool
 Native(RigExecRevisionOp op, const RigExecMoverParameters &p,
        std::vector<GfVec3f> *points)
 {
     RigExecGeometryWorkspace workspace;
-    return RigExecRunGeometry(op, p, points, /*useSimd=*/true, &workspace.wire,
+    return RigExecRunGeometry(op, p, points, g_useSimd, &workspace.wire,
                               &workspace.surface);
 }
 
@@ -532,6 +536,7 @@ CompareMatrix(RigExecRevisionOp op, const RigExecRevisionBinding &binding,
 
     // The scene runner refuses with the native run's first diagnostic.
     RigExecGeometryOpRunner runner;
+    runner.compile.useSimd = g_useSimd;
     GfMatrix4d ran(1.0);
     std::string diagnostic;
     const bool runnerOk = RigExecRunGeometryMatrixOp(
@@ -1434,20 +1439,23 @@ main()
         return 1;
     }
     const Grid grid(9, 7);
-    TestMatrix(grid);
-    TestSkin(grid);
-    TestPointOps(grid);
-    TestWrinkle(grid);
-    TestLattice(grid);
-    TestSurfaceProject(grid);
-    TestFrameDriven(grid);
-    TestWire(grid);
-    TestDerived(grid);
-    TestProjector(grid);
-    TestBlendShape(grid);
-    TestChain(grid);
-    TestRefusals(grid);
-    TestStaleSettings(grid);
+    for (const bool simd : {true, false}) {
+        g_useSimd = simd;
+        TestMatrix(grid);
+        TestSkin(grid);
+        TestPointOps(grid);
+        TestWrinkle(grid);
+        TestLattice(grid);
+        TestSurfaceProject(grid);
+        TestFrameDriven(grid);
+        TestWire(grid);
+        TestDerived(grid);
+        TestProjector(grid);
+        TestBlendShape(grid);
+        TestChain(grid);
+        TestRefusals(grid);
+        TestStaleSettings(grid);
+    }
     TestCombineWeights();
     TestCapabilityFlags();
     if (failures) {

@@ -29,7 +29,7 @@ inline constexpr uint32_t kRigExecInvalidIndex = 0xffffffffu;
 /// Version of the descriptor structs below. Each library records the version
 /// it was built with, and Initialize rejects one built with another. Raise
 /// it whenever a descriptor's layout changes.
-inline constexpr uint32_t kRigExecRegistryAbiVersion = 8;
+inline constexpr uint32_t kRigExecRegistryAbiVersion = 9;
 
 /// Refers to one registered data type. A type library defines one per type
 /// with RIGEXEC_DEFINE_TYPE_HANDLE, and Initialize gives it its index; read
@@ -370,6 +370,9 @@ struct RigExecOpIo {
     /// For a Windowed op: what it recorded on earlier frames, and where to
     /// record this frame's. Null for other ops.
     const RigExecWindowRun *window = nullptr;
+    /// The program's RigExecCompileOptions::useSimd: whether an op with an
+    /// SSE2 form and a scalar form uses the SSE2 form.
+    bool useSimd = true;
 };
 
 /// Computes an op's outputs from its inputs. Returns false, optionally with
@@ -460,6 +463,8 @@ struct RigExecOpBatch {
     /// the op's order; null when it declares none (see opFields.h).
     const RigExecPayloadColumn *payloadFields = nullptr;
     const RigExecStateColumn *stateFields = nullptr;
+    /// The program's RigExecCompileOptions::useSimd, as in RigExecOpIo.
+    bool useSimd = true;
 };
 
 /// Runs every active instance of \p batch, in instance order. On a failure
@@ -495,6 +500,7 @@ RigExecBatchInstance(const RigExecOpBatch &batch, size_t k)
     io.outputs = batch.outputs + k * batch.portCount;
     io.portCount = batch.portCount;
     io.window = batch.windows ? batch.windows[k] : nullptr;
+    io.useSimd = batch.useSimd;
     return io;
 }
 

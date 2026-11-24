@@ -28,9 +28,6 @@ using rigExecStd::Mat4d;
 using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 
-// The programs' default; the SSE and scalar forms agree only to tolerance.
-constexpr bool kUseSimd = true;
-
 enum MatrixDeformField : uint32_t { kRadial };
 
 using Math = rigExec::eval::MatrixKernelMath<Vec3f, Vec3d, Mat4d>;
@@ -81,7 +78,7 @@ DeformOne(const rigExec::RigExecOpIo &io, bool radial, std::string *error)
     out.Assign(in.Size());
     rigExec::eval::ApplyAcceptedMatrixKernel<Math>(
         view, envelope ? envelope->Data() : nullptr, radial, transform,
-        in.Data(), out.Data(), in.Size(), kUseSimd);
+        in.Data(), out.Data(), in.Size(), io.useSimd);
     return true;
 }
 
