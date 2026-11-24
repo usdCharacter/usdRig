@@ -1508,7 +1508,8 @@ RigExecInputReplayHeldProgram::Build(RigExecRigEvaluator *owner,
     if (reasons && !reasons->empty())
         throw std::runtime_error(
             "held-program adapter requires initially empty reasons output");
-    auto *observer = owner->_inputReplayObserver.get();
+    auto *observer =
+        owner->FindEvaluationObserver<RigExecInputReplayObserver>();
     const bool recording = bool(observer);
     unsigned ownerId = 0, id = 0;
     const auto *goldenMode = std::getenv("RIGEXEC_GOLDEN_SUITE");
@@ -1617,6 +1618,74 @@ RigExecInputReplaySuppression::~RigExecInputReplaySuppression()
 {
     --suppressed;
 }
+void
+RigExecInputReplayObserver::CompileStarting(RigExecRigEvaluator &evaluator,
+                                            std::vector<std::string> *errors)
+{
+    Options(evaluator.GetSolverGuidesEnabled(),
+            evaluator.GetPublishWeightFields());
+    _compileCall = Compile(errors);
+    _compileScope =
+        std::make_unique<RigExecInputReplayImplementationScope>(true);
+}
+
+void
+RigExecInputReplayObserver::CompileFinished(RigExecRigEvaluator &,
+                                            bool compiled,
+                                            std::vector<std::string> *errors)
+{
+    CompileResult(_compileCall, compiled, errors);
+    _compileScope.reset();
+}
+
+void
+RigExecInputReplayObserver::CompileRefused(RigExecRigEvaluator &,
+                                           std::vector<std::string> *errors)
+{
+    CompileResult(_compileCall, false, errors);
+    _compileScope.reset();
+}
+
+void
+RigExecInputReplayObserver::FrameStarting(RigExecRigEvaluator &evaluator,
+                                          UsdTimeCode time)
+{
+    Options(evaluator.GetSolverGuidesEnabled(),
+            evaluator.GetPublishWeightFields());
+    BeginEvaluate(time);
+}
+
+void
+RigExecInputReplayObserver::FrameEnded(RigExecRigEvaluator &)
+{
+    EndEvaluate();
+}
+
+void
+RigExecInputReplayObserver::OptionsChanging(RigExecRigEvaluator &,
+                                            bool solverGuides,
+                                            bool publishWeightFields)
+{
+    Options(solverGuides, publishWeightFields);
+}
+
+void
+RigExecInputReplayObserver::InteractiveOverridesChanging(
+    RigExecRigEvaluator &, const std::vector<RigExecValueOverride> *overrides)
+{
+    if (overrides)
+        Interactive(*overrides);
+    else
+        ClearInteractive();
+}
+
+void
+RigExecInputReplayObserver::UpstreamInputsChanging(
+    RigExecRigEvaluator &, const std::vector<RigExecValueOverride> &inputs)
+{
+    Upstream(inputs);
+}
+
 RigExecInputReplayImplementationScope::RigExecInputReplayImplementationScope(
     bool enabled)
     : _enabled(enabled)

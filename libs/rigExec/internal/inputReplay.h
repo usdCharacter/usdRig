@@ -1,6 +1,7 @@
 #ifndef RIGEXEC_INPUT_REPLAY_H
 #define RIGEXEC_INPUT_REPLAY_H
 
+#include "rigExec/api/evaluationObserver.h"
 #include "rigExec/internal/observerHost.h"
 #include "pxr/usd/usd/stage.h"
 #include <cstdint>
@@ -17,6 +18,7 @@ class RigExecBakedProgram;
 class RigExecRigEvaluator;
 class RigExecHeldProgramGoldenObserver;
 class RigExecInputReplayHeldProgram;
+class RigExecInputReplayImplementationScope;
 
 /// One explicit caller Compile action; passive result metadata stays separate.
 struct RigExecInputReplayCompileCall {
@@ -28,7 +30,8 @@ struct RigExecInputReplayCompileCall {
 
 /// Opt-in source-input recording. This observer never receives pose outputs.
 /// RIGEXEC_INPUT_REPLAY=capture:<new file> enables a serial owning-thread log.
-class RigExecInputReplayObserver {
+/// Installed on an evaluator by the verification factory.
+class RigExecInputReplayObserver : public RigExecEvaluationObserver {
 private:
     /// Factory-only construction: this passkey is private and not
     /// default-constructible, so {} cannot build one outside this class.
@@ -45,7 +48,24 @@ public:
     static void UnsupportedAction(const char *action);
     /// Record actual process-global caller array-admission state before mutation.
     static void ArrayAdmission(bool on);
-    ~RigExecInputReplayObserver();
+    ~RigExecInputReplayObserver() override;
+    void CompileStarting(RigExecRigEvaluator &evaluator,
+                         std::vector<std::string> *errors) override;
+    void CompileFinished(RigExecRigEvaluator &, bool compiled,
+                         std::vector<std::string> *errors) override;
+    void CompileRefused(RigExecRigEvaluator &,
+                        std::vector<std::string> *errors) override;
+    void FrameStarting(RigExecRigEvaluator &evaluator,
+                       UsdTimeCode time) override;
+    void FrameEnded(RigExecRigEvaluator &) override;
+    void OptionsChanging(RigExecRigEvaluator &, bool solverGuides,
+                         bool publishWeightFields) override;
+    void InteractiveOverridesChanging(
+        RigExecRigEvaluator &,
+        const std::vector<RigExecValueOverride> *overrides) override;
+    void UpstreamInputsChanging(
+        RigExecRigEvaluator &,
+        const std::vector<RigExecValueOverride> &inputs) override;
     RigExecInputReplayCompileCall Compile(const std::vector<std::string> *);
     void CompileResult(const RigExecInputReplayCompileCall &, bool,
                        const std::vector<std::string> *);
@@ -69,6 +89,10 @@ private:
     bool _evaluating = false, _compilePending = false;
     uint64_t _compileCalls = 0;
     RigExecInputReplayCompileCall _pendingCompile;
+    /// The caller Compile in progress, and the implementation scope that
+    /// covers it until its result is recorded.
+    RigExecInputReplayCompileCall _compileCall;
+    std::unique_ptr<RigExecInputReplayImplementationScope> _compileScope;
     friend class RigExecInputReplayHeldProgram;
 };
 

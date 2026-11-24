@@ -4,7 +4,6 @@
 #include "rigExec/api/evaluationObserver.h"
 #include "rigExec/internal/rigEvaluatorInternal.h"
 #include "rigExec/internal/rigEvaluatorPropertyBindings.h"
-#include "rigExec/internal/inputReplay.h"
 #include "rigExec/api/moverRegistry.h"
 
 #include "pxr/base/tf/staticTokens.h"
@@ -518,8 +517,6 @@ RigExecRigEvaluator::SetInteractiveOverrides(
     std::vector<RigExecValueOverride> overrides)
 {
     _AssertOwnerThread();
-    if (_inputReplayObserver)
-        _inputReplayObserver->Interactive(overrides);
     _Notify([&](RigExecEvaluationObserver &observer) {
         observer.InteractiveOverridesChanging(*this, &overrides);
     });
@@ -587,8 +584,6 @@ void
 RigExecRigEvaluator::ClearInteractiveOverrides()
 {
     _AssertOwnerThread();
-    if (_inputReplayObserver)
-        _inputReplayObserver->ClearInteractive();
     _Notify([&](RigExecEvaluationObserver &observer) {
         observer.InteractiveOverridesChanging(*this, nullptr);
     });
@@ -646,8 +641,6 @@ void
 RigExecRigEvaluator::SetUpstreamInputs(std::vector<RigExecValueOverride> inputs)
 {
     _AssertOwnerThread();
-    if (_inputReplayObserver)
-        _inputReplayObserver->Upstream(inputs);
     _Notify([&](RigExecEvaluationObserver &observer) {
         observer.UpstreamInputsChanging(*this, inputs);
     });

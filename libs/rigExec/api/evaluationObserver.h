@@ -4,8 +4,11 @@
 /// A hook for checks that watch an evaluator from outside it: recording its
 /// frames, replaying them later, or comparing it with a second evaluator.
 /// The evaluator calls each installed observer at fixed points, on the
-/// thread that owns the evaluator, in installation order. With none
-/// installed, each point only finds the list empty.
+/// thread that owns the evaluator: in installation order, except that
+/// CompileFinished, CompileRefused and FrameEnded go in reverse, so an
+/// observer that opens something when a call starts closes it after those
+/// installed later have finished. With none installed, each point only
+/// finds the list empty.
 
 #include "rigExec/api/rigEvaluator.h"
 

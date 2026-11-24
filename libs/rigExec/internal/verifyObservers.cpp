@@ -4,6 +4,7 @@
 
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/api/evaluationObserver.h"
+#include "rigExec/api/goldenSuite.h"
 #include "rigExec/internal/inputReplay.h"
 
 #include "pxr/base/tf/diagnostic.h"
@@ -161,11 +162,40 @@ private:
     std::unique_ptr<RigExecRigEvaluator> _shadow;
 };
 
+/// Records every pose the evaluator publishes in the golden suite.
+class GoldenSuiteRecorder : public RigExecEvaluationObserver {
+public:
+    explicit GoldenSuiteRecorder(
+        std::unique_ptr<RigExecGoldenSuiteObserver> suite)
+        : _suite(std::move(suite))
+    {
+    }
+    void FrameEvaluated(RigExecRigEvaluator &, UsdTimeCode,
+                        RigExecRigPose &pose) override
+    {
+        _suite->Record(pose);
+    }
+
+private:
+    std::unique_ptr<RigExecGoldenSuiteObserver> _suite;
+};
+
+/// Input replay first, so its recording brackets every other check's
+/// calls; the golden suite last, so it records the pose the shadow has
+/// annotated.
 void
 InstallVerification(RigExecRigEvaluator &evaluator)
 {
+    auto replay = RigExecInputReplayObserver::Create(
+        evaluator.GetEvaluationStage(), evaluator.GetRigPath());
+    auto suite = RigExecGoldenSuiteObserver::Create(evaluator.GetRigPath());
+    if (replay)
+        evaluator.AddEvaluationObserver(std::move(replay));
     if (kVerifyScopedClears)
         evaluator.AddEvaluationObserver(std::make_unique<ScopedClearShadow>());
+    if (suite)
+        evaluator.AddEvaluationObserver(
+            std::make_unique<GoldenSuiteRecorder>(std::move(suite)));
 }
 
 const bool kInstalled =

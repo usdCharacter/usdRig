@@ -1,7 +1,6 @@
 #ifndef RIGEXEC_GOLDEN_SUITE_H
 #define RIGEXEC_GOLDEN_SUITE_H
 
-#include "rigExec/internal/observerHost.h"
 #include "pxr/usd/sdf/path.h"
 #include <memory>
 #include <string>
@@ -29,5 +28,9 @@ public:
 protected:
     RigExecGoldenSuiteObserver() = default;
 };
+/// Completes the golden suite after every evaluator has closed: checks the
+/// process index and inventory. Idempotent; does nothing when the suite is
+/// off, and throws std::runtime_error when it is on without rigExecOracle.
+void RigExecFinalizeGoldenSuite();
 } // namespace rigExec
 #endif

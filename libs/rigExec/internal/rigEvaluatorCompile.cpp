@@ -6,7 +6,6 @@
 #include "rigExec/internal/rigEvaluatorInternal.h"
 #include "rigExec/internal/rigEvaluatorCompileAttempt.h"
 #include "rigExec/internal/crossDomainInputs.h"
-#include "rigExec/internal/inputReplay.h"
 #include "rigExec/internal/moverGraph.h"
 #include "rigExecScene/poseSceneTranslation.h"
 #include "rigExecScene/startFrameDerivation.h"
@@ -65,14 +64,6 @@ bool
 RigExecRigEvaluator::Compile(std::vector<std::string> *errors)
 {
     _AssertOwnerThread();
-    RigExecInputReplayCompileCall compileCall;
-    if (_inputReplayObserver) {
-        _inputReplayObserver->Options(_solverGuidesEnabled,
-                                      _publishWeightFields);
-        compileCall = _inputReplayObserver->Compile(errors);
-    }
-    RigExecInputReplayImplementationScope replayImplementation{
-        bool(_inputReplayObserver)};
     _Notify([&](RigExecEvaluationObserver &observer) {
         observer.CompileStarting(*this, errors);
     });
@@ -100,10 +91,7 @@ RigExecRigEvaluator::Compile(std::vector<std::string> *errors)
                         errors->push_back(attribute.GetPath().GetString() +
                                           ": rigExecInputElement requires a "
                                           "nonnegative int on a Vec3f input");
-                    if (_inputReplayObserver)
-                        _inputReplayObserver->CompileResult(compileCall, false,
-                                                            errors);
-                    _Notify([&](RigExecEvaluationObserver &observer) {
+                    _NotifyReverse([&](RigExecEvaluationObserver &observer) {
                         observer.CompileRefused(*this, errors);
                     });
                     return false;
@@ -111,11 +99,9 @@ RigExecRigEvaluator::Compile(std::vector<std::string> *errors)
             }
         }
     const bool compiled = _CompileRig(errors);
-    _Notify([&](RigExecEvaluationObserver &observer) {
+    _NotifyReverse([&](RigExecEvaluationObserver &observer) {
         observer.CompileFinished(*this, compiled, errors);
     });
-    if (_inputReplayObserver)
-        _inputReplayObserver->CompileResult(compileCall, compiled, errors);
     return compiled;
 }
 

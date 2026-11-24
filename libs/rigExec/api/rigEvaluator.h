@@ -294,8 +294,6 @@ RigExecPrepareRestDerivedIkChain(const std::vector<RigExecPointFrame> &current,
 ///
 /// Opaque: holds per-input UsdAttributeQuery.
 struct RigExecPropertyChainBindings;
-class RigExecGoldenSuiteObserver;
-class RigExecInputReplayObserver;
 class RigExecEvaluationObserver;
 
 /// What one stage notice did to the baked program: the
@@ -352,6 +350,14 @@ public:
     /// the observers installed before it (see evaluationObserver.h).
     void
     AddEvaluationObserver(std::unique_ptr<RigExecEvaluationObserver> observer);
+    /// The first installed observer that is a \p T, or null.
+    template <class T> T *FindEvaluationObserver() const
+    {
+        for (const auto &observer : _observers)
+            if (auto *found = dynamic_cast<T *>(observer.get()))
+                return found;
+        return nullptr;
+    }
 
     /// Whether the compiled rig can be baked, appending one reason per
     /// feature that stops it.
@@ -1740,6 +1746,18 @@ private:
 
     bool _publishWeightFields = true;
     bool _acceptsGpuDeformPublications = false;
+    /// Notified at each observer point; see evaluationObserver.h.
+    std::vector<std::unique_ptr<RigExecEvaluationObserver>> _observers;
+    template <class Fn> void _Notify(const Fn &fn)
+    {
+        for (const auto &observer : _observers)
+            fn(*observer);
+    }
+    template <class Fn> void _NotifyReverse(const Fn &fn)
+    {
+        for (auto it = _observers.rbegin(); it != _observers.rend(); ++it)
+            fn(**it);
+    }
     /// The compiled rig flattened into an exec-free op list, built at the
     /// end of Compile when the mode asks for one.
     ///
@@ -1750,15 +1768,6 @@ private:
     /// below; the rebuild happens at the next Evaluate, once the dynamic
     /// generation has settled whether the compiled rig itself moved. A notice that
     /// misses the index leaves the program standing.
-    std::unique_ptr<RigExecGoldenSuiteObserver> _goldenSuiteObserver;
-    /// Notified in order at each observer point; see evaluationObserver.h.
-    std::vector<std::unique_ptr<RigExecEvaluationObserver>> _observers;
-    template <class Fn> void _Notify(const Fn &fn)
-    {
-        for (const auto &observer : _observers)
-            fn(*observer);
-    }
-    std::unique_ptr<RigExecInputReplayObserver> _inputReplayObserver;
     std::unique_ptr<RigExecBakedProgram> _bakedProgram;
     /// The windowed operations' history lane and its tick memo
     /// (rigEvaluatorWindows.cpp). Owning-thread state behind a const

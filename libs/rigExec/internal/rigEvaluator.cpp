@@ -5,9 +5,7 @@
 #include "rigExec/internal/rigEvaluatorPropertyBindings.h"
 #include "rigExec/internal/parallel.h"
 #include "rigExec/api/evaluationObserver.h"
-#include "rigExec/api/goldenSuite.h"
 #include "rigExec/internal/oracleDispatch.h"
-#include "rigExec/internal/inputReplay.h"
 
 #include "pxr/base/work/detachedTask.h"
 #include "pxr/base/tf/diagnostic.h"
@@ -68,8 +66,6 @@ RigExecRigEvaluator::RigExecRigEvaluator(const UsdStageRefPtr &stage,
     : _stage(stage), _rigPath(rigPath),
       _restInputNames(evaluatorDetail::_MakeRestInputNames())
 {
-    _inputReplayObserver = RigExecInputReplayObserver::Create(stage, rigPath);
-    _goldenSuiteObserver = RigExecGoldenSuiteObserver::Create(rigPath);
     if (gObserverFactory)
         gObserverFactory(*this);
     // The static-input cache lives here and is consulted through the
@@ -87,7 +83,6 @@ RigExecRigEvaluator::RigExecRigEvaluator(const UsdStageRefPtr &stage,
 RigExecRigEvaluator::~RigExecRigEvaluator()
 {
     _observers.clear();
-    _inputReplayObserver.reset();
     TfNotice::Revoke(_noticeKey);
 }
 
@@ -114,24 +109,12 @@ RigExecRigEvaluator::Evaluate(UsdTimeCode time)
         RigExecRigEvaluator &evaluator;
         ~ObserverFrameScope()
         {
-            evaluator._Notify([this](RigExecEvaluationObserver &observer) {
-                observer.FrameEnded(evaluator);
-            });
+            evaluator._NotifyReverse(
+                [this](RigExecEvaluationObserver &observer) {
+                    observer.FrameEnded(evaluator);
+                });
         }
     } observerScope{*this};
-    if (_inputReplayObserver) {
-        _inputReplayObserver->Options(_solverGuidesEnabled,
-                                      _publishWeightFields);
-        _inputReplayObserver->BeginEvaluate(time);
-    }
-    struct ReplayEvaluationScope {
-        RigExecInputReplayObserver *observer;
-        ~ReplayEvaluationScope()
-        {
-            if (observer)
-                observer->EndEvaluate();
-        }
-    } replayScope{_inputReplayObserver.get()};
     _Notify([&](RigExecEvaluationObserver &observer) {
         observer.FrameStarting(*this, time);
     });
@@ -139,8 +122,6 @@ RigExecRigEvaluator::Evaluate(UsdTimeCode time)
     _Notify([&](RigExecEvaluationObserver &observer) {
         observer.FrameEvaluated(*this, time, pose);
     });
-    if (_goldenSuiteObserver)
-        _goldenSuiteObserver->Record(pose);
     return pose;
 }
 
@@ -148,8 +129,6 @@ void
 RigExecRigEvaluator::SetPublishWeightFields(bool publish)
 {
     _AssertOwnerThread();
-    if (_inputReplayObserver)
-        _inputReplayObserver->Options(_solverGuidesEnabled, publish);
     _Notify([&](RigExecEvaluationObserver &observer) {
         observer.OptionsChanging(*this, _solverGuidesEnabled, publish);
     });
@@ -191,8 +170,6 @@ void
 RigExecRigEvaluator::SetSolverGuidesEnabled(bool enabled)
 {
     _AssertOwnerThread();
-    if (_inputReplayObserver)
-        _inputReplayObserver->Options(enabled, _publishWeightFields);
     _Notify([&](RigExecEvaluationObserver &observer) {
         observer.OptionsChanging(*this, enabled, _publishWeightFields);
     });
