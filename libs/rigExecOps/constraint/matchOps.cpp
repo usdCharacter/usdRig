@@ -4,9 +4,10 @@
 #include "rigExecMath/poseArithmeticKernel.h"
 #include "rigExecMath/spaceMatchKernel.h"
 #include "rigExecMath/switchMathKernel.h"
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 
+#include <array>
 #include <cmath>
 #include <iterator>
 #include <string>
@@ -69,6 +70,59 @@ using rigExecStd::Mat4d;
 using rigExecStd::RigExecArray;
 using rigExecStd::Vec3d;
 using namespace opIo;
+using namespace fieldIo;
+using rigExec::RigExecOpBatch;
+
+/// The match payloads' declared fields, in saved order: the space switch,
+/// then IkFkMatch's own.
+enum MatchField : uint32_t {
+    kFilterCount,
+    kFilters,
+    kTwistAxis,
+    kAffectTranslation,
+    kAffectRotation,
+    kAffectScale,
+    kHasCarry,
+    kWorldCount,
+    kWorld,
+    kRideCount,
+    kRides,
+    kIkValue,
+    kScaleCalibration,
+    kUpperLengthOffset,
+    kLowerLengthOffset,
+    kStretchLimb,
+};
+
+/// One instance's SpaceSwitchSetup, its lists read in place.
+struct SwitchSettings {
+    rigExec::RigExecFieldView<const int32_t> filters;
+    Vec3d twistAxis;
+    std::array<bool, 3> affectTranslation, affectRotation, affectScale;
+    bool hasCarry = false;
+    rigExec::RigExecFieldView<const uint8_t> world;
+};
+
+std::array<bool, 3>
+FlagsAt(const RigExecOpBatch &batch, uint32_t field, size_t k)
+{
+    const auto flags = rigExec::RigExecPayloadField<uint8_t>(batch, field, k);
+    return {{flags[0] != 0, flags[1] != 0, flags[2] != 0}};
+}
+
+SwitchSettings
+SwitchAt(const RigExecOpBatch &batch, size_t k)
+{
+    SwitchSettings s;
+    s.filters = ListAt<int32_t>(batch, kFilters, k);
+    s.twistAxis = ValueAt<Vec3d>(batch, kTwistAxis, k);
+    s.affectTranslation = FlagsAt(batch, kAffectTranslation, k);
+    s.affectRotation = FlagsAt(batch, kAffectRotation, k);
+    s.affectScale = FlagsAt(batch, kAffectScale, k);
+    s.hasCarry = FlagAt(batch, kHasCarry, k);
+    s.world = ListAt<uint8_t>(batch, kWorld, k);
+    return s;
+}
 
 using SwitchRecord = rigExec::RigExecSpaceSwitchRecordT<Vec3d>;
 using SwitchInputs = rigExec::RigExecSpaceSwitchInputsT<Mat4d>;
@@ -114,10 +168,10 @@ FromRows(const double *rows)
 }
 
 SwitchRecord
-RecordOf(const SpaceSwitchSetup &setup)
+RecordOf(const SwitchSettings &setup)
 {
     SwitchRecord record;
-    record.filters = setup.filters;
+    record.filters.assign(setup.filters.begin(), setup.filters.end());
     record.twistAxis = setup.twistAxis;
     record.affectTranslation = setup.affectTranslation;
     record.affectRotation = setup.affectRotation;
@@ -147,7 +201,7 @@ RunSwitch(const SwitchRecord &record, const SwitchInputs &input, bool usable,
 /// disagree.
 template <class Port>
 bool
-SwitchInputsOf(const RigExecOpIo &io, const SpaceSwitchSetup &setup,
+SwitchInputsOf(const RigExecOpIo &io, const SwitchSettings &setup,
                const Port &port, SwitchInputs *in)
 {
     in->posedDefault = *In<Mat4d>(io, port.posedDefault);
@@ -165,7 +219,7 @@ SwitchInputsOf(const RigExecOpIo &io, const SpaceSwitchSetup &setup,
     }
     const auto &defaults = *In<RigExecArray<Mat4d>>(io, port.sourceDefaults);
     const auto &posed = *In<RigExecArray<Mat4d>>(io, port.sourcePosed);
-    const size_t count = setup.world.size();
+    const size_t count = setup.world.Size();
     if (defaults.Size() != count || posed.Size() != count)
         return false;
     in->sources.resize(count);
@@ -225,10 +279,21 @@ struct SpaceSwitchPorts {
 // it over Gf: the IK half, the pole's parent once the IK control has moved,
 // the FK half, and the half presented on the joints.
 bool
-RunIkFkMatch(const void *payload, void *, const RigExecOpIo &io,
-             std::string *error)
+IkFkMatchOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
-    const auto &p = *static_cast<const IkFkMatchPayload *>(payload);
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    struct {
+        SwitchSettings poleSwitch;
+        rigExec::RigExecFieldView<const uint8_t> poleSourceRides;
+        double ikValue, scaleCalibration, upperLengthOffset, lowerLengthOffset;
+        bool stretchLimb;
+    } const p = {SwitchAt(batch, k),
+                 ListAt<uint8_t>(batch, kRides, k),
+                 ValueAt<double>(batch, kIkValue, k),
+                 ValueAt<double>(batch, kScaleCalibration, k),
+                 ValueAt<double>(batch, kUpperLengthOffset, k),
+                 ValueAt<double>(batch, kLowerLengthOffset, k),
+                 FlagAt(batch, kStretchLimb, k)};
     auto &ikValues = Out<RigExecArray<double>>(io, IkFkMatchIkValues());
     auto &fkValues = Out<RigExecArray<double>>(io, IkFkMatchFkValues());
     uint8_t &valid = Out<uint8_t>(io, IkFkMatchValid());
@@ -324,7 +389,7 @@ RunIkFkMatch(const void *payload, void *, const RigExecOpIo &io,
                             "the pole switch's sources do not match it");
             inputs.active = *In<double>(io, IkFkMatchActive());
             for (size_t k = 0;
-                 k < inputs.sources.size() && k < p.poleSourceRides.size(); ++k)
+                 k < inputs.sources.size() && k < p.poleSourceRides.Size(); ++k)
                 if (p.poleSourceRides[k] && !inputs.sources[k].world)
                     inputs.sources[k].posedSpace =
                         inputs.sources[k].posedSpace * moved;
@@ -382,13 +447,22 @@ RunIkFkMatch(const void *payload, void *, const RigExecOpIo &io,
     return true;
 }
 
+bool
+RunIkFkMatch(const RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    return EachInstance(
+        batch, failed, [&](size_t k) { return IkFkMatchOne(batch, k, error); });
+}
+
 // The space match of a switched control: per space, the channels that keep
 // it on Target with that space selected (RigExecSpaceMatchSolveAll).
 bool
-RunSpaceMatch(const void *payload, void *, const RigExecOpIo &io,
-              std::string *error)
+SpaceMatchOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
-    const auto &p = *static_cast<const SpaceMatchPayload *>(payload);
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const struct {
+        SwitchSettings space;
+    } p = {SwitchAt(batch, k)};
     auto &values = Out<RigExecArray<double>>(io, SpaceMatchValues());
     uint8_t &valid = Out<uint8_t>(io, SpaceMatchValid());
     valid = 0;
@@ -419,6 +493,14 @@ RunSpaceMatch(const void *payload, void *, const RigExecOpIo &io,
                 ? 1
                 : 0;
     return true;
+}
+
+bool
+RunSpaceMatch(const RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return SpaceMatchOne(batch, k, error);
+    });
 }
 
 } // namespace
@@ -472,72 +554,67 @@ const rigExec::RigExecPortDesc kIkFkPorts[] = {
     {&IkFkMatchShownMask(), &rigExecStd::UIntType(), kOut, "shownMask"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
 void
-PutSwitch(Writer &w, const SpaceSwitchSetup &s)
+SetFlags(RigExecFieldValues &values, uint32_t field,
+         const std::array<bool, 3> &flags)
 {
-    payloadIo::PutList(w, s.filters);
-    payloadIo::Put(w, s.twistAxis);
-    payloadIo::PutFlags(w, s.affectTranslation);
-    payloadIo::PutFlags(w, s.affectRotation);
-    payloadIo::PutFlags(w, s.affectScale);
-    w.Bool(s.hasCarry);
-    payloadIo::PutList(w, s.world);
+    const uint8_t bytes[3] = {uint8_t(flags[0]), uint8_t(flags[1]),
+                              uint8_t(flags[2])};
+    values.Set(field, bytes, 3);
 }
 
 void
-GetSwitch(Reader &r, SpaceSwitchSetup &s)
+SetSwitch(RigExecFieldValues &out, const SpaceSwitchSetup &s)
 {
-    payloadIo::GetList(r, s.filters);
-    payloadIo::Get(r, s.twistAxis);
-    payloadIo::GetFlags(r, s.affectTranslation);
-    payloadIo::GetFlags(r, s.affectRotation);
-    payloadIo::GetFlags(r, s.affectScale);
-    s.hasCarry = r.Bool();
-    payloadIo::GetList(r, s.world);
+    SetList(out, kFilterCount, s.filters);
+    out.Set(kTwistAxis, s.twistAxis);
+    SetFlags(out, kAffectTranslation, s.affectTranslation);
+    SetFlags(out, kAffectRotation, s.affectRotation);
+    SetFlags(out, kAffectScale, s.affectScale);
+    SetFlag(out, kHasCarry, s.hasCarry);
+    SetList(out, kWorldCount, s.world);
 }
 
 void
-Save(Writer &w, const IkFkMatchPayload &p)
+IkFkValues(const void *payload, RigExecFieldValues &out)
 {
-    w.Version(1);
-    PutSwitch(w, p.poleSwitch);
-    payloadIo::PutList(w, p.poleSourceRides);
-    w.F64(p.ikValue);
-    w.F64(p.scaleCalibration);
-    w.F64(p.upperLengthOffset);
-    w.F64(p.lowerLengthOffset);
-    w.Bool(p.stretchLimb);
+    const auto &p = *static_cast<const IkFkMatchPayload *>(payload);
+    SetSwitch(out, p.poleSwitch);
+    SetList(out, kRideCount, p.poleSourceRides);
+    out.Set(kIkValue, p.ikValue);
+    out.Set(kScaleCalibration, p.scaleCalibration);
+    out.Set(kUpperLengthOffset, p.upperLengthOffset);
+    out.Set(kLowerLengthOffset, p.lowerLengthOffset);
+    SetFlag(out, kStretchLimb, p.stretchLimb);
 }
 
 void
-Load(Reader &r, IkFkMatchPayload &p)
+SpaceValues(const void *payload, RigExecFieldValues &out)
 {
-    r.Version(1);
-    GetSwitch(r, p.poleSwitch);
-    payloadIo::GetList(r, p.poleSourceRides);
-    p.ikValue = r.F64();
-    p.scaleCalibration = r.F64();
-    p.upperLengthOffset = r.F64();
-    p.lowerLengthOffset = r.F64();
-    p.stretchLimb = r.Bool();
+    SetSwitch(out, static_cast<const SpaceMatchPayload *>(payload)->space);
 }
 
-void
-Save(Writer &w, const SpaceMatchPayload &p)
-{
-    w.Version(1);
-    PutSwitch(w, p.space);
-}
+const rigExec::RigExecFieldDesc kIkFkFields[] = {
+    Count("filterCount"),
+    Items("filters", rigExecStd::IntType(), kFilterCount),
+    Value("twistAxis", rigExecStd::Vec3dType()),
+    Fixed(Flag("affectTranslation"), 3),
+    Fixed(Flag("affectRotation"), 3),
+    Fixed(Flag("affectScale"), 3),
+    Flag("hasCarry"),
+    Count("worldCount"),
+    Items("world", rigExecStd::BoolType(), kWorldCount),
+    Count("rideCount"),
+    Items("poleSourceRides", rigExecStd::BoolType(), kRideCount),
+    Value("ikValue", rigExecStd::DoubleType()),
+    Value("scaleCalibration", rigExecStd::DoubleType()),
+    Value("upperLengthOffset", rigExecStd::DoubleType()),
+    Value("lowerLengthOffset", rigExecStd::DoubleType()),
+    Flag("stretchLimb"),
+};
 
-void
-Load(Reader &r, SpaceMatchPayload &p)
-{
-    r.Version(1);
-    GetSwitch(r, p.space);
-}
+/// SpaceMatch saves the space switch alone: the first fields above.
+constexpr size_t kSpaceFieldCount = kRideCount;
 
 const rigExec::RigExecOpDesc kIkFk = [] {
     rigExec::RigExecOpDesc op;
@@ -545,11 +622,13 @@ const rigExec::RigExecOpDesc kIkFk = [] {
     op.name = "IkFkMatch";
     op.ports = kIkFkPorts;
     op.portCount = std::size(kIkFkPorts);
-    op.run = &RunIkFkMatch;
+    op.runBatch = &RunIkFkMatch;
     op.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    op.payload =
-        rigExec::RigExecPayloadHandlingFor<IkFkMatchPayload, &Save, &Load>();
+    op.payloadFields = kIkFkFields;
+    op.payloadFieldCount = std::size(kIkFkFields);
+    op.payloadVersion = 1;
+    op.payloadValues = &IkFkValues;
     return op;
 }();
 
@@ -579,11 +658,13 @@ const rigExec::RigExecOpDesc kSpace = [] {
     op.name = "SpaceMatch";
     op.ports = kSpacePorts;
     op.portCount = std::size(kSpacePorts);
-    op.run = &RunSpaceMatch;
+    op.runBatch = &RunSpaceMatch;
     op.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    op.payload =
-        rigExec::RigExecPayloadHandlingFor<SpaceMatchPayload, &Save, &Load>();
+    op.payloadFields = kIkFkFields;
+    op.payloadFieldCount = kSpaceFieldCount;
+    op.payloadVersion = 1;
+    op.payloadValues = &SpaceValues;
     return op;
 }();
 
