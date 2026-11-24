@@ -233,7 +233,10 @@ for src in "${sources[@]}"; do
     compile_one "$src"
 done
 
-if nm -uC "${objs[@]}" | grep -E 'pxr::|[^A-Za-z0-9_](Gf|Usd|Sdf|Vt|Tf|Hd|Exec)[A-Za-z0-9_]*' ; then
+# Symbol lines only: with several objects nm also prints each object's
+# path, and a mktemp directory name such as tmp.VtYcwFeMAb matches.
+if nm -uC "${objs[@]}" | grep -E '^[[:space:]]+U ' |
+    grep -E 'pxr::|[^A-Za-z0-9_](Gf|Usd|Sdf|Vt|Tf|Hd|Exec)[A-Za-z0-9_]*' ; then
     echo "runtime link line names an OpenUSD symbol" >&2
     exit 1
 fi
