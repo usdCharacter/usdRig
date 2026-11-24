@@ -187,6 +187,23 @@ public:
     std::vector<uint32_t> derivedBounds;
     /// The slots of the published arenas, one per distinct bound output.
     std::vector<uint32_t> publishedSlots;
+    /// Per slot: the nodes that read it, ascending, as
+    /// readers[readerStart[s], readerStart[s + 1]), from the compiled
+    /// graph's readers, and the node that writes it, or
+    /// kRigExecInvalidIndex for a host-written input.
+    std::vector<uint32_t> readerStart;
+    std::vector<uint32_t> readers;
+    std::vector<uint32_t> producer;
+    /// Per node: the slots it writes, as
+    /// nodeOutputs[nodeOutputStart[n], nodeOutputStart[n + 1]), and its
+    /// batchNodes entry. volatileNodes run every frame: the nodes that are
+    /// not Pure, ascending.
+    std::vector<uint32_t> nodeOutputStart;
+    std::vector<uint32_t> nodeOutputs;
+    std::vector<uint32_t> batchPosition;
+    std::vector<uint32_t> volatileNodes;
+    /// Per batchNodes entry: its batch.
+    std::vector<uint32_t> positionBatch;
     size_t inputArenaSize = 0;
     /// The work arena: values from 0, op state from stateBase.
     size_t workSize = 0;

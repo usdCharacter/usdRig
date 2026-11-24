@@ -229,6 +229,7 @@ NodeDescriptor(const CompileState &s, uint32_t n)
     RigExecOpDescriptor descriptor;
     descriptor.key = NodeKey(n);
     descriptor.kind = node.op;
+    descriptor.volatileInput = d.threading != RigExecOpThreading::Pure;
     for (uint32_t p = 0; p < node.portCount; ++p) {
         const uint32_t port = node.firstPort + p;
         if (d.ports[p].flags & kRigExecPortOutput) {
@@ -435,6 +436,58 @@ LayoutStore(CompileState &s)
     }
     program.inputArenaSize = input;
     program.workSize = work;
+}
+
+/// Indexes what dirty propagation walks: each slot's readers, from the
+/// compiled graph, and its writer; each node's outputs and batchNodes
+/// entry; the nodes that run every frame; each batchNodes entry's batch.
+void
+IndexReaders(CompileState &s)
+{
+    RigExecProgram &program = s.program;
+    const RigExecCompiledGraph &graph = program.graph;
+    const size_t slots = program.slots.size();
+    program.readerStart.assign(1, 0);
+    std::vector<uint32_t> readers;
+    for (uint32_t slot = 0; slot < slots; ++slot) {
+        readers.clear();
+        const auto found = graph.readers.find(slot);
+        if (found != graph.readers.end())
+            for (const uint32_t op : found->second)
+                readers.push_back(graph.ops[op].originalIndex);
+        std::sort(readers.begin(), readers.end());
+        readers.erase(std::unique(readers.begin(), readers.end()),
+                      readers.end());
+        program.readers.insert(program.readers.end(), readers.begin(),
+                               readers.end());
+        program.readerStart.push_back(uint32_t(program.readers.size()));
+    }
+    program.producer.assign(slots, kRigExecInvalidIndex);
+    program.nodeOutputStart.assign(1, 0);
+    for (uint32_t n = 0; n < s.nodeCount; ++n) {
+        const RigExecProgramNode &node = program.nodes[n];
+        const RigExecOpDesc &d = s.OpDesc(n);
+        for (uint32_t p = 0; p < node.portCount; ++p) {
+            if (!(d.ports[p].flags & kRigExecPortOutput))
+                continue;
+            const uint32_t slot = program.portSlots[node.firstPort + p];
+            program.producer[slot] = n;
+            program.nodeOutputs.push_back(slot);
+        }
+        program.nodeOutputStart.push_back(uint32_t(program.nodeOutputs.size()));
+    }
+    program.batchPosition.assign(s.nodeCount, 0);
+    for (uint32_t i = 0; i < s.nodeCount; ++i)
+        program.batchPosition[program.batchNodes[i]] = i;
+    for (const uint32_t op : graph.volatileOps)
+        program.volatileNodes.push_back(graph.ops[op].originalIndex);
+    std::sort(program.volatileNodes.begin(), program.volatileNodes.end());
+    program.positionBatch.assign(s.nodeCount, 0);
+    for (uint32_t b = 0; b < program.batches.size(); ++b) {
+        const RigExecProgramBatch &batch = program.batches[b];
+        for (uint32_t k = 0; k < batch.nodeCount; ++k)
+            program.positionBatch[batch.firstNode + k] = b;
+    }
 }
 
 /// Records, per slot, the port and element entries a run points at it.
@@ -780,6 +833,7 @@ RigExecCompile(const RigExecRigDesc &desc, const RigExecCompileOptions &options,
     LayoutStore(s);
     LayoutPayloadsAndState(s);
     PlaceCells(s);
+    IndexReaders(s);
     if (!SettleBounds(s))
         return nullptr;
     return program;

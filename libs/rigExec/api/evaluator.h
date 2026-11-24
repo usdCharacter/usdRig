@@ -68,7 +68,11 @@ public:
     /// until then BeginInputEdit fails.
     bool SetInput(RigExecInputId input, const void *value,
                   std::string *error = nullptr);
-    /// Runs every op of the program once, using the current inputs. If an
+    /// Computes the program's values from the current inputs. Only the ops
+    /// that read an input changed since the last successful Evaluate, the
+    /// ops that are not Pure, and the ops those feed run; every other value
+    /// keeps what it held, which is what running it again would give. The
+    /// first Evaluate, and the one after a failure, runs every op. If an
     /// op fails, Evaluate returns false with that op's message, no tap
     /// callback runs, and outputs may hold partial results.
     bool Evaluate(std::string *error = nullptr);

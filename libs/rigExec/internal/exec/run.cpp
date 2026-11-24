@@ -212,6 +212,12 @@ RigExecRun::Bind(const RigExecProgram &p, const RigExecInputChannel &input,
     }
     failed.assign(p.batches.size(), 0);
     errors.assign(p.batches.size(), std::string());
+    active.assign(p.batchNodes.size(), 0);
+    batchActive.assign(p.batches.size(), 0);
+    marked.reserve(p.batchNodes.size());
+    walk.reserve(p.batchNodes.size());
+    seen.assign(p.inputSlots.size(), 0);
+    everything = true;
     const size_t levelCount =
         p.levelBatches.empty() ? 0 : p.levelBatches.size() - 1;
     sharedStart.assign(1, 0);
@@ -325,9 +331,67 @@ RigExecRun::_SettleBounds()
 }
 
 void
+RigExecRun::_Mark(uint32_t node, const char *allowed)
+{
+    const uint32_t at = program->batchPosition[node];
+    if (active[at] || (allowed && !allowed[at]))
+        return;
+    active[at] = 1;
+    marked.push_back(at);
+    ++batchActive[program->positionBatch[at]];
+    walk.push_back(node);
+}
+
+void
+RigExecRun::_MarkDirty(bool historyTick)
+{
+    const RigExecProgram &p = *program;
+    for (const uint32_t at : marked) {
+        active[at] = 0;
+        batchActive[p.positionBatch[at]] = 0;
+    }
+    marked.clear();
+    walk.clear();
+    const char *allowed = historyTick ? p.batchHistoryMask.data() : nullptr;
+    if (everything) {
+        for (uint32_t n = 0; n < p.nodes.size(); ++n)
+            _Mark(n, allowed);
+        return;
+    }
+    for (uint32_t i = 0; i < p.inputSlots.size(); ++i) {
+        if (channel->FrontVersion(i) == seen[i])
+            continue;
+        const uint32_t slot = p.inputSlots[i];
+        for (uint32_t r = p.readerStart[slot]; r < p.readerStart[slot + 1]; ++r)
+            _Mark(p.readers[r], allowed);
+    }
+    for (const uint32_t n : p.volatileNodes)
+        _Mark(n, allowed);
+    for (size_t at = 0; at < walk.size(); ++at) {
+        const uint32_t n = walk[at];
+        for (uint32_t o = p.nodeOutputStart[n]; o < p.nodeOutputStart[n + 1];
+             ++o) {
+            const uint32_t slot = p.nodeOutputs[o];
+            for (uint32_t r = p.readerStart[slot]; r < p.readerStart[slot + 1];
+                 ++r)
+                _Mark(p.readers[r], allowed);
+        }
+    }
+}
+
+bool
+RigExecRun::_Runs(uint32_t slot) const
+{
+    const uint32_t n = program->producer[slot];
+    return n != kRigExecInvalidIndex && active[program->batchPosition[n]];
+}
+
+void
 RigExecRun::_PrepareOutputs()
 {
     for (RigExecPublishedPool &pool : published->pools) {
+        if (!_Runs(pool.slot))
+            continue;
         RigExecPublishedArena *arena = pool.arenas[pool.current].get();
         if (arena->pins.load(std::memory_order_acquire) == 0)
             continue;
@@ -353,7 +417,11 @@ RigExecRun::_Publish()
 {
     ++generation;
     for (RigExecPublishedPool &pool : published->pools)
-        pool.arenas[pool.current]->generation = generation;
+        if (_Runs(pool.slot))
+            pool.arenas[pool.current]->generation = generation;
+    for (uint32_t i = 0; i < program->inputSlots.size(); ++i)
+        seen[i] = channel->FrontVersion(i);
+    everything = false;
 }
 
 size_t
@@ -444,13 +512,15 @@ RigExecRun::_CheckBounds(const RigExecOpBatch &view,
 void
 RigExecRun::_RunBatch(uint32_t b)
 {
+    if (!batchActive[b])
+        return;
     const RigExecProgramBatch &batch = program->batches[b];
     const RigExecRegisteredOp &op = RigExecRegistry::Get().OpAt(batch.op);
     const RigExecOpDesc &d = *op.desc;
     RigExecOpBatch view;
     view.op = &d;
     view.count = batch.nodeCount;
-    view.active = active ? active + batch.firstNode : nullptr;
+    view.active = active.data() + batch.firstNode;
     if (batch.payloadOffset != SIZE_MAX) {
         view.payloads = program->payloads.Data() + batch.payloadOffset;
         view.payloadStride = batch.payloadStride;
@@ -511,12 +581,12 @@ RigExecRun::Run(bool historyTick, RigExecTaskSystem *tasks, std::string *error)
             _PointReaders(slot, channel->Front() + p.slots[slot].offset);
     }
     _SettleBounds();
+    _MarkDirty(historyTick);
     _PrepareOutputs();
     for (size_t w = 0; w < windows.size(); ++w) {
         captures[w].reset();
         windows[w].captureOnly = historyTick && !p.windowedNodes[w].feedsWindow;
     }
-    active = historyTick ? p.batchHistoryMask.data() : nullptr;
     std::fill(failed.begin(), failed.end(), uint8_t(0));
     RigExecTaskSchedule schedule;
     schedule.levelCount = sharedStart.size() - 1;
@@ -540,6 +610,7 @@ RigExecRun::Run(bool historyTick, RigExecTaskSystem *tasks, std::string *error)
     }
     for (RigExecWindowPacketPtr &capture : captures)
         capture.reset();
+    everything = true;
     return false;
 }
 

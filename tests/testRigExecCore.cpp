@@ -200,6 +200,26 @@ RunProbe(const void *payload, void *, const RigExecOpIo &io, std::string *)
     return true;
 }
 
+// out = in; counts its runs per payload id.
+RIGEXEC_DEFINE_OP_HANDLE(Mark)
+RIGEXEC_DEFINE_PORT_HANDLE(MarkIn)
+RIGEXEC_DEFINE_PORT_HANDLE(MarkOut)
+
+struct MarkPayload {
+    uint32_t id = 0;
+};
+
+std::atomic<uint32_t> markRuns[16];
+
+bool
+RunMark(const void *payload, void *, const RigExecOpIo &io, std::string *)
+{
+    markRuns[static_cast<const MarkPayload *>(payload)->id].fetch_add(1);
+    *static_cast<Vec3 *>(io.outputs[1]) =
+        *static_cast<const Vec3 *>(io.inputs[0]);
+    return true;
+}
+
 // A batch function that calls Run on each active instance.
 template <bool (*Run)(const void *, void *, const RigExecOpIo &, std::string *)>
 bool
@@ -343,6 +363,22 @@ RegisterCheck(RigExecOpRegistrar &registrar)
         return d;
     }();
     registrar.Add(Probe(), probe);
+
+    static const RigExecPortDesc markPorts[] = {
+        {&MarkIn(), &fakeTypes::Vec3Type(), kRigExecPortInput, "in"},
+        {&MarkOut(), &fakeTypes::Vec3Type(), kRigExecPortOutput, "out"},
+    };
+    static const RigExecOpDesc mark = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "Mark";
+        d.ports = markPorts;
+        d.portCount = 2;
+        d.run = &RunMark;
+        d.payload = RigExecPayloadHandlingFor<MarkPayload>();
+        return d;
+    }();
+    registrar.Add(Mark(), mark);
 }
 
 const RigExecOpLibraryDesc kCheckLibrary = [] {
@@ -605,6 +641,146 @@ TestPins()
     CHECK(frame(6.0f) == first);
     evaluator.reset();
     CHECK(x(three) == 5.0f && three.Generation() == 5);
+}
+
+// An evaluation reruns only the nodes an edit reaches through the compiled
+// readers, plus the windowed node and what it feeds; an order pair alone
+// reruns nothing. Results match running every node, bit for bit, and an
+// output nobody reran keeps its published storage.
+struct DirtyRig {
+    std::shared_ptr<const RigExecProgram> program;
+    RigExecInputId a, b, c, d;
+    std::vector<RigExecOutputId> outs;
+};
+
+DirtyRig
+BuildDirtyRig(size_t maxBatchNodes)
+{
+    // a -> m0 -> m1 -> out0; b -> m2; [m1, m2] -> Weighted -> out1;
+    // c -> RingSum -> m3 -> out2; d -> m4 -> out3, ordered after m2;
+    // m5 reads a through Check -> out4.
+    RigExecRigDescBuilder builder;
+    std::vector<RigExecNodeId> m;
+    for (uint32_t id = 0; id < 6; ++id) {
+        const MarkPayload payload{id};
+        m.push_back(builder.AddOp(Mark(), &payload));
+    }
+    const RingPayload frames{2};
+    const RigExecNodeId ring = builder.AddOp(RingSum(), &frames);
+    const RigExecNodeId sum = builder.AddOp(Weighted());
+    const RigExecNodeId check = builder.AddOp(Check());
+    DirtyRig rig;
+    rig.a = builder.BindInput(m[0], MarkIn());
+    builder.Connect(m[0], MarkOut(), m[1], MarkIn());
+    rig.b = builder.BindInput(m[2], MarkIn());
+    builder.Connect(m[1], MarkOut(), sum, WeightedItems());
+    builder.Connect(m[2], MarkOut(), sum, WeightedItems());
+    rig.c = builder.BindInput(ring, RingSumIn());
+    builder.Connect(ring, RingSumOut(), m[3], MarkIn());
+    rig.d = builder.BindInput(m[4], MarkIn());
+    builder.Order(m[2], m[4]);
+    builder.Connect(m[0], MarkOut(), check, CheckIn());
+    builder.Connect(check, CheckOut(), m[5], MarkIn());
+    rig.outs = {builder.BindOutput(m[1], MarkOut()),
+                builder.BindOutput(sum, WeightedOut()),
+                builder.BindOutput(m[3], MarkOut()),
+                builder.BindOutput(m[4], MarkOut()),
+                builder.BindOutput(m[5], MarkOut())};
+    rig.program = Compile(builder, maxBatchNodes);
+    return rig;
+}
+
+std::vector<uint32_t>
+TakeMarks()
+{
+    std::vector<uint32_t> runs;
+    for (std::atomic<uint32_t> &count : markRuns)
+        runs.push_back(count.exchange(0));
+    runs.resize(6);
+    return runs;
+}
+
+void
+TestDirtyPropagation()
+{
+    std::unique_ptr<RigExecTaskSystem> pool = RigExecCreateThreadTaskSystem(3);
+    for (const size_t maxBatchNodes : {size_t(0), size_t(1)})
+        for (RigExecTaskSystem *tasks :
+             {static_cast<RigExecTaskSystem *>(nullptr), pool.get()}) {
+            const DirtyRig rig = BuildDirtyRig(maxBatchNodes);
+            CHECK(rig.program);
+            if (!rig.program)
+                return;
+            RigExecEvaluatorOptions options;
+            options.tasks = tasks;
+            auto dirty = RigExecEvaluator::Create(rig.program, options);
+            auto reference = RigExecEvaluator::Create(rig.program, options);
+            Vec3 values[4] = {{1, 1, 1}, {2, 2, 2}, {3, 3, 3}, {4, 4, 4}};
+            const RigExecInputId inputs[4] = {rig.a, rig.b, rig.c, rig.d};
+            for (int i = 0; i < 4; ++i)
+                CHECK(dirty->SetInput(inputs[i], &values[i]));
+            // Each frame edits the inputs listed; the reference sets every
+            // input, so every node it has reruns.
+            struct Frame {
+                std::vector<int> edits;
+                std::vector<uint32_t> runs;
+            };
+            const std::vector<Frame> frames = {
+                {{}, {1, 1, 1, 1, 1, 1}},     {{}, {0, 0, 0, 1, 0, 0}},
+                {{0}, {1, 1, 0, 1, 0, 1}},    {{1}, {0, 0, 1, 1, 0, 0}},
+                {{3}, {0, 0, 0, 1, 1, 0}},    {{2}, {0, 0, 0, 1, 0, 0}},
+                {{0, 1}, {1, 1, 1, 1, 0, 1}},
+            };
+            RigExecValueView kept;
+            const void *orderedStorage = nullptr;
+            for (size_t f = 0; f < frames.size(); ++f) {
+                for (const int i : frames[f].edits) {
+                    values[i].x += 1.0f;
+                    CHECK(dirty->SetInput(inputs[i], &values[i]));
+                }
+                TakeMarks();
+                CHECK(dirty->Evaluate());
+                CHECK(TakeMarks() == frames[f].runs);
+                dirty->PushHistory();
+                for (int i = 0; i < 4; ++i)
+                    CHECK(reference->SetInput(inputs[i], &values[i]));
+                CHECK(reference->Evaluate());
+                reference->PushHistory();
+                for (const RigExecOutputId out : rig.outs)
+                    CHECK(Same(
+                        *static_cast<const Vec3 *>(dirty->GetOutput(out)),
+                        *static_cast<const Vec3 *>(reference->GetOutput(out))));
+                if (f == 2) {
+                    kept = dirty->ViewOutput(rig.outs[0]);
+                    orderedStorage = dirty->GetOutput(rig.outs[3]);
+                }
+                if (f == 3 || f == 5) {
+                    // out0 was not rerun: the same storage and generation.
+                    const RigExecValueView now = dirty->ViewOutput(rig.outs[0]);
+                    CHECK(now.Data() == kept.Data() &&
+                          now.Generation() == kept.Generation());
+                }
+                if (f == 3)
+                    CHECK(dirty->GetOutput(rig.outs[3]) == orderedStorage);
+            }
+            // The last frame reran out0 while a view held it: the view is
+            // unchanged and the new value lives elsewhere.
+            const Vec3 held = *kept.As<Vec3>(fakeTypes::Vec3Type());
+            CHECK(held.x == 2.0f);
+            CHECK(dirty->GetOutput(rig.outs[0]) != kept.Data());
+            CHECK(static_cast<const Vec3 *>(dirty->GetOutput(rig.outs[0]))->x ==
+                  values[0].x);
+            CHECK(dirty->GetOutput(rig.outs[3]) == orderedStorage);
+
+            // A failed frame makes the next one run every node.
+            const Vec3 negative{-1.0f, 0.0f, 0.0f};
+            CHECK(dirty->SetInput(rig.a, &negative));
+            CHECK(!dirty->Evaluate());
+            CHECK(dirty->SetInput(rig.a, &values[0]));
+            TakeMarks();
+            CHECK(dirty->Evaluate());
+            CHECK((TakeMarks() == std::vector<uint32_t>{1, 1, 1, 1, 1, 1}));
+        }
 }
 
 // in -> Scale(2) -> Offset -> out, with a tap on the Scale output.
@@ -2184,6 +2360,7 @@ main()
     TestStoreLayout();
     TestInputWriter();
     TestPins();
+    TestDirtyPropagation();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

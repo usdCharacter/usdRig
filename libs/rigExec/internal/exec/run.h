@@ -86,8 +86,18 @@ struct RigExecRun {
     std::vector<RigExecStateColumn> stateColumns;
     std::vector<RigExecFieldRunOf<std::byte>> stateRuns;
     std::vector<RigExecAlignedBuffer> stateBuffers;
-    /// The nodes this frame runs, by batchNodes entry (null runs all).
-    const char *active = nullptr;
+    /// The nodes this frame runs, by batchNodes entry.
+    std::vector<char> active;
+    /// How many of each batch's nodes this frame runs; marked lists the
+    /// active entries set, walk the nodes still to propagate from.
+    std::vector<uint32_t> batchActive;
+    std::vector<uint32_t> marked;
+    std::vector<uint32_t> walk;
+    /// Per input: the version of its value the last successful frame read.
+    std::vector<uint64_t> seen;
+    /// Whether the next frame runs every node: before the first frame and
+    /// after a failed one.
+    bool everything = true;
     /// Per batch: whether it failed this frame and why.
     std::vector<uint8_t> failed;
     std::vector<std::string> errors;
@@ -114,10 +124,13 @@ struct RigExecRun {
     /// Where slot \p slot's value is now.
     const void *Value(uint32_t slot) const;
 
-    /// Runs one frame on the channel's front copy: every node, or on a
-    /// history tick the nodes the windowed nodes depend on. A failed run
-    /// leaves every capture null and returns the first failure in batch
-    /// order.
+    /// Runs one frame on the channel's front copy: the nodes reading an
+    /// input whose value changed since the last successful frame, every
+    /// node that is not Pure, and every node a rerun node feeds; on a
+    /// history tick only those the windowed nodes depend on. Every other
+    /// value carries forward unchanged. A failed run leaves every capture
+    /// null, returns the first failure in batch order, and makes the next
+    /// frame run every node.
     bool Run(bool historyTick, RigExecTaskSystem *tasks, std::string *error);
 
 private:
@@ -127,6 +140,9 @@ private:
     void *_Written(uint32_t slot) const;
     void _SettleBounds();
     void _Reserve(uint32_t slot, size_t count);
+    void _MarkDirty(bool historyTick);
+    void _Mark(uint32_t node, const char *allowed);
+    bool _Runs(uint32_t slot) const;
     void _PrepareOutputs();
     void _Publish();
     void _RunBatch(uint32_t b);
