@@ -1487,6 +1487,69 @@ target_compile_definitions(testRigExecScenePoseOps PRIVATE
 rigexec_add_test(NAME testRigExecScenePoseOps COMMAND testRigExecScenePoseOps
     "${CMAKE_CURRENT_SOURCE_DIR}/examples")
 
+add_executable(testRigExecBakedOpParity tests/testRigExecBakedOpParity.cpp)
+target_link_libraries(testRigExecBakedOpParity PRIVATE rigExecSceneOps)
+target_compile_definitions(testRigExecBakedOpParity PRIVATE
+    ${_rigexec_schema_resource_define})
+rigexec_add_test(NAME testRigExecBakedOpParity COMMAND testRigExecBakedOpParity
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/01_FkChainTail.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/02_TwoBoneIkLeg.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/03_IkFkBlendClamp.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/04_BlendShapeFace.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/05_TwistRibbonSpine.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/06_LatticeBulge.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/07_SurfaceDrape.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/08_AimEyes.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/09_PropertyMathMovers.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/10_AimXformTurret.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/11_VolumeWeights.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/12_PatchCurve.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/13_ReadPhases.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/14_VolumeConstrainedSweep.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/15_TransformMatrixMover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/16_ConnectionReadPhases.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/19_HarmonicsChain.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/20_MatrixSphere.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/ArmRig.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/aim_constraint.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/blend_point_frames.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/blendshape_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/combine_weight.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/curve_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/delta_mush_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/fk_chain.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/float_math_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/lattice_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/matrix_math_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/matrix_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/parent_constraint.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/position_constraint.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/ribbon.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/rotation_constraint.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/scale_constraint.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/single_chain_ik_constraint.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/skeleton_2d.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/skin_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/smooth_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/spline_ik.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/surface_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/twist_distribution.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/two_bone_ik.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/vec3f_math_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/volume_correct_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/wrinkle_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/harmonics_constraint.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/space_switch.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/joint_group.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/cloth_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/projector_spaces.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/computed_path_reads.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/computed_weights.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/computed_chains.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/volume_placements.usda")
+set_tests_properties(testRigExecBakedOpParity PROPERTIES
+    ENVIRONMENT "RIGEXEC_ENABLE_SIMD=1")
+
 add_executable(testRigExecSceneDeterminism tests/testRigExecSceneDeterminism.cpp)
 target_link_libraries(testRigExecSceneDeterminism PRIVATE rigExecSceneOps)
 target_compile_definitions(testRigExecSceneDeterminism PRIVATE
@@ -3290,6 +3353,7 @@ foreach(_rigexec_oracle_exe IN ITEMS
     testRigExecCompiledRigRests testRigExecExampleParity
     testRigExecExecCrossCheck testRigExecExecCrossCheckRows
     testRigExecExternalMovers testRigExecFrozenContext
+    testRigExecBakedOpParity
     testRigExecGeometryOpsBakedParity testRigExecGoldenPose
     testRigExecGoldenSuiteObserver testRigExecInputActions testRigExecInteractive
     testRigExecOpTrace testRigExecOracleInputs testRigExecPatchMover testRigExecPhaseBindings
