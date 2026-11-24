@@ -523,9 +523,6 @@ RigExecRigEvaluator::SetInteractiveOverrides(
     _Notify([&](RigExecEvaluationObserver &observer) {
         observer.InteractiveOverridesChanging(*this, &overrides);
     });
-    if (_scopedClearShadow) {
-        _scopedClearShadow->SetInteractiveOverrides(overrides);
-    }
     // Asked of BOTH sets before either is dropped: an override being lifted
     // off a layout attribute moves the value the layout was read with just
     // as much as one being placed on it. The predicates read keys alone, so
@@ -595,9 +592,6 @@ RigExecRigEvaluator::ClearInteractiveOverrides()
     _Notify([&](RigExecEvaluationObserver &observer) {
         observer.InteractiveOverridesChanging(*this, nullptr);
     });
-    if (_scopedClearShadow) {
-        _scopedClearShadow->ClearInteractiveOverrides();
-    }
     const bool touchesLayout = _OverridesReachSkinLayout(_interactiveOverrides);
     const bool touchesShapes =
         _OverridesReachBlendShapes(_interactiveOverrides);
@@ -657,9 +651,6 @@ RigExecRigEvaluator::SetUpstreamInputs(std::vector<RigExecValueOverride> inputs)
     _Notify([&](RigExecEvaluationObserver &observer) {
         observer.UpstreamInputsChanging(*this, inputs);
     });
-    if (_scopedClearShadow) {
-        _scopedClearShadow->SetUpstreamInputs(inputs);
-    }
     _upstreamRequested = std::move(inputs);
     _AdmitUpstreamInputs();
 }

@@ -700,6 +700,19 @@ public:
         return _solverGuidesEnabled;
     }
 
+    /// Makes every stage notice drop this evaluator's value caches whole
+    /// instead of only what the notice could have made stale. Slower; a
+    /// second evaluator set this way is what the scoped clears are checked
+    /// against. Set it before the first Compile.
+    void SetWholesaleValueClears(bool wholesale)
+    {
+        _wholesaleValueClears = wholesale;
+    }
+    bool GetWholesaleValueClears() const
+    {
+        return _wholesaleValueClears;
+    }
+
     /// Advances once for every stage notice this evaluator receives.
     ///
     /// For a consumer that caches values read off the same stage across
@@ -1483,24 +1496,12 @@ private:
     /// Records \p notice in the value-edit log (GetValueEditsSince), or
     /// floors the log where the notice is not a covered value edit.
     void _LogValueEdit(const UsdNotice::ObjectsChanged &notice);
-    /// The same caches dropped whole.
-    /// What a shadow evaluator runs (RIGEXEC_VERIFY_SCOPED_CLEARS), and what
-    /// a notice at the root, on a resolved asset or inside a prototype runs.
+    /// The same caches dropped whole: what a notice at the root, on a
+    /// resolved asset or inside a prototype runs, and every notice under
+    /// SetWholesaleValueClears.
     void _ClearValueCachesWholesale(bool avarValuesOnly);
-    /// Set on the shadow evaluator RIGEXEC_VERIFY_SCOPED_CLEARS builds: its
-    /// notices take _ClearValueCachesWholesale, never the scoped path.
     bool _wholesaleValueClears = false;
-    /// The shadow itself: an evaluator of the same rig on the
-    /// same stage, told everything a caller tells this one, evaluated at
-    /// every time this one is and compared with it pose for pose. Null
-    /// unless the variable is set, and always null on the shadow.
-    std::unique_ptr<RigExecRigEvaluator> _scopedClearShadow;
-    /// Builds the shadow when the variable asks for one and there is none.
-    void _EnsureScopedClearShadow();
-    /// Evaluates the shadow at \p time and appends to \p pose every way
-    /// the two disagree, counted on comparisonMismatches.
-    void _VerifyScopedClears(UsdTimeCode time, RigExecRigPose *pose);
-    /// Evaluate's body; Evaluate adds the shadow comparison around it.
+    /// Evaluate's body; Evaluate notifies the observers around it.
     RigExecRigPose _EvaluateGeneration(UsdTimeCode time);
     /// One transform-valued input to a pose-domain constraint.
     ///

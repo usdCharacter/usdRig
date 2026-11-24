@@ -114,13 +114,6 @@ RigExecRigEvaluator::Compile(std::vector<std::string> *errors)
     _Notify([&](RigExecEvaluationObserver &observer) {
         observer.CompileFinished(*this, compiled, errors);
     });
-    // The shadow is asked every question this evaluator is, in the same
-    // order, so that the one thing that differs between them is how their
-    // notices clear the value caches.
-    _EnsureScopedClearShadow();
-    if (_scopedClearShadow) {
-        _scopedClearShadow->Compile();
-    }
     if (_inputReplayObserver)
         _inputReplayObserver->CompileResult(compileCall, compiled, errors);
     return compiled;

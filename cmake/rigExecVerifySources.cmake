@@ -8,6 +8,7 @@ add_library(rigExecVerify OBJECT
     libs/rigExec/internal/oracleDispatch.cpp
     libs/rigExec/internal/scalarReferenceAdapter.cpp
     libs/rigExec/internal/inputReplay.cpp
+    libs/rigExec/internal/verifyObservers.cpp
     libs/rigExec/internal/tapSet.cpp
     libs/rigExec/internal/computations.cpp)
 target_compile_features(rigExecVerify PRIVATE cxx_std_17)

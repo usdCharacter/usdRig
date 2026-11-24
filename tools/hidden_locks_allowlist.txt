@@ -184,7 +184,7 @@ libs/rigExec/internal/oracleDispatch.cpp | env | const char *value = std::getenv
 
 libs/rigExec/internal/parallel.cpp | env | return TfGetEnvSetting(RIGEXEC_ENABLE_PARALLEL_EVAL);
 
-libs/rigExec/internal/rigEvaluator.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_SCOPED_CLEARS", false);
+libs/rigExec/internal/verifyObservers.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_SCOPED_CLEARS", false);
 
 libs/rigExec/internal/rigEvaluatorDependencies.cpp | env | TfGetenvBool("RIGEXEC_VERIFY_POSEINFO", false);
 

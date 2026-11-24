@@ -11,7 +11,6 @@
 
 #include "pxr/base/work/detachedTask.h"
 #include "pxr/base/tf/diagnostic.h"
-#include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/notice.h"
 #include "pxr/base/tf/pyLock.h"
 #include "pxr/base/tf/stringUtils.h"
@@ -27,22 +26,7 @@ using namespace evaluatorDetail;
 
 namespace {
 
-// RIGEXEC_VERIFY_SCOPED_CLEARS=1: every evaluator builds a shadow of itself
-// whose notices drop the value caches whole, evaluates it beside every
-// generation, and reports each way the two poses differ as a baked parity
-// mismatch. The cone verifier cannot stand in for this: it
-// captures the program after the prologue, which is where a stale cache
-// would already have been read. Read once per process.
-const bool _kVerifyScopedClears =
-    TfGetenvBool("RIGEXEC_VERIFY_SCOPED_CLEARS", false);
-
 RigExecEvaluationObserverFactory gObserverFactory = nullptr;
-
-bool
-_ScopedClearShadowRequested()
-{
-    return _kVerifyScopedClears;
-}
 
 /// Destroys a program the evaluator has replaced, off this thread.
 ///
@@ -108,80 +92,6 @@ RigExecRigEvaluator::~RigExecRigEvaluator()
 }
 
 void
-RigExecRigEvaluator::_EnsureScopedClearShadow()
-{
-    if (_scopedClearShadow || _wholesaleValueClears ||
-        !_ScopedClearShadowRequested()) {
-        return;
-    }
-    // Built before this evaluator compiles or evaluates anything the shadow
-    // has not: Compile and Evaluate call this first. Whatever a caller set
-    // before then is handed over here, in the order it would have been set
-    // on a fresh evaluator; everything after is mirrored as it happens.
-    RigExecInputReplaySuppression suppressInputReplay;
-    auto shadow = std::make_unique<RigExecRigEvaluator>(_stage, _rigPath);
-    shadow->_wholesaleValueClears = true;
-    shadow->SetPublishWeightFields(_publishWeightFields);
-    shadow->SetSolverGuidesEnabled(_solverGuidesEnabled);
-    if (!_interactiveOverrides.empty()) {
-        shadow->SetInteractiveOverrides(_interactiveOverrides);
-    }
-    if (!_upstreamRequested.empty()) {
-        shadow->SetUpstreamInputs(_upstreamRequested);
-    }
-    shadow->SetBakedRoleMode(_bakedRoleMode, _bakedExportKeep);
-    _scopedClearShadow = std::move(shadow);
-}
-
-void
-RigExecRigEvaluator::_VerifyScopedClears(UsdTimeCode time, RigExecRigPose *pose)
-{
-    // A public field rather than a setter, so it is handed over per call.
-    _scopedClearShadow->cpuReference = cpuReference;
-    const RigExecRigPose shadow = _scopedClearShadow->Evaluate(time);
-    // Every domain --pose-out writes. RigExecComparePoses covers the maps,
-    // the ordered diagnostics and the work counters. Also compares the
-    // scalars RigExecComparePoses skips.
-    RigExecRigPose differences;
-    RigExecComparePoses(shadow, *pose, &differences);
-    const auto scalar = [&differences](size_t wholesale, size_t scoped,
-                                       const char *what) {
-        if (wholesale != scoped) {
-            differences.diagnostics.push_back(
-                std::string("baked parity: ") + what + " differs (" +
-                std::to_string(wholesale) + " vs " + std::to_string(scoped) +
-                ")");
-            ++differences.comparisonMismatches;
-        }
-    };
-    scalar(shadow.valid, pose->valid, "valid");
-    scalar(shadow.comparisonMismatches, pose->comparisonMismatches,
-           "baked parity mismatches");
-    scalar(shadow.referenceMismatches, pose->referenceMismatches,
-           "mover graph parity mismatches");
-    scalar(shadow.referenceAgreements, pose->referenceAgreements,
-           "mover graph parity agreements");
-    if (shadow.movedPropertiesCpu != pose->movedPropertiesCpu) {
-        differences.diagnostics.push_back(
-            "baked parity: CPU moved properties differ");
-        ++differences.comparisonMismatches;
-    }
-    if (differences.comparisonMismatches == 0) {
-        return;
-    }
-    for (const std::string &line : differences.diagnostics) {
-        pose->diagnostics.push_back("scoped cache clears: " + line);
-    }
-    pose->comparisonMismatches += differences.comparisonMismatches;
-    // The wording a parity disagreement uses, so one expression catches it.
-    TF_WARN("rigExec: baked parity mismatch: %zu difference(s) between the "
-            "scoped cache clears and a shadow evaluator that clears them "
-            "whole, at time %s: %s",
-            differences.comparisonMismatches, TfStringify(time).c_str(),
-            TfStringJoin(differences.diagnostics, "; ").c_str());
-}
-
-void
 RigExecSetEvaluationObserverFactory(RigExecEvaluationObserverFactory factory)
 {
     gObserverFactory = factory;
@@ -225,11 +135,7 @@ RigExecRigEvaluator::Evaluate(UsdTimeCode time)
     _Notify([&](RigExecEvaluationObserver &observer) {
         observer.FrameStarting(*this, time);
     });
-    _EnsureScopedClearShadow();
     RigExecRigPose pose = _EvaluateGeneration(time);
-    if (_scopedClearShadow) {
-        _VerifyScopedClears(time, &pose);
-    }
     _Notify([&](RigExecEvaluationObserver &observer) {
         observer.FrameEvaluated(*this, time, pose);
     });
@@ -248,8 +154,6 @@ RigExecRigEvaluator::SetPublishWeightFields(bool publish)
         observer.OptionsChanging(*this, _solverGuidesEnabled, publish);
     });
     _publishWeightFields = publish;
-    if (_scopedClearShadow)
-        _scopedClearShadow->SetPublishWeightFields(publish);
 }
 
 void
@@ -260,9 +164,6 @@ RigExecRigEvaluator::SetBakedRoleMode(RigExecBakedRoleMode mode,
     _Notify([&](RigExecEvaluationObserver &observer) {
         observer.BakedRoleModeChanging(*this, mode, exportKeep);
     });
-    if (_scopedClearShadow) {
-        _scopedClearShadow->SetBakedRoleMode(mode, exportKeep);
-    }
     if (mode == _bakedRoleMode && exportKeep == _bakedExportKeep) {
         return;
     }
@@ -296,8 +197,6 @@ RigExecRigEvaluator::SetSolverGuidesEnabled(bool enabled)
         observer.OptionsChanging(*this, enabled, _publishWeightFields);
     });
     _solverGuidesEnabled = enabled;
-    if (_scopedClearShadow)
-        _scopedClearShadow->SetSolverGuidesEnabled(enabled);
 }
 
 RigExecRigPose
