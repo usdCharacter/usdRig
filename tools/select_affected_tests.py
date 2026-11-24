@@ -370,7 +370,7 @@ def parse(cmake_text: str) -> dict:
             if bucket is not None:
                 bucket["links"].extend(named)
                 bucket["link_vis"].update(visibility)
-        elif name == "add_test":
+        elif name in ("add_test", "rigexec_add_test"):
             if "NAME" in args and "COMMAND" in args:
                 tname = args[args.index("NAME") + 1]
                 command = args[args.index("COMMAND") + 1 :]

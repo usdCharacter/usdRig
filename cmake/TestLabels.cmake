@@ -1,8 +1,46 @@
-# Labels for ctest -L. Called after every add_test in the root list.
+# Labels for ctest -L. Register tests with rigexec_add_test, which records the
+# test's executable; rigexec_label_tests then reads it, because CMake exposes
+# no readable COMMAND property for a test. Call it after the last registration.
 # usd-free: link closure has no OpenUSD library, and the test does not
 # require a fixture another test produces.
 # fast: usd-free, or a test whose direct project library is only rigExecMath.
 # Each directly linked project library is also a label.
+
+# rigexec_add_test(NAME <name> COMMAND <exe-or-target> [args...] [add_test keywords])
+# calls add_test with the same arguments. Only a COMMAND that names a target,
+# directly or as $<TARGET_FILE:target>, is labelled.
+function(rigexec_add_test)
+    set(_exe "")
+    set(_name "")
+    set(_i 0)
+    while(_i LESS ARGC)
+        if("${ARGV${_i}}" STREQUAL "NAME")
+            math(EXPR _j "${_i} + 1")
+            set(_name "${ARGV${_j}}")
+        elseif("${ARGV${_i}}" STREQUAL "COMMAND")
+            math(EXPR _j "${_i} + 1")
+            if(_j LESS ARGC)
+                set(_exe "${ARGV${_j}}")
+            endif()
+        endif()
+        math(EXPR _i "${_i} + 1")
+    endwhile()
+    if(NOT _name)
+        message(FATAL_ERROR "rigexec_add_test: NAME is required")
+    endif()
+    if(_exe MATCHES "^\\$<TARGET_FILE:([^>]+)>$")
+        set(_exe "${CMAKE_MATCH_1}")
+    endif()
+    set_property(GLOBAL PROPERTY "RIGEXEC_TEST_EXE:${_name}" "${_exe}")
+
+    set(_code "add_test(")
+    math(EXPR _last "${ARGC} - 1")
+    foreach(_k RANGE ${_last})
+        string(APPEND _code " [==[${ARGV${_k}}]==]")
+    endforeach()
+    string(APPEND _code ")")
+    cmake_language(EVAL CODE "${_code}")
+endfunction()
 
 set(_rigexec_pxr_libs
     arch tf gf vt sdf ts usd usdGeom usdSkel plug work exec execUsd ef vdf
@@ -80,22 +118,11 @@ endfunction()
 function(rigexec_label_tests)
     get_property(_tests DIRECTORY PROPERTY TESTS)
     foreach(_test IN LISTS _tests)
-        set(_cmd "")
-        get_property(_cmd TEST ${_test} PROPERTY COMMAND)
-        if(NOT _cmd)
+        get_property(_exe GLOBAL PROPERTY "RIGEXEC_TEST_EXE:${_test}")
+        if(NOT _exe OR NOT TARGET "${_exe}")
             continue()
         endif()
-        list(GET _cmd 0 _exe)
-        get_filename_component(_exe_name "${_exe}" NAME_WE)
-        set(_target "")
-        if(TARGET "${_exe}")
-            set(_target "${_exe}")
-        elseif(TARGET "${_exe_name}")
-            set(_target "${_exe_name}")
-        endif()
-        if(NOT _target)
-            continue()
-        endif()
+        set(_target "${_exe}")
         get_target_property(_alias "${_target}" ALIASED_TARGET)
         if(_alias)
             set(_target "${_alias}")
