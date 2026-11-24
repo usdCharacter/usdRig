@@ -29,7 +29,7 @@ inline constexpr uint32_t kRigExecInvalidIndex = 0xffffffffu;
 /// Version of the descriptor structs below. Each library records the version
 /// it was built with, and Initialize rejects one built with another. Raise
 /// it whenever a descriptor's layout changes.
-inline constexpr uint32_t kRigExecRegistryAbiVersion = 6;
+inline constexpr uint32_t kRigExecRegistryAbiVersion = 7;
 
 /// Refers to one registered data type. A type library defines one per type
 /// with RIGEXEC_DEFINE_TYPE_HANDLE, and Initialize gives it its index; read
@@ -103,6 +103,38 @@ enum class RigExecEqualMode : uint8_t { Bitwise, NaNEqual, Ieee };
 /// hash function.
 enum class RigExecHashClass : uint8_t { Exact, Generic, Unhashable };
 
+/// The scalar one column holds. A value is stored as columns: one per
+/// scalar it is made of, so a Vec3f is three Float32 columns.
+enum class RigExecColumnKind : uint8_t {
+    None,
+    UInt8,
+    Int32,
+    UInt32,
+    UInt64,
+    Float32,
+    Float64,
+};
+
+/// Bytes per scalar of \p kind; 0 for None.
+constexpr size_t
+RigExecColumnKindSize(RigExecColumnKind kind)
+{
+    switch (kind) {
+    case RigExecColumnKind::UInt8:
+        return 1;
+    case RigExecColumnKind::Int32:
+    case RigExecColumnKind::UInt32:
+    case RigExecColumnKind::Float32:
+        return 4;
+    case RigExecColumnKind::UInt64:
+    case RigExecColumnKind::Float64:
+        return 8;
+    case RigExecColumnKind::None:
+        break;
+    }
+    return 0;
+}
+
 /// Describes one data type: its size and alignment, how to construct, copy,
 /// compare and hash a value, and, for an array or a record, the types it is
 /// made of. A type that is not trivially copyable needs copy and destroy.
@@ -131,6 +163,20 @@ struct RigExecTypeDesc {
     uint64_t (*hash)(const void *value) = nullptr;
     /// For an array type: how many elements \p value holds.
     size_t (*count)(const void *value) = nullptr;
+    /// For a type without element or member types: the scalar its values
+    /// are made of and how many each holds, one after another in memory.
+    /// None leaves the type, and every type built from it, without columns.
+    /// The registry derives the columns of arrays and records from these.
+    RigExecColumnKind columnKind = RigExecColumnKind::None;
+    uint32_t columnCount = 0;
+};
+
+/// One column of a registered type. `run` says how many values the column
+/// holds for one value of the type: run 0 holds one, and run r > 0 holds
+/// one per element of the r-th array met in member order, depth first.
+struct RigExecTypeColumn {
+    RigExecColumnKind kind = RigExecColumnKind::None;
+    uint32_t run = 0;
 };
 
 /// Whether a port is an input or an output, and how it may be fed.
@@ -514,6 +560,14 @@ struct RigExecRegisteredType {
     const RigExecTypeLibraryDesc *library = nullptr;
     uint32_t index = kRigExecInvalidIndex;
     const RigExecTypeHandle *handle = nullptr;
+    /// The type's columns: its own scalars, then each member's, an array's
+    /// element columns in a run of their own. Empty when some part of the
+    /// type declares no columns.
+    std::vector<RigExecTypeColumn> columns;
+    /// Per run: the run whose values each hold one array of it, so an
+    /// array nested in an array's elements names the outer array's run.
+    /// Entry 0, the value itself, is kRigExecInvalidIndex.
+    std::vector<uint32_t> runParents;
 };
 
 /// A registered op: its description, the library that added it, its index

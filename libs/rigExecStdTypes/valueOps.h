@@ -53,6 +53,28 @@ RIGEXEC_STD_COMPONENTS(RrMat4d, double, 16)
 RIGEXEC_STD_COMPONENTS(RrQuatd, double, 4)
 #undef RIGEXEC_STD_COMPONENTS
 
+/// The column kind of scalar \p S; None for any other type.
+template <class S>
+constexpr rigExec::RigExecColumnKind
+ColumnKindOf()
+{
+    using K = rigExec::RigExecColumnKind;
+    if constexpr (std::is_same_v<S, uint8_t>)
+        return K::UInt8;
+    else if constexpr (std::is_same_v<S, int32_t>)
+        return K::Int32;
+    else if constexpr (std::is_same_v<S, uint32_t>)
+        return K::UInt32;
+    else if constexpr (std::is_same_v<S, uint64_t>)
+        return K::UInt64;
+    else if constexpr (std::is_same_v<S, float>)
+        return K::Float32;
+    else if constexpr (std::is_same_v<S, double>)
+        return K::Float64;
+    else
+        return K::None;
+}
+
 /// FNV-1a.
 inline uint64_t
 HashBytes(const void *data, size_t size, uint64_t seed)
@@ -293,6 +315,14 @@ TypeDescFor(const char *nameSpace, const char *name,
         d.count = [](const void *value) {
             return static_cast<const T *>(value)->Size();
         };
+    if constexpr (!IsArray<T>::value && !IsRecord<T>::value &&
+                  !IsFixed<T>::value) {
+        if (!element && !fieldCount) {
+            d.columnKind = ColumnKindOf<typename Components<T>::Scalar>();
+            if (d.columnKind != rigExec::RigExecColumnKind::None)
+                d.columnCount = uint32_t(Components<T>::count);
+        }
+    }
     return d;
 }
 

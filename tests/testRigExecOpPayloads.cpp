@@ -28,6 +28,8 @@
 #include "rigExecOps/solver/skeleton2dOps.h"
 #include "rigExecOps/solver/splineIkOps.h"
 #include "rigExecOps/weight/weightOps.h"
+#include "rigExecRigTypes/rigTypes.h"
+#include "rigExecStdTypes/stdTypes.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -986,6 +988,53 @@ TestCorruptValues()
 
 } // namespace
 
+/// Whether \p type's columns are \p kinds, each in run \p runs[i].
+bool
+HasColumns(const RigExecTypeHandle &type,
+           const std::vector<RigExecColumnKind> &kinds,
+           const std::vector<uint32_t> &runs)
+{
+    const auto &columns = RigExecRegistry::Get().Type(type).columns;
+    if (columns.size() != kinds.size())
+        return false;
+    for (size_t i = 0; i < kinds.size(); ++i)
+        if (columns[i].kind != kinds[i] || columns[i].run != runs[i])
+            return false;
+    return true;
+}
+
+/// Standard values decompose into their scalars; arrays and records into
+/// their elements' and members' columns, each array in a run of its own.
+void
+TestColumns()
+{
+    using K = RigExecColumnKind;
+    const std::vector<K> vec3f(3, K::Float32);
+    CHECK(HasColumns(rigExecStd::Vec3fType(), vec3f, {0, 0, 0}));
+    CHECK(HasColumns(rigExecStd::Vec3fArray(), vec3f, {1, 1, 1}));
+    CHECK(HasColumns(rigExecStd::Mat4dType(), std::vector<K>(16, K::Float64),
+                     std::vector<uint32_t>(16, 0)));
+    CHECK(HasColumns(rigExecStd::BoolType(), {K::UInt8}, {0}));
+    std::vector<K> frame(12, K::Float64);
+    frame.push_back(K::UInt32);
+    CHECK(HasColumns(rigExecRig::PointFrameType(), frame,
+                     std::vector<uint32_t>(13, 0)));
+    std::vector<K> frameArray = frame;
+    frameArray.insert(frameArray.end(), 12, K::Float64);
+    std::vector<uint32_t> frameArrayRuns(13, 1);
+    frameArrayRuns.insert(frameArrayRuns.end(), 12, 2);
+    CHECK(HasColumns(rigExecRig::PointFrameArrayType(), frameArray,
+                     frameArrayRuns));
+    CHECK(RigExecRegistry::Get()
+              .Type(rigExecRig::PointFrameArrayType())
+              .runParents ==
+          std::vector<uint32_t>({kRigExecInvalidIndex, 0, 0}));
+    CHECK(HasColumns(
+        rigExecRig::PointWeightsType(),
+        {K::Float32, K::Int32, K::Float32, K::UInt32, K::UInt32, K::UInt8},
+        {1, 2, 0, 0, 0, 0}));
+}
+
 int
 main()
 {
@@ -1001,6 +1050,7 @@ main()
     TestMathBytes();
     TestSavedBytes();
     TestDeformSavedBytes();
+    TestColumns();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

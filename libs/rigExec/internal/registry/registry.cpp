@@ -35,6 +35,55 @@ MixText(uint64_t h, const char *text)
     return Mix(h, v);
 }
 
+/// Appends \p part's columns and runs to \p type's; \p part's own values
+/// lie in \p type's run \p outerRun.
+void
+AppendColumns(RigExecRegisteredType &type, const RigExecRegisteredType &part,
+              uint32_t outerRun)
+{
+    const uint32_t base = uint32_t(type.runParents.size()) - 1;
+    for (const RigExecTypeColumn &c : part.columns)
+        type.columns.push_back({c.kind, c.run ? base + c.run : outerRun});
+    for (size_t r = 1; r < part.runParents.size(); ++r) {
+        const uint32_t parent = part.runParents[r];
+        type.runParents.push_back(parent ? base + parent : outerRun);
+    }
+}
+
+/// Fills \p type's columns from its descriptor and its parts' columns.
+template <class Index>
+void
+DeriveColumns(RigExecRegisteredType &type,
+              const std::vector<RigExecRegisteredType> &types,
+              const Index &index)
+{
+    const RigExecTypeDesc &d = *type.desc;
+    type.runParents.assign(1, kRigExecInvalidIndex);
+    bool columnar = true;
+    if (d.element) {
+        const RigExecRegisteredType &element = types[index.at(d.element)];
+        type.runParents.push_back(0);
+        columnar = !element.columns.empty();
+        if (columnar)
+            AppendColumns(type, element, 1);
+    } else if (d.fieldCount) {
+        for (size_t f = 0; columnar && f < d.fieldCount; ++f) {
+            const RigExecRegisteredType &part = types[index.at(d.fields[f])];
+            columnar = !part.columns.empty();
+            if (columnar)
+                AppendColumns(type, part, 0);
+        }
+    } else {
+        columnar = d.columnKind != RigExecColumnKind::None;
+        if (columnar)
+            type.columns.assign(d.columnCount, {d.columnKind, 0});
+    }
+    if (!columnar) {
+        type.columns.clear();
+        type.runParents.assign(1, kRigExecInvalidIndex);
+    }
+}
+
 std::string
 Text(const char *text)
 {
@@ -189,6 +238,13 @@ RigExecRegistryBuilder::_FreezeTypes(const RigExecRegistryInit &init)
         if (d.hashClass != RigExecHashClass::Unhashable && !d.hash) {
             _Error("type " + name + ": hash class without a hash");
         }
+        if (d.columnKind == RigExecColumnKind::None
+                ? d.columnCount != 0
+                : d.element || d.fieldCount ||
+                      d.columnCount * RigExecColumnKindSize(d.columnKind) !=
+                          d.size) {
+            _Error("type " + name + ": columns do not make up its values");
+        }
     }
     // Composition handles must name registered types; a registered type
     // may compose only types registered before it, so there is no cycle.
@@ -318,6 +374,7 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
     for (size_t i = 0; i < _typeEntries.size(); ++i) {
         const _TypeEntry &e = _typeEntries[i];
         r._types[i] = {e.desc, e.library, uint32_t(i), e.handle};
+        DeriveColumns(r._types[i], r._types, _typeIndex);
         fingerprint = MixText(fingerprint, e.desc->nameSpace);
         fingerprint = MixText(fingerprint, e.desc->name);
         fingerprint = Mix(fingerprint, e.desc->major);

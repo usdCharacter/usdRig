@@ -313,6 +313,26 @@ TestFieldValidation(const RigExecRegistryInit &good)
     CHECK(!fakeTypes::Float().IsValid());
 }
 
+// A type whose declared columns do not make up its size.
+RIGEXEC_DEFINE_TYPE_HANDLE(ShortColumns)
+
+void
+RegisterShortColumns(RigExecTypeRegistrar &registrar)
+{
+    static const RigExecTypeDesc desc = [] {
+        RigExecTypeDesc d;
+        d.nameSpace = "test";
+        d.name = "ShortColumns";
+        d.size = 12;
+        d.align = 4;
+        d.triviallyCopyable = true;
+        d.columnKind = RigExecColumnKind::Float32;
+        d.columnCount = 2;
+        return d;
+    }();
+    registrar.Add(ShortColumns(), desc);
+}
+
 void
 TestValidateErrors(const RigExecRegistryInit &good)
 {
@@ -378,6 +398,16 @@ TestValidateErrors(const RigExecRegistryInit &good)
         CHECK(Mentions(errors, "port x uses a type that is not registered"));
     }
     {
+        RigExecTypeLibraryDesc shortColumns;
+        shortColumns.name = "shortColumns";
+        shortColumns.registerTypes = &RegisterShortColumns;
+        RigExecRegistryInit init = good;
+        init.typeLibraries.push_back(&shortColumns);
+        std::vector<std::string> errors;
+        CHECK(!RigExecRegistry::Validate(init, &errors));
+        CHECK(Mentions(errors, "columns do not make up its values"));
+    }
+    {
         RigExecRegistryInit init = good;
         init.typeLibraries.push_back(good.typeLibraries.front());
         std::vector<std::string> errors;
@@ -421,6 +451,8 @@ TestInitialize(const RigExecRegistryInit &init)
     CHECK(fakeTypes::Vec3Type().Index() == 1);
     CHECK(!fakeTypes::Unregistered().IsValid());
     CHECK(r.Type(fakeTypes::Vec3Type()).desc->size == sizeof(fakeTypes::Vec3));
+    // A type that declares no columns has none.
+    CHECK(r.Type(fakeTypes::Vec3Type()).columns.empty());
     CHECK(fakeOps::ScaleIn().Index() == 0);
     CHECK(fakeOps::ScaleOut().Index() == 1);
     const RigExecRegisteredOp &offset = r.Op(fakeOps::Offset());
