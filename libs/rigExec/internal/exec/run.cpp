@@ -614,4 +614,70 @@ RigExecRun::Run(bool historyTick, RigExecTaskSystem *tasks, std::string *error)
     return false;
 }
 
+void
+RigExecRun::CopyFrom(const RigExecRun &source)
+{
+    const RigExecProgram &p = *program;
+    for (const RigExecProgramSlot &slot : p.slots) {
+        if (slot.arena != RigExecArenaKind::Work)
+            continue;
+        const RigExecTypeDesc &t = TypeOf(slot.type);
+        if (t.copy)
+            t.copy(work.Data() + slot.offset, source.work.Data() + slot.offset);
+        else
+            std::memcpy(work.Data() + slot.offset,
+                        source.work.Data() + slot.offset, t.size);
+    }
+    for (const RigExecProgramNode &node : p.nodes) {
+        const RigExecOpDesc &d = OpOf(node.op);
+        if (node.stateOffset == SIZE_MAX || !d.state.copy)
+            continue;
+        if (d.state.destroy)
+            d.state.destroy(State() + node.stateOffset);
+        d.state.copy(State() + node.stateOffset,
+                     source.State() + node.stateOffset);
+    }
+    for (const RigExecProgramBatch &batch : p.batches) {
+        if (batch.firstStateColumn == kRigExecInvalidIndex)
+            continue;
+        const size_t fields = OpOf(batch.op).stateFieldCount;
+        for (size_t i = batch.firstStateColumn;
+             i < batch.firstStateColumn + fields; ++i) {
+            const RigExecProgramColumn &c = p.stateColumns[i];
+            const size_t size = TypeOf(c.type).size;
+            if (c.firstRun == kRigExecInvalidIndex) {
+                std::memcpy(State() + c.offset, source.State() + c.offset,
+                            batch.nodeCount * c.stride);
+                continue;
+            }
+            for (uint32_t k = 0; k < batch.nodeCount; ++k) {
+                const uint32_t r = c.firstRun + k;
+                const RigExecFieldRunOf<std::byte> &from = source.stateRuns[r];
+                if (!from.data)
+                    continue;
+                if (c.fromInput) {
+                    stateBuffers[r].Allocate(from.count * size);
+                    stateRuns[r] = {stateBuffers[r].Data(), from.count};
+                }
+                std::memcpy(stateRuns[r].data, from.data, from.count * size);
+            }
+        }
+    }
+    for (size_t i = 0; i < published->pools.size(); ++i) {
+        const RigExecPublishedPool &from = source.published->pools[i];
+        RigExecPublishedPool &pool = published->pools[i];
+        const RigExecTypeDesc &t = TypeOf(pool.type);
+        RigExecPublishedArena &to = *pool.arenas[pool.current];
+        const RigExecPublishedArena &value = *from.arenas[from.current];
+        if (t.copy)
+            t.copy(to.storage.Data(), value.storage.Data());
+        else
+            std::memcpy(to.storage.Data(), value.storage.Data(), t.size);
+        to.generation = value.generation;
+    }
+    captures = source.captures;
+    generation = source.generation;
+    everything = true;
+}
+
 } // namespace rigExec

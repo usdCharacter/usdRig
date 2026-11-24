@@ -188,6 +188,7 @@ add_library(rigExecOpCore SHARED
     libs/rigExec/internal/exec/evaluator.cpp
     libs/rigExec/internal/exec/inputChannel.cpp
     libs/rigExec/internal/exec/run.cpp
+    libs/rigExec/internal/exec/runState.cpp
     libs/rigExec/internal/exec/threadTaskSystem.cpp
     libs/rigExec/internal/exec/view.cpp)
 target_compile_features(rigExecOpCore PUBLIC cxx_std_17)

@@ -8,6 +8,7 @@
 #include "rigExec/api/opFields.h"
 #include "rigExec/api/registry.h"
 #include "rigExec/api/rigDesc.h"
+#include "rigExec/api/runState.h"
 #include "rigExec/api/view.h"
 #include "rigExec/internal/program/program.h"
 #include "rigExecGraph/windowHistory.h"
@@ -781,6 +782,109 @@ TestDirtyPropagation()
             CHECK(dirty->Evaluate());
             CHECK((TakeMarks() == std::vector<uint32_t>{1, 1, 1, 1, 1, 1}));
         }
+}
+
+// Run states over one program: workers on their own threads, a copy that
+// continues from an evaluator, and a what-if that leaves it untouched.
+void
+TestRunStates()
+{
+    const DirtyRig rig = BuildDirtyRig(0);
+    CHECK(rig.program);
+    if (!rig.program)
+        return;
+    const RigExecInputId inputs[4] = {rig.a, rig.b, rig.c, rig.d};
+    const auto valueOf = [](int worker, int frame, int input) {
+        const float v = float(worker * 100 + frame * 4 + input + 1);
+        return Vec3{v, v + 0.5f, v + 0.25f};
+    };
+    constexpr int kWorkers = 4;
+    constexpr int kFrames = 12;
+    std::vector<std::vector<Vec3>> expected(kWorkers);
+    auto reference = RigExecEvaluator::Create(rig.program);
+    for (int w = 0; w < kWorkers; ++w)
+        for (int f = 0; f < kFrames; ++f) {
+            for (int i = 0; i < 4; ++i) {
+                const Vec3 v = valueOf(w, f, i);
+                CHECK(reference->SetInput(inputs[i], &v));
+            }
+            CHECK(reference->Evaluate());
+            for (const RigExecOutputId out : rig.outs)
+                expected[w].push_back(
+                    *static_cast<const Vec3 *>(reference->GetOutput(out)));
+        }
+    std::unique_ptr<RigExecTaskSystem> pool = RigExecCreateThreadTaskSystem(3);
+    std::vector<std::vector<Vec3>> got(kWorkers);
+    std::vector<std::thread> threads;
+    for (int w = 0; w < kWorkers; ++w)
+        threads.emplace_back([&, w] {
+            RigExecEvaluatorOptions options;
+            options.tasks = w % 2 ? pool.get() : nullptr;
+            auto state = RigExecRunState::Create(rig.program, options);
+            for (int f = 0; f < kFrames; ++f) {
+                RigExecInputWriter writer = state->BeginInputEdit();
+                for (int i = 0; i < 4; ++i) {
+                    const Vec3 v = valueOf(w, f, i);
+                    writer.Set(inputs[i], &v);
+                }
+                writer.Commit();
+                if (!state->Evaluate())
+                    return;
+                for (const RigExecOutputId out : rig.outs)
+                    got[w].push_back(
+                        *static_cast<const Vec3 *>(state->GetOutput(out)));
+            }
+        });
+    for (std::thread &thread : threads)
+        thread.join();
+    for (int w = 0; w < kWorkers; ++w) {
+        CHECK(got[w].size() == expected[w].size());
+        for (size_t k = 0; k < got[w].size() && k < expected[w].size(); ++k)
+            CHECK(Same(got[w][k], expected[w][k]));
+    }
+
+    // A copy continues from the evaluator's inputs and history.
+    auto evaluator = RigExecEvaluator::Create(rig.program);
+    for (int f = 0; f < 3; ++f) {
+        for (int i = 0; i < 4; ++i) {
+            const Vec3 v = valueOf(0, f, i);
+            CHECK(evaluator->SetInput(inputs[i], &v));
+        }
+        CHECK(evaluator->Evaluate());
+        evaluator->PushHistory();
+    }
+    std::unique_ptr<RigExecRunState> copy = evaluator->CreateRunState();
+    CHECK(&copy->GetProgram() == &evaluator->GetProgram());
+    for (const RigExecOutputId out : rig.outs)
+        CHECK(Same(*static_cast<const Vec3 *>(copy->GetOutput(out)),
+                   *static_cast<const Vec3 *>(evaluator->GetOutput(out))));
+    CHECK(copy->Evaluate() && evaluator->Evaluate());
+    for (const RigExecOutputId out : rig.outs)
+        CHECK(Same(*static_cast<const Vec3 *>(copy->GetOutput(out)),
+                   *static_cast<const Vec3 *>(evaluator->GetOutput(out))));
+    std::vector<Vec3> before;
+    for (const RigExecOutputId out : rig.outs)
+        before.push_back(*static_cast<const Vec3 *>(evaluator->GetOutput(out)));
+    {
+        RigExecInputWriter writer = copy->BeginInputEdit();
+        const Vec3 what{50.0f, 50.0f, 50.0f};
+        writer.Set(rig.a, &what);
+        writer.Commit();
+    }
+    CHECK(copy->Evaluate());
+    CHECK(static_cast<const Vec3 *>(copy->GetOutput(rig.outs[0]))->x == 50.0f);
+    for (size_t k = 0; k < rig.outs.size(); ++k)
+        CHECK(
+            Same(*static_cast<const Vec3 *>(evaluator->GetOutput(rig.outs[k])),
+                 before[k]));
+    std::unique_ptr<RigExecRunState> twin = copy->Clone();
+    copy->ReleaseOwner();
+    std::thread([&] { CHECK(copy->Evaluate()); }).join();
+    copy->ReleaseOwner();
+    CHECK(twin->Evaluate());
+    for (const RigExecOutputId out : rig.outs)
+        CHECK(Same(*static_cast<const Vec3 *>(twin->GetOutput(out)),
+                   *static_cast<const Vec3 *>(copy->GetOutput(out))));
 }
 
 // in -> Scale(2) -> Offset -> out, with a tap on the Scale output.
@@ -2361,6 +2465,7 @@ main()
     TestInputWriter();
     TestPins();
     TestDirtyPropagation();
+    TestRunStates();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

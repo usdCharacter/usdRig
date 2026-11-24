@@ -1,6 +1,7 @@
 #include "rigExec/api/evaluator.h"
 #include "rigExec/internal/exec/inputChannel.h"
 #include "rigExec/internal/exec/run.h"
+#include "rigExec/internal/exec/runStateData.h"
 #include "rigExec/internal/exec/view.h"
 #include "rigExec/internal/program/program.h"
 
@@ -186,6 +187,18 @@ RigExecEvaluator::ViewOutput(RigExecOutputId output) const
 {
     _AssertOwnerThread();
     return RigExecViewAccess::Output(_state->main, output);
+}
+
+std::unique_ptr<RigExecRunState>
+RigExecEvaluator::CreateRunState()
+{
+    _AssertOwnerThread();
+    _pending.Commit();
+    RigExecEvaluatorState &s = *_state;
+    return std::make_unique<RigExecRunState>(
+        RigExecRunState::_CreateKey(0),
+        RigExecRunStateData::CloneOf(s.program, _options, s.channel, s.rings,
+                                     s.main));
 }
 
 const RigExecProgram &

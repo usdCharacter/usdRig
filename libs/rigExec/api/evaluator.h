@@ -20,6 +20,7 @@
 namespace rigExec {
 
 struct RigExecEvaluatorState;
+class RigExecRunState;
 
 struct RigExecEvaluatorOptions {
     /// Worker threads that ops with no dependency on each other can run on.
@@ -84,6 +85,11 @@ public:
     /// is: later evaluations write that output elsewhere until the view is
     /// released. Empty for an unknown output.
     RigExecValueView ViewOutput(RigExecOutputId output) const;
+    /// A run state that continues from this evaluator: its inputs (with
+    /// any SetInput values committed first), op state, outputs and history
+    /// of earlier frames. Evaluating it leaves this evaluator untouched;
+    /// use it for a what-if evaluation or hand it to another thread.
+    std::unique_ptr<RigExecRunState> CreateRunState();
     /// The program this evaluator runs.
     const RigExecProgram &GetProgram() const;
     /// Switches to another compiled program, for example after the rig

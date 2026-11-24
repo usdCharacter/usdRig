@@ -132,6 +132,10 @@ struct RigExecRun {
     /// null, returns the first failure in batch order, and makes the next
     /// frame run every node.
     bool Run(bool historyTick, RigExecTaskSystem *tasks, std::string *error);
+    /// Takes \p source's work values, op state, published values and
+    /// captures; both are bound to one program. The next frame runs every
+    /// node.
+    void CopyFrom(const RigExecRun &source);
 
 private:
     void _BindFields();
