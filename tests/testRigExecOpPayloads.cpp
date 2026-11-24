@@ -937,13 +937,23 @@ TestCorruptValues()
 
     // A list length larger than the bytes left is refused before any item
     // is read or allocated.
-    const RigExecOpPayloadHandling &wire = Op(Wire()).desc->payload;
+    const RigExecOpPayloadHandling &blend = Op(BlendShape()).desc->payload;
+    BlendShapePayload s;
+    s.channels.resize(2);
+    blend.encode(&s, bytes);
+    for (size_t i = 4; i < 12; ++i)
+        bytes[i] = 0xff;
+    CHECK(!Decodes(blend, bytes, &error));
+    CHECK(error.find("longer than") != std::string::npos);
+
+    // A declared list's count past the bytes left is refused the same way.
+    const RigExecOpDesc &wire = *Op(Wire()).desc;
     WirePayload w;
     w.knots = {1.0, 2.0};
-    wire.encode(&w, bytes);
+    CHECK(RigExecEncodeOpPayload(wire, &w, bytes));
     for (size_t i = 8; i < 16; ++i)
         bytes[i] = 0xff;
-    CHECK(!Decodes(wire, bytes, &error));
+    CHECK(!FieldsDecode(wire, bytes, &error));
     CHECK(error.find("longer than") != std::string::npos);
 }
 

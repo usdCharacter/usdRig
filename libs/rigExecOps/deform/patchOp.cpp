@@ -1,10 +1,11 @@
 #include "rigExecOps/deform/patchOp.h"
 
 #include "rigExecMath/patchKernel.h"
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 
 #include <cmath>
+#include <cstdint>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -29,16 +30,39 @@ RIGEXEC_DEFINE_PORT_HANDLE(PatchOut)
 namespace {
 
 using namespace opIo;
+using namespace fieldIo;
 using rigExecStd::RigExecArray;
 using rigExecStd::Vec3f;
 using Doubles = RigExecArray<double>;
 using Ints = RigExecArray<int>;
 
-bool
-Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
-    std::string *error)
+enum PatchField : uint32_t {
+    kUVertexCount,
+    kVVertexCount,
+    kUOrder,
+    kVOrder,
+    kUPeriodic,
+    kVPeriodic,
+};
+
+/// Instance \p k's patch structure.
+PatchPayload
+PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
 {
-    const PatchPayload &p = *static_cast<const PatchPayload *>(payload);
+    PatchPayload p;
+    p.uVertexCount = ValueAt<int32_t>(batch, kUVertexCount, k);
+    p.vVertexCount = ValueAt<int32_t>(batch, kVVertexCount, k);
+    p.uOrder = ValueAt<int32_t>(batch, kUOrder, k);
+    p.vOrder = ValueAt<int32_t>(batch, kVOrder, k);
+    p.uPeriodic = FlagAt(batch, kUPeriodic, k);
+    p.vPeriodic = FlagAt(batch, kVPeriodic, k);
+    return p;
+}
+
+bool
+PatchOne(const rigExec::RigExecOpIo &io, const PatchPayload &p,
+         std::string *error)
+{
     const Points &controls = *In<Points>(io, PatchControlPoints());
     const Doubles &pointWeights = *In<Doubles>(io, PatchPointWeights());
     const Doubles &uKnots = *In<Doubles>(io, PatchUKnots());
@@ -100,6 +124,36 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
                        In<Envelope>(io, PatchEnvelope()), "Patch", error);
 }
 
+bool
+Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return PatchOne(rigExec::RigExecBatchInstance(batch, k),
+                        PayloadAt(batch, k), error);
+    });
+}
+
+void
+Values(const void *payload, rigExec::RigExecFieldValues &out)
+{
+    const PatchPayload &p = *static_cast<const PatchPayload *>(payload);
+    out.Set(kUVertexCount, p.uVertexCount);
+    out.Set(kVVertexCount, p.vVertexCount);
+    out.Set(kUOrder, p.uOrder);
+    out.Set(kVOrder, p.vOrder);
+    SetFlag(out, kUPeriodic, p.uPeriodic);
+    SetFlag(out, kVPeriodic, p.vPeriodic);
+}
+
+const rigExec::RigExecFieldDesc kFields[] = {
+    Value("uVertexCount", rigExecStd::IntType()),
+    Value("vVertexCount", rigExecStd::IntType()),
+    Value("uOrder", rigExecStd::IntType()),
+    Value("vOrder", rigExecStd::IntType()),
+    Flag("uPeriodic"),
+    Flag("vPeriodic"),
+};
+
 } // namespace
 
 namespace {
@@ -132,45 +186,20 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&PatchOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
-void
-Save(Writer &w, const PatchPayload &p)
-{
-    w.Version(1);
-    w.I32(p.uVertexCount);
-    w.I32(p.vVertexCount);
-    w.I32(p.uOrder);
-    w.I32(p.vOrder);
-    w.Bool(p.uPeriodic);
-    w.Bool(p.vPeriodic);
-}
-
-void
-Load(Reader &r, PatchPayload &p)
-{
-    r.Version(1);
-    p.uVertexCount = r.I32();
-    p.vVertexCount = r.I32();
-    p.uOrder = r.I32();
-    p.vOrder = r.I32();
-    p.uPeriodic = r.Bool();
-    p.vPeriodic = r.Bool();
-}
-
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "Patch";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.run = &Run;
+    d.runBatch = &Run;
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;
-    d.payload =
-        rigExec::RigExecPayloadHandlingFor<PatchPayload, &Save, &Load>();
+    d.payloadFields = kFields;
+    d.payloadFieldCount = std::size(kFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &Values;
     return d;
 }();
 

@@ -1,9 +1,10 @@
 #include "rigExecOps/deform/surfaceProjectOp.h"
 
 #include "rigExecMath/surfaceProjectKernel.h"
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 
+#include <cstdint>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -26,17 +27,40 @@ RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectOut)
 namespace {
 
 using namespace opIo;
+using namespace fieldIo;
 using rigExecStd::Mat4d;
 using rigExecStd::RigExecArray;
 using rigExecStd::Vec3f;
 using Ints = RigExecArray<int>;
 
-bool
-Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
-    std::string *error)
+enum SurfaceProjectField : uint32_t {
+    kMode,
+    kOffset,
+    kMaskCount,
+    kMask,
+    kTriangleCount,
+    kTriangles,
+};
+
+/// Instance \p k's settings.
+rigExec::RigExecSurfaceSnapSettings
+SettingsAt(const rigExec::RigExecOpBatch &batch, size_t k)
 {
-    const rigExec::RigExecSurfaceSnapSettings &settings =
-        static_cast<const SurfaceProjectPayload *>(payload)->settings;
+    rigExec::RigExecSurfaceSnapSettings s;
+    s.mode = EnumAt<rigExec::RigExecSurfaceSnapMode>(batch, kMode, k);
+    s.offset = ValueAt<float>(batch, kOffset, k);
+    const auto mask = ListAt<float>(batch, kMask, k);
+    s.mask.assign(mask.begin(), mask.end());
+    const auto triangles = ListAt<int32_t>(batch, kTriangles, k);
+    s.triangles.assign(triangles.begin(), triangles.end());
+    return s;
+}
+
+bool
+ProjectOne(const rigExec::RigExecOpIo &io,
+           const rigExec::RigExecSurfaceSnapSettings &settings,
+           std::string *error)
+{
     const Points &in = *In<Points>(io, SurfaceProjectPoints());
     const Points &surface = *In<Points>(io, SurfaceProjectSurface());
     const Ints &counts = *In<Ints>(io, SurfaceProjectCounts());
@@ -48,7 +72,6 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
     std::vector<Vec3f> points = ToVector(in);
     if (rigExec::RigExecSurfaceSnapIsLegacy(settings, toSurface, toTarget,
                                             toMetric)) {
-        // Brute force; a BVH waits for ops to carry state.
         rigExec::RigExecApplySurfaceProjectKernel(
             &points, surface.Data(), surface.Size(), counts.Data(),
             counts.Size(), indices.Data(), indices.Size(),
@@ -65,6 +88,35 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
                        In<Envelope>(io, SurfaceProjectEnvelope()),
                        "SurfaceProject", error);
 }
+
+bool
+Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return ProjectOne(rigExec::RigExecBatchInstance(batch, k),
+                          SettingsAt(batch, k), error);
+    });
+}
+
+void
+Values(const void *payload, rigExec::RigExecFieldValues &out)
+{
+    const rigExec::RigExecSurfaceSnapSettings &s =
+        static_cast<const SurfaceProjectPayload *>(payload)->settings;
+    SetEnum(out, kMode, s.mode);
+    out.Set(kOffset, s.offset);
+    SetList(out, kMaskCount, s.mask);
+    SetList(out, kTriangleCount, s.triangles);
+}
+
+const rigExec::RigExecFieldDesc kFields[] = {
+    Enum("mode", rigExec::RigExecSurfaceSnapMode::OutsideSurface),
+    Value("offset", rigExecStd::FloatType()),
+    Count("maskCount"),
+    Items("mask", rigExecStd::FloatType(), kMaskCount),
+    Count("triangleCount"),
+    Items("triangles", rigExecStd::IntType(), kTriangleCount),
+};
 
 } // namespace
 
@@ -98,41 +150,20 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
-void
-Save(Writer &w, const SurfaceProjectPayload &p)
-{
-    w.Version(1);
-    w.Enum(p.settings.mode);
-    w.F32(p.settings.offset);
-    payloadIo::PutList(w, p.settings.mask);
-    payloadIo::PutList(w, p.settings.triangles);
-}
-
-void
-Load(Reader &r, SurfaceProjectPayload &p)
-{
-    r.Version(1);
-    p.settings.mode = r.Enum(rigExec::RigExecSurfaceSnapMode::OutsideSurface);
-    p.settings.offset = r.F32();
-    payloadIo::GetList(r, p.settings.mask);
-    payloadIo::GetList(r, p.settings.triangles);
-}
-
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "SurfaceProject";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.run = &Run;
+    d.runBatch = &Run;
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;
-    d.payload = rigExec::RigExecPayloadHandlingFor<SurfaceProjectPayload, &Save,
-                                                   &Load>();
+    d.payloadFields = kFields;
+    d.payloadFieldCount = std::size(kFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &Values;
     return d;
 }();
 

@@ -1,8 +1,10 @@
 #include "rigExecOps/deform/latticeOp.h"
 
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 
+#include <array>
+#include <cstdint>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -31,6 +33,7 @@ using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 using Points = RigExecArray<Vec3f>;
 using namespace opIo;
+using namespace fieldIo;
 
 Mat4d
 MatrixOr1(const Mat4d *m)
@@ -38,10 +41,43 @@ MatrixOr1(const Mat4d *m)
     return m ? *m : Mat4d(1.0);
 }
 
-bool
-Run(const void *payload, void *, const RigExecOpIo &io, std::string *error)
+enum LatticeField : uint32_t {
+    kDivisions,
+    kRegularGrid,
+    kInterpolation,
+    kOrigin,
+    kSpacing,
+    kStrength,
+    kMaskCount,
+    kMask,
+};
+
+/// Instance \p k's settings.
+LatticePayload
+PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
 {
-    const LatticePayload &p = *static_cast<const LatticePayload *>(payload);
+    LatticePayload p;
+    const auto divisions = ListAt<int32_t>(batch, kDivisions, k);
+    const auto interpolation = ListAt<uint32_t>(batch, kInterpolation, k);
+    const auto origin = ListAt<float>(batch, kOrigin, k);
+    const auto spacing = ListAt<float>(batch, kSpacing, k);
+    for (size_t a = 0; a < 3; ++a) {
+        p.divisions[a] = divisions[a];
+        p.settings.interpolation[a] =
+            rigExec::RigExecLatticeInterpolation(interpolation[a]);
+        p.settings.origin[a] = origin[a];
+        p.settings.spacing[a] = spacing[a];
+    }
+    p.settings.regularGrid = FlagAt(batch, kRegularGrid, k);
+    p.settings.strength = ValueAt<float>(batch, kStrength, k);
+    const auto mask = ListAt<float>(batch, kMask, k);
+    p.settings.mask.assign(mask.begin(), mask.end());
+    return p;
+}
+
+bool
+LatticeOne(const RigExecOpIo &io, const LatticePayload &p, std::string *error)
+{
     const Points &in = *In<Points>(io, LatticePoints());
     const Points &posedCage = *In<Points>(io, LatticePosedCage());
     std::vector<Vec3f> points(in.begin(), in.end());
@@ -65,7 +101,6 @@ Run(const void *payload, void *, const RigExecOpIo &io, std::string *error)
         if (rest->Size() != in.Size())
             return Fail(error, "Lattice",
                         "rest points differ in count from the points");
-        // No retained bind factors yet: each run streams them.
         rigExec::RigExecApplyLatticeKernelRange(
             &points, 0, points.size(), rest->Data(), rest->Size(),
             restCage->Data(), restCage->Size(), posedCage.Data(),
@@ -75,6 +110,48 @@ Run(const void *payload, void *, const RigExecOpIo &io, std::string *error)
     return WritePoints(io, LatticeOut(), in, points,
                        In<Envelope>(io, LatticeEnvelope()), "Lattice", error);
 }
+
+bool
+Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return LatticeOne(rigExec::RigExecBatchInstance(batch, k),
+                          PayloadAt(batch, k), error);
+    });
+}
+
+void
+Values(const void *payload, rigExec::RigExecFieldValues &out)
+{
+    const LatticePayload &p = *static_cast<const LatticePayload *>(payload);
+    const rigExec::RigExecLatticeSettings &s = p.settings;
+    std::array<int32_t, 3> divisions;
+    std::array<uint32_t, 3> interpolation;
+    for (size_t a = 0; a < 3; ++a) {
+        divisions[a] = int32_t(p.divisions[a]);
+        interpolation[a] = uint32_t(s.interpolation[a]);
+    }
+    out.Set(kDivisions, divisions.data(), divisions.size());
+    SetFlag(out, kRegularGrid, s.regularGrid);
+    out.Set(kInterpolation, interpolation.data(), interpolation.size());
+    out.Set(kOrigin, s.origin.data(), s.origin.size());
+    out.Set(kSpacing, s.spacing.data(), s.spacing.size());
+    out.Set(kStrength, s.strength);
+    SetList(out, kMaskCount, s.mask);
+}
+
+const rigExec::RigExecFieldDesc kFields[] = {
+    Fixed(Value("divisions", rigExecStd::IntType()), 3),
+    Flag("regularGrid"),
+    Fixed(
+        Enum("interpolation", rigExec::RigExecLatticeInterpolation::CatmullRom),
+        3),
+    Fixed(Value("origin", rigExecStd::FloatType()), 3),
+    Fixed(Value("spacing", rigExecStd::FloatType()), 3),
+    Value("strength", rigExecStd::FloatType()),
+    Count("maskCount"),
+    Items("mask", rigExecStd::FloatType(), kMaskCount),
+};
 
 } // namespace
 
@@ -101,58 +178,21 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&LatticeOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
-void
-Save(Writer &w, const LatticePayload &p)
-{
-    w.Version(1);
-    for (int d : p.divisions)
-        w.I32(d);
-    const rigExec::RigExecLatticeSettings &s = p.settings;
-    w.Bool(s.regularGrid);
-    for (rigExec::RigExecLatticeInterpolation i : s.interpolation)
-        w.Enum(i);
-    for (float v : s.origin)
-        w.F32(v);
-    for (float v : s.spacing)
-        w.F32(v);
-    w.F32(s.strength);
-    payloadIo::PutList(w, s.mask);
-}
-
-void
-Load(Reader &r, LatticePayload &p)
-{
-    r.Version(1);
-    for (int &d : p.divisions)
-        d = r.I32();
-    rigExec::RigExecLatticeSettings &s = p.settings;
-    s.regularGrid = r.Bool();
-    for (rigExec::RigExecLatticeInterpolation &i : s.interpolation)
-        i = r.Enum(rigExec::RigExecLatticeInterpolation::CatmullRom);
-    for (float &v : s.origin)
-        v = r.F32();
-    for (float &v : s.spacing)
-        v = r.F32();
-    s.strength = r.F32();
-    payloadIo::GetList(r, s.mask);
-}
-
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "Lattice";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.run = &Run;
+    d.runBatch = &Run;
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
         rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
-    d.payload =
-        rigExec::RigExecPayloadHandlingFor<LatticePayload, &Save, &Load>();
+    d.payloadFields = kFields;
+    d.payloadFieldCount = std::size(kFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &Values;
     return d;
 }();
 

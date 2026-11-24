@@ -1446,6 +1446,22 @@ TestWire()
                     &oneIndex, &oneWeight},
                    &actual, &error));
     CHECK(error.find("not both") != std::string::npos);
+    // Nodes with different falloffs in one rig each run with their own.
+    std::vector<WirePayload> payloads(3, payload);
+    payloads[0].dropoffDistance = 0.0;
+    payloads[1].dropoffDistance = 1.5;
+    payloads[2].dropoffDistance = 4.0;
+    const std::vector<const RigExecPortHandle *> ports = {
+        &WirePoints(), &WireRestCurve(), &WireCurve(), &WireBindCoords(),
+        &WireEnvelope()};
+    const std::vector<const void *> values = {&in, &restArray, &posedArray,
+                                              &bindArray, &envelopeArray};
+    std::vector<Points> results;
+    CHECK(RunEach(Wire(), ports, WireOut(), payloads, values, &results));
+    for (size_t i = 0; i < results.size(); ++i) {
+        Node single(Wire(), ports, WireOut(), &payloads[i]);
+        CHECK(single.Run(values, &actual) && SamePoints(actual, results[i]));
+    }
 }
 
 void

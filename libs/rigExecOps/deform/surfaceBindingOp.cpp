@@ -1,9 +1,10 @@
 #include "rigExecOps/deform/surfaceBindingOp.h"
 
 #include "rigExecMath/surfaceBindingKernel.h"
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 
+#include <cstdint>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -42,6 +43,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(SurfaceBindingOut)
 namespace {
 
 using namespace opIo;
+using namespace fieldIo;
 using rigExecStd::Mat4d;
 using rigExecStd::RigExecArray;
 using rigExecStd::Vec3d;
@@ -55,12 +57,12 @@ List(const rigExec::RigExecOpIo &io, const rigExec::RigExecPortHandle &port)
     return {a.Data(), a.Size()};
 }
 
+enum SurfaceBindingField : uint32_t { kLimit, kSmooth, kFramed };
+
 bool
-Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
-    std::string *error)
+BindOne(const rigExec::RigExecOpIo &io, const SurfaceBindingPayload &p,
+        std::string *error)
 {
-    const SurfaceBindingPayload &p =
-        *static_cast<const SurfaceBindingPayload *>(payload);
     rigExec::RigExecSurfaceBinding<Vec3f> b;
     b.vertices = List<int>(io, SurfaceBindingVertices());
     b.vertexOffsets = List<int>(io, SurfaceBindingVertexOffsets());
@@ -112,6 +114,39 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
                        In<Envelope>(io, SurfaceBindingEnvelope()),
                        "SurfaceBinding", error);
 }
+
+bool
+Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    const uint8_t *limit =
+        rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kLimit);
+    const uint8_t *smooth =
+        rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kSmooth);
+    const uint8_t *framed =
+        rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kFramed);
+    return EachInstance(batch, failed, [&](size_t k) {
+        SurfaceBindingPayload p;
+        p.limit = limit[k] != 0;
+        p.smooth = smooth[k] != 0;
+        p.framed = framed[k] != 0;
+        return BindOne(rigExec::RigExecBatchInstance(batch, k), p, error);
+    });
+}
+
+void
+Values(const void *payload, rigExec::RigExecFieldValues &out)
+{
+    const auto &p = *static_cast<const SurfaceBindingPayload *>(payload);
+    SetFlag(out, kLimit, p.limit);
+    SetFlag(out, kSmooth, p.smooth);
+    SetFlag(out, kFramed, p.framed);
+}
+
+const rigExec::RigExecFieldDesc kFields[] = {
+    Flag("limit"),
+    Flag("smooth"),
+    Flag("framed"),
+};
 
 } // namespace
 
@@ -176,39 +211,20 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
-void
-Save(Writer &w, const SurfaceBindingPayload &p)
-{
-    w.Version(1);
-    w.Bool(p.limit);
-    w.Bool(p.smooth);
-    w.Bool(p.framed);
-}
-
-void
-Load(Reader &r, SurfaceBindingPayload &p)
-{
-    r.Version(1);
-    p.limit = r.Bool();
-    p.smooth = r.Bool();
-    p.framed = r.Bool();
-}
-
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "SurfaceBinding";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.run = &Run;
+    d.runBatch = &Run;
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;
-    d.payload = rigExec::RigExecPayloadHandlingFor<SurfaceBindingPayload, &Save,
-                                                   &Load>();
+    d.payloadFields = kFields;
+    d.payloadFieldCount = std::size(kFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &Values;
     return d;
 }();
 

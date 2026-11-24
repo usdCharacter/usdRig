@@ -1,5 +1,6 @@
 #include "rigExecOps/deform/ribbonOp.h"
 
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecMath/ribbonKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
@@ -32,9 +33,10 @@ using rigExecStd::Vec2f;
 using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 using namespace opIo;
+using namespace fieldIo;
 
 bool
-RunRibbon(const void *, void *, const RigExecOpIo &io, std::string *error)
+RibbonOne(const RigExecOpIo &io, std::string *error)
 {
     const Points &in = *In<Points>(io, RibbonPoints());
     const auto &bind = *In<RigExecArray<Vec2f>>(io, RibbonBindCoords());
@@ -56,7 +58,7 @@ RunRibbon(const void *, void *, const RigExecOpIo &io, std::string *error)
 }
 
 bool
-RunGuidePoints(const void *, void *, const RigExecOpIo &io, std::string *error)
+GuidePointsOne(const RigExecOpIo &io, std::string *error)
 {
     const Points &in = *In<Points>(io, GuidePointsPoints());
     const auto &frames =
@@ -73,16 +75,35 @@ RunGuidePoints(const void *, void *, const RigExecOpIo &io, std::string *error)
                          "GuidePoints", error);
 }
 
+bool
+RunRibbon(const rigExec::RigExecOpBatch &batch, size_t *failed,
+          std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return RibbonOne(rigExec::RigExecBatchInstance(batch, k), error);
+    });
+}
+
+bool
+RunGuidePoints(const rigExec::RigExecOpBatch &batch, size_t *failed,
+               std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return GuidePointsOne(rigExec::RigExecBatchInstance(batch, k), error);
+    });
+}
+
 rigExec::RigExecOpDesc
 FrameDesc(const char *name, const rigExec::RigExecPortDesc *ports,
-          size_t portCount, rigExec::RigExecOpRunFn run, uint32_t capabilities)
+          size_t portCount, rigExec::RigExecOpBatchFn runBatch,
+          uint32_t capabilities)
 {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = name;
     d.ports = ports;
     d.portCount = portCount;
-    d.run = run;
+    d.runBatch = runBatch;
     d.capabilities = rigExec::kRigExecOpBakeable |
                      rigExec::kRigExecOpFreezable |
                      rigExec::kRigExecOpFromLeaves | capabilities;

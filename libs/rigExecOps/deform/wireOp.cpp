@@ -1,9 +1,10 @@
 #include "rigExecOps/deform/wireOp.h"
 
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 #include "rigExecMath/wireBasisKernel.h"
 
+#include <cstdint>
 #include <iterator>
 #include <string>
 
@@ -28,6 +29,7 @@ using rigExecStd::Vec2f;
 using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 using namespace opIo;
+using namespace fieldIo;
 
 /// The curve and basis records the wire kernel reads.
 struct Curve {
@@ -41,10 +43,23 @@ struct Basis {
     bool ascendingIndices = false;
 };
 
-bool
-RunWire(const void *payload, void *, const RigExecOpIo &io, std::string *error)
+enum WireField : uint32_t { kOrder, kKnotCount, kKnots, kDropoffDistance };
+
+/// Instance \p k's curve layout and falloff.
+WirePayload
+PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
 {
-    const WirePayload &p = *static_cast<const WirePayload *>(payload);
+    WirePayload p;
+    p.order = ValueAt<int32_t>(batch, kOrder, k);
+    const auto knots = ListAt<double>(batch, kKnots, k);
+    p.knots.assign(knots.begin(), knots.end());
+    p.dropoffDistance = ValueAt<double>(batch, kDropoffDistance, k);
+    return p;
+}
+
+bool
+WireOne(const RigExecOpIo &io, const WirePayload &p, std::string *error)
+{
     const Points &in = *In<Points>(io, WirePoints());
     const std::vector<Vec3f> restPoints =
         ToVector(*In<Points>(io, WireRestCurve()));
@@ -85,6 +100,32 @@ RunWire(const void *payload, void *, const RigExecOpIo &io, std::string *error)
     return WritePoints(io, WireOut(), in, points, envelope, "Wire", error);
 }
 
+bool
+RunWire(const rigExec::RigExecOpBatch &batch, size_t *failed,
+        std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return WireOne(rigExec::RigExecBatchInstance(batch, k),
+                       PayloadAt(batch, k), error);
+    });
+}
+
+void
+Values(const void *payload, rigExec::RigExecFieldValues &out)
+{
+    const WirePayload &p = *static_cast<const WirePayload *>(payload);
+    out.Set(kOrder, int32_t(p.order));
+    SetList(out, kKnotCount, p.knots);
+    out.Set(kDropoffDistance, p.dropoffDistance);
+}
+
+const rigExec::RigExecFieldDesc kFields[] = {
+    Value("order", rigExecStd::IntType()),
+    Count("knotCount"),
+    Items("knots", rigExecStd::DoubleType(), kKnotCount),
+    Value("dropoffDistance", rigExecStd::DoubleType()),
+};
+
 } // namespace
 
 namespace {
@@ -107,39 +148,21 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&WireOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
-void
-Save(Writer &w, const WirePayload &p)
-{
-    w.Version(1);
-    w.I32(p.order);
-    payloadIo::PutList(w, p.knots);
-    w.F64(p.dropoffDistance);
-}
-
-void
-Load(Reader &r, WirePayload &p)
-{
-    r.Version(1);
-    p.order = r.I32();
-    payloadIo::GetList(r, p.knots);
-    p.dropoffDistance = r.F64();
-}
-
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "Wire";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.run = &RunWire;
+    d.runBatch = &RunWire;
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
         rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
-    d.payload = rigExec::RigExecPayloadHandlingFor<WirePayload, &Save, &Load>();
+    d.payloadFields = kFields;
+    d.payloadFieldCount = std::size(kFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &Values;
     return d;
 }();
 
