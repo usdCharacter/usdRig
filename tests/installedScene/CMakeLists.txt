@@ -145,7 +145,7 @@ set_tests_properties(testRigExecInstalledOpPlugins PROPERTIES
         "PATH=path_list_prepend:${rigExec_LIBRARY_DIR};PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/bin;PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;LD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};LD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib")
 
 # The fixture mover's op plugin, built against the installed SDK beside the
-# mover: the installed scene program runs the mover on its op.
+# mover: its binder runs the mover on its op through the installed op core.
 rigexec_add_op_plugin(testQuadraticOps NO_INSTALL BINDERS
     BINDS ExternalQuadraticMover
     PLUGIN_ROOT "${CMAKE_BINARY_DIR}/test-op-plugins"
@@ -158,7 +158,7 @@ get_target_property(installedQuadraticOpsResources testQuadraticOps
 add_executable(testRigExecInstalledOpPluginScene ../testRigExecOpPluginScene.cpp)
 target_compile_features(testRigExecInstalledOpPluginScene PRIVATE cxx_std_17)
 target_link_libraries(testRigExecInstalledOpPluginScene PRIVATE
-    rigExec::rigExec rigExec::rigExecScene plug usd)
+    rigExec::rigExec rigExec::rigExecScene rigExec::rigExecBuiltins plug usd)
 add_dependencies(testRigExecInstalledOpPluginScene testExternalMover
     testQuadraticOps)
 add_test(NAME testRigExecInstalledOpPluginScene

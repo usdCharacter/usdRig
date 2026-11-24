@@ -1,4 +1,4 @@
-#include "rigExecScene/poseOpRunner.h"
+#include "poseOpRunner.h"
 
 #include "rigExec/api/compile.h"
 #include "rigExec/api/types.h"

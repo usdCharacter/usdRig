@@ -1,8 +1,7 @@
-#include "rigExecScene/solverGraphBinding.h"
 #include "rigExecScene/autoClavicleGraph.h"
 #include "pxr/base/gf/rotation.h"
 #include "rigExec/internal/frameExtraction.h"
-#include "rigExecScene/constraintGraphBinding.h"
+#include "rigExecScene/sceneDescriptors.h"
 #include <cstdio>
 #include <cstring>
 #include "pxr/usd/sdf/types.h"
@@ -24,15 +23,6 @@ Translated(double x)
     for (auto &point : frame.points)
         point[0] += x;
     return frame;
-}
-RigExecSceneBoundInput
-Raw(const char *path)
-{
-    RigExecSceneBoundInput input;
-    input.consumer = input.source = SdfPath(path);
-    input.route = RigExecSceneReadRoute::Raw;
-    input.readPhase = TfToken("base");
-    return input;
 }
 } // namespace
 int
@@ -149,105 +139,6 @@ main()
             source, {UsdTimeCode::Default()}, &selected, &error));
         CHECK(selected.identities == savedIdentities);
     }
-    RigExecTypedValueStore values(8);
-    RigExecPointFrameArray a, b;
-    a.frames = {Translated(1)};
-    b.frames = {Translated(5)};
-    a.rests = {RigExecIdentityLandmarks()};
-    b.rests = a.rests;
-    values.Publish(0, VtValue(a));
-    values.Publish(1, VtValue(b));
-    values.Publish(2, 0.5f);
-    RigExecSceneSolverDescriptor descriptor;
-    descriptor.path = SdfPath("/Blend");
-    descriptor.record.kind = RigExecSolverKind::BlendPointFrames;
-    descriptor.blendA = SdfPath("/A");
-    descriptor.blendB = SdfPath("/B");
-    descriptor.inputs["inputs:weight"] = Raw("/Blend.inputs:weight");
-    descriptor.frameBindings["rigExec:inputA"].phase = TfToken("final");
-    descriptor.frameBindings["rigExec:inputB"].phase = TfToken("final");
-    size_t aggregateReads = 0;
-    RigExecSceneGraphBindingContext context;
-    context.resolve = [&](const RigExecSceneGraphReadRequest &request,
-                          RigExecValueId &id, std::string *) {
-        if (request.domain == RigExecSceneValueDomain::SolverAggregate) {
-            if (request.phase != "final")
-                return false;
-            ++aggregateReads;
-            id = request.source == SdfPath("/A") ? 0 : 1;
-            return true;
-        }
-        if (!request.raw || request.source != SdfPath("/Blend.inputs:weight"))
-            return false;
-        id = 2;
-        return true;
-    };
-    RigExecSolverGraphBinding solver;
-    std::string error;
-    CHECK(RigExecBindSolverGraph(descriptor, context, 3, &solver, &error));
-    CHECK(aggregateReads == 2 &&
-          solver.reads == std::vector<RigExecValueId>({0, 1, 2}));
-    RigExecSolverWorkspace workspace;
-    CHECK(RigExecRunSolverGraph(solver, &values, &workspace, &error));
-    auto result = values.Read<VtValue>(3);
-    CHECK(result && result->IsHolding<RigExecPointFrameArray>());
-    CHECK(result->UncheckedGet<RigExecPointFrameArray>().frames[0].Origin() ==
-          GfVec3d(3, 0, 0));
-    values.Publish(2, 1.0f);
-    CHECK(RigExecRunSolverGraph(solver, &values, &workspace, &error));
-    CHECK(values.Read<VtValue>(3)
-              ->UncheckedGet<RigExecPointFrameArray>()
-              .frames[0]
-              .Origin() == GfVec3d(5, 0, 0));
-    values.values[0].initialized = false;
-    CHECK(!RigExecRunSolverGraph(solver, &values, &workspace, &error));
-    CHECK(values.values[3].blocked && !values.Read<VtValue>(3));
-    CHECK(values.values[3].count == 0 &&
-          std::get<VtValue>(values.values[3].value)
-              .UncheckedGet<RigExecPointFrameArray>()
-              .frames.empty());
-
-    values.Publish(0, Translated(2));
-    values.Publish(1, Translated(8));
-    values.PublishSource(2, VtValue(false));
-    values.Publish(3, 1.0f);
-    RigExecSceneConstraintDescriptor constraint;
-    constraint.path = SdfPath("/Position");
-    constraint.record.kind = RigExecConstraintKind::Position;
-    constraint.sources = {SdfPath("/Source")};
-    constraint.inputs["inputs:enabled"] = Raw("/Position.inputs:enabled");
-    constraint.inputs["inputs:defaultWeight"] =
-        Raw("/Position.inputs:defaultWeight");
-    context.resolve = [](const RigExecSceneGraphReadRequest &request,
-                         RigExecValueId &id, std::string *) {
-        if (request.domain == RigExecSceneValueDomain::Pose) {
-            if (request.consumer != SdfPath("/Position.rigExec:sources"))
-                return false;
-            id = 1;
-            return true;
-        }
-        id = request.source == SdfPath("/Position.inputs:enabled") ? 2 : 3;
-        return request.raw;
-    };
-    RigExecSceneDescriptors scene;
-    RigExecConstraintGraphTarget target;
-    target.incoming = 0;
-    target.output = 4;
-    RigExecConstraintGraphBinding binding;
-    CHECK(RigExecBindConstraintGraph(scene, constraint, context, target,
-                                     &binding, &error));
-    CHECK(binding.reads == std::vector<RigExecValueId>({0, 1, 2, 3}));
-    values.values[1].initialized = false;
-    CHECK(RigExecRunConstraintGraph(binding, &values, &error));
-    CHECK(values.Read<RigExecPointFrame>(4)->Origin() == GfVec3d(2, 0, 0));
-    values.PublishSource(2, VtValue(true));
-    CHECK(!RigExecRunConstraintGraph(binding, &values, &error));
-    CHECK(values.Read<RigExecPointFrame>(4)->Origin() == GfVec3d(2, 0, 0));
-    CHECK(!values.values[4].blocked && !values.values[4].error.empty());
-    values.Publish(1, Translated(8));
-    CHECK(RigExecRunConstraintGraph(binding, &values, &error));
-    CHECK(values.Read<RigExecPointFrame>(4)->Origin() == GfVec3d(8, 0, 0));
-    CHECK(values.values[4].error.empty());
     {
         RigExecSceneDescriptors scene;
         scene.identities = {UsdTimeCode::Default()};

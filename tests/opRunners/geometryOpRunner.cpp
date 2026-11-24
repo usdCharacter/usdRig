@@ -1,4 +1,4 @@
-#include "rigExecScene/geometryOpRunner.h"
+#include "geometryOpRunner.h"
 
 #include "rigExec/api/compile.h"
 #include "rigExecBuiltins/builtins.h"

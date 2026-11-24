@@ -1,9 +1,9 @@
-#ifndef RIGEXEC_SCENE_WEIGHT_OP_RUNNER_H
-#define RIGEXEC_SCENE_WEIGHT_OP_RUNNER_H
+#ifndef RIGEXEC_TESTS_WEIGHT_OP_RUNNER_H
+#define RIGEXEC_TESTS_WEIGHT_OP_RUNNER_H
 
-/// A weight binding's combine records run as CombineWeights op nodes, one
-/// per record, built on first use and rebuilt when the payload or the input
-/// count baked into it moved. Owner-thread state of the scene runtime.
+/// Weight combine records run as CombineWeights op nodes, one per record,
+/// for tests that compare the op with the native combine. Built on first use
+/// and rebuilt when the payload or the input count baked into it moved.
 
 #include "rigExec/api/evaluator.h"
 #include "rigExecScene/weightProgram.h"

@@ -124,21 +124,14 @@ set_target_properties(rigExecInputValues PROPERTIES POSITION_INDEPENDENT_CODE ON
 add_library(rigExecScene SHARED
     libs/rigExecScene/authoredRestSpace.cpp
     libs/rigExecScene/autoClavicleGraph.cpp
-    libs/rigExecScene/constraintGraphBinding.cpp
     libs/rigExecScene/constraintSceneTranslation.cpp
-    libs/rigExecScene/geometryGraphBinding.cpp
     libs/rigExecScene/externalOps.cpp
-    libs/rigExecScene/geometryOpRunner.cpp
     libs/rigExecScene/geometryOps.cpp
     libs/rigExecScene/opPlugins.cpp
     libs/rigExecScene/geometrySceneTranslation.cpp
     libs/rigExecScene/jointGroupTranslation.cpp
-    libs/rigExecScene/poseCommit.cpp
-    libs/rigExecScene/poseGraphBinding.cpp
-    libs/rigExecScene/poseOpRunner.cpp
     libs/rigExecScene/poseOps.cpp
     libs/rigExecScene/poseSceneTranslation.cpp
-    libs/rigExecScene/propertyGraphBinding.cpp
     libs/rigExecScene/propertySceneTranslation.cpp
     libs/rigExecScene/providerRecordExport.cpp
     libs/rigExecScene/registerScene.cpp
@@ -146,17 +139,11 @@ add_library(rigExecScene SHARED
     libs/rigExecScene/sceneDescriptors.cpp
     libs/rigExecScene/sceneGraphBinding.cpp
     libs/rigExecScene/sceneGraphTypedRead.cpp
-    libs/rigExecScene/sceneProgram.cpp
-    libs/rigExecScene/sceneProgramLayout.cpp
-    libs/rigExecScene/sceneProgramTranslation.cpp
     libs/rigExecScene/sceneTypedReads.cpp
     libs/rigExecScene/sceneVersionRoutes.cpp
     libs/rigExecScene/skeleton2dTranslation.cpp
-    libs/rigExecScene/solverGraphBinding.cpp
     libs/rigExecScene/solverSceneTranslation.cpp
     libs/rigExecScene/usdSceneAccess.cpp
-    libs/rigExecScene/weightGraphBinding.cpp
-    libs/rigExecScene/weightOpRunner.cpp
     libs/rigExecScene/weightSceneTranslation.cpp
 )
 target_compile_features(rigExecScene PUBLIC cxx_std_17)
@@ -814,7 +801,7 @@ foreach(_mode scopeUsed scopeOther)
 endforeach()
 add_executable(testRigExecOpPluginScene tests/testRigExecOpPluginScene.cpp)
 target_link_libraries(testRigExecOpPluginScene PRIVATE rigExec rigExecScene
-    plug usd)
+    rigExecBuiltins plug usd)
 add_dependencies(testRigExecOpPluginScene testExternalMover testQuadraticOps)
 rigexec_add_test(NAME testRigExecOpPluginScene COMMAND testRigExecOpPluginScene
     "$<TARGET_GENEX_EVAL:testExternalMover,$<TARGET_PROPERTY:testExternalMover,RIGEXEC_PLUGIN_RESOURCE_DIR>>"
@@ -1035,11 +1022,6 @@ target_compile_definitions(testRigExecCloth PRIVATE
     ${_rigexec_schema_resource_define}
     RIGEXEC_CLOTH_EXAMPLE="${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/cloth_mover.usda")
 rigexec_add_test(NAME testRigExecCloth COMMAND testRigExecCloth)
-add_executable(testRigExecSceneClothOp tests/testRigExecSceneClothOp.cpp)
-target_link_libraries(testRigExecSceneClothOp PRIVATE rigExec rigExecScene)
-target_compile_definitions(testRigExecSceneClothOp PRIVATE
-    ${_rigexec_schema_resource_define})
-rigexec_add_test(NAME testRigExecSceneClothOp COMMAND testRigExecSceneClothOp)
 
 add_executable(testRigExecConstraints tests/testRigExecConstraints.cpp)
 target_link_libraries(testRigExecConstraints PRIVATE rigExec rigExecBake rigExecRuntime rigExecSampler)
@@ -1455,30 +1437,34 @@ add_library(rigExecSceneOps STATIC libs/rigExecScene/propertyOps.cpp)
 target_link_libraries(rigExecSceneOps PUBLIC rigExec rigExecScene
     rigExecBuiltins PRIVATE rigExecMath)
 set_target_properties(rigExecSceneOps PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# One op node per call, for the tests that compare an op with its kernel.
+add_library(rigExecTestOpRunners STATIC tests/opRunners/geometryOpRunner.cpp
+    tests/opRunners/poseOpRunner.cpp tests/opRunners/weightOpRunner.cpp)
+target_link_libraries(rigExecTestOpRunners PUBLIC rigExecSceneOps
+    PRIVATE rigExecMath)
 add_executable(testRigExecScenePropertyOps tests/testRigExecScenePropertyOps.cpp)
 target_link_libraries(testRigExecScenePropertyOps PRIVATE rigExecSceneOps)
 target_compile_definitions(testRigExecScenePropertyOps PRIVATE
     ${_rigexec_schema_resource_define})
 rigexec_add_test(NAME testRigExecScenePropertyOps COMMAND testRigExecScenePropertyOps)
 add_executable(testRigExecSceneGeometryOps tests/testRigExecSceneGeometryOps.cpp)
-target_link_libraries(testRigExecSceneGeometryOps PRIVATE rigExecSceneOps)
+target_link_libraries(testRigExecSceneGeometryOps PRIVATE rigExecTestOpRunners)
 rigexec_add_test(NAME testRigExecSceneGeometryOps COMMAND testRigExecSceneGeometryOps)
 set_tests_properties(testRigExecSceneGeometryOps PROPERTIES LABELS "fast")
 add_executable(testRigExecSceneExternalOps tests/testRigExecSceneExternalOps.cpp)
-target_link_libraries(testRigExecSceneExternalOps PRIVATE rigExecSceneOps)
+target_link_libraries(testRigExecSceneExternalOps PRIVATE rigExecTestOpRunners)
 target_compile_definitions(testRigExecSceneExternalOps PRIVATE
     ${_rigexec_schema_resource_define})
 rigexec_add_test(NAME testRigExecSceneExternalOps COMMAND testRigExecSceneExternalOps)
 set_tests_properties(testRigExecSceneExternalOps PROPERTIES LABELS "fast")
 add_executable(testRigExecScenePoseOps tests/testRigExecScenePoseOps.cpp)
-target_link_libraries(testRigExecScenePoseOps PRIVATE rigExecSceneOps)
+target_link_libraries(testRigExecScenePoseOps PRIVATE rigExecTestOpRunners)
 target_compile_definitions(testRigExecScenePoseOps PRIVATE
     ${_rigexec_schema_resource_define})
-rigexec_add_test(NAME testRigExecScenePoseOps COMMAND testRigExecScenePoseOps
-    "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+rigexec_add_test(NAME testRigExecScenePoseOps COMMAND testRigExecScenePoseOps)
 
 add_executable(testRigExecBakedOpParity tests/testRigExecBakedOpParity.cpp)
-target_link_libraries(testRigExecBakedOpParity PRIVATE rigExecSceneOps)
+target_link_libraries(testRigExecBakedOpParity PRIVATE rigExecTestOpRunners)
 target_compile_definitions(testRigExecBakedOpParity PRIVATE
     ${_rigexec_schema_resource_define})
 set(_rigexec_op_parity_rigs
@@ -1559,23 +1545,6 @@ rigexec_add_test(NAME testRigExecBakedOpParityScalar
     COMMAND testRigExecBakedOpParity ${_rigexec_op_parity_rigs})
 set_tests_properties(testRigExecBakedOpParityScalar PROPERTIES
     ENVIRONMENT "RIGEXEC_ENABLE_SIMD=0")
-
-add_executable(testRigExecSceneDeterminism tests/testRigExecSceneDeterminism.cpp)
-target_link_libraries(testRigExecSceneDeterminism PRIVATE rigExecSceneOps)
-target_compile_definitions(testRigExecSceneDeterminism PRIVATE
-    ${_rigexec_schema_resource_define})
-rigexec_add_test(NAME testRigExecSceneDeterminism
-    COMMAND testRigExecSceneDeterminism
-    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/tutorial_rolling_ball.usda"
-    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/delta_mush_mover.usda"
-    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/skin_mover.usda"
-    "${CMAKE_CURRENT_SOURCE_DIR}/examples/02_TwoBoneIkLeg.usda"
-    "${CMAKE_CURRENT_SOURCE_DIR}/examples/05_TwistRibbonSpine.usda"
-    "${CMAKE_CURRENT_SOURCE_DIR}/examples/08_AimEyes.usda"
-    "${CMAKE_CURRENT_SOURCE_DIR}/examples/19_HarmonicsChain.usda"
-    "${CMAKE_CURRENT_SOURCE_DIR}/examples/ArmRig.usda"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/oneloop_cross_domain.usda"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/projector_spaces.usda")
 
 add_executable(testRigExecOpGraph tests/testRigExecOpGraph.cpp)
 target_link_libraries(testRigExecOpGraph PRIVATE rigExecGraph work Threads::Threads)

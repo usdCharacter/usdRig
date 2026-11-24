@@ -1,6 +1,5 @@
 #include "rigExecScene/geometryProgram.h"
 #include "rigExecScene/geometrySceneTranslation.h"
-#include "rigExecScene/geometryGraphBinding.h"
 #include "rigExec/internal/moverGraph.h"
 #include <cstdio>
 using namespace rigExec;
@@ -202,101 +201,6 @@ main()
         CHECK(!RigExecTranslateSceneGeometry(
             framed, deformer.fact.path, target.fact.path, &detached, &error));
     }
-    RigExecSceneGeometryDescriptor graphDescriptor;
-    graphDescriptor.mover = SdfPath("/Rig/Move");
-    graphDescriptor.record.leaves.keys.push_back(
-        {SdfPath("/Mesh.points"), RigExecRevisionLeafType::Vec3fArray,
-         RigExecRevisionLeafTime::AtDefault, RigExecRevisionLeafFlavour::Raw,
-         VtValue(VtVec3fArray())});
-    graphDescriptor.bound = {1};
-    graphDescriptor.inputs.resize(1);
-    graphDescriptor.inputs[0].consumer = SdfPath("/Mesh.points");
-    graphDescriptor.inputs[0].source = SdfPath("/Mesh.points");
-    RigExecSceneGraphBindingContext link;
-    bool capturedRaw = false, capturedDefault = false;
-    link.resolve = [&](const RigExecSceneGraphReadRequest &request,
-                       RigExecValueId &id, std::string *) {
-        capturedRaw = request.raw;
-        capturedDefault = request.atDefault;
-        id = 0;
-        return true;
-    };
-    RigExecGeometryGraphBinding graphBinding;
-    CHECK(
-        RigExecBindGeometryGraph(graphDescriptor, link, &graphBinding, &error));
-    CHECK(capturedRaw && capturedDefault && graphBinding.reads.size() == 1);
-    RigExecTypedValueStore current(1);
-    current.PublishSource(0, VtValue(VtVec3fArray{GfVec3f(3, 2, 1)}));
-    CHECK(RigExecReadGeometryGraphLeaves(graphBinding, current, &detachedLeaves,
-                                         &error));
-    CHECK(!detachedLeaves.empty() &&
-          detachedLeaves[0].IsHolding<VtVec3fArray>() &&
-          !detachedLeaves[0].UncheckedGet<VtVec3fArray>().empty());
-    if (detachedLeaves.empty() ||
-        !detachedLeaves[0].IsHolding<VtVec3fArray>() ||
-        detachedLeaves[0].UncheckedGet<VtVec3fArray>().empty())
-        return 1;
-    CHECK(detachedLeaves[0].UncheckedGet<VtVec3fArray>()[0] ==
-          GfVec3f(3, 2, 1));
-    current.PublishSource(0, VtValue(VtVec3fArray{GfVec3f(4, 2, 1)}));
-    CHECK(RigExecReadGeometryGraphLeaves(graphBinding, current, &detachedLeaves,
-                                         &error));
-    CHECK(!detachedLeaves.empty() &&
-          detachedLeaves[0].IsHolding<VtVec3fArray>() &&
-          !detachedLeaves[0].UncheckedGet<VtVec3fArray>().empty());
-    if (detachedLeaves.empty() ||
-        !detachedLeaves[0].IsHolding<VtVec3fArray>() ||
-        detachedLeaves[0].UncheckedGet<VtVec3fArray>().empty())
-        return 1;
-    CHECK(detachedLeaves[0].UncheckedGet<VtVec3fArray>()[0] ==
-          GfVec3f(4, 2, 1));
-    RigExecSceneGeometryDescriptor ordered;
-    ordered.mover = SdfPath("/Rig/Move");
-    ordered.bound = {1};
-    ordered.inputs.resize(1);
-    ordered.typedLeaves.resize(1);
-    ordered.record.leaves.keys.push_back(
-        {SdfPath("/Rig/Move.inputs:amount"), RigExecRevisionLeafType::Float,
-         RigExecRevisionLeafTime::AtTime, RigExecRevisionLeafFlavour::Resolved,
-         VtValue(float(0))});
-    auto &typed = ordered.typedLeaves[0];
-    typed.consumer = SdfPath("/Rig/Move.inputs:amount");
-    typed.cppType = typeid(float);
-    typed.readPhase = TfToken("base");
-    RigExecSceneBoundInput headHop, middleHop;
-    headHop.consumer = typed.consumer;
-    middleHop.consumer = SdfPath("/Rig/Middle.inputs:value");
-    typed.hops = {headHop, middleHop};
-    link.resolve = [&](const RigExecSceneGraphReadRequest &request,
-                       RigExecValueId &id, std::string *) {
-        id = (request.source == typed.consumer ? 0 : 2) + (request.raw ? 0 : 1);
-        return true;
-    };
-    CHECK(RigExecBindGeometryGraph(ordered, link, &graphBinding, &error));
-    RigExecTypedValueStore overlayStore(4);
-    overlayStore.PublishSource(0, VtValue(float(10)));
-    overlayStore.PublishSource(2, VtValue(float(20)));
-    overlayStore.PublishSource(3, VtValue(float(99)), false, true);
-    CHECK(RigExecReadGeometryGraphLeaves(graphBinding, overlayStore,
-                                         &detachedLeaves, &error));
-    CHECK(!detachedLeaves.empty() && detachedLeaves[0].IsHolding<float>());
-    if (detachedLeaves.empty() || !detachedLeaves[0].IsHolding<float>())
-        return 1;
-    CHECK(detachedLeaves[0].UncheckedGet<float>() == 99);
-    overlayStore.PublishSource(1, VtValue(float(7)), false, true);
-    CHECK(RigExecReadGeometryGraphLeaves(graphBinding, overlayStore,
-                                         &detachedLeaves, &error));
-    CHECK(!detachedLeaves.empty() && detachedLeaves[0].IsHolding<float>());
-    if (detachedLeaves.empty() || !detachedLeaves[0].IsHolding<float>())
-        return 1;
-    CHECK(detachedLeaves[0].UncheckedGet<float>() == 7);
-    overlayStore.PublishSource(1, VtValue(double(7)), false, true);
-    CHECK(RigExecReadGeometryGraphLeaves(graphBinding, overlayStore,
-                                         &detachedLeaves, &error));
-    CHECK(!detachedLeaves.empty() && detachedLeaves[0].IsHolding<float>());
-    if (detachedLeaves.empty() || !detachedLeaves[0].IsHolding<float>())
-        return 1;
-    CHECK(detachedLeaves[0].UncheckedGet<float>() == 99);
     RigExecSceneNodeDescriptor mesh;
     mesh.fact.path = SdfPath("/Mesh");
     mesh.fact.type = TfToken("Mesh");

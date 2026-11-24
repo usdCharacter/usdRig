@@ -25,7 +25,6 @@ static int failures = 0;
 
 #include "rigExecFrozenParity.h"
 #include "rigExecRuntimeDrive.h"
-#include "rigExecSceneProgramDrive.h"
 
 namespace {
 
@@ -153,29 +152,6 @@ EvaluateTarget(RigExecRigEvaluator &rig)
                                             : it->second.Get<VtVec3fArray>();
 }
 
-// The scene program, which runs the patch mover as its op, gives the
-// native evaluator's bits.
-void
-CheckSceneProgram(const UsdStageRefPtr &stage, const char *what)
-{
-    RigExecRigEvaluator rig(stage, SdfPath("/Asset/Rig"));
-    const VtVec3fArray native = EvaluateTarget(rig);
-    rigExecSceneProgramDrive::SceneRun scene(stage, SdfPath("/Asset/Rig"), 0,
-                                             0);
-    const bool ran = scene.ok && scene.Evaluate(0);
-    CHECK(ran);
-    const VtValue value = scene.Final(SdfPath("/Asset/Target.points"),
-                                      RigExecSceneValueDomain::Points);
-    const bool same =
-        value.IsHolding<VtVec3fArray>() &&
-        value.UncheckedGet<VtVec3fArray>().size() == native.size() &&
-        std::memcmp(value.UncheckedGet<VtVec3fArray>().cdata(), native.cdata(),
-                    native.size() * sizeof(GfVec3f)) == 0;
-    if (!same)
-        std::printf("%s: the scene program differs from native\n", what);
-    CHECK(same);
-}
-
 void
 CheckNear(const GfVec3f &actual, const GfVec3f &expected, float tol = 2e-6f)
 {
@@ -287,28 +263,6 @@ int
 main()
 {
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
-
-    CheckSceneProgram(MakeStage(), "scene");
-    {
-        auto stage = MakeStage();
-        CHECK(stage->GetAttributeAtPath(SdfPath("/Asset/Rig/UvDriver.avars:tx"))
-                  .Set(0.25));
-        CHECK(stage->GetAttributeAtPath(SdfPath("/Asset/Patch.vForm"))
-                  .Set(TfToken("periodic")));
-        CheckSceneProgram(stage, "scene, driven, periodic");
-    }
-    {
-        auto stage = MakeShapesStage();
-        const UsdPrim stick =
-            stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/Stick"));
-        CHECK(stick.GetAttribute(TfToken("rigExec:uvContactLower"))
-                  .Set(VtIntArray{0}));
-        CHECK(stick.GetAttribute(TfToken("rigExec:uvContactUpper"))
-                  .Set(VtIntArray{1}));
-        CHECK(stage->GetAttributeAtPath(SdfPath("/Asset/Rig/Mouth.avars:open"))
-                  .Set(1.0));
-        CheckSceneProgram(stage, "scene, shapes and contacts");
-    }
 
     // 1. Runtime playback with both controller-driven UVs and controller-driven patch.
     CheckRuntime(MakeStage(), "uv_driver",

@@ -17,7 +17,7 @@ rigexec_add_mover(testExternalMover NO_INSTALL
     SCHEMA_TYPE ExternalQuadraticMover)
 
 # The same mover as an op plugin: its op runs the mover's kernel, and its
-# binder lets the scene program run the mover on the op.
+# binder turns the mover's declared inputs into the op's.
 rigexec_add_op_plugin(testQuadraticOps NO_INSTALL BINDERS
     BINDS ExternalQuadraticMover
     PLUGIN_ROOT "${CMAKE_BINARY_DIR}/test-op-plugins"

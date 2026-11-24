@@ -1,9 +1,10 @@
-#ifndef RIGEXEC_SCENE_POSE_OP_RUNNER_H
-#define RIGEXEC_SCENE_POSE_OP_RUNNER_H
+#ifndef RIGEXEC_TESTS_POSE_OP_RUNNER_H
+#define RIGEXEC_TESTS_POSE_OP_RUNNER_H
 
-/// One scene solver, constraint or auto clavicle run through the op core. Built on first
-/// use and rebuilt when a setting baked into it moved, so stale settings
-/// never run. Owner-thread state of the scene runtime.
+/// One solver, constraint, auto clavicle, harmonics or IK/FK match run through
+/// the op core, for tests that compare an op with its native kernel. Built on
+/// first use and rebuilt when a setting baked into it moved, so stale
+/// settings never run.
 
 #include "rigExec/api/evaluator.h"
 #include "rigExecScene/poseOps.h"

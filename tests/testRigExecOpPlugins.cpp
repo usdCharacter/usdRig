@@ -2,8 +2,8 @@
 // op runs in the op core, its schema type is known to OpenUSD and its binder
 // is found by schema type. A plugin built for another registry ABI, one
 // without its entry symbol, and one discovered after the registry froze are
-// reported by name, and fail only the scene programs whose movers have a
-// schema type the plugin binds.
+// reported by name, and fail only the movers of a schema type the plugin
+// binds.
 //
 //   testRigExecOpPlugins <mode> <plugin resources> <library> <scratch dir>
 //       [<mover plugin resources> <quadratic op plugin resources>]
@@ -17,8 +17,6 @@
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecScene/externalOps.h"
 #include "rigExecScene/opPlugins.h"
-#include "rigExecScene/sceneProgram.h"
-#include "rigExecSceneProgramDrive.h"
 #include "rigExecStdTypes/stdTypes.h"
 
 #include "pxr/base/plug/plugin.h"
@@ -157,64 +155,49 @@ Refused(const char *why, const char *schemaType = kSchemaType)
     CHECK(RigExecSceneOpSchemaJoined("RigExecLayeredSkinMover"));
 }
 
-const char *kQuadraticRig = R"USD(#usda 1.0
-def RigExecRoot "Rig" {
- def Points "Body" {
-  point3f[] points = [(-2, 0, 0), (1, 2, 3), (0.5, -1, 2), (3, 1, -1)]
- }
- def ExternalQuadraticMover "External" (prepend apiSchemas = ["RigExecMoverAPI"]) {
-  rel rigExec:moves = </Rig/Body.points>
-  float inputs:gain = 0.75
- }
-}
-)USD";
-
-const char *kLayeredSkinRig = R"USD(#usda 1.0
-def RigExecRoot "Rig" {
- def RigExecControl "A" {
-  double avars:tx = 2
- }
- def RigExecControl "B" {
-  double avars:rz = 30
- }
- def Points "Cloud" {
-  point3f[] points = [(0, 0, 0), (0, 1, 0), (1, 1, 0), (2, 0, 1)]
- }
- def RigExecLayeredSkinMover "Skin" (prepend apiSchemas = ["RigExecMoverAPI"]) {
-  rel rigExec:moves = </Rig/Cloud.points>
-  rel rigExec:influences = [</Rig/A>, </Rig/B>]
-  int[] rigExec:jointIndices = [0, 1, 1, 0, 0, 1, 1, 1]
-  float[] rigExec:jointWeights = [0.75, 0.25, 0.5, 0.5, 1, 0, 0.3, 0.6]
-  int rigExec:elementSize = 2
- }
-}
-)USD";
-
-/// Prepares and evaluates \p rig's scene program; false with \p error.
+/// Whether a mover of \p schemaType runs on its op: every plugin binding
+/// the type joined, and its op runs as one node fed through its binder;
+/// false with \p error naming the type and the plugins that failed it.
 bool
-RunsScene(const char *rig, std::string *error)
+RunsOp(const char *schemaType, std::string *error)
 {
-    auto stage = UsdStage::CreateInMemory();
-    CHECK(stage->GetRootLayer()->ImportFromString(rig));
-    const std::vector<UsdTimeCode> identities = {UsdTimeCode(1),
-                                                 UsdTimeCode::Default()};
-    const RigExecUsdSceneAccess access(stage);
-    RigExecSceneDescriptors scene;
-    RigExecSceneProgram program;
-    RigExecSceneProgramRuntime runtime;
-    if (!RigExecCaptureSceneDescriptors(access, SdfPath("/Rig"), identities,
-                                        &scene, error) ||
-        !RigExecTranslateSceneProgram(scene, &program, error)) {
-        std::printf("scene program: %s\n", error->c_str());
-        CHECK(false);
+    std::string why;
+    if (!RigExecSceneOpSchemaJoined(schemaType, &why)) {
+        *error =
+            std::string("op plugin unavailable for ") + schemaType + ": " + why;
         return false;
     }
-    return runtime.Prepare(program, error) &&
-           runtime.Evaluate(program, 0, {}, error);
+    RigExecRevisionBinding binding;
+    binding.externalSchema = TfToken(schemaType);
+    if (!RigExecExternalOpHandle(binding)) {
+        *error = std::string("no op for ") + schemaType;
+        return false;
+    }
+    if (std::string(schemaType) != "ExternalQuadraticMover")
+        return true;
+    const std::vector<VtValue> inputs = {VtValue(0.75f)};
+    std::vector<GfVec3f> points = {GfVec3f(1, 2, 3), GfVec3f(-2, 0, 0)};
+    const std::vector<GfVec3f> base = points;
+    RigExecExternalOpValues values;
+    values.inputs = &inputs;
+    values.basePoints = &base;
+    RigExecRigDescBuilder builder;
+    RigExecExternalOpNode node;
+    if (!RigExecAddExternalOp(binding, values, &builder, &node, error))
+        return false;
+    auto rig = builder.Build(error);
+    auto program = rig ? RigExecCompile(*rig, {}, error) : nullptr;
+    auto evaluator =
+        program ? RigExecEvaluator::Create(program, {}, error) : nullptr;
+    return evaluator &&
+           RigExecWriteExternalOpInputs(binding, values,
+                                        RigExecWeightPacket::Constant(1.0f),
+                                        points, node, evaluator.get(), error) &&
+           evaluator->Evaluate(error);
 }
 
-/// A broken plugin binding \p brokenType: the quadratic rig runs unless
-/// that is its type, and a rig on the built-in ops always runs.
+/// A broken plugin binding \p brokenType: the quadratic mover runs unless
+/// that is its type, and a mover on the built-in ops always runs.
 void
 Scoped(const std::string &scratch, const std::string &library,
        const char *brokenType, bool quadraticRuns)
@@ -223,16 +206,16 @@ Scoped(const std::string &scratch, const std::string &library,
                    brokenType);
     Refused("registry ABI", brokenType);
     std::string error;
-    const bool quadratic = RunsScene(kQuadraticRig, &error);
-    std::printf("quadratic rig: %s\n", quadratic ? "ran" : error.c_str());
+    const bool quadratic = RunsOp("ExternalQuadraticMover", &error);
+    std::printf("quadratic mover: %s\n", quadratic ? "ran" : error.c_str());
     CHECK(quadratic == quadraticRuns);
     if (!quadraticRuns)
         CHECK(error.find("brokenOffsetOps") != std::string::npos &&
               error.find(brokenType) != std::string::npos);
     error.clear();
-    const bool skin = RunsScene(kLayeredSkinRig, &error);
+    const bool skin = RunsOp("RigExecLayeredSkinMover", &error);
     if (!skin)
-        std::printf("layered skin rig: %s\n", error.c_str());
+        std::printf("layered skin mover: %s\n", error.c_str());
     CHECK(skin);
 }
 

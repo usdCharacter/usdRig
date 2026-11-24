@@ -6,7 +6,7 @@
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
 #include "rigExecBuiltins/builtins.h"
-#include "rigExecScene/geometryOpRunner.h"
+#include "opRunners/geometryOpRunner.h"
 #include "rigExecScene/geometryOps.h"
 #include "rigExecScene/geometryProgram.h"
 #include "rigExec/internal/moverGraph.h"

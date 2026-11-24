@@ -50,9 +50,7 @@ libs/rigExecOracle/weightReference.cpp | rigExec/internal/rigEvaluatorInternal.h
 libs/rigExecOracle/weightReference.cpp | rigExec/internal/weightReference.h
 libs/rigExecScene/autoClavicleGraph.cpp | rigExec/internal/frameExtraction.h
 libs/rigExecScene/autoClavicleGraph.cpp | rigExec/internal/pathText.h
-libs/rigExecScene/constraintGraphBinding.cpp | rigExec/internal/frameExtraction.h
 libs/rigExecScene/constraintSceneTranslation.cpp | rigExec/internal/frameExtraction.h
-libs/rigExecScene/geometryGraphBinding.cpp | rigExec/internal/moverGraph.h
 libs/rigExecScene/geometryProgram.cpp | rigExec/internal/moverGraph.h
 libs/rigExecScene/geometryProgram.cpp | rigExec/internal/pathText.h
 libs/rigExecScene/geometryProgram.h | rigExec/internal/moverGraphCaches.h
@@ -61,8 +59,6 @@ libs/rigExecScene/geometryProgram.h | rigExec/internal/moverPacket.h
 libs/rigExecScene/geometrySceneTranslation.cpp | rigExec/internal/moverGraph.h
 libs/rigExecScene/geometrySceneTranslation.cpp | rigExec/internal/pathText.h
 libs/rigExecScene/jointGroupTranslation.cpp | rigExec/internal/pathText.h
-libs/rigExecScene/poseGraphBinding.cpp | rigExec/internal/frameExtraction.h
-libs/rigExecScene/poseGraphBinding.cpp | rigExec/internal/pathText.h
 libs/rigExecScene/poseProgram.cpp | rigExec/internal/frameExtraction.h
 libs/rigExecScene/poseProgram.cpp | rigExec/internal/solverKernels.h
 libs/rigExecScene/providerContextBinding.cpp | rigExec/internal/pathText.h
@@ -70,8 +66,6 @@ libs/rigExecScene/providerRecordExport.cpp | rigExec/internal/pathText.h
 libs/rigExecScene/sceneDescriptors.cpp | rigExec/internal/moverGraph.h
 libs/rigExecScene/sceneGraphBinding.cpp | rigExec/internal/frameExtraction.h
 libs/rigExecScene/sceneGraphTypedRead.cpp | rigExec/internal/pathText.h
-libs/rigExecScene/sceneProgramLayout.cpp | rigExec/internal/pathText.h
-libs/rigExecScene/sceneProgramTranslation.cpp | rigExec/internal/pathText.h
 libs/rigExecScene/sceneVersionRoutes.cpp | rigExec/internal/moverGraph.h
 libs/rigExecScene/setupTransform.h | rigExec/internal/pathText.h
 libs/rigExecScene/skeleton2dTranslation.cpp | rigExec/internal/pathText.h
@@ -80,7 +74,6 @@ libs/rigExecScene/solverSceneTranslation.cpp | rigExec/internal/pathText.h
 libs/rigExecScene/solverSceneTranslation.cpp | rigExec/internal/solverKernels.h
 libs/rigExecScene/typedValues.cpp | rigExec/internal/bakedOpValues.h
 libs/rigExecScene/typedValues.cpp | rigExec/internal/weightPackets.h
-libs/rigExecScene/weightGraphBinding.cpp | rigExec/internal/frameExtraction.h
 libs/rigExecScene/weightProgram.h | rigExec/internal/weightPackets.h
 libs/rigExecScene/weightSceneTranslation.cpp | rigExec/internal/pathText.h
 python/_rigexec.cpp | rigExec/internal/evaluatorTesting.h

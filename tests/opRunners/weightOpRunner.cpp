@@ -1,4 +1,4 @@
-#include "rigExecScene/weightOpRunner.h"
+#include "weightOpRunner.h"
 
 #include "rigExec/api/compile.h"
 #include "rigExec/api/evaluator.h"

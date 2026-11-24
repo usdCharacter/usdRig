@@ -1,9 +1,9 @@
-// A scene solver or constraint run as rigExecOps' pose ops gives the bits
-// RigExecRunSolver, RigExecRunConstraint and the harmonics body give: per kind over its
-// settings, through refusals and a moved setting's rebuild, and per
-// operation of authored rigs, where the scene program's own publish, a
-// native rerun and an op rerun are compared value for value.
-#include "rigExecScene/poseOpRunner.h"
+// A solver or constraint run as rigExecOps' pose ops gives the bits
+// RigExecRunSolver, RigExecRunConstraint and the native kernels give: per
+// kind over its settings, through refusals and a moved setting's rebuild,
+// and for the auto clavicle, harmonics and IK/FK match ops against their
+// kernels.
+#include "opRunners/poseOpRunner.h"
 #include "rigExecScene/poseOps.h"
 
 #include "rigExec/api/compile.h"
@@ -12,28 +12,21 @@
 #include "rigExecGraph/windowHistory.h"
 #include "rigExec/internal/frameExtraction.h"
 #include "rigExec/internal/solverKernels.h"
+#include "rigExecMath/autoClavicleKernel.h"
 #include "rigExecMath/harmonicsKernel.h"
+#include "rigExecMath/ikFkMatchKernel.h"
 #include "rigExecMath/spaceMatchKernel.h"
 #include "rigExecMath/switchMathKernel.h"
+#include "rigExecOps/constraint/harmonicsOps.h"
 #include "rigExecOps/constraint/matchOps.h"
 #include "rigExecMath/splineIk.h"
-#include "rigExecScene/constraintGraphBinding.h"
 #include "rigExecScene/constraintProgram.h"
-#include "rigExecScene/solverGraphBinding.h"
-#include "rigExecPoseCompare.h"
-#include "rigExecSceneProgramDrive.h"
 #include "rigExecSchema/schemaNames.h"
 
 #include "pxr/base/gf/matrix3d.h"
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/gf/transform.h"
-#include "pxr/base/plug/registry.h"
-#include "pxr/base/tf/pathUtils.h"
 #include "pxr/base/vt/types.h"
-#include "pxr/usd/sdf/layer.h"
-#include "pxr/usd/usd/attribute.h"
-#include "pxr/usd/usd/primRange.h"
-#include "pxr/usd/usd/relationship.h"
 
 #include <cmath>
 #include <cstdio>
@@ -41,7 +34,6 @@
 #include <limits>
 #include <map>
 #include <string>
-#include <variant>
 #include <vector>
 
 using namespace rigExec;
@@ -691,387 +683,242 @@ TestSingleChainIk()
     CompareConstraint("single-chain broken", r, in, runner);
 }
 
-// Authored rigs.
-
-const char *const kSingleChainRig = R"usda(#usda 1.0
-(
-    startTimeCode = 1
-    endTimeCode = 4
-)
-
-def Xform "Asset"
-{
-    def "Sources"
-    {
-        def Xform "Effector"
-        {
-            double3 xformOp:translate.timeSamples = {
-                1: (3, 2, 0),
-                4: (5, -1, 1),
-            }
-            uniform token[] xformOpOrder = ["xformOp:translate"]
-        }
-
-        def Xform "PoleA"
-        {
-            double3 xformOp:translate = (2, 0, 8)
-            uniform token[] xformOpOrder = ["xformOp:translate"]
-        }
-
-        def Xform "PoleB"
-        {
-            double3 xformOp:translate = (2, 8, 0)
-            uniform token[] xformOpOrder = ["xformOp:translate"]
-        }
-
-        def Xform "Big"
-        {
-            double3 xformOp:scale.timeSamples = {
-                1: (2, 1, 0.5),
-                4: (1, 3, 1),
-            }
-            uniform token[] xformOpOrder = ["xformOp:scale"]
-        }
-    }
-
-    def Xform "Scaled"
-    {
-        double3 xformOp:translate = (1, 1, 5)
-        uniform token[] xformOpOrder = ["xformOp:translate"]
-    }
-
-    def RigExecRoot "Rig"
-    {
-        def "Joints"
-        {
-            def RigExecJoint "Root"
-            {
-                matrix4d posed:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
-
-                def RigExecJoint "Mid"
-                {
-                    matrix4d posed:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (2, 0, 0, 1) )
-
-                    def RigExecJoint "End"
-                    {
-                        matrix4d posed:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (4, 0, 0, 1) )
-                    }
-                }
-            }
-        }
-
-        def Scope "Movers"
-        {
-            def RigExecSingleChainIkConstraint "IK" (
-                prepend apiSchemas = ["RigExecMoverAPI"]
-            )
-            {
-                rel rigExec:moves = [</Asset/Rig/Joints/Root>, </Asset/Rig/Joints/Root/Mid>, </Asset/Rig/Joints/Root/Mid/End>]
-                rel rigExec:firstJoint = </Asset/Rig/Joints/Root>
-                rel rigExec:endJoint = </Asset/Rig/Joints/Root/Mid/End>
-                rel rigExec:effector = </Asset/Sources/Effector>
-                uniform token rigExec:poleVectorMode = "object"
-                rel rigExec:poleVectorObjects = [</Asset/Sources/PoleA>, </Asset/Sources/PoleB>]
-                float[] inputs:poleVectorWeights = [1, 3]
-                float inputs:stretch.timeSamples = {
-                    1: 0,
-                    4: 0.5,
-                }
-            }
-
-            def RigExecScaleConstraint "Scale" (
-                prepend apiSchemas = ["RigExecMoverAPI"]
-            )
-            {
-                rel rigExec:moves = </Asset/Scaled>
-                rel rigExec:sources = [</Asset/Sources/Big>, </Asset/Sources/PoleA>]
-                float[] inputs:sourceWeights = [1, 0.5]
-                bool inputs:affectScaleY = 0
-                double3 inputs:scaleOffset = (0.25, 0, 0)
-                float inputs:defaultWeight.timeSamples = {
-                    1: 1,
-                    4: 0.4,
-                }
-            }
-        }
-    }
-}
-)usda";
-
-std::map<std::string, int> sceneSolvers, sceneConstraints;
-
-const char *
-SolverName(RigExecSolverKind kind)
-{
-    switch (kind) {
-    case RigExecSolverKind::FkChain:
-        return "FkChain";
-    case RigExecSolverKind::TwoBoneIk:
-        return "TwoBoneIk";
-    case RigExecSolverKind::BlendPointFrames:
-        return "BlendPointFrames";
-    case RigExecSolverKind::TwistDistribution:
-        return "TwistDistribution";
-    case RigExecSolverKind::Ribbon:
-        return "Ribbon";
-    case RigExecSolverKind::SplineIk:
-        return "SplineIk";
-    case RigExecSolverKind::Skeleton2d:
-        return "Skeleton2d";
-    }
-    return "?";
-}
-
-const char *
-ConstraintName(RigExecConstraintKind kind)
-{
-    switch (kind) {
-    case RigExecConstraintKind::Position:
-        return "Position";
-    case RigExecConstraintKind::Rotation:
-        return "Rotation";
-    case RigExecConstraintKind::Scale:
-        return "Scale";
-    case RigExecConstraintKind::Parent:
-        return "Parent";
-    case RigExecConstraintKind::Aim:
-        return "Aim";
-    case RigExecConstraintKind::SingleChainIk:
-        return "SingleChainIk";
-    case RigExecConstraintKind::Harmonics:
-        return "Harmonics";
-    case RigExecConstraintKind::IkFkMatch:
-        return "IkFkMatch";
-    default:
-        return "?";
-    }
-}
-
-/// A frame bit for bit with any NaN equal to any NaN
-/// (rigExecTest::SameBitsOrNaN), for poisoned inputs.
-bool
-SameFrameOrNaN(const RigExecPointFrame &a, const RigExecPointFrame &b)
-{
-    return a.flags == b.flags &&
-           rigExecTest::SameBitsOrNaN(a.points[0].data(), b.points[0].data(),
-                                      12, "frame");
-}
-
-/// Bit for bit, including the blocked flag, count and diagnostic; with
-/// \p nanEqual, for poisoned inputs, any NaN equals any NaN.
-bool
-SameState(const RigExecTypedValueState &a, const RigExecTypedValueState &b,
-          bool nanEqual = false)
-{
-    if (a.initialized != b.initialized || a.blocked != b.blocked ||
-        a.count != b.count || a.error != b.error ||
-        a.value.index() != b.value.index())
-        return false;
-    const auto frame = nanEqual ? SameFrameOrNaN : SameFrame;
-    if (const auto *x = std::get_if<RigExecPointFrame>(&a.value))
-        return frame(*x, std::get<RigExecPointFrame>(b.value));
-    if (const auto *x = std::get_if<VtValue>(&a.value)) {
-        const VtValue &y = std::get<VtValue>(b.value);
-        if (x->IsHolding<RigExecPointFrameArray>()) {
-            if (!y.IsHolding<RigExecPointFrameArray>())
-                return false;
-            const auto &p = x->UncheckedGet<RigExecPointFrameArray>();
-            const auto &q = y.UncheckedGet<RigExecPointFrameArray>();
-            if (!nanEqual)
-                return SameArray(p, q);
-            if (p.frames.size() != q.frames.size() ||
-                p.rests.size() != q.rests.size())
-                return false;
-            for (size_t k = 0; k < p.frames.size(); ++k)
-                if (!frame(p.frames[k], q.frames[k]))
-                    return false;
-            for (size_t k = 0; k < p.rests.size(); ++k)
-                if (!rigExecTest::SameBitsOrNaN(
-                        p.rests[k][0].data(), q.rests[k][0].data(), 12, "rest"))
-                    return false;
-            return true;
-        }
-        if (nanEqual && x->IsHolding<VtDoubleArray>() &&
-            y.IsHolding<VtDoubleArray>()) {
-            const auto &p = x->UncheckedGet<VtDoubleArray>();
-            const auto &q = y.UncheckedGet<VtDoubleArray>();
-            return p.size() == q.size() &&
-                   rigExecTest::SameBitsOrNaN(p.cdata(), q.cdata(), p.size(),
-                                              "values");
-        }
-        if (nanEqual && x->IsHolding<VtMatrix4dArray>() &&
-            y.IsHolding<VtMatrix4dArray>()) {
-            const auto &p = x->UncheckedGet<VtMatrix4dArray>();
-            const auto &q = y.UncheckedGet<VtMatrix4dArray>();
-            return p.size() == q.size() &&
-                   (p.empty() || rigExecTest::SameBitsOrNaN(
-                                     p.cdata()->data(), q.cdata()->data(),
-                                     16 * p.size(), "matrices"));
-        }
-        return RigExecTypedSame(*x, y);
-    }
-    if (nanEqual) {
-        if (const auto *x = std::get_if<double>(&a.value))
-            return rigExecTest::SameBitsOrNaN(x, &std::get<double>(b.value), 1,
-                                              "double");
-        if (const auto *x = std::get_if<float>(&a.value))
-            return rigExecTest::SameBitsOrNaN(x, &std::get<float>(b.value), 1,
-                                              "float");
-        if (const auto *x = std::get_if<GfVec3d>(&a.value))
-            return rigExecTest::SameBitsOrNaN(
-                x->data(), std::get<GfVec3d>(b.value).data(), 3, "vector");
-        if (const auto *x = std::get_if<GfMatrix4d>(&a.value))
-            return rigExecTest::SameBitsOrNaN(
-                x->data(), std::get<GfMatrix4d>(b.value).data(), 16, "matrix");
-    }
-    return a.value == b.value;
-}
-
-/// Runs \p run twice from the same store, natively and with \p runner, and
-/// compares what each published to \p writes, and what the scene program
-/// itself published there (SameState, \p nanEqual for poisoned inputs).
-template <class Run>
-bool
-SamePublish(RigExecTypedValueStore &store,
-            const std::vector<RigExecValueId> &writes,
-            RigExecPoseOpRunner &runner, const Run &run, bool nanEqual = false)
-{
-    std::vector<RigExecTypedValueState> saved, native;
-    for (const RigExecValueId id : writes)
-        saved.push_back(store.values[size_t(id)]);
-    run(nullptr);
-    for (const RigExecValueId id : writes)
-        native.push_back(store.values[size_t(id)]);
-    for (size_t k = 0; k < writes.size(); ++k)
-        store.values[size_t(writes[k])] = saved[k];
-    run(&runner);
-    bool same = true;
-    for (size_t k = 0; k < writes.size(); ++k) {
-        same = same && SameState(native[k], saved[k], nanEqual) &&
-               SameState(native[k], store.values[size_t(writes[k])], nanEqual);
-        store.values[size_t(writes[k])] = saved[k];
-    }
-    return same;
-}
-
-/// An auto clavicle's publish, natively and on the op core, over its
-/// optional frames, the limb, a zero shift and an unusable frame.
+/// An auto clavicle's shift on the op core against RigExecAutoClavicleShift
+/// over the same frames and scalars, as RigExecRunAutoClavicle feeds it:
+/// over its optional frames, the limb and a zero shift.
 void
 TestAutoClavicle()
 {
+    const auto matrix = [](const RigExecPointFrame &frame) {
+        GfMatrix4d m(1.0);
+        RigExecPointsToMatrix(RigExecIdentityLandmarks(), frame.points, &m);
+        return m;
+    };
+    std::array<GfMatrix4d, 13> m;
+    m[0] = matrix(Frame(GfVec3d(1, 0, 0)));
+    m[1] = matrix(Frame(GfVec3d(0.5, 0.2, 0)));
+    m[2] = matrix(Frame(GfVec3d(0, 0.3, 0), GfVec3d(0, 1, 0), 10));
+    m[3] = matrix(Frame(GfVec3d(0, 0.3, 0)));
+    m[4] = matrix(Frame(GfVec3d(1, 0, 0), GfVec3d(0, 0, 1), 70));
+    for (size_t k = 0; k < 3; ++k)
+        m[5 + k] = matrix(Frame(GfVec3d(1.0 + 2.0 * k, 0, 0)));
+    m[8] = matrix(Frame(GfVec3d(3, 3, 1), GfVec3d(0, 1, 0), 20));
+    m[9] = matrix(Frame(GfVec3d(2, 0, -3)));
+    for (size_t k = 0; k < 3; ++k)
+        m[10 + k] = matrix(Frame(GfVec3d(1.0 + 2.1 * k, 0.1, 0)));
+    RigExecPoseOpRunner runner;
+    int shifted = 0;
     for (const bool ik : {false, true})
         for (const bool limb : {false, true})
             for (const double gain : {0.0, 1.0}) {
-                RigExecBoundAutoClavicle op;
+                RigExecAutoClavicleConstants constants;
+                constants.gain = gain;
+                constants.swings = {1, 0, 0, 0, 0.9238795, 0, 0.3826834, 0};
+                constants.widths = {10, 0.8};
+                constants.gains = {1, 0.5};
+                constants.weights = {1, 0.2, 0.2, 1};
+                RigExecAutoClavicleOpInputs in;
                 const size_t count = limb ? 13 : ik ? 10 : 8;
                 for (size_t i = 0; i < count; ++i)
-                    op.frames[i] = i;
+                    in.frames[i] = &m[i];
                 if (!ik)
-                    op.frames[8] = op.frames[9] = UINT64_MAX;
-                op.hasLimb = limb;
-                op.output = 13;
-                op.unavailable = "unavailable";
-                op.constants.gain = gain;
-                op.constants.swings = {1, 0, 0, 0, 0.9238795, 0, 0.3826834, 0};
-                op.constants.widths = {10, 0.8};
-                op.constants.gains = {1, 0.5};
-                op.constants.weights = {1, 0.2, 0.2, 1};
-                RigExecTypedValueStore values(14);
-                values.Publish(0, Frame(GfVec3d(1, 0, 0)));
-                values.Publish(1, Frame(GfVec3d(0.5, 0.2, 0)));
-                values.Publish(2,
-                               Frame(GfVec3d(0, 0.3, 0), GfVec3d(0, 1, 0), 10));
-                values.Publish(3, Frame(GfVec3d(0, 0.3, 0)));
-                values.Publish(4,
-                               Frame(GfVec3d(1, 0, 0), GfVec3d(0, 0, 1), 70));
-                for (size_t k = 0; k < 3; ++k)
-                    values.Publish(5 + k, Frame(GfVec3d(1.0 + 2.0 * k, 0, 0)));
-                values.Publish(8,
-                               Frame(GfVec3d(3, 3, 1), GfVec3d(0, 1, 0), 20));
-                values.Publish(9, Frame(GfVec3d(2, 0, -3)));
-                for (size_t k = 0; k < 3; ++k)
-                    values.Publish(10 + k,
-                                   Frame(GfVec3d(1.0 + 2.1 * k, 0.1, 0)));
-                RigExecPoseOpRunner runner;
-                const auto run = [&](RigExecPoseOpRunner *ops) {
-                    std::string error;
-                    RigExecRunAutoClavicle(op, &values, &error, ops);
-                };
-                run(nullptr);
-                const bool same = SamePublish(values, {op.output}, runner, run);
+                    in.frames[8] = in.frames[9] = nullptr;
+                in.ikBlend = 1 - constants.ikValue;
+                in.hasLimb = limb;
+                if (limb) {
+                    in.stretch = 1.1;
+                    in.twistDegrees = 15;
+                    in.upperOffset = 0.05;
+                }
+
+                RigExecAutoClavicleFrames frames;
+                frames.targetPosed = m[0].data();
+                frames.pivotPosed = m[1].data();
+                frames.anchorPosed = m[2].data();
+                frames.anchorDefault = m[3].data();
+                frames.fkPosed = m[4].data();
+                for (size_t i = 0; i < 3; ++i)
+                    frames.fkDefault[i] = m[5 + i].data();
+                if (ik) {
+                    frames.ikTargetPosed = m[8].data();
+                    frames.polePosed = m[9].data();
+                }
+                frames.ikBlend = in.ikBlend;
+                frames.amount = in.amount;
+                frames.hasLimb = limb;
+                if (limb) {
+                    frames.limb.stretch = in.stretch;
+                    frames.limb.pin = in.pin;
+                    frames.limb.upperScale = in.upperScale;
+                    frames.limb.lowerScale = in.lowerScale;
+                    frames.limb.softDistance = in.softDistance;
+                    frames.limb.scaleCalibration = in.scaleCalibration;
+                    frames.twistRadians =
+                        in.twistDegrees * std::acos(-1.0) / 180;
+                    frames.limbRestUpper = (m[11].ExtractTranslation() -
+                                            m[10].ExtractTranslation())
+                                               .GetLength() +
+                                           in.upperOffset;
+                    frames.limbRestLower = (m[12].ExtractTranslation() -
+                                            m[11].ExtractTranslation())
+                                               .GetLength() +
+                                           in.lowerOffset;
+                }
+                double native[3];
+                RigExecAutoClavicleShift(constants, frames, native);
+                GfMatrix4d nativeShifted = m[0];
+                nativeShifted.SetTranslateOnly(
+                    nativeShifted.ExtractTranslation() +
+                    GfVec3d(native[0], native[1], native[2]));
+
+                double delta[3] = {0, 0, 0};
+                GfMatrix4d opShifted = m[0];
+                std::string error;
+                const bool ran = RigExecRunAutoClavicleOp(
+                    constants, in, runner, delta, &opShifted, &error);
+                const bool moved =
+                    native[0] != 0 || native[1] != 0 || native[2] != 0;
+                const bool same =
+                    ran && Bits(native, delta, sizeof(native)) &&
+                    (!moved || Bits(nativeShifted.data(), opShifted.data(),
+                                    16 * sizeof(double)));
                 if (!same)
-                    std::printf("auto clavicle %d%d%g differs\n", int(ik),
-                                int(limb), gain);
+                    std::printf("auto clavicle %d%d%g differs (%s)\n", int(ik),
+                                int(limb), gain, error.c_str());
                 CHECK(same);
-                values.values[1].blocked = true;
-                run(nullptr);
-                CHECK(SamePublish(values, {op.output}, runner, run));
+                shifted += moved ? 1 : 0;
             }
+    std::printf("auto clavicle: %d shifted comparisons\n", shifted);
+    CHECK(shifted > 0);
 }
 
-/// A harmonics constraint natively and on the op core, run on one store:
-/// the publish, the error and the capture, bit for bit.
+/// A harmonics constraint's frame: what the op published, its
+/// rigExecOps::HarmonicsStatus and the window capture it took.
 struct HarmonicsRun {
-    RigExecTypedValueState state;
-    std::string error;
     RigExecWindowPacketPtr capture;
+    RigExecPointFrame frame;
+    uint32_t status = 0;
     bool ran = false;
+    std::string error;
 };
 
+/// A harmonics constraint's tick over Gf with RigExecHarmonicsOffset: the
+/// capture is the incoming origin in its space, taken before any gate, and
+/// the offset rings from the usable tail of \p ring and this tick.
 HarmonicsRun
-RunHarmonicsOnce(const RigExecConstraintGraphBinding &bound,
-                 RigExecTypedValueStore &store, const RigExecWindowRing *ring,
-                 bool captureOnly, RigExecPoseOpRunner *ops)
+NativeHarmonics(const RigExecHarmonicsOpConstants &constants,
+                const RigExecHarmonicsOpInputs &in,
+                const RigExecWindowRing &ring, bool captureOnly)
 {
-    const RigExecTypedValueState saved =
-        store.values[size_t(bound.target.output)];
+    using rigExecOps::HarmonicsStatus;
     HarmonicsRun run;
-    RigExecWindowRun window;
-    window.ring = ring;
-    window.capture = &run.capture;
-    window.captureOnly = captureOnly;
-    run.ran = RigExecRunConstraintGraph(bound, &store, &run.error,
-                                        ring ? &window : nullptr, ops);
-    run.state = store.values[size_t(bound.target.output)];
-    store.values[size_t(bound.target.output)] = saved;
+    run.ran = true;
+    run.frame = in.incoming;
+    const auto finish = [&](HarmonicsStatus why) {
+        run.status = uint32_t(why);
+        return run;
+    };
+    const bool usable = RigExecConstraintFrameUsable(in.incoming);
+    GfMatrix4d space(1.0), toSpace(1.0);
+    bool spaceUsable = true;
+    if (in.space) {
+        space = *in.space;
+        const double det = space.GetDeterminant();
+        spaceUsable = std::isfinite(det) && det != 0.0;
+        if (spaceUsable)
+            toSpace = space.GetInverse();
+    }
+    if (usable && spaceUsable) {
+        const GfVec3d p = in.space ? toSpace.Transform(in.incoming.Origin())
+                                   : in.incoming.Origin();
+        if (std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2])) {
+            auto packet = std::make_shared<RigExecWindowPacket>();
+            packet->scalars = {p[0], p[1], p[2]};
+            run.capture = std::move(packet);
+        }
+    }
+    if (captureOnly)
+        return finish(HarmonicsStatus::PassedThrough);
+    if (!usable)
+        return finish(HarmonicsStatus::Unusable);
+    if (!in.enabled || in.weight <= 0.0)
+        return finish(HarmonicsStatus::PassedThrough);
+    if (!run.capture)
+        return finish(spaceUsable ? HarmonicsStatus::NoMeasure
+                                  : HarmonicsStatus::NoMeasureDegenerateSpace);
+    size_t begin = ring.size();
+    while (begin > 0 && ring[begin - 1] && ring[begin - 1]->scalars.size() == 3)
+        --begin;
+    std::vector<double> positions;
+    for (size_t k = begin; k < ring.size(); ++k)
+        positions.insert(positions.end(), ring[k]->scalars.begin(),
+                         ring[k]->scalars.end());
+    positions.insert(positions.end(), run.capture->scalars.begin(),
+                     run.capture->scalars.end());
+    RigExecHarmonicsParameters params;
+    params.amplitude = in.amplitude;
+    params.decay = in.decay;
+    params.termination = in.termination;
+    params.matchVelocity = constants.matchVelocity;
+    for (size_t a = 0; a < 3; ++a)
+        params.axisAmplitude[a] = in.axisAmplitude[a];
+    if (!std::isfinite(params.amplitude) || !std::isfinite(params.decay) ||
+        !std::isfinite(params.termination) ||
+        !std::isfinite(in.axisAmplitude[0]) ||
+        !std::isfinite(in.axisAmplitude[1]) ||
+        !std::isfinite(in.axisAmplitude[2]))
+        return finish(HarmonicsStatus::NonFinite);
+    double ring3[3];
+    if (!RigExecHarmonicsOffset(
+            constants.settings, params,
+            reinterpret_cast<const double(*)[3]>(positions.data()),
+            positions.size() / 3, ring3))
+        return finish(HarmonicsStatus::PassedThrough);
+    GfVec3d offset(ring3[0], ring3[1], ring3[2]);
+    if (in.space)
+        offset = space.TransformDir(offset);
+    offset *= in.weight;
+    RigExecPointFrame candidate = in.incoming;
+    for (auto &q : candidate.points)
+        q += offset;
+    if (!RigExecConstraintFrameUsable(candidate))
+        return finish(HarmonicsStatus::InvalidResult);
+    run.frame = candidate;
+    return finish(HarmonicsStatus::Applied);
+}
+
+HarmonicsRun
+OpHarmonics(const RigExecHarmonicsOpConstants &constants,
+            const RigExecHarmonicsOpInputs &in, const RigExecWindowRing *ring,
+            bool captureOnly, RigExecPoseOpRunner &runner)
+{
+    HarmonicsRun run;
+    run.ran = RigExecRunHarmonicsOp(constants, in, ring, captureOnly, runner,
+                                    &run.capture, &run.frame, &run.status,
+                                    &run.error);
     return run;
 }
 
 bool
 SameHarmonics(const HarmonicsRun &a, const HarmonicsRun &b)
 {
-    return a.ran == b.ran && a.error == b.error &&
-           SameState(a.state, b.state) &&
+    return a.ran == b.ran && a.status == b.status &&
+           SameFrame(a.frame, b.frame) &&
            RigExecWindowPacketsEqual(a.capture, b.capture);
 }
 
 /// Frame by frame over a ring the native captures fill, on one runner that
 /// rebuilds when a setting moves: with and without a space (a singular and
-/// an unreadable one), on capture-only ticks, disabled, at zero and out of
-/// range weights, with a field weight and a broken field, with a
-/// non-finite amplitude and an unusable incoming frame.
+/// an unreadable one), on capture-only ticks, disabled, at zero and partial
+/// weights, with a non-finite amplitude and an unusable incoming frame.
 void
 TestHarmonics()
 {
-    enum Value : RigExecValueId {
-        kIncoming,
-        kOutput,
-        kCarry,
-        kField,
-        kEnabled,
-        kWeight,
-        kAmplitude,
-        kDecay,
-        kTermination,
-        kAxis,
-        kCount
-    };
     struct Case {
         const char *label;
         int space = 0; // 0 none, 1 usable, 2 singular, 3 unreadable
         bool enabled = true;
-        float weight = 0.8f;
-        int field = 0; // 0 none, 1 usable, 2 broken
+        double weight = 0.8;
         double amplitude = 1.3;
         bool ignoreFirst = true;
         bool unusableAt3 = false;
@@ -1082,100 +929,76 @@ TestHarmonics()
         {"singular space", 2},
         {"unreadable space", 3},
         {"disabled", 0, false},
-        {"zero weight", 0, true, 0.0f},
-        {"weight out of range", 0, true, 1.5f},
-        {"field weight", 1, true, 0.8f, 1},
-        {"broken field", 0, true, 0.8f, 2},
-        {"non-finite amplitude", 0, true, 0.8f, 0,
+        {"zero weight", 0, true, 0.0},
+        {"partial weight", 1, true, 0.6},
+        {"non-finite amplitude", 0, true, 0.8,
          std::numeric_limits<double>::quiet_NaN()},
-        {"from rest", 1, true, 1.0f, 0, 0.7, false},
-        {"unusable frame", 0, true, 0.8f, 0, 1.3, true, true},
+        {"from rest", 1, true, 1.0, 0.7, false},
+        {"unusable frame", 0, true, 0.8, 1.3, true, true},
     };
     RigExecPoseOpRunner runner;
     int applied = 0;
     for (const Case &c : cases) {
-        RigExecConstraintGraphBinding bound;
-        bound.structural.record.kind = RigExecConstraintKind::Harmonics;
-        bound.structural.harmonicsWaves = 2.0;
-        bound.structural.harmonicsWaveLength = 3.0;
-        bound.structural.harmonicsFrequency = 1.0;
-        bound.structural.harmonicsIgnoreFirstFrame = c.ignoreFirst;
-        bound.target.incoming = kIncoming;
-        bound.target.output = kOutput;
-        if (c.space)
-            bound.target.carry = kCarry;
-        if (c.field)
-            bound.target.weight = kField;
-        RigExecHarmonicsSettings settings;
-        settings.waves = 2.0;
-        settings.waveLength = 3.0;
-        bound.windowFrames = uint32_t(RigExecHarmonicsWindowFrames(settings));
-        const auto direct = [](RigExecValueId id) {
-            RigExecBoundGraphInput input;
-            input.direct = id;
-            return input;
-        };
-        bound.inputs[SchemaAttrText::inputsEnabled] = direct(kEnabled);
-        bound.inputs[SchemaAttrText::inputsDefaultWeight] = direct(kWeight);
-        bound.inputs[SchemaAttrText::inputsAmplitude] = direct(kAmplitude);
-        bound.inputs[SchemaAttrText::inputsDecay] = direct(kDecay);
-        bound.inputs[SchemaAttrText::inputsTermination] = direct(kTermination);
-        bound.inputs[SchemaAttrText::inputsAxisAmplitude] = direct(kAxis);
-
-        RigExecTypedValueStore store(kCount);
+        RigExecHarmonicsOpConstants constants;
+        constants.settings.waves = 2.0;
+        constants.settings.waveLength = 3.0;
+        constants.settings.frequency = 1.0;
+        constants.settings.ignoreFirstFrame = c.ignoreFirst;
+        constants.frames =
+            uint32_t(RigExecHarmonicsWindowFrames(constants.settings));
+        RigExecHarmonicsOpInputs in;
         GfMatrix4d space(1.0);
         space.SetRotate(GfRotation(GfVec3d(0.3, 1.0, 0.2), 35.0));
         space.SetTranslateOnly(GfVec3d(0.5, -2.0, 1.25));
         if (c.space == 2)
             space = GfMatrix4d(1.0).SetScale(GfVec3d(1.0, 0.0, 1.0));
-        store.PublishSource(kCarry,
-                            c.space == 3 ? VtValue(1.0f) : VtValue(space));
-        VtFloatArray field(c.field == 2 ? 0 : 1, 0.6f);
-        store.PublishSource(kField, VtValue(field));
-        store.PublishSource(kEnabled, VtValue(c.enabled));
-        store.PublishSource(kWeight, VtValue(c.weight));
-        store.PublishSource(kAmplitude, VtValue(c.amplitude));
-        store.PublishSource(kDecay, VtValue(2.5f));
-        store.PublishSource(kTermination, VtValue(0.1));
-        store.PublishSource(kAxis, VtValue(GfVec3d(1.0, 0.5, 2.0)));
+        if (c.space == 3)
+            space = GfMatrix4d(0.0);
+        if (c.space)
+            in.space = space;
+        in.enabled = c.enabled;
+        in.weight = c.weight;
+        in.amplitude = c.amplitude;
+        in.decay = 2.5;
+        in.termination = 0.1;
+        in.axisAmplitude = GfVec3d(1.0, 0.5, 2.0);
 
         RigExecWindowRing ring;
         for (int t = 0; t < 9; ++t) {
             const double s = double(t);
-            RigExecPointFrame incoming =
+            in.incoming =
                 Frame(GfVec3d(0.3 * s * s, std::sin(0.7 * s), -0.4 * s),
                       GfVec3d(0, 1, 0), 9.0 * s);
             if (c.unusableAt3 && t == 3)
-                incoming.flags = 0;
-            store.Publish(kIncoming, incoming);
+                in.incoming.flags = 0;
             for (const bool captureOnly : {false, true}) {
                 const HarmonicsRun native =
-                    RunHarmonicsOnce(bound, store, &ring, captureOnly, nullptr);
+                    NativeHarmonics(constants, in, ring, captureOnly);
                 const HarmonicsRun op =
-                    RunHarmonicsOnce(bound, store, &ring, captureOnly, &runner);
+                    OpHarmonics(constants, in, &ring, captureOnly, runner);
                 const bool same = SameHarmonics(native, op);
                 if (!same)
-                    std::printf("harmonics %s at %d%s: native %d (%s), op %d "
-                                "(%s)\n",
+                    std::printf("harmonics %s at %d%s: native status %u, op "
+                                "%d status %u (%s)\n",
                                 c.label, t, captureOnly ? " captured only" : "",
-                                int(native.ran), native.error.c_str(),
-                                int(op.ran), op.error.c_str());
+                                native.status, int(op.ran), op.status,
+                                op.error.c_str());
                 CHECK(same);
-                if (!captureOnly && native.ran && native.error.empty() &&
-                    !SameFrame(std::get<RigExecPointFrame>(native.state.value),
-                               incoming))
+                if (!captureOnly &&
+                    native.status ==
+                        uint32_t(rigExecOps::HarmonicsStatus::Applied))
                     ++applied;
                 if (!captureOnly) {
                     ring.push_back(native.capture);
-                    if (ring.size() > bound.windowFrames)
+                    if (ring.size() > constants.frames)
                         ring.erase(ring.begin());
                 }
             }
         }
         // Without a window: no history, nothing rings.
-        const bool same = SameHarmonics(
-            RunHarmonicsOnce(bound, store, nullptr, false, nullptr),
-            RunHarmonicsOnce(bound, store, nullptr, false, &runner));
+        const bool same =
+            SameHarmonics(NativeHarmonics(constants, in, {}, false),
+                          OpHarmonics(constants, in, nullptr, false, runner));
         if (!same)
             std::printf("harmonics %s without a window differs\n", c.label);
         CHECK(same);
@@ -1664,346 +1487,268 @@ TestSpaceMatch()
     CHECK(refused == kPoisoned);
 }
 
-void
-CompareRig(const std::string &label, const UsdStageRefPtr &stage,
-           const SdfPath &rig, int first, int last, bool nanEqual)
+/// RigExecIkFkMatchConstraint's arithmetic over Gf with the ikFkMatchKernel
+/// functions, as the evaluator runs it, from the op's inputs.
+RigExecIkFkMatchOpOutputs
+NativeIkFkMatch(const RigExecIkFkMatchOpConstants &m,
+                const RigExecIkFkMatchOpInputs &in)
 {
-    rigExecSceneProgramDrive::SceneRun scene(stage, rig, first, last);
-    if (!scene.ok) {
-        std::printf("%s: no scene program\n", label.c_str());
-        return;
+    using rigExecOps::IkFkPoleMode;
+    RigExecIkFkMatchOpOutputs out;
+    const GfMatrix4d *input = in.sources.data();
+    const GfMatrix4d *rest = in.rests.data();
+    const RigExecIkFkMatchChannels *channels = in.channels.data();
+    const GfMatrix4d *control = input + 5;
+    RigExecLimbStretch limb;
+    limb.stretch = in.scalars[1];
+    limb.softDistance = in.scalars[2];
+    limb.upperScale = in.scalars[3];
+    limb.lowerScale = in.scalars[4];
+    limb.pin = in.scalars[5];
+    limb.scaleCalibration = m.scaleCalibration;
+    double space[16];
+    const double *spaceMatrix = nullptr;
+    if (in.hasSpace) {
+        const GfMatrix4d carry = in.spaceRest.GetInverse() * in.spacePosed;
+        std::copy(carry.data(), carry.data() + 16, space);
+        spaceMatrix = space;
     }
-    const auto &operations = scene.program.operations;
-    std::vector<RigExecPoseOpRunner> runners(operations.size());
-    for (int t = first; t <= last; ++t) {
-        CHECK(scene.Evaluate(t));
-        RigExecTypedValueStore &store = scene.runtime.values;
-        for (size_t i = 0; i < operations.size(); ++i) {
-            if (const auto *op =
-                    std::get_if<RigExecSolverGraphBinding>(&operations[i])) {
-                if (!RigExecSolverOpSupported(op->record))
-                    continue;
-                RigExecSolverWorkspace workspace;
-                const bool same = SamePublish(
-                    store, {op->output}, runners[i],
-                    [&](RigExecPoseOpRunner *ops) {
-                        std::string error;
-                        RigExecRunSolverGraph(*op, &store, &workspace, &error,
-                                              ops);
-                    },
-                    nanEqual);
-                if (!same)
-                    std::printf("%s: %s solver %zu differs at %d\n",
-                                label.c_str(), SolverName(op->record.kind), i,
-                                t);
-                CHECK(same);
-                ++sceneSolvers[SolverName(op->record.kind)];
-            } else if (const auto *op = std::get_if<RigExecBoundAutoClavicle>(
-                           &operations[i])) {
-                const bool same = SamePublish(
-                    store, {op->output}, runners[i],
-                    [&](RigExecPoseOpRunner *ops) {
-                        std::string error;
-                        RigExecRunAutoClavicle(*op, &store, &error, ops);
-                    },
-                    nanEqual);
-                if (!same)
-                    std::printf("%s: auto clavicle %zu differs at %d\n",
-                                label.c_str(), i, t);
-                CHECK(same);
-            } else if (const auto *op =
-                           std::get_if<RigExecConstraintGraphBinding>(
-                               &operations[i])) {
-                const RigExecConstraintKind kind = op->structural.record.kind;
-                if (op->match) {
-                    const auto &m = *op->match;
-                    std::vector<RigExecValueId> writes = {m.ikValues,
-                                                          m.fkValues};
-                    writes.insert(writes.end(), m.presented.begin(),
-                                  m.presented.end());
-                    for (const auto &rider : m.riders)
-                        writes.push_back(rider.presented);
-                    writes.erase(std::remove_if(writes.begin(), writes.end(),
-                                                [&](RigExecValueId id) {
-                                                    return id >=
-                                                           store.values.size();
-                                                }),
-                                 writes.end());
-                    const bool same = SamePublish(
-                        store, writes, runners[i],
-                        [&](RigExecPoseOpRunner *ops) {
-                            std::string error;
-                            RigExecRunConstraintGraph(*op, &store, &error,
-                                                      nullptr, ops);
-                        },
-                        nanEqual);
-                    if (!same)
-                        std::printf("%s: IK/FK match %zu differs at %d\n",
-                                    label.c_str(), i, t);
-                    CHECK(same);
-                    ++sceneConstraints["IkFkMatch"];
-                    continue;
-                }
-                if (kind == RigExecConstraintKind::Harmonics) {
-                    // The drive pushes no history: the scene read an empty
-                    // ring.
-                    const RigExecWindowRing empty;
-                    const RigExecWindowRing *ring =
-                        op->windowFrames ? &empty : nullptr;
-                    const HarmonicsRun native =
-                        RunHarmonicsOnce(*op, store, ring, false, nullptr);
-                    const HarmonicsRun onOps =
-                        RunHarmonicsOnce(*op, store, ring, false, &runners[i]);
-                    const bool same =
-                        SameHarmonics(native, onOps) &&
-                        SameState(native.state,
-                                  store.values[size_t(op->target.output)]);
-                    if (!same)
-                        std::printf("%s: harmonics constraint %zu differs at "
-                                    "%d\n",
-                                    label.c_str(), i, t);
-                    CHECK(same);
-                    ++sceneConstraints[ConstraintName(kind)];
-                    continue;
-                }
-                if (!RigExecConstraintOpSupported(kind) || op->match ||
-                    op->windowFrames)
-                    continue;
-                std::vector<RigExecValueId> writes = {op->target.output};
-                for (const RigExecValueId id : op->target.chainOutputs)
-                    if (id < store.values.size())
-                        writes.push_back(id);
-                const bool same = SamePublish(
-                    store, writes, runners[i],
-                    [&](RigExecPoseOpRunner *ops) {
-                        std::string error;
-                        RigExecRunConstraintGraph(*op, &store, &error, nullptr,
-                                                  ops);
-                    },
-                    nanEqual);
-                if (!same)
-                    std::printf("%s: %s constraint %zu differs at %d\n",
-                                label.c_str(), ConstraintName(kind), i, t);
-                CHECK(same);
-                ++sceneConstraints[ConstraintName(kind)];
-            }
+    double restOrigins[3][3], restUpper = 0, restLower = 0, spaceFactor = 1;
+    for (size_t i = 0; i < 3; ++i)
+        for (int k = 0; k < 3; ++k)
+            restOrigins[i][k] = rest[i][3][k];
+    RigExecIkFkMatchRestLengths(restOrigins, spaceMatrix, m.upperLengthOffset,
+                                m.lowerLengthOffset, &restUpper, &restLower,
+                                &spaceFactor);
+    limb.softDistance *= spaceFactor;
+    RigExecIkFkMatchIkInputs ikIn;
+    for (size_t i = 0; i < 3; ++i)
+        ikIn.joints[i] = input[i].data();
+    ikIn.root = input[3].data();
+    ikIn.effectorPosed = input[4].data();
+    ikIn.ikPosed = control[0].data();
+    ikIn.ik = channels[0];
+    ikIn.twistRadians = in.scalars[6] * std::acos(-1.0) / 180.0;
+    ikIn.poleDistance =
+        (rest[4].ExtractTranslation() - rest[1].ExtractTranslation())
+            .GetLength() *
+        spaceFactor;
+    ikIn.polePosed = control[1].data();
+    ikIn.hasStretch = m.stretchLimb;
+    ikIn.limb = limb;
+    ikIn.restUpper = restUpper;
+    ikIn.restLower = restLower;
+    RigExecIkFkMatchIkResult ik;
+    RigExecIkFkMatchIk(ikIn, &ik);
+    RigExecIkFkMatchChannels pole = channels[1];
+    double poleFrame[16];
+    bool poleOk = false;
+    if (ik.ok) {
+        GfMatrix4d ikNew;
+        std::copy(ik.ikFrame, ik.ikFrame + 16, ikNew.data());
+        const GfMatrix4d moved = control[0].GetInverse() * ikNew;
+        const auto composed = ikFkMatchKernel::Compose(channels[1]);
+        GfMatrix4d avars;
+        std::copy(composed.begin(), composed.end(), avars.data());
+        GfMatrix4d parent = avars.GetInverse() * control[1];
+        if (in.poleMode == uint32_t(IkFkPoleMode::Switch)) {
+            RigExecSpaceSwitchInputs inputs = in.poleSwitch;
+            inputs.avars = GfMatrix4d(1.0);
+            for (size_t k = 0;
+                 k < inputs.sources.size() && k < m.poleSourceRides.size(); ++k)
+                if (m.poleSourceRides[k] && !inputs.sources[k].world)
+                    inputs.sources[k].posedSpace =
+                        inputs.sources[k].posedSpace * moved;
+            RigExecPointFrame frame;
+            GfMatrix4d switched(1.0);
+            if (RigExecRunSpaceSwitch(m.poleRecord, inputs, &frame) &&
+                RigExecConstraintFrameUsable(frame) &&
+                RigExecPointsToMatrix(RigExecIdentityLandmarks(), frame.points,
+                                      &switched))
+                parent = switched;
+        } else if (in.poleMode == uint32_t(IkFkPoleMode::Ride)) {
+            parent = parent * moved;
+        }
+        poleOk = RigExecIkFkMatchPole(ik.poleTarget, parent.data(), &pole,
+                                      poleFrame);
+    }
+    RigExecIkFkMatchFkInputs fkIn;
+    GfMatrix4d offsets[3];
+    for (size_t i = 0; i < 3; ++i) {
+        fkIn.joints[i] = input[i].data();
+        fkIn.fkPosed[i] = control[2 + i].data();
+        fkIn.fk[i] = channels[2 + i];
+        offsets[i] = rest[5 + i] * rest[i].GetInverse();
+        fkIn.offsets[i] = offsets[i].data();
+    }
+    fkIn.hasStretch = m.stretchLimb;
+    fkIn.upperScale = limb.upperScale;
+    fkIn.lowerScale = limb.lowerScale;
+    fkIn.restUpper = restUpper;
+    fkIn.restLower = restLower;
+    RigExecIkFkMatchFkResult fk;
+    RigExecIkFkMatchFk(fkIn, &fk);
+    if (ik.ok && poleOk && fk.ok) {
+        RigExecIkFkMatchPack(ik, pole, fk, out.ikValues.data(),
+                             out.fkValues.data());
+        out.valid = true;
+    }
+    const auto show = [&](size_t k, const double *frame) {
+        std::copy(frame, frame + 16, out.shown[k].data());
+        out.shownMask |= 1u << k;
+    };
+    switch (RigExecIkFkMatchShownSide(in.scalars[0], m.ikValue, in.weight)) {
+    case RigExecIkFkMatchShown::IkSide:
+        if (ik.ok && poleOk) {
+            show(0, ik.ikFrame);
+            show(1, poleFrame);
+        }
+        break;
+    case RigExecIkFkMatchShown::FkSide:
+        if (fk.ok)
+            for (size_t i = 0; i < 3; ++i)
+                show(2 + i, fk.frames[i]);
+        break;
+    case RigExecIkFkMatchShown::None:
+        break;
+    }
+    return out;
+}
+
+/// An IK/FK match on the op core against NativeIkFkMatch on a two-bone arm:
+/// the published values and the presented frames bit for bit, on either
+/// side and between, with the pole kept, riding the IK control and switched,
+/// with and without a stretching limb and a space, and with a non-finite IK
+/// control channel.
+void
+TestIkFkMatch()
+{
+    using rigExecOps::IkFkPoleMode;
+    const GfVec3d up(0, 0, 1);
+    const GfMatrix4d shoulder = Placement(up, -10, GfVec3d(0, 0, 0));
+    const GfMatrix4d elbow = Placement(up, 15, GfVec3d(0.98, -0.17, 0));
+    const GfMatrix4d wrist = Placement(up, 5, GfVec3d(2.0, 0.1, 0));
+    RigExecIkFkMatchOpInputs base;
+    base.sources = {shoulder,
+                    elbow,
+                    wrist,
+                    shoulder,
+                    wrist,
+                    Placement(GfVec3d(0.2, 1, 0), 25, GfVec3d(1.8, 0.4, 0.1)),
+                    Placement(up, 0, GfVec3d(1.1, -1.4, 0.3)),
+                    shoulder,
+                    elbow,
+                    wrist};
+    base.rests = {Placement(up, 0, GfVec3d(0, 0, 0)),
+                  Placement(up, 0, GfVec3d(1, 0, 0)),
+                  Placement(up, 0, GfVec3d(2, 0, 0)),
+                  Placement(up, 0, GfVec3d(2, 0, 0)),
+                  Placement(up, 0, GfVec3d(1, -1.5, 0)),
+                  Placement(up, 0, GfVec3d(0, 0, 0)),
+                  Placement(up, 0, GfVec3d(1, 0, 0)),
+                  Placement(up, 0, GfVec3d(2, 0, 0))};
+    const char *orders[3] = {"XYZ", "ZXY", "YZX"};
+    for (size_t k = 0; k < 5; ++k) {
+        RigExecIkFkMatchChannels &c = base.channels[k];
+        std::copy(orders[k % 3], orders[k % 3] + 3, c.order);
+        for (int a = 0; a < 3; ++a) {
+            c.t[a] = 0.1 * double(k + a);
+            c.r[a] = 5.0 * double(k + 1) + 2.0 * a;
         }
     }
-}
-
-/// testRigExecConstraints' IK/FK match arm: FK on frames 1-4, IK after,
-/// the IK control carrying a rider; with \p poleRides the pole sits under
-/// the IK control, so its parent rides the match's move.
-UsdStageRefPtr
-IkFkMatchStage(bool poleRides)
-{
-    const UsdStageRefPtr stage = UsdStage::CreateInMemory();
-    stage->SetStartTimeCode(1);
-    stage->SetEndTimeCode(10);
-    stage->DefinePrim(SdfPath("/Asset"), TfToken("Xform"));
-    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const auto control = [&](const std::string &path, double tx, double tz) {
-        const UsdPrim prim = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Controls/" + path), TfToken("RigExecControl"));
-        prim.CreateAttribute(TfToken("rest:tx"), SdfValueTypeNames->Double)
-            .Set(tx);
-        prim.CreateAttribute(TfToken("rest:tz"), SdfValueTypeNames->Double)
-            .Set(tz);
-        return prim;
-    };
-    const UsdPrim shoulder = control("Shoulder", 0, 0);
-    const UsdPrim up = control("Shoulder/Up", 0, 0);
-    const UsdPrim lo = control("Shoulder/Up/Lo", 3, 0);
-    const UsdPrim hand = control("Shoulder/Up/Lo/Hand", 4, 0);
-    const UsdPrim ik = control("Ik", 7, 0);
-    const UsdPrim orient = control("Ik/Orient", 0, 0);
-    const UsdPrim pole =
-        control(poleRides ? "Ik/Pole" : "Pole", poleRides ? -3.5 : 3.5, 2);
-    const UsdPrim settings = control("Settings", 0, -3);
-    const UsdAttribute ikfk = settings.CreateAttribute(
-        TfToken("avars:ikfk"), SdfValueTypeNames->Float);
-    const UsdAttribute ikTx =
-        ik.CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double);
-    const UsdAttribute ikTz =
-        ik.CreateAttribute(TfToken("avars:tz"), SdfValueTypeNames->Double);
-    const UsdAttribute ikRy =
-        ik.CreateAttribute(TfToken("avars:ry"), SdfValueTypeNames->Double);
-    const UsdAttribute upRz =
-        up.CreateAttribute(TfToken("avars:rz"), SdfValueTypeNames->Double);
-    const UsdAttribute loRz =
-        lo.CreateAttribute(TfToken("avars:rz"), SdfValueTypeNames->Double);
-    const UsdAttribute handRx =
-        hand.CreateAttribute(TfToken("avars:rx"), SdfValueTypeNames->Double);
-    for (int t = 1; t <= 10; ++t) {
-        ikfk.Set(t <= 4 ? 0.0f : t <= 8 ? 1.0f : 0.5f, UsdTimeCode(t));
-        ikTx.Set(-0.4 * t, UsdTimeCode(t));
-        ikTz.Set(0.3 * (t % 4), UsdTimeCode(t));
-        ikRy.Set(4.0 * t, UsdTimeCode(t));
-        upRz.Set(3.0 * t, UsdTimeCode(t));
-        loRz.Set(-6.0 * t, UsdTimeCode(t));
-        handRx.Set(5.0 * t, UsdTimeCode(t));
+    base.scalars = {0, 1, 0, 1, 1, 0, 0};
+    base.poleSwitch.posedDefault = Placement(up, 0, GfVec3d(1, -1.5, 0));
+    base.poleSwitch.parentDefault = Placement(up, 0, GfVec3d(0));
+    base.poleSwitch.parentDefaultInverse =
+        base.poleSwitch.parentDefault.GetInverse();
+    base.poleSwitch.parentPosed = Placement(up, 5, GfVec3d(0.1, 0, 0));
+    base.poleSwitch.sources.resize(2);
+    base.poleSwitch.sources[1].world = true;
+    for (size_t k = 0; k < 2; ++k) {
+        base.poleSwitch.sources[k].defaultSpace =
+            Placement(up, 0, GfVec3d(double(k), 0, 0));
+        base.poleSwitch.sources[k].posedSpace =
+            Placement(up, 10.0 * double(k + 1), GfVec3d(double(k), 0.2, 0));
     }
-    const SdfPath joints[3] = {
-        SdfPath("/Asset/Rig/Joints/Shoulder"),
-        SdfPath("/Asset/Rig/Joints/Shoulder/Elbow"),
-        SdfPath("/Asset/Rig/Joints/Shoulder/Elbow/Wrist")};
-    const double restTx[3] = {0.0, 3.0, 4.0};
-    for (int i = 0; i < 3; ++i)
-        stage->DefinePrim(joints[i], TfToken("RigExecJoint"))
-            .CreateAttribute(TfToken("rest:tx"), SdfValueTypeNames->Double)
-            .Set(restTx[i]);
-    const SdfPathVector chain(std::begin(joints), std::end(joints));
-    const UsdPrim match =
-        stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Match"),
-                          TfToken("RigExecIkFkMatchConstraint"));
-    match.ApplyAPI(TfToken("RigExecMoverAPI"));
-    match.CreateRelationship(TfToken("rigExec:moves"))
-        .SetTargets({ik.GetPath(), pole.GetPath(), up.GetPath(), lo.GetPath(),
-                     hand.GetPath()});
-    match.CreateRelationship(TfToken("rigExec:ikControl"))
-        .SetTargets({ik.GetPath()});
-    match.CreateRelationship(TfToken("rigExec:poleControl"))
-        .SetTargets({pole.GetPath()});
-    match.CreateRelationship(TfToken("rigExec:fkControls"))
-        .SetTargets({up.GetPath(), lo.GetPath(), hand.GetPath()});
-    match.CreateRelationship(TfToken("rigExec:limbJoints")).SetTargets(chain);
-    match.CreateRelationship(TfToken("rigExec:rootControl"))
-        .SetTargets({shoulder.GetPath()});
-    match.CreateRelationship(TfToken("rigExec:effector"))
-        .SetTargets({orient.GetPath()});
-    match.CreateAttribute(TfToken("inputs:switch"), SdfValueTypeNames->Double)
-        .SetConnections({ikfk.GetPath()});
-    match.CreateAttribute(TfToken("inputs:twist"), SdfValueTypeNames->Double)
-        .Set(10.0);
-    const UsdPrim fk = stage->DefinePrim(SdfPath("/Asset/Rig/Solvers/FK"),
-                                         TfToken("RigExecFkChain"));
-    fk.CreateRelationship(TfToken("rigExec:controls"))
-        .SetTargets({up.GetPath(), lo.GetPath(), hand.GetPath()});
-    const UsdPrim twoBone = stage->DefinePrim(SdfPath("/Asset/Rig/Solvers/IK"),
-                                              TfToken("RigExecTwoBoneIk"));
-    twoBone.CreateRelationship(TfToken("rigExec:rootControl"))
-        .SetTargets({shoulder.GetPath()});
-    twoBone.CreateRelationship(TfToken("rigExec:effectorControl"))
-        .SetTargets({orient.GetPath()});
-    twoBone.CreateRelationship(TfToken("rigExec:poleControl"))
-        .SetTargets({pole.GetPath()});
-    twoBone.CreateRelationship(TfToken("rigExec:joints")).SetTargets(chain);
-    const UsdPrim blend = stage->DefinePrim(SdfPath("/Asset/Rig/Solvers/Blend"),
-                                            TfToken("RigExecBlendPointFrames"));
-    blend.CreateRelationship(TfToken("rigExec:inputA"))
-        .SetTargets({fk.GetPath()});
-    blend.CreateRelationship(TfToken("rigExec:inputB"))
-        .SetTargets({twoBone.GetPath()});
-    blend.GetAttribute(TfToken("inputs:weight"))
-        .SetConnections({ikfk.GetPath()});
-    blend.CreateRelationship(TfToken("rigExec:joints")).SetTargets(chain);
-    // Solvers last: the match revises what they solve.
-    stage->GetPrimAtPath(SdfPath("/Asset/Rig"))
-        .SetChildrenReorder({TfToken("Controls"), TfToken("Joints"),
-                             TfToken("Movers"), TfToken("Solvers")});
-    return stage;
-}
+    base.poleSwitch.active = 0.0;
 
-void
-CompareStage(const std::string &label, const UsdStageRefPtr &stage,
-             bool nanEqual = false)
-{
-    if (!stage) {
-        std::printf("%s: stage did not open\n", label.c_str());
-        ++failures;
-        return;
-    }
-    int first = int(std::floor(stage->GetStartTimeCode()));
-    int last = int(std::floor(stage->GetEndTimeCode()));
-    if (last < first)
-        last = first;
-    last = std::min(last, first + 5);
-    for (const UsdPrim &prim : stage->Traverse())
-        if (prim.GetTypeName() == "RigExecRoot")
-            CompareRig(label + " " + prim.GetPath().GetString(), stage,
-                       prim.GetPath(), first, last, nanEqual);
-}
-
-void
-TestAuthoredRigs(const std::string &examples)
-{
-    const char *files[] = {
-        "01_FkChainTail.usda",
-        "02_TwoBoneIkLeg.usda",
-        "03_IkFkBlendClamp.usda",
-        "05_TwistRibbonSpine.usda",
-        "08_AimEyes.usda",
-        "10_AimXformTurret.usda",
-        "13_ReadPhases.usda",
-        "14_VolumeConstrainedSweep.usda",
-        "16_ConnectionReadPhases.usda",
-        "19_HarmonicsChain.usda",
-        "ArmRig.usda",
-        "aimtest.usda",
-        "rotateConstraint.usda",
-        "../tests/fixtures/computed_ik_space.usda",
-        "../tests/fixtures/computed_chains.usda",
-        "../tests/fixtures/frame_record_fallbacks.usda",
-        "../tests/fixtures/projector_spaces.usda",
-        "../tests/fixtures/oneloop_cross_domain.usda",
-        "../tests/fixtures/solver_checkpoint.usda",
+    RigExecPoseOpRunner runner;
+    int valid = 0, compared = 0;
+    const auto compare = [&](const RigExecIkFkMatchOpConstants &constants,
+                             const RigExecIkFkMatchOpInputs &in,
+                             const std::string &label) {
+        const RigExecIkFkMatchOpOutputs want = NativeIkFkMatch(constants, in);
+        RigExecIkFkMatchOpOutputs got;
+        std::string error;
+        const bool ran =
+            RigExecRunIkFkMatchOp(constants, in, runner, &got, &error);
+        bool same =
+            ran && got.valid == want.valid && got.shownMask == want.shownMask;
+        if (same && want.valid)
+            same = Bits(got.ikValues.data(), want.ikValues.data(),
+                        sizeof(want.ikValues)) &&
+                   Bits(got.fkValues.data(), want.fkValues.data(),
+                        sizeof(want.fkValues));
+        for (size_t k = 0; same && k < 5; ++k)
+            if (want.shownMask & (1u << k))
+                same = Bits(got.shown[k].data(), want.shown[k].data(),
+                            16 * sizeof(double));
+        if (!same)
+            std::printf("IK/FK match %s differs: ran %d (%s), valid %d/%d, "
+                        "shown %u/%u\n",
+                        label.c_str(), int(ran), error.c_str(), int(got.valid),
+                        int(want.valid), got.shownMask, want.shownMask);
+        CHECK(same);
+        ++compared;
+        valid += want.valid ? 1 : 0;
     };
-    for (const char *name : files)
-        CompareStage(name, UsdStage::Open(examples + "/" + name));
-    SdfLayerRefPtr layer = SdfLayer::CreateAnonymous(".usda");
-    CHECK(layer->ImportFromString(kSingleChainRig));
-    CompareStage("single-chain rig", UsdStage::Open(layer));
-    for (const bool poleRides : {false, true})
-        CompareStage(poleRides ? "IK/FK match, riding pole" : "IK/FK match",
-                     IkFkMatchStage(poleRides));
-    // A non-finite IK control channel: the scene program's IK/FK match and
-    // the op refuse it alike.
-    for (const double poison : kNonFinite) {
-        for (const char *channel :
-             {"avars:tx", "avars:rx", "avars:ry", "avars:rz"}) {
-            const UsdStageRefPtr stage = IkFkMatchStage(false);
-            stage->SetEditTarget(stage->GetSessionLayer());
-            const UsdPrim ik =
-                stage->GetPrimAtPath(SdfPath("/Asset/Rig/Controls/Ik"));
-            CHECK(ik);
-            if (ik)
-                ik.CreateAttribute(TfToken(channel), SdfValueTypeNames->Double)
-                    .Set(poison);
-            CompareStage(std::string("IK/FK match, non-finite ") + channel,
-                         stage, true);
+    for (const IkFkPoleMode mode :
+         {IkFkPoleMode::Keep, IkFkPoleMode::Ride, IkFkPoleMode::Switch})
+        for (const bool stretch : {true, false})
+            for (const bool space : {false, true})
+                for (const double side : {0.0, 0.5, 1.0}) {
+                    RigExecIkFkMatchOpConstants constants;
+                    constants.stretchLimb = stretch;
+                    constants.scaleCalibration = 0.1;
+                    constants.upperLengthOffset = 0.05;
+                    constants.poleWorld = {0, 1};
+                    constants.poleSourceRides = {1, 0};
+                    RigExecIkFkMatchOpInputs in = base;
+                    in.poleMode = uint32_t(mode);
+                    in.scalars[0] = side;
+                    in.scalars[6] = 12.0;
+                    in.hasSpace = space;
+                    if (space) {
+                        in.spaceRest = Placement(up, 0, GfVec3d(0.5, 0, 0));
+                        in.spacePosed =
+                            Placement(up, 20, GfVec3d(0.5, 0.1, 0), 1.2);
+                    }
+                    compare(constants, in,
+                            "mode " + std::to_string(int(mode)) +
+                                (stretch ? " stretch" : "") +
+                                (space ? " space" : "") + " side " +
+                                std::to_string(side));
+                }
+    // A non-finite IK control channel: both refuse it alike.
+    for (const double poison : kNonFinite)
+        for (int a = 0; a < 3; ++a) {
+            RigExecIkFkMatchOpConstants constants;
+            RigExecIkFkMatchOpInputs in = base;
+            in.scalars[0] = 1.0;
+            in.channels[0].t[a] = poison;
+            compare(constants, in, "non-finite channel");
+            in = base;
+            in.channels[0].r[a] = poison;
+            compare(constants, in, "non-finite rotation");
         }
-    }
-
-    // The scene program refuses RigExecBone2dAPI stages; TestSkeleton2d
-    // compares the 2D skeleton's records.
-    for (const char *kind : {"FkChain", "TwoBoneIk", "BlendPointFrames",
-                             "TwistDistribution", "Ribbon", "SplineIk"}) {
-        std::printf("scene %s solvers compared: %d\n", kind,
-                    sceneSolvers[kind]);
-        CHECK(sceneSolvers[kind] > 0);
-    }
-    for (const char *kind : {"Position", "Rotation", "Scale", "Parent", "Aim",
-                             "SingleChainIk", "Harmonics", "IkFkMatch"}) {
-        std::printf("scene %s constraints compared: %d\n", kind,
-                    sceneConstraints[kind]);
-        CHECK(sceneConstraints[kind] > 0);
-    }
-}
-
-std::string
-DefaultResourceDir()
-{
-#ifdef RIGEXEC_SCHEMA_RESOURCE_DIR
-    return TfAbsPath(RIGEXEC_SCHEMA_RESOURCE_DIR);
-#else
-    return std::string();
-#endif
+    std::printf("IK/FK match: %d comparisons, %d valid\n", compared, valid);
+    CHECK(valid > 0);
 }
 
 } // namespace
 
 int
-main(int argc, char **argv)
+main()
 {
     std::string error;
     if (!RigExecEnsureBuiltinRegistry(&error)) {
@@ -2025,24 +1770,12 @@ main(int argc, char **argv)
     TestSwitchMath();
     TestNonFiniteLandmarks();
     TestSpaceMatch();
+    TestIkFkMatch();
     // Each kind's comparisons include solved frames, not only empty ones.
     for (const char *kind : {"fk", "two-bone", "blend", "twist", "ribbon",
                              "spline", "skeleton2d", "constraint"}) {
         std::printf("%s: %d solved comparisons\n", kind, solvedFrames[kind]);
         CHECK(solvedFrames[kind] > 0);
-    }
-
-    std::string resources = DefaultResourceDir();
-    if (argc > 1 && resources.empty())
-        resources = TfAbsPath(std::string(argv[1]) +
-                              "/../plugin/rigExecSchema/resources");
-    if (!resources.empty())
-        PlugRegistry::GetInstance().RegisterPlugins(resources);
-    if (argc > 1)
-        TestAuthoredRigs(argv[1]);
-    else {
-        std::printf("no examples directory given\n");
-        ++failures;
     }
 
     if (failures) {

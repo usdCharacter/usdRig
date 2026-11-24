@@ -10,10 +10,8 @@
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecSchema/schemaTokens.h"
 #include "rigExecScene/externalOps.h"
-#include "rigExecScene/geometryOpRunner.h"
+#include "opRunners/geometryOpRunner.h"
 #include "rigExecScene/geometryProgram.h"
-
-#include "rigExecSceneProgramDrive.h"
 
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/plug/registry.h"
@@ -712,119 +710,6 @@ TestCloth()
     }
 }
 
-/// A layered skin rig: two control influences and an input transform.
-const char *kLayeredSkinRig = R"USD(#usda 1.0
-def RigExecRoot "Rig" {
- def RigExecControl "A" {
-  double avars:tx = 2
- }
- def RigExecControl "B" {
-  double avars:rz = 30
- }
- def RigExecControl "C" {
-  double avars:ty = 0.5
- }
- def Points "Cloud" {
-  point3f[] points = [(0, 0, 0), (0, 1, 0), (1, 1, 0), (2, 0, 1)]
- }
- def Scope "Movers" {
-  def RigExecLayeredSkinMover "Skin" (prepend apiSchemas = ["RigExecMoverAPI"]) {
-   rel rigExec:moves = </Rig/Cloud.points>
-   rel rigExec:influences = [</Rig/A>, </Rig/B>]
-   rel rigExec:transform = </Rig/C>
-   int[] rigExec:jointIndices = [0, 1, 1, 0, 0, 1, 1, 1]
-   float[] rigExec:jointWeights = [0.75, 0.25, 0.5, 0.5, 1, 0, 0.3, 0.6]
-   int rigExec:elementSize = 2
-   float[] inputs:mask = [1, 0.5, 0, 0.25]
-   bool inputs:transformInput = true
-  }
- }
-}
-)USD";
-
-/// The scene program, which runs the layered skin as its op, gives the
-/// native evaluator's bits.
-void
-TestLayeredSkinScene()
-{
-    const SdfPath cloud("/Rig/Cloud.points");
-    const auto check = [&](const UsdStageRefPtr &stage, const char *what) {
-        RigExecRigEvaluator rig(stage, SdfPath("/Rig"));
-        const RigExecRigPose pose = rig.Evaluate(UsdTimeCode(1));
-        const auto moved = pose.movedProperties.find(cloud);
-        CHECK(pose.valid && moved != pose.movedProperties.end());
-        if (moved == pose.movedProperties.end())
-            return;
-        const VtVec3fArray &native = moved->second.Get<VtVec3fArray>();
-        rigExecSceneProgramDrive::SceneRun scene(stage, SdfPath("/Rig"), 1, 1);
-        const bool ran = scene.ok && scene.Evaluate(1);
-        CHECK(ran);
-        const VtValue value =
-            scene.Final(cloud, RigExecSceneValueDomain::Points);
-        const bool same =
-            value.IsHolding<VtVec3fArray>() &&
-            value.UncheckedGet<VtVec3fArray>().size() == native.size() &&
-            std::memcmp(value.UncheckedGet<VtVec3fArray>().cdata(),
-                        native.cdata(), native.size() * sizeof(GfVec3f)) == 0;
-        if (!same)
-            std::printf("%s: the scene program differs from native\n", what);
-        CHECK(same);
-    };
-    const auto stage = [] {
-        auto s = UsdStage::CreateInMemory();
-        CHECK(s->GetRootLayer()->ImportFromString(kLayeredSkinRig));
-        return s;
-    };
-    check(stage(), "layered skin scene");
-    {
-        auto s = stage();
-        const UsdPrim skin = s->GetPrimAtPath(SdfPath("/Rig/Movers/Skin"));
-        CHECK(skin.GetAttribute(TfToken("rigExec:skinningMethod"))
-                  .Set(TfToken("dualQuaternion")));
-        CHECK(skin.GetAttribute(TfToken("inputs:useBaseInput")).Set(true));
-        CHECK(skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(0.5f));
-        check(s, "layered skin scene, dual quaternion, from base, half weight");
-    }
-    // An input transform with no rigExec:transform: both refuse, pass the
-    // points through and say so the same way.
-    {
-        auto s = stage();
-        CHECK(s->GetRelationshipAtPath(
-                   SdfPath("/Rig/Movers/Skin.rigExec:transform"))
-                  .ClearTargets(true));
-        RigExecRigEvaluator rig(s, SdfPath("/Rig"));
-        const RigExecRigPose pose = rig.Evaluate(UsdTimeCode(1));
-        const std::string refused = "MoverFailed /Rig/Movers/Skin: execution "
-                                    "rejected its inputs; revision passed "
-                                    "through";
-        CHECK(std::find(pose.diagnostics.begin(), pose.diagnostics.end(),
-                        refused) != pose.diagnostics.end());
-        rigExecSceneProgramDrive::SceneRun scene(s, SdfPath("/Rig"), 1, 1);
-        CHECK(scene.ok && scene.Evaluate(1));
-        const auto chain = scene.program.layout.routes.chains.find(
-            {cloud, RigExecSceneValueDomain::Points});
-        CHECK(chain != scene.program.layout.routes.chains.end() &&
-              !chain->second.versions.empty());
-        if (chain == scene.program.layout.routes.chains.end() ||
-            chain->second.versions.empty())
-            return;
-        const auto &entry =
-            scene.runtime.values
-                .values[size_t(chain->second.versions.back().value)];
-        CHECK(entry.error == refused);
-        const VtValue value =
-            scene.Final(cloud, RigExecSceneValueDomain::Points);
-        VtVec3fArray rest;
-        CHECK(s->GetAttributeAtPath(cloud).Get(&rest));
-        const auto moved = pose.movedProperties.find(cloud);
-        const VtVec3fArray native = moved != pose.movedProperties.end()
-                                        ? moved->second.Get<VtVec3fArray>()
-                                        : rest;
-        CHECK(value.IsHolding<VtVec3fArray>() &&
-              value.UncheckedGet<VtVec3fArray>() == rest && native == rest);
-    }
-}
-
 /// The ops' capabilities mirror the External revision's classification.
 // --- SurfaceBinding ---------------------------------------------------------
 
@@ -1281,10 +1166,6 @@ main()
     TestSurfaceBinding();
     TestLayeredSkin();
     TestCloth();
-#ifdef RIGEXEC_SCHEMA_RESOURCE_DIR
-    PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
-    TestLayeredSkinScene();
-#endif
     TestCapabilities();
     if (failures) {
         std::printf("%d failure(s)\n", failures);

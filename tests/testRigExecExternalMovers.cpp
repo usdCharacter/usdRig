@@ -11,7 +11,7 @@
 #include "rigExecRuntime/store.h"
 #include "rigExecRuntime/stageArrayInputs.h"
 #include "rigExecScene/usdSceneAccess.h"
-#include "rigExecScene/sceneProgramTranslation.h"
+#include "rigExecScene/sceneDescriptors.h"
 
 #include "pxr/base/plug/plugin.h"
 #include "pxr/base/plug/registry.h"
@@ -715,86 +715,6 @@ MakeExportRig(const char *moverType)
                                SdfValueTypeNames->Float, false)
               .Set(0.5f));
     return stage;
-}
-
-void
-TestDetachedExternalProgram()
-{
-    // An explicit recompile must retain the real original SCC authority after
-    // its writer bindings were rebuilt into an otherwise acyclic program.
-    RigExecSceneProgram cyclic;
-    cyclic.layout.valueKeys = {"raw", "solve", "field", "commit"};
-    cyclic.layout.leaves = {0};
-    std::string retainedError;
-    CHECK(cyclic.Append("Solve", RigExecSceneCopyOp{3, 1}, &retainedError));
-    CHECK(cyclic.Append("Field", RigExecSceneCopyOp{1, 2}, &retainedError));
-    CHECK(cyclic.Append("Commit", RigExecSceneCopyOp{2, 3}, &retainedError));
-    CHECK(cyclic.Compile(RigExecCyclePolicy::SetAside, &retainedError));
-    RigExecOpExclusionProof authority;
-    authority.keys = {"Solve", "Field"};
-    authority.removedKeys = {"Commit"};
-    authority.cycles = cyclic.graph.cycles;
-    authority.cycleMembers = cyclic.graph.cycleMembers;
-    RigExecSceneProgram normalized;
-    normalized.layout.valueKeys = cyclic.layout.valueKeys;
-    normalized.layout.leaves = {0};
-    CHECK(normalized.Append("Solve", RigExecSceneCopyOp{0, 1}, &retainedError));
-    CHECK(normalized.Append("Field", RigExecSceneCopyOp{1, 2}, &retainedError));
-    CHECK(normalized.Compile(RigExecCyclePolicy::SetAside, &authority,
-                             &retainedError));
-    CHECK(normalized.graph.ops.empty());
-    CHECK(normalized.Compile(RigExecCyclePolicy::SetAside, nullptr));
-    CHECK(normalized.graph.ops.empty() &&
-          normalized.graph.cycleMembers == authority.cycleMembers);
-    const auto normalizedIdentity = normalized.identity;
-    authority.keys.push_back("Field");
-    CHECK(!normalized.Compile(RigExecCyclePolicy::SetAside, &authority,
-                              &retainedError));
-    CHECK(normalized.identity == normalizedIdentity &&
-          normalized.graph.ops.empty());
-    auto stage = MakeExportRig("ExternalQuadraticMover");
-    RigExecUsdSceneAccess source(stage);
-    RigExecSceneDescriptors scene;
-    std::string error;
-    CHECK(RigExecCaptureSceneDescriptors(
-        source, kRig, {UsdTimeCode::Default(), UsdTimeCode(1), UsdTimeCode(3)},
-        &scene, &error));
-    RigExecSceneProgram program;
-    CHECK(RigExecTranslateSceneProgram(scene, &program, &error));
-    CHECK(program.Compile(RigExecCyclePolicy::SetAside, &error));
-    const auto preservedIdentity = program.identity;
-    const auto preservedPublic = program.publicValues;
-    const auto preservedMembers = program.graph.cycleMembers;
-    auto invalidScene = scene;
-    invalidScene.identities.clear();
-    error.clear();
-    CHECK(!RigExecTranslateSceneProgram(invalidScene, &program, &error));
-    CHECK(!error.empty());
-    CHECK(program.identity == preservedIdentity &&
-          program.publicValues == preservedPublic &&
-          program.graph.cycleMembers == preservedMembers);
-    RigExecValueId output = UINT64_MAX;
-    CHECK(program.layout.routes.Resolve(
-        scene, {kTarget, RigExecSceneValueDomain::Points},
-        SdfPath("/Rig/External"), TfToken("final"), &output, &error));
-    RigExecSceneProgramRuntime runtime;
-    CHECK(runtime.Prepare(program, &error));
-    for (size_t identity : {size_t(2), size_t(1), size_t(2)}) {
-        CHECK(runtime.Evaluate(program, identity, {}, &error));
-        VtValue boxed;
-        CHECK(RigExecReadSceneGraphValue(runtime.values, output, &boxed));
-        CHECK(boxed.IsHolding<VtVec3fArray>());
-        const auto &points = boxed.UncheckedGet<VtVec3fArray>();
-        CHECK(points.size() == kBase.size());
-        const float gain = identity == 2 ? 1.5f : 0.5f,
-                    lift = identity == 2 ? 2.0f : 0.0f;
-        for (size_t i = 0; i < points.size(); ++i) {
-            const auto &base = kBase[i];
-            const GfVec3f expected(base[0], base[1] + 0.5f * lift,
-                                   base[2] + 0.5f * gain * base[0] * base[0]);
-            CHECK((points[i] - expected).GetLength() < 1e-6f);
-        }
-    }
 }
 
 const std::vector<RrVec3f> &
@@ -1746,7 +1666,6 @@ main(int argc, char **argv)
         TestVaryingStructureAndCompileSources();
         TestEvaluation();
         TestTimeVaryingInputsKeyFramesApart();
-        TestDetachedExternalProgram();
         TestExport(argc == 4 ? argv[3] : nullptr);
         TestPhasedReferenceIsBound();
         TestTheExternalPayloadIsTheAssemblersAnswer();

@@ -7,7 +7,6 @@
 // matching the native points.
 #include "rigExecClothStage.h"
 #include "rigExecRuntimeDrive.h"
-#include "rigExecSceneProgramDrive.h"
 #include "rigExec/api/frameCache.h"
 #include "rigExec/api/frozenContext.h"
 #include "rigExec/api/rigEvaluator.h"
@@ -413,52 +412,6 @@ TestRandomAccessAgrees()
     CHECK(RigExecEvaluatorTesting::HistoryTickCount(playback) == first);
 }
 
-// The scene program runs the same window: sequential play pushing each
-// frame, and jumps that rebuild the history, match the native points.
-void
-TestSceneProgramMatchesNative()
-{
-    using rigExecSceneProgramDrive::SceneRun;
-    UsdStageRefPtr stage = MakeStage();
-    RigExecRigEvaluator native(stage, kRig);
-    CHECK(Compile(native));
-    std::vector<Points> want(41);
-    for (int t = 1; t <= 40; ++t)
-        want[size_t(t)] = PointsOf(native.Evaluate(UsdTimeCode(t)), kCurtain);
-    const auto curtain = [](const SceneRun &scene) {
-        const VtValue points =
-            scene.Final(kCurtain, RigExecSceneValueDomain::Points);
-        return points.IsHolding<VtVec3fArray>()
-                   ? Points(points.UncheckedGet<VtVec3fArray>().begin(),
-                            points.UncheckedGet<VtVec3fArray>().end())
-                   : Points();
-    };
-    SceneRun scene(stage, kRig, -70, 40);
-    CHECK(scene.ok);
-    if (!scene.ok)
-        return;
-    CHECK(scene.program.windowedOps.size() == 1);
-    for (int t = -70; t <= 40; ++t) {
-        CHECK(scene.Evaluate(t));
-        scene.runtime.PushHistory();
-        if (t >= 1 && !SameBits(curtain(scene), want[size_t(t)])) {
-            std::printf("t=%d scene and native differ by %g\n", t,
-                        Furthest(curtain(scene), want[size_t(t)]));
-            CHECK(false);
-            break;
-        }
-    }
-    SceneRun jumping(stage, kRig, -70, 40);
-    for (int t : {33, 9, 40, 1}) {
-        CHECK(jumping.Jump(t));
-        if (!SameBits(curtain(jumping), want[size_t(t)]))
-            std::printf("t=%d jump differs by %g (depth %zu)\n", t,
-                        Furthest(curtain(jumping), want[size_t(t)]),
-                        jumping.program.GetHistoryDepth());
-        CHECK(SameBits(curtain(jumping), want[size_t(t)]));
-    }
-}
-
 std::vector<RigExecValueOverride>
 Drag(double tx)
 {
@@ -698,7 +651,6 @@ main()
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     TestMatchesKernel();
     TestRandomAccessAgrees();
-    TestSceneProgramMatchesNative();
     TestDragReadsAuthoredHistory();
     TestFrozenJobsMatchLive();
     TestBinaryParity();

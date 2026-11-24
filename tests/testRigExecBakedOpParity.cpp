@@ -9,15 +9,15 @@
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/moverGraph.h"
 #include "rigExecScene/constraintSceneTranslation.h"
-#include "rigExecScene/geometryOpRunner.h"
-#include "rigExecScene/poseOpRunner.h"
 #include "rigExecScene/propertyOps.h"
-#include "rigExecScene/weightOpRunner.h"
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecStdTypes/stdTypes.h"
 
 #include "rigExec/api/compile.h"
 #include "rigExec/api/taskSystem.h"
+#include "opRunners/geometryOpRunner.h"
+#include "opRunners/poseOpRunner.h"
+#include "opRunners/weightOpRunner.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"

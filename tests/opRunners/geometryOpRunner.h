@@ -1,9 +1,9 @@
-#ifndef RIGEXEC_SCENE_GEOMETRY_OP_RUNNER_H
-#define RIGEXEC_SCENE_GEOMETRY_OP_RUNNER_H
+#ifndef RIGEXEC_TESTS_GEOMETRY_OP_RUNNER_H
+#define RIGEXEC_TESTS_GEOMETRY_OP_RUNNER_H
 
-/// One scene geometry revision run as a single op node through the op
-/// core. Built on first use and rebuilt when a setting baked into it moved,
-/// so stale settings never run. Owner-thread state of the scene runtime.
+/// One geometry revision run as a single op node through the op core, for
+/// tests that compare an op with its native kernel. Built on first use and
+/// rebuilt when a setting baked into it moved, so stale settings never run.
 
 #include "rigExec/api/compile.h"
 #include "rigExec/api/evaluator.h"
@@ -17,7 +17,7 @@
 
 namespace rigExec {
 
-/// The op core's options for scene geometry: a point op runs as ranges of
+/// The op core's options for geometry: a point op runs as ranges of
 /// the grain and from the size the per-point geometry kernels split at.
 RigExecCompileOptions RigExecGeometryCompileOptions();
 

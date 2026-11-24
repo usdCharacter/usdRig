@@ -1,13 +1,17 @@
-// The fixture mover plugin and its op plugin together: the scene program
-// discovers the op plugin, binds the mover's inputs to its Quadratic op and
-// runs it through the op core, giving the native evaluator's bits -- with a
-// reference read, under an envelope, and when the mover refuses.
+// The fixture mover plugin and its op plugin together: discovery finds the
+// op plugin, its binder turns the mover's declared inputs into the Quadratic
+// op's, and one op node run through the op core gives the native evaluator's
+// bits -- with a reference read, under an envelope, and when the mover
+// refuses.
 //
 //   testRigExecOpPluginScene <mover plugin resources> <op plugin resources>
+#include "rigExec/api/compile.h"
+#include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExecScene/externalOps.h"
 #include "rigExecScene/opPlugins.h"
+#include "rigExecStdTypes/stdTypes.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/usd/usd/stage.h"
@@ -27,8 +31,6 @@ static int failures = 0;
             ++failures;                                                        \
         }                                                                      \
     } while (0)
-
-#include "rigExecSceneProgramDrive.h"
 
 namespace {
 
@@ -57,9 +59,50 @@ Stage()
     return stage;
 }
 
-/// Native and scene program agree on the body's points.
+/// The Quadratic op on \p points with the mover's declared \p inputs under a
+/// constant \p weight; \p points stay as they are where the op refuses.
 void
-Compare(const UsdStageRefPtr &stage, const char *what)
+RunOp(const std::vector<VtValue> &inputs, float weight,
+      std::vector<GfVec3f> &points)
+{
+    RigExecRevisionBinding binding;
+    binding.moverPath = SdfPath("/Rig/External");
+    binding.target = kBody;
+    binding.externalSchema = TfToken("ExternalQuadraticMover");
+    const std::vector<GfVec3f> base = points;
+    RigExecExternalOpValues values;
+    values.inputs = &inputs;
+    values.basePoints = &base;
+    RigExecRigDescBuilder builder;
+    RigExecExternalOpNode node;
+    std::string error;
+    if (!RigExecAddExternalOp(binding, values, &builder, &node, &error))
+        return;
+    auto rig = builder.Build(&error);
+    auto program = rig ? RigExecCompile(*rig, {}, &error) : nullptr;
+    auto evaluator =
+        program ? RigExecEvaluator::Create(program, {}, &error) : nullptr;
+    CHECK(evaluator);
+    if (!evaluator ||
+        !RigExecWriteExternalOpInputs(binding, values,
+                                      RigExecWeightPacket::Constant(weight),
+                                      points, node, evaluator.get(), &error) ||
+        !evaluator->Evaluate(&error))
+        return;
+    const auto *out =
+        static_cast<const rigExecStd::RigExecArray<rigExecStd::Vec3f> *>(
+            evaluator->GetOutput(node.out));
+    CHECK(out && out->Size() == points.size());
+    if (!out || out->Size() != points.size())
+        return;
+    for (size_t i = 0; i < points.size(); ++i)
+        points[i] = GfVec3f((*out)[i][0], (*out)[i][1], (*out)[i][2]);
+}
+
+/// The native evaluator and the op agree on the body's points.
+void
+Compare(const UsdStageRefPtr &stage, const std::vector<VtValue> &inputs,
+        float weight, const char *what)
 {
     RigExecRigEvaluator rig(stage, SdfPath("/Rig"));
     std::vector<std::string> errors;
@@ -67,20 +110,19 @@ Compare(const UsdStageRefPtr &stage, const char *what)
     for (const std::string &e : errors)
         std::printf("compile: %s\n", e.c_str());
     const RigExecRigPose pose = rig.Evaluate(UsdTimeCode(1));
+    VtVec3fArray rest;
+    CHECK(stage->GetAttributeAtPath(kBody).Get(&rest));
     const auto moved = pose.movedProperties.find(kBody);
-    VtVec3fArray native;
-    if (moved != pose.movedProperties.end())
-        native = moved->second.Get<VtVec3fArray>();
-    rigExecSceneProgramDrive::SceneRun scene(stage, SdfPath("/Rig"), 1, 1);
-    CHECK(scene.ok && scene.Evaluate(1));
-    const VtValue value = scene.Final(kBody, RigExecSceneValueDomain::Points);
-    const bool same =
-        value.IsHolding<VtVec3fArray>() &&
-        value.UncheckedGet<VtVec3fArray>().size() == native.size() &&
-        std::memcmp(value.UncheckedGet<VtVec3fArray>().cdata(), native.cdata(),
-                    native.size() * sizeof(GfVec3f)) == 0;
+    const VtVec3fArray native = moved != pose.movedProperties.end()
+                                    ? moved->second.Get<VtVec3fArray>()
+                                    : rest;
+    std::vector<GfVec3f> points(rest.cbegin(), rest.cend());
+    RunOp(inputs, weight, points);
+    const bool same = points.size() == native.size() &&
+                      std::memcmp(points.data(), native.cdata(),
+                                  native.size() * sizeof(GfVec3f)) == 0;
     if (!same)
-        std::printf("%s: the scene program differs from native\n", what);
+        std::printf("%s: the op differs from native\n", what);
     CHECK(same);
 }
 
@@ -108,20 +150,23 @@ main(int argc, char **argv)
           std::strcmp(RigExecRegistry::Get().Op(*op).desc->name, "Quadratic") ==
               0);
 
-    Compare(Stage(), "gain");
+    Compare(Stage(), {VtValue(0.75f)}, 1.0f, "gain");
     {
         auto stage = Stage();
         auto mover = stage->GetPrimAtPath(SdfPath("/Rig/External"));
         CHECK(mover.CreateRelationship(TfToken("rigExec:reference"))
                   .SetTargets({SdfPath("/Rig/Reference.points")}));
         CHECK(mover.GetAttribute(TfToken("inputs:defaultWeight")).Set(0.5f));
-        Compare(stage, "reference, half weight");
+        Compare(stage,
+                {VtValue(0.75f), VtValue(VtVec3fArray{GfVec3f(0, 0.25f, 0)})},
+                0.5f, "reference, half weight");
     }
     for (const float gain : {-1.0f, -2.0f, -3.0f}) {
         auto stage = Stage();
         CHECK(stage->GetAttributeAtPath(SdfPath("/Rig/External.inputs:gain"))
                   .Set(gain));
-        Compare(stage, ("refused, gain " + std::to_string(gain)).c_str());
+        Compare(stage, {VtValue(gain)}, 1.0f,
+                ("refused, gain " + std::to_string(gain)).c_str());
     }
     if (failures) {
         std::printf("%d failure(s)\n", failures);
