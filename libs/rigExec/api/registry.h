@@ -29,7 +29,7 @@ inline constexpr uint32_t kRigExecInvalidIndex = 0xffffffffu;
 /// Version of the descriptor structs below. Each library records the version
 /// it was built with, and Initialize rejects one built with another. Raise
 /// it whenever a descriptor's layout changes.
-inline constexpr uint32_t kRigExecRegistryAbiVersion = 9;
+inline constexpr uint32_t kRigExecRegistryAbiVersion = 10;
 
 /// Refers to one registered data type. A type library defines one per type
 /// with RIGEXEC_DEFINE_TYPE_HANDLE, and Initialize gives it its index; read
@@ -176,6 +176,9 @@ struct RigExecTypeDesc {
     void (*reserve)(void *value, size_t count) = nullptr;
     /// With reserve: how many elements the longest of its arrays holds.
     size_t (*elements)(const void *value) = nullptr;
+    /// For an array: makes \p value hold \p count elements, keeping the
+    /// first ones it holds, in storage reserve made room for.
+    void (*resize)(void *value, size_t count) = nullptr;
 };
 
 /// One column of a registered type. `run` says how many values the column
@@ -195,6 +198,15 @@ enum RigExecPortFlags : uint32_t {
     /// connected or bound. The port's type is the type of one value; the op
     /// reads them as a RigExecPortList.
     kRigExecPortArray = 1u << 3,
+    /// On an op that runs in ranges (RigExecOpRangeHandling): an input
+    /// whose element i a range reads for element i of the outputs, or an
+    /// output, each of whose elements one range writes. The node's element
+    /// count is what its first pointwise input holds.
+    kRigExecPortPointwise = 1u << 4,
+    /// On an op that runs in ranges: an input a range reads around its
+    /// elements, through topology the node is given; each range keeps its
+    /// halo plan in its scratch.
+    kRigExecPortNeighbourhood = 1u << 5,
 };
 
 /// The most elements an output whose type holds arrays may hold. The
@@ -258,7 +270,7 @@ enum RigExecOpCapabilities : uint32_t {
     /// that result with the incoming points, instead of the op applying
     /// the weights itself.
     kRigExecOpSeparateBlend = 1u << 4,
-    /// The op can process a mesh one group of points at a time.
+    /// The op runs in ranges: it has RigExecOpRangeHandling.
     kRigExecOpRanged = 1u << 5,
     /// The scene translation builds the op's inputs from values it reads
     /// directly from the stage.
@@ -509,6 +521,57 @@ RigExecBatchInstance(const RigExecOpBatch &batch, size_t k)
 bool RigExecRunEachInstance(const RigExecOpBatch &batch, size_t *failed,
                             std::string *error);
 
+/// Elements [begin, end) of a ranged node's pointwise ports: range
+/// \p index of the \p ranges its \p count elements are cut into.
+struct RigExecOpRange {
+    size_t begin = 0;
+    size_t end = 0;
+    size_t count = 0;
+    uint32_t index = 0;
+    uint32_t ranges = 1;
+    /// This range's own scratch (RigExecOpRangeHandling::scratch), kept
+    /// from frame to frame; null when the op has none.
+    void *scratch = nullptr;
+};
+
+/// What accept decides for a node before any of its ranges runs.
+enum class RigExecRangePlan : uint8_t {
+    /// The node fails as a whole.
+    Refuse,
+    /// The node runs as its partition's ranges.
+    Ranges,
+    /// The node runs as one range over every element, whatever the
+    /// partition.
+    Whole,
+};
+
+/// How a Pure op runs one node over ranges of its elements, the ranges in
+/// parallel. The evaluator cuts a node's elements into ranges of the
+/// program's RigExecCompileOptions::rangeGrain; the partition depends only
+/// on the element count and the options. For each active instance k it
+/// sizes the pointwise outputs to the element count, then calls accept,
+/// then prepare, then run once per range. Results must be bitwise the same
+/// for every partition. A range reads the inputs, the payload and the
+/// node's state, and writes only its elements of the pointwise outputs and
+/// its scratch; ranges of one node run concurrently.
+struct RigExecOpRangeHandling {
+    /// Decides from the node's inputs alone, never from computed elements;
+    /// null is Ranges.
+    RigExecRangePlan (*accept)(const RigExecOpBatch &batch, size_t k,
+                               size_t count, std::string *error) = nullptr;
+    /// Builds what every range shares this frame into the node's state.
+    /// False fails the node before any range runs. Optional.
+    bool (*prepare)(const RigExecOpBatch &batch, size_t k, size_t count,
+                    std::string *error) = nullptr;
+    /// Writes elements [range.begin, range.end) of the pointwise outputs.
+    /// False fails the node.
+    bool (*run)(const RigExecOpBatch &batch, size_t k,
+                const RigExecOpRange &range, std::string *error) = nullptr;
+    /// Each range's scratch: created when the range is first cut and kept
+    /// until the evaluator unbinds. Results never depend on what it holds.
+    RigExecOpStateHandling scratch;
+};
+
 /// Describes one op: its name and version, its ports, how it runs, where
 /// it may run, what it costs, and how to handle its settings and working
 /// state. An op provides run, runBatch or both; the evaluator calls
@@ -549,6 +612,8 @@ struct RigExecOpDesc {
     /// from one evaluation to the next.
     const RigExecFieldDesc *stateFields = nullptr;
     size_t stateFieldCount = 0;
+    /// For a Ranged op, in place of run and runBatch.
+    RigExecOpRangeHandling range;
 };
 
 /// Receives a type library's types during Initialize.
@@ -625,8 +690,13 @@ struct RigExecRegisteredOp {
     /// The op's handle, for a reader that finds the op by its name in a
     /// saved file.
     const RigExecOpHandle *handle = nullptr;
-    /// The op's runBatch, or RigExecRunEachInstance when it has none.
+    /// The op's runBatch, or RigExecRunEachInstance when it has none; null
+    /// for a Ranged op.
     RigExecOpBatchFn runBatch = nullptr;
+    /// A Ranged op's first pointwise or neighbourhood input, which gives
+    /// the element count, and its outputs, by port index.
+    uint32_t rangeCountPort = kRigExecInvalidIndex;
+    std::vector<uint32_t> rangeOutputs;
     /// Type index per declared payload and state field, in field order.
     std::vector<uint32_t> payloadFieldTypes;
     std::vector<uint32_t> stateFieldTypes;

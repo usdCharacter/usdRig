@@ -385,10 +385,14 @@ TypeDescFor(const char *nameSpace, const char *name,
     d.equal = &TypeOps<T>::Equal;
     d.hashClass = rigExec::RigExecHashClass::Exact;
     d.hash = &TypeOps<T>::Hash;
-    if constexpr (IsArray<T>::value)
+    if constexpr (IsArray<T>::value) {
         d.count = [](const void *value) {
             return static_cast<const T *>(value)->Size();
         };
+        d.resize = [](void *value, size_t count) {
+            static_cast<T *>(value)->Resize(count);
+        };
+    }
     if constexpr (HoldsArrays<T>()) {
         d.reserve = &TypeOps<T>::Reserve;
         d.elements = &TypeOps<T>::Elements;

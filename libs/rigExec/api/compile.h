@@ -25,6 +25,12 @@ struct RigExecCompileOptions {
     /// so every evaluator of one rig must use the same setting; the scalar
     /// form is the one the recorded fixtures use.
     bool useSimd = true;
+    /// Elements per range of a node whose op runs in ranges
+    /// (RigExecOpRangeHandling); 0 runs each such node as one range. A
+    /// node with fewer than rangeThreshold elements, or at most rangeGrain,
+    /// also runs as one range. Results are the same for any values.
+    size_t rangeGrain = 0;
+    size_t rangeThreshold = 0;
 };
 
 /// The compiled program, shared by any number of evaluators; it never

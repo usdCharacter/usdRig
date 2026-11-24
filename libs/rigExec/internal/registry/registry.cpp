@@ -156,6 +156,7 @@ private:
     bool _FreezeOps(const RigExecRegistryInit &init);
     void _CheckBound(const std::string &op, const RigExecOpDesc &d,
                      const RigExecPortDesc &port);
+    void _CheckRanges(const std::string &op, const RigExecOpDesc &d);
     void _CheckFields(const std::string &op, const RigExecOpDesc &d,
                       bool payload);
     void _Error(std::string message)
@@ -243,6 +244,9 @@ RigExecRegistryBuilder::_FreezeTypes(const RigExecRegistryInit &init)
         if (!d.reserve != !d.elements) {
             _Error("type " + name + ": reserve and elements go together");
         }
+        if (d.resize && (!d.count || !d.reserve)) {
+            _Error("type " + name + ": resize needs count and reserve");
+        }
         if (d.columnKind == RigExecColumnKind::None
                 ? d.columnCount != 0
                 : d.element || d.fieldCount ||
@@ -324,9 +328,10 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
                  .second) {
             _Error("op " + name + ": registered by two libraries");
         }
-        if (!d.run && !d.runBatch) {
+        if (!d.run && !d.runBatch && !d.range.run) {
             _Error("op " + name + ": no run or batch function");
         }
+        _CheckRanges(name, d);
         std::set<const RigExecPortHandle *> ports;
         for (size_t p = 0; p < d.portCount; ++p) {
             const RigExecPortDesc &port = d.ports[p];
@@ -396,8 +401,11 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
         op.library = e.library;
         op.index = uint32_t(i);
         op.handle = e.handle;
-        op.runBatch =
-            e.desc->runBatch ? e.desc->runBatch : &RigExecRunEachInstance;
+        if (e.desc->range.run)
+            op.runBatch = nullptr;
+        else
+            op.runBatch =
+                e.desc->runBatch ? e.desc->runBatch : &RigExecRunEachInstance;
         for (size_t f = 0; f < e.desc->payloadFieldCount; ++f)
             op.payloadFieldTypes.push_back(
                 _typeIndex.at(e.desc->payloadFields[f].type));
@@ -409,6 +417,15 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
             _portIndex.emplace_back(e.desc->ports[p].port, uint32_t(p));
             if (e.desc->ports[p].bound != RigExecOutputBound::None)
                 op.boundedOutputs.push_back(uint32_t(p));
+            if (!e.desc->range.run)
+                continue;
+            const uint32_t flags = e.desc->ports[p].flags;
+            if (flags & kRigExecPortOutput)
+                op.rangeOutputs.push_back(uint32_t(p));
+            else if (op.rangeCountPort == kRigExecInvalidIndex &&
+                     (flags &
+                      (kRigExecPortPointwise | kRigExecPortNeighbourhood)))
+                op.rangeCountPort = uint32_t(p);
         }
         fingerprint = MixText(fingerprint, e.desc->nameSpace);
         fingerprint = MixText(fingerprint, e.desc->name);
@@ -483,6 +500,59 @@ RigExecRegistryBuilder::_CheckBound(const std::string &op,
 }
 
 void
+RigExecRegistryBuilder::_CheckRanges(const std::string &op,
+                                     const RigExecOpDesc &d)
+{
+    const std::string where = "op " + op;
+    const bool ranged = (d.capabilities & kRigExecOpRanged) != 0;
+    constexpr uint32_t kRangeFlags =
+        kRigExecPortPointwise | kRigExecPortNeighbourhood;
+    if (ranged != (d.range.run != nullptr)) {
+        _Error(where + ": the Ranged capability and range handling go "
+                       "together");
+        return;
+    }
+    if (!ranged) {
+        for (size_t p = 0; p < d.portCount; ++p)
+            if (d.ports[p].flags & kRangeFlags)
+                _Error(where + ": port " + Text(d.ports[p].name) +
+                       " is pointwise but the op does not run in ranges");
+        return;
+    }
+    if (d.run || d.runBatch)
+        _Error(where + ": a Ranged op runs through its range handling only");
+    if (d.threading != RigExecOpThreading::Pure)
+        _Error(where + ": a Ranged op must be Pure");
+    if (d.range.scratch.size &&
+        (!d.range.scratch.create || !d.range.scratch.destroy))
+        _Error(where + ": range scratch needs create and destroy");
+    bool counted = false;
+    for (size_t p = 0; p < d.portCount; ++p) {
+        const RigExecPortDesc &port = d.ports[p];
+        const std::string at = where + ": port " + Text(port.name);
+        const auto type = _typeIndex.find(port.type);
+        const RigExecTypeDesc *t = type == _typeIndex.end()
+                                       ? nullptr
+                                       : _typeEntries[type->second].desc;
+        if (port.flags & kRigExecPortOutput) {
+            if (!(port.flags & kRigExecPortPointwise) ||
+                (port.flags & kRigExecPortNeighbourhood) || !t || !t->resize)
+                _Error(at + " is not a pointwise output of an array type");
+            continue;
+        }
+        if (!(port.flags & kRangeFlags))
+            continue;
+        if ((port.flags & kRigExecPortArray) || !t || !t->count)
+            _Error(at + " is pointwise but not one array value");
+        if (!counted && (port.flags & kRigExecPortOptional))
+            _Error(at + " gives the element count but is optional");
+        counted = true;
+    }
+    if (!counted)
+        _Error(where + ": a Ranged op needs a pointwise input");
+}
+
+void
 RigExecRegistryBuilder::_CheckFields(const std::string &op,
                                      const RigExecOpDesc &d, bool payload)
 {
@@ -494,7 +564,7 @@ RigExecRegistryBuilder::_CheckFields(const std::string &op,
     if (!fields || (payload && d.payload.size) || (!payload && d.state.size))
         _Error("op " + op + ": declares " + kind +
                " fields and needs them in place of its " + kind + " handling");
-    if (!d.runBatch)
+    if (!d.runBatch && !d.range.run)
         _Error("op " + op + ": declares fields but has no batch function");
     if (!LittleEndian())
         _Error("op " + op + ": declared fields need a little-endian machine");

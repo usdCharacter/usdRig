@@ -5,6 +5,8 @@
 #include "rigExecMath/deltaMushKernel.h"
 
 #include <cstdint>
+#include <cstring>
+#include <memory>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -78,33 +80,102 @@ PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
     return p;
 }
 
-bool
-MushOne(const RigExecOpIo &io, const MushInstance &p, std::string *error)
+using RestData = rigExec::RigExecDeltaMushRestData<Vec3f, rigExecStd::Vec3d>;
+using GroupState =
+    rigExec::RigExecDeltaMushGroupState<Vec3f, rigExecStd::Vec3d>;
+
+constexpr const char *kUnusable = "unusable topology, rest or computation map";
+
+/// A node's rest data, rebuilt only when its rest points or topology move.
+struct MushState {
+    std::shared_ptr<const RestData> rest;
+};
+
+Mat4d
+MapOf(const RigExecOpIo &io)
 {
-    const Points &in = *In<Points>(io, DeltaMushPoints());
     const Mat4d *map = In<Mat4d>(io, DeltaMushComputationToTarget());
-    std::vector<Vec3f> points = ToVector(in);
-    if (!rigExec::RigExecApplyDeltaMushInSpaceKernel<Vec3f, rigExecStd::Vec3d,
-                                                     Mat4d>(
-            &points, ToVector(*In<Points>(io, DeltaMushRest())),
-            ToVector(*In<RigExecArray<int>>(io, DeltaMushCounts())),
-            ToVector(*In<RigExecArray<int>>(io, DeltaMushIndices())),
-            p.iterations, p.step, p.pinBorders, p.distanceWeight,
-            p.displacement, p.settings, map ? *map : Mat4d(1.0)))
-        return Fail(error, "DeltaMush",
-                    "unusable topology, rest or computation map");
-    return WritePoints(io, DeltaMushOut(), in, points,
-                       In<Envelope>(io, DeltaMushEnvelope()), "DeltaMush",
-                       error);
+    return map ? *map : Mat4d(1.0);
+}
+
+rigExec::RigExecRangePlan
+Accept(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
+       std::string *error)
+{
+    constexpr auto kRefuse = rigExec::RigExecRangePlan::Refuse;
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    if (!rigExec::deltaMushDetail::ComputationMapValid(MapOf(io)) ||
+        In<Points>(io, DeltaMushRest())->Size() != count)
+        return Fail(error, "DeltaMush", kUnusable), kRefuse;
+    if (!EnvelopeFits(*In<Points>(io, DeltaMushPoints()),
+                      In<Envelope>(io, DeltaMushEnvelope()), "DeltaMush",
+                      error))
+        return kRefuse;
+    return rigExec::RigExecRangePlan::Ranges;
 }
 
 bool
-Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
+Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
+        std::string *error)
 {
-    return EachInstance(batch, failed, [&](size_t k) {
-        return MushOne(rigExec::RigExecBatchInstance(batch, k),
-                       PayloadAt(batch, k), error);
-    });
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    MushState &state =
+        *static_cast<MushState *>(rigExec::RigExecBatchState(batch, k));
+    const Points &rest = *In<Points>(io, DeltaMushRest());
+    const auto &counts = *In<RigExecArray<int>>(io, DeltaMushCounts());
+    const auto &indices = *In<RigExecArray<int>>(io, DeltaMushIndices());
+    const auto same = [](const auto &a, const auto &b) {
+        return a.Size() == b.size() &&
+               (b.empty() ||
+                std::memcmp(a.Data(), b.data(), b.size() * sizeof(b[0])) == 0);
+    };
+    if (state.rest && same(rest, state.rest->rest) &&
+        same(counts, state.rest->counts) && same(indices, state.rest->indices))
+        return true;
+    state.rest.reset();
+    const MushInstance p = PayloadAt(batch, k);
+    rigExec::RigExecDeltaMushSettings settings;
+    settings.smoothing = p.settings.smoothing;
+    settings.frameTransport = p.settings.frameTransport;
+    settings.smoothWeights.assign(p.settings.smoothWeights.begin(),
+                                  p.settings.smoothWeights.end());
+    settings.edges.assign(p.settings.edges.begin(), p.settings.edges.end());
+    settings.onlySmooth = p.settings.onlySmooth;
+    auto built = std::make_shared<RestData>();
+    if (!rigExec::RigExecBuildDeltaMushRestData<Vec3f, rigExecStd::Vec3d>(
+            ToVector(rest), ToVector(counts), ToVector(indices), p.iterations,
+            p.step, p.pinBorders, p.distanceWeight, settings, built.get()))
+        return Fail(error, "DeltaMush", kUnusable);
+    state.rest = std::move(built);
+    return true;
+}
+
+/// Points [begin, end) of the whole kernel's result through the group
+/// kernel, its region read from the whole entering array; the range's
+/// scratch keeps its plan.
+bool
+MushRange(const rigExec::RigExecOpBatch &batch, size_t k,
+          const rigExec::RigExecOpRange &range, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const MushState &state =
+        *static_cast<const MushState *>(rigExec::RigExecBatchState(batch, k));
+    const Points &in = *In<Points>(io, DeltaMushPoints());
+    Points &out = Out<Points>(io, DeltaMushOut());
+    const int bounds[2] = {0, int(in.Size())};
+    const Vec3f *const groupPoints[1] = {in.Data()};
+    rigExec::RigExecGroupPoints<Vec3f> groups;
+    groups.bounds = bounds;
+    groups.groups = 1;
+    groups.points = groupPoints;
+    if (!rigExec::RigExecApplyDeltaMushGroup<Vec3f, rigExecStd::Vec3d, Mat4d>(
+            state.rest, ValueAt<double>(batch, kDisplacement, k), MapOf(io),
+            groups, range.begin, range.end, out.Data() + range.begin,
+            static_cast<GroupState *>(range.scratch)))
+        return Fail(error, "DeltaMush", kUnusable);
+    BlendEnvelopeRange(in, In<Envelope>(io, DeltaMushEnvelope()), out,
+                       range.begin, range.end);
+    return true;
 }
 
 void
@@ -148,8 +219,8 @@ using rigExec::kRigExecPortOutput;
 constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
 
 const rigExec::RigExecPortDesc kPorts[] = {
-    {&DeltaMushPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
-     "points"},
+    {&DeltaMushPoints(), &rigExecStd::Vec3fArray(),
+     kRigExecPortInput | rigExec::kRigExecPortNeighbourhood, "points"},
     {&DeltaMushRest(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
      "restPoints"},
     {&DeltaMushCounts(), &rigExecStd::IntArray(), kRigExecPortInput,
@@ -158,8 +229,10 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "faceVertexIndices"},
     {&DeltaMushComputationToTarget(), &rigExecStd::Mat4dType(), kOptional,
      "computationToTarget"},
-    {&DeltaMushEnvelope(), &rigExecStd::FloatArray(), kOptional, "envelope"},
-    {&DeltaMushOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+    {&DeltaMushEnvelope(), &rigExecStd::FloatArray(),
+     kOptional | rigExec::kRigExecPortPointwise, "envelope"},
+    {&DeltaMushOut(), &rigExecStd::Vec3fArray(),
+     kRigExecPortOutput | rigExec::kRigExecPortPointwise, "out",
      rigExec::RigExecOutputBound::Input, &DeltaMushPoints()},
 };
 
@@ -169,7 +242,11 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.name = "DeltaMush";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.runBatch = &Run;
+    d.range.accept = &Accept;
+    d.range.prepare = &Prepare;
+    d.range.run = &MushRange;
+    d.range.scratch = StateOf<GroupState>();
+    d.state = StateOf<MushState>();
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |

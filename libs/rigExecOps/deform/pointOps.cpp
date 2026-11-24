@@ -5,7 +5,9 @@
 #include "rigExecMath/smoothKernel.h"
 #include "rigExecMath/meshBoundsKernel.h"
 
+#include <algorithm>
 #include <iterator>
+#include <vector>
 #include <string>
 
 namespace rigExecOps {
@@ -41,33 +43,77 @@ StrengthOr1(const float *strength)
     return strength ? *strength : 1.0f;
 }
 
-bool
-SmoothOne(const RigExecOpIo &io, std::string *error)
+/// A node's edge adjacency, rebuilt only when its topology or point count
+/// moves.
+struct SmoothState {
+    rigExec::RigExecMeshAdjacency adjacency;
+    std::vector<int> counts;
+    std::vector<int> indices;
+    size_t pointCount = SIZE_MAX;
+};
+
+rigExec::RigExecRangePlan
+SmoothAccept(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
+             std::string *error)
 {
-    const Points &in = *In<Points>(io, SmoothPoints());
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    return EnvelopeFits(*In<Points>(io, SmoothPoints()),
+                        In<RigExecArray<float>>(io, SmoothEnvelope()), "Smooth",
+                        error)
+               ? rigExec::RigExecRangePlan::Ranges
+               : rigExec::RigExecRangePlan::Refuse;
+}
+
+bool
+SmoothPrepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
+              std::string *)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    SmoothState &state =
+        *static_cast<SmoothState *>(rigExec::RigExecBatchState(batch, k));
     const auto &counts = *In<RigExecArray<int>>(io, SmoothCounts());
     const auto &indices = *In<RigExecArray<int>>(io, SmoothIndices());
-    Points &out = Out<Points>(io, SmoothOut());
-    out = in;
+    if (state.pointCount == count &&
+        std::equal(counts.begin(), counts.end(), state.counts.begin(),
+                   state.counts.end()) &&
+        std::equal(indices.begin(), indices.end(), state.indices.begin(),
+                   state.indices.end()))
+        return true;
+    state.counts.assign(counts.begin(), counts.end());
+    state.indices.assign(indices.begin(), indices.end());
+    state.pointCount = count;
     // An adjacency that fails to build covers nothing, so the group kernel
     // passes the points through, as the whole kernel does.
-    rigExec::RigExecMeshAdjacency adjacency;
-    rigExec::RigExecBuildMeshAdjacency(in.Size(), counts.Data(), counts.Size(),
+    state.adjacency = rigExec::RigExecMeshAdjacency();
+    rigExec::RigExecBuildMeshAdjacency(count, counts.Data(), counts.Size(),
                                        indices.Data(), indices.Size(),
-                                       &adjacency);
+                                       &state.adjacency);
+    return true;
+}
+
+bool
+SmoothRange(const rigExec::RigExecOpBatch &batch, size_t k,
+            const rigExec::RigExecOpRange &range, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const SmoothState &state =
+        *static_cast<const SmoothState *>(rigExec::RigExecBatchState(batch, k));
+    const Points &in = *In<Points>(io, SmoothPoints());
+    Points &out = Out<Points>(io, SmoothOut());
     const int bounds[2] = {0, int(in.Size())};
     const Vec3f *const groupPoints[1] = {in.Data()};
     rigExec::RigExecGroupPoints<Vec3f> groups;
     groups.bounds = bounds;
     groups.groups = 1;
     groups.points = groupPoints;
-    if (!in.Empty() &&
-        !rigExec::RigExecApplyLaplacianSmoothGroup(
-            adjacency, StrengthOr1(In<float>(io, SmoothStrength())), in.Size(),
-            groups, 0, in.Size(), out.Data()))
+    if (!rigExec::RigExecApplyLaplacianSmoothGroup(
+            state.adjacency, StrengthOr1(In<float>(io, SmoothStrength())),
+            in.Size(), groups, range.begin, range.end,
+            out.Data() + range.begin))
         return Fail(error, "Smooth", "topology addresses no point");
-    return BlendEnvelope(in, In<RigExecArray<float>>(io, SmoothEnvelope()),
-                         &out, "Smooth", error);
+    BlendEnvelopeRange(in, In<RigExecArray<float>>(io, SmoothEnvelope()), out,
+                       range.begin, range.end);
+    return true;
 }
 
 bool
@@ -81,20 +127,6 @@ VolumeCorrectOne(const RigExecOpIo &io, std::string *error)
     return WritePoints(io, VolumeCorrectOut(), in, points,
                        In<RigExecArray<float>>(io, VolumeCorrectEnvelope()),
                        "VolumeCorrect", error);
-}
-
-bool
-RunSmooth(const rigExec::RigExecOpBatch &batch, size_t *failed,
-          std::string *error)
-{
-    for (size_t k = 0; k < batch.count; ++k) {
-        if (rigExec::RigExecBatchActive(batch, k) &&
-            !SmoothOne(rigExec::RigExecBatchInstance(batch, k), error)) {
-            *failed = k;
-            return false;
-        }
-    }
-    return true;
 }
 
 bool
@@ -138,14 +170,17 @@ using rigExec::kRigExecPortOutput;
 constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
 
 const rigExec::RigExecPortDesc kSmoothPorts[] = {
-    {&SmoothPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "points"},
+    {&SmoothPoints(), &rigExecStd::Vec3fArray(),
+     kRigExecPortInput | rigExec::kRigExecPortNeighbourhood, "points"},
     {&SmoothCounts(), &rigExecStd::IntArray(), kRigExecPortInput,
      "faceVertexCounts"},
     {&SmoothIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
      "faceVertexIndices"},
     {&SmoothStrength(), &rigExecStd::FloatType(), kOptional, "strength"},
-    {&SmoothEnvelope(), &rigExecStd::FloatArray(), kOptional, "envelope"},
-    {&SmoothOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+    {&SmoothEnvelope(), &rigExecStd::FloatArray(),
+     kOptional | rigExec::kRigExecPortPointwise, "envelope"},
+    {&SmoothOut(), &rigExecStd::Vec3fArray(),
+     kRigExecPortOutput | rigExec::kRigExecPortPointwise, "out",
      rigExec::RigExecOutputBound::Input, &SmoothPoints()},
 };
 
@@ -161,10 +196,17 @@ const rigExec::RigExecPortDesc kVolumePorts[] = {
      rigExec::RigExecOutputBound::Input, &VolumeCorrectPoints()},
 };
 
-const rigExec::RigExecOpDesc kSmoothDesc =
-    PointDesc("Smooth", kSmoothPorts, std::size(kSmoothPorts), &RunSmooth,
-              rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
-                  rigExec::kRigExecOpGate);
+const rigExec::RigExecOpDesc kSmoothDesc = [] {
+    rigExec::RigExecOpDesc d =
+        PointDesc("Smooth", kSmoothPorts, std::size(kSmoothPorts), nullptr,
+                  rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
+                      rigExec::kRigExecOpGate);
+    d.range.accept = &SmoothAccept;
+    d.range.prepare = &SmoothPrepare;
+    d.range.run = &SmoothRange;
+    d.state = StateOf<SmoothState>();
+    return d;
+}();
 
 const rigExec::RigExecOpDesc kVolumeDesc =
     PointDesc("VolumeCorrect", kVolumePorts, std::size(kVolumePorts),

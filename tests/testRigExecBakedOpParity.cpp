@@ -17,6 +17,7 @@
 #include "rigExecStdTypes/stdTypes.h"
 
 #include "rigExec/api/compile.h"
+#include "rigExec/api/taskSystem.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"
@@ -485,10 +486,29 @@ EnvelopeShape(const RigExecMoverParameters &p)
     return shape;
 }
 
+/// How a probe runs a ranged op: the scene's geometry grain, or every
+/// node cut into ranges of `grain` points, on worker threads or inline.
+struct RangeSetting {
+    size_t grain;
+    bool threads;
+    const char *label;
+};
+
+constexpr size_t kGeometryGrain = SIZE_MAX;
+
+const RangeSetting kRangeSettings[] = {
+    {kGeometryGrain, false, ""}, {0, false, " (whole)"},
+    {1, true, " (grain 1)"},     {7, true, " (grain 7)"},
+    {64, false, " (grain 64)"},
+};
+
+std::unique_ptr<RigExecTaskSystem> g_tasks;
+
 // RevisionChunk: the body runs a revision as vertex ranges; the op runs it
-// whole. Each revision is replayed whole over the version entering it and
-// compared with the version its fuse published, as the range verifier
-// does, and the apply decisions are compared too.
+// at the scene's grain, whole and cut into ranges of several sizes. Each
+// revision is replayed over the version entering it and compared with the
+// version its fuse published, as the range verifier does, and the apply
+// decisions are compared too.
 void
 ProbeRevisions(const B &b)
 {
@@ -553,25 +573,35 @@ ProbeRevisions(const B &b)
                     }
                 }
             }
-            RigExecGeometryOpRunner runner;
-            runner.compile.useSimd = b.useSimd;
-            std::vector<GfVec3f> points = entering;
-            std::string error;
-            bool applied = p.valid && revision.status.AllowsApply() &&
-                           RigExecRunGeometryOp(
-                               revision.op, p, blend ? &channels : nullptr,
-                               entering, runner, points, &error);
-            if (!applied)
-                points = entering;
-            const bool admitted = p.valid && revision.status.AllowsApply();
-            Compare("RevisionChunk", kind, revision.moverPathText,
-                    Points(published), Points(points), !admitted,
-                    applied ? std::string() : "op refused: " + error);
+            for (const RangeSetting &setting : kRangeSettings) {
+                RigExecGeometryOpRunner runner;
+                runner.compile.useSimd = b.useSimd;
+                if (setting.grain != kGeometryGrain) {
+                    runner.compile.rangeGrain = setting.grain;
+                    runner.compile.rangeThreshold = 0;
+                }
+                if (setting.threads)
+                    runner.evaluate.tasks = g_tasks.get();
+                std::vector<GfVec3f> points = entering;
+                std::string error;
+                bool applied = p.valid && revision.status.AllowsApply() &&
+                               RigExecRunGeometryOp(
+                                   revision.op, p, blend ? &channels : nullptr,
+                                   entering, runner, points, &error);
+                if (!applied)
+                    points = entering;
+                const bool admitted = p.valid && revision.status.AllowsApply();
+                Compare("RevisionChunk", kind,
+                        revision.moverPathText + setting.label,
+                        Points(published), Points(points), !admitted,
+                        applied ? std::string() : "op refused: " + error);
+                if (revision.rangeRole)
+                    CompareFlag("RevisionChunk", kind,
+                                revision.moverPathText + setting.label,
+                                "applies",
+                                RigExecBakedRevisionApplies(revision), applied);
+            }
             ++g_envelopes[kind][EnvelopeShape(p)];
-            if (revision.rangeRole)
-                CompareFlag("RevisionChunk", kind, revision.moverPathText,
-                            "applies", RigExecBakedRevisionApplies(revision),
-                            applied);
         }
     }
 }
@@ -1083,6 +1113,7 @@ int
 main(int argc, char **argv)
 {
     std::string error;
+    g_tasks = RigExecCreateThreadTaskSystem(4);
     if (!RigExecLoadGeometryOpCore(&error)) {
         std::printf("op core: %s\n", error.c_str());
         return 1;

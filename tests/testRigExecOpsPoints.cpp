@@ -4,6 +4,7 @@
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
 #include "rigExec/api/rigDesc.h"
+#include "rigExec/api/taskSystem.h"
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecMath/normalsLayoutKernel.h"
@@ -40,6 +41,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -49,6 +51,7 @@
 #include <random>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -174,9 +177,47 @@ RunEach(const RigExecOpHandle &op,
     return true;
 }
 
-/// One op node with the listed ports bound, the first output read.
+std::unique_ptr<RigExecTaskSystem> gTasks;
+
+/// How a Node also runs its op: cut into ranges of `grain` points, on
+/// worker threads or inline, with SIMD or without. The first setting of
+/// each SIMD mode, whole and inline, is the one the others must match.
+struct RangeSetting {
+    bool simd;
+    size_t grain;
+    bool threads;
+};
+
+const RangeSetting kRangeSettings[] = {
+    {true, 0, false},  {true, 1, true},   {true, 7, false}, {true, 64, true},
+    {false, 0, false}, {false, 1, false}, {false, 5, true},
+};
+
+/// Bitwise equality of a value without padding or of an array; true for
+/// other values, which no ranged op writes.
+template <class T>
+bool
+SameResult(const T &a, const T &b)
+{
+    if constexpr (std::has_unique_object_representations_v<T>)
+        return std::memcmp(&a, &b, sizeof(T)) == 0;
+    return true;
+}
+
+template <class T>
+bool
+SameResult(const RigExecArray<T> &a, const RigExecArray<T> &b)
+{
+    return a.Size() == b.Size() &&
+           (a.Empty() ||
+            std::memcmp(a.Data(), b.Data(), a.Size() * sizeof(T)) == 0);
+}
+
+/// One op node with the listed ports bound, the first output read. It runs
+/// under every range setting; each must give the bits, or the error, of the
+/// whole run in its SIMD mode, and Run answers the first.
 struct Node {
-    std::unique_ptr<RigExecEvaluator> evaluator;
+    std::vector<std::unique_ptr<RigExecEvaluator>> evaluators;
     std::vector<RigExecInputId> inputs;
     RigExecOutputId out;
 
@@ -191,27 +232,65 @@ struct Node {
         out = b.BindOutput(node, output);
         std::string error;
         auto desc = b.Build(&error);
-        auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
-        evaluator =
-            program ? RigExecEvaluator::Create(program, {}, &error) : nullptr;
-        if (!evaluator)
-            std::printf("node: %s\n", error.c_str());
-        CHECK(evaluator);
+        for (const RangeSetting &setting : kRangeSettings) {
+            RigExecCompileOptions options;
+            options.useSimd = setting.simd;
+            options.rangeGrain = setting.grain;
+            RigExecEvaluatorOptions evaluate;
+            evaluate.tasks = setting.threads ? gTasks.get() : nullptr;
+            auto program =
+                desc ? RigExecCompile(*desc, options, &error) : nullptr;
+            auto evaluator =
+                program ? RigExecEvaluator::Create(program, evaluate, &error)
+                        : nullptr;
+            if (!evaluator)
+                std::printf("node: %s\n", error.c_str());
+            CHECK(evaluator);
+            evaluators.push_back(std::move(evaluator));
+        }
     }
 
     template <class T>
     bool Run(const std::vector<const void *> &values, T *result,
              std::string *error = nullptr)
     {
-        if (!evaluator)
-            return false;
-        for (size_t i = 0; i < values.size(); ++i)
-            if (!evaluator->SetInput(inputs[i], values[i], error))
+        bool answer = false;
+        bool wholeRan[2] = {false, false};
+        T whole[2];
+        std::string wholeError[2];
+        for (size_t s = 0; s < evaluators.size(); ++s) {
+            RigExecEvaluator *evaluator = evaluators[s].get();
+            if (!evaluator)
                 return false;
-        if (!evaluator->Evaluate(error))
-            return false;
-        *result = *static_cast<const T *>(evaluator->GetOutput(out));
-        return true;
+            std::string why;
+            bool ran = true;
+            for (size_t i = 0; ran && i < values.size(); ++i)
+                ran = evaluator->SetInput(inputs[i], values[i], &why);
+            ran = ran && evaluator->Evaluate(&why);
+            T value{};
+            if (ran)
+                value = *static_cast<const T *>(evaluator->GetOutput(out));
+            const int mode = kRangeSettings[s].simd ? 0 : 1;
+            if (kRangeSettings[s].grain == 0 && !kRangeSettings[s].threads) {
+                wholeRan[mode] = ran;
+                whole[mode] = value;
+                wholeError[mode] = why;
+            } else if (ran != wholeRan[mode] ||
+                       (ran ? !SameResult(value, whole[mode])
+                            : why != wholeError[mode])) {
+                std::printf("range setting %zu differs from the whole run: "
+                            "%s\n",
+                            s, why.c_str());
+                CHECK(false);
+            }
+            if (s == 0) {
+                answer = ran;
+                *result = value;
+                if (error)
+                    *error = why;
+            }
+        }
+        return answer;
     }
 };
 
@@ -3114,10 +3193,109 @@ TestRetainedStateBatches()
     }
 }
 
+/// The per-frame time of a deform chain (skin, matrix, smooth) over a large
+/// mesh, whole and cut into the scene's ranges on worker threads; every
+/// setting gives the same bits.
+void
+ReportRangeTiming()
+{
+    using namespace rigExecOps;
+    const Grid grid(400, 7);
+    const size_t n = grid.points.size();
+    const int elementSize = 4;
+    std::vector<rigExecStd::Mat4d> mats(8, rigExecStd::Mat4d(1.0));
+    std::vector<int> indices(n * elementSize);
+    std::vector<float> weights(n * elementSize);
+    for (size_t i = 0; i < n; ++i)
+        for (int s = 0; s < elementSize; ++s) {
+            indices[i * elementSize + s] = int((i + size_t(s) * 3) % 8);
+            weights[i * elementSize + s] = 0.25f;
+        }
+    const Points in = ToStd(grid.points);
+    const auto indexArray = ToArray(indices);
+    const auto weightArray = ToArray(weights);
+    const auto counts = ToArray(grid.counts);
+    const auto faces = ToArray(grid.indices);
+    SkinPayload skin;
+    skin.elementSize = elementSize;
+    MatrixDeformPayload matrix;
+    RigExecRigDescBuilder b;
+    const RigExecNodeId s = b.AddOp(Skin(), &skin);
+    const RigExecNodeId m = b.AddOp(MatrixDeform(), &matrix);
+    const RigExecNodeId sm = b.AddOp(Smooth());
+    b.Connect(s, SkinOut(), m, MatrixDeformPoints());
+    b.Connect(m, MatrixDeformOut(), sm, SmoothPoints());
+    const RigExecInputId points = b.BindInput(s, SkinPoints());
+    const RigExecInputId transforms = b.BindInput(s, SkinTransforms());
+    const RigExecInputId skinIndices = b.BindInput(s, SkinIndices());
+    const RigExecInputId skinWeights = b.BindInput(s, SkinWeights());
+    const RigExecInputId transform = b.BindInput(m, MatrixDeformTransform());
+    const RigExecInputId faceCounts = b.BindInput(sm, SmoothCounts());
+    const RigExecInputId faceIndices = b.BindInput(sm, SmoothIndices());
+    const RigExecOutputId out = b.BindOutput(sm, SmoothOut());
+    auto desc = b.Build();
+    const size_t hardware =
+        std::max<size_t>(1, std::thread::hardware_concurrency());
+    auto wide = RigExecCreateThreadTaskSystem(hardware);
+    struct Setting {
+        const char *name;
+        size_t grain;
+        RigExecTaskSystem *tasks;
+    };
+    const Setting settings[] = {
+        {"whole, inline", 0, nullptr},
+        {"ranges of 512, 4 threads", 512, gTasks.get()},
+        {"ranges of 512, all threads", 512, wide.get()},
+    };
+    Points first;
+    for (const Setting &setting : settings) {
+        RigExecCompileOptions options;
+        options.rangeGrain = setting.grain;
+        options.rangeThreshold = 4096;
+        RigExecEvaluatorOptions evaluate;
+        evaluate.tasks = setting.tasks;
+        auto program = desc ? RigExecCompile(*desc, options) : nullptr;
+        auto evaluator =
+            program ? RigExecEvaluator::Create(program, evaluate) : nullptr;
+        CHECK(evaluator);
+        if (!evaluator)
+            return;
+        evaluator->SetInput(points, &in);
+        evaluator->SetInput(skinIndices, &indexArray);
+        evaluator->SetInput(skinWeights, &weightArray);
+        evaluator->SetInput(faceCounts, &counts);
+        evaluator->SetInput(faceIndices, &faces);
+        const int frames = 20;
+        double seconds = 0.0;
+        for (int frame = -2; frame < frames; ++frame) {
+            for (size_t t = 0; t < mats.size(); ++t)
+                mats[t][3][0] = 0.01 * double(frame + 3) * double(t);
+            const auto matArray = ToArray(mats);
+            rigExecStd::Mat4d move(1.0);
+            move[3][1] = 0.1 * double(frame);
+            evaluator->SetInput(transforms, &matArray);
+            evaluator->SetInput(transform, &move);
+            const auto start = std::chrono::steady_clock::now();
+            CHECK(evaluator->Evaluate());
+            const auto stop = std::chrono::steady_clock::now();
+            if (frame >= 0)
+                seconds += std::chrono::duration<double>(stop - start).count();
+        }
+        const auto &result =
+            *static_cast<const Points *>(evaluator->GetOutput(out));
+        if (first.Empty())
+            first = result;
+        CHECK(SamePoints(first, result));
+        std::printf("range timing: %zu points, %s: %.2f ms per frame\n", n,
+                    setting.name, 1000.0 * seconds / frames);
+    }
+}
+
 int
 main()
 {
     std::vector<std::string> errors;
+    gTasks = RigExecCreateThreadTaskSystem(4);
     if (!RigExecRegistry::Initialize(RigExecLinkedRegistrations(), &errors)) {
         for (const std::string &e : errors)
             std::printf("%s\n", e.c_str());
@@ -3147,6 +3325,7 @@ main()
     TestRibbonFrames();
     TestSingleChainIk();
     TestSplineIk();
+    ReportRangeTiming();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

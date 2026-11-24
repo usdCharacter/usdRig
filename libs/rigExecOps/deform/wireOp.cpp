@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <iterator>
 #include <string>
+#include <vector>
 
 namespace rigExecOps {
 
@@ -64,57 +65,103 @@ PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
     return p;
 }
 
-bool
-WireOne(const RigExecOpIo &io, const WireInstance &p, std::string *error)
+/// What every range of a node reads this frame: the curves, and for
+/// sparse weights their lists and basis.
+struct WireState {
+    std::vector<Vec3f> rest;
+    std::vector<Vec3f> posed;
+    std::vector<int> indices;
+    std::vector<float> weights;
+    Basis basis;
+};
+
+rigExec::RigExecRangePlan
+Accept(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
+       std::string *error)
 {
-    const Points &in = *In<Points>(io, WirePoints());
-    const std::vector<Vec3f> restPoints =
-        ToVector(*In<Points>(io, WireRestCurve()));
-    const std::vector<Vec3f> posedPoints =
-        ToVector(*In<Points>(io, WireCurve()));
-    const auto &bind = *In<RigExecArray<Vec2f>>(io, WireBindCoords());
+    constexpr auto kRefuse = rigExec::RigExecRangePlan::Refuse;
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const Envelope *envelope = In<Envelope>(io, WireEnvelope());
     const auto *indices = In<RigExecArray<int>>(io, WireWeightIndices());
     const auto *weights = In<RigExecArray<float>>(io, WireWeights());
     if (!indices != !weights)
-        return Fail(error, "Wire", "weight indices and weights go together");
+        return Fail(error, "Wire", "weight indices and weights go together"),
+               kRefuse;
     if (indices && envelope)
-        return Fail(error, "Wire", "an envelope or sparse weights, not both");
-    std::vector<Vec3f> points = ToVector(in);
-    if (indices) {
-        const std::vector<int> index = ToVector(*indices);
-        const std::vector<float> weight = ToVector(*weights);
-        Basis basis;
-        if (!rigExec::RigExecNurbsCurveIsValidKernel<Vec3f, Vec3d, Vec2f>(
-                &restPoints, &p.knots, p.order) ||
-            restPoints.size() != posedPoints.size() ||
-            !rigExec::RigExecBuildWireBasisKernel<Vec3f, Vec3d, Vec2f>(
-                bind.Data(), bind.Size(), in.Size(), index, p.order, p.knots,
-                restPoints.size(), p.dropoffDistance, &basis) ||
-            !rigExec::RigExecApplyWireBasisGroupKernel<Vec3f, Vec3d, Vec2f>(
-                points.data(), 0, points.size(), basis, index, weight,
-                restPoints, posedPoints))
-            return Fail(error, "Wire",
-                        "curves, binds or sparse weights do not fit");
-        return WritePoints(io, WireOut(), in, points, nullptr, "Wire", error);
-    }
-    const Curve rest{&restPoints, p.order, &p.knots};
-    const Curve posed{&posedPoints, p.order, &p.knots};
-    if (!rigExec::RigExecApplyWireGroupKernel<Vec3f, Vec3d, Vec2f>(
-            points.data(), 0, points.size(), points.size(), rest, posed,
-            bind.Data(), bind.Size(), p.dropoffDistance, nullptr, 0))
-        return Fail(error, "Wire", "curves or binds do not fit");
-    return WritePoints(io, WireOut(), in, points, envelope, "Wire", error);
+        return Fail(error, "Wire", "an envelope or sparse weights, not both"),
+               kRefuse;
+    if (!EnvelopeFits(*In<Points>(io, WirePoints()), envelope, "Wire", error))
+        return kRefuse;
+    return rigExec::RigExecRangePlan::Ranges;
 }
 
 bool
-RunWire(const rigExec::RigExecOpBatch &batch, size_t *failed,
+Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
         std::string *error)
 {
-    return EachInstance(batch, failed, [&](size_t k) {
-        return WireOne(rigExec::RigExecBatchInstance(batch, k),
-                       PayloadAt(batch, k), error);
-    });
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const WireInstance p = PayloadAt(batch, k);
+    WireState &state =
+        *static_cast<WireState *>(rigExec::RigExecBatchState(batch, k));
+    const Points &rest = *In<Points>(io, WireRestCurve());
+    const Points &posed = *In<Points>(io, WireCurve());
+    state.rest.assign(rest.begin(), rest.end());
+    state.posed.assign(posed.begin(), posed.end());
+    const auto &bind = *In<RigExecArray<Vec2f>>(io, WireBindCoords());
+    const auto *indices = In<RigExecArray<int>>(io, WireWeightIndices());
+    if (!indices) {
+        const Curve restCurve{&state.rest, p.order, &p.knots};
+        const Curve posedCurve{&state.posed, p.order, &p.knots};
+        if (!rigExec::RigExecWireInputsAreUsableKernel<Vec3f, Vec3d, Vec2f>(
+                restCurve, posedCurve, bind.Data(), bind.Size(), count))
+            return Fail(error, "Wire", "curves or binds do not fit");
+        return true;
+    }
+    const auto &weights = *In<RigExecArray<float>>(io, WireWeights());
+    state.indices.assign(indices->begin(), indices->end());
+    state.weights.assign(weights.begin(), weights.end());
+    if (!rigExec::RigExecNurbsCurveIsValidKernel<Vec3f, Vec3d, Vec2f>(
+            &state.rest, &p.knots, p.order) ||
+        state.rest.size() != state.posed.size() ||
+        !rigExec::RigExecBuildWireBasisKernel<Vec3f, Vec3d, Vec2f>(
+            bind.Data(), bind.Size(), count, state.indices, p.order, p.knots,
+            state.rest.size(), p.dropoffDistance, &state.basis) ||
+        state.indices.size() != state.weights.size())
+        return Fail(error, "Wire",
+                    "curves, binds or sparse weights do not fit");
+    return true;
+}
+
+bool
+WireRange(const rigExec::RigExecOpBatch &batch, size_t k,
+          const rigExec::RigExecOpRange &range, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const WireInstance p = PayloadAt(batch, k);
+    const WireState &state =
+        *static_cast<const WireState *>(rigExec::RigExecBatchState(batch, k));
+    const Points &in = *In<Points>(io, WirePoints());
+    Points &out = Out<Points>(io, WireOut());
+    CopyRange(in, out, range.begin, range.end);
+    Vec3f *const at = out.Data() + range.begin;
+    if (In<RigExecArray<int>>(io, WireWeightIndices())) {
+        if (!rigExec::RigExecApplyWireBasisGroupKernel<Vec3f, Vec3d, Vec2f>(
+                at, range.begin, range.end, state.basis, state.indices,
+                state.weights, state.rest, state.posed))
+            return Fail(error, "Wire",
+                        "curves, binds or sparse weights do not fit");
+        return true;
+    }
+    const auto &bind = *In<RigExecArray<Vec2f>>(io, WireBindCoords());
+    const Curve rest{&state.rest, p.order, &p.knots};
+    const Curve posed{&state.posed, p.order, &p.knots};
+    if (!rigExec::RigExecApplyWireGroupKernel<Vec3f, Vec3d, Vec2f>(
+            at, range.begin, range.end, range.count, rest, posed, bind.Data(),
+            bind.Size(), p.dropoffDistance, nullptr, 0))
+        return Fail(error, "Wire", "curves or binds do not fit");
+    BlendEnvelopeRange(in, In<Envelope>(io, WireEnvelope()), out, range.begin,
+                       range.end);
+    return true;
 }
 
 void
@@ -143,16 +190,19 @@ using rigExec::kRigExecPortOutput;
 constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
 
 const rigExec::RigExecPortDesc kPorts[] = {
-    {&WirePoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "points"},
+    {&WirePoints(), &rigExecStd::Vec3fArray(),
+     kRigExecPortInput | rigExec::kRigExecPortPointwise, "points"},
     {&WireRestCurve(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
      "restCurve"},
     {&WireCurve(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "curve"},
     {&WireBindCoords(), &rigExecStd::Vec2fArray(), kRigExecPortInput,
      "bindCoords"},
-    {&WireEnvelope(), &rigExecStd::FloatArray(), kOptional, "envelope"},
+    {&WireEnvelope(), &rigExecStd::FloatArray(),
+     kOptional | rigExec::kRigExecPortPointwise, "envelope"},
     {&WireWeightIndices(), &rigExecStd::IntArray(), kOptional, "weightIndices"},
     {&WireWeights(), &rigExecStd::FloatArray(), kOptional, "weights"},
-    {&WireOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+    {&WireOut(), &rigExecStd::Vec3fArray(),
+     kRigExecPortOutput | rigExec::kRigExecPortPointwise, "out",
      rigExec::RigExecOutputBound::Input, &WirePoints()},
 };
 
@@ -162,7 +212,10 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.name = "Wire";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.runBatch = &RunWire;
+    d.range.accept = &Accept;
+    d.range.prepare = &Prepare;
+    d.range.run = &WireRange;
+    d.state = StateOf<WireState>();
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |

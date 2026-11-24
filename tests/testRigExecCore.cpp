@@ -16,8 +16,11 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
+#include <new>
 #include <string>
 #include <thread>
 #include <tuple>
@@ -27,6 +30,57 @@
 
 using namespace rigExec;
 using fakeTypes::Vec3;
+
+namespace {
+std::atomic<bool> gCountAllocations{false};
+std::atomic<size_t> gAllocations{0};
+
+void *
+CountedAllocate(size_t size)
+{
+    if (gCountAllocations.load(std::memory_order_relaxed))
+        gAllocations.fetch_add(1, std::memory_order_relaxed);
+    if (void *p = std::malloc(size ? size : 1))
+        return p;
+    throw std::bad_alloc();
+}
+} // namespace
+
+void *
+operator new(size_t size)
+{
+    return CountedAllocate(size);
+}
+
+void *
+operator new[](size_t size)
+{
+    return CountedAllocate(size);
+}
+
+void
+operator delete(void *p) noexcept
+{
+    std::free(p);
+}
+
+void
+operator delete[](void *p) noexcept
+{
+    std::free(p);
+}
+
+void
+operator delete(void *p, size_t) noexcept
+{
+    std::free(p);
+}
+
+void
+operator delete[](void *p, size_t) noexcept
+{
+    std::free(p);
+}
 
 namespace {
 
@@ -2423,6 +2477,643 @@ TestTaps()
     CHECK(seen.order.empty());
 }
 
+// Ranged ops over a local array type. RScale writes element i from element
+// i of its input and a factor every range shares; RBlur averages each
+// element with its neighbours twice, each range keeping its halo plan in its
+// scratch.
+struct Floats {
+    std::vector<float> v;
+};
+
+RIGEXEC_DEFINE_TYPE_HANDLE(FloatsType)
+
+const RigExecTypeDesc kFloatsDesc = [] {
+    RigExecTypeDesc d;
+    d.nameSpace = "test";
+    d.name = "Floats";
+    d.size = sizeof(Floats);
+    d.align = alignof(Floats);
+    d.construct = [](void *dst) {
+        std::uninitialized_value_construct_n(static_cast<Floats *>(dst), 1);
+    };
+    d.copy = [](void *dst, const void *src) {
+        *static_cast<Floats *>(dst) = *static_cast<const Floats *>(src);
+    };
+    d.move = [](void *dst, void *src) {
+        *static_cast<Floats *>(dst) = std::move(*static_cast<Floats *>(src));
+    };
+    d.destroy = [](void *dst) { static_cast<Floats *>(dst)->~Floats(); };
+    d.equal = [](const void *a, const void *b, RigExecEqualMode) {
+        const auto &x = static_cast<const Floats *>(a)->v;
+        const auto &y = static_cast<const Floats *>(b)->v;
+        return x.size() == y.size() &&
+               (x.empty() ||
+                std::memcmp(x.data(), y.data(), x.size() * sizeof(float)) == 0);
+    };
+    d.count = [](const void *value) {
+        return static_cast<const Floats *>(value)->v.size();
+    };
+    d.reserve = [](void *value, size_t count) {
+        static_cast<Floats *>(value)->v.reserve(count);
+    };
+    d.elements = [](const void *value) {
+        return static_cast<const Floats *>(value)->v.size();
+    };
+    d.resize = [](void *value, size_t count) {
+        static_cast<Floats *>(value)->v.resize(count);
+    };
+    return d;
+}();
+
+void
+RegisterRangeTypes(RigExecTypeRegistrar &registrar)
+{
+    registrar.Add(FloatsType(), kFloatsDesc);
+}
+
+const RigExecTypeLibraryDesc kRangeTypes = [] {
+    RigExecTypeLibraryDesc d;
+    d.name = "testRangeTypes";
+    d.registerTypes = &RegisterRangeTypes;
+    return d;
+}();
+
+RIGEXEC_DEFINE_OP_HANDLE(RScale)
+RIGEXEC_DEFINE_PORT_HANDLE(RScaleIn)
+RIGEXEC_DEFINE_PORT_HANDLE(RScaleFactor)
+RIGEXEC_DEFINE_PORT_HANDLE(RScaleOut)
+RIGEXEC_DEFINE_OP_HANDLE(RBlur)
+RIGEXEC_DEFINE_PORT_HANDLE(RBlurIn)
+RIGEXEC_DEFINE_PORT_HANDLE(RBlurOut)
+
+std::atomic<uint32_t> acceptCalls{0};
+std::atomic<uint32_t> prepareCalls{0};
+std::atomic<uint32_t> rangeCalls{0};
+std::atomic<uint32_t> blurCuts{0};
+
+struct ScaleState {
+    float factor = 0.0f;
+};
+
+const Floats &
+FloatsIn(const RigExecOpBatch &batch, size_t k, const RigExecPortHandle &port)
+{
+    return *static_cast<const Floats *>(
+        batch.inputs[k * batch.portCount + port.Index()]);
+}
+
+Floats &
+FloatsOut(const RigExecOpBatch &batch, size_t k, const RigExecPortHandle &port)
+{
+    return *static_cast<Floats *>(
+        batch.outputs[k * batch.portCount + port.Index()]);
+}
+
+RigExecRangePlan
+AcceptScale(const RigExecOpBatch &batch, size_t k, size_t, std::string *error)
+{
+    acceptCalls.fetch_add(1);
+    const float factor = *static_cast<const float *>(
+        batch.inputs[k * batch.portCount + RScaleFactor().Index()]);
+    if (factor != factor) {
+        *error = "factor is not a number";
+        return RigExecRangePlan::Refuse;
+    }
+    return factor == 3.0f ? RigExecRangePlan::Whole : RigExecRangePlan::Ranges;
+}
+
+bool
+PrepareScale(const RigExecOpBatch &batch, size_t k, size_t, std::string *)
+{
+    prepareCalls.fetch_add(1);
+    static_cast<ScaleState *>(RigExecBatchState(batch, k))->factor =
+        *static_cast<const float *>(
+            batch.inputs[k * batch.portCount + RScaleFactor().Index()]) *
+        0.5f;
+    return true;
+}
+
+float
+ScaleElement(float in, float factor, size_t i)
+{
+    return in * factor + float(i % 7);
+}
+
+bool
+RunScale(const RigExecOpBatch &batch, size_t k, const RigExecOpRange &range,
+         std::string *error)
+{
+    rangeCalls.fetch_add(1);
+    const std::vector<float> &in = FloatsIn(batch, k, RScaleIn()).v;
+    std::vector<float> &out = FloatsOut(batch, k, RScaleOut()).v;
+    const float factor =
+        static_cast<const ScaleState *>(RigExecBatchState(batch, k))->factor;
+    for (size_t i = range.begin; i < range.end; ++i) {
+        if (in[i] == -1.0f) {
+            *error = "element " + std::to_string(i) + " is -1";
+            return false;
+        }
+        out[i] = ScaleElement(in[i], factor, i);
+    }
+    return true;
+}
+
+/// The mean of a[i - 1], a[i] and a[i + 1], clamped at the ends.
+float
+Mean3(const float *a, size_t i, size_t n)
+{
+    return (a[i ? i - 1 : 0] + a[i] + a[i + 1 < n ? i + 1 : n - 1]) / 3.0f;
+}
+
+struct BlurScratch {
+    size_t begin = SIZE_MAX;
+    size_t end = 0;
+    size_t count = 0;
+    std::vector<float> first;
+};
+
+bool
+RunBlur(const RigExecOpBatch &batch, size_t k, const RigExecOpRange &range,
+        std::string *)
+{
+    rangeCalls.fetch_add(1);
+    const std::vector<float> &in = FloatsIn(batch, k, RBlurIn()).v;
+    std::vector<float> &out = FloatsOut(batch, k, RBlurOut()).v;
+    BlurScratch &plan = *static_cast<BlurScratch *>(range.scratch);
+    const size_t n = range.count;
+    const size_t lo = range.begin ? range.begin - 1 : 0;
+    const size_t hi = std::min(n, range.end + 1);
+    if (plan.begin != range.begin || plan.end != range.end || plan.count != n) {
+        plan.begin = range.begin;
+        plan.end = range.end;
+        plan.count = n;
+        plan.first.resize(hi - lo);
+        blurCuts.fetch_add(1);
+    }
+    for (size_t j = lo; j < hi; ++j)
+        plan.first[j - lo] = Mean3(in.data(), j, n);
+    for (size_t i = range.begin; i < range.end; ++i) {
+        const float left = plan.first[(i ? i - 1 : 0) - lo];
+        const float right = plan.first[(i + 1 < n ? i + 1 : n - 1) - lo];
+        out[i] = (left + plan.first[i - lo] + right) / 3.0f;
+    }
+    return true;
+}
+
+template <class T>
+RigExecOpStateHandling
+HandlingOf()
+{
+    RigExecOpStateHandling h;
+    h.size = sizeof(T);
+    h.align = alignof(T);
+    h.create = [](void *dst) {
+        std::uninitialized_value_construct_n(static_cast<T *>(dst), 1);
+    };
+    h.copy = [](void *dst, const void *src) {
+        std::uninitialized_copy_n(static_cast<const T *>(src), 1,
+                                  static_cast<T *>(dst));
+    };
+    h.destroy = [](void *dst) { static_cast<T *>(dst)->~T(); };
+    return h;
+}
+
+void
+RegisterRangeOps(RigExecOpRegistrar &registrar)
+{
+    static const RigExecPortDesc scalePorts[] = {
+        {&RScaleIn(), &FloatsType(), kRigExecPortInput | kRigExecPortPointwise,
+         "in"},
+        {&RScaleFactor(), &fakeTypes::Float(), kRigExecPortInput, "factor"},
+        {&RScaleOut(), &FloatsType(),
+         kRigExecPortOutput | kRigExecPortPointwise, "out",
+         RigExecOutputBound::Input, &RScaleIn()},
+    };
+    static const RigExecOpDesc scale = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "RScale";
+        d.ports = scalePorts;
+        d.portCount = 3;
+        d.capabilities = kRigExecOpRanged;
+        d.range.accept = &AcceptScale;
+        d.range.prepare = &PrepareScale;
+        d.range.run = &RunScale;
+        d.state = HandlingOf<ScaleState>();
+        return d;
+    }();
+    registrar.Add(RScale(), scale);
+    static const RigExecPortDesc blurPorts[] = {
+        {&RBlurIn(), &FloatsType(),
+         kRigExecPortInput | kRigExecPortNeighbourhood, "in"},
+        {&RBlurOut(), &FloatsType(), kRigExecPortOutput | kRigExecPortPointwise,
+         "out", RigExecOutputBound::Input, &RBlurIn()},
+    };
+    static const RigExecOpDesc blur = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "RBlur";
+        d.ports = blurPorts;
+        d.portCount = 2;
+        d.capabilities = kRigExecOpRanged;
+        d.range.run = &RunBlur;
+        d.range.scratch = HandlingOf<BlurScratch>();
+        return d;
+    }();
+    registrar.Add(RBlur(), blur);
+}
+
+const RigExecOpLibraryDesc kRangeOps = [] {
+    RigExecOpLibraryDesc d;
+    d.name = "testRangeOps";
+    d.registerOps = &RegisterRangeOps;
+    return d;
+}();
+
+/// What RScale, RBlur, RScale computes over \p in, whole.
+std::vector<float>
+RangeChainReference(const std::vector<float> &in, float factor)
+{
+    const size_t n = in.size();
+    std::vector<float> a(n), first(n), b(n), c(n);
+    for (size_t i = 0; i < n; ++i)
+        a[i] = ScaleElement(in[i], factor * 0.5f, i);
+    for (size_t i = 0; i < n; ++i)
+        first[i] = Mean3(a.data(), i, n);
+    for (size_t i = 0; i < n; ++i)
+        b[i] = Mean3(first.data(), i, n);
+    for (size_t i = 0; i < n; ++i)
+        c[i] = ScaleElement(b[i], factor * 0.5f, i);
+    return c;
+}
+
+const RingPayload kRingPayload{3};
+
+/// Chains of RScale, RBlur, RScale over inputs of the given sizes, and with
+/// \p sides a windowed chain, a list op and order pairs beside them.
+struct RangeRig {
+    std::vector<RigExecInputId> ins, factors;
+    std::vector<RigExecOutputId> outs;
+    std::vector<RigExecNodeId> nodes;
+    RigExecInputId ringIn;
+    RigExecOutputId ringOut, listOut;
+    std::shared_ptr<const RigExecRigDesc> desc;
+};
+
+RangeRig
+BuildRangeRig(const std::vector<size_t> &sizes, bool sides = true)
+{
+    RangeRig rig;
+    RigExecRigDescBuilder b;
+    for (size_t c = 0; c < sizes.size(); ++c) {
+        const RigExecNodeId first = b.AddOp(RScale());
+        const RigExecNodeId blur = b.AddOp(RBlur());
+        const RigExecNodeId last = b.AddOp(RScale());
+        b.Connect(first, RScaleOut(), blur, RBlurIn());
+        b.Connect(blur, RBlurOut(), last, RScaleIn());
+        rig.ins.push_back(b.BindInput(first, RScaleIn()));
+        rig.factors.push_back(b.BindInput(first, RScaleFactor()));
+        rig.factors.push_back(b.BindInput(last, RScaleFactor()));
+        rig.outs.push_back(b.BindOutput(last, RScaleOut()));
+        rig.nodes.insert(rig.nodes.end(), {first, blur, last});
+    }
+    std::string error;
+    if (!sides) {
+        rig.desc = b.Build(&error);
+        return rig;
+    }
+    const RigExecNodeId ring = b.AddOp(RingSum(), &kRingPayload);
+    const RigExecNodeId check = b.AddOp(Check());
+    const RigExecNodeId list = b.AddOp(Weighted());
+    rig.ringIn = b.BindInput(ring, RingSumIn());
+    b.Connect(ring, RingSumOut(), check, CheckIn());
+    b.Connect(ring, RingSumOut(), list, WeightedItems());
+    b.Connect(check, CheckOut(), list, WeightedItems());
+    rig.ringOut = b.BindOutput(ring, RingSumOut());
+    rig.listOut = b.BindOutput(list, WeightedOut());
+    if (!rig.nodes.empty()) {
+        b.Order(rig.nodes[1], check);
+        b.Order(ring, rig.nodes.back());
+    }
+    rig.desc = b.Build(&error);
+    if (!rig.desc)
+        std::printf("range rig: %s\n", error.c_str());
+    return rig;
+}
+
+std::vector<float>
+RangeInput(size_t n, size_t chain, int frame)
+{
+    std::vector<float> v(n);
+    for (size_t i = 0; i < n; ++i)
+        v[i] = float(int((i * 37 + chain * 11 + size_t(frame) * 5) % 101)) *
+                   0.37f -
+               9.0f;
+    return v;
+}
+
+bool
+SameFloats(const std::vector<float> &a, const std::vector<float> &b)
+{
+    return a.size() == b.size() &&
+           (a.empty() ||
+            std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0);
+}
+
+size_t
+NonEmptyRanges(size_t n, size_t grain, size_t threshold)
+{
+    if (!n)
+        return 0;
+    if (!grain || n < threshold || n <= grain)
+        return 1;
+    return (n + grain - 1) / grain;
+}
+
+std::shared_ptr<const RigExecProgram>
+CompileRanges(const RigExecRigDesc &desc, size_t grain, size_t threshold,
+              size_t maxBatchNodes)
+{
+    RigExecCompileOptions options;
+    options.rangeGrain = grain;
+    options.rangeThreshold = threshold;
+    options.maxBatchNodes = maxBatchNodes;
+    std::string error;
+    auto program = RigExecCompile(desc, options, &error);
+    if (!program)
+        std::printf("range compile: %s\n", error.c_str());
+    return program;
+}
+
+// Every partition, batch size and thread count gives the whole run's bits;
+// accept and prepare run once per node and frame, each non-empty range
+// once, and a halo plan is cut once and kept.
+void
+TestRangePartitions()
+{
+    const std::vector<size_t> sizes = {0, 1, 5, 64, 100, 1000, 4097};
+    const RangeRig rig = BuildRangeRig(sizes);
+    CHECK(rig.desc);
+    if (!rig.desc)
+        return;
+    const float factors[] = {1.5f, 0.75f};
+    std::vector<std::unique_ptr<RigExecTaskSystem>> pools;
+    for (const size_t threads : {size_t(1), size_t(2), size_t(4), size_t(8)})
+        pools.push_back(RigExecCreateThreadTaskSystem(threads));
+    for (const size_t grain :
+         {size_t(0), size_t(1), size_t(3), size_t(64), size_t(1000)}) {
+        for (const size_t threshold : {size_t(0), size_t(100)}) {
+            for (const size_t batch : {size_t(0), size_t(1), size_t(2)}) {
+                auto program =
+                    CompileRanges(*rig.desc, grain, threshold, batch);
+                CHECK(program);
+                if (!program)
+                    return;
+                for (size_t pool = 0; pool <= pools.size(); ++pool) {
+                    RigExecEvaluatorOptions options;
+                    options.tasks = pool ? pools[pool - 1].get() : nullptr;
+                    auto evaluator = RigExecEvaluator::Create(program, options);
+                    size_t expectedRanges = 0;
+                    for (const size_t n : sizes)
+                        expectedRanges +=
+                            3 * NonEmptyRanges(n, grain, threshold);
+                    const Vec3 ring{1.0f, 2.0f, 3.0f};
+                    CHECK(evaluator->SetInput(rig.ringIn, &ring));
+                    uint32_t cutsAfterFirst = 0;
+                    for (int frame = 0; frame < 3; ++frame) {
+                        for (size_t c = 0; c < sizes.size(); ++c) {
+                            Floats in{RangeInput(sizes[c], c, frame)};
+                            CHECK(evaluator->SetInput(rig.ins[c], &in));
+                            CHECK(evaluator->SetInput(rig.factors[2 * c],
+                                                      &factors[0]));
+                            CHECK(evaluator->SetInput(rig.factors[2 * c + 1],
+                                                      &factors[0]));
+                        }
+                        acceptCalls = 0;
+                        prepareCalls = 0;
+                        rangeCalls = 0;
+                        std::string error;
+                        CHECK(evaluator->Evaluate(&error));
+                        CHECK(acceptCalls == 2 * sizes.size());
+                        CHECK(prepareCalls == 2 * sizes.size());
+                        CHECK(rangeCalls == expectedRanges);
+                        for (size_t c = 0; c < sizes.size(); ++c) {
+                            const auto *out = static_cast<const Floats *>(
+                                evaluator->GetOutput(rig.outs[c]));
+                            const bool same =
+                                out &&
+                                SameFloats(out->v,
+                                           RangeChainReference(
+                                               RangeInput(sizes[c], c, frame),
+                                               factors[0]));
+                            if (!same)
+                                std::printf("grain %zu threshold %zu batch "
+                                            "%zu pool %zu frame %d chain %zu "
+                                            "differs\n",
+                                            grain, threshold, batch, pool,
+                                            frame, c);
+                            CHECK(same);
+                        }
+                        if (frame == 0)
+                            cutsAfterFirst = blurCuts.load();
+                    }
+                    CHECK(blurCuts.load() == cutsAfterFirst);
+                    blurCuts = 0;
+                }
+            }
+        }
+    }
+}
+
+// A Whole plan runs one range over every element whatever the grain; only
+// the nodes an edit reaches run accept, prepare and their ranges again.
+void
+TestRangeWholeAndDirty()
+{
+    const std::vector<size_t> sizes = {300, 300};
+    const RangeRig rig = BuildRangeRig(sizes);
+    auto program = CompileRanges(*rig.desc, 16, 0, 0);
+    CHECK(program);
+    if (!program)
+        return;
+    auto pool = RigExecCreateThreadTaskSystem(4);
+    RigExecEvaluatorOptions options;
+    options.tasks = pool.get();
+    auto evaluator = RigExecEvaluator::Create(program, options);
+    const Vec3 ring{1.0f, 2.0f, 3.0f};
+    CHECK(evaluator->SetInput(rig.ringIn, &ring));
+    const float whole = 3.0f;
+    for (size_t c = 0; c < sizes.size(); ++c) {
+        Floats in{RangeInput(sizes[c], c, 0)};
+        CHECK(evaluator->SetInput(rig.ins[c], &in));
+        CHECK(evaluator->SetInput(rig.factors[2 * c], &whole));
+        CHECK(evaluator->SetInput(rig.factors[2 * c + 1], &whole));
+    }
+    rangeCalls = 0;
+    CHECK(evaluator->Evaluate());
+    // Two Whole scales and one blur of 19 ranges per chain.
+    CHECK(rangeCalls == 2 * (2 + 19));
+    for (size_t c = 0; c < sizes.size(); ++c) {
+        const auto *out =
+            static_cast<const Floats *>(evaluator->GetOutput(rig.outs[c]));
+        CHECK(out &&
+              SameFloats(out->v, RangeChainReference(RangeInput(sizes[c], c, 0),
+                                                     whole)));
+    }
+    Floats edited{RangeInput(sizes[1], 1, 4)};
+    CHECK(evaluator->SetInput(rig.ins[1], &edited));
+    acceptCalls = 0;
+    prepareCalls = 0;
+    rangeCalls = 0;
+    CHECK(evaluator->Evaluate());
+    CHECK(acceptCalls == 2);
+    CHECK(prepareCalls == 2);
+    CHECK(rangeCalls == 2 + 19);
+    const auto *out =
+        static_cast<const Floats *>(evaluator->GetOutput(rig.outs[1]));
+    CHECK(out && SameFloats(out->v, RangeChainReference(edited.v, whole)));
+    blurCuts = 0;
+}
+
+// The first failure in batch order is reported whatever the partition and
+// thread count: a range's failure in an earlier instance before a refusal
+// in a later one, and a refusal before a later instance's range failure.
+void
+TestRangeFailures()
+{
+    const std::vector<size_t> sizes = {200, 200, 200};
+    const RangeRig rig = BuildRangeRig(sizes);
+    auto pool = RigExecCreateThreadTaskSystem(4);
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float one = 1.0f;
+    for (int scenario = 0; scenario < 2; ++scenario) {
+        std::string reference;
+        for (const size_t grain :
+             {size_t(0), size_t(1), size_t(7), size_t(64)}) {
+            for (const size_t batch : {size_t(0), size_t(1)}) {
+                auto program = CompileRanges(*rig.desc, grain, 0, batch);
+                for (RigExecTaskSystem *tasks :
+                     {static_cast<RigExecTaskSystem *>(nullptr), pool.get()}) {
+                    RigExecEvaluatorOptions options;
+                    options.tasks = tasks;
+                    auto evaluator = RigExecEvaluator::Create(program, options);
+                    const Vec3 ring{1.0f, 2.0f, 3.0f};
+                    CHECK(evaluator->SetInput(rig.ringIn, &ring));
+                    for (size_t c = 0; c < sizes.size(); ++c) {
+                        Floats in{RangeInput(sizes[c], c, 0)};
+                        if (c == (scenario ? 2u : 0u))
+                            in.v[150] = -1.0f;
+                        CHECK(evaluator->SetInput(rig.ins[c], &in));
+                        const float &factor =
+                            c == (scenario ? 0u : 1u) ? nan : one;
+                        CHECK(evaluator->SetInput(rig.factors[2 * c], &factor));
+                        CHECK(
+                            evaluator->SetInput(rig.factors[2 * c + 1], &one));
+                    }
+                    std::string error;
+                    CHECK(!evaluator->Evaluate(&error));
+                    if (reference.empty())
+                        reference = error;
+                    if (error != reference)
+                        std::printf("scenario %d grain %zu: %s, not %s\n",
+                                    scenario, grain, error.c_str(),
+                                    reference.c_str());
+                    CHECK(error == reference);
+                }
+            }
+        }
+        CHECK(Contains(reference, scenario ? "factor is not a number"
+                                           : "element 150 is -1"));
+    }
+    blurCuts = 0;
+}
+
+// The registry refuses a ranged op without range handling, range handling
+// without the capability, pointwise ports on an op without ranges and a
+// ranged op with its own run function.
+void
+TestRangeRegistryErrors()
+{
+    static const RigExecPortDesc ports[] = {
+        {&RScaleIn(), &FloatsType(), kRigExecPortInput | kRigExecPortPointwise,
+         "in"},
+        {&RScaleOut(), &FloatsType(),
+         kRigExecPortOutput | kRigExecPortPointwise, "out",
+         RigExecOutputBound::Input, &RScaleIn()},
+    };
+    static RigExecOpDesc bad;
+    bad.nameSpace = "test";
+    bad.name = "Bad";
+    bad.ports = ports;
+    bad.portCount = 2;
+    static RigExecOpHandle badHandle;
+    const auto check = [&](const char *expected) {
+        RigExecOpLibraryDesc library;
+        library.name = "testBadRange";
+        library.registerOps = [](RigExecOpRegistrar &registrar) {
+            registrar.Add(badHandle, bad);
+        };
+        RigExecRegistryInit init;
+        init.typeLibraries = RigExecLinkedRegistrations().typeLibraries;
+        init.typeLibraries.push_back(&kRangeTypes);
+        init.opLibraries.push_back(&library);
+        std::vector<std::string> errors;
+        CHECK(!RigExecRegistry::Validate(init, &errors));
+        bool found = false;
+        for (const std::string &e : errors)
+            found = found || Contains(e, expected);
+        if (!found)
+            std::printf("no error naming \"%s\"\n", expected);
+        CHECK(found);
+    };
+    bad.run = &RunCheck;
+    check("is pointwise but the op does not run in ranges");
+    bad.capabilities = kRigExecOpRanged;
+    check("the Ranged capability and range handling go together");
+    bad.range.run = &RunBlur;
+    check("a Ranged op runs through its range handling only");
+    bad.run = nullptr;
+    bad.threading = RigExecOpThreading::OwnerThread;
+    check("a Ranged op must be Pure");
+}
+
+// After the first frames a ranged rig allocates nothing more in this
+// module, inline and on worker threads.
+void
+TestRangeNoAllocation()
+{
+    const std::vector<size_t> sizes = {1000, 50};
+    const RangeRig rig = BuildRangeRig(sizes, false);
+    auto program = CompileRanges(*rig.desc, 32, 0, 0);
+    auto pool = RigExecCreateThreadTaskSystem(4);
+    for (RigExecTaskSystem *tasks :
+         {static_cast<RigExecTaskSystem *>(nullptr), pool.get()}) {
+        RigExecEvaluatorOptions options;
+        options.tasks = tasks;
+        auto evaluator = RigExecEvaluator::Create(program, options);
+        const float factor = 1.25f;
+        std::vector<Floats> inputs;
+        for (size_t c = 0; c < sizes.size(); ++c) {
+            inputs.push_back(Floats{RangeInput(sizes[c], c, 0)});
+            CHECK(evaluator->SetInput(rig.factors[2 * c], &factor));
+            CHECK(evaluator->SetInput(rig.factors[2 * c + 1], &factor));
+        }
+        for (int frame = 0; frame < 6; ++frame) {
+            for (size_t c = 0; c < sizes.size(); ++c) {
+                inputs[c].v[0] = float(frame);
+                CHECK(evaluator->SetInput(rig.ins[c], &inputs[c]));
+            }
+            gAllocations = 0;
+            gCountAllocations = frame > 2;
+            CHECK(evaluator->Evaluate());
+            gCountAllocations = false;
+            if (frame > 2)
+                CHECK(gAllocations.load() == 0);
+        }
+    }
+    blurCuts = 0;
+}
+
 } // namespace
 
 int
@@ -2432,6 +3123,8 @@ main()
     init.opLibraries.push_back(&kCheckLibrary);
     init.typeLibraries.push_back(&kFieldTypes);
     init.opLibraries.push_back(&kFieldsLibrary);
+    init.typeLibraries.push_back(&kRangeTypes);
+    init.opLibraries.push_back(&kRangeOps);
     std::vector<std::string> errors;
     if (!RigExecRegistry::Initialize(init, &errors)) {
         for (const std::string &e : errors)
@@ -2466,6 +3159,11 @@ main()
     TestPins();
     TestDirtyPropagation();
     TestRunStates();
+    TestRangeRegistryErrors();
+    TestRangePartitions();
+    TestRangeWholeAndDirty();
+    TestRangeFailures();
+    TestRangeNoAllocation();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

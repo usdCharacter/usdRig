@@ -47,20 +47,13 @@ Accumulate(const S &sample, const V *base, size_t baseCount, float scale,
 
 } // namespace blendDetail
 
-/// Fills \p deltas (baseCount) with the channels' summed deltas. Channel c
-/// has weight weightOf(c) and samples c.samples, sorted by activation.
-/// \p forRange(n, fn) runs fn(begin, end) over [0, n), serially or split;
-/// each point is independent, so both give the same bits. False, atomically,
-/// on a channel with no samples or a sample that doesn't fit the base.
-template <class T, class V, class Channels, class WeightOf, class ForRange>
+/// Whether every channel has samples, each sample fits a base of
+/// \p baseCount points, and the activations are finite, above zero and
+/// distinct from the one before.
+template <class T, class Channels>
 bool
-RigExecSumBlendChannelsKernel(const Channels &channels, WeightOf weightOf,
-                              const V *base, size_t baseCount,
-                              std::vector<V> *deltas, ForRange forRange)
+RigExecBlendChannelsFitKernel(const Channels &channels, size_t baseCount)
 {
-    if (!deltas || !base || !baseCount)
-        return false;
-    deltas->assign(baseCount, V(0.0f));
     for (const auto &channel : channels) {
         const auto &samples = channel.samples;
         if (samples.empty())
@@ -78,6 +71,27 @@ RigExecSumBlendChannelsKernel(const Channels &channels, WeightOf weightOf,
                 (k > 0 && a == T::Activation(samples[k - 1])))
                 return false;
         }
+    }
+    return true;
+}
+
+/// Fills \p deltas (baseCount) with the channels' summed deltas. Channel c
+/// has weight weightOf(c) and samples c.samples, sorted by activation.
+/// \p forRange(n, fn) runs fn(begin, end) over [0, n), serially or split;
+/// each point is independent, so both give the same bits. False, atomically,
+/// on a channel with no samples or a sample that doesn't fit the base.
+template <class T, class V, class Channels, class WeightOf, class ForRange>
+bool
+RigExecSumBlendChannelsKernel(const Channels &channels, WeightOf weightOf,
+                              const V *base, size_t baseCount,
+                              std::vector<V> *deltas, ForRange forRange)
+{
+    if (!deltas || !base || !baseCount ||
+        !RigExecBlendChannelsFitKernel<T>(channels, baseCount))
+        return false;
+    deltas->assign(baseCount, V(0.0f));
+    for (const auto &channel : channels) {
+        const auto &samples = channel.samples;
         // Clamped into the authored range; an implicit zero sample sits at 0.
         const float w =
             std::min(std::max(RigExecBlendInputWeight(weightOf(channel)), 0.0f),

@@ -5,6 +5,7 @@
 /// core. Built on first use and rebuilt when a setting baked into it moved,
 /// so stale settings never run. Owner-thread state of the scene runtime.
 
+#include "rigExec/api/compile.h"
 #include "rigExec/api/evaluator.h"
 #include "rigExecScene/externalOps.h"
 #include "rigExecScene/geometryOps.h"
@@ -16,13 +17,17 @@
 
 namespace rigExec {
 
+/// The op core's options for scene geometry: a point op runs as ranges of
+/// the grain and from the size the per-point geometry kernels split at.
+RigExecCompileOptions RigExecGeometryCompileOptions();
+
 struct RigExecGeometryOpRunner {
     std::unique_ptr<RigExecEvaluator> evaluator;
     RigExecGeometryOpNode node;
     RigExecGeometryMatrixNode matrix;
     RigExecExternalOpNode external;
     RigExecGeometryPayloadScratchPtr payloadScratch;
-    RigExecCompileOptions compile;
+    RigExecCompileOptions compile = RigExecGeometryCompileOptions();
     RigExecEvaluatorOptions evaluate;
 };
 

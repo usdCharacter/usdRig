@@ -135,7 +135,7 @@ public:
     RigExecTypedValueStore values;
     /// How Prepare has the op core compile the programs this runtime
     /// builds. Results are the same for any value.
-    RigExecCompileOptions opCompile;
+    RigExecCompileOptions opCompile = RigExecGeometryCompileOptions();
     /// The worker threads the op core runs on. Results are the same for
     /// any value.
     RigExecEvaluatorOptions opEvaluate;

@@ -46,22 +46,76 @@ struct SampleTraits {
     }
 };
 
-bool
-Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
-    std::string *error)
+const BlendShapePayload &
+PayloadOf(const rigExec::RigExecOpBatch &batch, size_t k)
 {
-    const BlendShapePayload &p =
-        *static_cast<const BlendShapePayload *>(payload);
+    return *static_cast<const BlendShapePayload *>(
+        rigExec::RigExecBatchPayload(batch, k));
+}
+
+/// Whether the node's deltas sum per point range: no surface frame, and
+/// every sample an offset layout the range kernel reads as the whole
+/// kernel does.
+bool
+SumsInRanges(const BlendShapePayload &p, size_t count)
+{
+    if (p.surfaceFrame)
+        return false;
+    for (const BlendShapeChannel &channel : p.channels)
+        for (const BlendShapeSample &sample : channel.samples)
+            if (!sample.layout || (sample.layout->indices.empty() &&
+                                   !sample.layout->offsets.empty() &&
+                                   sample.layout->offsets.size() != count))
+                return false;
+    return true;
+}
+
+rigExec::RigExecRangePlan
+Accept(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
+       std::string *error)
+{
+    constexpr auto kRefuse = rigExec::RigExecRangePlan::Refuse;
+    const BlendShapePayload &p = PayloadOf(batch, k);
+    const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const Points &in = *In<Points>(io, BlendShapePoints());
+    const Points *base = In<Points>(io, BlendShapeBase());
+    if (!base)
+        base = &in;
+    if (In<Envelope>(io, BlendShapeWeights())->Size() != p.channels.size())
+        return Fail(error, "BlendShape", "needs one weight per channel"),
+               kRefuse;
+    if (base->Size() != in.Size())
+        return Fail(error, "BlendShape", "base length differs from the points"),
+               kRefuse;
+    if (!base->Size() || !rigExec::RigExecBlendChannelsFitKernel<SampleTraits>(
+                             p.channels, base->Size()))
+        return Fail(error, "BlendShape",
+                    "a channel has no samples or a sample doesn't fit"),
+               kRefuse;
+    if (p.surfaceFrame && (!In<Points>(io, BlendShapeRest()) ||
+                           !In<Ints>(io, BlendShapeCounts()) ||
+                           !In<Ints>(io, BlendShapeIndices())))
+        return Fail(error, "BlendShape",
+                    "surface frame needs a usable rest mesh"),
+               kRefuse;
+    if (!EnvelopeFits(in, In<Envelope>(io, BlendShapeEnvelope()), "BlendShape",
+                      error))
+        return kRefuse;
+    return SumsInRanges(p, count) ? rigExec::RigExecRangePlan::Ranges
+                                  : rigExec::RigExecRangePlan::Whole;
+}
+
+/// The whole node: the summed deltas, carried on the surface frames when
+/// it has them, added to the points.
+bool
+Whole(const BlendShapePayload &p, const rigExec::RigExecOpIo &io,
+      std::string *error)
+{
     const Points &in = *In<Points>(io, BlendShapePoints());
     const Envelope &weights = *In<Envelope>(io, BlendShapeWeights());
     const Points *base = In<Points>(io, BlendShapeBase());
     if (!base)
         base = &in;
-    if (weights.Size() != p.channels.size())
-        return Fail(error, "BlendShape", "needs one weight per channel");
-    if (base->Size() != in.Size())
-        return Fail(error, "BlendShape", "base length differs from the points");
-
     const BlendShapeChannel *first = p.channels.data();
     std::vector<Vec3f> deltas;
     if (!rigExec::RigExecSumBlendChannelsKernel<SampleTraits>(
@@ -76,14 +130,12 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
 
     std::vector<Vec3f> points = ToVector(in);
     if (p.surfaceFrame) {
-        const Points *rest = In<Points>(io, BlendShapeRest());
-        const Ints *counts = In<Ints>(io, BlendShapeCounts());
-        const Ints *indices = In<Ints>(io, BlendShapeIndices());
         std::vector<Vec3f> transported;
-        if (!rest || !counts || !indices ||
-            !rigExec::RigExecTransportSurfaceOffsetsKernel<Vec3f, Vec3d>(
-                ToVector(*rest), points, ToVector(*counts), ToVector(*indices),
-                deltas, &transported))
+        if (!rigExec::RigExecTransportSurfaceOffsetsKernel<Vec3f, Vec3d>(
+                ToVector(*In<Points>(io, BlendShapeRest())), points,
+                ToVector(*In<Ints>(io, BlendShapeCounts())),
+                ToVector(*In<Ints>(io, BlendShapeIndices())), deltas,
+                &transported))
             return Fail(error, "BlendShape",
                         "surface frame needs a usable rest mesh");
         deltas.swap(transported);
@@ -93,6 +145,36 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
     return WritePoints(io, BlendShapeOut(), in, points,
                        In<Envelope>(io, BlendShapeEnvelope()), "BlendShape",
                        error);
+}
+
+/// A range's summed deltas.
+struct BlendScratch {
+    std::vector<Vec3f> deltas;
+};
+
+bool
+BlendRange(const rigExec::RigExecOpBatch &batch, size_t k,
+           const rigExec::RigExecOpRange &range, std::string *error)
+{
+    const BlendShapePayload &p = PayloadOf(batch, k);
+    const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    if (!SumsInRanges(p, range.count))
+        return Whole(p, io, error);
+    const Points &in = *In<Points>(io, BlendShapePoints());
+    const Envelope &weights = *In<Envelope>(io, BlendShapeWeights());
+    std::vector<Vec3f> &deltas =
+        static_cast<BlendScratch *>(range.scratch)->deltas;
+    deltas.assign(range.end - range.begin, Vec3f(0.0f));
+    for (size_t c = 0; c < p.channels.size(); ++c)
+        rigExec::RigExecAccumulateBlendRange(p.channels[c].samples, weights[c],
+                                             range.begin, range.end,
+                                             deltas.data());
+    Points &out = Out<Points>(io, BlendShapeOut());
+    for (size_t i = range.begin; i < range.end; ++i)
+        out[i] = in[i] + deltas[i - range.begin];
+    BlendEnvelopeRange(in, In<Envelope>(io, BlendShapeEnvelope()), out,
+                       range.begin, range.end);
+    return true;
 }
 
 } // namespace
@@ -105,16 +187,18 @@ using rigExec::kRigExecPortOutput;
 constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
 
 const rigExec::RigExecPortDesc kPorts[] = {
-    {&BlendShapePoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
-     "points"},
+    {&BlendShapePoints(), &rigExecStd::Vec3fArray(),
+     kRigExecPortInput | rigExec::kRigExecPortPointwise, "points"},
     {&BlendShapeWeights(), &rigExecStd::FloatArray(), kRigExecPortInput,
      "weights"},
     {&BlendShapeBase(), &rigExecStd::Vec3fArray(), kOptional, "base"},
     {&BlendShapeRest(), &rigExecStd::Vec3fArray(), kOptional, "rest"},
     {&BlendShapeCounts(), &rigExecStd::IntArray(), kOptional, "counts"},
     {&BlendShapeIndices(), &rigExecStd::IntArray(), kOptional, "indices"},
-    {&BlendShapeEnvelope(), &rigExecStd::FloatArray(), kOptional, "envelope"},
-    {&BlendShapeOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+    {&BlendShapeEnvelope(), &rigExecStd::FloatArray(),
+     kOptional | rigExec::kRigExecPortPointwise, "envelope"},
+    {&BlendShapeOut(), &rigExecStd::Vec3fArray(),
+     kRigExecPortOutput | rigExec::kRigExecPortPointwise, "out",
      rigExec::RigExecOutputBound::Input, &BlendShapePoints()},
 };
 
@@ -180,7 +264,9 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.name = "BlendShape";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.run = &Run;
+    d.range.accept = &Accept;
+    d.range.run = &BlendRange;
+    d.range.scratch = StateOf<BlendScratch>();
     d.capabilities = rigExec::kRigExecOpBakeable |
                      rigExec::kRigExecOpFreezable | rigExec::kRigExecOpRanged |
                      rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;

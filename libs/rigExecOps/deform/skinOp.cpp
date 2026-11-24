@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <iterator>
 #include <string>
+#include <vector>
 
 namespace rigExecOps {
 
@@ -48,71 +49,127 @@ Usable(const Transforms &transforms)
 
 enum SkinField : uint32_t { kMethod, kElementSize };
 
-bool
-SkinOne(const rigExec::RigExecOpIo &io, SkinMethod method, int elementSize,
-        std::string *error)
+using Palette =
+    decltype(rigExec::RigExecSkinDualQuatPaletteKernel<Vec3f, Vec3d>(
+        static_cast<const Mat4d *>(nullptr), size_t(0)));
+
+/// What every range of a node reads this frame: the narrowed rows of a
+/// linear blend, or a dual-quaternion blend's palette.
+struct SkinState {
+    std::vector<float> rows;
+    Palette palette;
+};
+
+Layout
+LayoutOf(const rigExec::RigExecOpBatch &batch, size_t k)
 {
-    const Points &in = *In<Points>(io, SkinPoints());
+    const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const Transforms &transforms = *In<Transforms>(io, SkinTransforms());
     const Indices &indices = *In<Indices>(io, SkinIndices());
-    const Envelope &weights = *In<Envelope>(io, SkinWeights());
-
+    const int elementSize =
+        rigExec::RigExecPayloadColumnOf<int32_t>(batch, kElementSize)[k];
     Layout layout;
     layout.transforms = transforms.Data();
     layout.transformCount = transforms.Size();
     layout.indices = indices.Data();
-    layout.weights = weights.Data();
+    layout.weights = In<Envelope>(io, SkinWeights())->Data();
     layout.indexCount = indices.Size();
     layout.elementSize = elementSize < 1 ? 0 : size_t(elementSize);
-    layout.pointCount = in.Size();
+    layout.pointCount = In<Points>(io, SkinPoints())->Size();
+    return layout;
+}
+
+rigExec::RigExecRangePlan
+Accept(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
+       std::string *error)
+{
+    constexpr auto kRefuse = rigExec::RigExecRangePlan::Refuse;
+    const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const Points &in = *In<Points>(io, SkinPoints());
+    const Envelope &weights = *In<Envelope>(io, SkinWeights());
+    const Indices &indices = *In<Indices>(io, SkinIndices());
+    const Layout layout = LayoutOf(batch, k);
     if (!layout.elementSize || !layout.transformCount)
-        return Fail(error, "Skin", "needs an influence and elementSize >= 1");
+        return Fail(error, "Skin", "needs an influence and elementSize >= 1"),
+               kRefuse;
     if (weights.Size() != indices.Size() ||
         indices.Size() != in.Size() * layout.elementSize)
         return Fail(error, "Skin",
-                    "indices and weights need elementSize per point");
+                    "indices and weights need elementSize per point"),
+               kRefuse;
     for (size_t i = 0; i < indices.Size(); ++i) {
         if (indices[i] < 0 || size_t(indices[i]) >= layout.transformCount)
-            return Fail(error, "Skin", "an index is outside the influences");
+            return Fail(error, "Skin", "an index is outside the influences"),
+                   kRefuse;
         if (!std::isfinite(weights[i]) || weights[i] < 0.0f)
             return Fail(error, "Skin",
-                        "weights must be finite and non-negative");
+                        "weights must be finite and non-negative"),
+                   kRefuse;
     }
-    if (!Usable(transforms))
-        return Fail(error, "Skin", "transforms must be finite and affine");
-
-    Points &out = Out<Points>(io, SkinOut());
-    out.Assign(in.Size());
-    if (method == SkinMethod::ClassicLinear) {
-        if (io.useSimd)
-            rigExec::RigExecApplyLinearBlendSkinSimdKernel<Vec3f, Vec3d>(
-                in.Data(), out.Data(), layout, nullptr);
-        else
-            rigExec::RigExecApplyLinearBlendSkinKernel<Vec3f, Vec3d>(
-                in.Data(), out.Data(), layout);
-    } else {
-        const auto palette =
-            rigExec::RigExecSkinDualQuatPaletteKernel<Vec3f, Vec3d>(
-                layout.transforms, layout.transformCount);
-        if (!rigExec::RigExecApplyDualQuatSkinKernel<Vec3f, Vec3d>(
-                in.Data(), out.Data(), layout, palette.data(), palette.size()))
-            return Fail(error, "Skin", "dual quaternion blend is degenerate");
-    }
-    return BlendEnvelope(in, In<Envelope>(io, SkinEnvelope()), &out, "Skin",
-                         error);
+    if (!Usable(*In<Transforms>(io, SkinTransforms())))
+        return Fail(error, "Skin", "transforms must be finite and affine"),
+               kRefuse;
+    if (!EnvelopeFits(in, In<Envelope>(io, SkinEnvelope()), "Skin", error))
+        return kRefuse;
+    return rigExec::RigExecRangePlan::Ranges;
 }
 
 bool
-Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
+Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t, std::string *)
 {
-    const uint32_t *methods =
-        rigExec::RigExecPayloadColumnOf<uint32_t>(batch, kMethod);
-    const int32_t *elementSizes =
-        rigExec::RigExecPayloadColumnOf<int32_t>(batch, kElementSize);
-    return EachInstance(batch, failed, [&](size_t k) {
-        return SkinOne(rigExec::RigExecBatchInstance(batch, k),
-                       SkinMethod(methods[k]), elementSizes[k], error);
-    });
+    SkinState &state =
+        *static_cast<SkinState *>(rigExec::RigExecBatchState(batch, k));
+    const Layout layout = LayoutOf(batch, k);
+    const auto method = SkinMethod(
+        rigExec::RigExecPayloadColumnOf<uint32_t>(batch, kMethod)[k]);
+    if (method != SkinMethod::ClassicLinear) {
+        state.palette = rigExec::RigExecSkinDualQuatPaletteKernel<Vec3f, Vec3d>(
+            layout.transforms, layout.transformCount);
+        return true;
+    }
+    if (!batch.useSimd)
+        return true;
+    state.rows.resize(layout.transformCount * rigExec::kRigExecSkinRowStride);
+    for (size_t t = 0; t < layout.transformCount; ++t)
+        rigExec::RigExecNarrowSkinRowsKernel(
+            layout.transforms[t],
+            &state.rows[t * rigExec::kRigExecSkinRowStride]);
+    return true;
+}
+
+/// Points [begin, end) through the kernels over the layout's part for
+/// them, then the envelope.
+bool
+SkinRange(const rigExec::RigExecOpBatch &batch, size_t k,
+          const rigExec::RigExecOpRange &range, std::string *error)
+{
+    const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const SkinState &state =
+        *static_cast<const SkinState *>(rigExec::RigExecBatchState(batch, k));
+    const Points &in = *In<Points>(io, SkinPoints());
+    Points &out = Out<Points>(io, SkinOut());
+    const size_t begin = range.begin, end = range.end;
+    Layout part = LayoutOf(batch, k);
+    part.indices += begin * part.elementSize;
+    part.weights += begin * part.elementSize;
+    part.indexCount = (end - begin) * part.elementSize;
+    part.pointCount = end - begin;
+    const auto method = SkinMethod(
+        rigExec::RigExecPayloadColumnOf<uint32_t>(batch, kMethod)[k]);
+    if (method == SkinMethod::ClassicLinear) {
+        if (io.useSimd)
+            rigExec::RigExecApplyLinearBlendSkinSimdKernel<Vec3f, Vec3d>(
+                in.Data() + begin, out.Data() + begin, part, state.rows.data());
+        else
+            rigExec::RigExecApplyLinearBlendSkinKernel<Vec3f, Vec3d>(
+                in.Data() + begin, out.Data() + begin, part);
+    } else if (!rigExec::RigExecApplyDualQuatSkinKernel<Vec3f, Vec3d>(
+                   in.Data() + begin, out.Data() + begin, part,
+                   state.palette.data(), state.palette.size())) {
+        return Fail(error, "Skin", "dual quaternion blend is degenerate");
+    }
+    BlendEnvelopeRange(in, In<Envelope>(io, SkinEnvelope()), out, begin, end);
+    return true;
 }
 
 void
@@ -135,16 +192,20 @@ namespace {
 using rigExec::kRigExecPortInput;
 using rigExec::kRigExecPortOptional;
 using rigExec::kRigExecPortOutput;
+using rigExec::kRigExecPortPointwise;
 
 const rigExec::RigExecPortDesc kPorts[] = {
-    {&SkinPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "points"},
+    {&SkinPoints(), &rigExecStd::Vec3fArray(),
+     kRigExecPortInput | kRigExecPortPointwise, "points"},
     {&SkinTransforms(), &rigExecStd::Mat4dArray(), kRigExecPortInput,
      "transforms"},
     {&SkinIndices(), &rigExecStd::IntArray(), kRigExecPortInput, "indices"},
     {&SkinWeights(), &rigExecStd::FloatArray(), kRigExecPortInput, "weights"},
     {&SkinEnvelope(), &rigExecStd::FloatArray(),
-     kRigExecPortInput | kRigExecPortOptional, "envelope"},
-    {&SkinOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     kRigExecPortInput | kRigExecPortOptional | kRigExecPortPointwise,
+     "envelope"},
+    {&SkinOut(), &rigExecStd::Vec3fArray(),
+     kRigExecPortOutput | kRigExecPortPointwise, "out",
      rigExec::RigExecOutputBound::Input, &SkinPoints()},
 };
 
@@ -154,7 +215,10 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.name = "Skin";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.runBatch = &Run;
+    d.range.accept = &Accept;
+    d.range.prepare = &Prepare;
+    d.range.run = &SkinRange;
+    d.state = StateOf<SkinState>();
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |

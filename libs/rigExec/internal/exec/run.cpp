@@ -43,6 +43,8 @@ IntegerOf(const RigExecTypeDesc &t, const void *value)
     }
 }
 
+enum RangePlanCode : uint8_t { kPlanSkip, kPlanRanges, kPlanWhole };
+
 size_t
 Scaled(size_t elements, size_t count)
 {
@@ -91,6 +93,12 @@ RigExecRun::~RigExecRun()
         const RigExecOpDesc &d = OpOf(node.op);
         if (node.stateOffset != SIZE_MAX && d.state.destroy)
             d.state.destroy(State() + node.stateOffset);
+    }
+    for (size_t at = 0; at < scratch.size(); ++at) {
+        const RigExecOpDesc &d =
+            OpOf(program->nodes[program->batchNodes[at]].op);
+        for (const RigExecAlignedBuffer &buffer : scratch[at])
+            d.range.scratch.destroy(buffer.Data());
     }
 }
 
@@ -220,17 +228,29 @@ RigExecRun::Bind(const RigExecProgram &p, const RigExecInputChannel &input,
     everything = true;
     const size_t levelCount =
         p.levelBatches.empty() ? 0 : p.levelBatches.size() - 1;
-    sharedStart.assign(1, 0);
-    callerStart.assign(1, 0);
-    shared.clear();
-    caller.clear();
+    batchLevel.assign(p.batches.size(), 0);
+    rangedBatch.assign(p.batches.size(), 0);
     for (size_t level = 0; level < levelCount; ++level) {
         for (uint32_t b = p.levelBatches[level]; b < p.levelBatches[level + 1];
-             ++b)
-            (p.batches[b].ownerThread ? caller : shared).push_back(b);
-        sharedStart.push_back(uint32_t(shared.size()));
-        callerStart.push_back(uint32_t(caller.size()));
+             ++b) {
+            batchLevel[b] = uint32_t(level);
+            rangedBatch[b] = OpOf(p.batches[b].op).range.run != nullptr;
+        }
     }
+    shared.reserve(p.batches.size());
+    caller.reserve(p.batches.size());
+    sharedStart.reserve(2 * levelCount + 1);
+    callerStart.reserve(2 * levelCount + 1);
+    firstRangeTask.assign(p.batches.size(), 0);
+    rangesLeft = std::make_unique<std::atomic<uint32_t>[]>(p.batches.size());
+    headFailedAt.assign(p.batches.size(), kRigExecInvalidIndex);
+    headErrors.assign(p.batches.size(), std::string());
+    plans.assign(p.batchNodes.size(), kPlanSkip);
+    elementCounts.assign(p.batchNodes.size(), 0);
+    instanceRanges.assign(p.batchNodes.size(), 0);
+    scratch.resize(p.batchNodes.size());
+    levelSplit.assign(levelCount, 0);
+    levelFailed = std::make_unique<std::atomic<uint8_t>[]>(levelCount);
 }
 
 void
@@ -509,14 +529,11 @@ RigExecRun::_CheckBounds(const RigExecOpBatch &view,
     return true;
 }
 
-void
-RigExecRun::_RunBatch(uint32_t b)
+RigExecOpBatch
+RigExecRun::_View(uint32_t b) const
 {
-    if (!batchActive[b])
-        return;
     const RigExecProgramBatch &batch = program->batches[b];
-    const RigExecRegisteredOp &op = RigExecRegistry::Get().OpAt(batch.op);
-    const RigExecOpDesc &d = *op.desc;
+    const RigExecOpDesc &d = OpOf(batch.op);
     RigExecOpBatch view;
     view.op = &d;
     view.count = batch.nodeCount;
@@ -539,6 +556,33 @@ RigExecRun::_RunBatch(uint32_t b)
         view.payloadFields = payloadColumns.data() + batch.firstPayloadColumn;
     if (d.stateFieldCount)
         view.stateFields = stateColumns.data() + batch.firstStateColumn;
+    return view;
+}
+
+void
+RigExecRun::_Fail(uint32_t b, uint32_t instance, const std::string &error)
+{
+    const RigExecProgramBatch &batch = program->batches[b];
+    const RigExecOpDesc &d = OpOf(batch.op);
+    const uint32_t n = program->batchNodes[batch.firstNode + instance];
+    const uint32_t w = program->windowOfNode[n];
+    if (w != kRigExecInvalidIndex)
+        captures[w].reset();
+    failed[b] = 1;
+    errors[b] = "node " + std::to_string(n) + " (" +
+                (d.nameSpace ? d.nameSpace : "") + ":" +
+                (d.name ? d.name : "") + ") failed" +
+                (error.empty() ? "" : ": " + error);
+}
+
+void
+RigExecRun::_RunBatch(uint32_t b)
+{
+    if (!batchActive[b])
+        return;
+    const RigExecProgramBatch &batch = program->batches[b];
+    const RigExecRegisteredOp &op = RigExecRegistry::Get().OpAt(batch.op);
+    RigExecOpBatch view = _View(b);
     size_t at = 0;
     std::string error;
     const size_t ready = _SizeFromInputs(view, batch, op, &error);
@@ -553,23 +597,218 @@ RigExecRun::_RunBatch(uint32_t b)
         if (ready && !op.runBatch(view, &at, &before))
             error = std::move(before);
     }
-    const uint32_t n = program->batchNodes[batch.firstNode + at];
-    const uint32_t w = program->windowOfNode[n];
-    if (w != kRigExecInvalidIndex)
-        captures[w].reset();
-    failed[b] = 1;
-    errors[b] = "node " + std::to_string(n) + " (" +
-                (d.nameSpace ? d.nameSpace : "") + ":" +
-                (d.name ? d.name : "") + ") failed" +
-                (error.empty() ? "" : ": " + error);
+    _Fail(b, uint32_t(at), error);
+}
+
+size_t
+RigExecRun::_RangeCount(size_t elements) const
+{
+    const size_t grain = program->rangeGrain;
+    if (!grain || elements == SIZE_MAX || elements < program->rangeThreshold ||
+        elements <= grain)
+        return 1;
+    return (elements + grain - 1) / grain;
+}
+
+void
+RigExecRun::_Schedule()
+{
+    const RigExecProgram &p = *program;
+    const RigExecRegistry &registry = RigExecRegistry::Get();
+    const uint32_t batches = uint32_t(p.batches.size());
+    sharedStart.assign(1, 0);
+    callerStart.assign(1, 0);
+    shared.clear();
+    caller.clear();
+    rangeTasks.clear();
+    const auto close = [&] {
+        sharedStart.push_back(uint32_t(shared.size()));
+        callerStart.push_back(uint32_t(caller.size()));
+    };
+    for (size_t level = 0; level < levelSplit.size(); ++level) {
+        const uint32_t first = p.levelBatches[level];
+        const uint32_t last = p.levelBatches[level + 1];
+        for (uint32_t b = first; b < last; ++b)
+            (p.batches[b].ownerThread ? caller : shared).push_back(b);
+        close();
+        const size_t before = rangeTasks.size();
+        for (uint32_t b = first; b < last; ++b) {
+            if (!rangedBatch[b] || !batchActive[b])
+                continue;
+            const RigExecProgramBatch &batch = p.batches[b];
+            const RigExecRegisteredOp &op = registry.OpAt(batch.op);
+            firstRangeTask[b] = uint32_t(rangeTasks.size());
+            for (uint32_t k = 0; k < batch.nodeCount; ++k) {
+                const uint32_t at = batch.firstNode + k;
+                if (!active[at])
+                    continue;
+                const uint32_t out =
+                    p.portSlots[batch.firstPort + k * op.desc->portCount +
+                                op.rangeOutputs.front()];
+                instanceRanges[at] = uint32_t(_RangeCount(bounds[out]));
+                for (uint32_t r = 0; r < instanceRanges[at]; ++r)
+                    rangeTasks.push_back({b, k, r});
+            }
+            rangesLeft[b].store(uint32_t(rangeTasks.size()) - firstRangeTask[b],
+                                std::memory_order_relaxed);
+        }
+        levelSplit[level] = rangeTasks.size() != before;
+        levelFailed[level].store(0, std::memory_order_relaxed);
+        if (!levelSplit[level])
+            continue;
+        for (size_t t = before; t < rangeTasks.size(); ++t)
+            shared.push_back(batches + uint32_t(t));
+        close();
+    }
+    rangeFailed.assign(rangeTasks.size(), 0);
+    if (rangeErrors.size() < rangeTasks.size())
+        rangeErrors.resize(rangeTasks.size());
 }
 
 bool
-RigExecRun::_RunTask(void *context, uint32_t b)
+RigExecRun::_RunHeads(uint32_t b)
+{
+    headFailedAt[b] = kRigExecInvalidIndex;
+    if (!batchActive[b])
+        return true;
+    const RigExecProgramBatch &batch = program->batches[b];
+    const RigExecRegisteredOp &op = RigExecRegistry::Get().OpAt(batch.op);
+    const RigExecOpDesc &d = *op.desc;
+    const RigExecOpBatch view = _View(b);
+    std::string error;
+    const size_t ready = _SizeFromInputs(view, batch, op, &error);
+    for (uint32_t k = 0; k < batch.nodeCount; ++k)
+        plans[batch.firstNode + k] = kPlanSkip;
+    for (uint32_t k = 0; k < batch.nodeCount; ++k) {
+        const uint32_t at = batch.firstNode + k;
+        if (!active[at])
+            continue;
+        bool ok = k < ready;
+        const size_t ports = size_t(k) * d.portCount;
+        const void *counted = view.inputs[ports + op.rangeCountPort];
+        const size_t count =
+            TypeOf(op.portTypes[op.rangeCountPort]).count(counted);
+        for (size_t i = 0; ok && i < op.rangeOutputs.size(); ++i) {
+            const uint32_t port = op.rangeOutputs[i];
+            const size_t bound =
+                bounds[program->portSlots[batch.firstPort + ports + port]];
+            if (count > bound) {
+                error = std::string("output ") + d.ports[port].name +
+                        " holds " + std::to_string(count) +
+                        " elements, past its bound of " + std::to_string(bound);
+                ok = false;
+                break;
+            }
+            TypeOf(op.portTypes[port])
+                .resize(view.outputs[ports + port], count);
+        }
+        RigExecRangePlan plan = RigExecRangePlan::Ranges;
+        if (ok && d.range.accept)
+            plan = d.range.accept(view, k, count, &error);
+        if (ok && plan == RigExecRangePlan::Refuse) {
+            if (error.empty())
+                error = "refused";
+            ok = false;
+        }
+        if (ok && d.range.prepare)
+            ok = d.range.prepare(view, k, count, &error);
+        if (!ok) {
+            headFailedAt[b] = k;
+            headErrors[b] = std::move(error);
+            return false;
+        }
+        if (plan == RigExecRangePlan::Ranges &&
+            _RangeCount(count) > instanceRanges[at])
+            plan = RigExecRangePlan::Whole;
+        std::vector<RigExecAlignedBuffer> &buffers = scratch[at];
+        if (d.range.scratch.size) {
+            while (buffers.size() < instanceRanges[at]) {
+                buffers.emplace_back();
+                buffers.back().Allocate(d.range.scratch.size);
+                d.range.scratch.create(buffers.back().Data());
+            }
+        }
+        plans[at] = plan == RigExecRangePlan::Whole ? kPlanWhole : kPlanRanges;
+        elementCounts[at] = count;
+    }
+    return true;
+}
+
+bool
+RigExecRun::_RunRange(uint32_t t)
+{
+    const RigExecRangeTask task = rangeTasks[t];
+    const RigExecProgramBatch &batch = program->batches[task.batch];
+    const uint32_t at = batch.firstNode + task.instance;
+    RigExecOpRange range;
+    range.count = elementCounts[at];
+    range.index = task.range;
+    bool runs =
+        plans[at] == kPlanWhole ? task.range == 0 : plans[at] == kPlanRanges;
+    if (runs && plans[at] == kPlanRanges) {
+        range.ranges = uint32_t(_RangeCount(range.count));
+        runs = task.range < range.ranges;
+    }
+    if (runs && range.ranges > 1) {
+        const size_t grain = program->rangeGrain;
+        range.begin = size_t(task.range) * grain;
+        range.end = std::min(range.count, range.begin + grain);
+    } else {
+        range.end = range.count;
+    }
+    if (runs && range.begin < range.end) {
+        const RigExecOpDesc &d = OpOf(batch.op);
+        if (d.range.scratch.size)
+            range.scratch = scratch[at][task.range].Data();
+        if (!d.range.run(_View(task.batch), task.instance, range,
+                         &rangeErrors[t]))
+            rangeFailed[t] = 1;
+    }
+    if (rangesLeft[task.batch].fetch_sub(1, std::memory_order_acq_rel) == 1)
+        _CompleteRanges(task.batch);
+    return !levelFailed[batchLevel[task.batch]].load(std::memory_order_acquire);
+}
+
+void
+RigExecRun::_CompleteRanges(uint32_t b)
+{
+    const uint32_t headAt = headFailedAt[b];
+    for (size_t t = firstRangeTask[b];
+         t < rangeTasks.size() && rangeTasks[t].batch == b; ++t) {
+        if (rangeTasks[t].instance >= headAt)
+            break;
+        if (rangeFailed[t]) {
+            _Fail(b, rangeTasks[t].instance, rangeErrors[t]);
+            break;
+        }
+    }
+    if (!failed[b] && headAt != kRigExecInvalidIndex)
+        _Fail(b, headAt, headErrors[b]);
+    if (failed[b])
+        levelFailed[batchLevel[b]].store(1, std::memory_order_release);
+}
+
+bool
+RigExecRun::_RunTask(void *context, uint32_t task)
 {
     auto *self = static_cast<RigExecRun *>(context);
-    self->_RunBatch(b);
-    return !self->failed[b];
+    const uint32_t batches = uint32_t(self->program->batches.size());
+    if (task >= batches)
+        return self->_RunRange(task - batches);
+    bool ok = true;
+    if (self->rangedBatch[task]) {
+        ok = self->_RunHeads(task);
+    } else {
+        self->_RunBatch(task);
+        ok = !self->failed[task];
+    }
+    if (ok)
+        return true;
+    const uint32_t level = self->batchLevel[task];
+    if (!self->levelSplit[level])
+        return false;
+    self->levelFailed[level].store(1, std::memory_order_release);
+    return true;
 }
 
 bool
@@ -583,6 +822,7 @@ RigExecRun::Run(bool historyTick, RigExecTaskSystem *tasks, std::string *error)
     }
     _SettleBounds();
     _MarkDirty(historyTick);
+    _Schedule();
     _PrepareOutputs();
     for (size_t w = 0; w < windows.size(); ++w) {
         captures[w].reset();

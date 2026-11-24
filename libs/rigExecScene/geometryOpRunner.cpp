@@ -2,6 +2,7 @@
 
 #include "rigExec/api/compile.h"
 #include "rigExecBuiltins/builtins.h"
+#include "rigExecMath/rangeRunner.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
 #include "rigExecOps/deform/projectorOps.h"
 #include "rigExecScene/opPlugins.h"
@@ -76,6 +77,15 @@ FirstNote(uint32_t reason, const RigExecEvaluator &evaluator,
 }
 
 } // namespace
+
+RigExecCompileOptions
+RigExecGeometryCompileOptions()
+{
+    RigExecCompileOptions options;
+    options.rangeGrain = RigExecGeometryGrainSize;
+    options.rangeThreshold = RigExecGeometryParallelThreshold;
+    return options;
+}
 
 bool
 RigExecLoadGeometryOpCore(std::string *error)

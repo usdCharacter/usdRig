@@ -9,6 +9,7 @@
 #include "rigExecMath/envelope.h"
 #include "rigExecStdTypes/stdTypes.h"
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -73,19 +74,44 @@ AllFinite(const std::vector<rigExecStd::Vec3f> &points)
     return true;
 }
 
+/// Whether \p envelope, when given, holds one weight per point.
+inline bool
+EnvelopeFits(const Points &in, const Envelope *envelope, const char *op,
+             std::string *error)
+{
+    if (envelope && envelope->Size() != in.Size())
+        return Fail(error, op, "envelope length differs from the points");
+    return true;
+}
+
+/// Blends points [begin, end) of \p out back toward \p in by \p envelope;
+/// null is 1 everywhere.
+inline void
+BlendEnvelopeRange(const Points &in, const Envelope *envelope, Points &out,
+                   size_t begin, size_t end)
+{
+    if (!envelope)
+        return;
+    for (size_t i = begin; i < end; ++i)
+        out[i] = rigExec::RigExecBlendEnvelope(in[i], out[i], (*envelope)[i]);
+}
+
 /// Blends \p out back toward \p in by \p envelope; null is 1 everywhere.
 inline bool
 BlendEnvelope(const Points &in, const Envelope *envelope, Points *out,
               const char *op, std::string *error)
 {
-    if (!envelope)
-        return true;
-    if (envelope->Size() != in.Size())
-        return Fail(error, op, "envelope length differs from the points");
-    for (size_t i = 0; i < in.Size(); ++i)
-        (*out)[i] =
-            rigExec::RigExecBlendEnvelope(in[i], (*out)[i], (*envelope)[i]);
+    if (!EnvelopeFits(in, envelope, op, error))
+        return false;
+    BlendEnvelopeRange(in, envelope, *out, 0, in.Size());
     return true;
+}
+
+/// Copies points [begin, end) of \p in to \p out.
+inline void
+CopyRange(const Points &in, Points &out, size_t begin, size_t end)
+{
+    std::copy(in.Data() + begin, in.Data() + end, out.Data() + begin);
 }
 
 /// Writes \p points to \p port, blended toward \p in by \p envelope.

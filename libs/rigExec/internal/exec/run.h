@@ -55,6 +55,13 @@ struct RigExecPublishedSet {
     RigExecPublishedArena &Add(RigExecPublishedPool &pool);
 };
 
+/// One range of one instance of a ranged batch, run as one task.
+struct RigExecRangeTask {
+    uint32_t batch = 0;
+    uint32_t instance = 0;
+    uint32_t range = 0;
+};
+
 struct RigExecRun {
     const RigExecProgram *program = nullptr;
     /// Borrowed; outlives the run.
@@ -101,12 +108,38 @@ struct RigExecRun {
     /// Per batch: whether it failed this frame and why.
     std::vector<uint8_t> failed;
     std::vector<std::string> errors;
-    /// The program's batches by level, as the task system takes them:
-    /// owner-thread batches run on the caller, the rest anywhere.
+    /// This frame's tasks by task level, as the task system takes them:
+    /// each program level's batches, owner-thread ones on the caller, then,
+    /// when it has range tasks, those as a task level of their own. Task
+    /// number batches + t is range task t.
     std::vector<uint32_t> sharedStart;
     std::vector<uint32_t> shared;
     std::vector<uint32_t> callerStart;
     std::vector<uint32_t> caller;
+    /// Per batch: its program level and whether its op runs in ranges.
+    std::vector<uint32_t> batchLevel;
+    std::vector<char> rangedBatch;
+    /// This frame's range tasks, by batch, instance and range; per batch
+    /// its first one and how many have still to finish.
+    std::vector<RigExecRangeTask> rangeTasks;
+    std::vector<uint32_t> firstRangeTask;
+    std::unique_ptr<std::atomic<uint32_t>[]> rangesLeft;
+    std::vector<uint8_t> rangeFailed;
+    std::vector<std::string> rangeErrors;
+    /// Per ranged batch: the instance whose head failed this frame, or
+    /// kRigExecInvalidIndex, and why.
+    std::vector<uint32_t> headFailedAt;
+    std::vector<std::string> headErrors;
+    /// Per batchNodes entry of a ranged op: this frame's plan, element
+    /// count and scheduled ranges, and each range's scratch.
+    std::vector<uint8_t> plans;
+    std::vector<size_t> elementCounts;
+    std::vector<uint32_t> instanceRanges;
+    std::vector<std::vector<RigExecAlignedBuffer>> scratch;
+    /// Per program level: whether its range tasks run this frame, and
+    /// whether a task of that level failed.
+    std::vector<char> levelSplit;
+    std::unique_ptr<std::atomic<uint8_t>[]> levelFailed;
 
     RigExecRun() = default;
     RigExecRun(const RigExecRun &) = delete;
@@ -149,8 +182,15 @@ private:
     bool _Runs(uint32_t slot) const;
     void _PrepareOutputs();
     void _Publish();
+    void _Schedule();
+    size_t _RangeCount(size_t elements) const;
+    RigExecOpBatch _View(uint32_t b) const;
     void _RunBatch(uint32_t b);
-    static bool _RunTask(void *context, uint32_t b);
+    bool _RunHeads(uint32_t b);
+    bool _RunRange(uint32_t t);
+    void _CompleteRanges(uint32_t b);
+    void _Fail(uint32_t b, uint32_t instance, const std::string &error);
+    static bool _RunTask(void *context, uint32_t task);
     size_t _SizeFromInputs(const RigExecOpBatch &view,
                            const RigExecProgramBatch &batch,
                            const RigExecRegisteredOp &op, std::string *error);
