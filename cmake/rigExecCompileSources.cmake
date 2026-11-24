@@ -32,7 +32,7 @@ add_library(rigExecCompile OBJECT
     libs/rigExec/internal/bakedProgramEdits.cpp
     libs/rigExec/internal/programView.cpp
     libs/rigExec/internal/compiledProgram.cpp
-    # Scene programs that compose compiled descriptors.
+    # Scene records the compile composes from captured descriptors.
     libs/rigExecScene/constraintProgram.cpp
     libs/rigExecScene/geometryProgram.cpp
     libs/rigExecScene/poseProgram.cpp

@@ -16,7 +16,6 @@ reports cycles, assigns canonical IDs and lowers safe linear clusters.
 | `bakedOpGraph.cpp`, `bakedOpValues.cpp` | Native graph adapter, exact value keys and unavailable cycle outputs |
 | `bakedSchedule.cpp` | Operation dispatch, timing and graph reports |
 | `rigExecGraph/opGraph.cpp` | Common producer compiler, SCC reporting, clusters and readiness executor |
-| `rigExecScene/sceneProgramTranslation.cpp` | Detached typed graph assembly from composed scene descriptors |
 
 ## Layout
 

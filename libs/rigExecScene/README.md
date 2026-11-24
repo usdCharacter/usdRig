@@ -17,27 +17,21 @@ and linking.
 1. Reads composed scene facts through `RigExecSceneAccess`; the USD
    implementation is `RigExecUsdSceneAccess`.
 2. Captures detached `RigExecSceneDescriptors`, including schema roles,
-   attributes, relationships, mover applications, and sampled inputs.
+   attributes, relationships, and sampled inputs.
    Source access ends when capture returns.
-3. Translates those facts into domain records and binds reads to exact typed
-   value versions, including the requested `rigExecReadPhase`.
-4. Assembles operations for the shared producer compiler and readiness
-   executor in `rigExecGraph`.
-
-`RigExecSceneProgram` holds a typed operation table and compiled graph.
-`RigExecSceneProgramRuntime` retains values and operation workspaces and
-executes that graph. It uses the common scheduler; operation bodies consume
-captured values without querying the source scene.
+3. Translates those facts into the domain records the evaluator compiles,
+   with reads bound to the requested `rigExecReadPhase`.
+4. Bridges translated records to op nodes of the op core (`geometryOps`,
+   `poseOps`, `propertyOps`, `externalOps`), and discovers op plugins
+   (`opPlugins`).
 
 | Files | Responsibility |
 | --- | --- |
 | [sceneAccess.h](sceneAccess.h), [usdSceneAccess.h](usdSceneAccess.h) | Scene access contract and USD adapter |
 | [sceneDescriptors.h](sceneDescriptors.h) | Detached compiler input |
 | `*SceneTranslation.cpp` | Domain-specific translation of scene facts |
-| `*GraphBinding.cpp` | Typed operation inputs, outputs, and producers |
-| [sceneVersionRoutes.h](sceneVersionRoutes.h), [sceneGraphTypedRead.h](sceneGraphTypedRead.h) | Value-version routing and typed reads |
-| [sceneProgramTranslation.cpp](sceneProgramTranslation.cpp), [sceneProgramLayout.h](sceneProgramLayout.h) | Program assembly and value layout |
-| [sceneProgram.h](sceneProgram.h) | Compiled program and retained execution workspace |
+| [sceneGraphBinding.h](sceneGraphBinding.h), [sceneGraphTypedRead.h](sceneGraphTypedRead.h) | Typed reads the auto clavicle binds |
+| `*Ops.cpp`, [opPlugins.h](opPlugins.h) | Op bridges and op plugin discovery |
 | [providerRecordExport.cpp](providerRecordExport.cpp) | Provider records used by binary export |
 | [registerScene.cpp](registerScene.cpp), [sceneLinkAnchor.cpp](sceneLinkAnchor.cpp) | Load-time registration and linker retention |
 

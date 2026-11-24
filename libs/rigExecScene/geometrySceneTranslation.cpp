@@ -470,64 +470,6 @@ RigExecTranslateSceneGeometry(const RigExecSceneDescriptors &scene,
     return true;
 }
 bool
-RigExecTranslateSceneBlendChannel(const RigExecSceneDescriptors &scene,
-                                  const SdfPath &channel,
-                                  RigExecSceneGeometryDescriptor *out,
-                                  std::string *error)
-{
-    RigExecSceneCompileInputs source(scene);
-    const auto *node = source.Node(channel);
-    if (!node || node->fact.type != SchemaTypeName::RigExecBlendInput)
-        return Fail(error, "missing blend channel: " + channel.GetString());
-    RigExecGeometryRecord record;
-    record.op = RigExecRevisionOp::BlendShape;
-    record.binding.moverPath = channel;
-    record.binding.blendInputs = {channel};
-    std::vector<size_t> groups;
-    for (const auto &sample :
-         source.Targets(channel.AppendProperty(_tokens->rigExecSamples))) {
-        const auto points =
-            source.Targets(sample.AppendProperty(_tokens->rigExecTargetPoints));
-        RigExecReadPhase phase;
-        const auto *relationship = source.Relationship(
-            sample.AppendProperty(_tokens->rigExecTargetPoints));
-        if (relationship &&
-            !RigExecParseReadPhase(relationship->readPhase.GetString(), &phase,
-                                   error))
-            return false;
-        groups.push_back(std::max(size_t(1), points.size()));
-        if (points.empty())
-            record.binding.blendSamples[channel].push_back(
-                {sample, {}, phase, {}});
-        else
-            for (auto path : points) {
-                if (path.IsPrimPath())
-                    path = path.AppendProperty(_tokens->points);
-                record.binding.blendSamples[channel].push_back(
-                    {sample, path, phase, {}});
-            }
-    }
-    if (!RigExecTranslateSceneGeometry(
-            scene, channel,
-            channel.AppendProperty(_tokens->computeBlendChannel), out, error,
-            &record))
-        return false;
-    if (out->blendChannels.size() != 1)
-        return Fail(error, "invalid public channel descriptor");
-    auto &samples = out->blendChannels.front().samples;
-    std::vector<RigExecSceneGeometryBlendSample> grouped;
-    size_t first = 0;
-    for (size_t count : groups) {
-        auto sample = std::move(samples[first]);
-        for (size_t n = 1; n < count; ++n)
-            sample.additionalPoints.push_back(samples[first + n].points);
-        grouped.push_back(std::move(sample));
-        first += count;
-    }
-    samples = std::move(grouped);
-    return true;
-}
-bool
 RigExecGatherSceneGeometryBlendChannels(
     const RigExecSceneGeometryDescriptor &descriptor,
     const std::vector<VtValue> &values, size_t baseCount,

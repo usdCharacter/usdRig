@@ -450,7 +450,7 @@ frame that needs earlier ticks.
 A mover whose result at a frame depends on the frames before it -- a
 simulation, a lag -- is a temporal mover. It declares how many earlier frames
 it reads (`windowFrames`, at compile, and `windowFramesScene`, the same count
-from captured scene facts for the scene program), the packet a frame captures
+from captured scene facts), the packet a frame captures
 from its payload and entering points (`captureWindow`), and the solve over the
 earlier frames' packets, oldest first, then the current one (`applyWindow`);
 all four or none. The earlier frames are generations of the same compiled graph
@@ -468,9 +468,8 @@ callbacks; the reader keeps the packets (`PushHistory`, `ExecuteHistory`,
 
 ## Build an op plugin
 
-An op library can ship as an OpenUSD plugin of its own. The scene program
-then runs a mover on that library's op through the op core, with no core code
-naming either. Until the generic USD binder arrives, the mover itself still
+An op library can ship as an OpenUSD plugin of its own. A mover then runs on
+that library's op through the op core, with no core code naming either. Until the generic USD binder arrives, the mover itself still
 comes from a mover plugin as above, and the op plugin adds a *binder* for its
 schema type: how the mover's declared inputs and provider values become the
 op's payload and inputs. The baked program, the frozen evaluator and
@@ -502,7 +501,8 @@ Keep the arithmetic in one kernel that the mover's callbacks and the op both
 call, so the two paths give the same bits. The test fixture's
 `tests/externalMovers/quadraticOps.cpp` is a complete example: the
 `ExternalQuadraticMover` from the mover plugin above runs on its
-`Quadratic` op in the scene program, with the mover's own kernel.
+`Quadratic` op with the mover's own kernel, and
+`tests/testRigExecOpPluginScene.cpp` holds it to the native evaluator's bits.
 
 The generated `plugInfo.json` marks the library with
 
@@ -517,16 +517,16 @@ where `abiVersion` is the `kRigExecRegistryAbiVersion` of the
 `rigExec/api/registry.h` the plugin was compiled against. Add
 `build/usd/rigExecOpPlugins` (or the installed `lib/usd/rigExecOpPlugins`)
 to `PXR_PLUGINPATH_NAME`. `rigExecScene` discovers the plugins at the first
-scene program that needs the op core, before the registry initializes, and
+call that needs the op core, before the registry initializes, and
 takes their libraries into that one initialization
 (`RigExecEnsureSceneOpRegistry` in `rigExecScene/opPlugins.h`). A plugin
 built for another registry or binder ABI, a library that does not load, a
 missing entry symbol, a library the registry refuses, a schema type that
 already has a binder, or a registry initialized before discovery is reported
 by plugin name (`RigExecSceneOpPluginErrors`, with the plugins discovery
-considered) and is never skipped silently. It fails the scene programs whose
-movers have one of its `schemaTypes` or binder table's types; other scene
-programs run on the registry without it.
+considered) and is never skipped silently. It fails only the movers of its
+`schemaTypes` or binder table's types (`RigExecSceneOpSchemaJoined`); other
+movers run on the registry without it.
 A host without OpenUSD passes its op libraries to
 `RigExecRegistry::Initialize` itself.
 

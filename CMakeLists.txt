@@ -140,7 +140,6 @@ add_library(rigExecScene SHARED
     libs/rigExecScene/sceneGraphBinding.cpp
     libs/rigExecScene/sceneGraphTypedRead.cpp
     libs/rigExecScene/sceneTypedReads.cpp
-    libs/rigExecScene/sceneVersionRoutes.cpp
     libs/rigExecScene/skeleton2dTranslation.cpp
     libs/rigExecScene/solverSceneTranslation.cpp
     libs/rigExecScene/usdSceneAccess.cpp

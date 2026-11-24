@@ -13,9 +13,6 @@
 
 namespace rigExec {
 TF_DEFINE_PRIVATE_TOKENS(_tokens,
-    (points)
-    ((rigExecMoves, SchemaAttrText::rigExecMoves))
-    ((rigExecTarget, SchemaAttrText::rigExecTarget))
     ((rigExecJoints, SchemaAttrText::rigExecJoints))
     ((rigExecJointElements, SchemaAttrText::rigExecJointElements))
     ((rigExecPrimvarName, SchemaAttrText::rigExecPrimvarName))
@@ -371,38 +368,6 @@ RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
     for (const auto &[path, node] : scene.nodes) {
         if (node.stackOrdinal < 0 || !node.fact.active)
             continue;
-        const auto moves = scene.relationships.find(
-            path.AppendProperty(_tokens->rigExecMoves));
-        if (moves != scene.relationships.end())
-            for (size_t targetIndex = 0;
-                 targetIndex < moves->second.forwardedTargets.size();
-                 ++targetIndex) {
-                const auto &target =
-                    moves->second.forwardedTargets[targetIndex];
-                SdfPath canonical = target;
-                if (target.IsPrimPath() &&
-                    scene.attributes.count(
-                        target.AppendProperty(_tokens->points)))
-                    canonical = target.AppendProperty(_tokens->points);
-                scene.applications.push_back({path, target, node.domain,
-                                              node.stackOrdinal, canonical,
-                                              targetIndex});
-            }
-        if (node.domain == RigExecSceneDomain::SpaceSwitch ||
-            node.domain == RigExecSceneDomain::AutoClavicle) {
-            const auto target = scene.relationships.find(
-                path.AppendProperty(_tokens->rigExecTarget));
-            if (target != scene.relationships.end())
-                for (size_t targetIndex = 0;
-                     targetIndex < target->second.forwardedTargets.size();
-                     ++targetIndex) {
-                    const auto &provider =
-                        target->second.forwardedTargets[targetIndex];
-                    scene.applications.push_back({path, provider, node.domain,
-                                                  node.stackOrdinal, provider,
-                                                  targetIndex});
-                }
-        }
         const auto joints = scene.relationships.find(
             path.AppendProperty(_tokens->rigExecJoints));
         if (node.domain == RigExecSceneDomain::Solver &&
@@ -444,14 +409,6 @@ RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
             }
         }
     }
-    std::sort(scene.applications.begin(), scene.applications.end(),
-              [](const auto &a, const auto &b) {
-                  return a.stackOrdinal != b.stackOrdinal
-                             ? a.stackOrdinal < b.stackOrdinal
-                         : a.targetIndex != b.targetIndex
-                             ? a.targetIndex < b.targetIndex
-                             : a.target < b.target;
-              });
     *output = std::move(scene);
     return true;
 }
@@ -488,20 +445,5 @@ RigExecSelectSceneDescriptorIdentities(
     }
     *output = std::move(result);
     return true;
-}
-bool
-RigExecCompileSceneDescriptors(const RigExecSceneDescriptors &scene,
-                               const RigExecSceneKernelTranslation &translate,
-                               RigExecCyclePolicy policy,
-                               RigExecCompiledGraph *graph, std::string *error)
-{
-    if (!translate)
-        return Fail(error,
-                    "scene compiler needs production typed kernel translation");
-    std::vector<RigExecOpDescriptor> ops;
-    std::vector<RigExecValueId> leaves;
-    if (!translate(scene, &ops, &leaves, error))
-        return false;
-    return RigExecCompileOpGraph(ops, leaves, policy, graph, error);
 }
 } // namespace rigExec

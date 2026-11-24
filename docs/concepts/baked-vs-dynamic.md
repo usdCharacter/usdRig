@@ -213,7 +213,7 @@ OpenExec header.
 ## Scene and binary playback
 
 `rigExec:asset` selects a `.rigexec` asset in hosts that support binary playback.
-Without that asset selection, the host evaluates the scene program. This is a
+Without that asset selection, the host evaluates the stage's rig. This is a
 choice of input representation and playback source, not an evaluator policy
 mode. Rendering the scene requires no exported bake:
 

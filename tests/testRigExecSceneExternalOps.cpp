@@ -550,7 +550,7 @@ struct History {
         run.captureOnly = captureOnly;
         return run;
     }
-    /// The scene runtime's PushHistory for this window.
+    /// A host's PushHistory for this window.
     void Push()
     {
         ring.push_back(capture);

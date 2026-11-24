@@ -15,8 +15,8 @@
 /// still says which movers it fails. The cmake function
 /// rigexec_add_op_plugin writes it. Discovery loads each such plugin, takes
 /// its libraries into the one registry initialization, and adds its
-/// binders (rigExecScene/externalOps.h), so the scene program runs a plugin
-/// mover's op with no core code naming it. A host without OpenUSD passes
+/// binders (rigExecScene/externalOps.h), so a plugin mover runs on its op
+/// with no core code naming it. A host without OpenUSD passes
 /// its libraries to RigExecRegistry::Initialize itself.
 
 #include <string>
@@ -42,10 +42,6 @@ std::vector<std::string> RigExecSceneOpPluginErrors();
 /// schemaTypes or its binder table, and could not join.
 bool RigExecSceneOpSchemaJoined(const std::string &schemaType,
                                 std::string *error = nullptr);
-
-/// Each plugin discovery considered, as "<name> at <library path>", in
-/// discovery order; empty before the first RigExecEnsureSceneOpRegistry.
-std::vector<std::string> RigExecSceneOpPluginsConsidered();
 
 } // namespace rigExec
 

@@ -42,8 +42,8 @@ struct Discovery {
     std::vector<Failure> failures;
 };
 
-// Discovery runs once per process, at the first scene program's Prepare on
-// its owner thread; every later call reads its result.
+// Discovery runs once per process, at the first RigExecEnsureSceneOpRegistry
+// call; every later call reads its result.
 std::once_flag gDiscovered;
 Discovery gDiscovery;
 
@@ -305,12 +305,6 @@ RigExecSceneOpSchemaJoined(const std::string &schemaType, std::string *error)
     if (error)
         *error = why;
     return false;
-}
-
-std::vector<std::string>
-RigExecSceneOpPluginsConsidered()
-{
-    return gDiscovery.considered;
 }
 
 } // namespace rigExec

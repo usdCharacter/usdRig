@@ -3,7 +3,7 @@
 
 /// Host-side bridge from a solver or constraint record to rigExecOps' pose ops:
 /// the record's settings become the op's payload and the frame's values its
-/// inputs. The scene program runs its solvers and constraints through it.
+/// inputs.
 
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/rigDesc.h"

@@ -86,7 +86,7 @@ activates. To apply a change to rigs that are already active, call
 ## Limits worth knowing
 
 - **Incomplete frozen inputs** prevent worker-thread warming; the host can
-  still evaluate a valid scene program on its owning thread. An owning-thread
+  still evaluate a valid rig on its owning thread. An owning-thread
   fill that fails is retried only after a stage edit, a new range request or
   a cache clear. Compilation failures remain invalid poses with diagnostics.
 - **`.rigexec` playback sessions** are unchanged and never consult the

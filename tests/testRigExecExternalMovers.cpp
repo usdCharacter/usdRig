@@ -1581,8 +1581,7 @@ TestBoundUsdAttributeCapture()
                   a.forwardedTargets == b.forwardedTargets &&
                   a.targetExists == b.targetExists);
         }
-        CHECK(held.applications.empty() && old.applications.empty() &&
-              held.jointBindings.empty() && old.jointBindings.empty());
+        CHECK(held.jointBindings.empty() && old.jointBindings.empty());
         for (const auto &entry : held.nodes) {
             const auto &a = entry.second;
             const auto &b = old.nodes.at(entry.first);

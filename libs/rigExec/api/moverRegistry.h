@@ -264,8 +264,8 @@ struct RigExecMoverHandler {
     /// full-strength candidate. \p cache is the revision's own slot for a
     /// compiled rig build, compared on every use and rebuilt on a miss.
     uint32_t (*windowFrames)(const UsdPrim &mover) = nullptr;
-    /// windowFrames from captured scene facts, for the scene program, which
-    /// has no stage. Required with windowFrames; the two must agree.
+    /// windowFrames from captured scene facts. Required with windowFrames;
+    /// the two must agree.
     uint32_t (*windowFramesScene)(const RigExecSceneDescriptors &,
                                   const SdfPath &mover) = nullptr;
     bool (*captureWindow)(const VtValue &data,

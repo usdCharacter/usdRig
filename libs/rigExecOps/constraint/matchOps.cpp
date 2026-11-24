@@ -269,8 +269,8 @@ struct SpaceSwitchPorts {
     const rigExec::RigExecPortHandle &sourcePosed = SpaceMatchSourcePosed();
 };
 
-// RigExecIkFkMatchConstraint's arithmetic, as the scene program's body runs
-// it over Gf: the IK half, the pole's parent once the IK control has moved,
+// RigExecIkFkMatchConstraint's arithmetic, as the evaluator runs it over
+// Gf: the IK half, the pole's parent once the IK control has moved,
 // the FK half, and the half presented on the joints.
 bool
 IkFkMatchOne(const RigExecOpBatch &batch, size_t k, std::string *error)

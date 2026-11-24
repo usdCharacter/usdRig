@@ -72,31 +72,6 @@ struct PoseMath {
     }
 };
 } // namespace
-bool
-RigExecPreparePoseDelta(const RigExecPointFrame &before,
-                        const RigExecPointFrame &after, GfMatrix4d *delta)
-{
-    return RigExecPointsToMatrix(before.points, after.points, delta);
-}
-RigExecPosePropagateOutcome
-RigExecPropagatePoseFrame(const RigExecPointFrame &current,
-                          const RigExecPointFrame &before,
-                          const RigExecPointFrame &after,
-                          const GfMatrix4d &delta, bool deltaOk,
-                          bool solverOutput, bool parentBlocked,
-                          bool candidatePresent, RigExecPointFrame *output)
-{
-    return RigExecPropagatePoseArithmetic<PoseMath>(
-        current, before, after, delta, deltaOk, solverOutput, parentBlocked,
-        candidatePresent, output);
-}
-GfMatrix4d
-RigExecRunSpaceCheckpoint(
-    const GfMatrix4d &ancestor,
-    const std::vector<RigExecSpaceCheckpointInput> &inputs)
-{
-    return RigExecRunSpaceCheckpointArithmetic<PoseMath>(ancestor, inputs);
-}
 GfMatrix4d
 RigExecComposePoseAvars(double tx, double ty, double tz, double sx, double sy,
                         double sz, double rx, double ry, double rz, double spin,
@@ -107,11 +82,6 @@ RigExecComposePoseAvars(double tx, double ty, double tz, double sx, double sy,
     return RigExecProviderComposeAvars<PoseMath>(
         tx, ty, tz, sx, sy, sz, rx, ry, rz, spin,
         std::string_view(order.GetText(), order.size()));
-}
-GfMatrix4d
-RigExecPoseRoundTrip(const GfMatrix4d &matrix)
-{
-    return PoseMath::RoundTrip(matrix);
 }
 bool
 RigExecRunSpaceSwitchMatrix(const RigExecSpaceSwitchRecord &record,

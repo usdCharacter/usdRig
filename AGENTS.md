@@ -67,9 +67,9 @@ starting its workflow, and keep this list current when adding or changing skills
   op libraries with no `pxr` include path.
 - `libs/rigExecScene`: USD scene translation, built as `librigExecScene.so`.
   It links `tf`, `gf`, `vt`, `sdf`, `ts`, `usd`, `usdGeom`, and `rigExec`
-  publicly; graph, math and `rigExecBuiltins` are private. Its scene
-  geometry operations run as op nodes through `geometryOps`, except
-  External movers. `librigExec.so` does not link it.
+  publicly; graph, math and `rigExecBuiltins` are private. Its op bridges
+  (`geometryOps`, `poseOps`, `propertyOps`, `externalOps`) turn translated
+  records into op nodes. `librigExec.so` does not link it.
   Imaging and bake link it privately, so playback, runtime, and imaging
   tests load the library without being selected as scene tests. The evaluator calls it through the hooks in `sceneDispatch`.
   Installed headers live under `include/rigExecScene/`. Not every file in
@@ -131,8 +131,8 @@ starting its workflow, and keep this list current when adding or changing skills
   or registry lookups to graph bodies. Preserve existing binary opcodes and
   specialized range or weighting contracts when migrating built-ins. An op
   library shipped as a plugin uses `rigexec_add_op_plugin` in
-  [rigExecOpPlugin.cmake](cmake/rigExecOpPlugin.cmake); its binders let the
-  scene program run a plugin mover on its op
+  [rigExecOpPlugin.cmake](cmake/rigExecOpPlugin.cmake); its binders turn a
+  plugin mover's declared inputs into its op's
   ([op plugins](docs/concepts/external-movers.md#build-an-op-plugin)).
 - Design a new or changed point mover to run per vertex group. A mesh's
   points are cut into groups once per compiled rig, and a Range mover

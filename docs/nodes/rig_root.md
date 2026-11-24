@@ -91,7 +91,7 @@ single .rigexec file with no sidecar.
 Uniform because it is a decision about the whole rig -- which
 source answers it -- and not a channel an animator keys. Setting
 it can change how fast a frame arrives and not what the frame is:
-the binary preserves the compiled scene program's published-value contract, and
+the binary preserves the compiled rig's published-value contract, and
 a host that cannot open the file it names evaluates live and says
 so, rather than rendering a rig it did not evaluate.
 

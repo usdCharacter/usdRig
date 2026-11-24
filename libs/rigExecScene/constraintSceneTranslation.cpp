@@ -452,43 +452,6 @@ RigExecTranslateSceneConstraint(const RigExecSceneDescriptors &scene,
 }
 
 bool
-RigExecResolveSceneConstraint(const RigExecSceneDescriptors &scene,
-                              RigExecSceneConstraintDescriptor *descriptor,
-                              UsdTimeCode identity,
-                              const std::map<SdfPath, VtValue> &delivered,
-                              RigExecConstraintInputs *input, bool *enabled,
-                              float *defaultWeight, std::string *error)
-{
-    if (!descriptor || !input || !enabled || !defaultWeight)
-        return Fail(error, "null constraint input destination");
-    const RigExecSceneCompileInputs source(scene);
-    const auto readValue = [&](const char *name, VtValue *value) {
-        *value = VtValue();
-        const auto found = descriptor->inputs.find(name);
-        if (found == descriptor->inputs.end())
-            return true;
-        const auto &binding = found->second;
-        VtValue boxed;
-        const auto typed = descriptor->typedReads.find(name);
-        if (typed != descriptor->typedReads.end()) {
-            if (binding.readPhase != "base" &&
-                binding.source != binding.consumer &&
-                !delivered.count(binding.consumer))
-                return Fail(error,
-                            "phased constraint input producer unavailable: " +
-                                binding.consumer.GetString());
-            if (!RigExecResolveSceneTypedRead(scene, typed->second, identity,
-                                              delivered, &boxed, nullptr))
-                return true;
-        } else if (!source.Read(binding, identity, &boxed, nullptr, error))
-            return false;
-        *value = std::move(boxed);
-        return true;
-    };
-    return RigExecRefreshConstraintParameters(descriptor, readValue, input,
-                                              enabled, defaultWeight, error);
-}
-bool
 RigExecRefreshConstraintParameters(
     RigExecSceneConstraintDescriptor *descriptor,
     const std::function<bool(const char *, VtValue *)> &readValue,

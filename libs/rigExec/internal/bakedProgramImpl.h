@@ -4442,15 +4442,8 @@ RigExecBakedResolvePathLeaves(const RigExecBakedProgramImpl &,
                               const RigExecBakedPathLeaves &);
 void RigExecBakedResetWeightField(RigExecBakedProgramImpl *, int);
 
-/// RigExecIkFkMatchConstraint (bakedIkFkMatch.cpp): one run of its step
-/// -- \p scalars are inputs:switch, stretch, softDistance, upperScale,
-/// lowerScale, pin and twist -- and the publication of every match's values
-/// and presented frames into \p pose.
-void RigExecBakedRunIkFkMatch(RigExecBakedProgramImpl &B,
-                              RigExecBakedStep *step,
-                              RigExecBakedProgramImpl::Constraint &c,
-                              const RigExecBakedCommit &commit, double weight,
-                              const double scalars[7]);
+/// RigExecIkFkMatchConstraint (bakedIkFkMatch.cpp): the publication of every
+/// match's values and presented frames into \p pose.
 void RigExecBakedPresentIkFkMatches(const RigExecBakedProgramImpl &B,
                                     RigExecRigPose *pose);
 
