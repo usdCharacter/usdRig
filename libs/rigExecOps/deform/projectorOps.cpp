@@ -1,10 +1,11 @@
 #include "rigExecOps/deform/projectorOps.h"
 
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 #include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
 
+#include <cstdint>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -40,6 +41,7 @@ using rigExecStd::RigExecArray;
 using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 using namespace opIo;
+using namespace fieldIo;
 
 // Both of a pair, or neither.
 bool
@@ -52,11 +54,35 @@ Pair(const Mat4d *a, const Mat4d *b, Mat4d *first, Mat4d *second)
     return true;
 }
 
-bool
-RunSurfaceProjector(const void *payload, void *, const RigExecOpIo &io,
-                    std::string *error)
+enum SurfaceProjectorField : uint32_t {
+    kRayOrigin,
+    kRayDirection,
+    kRayUp,
+    kShaderOffset,
+    kReproject,
+    kSourceSpaceNamed,
+    kSpaceNamed,
+};
+
+/// Instance \p k's ray settings.
+SurfaceProjectorPayload
+PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
 {
-    const auto &p = *static_cast<const SurfaceProjectorPayload *>(payload);
+    SurfaceProjectorPayload p;
+    p.rayOrigin = ValueAt<Vec3d>(batch, kRayOrigin, k);
+    p.rayDirection = ValueAt<Vec3d>(batch, kRayDirection, k);
+    p.rayUp = ValueAt<Vec3d>(batch, kRayUp, k);
+    p.shaderOffset = ValueAt<Mat4d>(batch, kShaderOffset, k);
+    p.reproject = FlagAt(batch, kReproject, k);
+    p.sourceSpaceNamed = FlagAt(batch, kSourceSpaceNamed, k);
+    p.spaceNamed = FlagAt(batch, kSpaceNamed, k);
+    return p;
+}
+
+bool
+ProjectorOne(const RigExecOpIo &io, const SurfaceProjectorPayload &p,
+             std::string *error)
+{
     const Mat4d *sourceBase = In<Mat4d>(io, SurfaceProjectorSourceBase());
     const Mat4d *sourceFinal = In<Mat4d>(io, SurfaceProjectorSourceFinal());
     const Mat4d *spaceBase = In<Mat4d>(io, SurfaceProjectorSourceSpaceBase());
@@ -124,16 +150,54 @@ RunSurfaceProjector(const void *payload, void *, const RigExecOpIo &io,
 }
 
 bool
-RunShaderDials(const void *, void *, const RigExecOpIo &io, std::string *)
+RunSurfaceProjector(const rigExec::RigExecOpBatch &batch, size_t *failed,
+                    std::string *error)
 {
-    Out<Mat4d>(io, ShaderDialsOut()) = rigExec::RigExecPackShaderDialsT<Mat4d>(
-        ToVector(*In<RigExecArray<double>>(io, ShaderDialsDials())));
-    return true;
+    return EachInstance(batch, failed, [&](size_t k) {
+        return ProjectorOne(rigExec::RigExecBatchInstance(batch, k),
+                            PayloadAt(batch, k), error);
+    });
 }
+
+bool
+RunShaderDials(const rigExec::RigExecOpBatch &batch, size_t *failed,
+               std::string *)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+        Out<Mat4d>(io, ShaderDialsOut()) =
+            rigExec::RigExecPackShaderDialsT<Mat4d>(
+                ToVector(*In<RigExecArray<double>>(io, ShaderDialsDials())));
+        return true;
+    });
+}
+
+void
+ProjectorValues(const void *payload, rigExec::RigExecFieldValues &out)
+{
+    const auto &p = *static_cast<const SurfaceProjectorPayload *>(payload);
+    out.Set(kRayOrigin, p.rayOrigin);
+    out.Set(kRayDirection, p.rayDirection);
+    out.Set(kRayUp, p.rayUp);
+    out.Set(kShaderOffset, p.shaderOffset);
+    SetFlag(out, kReproject, p.reproject);
+    SetFlag(out, kSourceSpaceNamed, p.sourceSpaceNamed);
+    SetFlag(out, kSpaceNamed, p.spaceNamed);
+}
+
+const rigExec::RigExecFieldDesc kProjectorFields[] = {
+    Value("rayOrigin", rigExecStd::Vec3dType()),
+    Value("rayDirection", rigExecStd::Vec3dType()),
+    Value("rayUp", rigExecStd::Vec3dType()),
+    Value("shaderOffset", rigExecStd::Mat4dType()),
+    Flag("reproject"),
+    Flag("sourceSpaceNamed"),
+    Flag("spaceNamed"),
+};
 
 rigExec::RigExecOpDesc
 ProjectorDesc(const char *name, const rigExec::RigExecPortDesc *ports,
-              size_t portCount, rigExec::RigExecOpRunFn run,
+              size_t portCount, rigExec::RigExecOpBatchFn runBatch,
               uint32_t capabilities)
 {
     rigExec::RigExecOpDesc d;
@@ -141,7 +205,7 @@ ProjectorDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.name = name;
     d.ports = ports;
     d.portCount = portCount;
-    d.run = run;
+    d.runBatch = runBatch;
     d.capabilities = rigExec::kRigExecOpBakeable |
                      rigExec::kRigExecOpFreezable |
                      rigExec::kRigExecOpFromLeaves | capabilities;
@@ -194,41 +258,14 @@ const rigExec::RigExecPortDesc kDialPorts[] = {
     {&ShaderDialsOut(), &rigExecStd::Mat4dType(), kRigExecPortOutput, "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
-void
-Save(Writer &w, const SurfaceProjectorPayload &p)
-{
-    w.Version(1);
-    payloadIo::Put(w, p.rayOrigin);
-    payloadIo::Put(w, p.rayDirection);
-    payloadIo::Put(w, p.rayUp);
-    payloadIo::Put(w, p.shaderOffset);
-    w.Bool(p.reproject);
-    w.Bool(p.sourceSpaceNamed);
-    w.Bool(p.spaceNamed);
-}
-
-void
-Load(Reader &r, SurfaceProjectorPayload &p)
-{
-    r.Version(1);
-    payloadIo::Get(r, p.rayOrigin);
-    payloadIo::Get(r, p.rayDirection);
-    payloadIo::Get(r, p.rayUp);
-    payloadIo::Get(r, p.shaderOffset);
-    p.reproject = r.Bool();
-    p.sourceSpaceNamed = r.Bool();
-    p.spaceNamed = r.Bool();
-}
-
 const rigExec::RigExecOpDesc kProjectorDesc = [] {
     rigExec::RigExecOpDesc d = ProjectorDesc(
         "SurfaceProjector", kProjectorPorts, std::size(kProjectorPorts),
         &RunSurfaceProjector, rigExec::kRigExecOpSeparateBlend);
-    d.payload = rigExec::RigExecPayloadHandlingFor<SurfaceProjectorPayload,
-                                                   &Save, &Load>();
+    d.payloadFields = kProjectorFields;
+    d.payloadFieldCount = std::size(kProjectorFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &ProjectorValues;
     return d;
 }();
 

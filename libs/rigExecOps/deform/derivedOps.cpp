@@ -1,11 +1,11 @@
 #include "rigExecOps/deform/derivedOps.h"
 
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 #include "rigExecMath/meshBoundsKernel.h"
 #include "rigExecMath/normalsLayoutKernel.h"
-#include "rigExecMath/normalsLayoutKernel.h"
 
+#include <cstdint>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -34,6 +34,7 @@ using rigExec::RigExecOpIo;
 using rigExecStd::RigExecArray;
 using rigExecStd::Vec3f;
 using namespace opIo;
+using namespace fieldIo;
 
 // Writes \p values to \p port, blended from \p authored by \p envelope,
 // as the derived revision kernel does.
@@ -57,11 +58,12 @@ WriteDerived(const RigExecOpIo &io, const rigExec::RigExecPortHandle &port,
     return true;
 }
 
+enum NormalsField : uint32_t { kPerCorner, kLeftHanded };
+
 bool
-RunNormals(const void *payload, void *, const RigExecOpIo &io,
+NormalsOne(const RigExecOpIo &io, bool perCorner, bool leftHanded,
            std::string *error)
 {
-    const NormalsPayload &p = *static_cast<const NormalsPayload *>(payload);
     const Points &points = *In<Points>(io, RecomputeNormalsPoints());
     const auto &counts = *In<RigExecArray<int>>(io, RecomputeNormalsCounts());
     const auto &indices = *In<RigExecArray<int>>(io, RecomputeNormalsIndices());
@@ -71,7 +73,7 @@ RunNormals(const void *payload, void *, const RigExecOpIo &io,
         points.Data(), points.Size(), counts.Data(), counts.Size(),
         indices.Data(), indices.Size());
     if (!rigExec::RigExecLayoutNormals(&normals, indices.Data(), indices.Size(),
-                                       p.perCorner, p.leftHanded))
+                                       perCorner, leftHanded))
         return Fail(error, "RecomputeNormals", "a corner names no point");
     return WriteDerived(io, RecomputeNormalsOut(), std::move(normals),
                         In<Points>(io, RecomputeNormalsAuthored()),
@@ -80,7 +82,7 @@ RunNormals(const void *payload, void *, const RigExecOpIo &io,
 }
 
 bool
-RunExtent(const void *, void *, const RigExecOpIo &io, std::string *error)
+ExtentOne(const RigExecOpIo &io, std::string *error)
 {
     const Points &points = *In<Points>(io, RecomputeExtentPoints());
     const auto *widths = In<RigExecArray<float>>(io, RecomputeExtentWidths());
@@ -95,9 +97,45 @@ RunExtent(const void *, void *, const RigExecOpIo &io, std::string *error)
         In<Envelope>(io, RecomputeExtentEnvelope()), "RecomputeExtent", error);
 }
 
+bool
+RunNormals(const rigExec::RigExecOpBatch &batch, size_t *failed,
+           std::string *error)
+{
+    const uint8_t *perCorner =
+        rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kPerCorner);
+    const uint8_t *leftHanded =
+        rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kLeftHanded);
+    return EachInstance(batch, failed, [&](size_t k) {
+        return NormalsOne(rigExec::RigExecBatchInstance(batch, k),
+                          perCorner[k] != 0, leftHanded[k] != 0, error);
+    });
+}
+
+bool
+RunExtent(const rigExec::RigExecOpBatch &batch, size_t *failed,
+          std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return ExtentOne(rigExec::RigExecBatchInstance(batch, k), error);
+    });
+}
+
+void
+NormalsValues(const void *payload, rigExec::RigExecFieldValues &out)
+{
+    const NormalsPayload &p = *static_cast<const NormalsPayload *>(payload);
+    SetFlag(out, kPerCorner, p.perCorner);
+    SetFlag(out, kLeftHanded, p.leftHanded);
+}
+
+const rigExec::RigExecFieldDesc kNormalsFields[] = {
+    Flag("perCorner"),
+    Flag("leftHanded"),
+};
+
 rigExec::RigExecOpDesc
 DerivedDesc(const char *name, const rigExec::RigExecPortDesc *ports,
-            size_t portCount, rigExec::RigExecOpRunFn run,
+            size_t portCount, rigExec::RigExecOpBatchFn runBatch,
             uint32_t capabilities)
 {
     rigExec::RigExecOpDesc d;
@@ -105,7 +143,7 @@ DerivedDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.name = name;
     d.ports = ports;
     d.portCount = portCount;
-    d.run = run;
+    d.runBatch = runBatch;
     d.capabilities = rigExec::kRigExecOpBakeable |
                      rigExec::kRigExecOpFreezable |
                      rigExec::kRigExecOpFromLeaves | capabilities;
@@ -148,31 +186,14 @@ const rigExec::RigExecPortDesc kExtentPorts[] = {
      "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
-void
-Save(Writer &w, const NormalsPayload &p)
-{
-    w.Version(1);
-    w.Bool(p.perCorner);
-    w.Bool(p.leftHanded);
-}
-
-void
-Load(Reader &r, NormalsPayload &p)
-{
-    r.Version(1);
-    p.perCorner = r.Bool();
-    p.leftHanded = r.Bool();
-}
-
 const rigExec::RigExecOpDesc kNormalsDesc = [] {
     rigExec::RigExecOpDesc d =
         DerivedDesc("RecomputeNormals", kNormalsPorts, std::size(kNormalsPorts),
                     &RunNormals, 0);
-    d.payload =
-        rigExec::RigExecPayloadHandlingFor<NormalsPayload, &Save, &Load>();
+    d.payloadFields = kNormalsFields;
+    d.payloadFieldCount = std::size(kNormalsFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &NormalsValues;
     return d;
 }();
 
