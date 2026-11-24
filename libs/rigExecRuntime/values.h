@@ -7,6 +7,7 @@
 #define RIGEXEC_RUNTIME_VALUES_H
 
 #include "rigExecBinary/wireTypes.h"
+#include "rigExecMath/switchMathKernel.h"
 #include "rigExecRuntime/runtimeMath.h"
 
 #include <array>
@@ -43,8 +44,7 @@ enum RrPointFrameFlags : uint32_t {
 
 // Mirrors RigExecPointFrame: points[0] = O, [1] = X, [2] = Y, [3] = Z.
 struct RrPointFrame {
-    std::array<RrVec3d, 4> points{RrVec3d(0.0),
-                                  RrVec3d(1.0, 0.0, 0.0),
+    std::array<RrVec3d, 4> points{RrVec3d(0.0), RrVec3d(1.0, 0.0, 0.0),
                                   RrVec3d(0.0, 1.0, 0.0),
                                   RrVec3d(0.0, 0.0, 1.0)};
     uint32_t flags = RrPointFrameValid;
@@ -53,9 +53,15 @@ struct RrPointFrame {
     {
         return points == o.points && flags == o.flags;
     }
-    bool operator!=(const RrPointFrame &o) const { return !(*this == o); }
+    bool operator!=(const RrPointFrame &o) const
+    {
+        return !(*this == o);
+    }
 
-    bool IsValid() const { return (flags & RrPointFrameValid) != 0; }
+    bool IsValid() const
+    {
+        return (flags & RrPointFrameValid) != 0;
+    }
     bool IsDegenerate() const
     {
         return (flags & RrPointFrameDegenerate) != 0;
@@ -67,8 +73,8 @@ RrWireToFrame(const RigExecWireFrame &frame)
 {
     RrPointFrame out;
     for (size_t i = 0; i < 4; ++i) {
-        out.points[i] = RrVec3d(frame.points[i][0], frame.points[i][1],
-                                frame.points[i][2]);
+        out.points[i] =
+            RrVec3d(frame.points[i][0], frame.points[i][1], frame.points[i][2]);
     }
     out.flags = frame.flags;
     return out;
@@ -78,16 +84,8 @@ RrWireToFrame(const RigExecWireFrame &frame)
 inline bool
 RrFrameUsable(const RrPointFrame &frame)
 {
-    if (!frame.IsValid() || frame.IsDegenerate()) {
-        return false;
-    }
-    for (const RrVec3d &point : frame.points) {
-        if (!std::isfinite(point[0]) || !std::isfinite(point[1]) ||
-            !std::isfinite(point[2])) {
-            return false;
-        }
-    }
-    return true;
+    return RigExecFrameUsableT(frame.points, frame.IsValid(),
+                               frame.IsDegenerate());
 }
 
 // Mirrors RigExecPointFrameArray: one solver's aggregate boundary.
@@ -122,7 +120,11 @@ enum class RrInputTag : uint8_t {
     DoubleArray = 10,
     Vec2fArray = 11,
     Vec3fArray = 12,
-    Vec3dArray = 13, Matrix4dArray = 14, TokenArray = 15, BoolArray = 16, Vec3i = 17,
+    Vec3dArray = 13,
+    Matrix4dArray = 14,
+    TokenArray = 15,
+    BoolArray = 16,
+    Vec3i = 17,
 };
 
 inline bool
@@ -160,9 +162,13 @@ struct RrInputValue {
     {
         return tag == o.tag && f64 == o.f64 && f32 == o.f32 &&
                boolean == o.boolean && i32 == o.i32 && matrix == o.matrix &&
-               token == o.token && vec == o.vec && vec3f == o.vec3f && vec3i == o.vec3i;
+               token == o.token && vec == o.vec && vec3f == o.vec3f &&
+               vec3i == o.vec3i;
     }
-    bool operator!=(const RrInputValue &o) const { return !(*this == o); }
+    bool operator!=(const RrInputValue &o) const
+    {
+        return !(*this == o);
+    }
 };
 
 // One IK/FK match's published values (RigExecIkFkMatchConstraint
@@ -209,8 +215,8 @@ struct RrWeightPacket {
     {
         return representation == o.representation &&
                rangePolicy == o.rangePolicy && values == o.values &&
-               indices == o.indices &&
-               defaultWeight == o.defaultWeight && valid == o.valid;
+               indices == o.indices && defaultWeight == o.defaultWeight &&
+               valid == o.valid;
     }
     bool operator!=(const RrWeightPacket &o) const
     {
@@ -252,7 +258,10 @@ struct RrStepCounters {
     uint32_t chainsBuilt = 0;
     uint32_t revisionsBuilt = 0;
 
-    void Clear() { *this = RrStepCounters(); }
+    void Clear()
+    {
+        *this = RrStepCounters();
+    }
 };
 
 // One step's run output: diagnostics, counters, bail.
@@ -307,6 +316,6 @@ struct RrCommitScratch {
     std::vector<RrPointFrame> ikChain, ikPrepared, ikRest, ikSolved;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_RUNTIME_VALUES_H
+#endif // RIGEXEC_RUNTIME_VALUES_H

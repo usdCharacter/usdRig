@@ -332,7 +332,8 @@ _RrRunSpaceMatch(RrProgram *program, const RrPoseScratch &scratch,
                  size_t switchIndex, size_t slot,
                  const RigExecSpaceSwitchRecordT<RrVec3d> &record,
                  const RigExecSpaceSwitchInputsT<RrMat4d> &input,
-                 const RrPointFrame &posed)
+                 const RrPointFrame &posed,
+                 std::vector<std::string> *diagnostics)
 {
     RrStore &store = program->store;
     if (switchIndex >= store.spaceMatchValid.size())
@@ -345,30 +346,27 @@ _RrRunSpaceMatch(RrProgram *program, const RrPoseScratch &scratch,
         return;
     }
     RigExecSpaceSwitchInputsT<RrMat4d> trial = input;
-    const auto run = [&](const double *avars, double active, double *out) {
+    const auto compose = [&](const double *avars, double active,
+                             RrMat4d *composed) {
         std::copy(avars, avars + 16, &trial.avars._mtx[0][0]);
         trial.active = active;
-        RrMat4d composed, matrix;
-        if (!RigExecRunSpaceSwitchArithmetic<RrSpaceSwitchMath>(record, trial,
-                                                                &composed)) {
-            return false;
-        }
-        const RrPointFrame frame = RrFrameFromMatrix(composed);
-        if (!RrFrameUsable(frame) ||
-            !RrPointsToMatrix(RrIdentityLandmarks(), frame.points, &matrix)) {
-            return false;
-        }
-        std::copy(&matrix._mtx[0][0], &matrix._mtx[0][0] + 16, out);
-        return true;
+        return RigExecRunSpaceSwitchArithmetic<RrSpaceSwitchMath>(record, trial,
+                                                                  composed);
     };
     std::vector<double> &values = store.spaceMatchValues[switchIndex];
     values.resize(spaces * RigExecSpaceMatchStride);
+    const RigExecSpaceMatchOutcome outcome =
+        RigExecSpaceMatchT<RrMat3d, RrVec3d>(
+            target, _RrMatchChannelsOf(*program, scratch, slot), spaces,
+            compose, values.data());
     store.spaceMatchValid[switchIndex] =
-        RigExecSpaceMatchSolveAll(&target._mtx[0][0],
-                                  _RrMatchChannelsOf(*program, scratch, slot),
-                                  spaces, run, values.data())
-            ? 1
-            : 0;
+        outcome == RigExecSpaceMatchOutcome::Matched ? 1 : 0;
+    if (outcome == RigExecSpaceMatchOutcome::NotFinite && diagnostics &&
+        slot < program->slotMeta->paths.size()) {
+        diagnostics->push_back(
+            program->TextOrEmpty(program->slotMeta->paths[slot]) +
+            kRigExecSpaceMatchNotFinite);
+    }
 }
 
 } // namespace runtimePoseDetail
@@ -551,7 +549,8 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
                 store.base[size_t(i)] = RrFrameFromMatrix(output);
                 _RrRunSpaceMatch(program, *scratch, size_t(switchIndex),
                                  size_t(i), record, input,
-                                 store.base[size_t(i)]);
+                                 store.base[size_t(i)],
+                                 &store.stepOutputs[step].diagnostics);
             }
             for (size_t acIndex = 0;
                  acIndex < program->poses->autoClavicles.size(); ++acIndex) {

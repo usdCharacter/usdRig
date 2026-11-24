@@ -114,13 +114,20 @@ RigExecPoseRoundTrip(const GfMatrix4d &matrix)
     return PoseMath::RoundTrip(matrix);
 }
 bool
+RigExecRunSpaceSwitchMatrix(const RigExecSpaceSwitchRecord &record,
+                            const RigExecSpaceSwitchInputs &input,
+                            GfMatrix4d *output)
+{
+    return output &&
+           RigExecRunSpaceSwitchArithmetic<PoseMath>(record, input, output);
+}
+bool
 RigExecRunSpaceSwitch(const RigExecSpaceSwitchRecord &record,
                       const RigExecSpaceSwitchInputs &input,
                       RigExecPointFrame *output)
 {
     GfMatrix4d matrix(1.0);
-    if (!output ||
-        !RigExecRunSpaceSwitchArithmetic<PoseMath>(record, input, &matrix))
+    if (!output || !RigExecRunSpaceSwitchMatrix(record, input, &matrix))
         return false;
     *output = RigExecFrameFromMatrix(matrix);
     return true;

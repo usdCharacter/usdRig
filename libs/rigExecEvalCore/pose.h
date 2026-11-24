@@ -55,6 +55,7 @@
 #include "rigExecMath/rangeRunner.h"
 #include "rigExecMath/skeleton2dKernel.h"
 #include "rigExecMath/spaceMatchKernel.h"
+#include "rigExecMath/switchMathKernel.h"
 #include "rigExecSchema/schemaNames.h"
 
 namespace rigExec {
@@ -2945,17 +2946,8 @@ template <class Math>
 bool
 FrameUsable(const std::array<typename Math::Vec3, 4> &points, unsigned flags)
 {
-    if (!(flags & pose_ops::kPoseFrameValid) ||
-        (flags & pose_ops::kPoseFrameDegenerate)) {
-        return false;
-    }
-    for (const auto &point : points) {
-        if (!std::isfinite(point[0]) || !std::isfinite(point[1]) ||
-            !std::isfinite(point[2])) {
-            return false;
-        }
-    }
-    return true;
+    return RigExecFrameUsableT(points, (flags & pose_ops::kPoseFrameValid) != 0,
+                               (flags & pose_ops::kPoseFrameDegenerate) != 0);
 }
 
 template <class Host>

@@ -1125,7 +1125,7 @@ TestHarmonics()
 
 /// The baked space match (bakedSpaces.cpp): per space, the channels that
 /// keep the control on \p target, over the native space switch.
-bool
+RigExecSpaceMatchOutcome
 NativeSpaceMatch(const RigExecSpaceSwitchRecord &record,
                  const RigExecSpaceSwitchInputs &input,
                  const GfMatrix4d &target,
@@ -1133,21 +1133,15 @@ NativeSpaceMatch(const RigExecSpaceSwitchRecord &record,
                  std::vector<double> *values)
 {
     RigExecSpaceSwitchInputs trial = input;
-    const auto run = [&](const double *avars, double active, double *out) {
+    const auto compose = [&](const double *avars, double active,
+                             GfMatrix4d *composed) {
         std::copy(avars, avars + 16, trial.avars.data());
         trial.active = active;
-        RigExecPointFrame frame;
-        GfMatrix4d matrix;
-        if (!RigExecRunSpaceSwitch(record, trial, &frame) ||
-            !RigExecPointsToMatrix(RigExecIdentityLandmarks(), frame.points,
-                                   &matrix))
-            return false;
-        std::copy(matrix.data(), matrix.data() + 16, out);
-        return true;
+        return RigExecRunSpaceSwitchMatrix(record, trial, composed);
     };
     values->resize(input.sources.size() * RigExecSpaceMatchStride);
-    return RigExecSpaceMatchSolveAll(target.data(), current,
-                                     input.sources.size(), run, values->data());
+    return RigExecSpaceMatchT<GfMatrix3d, GfVec3d>(
+        target, current, input.sources.size(), compose, values->data());
 }
 
 rigExecStd::Mat4d
@@ -1367,10 +1361,16 @@ TestSwitchMath()
     std::printf("switch math: %d comparisons\n", compared);
 }
 
-/// A non-finite landmark: the shared kernel keeps the first non-finite
-/// landmark and leaves the later ones at identity. The IK/FK match (op
-/// and scene) and the runtime space match refuse such a frame; the baked
-/// space match and the SpaceMatch op do not check, and agree bit for bit.
+/// The values a landmark is poisoned with: a NaN and both infinities.
+const double kNonFinite[3] = {std::numeric_limits<double>::quiet_NaN(),
+                              std::numeric_limits<double>::infinity(),
+                              -std::numeric_limits<double>::infinity()};
+
+/// A non-finite landmark, NaN or either infinity in each landmark position
+/// and axis: the shared kernel keeps the first non-finite landmark and
+/// leaves the later ones at identity, and the one usability check
+/// (RigExecFrameUsableT) refuses the frame however it is flagged, over Gf
+/// and over the runtime's types.
 void
 TestNonFiniteLandmarks()
 {
@@ -1382,21 +1382,64 @@ TestNonFiniteLandmarks()
     CHECK(points[1] == GfVec3d(1, 0, 0) && points[3] == GfVec3d(0, 0, 1));
     const RigExecPointFrame frame = RigExecFrameFromMatrix(m);
     CHECK(frame.IsDegenerate() && !RigExecConstraintFrameUsable(frame));
-    GfMatrix4d matrix;
-    CHECK(RigExecPointsToMatrix(RigExecIdentityLandmarks(), frame.points,
-                                &matrix));
-    CHECK(!std::isfinite(matrix[3][1]));
+    int refused = 0;
+    const GfMatrix4d placed =
+        Placement(GfVec3d(0.3, 1, 0.2), 47.0, GfVec3d(1, -2, 3), 0.7);
+    for (const double poison : kNonFinite) {
+        for (size_t landmark = 0; landmark < 4; ++landmark) {
+            for (int axis = 0; axis < 3; ++axis) {
+                // Row 3 is landmark 0's and row a < 3 landmark a + 1's;
+                // either reaches landmark 0 (0 * x is not finite either),
+                // where the landmarks stop.
+                GfMatrix4d poisoned = placed;
+                poisoned[landmark ? int(landmark) - 1 : 3][axis] = poison;
+                CHECK(!RigExecMatrixLandmarksT(poisoned, &points));
+                CHECK(!std::isfinite(points[0][axis]));
+                CHECK(!RigExecConstraintFrameUsable(
+                    RigExecFrameFromMatrix(poisoned)));
+                GfMatrix4d read;
+                rigExecStd::Mat4d rrRead;
+                CHECK((RigExecReadLandmarkMatrixT<GfMatrix3d, GfVec3d>(
+                          poisoned, &read)) == RigExecLandmarkRead::NotUsable);
+                CHECK((RigExecReadLandmarkMatrixT<RrMat3d, RrVec3d>(
+                          StdMatrix(poisoned), &rrRead)) ==
+                      RigExecLandmarkRead::NotUsable);
+                RigExecPointFrame flagged = RigExecFrameFromMatrix(placed);
+                CHECK(RigExecConstraintFrameUsable(flagged));
+                flagged.points[landmark][axis] = poison;
+                CHECK(flagged.IsValid() && !flagged.IsDegenerate() &&
+                      !RigExecConstraintFrameUsable(flagged));
+                std::array<RrVec3d, 4> rrPoints;
+                for (size_t p = 0; p < 4; ++p)
+                    rrPoints[p] =
+                        RrVec3d(flagged.points[p][0], flagged.points[p][1],
+                                flagged.points[p][2]);
+                CHECK(!RigExecFrameUsableT(rrPoints, true, false));
+                ++refused;
+            }
+        }
+    }
+    std::printf("non-finite landmarks: %d refused\n", refused);
 }
 
 /// The SpaceMatch op against the baked space match, bit for bit, over
 /// rotation filters, axis masks, a carry, a world source and channels in
-/// several orders, signs, spins and scales.
+/// several orders, signs, spins and scales. Past the ordinary variants a
+/// space's posed frame, or the target, holds a NaN or an infinity in one
+/// landmark position: both refuse it (NotFinite, valid 0).
 void
 TestSpaceMatch()
 {
     using namespace rigExecOps;
-    int solved = 0;
-    for (int variant = 0; variant < 7; ++variant) {
+    int solved = 0, refused = 0;
+    constexpr int kOrdinary = 6;
+    constexpr int kPoisoned = 3 * 4 * 2;
+    for (int variant = 0; variant < kOrdinary + kPoisoned; ++variant) {
+        const int poisonIndex = variant - kOrdinary;
+        const double poison =
+            poisonIndex >= 0 ? kNonFinite[poisonIndex / 8] : 0.0;
+        const int poisonRow = poisonIndex >= 0 ? (poisonIndex / 2) % 4 : 0;
+        const bool poisonTarget = poisonIndex >= 0 && poisonIndex % 2 == 1;
         RigExecSpaceSwitchRecord record;
         if (variant == 1)
             record.filters = {1, 2, 0};
@@ -1428,10 +1471,8 @@ TestSpaceMatch()
                 GfVec3d(1, 0.4, 0.2), 20.0 + 11.0 * double(k),
                 GfVec3d(double(k), 0.5 * double(k), -1.0), 1.0 + 0.1 * k);
         }
-        // A space whose posed frame is not finite: neither checks it.
-        if (variant == 6)
-            input.sources[2].posedSpace[3][0] =
-                std::numeric_limits<double>::infinity();
+        if (poisonIndex >= 0 && !poisonTarget)
+            input.sources[2].posedSpace[poisonRow][poisonRow % 3] = poison;
         RigExecIkFkMatchChannels channels;
         const char *orders[3] = {"XYZ", "ZXY", "YZX"};
         std::copy(orders[variant % 3], orders[variant % 3] + 3, channels.order);
@@ -1452,9 +1493,16 @@ TestSpaceMatch()
         CHECK(RigExecRunSpaceSwitch(record, at, &frame) &&
               RigExecPointsToMatrix(RigExecIdentityLandmarks(), frame.points,
                                     &target));
+        if (poisonTarget)
+            target[poisonRow][poisonRow % 3] = poison;
         std::vector<double> want;
-        const bool native =
+        const RigExecSpaceMatchOutcome outcome =
             NativeSpaceMatch(record, input, target, channels, &want);
+        const bool native = outcome == RigExecSpaceMatchOutcome::Matched;
+        CHECK((poisonIndex >= 0) ==
+              (outcome == RigExecSpaceMatchOutcome::NotFinite));
+        if (outcome == RigExecSpaceMatchOutcome::NotFinite)
+            ++refused;
 
         SpaceMatchPayload payload;
         payload.space.filters = record.filters;
@@ -1539,18 +1587,20 @@ TestSpaceMatch()
             evaluator->GetOutput(values));
         const auto *valid =
             static_cast<const uint8_t *>(evaluator->GetOutput(validOut));
-        const bool same =
-            got && valid && (*valid != 0) == native &&
-            got->Size() == want.size() &&
-            Bits(got->Data(), want.data(), want.size() * sizeof(double));
+        const bool same = got && valid && (*valid != 0) == native &&
+                          (!native || (got->Size() == want.size() &&
+                                       Bits(got->Data(), want.data(),
+                                            want.size() * sizeof(double))));
         if (!same)
             std::printf("space match variant %d differs\n", variant);
         CHECK(same);
         if (native)
             ++solved;
     }
-    std::printf("space match: %d solved comparisons\n", solved);
-    CHECK(solved > 0);
+    std::printf("space match: %d solved, %d refused comparisons\n", solved,
+                refused);
+    CHECK(solved == kOrdinary);
+    CHECK(refused == kPoisoned);
 }
 
 void
@@ -1839,6 +1889,23 @@ TestAuthoredRigs(const std::string &examples)
     for (const bool poleRides : {false, true})
         CompareStage(poleRides ? "IK/FK match, riding pole" : "IK/FK match",
                      IkFkMatchStage(poleRides));
+    // A non-finite IK control channel: the scene program's IK/FK match and
+    // the op refuse it alike.
+    for (const double poison : kNonFinite) {
+        for (const char *channel :
+             {"avars:tx", "avars:rx", "avars:ry", "avars:rz"}) {
+            const UsdStageRefPtr stage = IkFkMatchStage(false);
+            stage->SetEditTarget(stage->GetSessionLayer());
+            const UsdPrim ik =
+                stage->GetPrimAtPath(SdfPath("/Asset/Rig/Controls/Ik"));
+            CHECK(ik);
+            if (ik)
+                ik.CreateAttribute(TfToken(channel), SdfValueTypeNames->Double)
+                    .Set(poison);
+            CompareStage(std::string("IK/FK match, non-finite ") + channel,
+                         stage);
+        }
+    }
 
     // The scene program refuses RigExecBone2dAPI stages; TestSkeleton2d
     // compares the 2D skeleton's records.

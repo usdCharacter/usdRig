@@ -1852,7 +1852,8 @@ void
 RigExecBakedRunSpaceMatch(const RigExecBakedProgramImpl &B,
                           RigExecBakedProgramImpl::SpaceSwitch &sw, int slot,
                           const RigExecSpaceSwitchInputs &input,
-                          const RigExecPointFrame &posed)
+                          const RigExecPointFrame &posed,
+                          std::vector<std::string> *diagnostics)
 {
     sw.matchValid = false;
     const size_t spaces = input.sources.size();
@@ -1861,18 +1862,11 @@ RigExecBakedRunSpaceMatch(const RigExecBakedProgramImpl &B,
     RigExecIkFkMatchChannels current;
     RigExecBakedMatchChannelsOf(B, slot, &current);
     RigExecSpaceSwitchInputs trial = input;
-    const auto run = [&](const double *avars, double active, double *out) {
+    const auto compose = [&](const double *avars, double active,
+                             GfMatrix4d *composed) {
         std::copy(avars, avars + 16, trial.avars.data());
         trial.active = active;
-        RigExecPointFrame frame;
-        GfMatrix4d matrix;
-        if (!RigExecRunSpaceSwitch(sw.kernelRecord, trial, &frame) ||
-            !RigExecPointsToMatrix(RigExecIdentityLandmarks(), frame.points,
-                                   &matrix)) {
-            return false;
-        }
-        std::copy(matrix.data(), matrix.data() + 16, out);
-        return true;
+        return RigExecRunSpaceSwitchMatrix(sw.kernelRecord, trial, composed);
     };
     // The target is read off the composed frame, as the runs are.
     GfMatrix4d target;
@@ -1881,8 +1875,13 @@ RigExecBakedRunSpaceMatch(const RigExecBakedProgramImpl &B,
         return;
     }
     sw.matchValues.resize(spaces * RigExecSpaceMatchStride);
-    sw.matchValid = RigExecSpaceMatchSolveAll(target.data(), current, spaces,
-                                              run, sw.matchValues.data());
+    const RigExecSpaceMatchOutcome outcome =
+        RigExecSpaceMatchT<GfMatrix3d, GfVec3d>(target, current, spaces,
+                                                compose, sw.matchValues.data());
+    sw.matchValid = outcome == RigExecSpaceMatchOutcome::Matched;
+    if (outcome == RigExecSpaceMatchOutcome::NotFinite && diagnostics)
+        diagnostics->push_back((*B.pathTexts)[size_t(slot)] +
+                               kRigExecSpaceMatchNotFinite);
 }
 
 void

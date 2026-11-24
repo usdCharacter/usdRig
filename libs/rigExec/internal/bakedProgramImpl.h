@@ -4482,11 +4482,13 @@ void RigExecBakedMatchChannelsOf(const RigExecBakedProgramImpl &B, int slot,
 
 /// Space matching (bakedSpaces.cpp): \p sw's matchValues for the control in
 /// \p slot, which the switch just composed onto \p posed from \p input,
-/// and the publication of every switch's values into \p pose.
+/// with a refusal's diagnostic appended to \p diagnostics, and the
+/// publication of every switch's values into \p pose.
 void RigExecBakedRunSpaceMatch(const RigExecBakedProgramImpl &B,
                                RigExecBakedProgramImpl::SpaceSwitch &sw,
                                int slot, const RigExecSpaceSwitchInputs &input,
-                               const RigExecPointFrame &posed);
+                               const RigExecPointFrame &posed,
+                               std::vector<std::string> *diagnostics);
 void RigExecBakedPresentSpaceMatches(const RigExecBakedProgramImpl &B,
                                      RigExecRigPose *pose);
 

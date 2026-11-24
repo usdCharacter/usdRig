@@ -179,22 +179,16 @@ RecordOf(const SwitchSettings &setup)
     return record;
 }
 
-/// RigExecRunSpaceSwitch, then its frame's matrix; \p usable refuses a
-/// frame with a non-finite landmark, as the IK/FK match does and the baked
-/// space match does not.
+/// RigExecRunSpaceSwitch, then its frame's matrix; false for a frame the
+/// pose walk would refuse (RigExecReadLandmarkMatrixT).
 bool
-RunSwitch(const SwitchRecord &record, const SwitchInputs &input, bool usable,
-          Mat4d *out)
+RunSwitch(const SwitchRecord &record, const SwitchInputs &input, Mat4d *out)
 {
     Mat4d composed(1.0);
-    if (!rigExec::RigExecRunSpaceSwitchArithmetic<SwitchMath>(record, input,
-                                                              &composed))
-        return false;
-    std::array<Vec3d, 4> points;
-    const bool finite = rigExec::RigExecMatrixLandmarksT(composed, &points);
-    return (finite || !usable) &&
-           rigExec::RigExecPointsToMatrixT<rigExec::RrMat3d>(
-               rigExec::RigExecIdentityLandmarksT<Vec3d>(), points, out);
+    return rigExec::RigExecRunSpaceSwitchArithmetic<SwitchMath>(record, input,
+                                                                &composed) &&
+           rigExec::RigExecReadLandmarkMatrixT<rigExec::RrMat3d, Vec3d>(
+               composed, out) == rigExec::RigExecLandmarkRead::Read;
 }
 
 /// The switch's inputs from its ports; false when the sources and the setup
@@ -394,7 +388,7 @@ IkFkMatchOne(const RigExecOpBatch &batch, size_t k, std::string *error)
                     inputs.sources[k].posedSpace =
                         inputs.sources[k].posedSpace * moved;
             Mat4d switched(1.0);
-            if (RunSwitch(RecordOf(p.poleSwitch), inputs, true, &switched))
+            if (RunSwitch(RecordOf(p.poleSwitch), inputs, &switched))
                 parent = switched;
         } else if (mode == IkFkPoleMode::Ride) {
             parent = parent * moved;
@@ -475,21 +469,18 @@ SpaceMatchOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         return Fail(error, "SpaceMatch", "needs one control's channels");
     const size_t spaces = trial.sources.size();
     values.Resize(spaces * rigExec::RigExecSpaceMatchStride);
-    if (!spaces)
-        return true;
     const SwitchRecord record = RecordOf(p.space);
-    const auto run = [&](const double *avars, double active, double *out) {
+    const auto compose = [&](const double *avars, double active,
+                             Mat4d *composed) {
         trial.avars = FromRows(avars);
         trial.active = active;
-        Mat4d matrix;
-        if (!RunSwitch(record, trial, false, &matrix))
-            return false;
-        std::copy(Rows(matrix), Rows(matrix) + 16, out);
-        return true;
+        return rigExec::RigExecRunSpaceSwitchArithmetic<SwitchMath>(
+            record, trial, composed);
     };
-    valid = rigExec::RigExecSpaceMatchSolveAll(
-                Rows(*In<Mat4d>(io, SpaceMatchTarget())),
-                ChannelsAt(channelValues, 0), spaces, run, values.Data())
+    valid = rigExec::RigExecSpaceMatchT<rigExec::RrMat3d, Vec3d>(
+                *In<Mat4d>(io, SpaceMatchTarget()),
+                ChannelsAt(channelValues, 0), spaces, compose,
+                values.Data()) == rigExec::RigExecSpaceMatchOutcome::Matched
                 ? 1
                 : 0;
     return true;

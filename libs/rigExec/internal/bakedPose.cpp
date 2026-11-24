@@ -2256,6 +2256,8 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
                 continue;
             const RigExecBakedProgramImpl::SpaceSwitch &sw =
                 B.spaceSwitches[size_t(switchIndex)];
+            // A space match that refuses a frame says so.
+            ++step.maxDiagnostics;
             const auto checkpointRead = [&](const auto &read) {
                 if (read.context >= 0)
                     step.reads.push_back(RigExecBakedOne(
@@ -4855,8 +4857,8 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
                         "space switch has no source for " +
                         (*B.pathTexts)[size_t(i)]);
                 } else {
-                    RigExecBakedRunSpaceMatch(B, sw, i, input,
-                                              B.base[size_t(i)]);
+                    RigExecBakedRunSpaceMatch(
+                        B, sw, i, input, B.base[size_t(i)], &step->diagnostics);
                 }
             }
             const int autoIndex = (size_t(i) < B.autoClavicleBySlot.size()

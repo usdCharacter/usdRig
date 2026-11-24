@@ -16,6 +16,7 @@
 #include "rigExec/api/frozenContext.h"
 #include "rigExec/api/tapSet.h"
 #include "rigExecMath/pointFrame.h"
+#include "rigExecMath/spaceMatchKernel.h"
 #include "rigExecMath/splineIk.h"
 
 #include "pxr/base/gf/rotation.h"
@@ -31,6 +32,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <string>
 #include <utility>
@@ -5566,18 +5568,14 @@ TestCompileRecoveryIgnoresOperationSpelling()
     }
 }
 
-// A switchable limb with an IK/FK match: the scene program publishes the
-// same outputs:ikValues/fkValues and presents the same control frames as the
-// native evaluator, on the FK value, the IK value and between them. A foreign
-// applied API schema on a control does not refuse the scene program.
-static void
-TestIkFkMatchSceneProgramMatchesNative()
+// A switchable limb with an IK/FK match: FK on frames 1-4, IK on 5-8,
+// between on 9-10. The match is /Asset/Rig/Movers/Match.
+static UsdStageRefPtr
+BuildIkFkMatchArm()
 {
-    using rigExecSceneProgramDrive::SceneRun;
-    const SdfPath rig("/Asset/Rig");
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     MakeXform(stage, SdfPath("/Asset"), Matrix());
-    stage->DefinePrim(rig, TfToken("RigExecRoot"));
+    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
     const auto control = [&](const std::string &path, double tx, double tz) {
         const UsdPrim prim = stage->DefinePrim(
             SdfPath("/Asset/Rig/Controls/" + path), TfToken("RigExecControl"));
@@ -5678,6 +5676,33 @@ TestIkFkMatchSceneProgramMatchesNative()
     match.CreateAttribute(TfToken("inputs:twist"), SdfValueTypeNames->Double)
         .Set(10.0);
     SolversLast(stage);
+    return stage;
+}
+
+// A switchable limb with an IK/FK match: the scene program publishes the
+// same outputs:ikValues/fkValues and presents the same control frames as the
+// native evaluator, on the FK value, the IK value and between them. A foreign
+// applied API schema on a control does not refuse the scene program.
+static void
+TestIkFkMatchSceneProgramMatchesNative()
+{
+    using rigExecSceneProgramDrive::SceneRun;
+    const SdfPath rig("/Asset/Rig");
+    const UsdStageRefPtr stage = BuildIkFkMatchArm();
+    const auto at = [&](const char *path) {
+        return stage->GetPrimAtPath(SdfPath(path));
+    };
+    const UsdPrim ik = at("/Asset/Rig/Controls/Ik");
+    const UsdPrim orient = at("/Asset/Rig/Controls/Ik/Orient");
+    const UsdPrim pole = at("/Asset/Rig/Controls/Pole");
+    const UsdPrim up = at("/Asset/Rig/Controls/Shoulder/Up");
+    const UsdPrim lo = at("/Asset/Rig/Controls/Shoulder/Up/Lo");
+    const UsdPrim hand = at("/Asset/Rig/Controls/Shoulder/Up/Lo/Hand");
+    const UsdPrim match = at("/Asset/Rig/Movers/Match");
+    const SdfPath joints[3] = {
+        SdfPath("/Asset/Rig/Joints/Shoulder"),
+        SdfPath("/Asset/Rig/Joints/Shoulder/Elbow"),
+        SdfPath("/Asset/Rig/Joints/Shoulder/Elbow/Wrist")};
 
     RigExecRigEvaluator native(stage, rig);
     std::vector<std::string> errors;
@@ -5788,6 +5813,320 @@ TestIkFkMatchSceneProgramMatchesNative()
     CHECK(sawValues);
     CHECK(sawIk);
     CHECK(sawFk);
+}
+
+// One published value bit for bit, so that a NaN equals itself.
+static bool
+SameValueBits(const VtValue &a, const VtValue &b)
+{
+    const auto bits = [](const void *x, const void *y, size_t size) {
+        return std::memcmp(x, y, size) == 0;
+    };
+    if (a.IsHolding<VtDoubleArray>() && b.IsHolding<VtDoubleArray>()) {
+        const VtDoubleArray &x = a.UncheckedGet<VtDoubleArray>();
+        const VtDoubleArray &y = b.UncheckedGet<VtDoubleArray>();
+        return x.size() == y.size() &&
+               (x.empty() || bits(x.cdata(), y.cdata(), x.size() * 8));
+    }
+    if (a.IsHolding<double>() && b.IsHolding<double>())
+        return bits(&a.UncheckedGet<double>(), &b.UncheckedGet<double>(), 8);
+    if (a.IsHolding<float>() && b.IsHolding<float>())
+        return bits(&a.UncheckedGet<float>(), &b.UncheckedGet<float>(), 4);
+    if (a.IsHolding<GfMatrix4d>() && b.IsHolding<GfMatrix4d>())
+        return bits(a.UncheckedGet<GfMatrix4d>().data(),
+                    b.UncheckedGet<GfMatrix4d>().data(), 128);
+    return a == b;
+}
+
+// Two publications of one frame bit for bit: the ordered diagnostics, every
+// moved property and every base, final and control frame. Prints the first
+// difference.
+static bool
+SamePublishedBits(const RigExecRigPose &a, const RigExecRigPose &b)
+{
+    if (a.valid != b.valid || a.diagnostics != b.diagnostics) {
+        std::printf("    validity or diagnostics differ\n");
+        return false;
+    }
+    if (a.movedProperties.size() != b.movedProperties.size()) {
+        std::printf("    %zu vs %zu moved properties\n",
+                    a.movedProperties.size(), b.movedProperties.size());
+        return false;
+    }
+    for (const auto &[path, value] : a.movedProperties) {
+        const auto found = b.movedProperties.find(path);
+        if (found == b.movedProperties.end() ||
+            !SameValueBits(value, found->second)) {
+            std::printf("    moved property %s differs\n", path.GetText());
+            return false;
+        }
+    }
+    const auto sameFrames = [](const char *what, const auto &x, const auto &y) {
+        if (x.size() != y.size()) {
+            std::printf("    %zu vs %zu %s\n", x.size(), y.size(), what);
+            return false;
+        }
+        for (const auto &[path, frame] : x) {
+            const auto found = y.find(path);
+            if (found == y.end() || frame.flags != found->second.flags ||
+                std::memcmp(frame.points.data(), found->second.points.data(),
+                            sizeof(frame.points)) != 0) {
+                std::printf("    %s %s differs\n", what, path.GetText());
+                if (found != y.end())
+                    for (size_t p = 0; p < 4; ++p)
+                        std::printf("      %u (%g %g %g) vs %u (%g %g %g)\n",
+                                    frame.flags, frame.points[p][0],
+                                    frame.points[p][1], frame.points[p][2],
+                                    found->second.flags,
+                                    found->second.points[p][0],
+                                    found->second.points[p][1],
+                                    found->second.points[p][2]);
+                return false;
+            }
+        }
+        return true;
+    };
+    return sameFrames("base frame", a.jointFramesBase, b.jointFramesBase) &&
+           sameFrames("final frame", a.jointFramesFinal, b.jointFramesFinal) &&
+           sameFrames("control frame", a.controlFrames, b.controlFrames);
+}
+
+// One frame of \p rig in the native evaluator, a frozen job and the
+// .rigexec runtime baked at that frame.
+struct EveryEvaluatorPose {
+    bool ok = false;
+    RigExecRigPose native, frozen, runtime;
+};
+
+static EveryEvaluatorPose
+EvaluateEveryEvaluator(const UsdStageRefPtr &stage, const SdfPath &rig,
+                       double time)
+{
+    EveryEvaluatorPose out;
+    RigExecRigEvaluator evaluator(stage, rig);
+    std::vector<std::string> errors;
+    std::string error;
+    if (!evaluator.Compile(&errors)) {
+        std::printf("FAIL every evaluator: %s does not compile\n",
+                    rig.GetText());
+        ++failures;
+        return out;
+    }
+    out.native = evaluator.Evaluate(UsdTimeCode(time));
+    std::shared_ptr<const RigExecFrozenProgram> frozen;
+    RigExecFrameInputs inputs;
+    if (!RigExecFreezeProgram(evaluator, &frozen, &error) || !frozen ||
+        !RigExecSampleFrameInputs(evaluator, UsdTimeCode(time), {}, &inputs,
+                                  &error)) {
+        std::printf("FAIL every evaluator: frozen: %s\n", error.c_str());
+        ++failures;
+        return out;
+    }
+    RigExecFrozenEvalContext context;
+    context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+    context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+    context.varyingInputCount = inputs.values.size();
+    if (evaluator.GetSolverGuidesEnabled())
+        context.flags |= kRigExecFrozenSolverGuidesEnabled;
+    if (evaluator.GetPublishWeightFields())
+        context.flags |= kRigExecFrozenPublishWeightFields;
+    context.frozen = frozen.get();
+    out.frozen = RigExecEvaluateFrozen(context, inputs,
+                                       RigExecMakeProductionStepRunner());
+    std::vector<uint8_t> bytes;
+    RigExecTestPlayer player;
+    if (!RigExecTestBakeAt(evaluator, time, &bytes, &error) ||
+        !player.Open(bytes, stage, &error) || !player.Play(time, &error) ||
+        !RigExecProjectRuntimePose(player.Reader(), UsdTimeCode(time), true,
+                                   &out.runtime, &error)) {
+        std::printf("FAIL every evaluator: runtime: %s\n", error.c_str());
+        ++failures;
+        return out;
+    }
+    out.ok = true;
+    return out;
+}
+
+// A space switch on P between Other and the rig, P in the rig's space.
+static const char *const kNonFiniteSpaceSwitch = R"usda(#usda 1.0
+def RigExecRoot "Rig"
+{
+    def Scope "Controls"
+    {
+        def RigExecControl "Other" (
+            prepend apiSchemas = ["RigExecControlAPI"]
+        )
+        {
+            double avars:tx.timeSamples = { 1: 10, 2: 20 }
+            matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (50, 100, 0, 1) )
+        }
+
+        def RigExecControl "P" (
+            prepend apiSchemas = ["RigExecControlAPI"]
+        )
+        {
+            double avars:rz.timeSamples = { 1: 15, 2: -10 }
+            matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 100, 0, 1) )
+
+            def RigExecJoint "PJ"
+            {
+                uniform token purpose = "default"
+            }
+        }
+    }
+
+    def "Movers"
+    {
+        def RigExecSpaceSwitch "pSpaces"
+        {
+            double inputs:activeSpace.timeSamples = { 1: 1, 2: 0 }
+            rel rigExec:sources = [
+                </Rig/Controls/Other>,
+                </Rig>,
+            ]
+            rel rigExec:target = </Rig/Controls/P>
+        }
+    }
+}
+)usda";
+
+// A frame whose landmarks are not all finite -- a NaN or either infinity in
+// a control's translation (every landmark) or in one rotation channel (the
+// landmarks its rows move) -- is refused by the space match and the IK/FK
+// match in every evaluator: the native evaluator, a frozen job and the
+// .rigexec runtime publish no match values for it and report the same
+// diagnostics. Unpoisoned, all three publish the same match values.
+static void
+TestNonFiniteMatchesAreRefused()
+{
+    const double poisons[] = {std::numeric_limits<double>::quiet_NaN(),
+                              std::numeric_limits<double>::infinity(),
+                              -std::numeric_limits<double>::infinity()};
+    const char *const channels[] = {"avars:tx", "avars:rx", "avars:ry",
+                                    "avars:rz"};
+    const auto agree = [](const std::string &label,
+                          const EveryEvaluatorPose &played) {
+        const bool frozen = SamePublishedBits(played.native, played.frozen);
+        const bool runtime = SamePublishedBits(played.native, played.runtime);
+        if (!frozen || !runtime) {
+            std::printf("FAIL %s: native and %s publish differently\n",
+                        label.c_str(), frozen ? "runtime" : "frozen");
+            for (const auto *pose :
+                 {&played.native, &played.frozen, &played.runtime})
+                for (const std::string &line : pose->diagnostics)
+                    std::printf("    %s\n", line.c_str());
+            ++failures;
+        }
+    };
+    const auto names = [](const RigExecRigPose &pose, const std::string &text) {
+        return std::any_of(
+            pose.diagnostics.begin(), pose.diagnostics.end(),
+            [&](const std::string &line) { return line == text; });
+    };
+
+    const SdfPath rig("/Rig");
+    const SdfPath matchValues(std::string("/Rig/Controls/P.") +
+                              SchemaAttrText::spacesMatchValues);
+    const std::string refusal =
+        std::string("/Rig/Controls/P") + kRigExecSpaceMatchNotFinite;
+    const auto switchStage = [] {
+        const SdfLayerRefPtr layer = SdfLayer::CreateAnonymous(".usda");
+        CHECK(layer->ImportFromString(kNonFiniteSpaceSwitch));
+        const UsdStageRefPtr stage = UsdStage::Open(layer);
+        stage->SetEditTarget(stage->GetSessionLayer());
+        return stage;
+    };
+    for (const double time : {1.0, 2.0}) {
+        const EveryEvaluatorPose played =
+            EvaluateEveryEvaluator(switchStage(), rig, time);
+        if (!played.ok)
+            continue;
+        const std::string label =
+            "finite space match at " + std::to_string(int(time));
+        agree(label, played);
+        CHECK(played.native.movedProperties.count(matchValues) == 1);
+        CHECK(!names(played.native, refusal));
+    }
+    int spaceRefusals = 0;
+    for (const double poison : poisons) {
+        // P's own channel poisons the target; Other's poisons the space
+        // match's run with Other selected.
+        for (const char *control : {"/Rig/Controls/P", "/Rig/Controls/Other"}) {
+            for (const char *channel : channels) {
+                const UsdStageRefPtr stage = switchStage();
+                stage->GetPrimAtPath(SdfPath(control))
+                    .CreateAttribute(TfToken(channel),
+                                     SdfValueTypeNames->Double)
+                    .Set(poison);
+                const EveryEvaluatorPose played =
+                    EvaluateEveryEvaluator(stage, rig, 1.0);
+                if (!played.ok)
+                    continue;
+                const std::string label = std::string("space match, ") +
+                                          control + "." + channel + " = " +
+                                          std::to_string(poison);
+                agree(label, played);
+                for (const auto *pose :
+                     {&played.native, &played.frozen, &played.runtime}) {
+                    CHECK(pose->movedProperties.count(matchValues) == 0);
+                    CHECK(names(*pose, refusal));
+                }
+                ++spaceRefusals;
+            }
+        }
+    }
+    CHECK(spaceRefusals == 24);
+
+    const SdfPath arm("/Asset/Rig");
+    const SdfPath ikValues("/Asset/Rig/Movers/Match.outputs:ikValues");
+    const SdfPath fkValues("/Asset/Rig/Movers/Match.outputs:fkValues");
+    for (const double time : {2.0, 6.0}) {
+        const EveryEvaluatorPose played =
+            EvaluateEveryEvaluator(BuildIkFkMatchArm(), arm, time);
+        if (!played.ok)
+            continue;
+        agree("finite IK/FK match at " + std::to_string(int(time)), played);
+        CHECK(played.native.movedProperties.count(ikValues) == 1);
+    }
+    int limbRefusals = 0;
+    for (const double poison : poisons) {
+        // The IK control on the IK side, an FK control on the FK side.
+        for (const auto &[control, time] :
+             {std::make_pair("/Asset/Rig/Controls/Ik", 6.0),
+              std::make_pair("/Asset/Rig/Controls/Shoulder/Up", 2.0)}) {
+            for (const char *channel : channels) {
+                const UsdStageRefPtr stage = BuildIkFkMatchArm();
+                stage->SetEditTarget(stage->GetSessionLayer());
+                stage->GetPrimAtPath(SdfPath(control))
+                    .CreateAttribute(TfToken(channel),
+                                     SdfValueTypeNames->Double)
+                    .Set(poison);
+                const EveryEvaluatorPose played =
+                    EvaluateEveryEvaluator(stage, arm, time);
+                if (!played.ok)
+                    continue;
+                const std::string label = std::string("IK/FK match, ") +
+                                          control + "." + channel + " = " +
+                                          std::to_string(poison);
+                agree(label, played);
+                for (const auto *pose :
+                     {&played.native, &played.frozen, &played.runtime}) {
+                    CHECK(pose->movedProperties.count(ikValues) == 0 &&
+                          pose->movedProperties.count(fkValues) == 0);
+                    CHECK(std::any_of(
+                        pose->diagnostics.begin(), pose->diagnostics.end(),
+                        [](const std::string &line) {
+                            return line.rfind("/Asset/Rig/Movers/Match ", 0) ==
+                                   0;
+                        }));
+                }
+                ++limbRefusals;
+            }
+        }
+    }
+    CHECK(limbRefusals == 24);
+    std::printf("non-finite matches: %d space and %d IK/FK refusals agree\n",
+                spaceRefusals, limbRefusals);
 }
 
 // Two (or three) unconsumed solvers naming the same joints stack in stack
@@ -6027,6 +6366,7 @@ main()
     TestSingleChainIkComputedStretch();
     TestSingleChainIkPreserveOrientationBaked();
     TestIkFkMatchSceneProgramMatchesNative();
+    TestNonFiniteMatchesAreRefused();
     TestStackedSolversSceneProgramMatchesNative();
 
     if (failures) {

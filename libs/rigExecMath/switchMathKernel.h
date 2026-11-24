@@ -90,6 +90,43 @@ RigExecMatrixLandmarksT(const Mat4 &m, std::array<Vec3, 4> *points)
     return true;
 }
 
+/// Whether a point frame may be read as a transform: flagged valid, not
+/// flagged degenerate, and every landmark finite. This is every evaluator's
+/// frame check.
+template <class Vec3>
+bool
+RigExecFrameUsableT(const std::array<Vec3, 4> &points, bool valid,
+                    bool degenerate)
+{
+    if (!valid || degenerate)
+        return false;
+    for (const Vec3 &point : points)
+        for (int a = 0; a < 3; ++a)
+            if (!std::isfinite(point[a]))
+                return false;
+    return true;
+}
+
+/// How RigExecReadLandmarkMatrixT ended.
+enum class RigExecLandmarkRead { Read, NotUsable, Singular };
+
+/// \p m read the way the pose walk reads a frame: its landmarks, refused
+/// unless usable (RigExecFrameUsableT), then mapped back from the identity
+/// landmarks into \p out.
+template <class Mat3, class Vec3, class Mat4>
+RigExecLandmarkRead
+RigExecReadLandmarkMatrixT(const Mat4 &m, Mat4 *out)
+{
+    std::array<Vec3, 4> points;
+    const bool finite = RigExecMatrixLandmarksT(m, &points);
+    if (!RigExecFrameUsableT(points, finite, !finite))
+        return RigExecLandmarkRead::NotUsable;
+    return RigExecPointsToMatrixT<Mat3>(RigExecIdentityLandmarksT<Vec3>(),
+                                        points, out)
+               ? RigExecLandmarkRead::Read
+               : RigExecLandmarkRead::Singular;
+}
+
 /// \p m through its point landmarks and back.
 template <class Mat3, class Vec3, class Mat4>
 Mat4
