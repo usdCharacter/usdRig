@@ -118,7 +118,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "inputTransform"},
     {&LayeredSkinEnvelope(), &rigExecStd::FloatArray(),
      kRigExecPortInput | kRigExecPortOptional, "envelope"},
-    {&LayeredSkinOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+    {&LayeredSkinOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     rigExec::RigExecOutputBound::Input, &LayeredSkinPoints()},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {

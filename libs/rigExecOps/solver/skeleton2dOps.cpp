@@ -128,7 +128,7 @@ RunSkeleton2d(const void *payload, void *state, const RigExecOpIo &io,
         out.frames.Resize(0);
         out.rests.Resize(0);
     } else {
-        out.frames = RigExecArray<PointFrame>(s.frames.data(), s.frames.size());
+        out.frames.Assign(s.frames.data(), s.frames.size());
         out.rests = rests;
     }
     Out<uint32_t>(io, Skeleton2dResult()) = uint32_t(result);
@@ -162,7 +162,7 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&Skeleton2dGroupSelectors(), &rigExecStd::DoubleArray(), kOptional,
      "groupSelectors"},
     {&Skeleton2dOut(), &rigExecRig::PointFrameArrayType(), kRigExecPortOutput,
-     "out"},
+     "out", rigExec::RigExecOutputBound::Input, &Skeleton2dRests()},
     {&Skeleton2dResult(), &rigExecStd::UIntType(), kRigExecPortOutput,
      "result"},
 };

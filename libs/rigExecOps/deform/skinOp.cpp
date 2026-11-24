@@ -85,7 +85,7 @@ SkinOne(const rigExec::RigExecOpIo &io, SkinMethod method, int elementSize,
         return Fail(error, "Skin", "transforms must be finite and affine");
 
     Points &out = Out<Points>(io, SkinOut());
-    out = Points(in.Size());
+    out.Assign(in.Size());
     if (method == SkinMethod::ClassicLinear) {
         if (kUseSimd)
             rigExec::RigExecApplyLinearBlendSkinSimdKernel<Vec3f, Vec3d>(
@@ -147,7 +147,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&SkinWeights(), &rigExecStd::FloatArray(), kRigExecPortInput, "weights"},
     {&SkinEnvelope(), &rigExecStd::FloatArray(),
      kRigExecPortInput | kRigExecPortOptional, "envelope"},
-    {&SkinOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+    {&SkinOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     rigExec::RigExecOutputBound::Input, &SkinPoints()},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {

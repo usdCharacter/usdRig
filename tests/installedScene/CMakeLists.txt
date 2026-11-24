@@ -63,7 +63,8 @@ set_tests_properties(testRigExecInstalledPlayback PROPERTIES
 # Each op-core API header compiles on its own against the installed op core,
 # which carries no OpenUSD include path.
 set(_rigexec_op_core_tus)
-foreach(_header registry opPorts rigDesc compile taps taskSystem evaluator)
+foreach(_header registry opPorts rigDesc compile taps taskSystem evaluator
+                view inputWriter)
     set(_tu "${CMAKE_CURRENT_BINARY_DIR}/opCoreHeaders/${_header}.cpp")
     file(CONFIGURE OUTPUT "${_tu}"
         CONTENT "#include \"rigExec/api/${_header}.h\"\n")

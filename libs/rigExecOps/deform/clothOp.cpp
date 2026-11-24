@@ -131,7 +131,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
      kRigExecPortInput | kRigExecPortArray | kRigExecPortOptional, "colliders"},
     {&ClothEnvelope(), &rigExecStd::FloatArray(),
      kRigExecPortInput | kRigExecPortOptional, "envelope"},
-    {&ClothOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+    {&ClothOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     rigExec::RigExecOutputBound::Input, &ClothPoints()},
     {&ClothStatusOut(), &rigExecStd::UIntType(), kRigExecPortOutput, "status"},
 };
 

@@ -207,8 +207,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "faceVertexIndices"},
     {&SurfaceBindingEnvelope(), &rigExecStd::FloatArray(),
      kRigExecPortInput | kRigExecPortOptional, "envelope"},
-    {&SurfaceBindingOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput,
-     "out"},
+    {&SurfaceBindingOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     rigExec::RigExecOutputBound::Input, &SurfaceBindingPoints()},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {

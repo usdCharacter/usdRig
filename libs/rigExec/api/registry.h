@@ -29,7 +29,7 @@ inline constexpr uint32_t kRigExecInvalidIndex = 0xffffffffu;
 /// Version of the descriptor structs below. Each library records the version
 /// it was built with, and Initialize rejects one built with another. Raise
 /// it whenever a descriptor's layout changes.
-inline constexpr uint32_t kRigExecRegistryAbiVersion = 7;
+inline constexpr uint32_t kRigExecRegistryAbiVersion = 8;
 
 /// Refers to one registered data type. A type library defines one per type
 /// with RIGEXEC_DEFINE_TYPE_HANDLE, and Initialize gives it its index; read
@@ -169,6 +169,13 @@ struct RigExecTypeDesc {
     /// The registry derives the columns of arrays and records from these.
     RigExecColumnKind columnKind = RigExecColumnKind::None;
     uint32_t columnCount = 0;
+    /// For an array, or a record or fixed list holding arrays: makes room
+    /// for \p count elements in each of its arrays, keeping what they
+    /// hold, so filling them later allocates nothing. An output of such a
+    /// type declares its bound (RigExecOutputBound).
+    void (*reserve)(void *value, size_t count) = nullptr;
+    /// With reserve: how many elements the longest of its arrays holds.
+    size_t (*elements)(const void *value) = nullptr;
 };
 
 /// One column of a registered type. `run` says how many values the column
@@ -190,6 +197,31 @@ enum RigExecPortFlags : uint32_t {
     kRigExecPortArray = 1u << 3,
 };
 
+/// The most elements an output whose type holds arrays may hold. The
+/// evaluator makes room for that many before a frame runs, so the op fills
+/// storage that is already there, and a node that writes more fails.
+enum class RigExecOutputBound : uint8_t {
+    /// For an output whose type holds no arrays.
+    None,
+    /// boundCount elements.
+    Fixed,
+    /// boundCount elements for each element the value fed to input
+    /// boundPort holds, or that input boundAltPort holds when it is set
+    /// and holds more. For an input that takes many values, its longest
+    /// value counts.
+    Input,
+    /// boundCount elements for each unit of the integer fed to input
+    /// boundPort, a one-value integer input, or for each element input
+    /// boundAltPort holds when it is set and holds more.
+    InputValue,
+    /// boundCount elements for each unit of the node's payload field
+    /// boundField, a one-value integer field.
+    Field,
+    /// As many as the rig description gives for this output of the node
+    /// (RigExecRigDescBuilder::SetOutputBound).
+    Host,
+};
+
 /// One input or output of an op.
 struct RigExecPortDesc {
     const RigExecPortHandle *port = nullptr;
@@ -197,6 +229,12 @@ struct RigExecPortDesc {
     uint32_t flags = 0;
     /// The port's name in generated schema and in messages.
     const char *name = "";
+    /// Outputs only: see RigExecOutputBound.
+    RigExecOutputBound bound = RigExecOutputBound::None;
+    const RigExecPortHandle *boundPort = nullptr;
+    const RigExecPortHandle *boundAltPort = nullptr;
+    uint32_t boundField = kRigExecInvalidIndex;
+    size_t boundCount = 1;
 };
 
 /// Where an op may run. Pure ops depend only on their inputs and may run on
@@ -586,6 +624,8 @@ struct RigExecRegisteredOp {
     /// Type index per declared payload and state field, in field order.
     std::vector<uint32_t> payloadFieldTypes;
     std::vector<uint32_t> stateFieldTypes;
+    /// The outputs that declare a bound, by port index, ascending.
+    std::vector<uint32_t> boundedOutputs;
 };
 
 /// The one registry of the process. Initialize builds it once at startup;

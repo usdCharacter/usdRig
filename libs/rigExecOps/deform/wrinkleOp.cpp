@@ -188,7 +188,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "faceVertexIndices"},
     {&WrinkleEnvelope(), &rigExecStd::FloatArray(),
      kRigExecPortInput | kRigExecPortOptional, "envelope"},
-    {&WrinkleOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+    {&WrinkleOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     rigExec::RigExecOutputBound::Input, &WrinklePoints()},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {

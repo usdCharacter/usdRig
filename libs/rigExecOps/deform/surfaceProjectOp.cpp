@@ -199,8 +199,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "surfaceToMetric"},
     {&SurfaceProjectEnvelope(), &rigExecStd::FloatArray(), kOptional,
      "envelope"},
-    {&SurfaceProjectOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput,
-     "out"},
+    {&SurfaceProjectOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     rigExec::RigExecOutputBound::Input, &SurfaceProjectPoints()},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {

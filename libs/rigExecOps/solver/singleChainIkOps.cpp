@@ -59,7 +59,7 @@ SingleChainIkOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         rigExec::RigExecSolveSingleChainIkKernel<Vec3f, Vec3d>(
             current, *In<PointFrame>(io, SingleChainIkEffector()), params);
     PointFrameArray &out = Out<PointFrameArray>(io, SingleChainIkOut());
-    out.frames = RigExecArray<PointFrame>(solved.data(), solved.size());
+    out.frames.Assign(solved.data(), solved.size());
     out.rests = chain.rests;
     return true;
 }
@@ -93,7 +93,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&SingleChainIkWeight(), &rigExecStd::DoubleType(), kOptional, "weight"},
     {&SingleChainIkStretch(), &rigExecStd::DoubleType(), kOptional, "stretch"},
     {&SingleChainIkOut(), &rigExecRig::PointFrameArrayType(),
-     kRigExecPortOutput, "out"},
+     kRigExecPortOutput, "out", rigExec::RigExecOutputBound::Input,
+     &SingleChainIkChain()},
 };
 
 void

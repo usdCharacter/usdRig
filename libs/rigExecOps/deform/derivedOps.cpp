@@ -54,7 +54,7 @@ WriteDerived(const RigExecOpIo &io, const rigExec::RigExecPortHandle &port,
             values[i] = rigExec::RigExecBlendEnvelope((*authored)[i], values[i],
                                                       (*envelope)[i]);
     }
-    Out<Points>(io, port) = Points(values.data(), values.size());
+    Out<Points>(io, port).Assign(values.data(), values.size());
     return true;
 }
 
@@ -171,7 +171,8 @@ const rigExec::RigExecPortDesc kNormalsPorts[] = {
     {&RecomputeNormalsEnvelope(), &rigExecStd::FloatArray(), kOptional,
      "envelope"},
     {&RecomputeNormalsOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput,
-     "out"},
+     "out", rigExec::RigExecOutputBound::Input, &RecomputeNormalsPoints(),
+     &RecomputeNormalsIndices()},
 };
 
 const rigExec::RigExecPortDesc kExtentPorts[] = {
@@ -183,7 +184,8 @@ const rigExec::RigExecPortDesc kExtentPorts[] = {
     {&RecomputeExtentEnvelope(), &rigExecStd::FloatArray(), kOptional,
      "envelope"},
     {&RecomputeExtentOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput,
-     "out"},
+     "out", rigExec::RigExecOutputBound::Fixed, nullptr, nullptr,
+     rigExec::kRigExecInvalidIndex, 2},
 };
 
 const rigExec::RigExecOpDesc kNormalsDesc = [] {

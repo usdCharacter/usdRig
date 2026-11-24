@@ -64,7 +64,7 @@ Run(const void *, void *, const rigExec::RigExecOpIo &io, std::string *error)
     if (envelope && envelope->Size() != in.Size())
         return Fail(error, "envelope length differs from the points");
     Points &out = Out<Points>(io, QuadraticOut());
-    out = Points(points.data(), points.size());
+    out.Assign(points.data(), points.size());
     if (envelope)
         for (size_t i = 0; i < in.Size(); ++i)
             out[i] =
@@ -82,7 +82,7 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&QuadraticEnvelope(), &rigExecStd::FloatArray(),
      rigExec::kRigExecPortInput | rigExec::kRigExecPortOptional, "envelope"},
     {&QuadraticOut(), &rigExecStd::Vec3fArray(), rigExec::kRigExecPortOutput,
-     "out"},
+     "out", rigExec::RigExecOutputBound::Input, &QuadraticPoints()},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {

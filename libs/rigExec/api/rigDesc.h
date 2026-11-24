@@ -84,6 +84,11 @@ public:
     /// Makes output \p out of \p node a value the host reads.
     RigExecOutputId BindOutput(RigExecNodeId node,
                                const RigExecPortHandle &out);
+    /// Gives the most elements output \p out of \p node may hold, for an
+    /// op that leaves that bound to the description
+    /// (RigExecOutputBound::Host).
+    void SetOutputBound(RigExecNodeId node, const RigExecPortHandle &out,
+                        size_t count);
     /// Makes \p first run before \p second when no connection already
     /// does, for example when both touch the same outside resource.
     void Order(RigExecNodeId first, RigExecNodeId second);

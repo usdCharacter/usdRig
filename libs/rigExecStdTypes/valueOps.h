@@ -21,6 +21,7 @@
 #include "rigExecRuntime/runtimeMath.h"
 #include "rigExecStdTypes/array.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -205,6 +206,71 @@ ValueHash(const T &value, uint64_t seed)
     }
 }
 
+/// Whether T is an array or holds one among its members.
+template <class T>
+constexpr bool
+HoldsArrays()
+{
+    if constexpr (IsArray<T>::value) {
+        return true;
+    } else if constexpr (IsRecord<T>::value) {
+        return std::apply(
+            [](auto... member) {
+                return (HoldsArrays<std::remove_cv_t<std::remove_reference_t<
+                            decltype(std::declval<T &>().*member)>>>() ||
+                        ...);
+            },
+            T::Members());
+    } else if constexpr (IsFixed<T>::value) {
+        return HoldsArrays<typename T::value_type>();
+    } else {
+        return false;
+    }
+}
+
+/// Makes room for \p count elements in each array \p value holds.
+template <class T>
+void
+ReserveArrays(T &value, size_t count)
+{
+    if constexpr (IsArray<T>::value) {
+        value.Reserve(count);
+    } else if constexpr (IsRecord<T>::value) {
+        std::apply(
+            [&](auto... member) { (ReserveArrays(value.*member, count), ...); },
+            T::Members());
+    } else if constexpr (IsFixed<T>::value) {
+        for (auto &element : value)
+            ReserveArrays(element, count);
+    }
+}
+
+/// The most elements any array \p value holds has.
+template <class T>
+size_t
+LongestArray(const T &value)
+{
+    if constexpr (IsArray<T>::value) {
+        return value.Size();
+    } else if constexpr (IsRecord<T>::value) {
+        return std::apply(
+            [&](auto... member) {
+                size_t longest = 0;
+                ((longest = std::max(longest, LongestArray(value.*member))),
+                 ...);
+                return longest;
+            },
+            T::Members());
+    } else if constexpr (IsFixed<T>::value) {
+        size_t longest = 0;
+        for (const auto &element : value)
+            longest = std::max(longest, LongestArray(element));
+        return longest;
+    } else {
+        return 0;
+    }
+}
+
 /// Changes when the layout of T changes: scalar kinds and widths, counts,
 /// sizes, alignments and member offsets.
 template <class T>
@@ -279,6 +345,14 @@ template <class T> struct TypeOps {
     {
         return ValueHash(*static_cast<const T *>(value), 0);
     }
+    static void Reserve(void *value, size_t count)
+    {
+        ReserveArrays(*static_cast<T *>(value), count);
+    }
+    static size_t Elements(const void *value)
+    {
+        return LongestArray(*static_cast<const T *>(value));
+    }
 };
 
 /// The descriptor of T, registered as (nameSpace, name). \p element names
@@ -315,6 +389,10 @@ TypeDescFor(const char *nameSpace, const char *name,
         d.count = [](const void *value) {
             return static_cast<const T *>(value)->Size();
         };
+    if constexpr (HoldsArrays<T>()) {
+        d.reserve = &TypeOps<T>::Reserve;
+        d.elements = &TypeOps<T>::Elements;
+    }
     if constexpr (!IsArray<T>::value && !IsRecord<T>::value &&
                   !IsFixed<T>::value) {
         if (!element && !fieldCount) {

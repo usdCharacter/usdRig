@@ -154,6 +154,8 @@ private:
 
     bool _FreezeTypes(const RigExecRegistryInit &init);
     bool _FreezeOps(const RigExecRegistryInit &init);
+    void _CheckBound(const std::string &op, const RigExecOpDesc &d,
+                     const RigExecPortDesc &port);
     void _CheckFields(const std::string &op, const RigExecOpDesc &d,
                       bool payload);
     void _Error(std::string message)
@@ -237,6 +239,9 @@ RigExecRegistryBuilder::_FreezeTypes(const RigExecRegistryInit &init)
         }
         if (d.hashClass != RigExecHashClass::Unhashable && !d.hash) {
             _Error("type " + name + ": hash class without a hash");
+        }
+        if (!d.reserve != !d.elements) {
+            _Error("type " + name + ": reserve and elements go together");
         }
         if (d.columnKind == RigExecColumnKind::None
                 ? d.columnCount != 0
@@ -341,6 +346,8 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
             if (!_typeIndex.count(port.type)) {
                 _Error("op " + name + ": port " + Text(port.name) +
                        " uses a type that is not registered");
+            } else {
+                _CheckBound(name, d, port);
             }
         }
         if (d.payload.size && (!d.payload.copy || !d.payload.destroy)) {
@@ -400,6 +407,8 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
         for (size_t p = 0; p < e.desc->portCount; ++p) {
             op.portTypes.push_back(_typeIndex.at(e.desc->ports[p].type));
             _portIndex.emplace_back(e.desc->ports[p].port, uint32_t(p));
+            if (e.desc->ports[p].bound != RigExecOutputBound::None)
+                op.boundedOutputs.push_back(uint32_t(p));
         }
         fingerprint = MixText(fingerprint, e.desc->nameSpace);
         fingerprint = MixText(fingerprint, e.desc->name);
@@ -410,6 +419,67 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
     }
     r._fingerprint = fingerprint;
     return true;
+}
+
+void
+RigExecRegistryBuilder::_CheckBound(const std::string &op,
+                                    const RigExecOpDesc &d,
+                                    const RigExecPortDesc &port)
+{
+    const std::string where = "op " + op + ": port " + Text(port.name);
+    const bool output = (port.flags & kRigExecPortOutput) != 0;
+    const bool arrays =
+        _typeEntries[_typeIndex.at(port.type)].desc->reserve != nullptr;
+    if (port.bound == RigExecOutputBound::None) {
+        if (output && arrays)
+            _Error(where + " holds arrays and declares no bound");
+        return;
+    }
+    if (!output || !arrays) {
+        _Error(where + " declares a bound but is not an output that holds "
+                       "arrays");
+        return;
+    }
+    const auto isInput = [&](const RigExecPortHandle *handle, bool single) {
+        for (size_t p = 0; p < d.portCount; ++p)
+            if (d.ports[p].port == handle &&
+                (d.ports[p].flags & kRigExecPortInput) &&
+                !(single && (d.ports[p].flags & kRigExecPortArray)))
+                return true;
+        return false;
+    };
+    const bool counted = port.bound == RigExecOutputBound::Input ||
+                         port.bound == RigExecOutputBound::InputValue;
+    if (counted &&
+        (!isInput(port.boundPort,
+                  port.bound == RigExecOutputBound::InputValue) ||
+         (port.boundAltPort && !isInput(port.boundAltPort, false)))) {
+        _Error(where + " takes its bound from a port that is not one of its "
+                       "op's inputs");
+    }
+    const bool singleInput = isInput(port.boundPort, true);
+    if (port.bound == RigExecOutputBound::InputValue) {
+        const RigExecTypeDesc *type = nullptr;
+        for (size_t p = 0; p < d.portCount; ++p)
+            if (d.ports[p].port == port.boundPort &&
+                _typeIndex.count(d.ports[p].type))
+                type = _typeEntries[_typeIndex.at(d.ports[p].type)].desc;
+        const bool integer = type && type->columnCount == 1 &&
+                             (type->columnKind == RigExecColumnKind::UInt8 ||
+                              type->columnKind == RigExecColumnKind::Int32 ||
+                              type->columnKind == RigExecColumnKind::UInt32 ||
+                              type->columnKind == RigExecColumnKind::UInt64);
+        if (!singleInput || !integer)
+            _Error(where + " takes its bound from a port that is not one of "
+                           "its op's one-value integer inputs");
+    }
+    if (port.bound == RigExecOutputBound::Field &&
+        (port.boundField >= d.payloadFieldCount ||
+         d.payloadFields[port.boundField].extent !=
+             RigExecFieldExtent::Scalar)) {
+        _Error(where + " takes its bound from a field that is not a one-value "
+                       "payload field");
+    }
 }
 
 void

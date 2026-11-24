@@ -114,7 +114,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&BlendShapeCounts(), &rigExecStd::IntArray(), kOptional, "counts"},
     {&BlendShapeIndices(), &rigExecStd::IntArray(), kOptional, "indices"},
     {&BlendShapeEnvelope(), &rigExecStd::FloatArray(), kOptional, "envelope"},
-    {&BlendShapeOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+    {&BlendShapeOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     rigExec::RigExecOutputBound::Input, &BlendShapePoints()},
 };
 
 using payloadIo::Reader;

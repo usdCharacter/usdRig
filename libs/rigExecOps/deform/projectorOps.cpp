@@ -125,7 +125,7 @@ ProjectorOne(const RigExecOpIo &io, const SurfaceProjectorPayload &p,
         Out<RigExecArray<double>>(io, SurfaceProjectorRay());
     uint32_t &probe = Out<uint32_t>(io, SurfaceProjectorProbe());
     reason = kSurfaceProjectorSolved;
-    ray = RigExecArray<double>();
+    ray.Resize(0);
     probe = 0;
     if (rigExec::RigExecSolveSurfaceProjectorNotesT(
             in, ToVector(*In<Points>(io, SurfaceProjectorBasePoints())),
@@ -141,7 +141,7 @@ ProjectorOne(const RigExecOpIo &io, const SurfaceProjectorPayload &p,
     }
     const rigExec::RigExecSurfaceProjectorNote &first = notes.front();
     reason = uint32_t(first.kind);
-    ray = RigExecArray<double>(first.ray, std::size(first.ray));
+    ray.Assign(first.ray, std::size(first.ray));
     probe = (first.castHit ? kSurfaceProjectorCastHit : 0u) |
             (first.recastHit ? kSurfaceProjectorRecastHit : 0u) |
             (first.restFrame ? kSurfaceProjectorRestFrame : 0u) |
@@ -247,7 +247,8 @@ const rigExec::RigExecPortDesc kProjectorPorts[] = {
     {&SurfaceProjectorReason(), &rigExecStd::UIntType(), kRigExecPortOutput,
      "reason"},
     {&SurfaceProjectorRay(), &rigExecStd::DoubleArray(), kRigExecPortOutput,
-     "ray"},
+     "ray", rigExec::RigExecOutputBound::Fixed, nullptr, nullptr,
+     rigExec::kRigExecInvalidIndex, 9},
     {&SurfaceProjectorProbe(), &rigExecStd::UIntType(), kRigExecPortOutput,
      "probe"},
 };

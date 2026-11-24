@@ -5,8 +5,10 @@
 /// its inputs, calls Evaluate once per frame and reads its outputs.
 
 #include "rigExec/api/compile.h"
+#include "rigExec/api/inputWriter.h"
 #include "rigExec/api/taps.h"
 #include "rigExec/api/taskSystem.h"
+#include "rigExec/api/view.h"
 #include "rigExecGraph/windowHistory.h"
 
 #include <cstddef>
@@ -53,10 +55,17 @@ public:
            const RigExecEvaluatorOptions &options = {},
            std::string *error = nullptr);
 
+    /// Opens an edit of the values the host feeds the program (see
+    /// inputWriter.h). The next Evaluate sees the edit once it is
+    /// committed, all of it at once. Fails, returning a writer that is not
+    /// open, while another edit is open.
+    RigExecInputWriter BeginInputEdit();
     /// Sets one of the values the host feeds the program, such as a control
     /// value for this frame. \p value must point to a value of the type the
     /// input was declared with; it is copied, so it can be released after
-    /// the call. The value stays until it is set again.
+    /// the call. The value stays until it is set again. The values set this
+    /// way form one edit that the next Evaluate or EvaluateHistory commits;
+    /// until then BeginInputEdit fails.
     bool SetInput(RigExecInputId input, const void *value,
                   std::string *error = nullptr);
     /// Runs every op of the program once, using the current inputs. If an
@@ -67,6 +76,12 @@ public:
     /// Evaluate. The pointer stays valid until the next Evaluate or
     /// SwapProgram; null for an unknown output.
     const void *GetOutput(RigExecOutputId output) const;
+    /// The same value as GetOutput, held for as long as the returned view
+    /// is: later evaluations write that output elsewhere until the view is
+    /// released. Empty for an unknown output.
+    RigExecValueView ViewOutput(RigExecOutputId output) const;
+    /// The program this evaluator runs.
+    const RigExecProgram &GetProgram() const;
     /// Switches to another compiled program, for example after the rig
     /// was edited. Call it between evaluations. Inputs, op state and the
     /// history of earlier frames start over; taps are kept and fail the
@@ -124,6 +139,8 @@ private:
 
     RigExecEvaluatorOptions _options;
     std::unique_ptr<RigExecEvaluatorState> _state;
+    /// The edit SetInput adds to; closed before _state goes.
+    RigExecInputWriter _pending;
     std::thread::id _ownerThread = std::this_thread::get_id();
 };
 

@@ -159,7 +159,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&DeltaMushComputationToTarget(), &rigExecStd::Mat4dType(), kOptional,
      "computationToTarget"},
     {&DeltaMushEnvelope(), &rigExecStd::FloatArray(), kOptional, "envelope"},
-    {&DeltaMushOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+    {&DeltaMushOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     rigExec::RigExecOutputBound::Input, &DeltaMushPoints()},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {

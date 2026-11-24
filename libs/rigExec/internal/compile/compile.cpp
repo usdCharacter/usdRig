@@ -401,18 +401,159 @@ PlacePortsInBatchOrder(CompileState &s)
             program.nodes[program.batchNodes[batch.firstNode]].firstPort;
 }
 
-/// Places every slot in the value arena, in slot order.
+/// Gives every slot its arena: each distinct bound output a published
+/// arena of its own, the host-written inputs the input arena, in binding
+/// order, and every other value the work arena, in slot order.
 void
-LayoutArena(CompileState &s)
+LayoutStore(CompileState &s)
 {
-    size_t offset = 0;
-    for (RigExecProgramSlot &slot : s.program.slots) {
-        const RigExecTypeDesc &t = *s.registry.TypeAt(slot.type).desc;
-        offset = RigExecPlaceValue(offset, t.size, t.align);
-        slot.offset = offset;
-        offset += t.size;
+    RigExecProgram &program = s.program;
+    for (const uint32_t slot : program.outputSlots) {
+        RigExecProgramSlot &place = program.slots[slot];
+        if (place.arena == RigExecArenaKind::Published)
+            continue;
+        place.arena = RigExecArenaKind::Published;
+        place.arenaIndex = uint32_t(program.publishedSlots.size());
+        place.offset = 0;
+        program.publishedSlots.push_back(slot);
     }
-    s.program.arenaSize = offset;
+    for (uint32_t i = 0; i < program.inputSlots.size(); ++i) {
+        RigExecProgramSlot &place = program.slots[program.inputSlots[i]];
+        place.arena = RigExecArenaKind::Input;
+        place.arenaIndex = i;
+    }
+    size_t input = 0;
+    size_t work = 0;
+    for (RigExecProgramSlot &slot : program.slots) {
+        if (slot.arena == RigExecArenaKind::Published)
+            continue;
+        const RigExecTypeDesc &t = *s.registry.TypeAt(slot.type).desc;
+        size_t &end = slot.arena == RigExecArenaKind::Input ? input : work;
+        end = RigExecPlaceValue(end, t.size, t.align);
+        slot.offset = end;
+        end += t.size;
+    }
+    program.inputArenaSize = input;
+    program.workSize = work;
+}
+
+/// Records, per slot, the port and element entries a run points at it.
+void
+PlaceCells(CompileState &s)
+{
+    RigExecProgram &program = s.program;
+    std::vector<std::vector<RigExecProgramCell>> cells(program.slots.size());
+    for (uint32_t port = 0; port < program.portSlots.size(); ++port) {
+        const uint32_t slot = program.portSlots[port];
+        if (slot != kRigExecInvalidIndex)
+            cells[slot].push_back({RigExecProgramCell::Input, port});
+    }
+    for (const RigExecProgramNode &node : program.nodes) {
+        const RigExecOpDesc &d = *s.registry.OpAt(node.op).desc;
+        for (uint32_t p = 0; p < node.portCount; ++p) {
+            const uint32_t port = node.firstPort + p;
+            const uint32_t slot = program.portSlots[port];
+            if (slot != kRigExecInvalidIndex &&
+                (d.ports[p].flags & kRigExecPortOutput))
+                for (RigExecProgramCell &cell : cells[slot])
+                    if (cell.index == port)
+                        cell.kind = RigExecProgramCell::Output;
+        }
+    }
+    for (uint32_t i = 0; i < program.listSlots.size(); ++i)
+        cells[program.listSlots[i]].push_back(
+            {RigExecProgramCell::ListItem, i});
+    program.cellStart.assign(1, 0);
+    for (const std::vector<RigExecProgramCell> &list : cells) {
+        program.cells.insert(program.cells.end(), list.begin(), list.end());
+        program.cellStart.push_back(uint32_t(program.cells.size()));
+    }
+}
+
+/// The integer one-value field \p field of \p values holds; a negative
+/// signed value counts as zero.
+uint64_t IntegerField(const RigExecRegistry &registry, const RigExecOpDesc &d,
+                      const RigExecFieldValues &values, uint32_t field);
+
+/// Settles each bounded output's bound: Fixed, Field and Host bounds to a
+/// count, Input and InputValue bounds to the slots they follow. Fails on
+/// a Host bound the description does not give.
+bool
+SettleBounds(CompileState &s)
+{
+    RigExecProgram &program = s.program;
+    program.bounds.assign(program.slots.size(), RigExecProgramBound());
+    // The slots fed to input \p handle of node \p n: one, or an array
+    // input's elements.
+    const auto addSources = [&](uint32_t n, const RigExecPortHandle *handle,
+                                bool integer) {
+        if (!handle)
+            return;
+        const uint32_t port = program.nodes[n].firstPort + handle->Index();
+        if (program.portSlots[port] != kRigExecInvalidIndex) {
+            program.boundSources.push_back({program.portSlots[port], integer});
+            return;
+        }
+        for (const RigExecProgramList &list : program.lists)
+            if (list.port == port)
+                for (uint32_t i = 0; i < list.count; ++i)
+                    program.boundSources.push_back(
+                        {program.listSlots[list.firstSlot + i], false});
+    };
+    for (const RigExecCompiledOp &op : program.graph.ops) {
+        const uint32_t n = op.originalIndex;
+        const RigExecProgramNode &node = program.nodes[n];
+        const RigExecRegisteredOp &registered = s.registry.OpAt(node.op);
+        const RigExecOpDesc &d = *registered.desc;
+        for (const uint32_t p : registered.boundedOutputs) {
+            const RigExecPortDesc &port = d.ports[p];
+            const uint32_t slot = program.portSlots[node.firstPort + p];
+            RigExecProgramBound &bound = program.bounds[slot];
+            bound.kind = RigExecOutputBound::Fixed;
+            bound.count = port.boundCount;
+            switch (port.bound) {
+            case RigExecOutputBound::Input:
+            case RigExecOutputBound::InputValue:
+                bound.firstSource = uint32_t(program.boundSources.size());
+                addSources(n, port.boundPort,
+                           port.bound == RigExecOutputBound::InputValue);
+                addSources(n, port.boundAltPort, false);
+                bound.sourceCount =
+                    uint32_t(program.boundSources.size()) - bound.firstSource;
+                if (!bound.sourceCount) {
+                    bound.count = 0;
+                    break;
+                }
+                bound.kind = port.bound;
+                program.derivedBounds.push_back(slot);
+                break;
+            case RigExecOutputBound::Field:
+                bound.count *= size_t(IntegerField(
+                    s.registry, d, s.data.nodes[n].fields, port.boundField));
+                break;
+            case RigExecOutputBound::Host: {
+                bool given = false;
+                for (const auto &[at, count] : s.data.outputBounds) {
+                    if (at.node == n && at.port == p) {
+                        bound.count = count;
+                        given = true;
+                    }
+                }
+                if (!given)
+                    return Fail(s.error, NodeText(s.registry, s.data, n) +
+                                             " output " +
+                                             (port.name ? port.name : "") +
+                                             " needs a bound from the "
+                                             "description");
+                break;
+            }
+            case RigExecOutputBound::Fixed:
+            case RigExecOutputBound::None:
+                break;
+            }
+        }
+    }
+    return true;
 }
 
 /// Places \p count values of \p size and \p align from \p end, one every
@@ -450,6 +591,21 @@ UnsignedField(const RigExecFieldValues &values, size_t field)
     for (size_t i = 0; i < values.ByteSize(field); ++i)
         value |= uint64_t(data[i]) << (8 * i);
     return value;
+}
+
+uint64_t
+IntegerField(const RigExecRegistry &registry, const RigExecOpDesc &d,
+             const RigExecFieldValues &values, uint32_t field)
+{
+    const RigExecTypeDesc &t =
+        *registry.TypeAt(d.payloadFields[field].type->Index()).desc;
+    if (t.columnKind == RigExecColumnKind::Int32) {
+        int32_t value = 0;
+        if (values.ByteSize(field) == sizeof(value))
+            std::memcpy(&value, values.Data(field), sizeof(value));
+        return value < 0 ? 0 : uint64_t(value);
+    }
+    return UnsignedField(values, field);
 }
 
 /// Lays out one batch's declared payload or state fields from \p end.
@@ -573,6 +729,10 @@ LayoutPayloadsAndState(CompileState &s)
         }
     }
     program.stateSize = stateSize;
+    program.stateBase = (program.workSize + RigExecAlignedBuffer::kAlign - 1) /
+                        RigExecAlignedBuffer::kAlign *
+                        RigExecAlignedBuffer::kAlign;
+    program.workSize = program.stateBase + stateSize;
     if (!payloadSize)
         return;
     program.payloads.Allocate(payloadSize);
@@ -617,8 +777,11 @@ RigExecCompile(const RigExecRigDesc &desc, const RigExecCompileOptions &options,
     SettleWindows(s);
     BuildBatches(s, options.maxBatchNodes);
     PlacePortsInBatchOrder(s);
-    LayoutArena(s);
+    LayoutStore(s);
     LayoutPayloadsAndState(s);
+    PlaceCells(s);
+    if (!SettleBounds(s))
+        return nullptr;
     return program;
 }
 

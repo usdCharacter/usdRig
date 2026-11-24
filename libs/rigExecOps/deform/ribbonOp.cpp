@@ -66,7 +66,7 @@ GuidePointsOne(const RigExecOpIo &io, std::string *error)
     if (frames.frames.Size() != in.Size())
         return Fail(error, "GuidePoints", "needs one frame per point");
     Points &out = Out<Points>(io, GuidePointsOut());
-    out = Points(in.Size());
+    out.Assign(in.Size());
     for (size_t i = 0; i < in.Size(); ++i) {
         const Vec3d &o = frames.frames[i].points[0];
         out[i] = Vec3f(float(o[0]), float(o[1]), float(o[2]));
@@ -126,7 +126,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "frames"},
     {&RibbonEnvelope(), &rigExecStd::FloatArray(),
      kRigExecPortInput | kRigExecPortOptional, "envelope"},
-    {&RibbonOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+    {&RibbonOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     rigExec::RigExecOutputBound::Input, &RibbonPoints()},
 };
 
 const rigExec::RigExecPortDesc kGuidePorts[] = {
@@ -136,7 +137,8 @@ const rigExec::RigExecPortDesc kGuidePorts[] = {
      kRigExecPortInput, "frames"},
     {&GuidePointsEnvelope(), &rigExecStd::FloatArray(),
      kRigExecPortInput | kRigExecPortOptional, "envelope"},
-    {&GuidePointsOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+    {&GuidePointsOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     rigExec::RigExecOutputBound::Input, &GuidePointsPoints()},
 };
 
 const rigExec::RigExecOpDesc kRibbonDesc =

@@ -454,7 +454,8 @@ constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
         {&Op##FalloffSamples(), &rigExecStd::FloatArray(), kOptional,          \
          "falloffSamples"},                                                    \
     {                                                                          \
-        &Op##Out(), &rigExecStd::FloatArray(), kRigExecPortOutput, "out"       \
+        &Op##Out(), &rigExecStd::FloatArray(), kRigExecPortOutput, "out",      \
+            rigExec::RigExecOutputBound::Input, &Op##Points()                  \
     }
 
 const RigExecPortDesc kSpherePorts[] = {
@@ -545,7 +546,8 @@ const RigExecPortDesc kCombinePorts[] = {
      "strength"},
     {&CombineWeightsInvert(), &rigExecStd::FloatType(), kOptional, "invert"},
     {&CombineWeightsOut(), &rigExecRig::PointWeightsType(), kRigExecPortOutput,
-     "out"},
+     "out", rigExec::RigExecOutputBound::InputValue,
+     &CombineWeightsTargetCount(), &CombineWeightsInputs()},
 };
 
 const rigExec::RigExecOpDesc kCombine = [] {

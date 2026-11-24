@@ -96,7 +96,7 @@ WritePoints(const rigExec::RigExecOpIo &io,
             const Envelope *envelope, const char *op, std::string *error)
 {
     Points &out = Out<Points>(io, port);
-    out = Points(points.data(), points.size());
+    out.Assign(points.data(), points.size());
     return BlendEnvelope(in, envelope, &out, op, error);
 }
 

@@ -133,8 +133,8 @@ SplineIkOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     rigExec::RigExecSolveSplineIkKernel<Vec3f, Vec3d, PointFrame>(
         rest, controls, params, &result);
     PointFrameArray &out = Out<PointFrameArray>(io, SplineIkOut());
-    out.frames = RigExecArray<PointFrame>(n);
-    out.rests = RigExecArray<PointLandmarks>(n);
+    out.frames.Assign(n);
+    out.rests.Assign(n);
     for (size_t i = 0; i < n; ++i) {
         out.frames[i] = result.joints[i].frame;
         out.rests[i] = (*restJoints)[i].points;
@@ -179,7 +179,7 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&SplineIkRoll(), &rigExecStd::DoubleType(), kOptional, "roll"},
     {&SplineIkTwist(), &rigExecStd::DoubleType(), kOptional, "twist"},
     {&SplineIkOut(), &rigExecRig::PointFrameArrayType(), kRigExecPortOutput,
-     "out"},
+     "out", rigExec::RigExecOutputBound::Input, &SplineIkRestJoints()},
 };
 
 void

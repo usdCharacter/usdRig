@@ -63,16 +63,48 @@ public:
     /// value-initialized.
     void Resize(size_t size)
     {
-        if (size > _capacity) {
-            RigExecArray grown;
-            grown._Allocate(size);
-            if (_size)
-                std::memcpy(grown._data, _data, _size * sizeof(T));
-            _Take(grown);
-        }
+        Reserve(size);
         if (size > _size)
             std::fill(_data + _size, _data + size, T());
         _size = size;
+    }
+
+    /// Makes room for \p capacity elements, keeping the ones it holds, so
+    /// growing to that size later allocates nothing.
+    void Reserve(size_t capacity)
+    {
+        if (capacity <= _capacity)
+            return;
+        RigExecArray grown;
+        grown._Allocate(capacity);
+        if (_size)
+            std::memcpy(grown._data, _data, _size * sizeof(T));
+        grown._size = _size;
+        _Take(grown);
+    }
+
+    /// Holds \p size value-initialized elements, in the storage it has
+    /// when that is large enough.
+    void Assign(size_t size)
+    {
+        Reserve(size);
+        std::fill(_data, _data + size, T());
+        _size = size;
+    }
+
+    /// Holds a copy of \p size elements from \p data, in the storage it
+    /// has when that is large enough.
+    void Assign(const T *data, size_t size)
+    {
+        Reserve(size);
+        if (size)
+            std::memcpy(_data, data, size * sizeof(T));
+        _size = size;
+    }
+
+    size_t Capacity() const
+    {
+        return _capacity;
     }
 
     size_t Size() const

@@ -220,7 +220,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&LatticeCageToLattice(), &rigExecStd::Mat4dType(), kOptional,
      "cageToLattice"},
     {&LatticeEnvelope(), &rigExecStd::FloatArray(), kOptional, "envelope"},
-    {&LatticeOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+    {&LatticeOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     rigExec::RigExecOutputBound::Input, &LatticePoints()},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {

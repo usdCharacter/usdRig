@@ -538,10 +538,16 @@ const rigExec::RigExecPortDesc kIkFkPorts[] = {
     {&IkFkMatchSourcePosed(), &rigExecStd::Mat4dArray(), kIn,
      "poleSourcePosed"},
     {&IkFkMatchActive(), &rigExecStd::DoubleType(), kIn, "poleActive"},
-    {&IkFkMatchIkValues(), &rigExecStd::DoubleArray(), kOut, "ikValues"},
-    {&IkFkMatchFkValues(), &rigExecStd::DoubleArray(), kOut, "fkValues"},
+    {&IkFkMatchIkValues(), &rigExecStd::DoubleArray(), kOut, "ikValues",
+     rigExec::RigExecOutputBound::Fixed, nullptr, nullptr,
+     rigExec::kRigExecInvalidIndex, 11},
+    {&IkFkMatchFkValues(), &rigExecStd::DoubleArray(), kOut, "fkValues",
+     rigExec::RigExecOutputBound::Fixed, nullptr, nullptr,
+     rigExec::kRigExecInvalidIndex, 20},
     {&IkFkMatchValid(), &rigExecStd::BoolType(), kOut, "valid"},
-    {&IkFkMatchShown(), &rigExecStd::Mat4dArray(), kOut, "shown"},
+    {&IkFkMatchShown(), &rigExecStd::Mat4dArray(), kOut, "shown",
+     rigExec::RigExecOutputBound::Fixed, nullptr, nullptr,
+     rigExec::kRigExecInvalidIndex, 5},
     {&IkFkMatchShownMask(), &rigExecStd::UIntType(), kOut, "shownMask"},
 };
 
@@ -639,7 +645,9 @@ const rigExec::RigExecPortDesc kSpacePorts[] = {
     {&SpaceMatchSourceDefaults(), &rigExecStd::Mat4dArray(), kIn,
      "sourceDefaults"},
     {&SpaceMatchSourcePosed(), &rigExecStd::Mat4dArray(), kIn, "sourcePosed"},
-    {&SpaceMatchValues(), &rigExecStd::DoubleArray(), kOut, "values"},
+    {&SpaceMatchValues(), &rigExecStd::DoubleArray(), kOut, "values",
+     rigExec::RigExecOutputBound::Input, &SpaceMatchSourceDefaults(), nullptr,
+     rigExec::kRigExecInvalidIndex, rigExec::RigExecSpaceMatchStride},
     {&SpaceMatchValid(), &rigExecStd::BoolType(), kOut, "valid"},
 };
 

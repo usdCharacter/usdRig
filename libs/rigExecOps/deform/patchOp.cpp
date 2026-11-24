@@ -183,7 +183,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "uvContactUpper"},
     {&PatchEnvelope(), &rigExecStd::FloatArray(),
      kRigExecPortInput | kRigExecPortOptional, "envelope"},
-    {&PatchOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+    {&PatchOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     rigExec::RigExecOutputBound::Input, &PatchPoints()},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {

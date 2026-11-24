@@ -8,6 +8,7 @@
 #include "rigExec/api/opFields.h"
 #include "rigExec/api/registry.h"
 #include "rigExec/api/rigDesc.h"
+#include "rigExec/api/view.h"
 #include "rigExec/internal/program/program.h"
 #include "rigExecGraph/windowHistory.h"
 
@@ -178,6 +179,27 @@ RunRingSum(const void *, void *, const RigExecOpIo &io, std::string *error)
     return true;
 }
 
+// out = in + payload.add; records each payload it is handed.
+RIGEXEC_DEFINE_OP_HANDLE(Probe)
+RIGEXEC_DEFINE_PORT_HANDLE(ProbeIn)
+RIGEXEC_DEFINE_PORT_HANDLE(ProbeOut)
+
+struct ProbePayload {
+    float add = 0.0f;
+};
+
+std::vector<const void *> probePayloads;
+
+bool
+RunProbe(const void *payload, void *, const RigExecOpIo &io, std::string *)
+{
+    probePayloads.push_back(payload);
+    const float add = static_cast<const ProbePayload *>(payload)->add;
+    const Vec3 &in = *static_cast<const Vec3 *>(io.inputs[0]);
+    *static_cast<Vec3 *>(io.outputs[1]) = Vec3{in.x + add, in.y, in.z};
+    return true;
+}
+
 // A batch function that calls Run on each active instance.
 template <bool (*Run)(const void *, void *, const RigExecOpIo &, std::string *)>
 bool
@@ -305,6 +327,22 @@ RegisterCheck(RigExecOpRegistrar &registrar)
         return d;
     }();
     registrar.Add(Tally(), tally);
+
+    static const RigExecPortDesc probePorts[] = {
+        {&ProbeIn(), &fakeTypes::Vec3Type(), kRigExecPortInput, "in"},
+        {&ProbeOut(), &fakeTypes::Vec3Type(), kRigExecPortOutput, "out"},
+    };
+    static const RigExecOpDesc probe = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "Probe";
+        d.ports = probePorts;
+        d.portCount = 2;
+        d.run = &RunProbe;
+        d.payload = RigExecPayloadHandlingFor<ProbePayload>();
+        return d;
+    }();
+    registrar.Add(Probe(), probe);
 }
 
 const RigExecOpLibraryDesc kCheckLibrary = [] {
@@ -337,6 +375,236 @@ RecordTap(void *context, size_t, const RigExecTapValue &value)
     auto *log = static_cast<TapLog *>(context);
     log->values.push_back(*static_cast<const Vec3 *>(value.data));
     log->types.push_back(value.type);
+}
+
+// Every value has one place: host inputs in the input arena, bound outputs
+// in published arenas of their own, the rest in the work arena; settings
+// live in the program's constant arena, which two evaluators share.
+void
+TestStoreLayout()
+{
+    RigExecRigDescBuilder builder;
+    const ProbePayload one{1.0f};
+    const ProbePayload two{2.0f};
+    const RigExecNodeId first = builder.AddOp(Probe(), &one);
+    const RigExecNodeId check = builder.AddOp(Check());
+    const RigExecNodeId last = builder.AddOp(Probe(), &two);
+    builder.Connect(first, ProbeOut(), check, CheckIn());
+    builder.Connect(check, CheckOut(), last, ProbeIn());
+    const RigExecInputId in = builder.BindInput(first, ProbeIn());
+    const RigExecOutputId middle = builder.BindOutput(check, CheckOut());
+    const RigExecOutputId out = builder.BindOutput(last, ProbeOut());
+    builder.BindOutput(last, ProbeOut());
+    std::shared_ptr<const RigExecProgram> program = Compile(builder);
+    CHECK(program);
+    if (!program)
+        return;
+    const RigExecProgram &p = *program;
+    CHECK(p.publishedSlots.size() == 2);
+    std::vector<std::pair<size_t, size_t>> work;
+    std::vector<std::pair<size_t, size_t>> input;
+    for (uint32_t slot = 0; slot < p.slots.size(); ++slot) {
+        const RigExecProgramSlot &place = p.slots[slot];
+        const bool bound =
+            std::count(p.outputSlots.begin(), p.outputSlots.end(), slot) != 0;
+        const bool host =
+            std::count(p.inputSlots.begin(), p.inputSlots.end(), slot) != 0;
+        CHECK(!(bound && host));
+        CHECK((place.arena == RigExecArenaKind::Published) == bound);
+        CHECK((place.arena == RigExecArenaKind::Input) == host);
+        if (bound)
+            CHECK(p.publishedSlots[place.arenaIndex] == slot);
+        if (place.arena == RigExecArenaKind::Work)
+            work.emplace_back(place.offset, place.offset + sizeof(Vec3));
+        if (host)
+            input.emplace_back(place.offset, place.offset + sizeof(Vec3));
+    }
+    CHECK(work.size() == 1 && input.size() == 1);
+    for (const auto &[begin, end] : work)
+        CHECK(end <= p.stateBase && p.stateBase <= p.workSize);
+    for (const auto &[begin, end] : input)
+        CHECK(end <= p.inputArenaSize);
+
+    RigExecValueRef ref;
+    CHECK(RigExecResolveInput(p, in, &ref) &&
+          ref.arena == RigExecArena::Input && ref.index == 0 &&
+          ref.count == 1 && ref.type == &fakeTypes::Vec3Type());
+    CHECK(RigExecResolveOutput(p, out, &ref) &&
+          ref.arena == RigExecArena::Published);
+    CHECK(RigExecResolveNodeOutput(p, first, ProbeOut(), &ref) &&
+          ref.arena == RigExecArena::Work);
+    CHECK(!RigExecResolveNodeOutput(p, first, CheckOut(), &ref));
+    CHECK(!RigExecResolveOutput(p, RigExecOutputId{9}, &ref));
+
+    auto a = RigExecEvaluator::Create(program);
+    auto b = RigExecEvaluator::Create(program);
+    const Vec3 x{1.0f, 2.0f, 3.0f};
+    CHECK(a->SetInput(in, &x) && b->SetInput(in, &x));
+    probePayloads.clear();
+    CHECK(a->Evaluate() && b->Evaluate());
+    CHECK(probePayloads.size() == 4);
+    if (probePayloads.size() == 4) {
+        CHECK(probePayloads[0] == probePayloads[2]);
+        CHECK(probePayloads[1] == probePayloads[3]);
+        for (const void *payload : probePayloads)
+            CHECK(payload >= p.payloads.Data() &&
+                  payload < p.payloads.Data() + p.payloads.Size());
+    }
+    CHECK(a->GetOutput(out) != b->GetOutput(out));
+    CHECK(a->GetOutput(middle) != b->GetOutput(middle));
+    CHECK(Same(*static_cast<const Vec3 *>(a->GetOutput(out)),
+               Vec3{4.0f, 2.0f, 3.0f}));
+    CHECK(&a->GetProgram() == &p);
+}
+
+// Edits reach the next evaluation whole, never part of one, and only once
+// committed; one edit is open at a time.
+void
+TestInputWriter()
+{
+    RigExecRigDescBuilder builder;
+    const RigExecNodeId sum = builder.AddOp(Weighted());
+    const RigExecInputId a = builder.BindInput(sum, WeightedItems());
+    const RigExecInputId b = builder.BindInput(sum, WeightedItems());
+    const RigExecOutputId out = builder.BindOutput(sum, WeightedOut());
+    std::shared_ptr<const RigExecProgram> program = Compile(builder);
+    CHECK(program);
+    if (!program)
+        return;
+    auto evaluator = RigExecEvaluator::Create(program);
+    const auto value = [&] {
+        return *static_cast<const Vec3 *>(evaluator->GetOutput(out));
+    };
+    {
+        RigExecInputWriter writer = evaluator->BeginInputEdit();
+        CHECK(writer.IsOpen());
+        CHECK(!evaluator->BeginInputEdit().IsOpen());
+        const Vec3 one{1.0f, 1.0f, 1.0f};
+        CHECK(writer.Set(a, &one) && writer.Set(b, &one));
+        CHECK(!writer.Set(RigExecInputId{7}, &one));
+        std::string error;
+        CHECK(!evaluator->SetInput(a, &one, &error));
+        CHECK(Contains(error, "another edit is open"));
+        CHECK(evaluator->Evaluate());
+        CHECK(Same(value(), Vec3{0.0f, 0.0f, 0.0f}));
+        writer.Commit();
+        CHECK(!writer.IsOpen());
+        CHECK(evaluator->Evaluate());
+        CHECK(Same(value(), Vec3{3.0f, 3.0f, 3.0f}));
+    }
+    {
+        RigExecInputWriter discarded = evaluator->BeginInputEdit();
+        const Vec3 big{100.0f, 100.0f, 100.0f};
+        CHECK(discarded.Set(a, &big));
+    }
+    CHECK(evaluator->Evaluate());
+    CHECK(Same(value(), Vec3{3.0f, 3.0f, 3.0f}));
+    {
+        RigExecInputWriter writer = evaluator->BeginInputEdit();
+        Vec3 *edit = writer.Edit<Vec3>(b, fakeTypes::Vec3Type());
+        CHECK(edit && Same(*edit, Vec3{1.0f, 1.0f, 1.0f}));
+        CHECK(!writer.Edit<float>(b, fakeTypes::Float()));
+        if (edit)
+            edit->x = 2.0f;
+        writer.Commit();
+    }
+    CHECK(evaluator->Evaluate());
+    CHECK(Same(value(), Vec3{5.0f, 3.0f, 3.0f}));
+
+    // One thread commits a = (i, i, 0), b = (0, 0, i) as one edit while
+    // this one evaluates: every result is (i, i, 2i) for one i.
+    {
+        RigExecInputWriter writer = evaluator->BeginInputEdit();
+        const Vec3 zero{0.0f, 0.0f, 0.0f};
+        writer.Set(a, &zero);
+        writer.Set(b, &zero);
+        writer.Commit();
+    }
+    constexpr int kEdits = 4000;
+    std::atomic<bool> done{false};
+    std::thread writerThread([&] {
+        for (int i = 1; i <= kEdits; ++i) {
+            RigExecInputWriter writer = evaluator->BeginInputEdit();
+            const Vec3 va{float(i), float(i), 0.0f};
+            const Vec3 vb{0.0f, 0.0f, float(i)};
+            writer.Set(a, &va);
+            writer.Set(b, &vb);
+            writer.Commit();
+        }
+        done.store(true);
+    });
+    float last = 0.0f;
+    int torn = 0;
+    int backwards = 0;
+    for (bool finished = false; !finished;) {
+        finished = done.load();
+        CHECK(evaluator->Evaluate());
+        const Vec3 v = value();
+        if (v.x != v.y || v.z != 2.0f * v.x)
+            ++torn;
+        if (v.x < last)
+            ++backwards;
+        last = v.x;
+    }
+    writerThread.join();
+    CHECK(torn == 0);
+    CHECK(backwards == 0);
+    CHECK(last == float(kEdits));
+}
+
+// A view keeps the value it lends unchanged while newer frames publish;
+// an output nobody holds is written in place.
+void
+TestPins()
+{
+    RigExecRigDescBuilder builder;
+    const ProbePayload ten{10.0f};
+    const RigExecNodeId check = builder.AddOp(Check());
+    const RigExecNodeId probe = builder.AddOp(Probe(), &ten);
+    builder.Connect(check, CheckOut(), probe, ProbeIn());
+    const RigExecInputId in = builder.BindInput(check, CheckIn());
+    const RigExecOutputId out = builder.BindOutput(check, CheckOut());
+    const RigExecOutputId after = builder.BindOutput(probe, ProbeOut());
+    std::shared_ptr<const RigExecProgram> program = Compile(builder);
+    CHECK(program);
+    if (!program)
+        return;
+    auto evaluator = RigExecEvaluator::Create(program);
+    const auto frame = [&](float x) {
+        const Vec3 v{x, 0.0f, 0.0f};
+        CHECK(evaluator->SetInput(in, &v));
+        CHECK(evaluator->Evaluate());
+        CHECK(static_cast<const Vec3 *>(evaluator->GetOutput(after))->x ==
+              x + 10.0f);
+        return evaluator->GetOutput(out);
+    };
+    const auto x = [](const RigExecValueView &view) {
+        const Vec3 *v = view.As<Vec3>(fakeTypes::Vec3Type());
+        return v ? v->x : -1.0f;
+    };
+    const void *first = frame(1.0f);
+    CHECK(frame(2.0f) == first);
+    RigExecValueView two = evaluator->ViewOutput(out);
+    CHECK(two && two.Data() == first && x(two) == 2.0f &&
+          two.Generation() == 2);
+    CHECK(!two.As<float>(fakeTypes::Float()));
+    CHECK(!evaluator->ViewOutput(RigExecOutputId{5}));
+    const void *third = frame(3.0f);
+    CHECK(third != first && x(two) == 2.0f);
+    RigExecValueView three = evaluator->ViewOutput(out);
+    RigExecValueView copy = two;
+    CHECK(x(copy) == 2.0f && three.Generation() == 3);
+    const void *fourth = frame(4.0f);
+    CHECK(fourth != first && fourth != third);
+    CHECK(x(two) == 2.0f && x(copy) == 2.0f && x(three) == 3.0f);
+    two.Reset();
+    CHECK(!two && x(copy) == 2.0f);
+    copy.Reset();
+    CHECK(frame(5.0f) == fourth);
+    three = evaluator->ViewOutput(out);
+    CHECK(frame(6.0f) == first);
+    evaluator.reset();
+    CHECK(x(three) == 5.0f && three.Generation() == 5);
 }
 
 // in -> Scale(2) -> Offset -> out, with a tap on the Scale output.
@@ -1913,6 +2181,9 @@ main()
     TestDeclaredFieldErrors();
     TestDeclaredFieldMask();
     TestTaps();
+    TestStoreLayout();
+    TestInputWriter();
+    TestPins();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

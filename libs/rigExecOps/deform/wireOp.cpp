@@ -152,7 +152,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&WireEnvelope(), &rigExecStd::FloatArray(), kOptional, "envelope"},
     {&WireWeightIndices(), &rigExecStd::IntArray(), kOptional, "weightIndices"},
     {&WireWeights(), &rigExecStd::FloatArray(), kOptional, "weights"},
-    {&WireOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+    {&WireOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     rigExec::RigExecOutputBound::Input, &WirePoints()},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {

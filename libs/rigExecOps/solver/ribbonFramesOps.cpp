@@ -56,8 +56,8 @@ SampleRibbonFramesOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     RebaseLive(io, SampleRibbonFramesJointRests(),
                SampleRibbonFramesJointRestLive(), &frames, &rests);
     PointFrameArray &out = Out<PointFrameArray>(io, SampleRibbonFramesOut());
-    out.frames = RigExecArray<PointFrame>(frames.data(), frames.size());
-    out.rests = RigExecArray<PointLandmarks>(rests.data(), rests.size());
+    out.frames.Assign(frames.data(), frames.size());
+    out.rests.Assign(rests.data(), rests.size());
     return true;
 }
 
@@ -89,7 +89,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&SampleRibbonFramesJointRestLive(), &rigExecStd::BoolArray(), kOptional,
      "jointRestLive"},
     {&SampleRibbonFramesOut(), &rigExecRig::PointFrameArrayType(),
-     kRigExecPortOutput, "out"},
+     kRigExecPortOutput, "out", rigExec::RigExecOutputBound::Field, nullptr,
+     nullptr, kSampleCount},
 };
 
 void

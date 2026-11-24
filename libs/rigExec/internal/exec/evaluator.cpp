@@ -1,29 +1,17 @@
 #include "rigExec/api/evaluator.h"
-#include "rigExec/api/opFields.h"
+#include "rigExec/internal/exec/inputChannel.h"
+#include "rigExec/internal/exec/run.h"
+#include "rigExec/internal/exec/view.h"
 #include "rigExec/internal/program/program.h"
 
-#include <algorithm>
 #include <cassert>
 #include <cstddef>
-#include <cstring>
 #include <utility>
 #include <vector>
 
 namespace rigExec {
 
 namespace {
-
-const RigExecTypeDesc &
-TypeOf(uint32_t type)
-{
-    return *RigExecRegistry::Get().TypeAt(type).desc;
-}
-
-const RigExecOpDesc &
-OpOf(uint32_t op)
-{
-    return *RigExecRegistry::Get().OpAt(op).desc;
-}
 
 struct ResolvedTap {
     uint32_t slot = kRigExecInvalidIndex;
@@ -40,392 +28,52 @@ ResolveTaps(const RigExecProgram &program, const RigExecTapList &taps,
     out.reserve(taps.taps.size());
     for (size_t i = 0; i < taps.taps.size(); ++i) {
         const RigExecTap &tap = taps.taps[i];
-        uint32_t slot = kRigExecInvalidIndex;
-        if (tap.node < program.nodes.size() && tap.output &&
-            tap.output->IsValid()) {
-            const RigExecProgramNode &node = program.nodes[tap.node];
-            const RigExecOpDesc &d = OpOf(node.op);
-            const uint32_t p = tap.output->Index();
-            if (p < d.portCount && d.ports[p].port == tap.output &&
-                (d.ports[p].flags & kRigExecPortOutput))
-                slot = program.portSlots[node.firstPort + p];
-        }
-        if (slot == kRigExecInvalidIndex) {
+        RigExecValueRef ref;
+        if (!tap.output ||
+            !RigExecResolveNodeOutput(program, tap.node, *tap.output, &ref)) {
             if (error)
                 *error = "tap " + std::to_string(i) +
                          " names a node or output the program lacks";
             return false;
         }
-        out.push_back(
-            {slot,
-             RigExecRegistry::Get().TypeAt(program.slots[slot].type).handle});
+        const RigExecProgramNode &node = program.nodes[tap.node];
+        out.push_back({program.portSlots[node.firstPort + tap.output->Index()],
+                       ref.type});
     }
     *resolved = std::move(out);
     return true;
 }
 
-/// One run's values, op state and run pointers: the evaluator's own, or a
-/// history tick's, which leaves the evaluator's outputs alone.
-struct RigExecRunState {
-    const RigExecProgram *program = nullptr;
-    RigExecAlignedBuffer arena;
-    RigExecAlignedBuffer opState;
-    /// Per program port: the value an op reads or writes there.
-    std::vector<const void *> inputs;
-    std::vector<void *> outputs;
-    /// Array inputs: element values, and the records inputs point to.
-    std::vector<const void *> listItems;
-    std::vector<RigExecPortList> lists;
-    /// Per window: this run's capture, and the record its node is handed.
-    std::vector<RigExecWindowPacketPtr> captures;
-    std::vector<RigExecWindowRun> windows;
-    /// Per batchNodes entry: its window record, or null.
-    std::vector<const RigExecWindowRun *> batchWindows;
-    /// Declared fields as batch functions see them, and the storage of the
-    /// state fields sized from an input, per state run.
-    std::vector<RigExecPayloadColumn> payloadColumns;
-    std::vector<RigExecFieldRunOf<const std::byte>> payloadRuns;
-    std::vector<RigExecStateColumn> stateColumns;
-    std::vector<RigExecFieldRunOf<std::byte>> stateRuns;
-    std::vector<RigExecAlignedBuffer> stateBuffers;
-
-    RigExecRunState() = default;
-    RigExecRunState(const RigExecRunState &) = delete;
-    RigExecRunState &operator=(const RigExecRunState &) = delete;
-
-    ~RigExecRunState()
-    {
-        if (!program)
-            return;
-        for (const RigExecProgramSlot &slot : program->slots) {
-            const RigExecTypeDesc &t = TypeOf(slot.type);
-            if (t.destroy)
-                t.destroy(arena.Data() + slot.offset);
-        }
-        for (const RigExecProgramNode &node : program->nodes) {
-            const RigExecOpDesc &d = OpOf(node.op);
-            if (node.stateOffset != SIZE_MAX && d.state.destroy)
-                d.state.destroy(opState.Data() + node.stateOffset);
-        }
-    }
-
-    /// \p rings outlives this state and keeps its size.
-    void Bind(const RigExecProgram &p,
-              const std::vector<RigExecWindowRing> &rings)
-    {
-        arena.Allocate(p.arenaSize);
-        for (const RigExecProgramSlot &slot : p.slots) {
-            const RigExecTypeDesc &t = TypeOf(slot.type);
-            if (t.construct)
-                t.construct(arena.Data() + slot.offset);
-        }
-        opState.Allocate(p.stateSize);
-        for (const RigExecProgramNode &node : p.nodes) {
-            const RigExecOpDesc &d = OpOf(node.op);
-            if (node.stateOffset != SIZE_MAX && d.state.create)
-                d.state.create(opState.Data() + node.stateOffset);
-        }
-        program = &p;
-        inputs.assign(p.portSlots.size(), nullptr);
-        outputs.assign(p.portSlots.size(), nullptr);
-        for (const RigExecProgramNode &node : p.nodes) {
-            const RigExecOpDesc &d = OpOf(node.op);
-            for (uint32_t port = 0; port < node.portCount; ++port) {
-                const uint32_t slot = p.portSlots[node.firstPort + port];
-                if (slot == kRigExecInvalidIndex)
-                    continue;
-                std::byte *value = arena.Data() + p.slots[slot].offset;
-                if (d.ports[port].flags & kRigExecPortOutput)
-                    outputs[node.firstPort + port] = value;
-                else
-                    inputs[node.firstPort + port] = value;
-            }
-        }
-        listItems.resize(p.listSlots.size());
-        for (size_t i = 0; i < p.listSlots.size(); ++i)
-            listItems[i] = arena.Data() + p.slots[p.listSlots[i]].offset;
-        lists.resize(p.lists.size());
-        for (size_t i = 0; i < p.lists.size(); ++i) {
-            const RigExecProgramList &list = p.lists[i];
-            lists[i] = {listItems.data() + list.firstSlot, list.count};
-            inputs[list.port] = &lists[i];
-        }
-        captures.assign(p.windowedNodes.size(), nullptr);
-        windows.assign(p.windowedNodes.size(), RigExecWindowRun());
-        for (size_t w = 0; w < windows.size(); ++w) {
-            windows[w].ring = &rings[w];
-            windows[w].capture = &captures[w];
-        }
-        batchWindows.assign(p.batchNodes.size(), nullptr);
-        for (size_t i = 0; i < p.batchNodes.size(); ++i) {
-            const uint32_t w = p.windowOfNode[p.batchNodes[i]];
-            if (w != kRigExecInvalidIndex)
-                batchWindows[i] = &windows[w];
-        }
-        BindFields(p);
-    }
-
-    void BindFields(const RigExecProgram &p)
-    {
-        payloadRuns.resize(p.payloadRuns.size());
-        for (size_t i = 0; i < p.payloadRuns.size(); ++i)
-            payloadRuns[i] = {p.payloads.Data() + p.payloadRuns[i].offset,
-                              p.payloadRuns[i].count};
-        payloadColumns.resize(p.payloadColumns.size());
-        for (size_t i = 0; i < p.payloadColumns.size(); ++i) {
-            const RigExecProgramColumn &c = p.payloadColumns[i];
-            payloadColumns[i] = {
-                p.payloads.Data() + c.offset, c.stride, c.count,
-                c.firstRun == kRigExecInvalidIndex ? nullptr
-                                                   : &payloadRuns[c.firstRun]};
-        }
-        stateRuns.resize(p.stateRuns.size());
-        stateBuffers.resize(p.stateRuns.size());
-        for (size_t i = 0; i < p.stateRuns.size(); ++i) {
-            const RigExecProgramRun &r = p.stateRuns[i];
-            stateRuns[i] = {r.offset == SIZE_MAX ? nullptr
-                                                 : opState.Data() + r.offset,
-                            r.offset == SIZE_MAX ? 0 : r.count};
-        }
-        stateColumns.resize(p.stateColumns.size());
-        for (size_t i = 0; i < p.stateColumns.size(); ++i) {
-            const RigExecProgramColumn &c = p.stateColumns[i];
-            const bool runs = c.firstRun != kRigExecInvalidIndex;
-            stateColumns[i] = {opState.Data() + c.offset, c.stride, c.count,
-                               runs ? &stateRuns[c.firstRun] : nullptr};
-        }
-        for (const RigExecProgramBatch &batch : p.batches) {
-            if (batch.firstStateColumn == kRigExecInvalidIndex)
-                continue;
-            const size_t fields = OpOf(batch.op).stateFieldCount;
-            for (size_t i = batch.firstStateColumn;
-                 i < batch.firstStateColumn + fields; ++i) {
-                const RigExecTypeDesc &t = TypeOf(p.stateColumns[i].type);
-                if (!t.construct || p.stateColumns[i].fromInput)
-                    continue;
-                for (uint32_t k = 0; k < batch.nodeCount; ++k) {
-                    const RigExecFieldView<std::byte> values =
-                        RigExecFieldAt<std::byte>(stateColumns[i], k);
-                    for (size_t v = 0; v < values.count; ++v)
-                        t.construct(values.data + v * t.size);
-                }
-            }
-        }
-    }
-
-    /// Sizes the batch's state fields that take their count from an input
-    /// to that input, constructing their values, and checks the payload
-    /// fields that do. Returns the first active instance whose payload
-    /// field does not match, with the reason in \p error, or count.
-    size_t SizeFromInputs(const RigExecOpBatch &view,
-                          const RigExecProgramBatch &batch,
-                          const RigExecRegisteredOp &op, std::string *error)
-    {
-        const RigExecOpDesc &d = *op.desc;
-        if (!d.payloadFieldCount && !d.stateFieldCount)
-            return view.count;
-        for (size_t k = 0; k < view.count; ++k) {
-            if (!RigExecBatchActive(view, k))
-                continue;
-            for (int payload = 1; payload >= 0; --payload) {
-                const RigExecFieldDesc *fields =
-                    payload ? d.payloadFields : d.stateFields;
-                const size_t count =
-                    payload ? d.payloadFieldCount : d.stateFieldCount;
-                for (size_t f = 0; f < count; ++f) {
-                    const RigExecFieldDesc &field = fields[f];
-                    if (field.extent != RigExecFieldExtent::FromInput)
-                        continue;
-                    const uint32_t port = field.port->Index();
-                    const void *value = view.inputs[k * view.portCount + port];
-                    const size_t elements =
-                        value ? TypeOf(op.portTypes[port]).count(value) : 0;
-                    if (payload) {
-                        const RigExecPayloadColumn &column =
-                            view.payloadFields[f];
-                        if (column.runs[k].count == elements)
-                            continue;
-                        if (error)
-                            *error = std::string("field ") + field.name +
-                                     " holds " +
-                                     std::to_string(column.runs[k].count) +
-                                     " values for " + std::to_string(elements) +
-                                     " input elements";
-                        return k;
-                    }
-                    const RigExecProgramColumn &c =
-                        program->stateColumns[batch.firstStateColumn + f];
-                    RigExecFieldRunOf<std::byte> &run =
-                        stateRuns[c.firstRun + k];
-                    if (run.data && run.count == elements)
-                        continue;
-                    const RigExecTypeDesc &t = TypeOf(c.type);
-                    RigExecAlignedBuffer &buffer = stateBuffers[c.firstRun + k];
-                    buffer.Allocate(elements * t.size);
-                    if (t.construct)
-                        for (size_t v = 0; v < elements; ++v)
-                            t.construct(buffer.Data() + v * t.size);
-                    run = {buffer.Data(), elements};
-                }
-            }
-        }
-        return view.count;
-    }
-};
-
 /// Appends \p capture to \p ring and keeps its newest \p frames.
 void
 PushTick(RigExecWindowRing *ring, RigExecWindowPacketPtr capture, size_t frames)
 {
-    ring->push_back(std::move(capture));
-    if (ring->size() > frames)
+    if (!frames) {
+        ring->clear();
+        return;
+    }
+    if (ring->size() >= frames)
         ring->erase(ring->begin(),
-                    ring->begin() + std::ptrdiff_t(ring->size() - frames));
+                    ring->begin() + std::ptrdiff_t(ring->size() + 1 - frames));
+    ring->push_back(std::move(capture));
 }
 
 } // namespace
 
-/// Everything bound to one program: values, op state, window history and
-/// run pointers.
+/// Everything bound to one program: the input channel, the main run, the
+/// history run, window history and taps.
 struct RigExecEvaluatorState {
     std::shared_ptr<const RigExecProgram> program;
+    RigExecInputChannel channel;
     /// Per window, oldest first; sized once at bind.
     std::vector<RigExecWindowRing> rings;
-    RigExecRunState main;
+    RigExecRun main;
     /// Bound on the first EvaluateHistory.
-    std::unique_ptr<RigExecRunState> history;
-    /// The run in progress, and the nodes it runs by batchNodes entry (null
-    /// runs all).
-    RigExecRunState *current = nullptr;
-    const char *active = nullptr;
-    /// Per batch run: whether it failed and why.
-    std::vector<uint8_t> failed;
-    std::vector<std::string> errors;
-    /// The program's batches by level, as the task system takes them:
-    /// owner-thread batches run on the caller, the rest anywhere.
-    std::vector<uint32_t> sharedStart;
-    std::vector<uint32_t> shared;
-    std::vector<uint32_t> callerStart;
-    std::vector<uint32_t> caller;
+    std::unique_ptr<RigExecRun> history;
     RigExecTapList tapSet;
     std::vector<ResolvedTap> taps;
     RigExecTapCallback tapCallback = nullptr;
     void *tapContext = nullptr;
-
-    void RunBatch(uint32_t b)
-    {
-        RigExecRunState &run = *current;
-        const RigExecProgramBatch &batch = program->batches[b];
-        const RigExecRegisteredOp &op = RigExecRegistry::Get().OpAt(batch.op);
-        const RigExecOpDesc &d = *op.desc;
-        RigExecOpBatch view;
-        view.op = &d;
-        view.count = batch.nodeCount;
-        view.active = active ? active + batch.firstNode : nullptr;
-        if (batch.payloadOffset != SIZE_MAX) {
-            view.payloads = program->payloads.Data() + batch.payloadOffset;
-            view.payloadStride = batch.payloadStride;
-        }
-        if (batch.stateOffset != SIZE_MAX) {
-            view.states = run.opState.Data() + batch.stateOffset;
-            view.stateStride = batch.stateStride;
-        }
-        view.portCount = d.portCount;
-        view.inputs = run.inputs.data() + batch.firstPort;
-        view.outputs = run.outputs.data() + batch.firstPort;
-        if (d.threading == RigExecOpThreading::Windowed)
-            view.windows = run.batchWindows.data() + batch.firstNode;
-        if (d.payloadFieldCount)
-            view.payloadFields =
-                run.payloadColumns.data() + batch.firstPayloadColumn;
-        if (d.stateFieldCount)
-            view.stateFields = run.stateColumns.data() + batch.firstStateColumn;
-        size_t at = 0;
-        std::string error;
-        const size_t ready = run.SizeFromInputs(view, batch, op, &error);
-        if (ready == view.count) {
-            if (op.runBatch(view, &at, &error))
-                return;
-        } else {
-            at = ready;
-            std::string before;
-            view.count = ready;
-            if (ready && !op.runBatch(view, &at, &before))
-                error = std::move(before);
-        }
-        const uint32_t n = program->batchNodes[batch.firstNode + at];
-        const uint32_t w = program->windowOfNode[n];
-        if (w != kRigExecInvalidIndex)
-            run.captures[w].reset();
-        failed[b] = 1;
-        errors[b] = "node " + std::to_string(n) + " (" +
-                    (d.nameSpace ? d.nameSpace : "") + ":" +
-                    (d.name ? d.name : "") + ") failed" +
-                    (error.empty() ? "" : ": " + error);
-    }
-
-    static bool RunTask(void *context, uint32_t b)
-    {
-        auto *self = static_cast<RigExecEvaluatorState *>(context);
-        self->RunBatch(b);
-        return !self->failed[b];
-    }
-
-    void BuildSchedule()
-    {
-        const RigExecProgram &p = *program;
-        const size_t levelCount =
-            p.levelBatches.empty() ? 0 : p.levelBatches.size() - 1;
-        sharedStart.assign(1, 0);
-        callerStart.assign(1, 0);
-        shared.clear();
-        caller.clear();
-        for (size_t level = 0; level < levelCount; ++level) {
-            for (uint32_t b = p.levelBatches[level];
-                 b < p.levelBatches[level + 1]; ++b)
-                (p.batches[b].ownerThread ? caller : shared).push_back(b);
-            sharedStart.push_back(uint32_t(shared.size()));
-            callerStart.push_back(uint32_t(caller.size()));
-        }
-    }
-
-    /// Runs \p run over every node, or on a history tick over the nodes the
-    /// windowed nodes depend on. A failed run leaves every capture null.
-    bool Run(RigExecRunState &run, bool historyTick, RigExecTaskSystem *tasks,
-             std::string *error)
-    {
-        const RigExecProgram &p = *program;
-        for (size_t w = 0; w < run.windows.size(); ++w) {
-            run.captures[w].reset();
-            run.windows[w].captureOnly =
-                historyTick && !p.windowedNodes[w].feedsWindow;
-        }
-        current = &run;
-        active = historyTick ? p.batchHistoryMask.data() : nullptr;
-        std::fill(failed.begin(), failed.end(), uint8_t(0));
-        RigExecTaskSchedule schedule;
-        schedule.levelCount = sharedStart.size() - 1;
-        schedule.sharedStart = sharedStart.data();
-        schedule.shared = shared.data();
-        schedule.callerStart = callerStart.data();
-        schedule.caller = caller.data();
-        schedule.run = &RigExecEvaluatorState::RunTask;
-        schedule.context = this;
-        if (tasks ? tasks->Run(schedule)
-                  : RigExecRunTaskScheduleInline(schedule))
-            return true;
-        // The first failure in batch order, whichever thread hit it.
-        for (size_t b = 0; b < p.batches.size(); ++b) {
-            if (failed[b]) {
-                if (error)
-                    *error = errors[b];
-                break;
-            }
-        }
-        for (RigExecWindowPacketPtr &capture : run.captures)
-            capture.reset();
-        return false;
-    }
 };
 
 RigExecEvaluator::RigExecEvaluator(
@@ -477,14 +125,21 @@ RigExecEvaluator::_Bind(std::shared_ptr<const RigExecProgram> program,
         state->tapContext = _state->tapContext;
     }
     const RigExecProgram &p = *program;
+    state->channel.Bind(p);
     state->rings.assign(p.windowedNodes.size(), RigExecWindowRing());
-    state->main.Bind(p, state->rings);
-    state->failed.assign(p.batches.size(), 0);
-    state->errors.assign(p.batches.size(), std::string());
+    for (size_t w = 0; w < p.windowedNodes.size(); ++w)
+        state->rings[w].reserve(p.windowedNodes[w].frames);
+    state->main.Bind(p, state->channel, state->rings);
     state->program = std::move(program);
-    state->BuildSchedule();
+    _pending = RigExecInputWriter();
     _state = std::move(state);
     return true;
+}
+
+RigExecInputWriter
+RigExecEvaluator::BeginInputEdit()
+{
+    return _state->channel.Begin();
 }
 
 bool
@@ -492,20 +147,9 @@ RigExecEvaluator::SetInput(RigExecInputId input, const void *value,
                            std::string *error)
 {
     _AssertOwnerThread();
-    const RigExecProgram &p = *_state->program;
-    if (input.index >= p.inputSlots.size() || !value) {
-        if (error)
-            *error = "SetInput: no such input";
-        return false;
-    }
-    const RigExecProgramSlot &slot = p.slots[p.inputSlots[input.index]];
-    const RigExecTypeDesc &t = TypeOf(slot.type);
-    std::byte *dst = _state->main.arena.Data() + slot.offset;
-    if (t.copy)
-        t.copy(dst, value);
-    else
-        std::memcpy(dst, value, t.size);
-    return true;
+    if (!_pending.IsOpen())
+        _pending = BeginInputEdit();
+    return _pending.Set(input, value, error);
 }
 
 bool
@@ -513,13 +157,14 @@ RigExecEvaluator::Evaluate(std::string *error)
 {
     _AssertOwnerThread();
     RigExecEvaluatorState &s = *_state;
-    if (!s.Run(s.main, false, _options.tasks, error))
+    _pending.Commit();
+    s.channel.Acquire();
+    if (!s.main.Run(false, _options.tasks, error))
         return false;
     if (s.tapCallback) {
-        const RigExecProgram &p = *s.program;
         for (size_t i = 0; i < s.taps.size(); ++i) {
             RigExecTapValue value;
-            value.data = s.main.arena.Data() + p.slots[s.taps[i].slot].offset;
+            value.data = s.main.Value(s.taps[i].slot);
             value.type = s.taps[i].type;
             s.tapCallback(s.tapContext, i, value);
         }
@@ -533,8 +178,20 @@ RigExecEvaluator::GetOutput(RigExecOutputId output) const
     const RigExecProgram &p = *_state->program;
     if (output.index >= p.outputSlots.size())
         return nullptr;
-    return _state->main.arena.Data() +
-           p.slots[p.outputSlots[output.index]].offset;
+    return _state->main.Value(p.outputSlots[output.index]);
+}
+
+RigExecValueView
+RigExecEvaluator::ViewOutput(RigExecOutputId output) const
+{
+    _AssertOwnerThread();
+    return RigExecViewAccess::Output(_state->main, output);
+}
+
+const RigExecProgram &
+RigExecEvaluator::GetProgram() const
+{
+    return *_state->program;
 }
 
 bool
@@ -595,20 +252,12 @@ RigExecEvaluator::EvaluateHistory(std::string *error)
     if (p.windowedNodes.empty())
         return true;
     if (!s.history) {
-        s.history = std::make_unique<RigExecRunState>();
-        s.history->Bind(p, s.rings);
+        s.history = std::make_unique<RigExecRun>();
+        s.history->Bind(p, s.channel, s.rings);
     }
-    for (const uint32_t input : p.inputSlots) {
-        const RigExecProgramSlot &slot = p.slots[input];
-        const RigExecTypeDesc &t = TypeOf(slot.type);
-        std::byte *dst = s.history->arena.Data() + slot.offset;
-        const std::byte *src = s.main.arena.Data() + slot.offset;
-        if (t.copy)
-            t.copy(dst, src);
-        else
-            std::memcpy(dst, src, t.size);
-    }
-    const bool ran = s.Run(*s.history, true, _options.tasks, error);
+    _pending.Commit();
+    s.channel.Acquire();
+    const bool ran = s.history->Run(true, _options.tasks, error);
     for (size_t w = 0; w < s.rings.size(); ++w)
         PushTick(&s.rings[w], s.history->captures[w],
                  p.windowedNodes[w].frames);

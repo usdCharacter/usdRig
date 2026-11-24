@@ -145,7 +145,8 @@ const rigExec::RigExecPortDesc kSmoothPorts[] = {
      "faceVertexIndices"},
     {&SmoothStrength(), &rigExecStd::FloatType(), kOptional, "strength"},
     {&SmoothEnvelope(), &rigExecStd::FloatArray(), kOptional, "envelope"},
-    {&SmoothOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+    {&SmoothOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     rigExec::RigExecOutputBound::Input, &SmoothPoints()},
 };
 
 const rigExec::RigExecPortDesc kVolumePorts[] = {
@@ -156,7 +157,8 @@ const rigExec::RigExecPortDesc kVolumePorts[] = {
     {&VolumeCorrectStrength(), &rigExecStd::FloatType(), kOptional, "strength"},
     {&VolumeCorrectEnvelope(), &rigExecStd::FloatArray(), kOptional,
      "envelope"},
-    {&VolumeCorrectOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+    {&VolumeCorrectOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     rigExec::RigExecOutputBound::Input, &VolumeCorrectPoints()},
 };
 
 const rigExec::RigExecOpDesc kSmoothDesc =

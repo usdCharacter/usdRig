@@ -95,8 +95,8 @@ RunDistributeTwist(const void *, void *, const RigExecOpIo &io,
     RebaseLive(io, DistributeTwistJointRests(), DistributeTwistJointRestLive(),
                &frames, &rests);
     PointFrameArray &out = Out<PointFrameArray>(io, DistributeTwistOut());
-    out.frames = RigExecArray<PointFrame>(frames.data(), frames.size());
-    out.rests = RigExecArray<PointLandmarks>(rests.data(), rests.size());
+    out.frames.Assign(frames.data(), frames.size());
+    out.rests.Assign(rests.data(), rests.size());
     return true;
 }
 
@@ -140,7 +140,8 @@ const rigExec::RigExecPortDesc kTwistPorts[] = {
     {&DistributeTwistJointRestLive(), &rigExecStd::BoolArray(), kOptional,
      "jointRestLive"},
     {&DistributeTwistOut(), &rigExecRig::PointFrameArrayType(),
-     kRigExecPortOutput, "out"},
+     kRigExecPortOutput, "out", rigExec::RigExecOutputBound::Input,
+     &DistributeTwistWeights()},
 };
 
 void

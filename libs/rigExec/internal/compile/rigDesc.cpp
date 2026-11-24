@@ -206,6 +206,22 @@ RigExecRigDescBuilder::BindOutput(RigExecNodeId node,
 }
 
 void
+RigExecRigDescBuilder::SetOutputBound(RigExecNodeId node,
+                                      const RigExecPortHandle &out,
+                                      size_t count)
+{
+    if (!_data || !_error.empty())
+        return;
+    const uint32_t o = FindPort(*_data, node, out, kRigExecPortOutput);
+    if (o == kRigExecInvalidIndex) {
+        _Fail("SetOutputBound: node " + std::to_string(node) +
+              " has no such output");
+        return;
+    }
+    _data->outputBounds.push_back({{node, o}, count});
+}
+
+void
 RigExecRigDescBuilder::Order(RigExecNodeId first, RigExecNodeId second)
 {
     if (!_data || !_error.empty())

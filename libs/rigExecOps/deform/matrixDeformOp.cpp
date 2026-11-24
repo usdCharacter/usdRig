@@ -47,7 +47,7 @@ DeformOne(const rigExec::RigExecOpIo &io, bool radial, std::string *error)
                             "envelope weights must be finite and in [0, 1]");
     }
     Points &out = Out<Points>(io, MatrixDeformOut());
-    out = Points(in.Size());
+    out.Assign(in.Size());
     if (!envelope)
         rigExec::RigExecApplyMatrixFullStrengthKernel<Vec3f, Vec3d>(
             transform, radial, in.Data(), out.Data(), in.Size(), kUseSimd);
@@ -95,7 +95,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "transform"},
     {&MatrixDeformEnvelope(), &rigExecStd::FloatArray(),
      kRigExecPortInput | kRigExecPortOptional, "envelope"},
-    {&MatrixDeformOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
+    {&MatrixDeformOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     rigExec::RigExecOutputBound::Input, &MatrixDeformPoints()},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {

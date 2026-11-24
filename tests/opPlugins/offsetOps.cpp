@@ -29,7 +29,7 @@ Run(const void *, void *, const rigExec::RigExecOpIo &io, std::string *)
     const Points &in = *In<Points>(io, OffsetPoints());
     const Vec3f &by = *In<Vec3f>(io, OffsetBy());
     Points &out = Out<Points>(io, OffsetOut());
-    out = Points(in.Size());
+    out.Assign(in.Size());
     for (size_t i = 0; i < in.Size(); ++i)
         out[i] = Vec3f(in[i][0] + by[0], in[i][1] + by[1], in[i][2] + by[2]);
     return true;
@@ -40,7 +40,7 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "points"},
     {&OffsetBy(), &rigExecStd::Vec3fType(), rigExec::kRigExecPortInput, "by"},
     {&OffsetOut(), &rigExecStd::Vec3fArray(), rigExec::kRigExecPortOutput,
-     "out"},
+     "out", rigExec::RigExecOutputBound::Input, &OffsetPoints()},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {

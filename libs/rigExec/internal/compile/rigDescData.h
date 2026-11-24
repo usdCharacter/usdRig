@@ -45,6 +45,9 @@ struct RigExecRigDescData {
     std::vector<RigExecDescInput> inputs;
     std::vector<RigExecDescPort> outputs;
     std::vector<std::pair<RigExecNodeId, RigExecNodeId>> orders;
+    /// Bounds the description gives for outputs whose op declares a Host
+    /// bound; the last one given for a port counts.
+    std::vector<std::pair<RigExecDescPort, size_t>> outputBounds;
     /// Elements recorded so far per array input.
     std::map<std::pair<RigExecNodeId, uint32_t>, uint32_t> listSizes;
 

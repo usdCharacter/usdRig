@@ -111,7 +111,7 @@ FkChainOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     if (FlagAt(batch, kScaleSegments, k))
         rigExec::RigExecScaleFkSegmentsKernel<Vec3d>(elements, &frames);
     PointFrameArray &out = Out<PointFrameArray>(io, FkChainOut());
-    out.frames = RigExecArray<PointFrame>(frames.data(), frames.size());
+    out.frames.Assign(frames.data(), frames.size());
     out.rests = outRests ? *outRests : controls.rests;
     return true;
 }
@@ -163,7 +163,7 @@ TwoBoneIkOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         *In<PointFrame>(io, TwoBoneIkEffector()),
         *In<PointFrame>(io, TwoBoneIkPole()), rests, params);
     PointFrameArray &out = Out<PointFrameArray>(io, TwoBoneIkOut());
-    out.frames = RigExecArray<PointFrame>(frames.data(), frames.size());
+    out.frames.Assign(frames.data(), frames.size());
     out.rests = restList;
     return true;
 }
@@ -190,7 +190,7 @@ const rigExec::RigExecPortDesc kFkPorts[] = {
     {&FkChainOutRests(), &rigExecRig::PointLandmarksList(), kOptional,
      "outRests"},
     {&FkChainOut(), &rigExecRig::PointFrameArrayType(), kRigExecPortOutput,
-     "out"},
+     "out", rigExec::RigExecOutputBound::Input, &FkChainControls()},
 };
 
 const rigExec::RigExecPortDesc kIkPorts[] = {
@@ -220,7 +220,8 @@ const rigExec::RigExecPortDesc kIkPorts[] = {
      "softDistance"},
     {&TwoBoneIkTwist(), &rigExecStd::FloatType(), kOptional, "twist"},
     {&TwoBoneIkOut(), &rigExecRig::PointFrameArrayType(), kRigExecPortOutput,
-     "out"},
+     "out", rigExec::RigExecOutputBound::Fixed, nullptr, nullptr,
+     rigExec::kRigExecInvalidIndex, 3},
 };
 
 void

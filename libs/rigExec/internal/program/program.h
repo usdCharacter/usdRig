@@ -14,10 +14,48 @@
 
 namespace rigExec {
 
-/// One value in the arena.
+/// The kinds of arena a program's values live in. The constant arena (the
+/// payload blob) is fixed by compile and shared by every run of the
+/// program. The input arena holds the values the host writes. A run's work
+/// arena holds the values only its nodes read, then its op state. Each
+/// bound output has a published arena of its own, which hosts read and pin.
+enum class RigExecArenaKind : uint8_t { Constant, Input, Work, Published };
+
+/// One value: its arena, its offset there and its type. arenaIndex is the
+/// input's binding index for an Input slot and the published arena's index
+/// for a Published slot.
 struct RigExecProgramSlot {
     size_t offset = 0;
     uint32_t type = kRigExecInvalidIndex;
+    RigExecArenaKind arena = RigExecArenaKind::Work;
+    uint32_t arenaIndex = 0;
+};
+
+/// One value an Input or InputValue bound follows: its elements, or the
+/// integer it holds.
+struct RigExecProgramBoundSource {
+    uint32_t slot = kRigExecInvalidIndex;
+    bool integer = false;
+};
+
+/// The most elements a value whose type holds arrays may hold. Compile
+/// settles Fixed, Field and Host bounds to `count`; an Input or
+/// InputValue bound is `count` times the largest of its sources,
+/// boundSources[firstSource, firstSource + sourceCount), which each run
+/// settles from the values it is given.
+struct RigExecProgramBound {
+    RigExecOutputBound kind = RigExecOutputBound::None;
+    uint32_t firstSource = 0;
+    uint32_t sourceCount = 0;
+    size_t count = 0;
+};
+
+/// Where a run keeps a pointer to a slot's value: an input or output port
+/// entry, or an array input's element entry.
+struct RigExecProgramCell {
+    enum Kind : uint8_t { Input, Output, ListItem };
+    Kind kind = Input;
+    uint32_t index = 0;
 };
 
 struct RigExecProgramNode {
@@ -138,7 +176,21 @@ public:
     std::vector<char> batchHistoryMask;
     /// Per node: its index in windowedNodes, or kRigExecInvalidIndex.
     std::vector<uint32_t> windowOfNode;
-    size_t arenaSize = 0;
+    /// Per slot: its bound, and where runs point at its value, as
+    /// cells[cellStart[s], cellStart[s + 1]).
+    std::vector<RigExecProgramBound> bounds;
+    std::vector<RigExecProgramBoundSource> boundSources;
+    std::vector<uint32_t> cellStart;
+    std::vector<RigExecProgramCell> cells;
+    /// The slots whose bound depends on another slot, in node order of the
+    /// compiled graph, so each one's sources are settled before it.
+    std::vector<uint32_t> derivedBounds;
+    /// The slots of the published arenas, one per distinct bound output.
+    std::vector<uint32_t> publishedSlots;
+    size_t inputArenaSize = 0;
+    /// The work arena: values from 0, op state from stateBase.
+    size_t workSize = 0;
+    size_t stateBase = 0;
     size_t stateSize = 0;
     RigExecAlignedBuffer payloads;
     /// Declared fields, batch by batch: payload columns live in payloads,

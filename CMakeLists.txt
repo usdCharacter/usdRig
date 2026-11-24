@@ -186,7 +186,10 @@ add_library(rigExecOpCore SHARED
     libs/rigExec/internal/compile/compile.cpp
     libs/rigExec/internal/exec/addressWait.cpp
     libs/rigExec/internal/exec/evaluator.cpp
-    libs/rigExec/internal/exec/threadTaskSystem.cpp)
+    libs/rigExec/internal/exec/inputChannel.cpp
+    libs/rigExec/internal/exec/run.cpp
+    libs/rigExec/internal/exec/threadTaskSystem.cpp
+    libs/rigExec/internal/exec/view.cpp)
 target_compile_features(rigExecOpCore PUBLIC cxx_std_17)
 target_include_directories(rigExecOpCore PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
