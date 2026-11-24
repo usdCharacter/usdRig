@@ -517,6 +517,31 @@ jobs:
             -j"$(nproc)" \
             --output-on-failure --no-tests=error
 
+      # Records the exec cross-check rows (tests/fixtures/README.md). The
+      # recorder fails when a judged row disagrees with OpenExec.
+      - name: Record exec cross-check rows
+        if: ${{ !cancelled() }}
+        run: |
+          export USD="${GITHUB_WORKSPACE}/usd-install"
+          source bin/_env.sh
+          export PXR_PLUGINPATH_NAME="$PWD/build/usd/rigExecSchema/resources:$PWD/build/usd/rigExecImaging/resources:$PWD/build/usd/rigExecMoverPlugins"
+          export RIGEXEC_ENABLE_SIMD=0
+          mkdir -p exec-rows
+          for f in 01_FkChainTail 03_IkFkBlendClamp 05_TwistRibbonSpine 11_VolumeWeights 13_ReadPhases ArmRig; do
+            build/testRigExecExecCrossCheckRows examples/$f.usda 1001 \
+              --golden-out exec-rows/$f.golden 1001 1024 1048
+          done
+          build/testRigExecExecCrossCheckRows tests/fixtures/computed_ik_space.usda 1 \
+            --golden-out exec-rows/computed_ik_space.golden 1 5 10
+          grep -ho 'reference=[^ ]*' exec-rows/ArmRig.golden
+
+      - name: Upload exec cross-check rows
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: exec-rows-linux
+          path: exec-rows/
+
       - name: Upload CTest logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -1853,12 +1878,29 @@ jobs:
           cmake --build build --parallel ${{ matrix.jobs }}
           ctest --test-dir build \
             --parallel ${{ matrix.jobs }} --output-on-failure --no-tests=error
+          export RIGEXEC_ENABLE_SIMD=0
+          mkdir -p exec-rows
+          for f in 01_FkChainTail 03_IkFkBlendClamp 05_TwistRibbonSpine 11_VolumeWeights 13_ReadPhases ArmRig; do
+            build/testRigExecExecCrossCheckRows examples/$f.usda 1001 \
+              --golden-out exec-rows/$f.golden 1001 1024 1048
+          done
+          build/testRigExecExecCrossCheckRows tests/fixtures/computed_ik_space.usda 1 \
+            --golden-out exec-rows/computed_ik_space.golden 1 5 10
+          grep -ho 'reference=[^ ]*' exec-rows/ArmRig.golden
+          unset RIGEXEC_ENABLE_SIMD
           cmake --install build --prefix "$GITHUB_WORKSPACE/usdrig-install"
           cmake -S tests/installedScene -B installed-scene-build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/usdrig-install;$USD"
           cmake --build installed-scene-build --parallel 2
           ctest --test-dir installed-scene-build --output-on-failure
+
+      - name: Upload exec cross-check rows
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: exec-rows-macos
+          path: exec-rows/
 
       - name: Upload build and test logs
         if: always()
