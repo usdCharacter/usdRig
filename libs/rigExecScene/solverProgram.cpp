@@ -159,14 +159,7 @@ RigExecRunSolver(const RigExecSolverRecord &s, const RigExecSolverInputs &input,
             s.jointRests, s.restIsLive);
         return true;
     case RigExecSolverKind::SplineIk: {
-        auto params = s.splineParams;
-        if (input.refreshSplineParams) {
-            params.preserveVolume = input.preserveVolume;
-            params.midFollowWeight = input.midFollowWeight;
-            params.roll = GfDegreesToRadians(input.rollDegrees);
-            params.twist = GfDegreesToRadians(input.twistDegrees);
-            params.minLengthRatio = input.minLengthRatio;
-        }
+        auto params = RigExecSolverSplineParams(s, input);
         const auto *rest = &s.splineRest;
         if (input.hasSpace) {
             GfMatrix4d delta(1.0);

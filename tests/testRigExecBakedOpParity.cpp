@@ -59,9 +59,6 @@ struct Expected {
     const char *key, *object, *finding;
 };
 const Expected kExpected[] = {
-    {"Solve/RigExecSplineIk", "/SpineSpline",
-     "the op refuses an input whose refreshSplineParams is unset, which the "
-     "baked body leaves unset when the spline settings are constant"},
     {"RevisionChunk/Matrix", "/Seg4Skin",
      "partial envelope: the op blends inside RigExecApplyMatrixRangeKernel, "
      "the baked body after the full-strength kernel"},
@@ -254,17 +251,6 @@ ProbeSolve(const B &b)
         const auto &baked = b.aggregates[size_t(step.object)];
         Compare("Solve", kind, s.pathText, VtValue(baked), VtValue(out),
                 baked.frames.empty());
-        if (!ran && s.kind == RigExecSolverKind::SplineIk &&
-            !s.kernelInputs.refreshSplineParams) {
-            auto refreshed = s.kernelInputs;
-            refreshed.refreshSplineParams = true;
-            RigExecPoseOpRunner again;
-            RigExecPointFrameArray forced;
-            std::string forcedError;
-            RigExecRunSolverOp(s, refreshed, again, &forced, &forcedError);
-            Compare("Solve", kind + " (refreshSplineParams forced)", s.pathText,
-                    VtValue(baked), VtValue(forced), baked.frames.empty());
-        }
         const std::string prefix = "diag " + s.pathText + ": ";
         std::string bakedError;
         for (const auto &line : step.diagnostics)

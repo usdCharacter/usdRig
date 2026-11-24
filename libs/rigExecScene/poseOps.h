@@ -106,7 +106,7 @@ bool RigExecAddSolverOp(const RigExecSolverRecord &record,
 /// Writes \p input's values for one frame into \p evaluator. False,
 /// writing nothing, where a setting baked into the nodes differs from
 /// \p record and \p input: the nodes must then be rebuilt. Requires the
-/// scene's refreshed parameters (refreshIkParams, refreshSplineParams).
+/// scene's refreshed two-bone IK parameters (refreshIkParams).
 bool RigExecWriteSolverOpInputs(const RigExecSolverRecord &record,
                                 const RigExecSolverInputs &input,
                                 const RigExecSolverOpNode &node,

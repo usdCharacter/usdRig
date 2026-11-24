@@ -6,6 +6,7 @@
 #include "rigExecMath/skeleton2dKernel.h"
 #include "rigExecMath/jointGroupKernel.h"
 #include "rigExecMath/pointFrame.h"
+#include "pxr/base/gf/math.h"
 namespace rigExec {
 // Defined in rigExec/api/types.h; held and passed by pointer here.
 struct RigExecPointFrameArray;
@@ -123,6 +124,23 @@ struct RigExecSolverInputs {
     /// Each joint group's rigExec:activeMember (FkChain, Skeleton2d).
     std::vector<double> jointGroupSelectors;
 };
+
+/// The spline IK settings a solve uses: \p input's when the scene refreshed
+/// them (refreshSplineParams), otherwise the constants \p s holds.
+inline RigExecSplineIkParams
+RigExecSolverSplineParams(const RigExecSolverRecord &s,
+                          const RigExecSolverInputs &input)
+{
+    RigExecSplineIkParams params = s.splineParams;
+    if (input.refreshSplineParams) {
+        params.preserveVolume = input.preserveVolume;
+        params.midFollowWeight = input.midFollowWeight;
+        params.roll = GfDegreesToRadians(input.rollDegrees);
+        params.twist = GfDegreesToRadians(input.twistDegrees);
+        params.minLengthRatio = input.minLengthRatio;
+    }
+    return params;
+}
 struct RigExecSolverWorkspace {
     std::vector<RigExecFkChainElement> fkElements;
     std::vector<RigExecPointFrame> spacedFrames;

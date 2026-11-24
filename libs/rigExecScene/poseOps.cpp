@@ -215,7 +215,7 @@ SplinePayload(const RigExecSolverRecord &s, const RigExecSolverInputs &input)
 {
     rigExecOps::SplineIkPayload p;
     p.restLengthChain = s.splineRestMode == RigExecSplineIkRestLength::Chain;
-    p.minLengthRatio = input.minLengthRatio;
+    p.minLengthRatio = RigExecSolverSplineParams(s, input).minLengthRatio;
     p.aimRootTangent = s.splineParams.aimRootTangent;
     return p;
 }
@@ -732,8 +732,9 @@ RigExecWriteSolverOpInputs(const RigExecSolverRecord &s,
     }
     case RigExecSolverKind::SplineIk: {
         const rigExecOps::SplineIkPayload payload = SplinePayload(s, input);
-        if (!input.refreshSplineParams ||
-            payload.restLengthChain != node.restLengthChain ||
+        const RigExecSplineIkParams params =
+            RigExecSolverSplineParams(s, input);
+        if (payload.restLengthChain != node.restLengthChain ||
             !Same(payload.minLengthRatio, node.minLengthRatio) ||
             payload.aimRootTangent != node.aimRootTangent)
             return Fail(error, "spline IK settings moved");
@@ -758,12 +759,10 @@ RigExecWriteSolverOpInputs(const RigExecSolverRecord &s,
                Set(e, node.mid, ToStd(input.mid), error) &&
                Set(e, node.end, ToStd(input.end), error) &&
                Set(e, node.volumeWeights, v.doubles, error) &&
-               Set(e, node.preserveVolume, input.preserveVolume, error) &&
-               Set(e, node.midFollow, input.midFollowWeight, error) &&
-               Set(e, node.roll, GfDegreesToRadians(input.rollDegrees),
-                   error) &&
-               Set(e, node.twist, GfDegreesToRadians(input.twistDegrees),
-                   error);
+               Set(e, node.preserveVolume, params.preserveVolume, error) &&
+               Set(e, node.midFollow, params.midFollowWeight, error) &&
+               Set(e, node.roll, params.roll, error) &&
+               Set(e, node.twist, params.twist, error);
     }
     case RigExecSolverKind::Skeleton2d: {
         if (node.hasStart != s.hasStart || !SameSkeleton(s, node))
