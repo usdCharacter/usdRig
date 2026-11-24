@@ -51,11 +51,13 @@ file (`RigExecExecRowsReference`). That configuration compares every bit; any
 other compares which rows were judged and the type and length of each value.
 
 The authoritative reference is the Linux configuration above
-(`linux-x86_64-gcc13`). The files under `windows-x86_64-msvc1936` were
-recorded on a Windows development machine and are exact only for that
-compiler; record the Linux set from the reference configuration before the
-OpenExec cross-check is removed. To record, from a shell that sourced
-`bin/_env.sh`, with `RIGEXEC_ENABLE_SIMD=0`:
+(`linux-x86_64-gcc13`); the Linux CI job records it on every run and
+uploads it as the `exec-rows-linux` artifact. The files under
+`windows-x86_64-msvc1936` were recorded on a Windows development machine with
+the same rows and keys; 15 of the 870 rows differ from the Linux set in the
+last bits of a double (at most 20 ULP, from the math library), so that set is
+exact only for that compiler. Replace both sets together. To record, from a
+shell that sourced `bin/_env.sh`, with `RIGEXEC_ENABLE_SIMD=0`:
 
 ```sh
 build/testRigExecExecCrossCheckRows examples/01_FkChainTail.usda 1001 \
