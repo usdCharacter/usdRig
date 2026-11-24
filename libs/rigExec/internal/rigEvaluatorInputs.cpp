@@ -1,6 +1,7 @@
 // Input reads, interactive overrides, and value-cache invalidation.
 
 #include "rigExecSchema/schemaNames.h"
+#include "rigExec/api/evaluationObserver.h"
 #include "rigExec/internal/rigEvaluatorInternal.h"
 #include "rigExec/internal/rigEvaluatorPropertyBindings.h"
 #include "rigExec/internal/inputReplay.h"
@@ -519,6 +520,9 @@ RigExecRigEvaluator::SetInteractiveOverrides(
     _AssertOwnerThread();
     if (_inputReplayObserver)
         _inputReplayObserver->Interactive(overrides);
+    _Notify([&](RigExecEvaluationObserver &observer) {
+        observer.InteractiveOverridesChanging(*this, &overrides);
+    });
     if (_scopedClearShadow) {
         _scopedClearShadow->SetInteractiveOverrides(overrides);
     }
@@ -588,6 +592,9 @@ RigExecRigEvaluator::ClearInteractiveOverrides()
     _AssertOwnerThread();
     if (_inputReplayObserver)
         _inputReplayObserver->ClearInteractive();
+    _Notify([&](RigExecEvaluationObserver &observer) {
+        observer.InteractiveOverridesChanging(*this, nullptr);
+    });
     if (_scopedClearShadow) {
         _scopedClearShadow->ClearInteractiveOverrides();
     }
@@ -647,6 +654,9 @@ RigExecRigEvaluator::SetUpstreamInputs(std::vector<RigExecValueOverride> inputs)
     _AssertOwnerThread();
     if (_inputReplayObserver)
         _inputReplayObserver->Upstream(inputs);
+    _Notify([&](RigExecEvaluationObserver &observer) {
+        observer.UpstreamInputsChanging(*this, inputs);
+    });
     if (_scopedClearShadow) {
         _scopedClearShadow->SetUpstreamInputs(inputs);
     }

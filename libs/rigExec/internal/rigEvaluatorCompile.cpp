@@ -2,6 +2,7 @@
 // settling.
 
 #include "rigExecSchema/schemaNames.h"
+#include "rigExec/api/evaluationObserver.h"
 #include "rigExec/internal/rigEvaluatorInternal.h"
 #include "rigExec/internal/rigEvaluatorCompileAttempt.h"
 #include "rigExec/internal/crossDomainInputs.h"
@@ -72,6 +73,9 @@ RigExecRigEvaluator::Compile(std::vector<std::string> *errors)
     }
     RigExecInputReplayImplementationScope replayImplementation{
         bool(_inputReplayObserver)};
+    _Notify([&](RigExecEvaluationObserver &observer) {
+        observer.CompileStarting(*this, errors);
+    });
     // A caller asking for a compile is asking the stage again, whatever the
     // settle path last concluded about it: nothing the memo remembers may
     // answer for this call, and whatever this call concludes is the caller's
@@ -99,11 +103,17 @@ RigExecRigEvaluator::Compile(std::vector<std::string> *errors)
                     if (_inputReplayObserver)
                         _inputReplayObserver->CompileResult(compileCall, false,
                                                             errors);
+                    _Notify([&](RigExecEvaluationObserver &observer) {
+                        observer.CompileRefused(*this, errors);
+                    });
                     return false;
                 }
             }
         }
     const bool compiled = _CompileRig(errors);
+    _Notify([&](RigExecEvaluationObserver &observer) {
+        observer.CompileFinished(*this, compiled, errors);
+    });
     // The shadow is asked every question this evaluator is, in the same
     // order, so that the one thing that differs between them is how their
     // notices clear the value caches.

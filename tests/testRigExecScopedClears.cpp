@@ -20,6 +20,7 @@
 // by one that drops the caches whole and the two poses are compared.
 #include "rigExec/internal/inputReplay.h"
 #include "rigExec/api/bakedProgram.h"
+#include "rigExec/api/evaluationObserver.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/api/profiler.h"
 #include "rigExec/api/rigEvaluator.h"
@@ -626,6 +627,95 @@ TestASparseLayoutIsBuiltOncePerCompiledRig()
     CHECK(evaluator->GetBakedProgramBuildCount() == builds);
 }
 
+// Records the points an evaluator reports, in order.
+class Recorder : public RigExecEvaluationObserver {
+public:
+    explicit Recorder(std::vector<std::string> *log) : _log(log)
+    {
+    }
+    void CompileStarting(RigExecRigEvaluator &,
+                         std::vector<std::string> *) override
+    {
+        _log->push_back("compile starting");
+    }
+    void CompileFinished(RigExecRigEvaluator &, bool compiled,
+                         std::vector<std::string> *) override
+    {
+        _log->push_back(compiled ? "compiled" : "compile failed");
+    }
+    void FrameStarting(RigExecRigEvaluator &, UsdTimeCode) override
+    {
+        _log->push_back("frame starting");
+    }
+    void FrameEvaluated(RigExecRigEvaluator &, UsdTimeCode,
+                        RigExecRigPose &pose) override
+    {
+        _log->push_back("frame evaluated");
+        pose.diagnostics.push_back("observed");
+    }
+    void FrameEnded(RigExecRigEvaluator &) override
+    {
+        _log->push_back("frame ended");
+    }
+    void OptionsChanging(RigExecRigEvaluator &, bool,
+                         bool publishWeightFields) override
+    {
+        _log->push_back(publishWeightFields ? "options publish"
+                                            : "options quiet");
+    }
+    void BakedRoleModeChanging(RigExecRigEvaluator &, RigExecBakedRoleMode,
+                               const std::set<SdfPath> &) override
+    {
+        _log->push_back("baked role mode");
+    }
+    void InteractiveOverridesChanging(
+        RigExecRigEvaluator &evaluator,
+        const std::vector<RigExecValueOverride> *overrides) override
+    {
+        // Still the old set: the call comes before the change.
+        _log->push_back(
+            evaluator.GetInteractiveOverrides().empty()
+                ? (overrides ? "overrides set" : "overrides cleared")
+                : "overrides changed late");
+    }
+    void
+    UpstreamInputsChanging(RigExecRigEvaluator &,
+                           const std::vector<RigExecValueOverride> &) override
+    {
+        _log->push_back("upstream");
+    }
+
+private:
+    std::vector<std::string> *_log;
+};
+
+// An installed observer is told of each point in the order the calls made
+// them, and what it adds to a pose reaches the caller.
+void
+TestObserverPoints()
+{
+    const UsdStageRefPtr stage = Open(kChainFixture);
+    RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+    std::vector<std::string> log;
+    evaluator.AddEvaluationObserver(std::make_unique<Recorder>(&log));
+    CHECK(evaluator.Compile());
+    evaluator.SetPublishWeightFields(true);
+    evaluator.SetBakedRoleMode(RigExecBakedRoleMode::Live, {});
+    evaluator.SetInteractiveOverrides({});
+    evaluator.ClearInteractiveOverrides();
+    evaluator.SetUpstreamInputs({});
+    const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
+    CHECK((log == std::vector<std::string>{"compile starting", "compiled",
+                                           "options publish", "baked role mode",
+                                           "overrides set", "overrides cleared",
+                                           "upstream", "frame starting",
+                                           "frame evaluated", "frame ended"}));
+    if (log.size() != 10)
+        for (const std::string &line : log)
+            std::printf("    observed: %s\n", line.c_str());
+    CHECK(std::find(pose.diagnostics.begin(), pose.diagnostics.end(),
+                    "observed") != pose.diagnostics.end());
+}
 } // namespace
 
 int
@@ -637,6 +727,7 @@ main()
         TestAnInputsMethodEditOnASkinMover();
         TestABlendSampleEdit();
         TestASparseLayoutIsBuiltOncePerCompiledRig();
+        TestObserverPoints();
     }
     if (failures) {
         std::printf("testRigExecScopedClears: %d failure(s)\n", failures);

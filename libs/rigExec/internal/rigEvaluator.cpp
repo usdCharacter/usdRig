@@ -4,6 +4,7 @@
 #include "rigExec/internal/rigEvaluatorDependencies.h"
 #include "rigExec/internal/rigEvaluatorPropertyBindings.h"
 #include "rigExec/internal/parallel.h"
+#include "rigExec/api/evaluationObserver.h"
 #include "rigExec/api/goldenSuite.h"
 #include "rigExec/internal/oracleDispatch.h"
 #include "rigExec/internal/inputReplay.h"
@@ -34,6 +35,8 @@ namespace {
 // would already have been read. Read once per process.
 const bool _kVerifyScopedClears =
     TfGetenvBool("RIGEXEC_VERIFY_SCOPED_CLEARS", false);
+
+RigExecEvaluationObserverFactory gObserverFactory = nullptr;
 
 bool
 _ScopedClearShadowRequested()
@@ -83,6 +86,8 @@ RigExecRigEvaluator::RigExecRigEvaluator(const UsdStageRefPtr &stage,
 {
     _inputReplayObserver = RigExecInputReplayObserver::Create(stage, rigPath);
     _goldenSuiteObserver = RigExecGoldenSuiteObserver::Create(rigPath);
+    if (gObserverFactory)
+        gObserverFactory(*this);
     // The static-input cache lives here and is consulted through the
     // resolved-input lookup every read already goes through.
     _resolvedInputs.SetStaticCache(&_staticInputs);
@@ -97,6 +102,7 @@ RigExecRigEvaluator::RigExecRigEvaluator(const UsdStageRefPtr &stage,
 
 RigExecRigEvaluator::~RigExecRigEvaluator()
 {
+    _observers.clear();
     _inputReplayObserver.reset();
     TfNotice::Revoke(_noticeKey);
 }
@@ -175,10 +181,34 @@ RigExecRigEvaluator::_VerifyScopedClears(UsdTimeCode time, RigExecRigPose *pose)
             TfStringJoin(differences.diagnostics, "; ").c_str());
 }
 
+void
+RigExecSetEvaluationObserverFactory(RigExecEvaluationObserverFactory factory)
+{
+    gObserverFactory = factory;
+}
+
+void
+RigExecRigEvaluator::AddEvaluationObserver(
+    std::unique_ptr<RigExecEvaluationObserver> observer)
+{
+    _AssertOwnerThread();
+    if (observer)
+        _observers.push_back(std::move(observer));
+}
+
 RigExecRigPose
 RigExecRigEvaluator::Evaluate(UsdTimeCode time)
 {
     _AssertOwnerThread();
+    struct ObserverFrameScope {
+        RigExecRigEvaluator &evaluator;
+        ~ObserverFrameScope()
+        {
+            evaluator._Notify([this](RigExecEvaluationObserver &observer) {
+                observer.FrameEnded(evaluator);
+            });
+        }
+    } observerScope{*this};
     if (_inputReplayObserver) {
         _inputReplayObserver->Options(_solverGuidesEnabled,
                                       _publishWeightFields);
@@ -192,11 +222,17 @@ RigExecRigEvaluator::Evaluate(UsdTimeCode time)
                 observer->EndEvaluate();
         }
     } replayScope{_inputReplayObserver.get()};
+    _Notify([&](RigExecEvaluationObserver &observer) {
+        observer.FrameStarting(*this, time);
+    });
     _EnsureScopedClearShadow();
     RigExecRigPose pose = _EvaluateGeneration(time);
     if (_scopedClearShadow) {
         _VerifyScopedClears(time, &pose);
     }
+    _Notify([&](RigExecEvaluationObserver &observer) {
+        observer.FrameEvaluated(*this, time, pose);
+    });
     if (_goldenSuiteObserver)
         _goldenSuiteObserver->Record(pose);
     return pose;
@@ -208,6 +244,9 @@ RigExecRigEvaluator::SetPublishWeightFields(bool publish)
     _AssertOwnerThread();
     if (_inputReplayObserver)
         _inputReplayObserver->Options(_solverGuidesEnabled, publish);
+    _Notify([&](RigExecEvaluationObserver &observer) {
+        observer.OptionsChanging(*this, _solverGuidesEnabled, publish);
+    });
     _publishWeightFields = publish;
     if (_scopedClearShadow)
         _scopedClearShadow->SetPublishWeightFields(publish);
@@ -218,6 +257,9 @@ RigExecRigEvaluator::SetBakedRoleMode(RigExecBakedRoleMode mode,
                                       std::set<SdfPath> exportKeep)
 {
     _AssertOwnerThread();
+    _Notify([&](RigExecEvaluationObserver &observer) {
+        observer.BakedRoleModeChanging(*this, mode, exportKeep);
+    });
     if (_scopedClearShadow) {
         _scopedClearShadow->SetBakedRoleMode(mode, exportKeep);
     }
@@ -250,6 +292,9 @@ RigExecRigEvaluator::SetSolverGuidesEnabled(bool enabled)
     _AssertOwnerThread();
     if (_inputReplayObserver)
         _inputReplayObserver->Options(enabled, _publishWeightFields);
+    _Notify([&](RigExecEvaluationObserver &observer) {
+        observer.OptionsChanging(*this, enabled, _publishWeightFields);
+    });
     _solverGuidesEnabled = enabled;
     if (_scopedClearShadow)
         _scopedClearShadow->SetSolverGuidesEnabled(enabled);
@@ -450,6 +495,9 @@ RigExecRigEvaluator::_RebuildBakedProgram(
                              std::move(reasons));
     // Last, once the replacement has taken what it adopts from it.
     _RetireBakedProgram(std::move(outgoing));
+    _Notify([&](RigExecEvaluationObserver &observer) {
+        observer.ProgramReplaced(*this);
+    });
 }
 
 bool

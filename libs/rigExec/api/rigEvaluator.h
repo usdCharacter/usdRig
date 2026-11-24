@@ -296,6 +296,7 @@ RigExecPrepareRestDerivedIkChain(const std::vector<RigExecPointFrame> &current,
 struct RigExecPropertyChainBindings;
 class RigExecGoldenSuiteObserver;
 class RigExecInputReplayObserver;
+class RigExecEvaluationObserver;
 
 /// What one stage notice did to the baked program: the
 /// evaluator's per-notice disposition, classifying the three branches of
@@ -346,6 +347,11 @@ public:
 
     /// Evaluates one complete generation at an explicit time.
     RigExecRigPose Evaluate(UsdTimeCode time);
+
+    /// Installs \p observer, which this evaluator owns and notifies after
+    /// the observers installed before it (see evaluationObserver.h).
+    void
+    AddEvaluationObserver(std::unique_ptr<RigExecEvaluationObserver> observer);
 
     /// Whether the compiled rig can be baked, appending one reason per
     /// feature that stops it.
@@ -490,6 +496,12 @@ public:
         return !_upstreamRequested.empty();
     }
 
+    /// The list SetInteractiveOverrides last received; empty after
+    /// ClearInteractiveOverrides.
+    const std::vector<RigExecValueOverride> &GetInteractiveOverrides() const
+    {
+        return _interactiveOverrides;
+    }
     /// The list SetUpstreamInputs last received.
     const std::vector<RigExecValueOverride> &GetUpstreamInputs() const
     {
@@ -1738,6 +1750,13 @@ private:
     /// generation has settled whether the compiled rig itself moved. A notice that
     /// misses the index leaves the program standing.
     std::unique_ptr<RigExecGoldenSuiteObserver> _goldenSuiteObserver;
+    /// Notified in order at each observer point; see evaluationObserver.h.
+    std::vector<std::unique_ptr<RigExecEvaluationObserver>> _observers;
+    template <class Fn> void _Notify(const Fn &fn)
+    {
+        for (const auto &observer : _observers)
+            fn(*observer);
+    }
     std::unique_ptr<RigExecInputReplayObserver> _inputReplayObserver;
     std::unique_ptr<RigExecBakedProgram> _bakedProgram;
     /// The windowed operations' history lane and its tick memo
