@@ -31,6 +31,16 @@ void RigExecExecCheckApplyAfterStep(RigExecExecCheckInput &input,
                                     bool frameMatrixInvalid,
                                     bool emptySolveFrames);
 
+/// The compiler and platform a recorded row golden belongs to, such as
+/// linux-x86_64-gcc13: only that configuration compares its bits.
+std::string RigExecExecRowsReference();
+/// The three header lines of a row golden for \p fixture's rig \p rig.
+std::string RigExecExecRowsGoldenHeader(const std::string &fixture,
+                                        const SdfPath &rig, bool simd);
+
+/// Whether rows are judged by OpenExec as they are built, or only captured.
+enum class RigExecExecCheckMode { Judge, Capture };
+
 /// Optional live-program instrumentation. Preparation and evaluation belong
 /// to the owning thread; capture copies only program values and each operation
 /// writes its own rows. Frozen programs do not carry this state.
@@ -43,7 +53,8 @@ class RigExecBakedExecCheckRows {
 
 public:
     static std::shared_ptr<RigExecBakedExecCheckRows>
-    Build(const RigExecBakedProgramImpl &, std::string *error = nullptr);
+    Build(const RigExecBakedProgramImpl &, std::string *error = nullptr,
+          RigExecExecCheckMode mode = RigExecExecCheckMode::Judge);
     // Public for std::make_shared; the gate is that only a member or friend
     // can build the non-aggregate _Tag, which brace-init cannot synthesize.
     RigExecBakedExecCheckRows(_Tag, const UsdStageRefPtr &stage)
@@ -61,6 +72,13 @@ public:
     virtual void ObserveConstraintCandidate(int walk,
                                             const RigExecPointFrame &);
     RigExecExecCrossCheckReport Evaluate(UsdTimeCode);
+    /// Per row, whether the cross-check would judge it at \p time: it was
+    /// captured without a skip and its array inputs still match the stage.
+    std::vector<char> Judged(UsdTimeCode time) const;
+    /// One golden visit: each judged row's key, a digest of its captured
+    /// inputs and its exact stored output.
+    std::string GoldenVisit(size_t ordinal, UsdTimeCode time,
+                            const std::vector<char> &judged) const;
     const std::vector<RigExecExecCheckDescriptor> &Descriptors() const
     {
         return _descriptors;
@@ -97,6 +115,8 @@ private:
     }
     bool Add(RigExecExecCheckDescriptor, Binding,
              const RigExecBakedProgramImpl &, std::string *error);
+    std::vector<RigExecExecCheckInput> _Verified(UsdTimeCode time) const;
+    RigExecExecCheckMode _mode = RigExecExecCheckMode::Judge;
     RigExecBakedExecCrossCheck _check;
     std::vector<Binding> _bindings;
     std::vector<RigExecExecCheckDescriptor> _descriptors;

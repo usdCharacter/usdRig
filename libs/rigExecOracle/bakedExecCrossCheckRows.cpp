@@ -852,7 +852,7 @@ RigExecBakedExecCheckRows::Add(RigExecExecCheckDescriptor d, Binding binding,
     Input initial = binding.capture(b);
     for (const auto &v : initial.overrides)
         d.requiredOverrides.push_back(Address(v));
-    if (!_check.Add(d, error))
+    if (_mode == RigExecExecCheckMode::Judge && !_check.Add(d, error))
         return false;
     const size_t row = _bindings.size();
     _byStep[binding.step].push_back(row);
@@ -877,9 +877,11 @@ RigExecBakedExecCheckRows::Add(RigExecExecCheckDescriptor d, Binding binding,
 RigExecBakedExecCheckRows::~RigExecBakedExecCheckRows() = default;
 
 std::shared_ptr<RigExecBakedExecCheckRows>
-RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
+RigExecBakedExecCheckRows::Build(const B &b, std::string *error,
+                                 RigExecExecCheckMode mode)
 {
     auto rows = std::make_shared<RigExecBakedExecCheckRows>(_Tag(0), b.stage);
+    rows->_mode = mode;
     rows->_byStep.resize(b.steps.size());
     for (size_t i = 0; i < b.steps.size(); ++i) {
         const auto &step = b.steps[i];
@@ -1299,11 +1301,10 @@ RigExecBakedExecCheckRows::AfterStep(const B &b, size_t step)
                 b.aggregates[size_t(b.steps[step].object)].frames.empty());
     }
 }
-RigExecExecCrossCheckReport
-RigExecBakedExecCheckRows::Evaluate(UsdTimeCode time)
+std::vector<RigExecExecCheckInput>
+RigExecBakedExecCheckRows::_Verified(UsdTimeCode time) const
 {
     auto verified = _inputs;
-    _lastChecked.assign(verified.size(), 0);
     for (size_t row = 0; row < verified.size(); ++row) {
         if (verified[row].skip != RigExecExecCheckSkip::None)
             continue;
@@ -1336,6 +1337,93 @@ RigExecBakedExecCheckRows::Evaluate(UsdTimeCode time)
             }
         }
     }
+    return verified;
+}
+
+std::vector<char>
+RigExecBakedExecCheckRows::Judged(UsdTimeCode time) const
+{
+    const auto verified = _Verified(time);
+    std::vector<char> judged(verified.size(), 0);
+    for (size_t row = 0; row < verified.size(); ++row)
+        judged[row] = verified[row].skip == RigExecExecCheckSkip::None &&
+                      _captured[row] && !_descriptors[row].skipOnly;
+    return judged;
+}
+
+std::string
+RigExecBakedExecCheckRows::GoldenVisit(size_t ordinal, UsdTimeCode time,
+                                       const std::vector<char> &judged) const
+{
+    std::string text = "visit \"frame\" " + std::to_string(ordinal) +
+                       " time=" + RigExecGoldenDouble(time.GetValue()) + "\n";
+    for (size_t row = 0; row < _inputs.size() && row < judged.size(); ++row) {
+        if (!judged[row])
+            continue;
+        const auto &input = _inputs[row];
+        std::string inputs, bits;
+        for (const auto &value : input.overrides) {
+            if (!RigExecEncodeGoldenValue(value.value, &bits))
+                bits = "unencodable " + value.value.GetTypeName();
+            inputs += value.prim.GetString() + " " +
+                      value.computation.GetString() + " " +
+                      value.attribute.GetString() + " " + bits + "\n";
+        }
+        if (!RigExecEncodeGoldenValue(input.expected, &bits))
+            bits = "unencodable " + input.expected.GetTypeName();
+        text += "v " + RigExecGoldenEscape(_descriptors[row].key) +
+                " in=" + RigExecGoldenHex(RigExecGoldenDigest(inputs)) + " " +
+                bits + "\n";
+    }
+    return text;
+}
+
+std::string
+RigExecExecRowsReference()
+{
+#if defined(_WIN32)
+    std::string reference = "windows";
+#elif defined(__APPLE__)
+    std::string reference = "macos";
+#elif defined(__linux__)
+    std::string reference = "linux";
+#else
+    std::string reference = "unknown";
+#endif
+#if defined(_M_X64) || defined(__x86_64__)
+    reference += "-x86_64";
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    reference += "-arm64";
+#else
+    reference += "-unknown";
+#endif
+#if defined(__clang__)
+    reference += "-clang" + std::to_string(__clang_major__);
+#elif defined(_MSC_VER)
+    reference += "-msvc" + std::to_string(_MSC_VER);
+#elif defined(__GNUC__)
+    reference += "-gcc" + std::to_string(__GNUC__);
+#else
+    reference += "-unknown";
+#endif
+    return reference;
+}
+
+std::string
+RigExecExecRowsGoldenHeader(const std::string &fixture, const SdfPath &rig,
+                            bool simd)
+{
+    return "rigexec-golden 2\nfixture " + RigExecGoldenEscape(fixture) +
+           " rig " + RigExecGoldenEscape(rig.GetString()) +
+           "\nprotocol exec-rows reference=" + RigExecExecRowsReference() +
+           " simd=" + (simd ? "1" : "0") + "\n";
+}
+
+RigExecExecCrossCheckReport
+RigExecBakedExecCheckRows::Evaluate(UsdTimeCode time)
+{
+    const auto verified = _Verified(time);
+    _lastChecked.assign(verified.size(), 0);
     for (size_t row = 0; row < verified.size(); ++row)
         _lastChecked[row] = verified[row].skip == RigExecExecCheckSkip::None;
     auto report = _check.Evaluate(time, verified);
@@ -1354,6 +1442,14 @@ RigExecBakedProgramTesting::EnableExecCrossCheck(
 {
     program._impl->execCheckRows =
         RigExecBakedExecCheckRows::Build(*program._impl, error);
+    return bool(program._impl->execCheckRows);
+}
+bool
+RigExecBakedProgramTesting::EnableExecRowCapture(
+    const RigExecBakedProgram &program, std::string *error)
+{
+    program._impl->execCheckRows = RigExecBakedExecCheckRows::Build(
+        *program._impl, error, RigExecExecCheckMode::Capture);
     return bool(program._impl->execCheckRows);
 }
 std::shared_ptr<RigExecBakedExecCheckRows>

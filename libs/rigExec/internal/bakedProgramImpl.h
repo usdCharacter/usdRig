@@ -4376,6 +4376,9 @@ struct RigExecBakedProgramTesting {
     /// owning-thread operations; native bodies only copy their bound values.
     static bool EnableExecCrossCheck(const RigExecBakedProgram &program,
                                      std::string *error = nullptr);
+    /// The same rows, captured from the bodies but never judged by OpenExec.
+    static bool EnableExecRowCapture(const RigExecBakedProgram &program,
+                                     std::string *error = nullptr);
     static std::shared_ptr<RigExecBakedExecCheckRows>
     ExecCrossCheckRows(const RigExecBakedProgram &program);
     static void SetOpObservers(const RigExecBakedProgram &program,

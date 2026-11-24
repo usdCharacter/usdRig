@@ -1619,6 +1619,22 @@ rigexec_add_test(NAME exec_crosscheck_computed_ik_space COMMAND testRigExecExecC
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/computed_ik_space.usda" 1)
 set_tests_properties(exec_crosscheck_computed_ik_space PROPERTIES LABELS "exec")
 
+# The rows the exec cross-check judged, recorded as goldens and compared
+# without OpenExec; see tests/fixtures/README.md.
+add_executable(testRigExecExecGoldens tests/testRigExecExecGoldens.cpp)
+target_link_libraries(testRigExecExecGoldens PRIVATE rigExec)
+target_compile_definitions(testRigExecExecGoldens PRIVATE ${_rigexec_schema_resource_define})
+foreach(_fixture examples/01_FkChainTail examples/03_IkFkBlendClamp
+        examples/05_TwistRibbonSpine examples/11_VolumeWeights
+        examples/13_ReadPhases examples/ArmRig tests/fixtures/computed_ik_space)
+    get_filename_component(_name "${_fixture}" NAME)
+    rigexec_add_test(NAME testRigExecExecGoldens_${_name} COMMAND testRigExecExecGoldens
+        "${CMAKE_CURRENT_SOURCE_DIR}/${_fixture}.usda"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/execRows")
+    set_tests_properties(testRigExecExecGoldens_${_name} PROPERTIES
+        LABELS "golden" ENVIRONMENT "RIGEXEC_ENABLE_SIMD=0")
+endforeach()
+
 add_executable(testRigExecInputActions tests/testRigExecInputActions.cpp)
 target_link_libraries(testRigExecInputActions PRIVATE rigExec)
 rigexec_add_test(NAME testRigExecInputActions COMMAND "${CMAKE_COMMAND}"
@@ -3324,7 +3340,7 @@ foreach(_rigexec_scene_exe IN ITEMS
     testRigExecChainLevels testRigExecConstraints testRigExecCrossDomainInputs
     testRigExecDefaultSpaces testRigExecDeltaMush testRigExecEnvelopeVolumes
     testRigExecCompiledProgram testRigExecCompiledRigRests testRigExecExampleParity testRigExecExecCrossCheck
-    testRigExecExecCrossCheckRows testRigExecExternalMovers
+    testRigExecExecCrossCheckRows testRigExecExecGoldens testRigExecExternalMovers
     testRigExecFrameCacheCones_Verify testRigExecFrameCacheSparsity
     testRigExecFrozenContext testRigExecGeometryOpsBakedParity
     testRigExecGeometryProgram testRigExecGraphBindings
@@ -3351,7 +3367,7 @@ foreach(_rigexec_oracle_exe IN ITEMS
     testRigExecArm testRigExecBakedAttribute testRigExecBakedMode
     testRigExecBakedSchedule testRigExecConstraints testRigExecDeltaMush
     testRigExecCompiledRigRests testRigExecExampleParity
-    testRigExecExecCrossCheck testRigExecExecCrossCheckRows
+    testRigExecExecCrossCheck testRigExecExecCrossCheckRows testRigExecExecGoldens
     testRigExecExternalMovers testRigExecFrozenContext
     testRigExecBakedOpParity
     testRigExecGeometryOpsBakedParity testRigExecGoldenPose

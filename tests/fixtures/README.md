@@ -39,6 +39,33 @@ establish semantic correctness. The independent numerical expectations live in
 and `testRigExecVolumeWeights`; CPU/SIMD comparisons also run in
 `testRigExecParallelKernels`.
 
+## Exec cross-check rows
+
+`execRows/<reference>/<fixture>.golden` hold, per frame, every row the exec
+cross-check judged when the file was recorded: the row key, a digest of the
+inputs the baked step body read, and the exact value it stored, which OpenExec
+reproduced bit for bit at that time. `testRigExecExecGoldens` captures the same
+rows from the production evaluator without OpenExec and compares them.
+`<reference>` names the platform, architecture and compiler that recorded the
+file (`RigExecExecRowsReference`). That configuration compares every bit; any
+other compares which rows were judged and the type and length of each value.
+
+The authoritative reference is the Linux configuration above
+(`linux-x86_64-gcc13`). The files under `windows-x86_64-msvc1936` were
+recorded on a Windows development machine and are exact only for that
+compiler; record the Linux set from the reference configuration before the
+OpenExec cross-check is removed. To record, from a shell that sourced
+`bin/_env.sh`, with `RIGEXEC_ENABLE_SIMD=0`:
+
+```sh
+build/testRigExecExecCrossCheckRows examples/01_FkChainTail.usda 1001 \
+  --golden-out tests/fixtures/execRows/<reference>/01_FkChainTail.golden \
+  1001 1024 1048
+```
+
+The examples use frames 1001, 1024 and 1048; `computed_ik_space` uses 1, 5
+and 10. Recording fails unless every judged row matches OpenExec.
+
 ## Rendered-image baselines
 
 `render/twistRibbon_1001.png` and `render/twistRibbon_1024.png` are 128x128

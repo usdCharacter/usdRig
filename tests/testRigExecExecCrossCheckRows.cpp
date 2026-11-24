@@ -5,8 +5,10 @@
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/api/types.h"
 #include "pxr/base/plug/registry.h"
+#include "pxr/base/tf/pathUtils.h"
 #include "pxr/usd/usd/primRange.h"
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <set>
@@ -89,11 +91,14 @@ static_assert(!_BraceConstructible<RigExecBakedExecCheckRows,
               "factory gate: brace-init must be rejected");
 
 // A stage path and reporting frame make this a supported fixture row,
-// using the native program's real bound inputs and stored outputs.
+// using the native program's real bound inputs and stored outputs. With
+// --golden-out <file> <frame>..., the rows the cross-check judges at each
+// frame are recorded instead (testRigExecExecGoldens compares them).
 int
 main(int argc, char **argv)
 {
-    CHECK(argc == 3);
+    const bool record = argc > 5 && std::string(argv[3]) == "--golden-out";
+    CHECK(argc == 3 || record);
     RigExecLoadComputations();
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     const auto stage = UsdStage::Open(argv[1]);
@@ -119,6 +124,29 @@ main(int argc, char **argv)
     CHECK(enabled);
     const auto rows = RigExecBakedProgramTesting::ExecCrossCheckRows(*program);
     CHECK(rows);
+    if (record) {
+        std::string golden = RigExecExecRowsGoldenHeader(
+            TfGetBaseName(argv[1]), rigPath,
+            RigExecBakedProgramAccess::StepGraph(*program).useSimd);
+        for (int i = 5; i < argc; ++i) {
+            const UsdTimeCode at(std::stod(argv[i]));
+            CHECK(evaluator.Evaluate(at).valid);
+            const auto report = rows->Evaluate(at);
+            for (const auto &line : report.diagnostics)
+                std::cerr << line << '\n';
+            CHECK(report.Passed() && report.checked > 0);
+            const auto judged = rows->Judged(at);
+            for (size_t row = 0; row < judged.size(); ++row)
+                CHECK(!judged[row] || rows->WasChecked(row));
+            golden += rows->GoldenVisit(size_t(i - 5), at, judged);
+        }
+        std::ofstream out(argv[4], std::ios::binary);
+        out << golden;
+        out.close();
+        CHECK(bool(out));
+        std::cout << "recorded " << argv[4] << '\n';
+        return 0;
+    }
     const UsdTimeCode time(std::stod(argv[2]));
     CHECK(evaluator.Evaluate(time).valid);
     auto report = rows->Evaluate(time);
