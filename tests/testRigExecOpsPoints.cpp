@@ -399,6 +399,27 @@ TestDeltaMush()
                     CHECK(false);
                 }
             }
+    // Nodes with different settings and lists in one rig each run with
+    // their own.
+    std::vector<DeltaMushPayload> payloads(settings.size());
+    for (size_t s = 0; s < settings.size(); ++s) {
+        payloads[s].iterations = 2 + int(s);
+        payloads[s].pinBorders = s % 2 == 0;
+        payloads[s].settings = settings[s];
+    }
+    const std::vector<const RigExecPortHandle *> ports = {
+        &DeltaMushPoints(), &DeltaMushRest(), &DeltaMushCounts(),
+        &DeltaMushIndices(), &DeltaMushEnvelope()};
+    const std::vector<const void *> values = {&in, &restArray, &counts,
+                                              &indices, &envelopeArray};
+    std::vector<Points> results;
+    CHECK(RunEach(DeltaMush(), ports, DeltaMushOut(), payloads, values,
+                  &results));
+    for (size_t i = 0; i < results.size(); ++i) {
+        Node single(DeltaMush(), ports, DeltaMushOut(), &payloads[i]);
+        Points actual;
+        CHECK(single.Run(values, &actual) && SamePoints(actual, results[i]));
+    }
 }
 
 /// A cage of d.x * d.y * d.z points over [lo, hi], x fastest, jittered.

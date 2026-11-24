@@ -1,9 +1,10 @@
 #include "rigExecOps/deform/deltaMushOp.h"
 
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 #include "rigExecMath/deltaMushKernel.h"
 
+#include <cstdint>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -29,11 +30,48 @@ using rigExecStd::RigExecArray;
 using rigExecStd::Vec3f;
 using Points = RigExecArray<Vec3f>;
 using namespace opIo;
+using namespace fieldIo;
+
+enum DeltaMushField : uint32_t {
+    kIterations,
+    kStep,
+    kPinBorders,
+    kDistanceWeight,
+    kDisplacement,
+    kSmoothing,
+    kFrameTransport,
+    kSmoothWeightCount,
+    kSmoothWeights,
+    kEdgeCount,
+    kEdges,
+    kOnlySmooth,
+};
+
+/// Instance \p k's settings.
+DeltaMushPayload
+PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
+{
+    DeltaMushPayload p;
+    p.iterations = ValueAt<int32_t>(batch, kIterations, k);
+    p.step = ValueAt<double>(batch, kStep, k);
+    p.pinBorders = FlagAt(batch, kPinBorders, k);
+    p.distanceWeight = ValueAt<double>(batch, kDistanceWeight, k);
+    p.displacement = ValueAt<double>(batch, kDisplacement, k);
+    p.settings.smoothing =
+        EnumAt<rigExec::RigExecDeltaMushSmoothing>(batch, kSmoothing, k);
+    p.settings.frameTransport = EnumAt<rigExec::RigExecDeltaMushFrameTransport>(
+        batch, kFrameTransport, k);
+    const auto weights = ListAt<float>(batch, kSmoothWeights, k);
+    p.settings.smoothWeights.assign(weights.begin(), weights.end());
+    const auto edges = ListAt<int32_t>(batch, kEdges, k);
+    p.settings.edges.assign(edges.begin(), edges.end());
+    p.settings.onlySmooth = FlagAt(batch, kOnlySmooth, k);
+    return p;
+}
 
 bool
-Run(const void *payload, void *, const RigExecOpIo &io, std::string *error)
+MushOne(const RigExecOpIo &io, const DeltaMushPayload &p, std::string *error)
 {
-    const DeltaMushPayload &p = *static_cast<const DeltaMushPayload *>(payload);
     const Points &in = *In<Points>(io, DeltaMushPoints());
     const Mat4d *map = In<Mat4d>(io, DeltaMushComputationToTarget());
     std::vector<Vec3f> points = ToVector(in);
@@ -50,6 +88,46 @@ Run(const void *payload, void *, const RigExecOpIo &io, std::string *error)
                        In<Envelope>(io, DeltaMushEnvelope()), "DeltaMush",
                        error);
 }
+
+bool
+Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return MushOne(rigExec::RigExecBatchInstance(batch, k),
+                       PayloadAt(batch, k), error);
+    });
+}
+
+void
+Values(const void *payload, rigExec::RigExecFieldValues &out)
+{
+    const DeltaMushPayload &p = *static_cast<const DeltaMushPayload *>(payload);
+    out.Set(kIterations, int32_t(p.iterations));
+    out.Set(kStep, p.step);
+    SetFlag(out, kPinBorders, p.pinBorders);
+    out.Set(kDistanceWeight, p.distanceWeight);
+    out.Set(kDisplacement, p.displacement);
+    SetEnum(out, kSmoothing, p.settings.smoothing);
+    SetEnum(out, kFrameTransport, p.settings.frameTransport);
+    SetList(out, kSmoothWeightCount, p.settings.smoothWeights);
+    SetList(out, kEdgeCount, p.settings.edges);
+    SetFlag(out, kOnlySmooth, p.settings.onlySmooth);
+}
+
+const rigExec::RigExecFieldDesc kFields[] = {
+    Value("iterations", rigExecStd::IntType()),
+    Value("step", rigExecStd::DoubleType()),
+    Flag("pinBorders"),
+    Value("distanceWeight", rigExecStd::DoubleType()),
+    Value("displacement", rigExecStd::DoubleType()),
+    Enum("smoothing", rigExec::RigExecDeltaMushSmoothing::LengthWeighted),
+    Enum("frameTransport", rigExec::RigExecDeltaMushFrameTransport::Corner),
+    Count("smoothWeightCount"),
+    Items("smoothWeights", rigExecStd::FloatType(), kSmoothWeightCount),
+    Count("edgeCount"),
+    Items("edges", rigExecStd::IntType(), kEdgeCount),
+    Flag("onlySmooth"),
+};
 
 } // namespace
 
@@ -75,56 +153,21 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&DeltaMushOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
-void
-Save(Writer &w, const DeltaMushPayload &p)
-{
-    w.Version(1);
-    w.I32(p.iterations);
-    w.F64(p.step);
-    w.Bool(p.pinBorders);
-    w.F64(p.distanceWeight);
-    w.F64(p.displacement);
-    w.Enum(p.settings.smoothing);
-    w.Enum(p.settings.frameTransport);
-    payloadIo::PutList(w, p.settings.smoothWeights);
-    payloadIo::PutList(w, p.settings.edges);
-    w.Bool(p.settings.onlySmooth);
-}
-
-void
-Load(Reader &r, DeltaMushPayload &p)
-{
-    r.Version(1);
-    p.iterations = r.I32();
-    p.step = r.F64();
-    p.pinBorders = r.Bool();
-    p.distanceWeight = r.F64();
-    p.displacement = r.F64();
-    p.settings.smoothing =
-        r.Enum(rigExec::RigExecDeltaMushSmoothing::LengthWeighted);
-    p.settings.frameTransport =
-        r.Enum(rigExec::RigExecDeltaMushFrameTransport::Corner);
-    payloadIo::GetList(r, p.settings.smoothWeights);
-    payloadIo::GetList(r, p.settings.edges);
-    p.settings.onlySmooth = r.Bool();
-}
-
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "DeltaMush";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.run = &Run;
+    d.runBatch = &Run;
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
         rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
-    d.payload =
-        rigExec::RigExecPayloadHandlingFor<DeltaMushPayload, &Save, &Load>();
+    d.payloadFields = kFields;
+    d.payloadFieldCount = std::size(kFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &Values;
     return d;
 }();
 

@@ -1,9 +1,10 @@
 #include "rigExecOps/deform/wrinkleOp.h"
 
 #include "rigExecMath/wrinkleKernel.h"
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 
+#include <cstdint>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -22,26 +23,114 @@ RIGEXEC_DEFINE_PORT_HANDLE(WrinkleOut)
 namespace {
 
 using namespace opIo;
+using namespace fieldIo;
 using rigExecStd::RigExecArray;
 using rigExecStd::Vec3f;
 
-bool
-Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
-    std::string *error)
+enum WrinkleField : uint32_t {
+    kIterations,
+    kTopology,
+    kNeighborDistance,
+    kRestLengthScale,
+    kStretchStiffness,
+    kCompressionStiffness,
+    kBendStiffness,
+    kMaxDisplacement,
+    kPinBorders,
+    kTangentPlaneCollisions,
+    kTangentPlaneInset,
+    kWrinkleScale,
+    kSmoothingIterations,
+    kPinPointCount,
+    kPinPoints,
+};
+
+/// Instance \p k's settings.
+rigExec::RigExecWrinkleSettings
+SettingsAt(const rigExec::RigExecOpBatch &batch, size_t k)
 {
-    const WrinklePayload &p = *static_cast<const WrinklePayload *>(payload);
+    rigExec::RigExecWrinkleSettings s;
+    s.iterations = ValueAt<int32_t>(batch, kIterations, k);
+    s.topology = EnumAt<rigExec::RigExecWrinkleTopology>(batch, kTopology, k);
+    s.neighborDistance = ValueAt<int32_t>(batch, kNeighborDistance, k);
+    s.restLengthScale = ValueAt<float>(batch, kRestLengthScale, k);
+    s.stretchStiffness = ValueAt<float>(batch, kStretchStiffness, k);
+    s.compressionStiffness = ValueAt<float>(batch, kCompressionStiffness, k);
+    s.bendStiffness = ValueAt<float>(batch, kBendStiffness, k);
+    s.maxDisplacement = ValueAt<float>(batch, kMaxDisplacement, k);
+    s.pinBorders = FlagAt(batch, kPinBorders, k);
+    s.tangentPlaneCollisions = FlagAt(batch, kTangentPlaneCollisions, k);
+    s.tangentPlaneInset = ValueAt<float>(batch, kTangentPlaneInset, k);
+    s.wrinkleScale = ValueAt<float>(batch, kWrinkleScale, k);
+    s.smoothingIterations = ValueAt<int32_t>(batch, kSmoothingIterations, k);
+    const auto pins = ListAt<int32_t>(batch, kPinPoints, k);
+    s.pinPoints.assign(pins.begin(), pins.end());
+    return s;
+}
+
+bool
+WrinkleOne(const rigExec::RigExecOpIo &io,
+           const rigExec::RigExecWrinkleSettings &settings, std::string *error)
+{
     const Points &in = *In<Points>(io, WrinklePoints());
     std::vector<Vec3f> points = ToVector(in);
-    // The topology is rebuilt every run until step 9 gives ops state.
     if (!rigExec::RigExecApplyWrinkleKernel<Vec3f, rigExecStd::Vec3d>(
             &points, ToVector(*In<Points>(io, WrinkleRest())),
             ToVector(*In<RigExecArray<int>>(io, WrinkleCounts())),
-            ToVector(*In<RigExecArray<int>>(io, WrinkleIndices())), p.settings))
+            ToVector(*In<RigExecArray<int>>(io, WrinkleIndices())), settings))
         return Fail(error, "Wrinkle",
                     "unusable settings, topology, rest or points");
     return WritePoints(io, WrinkleOut(), in, points,
                        In<Envelope>(io, WrinkleEnvelope()), "Wrinkle", error);
 }
+
+bool
+Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return WrinkleOne(rigExec::RigExecBatchInstance(batch, k),
+                          SettingsAt(batch, k), error);
+    });
+}
+
+void
+Values(const void *payload, rigExec::RigExecFieldValues &out)
+{
+    const rigExec::RigExecWrinkleSettings &s =
+        static_cast<const WrinklePayload *>(payload)->settings;
+    out.Set(kIterations, int32_t(s.iterations));
+    SetEnum(out, kTopology, s.topology);
+    out.Set(kNeighborDistance, int32_t(s.neighborDistance));
+    out.Set(kRestLengthScale, s.restLengthScale);
+    out.Set(kStretchStiffness, s.stretchStiffness);
+    out.Set(kCompressionStiffness, s.compressionStiffness);
+    out.Set(kBendStiffness, s.bendStiffness);
+    out.Set(kMaxDisplacement, s.maxDisplacement);
+    SetFlag(out, kPinBorders, s.pinBorders);
+    SetFlag(out, kTangentPlaneCollisions, s.tangentPlaneCollisions);
+    out.Set(kTangentPlaneInset, s.tangentPlaneInset);
+    out.Set(kWrinkleScale, s.wrinkleScale);
+    out.Set(kSmoothingIterations, int32_t(s.smoothingIterations));
+    SetList(out, kPinPointCount, s.pinPoints);
+}
+
+const rigExec::RigExecFieldDesc kFields[] = {
+    Value("iterations", rigExecStd::IntType()),
+    Enum("topology", rigExec::RigExecWrinkleTopology::SurfaceStruts),
+    Value("neighborDistance", rigExecStd::IntType()),
+    Value("restLengthScale", rigExecStd::FloatType()),
+    Value("stretchStiffness", rigExecStd::FloatType()),
+    Value("compressionStiffness", rigExecStd::FloatType()),
+    Value("bendStiffness", rigExecStd::FloatType()),
+    Value("maxDisplacement", rigExecStd::FloatType()),
+    Flag("pinBorders"),
+    Flag("tangentPlaneCollisions"),
+    Value("tangentPlaneInset", rigExecStd::FloatType()),
+    Value("wrinkleScale", rigExecStd::FloatType()),
+    Value("smoothingIterations", rigExecStd::IntType()),
+    Count("pinPointCount"),
+    Items("pinPoints", rigExecStd::IntType(), kPinPointCount),
+};
 
 } // namespace
 
@@ -64,63 +153,20 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&WrinkleOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
-void
-Save(Writer &w, const WrinklePayload &p)
-{
-    const rigExec::RigExecWrinkleSettings &s = p.settings;
-    w.Version(1);
-    w.I32(s.iterations);
-    w.Enum(s.topology);
-    w.I32(s.neighborDistance);
-    w.F32(s.restLengthScale);
-    w.F32(s.stretchStiffness);
-    w.F32(s.compressionStiffness);
-    w.F32(s.bendStiffness);
-    w.F32(s.maxDisplacement);
-    w.Bool(s.pinBorders);
-    w.Bool(s.tangentPlaneCollisions);
-    w.F32(s.tangentPlaneInset);
-    w.F32(s.wrinkleScale);
-    w.I32(s.smoothingIterations);
-    payloadIo::PutList(w, s.pinPoints);
-}
-
-void
-Load(Reader &r, WrinklePayload &p)
-{
-    rigExec::RigExecWrinkleSettings &s = p.settings;
-    r.Version(1);
-    s.iterations = r.I32();
-    s.topology = r.Enum(rigExec::RigExecWrinkleTopology::SurfaceStruts);
-    s.neighborDistance = r.I32();
-    s.restLengthScale = r.F32();
-    s.stretchStiffness = r.F32();
-    s.compressionStiffness = r.F32();
-    s.bendStiffness = r.F32();
-    s.maxDisplacement = r.F32();
-    s.pinBorders = r.Bool();
-    s.tangentPlaneCollisions = r.Bool();
-    s.tangentPlaneInset = r.F32();
-    s.wrinkleScale = r.F32();
-    s.smoothingIterations = r.I32();
-    payloadIo::GetList(r, s.pinPoints);
-}
-
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "Wrinkle";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.run = &Run;
+    d.runBatch = &Run;
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;
-    d.payload =
-        rigExec::RigExecPayloadHandlingFor<WrinklePayload, &Save, &Load>();
+    d.payloadFields = kFields;
+    d.payloadFieldCount = std::size(kFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &Values;
     return d;
 }();
 
