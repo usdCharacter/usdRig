@@ -973,6 +973,7 @@ inline constexpr const char *const brackets = "brackets";
 inline constexpr const char *const cage = "cage";
 inline constexpr const char *const circle = "circle";
 inline constexpr const char *const clamp = "clamp";
+inline constexpr const char *const classicLinear = "classicLinear";
 inline constexpr const char *const constant = "constant";
 inline constexpr const char *const custom = "custom";
 inline constexpr const char *const dense = "dense";

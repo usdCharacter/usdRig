@@ -45,7 +45,6 @@
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usd/timeCode.h"
 #include "pxr/usd/usdGeom/tokens.h"
-#include "pxr/usd/usdSkel/tokens.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -59,6 +58,7 @@
 using namespace rigExec;
 PXR_NAMESPACE_USING_DIRECTIVE
 
+static const TfToken _classicLinear(SchemaValueText::classicLinear);
 static const TfToken _dense(SchemaValueText::dense);
 static const TfToken _inputsDefaultWeight(SchemaAttrText::inputsDefaultWeight);
 static const TfToken
@@ -668,7 +668,7 @@ _ClassicLinearSkinStage()
     skin.CreateRelationship(_rigExecInfluences).SetTargets(joints);
     skin.CreateAttribute(_rigExecElementSize, SdfValueTypeNames->Int).Set(10);
     skin.CreateAttribute(_rigExecSkinningMethod, SdfValueTypeNames->Token)
-        .Set(UsdSkelTokens->classicLinear);
+        .Set(_classicLinear);
     VtIntArray indices(kPoints * 10, 0);
     VtFloatArray weights(kPoints * 10, 0.0f);
     for (size_t i = 0; i < kPoints; ++i) {
