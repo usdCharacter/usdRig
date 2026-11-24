@@ -21,6 +21,7 @@ libs/rigExec/internal/. Two checks:
 diff like code.
 """
 import argparse
+import os
 import pathlib
 import re
 import sys
@@ -30,7 +31,8 @@ INSTALLED = "tools/rigexec_installed_internal.txt"
 INTERNAL = "rigExec/internal/"
 ALLOWED_PREFIXES = ("libs/rigExecBinary/", "libs/rigExecBake/", "tests/")
 SOURCE_SUFFIXES = {".h", ".cpp", ".mm", ".cc", ".hpp", ".inl"}
-SKIPPED_DIRS = {"build", "thirdparty", ".git"}
+SKIPPED_DIRS = {"thirdparty", "third_party", "node_modules", ".git"}
+SKIPPED_TOP_PREFIXES = ("build",)
 # Libraries whose headers install; keep in step with CMakeLists.txt.
 INSTALLED_LIBS = (
     "rigExecGraph rigExecEvalCore rigExecScene rigExecMath rigExec "
@@ -43,13 +45,41 @@ NOT_INSTALLED = {"guideBoundsInternal.h", "registryInternal.h",
 INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]')
 
 
-def _sources(root):
-    for path in sorted(root.rglob("*")):
-        rel = path.relative_to(root)
-        if rel.parts and rel.parts[0] in SKIPPED_DIRS:
+def _skipped(rel_dir):
+    parts = rel_dir.parts
+    return (parts[0] in SKIPPED_DIRS
+            or parts[0].startswith(SKIPPED_TOP_PREFIXES))
+
+
+def _walk(base, root, suffixes):
+    """Files under base with a suffix, pruning excluded and unreadable
+    directories before descent. Yields (repo-relative posix path, Path)."""
+    def unreadable(error):
+        print(f"skipped unreadable directory: {error.filename}",
+              file=sys.stderr)
+
+    found = []
+    if not base.is_dir():
+        return found
+    for dirpath, dirnames, filenames in os.walk(base, onerror=unreadable):
+        here = pathlib.Path(dirpath)
+        rel_dir = here.relative_to(root)
+        if rel_dir.parts and _skipped(rel_dir):
+            dirnames[:] = []
             continue
-        if path.suffix in SOURCE_SUFFIXES and path.is_file():
-            yield rel.as_posix(), path
+        dirnames[:] = [d for d in dirnames
+                       if d not in SKIPPED_DIRS
+                       and not (not rel_dir.parts
+                                and d.startswith(SKIPPED_TOP_PREFIXES))]
+        for name in filenames:
+            path = here / name
+            if path.suffix in suffixes:
+                found.append((path.relative_to(root).as_posix(), path))
+    return sorted(found)
+
+
+def _sources(root):
+    return _walk(root, root, SOURCE_SUFFIXES)
 
 
 def _includes(path):
@@ -82,8 +112,7 @@ def _installed_internal(root):
     stack = []
     for lib in INSTALLED_LIBS:
         base = root / "libs" / lib
-        for path in sorted(base.rglob("*.h")):
-            rel = path.relative_to(root).as_posix()
+        for rel, path in _walk(base, root, {".h"}):
             if path.name in NOT_INSTALLED or "/internal/" in rel:
                 continue
             stack.append(rel)
