@@ -15,8 +15,8 @@
 #include "pxr/exec/exec/registerSchema.h"
 #include "pxr/exec/vdf/context.h"
 #include "pxr/exec/vdf/readIterator.h"
+#include "pxr/base/tf/stringUtils.h"
 #include "pxr/usd/usdGeom/mesh.h"
-#include "pxr/usd/usdSkel/blendShape.h"
 
 #include <algorithm>
 #include "rigExecSchema/schemaNames.h"
@@ -48,6 +48,8 @@ TF_DEFINE_PRIVATE_TOKENS(_blendShapeTokens,
     ((blendInputs, rigExec::SchemaAttrText::rigExecBlendInputs))
     ((samples, rigExec::SchemaAttrText::rigExecSamples))
     ((rigExecBlendShape, rigExec::SchemaAttrText::rigExecBlendShape))
+    ((blendShapeType, rigExec::BlendShapeText::typeName))
+    ((normalOffsets, rigExec::BlendShapeText::normalOffsets))
     (target));
 
 namespace {
@@ -255,17 +257,34 @@ _ValidateBlendShapeMover(const rigExec::RigExecMoverValidateContext &ctx,
             if (!sparseShape.empty()) {
                 if (sparseShape.size() != 1 ||
                     !stage->GetPrimAtPath(sparseShape[0].GetPrimPath())
-                         .IsA<UsdSkelBlendShape>()) {
+                         .IsA(_blendShapeTokens->blendShapeType)) {
                     *error = samplePath.GetString() +
                              ": rigExec:blendShape must name exactly one"
                              " UsdSkelBlendShape prim";
                     return false;
                 }
                 if (ctx.notices) {
-                    const UsdSkelBlendShape shape(
-                        stage->GetPrimAtPath(sparseShape[0].GetPrimPath()));
-                    const bool hasInbetweens = !shape.GetInbetweens().empty();
-                    const UsdAttribute normals = shape.GetNormalOffsetsAttr();
+                    const UsdPrim shape =
+                        stage->GetPrimAtPath(sparseShape[0].GetPrimPath());
+                    bool hasInbetweens = false;
+                    for (const UsdProperty &property :
+                         shape.GetPropertiesInNamespace(
+                             rigExec::BlendShapeText::inbetweensPrefix)) {
+                        const UsdAttribute attr = property.As<UsdAttribute>();
+                        if (attr &&
+                            TfStringStartsWith(
+                                attr.GetName(),
+                                rigExec::BlendShapeText::inbetweensPrefix) &&
+                            !TfStringEndsWith(
+                                attr.GetName(),
+                                rigExec::BlendShapeText::
+                                    inbetweenNormalOffsetsSuffix)) {
+                            hasInbetweens = true;
+                            break;
+                        }
+                    }
+                    const UsdAttribute normals =
+                        shape.GetAttribute(_blendShapeTokens->normalOffsets);
                     const bool hasNormals =
                         normals && normals.HasAuthoredValue();
                     if (hasInbetweens || hasNormals) {

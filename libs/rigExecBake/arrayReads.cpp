@@ -15,6 +15,7 @@
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/stage.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/usd/timeCode.h"
 
 #include <map>
@@ -25,6 +26,10 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExec {
 namespace {
+
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    ((offsets, BlendShapeText::offsets))
+    ((pointIndices, BlendShapeText::pointIndices)));
 
 using Consumer = RigExecBakeArrayConsumer;
 using Role = RigExecRevisionLeafRole;
@@ -167,10 +172,10 @@ struct _Lister {
                 if (!sample.blendShape.IsEmpty()) {
                     const auto shape = sample.blendShape.GetPrimPath();
                     sparseSources.emplace(
-                        shape.AppendProperty(TfToken("offsets")),
+                        shape.AppendProperty(_tokens->offsets),
                         RigExecRevisionLeafType::Vec3fArray);
                     sparseSources.emplace(
-                        shape.AppendProperty(TfToken("pointIndices")),
+                        shape.AppendProperty(_tokens->pointIndices),
                         RigExecRevisionLeafType::IntArray);
                 }
             }

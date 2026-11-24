@@ -9,7 +9,6 @@
 #include "pxr/base/tf/diagnostic.h"
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/usdGeom/pointBased.h"
-#include "pxr/usd/usdSkel/blendShape.h"
 
 #include <atomic>
 #include <cmath>
@@ -26,8 +25,9 @@ namespace rigExec {
 TF_DEFINE_PUBLIC_TOKENS(RigExecMoverExecTokens, RIGEXEC_MOVER_EXEC_TOKENS);
 
 TF_DEFINE_PRIVATE_TOKENS(_tokens,
-    (offsets)
-    (pointIndices));
+    ((blendShapeType, BlendShapeText::typeName))
+    ((offsets, BlendShapeText::offsets))
+    ((pointIndices, BlendShapeText::pointIndices)));
 
 namespace {
 
@@ -571,13 +571,12 @@ RigExecResolveBlendSampleLayout(const UsdStageRefPtr &stage,
     layout->pointCount = pointCount;
     layout->valid = false;
 
-    const UsdSkelBlendShape shape(
-        stage->GetPrimAtPath(blendShapePath.GetPrimPath()));
-    if (!shape) {
+    const UsdPrim shape = stage->GetPrimAtPath(blendShapePath.GetPrimPath());
+    if (!shape || !shape.IsA(_tokens->blendShapeType)) {
         return true; // cache the miss; it cannot become a hit this compiled rig
     }
-    const UsdAttribute offsetsAttr = shape.GetOffsetsAttr();
-    const UsdAttribute indicesAttr = shape.GetPointIndicesAttr();
+    const UsdAttribute offsetsAttr = shape.GetAttribute(_tokens->offsets);
+    const UsdAttribute indicesAttr = shape.GetAttribute(_tokens->pointIndices);
 
     // The admission rule. `uniform` already forbids time samples, so a
     // connection is the only route by which these can change while the compiled rig

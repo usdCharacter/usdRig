@@ -41,7 +41,6 @@
 #include "rigExecMath/simdKernels.h"
 
 #include "pxr/base/gf/matrix4d.h"
-#include "pxr/usd/usdSkel/blendShape.h"
 #include "pxr/base/tf/diagnostic.h"
 #include "pxr/base/tf/getenv.h"
 #include "pxr/base/work/loops.h"
@@ -91,8 +90,9 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((rigExecSkinningMethod, rigExec::SchemaAttrText::rigExecSkinningMethod))
     ((inputsWeight, rigExec::SchemaAttrText::inputsWeight))
     ((rigExecActivation, rigExec::SchemaAttrText::rigExecActivation))
-    (offsets)
-    (pointIndices)
+    ((offsets, rigExec::BlendShapeText::offsets))
+    ((pointIndices, rigExec::BlendShapeText::pointIndices))
+    ((blendShapeType, rigExec::BlendShapeText::typeName))
     ((rigExecWeightTarget, rigExec::SchemaAttrText::rigExecWeightTarget))
 );
 
@@ -347,13 +347,15 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
                     sample.phase = binding.phase;
                     sample.blendShape = binding.blendShape;
                     if (!sample.blendShape.IsEmpty()) {
-                        const UsdSkelBlendShape shape(B.stage->GetPrimAtPath(
-                            sample.blendShape.GetPrimPath()));
-                        sample.shapeValid = bool(shape);
+                        const UsdPrim shape = B.stage->GetPrimAtPath(
+                            sample.blendShape.GetPrimPath());
+                        sample.shapeValid =
+                            shape && shape.IsA(_tokens->blendShapeType);
                         sample.layoutRefused =
-                            shape &&
-                            (shape.GetOffsetsAttr().HasAuthoredConnections() ||
-                             shape.GetPointIndicesAttr()
+                            sample.shapeValid &&
+                            (shape.GetAttribute(_tokens->offsets)
+                                 .HasAuthoredConnections() ||
+                             shape.GetAttribute(_tokens->pointIndices)
                                  .HasAuthoredConnections());
                     }
                     if (binding.blendShape.IsEmpty()) {

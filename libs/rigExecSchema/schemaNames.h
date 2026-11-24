@@ -34,6 +34,19 @@ inline constexpr const char *const membershipExpression =
     "collection:members:membershipExpression";
 } // namespace CollectionMemberText
 
+// BlendShape names. These come from OpenUSD's UsdSkel schema, not the RigExec
+// schema; a sparse blend sample names a prim of this type and its attributes
+// are read by name, so they are spelled once here.
+namespace BlendShapeText {
+inline constexpr const char *const typeName = "BlendShape";
+inline constexpr const char *const offsets = "offsets";
+inline constexpr const char *const normalOffsets = "normalOffsets";
+inline constexpr const char *const pointIndices = "pointIndices";
+inline constexpr const char *const inbetweensPrefix = "inbetweens:";
+inline constexpr const char *const inbetweenNormalOffsetsSuffix =
+    ":normalOffsets";
+} // namespace BlendShapeText
+
 // Provider computation names: the identities a provider value is read
 // through ("computePointFrame", "computeRestFrame", ...). The scene provider
 // program declares them, and the evaluator, baked program, binary format,

@@ -2,10 +2,14 @@
 #include "rigExec/api/moverRegistry.h"
 #include "rigExec/internal/moverGraph.h"
 #include <set>
+#include "rigExecSchema/schemaNames.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/usd/primRange.h"
-#include "pxr/usd/usdSkel/blendShape.h"
 namespace rigExec {
 namespace {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    ((blendShapeType, BlendShapeText::typeName)));
+
 template <class T>
 void
 Capture(const RigExecResolvedInputs &resolved, const UsdAttribute &a,
@@ -107,7 +111,7 @@ RigExecCaptureOracleInputs(const UsdStageRefPtr &stage,
             row.relationships[r.GetName()] = std::move(v);
         }
         scene.prims[prim.GetPath()] = std::move(row);
-        if (prim.IsA<UsdSkelBlendShape>())
+        if (prim.IsA(_tokens->blendShapeType))
             scene.blendShapes.insert(prim.GetPath());
     }
     for (const auto &prim : stage->TraverseAll())

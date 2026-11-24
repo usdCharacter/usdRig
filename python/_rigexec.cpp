@@ -30,6 +30,7 @@
 #include "rigExecAuthoring/generateSkinWeights.h"
 #include "rigExecAuthoring/rigBuilder.h"
 #include "rigExecAuthoring/schemaAuthoring.h"
+#include "rigExecSchema/schemaNames.h"
 
 #include <array>
 #include <map>
@@ -2347,7 +2348,8 @@ PYBIND11_MODULE(_rigexec, m)
             "set_blend_shape",
             [](rigExec::RigExecBlendSampleHandle &h, py::object p) {
                 h.SetBlendShape(_PythonToDependencyPath(
-                    p, h.GetStage(), TfToken("BlendShape"), false));
+                    p, h.GetStage(), TfToken(rigExec::BlendShapeText::typeName),
+                    false));
             },
             py::arg("path"),
             "Point this sample at a UsdSkelBlendShape whose offsets (and\n"

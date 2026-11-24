@@ -20,8 +20,8 @@ namespace rigExec {
 
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
-    (offsets)
-    (pointIndices)
+    ((offsets, BlendShapeText::offsets))
+    ((pointIndices, BlendShapeText::pointIndices))
     ((restSpace, SchemaAttrText::restSpace))
     ((restTx, SchemaAttrText::restTx))
     ((restTy, SchemaAttrText::restTy))
