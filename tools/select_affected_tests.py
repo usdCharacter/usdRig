@@ -312,6 +312,17 @@ def parse(cmake_text: str) -> dict:
     executables = {}  # name -> {sources, links, link_vis}
     tests = []  # {name, command, executable}
 
+    source_vars = {}  # variable -> library whose SOURCES it was read from
+
+    def borrowed_sources(args: list[str]) -> list[str]:
+        """Sources of the libraries whose SOURCES a ${var} argument holds."""
+        borrowed = []
+        for arg in args:
+            m = re.fullmatch(r"\$\{([A-Za-z0-9_]+)\}", arg)
+            if m and source_vars.get(m.group(1)) in libraries:
+                borrowed.extend(libraries[source_vars[m.group(1)]]["sources"])
+        return borrowed
+
     current_kind = None
     for name, args in iter_commands(text):
         if name == "add_library" and args:
@@ -322,12 +333,31 @@ def parse(cmake_text: str) -> dict:
                 kind = rest[0]
                 rest = rest[1:]
             sources = [a for a in rest if not a.startswith("$")]
+            sources += borrowed_sources(rest)
             objects = object_refs(rest)
             libraries[lib] = {"kind": kind, "sources": sources, "objects": objects,
                               "links": [], "link_vis": {}}
+        elif name == "rigexec_add_op_library" and args:
+            # A STATIC op library over its SOURCES, linking the op core and
+            # its USES_TYPE_LIBRARIES publicly.
+            fields = defaultdict(list)
+            field = None
+            for arg in args[1:]:
+                if arg in {"SOURCES", "USES_TYPE_LIBRARIES"}:
+                    field = arg
+                elif field:
+                    fields[field].append(arg)
+            links = ["rigExecOpCore"] + fields["USES_TYPE_LIBRARIES"]
+            libraries[args[0]] = {
+                "kind": "STATIC", "sources": fields["SOURCES"], "objects": [],
+                "links": links, "link_vis": {l: "PUBLIC" for l in links}}
+        elif name == "get_target_property" and len(args) == 3 \
+                and args[2] == "SOURCES":
+            source_vars[args[0]] = args[1]
         elif name == "add_executable" and args:
             exe = args[0]
             sources = [a for a in args[1:] if not a.startswith("$")]
+            sources += borrowed_sources(args[1:])
             objects = object_refs(args[1:])
             executables[exe] = {"sources": sources, "objects": objects,
                                 "links": [], "link_vis": {}}
@@ -780,6 +810,13 @@ target_link_libraries(selPrivParent PRIVATE selPrivDep)
 add_executable(testSelPriv tests/testSelPriv.cpp)
 target_link_libraries(testSelPriv PRIVATE selPrivParent)
 add_test(NAME testSelPriv COMMAND testSelPriv)
+rigexec_add_op_library(selOps SOURCES libs/sel/op_alpha.cpp
+    USES_TYPE_LIBRARIES selTypes)
+get_target_property(_sel_ops selOps SOURCES)
+add_library(selBuiltins SHARED libs/sel/builtins.cpp ${_sel_ops})
+add_executable(testSelOps tests/testSelOps.cpp)
+target_link_libraries(testSelOps PRIVATE selBuiltins)
+add_test(NAME testSelOps COMMAND testSelOps)
 add_test(NAME testSelScript COMMAND ${CMAKE_COMMAND} -DSCRATCH_DIR=x
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/checkSelScript.cmake")
 """
@@ -883,10 +920,21 @@ def self_test() -> int:
     check("private SHARED dependency selects no test",
           res["direct_tests"], [])
 
+    # (c2) An op library's source selects the tests of the module that
+    # compiles its SOURCES, read through get_target_property.
+    res = select(["libs/sel/op_alpha.cpp"], model, index, False)
+    check("op library source selects the composing module's tests",
+          res["direct_tests"], ["testSelOps"])
+
     # (d) The real repository: every moved imaging domain source still
     # resolves to the pre-split 15-executable / 18-test inventory.
     real_model = parse_cmake_files()
     real_index = build_index(real_model)
+    res = select(["libs/rigExecOps/deform/matrixDeformOp.cpp"], real_model,
+                 real_index, False)
+    parity = ["testRigExecBakedOpParity", "testRigExecBakedOpParityScalar"]
+    check("a built-in op source selects the baked-vs-op probes",
+          [t for t in parity if t in res["direct_tests"]], parity)
     for src in IMAGING_SOURCES:
         res = select([src], real_model, real_index, False)
         check(f"{src} selects the imaging executables",
