@@ -23,13 +23,27 @@ struct RigExecTapList {
     std::vector<RigExecTap> taps;
 };
 
-/// Receives the tapped values after each successful Evaluate, on the thread
-/// that called it: one call per tap, in list order. \p tap is the tap's
-/// position in the list and \p type the value's registry type index.
-/// \p value is read-only and valid only during the call; copy what you
-/// need to keep.
+/// A tapped value, lent to the callback: `data` points at the value inside
+/// the evaluator, and `type` names its registered type. The pointer is
+/// valid only during the callback; copy what you need to keep.
+struct RigExecTapValue {
+    const void *data = nullptr;
+    const RigExecTypeHandle *type = nullptr;
+
+    /// The value as a \p T when it has type \p expected; null when it has
+    /// another type.
+    template <class T> const T *As(const RigExecTypeHandle &expected) const
+    {
+        return type == &expected ? static_cast<const T *>(data) : nullptr;
+    }
+};
+
+/// Receives the tapped values after each successful Evaluate, once all of
+/// the frame's ops have run. It is called on the thread that called
+/// Evaluate, once per tap, in list order; \p tap is the tap's position in
+/// the list.
 using RigExecTapCallback = void (*)(void *context, size_t tap,
-                                    const void *value, uint32_t type);
+                                    const RigExecTapValue &value);
 
 } // namespace rigExec
 

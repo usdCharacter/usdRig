@@ -27,6 +27,7 @@ OpOf(uint32_t op)
 
 struct ResolvedTap {
     uint32_t slot = kRigExecInvalidIndex;
+    const RigExecTypeHandle *type = nullptr;
 };
 
 /// Slots for \p taps on \p program; false with \p error if one names a
@@ -55,7 +56,9 @@ ResolveTaps(const RigExecProgram &program, const RigExecTapList &taps,
                          " names a node or output the program lacks";
             return false;
         }
-        out.push_back({slot});
+        out.push_back(
+            {slot,
+             RigExecRegistry::Get().TypeAt(program.slots[slot].type).handle});
     }
     *resolved = std::move(out);
     return true;
@@ -515,9 +518,10 @@ RigExecEvaluator::Evaluate(std::string *error)
     if (s.tapCallback) {
         const RigExecProgram &p = *s.program;
         for (size_t i = 0; i < s.taps.size(); ++i) {
-            const RigExecProgramSlot &slot = p.slots[s.taps[i].slot];
-            s.tapCallback(s.tapContext, i, s.main.arena.Data() + slot.offset,
-                          slot.type);
+            RigExecTapValue value;
+            value.data = s.main.arena.Data() + p.slots[s.taps[i].slot].offset;
+            value.type = s.taps[i].type;
+            s.tapCallback(s.tapContext, i, value);
         }
     }
     return true;

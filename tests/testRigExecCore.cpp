@@ -328,15 +328,15 @@ Compile(RigExecRigDescBuilder &builder, size_t maxBatchNodes = 0,
 
 struct TapLog {
     std::vector<Vec3> values;
-    std::vector<uint32_t> types;
+    std::vector<const RigExecTypeHandle *> types;
 };
 
 void
-RecordTap(void *context, size_t, const void *value, uint32_t type)
+RecordTap(void *context, size_t, const RigExecTapValue &value)
 {
     auto *log = static_cast<TapLog *>(context);
-    log->values.push_back(*static_cast<const Vec3 *>(value));
-    log->types.push_back(type);
+    log->values.push_back(*static_cast<const Vec3 *>(value.data));
+    log->types.push_back(value.type);
 }
 
 // in -> Scale(2) -> Offset -> out, with a tap on the Scale output.
@@ -373,8 +373,7 @@ TestChain()
     CHECK(result && Same(*result, Vec3{3.0f, 5.0f, 7.0f}));
     CHECK(log.values.size() == 1 &&
           Same(log.values[0], Vec3{2.0f, 4.0f, 6.0f}));
-    CHECK(log.types.size() == 1 &&
-          log.types[0] == fakeTypes::Vec3Type().Index());
+    CHECK(log.types.size() == 1 && log.types[0] == &fakeTypes::Vec3Type());
 
     // A tap on an input, or on a node the program lacks, is refused and the
     // previous taps stay.
@@ -1794,6 +1793,88 @@ TestDeclaredFieldMask()
                asideModel.Step(FieldsInput(asideModel, 2, 4))));
 }
 
+// What TestTaps sees in each callback.
+struct TapSeen {
+    const RigExecEvaluator *evaluator = nullptr;
+    RigExecOutputId last;
+    std::vector<size_t> order;
+    std::vector<Vec3> vec3s;
+    std::vector<float> floats;
+    size_t wrongType = 0;
+    size_t lastReady = 0;
+};
+
+void
+SeeTap(void *context, size_t tap, const RigExecTapValue &value)
+{
+    auto *seen = static_cast<TapSeen *>(context);
+    seen->order.push_back(tap);
+    if (const Vec3 *v = value.As<Vec3>(fakeTypes::Vec3Type())) {
+        seen->vec3s.push_back(*v);
+        if (value.As<float>(fakeTypes::Float()))
+            ++seen->wrongType;
+    } else if (const float *f = value.As<float>(fakeTypes::Float())) {
+        seen->floats.push_back(*f);
+        if (value.As<Vec3>(fakeTypes::Vec3Type()))
+            ++seen->wrongType;
+    }
+    // The frame is complete before any tap is reported.
+    const auto *last =
+        static_cast<const Vec3 *>(seen->evaluator->GetOutput(seen->last));
+    if (last && last->x != 0.0f)
+        ++seen->lastReady;
+}
+
+// Taps on a list-port node, a windowed node and a float output arrive typed,
+// in tap order, after the whole frame has run.
+void
+TestTaps()
+{
+    RigExecRigDescBuilder builder;
+    const RingPayload two{2};
+    const RigExecNodeId source = builder.AddOp(fakeOps::Offset());
+    const RigExecNodeId list = builder.AddOp(Weighted());
+    const RigExecNodeId ring = builder.AddOp(RingSum(), &two);
+    const RigExecNodeId norm = builder.AddOp(Norm());
+    const RigExecNodeId tail = builder.AddOp(fakeOps::Offset());
+    const RigExecInputId in = builder.BindInput(source, fakeOps::OffsetIn());
+    builder.Connect(source, fakeOps::OffsetOut(), list, WeightedItems());
+    builder.Connect(source, fakeOps::OffsetOut(), list, WeightedItems());
+    builder.Connect(list, WeightedOut(), ring, RingSumIn());
+    builder.Connect(ring, RingSumOut(), norm, NormIn());
+    builder.Connect(ring, RingSumOut(), tail, fakeOps::OffsetIn());
+    const RigExecOutputId last = builder.BindOutput(tail, fakeOps::OffsetOut());
+    std::string error;
+    auto program = Compile(builder, 0, &error);
+    CHECK(program);
+    if (!program)
+        return;
+    auto evaluator = RigExecEvaluator::Create(program);
+    TapSeen seen;
+    seen.evaluator = evaluator.get();
+    seen.last = last;
+    RigExecTapList taps;
+    taps.taps.push_back({norm, &NormOut()});
+    taps.taps.push_back({ring, &RingSumOut()});
+    taps.taps.push_back({list, &WeightedOut()});
+    CHECK(evaluator->SetTaps(taps, &SeeTap, &seen));
+    const Vec3 x{1.0f, 2.0f, 3.0f};
+    CHECK(evaluator->SetInput(in, &x));
+    CHECK(evaluator->Evaluate(&error));
+    // Source is x + 1; the list weights its two copies 1 and 2.
+    const Vec3 weighted{6.0f, 9.0f, 12.0f};
+    CHECK((seen.order == std::vector<size_t>{0, 1, 2}));
+    CHECK(seen.vec3s.size() == 2 && Same(seen.vec3s[0], weighted) &&
+          Same(seen.vec3s[1], weighted));
+    CHECK(seen.floats.size() == 1 && seen.floats[0] == 27.0f);
+    CHECK(seen.wrongType == 0);
+    CHECK(seen.lastReady == 3);
+    // A history tick reports no taps.
+    seen.order.clear();
+    CHECK(evaluator->EvaluateHistory(&error));
+    CHECK(seen.order.empty());
+}
+
 } // namespace
 
 int
@@ -1831,6 +1912,7 @@ main()
     TestDeclaredFields();
     TestDeclaredFieldErrors();
     TestDeclaredFieldMask();
+    TestTaps();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;
