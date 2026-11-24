@@ -742,22 +742,6 @@ struct RrGeoMoverStatus {
 // Envelope (rigExecEvalCore/envelope.h): the eligibility predicates, the
 // resolve, the blend, and the matrix dispatch are the shared definitions;
 // what is here is this front end's view of the packet and its call sites.
-// The weighted-matrix rule stays as the shared matrix bodies' scalar arm,
-// shared with its SSE2 form below.
-
-RrVec3d
-RrGeoApplyWeightedMatrix(const RrVec3d &point, const RrMat4d &transform,
-                         double weight)
-{
-    if (weight <= 0.0) {
-        return point;
-    }
-    const RrVec3d moved = transform.TransformAffine(point);
-    if (weight >= 1.0) {
-        return moved;
-    }
-    return point + (moved - point) * weight;
-}
 
 // RrPartialTransform in runtimeMath.h, shared with the pose constraint
 // step so a transform-domain matrix mover takes the same arc.
@@ -888,17 +872,6 @@ RrGeoApplyLinearBlendSkin(const RrVec3f *in, RrVec3f *out,
 #if !RIGEXEC_RUNTIME_HAS_SSE2
 
 void
-RrGeoApplyWeightedMatrixSimd(const RrVec3f *in, RrVec3f *out,
-                             const float *weights, size_t count,
-                             const RrMat4d &transform)
-{
-    for (size_t i = 0; i < count; ++i) {
-        out[i] = RrGeoToVec3f(RrGeoApplyWeightedMatrix(
-            RrGeoToVec3d(in[i]), transform, (weights ? weights[i] : 1.0f)));
-    }
-}
-
-void
 RrGeoApplyLinearBlendSkinSimd(const RrVec3f *in, RrVec3f *out,
                               const RrGeoSkinLayout &layout, const float *rows)
 {
@@ -907,50 +880,6 @@ RrGeoApplyLinearBlendSkinSimd(const RrVec3f *in, RrVec3f *out,
 }
 
 #else
-
-void
-RrGeoApplyWeightedMatrixSimd(const RrVec3f *in, RrVec3f *out,
-                             const float *weights, size_t count,
-                             const RrMat4d &transform)
-{
-    // Row-vector convention: p' = x*row0 + y*row1 + z*row2 + row3.
-    const __m128 row0 =
-        _mm_setr_ps(float(transform[0][0]), float(transform[0][1]),
-                    float(transform[0][2]), 0.0f);
-    const __m128 row1 =
-        _mm_setr_ps(float(transform[1][0]), float(transform[1][1]),
-                    float(transform[1][2]), 0.0f);
-    const __m128 row2 =
-        _mm_setr_ps(float(transform[2][0]), float(transform[2][1]),
-                    float(transform[2][2]), 0.0f);
-    const __m128 row3 =
-        _mm_setr_ps(float(transform[3][0]), float(transform[3][1]),
-                    float(transform[3][2]), 0.0f);
-
-    for (size_t i = 0; i < count; ++i) {
-        const __m128 q = _mm_setr_ps(in[i][0], in[i][1], in[i][2], 0.0f);
-        __m128 moved = _mm_add_ps(
-            _mm_add_ps(
-                _mm_mul_ps(_mm_shuffle_ps(q, q, _MM_SHUFFLE(0, 0, 0, 0)), row0),
-                _mm_mul_ps(_mm_shuffle_ps(q, q, _MM_SHUFFLE(1, 1, 1, 1)),
-                           row1)),
-            _mm_add_ps(
-                _mm_mul_ps(_mm_shuffle_ps(q, q, _MM_SHUFFLE(2, 2, 2, 2)), row2),
-                row3));
-        __m128 blended;
-        if ((weights ? weights[i] : 1.0f) <= 0.0f) {
-            blended = q;
-        } else if ((weights ? weights[i] : 1.0f) >= 1.0f) {
-            blended = moved;
-        } else {
-            const __m128 w = _mm_set1_ps((weights ? weights[i] : 1.0f));
-            blended = _mm_add_ps(q, _mm_mul_ps(w, _mm_sub_ps(moved, q)));
-        }
-        alignas(16) float result[4];
-        _mm_store_ps(result, blended);
-        out[i] = RrVec3f(result[0], result[1], result[2]);
-    }
-}
 
 void
 RrGeoApplyLinearBlendSkinSimd(const RrVec3f *in, RrVec3f *out,
@@ -1001,63 +930,10 @@ RrGeoApplyLinearBlendSkinSimd(const RrVec3f *in, RrVec3f *out,
 
 #endif // RIGEXEC_RUNTIME_HAS_SSE2
 
-// The matrix kernels run EvalCore's shared bodies (rigExecEvalCore/
-// envelope.h) through this front end's numbers: the scalar weighted-matrix
-// rule and its SSE2 form above, runtimeMath.h's radial arc factorization,
-// and the Rr* vector and matrix types.
-struct RrGeoEnvelopeMath {
-    using Vec3f = RrVec3f;
-    using Vec3d = RrVec3d;
-    using Mat4 = RrMat4d;
-    using PartialDecomposition = RrPartialDecomposition;
-    static Vec3f ToFloat(const Vec3d &v)
-    {
-        return RrGeoToVec3f(v);
-    }
-    static Vec3d ToDouble(const Vec3f &v)
-    {
-        return RrGeoToVec3d(v);
-    }
-    static double Clamp(double v, double lo, double hi)
-    {
-        return RrClamp(v, lo, hi);
-    }
-    static Mat4 Identity()
-    {
-        return Mat4(1.0);
-    }
-    static const unsigned char *TransformBytes(const Mat4 &t)
-    {
-        return reinterpret_cast<const unsigned char *>(&t);
-    }
-    static PartialDecomposition DecomposePartialTransform(const Mat4 &t)
-    {
-        return RrDecomposePartialTransform(t);
-    }
-    static Mat4 ApplyPartialDecomposition(const PartialDecomposition &d,
-                                          double weight)
-    {
-        return RrApplyPartialDecomposition(d, weight);
-    }
-    static Vec3d ApplyWeightedMatrix(const Vec3d &point, const Mat4 &t,
-                                     double weight)
-    {
-        return RrGeoApplyWeightedMatrix(point, t, weight);
-    }
-    static void ApplyWeightedMatrixSimd(const Vec3f *in, Vec3f *out,
-                                        const float *weights, size_t count,
-                                        const Mat4 &t)
-    {
-        RrGeoApplyWeightedMatrixSimd(in, out, weights, count, t);
-    }
-    // The core's radial identity shortcut is licensed only where the host
-    // computes under round-to-nearest with no flush-to-zero; playback keeps
-    // its exact doubles and reports its environment as unknown.
-    static bool FloatEnvironmentIsDefault()
-    {
-        return false;
-    }
-};
+// The matrix kernels run EvalCore's shared bodies and arithmetic
+// (rigExecEvalCore/envelope.h) over the Rr vector and matrix types.
+// Playback keeps its exact doubles: no radial identity shortcut.
+using RrGeoEnvelopeMath = eval::MatrixKernelMath<RrVec3f, RrVec3d, RrMat4d>;
 
 // \p useSimd is the program's RrGeoSettings::useSimd. Reads \p in and writes
 // \p pts, which may be the same array: point i is written only after it is

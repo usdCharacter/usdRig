@@ -98,10 +98,10 @@ ToStd(const RigExecPointFrameArray &a)
     return out;
 }
 
-/// A sparse zero-default field the wire op folds into its motion, as
-/// RigExecWireTakesSparseEnvelope decides it for the native wire.
+/// A sparse zero-default field the matrix and wire ops walk entry by entry,
+/// as eval::EnvelopeIsSparseWalk decides it for every evaluator.
 bool
-WireSparse(const RigExecWeightPacket &w)
+SparseWalk(const RigExecWeightPacket &w)
 {
     return w.valid && w.representation == _tokens->sparse &&
            w.defaultWeight == 0.0f && w.indices.size() == w.values.size() &&
@@ -287,8 +287,9 @@ SettingsMoved(const RigExecMoverParameters &p,
               RigExecGeometryPayloadScratch *scratch)
 {
     return !SamePayload(node.op, p, node, scratch) ||
-           (node.op == RigExecRevisionOp::Wire &&
-            Valid(node.weightIndices) != WireSparse(p.weights));
+           ((node.op == RigExecRevisionOp::Matrix ||
+             node.op == RigExecRevisionOp::Wire) &&
+            Valid(node.weightIndices) != SparseWalk(p.weights));
 }
 
 } // namespace
@@ -362,9 +363,16 @@ RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
         result.node = builder->AddOp(rigExecOps::MatrixDeform(), payload);
         in = &rigExecOps::MatrixDeformPoints();
         out = &rigExecOps::MatrixDeformOut();
-        envelope = &rigExecOps::MatrixDeformEnvelope();
         result.transform = builder->BindInput(
             result.node, rigExecOps::MatrixDeformTransform());
+        if (SparseWalk(p.weights)) {
+            result.weightIndices = builder->BindInput(
+                result.node, rigExecOps::MatrixDeformWeightIndices());
+            result.weightValues = builder->BindInput(
+                result.node, rigExecOps::MatrixDeformWeights());
+        } else {
+            envelope = &rigExecOps::MatrixDeformEnvelope();
+        }
         break;
     }
     case RigExecRevisionOp::Skin: {
@@ -501,7 +509,7 @@ RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
         result.bindCoords =
             builder->BindInput(result.node, rigExecOps::WireBindCoords());
         // The field's shape picks the ports.
-        if (WireSparse(p.weights)) {
+        if (SparseWalk(p.weights)) {
             result.weightIndices = builder->BindInput(
                 result.node, rigExecOps::WireWeightIndices());
             result.weightValues =
@@ -571,8 +579,8 @@ RigExecWriteGeometryOpInputs(const RigExecMoverParameters &p,
         if (!evaluator->SetInput(node.envelope, &envelope, error))
             return false;
     } else if (Valid(node.weightIndices)) {
-        if (!WireSparse(p.weights))
-            return Fail(error, "wire field is no longer sparse");
+        if (!SparseWalk(p.weights))
+            return Fail(error, "weight field is no longer sparse");
         const RigExecArray<int> indices = ToArray(p.weights.indices);
         const RigExecArray<float> values = ToArray(p.weights.values);
         if (!evaluator->SetInput(node.weightIndices, &indices, error) ||

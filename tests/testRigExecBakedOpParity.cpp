@@ -21,8 +21,11 @@
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"
 #include "pxr/base/tf/stringUtils.h"
+#include "pxr/usd/sdf/types.h"
+#include "pxr/usd/usd/editContext.h"
 #include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usd/stage.h"
+#include "pxr/usd/usdGeom/tokens.h"
 
 #include <cmath>
 #include <cstdio>
@@ -53,33 +56,8 @@ std::map<std::string, size_t> g_unprobed;
 std::vector<Finding> g_findings;
 std::string g_where;
 
-// Divergences this probe has found between a baked body and its op. Each is
-// reported on every run; a mismatch outside this table fails the test.
-struct Expected {
-    const char *key, *object, *finding;
-};
-const Expected kExpected[] = {
-    {"RevisionChunk/Matrix", "/Seg4Skin",
-     "partial envelope: the op blends inside RigExecApplyMatrixRangeKernel, "
-     "the baked body after the full-strength kernel"},
-    {"RevisionChunk/Matrix", "/WristMatrix",
-     "partial envelope: the op blends inside RigExecApplyMatrixRangeKernel, "
-     "the baked body after the full-strength kernel"},
-};
-
-const Expected *
-Known(const Finding &finding)
-{
-    for (const auto &expected : kExpected) {
-        const std::string object = expected.object;
-        if (finding.key == expected.key &&
-            finding.object.size() >= object.size() &&
-            finding.object.compare(finding.object.size() - object.size(),
-                                   object.size(), object) == 0)
-            return &expected;
-    }
-    return nullptr;
-}
+// Per revision kind, the envelope shapes its comparisons ran under.
+std::map<std::string, std::map<std::string, size_t>> g_envelopes;
 
 void
 Report(const std::string &key, const std::string &object,
@@ -494,6 +472,19 @@ ProbeConstraint(const B &b)
     }
 }
 
+std::string
+EnvelopeShape(const RigExecMoverParameters &p)
+{
+    std::string shape = RigExecEnvelopeIsFullStrength(p.weights)    ? "full"
+                        : RigExecWireTakesSparseEnvelope(p.weights) ? "sparse"
+                        : p.weights.representation == SchemaValueText::dense
+                            ? "dense"
+                            : "other";
+    if (p.radialWeight)
+        shape += " radial";
+    return shape;
+}
+
 // RevisionChunk: the body runs a revision as vertex ranges; the op runs it
 // whole. Each revision is replayed whole over the version entering it and
 // compared with the version its fuse published, as the range verifier
@@ -575,6 +566,7 @@ ProbeRevisions(const B &b)
             Compare("RevisionChunk", kind, revision.moverPathText,
                     Points(published), Points(points), !admitted,
                     applied ? std::string() : "op refused: " + error);
+            ++g_envelopes[kind][EnvelopeShape(p)];
             if (revision.rangeRole)
                 CompareFlag("RevisionChunk", kind, revision.moverPathText,
                             "applies", RigExecBakedRevisionApplies(revision),
@@ -862,11 +854,120 @@ Frames(const UsdStageRefPtr &stage)
             UsdTimeCode(end)};
 }
 
-void
-ProbeRig(const std::string &file)
+// The point movers each rig of the painted set must have compared under a
+// dense and a sparse partial envelope.
+const char *const kPaintedKinds[] = {
+    "Matrix", "Skin",    "Smooth",         "DeltaMush",     "Lattice",
+    "Wire",   "Wrinkle", "SurfaceProject", "VolumeCorrect",
+};
+
+// The radial forms also take a matrix mover's partial weight as a fraction
+// of its rotation.
+enum class Paint { None, Dense, Sparse, DenseRadial, SparseRadial };
+
+const Paint kPaints[] = {Paint::Dense, Paint::Sparse, Paint::DenseRadial,
+                         Paint::SparseRadial};
+
+const char *
+PaintName(Paint paint)
 {
-    const auto stage = UsdStage::Open(file);
-    const std::string name = TfGetBaseName(file);
+    switch (paint) {
+    case Paint::None:
+        return "";
+    case Paint::Dense:
+        return "[dense]";
+    case Paint::Sparse:
+        return "[sparse]";
+    case Paint::DenseRadial:
+        return "[dense radial]";
+    case Paint::SparseRadial:
+        return "[sparse radial]";
+    }
+    return "";
+}
+
+// Authors, in the session layer, one static weight per point mover of the
+// rig at \p rigPath and makes it the mover's envelope: zero, partial and
+// full weights over every point, or a sparse field with a zero default
+// naming every third point. The radial forms also make each matrix mover
+// take a fraction of its rotation. False when no mover was painted.
+bool
+PaintEnvelopes(const UsdStageRefPtr &stage, const SdfPath &rigPath, Paint paint)
+{
+    const bool sparse = paint == Paint::Sparse || paint == Paint::SparseRadial;
+    const bool radial =
+        paint == Paint::DenseRadial || paint == Paint::SparseRadial;
+    const TfToken moves(SchemaAttrText::rigExecMoves);
+    const TfToken weightObject(SchemaAttrText::rigExecWeightObject);
+    UsdEditContext context(stage, stage->GetSessionLayer());
+    std::vector<UsdPrim> movers;
+    for (const UsdPrim &prim : stage->Traverse())
+        if (prim.GetRelationship(moves))
+            movers.push_back(prim);
+    size_t painted = 0;
+    for (const UsdPrim &mover : movers) {
+        SdfPathVector targets;
+        mover.GetRelationship(moves).GetTargets(&targets);
+        if (targets.size() != 1 || !targets[0].IsPropertyPath() ||
+            targets[0].GetNameToken() != UsdGeomTokens->points)
+            continue;
+        const UsdAttribute target = stage->GetAttributeAtPath(targets[0]);
+        VtVec3fArray points;
+        if (!target || !target.Get(&points, UsdTimeCode::EarliestTime()) ||
+            points.empty())
+            continue;
+        const UsdPrim weight =
+            stage->DefinePrim(rigPath.AppendChild(TfToken(
+                                  "ProbeEnvelope" + std::to_string(painted++))),
+                              TfToken(SchemaTypeName::RigExecStaticWeight));
+        const auto uniform = [&](const char *name, const SdfValueTypeName &type,
+                                 const VtValue &value) {
+            weight
+                .CreateAttribute(TfToken(name), type, false,
+                                 SdfVariabilityUniform)
+                .Set(value);
+        };
+        uniform(SchemaAttrText::rigExecRepresentation, SdfValueTypeNames->Token,
+                VtValue(TfToken(sparse ? SchemaValueText::sparse
+                                       : SchemaValueText::dense)));
+        uniform(SchemaAttrText::rigExecRangePolicy, SdfValueTypeNames->Token,
+                VtValue(TfToken(SchemaValueText::strict)));
+        uniform(SchemaAttrText::rigExecDefaultWeight, SdfValueTypeNames->Float,
+                VtValue(0.0f));
+        const float dense[] = {0.0f, 0.25f, 1.0f, 0.6f, 0.1f, 0.85f};
+        const float entries[] = {0.3f, 0.7f, 1.0f, 0.45f};
+        VtIntArray indices;
+        VtFloatArray values;
+        for (size_t i = 0; i < points.size(); ++i) {
+            if (!sparse) {
+                values.push_back(dense[i % 6]);
+            } else if (i % 3 == 0) {
+                indices.push_back(int(i));
+                values.push_back(entries[(i / 3) % 4]);
+            }
+        }
+        if (sparse)
+            uniform(SchemaAttrText::rigExecIndices, SdfValueTypeNames->IntArray,
+                    VtValue(indices));
+        uniform(SchemaAttrText::rigExecValues, SdfValueTypeNames->FloatArray,
+                VtValue(values));
+        weight.CreateRelationship(TfToken(SchemaAttrText::rigExecWeightTarget))
+            .SetTargets({targets[0]});
+        mover.CreateRelationship(weightObject).SetTargets({weight.GetPath()});
+        if (radial && mover.GetTypeName() == SchemaTypeName::RigExecMatrixMover)
+            mover
+                .CreateAttribute(TfToken(SchemaAttrText::rigExecWeightBlend),
+                                 SdfValueTypeNames->Token, false,
+                                 SdfVariabilityUniform)
+                .Set(TfToken("radial"));
+    }
+    return painted > 0;
+}
+
+void
+ProbeStage(const UsdStageRefPtr &stage, const std::string &rig, Paint paint)
+{
+    const std::string name = rig + PaintName(paint);
     if (!stage) {
         ++g_unprobed["rig " + name + ": does not open"];
         return;
@@ -879,6 +980,10 @@ ProbeRig(const std::string &file)
         }
     if (rigPath.IsEmpty()) {
         ++g_unprobed["rig " + name + ": no RigExecRoot"];
+        return;
+    }
+    if (paint != Paint::None && !PaintEnvelopes(stage, rigPath, paint)) {
+        ++g_unprobed["rig " + name + ": no point mover to paint"];
         return;
     }
     RigExecRigEvaluator evaluator(stage, rigPath);
@@ -906,6 +1011,71 @@ ProbeRig(const std::string &file)
     }
 }
 
+void
+ProbeRig(const std::string &file, Paint paint)
+{
+    ProbeStage(UsdStage::Open(file), TfGetBaseName(file), paint);
+}
+
+// A wire: no example rig runs a curve mover as one. The curve's control
+// points move over frames 1 to 4 and each point is bound at its own (u, d).
+UsdStageRefPtr
+WireRig()
+{
+    const auto stage = UsdStage::CreateInMemory("wire.usda");
+    if (!stage->GetRootLayer()->ImportFromString(R"USD(#usda 1.0
+(
+    startTimeCode = 1
+    endTimeCode = 4
+)
+def Xform "Asset"
+{
+    def RigExecRoot "Rig"
+    {
+        def RigExecCurveMover "Wire" (
+            prepend apiSchemas = ["RigExecMoverAPI"]
+        )
+        {
+            uniform token rigExec:mode = "wire"
+            rel rigExec:moves = </Asset/Geom/Strip.points>
+            rel rigExec:driverCurve = </Asset/Curve>
+            rel rigExec:bindCoordinates = </Asset/Bind.st>
+            float inputs:dropoffDistance = 0.75
+        }
+    }
+    def Scope "Geom"
+    {
+        def Mesh "Strip"
+        {
+            point3f[] points = [(0, 0, 0), (0.1, 0.2, 0), (0.2, -0.1, 0),
+                (0.3, 0.3, 0.1), (0.4, 0, 0), (0.5, 0.1, -0.2),
+                (0.6, -0.3, 0), (0.7, 0.05, 0), (0.8, 0.4, 0.1),
+                (0.9, -0.2, 0), (1, 0, 0.3), (0.55, 0.6, 0)]
+        }
+    }
+    def Scope "Bind"
+    {
+        float2[] st = [(0, 0), (0.1, 0.2), (0.2, 0.1), (0.3, 0.32),
+            (0.4, 0), (0.5, 0.22), (0.6, 0.3), (0.7, 0.05), (0.8, 0.41),
+            (0.9, 0.2), (1, 0.3), (0.55, 0.6)]
+    }
+    def NurbsCurves "Curve"
+    {
+        int[] curveVertexCounts = [4]
+        int[] order = [4]
+        double[] knots = [0, 0, 0, 0, 1, 1, 1, 1]
+        point3f[] points = [(0, 0, 0), (0.33, 0, 0), (0.66, 0, 0), (1, 0, 0)]
+        point3f[] points.timeSamples = {
+            1: [(0, 0, 0), (0.33, 0.1, 0), (0.66, -0.2, 0), (1, 0, 0)],
+            4: [(0, 0.3, 0), (0.33, 0.9, 0.2), (0.66, -0.5, 0.1), (1, 0.4, 0)],
+        }
+    }
+}
+)USD"))
+        return UsdStageRefPtr();
+    return stage;
+}
+
 } // namespace
 
 int
@@ -917,8 +1087,22 @@ main(int argc, char **argv)
         return 1;
     }
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
-    for (int i = 1; i < argc; ++i)
-        ProbeRig(argv[i]);
+    // Rigs after --painted are probed as they are and again under each
+    // painted partial envelope.
+    bool painted = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--painted") == 0) {
+            painted = true;
+            continue;
+        }
+        ProbeRig(argv[i], Paint::None);
+        if (painted)
+            for (const Paint paint : kPaints)
+                ProbeRig(argv[i], paint);
+    }
+    if (painted)
+        for (const Paint paint : {Paint::None, Paint::Dense, Paint::Sparse})
+            ProbeStage(WireRig(), "wire rig", paint);
     std::printf("%-44s %9s %9s %9s\n", "family/kind", "compared", "refusals",
                 "mismatch");
     for (const auto &[key, tally] : g_tally)
@@ -927,14 +1111,23 @@ main(int argc, char **argv)
     std::printf("not probed:\n");
     for (const auto &[reason, count] : g_unprobed)
         std::printf("  %5zu  %s\n", count, reason.c_str());
-    size_t unexpected = 0;
     std::printf("findings: %zu\n", g_findings.size());
-    for (const auto &finding : g_findings) {
-        const Expected *known = Known(finding);
-        unexpected += known ? 0 : 1;
-        std::printf("  %s %s\n", known ? "known" : "NEW", finding.text.c_str());
-        if (known)
-            std::printf("        %s\n", known->finding);
+    for (const auto &finding : g_findings)
+        std::printf("  %s\n", finding.text.c_str());
+    std::printf("envelopes compared:\n");
+    for (const auto &[kind, shapes] : g_envelopes)
+        for (const auto &[shape, count] : shapes)
+            std::printf("  %-22s %-14s %6zu\n", kind.c_str(), shape.c_str(),
+                        count);
+    if (painted) {
+        for (const char *kind : kPaintedKinds)
+            for (const char *shape : {"dense", "sparse"})
+                if (!g_envelopes[kind][shape]) {
+                    std::printf("FAIL: no %s revision compared under a %s "
+                                "partial envelope\n",
+                                kind, shape);
+                    return 1;
+                }
     }
     for (const char *family :
          {"Solve/", "RevisionChunk/", "Derived/", "PropertyRevision/",
@@ -948,5 +1141,5 @@ main(int argc, char **argv)
             return 1;
         }
     }
-    return unexpected ? 1 : 0;
+    return g_findings.empty() ? 0 : 1;
 }

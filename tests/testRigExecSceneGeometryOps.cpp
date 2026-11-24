@@ -1,6 +1,7 @@
 // A geometry revision run as rigExecOps' deform op gives the bits
-// RigExecRunGeometry gives: per op, at full strength, under a constant and
-// a dense envelope, alone and chained, and both refuse the same envelopes.
+// RigExecRunGeometry gives: per op, at full strength, under a constant, a
+// dense and a sparse envelope, alone and chained, and both refuse the same
+// envelopes.
 #include "rigExec/api/compile.h"
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
@@ -94,6 +95,22 @@ Narrow(size_t count)
     return w;
 }
 
+/// A sparse field with a zero default naming every third point: the matrix
+/// and wire kernels walk it entry by entry.
+RigExecWeightPacket
+Sparse(size_t count)
+{
+    RigExecWeightPacket w;
+    w.representation = TfToken("sparse");
+    w.rangePolicy = TfToken("strict");
+    w.valid = true;
+    for (size_t i = 0; i < count; i += 3) {
+        w.indices.push_back(int(i));
+        w.values.push_back(i % 2 ? 0.3f : 0.85f);
+    }
+    return w;
+}
+
 /// The envelopes each op is run under.
 std::vector<std::pair<const char *, RigExecWeightPacket>>
 Envelopes(size_t count)
@@ -101,7 +118,8 @@ Envelopes(size_t count)
     return {{"full", RigExecWeightPacket::Constant(1.0f)},
             {"constant", RigExecWeightPacket::Constant(0.37f)},
             {"dense", Dense(count)},
-            {"narrow", Narrow(count)}};
+            {"narrow", Narrow(count)},
+            {"sparse", Sparse(count)}};
 }
 
 bool

@@ -43,11 +43,71 @@
 #include "rigExecEvalCore/kinds.h"
 #include "rigExecEvalCore/weights.h"
 #include "rigExecMath/envelope.h"
+#include "rigExecMath/matrixKernel.h"
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/rangeRunner.h"
 
 namespace rigExec {
 namespace eval {
+
+/// The Math trait over rigExecMath's matrix kernels (matrixKernel.h) for a
+/// float point V, its double twin D and a double 4x4 M: the one arithmetic
+/// of the matrix bodies below for every front end. The radial identity
+/// shortcut is off; a host that knows its float environment is the default
+/// one may derive and turn it on.
+template <class V, class D, class M> struct MatrixKernelMath {
+    using Vec3f = V;
+    using Vec3d = D;
+    using Mat4 = M;
+    using PartialDecomposition = RigExecPartialDecompositionOf<D>;
+    static V ToFloat(const D &v)
+    {
+        return matrixDetail::Narrow<V>(v);
+    }
+    static D ToDouble(const V &v)
+    {
+        return matrixDetail::Wide<D>(v);
+    }
+    static double Clamp(double v, double lo, double hi)
+    {
+        return v < lo ? lo : (v > hi ? hi : v);
+    }
+    static M Identity()
+    {
+        return M(1.0);
+    }
+    static const unsigned char *TransformBytes(const M &t)
+    {
+        return reinterpret_cast<const unsigned char *>(&t);
+    }
+    static PartialDecomposition DecomposePartialTransform(const M &t)
+    {
+        return RigExecDecomposePartialTransformKernel<D>(t);
+    }
+    static M ApplyPartialDecomposition(const PartialDecomposition &d,
+                                       double weight)
+    {
+        return RigExecApplyPartialDecompositionKernel<M>(d, weight);
+    }
+    static D ApplyWeightedMatrix(const D &point, const M &t, double weight)
+    {
+        return RigExecWeightedMatrixPoint(point, t, weight);
+    }
+    static void ApplyWeightedMatrixSimd(const V *in, V *out,
+                                        const float *weights, size_t count,
+                                        const M &t)
+    {
+        if (weights)
+            RigExecApplyWeightedMatrixSimdKernel<V, D>(in, out, weights, count,
+                                                       t);
+        else
+            RigExecApplyWeightedMatrixSimdKernel<V, D>(in, out, 1.0f, count, t);
+    }
+    static bool FloatEnvironmentIsDefault()
+    {
+        return false;
+    }
+};
 
 /// A compiled revision's envelope as the predicates read it: the codes a
 /// host adapter classified once from its packet, and the packet's arrays
@@ -226,7 +286,7 @@ ApplyMatrixKernelRange(bool radial, const typename Math::Mat4 &transform,
                 // unchanged, except that the "+ 0" of the translation row
                 // turns -0 into +0. Non-finite points take the transform
                 // (an infinity times 0 is NaN).
-                const Vec3f &q = pts[i];
+                const Vec3f &q = in[i];
                 if (std::isfinite(q[0]) && std::isfinite(q[1]) &&
                     std::isfinite(q[2])) {
                     pts[i] = Vec3f(q[0] == 0.0f ? 0.0f : q[0],
@@ -385,9 +445,37 @@ ApplyMatrixSparseWalk(
     }
 }
 
-/// The matrix kernel over the whole array: validation, then the sparse walk
-/// over the entries, the full-strength range, or the dense range, in that
-/// order and by these predicates only.
+/// The matrix kernel over \p count points once MatrixKernelAccepts took
+/// \p envelope: the sparse walk over its entries, the full-strength range,
+/// or the dense range over \p dense (the resolved envelope), in that order
+/// and by these predicates only. Reads \p in and writes \p pts, which may
+/// be the same array.
+template <class Math>
+void
+ApplyAcceptedMatrixKernel(const EnvelopePacketView &envelope,
+                          const float *dense, bool radial,
+                          const typename Math::Mat4 &transform,
+                          const typename Math::Vec3f *in,
+                          typename Math::Vec3f *pts, size_t count, bool useSimd)
+{
+    if (EnvelopeIsSparseWalk(envelope)) {
+        if (in != pts && count) {
+            std::memcpy(pts, in, count * sizeof(*in));
+        }
+        if (transform == Math::Identity()) {
+            return; // at rest every weighted point maps to itself
+        }
+        ApplyMatrixSparseWalk<Math>(radial, transform, envelope, 0,
+                                    envelope.indexCount, pts);
+        return;
+    }
+    ApplyMatrixKernelRange<Math>(
+        radial, transform, EnvelopeIsFullStrength(envelope) ? nullptr : dense,
+        0, count, in, pts, useSimd);
+}
+
+/// The matrix kernel over the whole array: validation, then
+/// ApplyAcceptedMatrixKernel.
 template <class Math, class Packet>
 bool
 ApplyMatrixKernel(const EnvelopePacketView &envelope, const Packet &weights,
@@ -399,21 +487,8 @@ ApplyMatrixKernel(const EnvelopePacketView &envelope, const Packet &weights,
     if (!MatrixKernelAccepts(envelope, weights, count, &dense)) {
         return false;
     }
-    if (EnvelopeIsSparseWalk(envelope)) {
-        if (transform == Math::Identity()) {
-            return true; // at rest every weighted point maps to itself
-        }
-        ApplyMatrixSparseWalk<Math>(radial, transform, envelope, 0,
-                                    envelope.indexCount, pts->data());
-        return true;
-    }
-    if (EnvelopeIsFullStrength(envelope)) {
-        ApplyMatrixKernelRange<Math>(radial, transform, nullptr, 0, count,
-                                     pts->data(), pts->data(), useSimd);
-        return true;
-    }
-    ApplyMatrixKernelRange<Math>(radial, transform, dense.data(), 0, count,
-                                 pts->data(), pts->data(), useSimd);
+    ApplyAcceptedMatrixKernel<Math>(envelope, dense.data(), radial, transform,
+                                    pts->data(), pts->data(), count, useSimd);
     return true;
 }
 

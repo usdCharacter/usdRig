@@ -3,8 +3,8 @@
 
 /// MatrixDeform: points moved by one transform, each by its envelope weight,
 /// which is folded into the movement (p' = q + w (T q - q), or a fraction of
-/// the rotation when radial) rather than blended after. The kernel is
-/// rigExecMath/matrixKernel.h.
+/// the rotation when radial) rather than blended after. The movement is
+/// rigExecEvalCore/envelope.h's matrix kernel, the one every evaluator runs.
 
 #include "rigExecOps/library.h"
 
@@ -26,10 +26,15 @@ const rigExec::RigExecOpHandle &MatrixDeform();
 
 // Points (Vec3fArray), Transform (Mat4d), Envelope (optional FloatArray,
 // one finite weight in [0, 1] per point; full strength when unfed), Out.
-// An unusable envelope is an error.
+// A sparse field with a zero default comes instead as WeightIndices
+// (IntArray, ascending point indices) and Weights (FloatArray, one weight
+// per index) and is walked entry by entry. An unusable envelope is an
+// error.
 const rigExec::RigExecPortHandle &MatrixDeformPoints();
 const rigExec::RigExecPortHandle &MatrixDeformTransform();
 const rigExec::RigExecPortHandle &MatrixDeformEnvelope();
+const rigExec::RigExecPortHandle &MatrixDeformWeightIndices();
+const rigExec::RigExecPortHandle &MatrixDeformWeights();
 const rigExec::RigExecPortHandle &MatrixDeformOut();
 
 } // namespace rigExecOps

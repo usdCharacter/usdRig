@@ -248,57 +248,9 @@ RigExecRevisionKindToken(RigExecRevisionOp op)
 namespace {
 
 // EvalCore's envelope and matrix bodies (rigExecEvalCore/envelope.h) over
-// the Gf numbers: the weighted-matrix rule and its SIMD form, the radial
-// arc factorization, and the Gf vector and matrix types.
-struct _EnvelopeMath {
-    using Vec3f = GfVec3f;
-    using Vec3d = GfVec3d;
-    using Mat4 = GfMatrix4d;
-    using PartialDecomposition = RigExecPartialDecomposition;
-    static Vec3f ToFloat(const Vec3d &v)
-    {
-        return Vec3f(v);
-    }
-    static Vec3d ToDouble(const Vec3f &v)
-    {
-        return Vec3d(v);
-    }
-    static double Clamp(double v, double lo, double hi)
-    {
-        return GfClamp(v, lo, hi);
-    }
-    static Mat4 Identity()
-    {
-        return Mat4(1.0);
-    }
-    static const unsigned char *TransformBytes(const Mat4 &t)
-    {
-        return reinterpret_cast<const unsigned char *>(&t);
-    }
-    static PartialDecomposition DecomposePartialTransform(const Mat4 &t)
-    {
-        return RigExecDecomposePartialTransform(t);
-    }
-    static Mat4 ApplyPartialDecomposition(const PartialDecomposition &d,
-                                          double weight)
-    {
-        return RigExecApplyPartialDecomposition(d, weight);
-    }
-    static Vec3d ApplyWeightedMatrix(const Vec3d &point, const Mat4 &t,
-                                     double weight)
-    {
-        return RigExecApplyWeightedMatrix(point, t, weight);
-    }
-    static void ApplyWeightedMatrixSimd(const Vec3f *in, Vec3f *out,
-                                        const float *weights, size_t count,
-                                        const Mat4 &t)
-    {
-        if (weights) {
-            RigExecApplyWeightedMatrixSimd(in, out, weights, count, t);
-        } else {
-            RigExecApplyWeightedMatrixSimd(in, out, 1.0f, count, t);
-        }
-    }
+// the Gf numbers. The radial identity shortcut is licensed where the float
+// environment is the default one.
+struct _EnvelopeMath : eval::MatrixKernelMath<GfVec3f, GfVec3d, GfMatrix4d> {
     static bool FloatEnvironmentIsDefault()
     {
         return RigExecFloatEnvironmentIsDefault();

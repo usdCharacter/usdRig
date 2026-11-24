@@ -1552,7 +1552,21 @@ rigexec_add_test(NAME testRigExecBakedOpParity COMMAND testRigExecBakedOpParity
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/computed_path_reads.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/computed_weights.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/computed_chains.usda"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/volume_placements.usda")
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/volume_placements.usda"
+    --painted
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/matrix_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/skin_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/smooth_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/delta_mush_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/lattice_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/curve_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/wrinkle_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/surface_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/volume_correct_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/ribbon.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/05_TwistRibbonSpine.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/06_LatticeBulge.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/ArmRig.usda")
 set_tests_properties(testRigExecBakedOpParity PROPERTIES
     ENVIRONMENT "RIGEXEC_ENABLE_SIMD=1")
 
