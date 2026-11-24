@@ -1,6 +1,8 @@
 #ifndef RIGEXEC_MATH_WRINKLE_SETTINGS_H
 #define RIGEXEC_MATH_WRINKLE_SETTINGS_H
 
+#include "borrowedSpan.h"
+
 #include <vector>
 
 namespace rigExec {
@@ -27,20 +29,41 @@ struct RigExecWrinkleSettings {
     bool operator==(const RigExecWrinkleSettings &other) const
     {
         return iterations == other.iterations && topology == other.topology &&
-            neighborDistance == other.neighborDistance &&
-            restLengthScale == other.restLengthScale &&
-            stretchStiffness == other.stretchStiffness &&
-            compressionStiffness == other.compressionStiffness &&
-            bendStiffness == other.bendStiffness &&
-            maxDisplacement == other.maxDisplacement &&
-            pinBorders == other.pinBorders &&
-            tangentPlaneCollisions == other.tangentPlaneCollisions &&
-            tangentPlaneInset == other.tangentPlaneInset &&
-            wrinkleScale == other.wrinkleScale &&
-            smoothingIterations == other.smoothingIterations &&
-            pinPoints == other.pinPoints;
+               neighborDistance == other.neighborDistance &&
+               restLengthScale == other.restLengthScale &&
+               stretchStiffness == other.stretchStiffness &&
+               compressionStiffness == other.compressionStiffness &&
+               bendStiffness == other.bendStiffness &&
+               maxDisplacement == other.maxDisplacement &&
+               pinBorders == other.pinBorders &&
+               tangentPlaneCollisions == other.tangentPlaneCollisions &&
+               tangentPlaneInset == other.tangentPlaneInset &&
+               wrinkleScale == other.wrinkleScale &&
+               smoothingIterations == other.smoothingIterations &&
+               pinPoints == other.pinPoints;
     }
-    bool operator!=(const RigExecWrinkleSettings &other) const { return !(*this == other); }
+    bool operator!=(const RigExecWrinkleSettings &other) const
+    {
+        return !(*this == other);
+    }
+};
+
+/// RigExecWrinkleSettings with its pin list borrowed instead of owned.
+struct RigExecWrinkleSettingsView {
+    int iterations = 80;
+    RigExecWrinkleTopology topology = RigExecWrinkleTopology::Cloth;
+    int neighborDistance = 2;
+    float restLengthScale = 1.0f;
+    float stretchStiffness = 1.0f;
+    float compressionStiffness = 1.0f;
+    float bendStiffness = 0.1f;
+    float maxDisplacement = 0.2f;
+    bool pinBorders = true;
+    bool tangentPlaneCollisions = true;
+    float tangentPlaneInset = 0.0f;
+    float wrinkleScale = 1.0f;
+    int smoothingIterations = 0;
+    RigExecBorrowedSpan<int> pinPoints;
 };
 
 } // namespace rigExec

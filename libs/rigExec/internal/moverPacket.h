@@ -27,7 +27,6 @@ struct RigExecMoverHandler;
 
 // Defined in rigExecMath/deltaMushKernel.h; the alias is the one
 // rigExecMath/geometryKernels.h declares. Packets hold it by shared_ptr.
-template <class Point, class Wide> struct RigExecDeltaMushRestData;
 using RigExecDeltaMushRest = RigExecDeltaMushRestData<GfVec3f, GfVec3d>;
 struct RigExecVertexNormalsTopology;
 

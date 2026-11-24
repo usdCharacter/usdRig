@@ -43,22 +43,22 @@ enum SurfaceProjectField : uint32_t {
 };
 
 /// Instance \p k's settings.
-rigExec::RigExecSurfaceSnapSettings
+rigExec::RigExecSurfaceSnapSettingsView
 SettingsAt(const rigExec::RigExecOpBatch &batch, size_t k)
 {
-    rigExec::RigExecSurfaceSnapSettings s;
+    rigExec::RigExecSurfaceSnapSettingsView s;
     s.mode = EnumAt<rigExec::RigExecSurfaceSnapMode>(batch, kMode, k);
     s.offset = ValueAt<float>(batch, kOffset, k);
     const auto mask = ListAt<float>(batch, kMask, k);
-    s.mask.assign(mask.begin(), mask.end());
+    s.mask = {mask.data, mask.Size()};
     const auto triangles = ListAt<int32_t>(batch, kTriangles, k);
-    s.triangles.assign(triangles.begin(), triangles.end());
+    s.triangles = {triangles.data, triangles.Size()};
     return s;
 }
 
 bool
 ProjectOne(const rigExec::RigExecOpIo &io,
-           const rigExec::RigExecSurfaceSnapSettings &settings,
+           const rigExec::RigExecSurfaceSnapSettingsView &settings,
            std::string *error)
 {
     const Points &in = *In<Points>(io, SurfaceProjectPoints());

@@ -52,11 +52,16 @@ enum LatticeField : uint32_t {
     kMask,
 };
 
-/// Instance \p k's settings.
-LatticePayload
+/// Instance \p k's settings, its mask read in place.
+struct LatticeInstance {
+    decltype(LatticePayload::divisions) divisions{};
+    rigExec::RigExecLatticeSettingsView settings;
+};
+
+LatticeInstance
 PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
 {
-    LatticePayload p;
+    LatticeInstance p;
     const auto divisions = ListAt<int32_t>(batch, kDivisions, k);
     const auto interpolation = ListAt<uint32_t>(batch, kInterpolation, k);
     const auto origin = ListAt<float>(batch, kOrigin, k);
@@ -71,12 +76,12 @@ PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
     p.settings.regularGrid = FlagAt(batch, kRegularGrid, k);
     p.settings.strength = ValueAt<float>(batch, kStrength, k);
     const auto mask = ListAt<float>(batch, kMask, k);
-    p.settings.mask.assign(mask.begin(), mask.end());
+    p.settings.mask = {mask.data, mask.Size()};
     return p;
 }
 
 bool
-LatticeOne(const RigExecOpIo &io, const LatticePayload &p, std::string *error)
+LatticeOne(const RigExecOpIo &io, const LatticeInstance &p, std::string *error)
 {
     const Points &in = *In<Points>(io, LatticePoints());
     const Points &posedCage = *In<Points>(io, LatticePosedCage());

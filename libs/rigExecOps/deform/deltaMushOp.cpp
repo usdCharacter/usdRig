@@ -47,11 +47,20 @@ enum DeltaMushField : uint32_t {
     kOnlySmooth,
 };
 
-/// Instance \p k's settings.
-DeltaMushPayload
+/// Instance \p k's settings, its lists read in place.
+struct MushInstance {
+    int iterations = 0;
+    double step = 0.0;
+    bool pinBorders = false;
+    double distanceWeight = 0.0;
+    double displacement = 0.0;
+    rigExec::RigExecDeltaMushSettingsView settings;
+};
+
+MushInstance
 PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
 {
-    DeltaMushPayload p;
+    MushInstance p;
     p.iterations = ValueAt<int32_t>(batch, kIterations, k);
     p.step = ValueAt<double>(batch, kStep, k);
     p.pinBorders = FlagAt(batch, kPinBorders, k);
@@ -62,15 +71,15 @@ PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
     p.settings.frameTransport = EnumAt<rigExec::RigExecDeltaMushFrameTransport>(
         batch, kFrameTransport, k);
     const auto weights = ListAt<float>(batch, kSmoothWeights, k);
-    p.settings.smoothWeights.assign(weights.begin(), weights.end());
+    p.settings.smoothWeights = {weights.data, weights.Size()};
     const auto edges = ListAt<int32_t>(batch, kEdges, k);
-    p.settings.edges.assign(edges.begin(), edges.end());
+    p.settings.edges = {edges.data, edges.Size()};
     p.settings.onlySmooth = FlagAt(batch, kOnlySmooth, k);
     return p;
 }
 
 bool
-MushOne(const RigExecOpIo &io, const DeltaMushPayload &p, std::string *error)
+MushOne(const RigExecOpIo &io, const MushInstance &p, std::string *error)
 {
     const Points &in = *In<Points>(io, DeltaMushPoints());
     const Mat4d *map = In<Mat4d>(io, DeltaMushComputationToTarget());

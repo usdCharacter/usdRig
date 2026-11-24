@@ -46,10 +46,10 @@ enum WrinkleField : uint32_t {
 };
 
 /// Instance \p k's settings.
-rigExec::RigExecWrinkleSettings
+rigExec::RigExecWrinkleSettingsView
 SettingsAt(const rigExec::RigExecOpBatch &batch, size_t k)
 {
-    rigExec::RigExecWrinkleSettings s;
+    rigExec::RigExecWrinkleSettingsView s;
     s.iterations = ValueAt<int32_t>(batch, kIterations, k);
     s.topology = EnumAt<rigExec::RigExecWrinkleTopology>(batch, kTopology, k);
     s.neighborDistance = ValueAt<int32_t>(batch, kNeighborDistance, k);
@@ -64,13 +64,14 @@ SettingsAt(const rigExec::RigExecOpBatch &batch, size_t k)
     s.wrinkleScale = ValueAt<float>(batch, kWrinkleScale, k);
     s.smoothingIterations = ValueAt<int32_t>(batch, kSmoothingIterations, k);
     const auto pins = ListAt<int32_t>(batch, kPinPoints, k);
-    s.pinPoints.assign(pins.begin(), pins.end());
+    s.pinPoints = {pins.data, pins.Size()};
     return s;
 }
 
 bool
 WrinkleOne(const rigExec::RigExecOpIo &io,
-           const rigExec::RigExecWrinkleSettings &settings, std::string *error)
+           const rigExec::RigExecWrinkleSettingsView &settings,
+           std::string *error)
 {
     const Points &in = *In<Points>(io, WrinklePoints());
     std::vector<Vec3f> points = ToVector(in);

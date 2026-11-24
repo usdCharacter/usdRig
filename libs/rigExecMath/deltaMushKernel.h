@@ -434,7 +434,8 @@ RigExecTransportCornerOffsetsKernel(const std::vector<Point> &rest,
 /// derived state is a pure function of exactly the echo. The smoothing
 /// settings are part of it: the posed half smooths with the same mode and
 /// per-vertex influence the rest half used.
-template <class Point, class Wide> struct RigExecDeltaMushRestData {
+template <class Point, class Wide, class Settings>
+struct RigExecDeltaMushRestData {
     std::vector<Point> rest;
     std::vector<int> counts;
     std::vector<int> indices;
@@ -442,7 +443,7 @@ template <class Point, class Wide> struct RigExecDeltaMushRestData {
     double step = 0.0;
     bool pinBorders = false;
     double distanceWeight = 0.0;
-    RigExecDeltaMushSettings settings;
+    Settings settings;
     /// Per-vertex (neighbor, edge-distance weight) table.
     std::vector<std::vector<std::pair<int, double>>> neighbors;
     std::vector<bool> pinned;
@@ -471,13 +472,13 @@ namespace deltaMushDetail {
 // smoothing the same input twice must smooth it the same way, which is only
 // guaranteed in one definition. A unit influence multiplies the step
 // exactly, so the legacy rest-weighted relaxation keeps its bits.
-template <class Point, class Wide>
+template <class Point, class Wide, class Settings>
 std::vector<Point>
 SmoothWithNeighbors(
     const std::vector<Point> &input,
     const std::vector<std::vector<std::pair<int, double>>> &neighbors,
     const std::vector<bool> &pinned, int iterations, double step,
-    const RigExecDeltaMushSettings &settings)
+    const Settings &settings)
 {
     std::vector<Wide> current;
     current.reserve(input.size());
@@ -528,8 +529,9 @@ SmoothWithNeighbors(
 }
 
 // The settings' own validation, independent of any mesh.
-inline bool
-SettingsValid(const RigExecDeltaMushSettings &settings, size_t pointCount)
+template <class Settings>
+bool
+SettingsValid(const Settings &settings, size_t pointCount)
 {
     if ((settings.smoothing != RigExecDeltaMushSmoothing::Rest &&
          settings.smoothing != RigExecDeltaMushSmoothing::Simple &&
@@ -556,19 +558,17 @@ SettingsValid(const RigExecDeltaMushSettings &settings, size_t pointCount)
 /// it. The input echo is filled whatever the outcome, so a cache can keep a
 /// rejected build as its candidate; the derived state is meaningful only on
 /// true. A step outside [0, 1] is refused only for rest-weighted smoothing.
-template <class Point, class Wide>
+template <class Point, class Wide, class Settings>
 bool
-RigExecBuildDeltaMushRestData(const std::vector<Point> &rest,
-                              const std::vector<int> &counts,
-                              const std::vector<int> &indices, int iterations,
-                              double step, bool pinBorders,
-                              double distanceWeight,
-                              const RigExecDeltaMushSettings &settings,
-                              RigExecDeltaMushRestData<Point, Wide> *data)
+RigExecBuildDeltaMushRestData(
+    const std::vector<Point> &rest, const std::vector<int> &counts,
+    const std::vector<int> &indices, int iterations, double step,
+    bool pinBorders, double distanceWeight, const Settings &settings,
+    RigExecDeltaMushRestData<Point, Wide, Settings> *data)
 {
     if (!data)
         return false;
-    RigExecDeltaMushRestData<Point, Wide> built;
+    RigExecDeltaMushRestData<Point, Wide, Settings> built;
     built.rest = rest;
     built.counts = counts;
     built.indices = indices;
@@ -735,18 +735,18 @@ RigExecBuildDeltaMushRestData(const std::vector<Point> &rest,
 /// and is flagged in \p kept when given; a non-finite entering point fails
 /// itself and every point its smoothing reaches. The displacement is limited
 /// to [0, 1] only for rest-weighted smoothing.
-template <class Point, class Wide>
+template <class Point, class Wide, class Settings>
 bool
 RigExecApplyDeltaMushWithRestData(
     std::vector<Point> *points,
-    const RigExecDeltaMushRestData<Point, Wide> &restData, double displacement,
-    std::vector<char> *kept = nullptr)
+    const RigExecDeltaMushRestData<Point, Wide, Settings> &restData,
+    double displacement, std::vector<char> *kept = nullptr)
 {
     if (!points || !restData.validated)
         return false;
     if (points->size() != restData.rest.size())
         return false;
-    const RigExecDeltaMushSettings &settings = restData.settings;
+    const Settings &settings = restData.settings;
     if (!std::isfinite(displacement) ||
         (settings.smoothing == RigExecDeltaMushSmoothing::Rest &&
          (displacement < 0 || displacement > 1)))
@@ -1315,7 +1315,7 @@ RigExecDeltaMushMaskPreservesVerdict(
     return restData.validated;
 }
 
-template <class Point, class Wide>
+template <class Point, class Wide, class Settings = RigExecDeltaMushSettings>
 bool
 RigExecApplyDeltaMushKernel(std::vector<Point> *points,
                             const std::vector<Point> &rest,
@@ -1323,12 +1323,12 @@ RigExecApplyDeltaMushKernel(std::vector<Point> *points,
                             const std::vector<int> &indices, int iterations,
                             double step, bool pinBorders, double distanceWeight,
                             double displacement,
-                            const RigExecDeltaMushSettings &settings = {},
+                            const Settings &settings = Settings(),
                             std::vector<char> *kept = nullptr)
 {
     if (!points || points->size() != rest.size())
         return false;
-    RigExecDeltaMushRestData<Point, Wide> restData;
+    RigExecDeltaMushRestData<Point, Wide, Settings> restData;
     if (!RigExecBuildDeltaMushRestData(rest, counts, indices, iterations, step,
                                        pinBorders, distanceWeight, settings,
                                        &restData)) {
@@ -1394,7 +1394,7 @@ ApplyInComputationSpace(std::vector<Point> *points,
 
 /// Row-vector affine adapter. Reference points are already in computation
 /// space; the identity map runs the plain kernel, bit for bit.
-template <class Point, class Wide, class Matrix>
+template <class Point, class Wide, class Matrix, class Settings>
 bool
 RigExecApplyDeltaMushInSpaceKernel(std::vector<Point> *points,
                                    const std::vector<Point> &rest,
@@ -1402,7 +1402,7 @@ RigExecApplyDeltaMushInSpaceKernel(std::vector<Point> *points,
                                    const std::vector<int> &indices,
                                    int iterations, double step, bool pinBorders,
                                    double distanceWeight, double displacement,
-                                   const RigExecDeltaMushSettings &settings,
+                                   const Settings &settings,
                                    const Matrix &computationToTarget)
 {
     if (!points || !deltaMushDetail::ComputationMapValid(computationToTarget))

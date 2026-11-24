@@ -2,6 +2,7 @@
 
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
+#include "rigExecMath/borrowedSpan.h"
 #include "rigExecMath/wireBasisKernel.h"
 
 #include <cstdint>
@@ -35,7 +36,7 @@ using namespace fieldIo;
 struct Curve {
     const std::vector<Vec3f> *points = nullptr;
     int order = 0;
-    const std::vector<double> *knots = nullptr;
+    const rigExec::RigExecBorrowedSpan<double> *knots = nullptr;
 };
 
 struct Basis {
@@ -45,20 +46,26 @@ struct Basis {
 
 enum WireField : uint32_t { kOrder, kKnotCount, kKnots, kDropoffDistance };
 
-/// Instance \p k's curve layout and falloff.
-WirePayload
+/// Instance \p k's curve layout and falloff, its knots read in place.
+struct WireInstance {
+    int order = 0;
+    rigExec::RigExecBorrowedSpan<double> knots;
+    double dropoffDistance = 0.0;
+};
+
+WireInstance
 PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
 {
-    WirePayload p;
+    WireInstance p;
     p.order = ValueAt<int32_t>(batch, kOrder, k);
     const auto knots = ListAt<double>(batch, kKnots, k);
-    p.knots.assign(knots.begin(), knots.end());
+    p.knots = {knots.data, knots.Size()};
     p.dropoffDistance = ValueAt<double>(batch, kDropoffDistance, k);
     return p;
 }
 
 bool
-WireOne(const RigExecOpIo &io, const WirePayload &p, std::string *error)
+WireOne(const RigExecOpIo &io, const WireInstance &p, std::string *error)
 {
     const Points &in = *In<Points>(io, WirePoints());
     const std::vector<Vec3f> restPoints =
