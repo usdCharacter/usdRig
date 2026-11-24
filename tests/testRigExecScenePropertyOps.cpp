@@ -7,9 +7,8 @@
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecScene/propertyOps.h"
 #include "rigExecScene/propertySceneTranslation.h"
-#include "rigExecStandalone/sceneAccess.h"
+#include "rigExecScene/usdSceneAccess.h"
 #include "rigExecStdTypes/stdTypes.h"
-#include "standaloneCapture.h"
 
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/plug/registry.h"
@@ -52,7 +51,6 @@ const SdfPath kTarget("/Rig.target");
 struct Scene {
     UsdStageRefPtr stage = UsdStage::CreateInMemory();
     std::vector<SdfPath> movers;
-    RigExecSceneDb db;
     RigExecSceneDescriptors descriptors;
 
     Scene(const SdfValueTypeName &type, const char *moverType,
@@ -66,9 +64,7 @@ struct Scene {
             movers.push_back(path);
         }
         std::string error;
-        db = rigExecTest::Capture(stage, {UsdTimeCode::Default()}, &error);
-        CHECK(error.empty());
-        const RigExecSceneDbAccess access(db);
+        const RigExecUsdSceneAccess access(stage);
         CHECK(RigExecCaptureSceneDescriptors(
             access, kRig, {UsdTimeCode::Default()}, &descriptors, &error));
     }

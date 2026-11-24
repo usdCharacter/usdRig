@@ -70,9 +70,8 @@ starting its workflow, and keep this list current when adding or changing skills
   publicly; graph, math and `rigExecBuiltins` are private. Its scene
   geometry operations run as op nodes through `geometryOps`, except
   External movers. `librigExec.so` does not link it.
-  Imaging, bake, and the standalone adapter link it privately, so playback,
-  runtime, and imaging tests load the library without being selected as
-  scene tests. The evaluator calls it through the hooks in `sceneDispatch`.
+  Imaging and bake link it privately, so playback, runtime, and imaging
+  tests load the library without being selected as scene tests. The evaluator calls it through the hooks in `sceneDispatch`.
   Installed headers live under `include/rigExecScene/`. Not every file in
   this directory is part of this library: `constraintProgram`,
   `geometryProgram`, `poseProgram`, `propertyProgram`, `providerProgram`,
@@ -181,8 +180,6 @@ starting its workflow, and keep this list current when adding or changing skills
   host registers or passes at `Open`. Do not include a `pxr/` header from a runtime translation unit or
   from a header-only kernel the runtime instantiates (the `rigExecGraph`
   headers and the `rigExecMath` kernel headers it includes).
-- `libs/rigExecStandalone`: experimental scene adapter and rigpack path;
-  distinct from `.rigexec` binary playback.
 - `plugin/rigExecUsdview`: editor UI plus Qt-free interaction models
   (`*Model.py`). `plugin/touchPose` and `plugin/shapeEditor` are further
   `usdview` tools with the same split. A host application can take over the

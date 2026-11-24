@@ -113,7 +113,7 @@ explicitly.
 
 RigExec builds against [OpenExec](https://openusd.org/release/intro_to_openexec.html)
 and registers computations with it, but production evaluation never runs it.
-Native, frozen, frame-cache, `.rigexec` runtime and standalone evaluation all
+Native, frozen, frame-cache and `.rigexec` runtime evaluation all
 compile and execute the shared operation graph. No environment variable or
 option selects OpenExec evaluation, and no failure falls back to it. OpenExec
 answers only the requests of one optional check and of tests.
@@ -186,8 +186,8 @@ Other rows are not judged by OpenExec:
 - CTest runs every `example_graph_*` test with
   `--exec-crosscheck --cpu-reference`. The `exec_crosscheck_*` fixtures and
   `testRigExecExecCrossCheck` carry the `exec` label (`ctest -L exec`).
-- `testRigExecDefaultSpaces`, `testRigExecArm`, `testRigExecConstraints`,
-  `testRigExecStandalone` and `testRigExecInteractive` use `RigExecTapSet`
+- `testRigExecDefaultSpaces`, `testRigExecArm`, `testRigExecConstraints`
+  and `testRigExecInteractive` use `RigExecTapSet`
   requests directly as reference values.
 - `TF_DEBUG=RIGEXEC_TAP_TIMING` reports the time spent building and computing
   `ExecUsdSystem` requests.
@@ -209,11 +209,6 @@ requests before a prim removal reaches OpenExec, which works around the
 interactive overrides, falloff tables and input replay; the ExecUsd-backed
 `RigExecTapSet` sits on top of that contract and its header includes no
 OpenExec header.
-
-`libs/rigExecStandalone/adapter.{h,cpp}` implements OpenExec's Esf scene
-interfaces over `RigExecSceneDb`, but nothing calls it. The
-[standalone runtime](../specs/standalone-runtime.md) translates its scene into the
-shared operation graph instead.
 
 ## Scene and binary playback
 
@@ -273,7 +268,6 @@ Paths are relative to the repository root.
 |---|---|---|
 | Production graph | Shared compiler and readiness executor; OpenExec is not called | `libs/rigExecGraph/opGraph.cpp:97`, `libs/rigExecGraph/opGraph.cpp:409` |
 | Build and link | `rigExec` links `exec execUsd ef vdf` publicly | `CMakeLists.txt:166-170` |
-| | `rigExecStandalone` links `exec esf` | `CMakeLists.txt:229` |
 | | `rigExecRuntime` links neither USD nor OpenExec | `CMakeLists.txt:343` |
 | | The installed package requires the same OpenUSD targets | `cmake/rigExecConfig.cmake.in:20-25` |
 | | The schema plugin's library is `rigExecImaging`; there is no `Exec` plugInfo block | `CMakeLists.txt:2610-2612` |
@@ -303,8 +297,6 @@ Paths are relative to the repository root.
 | | Enable hook | `libs/rigExecOracle/bakedExecCrossCheckRows.cpp:680-685` |
 | | `rigExecPose --exec-crosscheck` and backend refusals | `tools/rigExecPose.cpp:1435`, `:1551-1557`, `:1159`, `:1168` |
 | | CTest registration | `CMakeLists.txt:703-705`, `:909-910`, `:923-931` |
-| Direct test references | Tap sets built by tests | `tests/testRigExecDefaultSpaces.cpp:56`, `tests/testRigExecArm.cpp:198`, `tests/testRigExecConstraints.cpp:2630`, `tests/testRigExecStandalone.cpp:548`, `tests/testRigExecStandalone.cpp:916`, `tests/testRigExecInteractive.cpp:162` |
-| Esf | Adapter with no callers | `libs/rigExecStandalone/adapter.h:7-8`, `libs/rigExecStandalone/adapter.cpp:182-186` |
-| | Standalone runtime translation into the shared graph | `libs/rigExecStandalone/sceneRuntime.cpp:4-18` |
+| Direct test references | Tap sets built by tests | `tests/testRigExecDefaultSpaces.cpp:56`, `tests/testRigExecArm.cpp:198`, `tests/testRigExecConstraints.cpp:2630`, `tests/testRigExecInteractive.cpp:162` |
 | Shared data types | `RigExecValueAddress`, `RigExecValueOverride` | `libs/rigExec/internal/valueAddress.h:30-48`, `libs/rigExec/internal/valueAddress.h:63-88` |
 | | Production uses of the override type | `libs/rigExec/api/bakedProgram.h:456`, `libs/rigExec/api/frameCache.h:159` |

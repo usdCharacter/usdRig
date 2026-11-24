@@ -83,9 +83,6 @@ libs/rigExecScene/typedValues.cpp | rigExec/internal/weightPackets.h
 libs/rigExecScene/weightGraphBinding.cpp | rigExec/internal/frameExtraction.h
 libs/rigExecScene/weightProgram.h | rigExec/internal/weightPackets.h
 libs/rigExecScene/weightSceneTranslation.cpp | rigExec/internal/pathText.h
-libs/rigExecStandalone/pack.cpp | rigExec/internal/inputReplayValues.h
-libs/rigExecStandalone/system.cpp | rigExec/internal/inputReplayValues.h
-libs/rigExecStandalone/system.h | rigExec/internal/valueAddress.h
 python/_rigexec.cpp | rigExec/internal/evaluatorTesting.h
 tools/rigExecBake.cpp | rigExec/internal/bakedProgramImpl.h
 tools/rigExecPose.cpp | rigExec/internal/bakedExecCrossCheckRows.h

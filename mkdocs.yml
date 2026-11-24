@@ -150,8 +150,6 @@ nav:
       - Overview: specs/spec.md
       - Format and plugin API compatibility: compat-matrix.md
       - Presentation: specs/rigexec-presentation.md
-      - Standalone runtime: specs/standalone-runtime.md
-      - Standalone pack: specs/standalone-pack.md
       - Upstream rig inputs: specs/upstream-inputs.md
       - Cross-domain inputs: specs/cross-domain-inputs.md
       - Source input replay: specs/input-replay.md

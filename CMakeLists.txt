@@ -331,21 +331,6 @@ target_include_directories(rigExecBuiltins PUBLIC
     "$<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>")
 target_link_libraries(rigExecBuiltins PUBLIC rigExecOpCore PRIVATE rigExecEvalCore)
 
-add_library(rigExecStandalone SHARED
-    libs/rigExecStandalone/sceneDb.cpp
-    libs/rigExecStandalone/sceneAccess.cpp
-    libs/rigExecStandalone/graphFrontend.cpp
-    libs/rigExecStandalone/providerRuntime.cpp
-    libs/rigExecStandalone/sceneRuntime.cpp
-    libs/rigExecStandalone/adapter.cpp
-    libs/rigExecStandalone/system.cpp
-    libs/rigExecStandalone/pack.cpp)
-target_include_directories(rigExecStandalone PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
-    $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
-target_link_libraries(rigExecStandalone PUBLIC rigExec exec esf usd sdf)
-target_link_libraries(rigExecStandalone PRIVATE rigExecScene)
-
 add_library(rigExecAuthoring SHARED
     libs/rigExecAuthoring/generateSkinWeights.cpp
     libs/rigExecAuthoring/rigBuilder.cpp
@@ -1471,8 +1456,7 @@ target_link_libraries(rigExecSceneOps PUBLIC rigExec rigExecScene
     rigExecBuiltins PRIVATE rigExecMath)
 set_target_properties(rigExecSceneOps PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_executable(testRigExecScenePropertyOps tests/testRigExecScenePropertyOps.cpp)
-target_link_libraries(testRigExecScenePropertyOps PRIVATE rigExecSceneOps
-    rigExecStandalone)
+target_link_libraries(testRigExecScenePropertyOps PRIVATE rigExecSceneOps)
 target_compile_definitions(testRigExecScenePropertyOps PRIVATE
     ${_rigexec_schema_resource_define})
 rigexec_add_test(NAME testRigExecScenePropertyOps COMMAND testRigExecScenePropertyOps)
@@ -1719,11 +1703,6 @@ rigexec_add_test(NAME testRigExecGoldenPose COMMAND testRigExecGoldenPose)
 add_executable(testRigExecOracleInputs tests/testRigExecOracleInputs.cpp)
 target_link_libraries(testRigExecOracleInputs PRIVATE rigExec)
 rigexec_add_test(NAME testRigExecOracleInputs COMMAND testRigExecOracleInputs)
-
-add_executable(testRigExecStandalone tests/testRigExecStandalone.cpp)
-target_link_libraries(testRigExecStandalone PRIVATE rigExecStandalone rigExecAuthoring)
-target_compile_definitions(testRigExecStandalone PRIVATE ${_rigexec_schema_resource_define})
-rigexec_add_test(NAME testRigExecStandalone COMMAND testRigExecStandalone)
 
 add_executable(testRigExecRuntimeMath tests/testRigExecRuntimeMath.cpp)
 target_link_libraries(testRigExecRuntimeMath PRIVATE rigExecRuntime rigExecMath gf)
@@ -2101,11 +2080,6 @@ rigexec_add_verify_binary_test(NAME docs_joint_group
     STAGE "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/joint_group.usda"
     FRAMES 1001,1011,1012,1024 CLASS inputs
     DRAGS "/JointGroupAsset/Rig/Groups/Fingers.rigExec:activeMember,/JointGroupAsset/Rig/Controls/Arm.avars:tx")
-
-add_executable(testRigExecPack tests/testRigExecPack.cpp)
-target_link_libraries(testRigExecPack PRIVATE rigExecStandalone rigExecAuthoring)
-target_compile_definitions(testRigExecPack PRIVATE ${_rigexec_schema_resource_define})
-rigexec_add_test(NAME testRigExecPack COMMAND testRigExecPack)
 
 add_executable(testRigExecWeightFields tests/testRigExecWeightFields.cpp)
 target_link_libraries(testRigExecWeightFields PRIVATE rigExecMath)
@@ -3338,7 +3312,7 @@ if (MSVC AND NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
         if (_type STREQUAL "EXECUTABLE" AND _links AND
             _target MATCHES "^(test|bench|probe)")
             foreach(_lib rigExec rigExecBake rigExecImaging rigExecAuthoring
-                    rigExecSampler rigExecStandalone rigExecPlayback)
+                    rigExecSampler rigExecPlayback)
                 if (_lib IN_LIST _links)
                     list(APPEND _rigexec_pch_users ${_target})
                     break()
@@ -3352,10 +3326,9 @@ if (MSVC AND NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
 endif()
 
 # Executables that compile a stage through rigExec alone name the scene
-# library, so the hooks are loaded. Imaging, bake, and the standalone
-# adapter link it privately: playback, runtime, and imaging tests load
-# the library and are not scene tests. testRigExecStandalone calls the
-# translation functions from the test itself.
+# library, so the hooks are loaded. Imaging and bake link it privately:
+# playback, runtime, and imaging tests load the library and are not scene
+# tests.
 foreach(_rigexec_scene_exe IN ITEMS
     benchEditLatency benchFrameCache benchFrameCacheWarm benchRigSpeed
     testRigExecDeterminism
@@ -3380,7 +3353,7 @@ foreach(_rigexec_scene_exe IN ITEMS
     testRigExecSolverStacking testRigExecSurfaceBinding testRigExecSurfaceProjector
     testRigExecSurfaceSnap testRigExecValueEdits testRigExecVolumeWeights
     testRigExecWeightProgram testRigExecWrinkle
-    testRigExecStandalone testRigExecRigLogic)
+    testRigExecRigLogic)
     if (TARGET ${_rigexec_scene_exe})
         target_link_libraries(${_rigexec_scene_exe} PRIVATE rigExecScene)
     endif()
@@ -3420,7 +3393,7 @@ include(CMakePackageConfigHelpers)
 
 set(RIGEXEC_INSTALL_TARGETS
     rigExecLzma rigExecGraph rigExecEvalCore rigExecMath rigExec rigExecScene
-    rigExecOracle rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu
+    rigExecOracle rigExecAuthoring rigExecImaging rigExecGpu
     rigExecFlatBuffers rigExecBinary rigExecBake rigExecRuntime rigExecSampler
     rigExecBuiltins rigExecOpCore rigExecPlayback)
 install(TARGETS ${RIGEXEC_INSTALL_TARGETS}
@@ -3444,7 +3417,7 @@ install(FILES libs/rigExecOracle/registerOracle.h
     DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/rigExecOracle")
 
 # FILES_MATCHING still walks -- and recreates -- every subdirectory it passes
-foreach(_lib rigExecGraph rigExecEvalCore rigExecScene rigExecMath rigExec rigExecSchema rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler rigExecStdTypes rigExecRigTypes rigExecBuiltins rigExecPlayback)
+foreach(_lib rigExecGraph rigExecEvalCore rigExecScene rigExecMath rigExec rigExecSchema rigExecAuthoring rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler rigExecStdTypes rigExecRigTypes rigExecBuiltins rigExecPlayback)
     install(DIRECTORY "libs/${_lib}/"
         DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/${_lib}"
         FILES_MATCHING

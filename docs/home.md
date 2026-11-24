@@ -89,7 +89,7 @@ through Hydra for live playback in <code>usdview</code> and other viewers.</p>
     Export a rig to the `.rigexec` binary and play it with a standalone
     runtime that links no USD library.
 
-    [:octicons-arrow-right-24: Standalone runtime](specs/standalone-runtime.md)
+    [:octicons-arrow-right-24: Godot tutorial](concepts/tutorial-godot-baked-rig.md)
 
 </div>
 

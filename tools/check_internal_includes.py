@@ -36,7 +36,7 @@ SKIPPED_TOP_PREFIXES = ("build",)
 # Libraries whose headers install; keep in step with CMakeLists.txt.
 INSTALLED_LIBS = (
     "rigExecGraph rigExecEvalCore rigExecScene rigExecMath rigExec "
-    "rigExecSchema rigExecStandalone rigExecAuthoring rigExecImaging "
+    "rigExecSchema rigExecAuthoring rigExecImaging "
     "rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler "
     "rigExecStdTypes rigExecRigTypes rigExecBuiltins rigExecPlayback"
 ).split()

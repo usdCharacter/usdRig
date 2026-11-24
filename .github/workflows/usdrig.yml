@@ -862,7 +862,6 @@ jobs:
             "$P/lib/librigExecOracle.so" \
             "$P/lib/librigExecImaging.so" \
             "$P/lib/python/usdRigViewMenu.py" \
-            "$P/lib/librigExecStandalone.so" \
             "$P/lib/librigExecAuthoring.so" \
             "$P/lib/usd/rigExecSchema/resources/plugInfo.json" \
             "$P/lib/usd/rigExecSchema/resources/generatedSchema.usda" \

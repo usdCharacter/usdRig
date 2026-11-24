@@ -47,11 +47,10 @@ captured values without querying the source scene.
 | --- | --- |
 | `rigExecImaging` | Compiling live rigs for Hydra and `usdview` evaluation |
 | `rigExecBake` | Scene compilation and record export for `.rigexec` files |
-| `rigExecStandalone` | Experimental scene adapter and rigpack path |
 | Python `_rigexec` module | Stage-based rig compilation and evaluation |
 | `rigExecPose`, `rigExecBakeTool`, selected tests and benchmarks | Direct stage compilation |
 
-Imaging, bake, and the standalone adapter link `rigExecScene` privately.
+Imaging and bake link `rigExecScene` privately.
 The Python module and executables that need it directly name it on their
 link lines. Stage-compiling tests are listed near the end of the root
 `CMakeLists.txt`.

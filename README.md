@@ -88,7 +88,6 @@ The documentation is published at **[usdcharacter.github.io/usdRig](https://usdc
 - [Bake and inverse APIs](docs/specs/python-bake-inverse.md)
 - [Build and register external movers](docs/concepts/external-movers.md)
 - [Inspect the live evaluator graph and thread trace](docs/concepts/live-evaluator-inspection.md)
-- [Standalone runtime](docs/specs/standalone-runtime.md)
 - [Format and plugin API compatibility matrix](docs/compat-matrix.md)
 - [Public method references](docs/references.md)
 - [Agent and contributor guide](AGENTS.md)
@@ -194,7 +193,6 @@ throw `std::runtime_error`.
 | `libs/rigExecBake`, `libs/rigExecBinary`, `libs/rigExecRuntime` | Binary export, format, and playback |
 | `libs/rigExecSampler` | Stage values copied into binary-runtime inputs |
 | `libs/rigExecPlayback` | Background scheduler that warms the frame cache |
-| `libs/rigExecStandalone` | Experimental stage-free scene runtime and rigpack backend |
 | `python` | Python bindings and authoring helpers |
 | `plugin` | Schema resources and optional viewer tools |
 | `tests`, `examples`, `docs` | Verification, sample stages, and documentation |
@@ -223,16 +221,15 @@ The documentation site is built with MkDocs from `docs/` and `mkdocs.yml`:
 `python -m pip install -r docs/requirements.txt`, then `python -m mkdocs serve`
 to preview it. `.github/workflows/docs.yml` publishes it to GitHub Pages.
 
-The standalone backends support a subset of the authoring/runtime surface.
-Check their guides before integration. Changes to OpenUSD versions or binary
-formats require explicit compatibility testing.
+The binary runtime supports a subset of the authoring surface. Changes to
+OpenUSD versions or binary formats require explicit compatibility testing.
 
 ## OpenExec usage
 
 RigExec builds against [OpenExec](https://openusd.org/release/intro_to_openexec.html)
 from an unmodified OpenUSD 26.08 installation: the `rigExec` target links `exec`,
-`execUsd`, `ef` and `vdf` in [CMakeLists.txt](CMakeLists.txt). Native, frozen,
-`.rigexec` and standalone-scene evaluation run the shared operation graph, and the
+`execUsd`, `ef` and `vdf` in [CMakeLists.txt](CMakeLists.txt). Native, frozen
+and `.rigexec` evaluation run the shared operation graph, and the
 binary runtime links no USD or OpenExec library. No option selects OpenExec
 evaluation and no failure falls back to it.
 
@@ -275,7 +272,7 @@ RigExec's evaluation and playback layers are consumed outside this repository.
 Godot, Unreal and the Maya plug-in play baked rigs with the USD-free runtime in
 `libs/rigExecRuntime`, the same operation graph the viewport runs; see
 [evaluation and checks](docs/concepts/baked-vs-dynamic.md) and
-[the standalone runtime](docs/specs/standalone-runtime.md). The Blender and
+[the Godot tutorial](docs/concepts/tutorial-godot-baked-rig.md). The Blender and
 Maya ASCII file formats work on the other side of that bake: they translate
 source files into native USD rigs that RigExec compiles in this repository.
 The mobile rows carry the Hydra path in `libs/rigExecImaging` and the

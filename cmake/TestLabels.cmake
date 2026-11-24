@@ -54,7 +54,7 @@ set(_rigexec_project_libs
     rigExec rigExecOpCore rigExecCompile rigExecEval rigExecSchedule
     rigExecVerify rigExecScene rigExecOracle rigExecRuntime rigExecMath rigExecGraph
     rigExecEvalCore rigExecBinary rigExecBake rigExecImaging rigExecAuthoring
-    rigExecStandalone rigExecSampler rigExecLzma rigExecPlayback)
+    rigExecSampler rigExecLzma rigExecPlayback)
 set(_rigexec_fast_direct rigExecMath)
 
 function(_rigexec_normalize_link raw out)
