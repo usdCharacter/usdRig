@@ -49,6 +49,19 @@ jobs:
       - name: Scan owned sources for bare allocation
         run: python3 tools/check_allocations.py
 
+  pxr-libraries:
+    name: no dropped OpenUSD libraries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout usdRig
+        uses: actions/checkout@v4
+
+      - name: Scan links, includes and imports
+        run: |
+          python3 tools/check_pxr_libraries.py --self-test
+          python3 tools/check_pxr_libraries.py
+
   # --------------------------------------------------------------------------
   # Offline audit of the checkout's legal layer: the manifest must partition
   # the tracked tree exactly once, every legal text it names must exist and be
@@ -225,7 +238,7 @@ jobs:
           for lib in \
             libusd_usd.so libusd_tf.so libusd_sdf.so libusd_gf.so \
             libusd_arch.so libusd_vt.so libusd_plug.so libusd_work.so \
-            libusd_usdGeom.so libusd_usdSkel.so libusd_usdUtils.so \
+            libusd_usdGeom.so libusd_usdUtils.so \
             libusd_usdImaging.so libusd_hd.so \
             libusd_exec.so libusd_execUsd.so libusd_ef.so \
             libusd_vdf.so libusd_esf.so libusd_esfUsd.so

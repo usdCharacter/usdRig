@@ -498,6 +498,10 @@ load instead. A script that builds its own subprocess environment sets
 
 Linking rules:
 
+- No target links `usdSkel`. Read and author a BlendShape prim by name
+  (`BlendShapeText` in `libs/rigExecSchema/schemaNames.h`) through the
+  generic Usd/Sdf API. `tools/check_pxr_libraries.py` runs in CI and fails
+  on a link, an include under `pxr/usd/usdSkel` or a `UsdSkel` import.
 - A new test, bench, or probe that compiles a stage through `rigExec` alone
   joins the `rigExecScene` list near the end of `CMakeLists.txt`. Without
   it, compile returns false with a missing-scene diagnostic. Core-only tests

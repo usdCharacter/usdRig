@@ -16,5 +16,5 @@ target_include_directories(rigExecVerify PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/libs")
 target_link_libraries(rigExecVerify PRIVATE
     rigExecGraph rigExecMath
-    tf gf vt sdf ts usd usdGeom usdSkel plug work exec execUsd ef vdf)
+    tf gf vt sdf ts usd usdGeom plug work exec execUsd ef vdf)
 set_target_properties(rigExecVerify PROPERTIES POSITION_INDEPENDENT_CODE ON)

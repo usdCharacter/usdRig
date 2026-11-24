@@ -53,7 +53,7 @@ LAYER_CMAKE = (
 # Imported OpenUSD/OpenExec targets. A test that reaches one of these
 # cannot be built or run without the USD prefix.
 PXR_LIBS = {
-    "arch", "tf", "gf", "vt", "sdf", "ts", "usd", "usdGeom", "usdSkel",
+    "arch", "tf", "gf", "vt", "sdf", "ts", "usd", "usdGeom",
     "plug", "work", "exec", "execUsd", "ef", "vdf", "esf", "hd",
     "usdImaging", "usdUtils", "hio", "sdr", "js", "garch", "glf", "hf",
     "hdSt", "hgi", "trace",

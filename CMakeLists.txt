@@ -227,8 +227,7 @@ target_include_directories(rigExec PUBLIC
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rigExec PUBLIC
     rigExecOpCore
-    # usdSkel is here for UsdSkelBlendShape only.
-    plug sdf usd usdGeom usdSkel work
+    plug sdf usd usdGeom work
     exec execUsd ef vdf
 )
 
@@ -263,7 +262,7 @@ target_include_directories(rigExecOracle PUBLIC
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rigExecOracle PRIVATE rigExecMath)
 target_link_libraries(rigExecOracle PUBLIC
-    rigExec tf gf vt sdf ts usd usdGeom usdSkel)
+    rigExec tf gf vt sdf ts usd usdGeom)
 set_target_properties(rigExecOracle PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(rigExec::rigExecOracle ALIAS rigExecOracle)
 target_sources(rigExecOracle INTERFACE
@@ -889,6 +888,13 @@ rigexec_add_test(NAME testRigExecAllocationChecker
     COMMAND ${Python3_EXECUTABLE}
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/testRigExecAllocationChecker.py")
 set_tests_properties(testRigExecAllocationChecker PROPERTIES LABELS "fast")
+
+# No target links, includes or imports an OpenUSD library usdRig dropped
+# (tools/check_pxr_libraries.py, FORBIDDEN).
+rigexec_add_test(NAME testRigExecPxrLibraryChecker
+    COMMAND ${Python3_EXECUTABLE}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/testRigExecPxrLibraryChecker.py")
+set_tests_properties(testRigExecPxrLibraryChecker PROPERTIES LABELS "fast")
 
 # The legal packaging layer is stdlib-only. The manifest must partition the
 # tree exactly once, name every shipped legal text by its canonical file name,
