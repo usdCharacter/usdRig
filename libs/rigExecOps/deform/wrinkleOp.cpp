@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -68,17 +69,51 @@ SettingsAt(const rigExec::RigExecOpBatch &batch, size_t k)
     return s;
 }
 
+/// A node's wrinkle topology, built on its first run.
+struct WrinkleState {
+    std::shared_ptr<const rigExec::RigExecWrinkleMesh> mesh;
+};
+
+/// Topology is fixed per compiled rig and the state lives as long as the
+/// bound program, so the mesh is keyed by its sizes and payload rule only;
+/// the apply half walks the mesh's own faces, never the caller's.
+const rigExec::RigExecWrinkleMesh *
+MeshOf(WrinkleState &state, size_t pointCount, const RigExecArray<int> &counts,
+       const RigExecArray<int> &indices,
+       const rigExec::RigExecWrinkleSettingsView &settings)
+{
+    const rigExec::RigExecWrinkleMesh *mesh = state.mesh.get();
+    if (mesh && mesh->pointCount == pointCount &&
+        mesh->counts.size() == counts.Size() &&
+        mesh->indices.size() == indices.Size() &&
+        mesh->mode == settings.topology &&
+        mesh->neighborDistance == settings.neighborDistance)
+        return mesh;
+    state.mesh.reset();
+    auto built = std::make_shared<rigExec::RigExecWrinkleMesh>();
+    if (!rigExec::RigExecBuildWrinkleMesh(
+            pointCount, ToVector(counts), ToVector(indices), settings.topology,
+            settings.neighborDistance, built.get()))
+        return nullptr;
+    state.mesh = std::move(built);
+    return state.mesh.get();
+}
+
 bool
 WrinkleOne(const rigExec::RigExecOpIo &io,
            const rigExec::RigExecWrinkleSettingsView &settings,
-           std::string *error)
+           WrinkleState &state, std::string *error)
 {
     const Points &in = *In<Points>(io, WrinklePoints());
+    const Points &rest = *In<Points>(io, WrinkleRest());
     std::vector<Vec3f> points = ToVector(in);
-    if (!rigExec::RigExecApplyWrinkleKernel<Vec3f, rigExecStd::Vec3d>(
-            &points, ToVector(*In<Points>(io, WrinkleRest())),
-            ToVector(*In<RigExecArray<int>>(io, WrinkleCounts())),
-            ToVector(*In<RigExecArray<int>>(io, WrinkleIndices())), settings))
+    const rigExec::RigExecWrinkleMesh *mesh =
+        MeshOf(state, rest.Size(), *In<RigExecArray<int>>(io, WrinkleCounts()),
+               *In<RigExecArray<int>>(io, WrinkleIndices()), settings);
+    if (!mesh ||
+        !rigExec::RigExecApplyWrinkleWithTopology<Vec3f, rigExecStd::Vec3d>(
+            &points, ToVector(rest), mesh->counts, mesh->indices, settings,
+            *mesh))
         return Fail(error, "Wrinkle",
                     "unusable settings, topology, rest or points");
     return WritePoints(io, WrinkleOut(), in, points,
@@ -89,8 +124,10 @@ bool
 Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
     return EachInstance(batch, failed, [&](size_t k) {
-        return WrinkleOne(rigExec::RigExecBatchInstance(batch, k),
-                          SettingsAt(batch, k), error);
+        return WrinkleOne(
+            rigExec::RigExecBatchInstance(batch, k), SettingsAt(batch, k),
+            *static_cast<WrinkleState *>(rigExec::RigExecBatchState(batch, k)),
+            error);
     });
 }
 
@@ -168,6 +205,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.payloadFieldCount = std::size(kFields);
     d.payloadVersion = 1;
     d.payloadValues = &Values;
+    d.state = StateOf<WrinkleState>();
     return d;
 }();
 

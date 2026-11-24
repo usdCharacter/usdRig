@@ -10,6 +10,7 @@
 #include "rigExecStdTypes/stdTypes.h"
 
 #include <cmath>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,28 @@ using rigExec::opPorts::In;
 using rigExec::opPorts::InList;
 using rigExec::opPorts::InOr;
 using rigExec::opPorts::Out;
+
+/// State handling for an op whose per-node working state is a \p State,
+/// constructed when an evaluator binds the program and kept until it
+/// unbinds.
+template <class State>
+rigExec::RigExecOpStateHandling
+StateOf()
+{
+    rigExec::RigExecOpStateHandling h;
+    h.size = sizeof(State);
+    h.align = alignof(State);
+    h.create = [](void *dst) {
+        std::uninitialized_value_construct_n(static_cast<State *>(dst), 1);
+    };
+    h.copy = [](void *dst, const void *src) {
+        std::uninitialized_copy_n(static_cast<const State *>(src), 1,
+                                  static_cast<State *>(dst));
+    };
+    h.reset = [](void *dst) { *static_cast<State *>(dst) = State(); };
+    h.destroy = [](void *dst) { std::destroy_at(static_cast<State *>(dst)); };
+    return h;
+}
 
 template <class T>
 std::vector<T>

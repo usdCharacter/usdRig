@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -56,10 +57,51 @@ SettingsAt(const rigExec::RigExecOpBatch &batch, size_t k)
     return s;
 }
 
+/// A surface's snap triangulation, from its faces or authored triangles.
+struct SnapTriangles {
+    size_t surfacePoints = 0;
+    size_t counts = 0;
+    size_t indices = 0;
+    bool valid = false;
+    std::vector<int> triangles;
+};
+
+/// A node's snap triangulation, built on its first run, and the buffers the
+/// snap kernel refills each run.
+struct SurfaceProjectState {
+    std::shared_ptr<const SnapTriangles> snap;
+    rigExec::RigExecSurfaceSnapScratch<Vec3f> scratch;
+};
+
+/// Topology is fixed per compiled rig and the authored triangles are the
+/// node's payload, so the triangulation is keyed by sizes only; every
+/// triangle was checked against the surface point count it is keyed by.
+/// Null when the faces do not triangulate: the kernel then refuses them.
+const std::vector<int> *
+TrianglesOf(SurfaceProjectState &state, size_t surfacePoints,
+            const Ints &counts, const Ints &indices,
+            const rigExec::RigExecSurfaceSnapSettingsView &settings)
+{
+    const SnapTriangles *snap = state.snap.get();
+    if (!snap || snap->surfacePoints != surfacePoints ||
+        snap->counts != counts.Size() || snap->indices != indices.Size()) {
+        auto built = std::make_shared<SnapTriangles>();
+        built->surfacePoints = surfacePoints;
+        built->counts = counts.Size();
+        built->indices = indices.Size();
+        built->valid = rigExec::RigExecBuildSurfaceSnapTriangles(
+            surfacePoints, ToVector(counts), ToVector(indices),
+            settings.triangles, &built->triangles);
+        state.snap = std::move(built);
+        snap = state.snap.get();
+    }
+    return snap->valid ? &snap->triangles : nullptr;
+}
+
 bool
 ProjectOne(const rigExec::RigExecOpIo &io,
            const rigExec::RigExecSurfaceSnapSettingsView &settings,
-           std::string *error)
+           SurfaceProjectState &state, std::string *error)
 {
     const Points &in = *In<Points>(io, SurfaceProjectPoints());
     const Points &surface = *In<Points>(io, SurfaceProjectSurface());
@@ -76,11 +118,19 @@ ProjectOne(const rigExec::RigExecOpIo &io,
             &points, surface.Data(), surface.Size(), counts.Data(),
             counts.Size(), indices.Data(), indices.Size(),
             InOr(io, SurfaceProjectStrength(), 1.0f));
-    } else if (!rigExec::RigExecApplySurfaceSnapKernel<Vec3f,
-                                                       rigExecStd::Vec3d>(
-                   &points, ToVector(surface), ToVector(counts),
-                   ToVector(indices), settings, toSurface, toTarget,
-                   toMetric)) {
+    } else if (const std::vector<int> *triangles = TrianglesOf(
+                   state, surface.Size(), counts, indices, settings);
+               triangles
+                   ? !rigExec::RigExecApplySurfaceSnapKernel<Vec3f,
+                                                             rigExecStd::Vec3d>(
+                         &points, ToVector(surface), {}, {}, settings,
+                         toSurface, toTarget, toMetric, triangles, nullptr,
+                         &state.scratch)
+                   : !rigExec::RigExecApplySurfaceSnapKernel<Vec3f,
+                                                             rigExecStd::Vec3d>(
+                         &points, ToVector(surface), ToVector(counts),
+                         ToVector(indices), settings, toSurface, toTarget,
+                         toMetric)) {
         return Fail(error, "SurfaceProject",
                     "unusable surface, settings or spaces");
     }
@@ -94,7 +144,10 @@ Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
     return EachInstance(batch, failed, [&](size_t k) {
         return ProjectOne(rigExec::RigExecBatchInstance(batch, k),
-                          SettingsAt(batch, k), error);
+                          SettingsAt(batch, k),
+                          *static_cast<SurfaceProjectState *>(
+                              rigExec::RigExecBatchState(batch, k)),
+                          error);
     });
 }
 
@@ -164,6 +217,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.payloadFieldCount = std::size(kFields);
     d.payloadVersion = 1;
     d.payloadValues = &Values;
+    d.state = StateOf<SurfaceProjectState>();
     return d;
 }();
 

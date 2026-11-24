@@ -1,11 +1,14 @@
 #include "rigExecOps/deform/latticeOp.h"
 
+#include "rigExecMath/latticeKernel.h"
+#include "rigExecMath/surfaceKernelCache.h"
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
 
 #include <array>
 #include <cstdint>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -80,8 +83,43 @@ PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
     return p;
 }
 
+/// A node's bind of its rest points into the rest cage, built on the run
+/// that first sees those rest values.
+struct LatticeState {
+    std::shared_ptr<const rigExec::RigExecLatticeBind<Vec3f>> bind;
+};
+
+/// The bind is keyed by every value its factors derive from (the rest
+/// points' bits, the rest cage's box, the divisions). Null when the cage is
+/// unusable or the bind is over budget: the kernel then streams the same
+/// factors.
+const rigExec::RigExecLatticeBasis *
+BasisOf(LatticeState &state, const Points &rest, const Points &restCage,
+        const Points &posedCage, const LatticeInstance &p)
+{
+    const int dx = p.divisions[0], dy = p.divisions[1], dz = p.divisions[2];
+    Vec3f lo, size;
+    if (!rigExec::RigExecLatticeKernelSetup(
+            rest.Size(), rest.Data(), rest.Size(), restCage.Data(),
+            restCage.Size(), posedCage.Data(), posedCage.Size(), dx, dy, dz,
+            &lo, &size, static_cast<std::vector<Vec3f> *>(nullptr)))
+        return nullptr;
+    if (state.bind &&
+        state.bind->Matches(rest.Data(), rest.Size(), lo, size, dx, dy, dz))
+        return &state.bind->value;
+    state.bind.reset();
+    if (rigExec::RigExecLatticeBind<Vec3f>::Bytes(rest.Size(), dx, dy, dz) >
+        double(rigExec::RigExecLatticeBindBudgetBytes))
+        return nullptr;
+    auto built = std::make_shared<rigExec::RigExecLatticeBind<Vec3f>>();
+    built->Build(rest.Data(), rest.Size(), lo, size, dx, dy, dz);
+    state.bind = std::move(built);
+    return &state.bind->value;
+}
+
 bool
-LatticeOne(const RigExecOpIo &io, const LatticeInstance &p, std::string *error)
+LatticeOne(const RigExecOpIo &io, const LatticeInstance &p, LatticeState &state,
+           std::string *error)
 {
     const Points &in = *In<Points>(io, LatticePoints());
     const Points &posedCage = *In<Points>(io, LatticePosedCage());
@@ -110,7 +148,7 @@ LatticeOne(const RigExecOpIo &io, const LatticeInstance &p, std::string *error)
             &points, 0, points.size(), rest->Data(), rest->Size(),
             restCage->Data(), restCage->Size(), posedCage.Data(),
             posedCage.Size(), p.divisions[0], p.divisions[1], p.divisions[2],
-            nullptr);
+            BasisOf(state, *rest, *restCage, posedCage, p));
     }
     return WritePoints(io, LatticeOut(), in, points,
                        In<Envelope>(io, LatticeEnvelope()), "Lattice", error);
@@ -120,8 +158,10 @@ bool
 Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
     return EachInstance(batch, failed, [&](size_t k) {
-        return LatticeOne(rigExec::RigExecBatchInstance(batch, k),
-                          PayloadAt(batch, k), error);
+        return LatticeOne(
+            rigExec::RigExecBatchInstance(batch, k), PayloadAt(batch, k),
+            *static_cast<LatticeState *>(rigExec::RigExecBatchState(batch, k)),
+            error);
     });
 }
 
@@ -198,6 +238,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.payloadFieldCount = std::size(kFields);
     d.payloadVersion = 1;
     d.payloadValues = &Values;
+    d.state = StateOf<LatticeState>();
     return d;
 }();
 

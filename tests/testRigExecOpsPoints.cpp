@@ -48,6 +48,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -2796,6 +2797,323 @@ TestSingleChainIk()
         CHECK(actual.frames[i].flags & rigExecRig::kPointFrameDegenerate);
 }
 
+/// A node's retained topology, bind or triangulation answers later runs
+/// with new posed values as a fresh node does, and a new rest rebinds.
+void
+TestRetainedState()
+{
+    using namespace rigExecOps;
+    const auto check = [](const std::vector<GfVec3f> &expected,
+                          const Points &actual, const char *what, int run) {
+        if (!SameBits(expected, actual)) {
+            std::printf("%s run %d differs from a fresh run\n", what, run);
+            CHECK(false);
+        }
+    };
+    {
+        const Grid rest(8, 9, true);
+        const Points restArray = ToStd(rest.points);
+        const auto counts = ToArray(rest.counts);
+        const auto indices = ToArray(rest.indices);
+        WrinklePayload payload;
+        payload.settings.iterations = 12;
+        Node node(Wrinkle(),
+                  {&WrinklePoints(), &WrinkleRest(), &WrinkleCounts(),
+                   &WrinkleIndices()},
+                  WrinkleOut(), &payload);
+        for (int run = 0; run < 3; ++run) {
+            std::vector<GfVec3f> posed = rest.points;
+            for (GfVec3f &p : posed)
+                p = GfVec3f(p[0] * (0.6f + 0.1f * run), p[1],
+                            p[2] + 0.01f * p[1] * run);
+            std::vector<GfVec3f> expected = posed;
+            CHECK(RigExecApplyWrinkle(&expected, rest.points, rest.counts,
+                                      rest.indices, payload.settings));
+            const Points in = ToStd(posed);
+            Points actual;
+            CHECK(node.Run({&in, &restArray, &counts, &indices}, &actual));
+            check(expected, actual, "wrinkle", run);
+        }
+    }
+    {
+        const Grid grid(9, 3);
+        const GfVec3i d(3, 4, 2);
+        const auto restCage =
+            Cage(d, GfVec3f(-0.5f, -0.5f, -2), GfVec3f(8.5f, 8.5f, 2), 0, 1);
+        LatticePayload payload;
+        payload.divisions = {d[0], d[1], d[2]};
+        Node node(Lattice(),
+                  {&LatticePoints(), &LatticeRestPoints(), &LatticeRestCage(),
+                   &LatticePosedCage()},
+                  LatticeOut(), &payload);
+        const Points in = ToStd(grid.points), restCageArray = ToStd(restCage);
+        for (int run = 0; run < 4; ++run) {
+            std::vector<GfVec3f> rest = grid.points;
+            if (run == 3)
+                for (GfVec3f &p : rest)
+                    p += GfVec3f(0.25f, -0.1f, 0.05f);
+            const auto posedCage =
+                Cage(d, GfVec3f(-1, -0.2f, -2.5f), GfVec3f(9, 9.5f, 1.5f), 0.4f,
+                     11u + unsigned(run));
+            std::vector<GfVec3f> expected = grid.points;
+            RigExecApplyLattice(&expected, rest, restCage, posedCage, d);
+            const Points restArray = ToStd(rest), posedArray = ToStd(posedCage);
+            Points actual;
+            CHECK(node.Run({&in, &restArray, &restCageArray, &posedArray},
+                           &actual));
+            check(expected, actual, "lattice", run);
+        }
+    }
+    {
+        const Grid surface(11, 32);
+        const Grid target(13, 15);
+        const auto counts = ToArray(surface.counts);
+        const auto indices = ToArray(surface.indices);
+        const GfMatrix4d identity(1.0);
+        SurfaceProjectPayload payload;
+        payload.settings.mode = RigExecSurfaceSnapMode::Outside;
+        payload.settings.offset = 0.15f;
+        Node node(SurfaceProject(),
+                  {&SurfaceProjectPoints(), &SurfaceProjectSurface(),
+                   &SurfaceProjectCounts(), &SurfaceProjectIndices()},
+                  SurfaceProjectOut(), &payload);
+        for (int run = 0; run < 3; ++run) {
+            std::vector<GfVec3f> moved = surface.points, points = target.points;
+            for (GfVec3f &p : moved)
+                p[2] += 0.05f * run * p[0];
+            for (GfVec3f &p : points)
+                p = GfVec3f(p[0] * 0.9f - 0.5f, p[1] * 0.9f - 0.5f,
+                            p[2] * 0.5f + 0.7f - 0.1f * run);
+            std::vector<GfVec3f> expected = points;
+            CHECK((RigExecApplySurfaceSnapKernel<GfVec3f, GfVec3d>(
+                &expected, moved, surface.counts, surface.indices,
+                payload.settings, identity, identity, identity)));
+            const Points in = ToStd(points), surfaceArray = ToStd(moved);
+            Points actual;
+            CHECK(node.Run({&in, &surfaceArray, &counts, &indices}, &actual));
+            check(expected, actual, "surface snap", run);
+        }
+    }
+}
+
+/// One node's input values, kept alive while they are bound.
+struct BoundValues {
+    std::vector<std::shared_ptr<const void>> owned;
+    std::vector<const void *> values;
+
+    template <class T> void Add(T value)
+    {
+        auto held = std::make_shared<const T>(std::move(value));
+        values.push_back(held.get());
+        owned.push_back(std::move(held));
+    }
+};
+
+/// \p frames runs of one rig holding one node of \p op per payload, for
+/// each batch size and thread count: every node's result on every run
+/// equals \p expected(frame, node), the kernel run fresh on the values
+/// \p values(frame, node) binds.
+template <class Values, class Expected>
+void
+CheckRetainedAcrossBatches(const char *what, const RigExecOpHandle &op,
+                           const std::vector<const RigExecPortHandle *> &ins,
+                           const RigExecPortHandle &output,
+                           const std::vector<const void *> &payloads,
+                           int frames, const Values &values,
+                           const Expected &expected)
+{
+    std::vector<std::vector<std::vector<GfVec3f>>> want(frames);
+    std::vector<std::vector<BoundValues>> bound(frames);
+    for (int frame = 0; frame < frames; ++frame)
+        for (size_t node = 0; node < payloads.size(); ++node) {
+            want[frame].push_back(expected(frame, node));
+            bound[frame].push_back(values(frame, node));
+        }
+    const size_t hardware =
+        std::max<size_t>(1, std::thread::hardware_concurrency());
+    for (const size_t threads : {size_t(1), size_t(2), size_t(3), hardware}) {
+        auto tasks = RigExecCreateThreadTaskSystem(threads);
+        for (const size_t batch : {0, 1, 2, 3, 7}) {
+            RigExecRigDescBuilder b;
+            std::vector<std::vector<RigExecInputId>> inputs;
+            std::vector<RigExecOutputId> outs;
+            for (const void *payload : payloads) {
+                const RigExecNodeId node = b.AddOp(op, payload);
+                inputs.emplace_back();
+                for (const RigExecPortHandle *port : ins)
+                    inputs.back().push_back(b.BindInput(node, *port));
+                outs.push_back(b.BindOutput(node, output));
+            }
+            std::string error;
+            RigExecCompileOptions compileOptions;
+            compileOptions.maxBatchNodes = batch;
+            RigExecEvaluatorOptions evaluatorOptions;
+            evaluatorOptions.tasks = tasks.get();
+            auto desc = b.Build(&error);
+            auto program =
+                desc ? RigExecCompile(*desc, compileOptions, &error) : nullptr;
+            auto evaluator = program ? RigExecEvaluator::Create(
+                                           program, evaluatorOptions, &error)
+                                     : nullptr;
+            CHECK(evaluator);
+            if (!evaluator)
+                return;
+            for (int frame = 0; frame < frames; ++frame) {
+                for (size_t node = 0; node < payloads.size(); ++node)
+                    for (size_t i = 0; i < ins.size(); ++i)
+                        CHECK(evaluator->SetInput(inputs[node][i],
+                                                  bound[frame][node].values[i],
+                                                  &error));
+                CHECK(evaluator->Evaluate(&error));
+                for (size_t node = 0; node < payloads.size(); ++node) {
+                    const auto *actual = static_cast<const Points *>(
+                        evaluator->GetOutput(outs[node]));
+                    if (!actual || !SameBits(want[frame][node], *actual)) {
+                        std::printf("%s: threads %zu batch %zu frame %d node "
+                                    "%zu differs from a fresh run\n",
+                                    what, threads, batch, frame, node);
+                        CHECK(false);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Retained topology, binds and triangulations stay per node in batches
+/// of any size on any thread count; a node whose rest moves rebinds.
+void
+TestRetainedStateBatches()
+{
+    using namespace rigExecOps;
+    const size_t nodes = 5;
+    const int frames = 4;
+    {
+        std::vector<Grid> rests;
+        std::vector<WrinklePayload> settings(nodes);
+        std::vector<const void *> payloads;
+        for (size_t n = 0; n < nodes; ++n) {
+            rests.emplace_back(int(6 + n), unsigned(9 + n), true);
+            settings[n].settings.iterations = int(8 + n);
+            payloads.push_back(&settings[n]);
+        }
+        const auto posed = [&](int frame, size_t n) {
+            std::vector<GfVec3f> points = rests[n].points;
+            for (GfVec3f &p : points)
+                p = GfVec3f(p[0] * (0.6f + 0.1f * frame + 0.02f * n), p[1],
+                            p[2] + 0.01f * p[1] * frame);
+            return points;
+        };
+        CheckRetainedAcrossBatches(
+            "wrinkle", Wrinkle(),
+            {&WrinklePoints(), &WrinkleRest(), &WrinkleCounts(),
+             &WrinkleIndices()},
+            WrinkleOut(), payloads, frames,
+            [&](int frame, size_t n) {
+                BoundValues v;
+                v.Add(ToStd(posed(frame, n)));
+                v.Add(ToStd(rests[n].points));
+                v.Add(ToArray(rests[n].counts));
+                v.Add(ToArray(rests[n].indices));
+                return v;
+            },
+            [&](int frame, size_t n) {
+                std::vector<GfVec3f> expected = posed(frame, n);
+                CHECK(RigExecApplyWrinkle(&expected, rests[n].points,
+                                          rests[n].counts, rests[n].indices,
+                                          settings[n].settings));
+                return expected;
+            });
+    }
+    {
+        const Grid grid(9, 3);
+        const GfVec3i d(3, 4, 2);
+        const auto restCage =
+            Cage(d, GfVec3f(-0.5f, -0.5f, -2), GfVec3f(8.5f, 8.5f, 2), 0, 1);
+        LatticePayload settings;
+        settings.divisions = {d[0], d[1], d[2]};
+        const std::vector<const void *> payloads(nodes, &settings);
+        // Odd nodes' rest points move from frame 2 on.
+        const auto rest = [&](int frame, size_t n) {
+            std::vector<GfVec3f> points = grid.points;
+            for (GfVec3f &p : points)
+                p += GfVec3f(0.01f * n, 0, 0);
+            if (frame >= 2 && n % 2)
+                for (GfVec3f &p : points)
+                    p += GfVec3f(0.25f, -0.1f, 0.05f * frame);
+            return points;
+        };
+        const auto posedCage = [&](int frame, size_t n) {
+            return Cage(d, GfVec3f(-1, -0.2f, -2.5f), GfVec3f(9, 9.5f, 1.5f),
+                        0.4f, unsigned(11 + frame * 7 + n));
+        };
+        CheckRetainedAcrossBatches(
+            "lattice", Lattice(),
+            {&LatticePoints(), &LatticeRestPoints(), &LatticeRestCage(),
+             &LatticePosedCage()},
+            LatticeOut(), payloads, frames,
+            [&](int frame, size_t n) {
+                BoundValues v;
+                v.Add(ToStd(grid.points));
+                v.Add(ToStd(rest(frame, n)));
+                v.Add(ToStd(restCage));
+                v.Add(ToStd(posedCage(frame, n)));
+                return v;
+            },
+            [&](int frame, size_t n) {
+                std::vector<GfVec3f> expected = grid.points;
+                RigExecApplyLattice(&expected, rest(frame, n), restCage,
+                                    posedCage(frame, n), d);
+                return expected;
+            });
+    }
+    {
+        std::vector<Grid> surfaces;
+        const Grid target(7, 15);
+        SurfaceProjectPayload settings;
+        settings.settings.mode = RigExecSurfaceSnapMode::Outside;
+        settings.settings.offset = 0.15f;
+        const std::vector<const void *> payloads(nodes, &settings);
+        for (size_t n = 0; n < nodes; ++n)
+            surfaces.emplace_back(int(5 + n), unsigned(32 + n));
+        const auto moved = [&](int frame, size_t n) {
+            std::vector<GfVec3f> points = surfaces[n].points;
+            for (GfVec3f &p : points)
+                p[2] += 0.05f * frame * p[0];
+            return points;
+        };
+        const auto points = [&](int frame) {
+            std::vector<GfVec3f> out = target.points;
+            for (GfVec3f &p : out)
+                p = GfVec3f(p[0] * 0.6f - 0.5f, p[1] * 0.6f - 0.5f,
+                            p[2] * 0.5f + 0.7f - 0.1f * frame);
+            return out;
+        };
+        const GfMatrix4d identity(1.0);
+        CheckRetainedAcrossBatches(
+            "surface snap", SurfaceProject(),
+            {&SurfaceProjectPoints(), &SurfaceProjectSurface(),
+             &SurfaceProjectCounts(), &SurfaceProjectIndices()},
+            SurfaceProjectOut(), payloads, frames,
+            [&](int frame, size_t n) {
+                BoundValues v;
+                v.Add(ToStd(points(frame)));
+                v.Add(ToStd(moved(frame, n)));
+                v.Add(ToArray(surfaces[n].counts));
+                v.Add(ToArray(surfaces[n].indices));
+                return v;
+            },
+            [&](int frame, size_t n) {
+                std::vector<GfVec3f> expected = points(frame);
+                CHECK((RigExecApplySurfaceSnapKernel<GfVec3f, GfVec3d>(
+                    &expected, moved(frame, n), surfaces[n].counts,
+                    surfaces[n].indices, settings.settings, identity, identity,
+                    identity)));
+                return expected;
+            });
+    }
+}
+
 int
 main()
 {
@@ -2811,6 +3129,8 @@ main()
     TestLattice();
     TestWrinkle();
     TestSurfaceProject();
+    TestRetainedState();
+    TestRetainedStateBatches();
     TestMatrixDeform();
     TestSkin();
     TestBlendShape();
