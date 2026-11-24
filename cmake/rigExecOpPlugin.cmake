@@ -26,24 +26,29 @@ endfunction()
 # build and from find_package(rigExec):
 #
 #   rigexec_add_op_plugin(name SOURCES ...
-#       [LIBRARIES ...] [TYPE_LIBRARIES entry ...] [BINDERS]
+#       [LIBRARIES ...] [TYPE_LIBRARIES entry ...] [BINDERS [BINDS type ...]]
 #       [SCHEMA schema.usda SCHEMA_TYPE type] [PLUGIN_ROOT dir] [NO_INSTALL])
 #
 # The sources define RIGEXEC_OP_LIBRARY_ENTRY(name), a
 # RIGEXEC_TYPE_LIBRARY_ENTRY(entry) per TYPE_LIBRARIES entry, and with
-# BINDERS RIGEXEC_EXTERNAL_OP_BINDERS_ENTRY(name). The plugInfo names them;
+# BINDERS RIGEXEC_EXTERNAL_OP_BINDERS_ENTRY(name). BINDS lists the schema
+# types the binders bind, SCHEMA_TYPE among them with BINDERS: a scene
+# program whose mover has one of those types fails when the plugin does. The plugInfo names them;
 # rigExecScene discovers the plugin before the op registry initializes. A
 # SCHEMA adds the codeless schema the plugin's op is authored with.
 function(rigexec_add_op_plugin name)
     cmake_parse_arguments(P "NO_INSTALL;BINDERS"
-        "PLUGIN_ROOT;SCHEMA;SCHEMA_TYPE" "SOURCES;LIBRARIES;TYPE_LIBRARIES"
+        "PLUGIN_ROOT;SCHEMA;SCHEMA_TYPE" "SOURCES;LIBRARIES;TYPE_LIBRARIES;BINDS"
         ${ARGN})
     if (P_UNPARSED_ARGUMENTS OR P_KEYWORDS_MISSING_VALUES OR NOT P_SOURCES)
         message(FATAL_ERROR
-            "rigexec_add_op_plugin(${name}) requires SOURCES; optional LIBRARIES, TYPE_LIBRARIES, BINDERS, SCHEMA with SCHEMA_TYPE, PLUGIN_ROOT and NO_INSTALL")
+            "rigexec_add_op_plugin(${name}) requires SOURCES; optional LIBRARIES, TYPE_LIBRARIES, BINDERS with BINDS, SCHEMA with SCHEMA_TYPE, PLUGIN_ROOT and NO_INSTALL")
     endif()
     if (NOT name MATCHES "^[A-Za-z_][A-Za-z0-9_]*$")
         message(FATAL_ERROR "Op plugin names must be C/C++ identifiers: ${name}")
+    endif()
+    if (P_BINDS AND NOT P_BINDERS)
+        message(FATAL_ERROR "rigexec_add_op_plugin(${name}): BINDS needs BINDERS")
     endif()
     if ((P_SCHEMA AND NOT P_SCHEMA_TYPE) OR (P_SCHEMA_TYPE AND NOT P_SCHEMA))
         message(FATAL_ERROR "rigexec_add_op_plugin(${name}): SCHEMA and SCHEMA_TYPE go together")
@@ -102,6 +107,21 @@ function(rigexec_add_op_plugin name)
     endif()
     if (P_BINDERS)
         string(APPEND _info ", \"binders\": \"${name}_RigExecExternalOpBinders\"")
+        set(_bound ${P_BINDS})
+        if (P_SCHEMA_TYPE)
+            list(APPEND _bound "${P_SCHEMA_TYPE}")
+        endif()
+        list(REMOVE_DUPLICATES _bound)
+        set(_schema_types "")
+        foreach(_type IN LISTS _bound)
+            if (_schema_types)
+                string(APPEND _schema_types ", ")
+            endif()
+            string(APPEND _schema_types "\"${_type}\"")
+        endforeach()
+        if (_schema_types)
+            string(APPEND _info ", \"schemaTypes\": [${_schema_types}]")
+        endif()
     endif()
     set(_includes "")
     if (P_SCHEMA)

@@ -1,4 +1,5 @@
 #include "sceneProgram.h"
+#include "opPlugins.h"
 #include <algorithm>
 #include <type_traits>
 namespace rigExec {
@@ -263,6 +264,17 @@ RigExecSceneProgramRuntime::Prepare(const RigExecSceneProgram &program,
         std::string why;
         if (!RigExecLoadGeometryOpCore(&why))
             return Fail(error, "op registry unavailable: " + why);
+        for (const RigExecSceneOperation &operation : program.operations) {
+            if (!MovesExternally(operation))
+                continue;
+            const TfToken &schema =
+                std::get<RigExecSceneGeometryOp>(operation)
+                    .binding.descriptor.record.binding.externalSchema;
+            if (!RigExecSceneOpSchemaJoined(
+                    std::string(schema.GetText(), schema.size()), &why))
+                return Fail(error, std::string("op plugin unavailable for ") +
+                                       schema.GetText() + ": " + why);
+        }
     }
     _preparedProgram = &program;
     _identity = program.identity;

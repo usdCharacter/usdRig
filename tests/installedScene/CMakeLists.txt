@@ -146,6 +146,7 @@ set_tests_properties(testRigExecInstalledOpPlugins PROPERTIES
 # The fixture mover's op plugin, built against the installed SDK beside the
 # mover: the installed scene program runs the mover on its op.
 rigexec_add_op_plugin(testQuadraticOps NO_INSTALL BINDERS
+    BINDS ExternalQuadraticMover
     PLUGIN_ROOT "${CMAKE_BINARY_DIR}/test-op-plugins"
     SOURCES ../externalMovers/quadraticOps.cpp
     LIBRARIES testExternalMoverKernel)

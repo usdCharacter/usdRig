@@ -9,6 +9,7 @@
 #include "pxr/base/plug/plugin.h"
 #include "pxr/base/plug/registry.h"
 
+#include <algorithm>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -24,14 +25,21 @@ using OpEntry = const RigExecOpLibraryDesc *(*)();
 using TypeEntry = const RigExecTypeLibraryDesc *(*)();
 using BinderEntry = const RigExecExternalOpBinderTable *(*)();
 
+/// A plugin that could not join: why, and the schema types it binds.
+struct Failure {
+    std::string error;
+    std::vector<std::string> schemaTypes;
+};
+
 /// What discovery found: the plugins it considered, their libraries, in
-/// plugin order, the names of their op libraries, and why any plugin could
-/// not join.
+/// plugin order, the names of their op libraries with the schema types
+/// each plugin binds, and the plugins that could not join.
 struct Discovery {
     std::vector<std::string> considered;
     RigExecRegistryInit libraries;
     std::vector<std::string> opLibraries;
-    std::vector<std::string> errors;
+    std::vector<std::vector<std::string>> opLibraryTypes;
+    std::vector<Failure> failures;
 };
 
 // Discovery runs once per process, at the first scene program's Prepare on
@@ -40,6 +48,23 @@ std::once_flag gDiscovered;
 Discovery gDiscovery;
 
 const char *kKey = "RigExecOpLibrary";
+
+/// The plugInfo's schemaTypes and the schema types \p binders bind.
+std::vector<std::string>
+SchemaTypes(const JsObject &info,
+            const std::vector<const RigExecExternalOpBinder *> &binders)
+{
+    std::vector<std::string> types;
+    const auto declared = info.find("schemaTypes");
+    if (declared != info.end() && declared->second.IsArray())
+        for (const JsValue &name : declared->second.GetJsArray())
+            if (name.IsString())
+                types.push_back(name.GetString());
+    for (const RigExecExternalOpBinder *binder : binders)
+        if (binder && binder->schemaType)
+            types.emplace_back(binder->schemaType);
+    return types;
+}
 
 std::string
 StringField(const JsObject &object, const char *name)
@@ -155,21 +180,24 @@ Discover(Discovery *out)
         out->considered.push_back(plugin->GetName() + " at " +
                                   plugin->GetPath());
         if (!info->second.IsObject()) {
-            out->errors.push_back(who + ": " + kKey + " is not an object");
+            out->failures.push_back(
+                {who + ": " + kKey + " is not an object", {}});
             continue;
         }
+        const JsObject &fields = info->second.GetJsObject();
         if (RigExecRegistry::IsInitialized()) {
-            out->errors.push_back(who +
-                                  " joined no registry: it was initialized "
-                                  "before op plugin discovery");
+            out->failures.push_back({who + " joined no registry: it was "
+                                           "initialized before op plugin "
+                                           "discovery",
+                                     SchemaTypes(fields, {})});
             continue;
         }
         RigExecRegistryInit libraries;
         std::vector<const RigExecExternalOpBinder *> found;
         std::string why;
-        if (!LoadPlugin(plugin, info->second.GetJsObject(), &libraries, &found,
-                        &why)) {
-            out->errors.push_back(who + " " + why);
+        if (!LoadPlugin(plugin, fields, &libraries, &found, &why)) {
+            out->failures.push_back(
+                {who + " " + why, SchemaTypes(fields, found)});
             continue;
         }
         // The registry refuses a whole initialization for one bad library,
@@ -180,18 +208,22 @@ Discover(Discovery *out)
         Append(accepted, &candidate);
         std::vector<std::string> refused;
         if (!RigExecRegistry::Validate(candidate, &refused)) {
-            out->errors.push_back(
-                who + ": " +
-                (refused.empty() ? std::string("refused") : refused.front()));
+            out->failures.push_back(
+                {who + ": " +
+                     (refused.empty() ? std::string("refused")
+                                      : refused.front()),
+                 SchemaTypes(fields, found)});
             continue;
         }
         out->libraries = std::move(accepted);
         out->opLibraries.push_back(libraries.opLibraries.front()->name);
+        out->opLibraryTypes.push_back(SchemaTypes(fields, found));
         binders.insert(binders.end(), found.begin(), found.end());
     }
     std::string why;
     if (!RigExecAddExternalOpBinders(binders, &why))
-        out->errors.push_back("op plugin binders: " + why);
+        out->failures.push_back(
+            {"op plugin binders: " + why, SchemaTypes(JsObject(), binders)});
 }
 
 bool
@@ -205,6 +237,36 @@ Registered(const RigExecRegistry &registry, const std::string &library)
     return false;
 }
 
+/// The plugins discovery considered, for a diagnostic.
+std::string
+ConsideredText()
+{
+    std::string considered;
+    for (const std::string &plugin : gDiscovery.considered)
+        considered += (considered.empty() ? "" : ", ") + plugin;
+    return "op plugins considered: " +
+           (considered.empty() ? std::string("none") : considered);
+}
+
+/// Discovery's failures, and the op libraries it accepted that a registry
+/// initialized before discovery does not hold.
+std::vector<Failure>
+Failures()
+{
+    std::vector<Failure> failures = gDiscovery.failures;
+    if (!RigExecRegistry::IsInitialized())
+        return failures;
+    const RigExecRegistry &registry = RigExecRegistry::Get();
+    for (size_t k = 0; k < gDiscovery.opLibraries.size(); ++k)
+        if (!Registered(registry, gDiscovery.opLibraries[k]))
+            failures.push_back({"op library " + gDiscovery.opLibraries[k] +
+                                    " is not in this process's registry: it "
+                                    "was initialized before op plugin "
+                                    "discovery",
+                                gDiscovery.opLibraryTypes[k]});
+    return failures;
+}
+
 } // namespace
 
 bool
@@ -212,30 +274,36 @@ RigExecEnsureSceneOpRegistry(std::string *error)
 {
     std::call_once(gDiscovered, [] { Discover(&gDiscovery); });
     std::string why;
-    if (!RigExecEnsureBuiltinRegistry(&why, &gDiscovery.libraries)) {
-        if (error)
-            *error = why;
-        return false;
-    }
-    std::vector<std::string> errors = gDiscovery.errors;
-    const RigExecRegistry &registry = RigExecRegistry::Get();
-    for (const std::string &library : gDiscovery.opLibraries)
-        if (!Registered(registry, library))
-            errors.push_back("op library " + library +
-                             " is not in this process's registry: it was "
-                             "initialized before op plugin discovery");
-    if (errors.empty())
+    if (RigExecEnsureBuiltinRegistry(&why, &gDiscovery.libraries))
         return true;
-    if (error) {
-        error->clear();
-        for (const std::string &e : errors)
-            *error += (error->empty() ? "" : "; ") + e;
-        std::string considered;
-        for (const std::string &plugin : gDiscovery.considered)
-            considered += (considered.empty() ? "" : ", ") + plugin;
-        *error += "; op plugins considered: " +
-                  (considered.empty() ? std::string("none") : considered);
-    }
+    if (error)
+        *error = why + "; " + ConsideredText();
+    return false;
+}
+
+std::vector<std::string>
+RigExecSceneOpPluginErrors()
+{
+    std::vector<std::string> errors;
+    for (const Failure &failure : Failures())
+        errors.push_back(failure.error);
+    if (!errors.empty())
+        errors.push_back(ConsideredText());
+    return errors;
+}
+
+bool
+RigExecSceneOpSchemaJoined(const std::string &schemaType, std::string *error)
+{
+    std::string why;
+    for (const Failure &failure : Failures())
+        if (std::find(failure.schemaTypes.begin(), failure.schemaTypes.end(),
+                      schemaType) != failure.schemaTypes.end())
+            why += (why.empty() ? "" : "; ") + failure.error;
+    if (why.empty())
+        return true;
+    if (error)
+        *error = why;
     return false;
 }
 

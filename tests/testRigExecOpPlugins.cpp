@@ -2,27 +2,35 @@
 // op runs in the op core, its schema type is known to OpenUSD and its binder
 // is found by schema type. A plugin built for another registry ABI, one
 // without its entry symbol, and one discovered after the registry froze are
-// reported by name.
+// reported by name, and fail only the scene programs whose movers have a
+// schema type the plugin binds.
 //
 //   testRigExecOpPlugins <mode> <plugin resources> <library> <scratch dir>
+//       [<mover plugin resources> <quadratic op plugin resources>]
 //
-// mode: good, abi, symbol or late.
+// mode: good, abi, symbol, late, or with the mover plugins scopeUsed (a
+// broken plugin binds the quadratic mover) and scopeOther (it binds another
+// type).
 #include "rigExec/api/compile.h"
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecScene/externalOps.h"
 #include "rigExecScene/opPlugins.h"
+#include "rigExecScene/sceneProgram.h"
+#include "rigExecSceneProgramDrive.h"
 #include "rigExecStdTypes/stdTypes.h"
 
 #include "pxr/base/plug/plugin.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/fileUtils.h"
 #include "pxr/usd/usd/schemaRegistry.h"
+#include "pxr/usd/usd/stage.h"
 
 #include <cstdio>
 #include <fstream>
 #include <string>
+#include <vector>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 using namespace rigExec;
@@ -43,7 +51,7 @@ const char *kSchemaType = "TestOffsetMover";
 /// registered with OpenUSD.
 void
 RegisterBroken(const std::string &dir, const std::string &library, int abi,
-               const std::string &entry)
+               const std::string &entry, const char *schemaType = kSchemaType)
 {
     CHECK(TfMakeDirs(dir, -1, true) && TfIsDir(dir));
     {
@@ -53,7 +61,8 @@ RegisterBroken(const std::string &dir, const std::string &library, int abi,
                "\".\", \"LibraryPath\": \""
             << library
             << "\", \"Info\": {\"RigExecOpLibrary\": {\"abiVersion\": " << abi
-            << ", \"entry\": \"" << entry << "\"}}}]}\n";
+            << ", \"entry\": \"" << entry << "\", \"schemaTypes\": [\""
+            << schemaType << "\"]}}}]}\n";
         CHECK(out.good());
     }
     const PlugPluginPtrVector added =
@@ -83,6 +92,8 @@ Good()
     if (!ok)
         std::printf("%s\n", error.c_str());
     CHECK(ok);
+    CHECK(RigExecSceneOpPluginErrors().empty());
+    CHECK(RigExecSceneOpSchemaJoined(kSchemaType));
     CHECK(FindOp("rig", "Patch"));
     const RigExecRegisteredOp *offset = FindOp("test", "Offset");
     CHECK(offset);
@@ -123,21 +134,106 @@ Good()
           (*moved)[0][1] == 1.0f && (*moved)[0][2] == 5.0f);
 }
 
-/// Discovery refuses the plugin by name; the built-ins still register.
+/// Discovery reports the plugin by name; the registry initializes without
+/// it, and only its schema type is failed.
 void
-Refused(const char *why)
+Refused(const char *why, const char *schemaType = kSchemaType)
 {
     std::string error;
-    CHECK(!RigExecEnsureSceneOpRegistry(&error));
-    std::printf("reported: %s\n", error.c_str());
-    for (const std::string &plugin : RigExecSceneOpPluginsConsidered())
-        std::printf("considered: %s\n", plugin.c_str());
-    CHECK(error.find("op plugins considered: ") != std::string::npos);
-    CHECK(error.find("brokenOffsetOps") != std::string::npos ||
-          error.find("testOffsetOps") != std::string::npos);
-    CHECK(error.find(why) != std::string::npos);
+    CHECK(RigExecEnsureSceneOpRegistry(&error));
+    std::string reported;
+    for (const std::string &line : RigExecSceneOpPluginErrors())
+        reported += line + "\n";
+    std::printf("reported:\n%s", reported.c_str());
+    CHECK(reported.find("op plugins considered: ") != std::string::npos);
+    CHECK(reported.find("brokenOffsetOps") != std::string::npos ||
+          reported.find("testOffsetOps") != std::string::npos);
+    CHECK(reported.find(why) != std::string::npos);
     CHECK(RigExecRegistry::IsInitialized() && FindOp("rig", "Patch"));
     CHECK(!FindOp("test", "Offset"));
+    std::string failed;
+    CHECK(!RigExecSceneOpSchemaJoined(schemaType, &failed));
+    CHECK(failed.find(why) != std::string::npos);
+    CHECK(RigExecSceneOpSchemaJoined("RigExecLayeredSkinMover"));
+}
+
+const char *kQuadraticRig = R"USD(#usda 1.0
+def RigExecRoot "Rig" {
+ def Points "Body" {
+  point3f[] points = [(-2, 0, 0), (1, 2, 3), (0.5, -1, 2), (3, 1, -1)]
+ }
+ def ExternalQuadraticMover "External" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+  rel rigExec:moves = </Rig/Body.points>
+  float inputs:gain = 0.75
+ }
+}
+)USD";
+
+const char *kLayeredSkinRig = R"USD(#usda 1.0
+def RigExecRoot "Rig" {
+ def RigExecControl "A" {
+  double avars:tx = 2
+ }
+ def RigExecControl "B" {
+  double avars:rz = 30
+ }
+ def Points "Cloud" {
+  point3f[] points = [(0, 0, 0), (0, 1, 0), (1, 1, 0), (2, 0, 1)]
+ }
+ def RigExecLayeredSkinMover "Skin" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+  rel rigExec:moves = </Rig/Cloud.points>
+  rel rigExec:influences = [</Rig/A>, </Rig/B>]
+  int[] rigExec:jointIndices = [0, 1, 1, 0, 0, 1, 1, 1]
+  float[] rigExec:jointWeights = [0.75, 0.25, 0.5, 0.5, 1, 0, 0.3, 0.6]
+  int rigExec:elementSize = 2
+ }
+}
+)USD";
+
+/// Prepares and evaluates \p rig's scene program; false with \p error.
+bool
+RunsScene(const char *rig, std::string *error)
+{
+    auto stage = UsdStage::CreateInMemory();
+    CHECK(stage->GetRootLayer()->ImportFromString(rig));
+    const std::vector<UsdTimeCode> identities = {UsdTimeCode(1),
+                                                 UsdTimeCode::Default()};
+    const RigExecUsdSceneAccess access(stage);
+    RigExecSceneDescriptors scene;
+    RigExecSceneProgram program;
+    RigExecSceneProgramRuntime runtime;
+    if (!RigExecCaptureSceneDescriptors(access, SdfPath("/Rig"), identities,
+                                        &scene, error) ||
+        !RigExecTranslateSceneProgram(scene, &program, error)) {
+        std::printf("scene program: %s\n", error->c_str());
+        CHECK(false);
+        return false;
+    }
+    return runtime.Prepare(program, error) &&
+           runtime.Evaluate(program, 0, {}, error);
+}
+
+/// A broken plugin binding \p brokenType: the quadratic rig runs unless
+/// that is its type, and a rig on the built-in ops always runs.
+void
+Scoped(const std::string &scratch, const std::string &library,
+       const char *brokenType, bool quadraticRuns)
+{
+    RegisterBroken(scratch, library, 999, "testOffsetOps_RigExecOpLibrary",
+                   brokenType);
+    Refused("registry ABI", brokenType);
+    std::string error;
+    const bool quadratic = RunsScene(kQuadraticRig, &error);
+    std::printf("quadratic rig: %s\n", quadratic ? "ran" : error.c_str());
+    CHECK(quadratic == quadraticRuns);
+    if (!quadraticRuns)
+        CHECK(error.find("brokenOffsetOps") != std::string::npos &&
+              error.find(brokenType) != std::string::npos);
+    error.clear();
+    const bool skin = RunsScene(kLayeredSkinRig, &error);
+    if (!skin)
+        std::printf("layered skin rig: %s\n", error.c_str());
+    CHECK(skin);
 }
 
 } // namespace
@@ -145,9 +241,10 @@ Refused(const char *why)
 int
 main(int argc, char **argv)
 {
-    if (argc != 5) {
+    if (argc != 5 && argc != 7) {
         std::printf("usage: testRigExecOpPlugins <mode> <resources> "
-                    "<library> <scratch>\n");
+                    "<library> <scratch> [<mover resources> <quadratic "
+                    "resources>]\n");
         return 2;
     }
     const std::string mode = argv[1], resources = argv[2], library = argv[3],
@@ -167,6 +264,14 @@ main(int argc, char **argv)
         CHECK(RigExecEnsureBuiltinRegistry());
         PlugRegistry::GetInstance().RegisterPlugins(resources);
         Refused("initialized before op plugin discovery");
+    } else if (argc == 7 && mode == "scopeUsed") {
+        PlugRegistry::GetInstance().RegisterPlugins(argv[5]);
+        Scoped(scratch + "/scopeUsed", library, "ExternalQuadraticMover",
+               false);
+    } else if (argc == 7 && mode == "scopeOther") {
+        PlugRegistry::GetInstance().RegisterPlugins(
+            std::vector<std::string>{argv[5], argv[6]});
+        Scoped(scratch + "/scopeOther", library, kSchemaType, true);
     } else {
         std::printf("unknown mode %s\n", mode.c_str());
         return 2;

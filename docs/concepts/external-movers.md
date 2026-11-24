@@ -482,6 +482,7 @@ the usdRig build and from `find_package(rigExec)`:
 
 ```cmake
 rigexec_add_op_plugin(quadraticOps BINDERS
+    BINDS ExternalQuadraticMover
     SOURCES quadraticOps.cpp
     LIBRARIES quadraticKernel)
 ```
@@ -495,6 +496,8 @@ type, with `add`, `write` and `stale` functions shaped like the built-in
 movers' binders in `libs/rigExecScene/externalOps.cpp`. `TYPE_LIBRARIES`
 lists type library entries the plugin also defines, and `SCHEMA` with
 `SCHEMA_TYPE` adds a codeless schema the same way `rigexec_add_mover` does.
+`BINDS` lists the schema types the binders bind; with `BINDERS`, the
+`SCHEMA_TYPE` is one of them.
 Keep the arithmetic in one kernel that the mover's callbacks and the op both
 call, so the two paths give the same bits. The test fixture's
 `tests/externalMovers/quadraticOps.cpp` is a complete example: the
@@ -506,7 +509,8 @@ The generated `plugInfo.json` marks the library with
 ```json
 "Info": {"RigExecOpLibrary": {"abiVersion": <registry ABI>,
     "entry": "quadraticOps_RigExecOpLibrary",
-    "binders": "quadraticOps_RigExecExternalOpBinders"}}
+    "binders": "quadraticOps_RigExecExternalOpBinders",
+    "schemaTypes": ["ExternalQuadraticMover"]}}
 ```
 
 where `abiVersion` is the `kRigExecRegistryAbiVersion` of the
@@ -519,7 +523,10 @@ takes their libraries into that one initialization
 built for another registry or binder ABI, a library that does not load, a
 missing entry symbol, a library the registry refuses, a schema type that
 already has a binder, or a registry initialized before discovery is reported
-by plugin name and fails that scene program; it is never skipped silently.
+by plugin name (`RigExecSceneOpPluginErrors`, with the plugins discovery
+considered) and is never skipped silently. It fails the scene programs whose
+movers have one of its `schemaTypes` or binder table's types; other scene
+programs run on the registry without it.
 A host without OpenUSD passes its op libraries to
 `RigExecRegistry::Initialize` itself.
 
