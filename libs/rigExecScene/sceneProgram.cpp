@@ -290,6 +290,9 @@ RigExecSceneProgramRuntime::Prepare(const RigExecSceneProgram &program,
         workspace.opRunner.compile = opCompile;
         workspace.poseRunner.compile = opCompile;
         workspace.weight.combine.compile = opCompile;
+        workspace.opRunner.evaluate = opEvaluate;
+        workspace.poseRunner.evaluate = opEvaluate;
+        workspace.weight.combine.evaluate = opEvaluate;
         workspace.poseOnOps = RunsPoseOnOps(_operations[i]);
     }
     _windows.assign(program.windowedOps.size(), Window());
@@ -739,6 +742,8 @@ RigExecSceneProgramRuntime::EvaluateHistory(const RigExecSceneProgram &program,
     if (!_history || _history->_preparedProgram != &program ||
         _history->_identity != program.identity) {
         _history = std::make_unique<RigExecSceneProgramRuntime>();
+        _history->opCompile = opCompile;
+        _history->opEvaluate = opEvaluate;
         if (!_history->Prepare(program, error)) {
             _history.reset();
             return false;

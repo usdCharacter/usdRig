@@ -23,6 +23,7 @@ struct RigExecGeometryOpRunner {
     RigExecExternalOpNode external;
     RigExecGeometryPayloadScratchPtr payloadScratch;
     RigExecCompileOptions compile;
+    RigExecEvaluatorOptions evaluate;
 };
 
 /// Initializes the op registry with the built-in libraries and the op

@@ -1487,6 +1487,23 @@ target_compile_definitions(testRigExecScenePoseOps PRIVATE
 rigexec_add_test(NAME testRigExecScenePoseOps COMMAND testRigExecScenePoseOps
     "${CMAKE_CURRENT_SOURCE_DIR}/examples")
 
+add_executable(testRigExecSceneDeterminism tests/testRigExecSceneDeterminism.cpp)
+target_link_libraries(testRigExecSceneDeterminism PRIVATE rigExecSceneOps)
+target_compile_definitions(testRigExecSceneDeterminism PRIVATE
+    ${_rigexec_schema_resource_define})
+rigexec_add_test(NAME testRigExecSceneDeterminism
+    COMMAND testRigExecSceneDeterminism
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/tutorial_rolling_ball.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/delta_mush_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/skin_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/02_TwoBoneIkLeg.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/05_TwistRibbonSpine.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/08_AimEyes.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/19_HarmonicsChain.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/ArmRig.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/oneloop_cross_domain.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/projector_spaces.usda")
+
 add_executable(testRigExecOpGraph tests/testRigExecOpGraph.cpp)
 target_link_libraries(testRigExecOpGraph PRIVATE rigExecGraph work Threads::Threads)
 rigexec_add_test(NAME testRigExecOpGraph COMMAND testRigExecOpGraph)

@@ -34,7 +34,8 @@ Ready(RigExecPoseOpRunner &runner, bool built, const Add &add,
     const auto program =
         desc ? RigExecCompile(*desc, runner.compile, error) : nullptr;
     runner.evaluator =
-        program ? RigExecEvaluator::Create(program, {}, error) : nullptr;
+        program ? RigExecEvaluator::Create(program, runner.evaluate, error)
+                : nullptr;
     return runner.evaluator && write(error);
 }
 

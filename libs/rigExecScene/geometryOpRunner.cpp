@@ -31,7 +31,8 @@ Compile(RigExecRigDescBuilder &builder, RigExecGeometryOpRunner &runner,
     const auto program =
         desc ? RigExecCompile(*desc, runner.compile, error) : nullptr;
     runner.evaluator =
-        program ? RigExecEvaluator::Create(program, {}, error) : nullptr;
+        program ? RigExecEvaluator::Create(program, runner.evaluate, error)
+                : nullptr;
     return runner.evaluator != nullptr;
 }
 

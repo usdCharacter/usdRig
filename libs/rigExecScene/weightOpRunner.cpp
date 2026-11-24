@@ -29,7 +29,8 @@ using rigExecRig::WeightRepresentation;
 RigExecCombineOpNode *
 Ready(std::vector<std::unique_ptr<RigExecCombineOpNode>> &nodes, size_t record,
       const CombineWeightsPayload &payload, size_t inputCount,
-      const RigExecCompileOptions &options, std::string *error)
+      const RigExecCompileOptions &options,
+      const RigExecEvaluatorOptions &evaluate, std::string *error)
 {
     if (nodes.size() <= record)
         nodes.resize(record + 1);
@@ -56,7 +57,7 @@ Ready(std::vector<std::unique_ptr<RigExecCombineOpNode>> &nodes, size_t record,
     const auto desc = builder.Build(error);
     const auto program = desc ? RigExecCompile(*desc, options, error) : nullptr;
     node->evaluator =
-        program ? RigExecEvaluator::Create(program, {}, error) : nullptr;
+        program ? RigExecEvaluator::Create(program, evaluate, error) : nullptr;
     if (!node->evaluator)
         node.reset();
     return node.get();
@@ -105,8 +106,8 @@ RigExecWeightCombineOps::Combine(size_t record, const RigExecWeightRecord &r,
     payload.mode = rigExecOps::WeightCombineMode(r.combineMode);
     payload.inputs = rigExecOps::WeightCombineInputs::Fields;
     payload.clamp = r.clamp;
-    RigExecCombineOpNode *node =
-        Ready(_nodes, record, payload, r.inputs.size(), compile, error);
+    RigExecCombineOpNode *node = Ready(_nodes, record, payload, r.inputs.size(),
+                                       compile, evaluate, error);
     if (!node)
         return false;
     PointWeights &field = node->scratch;
@@ -146,8 +147,8 @@ RigExecWeightCombineOps::CombinePackets(
     CombineWeightsPayload payload;
     payload.mode = rigExecOps::WeightCombineMode(r.combineMode);
     payload.clamp = r.clamp;
-    RigExecCombineOpNode *node =
-        Ready(_nodes, record, payload, inputs.size(), compile, nullptr);
+    RigExecCombineOpNode *node = Ready(_nodes, record, payload, inputs.size(),
+                                       compile, evaluate, nullptr);
     if (!node)
         return RigExecWeightPacket();
     PointWeights &w = node->scratch;

@@ -32,6 +32,7 @@ struct RigExecPoseOpRunner {
     RigExecIkFkMatchOpNode match;
     RigExecPoseOpScratch scratch;
     RigExecCompileOptions compile;
+    RigExecEvaluatorOptions evaluate;
     std::vector<RigExecWindowRing> rings;
 };
 

@@ -5,7 +5,7 @@
 /// per record, built on first use and rebuilt when the payload or the input
 /// count baked into it moved. Owner-thread state of the scene runtime.
 
-#include "rigExec/api/compile.h"
+#include "rigExec/api/evaluator.h"
 #include "rigExecScene/weightProgram.h"
 
 #include <memory>
@@ -36,6 +36,7 @@ public:
                    size_t targetCount, float strength, float invert);
 
     RigExecCompileOptions compile;
+    RigExecEvaluatorOptions evaluate;
 
 private:
     std::vector<std::unique_ptr<RigExecCombineOpNode>> _nodes;
