@@ -6,6 +6,7 @@
 #include "rigExecMath/meshBoundsKernel.h"
 
 #include <algorithm>
+#include <array>
 #include <iterator>
 #include <vector>
 #include <string>
@@ -50,6 +51,8 @@ struct SmoothState {
     std::vector<int> counts;
     std::vector<int> indices;
     size_t pointCount = SIZE_MAX;
+    /// Per range index: the range and the points it reads.
+    std::vector<std::array<size_t, 4>> reads;
 };
 
 rigExec::RigExecRangePlan
@@ -82,6 +85,7 @@ SmoothPrepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
     state.counts.assign(counts.begin(), counts.end());
     state.indices.assign(indices.begin(), indices.end());
     state.pointCount = count;
+    state.reads.clear();
     // An adjacency that fails to build covers nothing, so the group kernel
     // passes the points through, as the whole kernel does.
     state.adjacency = rigExec::RigExecMeshAdjacency();
@@ -89,6 +93,33 @@ SmoothPrepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
                                        indices.Data(), indices.Size(),
                                        &state.adjacency);
     return true;
+}
+
+void
+SmoothReads(const rigExec::RigExecOpBatch &batch, size_t k,
+            const rigExec::RigExecOpRange &range, size_t *begin, size_t *end)
+{
+    SmoothState &state =
+        *static_cast<SmoothState *>(rigExec::RigExecBatchState(batch, k));
+    if (state.reads.size() <= range.index)
+        state.reads.resize(range.index + 1, {SIZE_MAX, 0, 0, 0});
+    std::array<size_t, 4> &memo = state.reads[range.index];
+    if (memo[0] != range.begin || memo[1] != range.end) {
+        size_t lo = range.begin, hi = range.end;
+        if (!state.adjacency.Covers(range.count)) {
+            lo = 0;
+            hi = range.count;
+        } else {
+            for (size_t i = range.begin; i < range.end; ++i)
+                for (const int n : state.adjacency.neighbors[i]) {
+                    lo = std::min(lo, size_t(n));
+                    hi = std::max(hi, size_t(n) + 1);
+                }
+        }
+        memo = {range.begin, range.end, lo, hi};
+    }
+    *begin = memo[2];
+    *end = memo[3];
 }
 
 bool
@@ -204,6 +235,7 @@ const rigExec::RigExecOpDesc kSmoothDesc = [] {
     d.range.accept = &SmoothAccept;
     d.range.prepare = &SmoothPrepare;
     d.range.run = &SmoothRange;
+    d.range.reads = &SmoothReads;
     d.state = StateOf<SmoothState>();
     return d;
 }();

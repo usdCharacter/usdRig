@@ -29,7 +29,7 @@ inline constexpr uint32_t kRigExecInvalidIndex = 0xffffffffu;
 /// Version of the descriptor structs below. Each library records the version
 /// it was built with, and Initialize rejects one built with another. Raise
 /// it whenever a descriptor's layout changes.
-inline constexpr uint32_t kRigExecRegistryAbiVersion = 10;
+inline constexpr uint32_t kRigExecRegistryAbiVersion = 11;
 
 /// Refers to one registered data type. A type library defines one per type
 /// with RIGEXEC_DEFINE_TYPE_HANDLE, and Initialize gives it its index; read
@@ -553,7 +553,13 @@ enum class RigExecRangePlan : uint8_t {
 /// then prepare, then run once per range. Results must be bitwise the same
 /// for every partition. A range reads the inputs, the payload and the
 /// node's state, and writes only its elements of the pointwise outputs and
-/// its scratch; ranges of one node run concurrently.
+/// its scratch; ranges of one node run concurrently. Ranged nodes that
+/// feed one another's pointwise or neighbourhood inputs form a range
+/// chain over one partition: accept and prepare run for every node of the
+/// chain first, then each range runs through the chain's nodes in order as
+/// one task, a neighbourhood input waiting only for the ranges it reads.
+/// So accept and prepare read the sizes of pointwise and neighbourhood
+/// inputs, never their elements.
 struct RigExecOpRangeHandling {
     /// Decides from the node's inputs alone, never from computed elements;
     /// null is Ranges.
@@ -567,6 +573,13 @@ struct RigExecOpRangeHandling {
     /// False fails the node.
     bool (*run)(const RigExecOpBatch &batch, size_t k,
                 const RigExecOpRange &range, std::string *error) = nullptr;
+    /// Elements [*begin, *end) of the neighbourhood input that \p range
+    /// reads, so a range waits only for those of the node feeding it;
+    /// called after prepare, before any range runs, never concurrently
+    /// for one node. Null reads every element.
+    void (*reads)(const RigExecOpBatch &batch, size_t k,
+                  const RigExecOpRange &range, size_t *begin,
+                  size_t *end) = nullptr;
     /// Each range's scratch: created when the range is first cut and kept
     /// until the evaluator unbinds. Results never depend on what it holds.
     RigExecOpStateHandling scratch;

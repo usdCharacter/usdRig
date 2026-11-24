@@ -609,6 +609,126 @@ SettleBounds(CompileState &s)
     return true;
 }
 
+/// Puts every ranged node in a range chain, in canonical order. A node
+/// continues the chain of the node feeding the input its element count
+/// comes from when that node ends its chain, every input it reads from
+/// the chain is pointwise or neighbourhood, and everything else it depends
+/// on is at a level before the chain's first node; otherwise it starts a
+/// chain of its own.
+void
+FormRangeChains(CompileState &s)
+{
+    RigExecProgram &program = s.program;
+    const RigExecCompiledGraph &graph = program.graph;
+    program.positionChain.assign(s.nodeCount, kRigExecInvalidIndex);
+    std::vector<uint32_t> chainOf(s.nodeCount, kRigExecInvalidIndex);
+    std::vector<uint32_t> memberOf(s.nodeCount, 0);
+    std::vector<std::vector<uint32_t>> members;
+    std::vector<std::vector<std::vector<RigExecProgramChainFeed>>> feeds;
+    std::vector<uint32_t> listOfPort(program.portSlots.size(),
+                                     kRigExecInvalidIndex);
+    for (uint32_t i = 0; i < program.lists.size(); ++i)
+        listOfPort[program.lists[i].port] = i;
+    std::vector<RigExecProgramChainFeed> joined;
+    for (const RigExecCompiledOp &op : graph.ops) {
+        const uint32_t n = op.originalIndex;
+        const RigExecProgramNode &node = program.nodes[n];
+        const RigExecRegisteredOp &registered = s.registry.OpAt(node.op);
+        const RigExecOpDesc &d = *registered.desc;
+        if (!d.range.run)
+            continue;
+        const uint32_t countSlot =
+            program.portSlots[node.firstPort + registered.rangeCountPort];
+        const uint32_t from = countSlot == kRigExecInvalidIndex
+                                  ? kRigExecInvalidIndex
+                                  : program.producer[countSlot];
+        uint32_t chain = kRigExecInvalidIndex;
+        if (from != kRigExecInvalidIndex &&
+            chainOf[from] != kRigExecInvalidIndex &&
+            members[chainOf[from]].back() == from) {
+            chain = chainOf[from];
+            const uint32_t headLevel = s.level[members[chain].front()];
+            for (const uint32_t predecessor : op.predecessors) {
+                const uint32_t p = graph.ops[predecessor].originalIndex;
+                if (chainOf[p] != chain && s.level[p] >= headLevel)
+                    chain = kRigExecInvalidIndex;
+            }
+            joined.clear();
+            for (uint32_t p = 0;
+                 chain != kRigExecInvalidIndex && p < node.portCount; ++p) {
+                const uint32_t flags = d.ports[p].flags;
+                if (!(flags & kRigExecPortInput))
+                    continue;
+                const uint32_t port = node.firstPort + p;
+                const uint32_t list = listOfPort[port];
+                const uint32_t first = list == kRigExecInvalidIndex
+                                           ? 0
+                                           : program.lists[list].firstSlot;
+                const uint32_t count = list == kRigExecInvalidIndex
+                                           ? 1
+                                           : program.lists[list].count;
+                for (uint32_t e = 0; e < count; ++e) {
+                    const uint32_t slot = list == kRigExecInvalidIndex
+                                              ? program.portSlots[port]
+                                              : program.listSlots[first + e];
+                    if (slot == kRigExecInvalidIndex)
+                        continue;
+                    const uint32_t producer = program.producer[slot];
+                    if (producer == kRigExecInvalidIndex ||
+                        chainOf[producer] != chain)
+                        continue;
+                    const bool neighbourhood =
+                        (flags & kRigExecPortNeighbourhood) != 0;
+                    if (list != kRigExecInvalidIndex ||
+                        !(flags & (kRigExecPortPointwise |
+                                   kRigExecPortNeighbourhood))) {
+                        chain = kRigExecInvalidIndex;
+                        break;
+                    }
+                    joined.push_back({memberOf[producer], neighbourhood});
+                }
+            }
+            for (const uint32_t predecessor : op.predecessors) {
+                const uint32_t p = graph.ops[predecessor].originalIndex;
+                if (chain == kRigExecInvalidIndex || chainOf[p] != chain)
+                    continue;
+                bool fed = false;
+                for (const RigExecProgramChainFeed &feed : joined)
+                    fed = fed || feed.member == memberOf[p];
+                if (!fed)
+                    chain = kRigExecInvalidIndex;
+            }
+        }
+        if (chain == kRigExecInvalidIndex) {
+            chain = uint32_t(members.size());
+            members.emplace_back();
+            feeds.emplace_back();
+            joined.clear();
+        }
+        chainOf[n] = chain;
+        memberOf[n] = uint32_t(members[chain].size());
+        members[chain].push_back(n);
+        feeds[chain].push_back(joined);
+    }
+    program.chainFeedStart.assign(1, 0);
+    for (uint32_t c = 0; c < members.size(); ++c) {
+        RigExecProgramChain chain;
+        chain.firstMember = uint32_t(program.chainMembers.size());
+        chain.memberCount = uint32_t(members[c].size());
+        chain.level = s.level[members[c].front()];
+        program.chains.push_back(chain);
+        for (uint32_t m = 0; m < members[c].size(); ++m) {
+            const uint32_t at = program.batchPosition[members[c][m]];
+            program.chainMembers.push_back(at);
+            program.positionChain[at] = c;
+            program.chainFeeds.insert(program.chainFeeds.end(),
+                                      feeds[c][m].begin(), feeds[c][m].end());
+            program.chainFeedStart.push_back(
+                uint32_t(program.chainFeeds.size()));
+        }
+    }
+}
+
 /// Places \p count values of \p size and \p align from \p end, one every
 /// \p stride bytes; returns the first one's offset and moves \p end past
 /// the last.
@@ -837,6 +957,7 @@ RigExecCompile(const RigExecRigDesc &desc, const RigExecCompileOptions &options,
     LayoutPayloadsAndState(s);
     PlaceCells(s);
     IndexReaders(s);
+    FormRangeChains(s);
     if (!SettleBounds(s))
         return nullptr;
     return program;

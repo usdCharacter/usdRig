@@ -129,6 +129,26 @@ struct RigExecProgramBatch {
     uint32_t firstStateColumn = kRigExecInvalidIndex;
 };
 
+/// A range chain: ranged nodes over one partition of their elements, each
+/// fed by the one before it through a pointwise or neighbourhood input,
+/// run range by range through the chain (RigExecOpRangeHandling). Every
+/// other input of a member is complete before the chain's first node's
+/// level, so the chain runs in that level.
+struct RigExecProgramChain {
+    /// Into chainMembers.
+    uint32_t firstMember = 0;
+    uint32_t memberCount = 0;
+    /// The program level of its first node.
+    uint32_t level = 0;
+};
+
+/// A member's pointwise or neighbourhood input fed by an earlier member,
+/// by that member's index in the chain.
+struct RigExecProgramChainFeed {
+    uint32_t member = 0;
+    bool neighbourhood = false;
+};
+
 class RigExecProgram {
     friend std::shared_ptr<const RigExecProgram>
     RigExecCompile(const RigExecRigDesc &desc,
@@ -208,6 +228,17 @@ public:
     std::vector<uint32_t> volatileNodes;
     /// Per batchNodes entry: its batch.
     std::vector<uint32_t> positionBatch;
+    /// Every ranged node is in exactly one chain. chainMembers holds the
+    /// members' batchNodes entries in chain order; per batchNodes entry,
+    /// positionChain names its chain (kRigExecInvalidIndex for a node that
+    /// does not run in ranges). Member m's feeds are
+    /// chainFeeds[chainFeedStart[m], chainFeedStart[m + 1]), m indexing
+    /// chainMembers.
+    std::vector<RigExecProgramChain> chains;
+    std::vector<uint32_t> chainMembers;
+    std::vector<uint32_t> positionChain;
+    std::vector<uint32_t> chainFeedStart;
+    std::vector<RigExecProgramChainFeed> chainFeeds;
     size_t inputArenaSize = 0;
     /// The work arena: values from 0, op state from stateBase.
     size_t workSize = 0;

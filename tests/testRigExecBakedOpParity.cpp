@@ -606,6 +606,98 @@ ProbeRevisions(const B &b)
     }
 }
 
+// RangeChain: a chain's revisions as one op program, so consecutive ranged
+// ops run as one range chain, at every range setting, against the same ops
+// run node by node. Only chains every revision of which an op takes as is.
+void
+ProbeRangeChains(const B &b)
+{
+    for (const auto &chain : b.chains) {
+        if (!chain.haveBase || chain.revisions.size() < 2)
+            continue;
+        bool usable = true;
+        std::string kinds;
+        for (const auto &revision : chain.revisions) {
+            kinds +=
+                (kinds.empty() ? "" : ">") + std::string(OpName(revision.op));
+            usable = usable && !revision.gpuOwned && !revision.rangeSetAside &&
+                     revision.op != RigExecRevisionOp::BlendShape &&
+                     RigExecGeometryOpSupported(revision.op) &&
+                     revision.parameters.valid && revision.status.AllowsApply();
+        }
+        if (!usable) {
+            Unprobed("RangeChain", "chain", "a revision no op takes as is");
+            continue;
+        }
+        const auto entering = VersionPoints(chain, 0);
+        std::vector<RigExecMoverParameters> params;
+        for (const auto &revision : chain.revisions) {
+            params.push_back(revision.parameters);
+            if (revision.op == RigExecRevisionOp::Skin)
+                params.back().skinTransforms = revision.influences;
+        }
+        std::vector<GfVec3f> stepped = entering;
+        bool stepsApplied = true;
+        for (size_t r = 0; r < chain.revisions.size() && stepsApplied; ++r) {
+            RigExecGeometryOpRunner runner;
+            runner.compile.useSimd = b.useSimd;
+            runner.compile.rangeGrain = 0;
+            std::vector<GfVec3f> next = stepped;
+            stepsApplied =
+                RigExecRunGeometryOp(chain.revisions[r].op, params[r], nullptr,
+                                     stepped, runner, next);
+            stepped = std::move(next);
+        }
+        if (!stepsApplied) {
+            Unprobed("RangeChain", "chain", "a revision's op refused");
+            continue;
+        }
+        for (const RangeSetting &setting : kRangeSettings) {
+            RigExecRigDescBuilder builder;
+            std::vector<RigExecGeometryOpNode> nodes(chain.revisions.size());
+            std::string error;
+            bool ok = true;
+            for (size_t r = 0; r < nodes.size() && ok; ++r)
+                ok = RigExecAddGeometryOp(chain.revisions[r].op, params[r],
+                                          &builder, r ? &nodes[r - 1] : nullptr,
+                                          &nodes[r], &error);
+            RigExecCompileOptions options = RigExecGeometryCompileOptions();
+            options.useSimd = b.useSimd;
+            if (setting.grain != kGeometryGrain) {
+                options.rangeGrain = setting.grain;
+                options.rangeThreshold = 0;
+            }
+            RigExecEvaluatorOptions evaluate;
+            if (setting.threads)
+                evaluate.tasks = g_tasks.get();
+            const auto desc = ok ? builder.Build(&error) : nullptr;
+            const auto program =
+                desc ? RigExecCompile(*desc, options, &error) : nullptr;
+            auto evaluator =
+                program ? RigExecEvaluator::Create(program, evaluate, &error)
+                        : nullptr;
+            for (size_t r = 0; evaluator && r < nodes.size(); ++r)
+                if (!RigExecWriteGeometryOpInputs(
+                        params[r], nodes[r], r ? nullptr : &entering,
+                        entering.size(), evaluator.get(), &error))
+                    evaluator.reset();
+            std::vector<GfVec3f> piped;
+            if (evaluator && evaluator->Evaluate(&error)) {
+                const auto *out = static_cast<
+                    const rigExecStd::RigExecArray<rigExecStd::Vec3f> *>(
+                    evaluator->GetOutput(nodes.back().out));
+                for (const auto &p : *out)
+                    piped.emplace_back(p[0], p[1], p[2]);
+            }
+            Compare("RangeChain", kinds,
+                    chain.target.GetString() + setting.label, Points(stepped),
+                    Points(piped), false,
+                    piped.empty() ? "chain program failed: " + error
+                                  : std::string());
+        }
+    }
+}
+
 // Derived: a points target replays its last assembly over its authored base
 // with the chain's final points; a matrix target replays the projector reads
 // over the chain's base and final points.
@@ -1036,6 +1128,7 @@ ProbeStage(const UsdStageRefPtr &stage, const std::string &rig, Paint paint)
         ProbeSolve(b);
         ProbeConstraint(b);
         ProbeRevisions(b);
+        ProbeRangeChains(b);
         ProbeDerived(b);
         ProbeProperty(b);
         ProbeWeights(b);
@@ -1162,8 +1255,8 @@ main(int argc, char **argv)
                 }
     }
     for (const char *family :
-         {"Solve/", "RevisionChunk/", "Derived/", "PropertyRevision/",
-          "WeightPacket/", "Constraint/"}) {
+         {"Solve/", "RevisionChunk/", "RangeChain/", "Derived/",
+          "PropertyRevision/", "WeightPacket/", "Constraint/"}) {
         size_t compared = 0;
         for (const auto &[key, tally] : g_tally)
             if (key.compare(0, std::strlen(family), family) == 0)

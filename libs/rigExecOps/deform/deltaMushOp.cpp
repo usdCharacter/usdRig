@@ -4,6 +4,8 @@
 #include "rigExecOps/opIo.h"
 #include "rigExecMath/deltaMushKernel.h"
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -89,6 +91,11 @@ constexpr const char *kUnusable = "unusable topology, rest or computation map";
 /// A node's rest data, rebuilt only when its rest points or topology move.
 struct MushState {
     std::shared_ptr<const RestData> rest;
+    /// Per range index: the range and the points it reads, for the rest
+    /// data in readsRest.
+    std::shared_ptr<const RestData> readsRest;
+    std::vector<std::array<size_t, 4>> reads;
+    std::vector<int> readList;
 };
 
 Mat4d
@@ -148,6 +155,34 @@ Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
         return Fail(error, "DeltaMush", kUnusable);
     state.rest = std::move(built);
     return true;
+}
+
+void
+MushReads(const rigExec::RigExecOpBatch &batch, size_t k,
+          const rigExec::RigExecOpRange &range, size_t *begin, size_t *end)
+{
+    MushState &state =
+        *static_cast<MushState *>(rigExec::RigExecBatchState(batch, k));
+    if (state.readsRest != state.rest) {
+        state.readsRest = state.rest;
+        state.reads.clear();
+    }
+    if (state.reads.size() <= range.index)
+        state.reads.resize(range.index + 1, {SIZE_MAX, 0, 0, 0});
+    std::array<size_t, 4> &memo = state.reads[range.index];
+    if (memo[0] != range.begin || memo[1] != range.end) {
+        size_t lo = 0, hi = range.count;
+        if (state.rest &&
+            rigExec::RigExecDeltaMushGroupReads(*state.rest, range.begin,
+                                                range.end, &state.readList) &&
+            !state.readList.empty()) {
+            lo = std::min(range.begin, size_t(state.readList.front()));
+            hi = std::max(range.end, size_t(state.readList.back()) + 1);
+        }
+        memo = {range.begin, range.end, lo, hi};
+    }
+    *begin = memo[2];
+    *end = memo[3];
 }
 
 /// Points [begin, end) of the whole kernel's result through the group
@@ -245,6 +280,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.range.accept = &Accept;
     d.range.prepare = &Prepare;
     d.range.run = &MushRange;
+    d.range.reads = &MushReads;
     d.range.scratch = StateOf<GroupState>();
     d.state = StateOf<MushState>();
     d.capabilities =

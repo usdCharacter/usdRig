@@ -3193,6 +3193,134 @@ TestRetainedStateBatches()
     }
 }
 
+/// A skin, matrix, smooth and delta mush chain runs as one range chain:
+/// every grain, thread count and the node-by-node run give the same bits,
+/// in each SIMD mode.
+void
+TestRangeChain()
+{
+    using namespace rigExecOps;
+    const Grid grid(40, 9);
+    const size_t n = grid.points.size();
+    const int elementSize = 2;
+    std::vector<rigExecStd::Mat4d> mats(4, rigExecStd::Mat4d(1.0));
+    for (size_t t = 0; t < mats.size(); ++t)
+        mats[t][3][0] = 0.05 * double(t + 1);
+    std::vector<int> indices(n * elementSize);
+    std::vector<float> weights(n * elementSize, 0.5f);
+    for (size_t i = 0; i < indices.size(); ++i)
+        indices[i] = int((i * 5) % mats.size());
+    const Points in = ToStd(grid.points);
+    const auto matArray = ToArray(mats);
+    const auto indexArray = ToArray(indices);
+    const auto weightArray = ToArray(weights);
+    const auto counts = ToArray(grid.counts);
+    const auto faces = ToArray(grid.indices);
+    rigExecStd::Mat4d move(1.0);
+    move[3][1] = 0.25;
+    SkinPayload skin;
+    skin.elementSize = elementSize;
+    MatrixDeformPayload matrix;
+    DeltaMushPayload mush;
+    mush.iterations = 3;
+    RigExecRigDescBuilder b;
+    const RigExecNodeId s = b.AddOp(Skin(), &skin);
+    const RigExecNodeId m = b.AddOp(MatrixDeform(), &matrix);
+    const RigExecNodeId sm = b.AddOp(Smooth());
+    const RigExecNodeId dm = b.AddOp(DeltaMush(), &mush);
+    b.Connect(s, SkinOut(), m, MatrixDeformPoints());
+    b.Connect(m, MatrixDeformOut(), sm, SmoothPoints());
+    b.Connect(sm, SmoothOut(), dm, DeltaMushPoints());
+    std::vector<std::pair<RigExecInputId, const void *>> inputs = {
+        {b.BindInput(s, SkinPoints()), &in},
+        {b.BindInput(s, SkinTransforms()), &matArray},
+        {b.BindInput(s, SkinIndices()), &indexArray},
+        {b.BindInput(s, SkinWeights()), &weightArray},
+        {b.BindInput(m, MatrixDeformTransform()), &move},
+        {b.BindInput(sm, SmoothCounts()), &counts},
+        {b.BindInput(sm, SmoothIndices()), &faces},
+        {b.BindInput(dm, DeltaMushRest()), &in},
+        {b.BindInput(dm, DeltaMushCounts()), &counts},
+        {b.BindInput(dm, DeltaMushIndices()), &faces},
+    };
+    const RigExecOutputId out = b.BindOutput(dm, DeltaMushOut());
+    auto desc = b.Build();
+    CHECK(desc);
+    if (!desc)
+        return;
+    const size_t hardware =
+        std::max<size_t>(1, std::thread::hardware_concurrency());
+    auto wide = RigExecCreateThreadTaskSystem(hardware);
+    for (const bool simd : {true, false}) {
+        // Node by node: each op's program on its own, whole.
+        Points stepped = in;
+        {
+            const auto step =
+                [&](const RigExecOpHandle &op, const void *payload,
+                    const RigExecPortHandle &pointsIn,
+                    const RigExecPortHandle &pointsOut,
+                    std::vector<
+                        std::pair<const RigExecPortHandle *, const void *>>
+                        bound) {
+                    RigExecRigDescBuilder one;
+                    const RigExecNodeId node = one.AddOp(op, payload);
+                    std::vector<std::pair<RigExecInputId, const void *>> set = {
+                        {one.BindInput(node, pointsIn), &stepped}};
+                    for (const auto &[port, value] : bound)
+                        set.push_back({one.BindInput(node, *port), value});
+                    const RigExecOutputId result =
+                        one.BindOutput(node, pointsOut);
+                    RigExecCompileOptions options;
+                    options.useSimd = simd;
+                    auto program = RigExecCompile(*one.Build(), options);
+                    auto evaluator = RigExecEvaluator::Create(program);
+                    for (const auto &[id, value] : set)
+                        CHECK(evaluator->SetInput(id, value));
+                    CHECK(evaluator->Evaluate());
+                    stepped = *static_cast<const Points *>(
+                        evaluator->GetOutput(result));
+                };
+            step(Skin(), &skin, SkinPoints(), SkinOut(),
+                 {{&SkinTransforms(), &matArray},
+                  {&SkinIndices(), &indexArray},
+                  {&SkinWeights(), &weightArray}});
+            step(MatrixDeform(), &matrix, MatrixDeformPoints(),
+                 MatrixDeformOut(), {{&MatrixDeformTransform(), &move}});
+            step(Smooth(), nullptr, SmoothPoints(), SmoothOut(),
+                 {{&SmoothCounts(), &counts}, {&SmoothIndices(), &faces}});
+            step(DeltaMush(), &mush, DeltaMushPoints(), DeltaMushOut(),
+                 {{&DeltaMushRest(), &in},
+                  {&DeltaMushCounts(), &counts},
+                  {&DeltaMushIndices(), &faces}});
+        }
+        for (const size_t grain :
+             {size_t(0), size_t(1), size_t(13), size_t(100), size_t(512)}) {
+            RigExecCompileOptions options;
+            options.useSimd = simd;
+            options.rangeGrain = grain;
+            auto program = RigExecCompile(*desc, options);
+            for (RigExecTaskSystem *tasks :
+                 {static_cast<RigExecTaskSystem *>(nullptr), gTasks.get(),
+                  wide.get()}) {
+                RigExecEvaluatorOptions evaluate;
+                evaluate.tasks = tasks;
+                auto evaluator = RigExecEvaluator::Create(program, evaluate);
+                for (const auto &[id, value] : inputs)
+                    CHECK(evaluator->SetInput(id, value));
+                std::string error;
+                CHECK(evaluator->Evaluate(&error));
+                const auto *result =
+                    static_cast<const Points *>(evaluator->GetOutput(out));
+                const bool same = result && SamePoints(stepped, *result);
+                if (!same)
+                    std::printf("range chain: simd %d grain %zu differs\n",
+                                int(simd), grain);
+                CHECK(same);
+            }
+        }
+    }
+}
+
 /// The per-frame time of a deform chain (skin, matrix, smooth) over a large
 /// mesh, whole and cut into the scene's ranges on worker threads; every
 /// setting gives the same bits.
@@ -3325,6 +3453,7 @@ main()
     TestRibbonFrames();
     TestSingleChainIk();
     TestSplineIk();
+    TestRangeChain();
     ReportRangeTiming();
     if (failures) {
         std::printf("%d failure(s)\n", failures);

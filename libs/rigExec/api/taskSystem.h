@@ -14,8 +14,10 @@ namespace rigExec {
 /// One evaluation's work, handed over whole. Tasks are numbered by the
 /// caller and grouped into levels: every task of a level finishes before
 /// any task of the next level starts. Within a level, shared tasks may run
-/// on any thread in any order; caller tasks run on the thread that called
-/// Run, in the order listed.
+/// on any thread, and a shared task may wait inside run for shared tasks
+/// listed before it in its level, so they start in the order listed: a
+/// task starts only once every task listed before it has started. Caller
+/// tasks run on the thread that called Run, in the order listed.
 struct RigExecTaskSchedule {
     size_t levelCount = 0;
     /// Level l's shared tasks are shared[sharedStart[l]] up to, not

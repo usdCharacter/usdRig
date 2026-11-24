@@ -55,13 +55,6 @@ struct RigExecPublishedSet {
     RigExecPublishedArena &Add(RigExecPublishedPool &pool);
 };
 
-/// One range of one instance of a ranged batch, run as one task.
-struct RigExecRangeTask {
-    uint32_t batch = 0;
-    uint32_t instance = 0;
-    uint32_t range = 0;
-};
-
 struct RigExecRun {
     const RigExecProgram *program = nullptr;
     /// Borrowed; outlives the run.
@@ -109,9 +102,12 @@ struct RigExecRun {
     std::vector<uint8_t> failed;
     std::vector<std::string> errors;
     /// This frame's tasks by task level, as the task system takes them:
-    /// each program level's batches, owner-thread ones on the caller, then,
-    /// when it has range tasks, those as a task level of their own. Task
-    /// number batches + t is range task t.
+    /// each program level's batches that do not run in ranges, owner-thread
+    /// ones on the caller, and one head task per range chain of the level,
+    /// then, when the level has chains, their range tasks as a task level
+    /// of their own. Task number batches + c is chain c's head task, and
+    /// batches + chains + s range slot s. A head task rewrites its chain's
+    /// part of shared into the order its range tasks may start in.
     std::vector<uint32_t> sharedStart;
     std::vector<uint32_t> shared;
     std::vector<uint32_t> callerStart;
@@ -119,19 +115,40 @@ struct RigExecRun {
     /// Per batch: its program level and whether its op runs in ranges.
     std::vector<uint32_t> batchLevel;
     std::vector<char> rangedBatch;
-    /// This frame's range tasks, by batch, instance and range; per batch
-    /// its first one and how many have still to finish.
-    std::vector<RigExecRangeTask> rangeTasks;
-    std::vector<uint32_t> firstRangeTask;
-    std::unique_ptr<std::atomic<uint32_t>[]> rangesLeft;
-    std::vector<uint8_t> rangeFailed;
-    std::vector<std::string> rangeErrors;
-    /// Per ranged batch: the instance whose head failed this frame, or
-    /// kRigExecInvalidIndex, and why.
-    std::vector<uint32_t> headFailedAt;
-    std::vector<std::string> headErrors;
+    /// Per program level: its chains, levelChains[levelChainStart[l],
+    /// levelChainStart[l + 1]).
+    std::vector<uint32_t> levelChainStart;
+    std::vector<uint32_t> levelChains;
+    /// Per batchNodes entry of a ranged op: its index in its chain.
+    std::vector<uint32_t> positionMember;
+    /// Per chain, this frame: whether it runs and its head task ran, its
+    /// ranges, its first range slot, where its range tasks sit in shared,
+    /// and the member whose head failed (memberCount when none) and why.
+    std::vector<char> chainActive;
+    std::vector<char> chainHeadRan;
+    std::vector<uint32_t> chainRanges;
+    std::vector<uint32_t> chainBase;
+    std::vector<uint32_t> chainSlice;
+    std::vector<uint32_t> chainStop;
+    std::vector<std::string> chainErrors;
+    /// Per chain member: the member that starts the segment it runs in,
+    /// or kRigExecInvalidIndex when it does not run this frame.
+    std::vector<uint32_t> segmentOf;
+    /// Per range slot (member m of chain c, range r at chainBase[c] +
+    /// m * chainRanges[c] + r): its chain; 0 until it is computed, 1 once
+    /// it is, 2 when it was not because it or what it reads failed;
+    /// whether it failed and why; and for a member reading an earlier one
+    /// through a neighbourhood input, the elements it reads.
+    std::vector<uint32_t> slotChain;
+    std::unique_ptr<std::atomic<uint8_t>[]> slotDone;
+    size_t slotDoneSize = 0;
+    std::vector<uint8_t> slotFailed;
+    std::vector<std::string> slotErrors;
+    std::vector<std::pair<size_t, size_t>> slotReads;
+    /// A head task's count of its segments' range tasks put in order.
+    std::vector<std::vector<uint32_t>> chainEmitted;
     /// Per batchNodes entry of a ranged op: this frame's plan, element
-    /// count and scheduled ranges, and each range's scratch.
+    /// count and range slots, and each range's scratch.
     std::vector<uint8_t> plans;
     std::vector<size_t> elementCounts;
     std::vector<uint32_t> instanceRanges;
@@ -186,14 +203,22 @@ private:
     size_t _RangeCount(size_t elements) const;
     RigExecOpBatch _View(uint32_t b) const;
     void _RunBatch(uint32_t b);
-    bool _RunHeads(uint32_t b);
-    bool _RunRange(uint32_t t);
-    void _CompleteRanges(uint32_t b);
+    bool _RunHead(uint32_t at, std::string *error);
+    void _RunChainHeads(uint32_t c);
+    void _OrderChain(uint32_t c);
+    uint32_t _Ranges(uint32_t at) const;
+    template <class Visit>
+    void _ForEachRead(uint32_t c, uint32_t start, uint32_t r,
+                      const Visit &visit) const;
+    bool _RangeOf(uint32_t at, uint32_t index, RigExecOpRange *range) const;
+    bool _RunSlot(uint32_t s);
+    void _CompleteChains();
     void _Fail(uint32_t b, uint32_t instance, const std::string &error);
     static bool _RunTask(void *context, uint32_t task);
     size_t _SizeFromInputs(const RigExecOpBatch &view,
                            const RigExecProgramBatch &batch,
-                           const RigExecRegisteredOp &op, std::string *error);
+                           const RigExecRegisteredOp &op, std::string *error,
+                           size_t only = SIZE_MAX);
     bool _CheckBounds(const RigExecOpBatch &view,
                       const RigExecProgramBatch &batch,
                       const RigExecRegisteredOp &op, size_t *at,
