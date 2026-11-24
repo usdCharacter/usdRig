@@ -1,7 +1,7 @@
 #include "rigExecOps/constraint/autoClavicleOps.h"
 
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 
 #include <cmath>
 #include <iterator>
@@ -36,11 +36,56 @@ RIGEXEC_DEFINE_PORT_HANDLE(AutoClavicleOut)
 
 namespace {
 
+using rigExec::RigExecOpBatch;
 using rigExec::RigExecOpIo;
 using rigExecStd::Mat4d;
 using rigExecStd::RigExecArray;
 using rigExecStd::Vec3d;
 using namespace opIo;
+using namespace fieldIo;
+
+/// The auto clavicle payload's declared fields, in saved order.
+enum ClavicleField : uint32_t {
+    kBasis,
+    kIkValue,
+    kGain,
+    kKernel,
+    kNormalize,
+    kSwingCount,
+    kSwings,
+    kWidthCount,
+    kWidths,
+    kGainCount,
+    kGains,
+    kWeightCount,
+    kWeights,
+    kHasLimb,
+};
+
+/// Instance \p k's constants, read in place.
+rigExec::RigExecAutoClavicleConstantsView
+ConstantsAt(const RigExecOpBatch &batch, size_t k)
+{
+    rigExec::RigExecAutoClavicleConstantsView c;
+    c.basis = rigExec::RigExecPayloadField<double>(batch, kBasis, k).data;
+    c.ikValue = ValueAt<double>(batch, kIkValue, k);
+    c.gain = ValueAt<double>(batch, kGain, k);
+    c.kernel = ValueAt<int32_t>(batch, kKernel, k);
+    c.normalize = FlagAt(batch, kNormalize, k);
+    const auto swings = ListAt<double>(batch, kSwings, k);
+    const auto widths = ListAt<double>(batch, kWidths, k);
+    const auto gains = ListAt<double>(batch, kGains, k);
+    const auto weights = ListAt<double>(batch, kWeights, k);
+    c.swings = swings.data;
+    c.swingCount = swings.Size();
+    c.widths = widths.data;
+    c.widthCount = widths.Size();
+    c.gains = gains.data;
+    c.gainCount = gains.Size();
+    c.weights = weights.data;
+    c.weightCount = weights.Size();
+    return c;
+}
 
 const double *
 Rows(const Mat4d *m)
@@ -60,10 +105,13 @@ OriginDistance(const Mat4d &a, const Mat4d &b)
 }
 
 bool
-RunAutoClavicle(const void *payload, void *, const RigExecOpIo &io,
-                std::string *error)
+AutoClavicleOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
-    const auto &p = *static_cast<const AutoClavicleOpPayload *>(payload);
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const struct {
+        rigExec::RigExecAutoClavicleConstantsView constants;
+        bool hasLimb;
+    } p = {ConstantsAt(batch, k), FlagAt(batch, kHasLimb, k)};
     const Mat4d &target = *In<Mat4d>(io, AutoClavicleTarget());
     const auto &fkDefault =
         *In<RigExecArray<Mat4d>>(io, AutoClavicleFkDefault());
@@ -108,6 +156,14 @@ RunAutoClavicle(const void *payload, void *, const RigExecOpIo &io,
     for (int k = 0; k < 3; ++k)
         out._mtx[3][k] = target._mtx[3][k] + delta[k];
     return true;
+}
+
+bool
+RunAutoClavicle(const RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return AutoClavicleOne(batch, k, error);
+    });
 }
 
 } // namespace
@@ -160,44 +216,39 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&AutoClavicleOut(), &rigExecStd::Mat4dType(), kRigExecPortOutput, "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
 void
-Save(Writer &w, const AutoClavicleOpPayload &p)
+ClavicleValues(const void *payload, RigExecFieldValues &out)
 {
-    w.Version(1);
+    const auto &p = *static_cast<const AutoClavicleOpPayload *>(payload);
     const rigExec::RigExecAutoClavicleConstants &c = p.constants;
-    for (double b : c.basis)
-        w.F64(b);
-    w.F64(c.ikValue);
-    w.F64(c.gain);
-    w.I32(c.kernel);
-    w.Bool(c.normalize);
-    payloadIo::PutList(w, c.swings);
-    payloadIo::PutList(w, c.widths);
-    payloadIo::PutList(w, c.gains);
-    payloadIo::PutList(w, c.weights);
-    w.Bool(p.hasLimb);
+    out.Set(kBasis, c.basis, 9);
+    out.Set(kIkValue, c.ikValue);
+    out.Set(kGain, c.gain);
+    out.Set(kKernel, int32_t(c.kernel));
+    SetFlag(out, kNormalize, c.normalize);
+    SetList(out, kSwingCount, c.swings);
+    SetList(out, kWidthCount, c.widths);
+    SetList(out, kGainCount, c.gains);
+    SetList(out, kWeightCount, c.weights);
+    SetFlag(out, kHasLimb, p.hasLimb);
 }
 
-void
-Load(Reader &r, AutoClavicleOpPayload &p)
-{
-    r.Version(1);
-    rigExec::RigExecAutoClavicleConstants &c = p.constants;
-    for (double &b : c.basis)
-        b = r.F64();
-    c.ikValue = r.F64();
-    c.gain = r.F64();
-    c.kernel = r.I32();
-    c.normalize = r.Bool();
-    payloadIo::GetList(r, c.swings);
-    payloadIo::GetList(r, c.widths);
-    payloadIo::GetList(r, c.gains);
-    payloadIo::GetList(r, c.weights);
-    p.hasLimb = r.Bool();
-}
+const rigExec::RigExecFieldDesc kFields[] = {
+    Fixed(Value("basis", rigExecStd::DoubleType()), 9),
+    Value("ikValue", rigExecStd::DoubleType()),
+    Value("gain", rigExecStd::DoubleType()),
+    Value("kernel", rigExecStd::IntType()),
+    Flag("normalize"),
+    Count("swingCount"),
+    Items("swings", rigExecStd::DoubleType(), kSwingCount),
+    Count("widthCount"),
+    Items("widths", rigExecStd::DoubleType(), kWidthCount),
+    Count("gainCount"),
+    Items("gains", rigExecStd::DoubleType(), kGainCount),
+    Count("weightCount"),
+    Items("weights", rigExecStd::DoubleType(), kWeightCount),
+    Flag("hasLimb"),
+};
 
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
@@ -205,10 +256,12 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.name = "AutoClavicle";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.run = &RunAutoClavicle;
+    d.runBatch = &RunAutoClavicle;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
-    d.payload = rigExec::RigExecPayloadHandlingFor<AutoClavicleOpPayload, &Save,
-                                                   &Load>();
+    d.payloadFields = kFields;
+    d.payloadFieldCount = std::size(kFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &ClavicleValues;
     return d;
 }();
 

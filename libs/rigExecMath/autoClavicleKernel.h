@@ -54,6 +54,49 @@ struct RigExecAutoClavicleConstants {
     }
 };
 
+/// RigExecAutoClavicleConstants as the kernel reads them: the same values,
+/// borrowed, with each per-pose array as a pointer and a count.
+struct RigExecAutoClavicleConstantsView {
+    const double *basis = nullptr;
+    double ikValue = 1.0;
+    double gain = 0.4;
+    int kernel = 0;
+    bool normalize = true;
+    const double *swings = nullptr;
+    size_t swingCount = 0;
+    const double *widths = nullptr;
+    size_t widthCount = 0;
+    const double *gains = nullptr;
+    size_t gainCount = 0;
+    const double *weights = nullptr;
+    size_t weightCount = 0;
+
+    size_t PoseCount() const
+    {
+        return widthCount;
+    }
+};
+
+inline RigExecAutoClavicleConstantsView
+RigExecAutoClavicleViewOf(const RigExecAutoClavicleConstants &c)
+{
+    RigExecAutoClavicleConstantsView v;
+    v.basis = c.basis;
+    v.ikValue = c.ikValue;
+    v.gain = c.gain;
+    v.kernel = c.kernel;
+    v.normalize = c.normalize;
+    v.swings = c.swings.data();
+    v.swingCount = c.swings.size();
+    v.widths = c.widths.data();
+    v.widthCount = c.widths.size();
+    v.gains = c.gains.data();
+    v.gainCount = c.gains.size();
+    v.weights = c.weights.data();
+    v.weightCount = c.weights.size();
+    return v;
+}
+
 /// One frame's inputs. Null pointers are absent optional inputs.
 struct RigExecAutoClavicleFrames {
     const double *anchorPosed = nullptr;
@@ -275,12 +318,12 @@ AngleBetween(const double *a, const double *b)
 /// (basis axes): RigExecRbfSolver::Evaluate's kernels, solve and
 /// normalisation, for swing poses about X with negative weights kept.
 inline void
-PoseWeights(const RigExecAutoClavicleConstants &c, const double *d,
+PoseWeights(const RigExecAutoClavicleConstantsView &c, const double *d,
             std::vector<double> *out)
 {
     const size_t n = c.PoseCount();
     out->assign(n, 0.0);
-    if (n == 0 || c.weights.size() != n * n || c.swings.size() != n * 4) {
+    if (n == 0 || c.weightCount != n * n || c.swingCount != n * 4) {
         out->clear();
         return;
     }
@@ -334,7 +377,7 @@ PoseWeights(const RigExecAutoClavicleConstants &c, const double *d,
 /// origin this frame, in `delta`, and the blend weight in `weight`. False
 /// (and a zero delta) when a required frame is missing or degenerate.
 inline bool
-RigExecAutoClavicleShift(const RigExecAutoClavicleConstants &c,
+RigExecAutoClavicleShift(const RigExecAutoClavicleConstantsView &c,
                          const RigExecAutoClavicleFrames &f, double delta[3],
                          double *weight = nullptr)
 {
@@ -384,7 +427,7 @@ RigExecAutoClavicleShift(const RigExecAutoClavicleConstants &c,
         Normalize(inBasis);
         PoseWeights(c, inBasis, &poses);
         double sum = 0.0;
-        for (size_t i = 0; i < poses.size() && i < c.gains.size(); ++i) {
+        for (size_t i = 0; i < poses.size() && i < c.gainCount; ++i) {
             sum += c.gains[i] * std::clamp(poses[i], 0.0, 1.0);
         }
         double w = c.gain * f.amount * sum;
@@ -540,6 +583,15 @@ RigExecAutoClavicleShift(const RigExecAutoClavicleConstants &c,
     if (weight)
         *weight = w;
     return true;
+}
+
+inline bool
+RigExecAutoClavicleShift(const RigExecAutoClavicleConstants &c,
+                         const RigExecAutoClavicleFrames &f, double delta[3],
+                         double *weight = nullptr)
+{
+    return RigExecAutoClavicleShift(RigExecAutoClavicleViewOf(c), f, delta,
+                                    weight);
 }
 
 } // namespace rigExec

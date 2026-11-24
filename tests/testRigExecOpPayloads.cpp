@@ -722,6 +722,31 @@ TestSavedBytes()
                    "01010300000000000000010001");
     }
     {
+        AutoClavicleOpPayload p;
+        CheckSaved(AutoClavicle(), &p,
+                   "01000000000000000000f03f00000000000000000000000000000000"
+                   "0000000000000000000000000000f03f000000000000000000000000"
+                   "000000000000000000000000000000000000f03f000000000000f03f"
+                   "9a9999999999d93f0000000001000000000000000000000000000000"
+                   "000000000000000000000000000000000000");
+        p.constants.basis[4] = -0.0;
+        p.constants.kernel = 1;
+        p.constants.normalize = false;
+        p.constants.swings = {1.0, 0.0, 0.25, -0.5};
+        p.constants.widths = {0.75};
+        p.constants.gains = {2.0};
+        p.constants.weights = {1.5};
+        p.hasLimb = true;
+        CheckSaved(AutoClavicle(), &p,
+                   "01000000000000000000f03f00000000000000000000000000000000"
+                   "00000000000000000000000000000080000000000000000000000000"
+                   "000000000000000000000000000000000000f03f000000000000f03f"
+                   "9a9999999999d93f01000000000400000000000000000000000000f0"
+                   "3f0000000000000000000000000000d03f000000000000e0bf010000"
+                   "0000000000000000000000e83f010000000000000000000000000000"
+                   "400100000000000000000000000000f83f01");
+    }
+    {
         WeightFieldPayload p;
         CheckSaved(PlaneWeight(), &p, "010000000000000000000000000200000000");
         p.falloffCurve = {1.0f, 0.5f, 0.0f};
@@ -921,11 +946,13 @@ TestCorruptValues()
     CHECK(!FieldsDecode(skin, badEnum, &error));
     CHECK(error.find("method: a value is out of range") != std::string::npos);
 
-    const RigExecOpPayloadHandling &clavicle = Op(AutoClavicle()).desc->payload;
-    AutoClavicleOpPayload a;
-    clavicle.encode(&a, bytes);
-    bytes.back() = 2;
-    CHECK(!Decodes(clavicle, bytes, &error));
+    const RigExecOpPayloadHandling &skeleton = Op(Skeleton2d()).desc->payload;
+    Skeleton2dPayload grouped;
+    grouped.groups = {RigExecJointGroup()};
+    skeleton.encode(&grouped, bytes);
+    // The group's enabled flag, ahead of the empty member list.
+    bytes[bytes.size() - 9] = 2;
+    CHECK(!Decodes(skeleton, bytes, &error));
     CHECK(error.find("flag") != std::string::npos);
 
     // A declared flag holding 2 is refused the same way.
