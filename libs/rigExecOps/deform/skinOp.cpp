@@ -1,11 +1,12 @@
 #include "rigExecOps/deform/skinOp.h"
 
 #include "rigExecMath/skinKernel.h"
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 #include "rigExecRuntime/dualQuatMath.h"
 
 #include <cmath>
+#include <cstdint>
 #include <iterator>
 #include <string>
 
@@ -23,6 +24,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(SkinOut)
 namespace {
 
 using namespace opIo;
+using namespace fieldIo;
 using rigExecStd::Mat4d;
 using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
@@ -47,11 +49,12 @@ Usable(const Transforms &transforms)
     return true;
 }
 
+enum SkinField : uint32_t { kMethod, kElementSize };
+
 bool
-Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
-    std::string *error)
+SkinOne(const rigExec::RigExecOpIo &io, SkinMethod method, int elementSize,
+        std::string *error)
 {
-    const SkinPayload &p = *static_cast<const SkinPayload *>(payload);
     const Points &in = *In<Points>(io, SkinPoints());
     const Transforms &transforms = *In<Transforms>(io, SkinTransforms());
     const Indices &indices = *In<Indices>(io, SkinIndices());
@@ -63,7 +66,7 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
     layout.indices = indices.Data();
     layout.weights = weights.Data();
     layout.indexCount = indices.Size();
-    layout.elementSize = p.elementSize < 1 ? 0 : size_t(p.elementSize);
+    layout.elementSize = elementSize < 1 ? 0 : size_t(elementSize);
     layout.pointCount = in.Size();
     if (!layout.elementSize || !layout.transformCount)
         return Fail(error, "Skin", "needs an influence and elementSize >= 1");
@@ -83,7 +86,7 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
 
     Points &out = Out<Points>(io, SkinOut());
     out = Points(in.Size());
-    if (p.method == SkinMethod::ClassicLinear) {
+    if (method == SkinMethod::ClassicLinear) {
         if (kUseSimd)
             rigExec::RigExecApplyLinearBlendSkinSimdKernel<Vec3f, Vec3d>(
                 in.Data(), out.Data(), layout, nullptr);
@@ -101,6 +104,32 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
     return BlendEnvelope(in, In<Envelope>(io, SkinEnvelope()), &out, "Skin",
                          error);
 }
+
+bool
+Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    const uint32_t *methods =
+        rigExec::RigExecPayloadColumnOf<uint32_t>(batch, kMethod);
+    const int32_t *elementSizes =
+        rigExec::RigExecPayloadColumnOf<int32_t>(batch, kElementSize);
+    return EachInstance(batch, failed, [&](size_t k) {
+        return SkinOne(rigExec::RigExecBatchInstance(batch, k),
+                       SkinMethod(methods[k]), elementSizes[k], error);
+    });
+}
+
+void
+Values(const void *payload, rigExec::RigExecFieldValues &out)
+{
+    const SkinPayload &p = *static_cast<const SkinPayload *>(payload);
+    SetEnum(out, kMethod, p.method);
+    out.Set(kElementSize, int32_t(p.elementSize));
+}
+
+const rigExec::RigExecFieldDesc kFields[] = {
+    Enum("method", SkinMethod::DualQuaternion),
+    Value("elementSize", rigExecStd::IntType()),
+};
 
 } // namespace
 
@@ -121,37 +150,21 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&SkinOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
-void
-Save(Writer &w, const SkinPayload &p)
-{
-    w.Version(1);
-    w.Enum(p.method);
-    w.I32(p.elementSize);
-}
-
-void
-Load(Reader &r, SkinPayload &p)
-{
-    r.Version(1);
-    p.method = r.Enum(SkinMethod::DualQuaternion);
-    p.elementSize = r.I32();
-}
-
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "Skin";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.run = &Run;
+    d.runBatch = &Run;
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
         rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
-    d.payload = rigExec::RigExecPayloadHandlingFor<SkinPayload, &Save, &Load>();
+    d.payloadFields = kFields;
+    d.payloadFieldCount = std::size(kFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &Values;
     return d;
 }();
 

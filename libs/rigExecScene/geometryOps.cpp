@@ -14,6 +14,7 @@
 #include "rigExecOps/deform/wrinkleOp.h"
 #include "rigExecRigTypes/rigTypes.h"
 
+#include "rigExec/api/opFields.h"
 #include "rigExec/api/registry.h"
 
 #include "pxr/base/tf/staticTokens.h"
@@ -154,6 +155,10 @@ struct RigExecGeometryPayloadScratch {
     rigExecOps::WirePayload wire;
     rigExecOps::NormalsPayload normals;
     rigExecOps::BlendShapePayload blend;
+    /// The field values of a candidate and of a node's payload, compared
+    /// for an op that declares its payload fields.
+    RigExecFieldValues candidateFields;
+    RigExecFieldValues nodeFields;
 };
 
 void
@@ -238,6 +243,22 @@ BuildPayload(RigExecRevisionOp op, const RigExecMoverParameters &p,
     return true;
 }
 
+/// Whether \p a and \p b, payloads of \p d, hold the same field values.
+bool
+SameFields(const RigExecOpDesc &d, const void *a, const void *b,
+           RigExecGeometryPayloadScratch &s)
+{
+    if (!d.payloadValues)
+        return false;
+    if (s.candidateFields.FieldCount() != d.payloadFieldCount)
+        s.candidateFields = RigExecFieldValues(d.payloadFieldCount);
+    if (s.nodeFields.FieldCount() != d.payloadFieldCount)
+        s.nodeFields = RigExecFieldValues(d.payloadFieldCount);
+    d.payloadValues(a, s.candidateFields);
+    d.payloadValues(b, s.nodeFields);
+    return s.candidateFields == s.nodeFields;
+}
+
 /// Whether \p p builds the payload \p node was built with.
 bool
 SamePayload(RigExecRevisionOp op, const RigExecMoverParameters &p,
@@ -253,8 +274,10 @@ SamePayload(RigExecRevisionOp op, const RigExecMoverParameters &p,
     if (!candidate || !node.payload)
         return !candidate && !node.payload;
     const RigExecOpHandle *handle = RigExecGeometryOpHandle(op);
-    const auto equal = RigExecRegistry::Get().Op(*handle).desc->payload.equal;
-    return equal && equal(candidate, node.payload.get());
+    const RigExecOpDesc &d = *RigExecRegistry::Get().Op(*handle).desc;
+    if (d.payloadFieldCount)
+        return SameFields(d, candidate, node.payload.get(), *scratch);
+    return d.payload.equal && d.payload.equal(candidate, node.payload.get());
 }
 
 /// Whether a write of \p p into \p node would refuse moved settings.

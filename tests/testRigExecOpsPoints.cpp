@@ -122,6 +122,57 @@ Blend(const std::vector<GfVec3f> &in, const std::vector<float> &envelope,
         (*out)[i] = RigExecBlendEnvelope(in[i], (*out)[i], envelope[i]);
 }
 
+bool
+SamePoints(const Points &a, const Points &b)
+{
+    return a.Size() == b.Size() &&
+           (a.Empty() ||
+            std::memcmp(a.Data(), b.Data(), a.Size() * sizeof(Vec3f)) == 0);
+}
+
+/// Nodes of \p op, one per payload in \p payloads, each fed \p values on
+/// \p ins in one rig; the outputs, in payload order.
+template <class P>
+bool
+RunEach(const RigExecOpHandle &op,
+        const std::vector<const RigExecPortHandle *> &ins,
+        const RigExecPortHandle &output, const std::vector<P> &payloads,
+        const std::vector<const void *> &values, std::vector<Points> *results)
+{
+    RigExecRigDescBuilder b;
+    std::vector<std::vector<RigExecInputId>> inputs;
+    std::vector<RigExecOutputId> outs;
+    for (const P &payload : payloads) {
+        const RigExecNodeId node = b.AddOp(op, &payload);
+        inputs.emplace_back();
+        for (const RigExecPortHandle *port : ins)
+            inputs.back().push_back(b.BindInput(node, *port));
+        outs.push_back(b.BindOutput(node, output));
+    }
+    std::string error;
+    auto desc = b.Build(&error);
+    auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
+    auto evaluator =
+        program ? RigExecEvaluator::Create(program, {}, &error) : nullptr;
+    if (!evaluator) {
+        std::printf("nodes: %s\n", error.c_str());
+        return false;
+    }
+    for (const auto &nodeInputs : inputs)
+        for (size_t i = 0; i < values.size(); ++i)
+            if (!evaluator->SetInput(nodeInputs[i], values[i], &error))
+                return false;
+    if (!evaluator->Evaluate(&error)) {
+        std::printf("nodes: %s\n", error.c_str());
+        return false;
+    }
+    results->clear();
+    for (const RigExecOutputId &out : outs)
+        results->push_back(
+            *static_cast<const Points *>(evaluator->GetOutput(out)));
+    return true;
+}
+
 /// One op node with the listed ports bound, the first output read.
 struct Node {
     std::unique_ptr<RigExecEvaluator> evaluator;
@@ -777,6 +828,23 @@ TestMatrixDeform()
     Points actual;
     CHECK(!weighted.Run({&in, &transform, &badArray}, &actual));
     CHECK(!weighted.Run({&in, &transform, &shortArray}, &actual));
+
+    // Nodes with different settings in one rig each run with their own.
+    MatrixDeformPayload radial;
+    radial.radial = true;
+    const std::vector<MatrixDeformPayload> payloads = {payload, radial,
+                                                       payload};
+    const std::vector<const RigExecPortHandle *> ports = {
+        &MatrixDeformPoints(), &MatrixDeformTransform(),
+        &MatrixDeformEnvelope()};
+    const std::vector<const void *> values = {&in, &transform, &envelopeArray};
+    std::vector<Points> results;
+    CHECK(RunEach(MatrixDeform(), ports, MatrixDeformOut(), payloads, values,
+                  &results));
+    for (size_t i = 0; i < results.size(); ++i) {
+        Node single(MatrixDeform(), ports, MatrixDeformOut(), &payloads[i]);
+        CHECK(single.Run(values, &actual) && SamePoints(actual, results[i]));
+    }
 }
 
 void
@@ -889,6 +957,24 @@ TestSkin()
         {&SkinPoints(), &SkinTransforms(), &SkinIndices(), &SkinWeights()},
         SkinOut(), &payload);
     CHECK(!empty.Run({&in, &transforms, &indexArray, &weightArray}, &actual));
+
+    // Nodes with different settings in one rig each run with their own.
+    SkinPayload linear;
+    linear.elementSize = elementSize;
+    SkinPayload dual = linear;
+    dual.method = SkinMethod::DualQuaternion;
+    const std::vector<SkinPayload> payloads = {dual, linear, dual};
+    const std::vector<const RigExecPortHandle *> ports = {
+        &SkinPoints(), &SkinTransforms(), &SkinIndices(), &SkinWeights()};
+    const std::vector<const void *> values = {&in, &transforms, &indexArray,
+                                              &weightArray};
+    std::vector<Points> results;
+    CHECK(RunEach(Skin(), ports, SkinOut(), payloads, values, &results));
+    for (size_t i = 0; i < results.size(); ++i) {
+        Node single(Skin(), ports, SkinOut(), &payloads[i]);
+        CHECK(single.Run(values, &actual) && SamePoints(actual, results[i]));
+    }
+    CHECK(results.size() == 3 && !SamePoints(results[0], results[1]));
 }
 
 // The baked channel sum, spelled out in Gf: dense pairs lerp their deltas,

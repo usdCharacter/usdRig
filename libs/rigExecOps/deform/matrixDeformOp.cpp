@@ -1,10 +1,11 @@
 #include "rigExecOps/deform/matrixDeformOp.h"
 
 #include "rigExecMath/matrixKernel.h"
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 
 #include <cmath>
+#include <cstdint>
 #include <iterator>
 #include <string>
 
@@ -20,6 +21,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformOut)
 namespace {
 
 using namespace opIo;
+using namespace fieldIo;
 using rigExecStd::Mat4d;
 using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
@@ -27,12 +29,11 @@ using rigExecStd::Vec3f;
 // The programs' default; the SSE and scalar forms agree only to tolerance.
 constexpr bool kUseSimd = true;
 
+enum MatrixDeformField : uint32_t { kRadial };
+
 bool
-Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
-    std::string *error)
+DeformOne(const rigExec::RigExecOpIo &io, bool radial, std::string *error)
 {
-    const bool radial =
-        static_cast<const MatrixDeformPayload *>(payload)->radial;
     const Points &in = *In<Points>(io, MatrixDeformPoints());
     const Mat4d &transform = *In<Mat4d>(io, MatrixDeformTransform());
     const Envelope *envelope = In<Envelope>(io, MatrixDeformEnvelope());
@@ -57,6 +58,28 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
     return true;
 }
 
+bool
+Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    const uint8_t *radial =
+        rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kRadial);
+    return EachInstance(batch, failed, [&](size_t k) {
+        return DeformOne(rigExec::RigExecBatchInstance(batch, k),
+                         radial[k] != 0, error);
+    });
+}
+
+void
+Values(const void *payload, rigExec::RigExecFieldValues &out)
+{
+    const auto &p = *static_cast<const MatrixDeformPayload *>(payload);
+    SetFlag(out, kRadial, p.radial);
+}
+
+const rigExec::RigExecFieldDesc kFields[] = {
+    Flag("radial"),
+};
+
 } // namespace
 
 namespace {
@@ -75,35 +98,20 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&MatrixDeformOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
-void
-Save(Writer &w, const MatrixDeformPayload &p)
-{
-    w.Version(1);
-    w.Bool(p.radial);
-}
-
-void
-Load(Reader &r, MatrixDeformPayload &p)
-{
-    r.Version(1);
-    p.radial = r.Bool();
-}
-
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "MatrixDeform";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.run = &Run;
+    d.runBatch = &Run;
     d.capabilities = rigExec::kRigExecOpBakeable |
                      rigExec::kRigExecOpFreezable | rigExec::kRigExecOpRanged |
                      rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;
-    d.payload =
-        rigExec::RigExecPayloadHandlingFor<MatrixDeformPayload, &Save, &Load>();
+    d.payloadFields = kFields;
+    d.payloadFieldCount = std::size(kFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &Values;
     return d;
 }();
 

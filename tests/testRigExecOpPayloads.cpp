@@ -743,19 +743,183 @@ TestSavedBytes()
     }
 }
 
+/// The deform payloads save the bytes they saved before their fields were
+/// declared, at defaults and filled.
+void
+TestDeformSavedBytes()
+{
+    {
+        MatrixDeformPayload p;
+        CheckSaved(MatrixDeform(), &p, "01000000 00");
+        p.radial = true;
+        CheckSaved(MatrixDeform(), &p, "01000000 01");
+    }
+    {
+        SkinPayload p;
+        CheckSaved(Skin(), &p, "01000000 00000000 01000000");
+        p.method = SkinMethod::DualQuaternion;
+        p.elementSize = 4;
+        CheckSaved(Skin(), &p, "01000000 01000000 04000000");
+    }
+    {
+        LayeredSkinPayload p;
+        CheckSaved(LayeredSkin(), &p, "01000000 01000000 00");
+        p.elementSize = 4;
+        p.dualQuaternion = true;
+        CheckSaved(LayeredSkin(), &p, "01000000 04000000 01");
+    }
+    {
+        DeltaMushPayload p;
+        CheckSaved(DeltaMush(), &p,
+                   "01000000 0a000000 000000000000e03f 01 0000000000000000 "
+                   "000000000000f03f 00000000 00000000 0000000000000000 "
+                   "0000000000000000 00");
+        p.iterations = 4;
+        p.step = 0.25;
+        p.pinBorders = false;
+        p.settings.smoothing = RigExecDeltaMushSmoothing::LengthWeighted;
+        p.settings.frameTransport = RigExecDeltaMushFrameTransport::Corner;
+        p.settings.smoothWeights = {0.0f, 1.0f, 0.5f};
+        p.settings.edges = {0, 1, 1, 2};
+        p.settings.onlySmooth = true;
+        CheckSaved(
+            DeltaMush(), &p,
+            "01000000 04000000 000000000000d03f 00 0000000000000000 "
+            "000000000000f03f 02000000 01000000 0300000000000000 00000000 "
+            "0000803f 0000003f 0400000000000000 00000000 01000000 01000000 "
+            "02000000 01");
+    }
+    {
+        LatticePayload p;
+        CheckSaved(
+            Lattice(), &p,
+            "01000000 02000000 02000000 02000000 00 02000000 02000000 "
+            "02000000 000000bf 000000bf 000000bf 0000803f 0000803f 0000803f "
+            "0000803f 0000000000000000");
+        p.divisions = {3, 4, 5};
+        p.settings.regularGrid = true;
+        p.settings.interpolation[1] = RigExecLatticeInterpolation::CatmullRom;
+        p.settings.origin = {1.0f, 2.0f, 3.0f};
+        p.settings.strength = 0.5f;
+        p.settings.mask = {1.0f, 0.0f};
+        CheckSaved(
+            Lattice(), &p,
+            "01000000 03000000 04000000 05000000 01 02000000 03000000 "
+            "02000000 0000803f 00000040 00004040 0000803f 0000803f 0000803f "
+            "0000003f 0200000000000000 0000803f 00000000");
+    }
+    {
+        WrinklePayload p;
+        CheckSaved(
+            Wrinkle(), &p,
+            "01000000 50000000 00000000 02000000 0000803f 0000803f 0000803f "
+            "cdcccc3d cdcc4c3e 01 01 00000000 0000803f 00000000 "
+            "0000000000000000");
+        p.settings.iterations = 12;
+        p.settings.topology = RigExecWrinkleTopology::SurfaceStruts;
+        p.settings.bendStiffness = 0.3f;
+        p.settings.tangentPlaneCollisions = false;
+        p.settings.pinPoints = {4, 9};
+        CheckSaved(
+            Wrinkle(), &p,
+            "01000000 0c000000 01000000 02000000 0000803f 0000803f 0000803f "
+            "9a99993e cdcc4c3e 01 00 00000000 0000803f 00000000 "
+            "0200000000000000 04000000 09000000");
+    }
+    {
+        SurfaceProjectPayload p;
+        CheckSaved(
+            SurfaceProject(), &p,
+            "01000000 00000000 00000000 0000000000000000 0000000000000000");
+        p.settings.mode = RigExecSurfaceSnapMode::OutsideSurface;
+        p.settings.offset = 0.01f;
+        p.settings.mask = {0.5f};
+        p.settings.triangles = {0, 1, 2};
+        CheckSaved(SurfaceProject(), &p,
+                   "01000000 03000000 0ad7233c 0100000000000000 0000003f "
+                   "0300000000000000 00000000 01000000 02000000");
+    }
+    {
+        WirePayload p;
+        CheckSaved(Wire(), &p,
+                   "01000000 04000000 0000000000000000 0000000000000000");
+        p.order = 3;
+        p.knots = {0.0, 0.0, 0.0, 1.0, 1.0, 1.0};
+        p.dropoffDistance = 2.5;
+        CheckSaved(Wire(), &p,
+                   "01000000 03000000 0600000000000000 0000000000000000 "
+                   "0000000000000000 0000000000000000 000000000000f03f "
+                   "000000000000f03f 000000000000f03f 0000000000000440");
+    }
+    {
+        NormalsPayload p;
+        CheckSaved(RecomputeNormals(), &p, "01000000 00 00");
+        p.perCorner = true;
+        p.leftHanded = true;
+        CheckSaved(RecomputeNormals(), &p, "01000000 01 01");
+    }
+    {
+        PatchPayload p;
+        CheckSaved(Patch(), &p,
+                   "01000000 00000000 00000000 00000000 00000000 00 00");
+        p.uVertexCount = 7;
+        p.vVertexCount = -2;
+        p.uOrder = 4;
+        p.vOrder = 16;
+        p.uPeriodic = true;
+        CheckSaved(Patch(), &p,
+                   "01000000 07000000 feffffff 04000000 10000000 01 00");
+    }
+    {
+        SurfaceBindingPayload p;
+        CheckSaved(SurfaceBinding(), &p, "01000000 000000");
+        p.limit = true;
+        p.framed = true;
+        CheckSaved(SurfaceBinding(), &p, "01000000 010001");
+    }
+    {
+        SurfaceProjectorPayload p;
+        CheckSaved(
+            SurfaceProjector(), &p,
+            "01000000 000000000000000000000000000000000000000000000000 "
+            "00000000000000000000000000000000000000000000f03f "
+            "0000000000000000000000000000f03f0000000000000000 "
+            "000000000000f03f000000000000000000000000000000000000000000000000 "
+            "0000000000000000000000000000f03f00000000000000000000000000000000 "
+            "00000000000000000000000000000000000000000000f03f0000000000000000 "
+            "000000000000000000000000000000000000000000000000000000000000f03f "
+            "000000");
+        p.rayOrigin = Vec3d(1.0, 2.0, 3.0);
+        p.shaderOffset[3][0] = 4.0;
+        p.reproject = true;
+        p.spaceNamed = true;
+        CheckSaved(
+            SurfaceProjector(), &p,
+            "01000000 000000000000f03f00000000000000400000000000000840 "
+            "00000000000000000000000000000000000000000000f03f "
+            "0000000000000000000000000000f03f0000000000000000 "
+            "000000000000f03f000000000000000000000000000000000000000000000000 "
+            "0000000000000000000000000000f03f00000000000000000000000000000000 "
+            "00000000000000000000000000000000000000000000f03f0000000000000000 "
+            "000000000000104000000000000000000000000000000000000000000000f03f "
+            "010001");
+    }
+}
+
 /// Values a writer cannot produce are refused.
 void
 TestCorruptValues()
 {
-    const RigExecOpPayloadHandling &skin = Op(Skin()).desc->payload;
+    // A declared enum past its last value is refused.
+    const RigExecOpDesc &skin = *Op(Skin()).desc;
     std::vector<uint8_t> bytes;
     SkinPayload p;
-    skin.encode(&p, bytes);
+    CHECK(RigExecEncodeOpPayload(skin, &p, bytes));
     std::vector<uint8_t> badEnum = bytes;
     badEnum[4] = 7;
     std::string error;
-    CHECK(!Decodes(skin, badEnum, &error));
-    CHECK(error.find("enum") != std::string::npos);
+    CHECK(!FieldsDecode(skin, badEnum, &error));
+    CHECK(error.find("method: a value is out of range") != std::string::npos);
 
     const RigExecOpPayloadHandling &clavicle = Op(AutoClavicle()).desc->payload;
     AutoClavicleOpPayload a;
@@ -799,6 +963,7 @@ main()
     TestCorruptValues();
     TestMathBytes();
     TestSavedBytes();
+    TestDeformSavedBytes();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

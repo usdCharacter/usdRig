@@ -1,10 +1,11 @@
 #include "rigExecOps/deform/layeredSkinOp.h"
 
 #include "rigExecMath/layeredSkinKernel.h"
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecOps/payloadIo.h"
 #include "rigExecRuntime/dualQuatMath.h"
 
+#include <cstdint>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -26,17 +27,18 @@ RIGEXEC_DEFINE_PORT_HANDLE(LayeredSkinOut)
 namespace {
 
 using namespace opIo;
+using namespace fieldIo;
 using rigExecStd::Mat4d;
 using rigExecStd::RigExecArray;
 using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 
+enum LayeredSkinField : uint32_t { kElementSize, kDualQuaternion };
+
 bool
-Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
-    std::string *error)
+SkinOne(const rigExec::RigExecOpIo &io, int32_t elementSize,
+        bool dualQuaternion, std::string *error)
 {
-    const LayeredSkinPayload &p =
-        *static_cast<const LayeredSkinPayload *>(payload);
     const Points &in = *In<Points>(io, LayeredSkinPoints());
     const auto &transforms =
         *In<RigExecArray<Mat4d>>(io, LayeredSkinTransforms());
@@ -46,16 +48,15 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
     const Points &base = *In<Points>(io, LayeredSkinBase());
     if (!rigExec::RigExecLayeredSkinAccepts(
             transforms.Data(), transforms.Size(), indices.Data(),
-            indices.Size(), weights.Data(), weights.Size(), p.elementSize,
+            indices.Size(), weights.Data(), weights.Size(), elementSize,
             mask.Data(), mask.Size(), in.Size()))
         return Fail(error, "LayeredSkin", "unusable skin layout or mask");
     const rigExec::RigExecSkinLayoutOf<Mat4d> layout{
-        transforms.Data(), transforms.Size(), indices.Data(),
-        weights.Data(),    indices.Size(),    size_t(p.elementSize),
-        in.Size()};
+        transforms.Data(), transforms.Size(),   indices.Data(), weights.Data(),
+        indices.Size(),    size_t(elementSize), in.Size()};
     std::vector<Vec3f> points = ToVector(in);
     if (!rigExec::RigExecApplyLayeredSkinKernel<Vec3f, Vec3d, Mat4d>(
-            layout, p.dualQuaternion, base.Data(), base.Size(), mask.Data(),
+            layout, dualQuaternion, base.Data(), base.Size(), mask.Data(),
             mask.Size(), *In<Mat4d>(io, LayeredSkinInputTransform()),
             points.data(), points.size()) ||
         !AllFinite(points))
@@ -66,6 +67,32 @@ Run(const void *payload, void *, const rigExec::RigExecOpIo &io,
                        In<Envelope>(io, LayeredSkinEnvelope()), "LayeredSkin",
                        error);
 }
+
+bool
+Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    const int32_t *elementSizes =
+        rigExec::RigExecPayloadColumnOf<int32_t>(batch, kElementSize);
+    const uint8_t *dualQuaternion =
+        rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kDualQuaternion);
+    return EachInstance(batch, failed, [&](size_t k) {
+        return SkinOne(rigExec::RigExecBatchInstance(batch, k), elementSizes[k],
+                       dualQuaternion[k] != 0, error);
+    });
+}
+
+void
+Values(const void *payload, rigExec::RigExecFieldValues &out)
+{
+    const auto &p = *static_cast<const LayeredSkinPayload *>(payload);
+    out.Set(kElementSize, p.elementSize);
+    SetFlag(out, kDualQuaternion, p.dualQuaternion);
+}
+
+const rigExec::RigExecFieldDesc kFields[] = {
+    Value("elementSize", rigExecStd::IntType()),
+    Flag("dualQuaternion"),
+};
 
 } // namespace
 
@@ -94,37 +121,20 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&LayeredSkinOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out"},
 };
 
-using payloadIo::Reader;
-using payloadIo::Writer;
-
-void
-Save(Writer &w, const LayeredSkinPayload &p)
-{
-    w.Version(1);
-    w.I32(p.elementSize);
-    w.Bool(p.dualQuaternion);
-}
-
-void
-Load(Reader &r, LayeredSkinPayload &p)
-{
-    r.Version(1);
-    p.elementSize = r.I32();
-    p.dualQuaternion = r.Bool();
-}
-
 const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "LayeredSkin";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.run = &Run;
+    d.runBatch = &Run;
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;
-    d.payload =
-        rigExec::RigExecPayloadHandlingFor<LayeredSkinPayload, &Save, &Load>();
+    d.payloadFields = kFields;
+    d.payloadFieldCount = std::size(kFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &Values;
     return d;
 }();
 
