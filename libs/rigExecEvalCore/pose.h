@@ -811,8 +811,9 @@ ExtractRotationQuat(const typename Math::Mat4 &m)
 
 // A matrix as a point frame: the identity landmarks through the
 // affine transform; a non-finite component marks the frame
-// degenerate. Returns the points and flags separately so bodies can
-// publish through either frame type.
+// degenerate, keeps that landmark and leaves the later ones at
+// identity (RigExecMatrixLandmarksT). Returns the points and flags
+// separately so bodies can publish through either frame type.
 template <class Math>
 void
 FrameFromMatrix(const typename Math::Mat4 &m,
@@ -820,6 +821,7 @@ FrameFromMatrix(const typename Math::Mat4 &m,
 {
     const std::array<typename Math::Vec3, 4> identity =
         IdentityLandmarks<Math>();
+    *points = identity;
     for (size_t i = 0; i < 4; ++i) {
         (*points)[i] = TransformAffine3<Math>(m, identity[i]);
         for (int a = 0; a < 3; ++a) {
