@@ -36,7 +36,7 @@ struct RigExecSolverOpNode {
         preserveVolume, midFollow, roll;
     RigExecInputId startPose, externalRests, externalPoses, channels, selectors,
         groupSelectors;
-    RigExecOutputId out, result;
+    RigExecOutputId out;
     /// A frame blend: one node per element.
     struct Blend {
         RigExecInputId a, b, rest, weight, outRest;
@@ -81,9 +81,10 @@ enum class RigExecSolverOpAnswer {
     /// Run the op nodes.
     Run,
     /// \p output holds the answer, reached with no arithmetic: a frame
-    /// blend's pass-through of one input or its empty answer.
+    /// blend with one input fed passes it.
     Done,
-    /// Native's own refusal: \p output is empty and \p error says why.
+    /// Inputs the nodes cannot be built or written from: \p output is
+    /// empty and \p error says why.
     Failed,
 };
 
@@ -114,15 +115,13 @@ bool RigExecWriteSolverOpInputs(const RigExecSolverRecord &record,
                                 RigExecEvaluator *evaluator,
                                 std::string *error = nullptr);
 
-/// Reads the evaluated nodes into \p output, as RigExecRunSolver gives it,
-/// with its validity in \p valid and, where invalid, its reason in
-/// \p error. False where the nodes have no output.
+/// Reads the evaluated nodes into \p output, as RigExecRunSolver gives it.
+/// False where the nodes have no valid output.
 bool RigExecReadSolverOpOutput(const RigExecSolverRecord &record,
                                const RigExecSolverInputs &input,
                                const RigExecSolverOpNode &node,
                                const RigExecEvaluator &evaluator,
-                               RigExecPointFrameArray *output, bool *valid,
-                               std::string *error = nullptr);
+                               RigExecPointFrameArray *output);
 
 /// A constraint's op node and its host-written ports.
 struct RigExecConstraintOpNode {

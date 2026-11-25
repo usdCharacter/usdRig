@@ -75,6 +75,16 @@ RunBlendFrames(const RigExecOpBatch &batch, size_t *failed, std::string *error)
 }
 
 bool
+CheckDistributeTwist(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (Fed(check, DistributeTwistJointRests()) !=
+        Fed(check, DistributeTwistJointRestLive()))
+        return Fail(error, "DistributeTwist",
+                    "needs joint rests and their live flags together");
+    return true;
+}
+
+bool
 RunDistributeTwist(const void *, void *, const RigExecOpIo &io,
                    std::string *error)
 {
@@ -175,6 +185,7 @@ const rigExec::RigExecOpDesc kTwist = [] {
     d.ports = kTwistPorts;
     d.portCount = std::size(kTwistPorts);
     d.run = &RunDistributeTwist;
+    d.validate = &CheckDistributeTwist;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     return d;
 }();

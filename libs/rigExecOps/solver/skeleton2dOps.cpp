@@ -22,7 +22,6 @@ RIGEXEC_DEFINE_PORT_HANDLE(Skeleton2dChannels)
 RIGEXEC_DEFINE_PORT_HANDLE(Skeleton2dSelectors)
 RIGEXEC_DEFINE_PORT_HANDLE(Skeleton2dGroupSelectors)
 RIGEXEC_DEFINE_PORT_HANDLE(Skeleton2dOut)
-RIGEXEC_DEFINE_PORT_HANDLE(Skeleton2dResult)
 
 namespace {
 
@@ -33,6 +32,8 @@ using rigExecRig::PointLandmarks;
 using rigExecStd::RigExecArray;
 using Landmarks = RigExecArray<PointLandmarks>;
 using namespace opIo;
+
+constexpr char kMalformed[] = "2D skeleton solve order is malformed";
 
 /// The solve's scratch and the vectors the kernel reads, kept per node.
 struct Skeleton2dState {
@@ -123,15 +124,51 @@ RunSkeleton2d(const void *payload, void *state, const RigExecOpIo &io,
                 c->targetIndex = v[12];
             },
             rigExecRig::kPointFrameValid, &s.scratch, &s.frames);
-    PointFrameArray &out = Out<PointFrameArray>(io, Skeleton2dOut());
-    if (result == rigExec::RigExecSkeleton2dResult::Malformed) {
-        out.frames.Resize(0);
-        out.rests.Resize(0);
-    } else {
-        out.frames.Assign(s.frames.data(), s.frames.size());
-        out.rests = rests;
+    switch (result) {
+    case rigExec::RigExecSkeleton2dResult::Solved:
+        break;
+    case rigExec::RigExecSkeleton2dResult::Malformed:
+        return Fail(error, "Skeleton2d", kMalformed);
+    case rigExec::RigExecSkeleton2dResult::NotPlanar:
+        return Fail(error, "Skeleton2d",
+                    "a 2D bone's rest (its rest:space, or the frame a pose "
+                    "step below the skeleton wrote) or parent space is not a "
+                    "rotation about +Z in the skeleton's plane");
+    case rigExec::RigExecSkeleton2dResult::NotFinite:
+        return Fail(error, "Skeleton2d",
+                    "2D skeleton solve failed (a non-finite channel)");
     }
-    Out<uint32_t>(io, Skeleton2dResult()) = uint32_t(result);
+    PointFrameArray &out = Out<PointFrameArray>(io, Skeleton2dOut());
+    out.frames.Assign(s.frames.data(), s.frames.size());
+    out.rests = rests;
+    return true;
+}
+
+bool
+CheckSkeleton2d(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    const auto &p = *static_cast<const Skeleton2dPayload *>(
+        rigExec::RigExecBatchPayload(check.batch, check.k));
+    const size_t n = p.order.size();
+    if (p.setup.size() != n)
+        return Fail(error, "Skeleton2d", kMalformed);
+    for (const uint32_t joint : p.order)
+        if (size_t(joint) >= n)
+            return Fail(error, "Skeleton2d", kMalformed);
+    if (Fed(check, Skeleton2dStartRest()) != Fed(check, Skeleton2dStartPose()))
+        return Fail(error, "Skeleton2d",
+                    "needs the start rest and pose together");
+    if (Fed(check, Skeleton2dExternalRests()) !=
+            Fed(check, Skeleton2dExternalPoses()) ||
+        !SameCount(CheckElements(check, Skeleton2dExternalRests()),
+                   CheckElements(check, Skeleton2dExternalPoses())))
+        return Fail(error, "Skeleton2d",
+                    "needs one posed frame per outside parent space");
+    if (!SameCount(CheckElements(check, Skeleton2dRests()), n))
+        return Fail(error, "Skeleton2d", kMalformed);
+    if (!SameCount(CheckElements(check, Skeleton2dChannels()),
+                   n * rigExec::kRigExecBone2dChannelCount))
+        return Fail(error, "Skeleton2d", "needs every channel of every joint");
     return true;
 }
 
@@ -163,8 +200,6 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "groupSelectors"},
     {&Skeleton2dOut(), &rigExecRig::PointFrameArrayType(), kRigExecPortOutput,
      "out", rigExec::RigExecOutputBound::Input, &Skeleton2dRests()},
-    {&Skeleton2dResult(), &rigExecStd::UIntType(), kRigExecPortOutput,
-     "result"},
 };
 
 using payloadIo::Reader;
@@ -275,6 +310,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.run = &RunSkeleton2d;
+    d.validate = &CheckSkeleton2d;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payload =
         rigExec::RigExecPayloadHandlingFor<Skeleton2dPayload, &Save, &Load>();

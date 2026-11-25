@@ -109,10 +109,14 @@ SameArray(const RigExecPointFrameArray &a, const RigExecPointFrameArray &b)
 /// Per kind, the comparisons whose native answer moved a frame.
 std::map<std::string, int> solvedFrames;
 
-/// Native against the op, one frame, on \p runner.
+/// Native against the op, one frame, on \p runner. With \p opError the
+/// native solve refuses the frame (fails, or publishes the rests or an empty
+/// aggregate); the op's compile or evaluation fails instead with an error
+/// holding \p opError and publishes nothing.
 void
 CompareSolver(const std::string &label, const RigExecSolverRecord &s,
-              const RigExecSolverInputs &input, RigExecPoseOpRunner &runner)
+              const RigExecSolverInputs &input, RigExecPoseOpRunner &runner,
+              const char *opError = nullptr)
 {
     CHECK(RigExecSolverOpSupported(s));
     RigExecSolverWorkspace workspace;
@@ -121,8 +125,9 @@ CompareSolver(const std::string &label, const RigExecSolverRecord &s,
     const bool native =
         RigExecRunSolver(s, input, &workspace, &want, &wantError);
     const bool op = RigExecRunSolverOp(s, input, runner, &got, &gotError);
-    const bool same = native == op && (native || wantError == gotError) &&
-                      SameArray(want, got);
+    const bool same = opError ? !op && got.frames.empty() &&
+                                    gotError.find(opError) != std::string::npos
+                              : native && op && SameArray(want, got);
     if (!same)
         std::printf("%s: native %d (%s, %zu frames), op %d (%s, %zu frames)\n",
                     label.c_str(), int(native), wantError.c_str(),
@@ -206,12 +211,13 @@ TestFkChain()
                                           std::to_string(live),
                                       s, FkInputs(t), runner);
                 }
-    // A control count the rests do not match: native's own refusal.
+    // A control count the rests do not match: refused before any node is
+    // built.
     RigExecPoseOpRunner runner;
     RigExecSolverInputs shortInputs = FkInputs(1.0);
     shortInputs.controls.pop_back();
     CompareSolver("fk cardinality", FkRecord(true, false, false, false),
-                  shortInputs, runner);
+                  shortInputs, runner, "FK control/rest cardinality mismatch");
     // Joint groups stay native.
     RigExecSolverRecord grouped = FkRecord(false, false, false, false);
     grouped.jointGroups.resize(1);
@@ -327,7 +333,9 @@ TestBlendFrames()
             mismatch.blendA = &a;
             mismatch.blendB = &shorter;
             mismatch.blendWeight = 0.5;
-            CompareSolver("blend mismatch", s, mismatch, runner);
+            CompareSolver("blend mismatch", s, mismatch, runner,
+                          "frame blend needs one frame and rest per joint on "
+                          "both inputs");
             mismatch.blendA = &longer;
             mismatch.blendB = &longerB;
             CompareSolver("blend rebuilt", s, mismatch, runner);
@@ -354,7 +362,10 @@ TestTwist()
             in.root = Frame(GfVec3d(0.2, 0, 0), GfVec3d(1, 0, 0), 15);
             in.end = Frame(GfVec3d(4, 0.3, 0), GfVec3d(1, 0, 0), 200);
             in.twistTurns = turns;
-            CompareSolver("twist", s, in, runner);
+            CompareSolver("twist", s, in, runner,
+                          std::isfinite(turns)
+                              ? nullptr
+                              : "DistributeTwist: needs a finite twist");
         }
     }
 }
@@ -378,16 +389,19 @@ TestRibbon()
         }
         RigExecPoseOpRunner runner;
         // Five samples, a moved count (rebuilt), one sample and no curve:
-        // the last two publish nothing.
+        // the last two fail compile and the evaluation that binds them.
+        constexpr char kTooFew[] = "SampleRibbonFrames: needs two samples and "
+                                   "two distinct points per curve";
         for (const int count : {5, 3, 1}) {
             RigExecSolverInputs in;
             in.ribbonPoints = posed;
             in.ribbonSampleCount = count;
-            CompareSolver("ribbon " + std::to_string(count), s, in, runner);
+            CompareSolver("ribbon " + std::to_string(count), s, in, runner,
+                          count < 2 ? kTooFew : nullptr);
         }
         RigExecSolverInputs none;
         none.ribbonSampleCount = 5;
-        CompareSolver("ribbon no curve", s, none, runner);
+        CompareSolver("ribbon no curve", s, none, runner, kTooFew);
     }
 }
 
@@ -455,8 +469,9 @@ TestSplineIk()
                 }
 }
 
-/// A one-bone 2D skeleton: solved, with a non-finite channel, out of the
-/// plane, with a malformed order and with a channel missing.
+/// A one-bone 2D skeleton: solved, with a non-finite channel and out of the
+/// plane (errors of the evaluation), with a malformed order (a compile
+/// error) and with a channel missing (refused before any node is built).
 void
 TestSkeleton2d()
 {
@@ -481,16 +496,24 @@ TestSkeleton2d()
     CompareSolver("skeleton2d start", s, in, runner);
     RigExecSolverInputs nan = in;
     nan.bone2dChannels[1].rz = std::numeric_limits<double>::quiet_NaN();
-    CompareSolver("skeleton2d nan", s, nan, runner);
+    CompareSolver("skeleton2d nan", s, nan, runner,
+                  "Skeleton2d: 2D skeleton solve failed (a non-finite "
+                  "channel)");
     RigExecSolverRecord tilted = s;
     tilted.jointRests[1] = Frame(GfVec3d(2, 0, 0), GfVec3d(1, 0, 0), 30).points;
-    CompareSolver("skeleton2d tilted", tilted, in, runner);
+    CompareSolver("skeleton2d tilted", tilted, in, runner,
+                  "Skeleton2d: a 2D bone's rest (its rest:space, or the frame "
+                  "a pose step below the skeleton wrote) or parent space is "
+                  "not a rotation about +Z in the skeleton's plane");
     RigExecSolverRecord malformed = s;
     malformed.bone2dOrder = {0, 7};
-    CompareSolver("skeleton2d malformed", malformed, in, runner);
+    CompareSolver("skeleton2d malformed", malformed, in, runner,
+                  "is invalid: Skeleton2d: 2D skeleton solve order is "
+                  "malformed");
     RigExecSolverInputs missing = in;
     missing.bone2dChannels.pop_back();
-    CompareSolver("skeleton2d counts", s, missing, runner);
+    CompareSolver("skeleton2d counts", s, missing, runner,
+                  kRigExecSkeleton2dCountsDiffer);
 }
 
 /// A node built from one record refuses a write whose baked settings moved,

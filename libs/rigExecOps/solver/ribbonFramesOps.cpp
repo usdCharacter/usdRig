@@ -62,6 +62,24 @@ SampleRibbonFramesOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 }
 
 bool
+CheckSampleRibbonFrames(const rigExec::RigExecOpCheck &check,
+                        std::string *error)
+{
+    const size_t posed = CheckElements(check, SampleRibbonFramesPosed());
+    const size_t rest = CheckElements(check, SampleRibbonFramesRest());
+    if (ValueAt<int32_t>(check.batch, kSampleCount, check.k) < 2 ||
+        (posed < rigExec::kRigExecPortUnfed && posed < 2) ||
+        (rest < rigExec::kRigExecPortUnfed && rest < 2))
+        return Fail(error, "SampleRibbonFrames",
+                    "needs two samples and two distinct points per curve");
+    if (Fed(check, SampleRibbonFramesJointRests()) !=
+        Fed(check, SampleRibbonFramesJointRestLive()))
+        return Fail(error, "SampleRibbonFrames",
+                    "needs joint rests and their live flags together");
+    return true;
+}
+
+bool
 RunSampleRibbonFrames(const RigExecOpBatch &batch, size_t *failed,
                       std::string *error)
 {
@@ -111,6 +129,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.runBatch = &RunSampleRibbonFrames;
+    d.validate = &CheckSampleRibbonFrames;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kFields;
     d.payloadFieldCount = std::size(kFields);

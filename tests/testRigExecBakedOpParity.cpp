@@ -44,8 +44,14 @@ namespace {
 
 using B = RigExecBakedProgramImpl;
 
+/// compared: applied results compared bit for bit (refusals: of them, ones
+/// both sides answered with a pass-through). compileErrors: the baked step
+/// refused and the op failed compile, the evaluation that binds its inputs
+/// or the bridge that builds it. runErrors: the baked step refused and the
+/// op's evaluation stopped with an error while it ran.
 struct Tally {
-    size_t compared = 0, refusals = 0, mismatched = 0;
+    size_t compared = 0, refusals = 0, compileErrors = 0, runErrors = 0,
+           mismatched = 0;
 };
 
 struct Finding {
@@ -128,6 +134,24 @@ Compare(const std::string &family, const std::string &kind,
     Report(family + "/" + kind, object,
            FirstDifference(a, b) +
                (note.empty() ? std::string() : " (" + note + ")"));
+}
+
+/// An op that failed: counted where the baked step refused, a finding where
+/// it applied.
+void
+OpFailed(const std::string &family, const std::string &kind,
+         const std::string &object, bool bakedRefused, const std::string &error)
+{
+    Tally &tally = g_tally[family + "/" + kind];
+    if (!bakedRefused) {
+        Report(family + "/" + kind, object,
+               "the op failed where the baked step applied: " + error);
+        return;
+    }
+    if (error.find(") failed: ") != std::string::npos)
+        ++tally.runErrors;
+    else
+        ++tally.compileErrors;
 }
 
 void
@@ -228,17 +252,21 @@ ProbeSolve(const B &b)
         const bool ran =
             RigExecRunSolverOp(s, s.kernelInputs, runner, &out, &error);
         const auto &baked = b.aggregates[size_t(step.object)];
-        Compare("Solve", kind, s.pathText, VtValue(baked), VtValue(out),
-                baked.frames.empty());
         const std::string prefix = "diag " + s.pathText + ": ";
         std::string bakedError;
         for (const auto &line : step.diagnostics)
             if (line.compare(0, prefix.size(), prefix) == 0)
                 bakedError = line.substr(prefix.size());
-        if (bakedError != (ran ? std::string() : error))
+        if (!ran) {
+            OpFailed("Solve", kind, s.pathText,
+                     baked.frames.empty() || !bakedError.empty(), error);
+            continue;
+        }
+        Compare("Solve", kind, s.pathText, VtValue(baked), VtValue(out),
+                baked.frames.empty());
+        if (!bakedError.empty())
             Report("Solve/" + kind, s.pathText,
-                   "diagnostic baked \"" + bakedError + "\" op \"" +
-                       (ran ? std::string() : error) + "\"");
+                   "diagnostic baked \"" + bakedError + "\" where the op ran");
     }
 }
 
@@ -1228,11 +1256,12 @@ main(int argc, char **argv)
     if (painted)
         for (const Paint paint : {Paint::None, Paint::Dense, Paint::Sparse})
             ProbeStage(WireRig(), "wire rig", paint);
-    std::printf("%-44s %9s %9s %9s\n", "family/kind", "compared", "refusals",
-                "mismatch");
+    std::printf("%-44s %9s %9s %9s %9s %9s\n", "family/kind", "compared",
+                "refusals", "compile", "run", "mismatch");
     for (const auto &[key, tally] : g_tally)
-        std::printf("%-44s %9zu %9zu %9zu\n", key.c_str(), tally.compared,
-                    tally.refusals, tally.mismatched);
+        std::printf("%-44s %9zu %9zu %9zu %9zu %9zu\n", key.c_str(),
+                    tally.compared, tally.refusals, tally.compileErrors,
+                    tally.runErrors, tally.mismatched);
     std::printf("not probed:\n");
     for (const auto &[reason, count] : g_unprobed)
         std::printf("  %5zu  %s\n", count, reason.c_str());

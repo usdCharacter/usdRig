@@ -74,19 +74,12 @@ RigExecRunSolverOp(const RigExecSolverRecord &record,
         error);
     if (!ready)
         return false;
-    std::string why;
-    if (!runner.evaluator->Evaluate(&why)) {
-        // A curve or twist that does not solve: native's empty aggregate.
-        if (record.kind == RigExecSolverKind::Ribbon ||
-            record.kind == RigExecSolverKind::TwistDistribution)
-            return true;
-        return Fail(error, why);
-    }
-    bool valid = true;
+    if (!runner.evaluator->Evaluate(error))
+        return false;
     if (!RigExecReadSolverOpOutput(record, input, runner.solver,
-                                   *runner.evaluator, output, &valid, error))
+                                   *runner.evaluator, output))
         return Fail(error, "solver op has no output");
-    return valid;
+    return true;
 }
 
 bool

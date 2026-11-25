@@ -38,8 +38,8 @@ struct RigExecPoseOpRunner {
 };
 
 /// RigExecRunSolver for a record RigExecSolverOpSupported accepts: the same
-/// output, validity and error. A ribbon or twist the op cannot solve gives
-/// native's empty aggregate.
+/// output where the op runs. False with the compile or evaluation error
+/// where it does not.
 bool RigExecRunSolverOp(const RigExecSolverRecord &record,
                         const RigExecSolverInputs &input,
                         RigExecPoseOpRunner &runner,

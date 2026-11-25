@@ -452,8 +452,13 @@ RigExecAnswerSolverOp(const RigExecSolverRecord &s,
         return RigExecSolverOpAnswer::Done;
     }
     const size_t n = a->GetSize();
-    if (n == 0 || n != b->GetSize() || a->rests.size() != n)
+    if (n == 0)
         return RigExecSolverOpAnswer::Done;
+    if (n != b->GetSize() || a->rests.size() != n) {
+        Fail(error, "frame blend needs one frame and rest per joint on both "
+                    "inputs");
+        return RigExecSolverOpAnswer::Failed;
+    }
     return RigExecSolverOpAnswer::Run;
 }
 
@@ -605,7 +610,6 @@ RigExecAddSolverOp(const RigExecSolverRecord &s,
         r.selectors = b.BindInput(id, Skeleton2dSelectors());
         r.groupSelectors = b.BindInput(id, Skeleton2dGroupSelectors());
         r.out = b.BindOutput(id, Skeleton2dOut());
-        r.result = b.BindOutput(id, Skeleton2dResult());
         break;
     }
     }
@@ -818,12 +822,10 @@ RigExecReadSolverOpOutput(const RigExecSolverRecord &s,
                           const RigExecSolverInputs &input,
                           const RigExecSolverOpNode &node,
                           const RigExecEvaluator &e,
-                          RigExecPointFrameArray *output, bool *valid,
-                          std::string *error)
+                          RigExecPointFrameArray *output)
 {
     output->frames.clear();
     output->rests.clear();
-    *valid = true;
     if (s.kind == RigExecSolverKind::BlendPointFrames) {
         const RigExecPointFrameArray &a = *input.blendA;
         for (size_t k = 0; k < node.blend.size(); ++k) {
@@ -846,28 +848,6 @@ RigExecReadSolverOpOutput(const RigExecSolverRecord &s,
     // Native publishes the unspaced joint rests.
     if (s.kind == RigExecSolverKind::SplineIk)
         output->rests = s.splineJointRests;
-    if (s.kind == RigExecSolverKind::Skeleton2d) {
-        const auto *result =
-            static_cast<const uint32_t *>(e.GetOutput(node.result));
-        if (!result)
-            return false;
-        switch (RigExecSkeleton2dResult(*result)) {
-        case RigExecSkeleton2dResult::Solved:
-            break;
-        case RigExecSkeleton2dResult::Malformed:
-            *valid = false;
-            Fail(error, kRigExecSkeleton2dMalformed);
-            break;
-        case RigExecSkeleton2dResult::NotPlanar:
-            *valid = false;
-            Fail(error, kRigExecSkeleton2dNotPlanar);
-            break;
-        case RigExecSkeleton2dResult::NotFinite:
-            *valid = false;
-            Fail(error, kRigExecSkeleton2dNotFinite);
-            break;
-        }
-    }
     return true;
 }
 

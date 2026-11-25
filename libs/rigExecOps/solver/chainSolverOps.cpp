@@ -80,6 +80,33 @@ struct IkParams {
 };
 
 bool
+CheckFkChain(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    const auto parents = ListAt<int32_t>(check.batch, kParents, check.k);
+    const size_t n = parents.Size();
+    for (size_t i = 0; i < n; ++i)
+        if (parents[i] >= int(i) || parents[i] < -1)
+            return Fail(error, "FkChain", "parents must come first");
+    if (const PointFrameArray *controls =
+            CheckValue<PointFrameArray>(check, FkChainControls()))
+        if (controls->frames.Size() != n || controls->rests.Size() != n)
+            return Fail(error, "FkChain",
+                        "needs one rest and one parent index per control");
+    if (Fed(check, FkChainOutRests()) &&
+        !SameCount(CheckElements(check, FkChainOutRests()), n))
+        return Fail(error, "FkChain", "needs one output rest per control");
+    return true;
+}
+
+bool
+CheckTwoBoneIk(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (!SameCount(CheckElements(check, TwoBoneIkRests()), 3))
+        return Fail(error, "TwoBoneIk", "needs three joint rests");
+    return true;
+}
+
+bool
 FkChainOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
@@ -260,6 +287,7 @@ const rigExec::RigExecOpDesc kFk = [] {
     d.ports = kFkPorts;
     d.portCount = std::size(kFkPorts);
     d.runBatch = &RunFkChain;
+    d.validate = &CheckFkChain;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kFkFields;
     d.payloadFieldCount = std::size(kFkFields);
@@ -275,6 +303,7 @@ const rigExec::RigExecOpDesc kIk = [] {
     d.ports = kIkPorts;
     d.portCount = std::size(kIkPorts);
     d.runBatch = &RunTwoBoneIk;
+    d.validate = &CheckTwoBoneIk;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kIkFields;
     d.payloadFieldCount = std::size(kIkFields);

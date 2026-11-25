@@ -143,6 +143,19 @@ SplineIkOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 }
 
 bool
+CheckSplineIk(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    const size_t joints = CheckElements(check, SplineIkRestJoints());
+    if (joints == 0)
+        return Fail(error, "SplineIk", "needs at least one joint");
+    const size_t volume = CheckElements(check, SplineIkVolumeWeights());
+    if (Fed(check, SplineIkVolumeWeights()) && volume != 0 &&
+        !SameCount(volume, joints))
+        return Fail(error, "SplineIk", "needs one volume weight per joint");
+    return true;
+}
+
+bool
 RunSplineIk(const RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
     return EachInstance(batch, failed,
@@ -204,6 +217,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.runBatch = &RunSplineIk;
+    d.validate = &CheckSplineIk;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kFields;
     d.payloadFieldCount = std::size(kFields);
