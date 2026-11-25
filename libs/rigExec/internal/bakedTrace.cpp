@@ -64,7 +64,8 @@ RigExecBakedStepDomainName(const RigExecBakedProgramImpl &B,
 {
     return RigExecBakedPropertyPartOf(B, step, nullptr, nullptr)
                ? "property"
-               : RigExecBakedStepDomainName(step.kind);
+               : RigExecBakedStepDomainName(
+                     RigExecBakedIdentityOf(B, step).kind);
 }
 
 std::vector<RigExecOpTraceEntry>

@@ -1015,7 +1015,7 @@ bool RrWeightSizeScratch(RrProgram *program, std::string *error);
 /// Runs after the reads are bound.
 bool RrPropertySizeScratch(RrProgram *program, std::string *error);
 
-/// Resolves property lookup \p lookup (OpLookup source kPropertyLookup)
+/// Resolves property lookup \p lookup (OpLookupSource::Property)
 /// into \p out, a value of its op input's \p type. False with the error
 /// that stops the evaluation: a missing or non-finite base, a failed
 /// weight field.

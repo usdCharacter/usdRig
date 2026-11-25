@@ -528,47 +528,63 @@ static_assert(uint8_t(fb::ArraySource::Pool) == 0 &&
                   fb::ArraySource::MAX == fb::ArraySource::SkinWeights,
               "the array sources are frozen");
 
-/// The property chain and part (1 to its revision count) op node \p node
-/// runs: the chain version below its base its value is stored in.
-bool
-_PropertyNodePart(const RigExecWireFile &file, int64_t node, size_t *chain,
-                  size_t *part)
-{
-    if (!file.opGraph || node < 0)
-        return false;
-    for (const auto &output : file.opGraph->hostOutputs) {
-        if (!output || output->node != uint64_t(node) || output->target != 0)
-            continue;
-        for (size_t c = 0; c < file.propertyChains.size(); ++c) {
-            const uint32_t base = file.propertyChains[c].versionBase;
-            if (output->object > base &&
-                output->object <=
-                    base + file.propertyChains[c].revisions.size()) {
-                if (chain)
-                    *chain = c;
-                if (part)
-                    *part = output->object - base;
-                return true;
-            }
+/// Per op node: the property chain and part (1 to its revision count) it
+/// runs, found from the chain version above the base its value is stored
+/// in, or SIZE_MAX for a node that runs no property revision.
+struct _PropertyNodeParts {
+    std::vector<size_t> chain, part;
+
+    explicit _PropertyNodeParts(const RigExecWireFile &file)
+    {
+        const size_t nodes = file.opGraph ? file.opGraph->nodes.size() : 0;
+        chain.assign(nodes, SIZE_MAX);
+        part.assign(nodes, SIZE_MAX);
+        if (!nodes)
+            return;
+        std::vector<std::pair<uint64_t, size_t>> firstVersion;
+        for (size_t c = 0; c < file.propertyChains.size(); ++c)
+            firstVersion.emplace_back(
+                uint64_t(file.propertyChains[c].versionBase) + 1, c);
+        std::sort(firstVersion.begin(), firstVersion.end());
+        for (const auto &output : file.opGraph->hostOutputs) {
+            if (!output || output->node >= nodes || output->target != 0)
+                continue;
+            auto at = std::upper_bound(
+                firstVersion.begin(), firstVersion.end(),
+                std::make_pair(uint64_t(output->object), SIZE_MAX));
+            if (at == firstVersion.begin())
+                continue;
+            --at;
+            const size_t c = at->second;
+            const uint64_t k = uint64_t(output->object) - at->first + 1;
+            if (k > file.propertyChains[c].revisions.size() ||
+                chain[output->node] != SIZE_MAX)
+                continue;
+            chain[output->node] = c;
+            part[output->node] = size_t(k);
         }
     }
-    return false;
-}
+
+    bool Of(int64_t node, size_t *c, size_t *k) const
+    {
+        if (node < 0 || size_t(node) >= chain.size() ||
+            chain[size_t(node)] == SIZE_MAX)
+            return false;
+        if (c)
+            *c = chain[size_t(node)];
+        if (k)
+            *k = part[size_t(node)];
+        return true;
+    }
+};
 
 class _Validator {
 public:
     explicit _Validator(const RigExecWireFile &file) : _f(file)
     {
-        const size_t nodes = file.opGraph ? file.opGraph->nodes.size() : 0;
-        _propertyChainOf.assign(nodes, kNoProperty);
-        _propertyPartOf.assign(nodes, kNoProperty);
-        for (size_t n = 0; n < nodes; ++n) {
-            size_t chain = 0, part = 0;
-            if (_PropertyNodePart(file, int64_t(n), &chain, &part)) {
-                _propertyChainOf[n] = chain;
-                _propertyPartOf[n] = part;
-            }
-        }
+        _PropertyNodeParts parts(file);
+        _propertyChainOf = std::move(parts.chain);
+        _propertyPartOf = std::move(parts.part);
     }
 
     bool Run(std::string *error)
@@ -9413,7 +9429,7 @@ RigExecFormatPropertyPart(const RigExecWireFile &file,
                           size_t *part)
 {
     return step.kind == fb::StepKind::OpNode &&
-           _PropertyNodePart(file, step.object, chain, part);
+           _PropertyNodeParts(file).Of(step.object, chain, part);
 }
 
 bool
@@ -9700,7 +9716,7 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
         if (!file.opGraph || !_Has(file.opGraph->nodes, object))
             return false;
         size_t chain = 0, part = 0;
-        *out = _PropertyNodePart(file, object, &chain, &part)
+        *out = _PropertyNodeParts(file).Of(object, &chain, &part)
                    ? text(file.propertyChains[chain].revisions[part - 1].mover)
                    : "op node " + std::to_string(object);
         return true;

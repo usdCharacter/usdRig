@@ -827,8 +827,10 @@ RigExecBakedProgram::_BuildStepGraph(_BuildAttempt &build)
     // Keys describe authored owners and domain-local revisions, independently
     // of the descriptor emission or eventual execution order.
     RigExecPathText labelText;
-    for (auto &step : B.steps) {
+    for (auto &bakedStep : B.steps) {
         using K = RigExecBakedStepKind;
+        const RigExecBakedStepIdentity step =
+            RigExecBakedIdentityOf(B, bakedStep);
         SdfPath owner, target;
         int revision = -1, ordinal = -1;
         std::string expression;
@@ -986,7 +988,7 @@ RigExecBakedProgram::_BuildStepGraph(_BuildAttempt &build)
             break;
         case K::OpNode: {
             size_t chain = 0, part = 0;
-            if (RigExecBakedPropertyPartOf(B, step, &chain, &part)) {
+            if (RigExecBakedPropertyPartOf(B, bakedStep, &chain, &part)) {
                 target = B.propertyChains[chain].target;
                 revision = int(part);
                 owner = B.propertyChains[chain].revisions[part - 1].mover;
@@ -1005,13 +1007,13 @@ RigExecBakedProgram::_BuildStepGraph(_BuildAttempt &build)
         const auto position = E._nativePoseOrdinals.find(owner);
         if (position != E._nativePoseOrdinals.end())
             ordinal = position->second;
-        step.label = expression.empty() ? labelText(owner) : expression;
-        step.descriptorKey = step.label +
-                             "/category:" + std::to_string(int(step.kind)) +
-                             "/stack:" + std::to_string(ordinal) +
-                             "/target:" + labelText(target) +
-                             "/revision:" + std::to_string(revision) +
-                             "/subindex:" + std::to_string(step.part);
+        bakedStep.label = expression.empty() ? labelText(owner) : expression;
+        bakedStep.descriptorKey =
+            bakedStep.label + "/category:" + std::to_string(int(step.kind)) +
+            "/stack:" + std::to_string(ordinal) +
+            "/target:" + labelText(target) +
+            "/revision:" + std::to_string(revision) +
+            "/subindex:" + std::to_string(step.part);
     }
     if (!ctx.ok)
         return nullptr;

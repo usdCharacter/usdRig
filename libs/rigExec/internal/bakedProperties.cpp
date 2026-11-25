@@ -1661,12 +1661,17 @@ RigExecBakedBuildPropertySteps(RigExecBakedProgramImpl *program)
     for (size_t r = 0; r < B.propertyRecords.size(); ++r)
         B.propertyRecordById[B.propertyRecords[r].id] = int(r);
     B.steps.clear();
-    B.propertyNodeChain.clear();
+    B.opNodeOrigins.clear();
     for (size_t c = 0; c < B.propertyChains.size(); ++c) {
         Chain &chain = B.propertyChains[c];
-        chain.firstNode = uint32_t(B.propertyNodeChain.size());
-        B.propertyNodeChain.resize(
-            B.propertyNodeChain.size() + chain.revisions.size(), uint32_t(c));
+        chain.firstNode = uint32_t(B.opNodeOrigins.size());
+        for (size_t k = 1; k <= chain.revisions.size(); ++k) {
+            RigExecBakedOpOrigin origin;
+            origin.family = RigExecBakedOpFamily::Property;
+            origin.object = int32_t(c);
+            origin.part = int32_t(k);
+            B.opNodeOrigins.push_back(origin);
+        }
     }
     for (size_t c = 0; c < B.propertyChains.size(); ++c) {
         const Chain &chain = B.propertyChains[c];
@@ -2193,14 +2198,13 @@ RigExecBakedPropertyPartOf(const RigExecBakedProgramImpl &B,
                            const RigExecBakedStep &step, size_t *chain,
                            size_t *part)
 {
-    if (step.kind != RigExecBakedStepKind::OpNode || step.object < 0 ||
-        size_t(step.object) >= B.propertyNodeChain.size())
+    const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(B, step);
+    if (!origin || origin->family != RigExecBakedOpFamily::Property)
         return false;
-    const size_t c = B.propertyNodeChain[size_t(step.object)];
     if (chain)
-        *chain = c;
+        *chain = size_t(origin->object);
     if (part)
-        *part = size_t(step.object) - B.propertyChains[c].firstNode + 1;
+        *part = size_t(origin->part);
     return true;
 }
 
@@ -2216,13 +2220,14 @@ RigExecBakedAddPropertyOps(const RigExecBakedProgramImpl &B,
         layout->hostInputs.push_back({node, port.Index(),
                                       eval::OpHostSource::Lookup,
                                       uint32_t(layout->lookups.size())});
-        layout->lookups.push_back(
-            {eval::kPropertyLookup, chain, revision, uint8_t(read)});
+        layout->lookups.push_back({uint8_t(eval::OpLookupSource::Property),
+                                   chain, revision, uint8_t(read)});
     };
     const auto store = [&](RigExecNodeId node, const RigExecPortHandle &port,
                            uint32_t version) {
         layout->hostOutputs.push_back(
-            {node, port.Index(), eval::kPropertyVersion, version});
+            {node, port.Index(), uint8_t(eval::OpOutputTarget::PropertyVersion),
+             version});
     };
     for (uint32_t c = 0; c < B.propertyChains.size(); ++c) {
         const Chain &chain = B.propertyChains[c];
@@ -2367,12 +2372,13 @@ RigExecBakedStorePropertyVersion(RigExecBakedProgramImpl &B,
                                  const eval::OpHostOutput &output,
                                  const void *value, std::string *error)
 {
-    if (output.node >= B.propertyNodeChain.size() ||
+    if (output.node >= B.opNodeOrigins.size() ||
+        B.opNodeOrigins[output.node].family != RigExecBakedOpFamily::Property ||
         output.object >= B.propertyVersionCount)
         return PropertyFail(error, "op nodes: node " +
                                        std::to_string(output.node) +
                                        " stores no property version");
-    const size_t c = B.propertyNodeChain[output.node];
+    const size_t c = size_t(B.opNodeOrigins[output.node].object);
     const Chain &chain = B.propertyChains[c];
     switch (chain.arm) {
     case Chain::Arm::Float:

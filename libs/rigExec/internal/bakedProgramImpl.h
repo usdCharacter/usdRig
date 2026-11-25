@@ -1152,6 +1152,28 @@ struct RigExecBakedOpProgram {
 /// Op nodes a test adds for a rig (RigExecBakedProgramTesting::
 /// SetOpInjector) to the description Build is writing, after the property
 /// chains' nodes: their inputs from the rig or fixed, and named outputs.
+/// Which of the program's families an op node computes.
+enum class RigExecBakedOpFamily : uint8_t {
+    Property,
+};
+
+/// Where an op node's step comes from: its family, that family's object and
+/// part, and the step kind whose identity (descriptor category and
+/// subindex, cost, exec-check row name, trace domain) the step keeps.
+struct RigExecBakedOpOrigin {
+    RigExecBakedOpFamily family = RigExecBakedOpFamily::Property;
+    RigExecBakedStepKind kind = RigExecBakedStepKind::OpNode;
+    int32_t object = -1;
+    int32_t part = -1;
+};
+
+/// The kind, object and part a step is identified, costed and reported by.
+struct RigExecBakedStepIdentity {
+    RigExecBakedStepKind kind = RigExecBakedStepKind::OpNode;
+    int object = -1;
+    int part = -1;
+};
+
 struct RigExecBakedOpInjection {
     RigExecRigDescBuilder *builder = nullptr;
     std::vector<eval::OpHostInput> hostInputs;
@@ -2231,9 +2253,9 @@ struct RigExecBakedProgramImpl {
     /// The PropertyVersion domain's size: every chain's versions, then the
     /// records.
     uint32_t propertyVersionCount = 0;
-    /// Per property op node: its chain. Property nodes come first among
-    /// the op nodes.
-    std::vector<uint32_t> propertyNodeChain;
+    /// Per op node a family of the program runs: where its step comes
+    /// from. Nodes past its end are injected.
+    std::vector<RigExecBakedOpOrigin> opNodeOrigins;
     /// Per op lookup: the keys or points a property read lends its op
     /// input until its next run.
     std::vector<VtArray<GfVec2f>> propertyKeyHold;
@@ -2764,6 +2786,16 @@ bool RigExecBakedHeadLeafHolds(const RigExecBakedHeadLeaf &leaf,
 /// code. Reads the stage: owning thread.
 bool RigExecBakedHeadLeafVaries(const RigExecBakedHeadLeaf &leaf);
 
+/// The origin of op step \p step's node; null for an injected node and for
+/// any other step.
+const RigExecBakedOpOrigin *
+RigExecBakedOriginOf(const RigExecBakedProgramImpl &B,
+                     const RigExecBakedStep &step);
+/// The step's own kind, object and part; for an op node whose origin keeps
+/// another kind's identity, that kind with the origin's object and part.
+RigExecBakedStepIdentity
+RigExecBakedIdentityOf(const RigExecBakedProgramImpl &B,
+                       const RigExecBakedStep &step);
 /// The property chain and part (1 to its revision count) op step \p step
 /// runs: revision part, and for part 1 also the chain's base. False for any
 /// other step.

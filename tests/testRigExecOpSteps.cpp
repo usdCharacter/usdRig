@@ -11,6 +11,7 @@
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExecBinary/format.h"
 #include "rigExecBuiltins/builtins.h"
+#include "rigExecEvalCore/opSteps.h"
 #include "rigExecRuntime/runtime.h"
 #include "rigExecOps/deform/matrixDeformOp.h"
 #include "rigExecOps/deform/pointOps.h"
@@ -700,6 +701,222 @@ TestUnregistered(const char *path)
     CHECK(opened && RigExecRegistry::IsInitialized());
 }
 
+/// A host that resolves op steps' lookups and stores their group outputs
+/// on its own: a chain member's lookup is resolved by the chain's head, and
+/// each range step hands every group it wrote to StoreGroup.
+struct GroupHost {
+    GfMatrix4d matrix;
+    std::vector<int> bounds;
+    std::vector<VtVec3fArray> groups;
+    float strength = 0.5f;
+    int lookups = 0;
+    std::vector<VtVec3fArray> stored;
+    std::vector<int> stores;
+
+    const void *Matrix(eval::OpHostSource, uint32_t) const
+    {
+        return matrix.data();
+    }
+    const void *ChainGroupPoints(uint32_t, uint32_t g) const
+    {
+        return groups[g].cdata();
+    }
+    bool LookUpProperty(uint32_t, const eval::OpLookup &,
+                        const RigExecTypeDesc &, void *value, std::string *)
+    {
+        ++lookups;
+        *static_cast<float *>(value) = strength;
+        return true;
+    }
+    bool StorePropertyVersion(const eval::OpHostOutput &, const void *,
+                              std::string *error)
+    {
+        *error = "no property versions";
+        return false;
+    }
+    bool StoreGroup(const eval::OpHostOutput &output, uint32_t g,
+                    const void *elements, size_t count, std::string *error)
+    {
+        if (count != size_t(bounds[g + 1] - bounds[g])) {
+            *error = "group " + std::to_string(g) + " holds " +
+                     std::to_string(count) + " points";
+            return false;
+        }
+        const auto *points = static_cast<const GfVec3f *>(elements);
+        std::copy(points, points + count,
+                  stored[output.object].begin() + bounds[g]);
+        ++stores[output.object];
+        return true;
+    }
+};
+
+template <class T>
+eval::OpConstant
+ConstantOf(uint32_t node, uint32_t port, const T *data, size_t count)
+{
+    eval::OpConstant constant;
+    constant.node = node;
+    constant.port = port;
+    const auto *bytes = reinterpret_cast<const uint8_t *>(data);
+    constant.bytes.assign(bytes, bytes + count * sizeof(T));
+    return constant;
+}
+
+void
+TestHostLookupsAndGroupOutputs()
+{
+    using namespace rigExecOps;
+    RigExecRigDescBuilder builder;
+    const OpRig rig = MakeOps(false, &builder);
+    const RigExecOutputId deformOut =
+        builder.BindOutput(rig.deform, MatrixDeformOut());
+    std::string why;
+    const auto desc = builder.Build(&why);
+    CHECK(desc);
+    if (!desc)
+        return;
+
+    VtVec3fArray points(kPoints);
+    for (size_t i = 0; i < kPoints; ++i)
+        points[i] = GfVec3f(float(i % 100), float(i / 100), float(i % 7));
+    VtIntArray counts, faces;
+    GridFaces(kPoints, &counts, &faces);
+    const GfMatrix4d offset = Offset();
+    const float one = 1.0f;
+
+    GroupHost host;
+    host.matrix.SetTranslate(GfVec3d(0.5, -1.0, 2.0));
+    host.bounds = {0, 2500, 5000, 7500, int(kPoints)};
+    for (size_t g = 0; g + 1 < host.bounds.size(); ++g)
+        host.groups.emplace_back(points.cbegin() + host.bounds[g],
+                                 points.cbegin() + host.bounds[g + 1]);
+    host.stored.assign(2, VtVec3fArray(kPoints));
+    host.stores.assign(2, 0);
+
+    const auto layOut = [&](eval::OpStepLayout *layout) {
+        RigExecCompileOptions options;
+        options.hostOrder = true;
+        layout->program = RigExecCompile(*desc, options, &why);
+        layout->hostInputs = {
+            {rig.math, MatrixIn().Index(), eval::OpHostSource::FinalMatrix, 0},
+            {rig.deform, MatrixDeformPoints().Index(),
+             eval::OpHostSource::ChainPoints, 0},
+            {rig.smooth, SmoothStrength().Index(), eval::OpHostSource::Lookup,
+             0}};
+        layout->lookups = {{uint8_t(eval::OpLookupSource::Property), 0, -1, 0}};
+        layout->hostOutputs = {{rig.smooth, SmoothOut().Index(),
+                                uint8_t(eval::OpOutputTarget::ChainGroup), 0},
+                               {rig.deform, MatrixDeformOut().Index(),
+                                uint8_t(eval::OpOutputTarget::ChainGroup), 1}};
+        layout->constants = {
+            ConstantOf(rig.math, MatrixValue().Index(), offset.data(), 16),
+            ConstantOf(rig.math, MatrixWeight().Index(), &one, 1),
+            ConstantOf(rig.smooth, SmoothCounts().Index(), counts.cdata(),
+                       counts.size()),
+            ConstantOf(rig.smooth, SmoothIndices().Index(), faces.cdata(),
+                       faces.size())};
+        layout->chains.assign(RigExecProgramChainCount(*layout->program),
+                              eval::OpChainLayout());
+        for (eval::OpChainLayout &chain : layout->chains)
+            chain.bounds = host.bounds;
+    };
+
+    eval::OpStepLayout layout;
+    layOut(&layout);
+    CHECK(eval::LayOutOpSteps(&layout, &why));
+    CHECK(layout.chains.size() == 1);
+    eval::OpStepState state;
+    state.run = RigExecRunState::Create(layout.program, {}, &why);
+    CHECK(state.run && eval::BindOpStepState(layout, host, &state, &why));
+    if (!state.run || layout.chains.size() != 1)
+        return;
+    bool ran = true;
+    for (size_t n = 0; n < layout.nodes.size(); ++n)
+        if (layout.chainOf[n] == kRigExecInvalidIndex)
+            ran = ran &&
+                  eval::RunOpStep(layout, host, &state, eval::OpStepKind::Node,
+                                  int(n), -1, &why);
+    ran = ran && eval::RunOpStep(layout, host, &state,
+                                 eval::OpStepKind::ChainHead, 0, -1, &why);
+    CHECK(host.lookups == 1);
+    const RigExecChainDesc &chain = layout.chainDescs[0];
+    const uint32_t groups = layout.chains[0].Groups();
+    for (uint32_t s = 0; s < chain.members.size(); ++s)
+        if (chain.segments[s] == s)
+            for (uint32_t g = 0; g < (chain.whole[s] ? 1 : groups); ++g)
+                ran = ran && eval::RunOpStep(layout, host, &state,
+                                             eval::OpStepKind::ChainRange, 0,
+                                             int(s * groups + g), &why);
+    if (!ran)
+        std::printf("host steps: %s\n", why.c_str());
+    CHECK(ran);
+    CHECK(host.stores[0] == int(groups) && host.stores[1] == int(groups));
+
+    auto evaluator = RigExecEvaluator::Create(RigExecCompile(*desc));
+    const rigExecStd::RigExecArray<rigExecStd::Vec3f> in(
+        reinterpret_cast<const rigExecStd::Vec3f *>(points.cdata()),
+        points.size());
+    const rigExecStd::RigExecArray<int32_t> c(counts.cdata(), counts.size());
+    const rigExecStd::RigExecArray<int32_t> f(faces.cdata(), faces.size());
+    rigExecStd::Mat4d matrix, value;
+    std::memcpy(&matrix, host.matrix.data(), sizeof(matrix));
+    std::memcpy(&value, offset.data(), sizeof(value));
+    evaluator->SetInput(rig.matrix, &matrix);
+    evaluator->SetInput(rig.value, &value);
+    evaluator->SetInput(rig.weight, &one);
+    evaluator->SetInput(rig.points, &in);
+    evaluator->SetInput(rig.counts, &c);
+    evaluator->SetInput(rig.indices, &f);
+    evaluator->SetInput(rig.strength, &host.strength);
+    CHECK(evaluator->Evaluate(&why));
+    const auto same = [](const void *output, const VtVec3fArray &stored) {
+        const auto *array =
+            static_cast<const rigExecStd::RigExecArray<rigExecStd::Vec3f> *>(
+                output);
+        return array && array->Size() == stored.size() &&
+               std::memcmp(array->Data(), stored.cdata(),
+                           stored.size() * sizeof(GfVec3f)) == 0;
+    };
+    CHECK(same(evaluator->GetOutput(rig.out), host.stored[0]));
+    CHECK(same(evaluator->GetOutput(deformOut), host.stored[1]));
+
+    const auto refused = [&](auto &&change, const char *expected) {
+        eval::OpStepLayout bad;
+        layOut(&bad);
+        change(&bad);
+        std::string reason;
+        const bool laid = eval::LayOutOpSteps(&bad, &reason);
+        if (laid || reason.find(expected) == std::string::npos)
+            std::printf("expected \"%s\", got \"%s\"\n", expected,
+                        reason.c_str());
+        CHECK(!laid && reason.find(expected) != std::string::npos);
+    };
+    refused(
+        [](eval::OpStepLayout *bad) {
+            bad->lookups[0].source =
+                uint8_t(eval::OpLookupSource::WeightArrays);
+        },
+        "reads lookup source 2, which no host resolves");
+    refused(
+        [&](eval::OpStepLayout *bad) {
+            bad->hostInputs[1].source = eval::OpHostSource::Lookup;
+        },
+        "a lookup feeds point input");
+    refused(
+        [](eval::OpStepLayout *bad) {
+            bad->hostOutputs[0].target =
+                uint8_t(eval::OpOutputTarget::PropertyVersion);
+        },
+        "in output target 0, which no host stores");
+    refused(
+        [&](eval::OpStepLayout *bad) {
+            bad->hostOutputs.push_back(
+                {rig.math, MatrixOut().Index(),
+                 uint8_t(eval::OpOutputTarget::ChainGroup), 2});
+        },
+        "in output target 4, which no host stores");
+}
+
 } // namespace
 
 /// With --write FILE the baked file is also written to FILE; with
@@ -725,6 +942,7 @@ main(int argc, char **argv)
     TestInjectedChain();
     TestRuntime(writeTo);
     TestFailingNode();
+    TestHostLookupsAndGroupOutputs();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

@@ -857,8 +857,10 @@ RigExecBakedExecCheckRows::Add(RigExecExecCheckDescriptor d, Binding binding,
     const size_t row = _bindings.size();
     _byStep[binding.step].push_back(row);
     if (binding.perSlot)
-        _bySlot[{uint32_t(b.steps[binding.step].kind), binding.slot}].push_back(
-            row);
+        _bySlot[{uint32_t(
+                     RigExecBakedIdentityOf(b, b.steps[binding.step]).kind),
+                 binding.slot}]
+            .push_back(row);
     _descriptors.push_back(std::move(d));
     _bindings.push_back(std::move(binding));
     // A constraint result callback reads its row-local candidate storage.
@@ -884,7 +886,9 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error,
     rows->_mode = mode;
     rows->_byStep.resize(b.steps.size());
     for (size_t i = 0; i < b.steps.size(); ++i) {
-        const auto &step = b.steps[i];
+        const auto &bakedStep = b.steps[i];
+        const RigExecBakedStepIdentity step =
+            RigExecBakedIdentityOf(b, bakedStep);
         const auto add =
             [&](const SdfPath &path, const char *key, int slot, bool perSlot,
                 std::function<Input(const B &)> capture,
@@ -895,7 +899,7 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error,
                 RigExecExecCheckDescriptor d;
                 d.key = std::string(KindName(step.kind)) + " " +
                         path.GetString() + ":" + key;
-                d.key += " op " + step.descriptorKey;
+                d.key += " op " + bakedStep.descriptorKey;
                 if (step.kind == Kind::ProviderMatrix ||
                     step.kind == Kind::VolumePlacements)
                     d.key +=
@@ -1057,7 +1061,7 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error,
             d.key = std::string(supported
                                     ? "OriginalConstraint "
                                     : RigExecExecCheckSkipText::noEquivalent) +
-                    c.path.GetString() + " op " + step.descriptorKey;
+                    c.path.GetString() + " op " + bakedStep.descriptorKey;
             d.kind = uint32_t(step.kind);
             if (supported) {
                 const auto binding = ConstraintReferenceBinding(b, walk);
@@ -1177,9 +1181,10 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error,
         } else {
             RigExecExecCheckDescriptor d;
             d.key = std::string(RigExecExecCheckSkipText::noEquivalent) + " " +
-                    step.label;
+                    bakedStep.label;
             size_t propertyChain = 0;
-            if (RigExecBakedPropertyPartOf(b, step, &propertyChain, nullptr))
+            if (RigExecBakedPropertyPartOf(b, bakedStep, &propertyChain,
+                                           nullptr))
                 d.key += " target " +
                          b.propertyChains[propertyChain].target.GetString();
             if (step.kind == Kind::RevisionStatic ||
@@ -1191,10 +1196,10 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error,
                     " target " + b.chains[size_t(id.first)].target.GetString();
             }
             d.key += " part " + std::to_string(step.part);
-            d.key += " op " + step.descriptorKey;
+            d.key += " op " + bakedStep.descriptorKey;
             // The compiled label is the authored identity. Some mechanical
             // rows carry no label, so state their stable graph identity.
-            if (step.label.empty())
+            if (bakedStep.label.empty())
                 d.key += std::to_string(uint32_t(step.kind)) + ":" +
                          std::to_string(step.object) + ":" +
                          std::to_string(step.part);

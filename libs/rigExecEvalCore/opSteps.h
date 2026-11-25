@@ -34,6 +34,43 @@ enum class OpHostSource : uint8_t {
     Lookup = 4,
 };
 
+/// OpLookup::source: the family of the rig's values a lookup reads. The
+/// numbers are part of the file format.
+enum class OpLookupSource : uint8_t {
+    Property = 0,
+    PoseVersion = 1,
+    WeightArrays = 2,
+    ChainVersion = 3,
+};
+
+/// OpHostOutput::target: the family of host slots a port value is stored
+/// in. The numbers are part of the file format.
+enum class OpOutputTarget : uint8_t {
+    PropertyVersion = 0,
+    VolumePlacement = 1,
+    VolumePlacementBase = 2,
+    WeightPacket = 3,
+    /// A range chain member's output, group by group, into the host's
+    /// vertex-group state.
+    ChainGroup = 4,
+};
+
+/// Whether OpLookUp resolves lookups of \p source.
+constexpr bool
+OpLookupSourceRuns(uint8_t source)
+{
+    return source == uint8_t(OpLookupSource::Property);
+}
+
+/// Whether OpStoreOutput stores outputs of \p target, or, for a range chain
+/// member, the host's StoreGroup does.
+constexpr bool
+OpOutputTargetRuns(uint8_t target, bool chainMember)
+{
+    return chainMember ? target == uint8_t(OpOutputTarget::ChainGroup)
+                       : target == uint8_t(OpOutputTarget::PropertyVersion);
+}
+
 /// A per-frame read of the rig the host resolves for a Lookup input; what
 /// \p object, \p part and \p read name depends on \p source.
 struct OpLookup {
@@ -288,6 +325,19 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
                     error, "node " + std::to_string(input.node) +
                                " reads lookup " + std::to_string(input.object) +
                                ", which the layout lacks");
+            if (!OpLookupSourceRuns(layout->lookups[input.object].source))
+                return OpLayoutFail(
+                    error,
+                    "node " + std::to_string(input.node) +
+                        " reads lookup source " +
+                        std::to_string(layout->lookups[input.object].source) +
+                        ", which no host resolves");
+            if (layout->nodes[input.node].op->ports[input.port].flags &
+                (kRigExecPortPointwise | kRigExecPortNeighbourhood))
+                return OpLayoutFail(error, "a lookup feeds point input " +
+                                               std::to_string(input.port) +
+                                               " of node " +
+                                               std::to_string(input.node));
             if (layout->nodes[input.node].op->ports[input.port].flags &
                 kRigExecPortChecked)
                 return OpLayoutFail(error, "a lookup feeds checked input " +
@@ -320,6 +370,17 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
                                            "input " +
                                            std::to_string(output.port) +
                                            " to store");
+        const bool member =
+            layout->chainOf[output.node] != kRigExecInvalidIndex;
+        if (!OpOutputTargetRuns(output.target, member) ||
+            (member &&
+             !(layout->nodes[output.node].op->ports[output.port].flags &
+               kRigExecPortOutput)))
+            return OpLayoutFail(
+                error, "node " + std::to_string(output.node) + " stores port " +
+                           std::to_string(output.port) + " in output target " +
+                           std::to_string(output.target) +
+                           ", which no host stores");
         layout->hostOutputsOf[output.node].push_back(o);
     }
     layout->constantValues.clear();
@@ -414,14 +475,75 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
     return true;
 }
 
-/// Runs op step (\p kind, \p object, \p part): node \p object, after
-/// \p host.Lookup(index, lookup, type, value, error) resolved each of its
-/// Lookup inputs in layout order, a hostOutput of a looked-up input stored
-/// by \p host.Output(output, value, error) before the next lookup, and the
-/// hostOutputs of its outputs stored after it ran; chain \p object's head;
-/// or group part % G of the
-/// segment starting at member part / G of chain \p object. False with the
-/// reason in \p error. Steps that do not feed each other may run at once.
+/// Resolves lookup \p index through the \p host method of its source's
+/// family: \p host.LookUpProperty(index, lookup, type, value, error).
+template <class Host>
+bool
+OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
+         const RigExecTypeDesc &type, void *value, std::string *error)
+{
+    switch (OpLookupSource(lookup.source)) {
+    case OpLookupSource::Property:
+        return host.LookUpProperty(index, lookup, type, value, error);
+    case OpLookupSource::PoseVersion:
+    case OpLookupSource::WeightArrays:
+    case OpLookupSource::ChainVersion:
+        break;
+    }
+    return OpLayoutFail(error, "no host resolves lookup source " +
+                                   std::to_string(lookup.source));
+}
+
+/// Stores \p value through the \p host method of \p output's target
+/// family: \p host.StorePropertyVersion(output, value, error).
+template <class Host>
+bool
+OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
+              std::string *error)
+{
+    switch (OpOutputTarget(output.target)) {
+    case OpOutputTarget::PropertyVersion:
+        return host.StorePropertyVersion(output, value, error);
+    case OpOutputTarget::VolumePlacement:
+    case OpOutputTarget::VolumePlacementBase:
+    case OpOutputTarget::WeightPacket:
+    case OpOutputTarget::ChainGroup:
+        break;
+    }
+    return OpLayoutFail(error, "no host stores output target " +
+                                   std::to_string(output.target));
+}
+
+/// Resolves node \p node's Lookup inputs in layout order, storing a
+/// hostOutput of a looked-up input before the next lookup.
+template <class Host>
+bool
+ResolveOpLookups(const OpStepLayout &layout, Host &host, OpStepState *state,
+                 size_t node, std::string *error)
+{
+    for (const uint32_t i : layout.lookupsOf[node]) {
+        OpPortValue &value = *state->lookedUp[i];
+        const uint32_t lookup = layout.hostInputs[i].object;
+        if (!OpLookUp(host, lookup, layout.lookups[lookup], value.Type(),
+                      value.Value(), error))
+            return false;
+        for (const uint32_t o : layout.hostOutputsOf[node])
+            if (layout.hostOutputs[o].port == layout.hostInputs[i].port &&
+                !OpStoreOutput(host, layout.hostOutputs[o], value.Value(),
+                               error))
+                return false;
+    }
+    return true;
+}
+
+/// Runs op step (\p kind, \p object, \p part): node \p object, after its
+/// lookups resolved (ResolveOpLookups), its outputs' hostOutputs stored
+/// after it ran; chain \p object's head, after its members' lookups
+/// resolved; or group part % G of the segment starting at member part / G
+/// of chain \p object, each of the segment's hostOutputs stored for the
+/// groups it wrote by \p host.StoreGroup(output, group, elements, count,
+/// error). False with the reason in \p error. Steps that do not feed each
+/// other may run at once.
 template <class Host>
 bool
 RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
@@ -435,17 +557,8 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
         if (index >= layout.nodes.size())
             return OpLayoutFail(error, "no node " + std::to_string(object));
         const RigExecNodeDesc &d = layout.nodes[index];
-        for (const uint32_t i : layout.lookupsOf[index]) {
-            OpPortValue &value = *state->lookedUp[i];
-            const uint32_t lookup = layout.hostInputs[i].object;
-            if (!host.Lookup(lookup, layout.lookups[lookup], value.Type(),
-                             value.Value(), error))
-                return false;
-            for (const uint32_t o : layout.hostOutputsOf[index])
-                if (layout.hostOutputs[o].port == layout.hostInputs[i].port &&
-                    !host.Output(layout.hostOutputs[o], value.Value(), error))
-                    return false;
-        }
+        if (!ResolveOpLookups(layout, host, state, index, error))
+            return false;
         if (!run.RunNode(RigExecNodeId(object), error))
             return false;
         for (const uint32_t o : layout.hostOutputsOf[index]) {
@@ -459,7 +572,7 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
                 return OpLayoutFail(error, "node " + std::to_string(object) +
                                                " holds no value at port " +
                                                std::to_string(output.port));
-            if (!host.Output(output, value, error))
+            if (!OpStoreOutput(host, output, value, error))
                 return false;
         }
         for (size_t p = 0; p < d.values.size(); ++p)
@@ -472,7 +585,11 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
         return OpLayoutFail(error, "no chain " + std::to_string(object));
     const OpChainLayout &chain = layout.chains[index];
     const uint32_t groups = chain.Groups();
+    const RigExecChainDesc &desc = layout.chainDescs[index];
     if (kind == OpStepKind::ChainHead) {
+        for (const RigExecNodeId member : desc.members)
+            if (!ResolveOpLookups(layout, host, state, member, error))
+                return false;
         if (!run.RunChainHead(index, chain.bounds.data(), groups, error))
             return false;
         ++state->versions[layout.PlanSlot(index)];
@@ -482,7 +599,6 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
         return OpLayoutFail(error, "an op range step names no group");
     const uint32_t segment = uint32_t(part) / groups;
     const uint32_t g = uint32_t(part) % groups;
-    const RigExecChainDesc &desc = layout.chainDescs[index];
     for (size_t i = 0; i < layout.hostInputs.size(); ++i) {
         const OpHostInput &input = layout.hostInputs[i];
         if (input.source != OpHostSource::ChainPoints ||
@@ -496,6 +612,23 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
     for (uint32_t m = segment;
          m < desc.members.size() && desc.segments[m] == segment; ++m) {
         const RigExecNodeDesc &d = layout.nodes[desc.members[m]];
+        for (const uint32_t o : layout.hostOutputsOf[desc.members[m]]) {
+            const OpHostOutput &output = layout.hostOutputs[o];
+            RigExecValueRef ref;
+            ref.value = d.values[output.port];
+            for (uint32_t h = desc.whole[m] ? 0 : g;
+                 h < (desc.whole[m] ? groups : g + 1); ++h) {
+                size_t count = 0;
+                const void *elements = run.GetGroupValue(ref, h, &count);
+                if (!elements && count)
+                    return OpLayoutFail(
+                        error, "node " + std::to_string(desc.members[m]) +
+                                   " holds no group " + std::to_string(h) +
+                                   " at port " + std::to_string(output.port));
+                if (!host.StoreGroup(output, h, elements, count, error))
+                    return false;
+            }
+        }
         for (size_t p = 0; p < d.values.size(); ++p) {
             if (!(d.op->ports[p].flags & kRigExecPortOutput) ||
                 d.values[p] == kRigExecInvalidIndex)

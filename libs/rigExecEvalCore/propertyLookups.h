@@ -11,12 +11,9 @@
 namespace rigExec {
 namespace eval {
 
-/// OpLookup::source of a property chain read: object is the chain, part
-/// the revision (-1 for the chain's base) and read a PropertyRead.
-constexpr uint8_t kPropertyLookup = 0;
-/// OpHostOutput::target of a property version: object is its slot.
-constexpr uint8_t kPropertyVersion = 0;
-
+/// What an OpLookupSource::Property lookup reads: its object is the chain,
+/// its part the revision (-1 for the chain's base). An
+/// OpOutputTarget::PropertyVersion output's object is the version's slot.
 enum class PropertyRead : uint8_t {
     /// A drag on the target converted to the chain's type, else the
     /// target's own value; finite or the evaluation fails.

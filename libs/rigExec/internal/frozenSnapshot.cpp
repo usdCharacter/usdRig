@@ -494,7 +494,7 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
     D.providerRefreshes = src.providerRefreshes;
     D.providerRefreshBefore = src.providerRefreshBefore;
     D.propertyVersionCount = src.propertyVersionCount;
-    D.propertyNodeChain = src.propertyNodeChain;
+    D.opNodeOrigins = src.opNodeOrigins;
     D.propertyKeyHold.assign(src.propertyKeyHold.size(), VtArray<GfVec2f>());
     D.propertyPointHold.assign(src.propertyPointHold.size(), VtVec3fArray());
     D.headLeaves = src.headLeaves;

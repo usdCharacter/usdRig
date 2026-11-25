@@ -5,6 +5,7 @@
 #include "rigExec/internal/exec/view.h"
 
 #include <cassert>
+#include <cstddef>
 #include <utility>
 
 namespace rigExec {
@@ -171,6 +172,45 @@ RigExecRunState::GetValue(const RigExecValueRef &ref) const
         _data->program->groupedSlots[ref.value])
         return nullptr;
     return _data->run.Value(ref.value);
+}
+
+const void *
+RigExecRunState::GetGroupValue(const RigExecValueRef &ref, uint32_t group,
+                               size_t *count) const
+{
+    const RigExecProgram &p = *_data->program;
+    const RigExecRun &run = _data->run;
+    *count = 0;
+    if (ref.value >= p.slots.size())
+        return nullptr;
+    const uint32_t node = p.producer[ref.value];
+    if (node == kRigExecInvalidIndex)
+        return nullptr;
+    const uint32_t chain = p.positionChain[p.batchPosition[node]];
+    if (chain == kRigExecInvalidIndex || chain >= run.chainBounds.size())
+        return nullptr;
+    const std::vector<int> &cut = run.chainBounds[chain];
+    if (size_t(group) + 1 >= cut.size())
+        return nullptr;
+    const size_t elements = size_t(cut[group + 1] - cut[group]);
+    if (p.groupedSlots[ref.value]) {
+        const std::vector<RigExecAlignedBuffer> &store =
+            run.groupStore[ref.value];
+        if (group >= store.size())
+            return nullptr;
+        *count = elements;
+        return store[group].Data();
+    }
+    const RigExecTypeDesc &type =
+        *RigExecRegistry::Get().TypeAt(p.slots[ref.value].type).desc;
+    void *value = const_cast<void *>(run.Value(ref.value));
+    if (!value || !type.data || !type.element)
+        return nullptr;
+    const size_t size =
+        RigExecRegistry::Get().TypeAt(type.element->Index()).desc->size;
+    *count = elements;
+    return static_cast<const std::byte *>(type.data(value)) +
+           size_t(cut[group]) * size;
 }
 
 size_t

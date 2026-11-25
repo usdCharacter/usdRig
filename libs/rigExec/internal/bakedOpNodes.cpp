@@ -60,22 +60,22 @@ struct BakedOpHost {
         const RigExecBakedProgramImpl::GeomChain &c = B.chains[chain];
         return RigExecBakedGroupAt(c, c.revisions.size(), g).data;
     }
-    bool Lookup(uint32_t index, const eval::OpLookup &lookup,
-                const RigExecTypeDesc &type, void *value,
-                std::string *error) const
+    bool LookUpProperty(uint32_t index, const eval::OpLookup &lookup,
+                        const RigExecTypeDesc &type, void *value,
+                        std::string *error) const
     {
-        if (lookup.source != eval::kPropertyLookup)
-            return Fail(error,
-                        "no lookup source " + std::to_string(lookup.source));
         return RigExecBakedLookUpProperty(B, lookup, index, type, value, error);
     }
-    bool Output(const eval::OpHostOutput &output, const void *value,
-                std::string *error) const
+    bool StorePropertyVersion(const eval::OpHostOutput &output,
+                              const void *value, std::string *error) const
     {
-        if (output.target != eval::kPropertyVersion)
-            return Fail(error,
-                        "no output target " + std::to_string(output.target));
         return RigExecBakedStorePropertyVersion(B, output, value, error);
+    }
+    bool StoreGroup(const eval::OpHostOutput &output, uint32_t, const void *,
+                    size_t, std::string *error) const
+    {
+        return Fail(error, "no vertex-group state takes the groups of node " +
+                               std::to_string(output.node));
     }
 };
 
@@ -193,7 +193,8 @@ DeclarePortReads(const RigExecBakedProgramImpl &B,
                 RigExecBakedOne(D::FinalMatrix, int(input.object)));
         else if (input.source == eval::OpHostSource::BaseMatrix)
             reads->push_back(RigExecBakedOne(D::BaseMatrix, int(input.object)));
-        else if (!reader.head && !whole)
+        else if (input.source == eval::OpHostSource::ChainPoints &&
+                 !reader.head && !whole)
             RigExecBakedDeclareGroupRead(
                 B, int(input.object), B.chains[input.object].revisions.size(),
                 group, reads);
@@ -272,9 +273,10 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
                 d.values[p] != kRigExecInvalidIndex)
                 visit(d.values[p]);
     };
-    for (uint32_t n = uint32_t(B->propertyNodeChain.size());
-         n < layout.nodes.size(); ++n) {
-        if (layout.chainOf[n] != kRigExecInvalidIndex)
+    for (uint32_t n = 0; n < layout.nodes.size(); ++n) {
+        if (layout.chainOf[n] != kRigExecInvalidIndex ||
+            (n < B->opNodeOrigins.size() &&
+             B->opNodeOrigins[n].family == RigExecBakedOpFamily::Property))
             continue;
         RigExecBakedStep &step = AddOpStep(B, K::OpNode, int(n), -1);
         DeclareNodeReads(*B, op, n, OpReader(), &step.reads);
@@ -336,6 +338,26 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
 
 } // namespace
 
+const RigExecBakedOpOrigin *
+RigExecBakedOriginOf(const RigExecBakedProgramImpl &B,
+                     const RigExecBakedStep &step)
+{
+    if (step.kind != K::OpNode || step.object < 0 ||
+        size_t(step.object) >= B.opNodeOrigins.size())
+        return nullptr;
+    return &B.opNodeOrigins[size_t(step.object)];
+}
+
+RigExecBakedStepIdentity
+RigExecBakedIdentityOf(const RigExecBakedProgramImpl &B,
+                       const RigExecBakedStep &step)
+{
+    const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(B, step);
+    if (origin && origin->kind != K::OpNode)
+        return {origin->kind, origin->object, origin->part};
+    return {step.kind, step.object, step.part};
+}
+
 void
 RigExecBakedProgramTesting::SetOpInjector(
     std::function<bool(const RigExecBakedProgramImpl &,
@@ -361,7 +383,7 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
     RigExecBakedOpInjection injection;
     injection.builder = &builder;
     const bool injected = gOpInjector && gOpInjector(B, &injection);
-    if (B.propertyNodeChain.empty() && !injected)
+    if (B.opNodeOrigins.empty() && !injected)
         return true;
     std::string why;
     const std::shared_ptr<const RigExecRigDesc> desc = builder.Build(&why);

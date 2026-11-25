@@ -394,10 +394,10 @@ WrittenSlots(const RigExecBakedStep &step, RigExecBakedSlotDomain domain)
 
 double
 StepSize(const RigExecBakedProgramImpl &B, LazyGeometrySizes &geometry,
-         const RigExecBakedStep &step)
+         const RigExecBakedStep &step, const RigExecBakedStepIdentity &id)
 {
-    const size_t object = size_t(step.object);
-    switch (step.kind) {
+    const size_t object = size_t(id.object);
+    switch (id.kind) {
     case RigExecBakedStepKind::ComposeSubtree: {
         const RigExecBakedComposeGroup &group = B.composeGroups[object];
         return double(group.end - group.begin);
@@ -473,22 +473,22 @@ StepSize(const RigExecBakedProgramImpl &B, LazyGeometrySizes &geometry,
             B.chains[size_t(chain)].revisions[size_t(revision)];
         if ((geom.role == RigExecBakedRevisionRole::Range ||
              (geom.role == RigExecBakedRevisionRole::Whole && geom.chunked)) &&
-            step.part >= 0 && size_t(step.part) < geom.chunks.size()) {
+            id.part >= 0 && size_t(id.part) < geom.chunks.size()) {
             // A vertex group of a range chain -- a Range revision's group
             // step or a Whole keyed skin's speculative chunk: the group's
             // share of the revision's units.
             const RigExecBakedProgramImpl::GeomChunk &chunk =
-                geom.chunks[size_t(step.part)];
+                geom.chunks[size_t(id.part)];
             const double points =
                 double(B.chains[size_t(chain)].groupPointCount);
             return points > 0.0 ? geometry.Get().revisionUnits[object] *
                                       double(chunk.end - chunk.begin) / points
                                 : 0.0;
         }
-        if (geom.chunked && step.part >= 0 &&
-            size_t(step.part) < geom.chunks.size()) {
+        if (geom.chunked && id.part >= 0 &&
+            size_t(id.part) < geom.chunks.size()) {
             const RigExecBakedProgramImpl::GeomChunk &chunk =
-                geom.chunks[size_t(step.part)];
+                geom.chunks[size_t(id.part)];
             return double(chunk.end - chunk.begin) *
                    geometry.Get().revisionElementSize[object];
         }
@@ -509,14 +509,14 @@ StepSize(const RigExecBakedProgramImpl &B, LazyGeometrySizes &geometry,
 /// revision -- a Range revision's written groups, a Whole keyed skin's G
 /// chunks -- so the revision's modelled cost is the one chunk's it replaced.
 double
-RangeFixedUs(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
-             double fixedUs)
+RangeFixedUs(const RigExecBakedProgramImpl &B,
+             const RigExecBakedStepIdentity &id, double fixedUs)
 {
-    if (step.kind != RigExecBakedStepKind::RevisionChunk || step.object < 0 ||
-        size_t(step.object) >= B.revisionIndex.size()) {
+    if (id.kind != RigExecBakedStepKind::RevisionChunk || id.object < 0 ||
+        size_t(id.object) >= B.revisionIndex.size()) {
         return fixedUs;
     }
-    const auto &[chain, revision] = B.revisionIndex[size_t(step.object)];
+    const auto &[chain, revision] = B.revisionIndex[size_t(id.object)];
     const RigExecBakedProgramImpl::GeomRevision &geom =
         B.chains[size_t(chain)].revisions[size_t(revision)];
     size_t steps = 0;
@@ -545,9 +545,10 @@ RigExecBakedAssignStepCosts(RigExecBakedProgramImpl *program, size_t firstStep)
         step.label = category == std::string::npos
                          ? StepLabel(B, step, labels)
                          : step.descriptorKey.substr(0, category);
-        const StepCostConstants &constants = kStepCosts[size_t(step.kind)];
-        step.sizeUnits = StepSize(B, geometry, step);
-        step.cost = RangeFixedUs(B, step, constants.fixedUs) +
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        const StepCostConstants &constants = kStepCosts[size_t(id.kind)];
+        step.sizeUnits = StepSize(B, geometry, step, id);
+        step.cost = RangeFixedUs(B, id, constants.fixedUs) +
                     constants.perUnitUs * step.sizeUnits;
         // Longest path from a source, which is the level the packing groups
         // by. One forward pass, because program order is a topological order.

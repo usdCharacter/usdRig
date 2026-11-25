@@ -95,22 +95,22 @@ struct RrOpHost {
     {
         return RrGeoFinalGroupPoints(&p, chain, g);
     }
-    bool Lookup(uint32_t, const eval::OpLookup &lookup,
-                const RigExecTypeDesc &type, void *value,
-                std::string *error) const
+    bool LookUpProperty(uint32_t, const eval::OpLookup &lookup,
+                        const RigExecTypeDesc &type, void *value,
+                        std::string *error) const
     {
-        if (lookup.source != eval::kPropertyLookup)
-            return Fail(error,
-                        "no lookup source " + std::to_string(lookup.source));
         return RrLookUpProperty(&p, lookup, type, value, error);
     }
-    bool Output(const eval::OpHostOutput &output, const void *value,
-                std::string *error) const
+    bool StorePropertyVersion(const eval::OpHostOutput &output,
+                              const void *value, std::string *error) const
     {
-        if (output.target != eval::kPropertyVersion)
-            return Fail(error,
-                        "no output target " + std::to_string(output.target));
         return RrStorePropertyVersion(&p, output.object, value, error);
+    }
+    bool StoreGroup(const eval::OpHostOutput &output, uint32_t, const void *,
+                    size_t, std::string *error) const
+    {
+        return Fail(error, "no vertex-group state takes the groups of node " +
+                               std::to_string(output.node));
     }
 };
 
@@ -263,7 +263,7 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
             continue;
         builder.BindOutput(output->node, *desc.ports[output->port].port);
         size_t chain = 0, part = 0;
-        if (output->target == eval::kPropertyVersion &&
+        if (output->target == uint8_t(eval::OpOutputTarget::PropertyVersion) &&
             RrPropertyPartOfVersion(p, output->object, &chain, &part) &&
             part > 0) {
             nodes->propertyChain[output->node] = uint32_t(chain);

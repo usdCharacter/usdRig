@@ -151,6 +151,12 @@ public:
     /// wrote it last left it; null when the program has no such value or
     /// keeps it in its chain's groups.
     const void *GetValue(const RigExecValueRef &ref) const;
+    /// The elements of group \p group of the value \p ref names, written
+    /// by a member of a range chain, and their count in \p count; null
+    /// with a count of 0 when the program has no such value or group.
+    /// Valid until the next step writes that value.
+    const void *GetGroupValue(const RigExecValueRef &ref, uint32_t group,
+                              size_t *count) const;
 
     /// Lets another thread take the run state over: the next call, from
     /// any thread, makes that thread its owner.
