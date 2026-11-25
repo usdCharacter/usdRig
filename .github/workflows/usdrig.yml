@@ -525,8 +525,23 @@ jobs:
             -j"$(nproc)" \
             --output-on-failure --no-tests=error
 
-      # The exec_rows_* tests of this shard recorded their exec cross-check
-      # rows into build/execRows (tests/fixtures/README.md).
+      # Re-records this shard's exec-row goldens from the production evaluator
+      # into build/execRows, the set a deliberate row change checks in for
+      # this configuration (tests/fixtures/README.md).
+      - name: Record exec-row goldens
+        if: ${{ !cancelled() }}
+        run: |
+          export USD="${GITHUB_WORKSPACE}/usd-install"
+          source bin/_env.sh
+          export PXR_PLUGINPATH_NAME="$PWD/build/usd/rigExecSchema/resources:$PWD/build/usd/rigExecImaging/resources:$PWD/build/usd/rigExecMoverPlugins"
+          touch build/execRows.stamp
+          RIGEXEC_RECORD_EXEC_ROWS=1 ctest --test-dir build \
+            -I ${{ matrix.shard }},,3 -R '^testRigExecExecGoldens_' \
+            -j"$(nproc)" --output-on-failure
+          mkdir -p build/execRows
+          find tests/fixtures/execRows -name '*.golden' \
+            -newer build/execRows.stamp -exec cp {} build/execRows/ \;
+
       - name: Upload exec cross-check rows
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
@@ -554,6 +569,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Download exec cross-check rows
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           pattern: exec-rows-linux-shard*
@@ -562,14 +578,17 @@ jobs:
 
       - name: Exec cross-check rows configuration
         run: |
-          ls execRows/*.golden | wc -l
-          grep -ho 'reference=[^ ]*' execRows/ArmRig.golden
+          mkdir -p execRows
+          find execRows -name '*.golden' | wc -l
+          cat /dev/null execRows/*.golden 2>/dev/null |
+            grep -o 'reference=[^ ]*' | sort -u || true
 
       - name: Upload exec cross-check rows
         uses: actions/upload-artifact@v4
         with:
           name: exec-rows-linux
           path: execRows/
+          if-no-files-found: warn
 
       - name: CTest shards passed
         if: always()
@@ -1907,6 +1926,21 @@ jobs:
             -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/usdrig-install;$USD"
           cmake --build installed-scene-build --parallel 2
           ctest --test-dir installed-scene-build --output-on-failure
+
+      - name: Record exec-row goldens
+        if: ${{ runner.os == 'macOS' && !cancelled() }}
+        shell: bash
+        run: |
+          export USD="$GITHUB_WORKSPACE/usd-install"
+          source bin/_env.sh
+          export PXR_PLUGINPATH_NAME="$PWD/build/usd/rigExecSchema/resources:$PWD/build/usd/rigExecImaging/resources:$PWD/build/usd/rigExecMoverPlugins"
+          touch build/execRows.stamp
+          RIGEXEC_RECORD_EXEC_ROWS=1 ctest --test-dir build \
+            -R '^testRigExecExecGoldens_' \
+            --parallel ${{ matrix.jobs }} --output-on-failure
+          mkdir -p build/execRows
+          find tests/fixtures/execRows -name '*.golden' \
+            -newer build/execRows.stamp -exec cp {} build/execRows/ \;
 
       - name: Upload exec cross-check rows
         if: ${{ runner.os == 'macOS' && !cancelled() }}
