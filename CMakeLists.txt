@@ -1367,10 +1367,6 @@ foreach(_case IN ITEMS outside-target outside-target-far
             "${CMAKE_CURRENT_SOURCE_DIR}/examples"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures" ${_case})
 endforeach()
-# Finding: compile skips a projector under an animated ancestor above the
-# asset root; drop WILL_FAIL once fixed.
-set_tests_properties(testRigExecOutsideTransforms_projector-animated-ancestor
-    PROPERTIES WILL_FAIL TRUE)
 
 add_executable(testRigExecGeometryOpsBakedParity
     tests/testRigExecGeometryOpsBakedParity.cpp)

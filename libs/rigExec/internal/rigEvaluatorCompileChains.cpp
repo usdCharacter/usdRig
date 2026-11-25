@@ -590,10 +590,14 @@ RigExecRigEvaluator::_CompileDerivedMaintenance(_CompileAttempt &attempt)
                     projector.path.GetText(), meshPath.GetText());
             continue;
         }
-        // The mesh's own transform places the ray when the source names no
-        // sibling space. It is a stage transform the rig does not own, so
-        // it is captured here and must not vary over time.
-        for (UsdPrim p = mesh; p && !p.IsPseudoRoot(); p = p.GetParent()) {
+        // The mesh's transform relative to the asset places the ray when the
+        // source names no sibling space. It is a stage transform the rig does
+        // not own, so it is captured here and must not vary over time; the
+        // asset root and its ancestors cancel out of it.
+        const SdfPath assetRootPath = _rigPath.GetParentPath();
+        for (UsdPrim p = mesh;
+             p && !p.IsPseudoRoot() && p.GetPath() != assetRootPath;
+             p = p.GetParent()) {
             if (const UsdGeomXformable xformable{p}) {
                 if (xformable.TransformMightBeTimeVarying()) {
                     return attempt.Fail(
@@ -607,8 +611,7 @@ RigExecRigEvaluator::_CompileDerivedMaintenance(_CompileAttempt &attempt)
             }
         }
         UsdGeomXformCache meshXforms(UsdTimeCode::Default());
-        const UsdPrim assetRoot =
-            _stage->GetPrimAtPath(_rigPath.GetParentPath());
+        const UsdPrim assetRoot = _stage->GetPrimAtPath(assetRootPath);
         const GfMatrix4d assetWorld =
             assetRoot && !assetRoot.IsPseudoRoot()
                 ? meshXforms.GetLocalToWorldTransform(assetRoot)

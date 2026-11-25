@@ -824,7 +824,7 @@ TestProjector()
 
 // The mesh-to-asset map does not change when only an ancestor above the
 // asset root animates, so the projector publishes the static ancestor's
-// values. Today compile skips the projector (FINDING, registered WILL_FAIL).
+// values.
 void
 TestProjectorAnimatedAncestor()
 {
