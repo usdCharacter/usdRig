@@ -55,8 +55,7 @@ namespace {
 using B = RigExecBakedProgramImpl;
 
 /// compared: applied results compared bit for bit (refusals: of them, ones
-/// both sides answered with a pass-through, or a projector miss the baked
-/// step left unpublished and the op answered with its fallback). compileErrors: the baked step
+/// both sides answered with a pass-through). compileErrors: the baked step
 /// refused and the op failed compile, the evaluation that binds its inputs
 /// or the bridge that builds it. runErrors: the baked step refused and the
 /// op's evaluation stopped with an error while it ran.
@@ -967,11 +966,10 @@ ProbeDerived(const B &b)
                              !derived.haveMatrix, diagnostic);
                     continue;
                 }
-                // A miss publishes nothing; the op's fallback is the matrix
-                // the baked kernel wrote beside it.
                 Compare("Derived", kind, derived.targetText,
-                        VtValue(derived.matrix), VtValue(matrix),
-                        !derived.haveMatrix);
+                        derived.haveMatrix ? VtValue(derived.matrix)
+                                           : VtValue(),
+                        VtValue(matrix), false);
                 continue;
             }
             if (!RigExecGeometryOpSupported(revision.op)) {

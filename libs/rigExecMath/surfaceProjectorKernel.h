@@ -649,7 +649,8 @@ RigExecSurfaceProjectorMissed(
 }
 
 /// RigExecSolveSurfaceProjectorNotesT with each note as the diagnostic line
-/// a projector named \p who reports.
+/// a projector named \p who reports. True also on a miss: \p shaderMatrix
+/// then holds the fallback, in.shaderOffset.
 template <class Mat4, class Vec3d, class Vec3f, class Normals>
 bool
 RigExecSolveSurfaceProjectorT(
@@ -667,7 +668,7 @@ RigExecSolveSurfaceProjectorT(
         std::forward<Normals>(normalsOf), shaderMatrix, &notes, cache);
     for (const RigExecSurfaceProjectorNote &note : notes)
         diagnostics->push_back(RigExecSurfaceProjectorNoteText(note, who));
-    return solved;
+    return solved || RigExecSurfaceProjectorMissed(notes);
 }
 
 /// Evaluate a resolved target with the shared vertex normals.

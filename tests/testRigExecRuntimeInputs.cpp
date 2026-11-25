@@ -2717,7 +2717,7 @@ main(int argc, char **argv)
         GfMatrix4d offset(1.0);
         offset.SetScale(1.5);
         offset.SetTranslateOnly(GfVec3d(0.0, 0.25, -0.1));
-        cases += 4;
+        cases += 5;
         _CheckSets("computed_path_reads Mush.inputs:iterations = 6", stage,
                    10.0, {_Int(mush + "inputs:iterations", 6)}, 1);
         _CheckSets("computed_path_reads Mush.inputs:enabled = false", stage,
@@ -2729,6 +2729,24 @@ main(int argc, char **argv)
         _CheckSets("computed_path_reads Projector.rigExec:shaderOffset", stage,
                    1.0, {_Matrix(projector + "rigExec:shaderOffset", offset)},
                    1);
+        // A ray that misses the ball publishes rigExec:shaderOffset.
+        _CheckSets(
+            "computed_path_reads Projector.rigExec:rayOrigin misses", stage,
+            1.0,
+            {_Vec3d(projector + "rigExec:rayOrigin", GfVec3d(40.0, 40.0, 0.0))},
+            1, [](const RigExecRuntimeReader &reader) {
+                GfMatrix4d fallback(2.0);
+                fallback[3][3] = 1.0;
+                bool published = false;
+                for (const auto &primvar : reader.GetMatrixPrimvars()) {
+                    if (primvar.path ==
+                        "/PathReadAsset/Geom/Ball.primvars:ballProjector") {
+                        published = rigExecTestDrive::SameMatrix(
+                            fallback, primvar.matrix);
+                    }
+                }
+                CHECK(published);
+            });
     }
     // A delta mush disabled at T reads nothing past its enable there, so
     // the run at T reaches neither its rest points nor its topology; the

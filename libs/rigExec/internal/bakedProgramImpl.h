@@ -992,7 +992,7 @@ struct RigExecBakedGeomChain {
         bool baseDirty = false;
         /// A surface projector target (RigExecIsDerivedMatrixOp): no
         /// authored base, and a MATRIX published in place of a vec3f
-        /// array -- when this run measured one.
+        /// array -- when this run measured one or its ray missed.
         bool matrixTarget = false;
         GfMatrix4d matrix{1.0};
         bool haveMatrix = false;

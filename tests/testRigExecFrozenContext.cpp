@@ -7663,6 +7663,74 @@ TestProjectorSpacesMatchDynamic(const std::string &examplesDir)
     }
 }
 
+// A projector ray that misses publishes rigExec:shaderOffset, live and in a
+// warming job alike (tests/fixtures/computed_path_reads.usda).
+void
+TestProjectorMissPublishesOffset(const std::string &examplesDir)
+{
+    UsdStageRefPtr stage = UsdStage::Open(
+        examplesDir + "/../tests/fixtures/computed_path_reads.usda");
+    CHECK(stage);
+    if (!stage) {
+        return;
+    }
+    const SdfPath projector("/PathReadAsset/Rig/Movers/Projector");
+    const SdfPath target("/PathReadAsset/Geom/Ball.primvars:ballProjector");
+    stage->SetEditTarget(stage->GetSessionLayer());
+    CHECK(stage->GetPrimAtPath(projector)
+              .GetAttribute(TfToken("rigExec:rayOrigin"))
+              .Set(GfVec3d(40.0, 40.0, 0.0)));
+    const SdfPath rig("/PathReadAsset/Rig");
+    RigExecRigEvaluator evaluator(stage, rig);
+    std::vector<std::string> errors;
+    CHECK(evaluator.Compile(&errors));
+    CHECK(evaluator.IsBakeable());
+    const auto publishesOffset = [&](const char *what,
+                                     const RigExecRigPose &pose, double frame) {
+        GfMatrix4d offset;
+        CHECK(stage->GetPrimAtPath(projector)
+                  .GetAttribute(TfToken("rigExec:shaderOffset"))
+                  .Get(&offset, UsdTimeCode(frame)));
+        const auto found = pose.movedProperties.find(target);
+        const bool same = found != pose.movedProperties.end() &&
+                          found->second.IsHolding<GfMatrix4d>() &&
+                          std::memcmp(&found->second.UncheckedGet<GfMatrix4d>(),
+                                      &offset, sizeof(offset)) == 0;
+        if (!same) {
+            std::printf("FAIL projector miss %s frame %g: %s is not "
+                        "rigExec:shaderOffset\n",
+                        what, frame, target.GetText());
+        }
+        CHECK(same);
+    };
+    RigExecCancellationSource cancellation;
+    std::vector<RigExecValueOverride> noOverrides;
+    std::string error;
+    for (double frame : {1.0, 4.0}) {
+        const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
+        CHECK(live.valid);
+        publishesOffset("live", live, frame);
+        std::shared_ptr<const RigExecFrozenProgram> frozen;
+        CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
+        if (!frozen) {
+            std::printf("FAIL projector miss freeze refused: %s\n",
+                        error.c_str());
+            return;
+        }
+        RigExecFrameInputs inputs;
+        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame),
+                                       noOverrides, &inputs, &error));
+        bool ran = false;
+        const RigExecRigPose warmed =
+            RunWarmingJob(&evaluator, rig, frozen, inputs, &cancellation, &ran);
+        CHECK(ran);
+        publishesOffset("warmed", warmed, frame);
+        CheckPosesBitIdentical(
+            TfStringPrintf("projector miss warmed frame %g", frame).c_str(),
+            live, warmed);
+    }
+}
+
 // tests/fixtures/frame_record_fallbacks.usda, frozen: AtPrim read phases on
 // rigExec:transform resolve through the worker's own FrameMatrix records. A
 // warming job at frames 4 (C2 disabled, so its record is X as C1 left it)
@@ -9537,6 +9605,7 @@ main(int argc, char **argv)
         TestFrozenWeightPacketOpsMatchLive(argv[1]);
         TestUnavailableTargetSamplesLocalInvalidRoles(argv[1]);
         TestProjectorSpacesMatchDynamic(argv[1]);
+        TestProjectorMissPublishesOffset(argv[1]);
         TestVolumePlacementsFixtureFreezes(argv[1]);
         TestFrozenVolumePlacementUsesTheSharedGate(argv[1]);
         TestFrameRecordFallbacksFreeze(argv[1]);

@@ -362,7 +362,7 @@ struct RrDerivedPublish {
     uint32_t target = 0;
     RrRetainedArray<RrVec3f> result;
     /// A surface projector target publishes a matrix primvar instead,
-    /// when this run measured one.
+    /// when this run measured one or its ray missed.
     bool matrixTarget = false;
     bool haveMatrix = false;
     RrMat4d matrix;

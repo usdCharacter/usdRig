@@ -517,8 +517,8 @@ TestDerived(const Grid &grid)
 
 /// Runs one projector or dials node and compares it with the native
 /// matrix: both succeed with the same bits, or both fail. Where \p miss,
-/// the native run measures no frame and the op outputs the shaderOffset
-/// fallback the native kernel wrote. True when the native run succeeded.
+/// the ray measures no frame and both output the shaderOffset fallback.
+/// True when the native run succeeded.
 bool
 CompareMatrix(RigExecRevisionOp op, const RigExecRevisionBinding &binding,
               const RigExecSurfaceProjectorFrames &frames,
@@ -537,11 +537,12 @@ CompareMatrix(RigExecRevisionOp op, const RigExecRevisionBinding &binding,
                                  &expected, &diagnostics, nullptr);
 
     if (miss) {
-        CHECK(!nativeOk);
+        CHECK(nativeOk);
         CHECK(std::memcmp(&expected, &reads.shaderOffset, sizeof(expected)) ==
               0);
+        CHECK(!diagnostics.empty() &&
+              diagnostics.back().find("cast=MISS") != std::string::npos);
     }
-    const bool opRuns = nativeOk || miss;
 
     // Where the native run fails on unusable input, the op's evaluation
     // stops with an error holding each of the native run's notes.
@@ -551,8 +552,8 @@ CompareMatrix(RigExecRevisionOp op, const RigExecRevisionBinding &binding,
     std::string diagnostic;
     const bool runnerOk = RigExecRunGeometryMatrixOp(
         op, binding, frames, reads, base, final, runner, ran, diagnostic);
-    CHECK(runnerOk == opRuns);
-    if (!opRuns) {
+    CHECK(runnerOk == nativeOk);
+    if (!nativeOk) {
         for (const std::string &line : diagnostics) {
             const std::string body = line.substr(line.find(": ") + 2);
             if (diagnostic.find("SurfaceProjector: ") == std::string::npos ||
@@ -584,7 +585,7 @@ CompareMatrix(RigExecRevisionOp op, const RigExecRevisionBinding &binding,
     CHECK(RigExecWriteGeometryMatrixInputs(binding, frames, reads, base, final,
                                            node, evaluator.get(), &error));
     const bool opOk = evaluator->Evaluate(&error);
-    if (opOk != opRuns) {
+    if (opOk != nativeOk) {
         std::printf("%s: native %d op %d (%s)\n", label, int(nativeOk),
                     int(opOk), error.c_str());
         CHECK(false);
@@ -595,8 +596,6 @@ CompareMatrix(RigExecRevisionOp op, const RigExecRevisionBinding &binding,
               !evaluator->GetOutput(node.out));
         return false;
     }
-    if (!nativeOk)
-        CHECK(diagnostic.empty());
     const auto *actual =
         static_cast<const Mat4d *>(evaluator->GetOutput(node.out));
     CHECK(actual);
@@ -686,22 +685,21 @@ TestProjector(const Grid &grid)
                             frames, reads, grid.rest, grid.points, c.label));
     }
 
-    // A ray that misses: native publishes nothing, the op outputs the
-    // shaderOffset, also when an unresolved rig space is noted before the
-    // miss.
+    // A ray that misses: native and the op output the shaderOffset, also
+    // when an unresolved rig space is noted before the miss.
     binding.moverPath = SdfPath("/Rig/Projector");
     RigExecProjectorReads miss = reads;
     miss.rayOrigin = GfVec3d(40.0, 40.0, 2.0);
     for (const bool reproject : {false, true}) {
         miss.reproject = reproject;
-        CHECK(!CompareMatrix(RigExecRevisionOp::SurfaceProjector, binding,
-                             RigExecSurfaceProjectorFrames(), miss, grid.rest,
-                             grid.points, "miss", true));
+        CHECK(CompareMatrix(RigExecRevisionOp::SurfaceProjector, binding,
+                            RigExecSurfaceProjectorFrames(), miss, grid.rest,
+                            grid.points, "miss", true));
         RigExecSurfaceProjectorFrames unprovided;
         unprovided.named[2] = true;
-        CHECK(!CompareMatrix(RigExecRevisionOp::SurfaceProjector, binding,
-                             unprovided, miss, grid.rest, grid.points,
-                             "miss, space not a provider", true));
+        CHECK(CompareMatrix(RigExecRevisionOp::SurfaceProjector, binding,
+                            unprovided, miss, grid.rest, grid.points,
+                            "miss, space not a provider", true));
     }
     // No usable surface, and a ray with no direction: both fail.
     CHECK(!CompareMatrix(RigExecRevisionOp::SurfaceProjector, binding,
