@@ -3876,6 +3876,58 @@ RrGeoNoteSparseSource(const RrProgram *program, size_t pointCount,
 } // namespace
 
 const void *
+RrGeoGroupPointsAt(const RrProgram *program, size_t chain, size_t version,
+                   size_t g)
+{
+    const auto *scratch =
+        static_cast<const RrGeometryScratch *>(program->geo.get());
+    if (!scratch || chain >= scratch->chains.size() ||
+        version > scratch->chains[chain].revisions.size())
+        return nullptr;
+    return RrGeoGroupAt(scratch->chains[chain], version, g, nullptr).data;
+}
+
+bool
+RrStoreChainGroup(RrProgram *program, const eval::OpHostOutput &output,
+                  uint32_t g, const void *elements, size_t count,
+                  std::string *error)
+{
+    const auto fail = [&](const std::string &why) {
+        if (error)
+            *error = "revision " + std::to_string(output.object) + why;
+        return false;
+    };
+    auto *scratch = static_cast<RrGeometryScratch *>(program->geo.get());
+    const auto &geo = *program->geometry;
+    if (!scratch || output.object >= geo.revisionIndex.size())
+        return fail(" is not in the program");
+    const auto &entry = geo.revisionIndex[output.object];
+    RrGeometryScratch::Chain &chain = scratch->chains[size_t(entry.first)];
+    const size_t r = size_t(entry.second);
+    auto &revision = chain.revisions[r];
+    if (g >= revision.groups.size() || g >= revision.groupWritten.size() ||
+        !revision.groupWritten[g] || g + 1 >= chain.groupBounds.size())
+        return fail(" writes no group " + std::to_string(g));
+    if (count != size_t(chain.groupBounds[g + 1] - chain.groupBounds[g]))
+        return fail(" is given " + std::to_string(count) +
+                    " points for group " + std::to_string(g));
+    const auto *points = static_cast<const RrVec3f *>(elements);
+    RigExecGroupState<RrVec3f> &state = revision.groups[g];
+    state.ok = true;
+    RigExecGroupSource from;
+    const RigExecPointsRef<RrVec3f> &entering =
+        RrGeoGroupAt(chain, r, g, &from);
+    if (RigExecPointsBitsEqual(entering.data, entering.count, points, count)) {
+        RigExecPublishPassedGroup(&state, entering, from);
+        return true;
+    }
+    const int k = RigExecGroupScratch(&state, count);
+    std::copy(points, points + count, state.own[size_t(k)]->begin());
+    RigExecPublishOwnGroup(&state, k);
+    return true;
+}
+
+const void *
 RrGeoFinalGroupPoints(const RrProgram *program, size_t chain, size_t g)
 {
     const auto *scratch =

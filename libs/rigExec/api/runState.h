@@ -129,6 +129,13 @@ public:
     /// reads them.
     bool PointInputGroups(RigExecInputId input, const RigExecOpGroups *groups,
                           std::string *error = nullptr);
+    /// As PointInputGroups, for an input range chains' members read through
+    /// neighbourhood inputs: \p groups holds one table per group, and the
+    /// range of group g reads \p groups[g], whose points the host sets for
+    /// the groups that range reads (ChainReads) before it runs it.
+    bool PointInputHaloGroups(RigExecInputId input,
+                              const RigExecOpGroups *groups,
+                              std::string *error = nullptr);
     bool RunNode(RigExecNodeId node, std::string *error = nullptr);
     /// Prepares every member of chain \p chain for a frame cut into
     /// \p groups groups of elements, group g holding [bounds[g],

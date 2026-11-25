@@ -60,6 +60,16 @@ struct BakedOpHost {
         const RigExecBakedProgramImpl::GeomChain &c = B.chains[chain];
         return RigExecBakedGroupAt(c, c.revisions.size(), g).data;
     }
+    const void *ChainVersionGroupPoints(const eval::OpLookup &lookup,
+                                        uint32_t g) const
+    {
+        if (lookup.object >= B.chains.size() || lookup.part < 0 ||
+            size_t(lookup.part) > B.chains[lookup.object].revisions.size())
+            return nullptr;
+        return RigExecBakedGroupAt(B.chains[lookup.object], size_t(lookup.part),
+                                   g)
+            .data;
+    }
     bool LookUpProperty(uint32_t index, const eval::OpLookup &lookup,
                         const RigExecTypeDesc &type, void *value,
                         std::string *error) const
@@ -111,11 +121,12 @@ struct BakedOpHost {
     {
         return RigExecBakedStoreWeightField(B, output, value, error);
     }
-    bool StoreGroup(const eval::OpHostOutput &output, uint32_t, const void *,
-                    size_t, std::string *error) const
+    bool StoreGroup(const eval::OpHostOutput &output, uint32_t g,
+                    const void *elements, size_t count,
+                    std::string *error) const
     {
-        return Fail(error, "no vertex-group state takes the groups of node " +
-                               std::to_string(output.node));
+        return RigExecBakedStoreChainGroup(B, output, g, elements, count,
+                                           error);
     }
 };
 
@@ -225,19 +236,45 @@ DeclarePortReads(const RigExecBakedProgramImpl &B,
     value(d.values[p], false);
     for (const uint32_t element : d.lists[p])
         value(element, true);
-    for (const eval::OpHostInput &input : layout.hostInputs) {
+    const auto matrices = [&](const eval::OpLookup &lookup) {
+        if (lookup.source == uint8_t(eval::OpLookupSource::Matrix))
+            reads->push_back(
+                RigExecBakedOne(lookup.part ? D::BaseMatrix : D::FinalMatrix,
+                                int(lookup.object)));
+    };
+    for (size_t i = 0; i < layout.hostInputs.size(); ++i) {
+        const eval::OpHostInput &input = layout.hostInputs[i];
         if (input.node != n || input.port != p)
             continue;
-        if (input.source == eval::OpHostSource::FinalMatrix)
+        if (input.source == eval::OpHostSource::FinalMatrix) {
             reads->push_back(
                 RigExecBakedOne(D::FinalMatrix, int(input.object)));
-        else if (input.source == eval::OpHostSource::BaseMatrix)
+        } else if (input.source == eval::OpHostSource::BaseMatrix) {
             reads->push_back(RigExecBakedOne(D::BaseMatrix, int(input.object)));
-        else if (input.source == eval::OpHostSource::ChainPoints &&
-                 !reader.head && !whole)
-            RigExecBakedDeclareGroupRead(
-                B, int(input.object), B.chains[input.object].revisions.size(),
-                group, reads);
+        } else if (layout.grouped[i]) {
+            if (reader.head || whole)
+                continue;
+            const bool latest = input.source == eval::OpHostSource::ChainPoints;
+            const uint32_t from =
+                latest ? input.object : layout.lookups[input.object].object;
+            const size_t version =
+                latest ? B.chains[from].revisions.size()
+                       : size_t(layout.lookups[input.object].part);
+            RigExecBakedDeclareGroupRead(B, int(from), version, group, reads);
+            if (layout.grouped[i] == 2)
+                for (const uint32_t h :
+                     op.halo[chain][layout.memberOf[n]][group])
+                    if (h != group)
+                        RigExecBakedDeclareGroupRead(B, int(from), version, h,
+                                                     reads);
+        } else if (input.source == eval::OpHostSource::Lookup &&
+                   (reader.head || chain == kRigExecInvalidIndex)) {
+            const eval::OpLookup &lookup = layout.lookups[input.object];
+            matrices(lookup);
+            if (lookup.source == uint8_t(eval::OpLookupSource::List))
+                for (int32_t e = 0; e < lookup.part; ++e)
+                    matrices(layout.lookups[lookup.object + uint32_t(e)]);
+        }
     }
 }
 
@@ -275,6 +312,9 @@ FindHaloGroups(RigExecBakedOpProgram *op, RigExecRunState &run)
             bool halo = false;
             for (const RigExecChainDesc::Feed &feed : desc.feeds[m])
                 halo = halo || feed.neighbourhood;
+            for (size_t i = 0; i < layout.hostInputs.size(); ++i)
+                halo = halo || (layout.grouped[i] == 2 &&
+                                layout.hostInputs[i].node == desc.members[m]);
             if (!halo)
                 continue;
             op->halo[c][m].assign(groups, std::vector<uint32_t>());
@@ -373,6 +413,18 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
                                 : RigExecBakedOne(D::OpGroupValue,
                                                   int(base + g)));
                     });
+                    for (const uint32_t o : layout.hostOutputsOf[n]) {
+                        const eval::OpHostOutput &output =
+                            layout.hostOutputs[o];
+                        for (uint32_t h = whole ? 0 : g;
+                             h < (whole ? groups : g + 1); ++h) {
+                            const int slot = RigExecBakedGroupSlot(
+                                *B, int(output.object), h);
+                            if (slot >= 0)
+                                step.writes.push_back(
+                                    RigExecBakedOne(D::RevisionOut, slot));
+                        }
+                    }
                 }
                 std::sort(step.reads.begin(), step.reads.end(),
                           [](const RigExecBakedSlotRange &a,
@@ -448,9 +500,20 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
     layout.program = RigExecCompile(*desc, options, &why);
     if (!layout.program)
         return Fail(error, why);
-    layout.hostInputs.insert(layout.hostInputs.end(),
-                             injection.hostInputs.begin(),
-                             injection.hostInputs.end());
+    const uint32_t lookupBase = uint32_t(layout.lookups.size());
+    for (eval::OpHostInput input : injection.hostInputs) {
+        if (input.source == eval::OpHostSource::Lookup)
+            input.object += lookupBase;
+        layout.hostInputs.push_back(input);
+    }
+    for (eval::OpLookup lookup : injection.lookups) {
+        if (lookup.source == uint8_t(eval::OpLookupSource::List))
+            lookup.object += lookupBase;
+        layout.lookups.push_back(lookup);
+    }
+    layout.hostOutputs.insert(layout.hostOutputs.end(),
+                              injection.hostOutputs.begin(),
+                              injection.hostOutputs.end());
     const size_t chains = RigExecProgramChainCount(*layout.program);
     layout.chains.assign(chains, eval::OpChainLayout());
     std::vector<uint32_t> chainOfNode(RigExecProgramNodeCount(*layout.program),
@@ -463,23 +526,36 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
     }
     std::vector<char> placed(chains, 0);
     for (const eval::OpHostInput &input : layout.hostInputs) {
-        if (input.source != eval::OpHostSource::ChainPoints)
-            continue;
         const uint32_t c = input.node < chainOfNode.size()
                                ? chainOfNode[input.node]
                                : kRigExecInvalidIndex;
+        uint32_t from = input.object;
+        if (input.source == eval::OpHostSource::Lookup) {
+            RigExecNodeDesc node;
+            if (c == kRigExecInvalidIndex ||
+                input.object >= layout.lookups.size() ||
+                layout.lookups[input.object].source !=
+                    uint8_t(eval::OpLookupSource::ChainVersion) ||
+                !RigExecProgramNodeAt(*layout.program, input.node, &node) ||
+                input.port >= node.values.size() ||
+                !(node.op->ports[input.port].flags &
+                  (kRigExecPortPointwise | kRigExecPortNeighbourhood)))
+                continue;
+            from = layout.lookups[input.object].object;
+        } else if (input.source != eval::OpHostSource::ChainPoints) {
+            continue;
+        }
         if (c == kRigExecInvalidIndex)
             return Fail(error, "node " + std::to_string(input.node) +
                                    " reads chain points outside a range chain");
-        if (input.object >= B.chains.size() ||
-            B.chains[input.object].groupBounds.size() < 2)
-            return Fail(error, "point chain " + std::to_string(input.object) +
+        if (from >= B.chains.size() || B.chains[from].groupBounds.size() < 2)
+            return Fail(error, "point chain " + std::to_string(from) +
                                    " is not cut into vertex groups");
-        if (placed[c] && layout.chains[c].pointChain != input.object)
+        if (placed[c] && layout.chains[c].pointChain != from)
             return Fail(error, "range chain " + std::to_string(c) +
                                    " reads two point chains");
-        layout.chains[c].pointChain = input.object;
-        layout.chains[c].bounds = B.chains[input.object].groupBounds;
+        layout.chains[c].pointChain = from;
+        layout.chains[c].bounds = B.chains[from].groupBounds;
         placed[c] = 1;
     }
     for (size_t c = 0; c < chains; ++c)
@@ -607,6 +683,7 @@ RigExecBakedCloneOpState(const RigExecBakedProgramImpl &source,
     source.opState->run->ReleaseOwner();
     state->versions = source.opState->versions;
     state->groupVersions = source.opState->groupVersions;
+    state->haloReads = source.opState->haloReads;
     const RigExecBakedOpProgram &op = *source.opProgram;
     const BakedOpHost host{*clone};
     if (!eval::BindOpStepState(op.layout, host, state.get(), error))

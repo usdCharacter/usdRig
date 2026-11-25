@@ -131,6 +131,19 @@ RigExecRunState::PointInputGroups(RigExecInputId input,
 }
 
 bool
+RigExecRunState::PointInputHaloGroups(RigExecInputId input,
+                                      const RigExecOpGroups *groups,
+                                      std::string *error)
+{
+    if (input.index >= _data->program->inputSlots.size()) {
+        if (error)
+            *error = "no input " + std::to_string(input.index);
+        return false;
+    }
+    return _data->run.PointInputHaloGroups(input.index, groups, error);
+}
+
+bool
 RigExecRunState::RunChainHead(size_t chain, const int *bounds, uint32_t groups,
                               std::string *error)
 {

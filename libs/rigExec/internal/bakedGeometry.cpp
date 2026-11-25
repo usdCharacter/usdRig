@@ -2512,6 +2512,45 @@ RigExecBakedDeclareGroupRead(const RigExecBakedProgramImpl &B, int chain,
                  : RigExecBakedOne(RigExecBakedSlotDomain::RevisionOut, slot));
 }
 
+bool
+RigExecBakedStoreChainGroup(RigExecBakedProgramImpl &B,
+                            const eval::OpHostOutput &output, uint32_t g,
+                            const void *elements, size_t count,
+                            std::string *error)
+{
+    const auto fail = [&](const std::string &why) {
+        if (error)
+            *error = "revision " + std::to_string(output.object) + why;
+        return false;
+    };
+    if (output.object >= B.revisionIndex.size())
+        return fail(" is not in the program");
+    const auto &[chain, r] = B.revisionIndex[output.object];
+    RigExecBakedProgramImpl::GeomChain &geom = B.chains[size_t(chain)];
+    RigExecBakedProgramImpl::GeomRevision &revision = geom.revisions[size_t(r)];
+    if (g >= revision.groups.size() || g >= revision.groupWritten.size() ||
+        !revision.groupWritten[g] || g + 1 >= geom.groupBounds.size())
+        return fail(" writes no group " + std::to_string(g));
+    if (count != size_t(geom.groupBounds[g + 1] - geom.groupBounds[g]))
+        return fail(" is given " + std::to_string(count) +
+                    " points for group " + std::to_string(g));
+    const auto *points = static_cast<const GfVec3f *>(elements);
+    RigExecGroupState<GfVec3f> &state = revision.groups[g];
+    state.ok = true;
+    const RigExecPointsRef<GfVec3f> &entering =
+        RigExecBakedGroupAt(geom, size_t(r), g);
+    if (RigExecPointsBitsEqual(entering.data, entering.count, points, count)) {
+        RigExecPublishPassedGroup(
+            &state, entering,
+            RigExecBakedGroupSourceAt(B, chain, size_t(r), g));
+        return true;
+    }
+    const int k = RigExecGroupScratch(&state, count);
+    std::copy(points, points + count, state.own[size_t(k)]->begin());
+    RigExecPublishOwnGroup(&state, k);
+    return true;
+}
+
 int
 RigExecBakedGroupSlot(const RigExecBakedProgramImpl &B, int id, size_t g)
 {

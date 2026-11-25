@@ -95,6 +95,13 @@ struct RrOpHost {
     {
         return RrGeoFinalGroupPoints(&p, chain, g);
     }
+    const void *ChainVersionGroupPoints(const eval::OpLookup &lookup,
+                                        uint32_t g) const
+    {
+        return lookup.part < 0 ? nullptr
+                               : RrGeoGroupPointsAt(&p, lookup.object,
+                                                    size_t(lookup.part), g);
+    }
     bool LookUpProperty(uint32_t, const eval::OpLookup &lookup,
                         const RigExecTypeDesc &type, void *value,
                         std::string *error) const
@@ -145,11 +152,11 @@ struct RrOpHost {
     {
         return RrStoreWeightField(&p, output, value, error);
     }
-    bool StoreGroup(const eval::OpHostOutput &output, uint32_t, const void *,
-                    size_t, std::string *error) const
+    bool StoreGroup(const eval::OpHostOutput &output, uint32_t g,
+                    const void *elements, size_t count,
+                    std::string *error) const
     {
-        return Fail(error, "no vertex-group state takes the groups of node " +
-                               std::to_string(output.node));
+        return RrStoreChainGroup(&p, output, g, elements, count, error);
     }
 };
 

@@ -11,6 +11,7 @@
 #include "rigExec/api/runState.h"
 #include "rigExec/api/view.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -45,6 +46,11 @@ enum class OpLookupSource : uint8_t {
     ChainVersion = 3,
     /// An input of weight object `part` as weight field `object` reads it.
     WeightFieldInputs = 4,
+    /// An array of `part` elements, element i what lookup `object` + i
+    /// answers.
+    List = 5,
+    /// Mat4d: the final (part 0) or base (part 1) matrix of slot `object`.
+    Matrix = 6,
 };
 
 /// OpLookup::read of a WeightArrays lookup, whose object is a weight object:
@@ -135,7 +141,9 @@ OpLookupSourceRuns(uint8_t source)
            source == uint8_t(OpLookupSource::PoseVersion) ||
            source == uint8_t(OpLookupSource::WeightArrays) ||
            source == uint8_t(OpLookupSource::ChainVersion) ||
-           source == uint8_t(OpLookupSource::WeightFieldInputs);
+           source == uint8_t(OpLookupSource::WeightFieldInputs) ||
+           source == uint8_t(OpLookupSource::List) ||
+           source == uint8_t(OpLookupSource::Matrix);
 }
 
 /// Whether OpStoreOutput stores outputs of \p target, or, for a range chain
@@ -296,8 +304,12 @@ struct OpStepLayout {
     std::vector<RigExecChainDesc> chainDescs;
     /// Per program node: its chain and member index, or kRigExecInvalidIndex.
     std::vector<uint32_t> chainOf, memberOf;
-    /// Per hostInputs entry: the program input it writes.
+    /// Per hostInputs entry: the program input it writes, and how a range
+    /// chain member reads it group by group: 0 not, 1 through a pointwise
+    /// input, 2 through a neighbourhood input. Chain points and a
+    /// ChainVersion lookup feeding a point input are read group by group.
     std::vector<uint32_t> hostInputIds;
+    std::vector<uint8_t> grouped;
     /// Per program node: its Lookup hostInputs entries and its hostOutputs
     /// entries.
     std::vector<std::vector<uint32_t>> lookupsOf, hostOutputsOf;
@@ -378,6 +390,7 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
         }
     }
     layout->hostInputIds.clear();
+    layout->grouped.clear();
     layout->lookupsOf.assign(nodes, std::vector<uint32_t>());
     layout->hostOutputsOf.assign(nodes, std::vector<uint32_t>());
     for (const OpHostInput &input : layout->hostInputs) {
@@ -389,16 +402,22 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
                                            " has no host input " +
                                            std::to_string(input.port));
         const uint32_t id = layout->nodes[input.node].inputs[input.port];
+        const uint32_t flags =
+            layout->nodes[input.node].op->ports[input.port].flags;
+        const bool member = layout->chainOf[input.node] != kRigExecInvalidIndex;
+        const bool points =
+            (flags & (kRigExecPortPointwise | kRigExecPortNeighbourhood)) != 0;
+        const uint8_t grouped =
+            (flags & kRigExecPortNeighbourhood) ? uint8_t(2) : uint8_t(1);
+        layout->grouped.push_back(0);
         if (input.source == OpHostSource::ChainPoints) {
-            const uint32_t c = layout->chainOf[input.node];
-            if (c == kRigExecInvalidIndex ||
-                !(layout->nodes[input.node].op->ports[input.port].flags &
-                  kRigExecPortPointwise))
+            if (!member || !points)
                 return OpLayoutFail(error,
                                     "chain points feed node " +
                                         std::to_string(input.node) +
                                         ", which does not read them point "
                                         "by point in a range chain");
+            layout->grouped.back() = grouped;
         }
         if (input.source == OpHostSource::Lookup) {
             if (input.object >= layout->lookups.size())
@@ -413,20 +432,52 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
                         " reads lookup source " +
                         std::to_string(layout->lookups[input.object].source) +
                         ", which no host resolves");
-            if (layout->nodes[input.node].op->ports[input.port].flags &
-                (kRigExecPortPointwise | kRigExecPortNeighbourhood))
+            const OpLookup &lookup = layout->lookups[input.object];
+            const bool version =
+                lookup.source == uint8_t(OpLookupSource::ChainVersion);
+            if (points && !(version && member))
                 return OpLayoutFail(error, "a lookup feeds point input " +
                                                std::to_string(input.port) +
                                                " of node " +
                                                std::to_string(input.node));
-            if (layout->nodes[input.node].op->ports[input.port].flags &
-                kRigExecPortChecked)
+            if (flags & kRigExecPortChecked)
                 return OpLayoutFail(error, "a lookup feeds checked input " +
                                                std::to_string(input.port) +
                                                " of node " +
                                                std::to_string(input.node));
-            layout->lookupsOf[input.node].push_back(
-                uint32_t(layout->hostInputIds.size()));
+            if (lookup.source == uint8_t(OpLookupSource::List)) {
+                const RigExecTypeDesc &type =
+                    *RigExecRegistry::Get()
+                         .TypeAt(layout->nodes[input.node]
+                                     .op->ports[input.port]
+                                     .type->Index())
+                         .desc;
+                bool listed = lookup.part >= 0 && type.element && type.resize &&
+                              type.data &&
+                              RigExecRegistry::Get()
+                                  .TypeAt(type.element->Index())
+                                  .desc->triviallyCopyable &&
+                              size_t(lookup.object) + size_t(lookup.part) <=
+                                  layout->lookups.size();
+                for (int32_t e = 0; listed && e < lookup.part; ++e) {
+                    const uint8_t source =
+                        layout->lookups[lookup.object + uint32_t(e)].source;
+                    listed = OpLookupSourceRuns(source) &&
+                             source != uint8_t(OpLookupSource::List);
+                }
+                if (!listed)
+                    return OpLayoutFail(
+                        error, "node " + std::to_string(input.node) +
+                                   " reads lookup list " +
+                                   std::to_string(input.object) +
+                                   ", whose elements the layout lacks or "
+                                   "its input cannot hold");
+            }
+            if (points)
+                layout->grouped.back() = grouped;
+            else
+                layout->lookupsOf[input.node].push_back(
+                    uint32_t(layout->hostInputIds.size()));
         }
         layout->hostInputIds.push_back(id);
     }
@@ -500,13 +551,32 @@ struct OpStepState {
     std::vector<std::unique_ptr<OpPortValue>> lookedUp;
     std::vector<std::vector<const void *>> groupPoints;
     std::vector<RigExecOpGroups> groups;
+    /// Per hostInputs entry read through a neighbourhood input, per group:
+    /// the groups table that group's range reads and its RigExecOpGroups;
+    /// and the groups it reads, found by the chain's head.
+    std::vector<std::vector<std::vector<const void *>>> haloPoints;
+    std::vector<std::vector<RigExecOpGroups>> haloGroups;
+    std::vector<std::vector<std::vector<uint32_t>>> haloReads;
     std::vector<uint64_t> versions, groupVersions;
 };
 
+/// Group \p g of the points host input \p input reads group by group: of
+/// its chain's final points, or of the chain version its lookup names.
+template <class Host>
+const void *
+OpGroupPoints(const OpStepLayout &layout, Host &host, const OpHostInput &input,
+              uint32_t g)
+{
+    return input.source == OpHostSource::ChainPoints
+               ? host.ChainGroupPoints(input.object, g)
+               : host.ChainVersionGroupPoints(layout.lookups[input.object], g);
+}
+
 /// Points \p state's run at the host's values: each matrix input at what
-/// \p host.Matrix answers, each chain-points input at a group
-/// table its range steps fill. Call it on a new or cloned state, before
-/// its first step, whenever the host's storage moved.
+/// \p host.Matrix answers, each input read group by group at a group
+/// table its range steps fill, one per group for a neighbourhood input.
+/// Call it on a new or cloned state, before its first step, whenever the
+/// host's storage moved; a clone takes its source's haloReads.
 template <class Host>
 bool
 BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
@@ -515,6 +585,9 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
     state->groupPoints.assign(layout.hostInputs.size(),
                               std::vector<const void *>());
     state->groups.assign(layout.hostInputs.size(), RigExecOpGroups());
+    state->haloPoints.assign(layout.hostInputs.size(), {});
+    state->haloGroups.assign(layout.hostInputs.size(), {});
+    state->haloReads.resize(layout.hostInputs.size());
     state->lookedUp.clear();
     state->lookedUp.resize(layout.hostInputs.size());
     state->versions.resize(layout.OpValueCount(), 0);
@@ -525,7 +598,25 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
     for (size_t i = 0; i < layout.hostInputs.size(); ++i) {
         const OpHostInput &input = layout.hostInputs[i];
         const RigExecInputId id{layout.hostInputIds[i]};
-        if (input.source == OpHostSource::Lookup) {
+        if (layout.grouped[i] == 2) {
+            const OpChainLayout &chain =
+                layout.chains[layout.chainOf[input.node]];
+            const uint32_t groups = chain.Groups();
+            state->haloPoints[i].assign(
+                groups, std::vector<const void *>(groups, nullptr));
+            state->haloGroups[i].assign(groups, RigExecOpGroups());
+            for (uint32_t g = 0; g < groups; ++g) {
+                state->haloPoints[i][g][g] =
+                    OpGroupPoints(layout, host, input, g);
+                state->haloGroups[i][g] = {chain.bounds.data(), groups,
+                                           state->haloPoints[i][g].data()};
+            }
+            if (!state->run->PointInputHaloGroups(
+                    id, state->haloGroups[i].data(), error))
+                return false;
+            continue;
+        }
+        if (input.source == OpHostSource::Lookup && !layout.grouped[i]) {
             const RigExecPortDesc &port =
                 layout.nodes[input.node].op->ports[input.port];
             state->lookedUp[i] = std::make_unique<OpPortValue>(
@@ -536,7 +627,7 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
                                " has no input " + std::to_string(input.port));
             continue;
         }
-        if (input.source != OpHostSource::ChainPoints) {
+        if (!layout.grouped[i]) {
             const void *value = host.Matrix(input.source, input.object);
             if (!value || !state->run->PointInput(id, value))
                 return OpLayoutFail(error, "slot " +
@@ -547,7 +638,7 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
         const OpChainLayout &chain = layout.chains[layout.chainOf[input.node]];
         state->groupPoints[i].assign(chain.Groups(), nullptr);
         for (uint32_t g = 0; g < chain.Groups(); ++g)
-            state->groupPoints[i][g] = host.ChainGroupPoints(input.object, g);
+            state->groupPoints[i][g] = OpGroupPoints(layout, host, input, g);
         state->groups[i] = {chain.bounds.data(), chain.Groups(),
                             state->groupPoints[i].data()};
         if (!state->run->PointInputGroups(id, &state->groups[i], error))
@@ -559,7 +650,8 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
 /// Resolves lookup \p index through the \p host method of its source's
 /// family: LookUpProperty, LookUpPoseVersion, LookUpWeight,
 /// LookUpChainVersion or LookUpWeightField(index, lookup, type, value,
-/// error).
+/// error), or a Matrix lookup through Matrix(source, slot). A List lookup
+/// resolves through OpLookUpAt.
 template <class Host>
 bool
 OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
@@ -576,6 +668,19 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
         return host.LookUpChainVersion(index, lookup, type, value, error);
     case OpLookupSource::WeightFieldInputs:
         return host.LookUpWeightField(index, lookup, type, value, error);
+    case OpLookupSource::Matrix: {
+        const void *matrix = host.Matrix(
+            lookup.part ? OpHostSource::BaseMatrix : OpHostSource::FinalMatrix,
+            lookup.object);
+        if (!matrix || !type.triviallyCopyable ||
+            type.size != 16 * sizeof(double))
+            return OpLayoutFail(error, "slot " + std::to_string(lookup.object) +
+                                           " has no such matrix");
+        std::memcpy(value, matrix, type.size);
+        return true;
+    }
+    case OpLookupSource::List:
+        break;
     }
     return OpLayoutFail(error, "no host resolves lookup source " +
                                    std::to_string(lookup.source));
@@ -606,6 +711,28 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
                                    std::to_string(output.target));
 }
 
+/// Resolves lookup \p index of \p layout: a List lookup element by element
+/// into an array of its length, any other through OpLookUp.
+template <class Host>
+bool
+OpLookUpAt(const OpStepLayout &layout, Host &host, uint32_t index,
+           const RigExecTypeDesc &type, void *value, std::string *error)
+{
+    const OpLookup &lookup = layout.lookups[index];
+    if (lookup.source != uint8_t(OpLookupSource::List))
+        return OpLookUp(host, index, lookup, type, value, error);
+    const RigExecTypeDesc &element =
+        *RigExecRegistry::Get().TypeAt(type.element->Index()).desc;
+    type.resize(value, size_t(lookup.part));
+    auto *elements = static_cast<uint8_t *>(type.data(value));
+    for (uint32_t e = 0; e < uint32_t(lookup.part); ++e)
+        if (!OpLookUp(host, lookup.object + e,
+                      layout.lookups[lookup.object + e], element,
+                      elements + e * element.size, error))
+            return false;
+    return true;
+}
+
 /// Resolves node \p node's Lookup inputs in layout order, storing a
 /// hostOutput of a looked-up input before the next lookup.
 template <class Host>
@@ -616,8 +743,8 @@ ResolveOpLookups(const OpStepLayout &layout, Host &host, OpStepState *state,
     for (const uint32_t i : layout.lookupsOf[node]) {
         OpPortValue &value = *state->lookedUp[i];
         const uint32_t lookup = layout.hostInputs[i].object;
-        if (!OpLookUp(host, lookup, layout.lookups[lookup], value.Type(),
-                      value.Value(), error))
+        if (!OpLookUpAt(layout, host, lookup, value.Type(), value.Value(),
+                        error))
             return false;
         for (const uint32_t o : layout.hostOutputsOf[node])
             if (layout.hostOutputs[o].port == layout.hostInputs[i].port &&
@@ -684,6 +811,22 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
                 return false;
         if (!run.RunChainHead(index, chain.bounds.data(), groups, error))
             return false;
+        for (size_t i = 0; i < layout.hostInputs.size(); ++i) {
+            const uint32_t node = layout.hostInputs[i].node;
+            if (layout.grouped[i] != 2 || layout.chainOf[node] != index)
+                continue;
+            state->haloReads[i].resize(groups);
+            for (uint32_t g = 0; g < groups; ++g) {
+                size_t lo = 0, hi = 0;
+                run.ChainReads(index, layout.memberOf[node], g, &lo, &hi);
+                std::vector<uint32_t> &reads = state->haloReads[i][g];
+                reads.clear();
+                for (uint32_t h = 0; h < groups; ++h)
+                    if (h == g || (size_t(chain.bounds[h]) < hi &&
+                                   size_t(chain.bounds[h + 1]) > lo))
+                        reads.push_back(h);
+            }
+        }
         ++state->versions[layout.PlanSlot(index)];
         return true;
     }
@@ -693,11 +836,24 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
     const uint32_t g = uint32_t(part) % groups;
     for (size_t i = 0; i < layout.hostInputs.size(); ++i) {
         const OpHostInput &input = layout.hostInputs[i];
-        if (input.source != OpHostSource::ChainPoints ||
-            layout.chainOf[input.node] != index ||
+        if (!layout.grouped[i] || layout.chainOf[input.node] != index ||
             desc.segments[layout.memberOf[input.node]] != segment)
             continue;
-        state->groupPoints[i][g] = host.ChainGroupPoints(input.object, g);
+        if (layout.grouped[i] == 1) {
+            state->groupPoints[i][g] = OpGroupPoints(layout, host, input, g);
+            continue;
+        }
+        std::vector<const void *> &table = state->haloPoints[i][g];
+        std::fill(table.begin(), table.end(), nullptr);
+        if (desc.whole[layout.memberOf[input.node]]) {
+            for (uint32_t h = 0; h < groups; ++h)
+                table[h] = OpGroupPoints(layout, host, input, h);
+            continue;
+        }
+        table[g] = OpGroupPoints(layout, host, input, g);
+        if (g < state->haloReads[i].size())
+            for (const uint32_t h : state->haloReads[i][g])
+                table[h] = OpGroupPoints(layout, host, input, h);
     }
     if (!run.RunChainRange(index, segment, g, error))
         return false;

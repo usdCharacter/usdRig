@@ -1188,6 +1188,10 @@ struct RigExecBakedOpInjection {
         VtValue value;
     };
     std::vector<Constant> constants;
+    /// Lookups the hostInputs' Lookup entries index from 0, and values
+    /// stored after their nodes run.
+    std::vector<eval::OpLookup> lookups;
+    std::vector<eval::OpHostOutput> hostOutputs;
     std::vector<std::pair<std::string, RigExecOutputId>> outputs;
 };
 
@@ -4031,6 +4035,16 @@ void RigExecBakedDeclareGroupRead(const RigExecBakedProgramImpl &B, int chain,
 /// The RevisionOut slot of group \p g as revision \p id publishes it (Range:
 /// chunkBase + g; Whole: chunkBase + chunks.size() + g), or -1 when unwritten.
 int RigExecBakedGroupSlot(const RigExecBakedProgramImpl &B, int id, size_t g);
+/// Publishes \p count points at \p elements as group \p g of revision
+/// \p output.object (an id of revisionIndex), which writes that group: the
+/// entering group passed through when they hold its bits, else a copy in
+/// one of the group's own buffers; the group's version moves only when its
+/// bits do. False with the reason for a revision or group it lacks or a
+/// count other than the group's.
+bool RigExecBakedStoreChainGroup(RigExecBakedProgramImpl &B,
+                                 const eval::OpHostOutput &output, uint32_t g,
+                                 const void *elements, size_t count,
+                                 std::string *error);
 /// Whether every role pin holds for this run's sampled values. Owning thread
 /// after RigExecBakedRunGeometryPrologue; the frozen worker after
 /// _FrozenPrologue. Reach from *interactiveOverrides and upstream against the

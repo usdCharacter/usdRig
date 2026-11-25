@@ -211,6 +211,7 @@ RigExecRun::Bind(const RigExecProgram &p, const RigExecInputChannel &input,
     boundFront = channel->front;
     hostInputs.assign(p.inputSlots.size(), nullptr);
     hostGroups.assign(p.inputSlots.size(), RigExecOpGroups());
+    hostHalo.assign(p.inputSlots.size(), nullptr);
     hostGroupValues.clear();
     hostGroupValues.resize(p.inputSlots.size());
     hostGroupOfSlot.assign(p.slots.size(), kRigExecInvalidIndex);
@@ -1292,10 +1293,25 @@ bool
 RigExecRun::PointInputGroups(uint32_t input, const RigExecOpGroups *groups,
                              std::string *error)
 {
+    return _PointInputGroups(input, groups, false, error);
+}
+
+bool
+RigExecRun::PointInputHaloGroups(uint32_t input, const RigExecOpGroups *groups,
+                                 std::string *error)
+{
+    return _PointInputGroups(input, groups, true, error);
+}
+
+bool
+RigExecRun::_PointInputGroups(uint32_t input, const RigExecOpGroups *groups,
+                              bool halo, std::string *error)
+{
     const RigExecProgram &p = *program;
     const uint32_t slot = p.inputSlots[input];
     if (!groups) {
         hostGroups[input] = RigExecOpGroups();
+        hostHalo[input] = nullptr;
         hostGroupOfSlot[slot] = kRigExecInvalidIndex;
         PointInput(input, nullptr);
         return true;
@@ -1325,10 +1341,14 @@ RigExecRun::PointInputGroups(uint32_t input, const RigExecOpGroups *groups,
                 continue;
             const uint32_t flags = d.ports[port].flags;
             reads = !(flags & kRigExecPortChecked) &&
-                    (flags & kRigExecPortPointwise) != 0;
+                    (flags & (halo ? kRigExecPortNeighbourhood
+                                   : kRigExecPortPointwise)) != 0;
         }
         if (!reads)
-            return fail("is read whole by node " + std::to_string(n));
+            return fail(halo ? "is not read through a neighbourhood input "
+                               "by node " +
+                                   std::to_string(n)
+                             : "is read whole by node " + std::to_string(n));
     }
     RigExecAlignedBuffer &value = hostGroupValues[input];
     if (!value.Size()) {
@@ -1338,6 +1358,7 @@ RigExecRun::PointInputGroups(uint32_t input, const RigExecOpGroups *groups,
     }
     t.borrow(value.Data(), nullptr, size_t(groups->bounds[groups->groups]));
     hostGroups[input] = *groups;
+    hostHalo[input] = halo ? groups : nullptr;
     hostGroupOfSlot[slot] = input;
     PointInput(input, value.Data());
     return true;
@@ -1605,7 +1626,11 @@ RigExecRun::_PointRange(uint32_t at, RigExecOpRange *range)
             continue;
         if ((flags & kRigExecPortInput) &&
             (flags & kRigExecPortNeighbourhood)) {
-            cells[port] = &slotGroups[slot];
+            const uint32_t host = hostGroupOfSlot[slot];
+            cells[port] = host != kRigExecInvalidIndex && hostHalo[host]
+                              ? const_cast<RigExecOpGroups *>(
+                                    &hostHalo[host][range->index])
+                              : &slotGroups[slot];
             continue;
         }
         if (p.groupedSlots[slot]) {

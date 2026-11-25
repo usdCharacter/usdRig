@@ -177,6 +177,9 @@ struct RigExecRun {
     /// the value standing for it, which holds their count; per slot, the
     /// input feeding it that way or kRigExecInvalidIndex.
     std::vector<RigExecOpGroups> hostGroups;
+    /// Per input a host feeds as one groups table per range
+    /// (PointInputHaloGroups): the tables, else null.
+    std::vector<const RigExecOpGroups *> hostHalo;
     std::vector<RigExecAlignedBuffer> hostGroupValues;
     std::vector<uint32_t> hostGroupOfSlot;
     /// Per chain: this frame's range bounds, ranges + 1 of them.
@@ -232,6 +235,8 @@ struct RigExecRun {
     void PointInput(uint32_t input, const void *value);
     bool PointInputGroups(uint32_t input, const RigExecOpGroups *groups,
                           std::string *error);
+    bool PointInputHaloGroups(uint32_t input, const RigExecOpGroups *groups,
+                              std::string *error);
     bool RunNode(uint32_t node, std::string *error);
     bool RunChainHead(uint32_t chain, const int *bounds, uint32_t groups,
                       std::string *error);
@@ -279,6 +284,8 @@ private:
     bool _RangeOf(uint32_t at, uint32_t index, RigExecOpRange *range) const;
     void _PrepareGroups(uint32_t chain);
     void _PointRange(uint32_t at, RigExecOpRange *range);
+    bool _PointInputGroups(uint32_t input, const RigExecOpGroups *groups,
+                           bool halo, std::string *error);
     bool _RunSlot(uint32_t s);
     void _CompleteChains();
     void _Fail(uint32_t b, uint32_t instance, const std::string &error);

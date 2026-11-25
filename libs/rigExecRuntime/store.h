@@ -1080,6 +1080,14 @@ bool RrRunGeometryStep(RrProgram *program, size_t step, std::string *error);
 // none this run.
 const void *RrGeoFinalGroupPoints(const RrProgram *program, size_t chain,
                                   size_t g);
+// Group \p g of version \p version of point chain \p chain (0 the base);
+// null when the chain has no such version or group this run.
+const void *RrGeoGroupPointsAt(const RrProgram *program, size_t chain,
+                               size_t version, size_t g);
+// RigExecBakedStoreChainGroup over the runtime's revision groups.
+bool RrStoreChainGroup(RrProgram *program, const eval::OpHostOutput &output,
+                       uint32_t g, const void *elements, size_t count,
+                       std::string *error);
 bool RrRevisionWeightFieldInput(const RrProgram *, size_t, const RrVec3f **,
                                 size_t *);
 /// Resolves ChainVersion lookup \p lookup: the points entering revision
