@@ -1,5 +1,6 @@
 // The pose input ops evaluated through the core: bound avar values, a space
-// checkpoint's switch frame, and what fails compile or the evaluation.
+// checkpoint's switch frame, a pose interpolator's weights, and what fails
+// compile or the evaluation.
 #include "rigExec/api/compile.h"
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
@@ -7,6 +8,7 @@
 #include "rigExecOps/pose/poseOps.h"
 #include "rigExecEvalCore/pose.h"
 #include "rigExecRuntime/poseMath.h"
+#include "rigExecRuntime/rbfSolver.h"
 #include "rigExecRigTypes/rigTypes.h"
 
 #include <cmath>
@@ -222,6 +224,103 @@ TestSpaceCheckpoint()
     CHECK(bad.error.find("per slot") != std::string::npos);
 }
 
+void
+TestPoseInterpolator()
+{
+    PoseInterpolatorPayload maps;
+    maps.solve = PoseSolve::Maps;
+    maps.poseCount = 2;
+    maps.mapsInputCount = 1;
+    maps.mapRowInputs = {0, 0};
+    maps.mapRowFrom = {0.0, 0.0};
+    maps.mapRowTo = {1.0, 1.0};
+    maps.mapRowSlope = {2.0, -1.0};
+    maps.mapRowCut = {0.0, 3.0};
+    maps.mapBegin = {0, 1, 2};
+    maps.mapUnclamped = {0, 1};
+    const std::vector<const RigExecPortHandle *> mapPorts = {
+        &PoseInterpolatorEnabled(), &PoseInterpolatorNumeric()};
+    {
+        Harness h(PoseInterpolator(), &maps, mapPorts,
+                  {&PoseInterpolatorOut()});
+        const uint8_t on = 1, off = 0;
+        const auto low = Doubles({0.25}), high = Doubles({0.75});
+        CHECK(h.Run({&on, &low}));
+        auto out = h.Out<RigExecArray<float>>(0);
+        CHECK(out.Size() == 2 && out[0] == 0.5f && out[1] == 2.75f);
+        CHECK(h.Run({&on, &high}));
+        out = h.Out<RigExecArray<float>>(0);
+        CHECK(out.Size() == 2 && out[0] == 1.0f && out[1] == 2.25f);
+        CHECK(h.Run({&off, &high}));
+        out = h.Out<RigExecArray<float>>(0);
+        CHECK(out.Size() == 2 && out[0] == 0.0f && out[1] == 0.0f);
+        const auto two = Doubles({0.25, 0.5});
+        CHECK(!h.Run({&on, &two}));
+        CHECK(h.error.find("per map input") != std::string::npos);
+    }
+    {
+        PoseInterpolatorPayload extra = maps;
+        extra.poseCount = 3;
+        Harness h(PoseInterpolator(), &extra, mapPorts,
+                  {&PoseInterpolatorOut()});
+        CHECK(!h.evaluator);
+        CHECK(h.error.find("do not fit its maps") != std::string::npos);
+        Harness unfed(PoseInterpolator(), &maps, {&PoseInterpolatorEnabled()},
+                      {&PoseInterpolatorOut()});
+        CHECK(!unfed.evaluator);
+        CHECK(unfed.error.find("per map input") != std::string::npos);
+    }
+
+    PoseInterpolatorPayload rbf;
+    rbf.poseCount = 2;
+    rbf.rbfPoses = {rigExecStd::Vec3d(0.0, 0.0, 0.0),
+                    rigExecStd::Vec3d(1.5707963267948966, 0.0, 0.0)};
+    rbf.rbfRadius = 1.0;
+    rbf.rbfWeightRows = 2;
+    rbf.rbfWeights = {1.0, 0.0, 0.0, 1.0};
+    const std::vector<const RigExecPortHandle *> framePorts = {
+        &PoseInterpolatorDriverFinal(), &PoseInterpolatorDriverRest()};
+    Harness h(PoseInterpolator(), &rbf, framePorts, {&PoseInterpolatorOut()});
+    rigExecRig::PointFrame rest, turned;
+    turned.points[2] = rigExecStd::Vec3d(0.0, 0.6, 0.8);
+    turned.points[3] = rigExecStd::Vec3d(0.0, -0.8, 0.6);
+    CHECK(h.Run({&turned, &rest}));
+    const auto out = h.Out<RigExecArray<float>>(0);
+    RrRbfSolver solver({rbf.rbfPoses[0], rbf.rbfPoses[1]}, {}, {},
+                       rbf.rbfTwistAxis, RrRbfKernel::Gaussian, 1.0, 0.0, true,
+                       true, false);
+    solver.SetSolvedTable({}, {}, {{1.0, 0.0}, {0.0, 1.0}});
+    RigExecPoseInterpolatorRecordT<RrRbfSolver &> record{solver, false, true,
+                                                         2};
+    RigExecPoseInterpolatorInputsT<rigExecRig::PointFrame> input;
+    input.driverFinal = &turned;
+    input.driverRest = &rest;
+    std::vector<double> weights;
+    CHECK(RigExecRunPoseInterpolatorArithmetic<
+              RrPoseInterpolatorMathT<rigExecRig::PointFrame>>(record, input,
+                                                               &weights) ==
+          RigExecPoseInterpolatorStatus::Success);
+    CHECK(out.Size() == 2 && weights.size() == 2 &&
+          out[0] == float(weights[0]) && out[1] == float(weights[1]));
+    CHECK(out.Size() == 2 && out[1] > out[0]);
+    rigExecRig::PointFrame broken;
+    broken.flags = 0;
+    CHECK(!h.Run({&broken, &rest}));
+    CHECK(h.error.find("no usable frame") != std::string::npos);
+
+    PoseInterpolatorPayload uneven = rbf;
+    uneven.rbfWeightRows = 1;
+    uneven.rbfWeights = {1.0, 0.0};
+    Harness bad(PoseInterpolator(), &uneven, framePorts,
+                {&PoseInterpolatorOut()});
+    CHECK(!bad.evaluator);
+    CHECK(bad.error.find("weight row") != std::string::npos);
+    Harness lone(PoseInterpolator(), &rbf, {&PoseInterpolatorDriverFinal()},
+                 {&PoseInterpolatorOut()});
+    CHECK(!lone.evaluator);
+    CHECK(lone.error.find("pairs") != std::string::npos);
+}
+
 } // namespace
 
 int
@@ -235,6 +334,7 @@ main()
     }
     TestAvarInputs();
     TestSpaceCheckpoint();
+    TestPoseInterpolator();
     if (failures) {
         std::printf("%d failures\n", failures);
         return 1;

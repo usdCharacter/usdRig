@@ -444,6 +444,23 @@ TestFilledPayloads()
         checkpoint.rotationSigns = {5, 0};
         checkpoint.noScale = {1, 0};
         CheckRoundTrip(Op(SpaceCheckpoint()), &checkpoint);
+        PoseInterpolatorPayload interpolator;
+        interpolator.solve = PoseSolve::Network;
+        interpolator.poseCount = 2;
+        interpolator.extraParents = {1, 0};
+        interpolator.rbfPoses = {rigExecStd::Vec3d(0.5, 0.0, -1.0)};
+        interpolator.rbfPoseTypes = {2};
+        interpolator.rbfWeights = {0.25, -0.5};
+        interpolator.methodTargets = {1.0, 2.0};
+        interpolator.methodTwistAxis = 2;
+        interpolator.networkLayerSizes = {4, 2};
+        interpolator.networkActivations = {2, 4};
+        interpolator.networkAlphas = {0.1f, 0.0f};
+        interpolator.networkDefaults = {0.5f, 0.25f};
+        interpolator.mapRowInputs = {0};
+        interpolator.mapBegin = {0, 1};
+        interpolator.mapUnclamped = {1};
+        CheckRoundTrip(Op(PoseInterpolator()), &interpolator);
     }
     {
         BlendFramesPayload p;

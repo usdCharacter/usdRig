@@ -4,8 +4,10 @@
 #include "rigExecOps/opIo.h"
 #include "rigExecEvalCore/pose.h"
 #include "rigExecMath/avarScale.h"
+#include "rigExecMath/poseArithmeticKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecRuntime/poseMath.h"
+#include "rigExecRuntime/rbfSolver.h"
 #include "rigExecStdTypes/stdTypes.h"
 
 #include <iterator>
@@ -27,6 +29,66 @@ RIGEXEC_DEFINE_PORT_HANDLE(SpaceCheckpointPosedAuthored)
 RIGEXEC_DEFINE_PORT_HANDLE(SpaceCheckpointPosedAuthoredMatrix)
 RIGEXEC_DEFINE_PORT_HANDLE(SpaceCheckpointAnchor)
 RIGEXEC_DEFINE_PORT_HANDLE(SpaceCheckpointOut)
+
+RIGEXEC_DEFINE_OP_HANDLE(PoseInterpolator)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorEnabled)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorNumeric)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorMask)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorDriverFinal)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorDriverRest)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorParentFinal)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorParentRest)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorExtraFinals)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorExtraRests)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorExtraParentFinals)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorExtraParentRests)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorOut)
+
+bool
+PoseInterpolatorPayload::operator==(const PoseInterpolatorPayload &o) const
+{
+    return solve == o.solve && poseCount == o.poseCount &&
+           enableTranslation == o.enableTranslation &&
+           allowNegativeWeights == o.allowNegativeWeights &&
+           extraParents == o.extraParents && rbfPoses == o.rbfPoses &&
+           rbfTranslations == o.rbfTranslations &&
+           rbfPoseTypes == o.rbfPoseTypes && rbfTwistAxis == o.rbfTwistAxis &&
+           rbfKernel == o.rbfKernel && rbfRadius == o.rbfRadius &&
+           rbfTranslationRadius == o.rbfTranslationRadius &&
+           rbfRadii == o.rbfRadii &&
+           rbfTranslationRadii == o.rbfTranslationRadii &&
+           rbfNormalize == o.rbfNormalize &&
+           rbfEnableRotation == o.rbfEnableRotation &&
+           rbfEnableTranslation == o.rbfEnableTranslation &&
+           rbfWeightRows == o.rbfWeightRows && rbfWeights == o.rbfWeights &&
+           methodSolverType == o.methodSolverType &&
+           methodDistance == o.methodDistance &&
+           methodWeightFunction == o.methodWeightFunction &&
+           methodNormalize == o.methodNormalize &&
+           methodTwistAxis == o.methodTwistAxis &&
+           methodRawCount == o.methodRawCount &&
+           methodTargetCount == o.methodTargetCount &&
+           methodRadius == o.methodRadius &&
+           methodWeightThreshold == o.methodWeightThreshold &&
+           methodTargets == o.methodTargets &&
+           methodDistanceTargets == o.methodDistanceTargets &&
+           methodTargetScales == o.methodTargetScales &&
+           methodCoefficients == o.methodCoefficients &&
+           networkInputCount == o.networkInputCount &&
+           networkLayerSizes == o.networkLayerSizes &&
+           networkActivations == o.networkActivations &&
+           networkAlphas == o.networkAlphas &&
+           networkWeights == o.networkWeights &&
+           networkBiases == o.networkBiases &&
+           networkInputMean == o.networkInputMean &&
+           networkInputScale == o.networkInputScale &&
+           networkDefaults == o.networkDefaults &&
+           mapsInputCount == o.mapsInputCount &&
+           mapRowInputs == o.mapRowInputs && mapRowFrom == o.mapRowFrom &&
+           mapRowTo == o.mapRowTo && mapRowSlope == o.mapRowSlope &&
+           mapRowCut == o.mapRowCut && mapBegin == o.mapBegin &&
+           mapUnclamped == o.mapUnclamped;
+}
 
 uint32_t
 SpaceCheckpointRotOrderCode(const char *text, size_t size)
@@ -204,6 +266,452 @@ RunSpaceCheckpoint(const RigExecOpBatch &batch, size_t *failed,
     });
 }
 
+// ---- PoseInterpolator ----
+
+enum PoseInterpolatorField : uint32_t {
+    kSolve,
+    kPoseCount,
+    kEnableTranslation,
+    kAllowNegative,
+    kExtraParentCount,
+    kExtraParents,
+    kRbfPoseCount,
+    kRbfPoses,
+    kRbfTranslationCount,
+    kRbfTranslations,
+    kRbfPoseTypeCount,
+    kRbfPoseTypes,
+    kRbfTwistAxis,
+    kRbfKernel,
+    kRbfRadius,
+    kRbfTranslationRadius,
+    kRbfRadiusCount,
+    kRbfRadii,
+    kRbfTranslationRadiusCount,
+    kRbfTranslationRadii,
+    kRbfNormalize,
+    kRbfEnableRotation,
+    kRbfEnableTranslation,
+    kRbfWeightRows,
+    kRbfWeightCount,
+    kRbfWeights,
+    kMethodSolverType,
+    kMethodDistance,
+    kMethodWeightFunction,
+    kMethodNormalize,
+    kMethodTwistAxis,
+    kMethodRawCount,
+    kMethodTargetCount,
+    kMethodRadius,
+    kMethodWeightThreshold,
+    kMethodTargetsCount,
+    kMethodTargets,
+    kMethodDistanceTargetsCount,
+    kMethodDistanceTargets,
+    kMethodScaleCount,
+    kMethodScales,
+    kMethodCoefficientCount,
+    kMethodCoefficients,
+    kNetworkInputCount,
+    kNetworkLayerCount,
+    kNetworkLayerSizes,
+    kNetworkActivationCount,
+    kNetworkActivations,
+    kNetworkAlphaCount,
+    kNetworkAlphas,
+    kNetworkWeightCount,
+    kNetworkWeights,
+    kNetworkBiasCount,
+    kNetworkBiases,
+    kNetworkMeanCount,
+    kNetworkMean,
+    kNetworkScaleCount,
+    kNetworkScale,
+    kNetworkDefaultCount,
+    kNetworkDefaults,
+    kMapsInputCount,
+    kMapRowCount,
+    kMapRowInputs,
+    kMapFromCount,
+    kMapFrom,
+    kMapToCount,
+    kMapTo,
+    kMapSlopeCount,
+    kMapSlope,
+    kMapCutCount,
+    kMapCut,
+    kMapBeginCount,
+    kMapBegin,
+    kMapUnclampedCount,
+    kMapUnclamped
+};
+
+using rigExecRig::PointFrame;
+using InterpolatorMath = rigExec::RrPoseInterpolatorMathT<PointFrame>;
+
+/// The tables a node's solve reads, built from its payload once per bound
+/// program.
+struct PoseInterpolatorState {
+    bool built = false;
+    rigExec::RrRbfSolver solver;
+    rigExec::RigExecRbfMethodTable method;
+    rigExec::RigExecMlNetwork network;
+    rigExec::RigExecAnimatedMapsTable maps;
+    std::vector<double> weights;
+};
+
+template <class T>
+std::vector<T>
+ListOf(const RigExecOpBatch &batch, uint32_t field, size_t k)
+{
+    const auto view = ListAt<T>(batch, field, k);
+    return std::vector<T>(view.data, view.data + view.Size());
+}
+
+bool
+BuildRbf(const RigExecOpBatch &batch, size_t k, PoseInterpolatorState &s,
+         std::string *error)
+{
+    const auto poses = ListOf<rigExecStd::Vec3d>(batch, kRbfPoses, k);
+    const auto weights = ListAt<double>(batch, kRbfWeights, k);
+    const uint64_t rows = ValueAt<uint64_t>(batch, kRbfWeightRows, k);
+    const auto types = ListAt<uint32_t>(batch, kRbfPoseTypes, k);
+    if (rows != ValueAt<uint64_t>(batch, kPoseCount, k) ||
+        weights.Size() != rows * poses.size())
+        return Fail(error, "PoseInterpolator",
+                    "needs one weight row per pose weight and one column per "
+                    "pose");
+    std::vector<rigExec::RrRbfPoseType> poseTypes;
+    for (size_t i = 0; i < types.Size(); ++i) {
+        if (types.data[i] > uint32_t(rigExec::RrRbfPoseType::Twist))
+            return Fail(error, "PoseInterpolator",
+                        "names an unknown RBF pose type");
+        poseTypes.push_back(rigExec::RrRbfPoseType(types.data[i]));
+    }
+    s.solver = rigExec::RrRbfSolver(
+        poses, ListOf<rigExecStd::Vec3d>(batch, kRbfTranslations, k), poseTypes,
+        ValueAt<rigExecStd::Vec3d>(batch, kRbfTwistAxis, k),
+        EnumAt<rigExec::RrRbfKernel>(batch, kRbfKernel, k),
+        ValueAt<double>(batch, kRbfRadius, k),
+        ValueAt<double>(batch, kRbfTranslationRadius, k),
+        FlagAt(batch, kRbfNormalize, k), FlagAt(batch, kRbfEnableRotation, k),
+        FlagAt(batch, kRbfEnableTranslation, k));
+    std::vector<std::vector<double>> table{size_t(rows)};
+    for (size_t r = 0; r < table.size(); ++r)
+        table[r].assign(weights.data + r * poses.size(),
+                        weights.data + (r + 1) * poses.size());
+    s.solver.SetSolvedTable(ListOf<double>(batch, kRbfRadii, k),
+                            ListOf<double>(batch, kRbfTranslationRadii, k),
+                            table);
+    return true;
+}
+
+bool
+BuildMethod(const RigExecOpBatch &batch, size_t k, PoseInterpolatorState &s,
+            std::string *error)
+{
+    rigExec::RigExecRbfMethodTable &table = s.method;
+    table.solverType =
+        EnumAt<rigExec::RigExecRbfSolverType>(batch, kMethodSolverType, k);
+    table.distanceMethod =
+        EnumAt<rigExec::RigExecRbfDistanceMethod>(batch, kMethodDistance, k);
+    table.weightFunction = EnumAt<rigExec::RigExecRbfWeightFunction>(
+        batch, kMethodWeightFunction, k);
+    table.normalizeMethod =
+        EnumAt<rigExec::RigExecRbfNormalizeMethod>(batch, kMethodNormalize, k);
+    table.twistAxis = int(ValueAt<uint32_t>(batch, kMethodTwistAxis, k));
+    table.rawCount = size_t(ValueAt<uint64_t>(batch, kMethodRawCount, k));
+    table.targetCount = size_t(ValueAt<uint64_t>(batch, kMethodTargetCount, k));
+    table.radius = ValueAt<double>(batch, kMethodRadius, k);
+    table.weightThreshold = ValueAt<double>(batch, kMethodWeightThreshold, k);
+    table.targets = ListOf<double>(batch, kMethodTargets, k);
+    table.distanceTargets = ListOf<double>(batch, kMethodDistanceTargets, k);
+    table.targetScales = ListOf<double>(batch, kMethodScales, k);
+    table.coefficients = ListOf<double>(batch, kMethodCoefficients, k);
+    const size_t targets = table.targetCount;
+    if (targets != ValueAt<uint64_t>(batch, kPoseCount, k) ||
+        table.targets.size() != targets * table.rawCount ||
+        table.targetScales.size() != targets ||
+        (table.distanceMethod == rigExec::RigExecRbfDistanceMethod::TwistAngle
+             ? table.distanceTargets.size() != targets
+             : !table.distanceTargets.empty()) ||
+        (table.solverType == rigExec::RigExecRbfSolverType::Interpolative
+             ? table.coefficients.size() != targets * targets
+             : !table.coefficients.empty()))
+        return Fail(error, "PoseInterpolator",
+                    "has an RBF method table that does not fit its targets");
+    return true;
+}
+
+bool
+BuildNetwork(const RigExecOpBatch &batch, size_t k, PoseInterpolatorState &s,
+             std::string *error)
+{
+    const auto sizes = ListOf<int32_t>(batch, kNetworkLayerSizes, k);
+    const auto codes = ListAt<uint32_t>(batch, kNetworkActivations, k);
+    std::vector<int> layerSizes(sizes.begin(), sizes.end());
+    std::vector<int> activations(codes.data, codes.data + codes.Size());
+    std::string why;
+    if (!rigExec::RigExecMlBuildNetwork(
+            size_t(ValueAt<uint64_t>(batch, kNetworkInputCount, k)), layerSizes,
+            activations, ListOf<float>(batch, kNetworkAlphas, k),
+            ListOf<float>(batch, kNetworkWeights, k),
+            ListOf<float>(batch, kNetworkBiases, k), &s.network, &why))
+        return Fail(error, "PoseInterpolator", why);
+    s.network.inputMean = ListOf<float>(batch, kNetworkMean, k);
+    s.network.inputScale = ListOf<float>(batch, kNetworkScale, k);
+    s.network.defaults = ListOf<float>(batch, kNetworkDefaults, k);
+    const size_t inputs = s.network.inputCount;
+    const size_t outputs = s.network.OutputCount();
+    if (outputs != ValueAt<uint64_t>(batch, kPoseCount, k) ||
+        (!s.network.inputMean.empty() &&
+         s.network.inputMean.size() != inputs) ||
+        (!s.network.inputScale.empty() &&
+         s.network.inputScale.size() != inputs) ||
+        (!s.network.defaults.empty() && s.network.defaults.size() != outputs))
+        return Fail(error, "PoseInterpolator",
+                    "has a network whose tables do not fit its inputs and "
+                    "outputs");
+    return true;
+}
+
+bool
+BuildMaps(const RigExecOpBatch &batch, size_t k, PoseInterpolatorState &s,
+          std::string *error)
+{
+    const auto inputs = ListAt<int32_t>(batch, kMapRowInputs, k);
+    const auto from = ListAt<double>(batch, kMapFrom, k);
+    const auto to = ListAt<double>(batch, kMapTo, k);
+    const auto slope = ListAt<double>(batch, kMapSlope, k);
+    const auto cut = ListAt<double>(batch, kMapCut, k);
+    const auto begin = ListAt<uint64_t>(batch, kMapBegin, k);
+    const auto unclamped = ListAt<uint8_t>(batch, kMapUnclamped, k);
+    const size_t rows = inputs.Size();
+    const size_t maps = begin.Size() ? begin.Size() - 1 : 0;
+    bool fits = from.Size() == rows && to.Size() == rows &&
+                slope.Size() == rows && cut.Size() == rows && begin.Size() &&
+                begin.data[0] == 0 && begin.data[maps] == rows &&
+                maps == ValueAt<uint64_t>(batch, kPoseCount, k) &&
+                (unclamped.Size() == 0 || unclamped.Size() == maps);
+    for (size_t m = 0; fits && m < maps; ++m)
+        fits = begin.data[m] <= begin.data[m + 1];
+    if (!fits)
+        return Fail(error, "PoseInterpolator",
+                    "has map rows that do not fit its maps");
+    rigExec::RigExecAnimatedMapsTable &table = s.maps;
+    table.inputCount = size_t(ValueAt<uint64_t>(batch, kMapsInputCount, k));
+    for (size_t m = 0; m < maps; ++m) {
+        std::vector<rigExec::RigExecConditionalRow> mapRows;
+        for (size_t r = size_t(begin.data[m]); r < size_t(begin.data[m + 1]);
+             ++r)
+            mapRows.push_back({inputs.data[r], from.data[r], to.data[r],
+                               slope.data[r], cut.data[r]});
+        if (!table.AddMap(std::move(mapRows),
+                          !(m < unclamped.Size() && unclamped.data[m] != 0)))
+            return Fail(error, "PoseInterpolator",
+                        "has a map row naming an input past inputCount");
+    }
+    return true;
+}
+
+bool
+BuildPoseInterpolator(const RigExecOpBatch &batch, size_t k,
+                      PoseInterpolatorState &s, std::string *error)
+{
+    switch (EnumAt<PoseSolve>(batch, kSolve, k)) {
+    case PoseSolve::Rbf:
+        return BuildRbf(batch, k, s, error);
+    case PoseSolve::RbfMethod:
+        return BuildMethod(batch, k, s, error);
+    case PoseSolve::Network:
+        return BuildNetwork(batch, k, s, error);
+    case PoseSolve::Maps:
+        return BuildMaps(batch, k, s, error);
+    }
+    return Fail(error, "PoseInterpolator", "names an unknown solve");
+}
+
+size_t
+ExtraParentCount(const RigExecOpBatch &batch, size_t k)
+{
+    const auto parents = ListAt<uint8_t>(batch, kExtraParents, k);
+    size_t count = 0;
+    for (size_t e = 0; e < parents.Size(); ++e)
+        count += parents.data[e] != 0;
+    return count;
+}
+
+bool
+CheckPoseInterpolator(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    const RigExecOpBatch &batch = check.batch;
+    const size_t k = check.k;
+    PoseInterpolatorState scratch;
+    if (!BuildPoseInterpolator(batch, k, scratch, error))
+        return false;
+    const PoseSolve solve = EnumAt<PoseSolve>(batch, kSolve, k);
+    const bool driver = Fed(check, PoseInterpolatorDriverFinal());
+    const bool numeric = Fed(check, PoseInterpolatorNumeric());
+    if (driver != Fed(check, PoseInterpolatorDriverRest()) ||
+        Fed(check, PoseInterpolatorParentFinal()) !=
+            Fed(check, PoseInterpolatorParentRest()) ||
+        (Fed(check, PoseInterpolatorParentFinal()) && !driver))
+        return Fail(error, "PoseInterpolator",
+                    "needs its driver and parent frames fed in final and "
+                    "rest pairs");
+    const size_t extras = ListAt<uint8_t>(batch, kExtraParents, k).Size();
+    const size_t extraParents = ExtraParentCount(batch, k);
+    const bool extraFeeds =
+        solve == PoseSolve::RbfMethod || solve == PoseSolve::Network;
+    if ((extras && !extraFeeds) ||
+        !SameCount(CheckElements(check, PoseInterpolatorExtraFinals()),
+                   extras) ||
+        !SameCount(CheckElements(check, PoseInterpolatorExtraRests()),
+                   extras) ||
+        !SameCount(CheckElements(check, PoseInterpolatorExtraParentFinals()),
+                   extraParents) ||
+        !SameCount(CheckElements(check, PoseInterpolatorExtraParentRests()),
+                   extraParents) ||
+        (extras && !driver))
+        return Fail(error, "PoseInterpolator",
+                    "needs one extra driver frame per extra driver and one "
+                    "extra parent frame per extra driver with a parent");
+    const size_t values = CheckElements(check, PoseInterpolatorNumeric());
+    const size_t known = numeric ? values : 0;
+    switch (solve) {
+    case PoseSolve::Rbf:
+    case PoseSolve::RbfMethod:
+        if (!numeric && !driver)
+            return Fail(error, "PoseInterpolator",
+                        "needs a driver frame or numeric values");
+        if (solve == PoseSolve::RbfMethod && !numeric &&
+            scratch.method.rawCount != 4 * (1 + extras))
+            return Fail(error, "PoseInterpolator",
+                        "measures four values per driver frame, not its "
+                        "method's raw count");
+        if (solve == PoseSolve::RbfMethod && numeric &&
+            !SameCount(values, scratch.method.rawCount))
+            return Fail(error, "PoseInterpolator",
+                        "needs one numeric value per method raw value");
+        break;
+    case PoseSolve::Network:
+        if (!SameCount(known, rigExec::kRigExecPortUnfed) &&
+            (driver ? 4 * (1 + extras) : 0) + known !=
+                scratch.network.inputCount)
+            return Fail(error, "PoseInterpolator",
+                        "needs a row of the network's input count");
+        break;
+    case PoseSolve::Maps:
+        if (!numeric || !SameCount(values, scratch.maps.inputCount))
+            return Fail(error, "PoseInterpolator",
+                        "needs one numeric value per map input");
+        break;
+    }
+    return true;
+}
+
+bool
+PoseInterpolatorOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    auto &state = *static_cast<PoseInterpolatorState *>(
+        rigExec::RigExecBatchState(batch, k));
+    if (!state.built) {
+        if (!BuildPoseInterpolator(batch, k, state, error))
+            return false;
+        state.built = true;
+    }
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const size_t poseCount = size_t(ValueAt<uint64_t>(batch, kPoseCount, k));
+    auto &out = Out<RigExecArray<float>>(io, PoseInterpolatorOut());
+    out.Resize(poseCount);
+    for (size_t i = 0; i < poseCount; ++i)
+        out[i] = 0.0f;
+    rigExec::RigExecPoseInterpolatorInputsT<PointFrame> input;
+    input.enabled = InOr(io, PoseInterpolatorEnabled(), uint8_t(1)) != 0;
+    if (const auto *numeric =
+            In<RigExecArray<double>>(io, PoseInterpolatorNumeric()))
+        input.numeric.assign(numeric->begin(), numeric->end());
+    input.mask = InOr(io, PoseInterpolatorMask(), 1.0);
+    input.driverFinal = In<PointFrame>(io, PoseInterpolatorDriverFinal());
+    input.driverRest = In<PointFrame>(io, PoseInterpolatorDriverRest());
+    input.parentFinal = In<PointFrame>(io, PoseInterpolatorParentFinal());
+    input.parentRest = In<PointFrame>(io, PoseInterpolatorParentRest());
+    const auto parents = ListAt<uint8_t>(batch, kExtraParents, k);
+    if (parents.Size()) {
+        const auto &finals =
+            *In<RigExecArray<PointFrame>>(io, PoseInterpolatorExtraFinals());
+        const auto &rests =
+            *In<RigExecArray<PointFrame>>(io, PoseInterpolatorExtraRests());
+        const auto *parentFinals = In<RigExecArray<PointFrame>>(
+            io, PoseInterpolatorExtraParentFinals());
+        const auto *parentRests = In<RigExecArray<PointFrame>>(
+            io, PoseInterpolatorExtraParentRests());
+        const size_t withParent = ExtraParentCount(batch, k);
+        if (finals.Size() != parents.Size() || rests.Size() != parents.Size() ||
+            (withParent && (!parentFinals || !parentRests ||
+                            parentFinals->Size() != withParent ||
+                            parentRests->Size() != withParent)))
+            return Fail(error, "PoseInterpolator",
+                        "needs one extra driver frame per extra driver");
+        input.extraDrivers.resize(parents.Size());
+        for (size_t e = 0, p = 0; e < parents.Size(); ++e) {
+            auto &extra = input.extraDrivers[e];
+            extra.final = &finals[e];
+            extra.rest = &rests[e];
+            if (parents.data[e]) {
+                extra.parentFinal = &(*parentFinals)[p];
+                extra.parentRest = &(*parentRests)[p];
+                ++p;
+            }
+        }
+    }
+    const PoseSolve solve = EnumAt<PoseSolve>(batch, kSolve, k);
+    rigExec::RigExecPoseInterpolatorRecordT<
+        rigExec::RrRbfSolver &, const rigExec::RigExecRbfMethodTable &,
+        const rigExec::RigExecMlNetwork *,
+        const rigExec::RigExecAnimatedMapsTable *>
+        record{state.solver,
+               FlagAt(batch, kEnableTranslation, k),
+               FlagAt(batch, kAllowNegative, k),
+               poseCount,
+               solve == PoseSolve::RbfMethod,
+               state.method,
+               solve == PoseSolve::Network,
+               &state.network,
+               solve == PoseSolve::Maps,
+               &state.maps};
+    using Status = rigExec::RigExecPoseInterpolatorStatus;
+    switch (rigExec::RigExecRunPoseInterpolatorArithmetic<InterpolatorMath>(
+        record, input, &state.weights)) {
+    case Status::Disabled:
+        return true;
+    case Status::UnusableRotation:
+        return Fail(error, "PoseInterpolator",
+                    "has no usable frame for its driver");
+    case Status::UnusableTranslation:
+        return Fail(error, "PoseInterpolator",
+                    "could not measure its driver's translation");
+    case Status::CountMismatch:
+        return Fail(error, "PoseInterpolator",
+                    "solved " + std::to_string(state.weights.size()) +
+                        " weights for " + std::to_string(poseCount) + " poses");
+    case Status::Success:
+        break;
+    }
+    for (size_t i = 0; i < poseCount; ++i)
+        out[i] = static_cast<float>(state.weights[i]);
+    return true;
+}
+
+bool
+RunPoseInterpolator(const RigExecOpBatch &batch, size_t *failed,
+                    std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return PoseInterpolatorOne(batch, k, error);
+    });
+}
+
 } // namespace
 
 namespace {
@@ -304,6 +812,189 @@ const rigExec::RigExecOpDesc kSpaceCheckpointDesc = [] {
     return d;
 }();
 
+constexpr uint32_t kOptionalInput = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kPoseInterpolatorPorts[] = {
+    {&PoseInterpolatorEnabled(), &rigExecStd::BoolType(), kOptionalInput,
+     "enabled"},
+    {&PoseInterpolatorNumeric(), &rigExecStd::DoubleArray(), kOptionalInput,
+     "numeric"},
+    {&PoseInterpolatorMask(), &rigExecStd::DoubleType(), kOptionalInput,
+     "mask"},
+    {&PoseInterpolatorDriverFinal(), &rigExecRig::PointFrameType(),
+     kOptionalInput, "driverFinal"},
+    {&PoseInterpolatorDriverRest(), &rigExecRig::PointFrameType(),
+     kOptionalInput, "driverRest"},
+    {&PoseInterpolatorParentFinal(), &rigExecRig::PointFrameType(),
+     kOptionalInput, "parentFinal"},
+    {&PoseInterpolatorParentRest(), &rigExecRig::PointFrameType(),
+     kOptionalInput, "parentRest"},
+    {&PoseInterpolatorExtraFinals(), &rigExecRig::PointFrameList(),
+     kOptionalInput, "extraFinals"},
+    {&PoseInterpolatorExtraRests(), &rigExecRig::PointFrameList(),
+     kOptionalInput, "extraRests"},
+    {&PoseInterpolatorExtraParentFinals(), &rigExecRig::PointFrameList(),
+     kOptionalInput, "extraParentFinals"},
+    {&PoseInterpolatorExtraParentRests(), &rigExecRig::PointFrameList(),
+     kOptionalInput, "extraParentRests"},
+    {&PoseInterpolatorOut(), &rigExecStd::FloatArray(), kRigExecPortOutput,
+     "out", rigExec::RigExecOutputBound::Field, nullptr, nullptr, kPoseCount},
+};
+
+void
+PoseInterpolatorValuesOf(const void *payload, RigExecFieldValues &out)
+{
+    const auto &p = *static_cast<const PoseInterpolatorPayload *>(payload);
+    SetEnum(out, kSolve, p.solve);
+    out.Set(kPoseCount, p.poseCount);
+    SetFlag(out, kEnableTranslation, p.enableTranslation);
+    SetFlag(out, kAllowNegative, p.allowNegativeWeights);
+    SetList(out, kExtraParentCount, p.extraParents);
+    SetList(out, kRbfPoseCount, p.rbfPoses);
+    SetList(out, kRbfTranslationCount, p.rbfTranslations);
+    SetList(out, kRbfPoseTypeCount, p.rbfPoseTypes);
+    out.Set(kRbfTwistAxis, p.rbfTwistAxis);
+    out.Set(kRbfKernel, p.rbfKernel);
+    out.Set(kRbfRadius, p.rbfRadius);
+    out.Set(kRbfTranslationRadius, p.rbfTranslationRadius);
+    SetList(out, kRbfRadiusCount, p.rbfRadii);
+    SetList(out, kRbfTranslationRadiusCount, p.rbfTranslationRadii);
+    SetFlag(out, kRbfNormalize, p.rbfNormalize);
+    SetFlag(out, kRbfEnableRotation, p.rbfEnableRotation);
+    SetFlag(out, kRbfEnableTranslation, p.rbfEnableTranslation);
+    out.Set(kRbfWeightRows, p.rbfWeightRows);
+    SetList(out, kRbfWeightCount, p.rbfWeights);
+    out.Set(kMethodSolverType, p.methodSolverType);
+    out.Set(kMethodDistance, p.methodDistance);
+    out.Set(kMethodWeightFunction, p.methodWeightFunction);
+    out.Set(kMethodNormalize, p.methodNormalize);
+    out.Set(kMethodTwistAxis, p.methodTwistAxis);
+    out.Set(kMethodRawCount, p.methodRawCount);
+    out.Set(kMethodTargetCount, p.methodTargetCount);
+    out.Set(kMethodRadius, p.methodRadius);
+    out.Set(kMethodWeightThreshold, p.methodWeightThreshold);
+    SetList(out, kMethodTargetsCount, p.methodTargets);
+    SetList(out, kMethodDistanceTargetsCount, p.methodDistanceTargets);
+    SetList(out, kMethodScaleCount, p.methodTargetScales);
+    SetList(out, kMethodCoefficientCount, p.methodCoefficients);
+    out.Set(kNetworkInputCount, p.networkInputCount);
+    SetList(out, kNetworkLayerCount, p.networkLayerSizes);
+    SetList(out, kNetworkActivationCount, p.networkActivations);
+    SetList(out, kNetworkAlphaCount, p.networkAlphas);
+    SetList(out, kNetworkWeightCount, p.networkWeights);
+    SetList(out, kNetworkBiasCount, p.networkBiases);
+    SetList(out, kNetworkMeanCount, p.networkInputMean);
+    SetList(out, kNetworkScaleCount, p.networkInputScale);
+    SetList(out, kNetworkDefaultCount, p.networkDefaults);
+    out.Set(kMapsInputCount, p.mapsInputCount);
+    SetList(out, kMapRowCount, p.mapRowInputs);
+    SetList(out, kMapFromCount, p.mapRowFrom);
+    SetList(out, kMapToCount, p.mapRowTo);
+    SetList(out, kMapSlopeCount, p.mapRowSlope);
+    SetList(out, kMapCutCount, p.mapRowCut);
+    SetList(out, kMapBeginCount, p.mapBegin);
+    SetList(out, kMapUnclampedCount, p.mapUnclamped);
+}
+
+const rigExec::RigExecFieldDesc kPoseInterpolatorFields[] = {
+    Enum("solve", PoseSolve::Maps),
+    Value("poseCount", rigExecStd::UInt64Type()),
+    Flag("enableTranslation"),
+    Flag("allowNegativeWeights"),
+    Count("extraParentCount"),
+    Items("extraParents", rigExecStd::BoolType(), kExtraParentCount),
+    Count("rbfPoseCount"),
+    Items("rbfPoses", rigExecStd::Vec3dType(), kRbfPoseCount),
+    Count("rbfTranslationCount"),
+    Items("rbfTranslations", rigExecStd::Vec3dType(), kRbfTranslationCount),
+    Count("rbfPoseTypeCount"),
+    Items("rbfPoseTypes", rigExecStd::UIntType(), kRbfPoseTypeCount),
+    Value("rbfTwistAxis", rigExecStd::Vec3dType()),
+    Enum("rbfKernel", rigExec::RrRbfKernel::Quintic),
+    Value("rbfRadius", rigExecStd::DoubleType()),
+    Value("rbfTranslationRadius", rigExecStd::DoubleType()),
+    Count("rbfRadiusCount"),
+    Items("rbfRadii", rigExecStd::DoubleType(), kRbfRadiusCount),
+    Count("rbfTranslationRadiusCount"),
+    Items("rbfTranslationRadii", rigExecStd::DoubleType(),
+          kRbfTranslationRadiusCount),
+    Flag("rbfNormalize"),
+    Flag("rbfEnableRotation"),
+    Flag("rbfEnableTranslation"),
+    Value("rbfWeightRows", rigExecStd::UInt64Type()),
+    Count("rbfWeightCount"),
+    Items("rbfWeights", rigExecStd::DoubleType(), kRbfWeightCount),
+    Enum("methodSolverType", rigExec::RigExecRbfSolverType::Interpolative),
+    Enum("methodDistance", rigExec::RigExecRbfDistanceMethod::TwistAngle),
+    Enum("methodWeightFunction", rigExec::RigExecRbfWeightFunction::Quintic),
+    Enum("methodNormalize", rigExec::RigExecRbfNormalizeMethod::Always),
+    Enum("methodTwistAxis", 2u),
+    Value("methodRawCount", rigExecStd::UInt64Type()),
+    Value("methodTargetCount", rigExecStd::UInt64Type()),
+    Value("methodRadius", rigExecStd::DoubleType()),
+    Value("methodWeightThreshold", rigExecStd::DoubleType()),
+    Count("methodTargetsCount"),
+    Items("methodTargets", rigExecStd::DoubleType(), kMethodTargetsCount),
+    Count("methodDistanceTargetsCount"),
+    Items("methodDistanceTargets", rigExecStd::DoubleType(),
+          kMethodDistanceTargetsCount),
+    Count("methodScaleCount"),
+    Items("methodTargetScales", rigExecStd::DoubleType(), kMethodScaleCount),
+    Count("methodCoefficientCount"),
+    Items("methodCoefficients", rigExecStd::DoubleType(),
+          kMethodCoefficientCount),
+    Value("networkInputCount", rigExecStd::UInt64Type()),
+    Count("networkLayerCount"),
+    Items("networkLayerSizes", rigExecStd::IntType(), kNetworkLayerCount),
+    Count("networkActivationCount"),
+    Items("networkActivations", rigExecStd::UIntType(),
+          kNetworkActivationCount),
+    Count("networkAlphaCount"),
+    Items("networkAlphas", rigExecStd::FloatType(), kNetworkAlphaCount),
+    Count("networkWeightCount"),
+    Items("networkWeights", rigExecStd::FloatType(), kNetworkWeightCount),
+    Count("networkBiasCount"),
+    Items("networkBiases", rigExecStd::FloatType(), kNetworkBiasCount),
+    Count("networkMeanCount"),
+    Items("networkInputMean", rigExecStd::FloatType(), kNetworkMeanCount),
+    Count("networkScaleCount"),
+    Items("networkInputScale", rigExecStd::FloatType(), kNetworkScaleCount),
+    Count("networkDefaultCount"),
+    Items("networkDefaults", rigExecStd::FloatType(), kNetworkDefaultCount),
+    Value("mapsInputCount", rigExecStd::UInt64Type()),
+    Count("mapRowCount"),
+    Items("mapRowInputs", rigExecStd::IntType(), kMapRowCount),
+    Count("mapFromCount"),
+    Items("mapRowFrom", rigExecStd::DoubleType(), kMapFromCount),
+    Count("mapToCount"),
+    Items("mapRowTo", rigExecStd::DoubleType(), kMapToCount),
+    Count("mapSlopeCount"),
+    Items("mapRowSlope", rigExecStd::DoubleType(), kMapSlopeCount),
+    Count("mapCutCount"),
+    Items("mapRowCut", rigExecStd::DoubleType(), kMapCutCount),
+    Count("mapBeginCount"),
+    Items("mapBegin", rigExecStd::UInt64Type(), kMapBeginCount),
+    Count("mapUnclampedCount"),
+    Items("mapUnclamped", rigExecStd::BoolType(), kMapUnclampedCount),
+};
+
+const rigExec::RigExecOpDesc kPoseInterpolatorDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "PoseInterpolator";
+    d.ports = kPoseInterpolatorPorts;
+    d.portCount = std::size(kPoseInterpolatorPorts);
+    d.runBatch = &RunPoseInterpolator;
+    d.validate = &CheckPoseInterpolator;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    d.payloadFields = kPoseInterpolatorFields;
+    d.payloadFieldCount = std::size(kPoseInterpolatorFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &PoseInterpolatorValuesOf;
+    d.state = opIo::StateOf<PoseInterpolatorState>();
+    return d;
+}();
+
 } // namespace
 
 void
@@ -311,6 +1002,7 @@ RegisterPoseOps(rigExec::RigExecOpRegistrar &registrar)
 {
     registrar.Add(AvarInputs(), kAvarInputsDesc);
     registrar.Add(SpaceCheckpoint(), kSpaceCheckpointDesc);
+    registrar.Add(PoseInterpolator(), kPoseInterpolatorDesc);
 }
 
 } // namespace rigExecOps

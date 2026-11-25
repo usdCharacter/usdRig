@@ -9,7 +9,7 @@ is divided by responsibility:
 | `poseSteps.cpp` | Step dispatch, commit deltas, propagation |
 | `poseSolvers.cpp` | FK, two-bone IK, spline IK, ribbon, twist solvers |
 | `poseConstraints.cpp` | Constraint sources, constraint kernels, single-chain IK |
-| `poseInterpolation.cpp` | Radial-basis interpolation from solved wire tables |
+| `rbfSolver.h` | Radial-basis interpolation from solved wire tables |
 | `poseMath.cpp` | Frame decomposition and blending shared by pose operations |
 
 Registered mover modules supply USD-free typed definitions through
@@ -20,7 +20,8 @@ to the `Open` overload. The USD adapter is a separate build input. See
 [registered modules](../../docs/concepts/external-movers.md#build-a-mover-repository).
 
 `poseInternal.h` contains private scratch types and phase interfaces. Keep
-kernel implementations in their `.cpp` files and retain the baked path's
+kernel implementations in their `.cpp` files, except `rbfSolver.h`, which the
+op library shares, and retain the baked path's
 floating-point operation order and precision. Interpolation consumes the
 already-solved weights; regularization and matrix inversion belong to baking.
 

@@ -216,7 +216,7 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
             poses.poseInterpolators[i].valueInputs.size(), 0.0);
     }
     scratch->interpSolvers.assign(poses.poseInterpolators.size(),
-                                  _RrRbfSolver());
+                                  RrRbfSolver());
     scratch->interpScratch.assign(poses.poseInterpolators.size(), {});
     scratch->interpMethods.assign(poses.poseInterpolators.size(), {});
     for (size_t i = 0; i < poses.poseInterpolators.size(); ++i) {
@@ -229,14 +229,14 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
         for (const RigExecWireVec3d &p : wire.translations) {
             rbfTranslations.push_back(RrVec3d(p[0], p[1], p[2]));
         }
-        std::vector<_RrRbfPoseType> rbfPoseTypes;
+        std::vector<RrRbfPoseType> rbfPoseTypes;
         for (uint8_t type : wire.poseTypes) {
-            rbfPoseTypes.push_back(_RrRbfPoseType(type));
+            rbfPoseTypes.push_back(RrRbfPoseType(type));
         }
-        scratch->interpSolvers[i] = _RrRbfSolver(
+        scratch->interpSolvers[i] = RrRbfSolver(
             rbfPoses, rbfTranslations, rbfPoseTypes,
             RrVec3d(wire.twistAxis[0], wire.twistAxis[1], wire.twistAxis[2]),
-            _RrRbfKernel(wire.kernel), wire.radius, wire.translationRadius,
+            RrRbfKernel(wire.kernel), wire.radius, wire.translationRadius,
             wire.normalize, wire.enableRotation, wire.enableTranslation);
         std::vector<std::vector<double>> weights;
         weights.reserve(wire.weights.size());

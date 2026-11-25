@@ -37,26 +37,6 @@ struct RrSpaceSwitchMath {
     }
 };
 
-struct RrPoseInterpolatorMath {
-    using Quaternion = RrQuatd;
-    using Vector = RrVec3d;
-    static bool FrameRotation(const RrPointFrame &f, Quaternion *q)
-    {
-        return RrFrameRotation(f, q);
-    }
-    static bool FrameTranslation(const RrPointFrame &f,
-                                 const RrPointFrame &rest,
-                                 const RrPointFrame *parent,
-                                 const RrPointFrame *parentRest, Vector *v)
-    {
-        return RrFrameTranslation(f, rest, parent, parentRest, v);
-    }
-    static Vector EulerFromQuaternion(const Quaternion &q)
-    {
-        return _RrRbfEulerFromQuaternion(q);
-    }
-};
-
 struct RrPosePropagateMath {
     static bool Usable(const RrPointFrame &frame)
     {
@@ -939,9 +919,9 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
                    bool(interp.maps),
                    &scratch->interpMaps[object]};
         std::vector<double> &interpScratch = scratch->interpScratch[object];
-        const auto status =
-            RigExecRunPoseInterpolatorArithmetic<RrPoseInterpolatorMath>(
-                record, input, &interpScratch);
+        const auto status = RigExecRunPoseInterpolatorArithmetic<
+            RrPoseInterpolatorMathT<RrPointFrame>>(record, input,
+                                                   &interpScratch);
         if (status == RigExecPoseInterpolatorStatus::UnusableRotation) {
             output.diagnostics.push_back(
                 "pose interpolator " + program->TextOrEmpty(interp.path) +

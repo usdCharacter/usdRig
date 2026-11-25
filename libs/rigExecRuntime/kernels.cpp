@@ -5,6 +5,7 @@
 #include "rigExecRuntime/store.h"
 
 #include "rigExecRuntime/dualQuatMath.h"
+#include "rigExecRuntime/rbfSolver.h"
 #include "rigExecMath/switchMathKernel.h"
 
 #include <algorithm>
@@ -61,15 +62,7 @@ RrMatrixToPoints(const std::array<RrVec3d, 4> &restPoints,
 bool
 RrFrameRotation(const RrPointFrame &frame, RrQuatd *out)
 {
-    RrMat4d matrix;
-    matrix.SetIdentity();
-    if (!frame.IsValid() || frame.IsDegenerate() ||
-        !RrPointsToMatrix(RrIdentityLandmarks(), frame.points, &matrix)) {
-        return false;
-    }
-    matrix.SetTranslateOnly(RrVec3d(0.0));
-    *out = matrix.GetOrthonormalized(false).ExtractRotationQuat();
-    return true;
+    return RrPoseInterpolatorMathT<RrPointFrame>::FrameRotation(frame, out);
 }
 
 RrMat4d
@@ -129,53 +122,14 @@ RrRoundTrip(const RrMat4d &m)
     return RigExecRoundTripT<RrMat3d, RrVec3d>(m);
 }
 
-namespace {
-
-bool
-_RrFrameMatrix(const RrPointFrame &frame, RrMat4d *out)
-{
-    return frame.IsValid() && !frame.IsDegenerate() &&
-           RrPointsToMatrix(RrIdentityLandmarks(), frame.points, out);
-}
-
-} // namespace
-
 bool
 RrFrameTranslation(const RrPointFrame &driverFinal,
                    const RrPointFrame &driverRest,
                    const RrPointFrame *parentFinal,
                    const RrPointFrame *parentRest, RrVec3d *out)
 {
-    RrMat4d world(1.0), restWorld(1.0);
-    if (!_RrFrameMatrix(driverFinal, &world) ||
-        !_RrFrameMatrix(driverRest, &restWorld)) {
-        return false;
-    }
-    RrMat4d local = world, restLocal = restWorld;
-    double det = 0.0;
-    if (parentFinal && parentRest) {
-        RrMat4d parent(1.0), restParent(1.0);
-        if (!_RrFrameMatrix(*parentFinal, &parent) ||
-            !_RrFrameMatrix(*parentRest, &restParent)) {
-            return false;
-        }
-        const RrMat4d parentInverse = parent.GetInverse(&det);
-        if (det == 0.0) {
-            return false;
-        }
-        const RrMat4d restParentInverse = restParent.GetInverse(&det);
-        if (det == 0.0) {
-            return false;
-        }
-        local = world * parentInverse;
-        restLocal = restWorld * restParentInverse;
-    }
-    const RrMat4d restLocalInverse = restLocal.GetInverse(&det);
-    if (det == 0.0) {
-        return false;
-    }
-    *out = restLocalInverse.Transform(local.ExtractTranslation());
-    return true;
+    return RrPoseInterpolatorMathT<RrPointFrame>::FrameTranslation(
+        driverFinal, driverRest, parentFinal, parentRest, out);
 }
 
 RrMat4d

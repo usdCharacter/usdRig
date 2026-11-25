@@ -1879,6 +1879,177 @@ ProbeSpaceCheckpoint(const B &b, const RigExecBakedStep &step)
     CompareBits("Pose", "SpaceCheckpoint", label, baked, op, false);
 }
 
+// A pose interpolator's weights from the frames, values and enable its step
+// read, against the weights it wrote.
+void
+ProbePoseInterpolator(const B &b, const RigExecBakedStep &step)
+{
+    using namespace rigExecOps;
+    const auto &interp = b.poseInterpolators[size_t(step.object)];
+    PoseInterpolatorPayload payload;
+    payload.poseCount = interp.poseSlots.size();
+    payload.enableTranslation = interp.enableTranslation;
+    payload.allowNegativeWeights = interp.allowNegativeWeights;
+    std::string kind = "PoseInterpolator Rbf";
+    if (interp.mapsSolve && interp.maps) {
+        kind = "PoseInterpolator Maps";
+        payload.solve = PoseSolve::Maps;
+        const RigExecAnimatedMapsTable &table = *interp.maps;
+        payload.mapsInputCount = table.inputCount;
+        for (const RigExecConditionalRow &row : table.rows) {
+            payload.mapRowInputs.push_back(int32_t(row.input));
+            payload.mapRowFrom.push_back(row.from);
+            payload.mapRowTo.push_back(row.to);
+            payload.mapRowSlope.push_back(row.slope);
+            payload.mapRowCut.push_back(row.cut);
+        }
+        for (const size_t begin : table.mapBegin)
+            payload.mapBegin.push_back(begin);
+        for (size_t m = 0; m < table.MapCount(); ++m)
+            payload.mapUnclamped.push_back(table.Clamps(m) ? 0 : 1);
+    } else if (interp.mlSolve && interp.network) {
+        kind = "PoseInterpolator Network";
+        payload.solve = PoseSolve::Network;
+        const RigExecMlNetwork &net = *interp.network;
+        payload.networkInputCount = net.inputCount;
+        for (const RigExecMlLayer &layer : net.layers) {
+            payload.networkLayerSizes.push_back(int32_t(layer.outputCount));
+            payload.networkActivations.push_back(uint32_t(layer.activation));
+            payload.networkAlphas.push_back(float(layer.alpha));
+        }
+        const size_t biasBegin =
+            net.layers.empty() ? 0 : net.layers.front().biasOffset;
+        payload.networkWeights.assign(net.parameters.begin(),
+                                      net.parameters.begin() + biasBegin);
+        payload.networkBiases.assign(net.parameters.begin() + biasBegin,
+                                     net.parameters.end());
+        payload.networkInputMean = net.inputMean;
+        payload.networkInputScale = net.inputScale;
+        payload.networkDefaults = net.defaults;
+    } else if (interp.rigLogicSolve) {
+        kind = "PoseInterpolator RbfMethod";
+        payload.solve = PoseSolve::RbfMethod;
+        const RigExecRbfMethodTable &table = interp.method;
+        payload.methodSolverType = uint32_t(table.solverType);
+        payload.methodDistance = uint32_t(table.distanceMethod);
+        payload.methodWeightFunction = uint32_t(table.weightFunction);
+        payload.methodNormalize = uint32_t(table.normalizeMethod);
+        payload.methodTwistAxis = uint32_t(table.twistAxis);
+        payload.methodRawCount = table.rawCount;
+        payload.methodTargetCount = table.targetCount;
+        payload.methodRadius = table.radius;
+        payload.methodWeightThreshold = table.weightThreshold;
+        payload.methodTargets = table.targets;
+        payload.methodDistanceTargets = table.distanceTargets;
+        payload.methodTargetScales = table.targetScales;
+        payload.methodCoefficients = table.coefficients;
+    } else {
+        const RigExecRbfSolver &solver = interp.solver;
+        for (const GfVec3d &p : solver.GetPoses())
+            payload.rbfPoses.push_back(OpVector(p));
+        for (const GfVec3d &t : solver.GetTranslations())
+            payload.rbfTranslations.push_back(OpVector(t));
+        for (const RigExecRbfPoseType type : solver.GetPoseTypes())
+            payload.rbfPoseTypes.push_back(uint32_t(type));
+        payload.rbfTwistAxis = OpVector(solver.GetTwistAxis());
+        payload.rbfKernel = uint32_t(solver.GetKernel());
+        payload.rbfRadius = solver.GetRadius();
+        payload.rbfTranslationRadius = solver.GetTranslationRadius();
+        payload.rbfRadii = solver.GetRadii();
+        payload.rbfTranslationRadii = solver.GetTranslationRadii();
+        payload.rbfNormalize = solver.GetNormalize();
+        payload.rbfEnableRotation = solver.GetEnableRotation();
+        payload.rbfEnableTranslation = solver.GetEnableTranslation();
+        payload.rbfWeightRows = solver.GetWeights().size();
+        for (const auto &row : solver.GetWeights())
+            payload.rbfWeights.insert(payload.rbfWeights.end(), row.begin(),
+                                      row.end());
+    }
+    const bool extras = payload.solve == PoseSolve::RbfMethod ||
+                        payload.solve == PoseSolve::Network;
+    std::vector<const RigExecPortHandle *> ins = {&PoseInterpolatorEnabled()};
+    const uint8_t enabled = interp.enabledValue ? 1 : 0;
+    std::vector<const void *> values = {&enabled};
+    rigExecStd::RigExecArray<double> numeric(interp.values.size());
+    for (size_t i = 0; i < interp.values.size(); ++i)
+        numeric[i] = interp.values[i];
+    if (!interp.values.empty()) {
+        ins.push_back(&PoseInterpolatorNumeric());
+        values.push_back(&numeric);
+    }
+    const double mask = interp.maskValue;
+    if (payload.solve == PoseSolve::Network) {
+        ins.push_back(&PoseInterpolatorMask());
+        values.push_back(&mask);
+    }
+    auto finalOf = [&](int slot) {
+        return OpFrame(b.fin[size_t(b.finLast[size_t(slot)])]);
+    };
+    auto restOf = [&](int slot) { return OpFrame(b.restFrames[size_t(slot)]); };
+    rigExecRig::PointFrame frames[4];
+    if (interp.driverSlot >= 0) {
+        frames[0] = finalOf(interp.driverSlot);
+        frames[1] = restOf(interp.driverSlot);
+        ins.push_back(&PoseInterpolatorDriverFinal());
+        ins.push_back(&PoseInterpolatorDriverRest());
+        values.push_back(&frames[0]);
+        values.push_back(&frames[1]);
+        if (interp.parentSlot >= 0) {
+            frames[2] = finalOf(interp.parentSlot);
+            frames[3] = restOf(interp.parentSlot);
+            ins.push_back(&PoseInterpolatorParentFinal());
+            ins.push_back(&PoseInterpolatorParentRest());
+            values.push_back(&frames[2]);
+            values.push_back(&frames[3]);
+        }
+    }
+    rigExecStd::RigExecArray<rigExecRig::PointFrame> extraLists[4];
+    if (extras && !interp.extraDriverSlots.empty()) {
+        std::vector<rigExecRig::PointFrame> lists[4];
+        for (size_t e = 0; e < interp.extraDriverSlots.size(); ++e) {
+            lists[0].push_back(finalOf(interp.extraDriverSlots[e]));
+            lists[1].push_back(restOf(interp.extraDriverSlots[e]));
+            const int parent = interp.extraParentSlots[e];
+            payload.extraParents.push_back(parent >= 0);
+            if (parent >= 0) {
+                lists[2].push_back(finalOf(parent));
+                lists[3].push_back(restOf(parent));
+            }
+        }
+        const RigExecPortHandle *ports[4] = {
+            &PoseInterpolatorExtraFinals(), &PoseInterpolatorExtraRests(),
+            &PoseInterpolatorExtraParentFinals(),
+            &PoseInterpolatorExtraParentRests()};
+        for (int l = 0; l < 4; ++l) {
+            if (lists[l].empty())
+                continue;
+            extraLists[l] = rigExecStd::RigExecArray<rigExecRig::PointFrame>(
+                lists[l].size());
+            for (size_t i = 0; i < lists[l].size(); ++i)
+                extraLists[l][i] = lists[l][i];
+            ins.push_back(ports[l]);
+            values.push_back(&extraLists[l]);
+        }
+    }
+    const std::string object = interp.pathText;
+    std::string key = "PoseInterpolator/" +
+                      g_where.substr(0, g_where.rfind('@')) + "/" + object;
+    SpaceNode &node = SpaceNodeFor(key, PoseInterpolator(), &payload, ins,
+                                   {&PoseInterpolatorOut()});
+    std::string error;
+    if (!RunSpaceNode(node, values, &error)) {
+        OpFailed("Pose", kind, object, !step.diagnostics.empty(), error);
+        return;
+    }
+    const auto &out = SpaceOut<rigExecStd::RigExecArray<float>>(node, 0);
+    std::vector<double> baked, op;
+    for (const int slot : interp.poseSlots)
+        baked.push_back(double(b.poseWeights[size_t(slot)]));
+    for (const float w : out)
+        op.push_back(double(w));
+    CompareBits("Pose", kind, object, baked, op, !step.diagnostics.empty());
+}
+
 void
 ProbePose(const B &b)
 {
@@ -1889,6 +2060,10 @@ ProbePose(const B &b)
                  step.object >= 0 &&
                  size_t(step.object) < b.switchFrameContexts.size())
             ProbeSpaceCheckpoint(b, step);
+        else if (step.kind == RigExecBakedStepKind::PoseInterpolator &&
+                 step.object >= 0 &&
+                 size_t(step.object) < b.poseInterpolators.size())
+            ProbePoseInterpolator(b, step);
     }
 }
 
@@ -2380,7 +2555,9 @@ main(int argc, char **argv)
           "Spaces/SpaceExpression/SpaceExpression",
           "Spaces/SpaceExpression/AffineFrame", "Commit/",
           "Solve/RigExecFkChain groups", "Pose/AvarInputs",
-          "Pose/SpaceCheckpoint"}) {
+          "Pose/SpaceCheckpoint", "Pose/PoseInterpolator Rbf",
+          "Pose/PoseInterpolator RbfMethod", "Pose/PoseInterpolator Network",
+          "Pose/PoseInterpolator Maps"}) {
         size_t compared = 0;
         for (const auto &[key, tally] : g_tally)
             if (key.compare(0, std::strlen(family), family) == 0)
