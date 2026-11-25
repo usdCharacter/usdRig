@@ -19,10 +19,14 @@ Read its [AGENTS.md](../../AGENTS.md), the
 files for the components being used; these are the authority for node roles,
 external ports, provider parents, required fit fields, and attachment templates.
 
-For a small working authoring/evaluation example, inspect
-[test_components.py](../../asset_lib/components/test_components.py). It fits a
-leg in an independent namespace at two sizes. Its single-layer test arrangement
-does not replace the fit/composition separation for a delivered character.
+For small working authoring/evaluation examples, inspect
+[test_components.py](../../asset_lib/components/test_components.py), which fits
+a leg in an independent namespace at two sizes, and
+[example_trunk_head.py](../../asset_lib/components/example_trunk_head.py),
+which binds `torso`, `spine` and `head` instances in a fresh namespace and
+checks the binder, the validator, compilation, weighted motion and a headless
+reopen. The test's single-layer arrangement does not replace the fit/composition
+separation for a delivered character.
 
 Run scripts importing `pxr` or `rigexec` in the environment initialized by
 `bin/_env.bat` on Windows or `bin/_env.sh` on POSIX. Use that environment's
@@ -157,6 +161,15 @@ Rebuilding a composition replaces that generated layer. Put durable value edits
 in the fit and durable wiring edits in the bindings. USD layers are sufficient
 at runtime; the JSON and Python composer are authoring inputs. Retain referenced
 library files when moving or packaging an unflattened asset.
+
+## Worked example
+
+[worked-trunk-head.md](worked-trunk-head.md) walks one intake request — trunk
+and head controls, walk and run, weighted deformation with no skincluster —
+from that request to instances, manifest ports, node destinations, and provider
+parents, and names the pose checks the runnable proof
+(`asset_lib/components/example_trunk_head.py`) covers and skips. Read it when
+binding a chain of instances for the first time; a routine rebuild can skip it.
 
 ## Validate and deliver
 
