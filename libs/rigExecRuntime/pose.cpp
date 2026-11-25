@@ -1,5 +1,6 @@
 // Runtime pose scratch allocation, input prologue, and ladder composition.
 
+#include "rigExecMath/avarScale.h"
 #include "rigExecSchema/schemaNames.h"
 #include "poseEvalHost.h"
 #include "poseInternal.h"
@@ -14,22 +15,6 @@ namespace rigExec {
 using namespace runtimePoseDetail;
 
 namespace {
-
-// Smallest supported avar scale magnitude, in avarScale.h terms.
-constexpr double _RrAvarScaleFloor = 1e-4;
-
-// RigExecNormalizeAvarScale, verbatim: non-finite resolves to identity,
-// magnitudes below the floor are raised to it with the sign intact.
-double
-_RrNormalizeAvarScale(double value)
-{
-    if (!std::isfinite(value)) {
-        return 1.0;
-    }
-    return std::abs(value) < _RrAvarScaleFloor
-               ? std::copysign(_RrAvarScaleFloor, value)
-               : value;
-}
 
 RrMat4d
 _RrWireMatrix(const RigExecWireMatrix4d &wire)
@@ -82,9 +67,9 @@ _RrComposeAvars(double tx, double ty, double tz, double sx, double sy,
     }
     RrMat4d m;
     m.SetIdentity();
-    m[0][0] = _RrNormalizeAvarScale(sx);
-    m[1][1] = _RrNormalizeAvarScale(sy);
-    m[2][2] = _RrNormalizeAvarScale(sz);
+    m[0][0] = RigExecNormalizeAvarScale(sx);
+    m[1][1] = RigExecNormalizeAvarScale(sy);
+    m[2][2] = RigExecNormalizeAvarScale(sz);
     for (const char axis : sequence) {
         const int index = axis == 'X' ? 0 : axis == 'Y' ? 1 : 2;
         if (angles[index] != 0.0) {

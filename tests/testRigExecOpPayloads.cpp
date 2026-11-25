@@ -24,6 +24,7 @@
 #include "rigExecOps/solver/chainSolverOps.h"
 #include "rigExecOps/solver/frameBlendOps.h"
 #include "rigExecOps/solver/poseCommitOps.h"
+#include "rigExecOps/pose/poseOps.h"
 #include "rigExecOps/solver/ribbonFramesOps.h"
 #include "rigExecOps/solver/singleChainIkOps.h"
 #include "rigExecOps/solver/skeleton2dOps.h"
@@ -434,6 +435,10 @@ TestFilledPayloads()
         commit.blocked = {0, 1, 0};
         commit.solverOutput = true;
         CheckRoundTrip(Op(PoseCommit()), &commit);
+        AvarInputsPayload avars;
+        avars.avarCount = 3;
+        avars.targets = {2, 0, 1, 0};
+        CheckRoundTrip(Op(AvarInputs()), &avars);
     }
     {
         BlendFramesPayload p;

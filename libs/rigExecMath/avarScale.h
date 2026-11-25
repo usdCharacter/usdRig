@@ -5,6 +5,7 @@
 #define RIGEXEC_MATH_AVAR_SCALE_H
 
 #include <cmath>
+#include <cstddef>
 
 namespace rigExec {
 
@@ -35,8 +36,8 @@ RigExecNormalizeAvarScale(double value)
         return 1.0;
     }
     return std::abs(value) < RigExecAvarScaleFloor
-        ? std::copysign(RigExecAvarScaleFloor, value)
-        : value;
+               ? std::copysign(RigExecAvarScaleFloor, value)
+               : value;
 }
 
 /// Apply the runtime avars:rotationSign contract to one axis.
@@ -60,10 +61,9 @@ RigExecNormalizeRotationSign(double value)
 inline unsigned char
 RigExecRotationSignMask(double x, double y, double z)
 {
-    return (unsigned char)(
-        (RigExecNormalizeRotationSign(x) < 0.0 ? 1u : 0u) |
-        (RigExecNormalizeRotationSign(y) < 0.0 ? 2u : 0u) |
-        (RigExecNormalizeRotationSign(z) < 0.0 ? 4u : 0u));
+    return (unsigned char)((RigExecNormalizeRotationSign(x) < 0.0 ? 1u : 0u) |
+                           (RigExecNormalizeRotationSign(y) < 0.0 ? 2u : 0u) |
+                           (RigExecNormalizeRotationSign(z) < 0.0 ? 4u : 0u));
 }
 
 /// The sign one packed axis selects: -1 when its bit is set, +1 otherwise.
@@ -73,6 +73,18 @@ RigExecRotationSignFromMask(unsigned mask, int axis)
     return (mask & (1u << axis)) ? -1.0 : 1.0;
 }
 
-}  // namespace rigExec
+/// Writes \p count bound avar values in order: binding k writes value(k) to
+/// slot(k), so a later binding for the same slot wins.
+template <class Slot, class Value, class Write>
+void
+RigExecWriteAvarBindings(size_t count, const Slot &slot, const Value &value,
+                         const Write &write)
+{
+    for (size_t k = 0; k < count; ++k) {
+        write(slot(k), value(k));
+    }
+}
 
-#endif  // RIGEXEC_MATH_AVAR_SCALE_H
+} // namespace rigExec
+
+#endif // RIGEXEC_MATH_AVAR_SCALE_H

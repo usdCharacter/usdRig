@@ -3,6 +3,7 @@
 #include "poseInternal.h"
 #include "poseEvalHost.h"
 #include "spaces.h"
+#include "rigExecMath/avarScale.h"
 #include "rigExecMath/poseArithmeticKernel.h"
 #include "rigExecMath/providerMatrixKernel.h"
 #include <algorithm>
@@ -76,15 +77,6 @@ enum _RrPropagateOutcome : uint8_t {
     _RrInvalidResult = 5,
 };
 
-// RigExecRotationSignFromMask, verbatim: bit N set negates axis N. The
-// runtime carries its own copy of the math helpers rather than reaching
-// into rigExecMath, which keeps it free of every other project header.
-double
-_RrRotationSign(unsigned mask, int axis)
-{
-    return (mask & (1u << axis)) ? -1.0 : 1.0;
-}
-
 // The split constants of the commit walk (bakedPose.cpp).
 enum : size_t {
     _RrPropagateChunkSize = 64,
@@ -146,12 +138,13 @@ _RrComposeAvarsOf(const RrProgram &program, const RrPoseScratch &scratch,
     // apply it (computations.cpp, bakedPose.cpp).
     const unsigned sign =
         i < scratch.rotationSign.size() ? scratch.rotationSign[i] : 0u;
-    const double signX = _RrRotationSign(sign, 0);
+    const double signX = RigExecRotationSignFromMask(sign, 0);
     return _RrComposeAvars(
         a[0] * units, a[1] * units, a[2] * units, noScale ? 1.0 : a[3],
         noScale ? 1.0 : a[4], noScale ? 1.0 : a[5], a[6] * signX,
-        a[7] * _RrRotationSign(sign, 1), a[8] * _RrRotationSign(sign, 2),
-        a[9] * signX, program.TextOrEmpty(scratch.rotOrder[i]));
+        a[7] * RigExecRotationSignFromMask(sign, 1),
+        a[8] * RigExecRotationSignFromMask(sign, 2), a[9] * signX,
+        program.TextOrEmpty(scratch.rotOrder[i]));
 }
 
 // _SpaceOfFrame: an unusable frame selects the NaN sentinel, so the

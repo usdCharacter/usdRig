@@ -139,29 +139,6 @@ enum PosePropagateOutcome : uint8_t {
     kPosePropagateInvalidResult = 5
 };
 
-// Smallest supported avar scale magnitude, in avarScale.h terms.
-constexpr double kPoseAvarScaleFloor = 1e-4;
-
-// RigExecNormalizeAvarScale: non-finite resolves to identity,
-// magnitudes below the floor are raised to it with the sign intact.
-inline double
-NormalizeAvarScale(double value)
-{
-    if (!std::isfinite(value)) {
-        return 1.0;
-    }
-    return std::abs(value) < kPoseAvarScaleFloor
-               ? std::copysign(kPoseAvarScaleFloor, value)
-               : value;
-}
-
-// RigExecRotationSignFromMask: bit N set negates axis N.
-inline double
-RotationSignFromMask(unsigned mask, int axis)
-{
-    return (mask & (1u << axis)) ? -1.0 : 1.0;
-}
-
 } // namespace pose_detail
 
 // The explicitly ordered affine arithmetic every pose body below runs
@@ -640,7 +617,7 @@ RotationMatrix(const typename Math::Vec3 &axis, double degrees)
 
 // Slot avars as one matrix: S * R(order) * Rspin * T, in the order
 // RigExecProviderComposeAvars and _RrComposeAvars both spell. Scales
-// normalize through NormalizeAvarScale; a zero angle skips its
+// normalize through RigExecNormalizeAvarScale; a zero angle skips its
 // rotation; anything but a 3-letter order composes XYZ.
 template <class Math>
 typename Math::Mat4
@@ -653,10 +630,10 @@ ComposeAvars(double tx, double ty, double tz, double sx, double sy, double sz,
     const double angles[3] = {rx, ry, rz};
     const std::string_view sequence =
         order.size() == 3 ? order : std::string_view(SchemaValueText::xyz);
-    typename Math::Mat4 m = Math::Mat4FromElements(
-        pose_detail::NormalizeAvarScale(sx), 0, 0, 0, 0,
-        pose_detail::NormalizeAvarScale(sy), 0, 0, 0, 0,
-        pose_detail::NormalizeAvarScale(sz), 0, 0, 0, 0, 1.0);
+    typename Math::Mat4 m =
+        Math::Mat4FromElements(RigExecNormalizeAvarScale(sx), 0, 0, 0, 0,
+                               RigExecNormalizeAvarScale(sy), 0, 0, 0, 0,
+                               RigExecNormalizeAvarScale(sz), 0, 0, 0, 0, 1.0);
     for (char axis : sequence) {
         const int i = axis == 'X' ? 0 : axis == 'Y' ? 1 : 2;
         if (angles[i] != 0.0) {
@@ -2728,11 +2705,11 @@ RunAvarInputsStep(Host &host, const StepRef &step)
     // writes. The adapter clamps the count; there is no Invalid arm.
     const size_t count =
         step.object < 0 ? 0 : host.inputs().avarWriteCount(size_t(step.object));
-    for (size_t k = 0; k < count; ++k) {
-        host.state().writeAvar(
-            host.inputs().avarWriteSlot(size_t(step.object), k),
-            host.inputs().avarWriteValue(size_t(step.object), k));
-    }
+    const size_t object = size_t(step.object);
+    RigExecWriteAvarBindings(
+        count, [&](size_t k) { return host.inputs().avarWriteSlot(object, k); },
+        [&](size_t k) { return host.inputs().avarWriteValue(object, k); },
+        [&](auto slot, double value) { host.state().writeAvar(slot, value); });
     return {Outcome::Applied, kNoStepDetail};
 }
 
@@ -2768,12 +2745,12 @@ ComposeSlotAvars(const PoseSlotComposeT<Math> &slot)
     const double units = a[10];
     const bool noScale = slot.noScaleAvars;
     const unsigned sign = slot.rotationSign;
-    const double signX = pose_detail::RotationSignFromMask(sign, 0);
+    const double signX = RigExecRotationSignFromMask(sign, 0);
     return pose_ops::ComposeAvars<Math>(
         a[0] * units, a[1] * units, a[2] * units, noScale ? 1.0 : a[3],
         noScale ? 1.0 : a[4], noScale ? 1.0 : a[5], a[6] * signX,
-        a[7] * pose_detail::RotationSignFromMask(sign, 1),
-        a[8] * pose_detail::RotationSignFromMask(sign, 2), a[9] * signX,
+        a[7] * RigExecRotationSignFromMask(sign, 1),
+        a[8] * RigExecRotationSignFromMask(sign, 2), a[9] * signX,
         slot.rotOrder);
 }
 

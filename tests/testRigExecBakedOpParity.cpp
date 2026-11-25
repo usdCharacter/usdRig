@@ -18,6 +18,7 @@
 #include "rigExec/api/taskSystem.h"
 #include "rigExecMath/poseCommitKernel.h"
 #include "rigExecOps/solver/poseCommitOps.h"
+#include "rigExecOps/pose/poseOps.h"
 #include "opRunners/geometryOpRunner.h"
 #include "opRunners/poseOpRunner.h"
 #include "opRunners/weightOpRunner.h"
@@ -1750,6 +1751,64 @@ ProbeSpaces(const B &b)
     }
 }
 
+// Pose: a provider's bound avar values, read as its AvarInputs step reads
+// them, against the avars the step wrote.
+void
+ProbeAvarInputs(const B &b, const RigExecBakedStep &step)
+{
+    using namespace rigExecOps;
+    const auto varying =
+        RigExecBakedAvarBindingRange(b.avarBindingBegin, step.object);
+    const auto constant =
+        RigExecBakedAvarBindingRange(b.avarConstantBindingBegin, step.object);
+    AvarInputsPayload payload;
+    std::vector<uint32_t> slots;
+    rigExecStd::RigExecArray<double> values;
+    std::vector<double> read;
+    auto bind = [&](const auto &binding) {
+        const auto at =
+            std::find(slots.begin(), slots.end(), uint32_t(binding.slot));
+        payload.targets.push_back(uint32_t(at - slots.begin()));
+        if (at == slots.end())
+            slots.push_back(uint32_t(binding.slot));
+        read.push_back(RigExecBakedLeafRead(b, binding.input));
+    };
+    for (size_t i = varying.first; i < varying.second; ++i)
+        bind(b.avarBindings[i]);
+    for (size_t i = constant.first; i < constant.second; ++i)
+        bind(b.avarConstantBindings[i]);
+    if (slots.empty())
+        return;
+    payload.avarCount = slots.size();
+    values.Resize(read.size());
+    for (size_t i = 0; i < read.size(); ++i)
+        values[i] = read[i];
+    std::string key = "AvarInputs";
+    for (const uint32_t t : payload.targets)
+        key += "/" + std::to_string(t);
+    SpaceNode &node = SpaceNodeFor(key, AvarInputs(), &payload,
+                                   {&AvarInputsValues()}, {&AvarInputsOut()});
+    std::string error;
+    const std::string object = b.paths[size_t(slots.front()) / 11].GetString();
+    if (!RunSpaceNode(node, {&values}, &error)) {
+        OpFailed("Pose", "AvarInputs", object, false, error);
+        return;
+    }
+    const auto &out = SpaceOut<rigExecStd::RigExecArray<double>>(node, 0);
+    std::vector<double> baked, op(out.begin(), out.end());
+    for (const uint32_t slot : slots)
+        baked.push_back(b.avars[slot]);
+    CompareBits("Pose", "AvarInputs", object, baked, op, false);
+}
+
+void
+ProbePose(const B &b)
+{
+    for (const auto &step : b.steps)
+        if (step.kind == RigExecBakedStepKind::AvarInputs && step.object >= 0)
+            ProbeAvarInputs(b, step);
+}
+
 std::vector<UsdTimeCode>
 Frames(const UsdStageRefPtr &stage)
 {
@@ -1917,6 +1976,7 @@ ProbeStage(const UsdStageRefPtr &stage, const std::string &rig, Paint paint)
         ProbeDerived(b);
         ProbeWeights(b);
         ProbeSpaces(b);
+        ProbePose(b);
     }
 }
 
@@ -2236,7 +2296,7 @@ main(int argc, char **argv)
           "Spaces/FrameMatrix/", "Spaces/ProviderRefresh",
           "Spaces/SpaceExpression/SpaceExpression",
           "Spaces/SpaceExpression/AffineFrame", "Commit/",
-          "Solve/RigExecFkChain groups"}) {
+          "Solve/RigExecFkChain groups", "Pose/AvarInputs"}) {
         size_t compared = 0;
         for (const auto &[key, tally] : g_tally)
             if (key.compare(0, std::strlen(family), family) == 0)

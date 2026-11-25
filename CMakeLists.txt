@@ -305,6 +305,7 @@ rigexec_add_op_library(rigExecOps
         libs/rigExecOps/space/spaceOps.cpp
         libs/rigExecOps/space/providerOps.cpp
         libs/rigExecOps/solver/poseCommitOps.cpp
+        libs/rigExecOps/pose/poseOps.cpp
     USES_TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes)
 target_link_libraries(rigExecOps PRIVATE rigExecEvalCore)
 
@@ -1448,6 +1449,15 @@ rigexec_link_registrations(testRigExecOpsSpaces
     TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 rigexec_add_test(NAME testRigExecOpsSpaces COMMAND testRigExecOpsSpaces)
 set_tests_properties(testRigExecOpsSpaces PROPERTIES LABELS "fast")
+add_executable(testRigExecOpsPose tests/testRigExecOpsPose.cpp)
+target_link_libraries(testRigExecOpsPose PRIVATE rigExecOpCore)
+target_include_directories(testRigExecOpsPose PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/libs")
+target_link_libraries(testRigExecOpsPose PRIVATE Threads::Threads)
+rigexec_link_registrations(testRigExecOpsPose
+    TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
+rigexec_add_test(NAME testRigExecOpsPose COMMAND testRigExecOpsPose)
+set_tests_properties(testRigExecOpsPose PROPERTIES LABELS "fast")
 add_executable(testRigExecOpsPoints tests/testRigExecOpsPoints.cpp)
 target_link_libraries(testRigExecOpsPoints PRIVATE rigExecOpCore)
 target_include_directories(testRigExecOpsPoints PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libs")

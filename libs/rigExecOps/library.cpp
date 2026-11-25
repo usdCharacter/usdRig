@@ -36,6 +36,7 @@ Register(rigExec::RigExecOpRegistrar &registrar)
     RegisterClothOps(registrar);
     RegisterSpaceOps(registrar);
     RegisterPoseCommitOps(registrar);
+    RegisterPoseOps(registrar);
 }
 
 const rigExec::RigExecOpLibraryDesc kLibrary = [] {
