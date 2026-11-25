@@ -55,11 +55,16 @@ other compares which rows were judged and the type and length of each value.
 
 The authoritative reference is the Linux configuration above
 (`linux-x86_64-gcc13`); the Linux CI job records it on every run and
-uploads it as the `exec-rows-linux` artifact. The files under
-`windows-x86_64-msvc1936` were recorded on a Windows development machine with
-the same rows and keys as the Linux set; 111 of the 2286 row lines differ in
-the last bits of doubles (at most 5.3e-15 absolute, from the math library),
-so that set is exact only for that compiler. Replace both sets together.
+uploads it as the `exec-rows-linux` artifact. Two more exact sets have the
+same rows and keys as the Linux set; only the last bits of doubles differ,
+from the math library:
+
+- `windows-x86_64-msvc1936`, recorded on a Windows development machine: 111
+  of the 2286 row lines differ, at most 5.3e-15 absolute.
+- `macos-arm64-clang17`, the macOS CI job's `exec-rows-macos` artifact:
+  92 of the 2286 row lines differ, at most 1.6e-14 absolute.
+
+Replace the sets together.
 
 Every rig the `example_graph_*` tests run, plus `computed_ik_space` and the
 six `independentConstraints` stages, has a golden: `rigexec_add_exec_rows_test`
