@@ -1040,6 +1040,7 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
     const UsdTimeCode dragTime(bakeTime);
     size_t dragsMatched = 0;
     size_t dragsTried = 0;
+    size_t dragsBothFailed = 0;
     if (!dragInputs.empty() &&
         (!prefill(bakeTime, &error) ||
          !sampler.Apply(dragTime, reader.get(), &error))) {
@@ -1146,7 +1147,31 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
                 _VerifyPush(&diffs,
                             "the native upstream channel refused the value");
             }
-            if (_InvalidLeg(pose)) {
+            bool bothFailed = false;
+            if (!pose.valid && !pose.referenceMismatches &&
+                !pose.comparisonMismatches && !windowed) {
+                // A drag both evaluators refuse with the same error matches.
+                std::string runtimeError;
+                if (reader->SetInput(name, value, &runtimeError) &&
+                    !reader->Execute(&runtimeError)) {
+                    bothFailed =
+                        std::find(pose.diagnostics.begin(),
+                                  pose.diagnostics.end(),
+                                  runtimeError) != pose.diagnostics.end();
+                }
+                if (bothFailed) {
+                    ++dragsBothFailed;
+                    std::printf("  drag %s = %.17g: both fail: %s\n",
+                                name.c_str(), value, runtimeError.c_str());
+                } else {
+                    _VerifyPush(&diffs, "native leg failed; runtime " +
+                                            (runtimeError.empty()
+                                                 ? std::string("ran")
+                                                 : "failed: " + runtimeError));
+                    for (const std::string &line : pose.diagnostics)
+                        _VerifyPush(&diffs, "  " + line.substr(0, 200));
+                }
+            } else if (_InvalidLeg(pose)) {
                 _VerifyPush(&diffs,
                             TfStringPrintf(
                                 "native leg INVALID (valid=%d, %zu reference "
@@ -1170,7 +1195,9 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
             // The reference edits only its isolated session; the original
             // session is unchanged, as the exact guards above require.
             reader->ResetInput(name, nullptr);
-            if (diffs.empty()) {
+            if (diffs.empty() && bothFailed) {
+                ++dragsMatched;
+            } else if (diffs.empty()) {
                 ++dragsMatched;
                 std::printf(
                     "  drag %s = %.17g: runtime==native exact published pose\n",
@@ -1185,8 +1212,10 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
             }
         }
     }
-    std::printf("  verify-binary: %zu of %zu drag(s) match\n", dragsMatched,
-                dragsTried);
+    std::printf(
+        "  verify-binary: %zu of %zu drag(s) match, %zu of them failing "
+        "identically in both\n",
+        dragsMatched, dragsTried, dragsBothFailed);
     return status;
 }
 
@@ -1694,6 +1723,9 @@ RunPose(int argc, char **argv)
     }
     if (!evaluator.GetBakedProgram()) {
         std::printf("  native program unavailable\n");
+        for (const std::string &reason :
+             evaluator.Evaluate(UsdTimeCode::Default()).diagnostics)
+            std::printf("    refused: %s\n", reason.c_str());
         return 1;
     }
     if (showTargets) {

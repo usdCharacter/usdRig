@@ -10,9 +10,11 @@
 #include "pxr/base/tf/staticTokens.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
+#include <type_traits>
 #include <utility>
-#include <numeric>
 
 // The shape types and plane bounds the packet builders dispatch on. A table
 // rather than function-local statics: these run inside step bodies and the
@@ -38,23 +40,57 @@ RigExecWeightPacketsTouchTokens()
 bool
 RigExecApplyWeightRangePolicy(const TfToken &policy, float *w)
 {
-    if (!std::isfinite(*w)) {
-        return false;
-    }
-    if (*w < 0.0f || *w > 1.0f) {
-        if (policy == SchemaValueText::clamp) {
-            *w = std::min(std::max(*w, 0.0f), 1.0f);
-            return true;
-        }
-        return false;
-    }
-    return true;
+    return RigExecApplyWeightRangeKernel(policy == SchemaValueText::clamp, w);
 }
 
-// Core behind both RigExecBuildStaticWeightPacket overloads: identical
-// validation, canonicalization, and range policy over borrowed arrays.
-// Null with a zero size stands for an empty array and is never
-// dereferenced.
+namespace {
+
+int
+_RepresentationKind(const TfToken &representation)
+{
+    return representation == SchemaValueText::constant ? kRigExecWeightConstant
+           : representation == SchemaValueText::dense  ? kRigExecWeightDense
+           : representation == SchemaValueText::sparse ? kRigExecWeightSparse
+                                                       : -1;
+}
+
+bool
+_KnownPolicy(const TfToken &rangePolicy)
+{
+    return rangePolicy == SchemaValueText::strict ||
+           rangePolicy == SchemaValueText::clamp;
+}
+
+RigExecWeightPacketView
+_View(const RigExecWeightPacket &packet)
+{
+    RigExecWeightPacketView view;
+    view.valid = packet.valid;
+    view.representation = _RepresentationKind(packet.representation);
+    view.defaultWeight = packet.defaultWeight;
+    view.values = packet.values.data();
+    view.valueCount = packet.values.size();
+    view.indices = packet.indices.data();
+    view.indexCount = packet.indices.size();
+    return view;
+}
+
+bool
+_Publish(const char *why, RigExecWeightPacketBuild *built,
+         RigExecWeightPacket *packet)
+{
+    packet->defaultWeight = built->defaultWeight;
+    packet->values = std::move(built->values);
+    packet->indices = std::move(built->indices);
+    packet->valid = !why;
+    return packet->valid;
+}
+
+} // namespace
+
+static_assert(std::is_same<int, int32_t>::value,
+              "weight packet indices are the kernel's int32 indices");
+
 static RigExecWeightPacket
 _BuildStaticWeightPacket(const TfToken &representation,
                          const TfToken &rangePolicy, const float *values,
@@ -65,98 +101,18 @@ _BuildStaticWeightPacket(const TfToken &representation,
     RigExecWeightPacket packet;
     packet.representation = representation;
     packet.rangePolicy = rangePolicy;
-    // Unknown structural tokens are rejected, never coerced;
-    // allowedTokens metadata alone is not validation.
-    if (packet.representation != SchemaValueText::constant &&
-        packet.representation != SchemaValueText::dense &&
-        packet.representation != SchemaValueText::sparse) {
+    const int kind = _RepresentationKind(representation);
+    if (kind < 0 || !_KnownPolicy(rangePolicy))
         return packet;
-    }
-    if (packet.rangePolicy != SchemaValueText::strict &&
-        packet.rangePolicy != SchemaValueText::clamp) {
-        return packet;
-    }
     packet.defaultWeight = defaultWeight;
-    if ((valuesSize && !values) || (indicesSize && !indices)) {
+    if ((valuesSize && !values) || (indicesSize && !indices))
         return packet;
-    }
-
-    auto &pairs = workspace.pairs;
-    pairs.clear();
-    {
-        if (packet.representation == SchemaValueText::sparse) {
-            const size_t paired = std::min(valuesSize, indicesSize);
-            for (size_t i = 0; i < paired; ++i) {
-                pairs.emplace_back(indices[i], values[i]);
-            }
-            if (valuesSize != indicesSize) {
-                return packet; // size mismatch: invalid
-            }
-        } else if (valuesSize > 0) {
-            // One sized copy, not a push_back loop: the caller already
-            // holds the values in an array, and a dense paint is one
-            // float per mesh element.
-            packet.values.assign(values, values + valuesSize);
-        }
-    }
-    // Canonical sorted sparse support; authored pair order is
-    // non-semantic and duplicates are rejected.
-    if (packet.representation == SchemaValueText::sparse) {
-        const bool sameSupport =
-            workspace.support.size() == indicesSize &&
-            (indicesSize == 0 || std::equal(workspace.support.begin(),
-                                            workspace.support.end(), indices));
-        if (!sameSupport) {
-            if (indicesSize)
-                workspace.support.assign(indices, indices + indicesSize);
-            else
-                workspace.support.clear();
-            workspace.supportOrder.resize(indicesSize);
-            std::iota(workspace.supportOrder.begin(),
-                      workspace.supportOrder.end(), size_t(0));
-            std::sort(
-                workspace.supportOrder.begin(), workspace.supportOrder.end(),
-                [&](size_t a, size_t b) { return indices[a] < indices[b]; });
-            workspace.uniqueSupport = true;
-            for (size_t i = 1; i < indicesSize; ++i)
-                if (indices[workspace.supportOrder[i - 1]] ==
-                    indices[workspace.supportOrder[i]]) {
-                    workspace.uniqueSupport = false;
-                    break;
-                }
-        }
-        if (workspace.uniqueSupport) {
-            for (size_t i = 0; i < indicesSize; ++i) {
-                const size_t source = workspace.supportOrder[i];
-                pairs[i] = {indices[source], values[source]};
-            }
-        } else
-            std::sort(pairs.begin(), pairs.end());
-        packet.indices.reserve(pairs.size());
-        packet.values.reserve(pairs.size());
-        for (size_t i = 0; i < pairs.size(); ++i) {
-            if (i > 0 && pairs[i].first == pairs[i - 1].first) {
-                return packet; // duplicate index: invalid
-            }
-            packet.indices.push_back(pairs[i].first);
-            packet.values.push_back(pairs[i].second);
-        }
-    }
-    if (packet.representation == SchemaValueText::dense &&
-        packet.defaultWeight != 0.0f) {
-        return packet; // canonical dense default is zero
-    }
-
-    for (float &w : packet.values) {
-        if (!RigExecApplyWeightRangePolicy(packet.rangePolicy, &w)) {
-            return packet;
-        }
-    }
-    if (!RigExecApplyWeightRangePolicy(packet.rangePolicy,
-                                       &packet.defaultWeight)) {
-        return packet;
-    }
-    packet.valid = true;
+    RigExecWeightPacketBuild built;
+    _Publish(RigExecStaticWeightPacketKernel(
+                 kind, rangePolicy == SchemaValueText::clamp, defaultWeight,
+                 values, valuesSize, indices, indicesSize,
+                 &workspace.staticScratch, &built),
+             &built, &packet);
     return packet;
 }
 
@@ -195,58 +151,17 @@ RigExecBuildDynamicWeightPacket(const RigExecDynamicWeightInputs &inputs,
     RigExecWeightPacket packet;
     packet.representation = inputs.representation;
     packet.rangePolicy = inputs.rangePolicy;
-    if (packet.representation != SchemaValueText::constant &&
-        packet.representation != SchemaValueText::dense &&
-        packet.representation != SchemaValueText::sparse) {
+    const int kind = _RepresentationKind(inputs.representation);
+    if (kind < 0 || !_KnownPolicy(inputs.rangePolicy))
         return packet;
-    }
-    if (packet.rangePolicy != SchemaValueText::strict &&
-        packet.rangePolicy != SchemaValueText::clamp) {
-        return packet;
-    }
-
-    const float d = inputs.driver;
-    const float s = inputs.scale;
-    const float a = inputs.bias;
-
-    if (!base) {
-        // Without a base only constant is legal and b_i = 1.
-        if (packet.representation != SchemaValueText::constant) {
-            return packet;
-        }
-        packet.defaultWeight = (1.0f * d) * s + a;
-        if (!RigExecApplyWeightRangePolicy(packet.rangePolicy,
-                                           &packet.defaultWeight)) {
-            return packet;
-        }
-        packet.valid = true;
-        return packet;
-    }
-    if (!base->valid || base->representation != packet.representation) {
-        return packet;
-    }
-
-    // r_i = (b_i d) s + a over the base field; dense keeps canonical
-    // packet default zero.
-    packet.indices = base->indices;
-    packet.values.reserve(base->values.size());
-    for (float b : base->values) {
-        float r = (b * d) * s + a;
-        if (!RigExecApplyWeightRangePolicy(packet.rangePolicy, &r)) {
-            return packet;
-        }
-        packet.values.push_back(r);
-    }
-    if (packet.representation == SchemaValueText::dense) {
-        packet.defaultWeight = 0.0f;
-    } else {
-        packet.defaultWeight = (base->defaultWeight * d) * s + a;
-        if (!RigExecApplyWeightRangePolicy(packet.rangePolicy,
-                                           &packet.defaultWeight)) {
-            return packet;
-        }
-    }
-    packet.valid = true;
+    const RigExecWeightPacketView view =
+        base ? _View(*base) : RigExecWeightPacketView();
+    RigExecWeightPacketBuild built;
+    _Publish(RigExecDynamicWeightPacketKernel(
+                 kind, inputs.rangePolicy == SchemaValueText::clamp,
+                 inputs.driver, inputs.scale, inputs.bias,
+                 base ? &view : nullptr, &built),
+             &built, &packet);
     return packet;
 }
 
@@ -258,28 +173,13 @@ RigExecBuildDynamicWeightPacket(const RigExecDynamicWeightInputs &inputs,
 bool
 RigExecRigidWorldToLocal(const RigExecPointFrame &posed, GfMatrix4d *result)
 {
-    if (!posed.IsValid() || posed.IsDegenerate()) {
-        return false;
-    }
-    GfMatrix4d placement(1.0);
-    if (!RigExecPointsToMatrix(RigExecIdentityLandmarks(), posed.points,
-                               &placement)) {
-        return false;
-    }
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            if (!std::isfinite(placement[i][j])) {
-                return false;
-            }
-        }
-    }
-    GfMatrix4d rigid = placement.RemoveScaleShear();
-    const double det = rigid.GetDeterminant();
-    if (!std::isfinite(det) || std::abs(det) < 1e-12) {
-        return false;
-    }
-    *result = rigid.GetInverse();
-    return true;
+    return RigExecRigidWorldToLocalKernel(
+        posed.points, posed.IsValid(), posed.IsDegenerate(),
+        [](const std::array<GfVec3d, 4> &rest,
+           const std::array<GfVec3d, 4> &pose, GfMatrix4d *matrix) {
+            return RigExecPointsToMatrix(rest, pose, matrix);
+        },
+        [](const GfMatrix4d &m) { return m.RemoveScaleShear(); }, result);
 }
 
 GfMatrix4d
@@ -559,93 +459,6 @@ RigExecBuildVolumeWeightPacket(const TfToken &typeName,
     return packet;
 }
 
-// Composition. Every input is resolved to a dense field over the same
-// element count before folding, so a static sparse paint and a generated
-// volume field compose without either knowing about the other.
-// Publishes one combine input as a dense read-only view. Dense inputs
-// borrow the packet's own values after the cardinality and negativity
-// checks -- no copy; sparse scatters through a linear merge and anything
-// else (constant or unknown) broadcasts the default, both into *scratch,
-// rejecting negative resolved values in every arm. The view stays alive
-// until the next input resolves: packet storage outlives the synchronous
-// fold, and the caller owns the scratch. Not ResolveAll: it rejects sparse
-// support Resolve accepts.
-static bool
-_ResolveCombineInput(const RigExecWeightPacket &in, size_t elementCount,
-                     std::vector<float> *scratch, const float **data,
-                     size_t *size)
-{
-    if (in.representation == SchemaValueText::dense) {
-        if (in.values.size() != elementCount) {
-            return false;
-        }
-        for (const float v : in.values) {
-            if (v < 0.0f) {
-                return false;
-            }
-        }
-        *data = in.values.data();
-        *size = in.values.size();
-        return true;
-    }
-    if (in.representation != SchemaValueText::sparse) {
-        // Constant and unknown broadcast the default, which the
-        // per-point loop rejected when negative.
-        if (in.defaultWeight < 0.0f) {
-            return false;
-        }
-        scratch->assign(elementCount, in.defaultWeight);
-        *data = scratch->data();
-        *size = scratch->size();
-        return true;
-    }
-    if (in.indices.size() != in.values.size()) {
-        return false;
-    }
-    scratch->assign(elementCount, in.defaultWeight);
-    if (!std::is_sorted(in.indices.begin(), in.indices.end())) {
-        // Unsorted support: no producer writes it (the static builder
-        // canonicalizes), but a hand-built packet still resolves
-        // element by element rather than through a merge that assumes order.
-        for (size_t i = 0; i < elementCount; ++i) {
-            (*scratch)[i] = in.Resolve(i, elementCount);
-            if ((*scratch)[i] < 0.0f) {
-                return false;
-            }
-        }
-        *data = scratch->data();
-        *size = scratch->size();
-        return true;
-    }
-    // Linear merge: the support is sorted, so one pointer advanced past
-    // each point finds the same first match a per-point lower_bound
-    // would -- first-wins for duplicates, no match for out-of-range
-    // entries -- in O(points + support) instead of O(points log support).
-    size_t p = 0;
-    const size_t n = in.indices.size();
-    for (size_t i = 0; i < elementCount; ++i) {
-        const int ii = static_cast<int>(i);
-        while (p < n && in.indices[p] < ii) {
-            ++p;
-        }
-        if (p < n && in.indices[p] == ii) {
-            (*scratch)[i] = in.values[p];
-            ++p;
-        }
-    }
-    // The per-point loop rejected negative resolved values: one scan
-    // over the merged field, so a negative default under full coverage
-    // (which no point reads) still passes.
-    for (size_t i = 0; i < elementCount; ++i) {
-        if ((*scratch)[i] < 0.0f) {
-            return false;
-        }
-    }
-    *data = scratch->data();
-    *size = scratch->size();
-    return true;
-}
-
 RigExecWeightPacket
 RigExecBuildCombineWeightPacket(
     const TfToken &representation, const TfToken &rangePolicy,
@@ -701,59 +514,25 @@ RigExecBuildCombineWeightPacket(
         return packet;
     }
 
-    // Element count. A dense input carries it; when every input is
-    // CONSTANT -- which is the schema default for an authored weight, so
-    // it is not an exotic case -- nothing among the inputs knows the
-    // cardinality and the combine has to get it from its own
-    // rigExec:weightTarget.
-    // Reading the target here is not belt-and-braces: without it a
-    // constant-only combine publishes an invalid packet and the mover
-    // passes through, while the CPU oracle resolves every constant to
-    // `count` values and moves the points. That divergence is a parity
-    // mismatch, and it is reachable the first time someone multiplies
-    // two freshly created static weights together.
-    size_t elementCount = 0;
+    // A constant-only combine takes its element count from its own
+    // rigExec:weightTarget, as the CPU oracle does.
+    std::vector<RigExecWeightPacketView> views;
+    views.reserve(inputs.size());
     for (const RigExecWeightPacket *in : inputs) {
-        if (!in || !in->valid) {
-            return packet; // one bad input fails the fold atomically
-        }
-        if (in->representation == SchemaValueText::dense) {
-            if (elementCount && in->values.size() != elementCount) {
-                return packet;
-            }
-            elementCount = in->values.size();
-        }
+        if (!in)
+            return packet;
+        views.push_back(_View(*in));
     }
-    if (!elementCount) {
-        elementCount = weightTargetCount;
-    }
-    if (!elementCount) {
-        return packet;
-    }
-
-    // Streamed fold: each input publishes a dense view and folds
-    // straight into the accumulator, so a many-input combine holds
-    // O(points) of temporary storage instead of O(inputs x points).
-    // Dense inputs borrow the packet's values with no copy; the
-    // scratch serves only sparse/constant expansion.
-    std::vector<float> folded;
-    auto &field = workspace->combineField;
-    if (!RigExecCombineWeightFieldsStreamed(
-            mode, inputs.size(), elementCount,
-            [&](size_t k, const float **data, size_t *size) {
-                return _ResolveCombineInput(*inputs[k], elementCount, &field,
-                                            data, size);
+    RigExecWeightPacketBuild built;
+    if (RigExecCombineWeightPacketKernel(
+            mode, packet.rangePolicy == SchemaValueText::clamp, strength,
+            invert, views.size(),
+            [&](size_t k) -> const RigExecWeightPacketView & {
+                return views[k];
             },
-            &folded)) {
+            weightTargetCount, &workspace->combineField, &built))
         return packet;
-    }
-    for (float &w : folded) {
-        w = (w + (1.0f - 2.0f * w) * invert) * strength;
-        if (!RigExecApplyWeightRangePolicy(packet.rangePolicy, &w)) {
-            return RigExecWeightPacket();
-        }
-    }
-    packet.values = std::move(folded);
+    packet.values = std::move(built.values);
     packet.defaultWeight = 0.0f;
     packet.valid = true;
     return packet;

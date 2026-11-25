@@ -929,14 +929,8 @@ TestPlaneBoundsCompiledRigSplit()
     }
 }
 
-// A bounded plane whose extents are not a rectangle.
-// Both paths reject it -- the exec kernel returns an invalid packet and
-// the CPU oracle reports an error -- and the two rejections have to mean
-// the SAME THING downstream, or the parity harness is comparing a
-// pass-through against a deformation. The failure mode this rules out is
-// the quiet one: a kernel that treated a negative extent as "unbounded"
-// would move points the oracle leaves alone, and nothing but parity
-// would notice.
+// A bounded plane whose extents are not a rectangle stops the frame with the
+// extent's error; it is never read as unbounded or as weight zero.
 static void
 TestPlaneBoundedInvalidExtents()
 {
@@ -968,21 +962,14 @@ TestPlaneBoundedInvalidExtents()
         return;
     }
     const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
-    CHECK(pose.valid);
-    // The rejection has to be the EXTENT, not a rig that never built a
-    // revision: without this the case passes on any failure at all.
-    CheckTheHarnessRan("plane-bad-extent", pose);
-    // Rejected means PASS-THROUGH, not "weight zero" and not "unbounded":
-    // the points come out exactly as authored.
-    const auto it = pose.movedProperties.find(Fixture::Target());
-    CHECK(it != pose.movedProperties.end());
-    if (it != pose.movedProperties.end()) {
-        const VtVec3fArray points = it->second.Get<VtVec3fArray>();
-        CHECK(points.size() == 4);
-        for (size_t i = 0; i < points.size() && i < 4; ++i) {
-            CHECK(Near(points[i], f.base[i]));
-        }
-    }
+    CHECK(!pose.valid);
+    CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                      [](const std::string &line) {
+                          return line.find("/Asset/Rig/Weights/Plane: ") == 0 &&
+                                 line.find("VolumeWeights: extents must be "
+                                           "finite and positive") !=
+                                     std::string::npos;
+                      }));
 
     // ...and a valid extent on the same rig recovers, which is what says
     // the rejection was the extent and not a broken compiled rig.
@@ -1189,6 +1176,10 @@ TestCombineSubtractOrder()
     // they do in two different functions.
     combine.GetRelationship(TfToken("rigExec:inputWeights"))
         .SetTargets({a.GetPath(), b.GetPath()});
+    combine
+        .CreateAttribute(TfToken("rigExec:rangePolicy"),
+                         SdfValueTypeNames->Token)
+        .Set(TfToken("clamp"));
     const VtVec3fArray reversed = f.Resolve("combine-subtract-reversed");
     CHECK(reversed.size() == 4);
     if (reversed.size() != 4)
@@ -1518,10 +1509,9 @@ TestCurrentPhaseThroughCombine()
     }
 }
 
-// Only the composition SCC is excluded. Its geometry consumer receives an
-// invalid packet and keeps the authored base; an unrelated property still runs.
+// A weight composition cycle refuses the rig at compile, naming the cycle.
 static void
-TestCombineCycleSetsAsideMembers()
+TestCombineCycleRefusesTheRig()
 {
     const VtVec3fArray base{GfVec3f(0, 0, 0), GfVec3f(1, 0, 0)};
     Fixture f(base, GfVec3d(0, 2, 0));
@@ -1531,6 +1521,9 @@ TestCombineCycleSetsAsideMembers()
             TfToken("RigExecCombineWeight"));
         c.CreateRelationship(TfToken("rigExec:weightTarget"))
             .SetTargets({Fixture::Target()});
+        c.CreateAttribute(TfToken("rigExec:representation"),
+                          SdfValueTypeNames->Token)
+            .Set(TfToken("dense"));
         return c;
     };
     const UsdPrim a = makeCombine("CycleA"), b = makeCombine("CycleB");
@@ -1538,77 +1531,20 @@ TestCombineCycleSetsAsideMembers()
         .SetTargets({b.GetPath()});
     b.CreateRelationship(TfToken("rigExec:inputWeights"))
         .SetTargets({a.GetPath()});
-    const SdfPath moverPath("/Asset/Rig/Movers/M");
-    f.MakeMover(moverPath, a.GetPath());
-    const auto channel =
-        f.stage->DefinePrim(SdfPath("/Asset/Rig/Channels/Independent"));
-    const auto scalar =
-        channel.CreateAttribute(TfToken("value"), SdfValueTypeNames->Float);
-    scalar.Set(0.0f);
-    const auto sibling =
-        f.stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Independent"),
-                            TfToken("RigExecFloatMathMover"));
-    sibling.ApplyAPI(TfToken("RigExecMoverAPI"));
-    sibling.CreateRelationship(TfToken("rigExec:moves"))
-        .SetTargets({scalar.GetPath()});
-    sibling
-        .CreateAttribute(TfToken("rigExec:operation"), SdfValueTypeNames->Token)
-        .Set(TfToken("add"));
-    sibling.CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float)
-        .Set(7.0f);
+    f.MakeMover(SdfPath("/Asset/Rig/Movers/M"), a.GetPath());
 
     RigExecRigEvaluator evaluator(f.stage, SdfPath("/Asset/Rig"));
     std::vector<std::string> errors;
-    CHECK(evaluator.Compile(&errors));
-    CHECK(evaluator.GetSkippedOperations().count(moverPath) == 0);
-    CHECK(evaluator.GetBakedProgram());
-    if (!evaluator.GetBakedProgram())
-        return;
-    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
-        *evaluator.GetBakedProgram());
-    CHECK(B.opGraph.cycles.size() == 1);
-    bool namedA = false, namedB = false;
-    for (const auto &loop : B.opGraph.cycles)
-        for (const auto &key : loop) {
-            namedA |= key.find(a.GetPath().GetString()) != std::string::npos;
-            namedB |= key.find(b.GetPath().GetString()) != std::string::npos;
-        }
-    CHECK(namedA && namedB);
-    CHECK(B.excludedSteps.size() == 2);
-    for (const auto &step : B.excludedSteps) {
-        CHECK(step.kind == RigExecBakedStepKind::WeightPacket);
-        if (step.kind == RigExecBakedStepKind::WeightPacket) {
-            const auto &path = B.weightObjects[size_t(step.object)].path;
-            CHECK(path == a.GetPath() || path == b.GetPath());
-        }
-    }
-    const auto builds = evaluator.GetBakedProgramBuildCount();
-    const auto check = [&](const RigExecRigPose &pose) {
-        CHECK(pose.valid);
-        const auto points = pose.movedProperties.find(Fixture::Target());
-        CHECK(points != pose.movedProperties.end());
-        if (points != pose.movedProperties.end())
-            CHECK(points->second.IsHolding<VtVec3fArray>() &&
-                  points->second.UncheckedGet<VtVec3fArray>() == base);
-        const auto value = pose.movedProperties.find(scalar.GetPath());
-        CHECK(value != pose.movedProperties.end());
-        if (value != pose.movedProperties.end())
-            CHECK(value->second.IsHolding<float>() &&
-                  value->second.UncheckedGet<float>() == 7.0f);
-        for (const auto &step : B.excludedSteps)
-            if (step.kind == RigExecBakedStepKind::WeightPacket)
-                CHECK(!B.weightPackets[size_t(step.object)].valid);
-    };
-    check(evaluator.Evaluate(UsdTimeCode::Default()));
-    const auto held = evaluator.Evaluate(UsdTimeCode::Default());
-    check(held);
-    CHECK(held.executedOpCount == 0);
-    f.joint.GetAttribute(TfToken("avars:ty")).Set(4.0);
-    check(evaluator.Evaluate(UsdTimeCode::Default()));
-    CHECK(evaluator.GetBakedProgramBuildCount() == builds);
+    evaluator.Compile(&errors);
+    CHECK(!evaluator.GetBakedProgram());
+    const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
+    CHECK(!pose.valid);
     bool diagnosed = false;
-    for (const auto &error : errors)
-        diagnosed |= error.find("operation cycle") != std::string::npos;
+    for (const auto &error : pose.diagnostics)
+        diagnosed |=
+            error.find("operation cycle: ") != std::string::npos &&
+            (error.find(a.GetPath().GetString()) != std::string::npos ||
+             error.find(b.GetPath().GetString()) != std::string::npos);
     CHECK(diagnosed);
 }
 
@@ -2883,7 +2819,7 @@ main(int argc, char **argv)
     TestCombineOfConstantInputs();
     TestDefaultCombineNeedsNoRepresentation();
     TestCurrentPhaseThroughCombine();
-    TestCombineCycleSetsAsideMembers();
+    TestCombineCycleRefusesTheRig();
     TestInvert();
     TestAuthoredFalloffCurve();
     TestSamplePhase(/* current */ false);

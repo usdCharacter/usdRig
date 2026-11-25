@@ -5742,17 +5742,20 @@ TestWeightDescriptorValidationAndCompiledRig()
         CHECK(evaluator.Evaluate(UsdTimeCode::Default()).valid);
     }
     {
-        // Numeric packet contents are value state, unlike the dense array's
-        // descriptor cardinality.  A strict violation therefore compiles and
-        // fails just this mover revision back to the preceding points.
+        // Painted values are known at Build: a strict violation refuses
+        // the rig.
         const UsdStageRefPtr badValue = makeStage(VtFloatArray{1, 2, 1});
         RigExecRigEvaluator evaluator(badValue, SdfPath("/Asset/Rig"));
         evaluator.cpuReference = true;
-        CHECK(evaluator.Compile(nullptr));
+        evaluator.Compile(nullptr);
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
-        CHECK(pose.valid);
-        CHECK(EnvelopePoints(pose, SdfPath("/Asset/Geom/P.points")) ==
-              VtVec3fArray({GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(2, 0, 0)}));
+        CHECK(!pose.valid);
+        CHECK(std::any_of(
+            pose.diagnostics.begin(), pose.diagnostics.end(),
+            [](const std::string &line) {
+                return line.find("/Asset/Rig/Weights/W: a weight is not finite "
+                                 "or outside [0, 1]") != std::string::npos;
+            }));
     }
     {
         // A points property authored only at a time sample is a valid domain;

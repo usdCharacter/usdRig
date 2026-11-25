@@ -596,11 +596,7 @@ _HeadEnvelopeFile()
     auto revision = f.steps[0], compose = f.steps[1];
     f.steps.clear();
     for (int object = 0; object < 3; ++object) {
-        fb::RigExecWireStep packet;
-        packet.kind = fb::StepKind::WeightPacket;
-        packet.object = object;
-        packet.writes = {fb::SlotRange(fb::SlotDomain::WeightPacket,
-                                       uint32_t(object), uint32_t(object + 1))};
+        fb::RigExecWireStep packet = _PacketStep(f, uint32_t(object));
         packet.succs = {3};
         if (object == 2) {
             packet.reads = {fb::SlotRange(fb::SlotDomain::WeightPacket, 0, 2)};

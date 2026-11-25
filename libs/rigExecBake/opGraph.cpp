@@ -30,6 +30,18 @@ Fail(std::string *error, const std::string &why)
     return false;
 }
 
+uint32_t
+OutputPortOf(const eval::OpStepLayout &layout, uint32_t producer, uint32_t v)
+{
+    const RigExecNodeDesc &from = layout.nodes[producer];
+    uint32_t port = 0;
+    for (uint32_t o = 0; o < from.values.size(); ++o)
+        if ((from.op->ports[o].flags & kRigExecPortOutput) &&
+            from.values[o] == v)
+            port = o;
+    return port;
+}
+
 } // namespace
 
 bool
@@ -62,9 +74,23 @@ RigExecBakeOpGraph(const RigExecBakedProgramImpl &program,
         for (uint32_t p = 0; p < d.values.size(); ++p) {
             if (!(d.op->ports[p].flags & kRigExecPortInput))
                 continue;
-            if (!d.lists[p].empty())
-                return Fail(error, "node " + std::to_string(n) +
-                                       " takes many values on one input");
+            if (!d.lists[p].empty()) {
+                for (const uint32_t v : d.lists[p]) {
+                    const uint32_t producer = layout.producerOf[v];
+                    if (producer == kRigExecInvalidIndex)
+                        return Fail(error,
+                                    "a value of input " +
+                                        std::string(d.op->ports[p].name) +
+                                        " of node " + std::to_string(n) +
+                                        " is fed by no node");
+                    auto input = std::make_unique<fb::RigExecWireOpNodeInput>();
+                    input->port = p;
+                    input->node = int32_t(producer);
+                    input->output = OutputPortOf(layout, producer, v);
+                    node->inputs.push_back(std::move(input));
+                }
+                continue;
+            }
             auto input = std::make_unique<fb::RigExecWireOpNodeInput>();
             input->port = p;
             const uint32_t v = d.values[p];
@@ -72,12 +98,8 @@ RigExecBakeOpGraph(const RigExecBakedProgramImpl &program,
                                           ? kRigExecInvalidIndex
                                           : layout.producerOf[v];
             if (producer != kRigExecInvalidIndex) {
-                const RigExecNodeDesc &from = layout.nodes[producer];
                 input->node = int32_t(producer);
-                for (uint32_t o = 0; o < from.values.size(); ++o)
-                    if ((from.op->ports[o].flags & kRigExecPortOutput) &&
-                        from.values[o] == v)
-                        input->output = o;
+                input->output = OutputPortOf(layout, producer, v);
                 node->inputs.push_back(std::move(input));
                 continue;
             }

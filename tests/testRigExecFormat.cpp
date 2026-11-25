@@ -1605,11 +1605,11 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 38 &&
-                      RigExecFormatOldestReadable == 38,
-                  "format 38 runs volume placements as op nodes and is the "
+    static_assert(RigExecFormatVersion == 39 &&
+                      RigExecFormatOldestReadable == 39,
+                  "format 39 runs weight packets as op nodes and is the "
                   "only format Open reads");
-    // Every older format requires re-export: its volume placements ran as
+    // Every older format requires re-export: its weight packets ran as
     // their own steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
@@ -1621,14 +1621,13 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 38 through " +
+            " (this reader reads 39 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 38 ? "re-export: volume placements as op nodes"
-                          : "rebake");
+            (version < 39 ? "re-export: weight packets as op nodes" : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 38 ? reexports : rebakes);
+        ++(version < 39 ? reexports : rebakes);
     }
-    CHECK(reexports == 38 && rebakes == 1);
+    CHECK(reexports == 39 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -2719,6 +2718,36 @@ _VolumeFile()
     return f;
 }
 
+/// A StaticWeights op node storing the packet of weight object \p object,
+/// and the OpNode step that runs it writing that packet alone.
+fb::RigExecWireStep
+_PacketStep(RigExecWireFile &f, uint32_t object)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = "StaticWeights";
+    entry->version = 1;
+    f.manifest->coreOps.push_back(std::move(entry));
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = uint32_t(f.manifest->coreOps.size() - 1);
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+    output->node = node;
+    output->port = 3;
+    output->target = 3;
+    output->object = object;
+    f.opGraph->hostOutputs.push_back(std::move(output));
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    step.writes = {
+        fb::SlotRange(fb::SlotDomain::WeightPacket, object, object + 1)};
+    return step;
+}
+
 /// Appends \p step to \p f in cluster 0, with no edges.
 void
 _AppendStep(RigExecWireFile &f, fb::RigExecWireStep step)
@@ -2842,31 +2871,38 @@ TestVolumePlacementSteps()
            "step 1 is a retired SnapshotFinals step",
            [](F &f) { _RegionStep(f, 1).kind = fb::StepKind::SnapshotFinals; });
     expect("a weight packet writing WeightFrames",
-           "step 3 (WeightPacket /Rig/W) writes WeightFrames, which only a "
-           "VolumePlacement op step writes",
+           "step 3 (OpNode /Rig/W) writes other than the WeightPacket of "
+           "weight object 0",
+           [](F &f) {
+               fb::RigExecWireStep packet = _PacketStep(f, 0);
+               packet.writes.push_back(
+                   fb::SlotRange(fb::SlotDomain::WeightFrames, 0, 1));
+               _AppendStep(f, std::move(packet));
+           });
+    expect("a retired weight packet step",
+           "step 3 (ReservedWeightPacket 0): the retired WeightPacket step",
            [](F &f) {
                fb::RigExecWireStep packet;
-               packet.kind = fb::StepKind::WeightPacket;
+               packet.kind = fb::StepKind::ReservedWeightPacket;
                packet.object = 0;
                packet.writes = {
-                   fb::SlotRange(fb::SlotDomain::WeightPacket, 0, 1),
-                   fb::SlotRange(fb::SlotDomain::WeightFrames, 0, 1)};
+                   fb::SlotRange(fb::SlotDomain::WeightPacket, 0, 1)};
                _AppendStep(f, std::move(packet));
            });
 
     // A reader of a volume's placement: after its step it reads what the
     // step wrote; ahead of it, the producer check refuses it.
-    fb::RigExecWireStep reader;
-    reader.kind = fb::StepKind::WeightPacket;
-    reader.object = 0;
-    reader.reads = {
-        fb::SlotRange(fb::SlotDomain::WeightFrames, 0, 1),
-        fb::SlotRange(fb::SlotDomain::RequiredStageFramesAdmission, 0, 1)};
-    reader.writes = {fb::SlotRange(fb::SlotDomain::WeightPacket, 0, 1)};
+    const auto reader = [](F &f) {
+        fb::RigExecWireStep step = _PacketStep(f, 0);
+        step.reads = {
+            fb::SlotRange(fb::SlotDomain::WeightFrames, 0, 1),
+            fb::SlotRange(fb::SlotDomain::RequiredStageFramesAdmission, 0, 1)};
+        return step;
+    };
     {
         _context = "volume placements: reader after its step";
         F file = _VolumeFile();
-        _AppendStep(file, reader);
+        _AppendStep(file, reader(file));
         why.clear();
         CHECK(RigExecFormatValidate(file, &why));
         if (!why.empty()) {
@@ -2877,7 +2913,7 @@ TestVolumePlacementSteps()
            "step 1 reads WeightFrames slots [0, 1), which no earlier step "
            "writes",
            [&reader](F &f) {
-               _AppendStep(f, reader);
+               _AppendStep(f, reader(f));
                // Swap the two last steps: the reader runs before the
                // placement it reads.
                std::swap(_RegionStep(f, 1), _RegionStep(f, 3));
@@ -2958,9 +2994,6 @@ TestStepLabels()
     });
     label("PoseInterpolator /Rig/Ctl", [](RigExecWireFile &f) {
         _RegionStep(f, 0).kind = StepKind::PoseInterpolator;
-    });
-    label("WeightPacket /Rig/W", [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::WeightPacket;
     });
     label("RevisionFuse /Rig/Mover", [](RigExecWireFile &f) {
         _RegionStep(f, 0).kind = StepKind::RevisionFuse;
@@ -4722,7 +4755,8 @@ _GroupFile(fb::RevisionOp op, std::vector<size_t> parts = {}, bool gate = false)
         return reads;
     };
     if (gate) {
-        _AppendStep(f, _GroupStep(K::WeightPacket, 0, -1, {},
+        fb::RigExecWireStep packet = _PacketStep(f, 0);
+        _AppendStep(f, _GroupStep(K::OpNode, packet.object, -1, {},
                                   {_GroupSlot(D::WeightPacket, 0)}));
     }
     _AppendStep(f, _GroupStep(K::InfluenceFold, 0, -1, {},

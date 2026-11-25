@@ -19,6 +19,9 @@
 #include "rigExecBinary/manifest.h"
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecEvalCore/opSteps.h"
+#include "rigExec/api/opFields.h"
+#include "rigExec/api/registry.h"
+#include "rigExecOps/weight/weightOps.h"
 #include "rigExecMath/weightFieldKernel.h"
 #include "rigExecRuntime/dualQuatMath.h"
 #include "rigExecGraph/opValues.h"
@@ -657,11 +660,186 @@ _SynthPlacementNode(fb::RigExecWireFile *file, uint32_t slot, bool base)
     return node;
 }
 
+// The manifest index of core op \p name, added on first use.
+static uint32_t
+_SynthOpEntry(fb::RigExecWireFile *file, const char *name)
+{
+    auto &ops = file->manifest->coreOps;
+    for (size_t i = 0; i < ops.size(); ++i)
+        if (ops[i] && ops[i]->nameSpace == "rig" && ops[i]->name == name)
+            return uint32_t(i);
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = name;
+    entry->version = 1;
+    ops.push_back(std::move(entry));
+    return uint32_t(ops.size() - 1);
+}
+
+// The weight packet op node of weight object \p object, as the bake writes
+// it: its op by the object's type, its inputs WeightArrays lookups (a
+// volume's frame the pose version of its provider slot), its composed
+// packets fed by the nodes \p nodeOf names, its packet stored as the
+// object's. Its node index.
+static uint32_t
+_SynthPacketNode(fb::RigExecWireFile *file, size_t object,
+                 const std::vector<int64_t> &nodeOf)
+{
+    using R = rigExec::eval::OpWeightRead;
+    if (!file->opGraph)
+        file->opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto &graph = *file->opGraph;
+    const fb::RigExecWireWeightObject &w =
+        file->geometry->weightObjects[object];
+    const std::string type = _WireString(*file, w.type);
+    const std::string representation = _WireString(*file, w.representation);
+    const bool clamp = _WireString(*file, w.rangePolicy) == "clamp";
+    const auto rep = representation == "dense"
+                         ? rigExecRig::WeightRepresentation::Dense
+                     : representation == "sparse"
+                         ? rigExecRig::WeightRepresentation::Sparse
+                         : rigExecRig::WeightRepresentation::Constant;
+    const uint32_t node = uint32_t(graph.nodes.size());
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    const auto look = [&](const rigExec::RigExecPortHandle &port, R read) {
+        auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+        in->port = port.Index();
+        in->host = 4;
+        in->object = uint32_t(graph.lookups.size());
+        op->inputs.push_back(std::move(in));
+        auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+        lookup->source = 2;
+        lookup->object = uint32_t(object);
+        lookup->part = -1;
+        lookup->read = uint8_t(read);
+        graph.lookups.push_back(std::move(lookup));
+    };
+    const auto feed = [&](const rigExec::RigExecPortHandle &port, int from,
+                          const rigExec::RigExecPortHandle &out) {
+        auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+        in->port = port.Index();
+        in->node = int32_t(nodeOf[size_t(from)]);
+        in->output = out.Index();
+        op->inputs.push_back(std::move(in));
+    };
+    const auto outOf = [&](int from) -> const rigExec::RigExecPortHandle & {
+        const std::string t = _WireString(
+            *file, file->geometry->weightObjects[size_t(from)].type);
+        return t == "RigExecStaticWeight"    ? rigExecOps::StaticWeightsOut()
+               : t == "RigExecDynamicWeight" ? rigExecOps::DynamicWeightsOut()
+               : t == "RigExecCombineWeight" ? rigExecOps::CombineWeightsOut()
+                                             : rigExecOps::VolumeWeightsOut();
+    };
+    const auto encode = [&](const rigExec::RigExecOpHandle &handle,
+                            const void *payload) {
+        const auto &desc =
+            *rigExec::RigExecRegistry::Get().OpAt(handle.Index()).desc;
+        std::vector<uint8_t> bytes;
+        CHECK(rigExec::RigExecEncodeOpPayload(desc, payload, bytes));
+        op->payload = std::move(bytes);
+    };
+    const rigExec::RigExecPortHandle *out = nullptr;
+    if (type == "RigExecStaticWeight") {
+        op->op = _SynthOpEntry(file, "StaticWeights");
+        const rigExecOps::WeightPacketPayload payload{rep, clamp};
+        encode(rigExecOps::StaticWeights(), &payload);
+        look(rigExecOps::StaticWeightsValues(), R::Values);
+        look(rigExecOps::StaticWeightsIndices(), R::Indices);
+        look(rigExecOps::StaticWeightsDefaultWeight(), R::DefaultWeight);
+        out = &rigExecOps::StaticWeightsOut();
+    } else if (type == "RigExecDynamicWeight") {
+        op->op = _SynthOpEntry(file, "DynamicWeights");
+        const rigExecOps::WeightPacketPayload payload{rep, clamp};
+        encode(rigExecOps::DynamicWeights(), &payload);
+        if (w.base >= 0)
+            feed(rigExecOps::DynamicWeightsBase(), w.base, outOf(w.base));
+        look(rigExecOps::DynamicWeightsDriver(), R::Driver);
+        look(rigExecOps::DynamicWeightsScale(), R::Scale);
+        look(rigExecOps::DynamicWeightsBias(), R::Bias);
+        out = &rigExecOps::DynamicWeightsOut();
+    } else if (type == "RigExecCombineWeight") {
+        op->op = _SynthOpEntry(file, "CombineWeights");
+        const std::string mode = _WireString(*file, w.combineMode);
+        const char *const modes[] = {"multiply", "add",     "subtract", "max",
+                                     "min",      "average", "overlay"};
+        rigExecOps::CombineWeightsPayload payload;
+        for (size_t m = 0; m < 7; ++m)
+            if (mode == modes[m])
+                payload.mode = rigExecOps::WeightCombineMode(m);
+        payload.inputs = rigExecOps::WeightCombineInputs::Packets;
+        payload.clamp = clamp;
+        encode(rigExecOps::CombineWeights(), &payload);
+        for (const int32_t input : w.inputs)
+            feed(rigExecOps::CombineWeightsInputs(), input, outOf(input));
+        look(rigExecOps::CombineWeightsTargetCount(), R::CombineTargetCount);
+        look(rigExecOps::CombineWeightsStrength(), R::Strength);
+        look(rigExecOps::CombineWeightsInvert(), R::Invert);
+        out = &rigExecOps::CombineWeightsOut();
+    } else {
+        op->op = _SynthOpEntry(file, "VolumeWeights");
+        rigExecOps::VolumeWeightsPayload payload;
+        payload.clamp = clamp;
+        payload.shape = type == "RigExecSphereWeight"
+                            ? rigExecOps::VolumeWeightShape::Sphere
+                        : type == "RigExecPlaneWeight"
+                            ? rigExecOps::VolumeWeightShape::Plane
+                            : rigExecOps::VolumeWeightShape::Curve;
+        const std::string axis = _WireString(*file, w.planeAxis);
+        payload.planeAxis = axis == "x"   ? rigExecOps::WeightFieldAxis::X
+                            : axis == "y" ? rigExecOps::WeightFieldAxis::Y
+                                          : rigExecOps::WeightFieldAxis::Z;
+        payload.planeBounded = _WireString(*file, w.planeBounds) == "bounded";
+        encode(rigExecOps::VolumeWeights(), &payload);
+        {
+            auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+            in->port = rigExecOps::VolumeWeightsFrame().Index();
+            in->host = 4;
+            in->object = uint32_t(graph.lookups.size());
+            op->inputs.push_back(std::move(in));
+            auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+            lookup->source = 1;
+            lookup->object = uint32_t(w.providerSlot);
+            lookup->part = 1;
+            graph.lookups.push_back(std::move(lookup));
+        }
+        look(rigExecOps::VolumeWeightsPoints(), R::TargetPoints);
+        if (!w.samplePoints.empty())
+            look(rigExecOps::VolumeWeightsSamples(), R::SamplePoints);
+        if (payload.shape == rigExecOps::VolumeWeightShape::Curve)
+            look(rigExecOps::VolumeWeightsCurve(), R::CurvePoints);
+        look(rigExecOps::VolumeWeightsStrength(), R::Strength);
+        look(rigExecOps::VolumeWeightsInvert(), R::Invert);
+        look(rigExecOps::VolumeWeightsFalloffMin(), R::FalloffMin);
+        look(rigExecOps::VolumeWeightsFalloffMax(), R::FalloffMax);
+        look(rigExecOps::VolumeWeightsFalloffSamples(), R::FalloffSamples);
+        if (payload.shape != rigExecOps::VolumeWeightShape::Plane)
+            look(rigExecOps::VolumeWeightsScale(), R::ScaleAxes);
+        if (payload.shape == rigExecOps::VolumeWeightShape::Sphere) {
+            look(rigExecOps::VolumeWeightsPositiveScale(), R::PositiveScales);
+            look(rigExecOps::VolumeWeightsNegativeScale(), R::NegativeScales);
+        }
+        if (payload.planeBounded) {
+            look(rigExecOps::VolumeWeightsExtentU(), R::ExtentU);
+            look(rigExecOps::VolumeWeightsExtentV(), R::ExtentV);
+        }
+        out = &rigExecOps::VolumeWeightsOut();
+    }
+    graph.nodes.push_back(std::move(op));
+    auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+    output->node = node;
+    output->port = out->Index();
+    output->target = 3;
+    output->object = uint32_t(object);
+    graph.hostOutputs.push_back(std::move(output));
+    return node;
+}
+
 // Compile the fixture's typed operations with the production compiler. The
 // identity volume frames are explicit sampled Xform seeds; every numerical
 // packet and chained points publication has an ordinary producer.
 static bool
-_SynthCompileGraph(fb::RigExecWireFile *file, std::string *error)
+_SynthCompileGraph(fb::RigExecWireFile *file, std::string *error,
+                   const std::vector<char> *noPacket = nullptr)
 {
     using D = fb::SlotDomain;
     using K = fb::StepKind;
@@ -710,9 +888,15 @@ _SynthCompileGraph(fb::RigExecWireFile *file, std::string *error)
         file->steps.back().reads = {one(D::ChainBase, uint32_t(c))};
         file->steps.back().writes = {one(D::ChainPoints, uint32_t(c))};
     }
+    std::vector<int64_t> packetNode(file->geometry->weightObjects.size(), -1);
+    for (size_t i = 0; i < packetNode.size(); ++i)
+        if (!noPacket || !(*noPacket)[i])
+            packetNode[i] = _SynthPacketNode(file, i, packetNode);
     for (size_t i = 0; i < file->geometry->weightObjects.size(); ++i) {
         const auto &object = file->geometry->weightObjects[i];
-        add(K::WeightPacket, int(i), -1,
+        if (packetNode[i] < 0)
+            continue;
+        add(K::OpNode, int(packetNode[i]), -1,
             RigExecFormatPathText(*file, object.path));
         auto &step = file->steps.back();
         step.writes = {one(D::WeightPacket, uint32_t(i))};
@@ -1453,7 +1637,12 @@ _TestSyntheticBuilders()
     CHECK(file.inputs.size() == 3 + 7);
     std::vector<uint8_t> bytes;
     std::string error;
-    CHECK(_SynthCompileGraph(&file, &error));
+    // A packet that fails whatever the frame makes no op node: the bake
+    // refuses its rig. The rest run as the bake writes them.
+    std::vector<char> noPacket(expected.size(), 0);
+    for (size_t i = 0; i < expected.size(); ++i)
+        noPacket[i] = !expected[i].valid;
+    CHECK(_SynthCompileGraph(&file, &error, &noPacket));
     CHECK(RigExecFormatWrite(file, &bytes, &error));
     if (bytes.empty()) {
         std::printf("synthetic write diagnostic: %s\n", error.c_str());
@@ -1482,7 +1671,10 @@ _TestSyntheticBuilders()
     for (size_t i = 0; i < expected.size(); ++i) {
         const std::string path =
             _WireString(file, geometry.weightObjects[i].path);
-        if (_SynthCompare(path.c_str(), expected[i], actual[i], file)) {
+        if (noPacket[i]) {
+            CHECK(!actual[i].valid);
+            ++ok;
+        } else if (_SynthCompare(path.c_str(), expected[i], actual[i], file)) {
             ++ok;
         } else {
             ++failures;
@@ -1537,6 +1729,34 @@ _TestSyntheticBuilders()
         }
         std::printf("synthetic, retired VolumePlacements refused: %s\n",
                     why.c_str());
+        const auto packet = std::find_if(
+            retired->steps.begin(), retired->steps.end(),
+            [&](const auto &step) {
+                return RigExecFormatStepLabel(
+                           *retired, size_t(&step - retired->steps.data()))
+                           .rfind("OpNode /w/", 0) == 0;
+            });
+        CHECK(packet != retired->steps.end());
+        if (packet == retired->steps.end())
+            return;
+        retired->steps[place].kind = fb::StepKind::OpNode;
+        const size_t at = size_t(packet - retired->steps.begin());
+        const std::string packetLabel = RigExecFormatStepLabel(*retired, at);
+        retired->steps[at].kind = fb::StepKind::ReservedWeightPacket;
+        const std::vector<uint8_t> repacked =
+            RigExecTestPackUnchecked(*retired);
+        const std::unique_ptr<RigExecRuntimeReader> refusedPacket =
+            RigExecRuntimeReader::Open(repacked.data(), repacked.size(), &why);
+        const std::string wantPacket = "invalid .rigexec: step " +
+                                       std::to_string(at) + " (" +
+                                       RigExecFormatStepLabel(*retired, at) +
+                                       "): the retired WeightPacket step";
+        CHECK(!refusedPacket && why == wantPacket);
+        if (refusedPacket || why != wantPacket)
+            std::printf("  retired packet step open said '%s', expected '%s' "
+                        "(was %s)\n",
+                        refusedPacket ? "(opened)" : why.c_str(),
+                        wantPacket.c_str(), packetLabel.c_str());
     }
 
     // Each slot set as an input: the next run builds every packet that
@@ -1584,7 +1804,10 @@ _TestSyntheticBuilders()
     for (size_t i = 0; i < moved.size() && i < set.size(); ++i) {
         const std::string path =
             _WireString(file, geometry.weightObjects[i].path);
-        if (_SynthCompare(path.c_str(), moved[i], set[i], file)) {
+        if (noPacket[i]) {
+            CHECK(!set[i].valid);
+            ++setOk;
+        } else if (_SynthCompare(path.c_str(), moved[i], set[i], file)) {
             ++setOk;
         } else {
             ++failures;
@@ -2399,13 +2622,17 @@ _TestPaintedEnvelopeSet()
             }
             const fb::RigExecWireWeightObject &object =
                 file->geometry->weightObjects[size_t(c.weightObjectIndex)];
-            const auto packet = std::find_if(
-                file->steps.begin(), file->steps.end(), [&](const auto &step) {
-                    return step.kind == fb::StepKind::WeightPacket &&
-                           step.object == c.weightObjectIndex;
-                });
+            // A weight read only as a field makes no packet node.
+            const bool packet =
+                file->opGraph &&
+                std::any_of(
+                    file->opGraph->hostOutputs.begin(),
+                    file->opGraph->hostOutputs.end(), [&](const auto &output) {
+                        return output->target == 3 &&
+                               output->object == uint32_t(c.weightObjectIndex);
+                    });
             listed =
-                packet != file->steps.end() && c.weightField >= 0 &&
+                !packet && c.weightField >= 0 &&
                 size_t(c.weightField) < file->geometry->weightFields.size() &&
                 file->geometry->weightFields[size_t(c.weightField)].object ==
                     c.weightObjectIndex &&

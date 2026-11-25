@@ -11,7 +11,10 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <numeric>
+#include <utility>
 #include <vector>
 
 namespace rigExec {
@@ -46,6 +49,35 @@ RigExecVolumePlacement(const std::array<D, 4> &points, bool valid,
             return RigExecVolumePlacementResult::NotFinite;
     pointsToMatrix(RigExecVolumeLandmarks<D>(), points, placement);
     return RigExecVolumePlacementResult::Placed;
+}
+
+/// The inverse of the rigid part of a volume's placement over its frame
+/// \p points (\p pointsToMatrix as above, scale and shear removed by
+/// \p removeScaleShear); false for a frame that is not \p valid, is
+/// \p degenerate, or places nothing finite and invertible.
+template <class D, class M, class PointsToMatrix, class RemoveScaleShear>
+bool
+RigExecRigidWorldToLocalKernel(const std::array<D, 4> &points, bool valid,
+                               bool degenerate,
+                               const PointsToMatrix &pointsToMatrix,
+                               const RemoveScaleShear &removeScaleShear,
+                               M *worldToLocal)
+{
+    if (!valid || degenerate)
+        return false;
+    M placement(1.0);
+    if (!pointsToMatrix(RigExecVolumeLandmarks<D>(), points, &placement))
+        return false;
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+            if (!std::isfinite(placement[i][j]))
+                return false;
+    const M rigid = removeScaleShear(placement);
+    const double det = rigid.GetDeterminant();
+    if (!std::isfinite(det) || std::abs(det) < 1e-12)
+        return false;
+    *worldToLocal = rigid.GetInverse();
+    return true;
 }
 
 /// How one weight field folds into the accumulated result.
@@ -327,6 +359,291 @@ RigExecCombineWeightFieldsStreamed(RigExecWeightCombine mode, size_t inputCount,
             w *= inv;
     }
     return true;
+}
+
+/// A weight packet's representation, numbered as rigExecEvalCore's
+/// WeightRepresentation and rigExecRig's WeightRepresentation.
+enum RigExecWeightPacketRepresentation : int {
+    kRigExecWeightConstant = 0,
+    kRigExecWeightDense = 1,
+    kRigExecWeightSparse = 2,
+};
+
+/// A packet read in place.
+struct RigExecWeightPacketView {
+    bool valid = false;
+    int representation = kRigExecWeightConstant;
+    float defaultWeight = 0.0f;
+    const float *values = nullptr;
+    size_t valueCount = 0;
+    const int32_t *indices = nullptr;
+    size_t indexCount = 0;
+};
+
+/// What a packet kernel builds.
+struct RigExecWeightPacketBuild {
+    float defaultWeight = 0.0f;
+    std::vector<float> values;
+    std::vector<int32_t> indices;
+};
+
+/// A static packet's last sorted support, reused while its indices repeat,
+/// and the pairs it sorts.
+struct RigExecStaticWeightScratch {
+    std::vector<std::pair<int32_t, float>> pairs;
+    std::vector<int32_t> support;
+    std::vector<size_t> supportOrder;
+    bool uniqueSupport = false;
+};
+
+/// The weight of element \p i of a \p count-element target, or -1 for a
+/// cardinality mismatch. An unknown representation reads as constant.
+template <class View>
+inline float
+RigExecResolveWeightPacket(const View &packet, size_t i, size_t count)
+{
+    switch (packet.representation) {
+    case kRigExecWeightDense:
+        if (packet.valueCount != count || i >= count)
+            return -1.0f;
+        return packet.values[i];
+    case kRigExecWeightSparse: {
+        if (packet.indexCount != packet.valueCount)
+            return -1.0f;
+        if (!packet.indexCount)
+            return packet.defaultWeight;
+        const auto it = std::lower_bound(
+            packet.indices, packet.indices + packet.indexCount, int32_t(i));
+        if (it != packet.indices + packet.indexCount && *it == int32_t(i))
+            return packet.values[size_t(it - packet.indices)];
+        return packet.defaultWeight;
+    }
+    default:
+        break;
+    }
+    return packet.defaultWeight;
+}
+
+/// A combine input as a dense field of \p count weights in \p data: a
+/// dense input in place, any other written to \p scratch. False for a
+/// length mismatch or a negative weight.
+template <class View>
+bool
+RigExecResolveCombineWeightInput(const View &input, size_t count,
+                                 std::vector<float> *scratch,
+                                 const float **data, size_t *size)
+{
+    if (input.representation == kRigExecWeightDense) {
+        if (input.valueCount != count)
+            return false;
+        for (size_t i = 0; i < input.valueCount; ++i)
+            if (input.values[i] < 0.0f)
+                return false;
+        *data = input.values;
+        *size = input.valueCount;
+        return true;
+    }
+    if (input.representation != kRigExecWeightSparse) {
+        if (input.defaultWeight < 0.0f)
+            return false;
+        scratch->assign(count, input.defaultWeight);
+    } else {
+        if (input.indexCount != input.valueCount)
+            return false;
+        scratch->assign(count, input.defaultWeight);
+        const bool sorted =
+            !input.indexCount ||
+            std::is_sorted(input.indices, input.indices + input.indexCount);
+        if (!sorted) {
+            for (size_t i = 0; i < count; ++i)
+                (*scratch)[i] = RigExecResolveWeightPacket(input, i, count);
+        } else {
+            size_t p = 0;
+            for (size_t i = 0; i < count; ++i) {
+                const int32_t index = int32_t(i);
+                if (i && index < int32_t(i - 1))
+                    p = 0;
+                while (p < input.indexCount && input.indices[p] < index)
+                    ++p;
+                if (p < input.indexCount && input.indices[p] == index)
+                    (*scratch)[i] = input.values[p++];
+            }
+        }
+        for (float w : *scratch)
+            if (w < 0.0f)
+                return false;
+    }
+    *data = scratch->data();
+    *size = scratch->size();
+    return true;
+}
+
+/// The range policy's failure for a weight it refuses.
+inline const char *
+RigExecWeightRangeFailure(bool clamp)
+{
+    return clamp ? "a weight is not finite"
+                 : "a weight is not finite or outside [0, 1]";
+}
+
+/// A painted packet of \p representation: \p values (and, sparse, their
+/// \p indices, sorted into ascending order) and \p defaultWeight under the
+/// range policy. Null on success, else why it fails.
+inline const char *
+RigExecStaticWeightPacketKernel(int representation, bool clamp,
+                                float defaultWeight, const float *values,
+                                size_t valueCount, const int32_t *indices,
+                                size_t indexCount,
+                                RigExecStaticWeightScratch *work,
+                                RigExecWeightPacketBuild *out)
+{
+    out->defaultWeight = defaultWeight;
+    out->values.clear();
+    out->indices.clear();
+    if (representation == kRigExecWeightSparse) {
+        const size_t paired = std::min(valueCount, indexCount);
+        auto &pairs = work->pairs;
+        pairs.clear();
+        for (size_t i = 0; i < paired; ++i)
+            pairs.emplace_back(indices[i], values[i]);
+        if (valueCount != indexCount)
+            return "its values and indices differ in length";
+        const bool same =
+            work->support.size() == indexCount &&
+            (indexCount == 0 ||
+             std::equal(work->support.begin(), work->support.end(), indices));
+        if (!same) {
+            if (indexCount)
+                work->support.assign(indices, indices + indexCount);
+            else
+                work->support.clear();
+            work->supportOrder.resize(indexCount);
+            std::iota(work->supportOrder.begin(), work->supportOrder.end(),
+                      size_t(0));
+            std::sort(
+                work->supportOrder.begin(), work->supportOrder.end(),
+                [&](size_t a, size_t b) { return indices[a] < indices[b]; });
+            work->uniqueSupport = true;
+            for (size_t i = 1; i < indexCount; ++i) {
+                if (indices[work->supportOrder[i - 1]] ==
+                    indices[work->supportOrder[i]]) {
+                    work->uniqueSupport = false;
+                    break;
+                }
+            }
+        }
+        if (work->uniqueSupport) {
+            for (size_t i = 0; i < indexCount; ++i) {
+                const size_t source = work->supportOrder[i];
+                pairs[i] = {indices[source], values[source]};
+            }
+        } else {
+            std::sort(pairs.begin(), pairs.end());
+        }
+        out->indices.reserve(pairs.size());
+        out->values.reserve(pairs.size());
+        for (size_t i = 0; i < pairs.size(); ++i) {
+            if (i > 0 && pairs[i].first == pairs[i - 1].first)
+                return "an index appears twice";
+            out->indices.push_back(pairs[i].first);
+            out->values.push_back(pairs[i].second);
+        }
+    } else if (valueCount) {
+        out->values.assign(values, values + valueCount);
+    }
+    if (representation == kRigExecWeightDense && defaultWeight != 0.0f)
+        return "a dense packet's default weight is not 0";
+    for (float &w : out->values)
+        if (!RigExecApplyWeightRangeKernel(clamp, &w))
+            return RigExecWeightRangeFailure(clamp);
+    if (!RigExecApplyWeightRangeKernel(clamp, &out->defaultWeight))
+        return RigExecWeightRangeFailure(clamp);
+    return nullptr;
+}
+
+/// A packet remapped from \p base as (w * driver) * scale + bias under the
+/// range policy, or, with no base, a constant packet of driver * scale +
+/// bias. Null on success, else why it fails.
+template <class View>
+const char *
+RigExecDynamicWeightPacketKernel(int representation, bool clamp, float driver,
+                                 float scale, float bias, const View *base,
+                                 RigExecWeightPacketBuild *out)
+{
+    out->defaultWeight = 0.0f;
+    out->values.clear();
+    out->indices.clear();
+    if (!base) {
+        if (representation != kRigExecWeightConstant)
+            return "a packet that is not constant needs a base packet";
+        out->defaultWeight = (1.0f * driver) * scale + bias;
+        if (!RigExecApplyWeightRangeKernel(clamp, &out->defaultWeight))
+            return RigExecWeightRangeFailure(clamp);
+        return nullptr;
+    }
+    if (!base->valid || base->representation != representation)
+        return "its base packet is invalid or of another representation";
+    if (base->indexCount)
+        out->indices.assign(base->indices, base->indices + base->indexCount);
+    out->values.reserve(base->valueCount);
+    for (size_t i = 0; i < base->valueCount; ++i) {
+        float r = (base->values[i] * driver) * scale + bias;
+        if (!RigExecApplyWeightRangeKernel(clamp, &r))
+            return RigExecWeightRangeFailure(clamp);
+        out->values.push_back(r);
+    }
+    if (representation != kRigExecWeightDense) {
+        out->defaultWeight = (base->defaultWeight * driver) * scale + bias;
+        if (!RigExecApplyWeightRangeKernel(clamp, &out->defaultWeight))
+            return RigExecWeightRangeFailure(clamp);
+    }
+    return nullptr;
+}
+
+/// The dense packet folding \p inputCount packets, \p inputAt(k) each, in
+/// order under \p mode, then inverted and scaled, under the range policy.
+/// The element count is a dense input's length, else \p targetCount. Null
+/// on success, else why it fails.
+template <class InputAt>
+const char *
+RigExecCombineWeightPacketKernel(RigExecWeightCombine mode, bool clamp,
+                                 float strength, float invert,
+                                 size_t inputCount, InputAt &&inputAt,
+                                 size_t targetCount,
+                                 std::vector<float> *scratch,
+                                 RigExecWeightPacketBuild *out)
+{
+    out->defaultWeight = 0.0f;
+    out->indices.clear();
+    size_t elementCount = 0;
+    for (size_t k = 0; k < inputCount; ++k) {
+        const auto &in = inputAt(k);
+        if (!in.valid)
+            return "an input packet is invalid";
+        if (in.representation == kRigExecWeightDense) {
+            if (elementCount && in.valueCount != elementCount)
+                return "its dense inputs differ in length";
+            elementCount = in.valueCount;
+        }
+    }
+    if (!elementCount)
+        elementCount = targetCount;
+    if (!elementCount)
+        return "no element count is known";
+    if (!RigExecCombineWeightFieldsStreamed(
+            mode, inputCount, elementCount,
+            [&](size_t k, const float **data, size_t *size) {
+                return RigExecResolveCombineWeightInput(
+                    inputAt(k), elementCount, scratch, data, size);
+            },
+            &out->values))
+        return "an input resolves a negative weight or another length";
+    for (float &w : out->values) {
+        w = (w + (1.0f - 2.0f * w) * invert) * strength;
+        if (!RigExecApplyWeightRangeKernel(clamp, &w))
+            return RigExecWeightRangeFailure(clamp);
+    }
+    return nullptr;
 }
 
 } // namespace rigExec

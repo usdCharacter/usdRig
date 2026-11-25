@@ -8,6 +8,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/api/types.h"
 
+#include "rigExecMath/weightFieldKernel.h"
 #include "rigExecMath/weightFields.h"
 
 #include "pxr/base/gf/matrix4d.h"
@@ -25,10 +26,7 @@ namespace rigExec {
 /// Scratch belongs to one packet producer and is never published. Unique
 /// sparse support order is reused until the authored index array changes.
 struct RigExecWeightPacketWorkspace {
-    std::vector<std::pair<int, float>> pairs;
-    std::vector<int> support;
-    std::vector<size_t> supportOrder;
-    bool uniqueSupport = false;
+    RigExecStaticWeightScratch staticScratch;
     std::vector<float> combineField;
 };
 

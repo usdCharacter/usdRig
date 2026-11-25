@@ -3207,6 +3207,14 @@ NoteStepInputs(const RigExecBakedProgramImpl &B,
                RigExecBakedDependencySink *sink)
 {
     RigExecBakedStep &step = *sink->step;
+    const RigExecBakedStepIdentity identity = RigExecBakedIdentityOf(B, step);
+    if (identity.kind == RigExecBakedStepKind::WeightPacket) {
+        if (identity.object >= 0 &&
+            size_t(identity.object) < B.weightObjects.size())
+            RigExecBakedNoteWeightInputs(
+                B.weightObjects[size_t(identity.object)], sink);
+        return;
+    }
     switch (step.kind) {
     case RigExecBakedStepKind::Solve:
         if (step.object < 0 || size_t(step.object) >= B.solvers.size())
@@ -3231,12 +3239,6 @@ NoteStepInputs(const RigExecBakedProgramImpl &B,
         }
         break;
     }
-    case RigExecBakedStepKind::WeightPacket:
-        if (step.object < 0 || size_t(step.object) >= B.weightObjects.size())
-            break;
-        RigExecBakedNoteWeightInputs(B.weightObjects[size_t(step.object)],
-                                     sink);
-        break;
     case RigExecBakedStepKind::AvarInputs: {
         const auto note = [&](const auto &bindings,
                               const std::vector<uint32_t> &begin) {
@@ -3582,10 +3584,13 @@ RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
                     frozenDetail::_VisitConstraintInputs(
                         B.constraints[size_t(walk.index)], fn);
                 });
-        } else if (step.kind == RigExecBakedStepKind::WeightPacket) {
+        } else if (RigExecBakedIdentityOf(B, step).kind ==
+                   RigExecBakedStepKind::WeightPacket) {
             directBindings(&step, [&](const auto &fn) {
                 frozenDetail::_VisitWeightInputs(
-                    B.weightObjects[size_t(step.object)], fn);
+                    B.weightObjects[size_t(
+                        RigExecBakedIdentityOf(B, step).object)],
+                    fn);
             });
         } else if (step.kind == RigExecBakedStepKind::PoseInterpolator) {
             directBindings(&step, [&](const auto &fn) {
@@ -3655,9 +3660,12 @@ RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
                              .revisions[size_t(at.second)]
                              .layoutLeaves,
                          &step);
-        } else if (step.kind == RigExecBakedStepKind::WeightPacket)
-            declareExact(B.weightObjects[size_t(step.object)].pointLeaves,
-                         &step);
+        } else if (RigExecBakedIdentityOf(B, step).kind ==
+                   RigExecBakedStepKind::WeightPacket)
+            declareExact(
+                B.weightObjects[size_t(RigExecBakedIdentityOf(B, step).object)]
+                    .pointLeaves,
+                &step);
     }
     // Weight-field path leaves are allocated by field capture after the initial
     // census; bind field memo IDs only against this final numbered census.

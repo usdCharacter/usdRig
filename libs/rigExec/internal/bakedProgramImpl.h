@@ -1116,9 +1116,8 @@ struct RigExecBakedWeightObject {
     int falloffSamplesLeaf = -1;
     std::array<VtVec3fArray, 3> packetPointViews;
     std::array<std::vector<GfVec3f>, 3> packetPointScratch;
-    std::vector<GfVec3f> packetLocalCurve;
-    std::vector<const RigExecWeightPacket *> packetInputRefs;
-    RigExecWeightPacketWorkspace packetWorkspace;
+    /// The authored falloff samples a packet's lookup last lent.
+    VtFloatArray packetFalloffSamples;
     /// The point gathers' reads, one key per attribute of
     /// `targetPoints`, `samplePoints`, `curvePoints` and
     /// `combineTargetPoints` in that order, each list starting at its
@@ -1156,6 +1155,7 @@ struct RigExecBakedOpProgram {
 enum class RigExecBakedOpFamily : uint8_t {
     Property,
     VolumePlacement,
+    WeightPacket,
 };
 
 /// Where an op node's step comes from: its family, that family's object and
@@ -2827,6 +2827,28 @@ bool RigExecBakedStorePropertyVersion(RigExecBakedProgramImpl &B,
 /// \p builder, numbered as RigExecBakedBuildWeightSteps numbered them after
 /// the property nodes: its frame looked up at the slot's last fin or base
 /// version, its placement stored in volumePlacement or volumePlacementBase.
+/// Adds the weight packet op node of each WeightPacket origin to
+/// \p builder, numbered after the VolumePlacement nodes: StaticWeights,
+/// DynamicWeights, CombineWeights or VolumeWeights fed by the nodes of the
+/// objects it composes and by WeightArrays lookups, its packet stored in
+/// weightPackets. False with the reason for a weight object that can make
+/// no packet: an unknown representation, policy, mode, axis or bounds, no
+/// base for a remapped packet, no placement, target or curve for a volume,
+/// or painted weights that fail whatever the frame.
+bool RigExecBakedAddWeightPacketOps(const RigExecBakedProgramImpl &B,
+                                    RigExecRigDescBuilder *builder,
+                                    eval::OpStepLayout *layout,
+                                    std::string *error);
+/// Resolves a WeightArrays lookup: input \p lookup.read of weight object
+/// \p lookup.object, an array lent in place.
+bool RigExecBakedLookUpWeight(RigExecBakedProgramImpl &B,
+                              const eval::OpLookup &lookup,
+                              const RigExecTypeDesc &type, void *out,
+                              std::string *error);
+/// Stores a weight packet op's packet as weightPackets[output.object].
+bool RigExecBakedStoreWeightPacket(RigExecBakedProgramImpl &B,
+                                   const eval::OpHostOutput &output,
+                                   const void *value, std::string *error);
 void RigExecBakedAddVolumePlacementOps(const RigExecBakedProgramImpl &B,
                                        RigExecRigDescBuilder *builder,
                                        eval::OpStepLayout *layout);
@@ -3691,15 +3713,11 @@ RigExecBakedAssembleFromLeaves(RigExecBakedProgramImpl *program,
                                size_t layoutPointCount = size_t(-1),
                                RigExecExternalRevision *external = nullptr);
 
-/// Appends one VolumePlacements step per volume provider slot (object =
-/// slot, part 1), then one WeightPacket step per weight object in the
+/// Appends the final and base VolumePlacement op step of each volume
+/// provider slot, then one weight packet op step per weight object in the
 /// table's dependency order -- all of it between the pose half and the
 /// geometry half.
 void RigExecBakedBuildWeightSteps(RigExecBakedProgramImpl *program);
-
-/// Runs one WeightPacket step, under the same rule as the other two.
-void RigExecBakedRunWeightStep(RigExecBakedProgramImpl *program,
-                               RigExecBakedStep *step, UsdTimeCode time);
 
 /// Replaces \p frames (pose.weightFrames) with one entry per placedVolumes
 /// slot, from volumePlacement: the dynamic walk's key set, for live and
@@ -4084,18 +4102,6 @@ RigExecBakedNoteInput(const RigExecBakedInput<T> &input,
 /// override placement honest with no further code.
 int RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
                                  const SdfPath &path);
-
-/// The packet \p object publishes this frame.
-///
-/// \p packets holds the packets already built for the objects BEFORE this
-/// one in the table, which dependency order guarantees are the ones it
-/// composes. Every stage read is a leaf the prologue sampled at \p time
-/// (`pointLeaves` and the bound inputs').
-RigExecWeightPacket
-RigExecBakedWeightPacket(const RigExecBakedProgramImpl &program,
-                         RigExecBakedProgramImpl::WeightObject *object,
-                         const std::vector<RigExecWeightPacket> &packets,
-                         UsdTimeCode time);
 
 /// The numeric time Build probes input selections at: the stage's start
 /// time code when it authors a time-code range, else 0. Never Default.

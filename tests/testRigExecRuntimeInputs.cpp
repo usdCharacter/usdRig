@@ -1605,23 +1605,26 @@ _TestPaintedArrays(const UsdStageRefPtr &stage)
     if (repeated.size() >= 2) {
         repeated[1] = repeated[0];
     }
-    const std::string seg4Skin =
-        "/TailAsset/Rig/Movers/Geometry/Seg1Skin/Seg2Skin/Seg3Skin/Seg4Skin";
-    _CheckArraySets(
-        label + ": Seg4W indices repeated", stage, rigPath, listed,
-        {{seg4Indices, VtValue(repeated), false}}, true,
-        [&](RigExecRuntimeReader &played) {
-            const std::vector<std::string> lines = played.GetDiagnostics();
-            CHECK(lines ==
-                  std::vector<std::string>(
-                      {"MoverFailed " + seg4Skin +
-                           ": rigExec:weightObject produced an invalid "
-                           "common envelope; revision passed through",
-                       "MoverFailed " + seg4Skin +
-                           ": execution rejected its inputs; revision "
-                           "passed through"}));
-        },
-        _Reference::EditedOutputs);
+    {
+        // Repeated sparse indices stop the frame with the packet's error.
+        std::unique_ptr<RigExecRuntimeReader> reader =
+            _OpenRun(label + ": Seg4W indices repeated", listed);
+        size_t input = 0;
+        if (reader && !reader->FindInput(seg4Indices, &input))
+            reader = _OpenRun(label + ": Seg4W indices repeated",
+                              RigExecTestListPrivateArraySlots(listed));
+        CHECK(reader);
+        std::string error;
+        if (reader) {
+            CHECK(RigExecTestApplyArraySets(
+                reader.get(), {{seg4Indices, VtValue(repeated), false}},
+                &error));
+            CHECK(!reader->Execute(&error));
+            CHECK(error.rfind("/TailAsset/Rig/Weights/Seg4W: node ", 0) == 0 &&
+                  error.find("(rig:StaticWeights) failed: StaticWeights: an "
+                             "index appears twice") != std::string::npos);
+        }
+    }
 }
 
 // Real numeric-time samples, not public setter simulations. A second reader
@@ -1740,7 +1743,20 @@ _CheckStageArraySamples(const std::string &label, const UsdStageRefPtr &stage,
                         error.c_str());
             continue;
         }
-        CHECK(RigExecTestDrive(reader.get(), &sampler, frame, &error));
+        if (!RigExecTestDrive(reader.get(), &sampler, frame, &error)) {
+            // An invalid sampled value stops the frame in both evaluators
+            // with the same error.
+            RigExecRigPose pose;
+            std::string why;
+            CHECK(!RigExecTestArrayReference(stage, rigPath, {}, frame, &pose,
+                                             &why));
+            CHECK(!pose.valid &&
+                  std::find(pose.diagnostics.begin(), pose.diagnostics.end(),
+                            error) != pose.diagnostics.end());
+            std::printf("%s frame %g: both fail: %s\n", label.c_str(), frame,
+                        error.c_str());
+            continue;
+        }
         {
             RigExecRigPose pose;
             CHECK(RigExecTestArrayReference(stage, rigPath, {}, frame, &pose,
@@ -2817,7 +2833,7 @@ main(int argc, char **argv)
 
     std::printf("array inputs: %d of %d case(s) == session edit\n",
                 arrayMatched, arrayCases);
-    CHECK(arrayMatched == arrayCases && arrayCases == 18);
+    CHECK(arrayMatched == arrayCases && arrayCases == 17);
     _TestArraysAgainstOverrides(fixtures);
     std::printf("array inputs: %d of %d run(s) == live baked's interactive "
                 "overrides, counters included\n",

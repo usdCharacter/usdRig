@@ -2367,6 +2367,109 @@ CheckFrozenWeightFramesMatchLive(RigExecRigEvaluator *evaluator,
     }
     return frozen;
 }
+// Weight packets run as op nodes in the frozen job: a cold workspace runs
+// every packet node and publishes live's pose bit for bit, at animated
+// frames and under a drag of a combine's strength; a non-finite strength
+// stops the frame with the same error live reports.
+void
+TestFrozenWeightPacketOpsMatchLive(const std::string &examplesDir)
+{
+    UsdStageRefPtr stage =
+        UsdStage::Open(examplesDir + "/11_VolumeWeights.usda");
+    CHECK(stage);
+    if (!stage)
+        return;
+    const SdfPath rig("/VolumeAsset/Rig");
+    RigExecRigEvaluator evaluator(stage, rig);
+    CHECK(evaluator.Compile());
+    CHECK(evaluator.Evaluate(UsdTimeCode(1001.0)).valid);
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
+    std::set<size_t> packetSteps;
+    for (size_t i = 0; i < B.steps.size(); ++i)
+        if (RigExecBakedIdentityOf(B, B.steps[i]).kind ==
+            RigExecBakedStepKind::WeightPacket) {
+            CHECK(B.steps[i].kind == RigExecBakedStepKind::OpNode);
+            packetSteps.insert(i);
+        }
+    CHECK(packetSteps.size() >= 3);
+    std::shared_ptr<const RigExecFrozenProgram> frozen;
+    std::string error;
+    CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
+    if (!frozen)
+        return;
+    RigExecValueOverride strength;
+    strength.prim = SdfPath("/VolumeAsset/Rig/Weights/MidCombined");
+    strength.attribute = TfToken("inputs:strength");
+    const auto run = [&](double frame, const char *what,
+                         const std::vector<RigExecValueOverride> &drags,
+                         bool runs = true) {
+        evaluator.SetInteractiveOverrides(drags);
+        const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
+        RigExecFrameInputs inputs;
+        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame), drags,
+                                       &inputs, &error));
+        RigExecFrozenEvalContext context;
+        context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+        context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+        context.varyingInputCount = inputs.values.size();
+        if (evaluator.GetPublishWeightFields())
+            context.flags |= kRigExecFrozenPublishWeightFields;
+        context.frozen = frozen.get();
+        auto workspace = RigExecCreateFrozenWorkspace(frozen);
+        context.workspace = workspace.get();
+        RigExecFrozenRunReport report;
+        const RigExecRigPose pose = RigExecEvaluateFrozen(
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
+        evaluator.SetInteractiveOverrides({});
+        size_t ran = 0;
+        for (const auto &entry : report.region)
+            if (entry.kind == "WeightPacket") {
+                CHECK(packetSteps.count(entry.step) == 1);
+                ++ran;
+            }
+        if (runs && ran == 0) {
+            std::printf("FAIL %s: the frozen job ran no weight packet\n", what);
+            ++failures;
+        }
+        return std::make_pair(live, pose);
+    };
+    for (const double frame : {1012.0, 1024.0}) {
+        const auto [live, pose] = run(frame, "animated frame", {});
+        CHECK(live.valid);
+        CheckPosesBitIdentical("frozen weight packets", live, pose);
+    }
+    strength.value = VtValue(0.5f);
+    {
+        const auto [live, pose] = run(1012.0, "strength drag", {strength});
+        CHECK(live.valid);
+        CheckPosesBitIdentical("frozen weight packets under a drag", live,
+                               pose);
+    }
+    strength.value = VtValue(std::numeric_limits<float>::quiet_NaN());
+    // The frozen job refuses a non-finite input before it runs, or fails
+    // with live's error.
+    const auto [live, pose] =
+        run(1012.0, "non-finite strength", {strength}, false);
+    CHECK(!live.valid && !pose.valid);
+    const auto failure = std::find_if(
+        live.diagnostics.begin(), live.diagnostics.end(),
+        [](const std::string &line) {
+            return line.find("MidCombined") != std::string::npos &&
+                   line.find("CombineWeights") != std::string::npos;
+        });
+    CHECK(failure != live.diagnostics.end());
+    if (failure != live.diagnostics.end() && !pose.diagnostics.empty() &&
+        std::find(pose.diagnostics.begin(), pose.diagnostics.end(), *failure) ==
+            pose.diagnostics.end()) {
+        std::printf("FAIL frozen weight packets: live fails with '%s', "
+                    "frozen does not\n",
+                    failure->c_str());
+        ++failures;
+    }
+}
+
 // Frozen publishes exactly live's weightFrames on every path. On
 // 14_VolumeConstrainedSweep with a volume outside the rig that only a
 // constraint names, that volume has a slot and a placement step, which the
@@ -9431,6 +9534,7 @@ main(int argc, char **argv)
         TestAStandingSnapshotPatchedAfterALiveRunCarriesTheEdit(argv[1]);
         TestVolumeWeightsBurstMatchesPlain(argv[1]);
         TestFrozenWeightFramesMatchLive(argv[1]);
+        TestFrozenWeightPacketOpsMatchLive(argv[1]);
         TestUnavailableTargetSamplesLocalInvalidRoles(argv[1]);
         TestProjectorSpacesMatchDynamic(argv[1]);
         TestVolumePlacementsFixtureFreezes(argv[1]);

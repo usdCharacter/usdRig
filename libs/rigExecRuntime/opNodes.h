@@ -34,6 +34,9 @@ struct RrOpNodes {
     /// Per node: the property chain and part (1 to its revision count) it
     /// runs, or kRigExecInvalidIndex for a node of no property chain.
     std::vector<uint32_t> propertyChain, propertyPart;
+    /// Per node: the weight object whose packet it stores, or
+    /// kRigExecInvalidIndex.
+    std::vector<uint32_t> weightObject;
 };
 
 /// Builds \p program's op nodes from its file, when it holds any. False

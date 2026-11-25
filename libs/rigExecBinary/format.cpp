@@ -589,8 +589,13 @@ public:
         _placementSlot.assign(nodes, -1);
         _placementBase.assign(nodes, 0);
         _placementLookup.assign(nodes, -1);
+        _packetObject.assign(nodes, -1);
         if (!nodes)
             return;
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 3 &&
+                _packetObject[output->node] < 0)
+                _packetObject[output->node] = int64_t(output->object);
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node < nodes &&
                 (output->target == 1 || output->target == 2) &&
@@ -662,17 +667,35 @@ private:
                                 _N(r + 1) + ": runs as no op node");
         if (!_f.opGraph)
             return true;
-        std::vector<uint8_t> stored;
+        std::vector<uint8_t> stored, packets;
         for (const auto &output : _f.opGraph->hostOutputs) {
             if (!output)
                 return _Bad("op_graph.host_outputs: an entry is missing");
-            if (output->target > 2)
+            if (output->target > 3)
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
             if (output->node >= _f.opGraph->nodes.size())
                 return _Bad("op_graph.host_outputs: no node " +
                             _N(output->node));
             const size_t node = size_t(output->node);
+            if (output->target == 3) {
+                if (_propertyChainOf[node] != kNoProperty ||
+                    _placementSlot[node] >= 0 ||
+                    _packetObject[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores more than one weight packet");
+                if (output->object >= _stepBacked)
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the packet of weight object " +
+                                _N(output->object) + ", which no step builds");
+                if (packets.size() <= output->object)
+                    packets.resize(size_t(output->object) + 1, 0);
+                if (packets[size_t(output->object)]++)
+                    return _Bad("op_graph.host_outputs: the packet of weight "
+                                "object " +
+                                _N(output->object) + " is stored twice");
+                continue;
+            }
             if (output->target != 0) {
                 const std::vector<uint8_t> &volumes =
                     _f.constants->noScaleAvars;
@@ -715,6 +738,13 @@ private:
                 if ((lookup->part != 0 && lookup->part != 1) || lookup->read)
                     return _Bad("op_graph.lookups: a pose version lookup "
                                 "reads neither a fin nor a base frame");
+                continue;
+            }
+            if (lookup && lookup->source == 2) {
+                if (lookup->object >= _stepBacked || lookup->part != -1 ||
+                    lookup->read > 19)
+                    return _Bad("op_graph.lookups: a weight lookup reads no "
+                                "input of a weight object a step builds");
                 continue;
             }
             if (!lookup || lookup->source != 0 ||
@@ -763,6 +793,8 @@ private:
             if (kind == fb::StepKind::ReservedVolumePlacements)
                 return _Bad(_StepName(i) +
                             ": the retired VolumePlacements step");
+            if (kind == fb::StepKind::ReservedWeightPacket)
+                return _Bad(_StepName(i) + ": the retired WeightPacket step");
             const bool op = kind == fb::StepKind::OpNode ||
                             kind == fb::StepKind::OpChainHead ||
                             kind == fb::StepKind::OpChainRange;
@@ -1985,6 +2017,16 @@ private:
                    : -1;
     }
 
+    /// The weight object whose packet the op step \p step builds, or -1 for
+    /// any other step.
+    int64_t _PacketObjectOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _packetObject.size()
+                   ? _packetObject[size_t(step.object)]
+                   : -1;
+    }
+
     /// One VolumePlacement op step places one volume: its one write that
     /// slot of WeightFrames (WeightFramesBase for the base placement), and no
     /// other step placing the same slot. \p placer maps each slot to the
@@ -2068,11 +2110,18 @@ private:
         }
         for (size_t i = 0; i < _f.steps.size(); ++i) {
             const fb::RigExecWireStep &step = _f.steps[i];
-            if (step.kind == fb::StepKind::WeightPacket &&
-                (step.object < 0 || size_t(step.object) >= _stepBacked)) {
-                return _Bad("steps[" + _N(i) +
-                            "]: a WeightPacket step names no step-backed "
-                            "weight object");
+            if (step.kind == fb::StepKind::ReservedWeightPacket)
+                return _Bad(_StepName(i) + ": the retired WeightPacket step");
+            if (const int64_t object = _PacketObjectOf(step); object >= 0) {
+                if (step.writes.size() != 1 ||
+                    step.writes[0].domain() != fb::SlotDomain::WeightPacket ||
+                    step.writes[0].begin() != uint32_t(object) ||
+                    step.writes[0].end() != uint32_t(object) + 1)
+                    return _Bad(_StepName(i) +
+                                " writes other than the WeightPacket of "
+                                "weight object " +
+                                _N(object));
+                continue;
             }
             if (step.kind == fb::StepKind::ReservedVolumePlacements)
                 return _Bad(_StepName(i) +
@@ -4334,9 +4383,10 @@ private:
                     read(D::ChainDirty, revision);
                 }
             };
-            if (step.kind == K::WeightPacket &&
-                _Has(g.weightObjects, step.object)) {
-                const auto &weight = g.weightObjects[size_t(step.object)];
+            if (_PacketObjectOf(step) >= 0 &&
+                _Has(g.weightObjects, _PacketObjectOf(step))) {
+                const auto &weight =
+                    g.weightObjects[size_t(_PacketObjectOf(step))];
                 if (weight.base >= 0)
                     read(D::WeightPacket, uint32_t(weight.base));
                 for (int32_t input : weight.inputs)
@@ -9249,6 +9299,8 @@ private:
     /// Per op node: the volume slot it places (-1 for none), whether its
     /// base placement, and the lookup its frame input reads (-1 for none).
     std::vector<int64_t> _placementSlot, _placementLookup;
+    /// Per op node: the weight object whose packet it stores, or -1.
+    std::vector<int64_t> _packetObject;
     std::vector<uint8_t> _placementBase;
     std::string _error;
     size_t _slots = 0;
@@ -9431,13 +9483,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 38,
+    static_assert(RigExecFormatOldestReadable == 39,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: volume placements as op nodes"
+                ? "re-export: weight packets as op nodes"
                 : "rebake");
 }
 
@@ -9664,8 +9716,8 @@ _StepKindName(fb::StepKind kind)
         return "PoseInterpolator";
     case fb::StepKind::ReservedVolumePlacements:
         return "ReservedVolumePlacements";
-    case fb::StepKind::WeightPacket:
-        return "WeightPacket";
+    case fb::StepKind::ReservedWeightPacket:
+        return "ReservedWeightPacket";
     case fb::StepKind::InfluenceFold:
         return "InfluenceFold";
     case fb::StepKind::RevisionStatic:
@@ -9796,6 +9848,13 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
                        (output->target == 2 ? " base" : "");
                 return true;
             }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
+                output->target == 3 && geometry &&
+                _Has(geometry->weightObjects, output->object)) {
+                *out = text(geometry->weightObjects[output->object].path);
+                return true;
+            }
         size_t chain = 0, part = 0;
         *out = _PropertyNodeParts(file).Of(object, &chain, &part)
                    ? text(file.propertyChains[chain].revisions[part - 1].mover)
@@ -9869,12 +9928,8 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
         return true;
     case fb::StepKind::ReservedVolumePlacements:
         return false;
-    case fb::StepKind::WeightPacket:
-        if (!geometry || !_Has(geometry->weightObjects, object)) {
-            return false;
-        }
-        *out = text(geometry->weightObjects[size_t(object)].path);
-        return true;
+    case fb::StepKind::ReservedWeightPacket:
+        return false;
     case fb::StepKind::InfluenceFold:
     case fb::StepKind::RevisionStatic:
     case fb::StepKind::RevisionChunk:

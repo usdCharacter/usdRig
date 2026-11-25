@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstring>
 #include <iterator>
+#include <memory>
 #include <numeric>
 #include <string>
 #include <utility>
@@ -30,6 +31,33 @@ RIGEXEC_DEFINE_PORT_HANDLE(CombineWeightsTargetCount)
 RIGEXEC_DEFINE_PORT_HANDLE(CombineWeightsStrength)
 RIGEXEC_DEFINE_PORT_HANDLE(CombineWeightsInvert)
 RIGEXEC_DEFINE_PORT_HANDLE(CombineWeightsOut)
+RIGEXEC_DEFINE_OP_HANDLE(StaticWeights)
+RIGEXEC_DEFINE_PORT_HANDLE(StaticWeightsValues)
+RIGEXEC_DEFINE_PORT_HANDLE(StaticWeightsIndices)
+RIGEXEC_DEFINE_PORT_HANDLE(StaticWeightsDefaultWeight)
+RIGEXEC_DEFINE_PORT_HANDLE(StaticWeightsOut)
+RIGEXEC_DEFINE_OP_HANDLE(DynamicWeights)
+RIGEXEC_DEFINE_PORT_HANDLE(DynamicWeightsBase)
+RIGEXEC_DEFINE_PORT_HANDLE(DynamicWeightsDriver)
+RIGEXEC_DEFINE_PORT_HANDLE(DynamicWeightsScale)
+RIGEXEC_DEFINE_PORT_HANDLE(DynamicWeightsBias)
+RIGEXEC_DEFINE_PORT_HANDLE(DynamicWeightsOut)
+RIGEXEC_DEFINE_OP_HANDLE(VolumeWeights)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsFrame)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsPoints)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsSamples)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsCurve)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsStrength)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsInvert)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsFalloffMin)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsFalloffMax)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsFalloffSamples)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsScale)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsPositiveScale)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsNegativeScale)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsExtentU)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsExtentV)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsOut)
 
 #define RIGEXEC_DEFINE_WEIGHT_FIELD_PORTS(Op)                                  \
     RIGEXEC_DEFINE_PORT_HANDLE(Op##Points)                                     \
@@ -298,56 +326,54 @@ using rigExecRig::PointWeights;
 using WeightList = InList<PointWeights>;
 
 static_assert(int(WeightCombineMode::Overlay) ==
-                      rigExec::eval::kWeightCombineOverlay &&
+                      int(rigExec::RigExecWeightCombine::Overlay) &&
                   int(rigExecRig::WeightRepresentation::Sparse) ==
-                      rigExec::eval::kWeightSparse,
-              "combine codes follow rigExecEvalCore");
+                      rigExec::kRigExecWeightSparse &&
+                  int(rigExecRig::WeightRepresentation::Dense) ==
+                      rigExec::kRigExecWeightDense,
+              "weight codes follow rigExecMath");
 
-/// Op state: the packet fold's scratch and its input indices.
+/// \p w read in place.
+rigExec::RigExecWeightPacketView
+ViewOf(const PointWeights &w)
+{
+    rigExec::RigExecWeightPacketView view;
+    view.valid = w.valid != 0;
+    view.representation = int(w.representation);
+    view.defaultWeight = w.defaultWeight;
+    view.values = w.values.Data();
+    view.valueCount = w.values.Size();
+    view.indices = w.indices.Data();
+    view.indexCount = w.indices.Size();
+    return view;
+}
+
+/// Writes \p built to \p out as a valid packet.
+void
+WritePacket(const rigExec::RigExecWeightPacketBuild &built,
+            rigExecRig::WeightRepresentation representation, bool clamp,
+            PointWeights *out)
+{
+    out->values.Resize(built.values.size());
+    if (!built.values.empty())
+        std::memcpy(out->values.Data(), built.values.data(),
+                    built.values.size() * sizeof(float));
+    out->indices.Resize(built.indices.size());
+    if (!built.indices.empty())
+        std::memcpy(out->indices.Data(), built.indices.data(),
+                    built.indices.size() * sizeof(int32_t));
+    out->defaultWeight = built.defaultWeight;
+    out->representation = uint32_t(representation);
+    out->rangePolicy = uint32_t(clamp ? rigExecRig::WeightRange::Clamp
+                                      : rigExecRig::WeightRange::Strict);
+    out->valid = 1;
+}
+
+/// Op state: the combine fold's scratch and packet.
 struct CombineState {
     std::vector<float> combineField;
-    std::vector<int32_t> indices;
-    rigExec::eval::WeightPacketResult result;
-};
-
-/// The host eval::BuildCombinePacket reads its inputs through.
-struct CombineHost {
-    struct Math {
-        using Vec3f = rigExecStd::Vec3f;
-        using Vec3d = rigExecStd::Vec3d;
-    };
-    struct State {
-        const WeightList &inputs;
-        CombineState &state;
-        CombineState *packetScratch(size_t)
-        {
-            return &state;
-        }
-        size_t packetCount() const
-        {
-            return inputs.Size();
-        }
-        rigExec::eval::WeightPacketView packetView(size_t k) const
-        {
-            const PointWeights &w = inputs[k];
-            return {w.valid != 0,    int(w.representation), w.defaultWeight,
-                    w.values.Data(), w.values.Size(),       w.indices.Data(),
-                    w.indices.Size()};
-        }
-        void storePacket(size_t, rigExec::eval::WeightPacketResult &result)
-        {
-            std::swap(state.result, result);
-        }
-        void storePacket(size_t, rigExec::eval::WeightPacketResult &&result)
-        {
-            state.result = std::move(result);
-        }
-    };
-    State s;
-    State &state()
-    {
-        return s;
-    }
+    std::vector<rigExec::RigExecWeightPacketView> views;
+    rigExec::RigExecWeightPacketBuild built;
 };
 
 void
@@ -369,7 +395,6 @@ WriteDense(const std::vector<float> &values, const CombineWeightsPayload &p,
 bool
 CombineWeightsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
-    namespace eval = rigExec::eval;
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     CombineWeightsPayload p;
     p.mode = EnumAt<WeightCombineMode>(batch, kMode, k);
@@ -386,8 +411,9 @@ CombineWeightsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 
     if (p.inputs == WeightCombineInputs::Fields) {
         std::vector<float> &folded = s.combineField;
-        if (!eval::weights_detail::CombineStreamed(
-                int(p.mode), inputs.Size(), targetCount,
+        if (!rigExec::RigExecCombineWeightFieldsStreamed(
+                rigExec::RigExecWeightCombine(p.mode), inputs.Size(),
+                targetCount,
                 [&](size_t k, const float **data, size_t *size) {
                     const PointWeights &w = inputs[k];
                     if (!w.valid ||
@@ -407,31 +433,20 @@ CombineWeightsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         return true;
     }
 
-    if (s.indices.size() < inputs.Size()) {
-        s.indices.resize(inputs.Size());
-        std::iota(s.indices.begin(), s.indices.end(), 0);
-    }
-    eval::WeightPacketFacts<CombineHost::Math> facts;
-    facts.representation = eval::kWeightDense;
-    facts.rangePolicy =
-        p.clamp ? eval::kWeightPolicyClamp : eval::kWeightPolicyStrict;
-    facts.combineMode = int(p.mode);
-    facts.inputCount = inputs.Size();
-    facts.inputIndices = s.indices.data();
-    facts.combineTargetCount = targetCount;
-    facts.scalars[4] = strength;
-    facts.scalars[5] = invert;
-    CombineHost host{{inputs, s}};
-    eval::weights_detail::BuildCombinePacket(host, 0, facts);
-    if (s.result.bare)
-        return Fail(error, "CombineWeights",
-                    p.clamp ? "non-finite weight" : "weight out of range");
-    if (!s.result.valid)
-        return Fail(error, "CombineWeights",
-                    "its inputs do not combine: an input is invalid, dense "
-                    "inputs differ in length, a weight resolves negative or "
-                    "no element count is known");
-    WriteDense(s.result.values, p, true, &out);
+    std::vector<rigExec::RigExecWeightPacketView> &views = s.views;
+    views.resize(inputs.Size());
+    for (size_t i = 0; i < inputs.Size(); ++i)
+        views[i] = ViewOf(inputs[i]);
+    if (const char *why = rigExec::RigExecCombineWeightPacketKernel(
+            rigExec::RigExecWeightCombine(p.mode), p.clamp, strength, invert,
+            views.size(),
+            [&](size_t i) -> const rigExec::RigExecWeightPacketView & {
+                return views[i];
+            },
+            targetCount, &s.combineField, &s.built))
+        return Fail(error, "CombineWeights", why);
+    WritePacket(s.built, rigExecRig::WeightRepresentation::Dense, p.clamp,
+                &out);
     return true;
 }
 
@@ -484,6 +499,215 @@ RunVolumePlacement(const RigExecOpBatch &batch, size_t *failed,
             return Fail(error, "VolumePlacement",
                         "a landmark of the volume's frame is not finite");
         return true;
+    });
+}
+
+/// Op state: a painted packet's sort memo and packet.
+struct StaticState {
+    rigExec::RigExecStaticWeightScratch scratch;
+    rigExec::RigExecWeightPacketBuild built;
+};
+
+/// A weight packet op's declared fields, in saved order.
+enum PacketField : uint32_t { kRepresentation, kPacketClamp };
+
+bool
+StaticWeightsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const auto representation =
+        EnumAt<rigExecRig::WeightRepresentation>(batch, kRepresentation, k);
+    const bool clamp = FlagAt(batch, kPacketClamp, k);
+    auto &s = *static_cast<StaticState *>(rigExec::RigExecBatchState(batch, k));
+    const Weights &values = *In<Weights>(io, StaticWeightsValues());
+    const auto *indices =
+        In<rigExecStd::RigExecArray<int32_t>>(io, StaticWeightsIndices());
+    if (const char *why = rigExec::RigExecStaticWeightPacketKernel(
+            int(representation), clamp,
+            InOr(io, StaticWeightsDefaultWeight(), 0.0f), values.Data(),
+            values.Size(), indices ? indices->Data() : nullptr,
+            indices ? indices->Size() : 0, &s.scratch, &s.built))
+        return Fail(error, "StaticWeights", why);
+    WritePacket(s.built, representation, clamp,
+                &Out<PointWeights>(io, StaticWeightsOut()));
+    return true;
+}
+
+bool
+RunStaticWeights(const RigExecOpBatch &batch, size_t *failed,
+                 std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return StaticWeightsOne(batch, k, error);
+    });
+}
+
+bool
+DynamicWeightsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const auto representation =
+        EnumAt<rigExecRig::WeightRepresentation>(batch, kRepresentation, k);
+    const bool clamp = FlagAt(batch, kPacketClamp, k);
+    auto &built = *static_cast<rigExec::RigExecWeightPacketBuild *>(
+        rigExec::RigExecBatchState(batch, k));
+    const PointWeights *base = In<PointWeights>(io, DynamicWeightsBase());
+    const rigExec::RigExecWeightPacketView view =
+        base ? ViewOf(*base) : rigExec::RigExecWeightPacketView();
+    if (const char *why = rigExec::RigExecDynamicWeightPacketKernel(
+            int(representation), clamp, InOr(io, DynamicWeightsDriver(), 1.0f),
+            InOr(io, DynamicWeightsScale(), 1.0f),
+            InOr(io, DynamicWeightsBias(), 0.0f), base ? &view : nullptr,
+            &built))
+        return Fail(error, "DynamicWeights", why);
+    WritePacket(built, representation, clamp,
+                &Out<PointWeights>(io, DynamicWeightsOut()));
+    return true;
+}
+
+bool
+RunDynamicWeights(const RigExecOpBatch &batch, size_t *failed,
+                  std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return DynamicWeightsOne(batch, k, error);
+    });
+}
+
+/// The vector and matrix types rigExecEvalCore's field bodies run over.
+struct VolumeMath {
+    using Vec3f = rigExecStd::Vec3f;
+    using Vec3d = rigExecStd::Vec3d;
+    using Mat4 = rigExecStd::Mat4d;
+    static Vec3d ToDouble(const Vec3f &p)
+    {
+        return {p[0], p[1], p[2]};
+    }
+    static Vec3f ToFloat(const Vec3d &p)
+    {
+        return {float(p[0]), float(p[1]), float(p[2])};
+    }
+    static float Dot(const Vec3f &a, const Vec3f &b)
+    {
+        return rigExec::RrDot(a, b);
+    }
+};
+
+/// VolumeWeights' declared fields, in saved order.
+enum VolumeField : uint32_t {
+    kShape,
+    kVolumeClamp,
+    kVolumePlaneAxis,
+    kVolumePlaneBounded
+};
+
+/// Op state: the field, and a curve carried into local space.
+struct VolumeState {
+    std::vector<float> weights;
+    std::vector<Vec3f> localCurve;
+};
+
+bool
+VolumeWeightsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    namespace detail = rigExec::eval::weights_detail;
+    using View = rigExec::eval::WeightPointViewT<VolumeMath>;
+    const char *const op = "VolumeWeights";
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const auto shape = EnumAt<VolumeWeightShape>(batch, kShape, k);
+    const bool clamp = FlagAt(batch, kVolumeClamp, k);
+    auto &s = *static_cast<VolumeState *>(rigExec::RigExecBatchState(batch, k));
+    const rigExecRig::PointFrame &frame =
+        *In<rigExecRig::PointFrame>(io, VolumeWeightsFrame());
+    Mat4d worldToLocal;
+    if (!rigExec::RigExecRigidWorldToLocalKernel(
+            frame.points, (frame.flags & rigExecRig::kPointFrameValid) != 0,
+            (frame.flags & rigExecRig::kPointFrameDegenerate) != 0,
+            [](const rigExecRig::PointLandmarks &rest,
+               const rigExecRig::PointLandmarks &pose, Mat4d *matrix) {
+                return rigExec::RrDualQuatPointsToMatrix(rest, pose, matrix);
+            },
+            [](const Mat4d &m) { return m.RemoveScaleShear(); }, &worldToLocal))
+        return Fail(error, op,
+                    "the volume's frame does not place it: it is not valid, "
+                    "is degenerate or is not invertible");
+    const Vec3f scale = InOr(io, VolumeWeightsScale(), Vec3f(1.0f));
+    if (shape != VolumeWeightShape::Plane && !Positive(scale))
+        return Fail(error, op, "scale must be finite and positive");
+    const Points &target = *In<Points>(io, VolumeWeightsPoints());
+    const Points *samples = In<Points>(io, VolumeWeightsSamples());
+    const size_t sampled = samples ? samples->Size() : 0;
+    if (!target.Size())
+        return Fail(error, op, "the target has no points");
+    if (sampled && sampled != target.Size())
+        return Fail(error, op, "sampled point count does not match the target");
+    const View points = sampled ? View{samples->Data(), sampled}
+                                : View{target.Data(), target.Size()};
+    rigExec::eval::WeightFalloffFacts params;
+    params.falloffMin = InOr(io, VolumeWeightsFalloffMin(), 0.0f);
+    params.falloffMax = InOr(io, VolumeWeightsFalloffMax(), 1.0f);
+    params.invert = InOr(io, VolumeWeightsInvert(), 0.0f);
+    params.strength = InOr(io, VolumeWeightsStrength(), 1.0f);
+    if (const Weights *curve = In<Weights>(io, VolumeWeightsFalloffSamples())) {
+        params.curve = curve->Data();
+        params.curveCount = curve->Size();
+    }
+    if (shape == VolumeWeightShape::Plane) {
+        const auto axis = EnumAt<WeightFieldAxis>(batch, kVolumePlaneAxis, k);
+        const bool bounded = FlagAt(batch, kVolumePlaneBounded, k);
+        const float extentU = InOr(io, VolumeWeightsExtentU(), 1.0f);
+        const float extentV = InOr(io, VolumeWeightsExtentV(), 1.0f);
+        if (bounded)
+            for (float extent : {extentU, extentV})
+                if (!std::isfinite(extent) || extent <= 0.0f)
+                    return Fail(error, op,
+                                "extents must be finite and positive");
+        detail::PlaneWeightField<VolumeMath>(
+            points, worldToLocal, int(axis), params, &s.weights,
+            bounded ? extentU : 1.0f, bounded ? extentV : 1.0f, bounded,
+            nullptr);
+    } else if (shape == VolumeWeightShape::Sphere) {
+        const Vec3f positive =
+            InOr(io, VolumeWeightsPositiveScale(), Vec3f(1.0f));
+        const Vec3f negative =
+            InOr(io, VolumeWeightsNegativeScale(), Vec3f(1.0f));
+        if (!Positive(positive) || !Positive(negative))
+            return Fail(error, op, "signed scales must be finite and positive");
+        detail::SphereWeightField<VolumeMath>(
+            points, detail::ApplyAxisScales<VolumeMath>(worldToLocal, scale),
+            params, &s.weights, positive, negative, nullptr);
+    } else {
+        const Points *curve = In<Points>(io, VolumeWeightsCurve());
+        if (!curve || !curve->Size())
+            return Fail(error, op, "needs a curve");
+        detail::CurveWeightField<VolumeMath>(
+            points, View{curve->Data(), curve->Size()},
+            detail::ApplyAxisScales<VolumeMath>(worldToLocal, scale), params,
+            &s.weights, &s.localCurve, nullptr);
+    }
+    for (float &weight : s.weights)
+        if (!rigExec::RigExecApplyWeightRangeKernel(clamp, &weight))
+            return Fail(error, op, rigExec::RigExecWeightRangeFailure(clamp));
+    PointWeights &out = Out<PointWeights>(io, VolumeWeightsOut());
+    out.values.Resize(s.weights.size());
+    if (!s.weights.empty())
+        std::memcpy(out.values.Data(), s.weights.data(),
+                    s.weights.size() * sizeof(float));
+    out.indices.Resize(0);
+    out.defaultWeight = 0.0f;
+    out.representation = uint32_t(rigExecRig::WeightRepresentation::Dense);
+    out.rangePolicy = uint32_t(clamp ? rigExecRig::WeightRange::Clamp
+                                     : rigExecRig::WeightRange::Strict);
+    out.valid = 1;
+    return true;
+}
+
+bool
+RunVolumeWeights(const RigExecOpBatch &batch, size_t *failed,
+                 std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return VolumeWeightsOne(batch, k, error);
     });
 }
 
@@ -649,6 +873,122 @@ const rigExec::RigExecOpDesc kVolumePlacement = [] {
     return d;
 }();
 
+const RigExecPortDesc kStaticPorts[] = {
+    {&StaticWeightsValues(), &rigExecStd::FloatArray(), kRigExecPortInput,
+     "values"},
+    {&StaticWeightsIndices(), &rigExecStd::IntArray(), kOptional, "indices"},
+    {&StaticWeightsDefaultWeight(), &rigExecStd::FloatType(), kOptional,
+     "defaultWeight"},
+    {&StaticWeightsOut(), &rigExecRig::PointWeightsType(), kRigExecPortOutput,
+     "out", rigExec::RigExecOutputBound::Input, &StaticWeightsValues()},
+};
+
+const RigExecPortDesc kDynamicPorts[] = {
+    {&DynamicWeightsBase(), &rigExecRig::PointWeightsType(), kOptional, "base"},
+    {&DynamicWeightsDriver(), &rigExecStd::FloatType(), kOptional, "driver"},
+    {&DynamicWeightsScale(), &rigExecStd::FloatType(), kOptional, "scale"},
+    {&DynamicWeightsBias(), &rigExecStd::FloatType(), kOptional, "bias"},
+    {&DynamicWeightsOut(), &rigExecRig::PointWeightsType(), kRigExecPortOutput,
+     "out", rigExec::RigExecOutputBound::Input, &DynamicWeightsBase()},
+};
+
+const RigExecPortDesc kVolumePorts[] = {
+    {&VolumeWeightsFrame(), &rigExecRig::PointFrameType(), kRigExecPortInput,
+     "frame"},
+    {&VolumeWeightsPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "points"},
+    {&VolumeWeightsSamples(), &rigExecStd::Vec3fArray(), kOptional, "samples"},
+    {&VolumeWeightsCurve(), &rigExecStd::Vec3fArray(), kOptional, "curve"},
+    {&VolumeWeightsStrength(), &rigExecStd::FloatType(), kOptional, "strength"},
+    {&VolumeWeightsInvert(), &rigExecStd::FloatType(), kOptional, "invert"},
+    {&VolumeWeightsFalloffMin(), &rigExecStd::FloatType(), kOptional,
+     "falloffMin"},
+    {&VolumeWeightsFalloffMax(), &rigExecStd::FloatType(), kOptional,
+     "falloffMax"},
+    {&VolumeWeightsFalloffSamples(), &rigExecStd::FloatArray(), kOptional,
+     "falloffSamples"},
+    {&VolumeWeightsScale(), &rigExecStd::Vec3fType(), kOptional, "scale"},
+    {&VolumeWeightsPositiveScale(), &rigExecStd::Vec3fType(), kOptional,
+     "positiveScale"},
+    {&VolumeWeightsNegativeScale(), &rigExecStd::Vec3fType(), kOptional,
+     "negativeScale"},
+    {&VolumeWeightsExtentU(), &rigExecStd::FloatType(), kOptional, "extentU"},
+    {&VolumeWeightsExtentV(), &rigExecStd::FloatType(), kOptional, "extentV"},
+    {&VolumeWeightsOut(), &rigExecRig::PointWeightsType(), kRigExecPortOutput,
+     "out", rigExec::RigExecOutputBound::Input, &VolumeWeightsPoints()},
+};
+
+void
+PacketValues(const void *payload, RigExecFieldValues &out)
+{
+    const auto &p = *static_cast<const WeightPacketPayload *>(payload);
+    SetEnum(out, kRepresentation, p.representation);
+    SetFlag(out, kPacketClamp, p.clamp);
+}
+
+void
+VolumeValues(const void *payload, RigExecFieldValues &out)
+{
+    const auto &p = *static_cast<const VolumeWeightsPayload *>(payload);
+    SetEnum(out, kShape, p.shape);
+    SetFlag(out, kVolumeClamp, p.clamp);
+    SetEnum(out, kVolumePlaneAxis, p.planeAxis);
+    SetFlag(out, kVolumePlaneBounded, p.planeBounded);
+}
+
+const rigExec::RigExecFieldDesc kPacketFields[] = {
+    Enum("representation", rigExecRig::WeightRepresentation::Sparse),
+    Flag("clamp"),
+};
+
+const rigExec::RigExecFieldDesc kVolumeFields[] = {
+    Enum("shape", VolumeWeightShape::Curve),
+    Flag("clamp"),
+    Enum("planeAxis", WeightFieldAxis::Z),
+    Flag("planeBounded"),
+};
+
+template <class State>
+rigExec::RigExecOpDesc
+PacketDesc(const char *name, const RigExecPortDesc *ports, size_t count,
+           rigExec::RigExecOpBatchFn runBatch,
+           const rigExec::RigExecFieldDesc *fields, size_t fieldCount,
+           void (*values)(const void *, RigExecFieldValues &))
+{
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = name;
+    d.ports = ports;
+    d.portCount = count;
+    d.runBatch = runBatch;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    d.payloadFields = fields;
+    d.payloadFieldCount = fieldCount;
+    d.payloadVersion = 1;
+    d.payloadValues = values;
+    d.state.size = sizeof(State);
+    d.state.align = alignof(State);
+    d.state.create = [](void *dst) {
+        std::uninitialized_value_construct_n(static_cast<State *>(dst), 1);
+    };
+    d.state.destroy = [](void *dst) {
+        std::destroy_at(static_cast<State *>(dst));
+    };
+    return d;
+}
+
+const rigExec::RigExecOpDesc kStatic = PacketDesc<StaticState>(
+    "StaticWeights", kStaticPorts, std::size(kStaticPorts), &RunStaticWeights,
+    kPacketFields, std::size(kPacketFields), &PacketValues);
+const rigExec::RigExecOpDesc kDynamic =
+    PacketDesc<rigExec::RigExecWeightPacketBuild>(
+        "DynamicWeights", kDynamicPorts, std::size(kDynamicPorts),
+        &RunDynamicWeights, kPacketFields, std::size(kPacketFields),
+        &PacketValues);
+const rigExec::RigExecOpDesc kVolume = PacketDesc<VolumeState>(
+    "VolumeWeights", kVolumePorts, std::size(kVolumePorts), &RunVolumeWeights,
+    kVolumeFields, std::size(kVolumeFields), &VolumeValues);
+
 } // namespace
 
 void
@@ -659,6 +999,9 @@ RegisterWeightOps(rigExec::RigExecOpRegistrar &registrar)
     registrar.Add(PlaneWeight(), kPlane);
     registrar.Add(CurveWeight(), kCurve);
     registrar.Add(CombineWeights(), kCombine);
+    registrar.Add(StaticWeights(), kStatic);
+    registrar.Add(DynamicWeights(), kDynamic);
+    registrar.Add(VolumeWeights(), kVolume);
 }
 
 } // namespace rigExecOps

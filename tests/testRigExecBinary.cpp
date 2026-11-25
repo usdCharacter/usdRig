@@ -1878,13 +1878,37 @@ TestComputedEnvelopeBake()
             const auto &field =
                 file->geometry->weightFields[size_t(fieldIndex)];
             CHECK(field.object == index && uint8_t(field.form) == 1);
+            // Only a weight an envelope reads, or one it composes, makes a
+            // packet node; a constraint reads the weight's field.
+            std::vector<char> packeted(program.weightObjects.size(), 0);
+            std::vector<int> pending;
+            for (const auto &chain : program.chains) {
+                for (const auto &revision : chain.revisions)
+                    pending.push_back(revision.weightObject);
+                for (const auto &derived : chain.derived)
+                    pending.push_back(derived.revision.weightObject);
+            }
+            while (!pending.empty()) {
+                const int w = pending.back();
+                pending.pop_back();
+                if (w < 0 || size_t(w) >= packeted.size() ||
+                    packeted[size_t(w)])
+                    continue;
+                packeted[size_t(w)] = 1;
+                pending.push_back(program.weightObjects[size_t(w)].base);
+                for (const int input : program.weightObjects[size_t(w)].inputs)
+                    pending.push_back(input);
+            }
             size_t producers = 0;
-            for (const auto &step : program.steps)
-                producers += step.kind == RigExecBakedStepKind::WeightPacket &&
-                                     step.object == index
+            for (const auto &step : program.steps) {
+                const RigExecBakedStepIdentity id =
+                    RigExecBakedIdentityOf(program, step);
+                producers += id.kind == RigExecBakedStepKind::WeightPacket &&
+                                     id.object == index
                                  ? 1
                                  : 0;
-            CHECK(producers == 1);
+            }
+            CHECK(producers == size_t(packeted[size_t(index)]));
             CHECK(object.fieldStaticError.empty());
             CHECK(object.fieldPhaseError.empty());
             CHECK(object.defaultWeight->mode == fb::ReadMode::Baked);

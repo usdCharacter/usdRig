@@ -1249,8 +1249,10 @@ _BinaryCompareHeadMemo(const rigExec::RigExecBakedProgramImpl &program,
                 expected.insert(p.GetString());
         }
     };
-    if (live.kind == rigExec::RigExecBakedStepKind::WeightPacket)
-        painted(live.object);
+    const rigExec::RigExecBakedStepIdentity identity =
+        rigExec::RigExecBakedIdentityOf(program, live);
+    if (identity.kind == rigExec::RigExecBakedStepKind::WeightPacket)
+        painted(identity.object);
     if (live.kind == rigExec::RigExecBakedStepKind::WeightField) {
         CHECK(live.object >= 0 &&
               size_t(live.object) < program.weightFields.size());

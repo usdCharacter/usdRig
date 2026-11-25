@@ -2361,8 +2361,10 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
                 if (slot >= 0)
                     slots.push_back(uint32_t(slot));
         };
-        if (step.kind == RigExecBakedStepKind::WeightPacket)
-            paintedSlots(step.object);
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(B, step);
+        if (identity.kind == RigExecBakedStepKind::WeightPacket)
+            paintedSlots(identity.object);
         else if (step.kind == RigExecBakedStepKind::WeightField)
             for (int object : B.weightFields[size_t(step.object)].objects)
                 paintedSlots(object);

@@ -445,7 +445,8 @@ TestInjectedChain()
     CHECK(groups == 10);
     size_t nodes = 0, heads = 0, ranges = 0;
     for (const RigExecBakedStep &step : B.steps) {
-        nodes += step.kind == RigExecBakedStepKind::OpNode;
+        nodes += step.kind == RigExecBakedStepKind::OpNode &&
+                 !RigExecBakedOriginOf(B, step);
         heads += step.kind == RigExecBakedStepKind::OpChainHead;
         ranges += step.kind == RigExecBakedStepKind::OpChainRange;
     }
@@ -616,8 +617,12 @@ TestRuntime(const char *writeTo)
             f.manifest->coreTypes[0]->name = "Missing";
         },
         "Missing v1 is in no type library");
+    // The injected nodes come after the rig's weight packet nodes.
+    const size_t injected = file->opGraph->nodes.size() - 3;
     damaged(
-        [](fb::RigExecWireFile &f) { f.opGraph->nodes[0]->payload.resize(3); },
+        [&](fb::RigExecWireFile &f) {
+            f.opGraph->nodes[injected]->payload.resize(3);
+        },
         "settings do not decode");
     damaged(
         [](fb::RigExecWireFile &f) {
@@ -628,17 +633,21 @@ TestRuntime(const char *writeTo)
         },
         "node 9 out of range");
     damaged(
-        [](fb::RigExecWireFile &f) {
-            f.opGraph->nodes[0]->inputs[0]->port = 40;
+        [&](fb::RigExecWireFile &f) {
+            f.opGraph->nodes[injected]->inputs[0]->port = 40;
         },
         "has no input port 40");
-    damaged([](fb::RigExecWireFile &f) { f.opGraph->nodes[0]->op = 7; },
+    damaged([&](fb::RigExecWireFile &f) { f.opGraph->nodes[injected]->op = 7; },
             "past manifest core_ops");
-    damaged([](fb::RigExecWireFile &f) { f.opGraph->order.emplace_back(2, 0); },
-            "cycle");
     damaged(
-        [](fb::RigExecWireFile &f) {
-            for (auto &input : f.opGraph->nodes[2]->inputs)
+        [&](fb::RigExecWireFile &f) {
+            f.opGraph->order.emplace_back(uint32_t(injected + 2),
+                                          uint32_t(injected));
+        },
+        "cycle");
+    damaged(
+        [&](fb::RigExecWireFile &f) {
+            for (auto &input : f.opGraph->nodes[injected + 2]->inputs)
                 if (input->host == 3)
                     input->constant.resize(3);
         },
@@ -744,6 +753,18 @@ struct GroupHost {
                               std::string *error)
     {
         *error = "no volume placements";
+        return false;
+    }
+    bool LookUpWeight(uint32_t, const eval::OpLookup &, const RigExecTypeDesc &,
+                      void *, std::string *error)
+    {
+        *error = "no weight objects";
+        return false;
+    }
+    bool StoreWeightPacket(const eval::OpHostOutput &, const void *,
+                           std::string *error)
+    {
+        *error = "no weight packets";
         return false;
     }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t g,
@@ -906,9 +927,9 @@ TestHostLookupsAndGroupOutputs()
     refused(
         [](eval::OpStepLayout *bad) {
             bad->lookups[0].source =
-                uint8_t(eval::OpLookupSource::WeightArrays);
+                uint8_t(eval::OpLookupSource::ChainVersion);
         },
-        "reads lookup source 2, which no host resolves");
+        "reads lookup source 3, which no host resolves");
     refused(
         [&](eval::OpStepLayout *bad) {
             bad->hostInputs[1].source = eval::OpHostSource::Lookup;

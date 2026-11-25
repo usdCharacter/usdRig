@@ -619,7 +619,13 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// OpGraph.lookups source 1 entry, and its placement is stored through
 /// OpGraph.host_outputs targets 1 and 2. It retires the VolumePlacements
 /// step.
-inline constexpr uint32_t RigExecFormatVersion = 38;
+///
+/// Format 39 builds each weight object's packet by a StaticWeights,
+/// DynamicWeights, CombineWeights or VolumeWeights op node (OpNode steps):
+/// its inputs read the weight object through OpGraph.lookups source 2, a
+/// volume's frame through source 1, and its packet is stored through
+/// OpGraph.host_outputs target 3. It retires the WeightPacket step.
+inline constexpr uint32_t RigExecFormatVersion = 39;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -627,7 +633,7 @@ inline constexpr uint32_t RigExecFormatVersion = 38;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 38;
+inline constexpr uint32_t RigExecFormatOldestReadable = 39;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

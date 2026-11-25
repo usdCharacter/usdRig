@@ -2623,31 +2623,31 @@ TestEpilogueSharesPublications()
     CHECK(result.Read()[0] == RrVec3f(4, 5, 6));
 }
 
-// A current-phase field the oracle fails to resolve: the combine's
-// strength 2 lifts the rest-pose field past 1 under its strict range
-// policy at frame 4. The revision then holds an empty packet and the
-// generation the program's own diagnostic, compared verbatim by the parity
-// path.
+// The combine's strength 2 lifts its packet past 1 under its strict range
+// policy: the packet is a declared input of the current-phase revision, so
+// every frame stops with the packet's error and the rig does not bake.
 static void
 TestCurrentPhaseFailure()
 {
     const char *const name = "current phase, failed resolve";
-    const std::vector<double> frames = {1, 2, 3, 4};
-    _TestStage(name, _CurrentPhaseThroughCombineStage(2.0f), frames);
-    std::vector<std::vector<std::string>> diagnostics;
+    const UsdStageRefPtr stage = _CurrentPhaseThroughCombineStage(2.0f);
+    RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+    for (const double frame : {1.0, 4.0}) {
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(frame));
+        CHECK(!pose.valid);
+        CHECK(std::any_of(
+            pose.diagnostics.begin(), pose.diagnostics.end(),
+            [](const std::string &line) {
+                return line.rfind("/Asset/Rig/Weights/Wrapped: node ", 0) ==
+                           0 &&
+                       line.find("CombineWeights: a weight is "
+                                 "not finite or outside [0, 1]") !=
+                           std::string::npos;
+            }));
+    }
+    std::vector<uint8_t> bytes;
     std::string error;
-    CHECK(_RunDiagnostics(_CurrentPhaseThroughCombineStage(2.0f), frames,
-                          &diagnostics, &error));
-    if (!error.empty()) {
-        std::printf("%s: %s\n", name, error.c_str());
-    }
-    const std::string failed = "current-phase weight failed: strict range "
-                               "violation on /Asset/Rig/Weights/Wrapped";
-    CHECK(diagnostics.size() == frames.size());
-    if (diagnostics.size() == frames.size()) {
-        CHECK(!_HasLine(diagnostics[0], failed));
-        CHECK(_HasLine(diagnostics[3], failed));
-    }
+    CHECK(!RigExecTestBakeAt(evaluator, 1, &bytes, &error));
     std::printf("%s: checked\n", name);
 }
 
@@ -3387,18 +3387,18 @@ TestOraclePointsSet()
     std::unique_ptr<RigExecRuntimeReader> fewer =
         _ArrayReader(name, RigExecTestListPrivateArraySlots(bytes));
     if (fewer) {
+        // One point fewer stops the frame with the volume's error.
         VtVec3fArray shorter(points.begin(), points.end() - 1);
-        matched +=
-            _ArraySetsMatch(name, "sampled, one point fewer", stage, rigPath,
-                            fewer.get(), {{sampler, VtValue(shorter), true}});
-        const std::string failed =
-            "current-phase weight failed: /Asset/Rig/Weights/Plane: "
-            "sampled point count does not match the target";
-        const std::vector<std::string> &lines = fewer->GetDiagnostics();
-        CHECK(std::find(lines.begin(), lines.end(), failed) != lines.end());
+        std::string error;
+        CHECK(RigExecTestApplyArraySets(
+            fewer.get(), {{sampler, VtValue(shorter), true}}, &error));
+        CHECK(!fewer->Execute(&error));
+        CHECK(error.rfind("/Asset/Rig/Weights/Plane: node ", 0) == 0 &&
+              error.find("VolumeWeights: sampled point count does not match "
+                         "the target") != std::string::npos);
     }
-    std::printf("%s: %d of 2 sets == session edit\n", name, matched);
-    CHECK(matched == 2);
+    std::printf("%s: %d of 1 set == session edit\n", name, matched);
+    CHECK(matched == 1);
 }
 
 // The oracle's sample points are the attribute the oracle resolves its
@@ -3569,11 +3569,6 @@ TestStageArrayOracleAndChain()
                           SdfPath("/Asset/Rig/Joints/Lift.avars:ty"))
                       .Get(&precedingLift, UsdTimeCode(1)) &&
                   precedingLift != 0.0);
-            // The Mix is current-phase through its preceding Sphere. Plane's
-            // canonical fallback is the raw base, apart from First's lift.
-            CHECK(stage->GetPrimAtPath(SdfPath("/Asset/Rig/Weights/Plane"))
-                      .GetRelationship(TfToken("rigExec:weightTarget"))
-                      .SetTargets({fallbackPath.GetPrimPath()}));
         }
         std::vector<uint8_t> bytes;
         std::string error;
@@ -3655,7 +3650,7 @@ TestStageArrayOracleAndChain()
                               RigExecFormatPathText(*file,
                                                     object.targetPoints[0]) ==
                                   fallbackPath.GetString() &&
-                              object.targetValid == std::vector<uint8_t>{0});
+                              object.targetValid == std::vector<uint8_t>{1});
                     }
                 }
             }
@@ -3681,28 +3676,36 @@ TestStageArrayOracleAndChain()
             bool sampled = false;
             CHECK(sampler.Apply(UsdTimeCode(time), reader.get(), &error,
                                 &sampled));
-            CHECK(reader->Execute(&error));
+            std::string failure;
+            const bool ran = reader->Execute(&failure);
             CHECK(reader->GetInputCount() == publicCount);
             {
+                // An invalid volume input stops the frame in both evaluators
+                // with the same error.
                 RigExecRigPose pose;
-                CHECK(RigExecTestArrayReference(stage, rigPath, {}, time, &pose,
-                                                &error));
-                std::vector<std::string> diffs;
-                CHECK(RigExecCompareRuntimeRun(pose, *reader, &diffs));
-                for (const auto &diff : diffs) {
-                    std::printf("  %s at %.0f: %s\n", name, time, diff.c_str());
+                const bool referenced = RigExecTestArrayReference(
+                    stage, rigPath, {}, time, &pose, &error);
+                if (!ran) {
+                    CHECK(!referenced && !pose.valid &&
+                          _HasLine(pose.diagnostics, failure));
+                } else {
+                    CHECK(referenced);
+                    std::vector<std::string> diffs;
+                    CHECK(RigExecCompareRuntimeRun(pose, *reader, &diffs));
+                    for (const auto &diff : diffs)
+                        std::printf("  %s at %.0f: %s\n", name, time,
+                                    diff.c_str());
                 }
             }
             if (privateOracle) {
-                const auto &lines = reader->GetDiagnostics();
                 if (curveOracle) {
-                    const std::string curveFailure =
-                        "current-phase weight failed: "
-                        "/Asset/Rig/Weights/Curve: "
-                        "rigExec:curve must name exactly one points source";
-                    CHECK(_HasLine(lines, curveFailure) ==
-                          (time == 4 || time == 5));
+                    CHECK(ran == !(time == 4 || time == 5));
+                    if (!ran)
+                        CHECK(failure.rfind("/Asset/Rig/Weights/Curve: node ",
+                                            0) == 0);
                 } else {
+                    const auto &lines = reader->GetDiagnostics();
+                    CHECK(ran);
                     CHECK(_HasLine(lines, countFailure) ==
                           (time == 3 || time == 4));
                     // A blocked primary sampleSource falls back to raw
@@ -3732,6 +3735,37 @@ TestStageArrayOracleAndChain()
             "%s: original slot, 7 frames incl short/empty/missing/recovery\n",
             name);
     }
+}
+
+// A volume weight whose weightTarget names a prim, not points, weighs no
+// points: compile refuses the rig, so nothing evaluates or bakes.
+static void
+TestVolumeTargetWithoutPointsRefused()
+{
+    _MixOptions options;
+    options.animatedSampler = true;
+    options.samplerPrim = true;
+    const UsdStageRefPtr stage = _VolumeMixStage(options);
+    const SdfPath rigPath("/Asset/Rig");
+    CHECK(stage->GetPrimAtPath(SdfPath("/Asset/Rig/Weights/Plane"))
+              .GetRelationship(TfToken("rigExec:weightTarget"))
+              .SetTargets({SdfPath("/Asset/Geom/M")}));
+    const std::string refusal =
+        "/Asset/Rig/Weights/Plane: the volume weighs no target points";
+    RigExecRigEvaluator evaluator(stage, rigPath);
+    std::vector<std::string> errors;
+    evaluator.Compile(&errors);
+    CHECK(!evaluator.GetBakedProgram());
+    const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(1.0));
+    CHECK(!pose.valid);
+    CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                      [&](const std::string &line) {
+                          return line.find(refusal) != std::string::npos;
+                      }));
+    std::vector<uint8_t> bytes;
+    std::string error;
+    CHECK(!RigExecTestBakeAt(evaluator, 1, &bytes, &error));
+    std::printf("volume target without points: refused\n");
 }
 
 // docs/examples/skin_mover.usda's two skins, whose layouts hold a mid-row
@@ -5349,6 +5383,7 @@ main(int argc, char **argv)
     TestOraclePointsSet();
     TestOracleSlotIsCanonical();
     TestStageArrayOracleAndChain();
+    TestVolumeTargetWithoutPointsRefused();
     TestDynamicSupportFromSlots();
     TestEmptyPlaneAxis();
     TestAnimatedStaticPointsReported();

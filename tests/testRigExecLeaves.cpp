@@ -320,6 +320,43 @@ RunChecked(RigExecRigEvaluator *evaluator,
     return pose;
 }
 
+// A drag that makes the dragged weight object's packet invalid stops the
+// frame with that packet's error; any other drag runs as RunChecked.
+bool
+FailsAtItsPacket(const RigExecRigPose &pose, const SdfPath &weight)
+{
+    const std::string prefix = weight.GetPrimPath().GetString() + ": node ";
+    return !pose.valid &&
+           std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                       [&](const std::string &line) {
+                           return line.rfind(prefix, 0) == 0 &&
+                                  line.find("Weights) failed: ") !=
+                                      std::string::npos;
+                       });
+}
+
+void
+RunCheckedOrFailsAtItsPacket(RigExecRigEvaluator *evaluator,
+                             const std::vector<RigExecValueOverride> &drag,
+                             UsdTimeCode time, const std::string &what,
+                             const SdfPath &weight)
+{
+    evaluator->SetInteractiveOverrides(drag);
+    const size_t generations = evaluator->GetBakedGenerationCount();
+    const RigExecRigPose pose = evaluator->Evaluate(time);
+    if (FailsAtItsPacket(pose, weight))
+        return;
+    CHECK(pose.valid);
+    CHECK(pose.comparisonMismatches == 0);
+    CHECK(evaluator->GetBakedGenerationCount() == generations + 1);
+    const size_t mismatches = LeafMismatches(*evaluator, drag, time, what);
+    if (mismatches) {
+        std::printf("FAIL %s: %zu leaf/read mismatch(es)\n", what.c_str(),
+                    mismatches);
+    }
+    CHECK(mismatches == 0);
+}
+
 template <class T>
 RigExecValueOverride
 DragOf(const SdfPath &property, T value)
@@ -828,9 +865,13 @@ CheckBodyLeavesEqualTheFunnel(const Fixture &f, const UsdStageRefPtr &stage,
             if (drag.empty()) {
                 return;
             }
-            RunChecked(evaluator, drag, t,
-                       name + " " + kind + " " + path.GetString() + " at " +
-                           Text(t.GetValue()));
+            const std::string what = name + " " + kind + " " +
+                                     path.GetString() + " at " +
+                                     Text(t.GetValue());
+            if (std::string(kind) == "weight object")
+                RunCheckedOrFailsAtItsPacket(evaluator, drag, t, what, path);
+            else
+                RunChecked(evaluator, drag, t, what);
         }
         RunChecked(evaluator, {}, frames.back(),
                    name + " lifted " + kind + " " + path.GetString());
@@ -2869,7 +2910,8 @@ TestNoBodyReadsTheStage(const std::string &examples)
             evaluator->SetInteractiveOverrides(drag);
             const size_t generations = evaluator->GetBakedGenerationCount();
             const RigExecRigPose pose = evaluator->Evaluate(t);
-            CHECK(pose.valid);
+            CHECK(pose.valid ||
+                  (!drag.empty() && FailsAtItsPacket(pose, drag.front().prim)));
             ++fixtureRuns;
             if (evaluator->GetBakedGenerationCount() == generations + 1) {
                 ++fixtureBaked;

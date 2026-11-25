@@ -117,6 +117,17 @@ struct RrOpHost {
     {
         return RrStoreVolumePlacement(&p, output, value, error);
     }
+    bool LookUpWeight(uint32_t, const eval::OpLookup &lookup,
+                      const RigExecTypeDesc &type, void *value,
+                      std::string *error) const
+    {
+        return RrLookUpWeight(&p, lookup, type, value, error);
+    }
+    bool StoreWeightPacket(const eval::OpHostOutput &output, const void *value,
+                           std::string *error) const
+    {
+        return RrStoreWeightPacket(&p, output, value, error);
+    }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t, const void *,
                     size_t, std::string *error) const
     {
@@ -260,6 +271,7 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
             {lookup->source, lookup->object, lookup->part, lookup->read});
     nodes->propertyChain.assign(graph.nodes.size(), kRigExecInvalidIndex);
     nodes->propertyPart.assign(graph.nodes.size(), kRigExecInvalidIndex);
+    nodes->weightObject.assign(graph.nodes.size(), kRigExecInvalidIndex);
     for (const auto &output : graph.hostOutputs) {
         if (output->node >= graph.nodes.size())
             return Fail(error, "a stored value names no node");
@@ -273,6 +285,8 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
         if (!(desc.ports[output->port].flags & kRigExecPortOutput))
             continue;
         builder.BindOutput(output->node, *desc.ports[output->port].port);
+        if (output->target == uint8_t(eval::OpOutputTarget::WeightPacket))
+            nodes->weightObject[output->node] = output->object;
         size_t chain = 0, part = 0;
         if (output->target == uint8_t(eval::OpOutputTarget::PropertyVersion) &&
             RrPropertyPartOfVersion(p, output->object, &chain, &part) &&
@@ -325,6 +339,14 @@ RrRunOpStep(RrProgram *p, size_t i, std::string *error)
     size_t chain = 0, part = 0;
     if (error && RrPropertyPartOf(p, step, &chain, &part))
         *error = RrPropertyRevisionLabel(p, chain, part) + ": " + *error;
+    else if (error && step.kind == RigExecWireStepKind::OpNode &&
+             step.object >= 0 &&
+             size_t(step.object) < nodes->weightObject.size()) {
+        const uint32_t object = nodes->weightObject[size_t(step.object)];
+        if (p->geometry && object < p->geometry->weightObjects.size())
+            *error = p->TextOrEmpty(p->geometry->weightObjects[object].path) +
+                     ": " + *error;
+    }
     return false;
 }
 

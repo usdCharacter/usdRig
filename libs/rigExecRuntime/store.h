@@ -736,7 +736,7 @@ struct RrProgram {
     const RigExecWireConstants *constants = nullptr;
     const RigExecWireDomainPose *poses = nullptr;
     const RigExecWireDomainGeometry *geometry = nullptr;
-    /// The weight objects WeightPacket steps build: the leading entries of
+    /// The weight objects weight packet op steps build: the leading entries of
     /// geometry->weightObjects, before the envelope-only ones.
     size_t stepWeightObjects = 0;
     /// Each path node's text, by id: one pass, a parent before its child.
@@ -1035,6 +1035,13 @@ bool RrLookUpPoseVersion(const RrProgram *program, const eval::OpLookup &lookup,
 bool RrStoreVolumePlacement(RrProgram *program,
                             const eval::OpHostOutput &output, const void *value,
                             std::string *error);
+/// Resolves WeightArrays lookup \p lookup: input \p lookup.read of weight
+/// object \p lookup.object, an array lent in place.
+bool RrLookUpWeight(const RrProgram *program, const eval::OpLookup &lookup,
+                    const RigExecTypeDesc &type, void *out, std::string *error);
+/// Stores a weight packet op's packet as weightPackets[output.object].
+bool RrStoreWeightPacket(RrProgram *program, const eval::OpHostOutput &output,
+                         const void *value, std::string *error);
 /// "diag <mover>" of revision \p part (from 1) of \p chain.
 std::string RrPropertyRevisionLabel(const RrProgram *program, size_t chain,
                                     size_t part);

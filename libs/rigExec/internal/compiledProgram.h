@@ -951,7 +951,9 @@ enum class RigExecBakedStepKind {
     /// identity, its object a volume's provider slot, part 1 the final
     /// placement and 2 the base one.
     VolumePlacements,
-    WeightPacket,   ///< one weight object's packet, built once per frame
+    /// Never a step's kind: a weight packet op node keeps it as its
+    /// identity, its object an index into weightObjects.
+    WeightPacket,
     InfluenceFold,  ///< one revision's influence table
     RevisionStatic, ///< one revision's packet, status and executed decision
     RevisionChunk,  ///< one vertex range of one revision
@@ -1051,7 +1053,6 @@ struct RigExecBakedStep {
     ///     PropagateChunk/CommitApply                index into commits
     ///   ProviderMatrix                              provider slot
     ///   PoseInterpolator                            index into poseInterpolators
-    ///   WeightPacket                                index into weightObjects
     ///   InfluenceFold/RevisionStatic/
     ///     RevisionChunk/RevisionFuse                index into revisionIndex
     ///   ChainStatus                                 index into chains

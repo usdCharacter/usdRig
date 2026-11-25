@@ -1,12 +1,13 @@
 #ifndef RIGEXEC_OPS_WEIGHT_WEIGHT_OPS_H
 #define RIGEXEC_OPS_WEIGHT_WEIGHT_OPS_H
 
-/// The volume weight producers: sphere, plane and curve fields over a target's
-/// points, in the volume's rigid local space, and the ordered combine of
-/// weights. The field kernel is rigExecMath/weightFieldKernel.h and the combine
-/// rigExecEvalCore/weights.h.
+/// The weight producers: sphere, plane and curve fields over a target's
+/// points, in the volume's rigid local space; the painted, remapped, volume
+/// and combined weight packets; and the ordered combine of weights. The
+/// kernels are rigExecMath/weightFieldKernel.h and rigExecEvalCore/weights.h.
 
 #include "rigExecOps/library.h"
+#include "rigExecRigTypes/rigTypes.h"
 
 #include <cstdint>
 #include <vector>
@@ -107,6 +108,90 @@ const rigExec::RigExecPortHandle &CurveWeightCurve();
 const rigExec::RigExecOpHandle &VolumePlacement();
 const rigExec::RigExecPortHandle &VolumePlacementFrame();
 const rigExec::RigExecPortHandle &VolumePlacementOut();
+
+/// The settings of a weight packet op: its packet's representation and
+/// whether out-of-range weights clamp (true) or fail the op (false).
+struct WeightPacketPayload {
+    rigExecRig::WeightRepresentation representation =
+        rigExecRig::WeightRepresentation::Constant;
+    bool clamp = false;
+
+    bool operator==(const WeightPacketPayload &o) const
+    {
+        return representation == o.representation && clamp == o.clamp;
+    }
+};
+
+/// A painted packet: Values (FloatArray), at Indices (IntArray, optional)
+/// for a sparse packet, which come out sorted, and DefaultWeight (Float, 0),
+/// to Out (PointWeights). A sparse packet whose values and indices differ in
+/// length or repeat an index, a dense one whose default is not 0, or a
+/// weight outside the range policy is an error.
+const rigExec::RigExecOpHandle &StaticWeights();
+const rigExec::RigExecPortHandle &StaticWeightsValues();
+const rigExec::RigExecPortHandle &StaticWeightsIndices();
+const rigExec::RigExecPortHandle &StaticWeightsDefaultWeight();
+const rigExec::RigExecPortHandle &StaticWeightsOut();
+
+/// A remapped packet: each weight w of Base (PointWeights, optional) as
+/// (w * Driver) * Scale + Bias (Float; 1, 1, 0) to Out (PointWeights).
+/// Without a base the packet is constant, its weight Driver * Scale + Bias.
+/// A base of another representation, a missing base for a packet that is
+/// not constant, or a weight outside the range policy is an error.
+const rigExec::RigExecOpHandle &DynamicWeights();
+const rigExec::RigExecPortHandle &DynamicWeightsBase();
+const rigExec::RigExecPortHandle &DynamicWeightsDriver();
+const rigExec::RigExecPortHandle &DynamicWeightsScale();
+const rigExec::RigExecPortHandle &DynamicWeightsBias();
+const rigExec::RigExecPortHandle &DynamicWeightsOut();
+
+enum class VolumeWeightShape : uint8_t { Sphere, Plane, Curve };
+
+/// What a VolumeWeights op is configured with at compile.
+struct VolumeWeightsPayload {
+    VolumeWeightShape shape = VolumeWeightShape::Sphere;
+    /// Out-of-range weights clamp (true) or fail the op (false).
+    bool clamp = false;
+    /// Plane: as WeightFieldPayload's.
+    WeightFieldAxis planeAxis = WeightFieldAxis::Z;
+    bool planeBounded = false;
+
+    bool operator==(const VolumeWeightsPayload &o) const
+    {
+        return shape == o.shape && clamp == o.clamp &&
+               planeAxis == o.planeAxis && planeBounded == o.planeBounded;
+    }
+};
+
+/// A volume's dense packet over the target's Points (Vec3fArray), or over
+/// Samples (Vec3fArray, optional) when they are not empty and as many: the
+/// shape's field, in the rigid local space of the volume placed by Frame
+/// (PointFrame), remapped through Strength, Invert, FalloffMin and
+/// FalloffMax (Float; 1, 0, 0, 1) and FalloffSamples (FloatArray, optional;
+/// fewer than two is linear), to Out (PointWeights). Sphere and Curve:
+/// Scale (Vec3f, 1) divides the local axes; Sphere: PositiveScale and
+/// NegativeScale (Vec3f, 1) by the coordinate's sign; Curve: Curve
+/// (Vec3fArray, in the points' space); Plane: ExtentU and ExtentV (Float,
+/// 1) when bounded. A frame that places nothing invertible, no points,
+/// samples of another count, a scale or extent that is not finite and
+/// positive, an empty curve, or a weight outside the range policy is an
+/// error.
+const rigExec::RigExecOpHandle &VolumeWeights();
+const rigExec::RigExecPortHandle &VolumeWeightsFrame();
+const rigExec::RigExecPortHandle &VolumeWeightsPoints();
+const rigExec::RigExecPortHandle &VolumeWeightsSamples();
+const rigExec::RigExecPortHandle &VolumeWeightsCurve();
+const rigExec::RigExecPortHandle &VolumeWeightsStrength();
+const rigExec::RigExecPortHandle &VolumeWeightsInvert();
+const rigExec::RigExecPortHandle &VolumeWeightsFalloffMin();
+const rigExec::RigExecPortHandle &VolumeWeightsFalloffMax();
+const rigExec::RigExecPortHandle &VolumeWeightsFalloffSamples();
+const rigExec::RigExecPortHandle &VolumeWeightsScale();
+const rigExec::RigExecPortHandle &VolumeWeightsPositiveScale();
+const rigExec::RigExecPortHandle &VolumeWeightsNegativeScale();
+const rigExec::RigExecPortHandle &VolumeWeightsExtentU();
+const rigExec::RigExecPortHandle &VolumeWeightsExtentV();
+const rigExec::RigExecPortHandle &VolumeWeightsOut();
 
 /// Folds Inputs (PointWeights list, optional) in feed order, then applies
 /// optional Invert (Float, 0) and Strength (Float, 1) to Out (PointWeights,

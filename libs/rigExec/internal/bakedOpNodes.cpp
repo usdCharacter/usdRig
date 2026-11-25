@@ -82,6 +82,17 @@ struct BakedOpHost {
     {
         return RigExecBakedStoreVolumePlacement(B, output, value, error);
     }
+    bool LookUpWeight(uint32_t, const eval::OpLookup &lookup,
+                      const RigExecTypeDesc &type, void *value,
+                      std::string *error) const
+    {
+        return RigExecBakedLookUpWeight(B, lookup, type, value, error);
+    }
+    bool StoreWeightPacket(const eval::OpHostOutput &output, const void *value,
+                           std::string *error) const
+    {
+        return RigExecBakedStoreWeightPacket(B, output, value, error);
+    }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t, const void *,
                     size_t, std::string *error) const
     {
@@ -391,6 +402,8 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
     if (!RigExecBakedAddPropertyOps(B, &builder, &layout, error))
         return false;
     RigExecBakedAddVolumePlacementOps(B, &builder, &layout);
+    if (!RigExecBakedAddWeightPacketOps(B, &builder, &layout, error))
+        return false;
     RigExecBakedOpInjection injection;
     injection.builder = &builder;
     const bool injected = gOpInjector && gOpInjector(B, &injection);
@@ -531,10 +544,17 @@ RigExecBakedRunOpStep(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
                         step->part, &error))
         return;
     step->failed = true;
-    step->diagnostics.push_back(
-        property ? B.propertyChains[chain].revisions[part - 1].linePrefix +
-                       ": " + error
-                 : error);
+    const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(B, *step);
+    if (property)
+        step->diagnostics.push_back(
+            B.propertyChains[chain].revisions[part - 1].linePrefix + ": " +
+            error);
+    else if (origin && origin->family == RigExecBakedOpFamily::WeightPacket)
+        step->diagnostics.push_back(
+            B.weightObjects[size_t(origin->object)].path.GetString() + ": " +
+            error);
+    else
+        step->diagnostics.push_back(error);
 }
 
 bool

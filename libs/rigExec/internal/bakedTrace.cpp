@@ -192,10 +192,12 @@ RigExecBakedProgram::_GetCycleSkips(
     for (const auto &step : B.excludedSteps) {
         Member member;
         member.step = &step;
-        if (step.object < 0)
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(B, step);
+        if (identity.object < 0)
             continue;
-        const size_t object = size_t(step.object);
-        switch (step.kind) {
+        const size_t object = size_t(identity.object);
+        switch (identity.kind) {
         case K::Solve:
             member.owner = B.solvers[object].path;
             member.solver = member.pose = true;

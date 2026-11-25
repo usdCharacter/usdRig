@@ -996,18 +996,19 @@ ProbeDerived(const B &b)
 }
 
 // WeightPacket: a combine weight's packet from the packets, target count,
-// strength and invert the body read. Other weight kinds have no op.
+// strength and invert its op node read, through the scene's combine runner.
 void
 ProbeWeights(const B &b)
 {
-    for (const auto &step : b.steps) {
+    for (const auto &bakedStep : b.steps) {
+        const RigExecBakedStepIdentity step =
+            RigExecBakedIdentityOf(b, bakedStep);
         if (step.kind != RigExecBakedStepKind::WeightPacket)
             continue;
         const auto &w = b.weightObjects[size_t(step.object)];
         const std::string kind = TypeName(w.type);
         if (kind != SchemaTypeName::RigExecCombineWeight) {
-            Unprobed("WeightPacket", kind,
-                     "no op (CombineWeights is the only weight-packet op)");
+            Unprobed("WeightPacket", kind, "the scene runs no op of this kind");
             continue;
         }
         RigExecWeightRecord record;

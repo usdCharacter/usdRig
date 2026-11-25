@@ -24,8 +24,8 @@ bump here, and update the pinned sidecars.
 
 | Contract | Value | Defined in | Enforced by |
 |---|---|---|---|
-| `.rigexec` format (writer) | **38** | `RigExecFormatVersion` in `libs/rigExecBinary/format.h` | every bake stamps it |
-| `.rigexec` format (reader) | **38** | `RigExecFormatOldestReadable` in `libs/rigExecBinary/format.h` | `libs/rigExecBinary/format.cpp` refuses others at open with a re-export suggestion; a `static_assert` pins the oldest readable, and `tests/testRigExecFormat.cpp` and `tests/testRigExecRuntimeLoader.cpp` pin the accepted range |
+| `.rigexec` format (writer) | **39** | `RigExecFormatVersion` in `libs/rigExecBinary/format.h` | every bake stamps it |
+| `.rigexec` format (reader) | **39** | `RigExecFormatOldestReadable` in `libs/rigExecBinary/format.h` | `libs/rigExecBinary/format.cpp` refuses others at open with a re-export suggestion; a `static_assert` pins the oldest readable, and `tests/testRigExecFormat.cpp` and `tests/testRigExecRuntimeLoader.cpp` pin the accepted range |
 | Mover plugin API | **8** | `RigExecMoverPluginApiVersion` in `libs/rigExec/api/moverRegistry.h` | the loader (`moverRegistry.cpp`) rejects a plugin whose metadata `RigExecMoverPlugin` value differs; `cmake/rigExecMoverPlugin.cmake` stamps the same number into plugin metadata |
 | External-mover wire type IDs | plain API4 IDs, pinned | `RigExecExternalInputType` in `libs/rigExecBinary/external.h` | the format's `InputTag` numeric inventory; IDs never renumber |
 
@@ -81,9 +81,10 @@ in usdRig history.
 | 35 | 2026-11-23 | op nodes run through the op core |
 | 36 | 2026-11-24 | op nodes as steps of the common schedule |
 | 37 | 2026-11-25 | property revisions as op nodes reading the rig through lookups |
-| 38 | 2026-11-25 | volume placements as op nodes reading pose versions through lookups; **oldest readable from here on** |
+| 38 | 2026-11-25 | volume placements as op nodes reading pose versions through lookups |
+| 39 | 2026-11-25 | weight packets as op nodes reading weight arrays through lookups; **oldest readable from here on** |
 
-Versions 6 and 11–16 never appeared on `main`. Files written before version 38
+Versions 6 and 11–16 never appeared on `main`. Files written before version 39
 are outside every current reader: re-export them.
 
 ## Mover plugin API history

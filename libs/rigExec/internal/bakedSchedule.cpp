@@ -2327,11 +2327,6 @@ RouteBakedStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
         RigExecBakedRunAvarOp(B, step);
     } else if (step->kind == RigExecBakedStepKind::WeightField) {
         RigExecBakedRunWeightField(B, step);
-    } else if (step->kind == RigExecBakedStepKind::WeightPacket) {
-        // Neither half's: a weight object is bound by movers and by
-        // constraints, so its packet is built between the two rather than
-        // inside either (bakedWeights.cpp).
-        RigExecBakedRunWeightStep(B, step, time);
     } else if (RigExecBakedIsOpStep(step->kind)) {
         RigExecBakedRunOpStep(B, step);
     } else if (RigExecBakedIsGeometryStep(step->kind)) {

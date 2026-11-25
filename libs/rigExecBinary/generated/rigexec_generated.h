@@ -1186,7 +1186,9 @@ enum class StepKind : uint8_t {
   /// Reserved: a volume placement before format 38, which runs as an
   /// OpNode step since. Open refuses it.
   ReservedVolumePlacements = 10,
-  WeightPacket = 11,
+  /// Reserved: a weight object's packet before format 39, which runs as an
+  /// OpNode step since. Open refuses it.
+  ReservedWeightPacket = 11,
   InfluenceFold = 12,
   RevisionStatic = 13,
   RevisionChunk = 14,
@@ -1231,7 +1233,7 @@ inline const StepKind (&EnumValuesStepKind())[33] {
     StepKind::SnapshotFinals,
     StepKind::PoseInterpolator,
     StepKind::ReservedVolumePlacements,
-    StepKind::WeightPacket,
+    StepKind::ReservedWeightPacket,
     StepKind::InfluenceFold,
     StepKind::RevisionStatic,
     StepKind::RevisionChunk,
@@ -1270,7 +1272,7 @@ inline const char * const *EnumNamesStepKind() {
     "SnapshotFinals",
     "PoseInterpolator",
     "ReservedVolumePlacements",
-    "WeightPacket",
+    "ReservedWeightPacket",
     "InfluenceFold",
     "RevisionStatic",
     "RevisionChunk",
@@ -5588,7 +5590,7 @@ struct Step FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   /// What the step works on, by kind: a compose group, a solver, a commit,
   /// a provider slot (ProviderMatrix),
-  /// a pose interpolator, a weight object, a revision id, a chain, a
+  /// a pose interpolator, a revision id, a chain, a
   /// derived id, or a pose.frame_records index (FrameMatrix).
   int32_t object() const {
     return GetField<int32_t>(VT_OBJECT, -1);
@@ -21957,7 +21959,8 @@ struct OpNodeInput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_OBJECT = 12,
     VT_CONSTANT = 14
   };
-  /// The fed port: its index in the op's port list.
+  /// The fed port: its index in the op's port list. A port taking many
+  /// values has one entry per value, in order.
   uint32_t port() const {
     return GetField<uint32_t>(VT_PORT, 0);
   }
@@ -22419,6 +22422,13 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// weight, 3 value, 4 min, 5 max, 6 keys, 7 tangents, 8 path points.
   /// 1 (format 38): the pose frame of fin (`part` 0) or base (`part` 1)
   /// version `object`.
+  /// 2 (format 39): input `read` of weight object `object`
+  /// (geometry.weight_objects index; `part` -1): 0 defaultWeight, 1
+  /// driver, 2 scale, 3 bias, 4 strength, 5 invert, 6 falloffMin, 7
+  /// falloffMax, 8 the x, y, z scales, 9 the positive and 10 the negative
+  /// scales, 11 extentU, 12 extentV, 13 values, 14 indices, 15 sample, 16
+  /// target and 17 curve points, 18 the falloff samples, 19 the combine
+  /// target point count.
   uint8_t source() const {
     return GetField<uint8_t>(VT_SOURCE, 0);
   }
@@ -22523,7 +22533,8 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return GetField<uint32_t>(VT_PORT, 0);
   }
   /// 0: property version `object`; 1 and 2 (format 38): the final and
-  /// the base placement of volume slot `object`.
+  /// the base placement of volume slot `object`; 3 (format 39): the
+  /// packet of weight object `object`.
   uint8_t target() const {
     return GetField<uint8_t>(VT_TARGET, 0);
   }

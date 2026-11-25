@@ -67,8 +67,7 @@ _RrGetenvBool(const char *name, bool fallback)
 bool
 _RrIsWeightKind(RigExecWireStepKind kind)
 {
-    return kind == RigExecWireStepKind::WeightField ||
-           kind == RigExecWireStepKind::WeightPacket;
+    return kind == RigExecWireStepKind::WeightField;
 }
 
 // The skip callback changes state only through MarkSkipped, whose counters
