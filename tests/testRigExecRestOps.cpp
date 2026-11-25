@@ -992,7 +992,7 @@ TestTheValidatorAcceptsDomainEnumerationOrder(const std::string &examples)
     for (size_t p = 0; p < RigExecBakedHeadIndices(B).size(); ++p) {
         const RigExecBakedStep &step = B.steps[RigExecBakedHeadIndices(B)[p]];
         property =
-            property || step.kind == RigExecBakedStepKind::PropertyRevision;
+            property || RigExecBakedPropertyPartOf(B, step, nullptr, nullptr);
         if (from == RigExecBakedHeadIndices(B).size() &&
             step.kind == RigExecBakedStepKind::RestCompose) {
             from = p;

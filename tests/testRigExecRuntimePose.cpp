@@ -530,6 +530,22 @@ _TestProviderRefreshRefusals(const std::vector<uint8_t> &bytes)
         }
     }
 }
+// Whether \p pose failed with \p error among its lines.
+static bool
+_FailedWith(const RigExecRigPose &pose, const std::string &error)
+{
+    const bool found =
+        !pose.valid && !error.empty() &&
+        std::find(pose.diagnostics.begin(), pose.diagnostics.end(), error) !=
+            pose.diagnostics.end();
+    if (!found) {
+        std::printf("  reader error: %s\n", error.c_str());
+        for (const std::string &line : pose.diagnostics)
+            std::printf("  evaluator line: %s\n", line.c_str());
+    }
+    return found;
+}
+
 static void
 _TestStage(const std::string &name, const UsdStageRefPtr &stage,
            const std::vector<double> &frames,
@@ -571,11 +587,20 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
     for (double frame : times) {
         const RigExecRigPose pose = measured.Evaluate(UsdTimeCode(frame));
         if (!pose.valid) {
-            std::printf("%s frame %.17g: baked pose invalid\n", name.c_str(),
-                        frame);
-            CHECK(false);
-            failed = true;
-            break;
+            // A frame that fails fails in the reader with the same error.
+            const bool played = player.Play(frame, &error);
+            const bool same = !played && _FailedWith(pose, error);
+            if (!same) {
+                std::printf("%s frame %.17g: the baked pose failed, the "
+                            "reader %s\n",
+                            name.c_str(), frame,
+                            played ? "played" : error.c_str());
+                CHECK(false);
+                failed = true;
+                break;
+            }
+            ++compared;
+            continue;
         }
         const RigExecBakedProgram *program = measured.GetBakedProgram();
         if (!program) {
@@ -1519,8 +1544,16 @@ _ChainsMatchLive(const std::string &name, const UsdStageRefPtr &stage,
     for (double frame : frames) {
         const RigExecRigPose want = baked.Evaluate(UsdTimeCode(frame));
         if (!want.valid) {
-            std::printf("%s frame %g: no live pose\n", name.c_str(), frame);
-            return false;
+            if (player.Play(frame, &error) || !_FailedWith(want, error)) {
+                std::printf("%s frame %g: the live pose failed, the runtime "
+                            "did not with its error\n",
+                            name.c_str(), frame);
+                return false;
+            }
+            _ChainFrame row;
+            row.lines = {error};
+            rows->push_back(std::move(row));
+            continue;
         }
         if (!player.Play(frame, &error)) {
             std::printf("%s frame %g: %s\n", name.c_str(), frame,
@@ -1682,9 +1715,10 @@ _DoubleChainStage()
 
 // A matrix chain: multiply by a rotation and translation under
 // inputs:defaultWeight 0.5, then blend toward a translation under 0.25,
-// then a multiply whose operand is not finite (inputs unusable).
+// then a multiply whose operand is not finite: disabled, or enabled to
+// fail the frame.
 static UsdStageRefPtr
-_MatrixChainStage()
+_MatrixChainStageWith(bool badEnabled)
 {
     const UsdStageRefPtr stage = _ChainBaseStage();
     const UsdAttribute local =
@@ -1700,6 +1734,8 @@ _MatrixChainStage()
     GfMatrix4d infinite(1.0);
     infinite[3][0] = std::numeric_limits<double>::infinity();
     _SetInput(bad, "inputs:value", SdfValueTypeNames->Matrix4d, infinite);
+    if (!badEnabled)
+        _SetInput(bad, "inputs:enabled", SdfValueTypeNames->Bool, false);
     const UsdPrim snap =
         _MathMover(stage, "Bad/Snap", "RigExecMatrixMathMover", "blend", local);
     _SetInput(snap, "inputs:value", SdfValueTypeNames->Matrix4d,
@@ -1712,6 +1748,12 @@ _MatrixChainStage()
         GfMatrix4d(GfRotation(GfVec3d(0, 0, 1), 30.0), GfVec3d(0.0, 5.0, 0.0)));
     _SetInput(offset, "inputs:defaultWeight", SdfValueTypeNames->Float, 0.5f);
     return stage;
+}
+
+static UsdStageRefPtr
+_MatrixChainStage()
+{
+    return _MatrixChainStageWith(false);
 }
 
 // A vec3f chain: add, then clamp per component, then remap under 0.5.
@@ -1770,11 +1812,12 @@ _DisabledStage()
 
 // Envelopes on property revisions: a blend under a StaticWeight 0.5, an add
 // under a clamped DynamicWeight an avar drives, an add under a strict one
-// the avar drives out of range from frame 8 (the oracle's error passes the
-// revision through), an add under inputs:defaultWeight 0.25, and three
-// whose defaultWeight is out of range: 1.5, -0.25 and NaN.
+// the avar drives out of range from frame 8 (the field's error fails the
+// frame), an add under inputs:defaultWeight 0.25, and three whose
+// defaultWeight is out of range: 1.5, -0.25 and NaN, disabled unless
+// \p outOfRangeEnabled.
 static UsdStageRefPtr
-_EnvelopeChainStage()
+_EnvelopeChainStageWith(bool outOfRangeEnabled)
 {
     const UsdStageRefPtr stage = _ChainBaseStage();
     const UsdPrim dial = stage->DefinePrim(SdfPath("/Asset/Rig/Controls/Dial"),
@@ -1858,7 +1901,16 @@ _EnvelopeChainStage()
     _SetInput(notANumber, "inputs:value", SdfValueTypeNames->Float, 100.0f);
     _SetInput(notANumber, "inputs:defaultWeight", SdfValueTypeNames->Float,
               std::numeric_limits<float>::quiet_NaN());
+    if (!outOfRangeEnabled)
+        for (const UsdPrim &prim : {over, negative, notANumber})
+            _SetInput(prim, "inputs:enabled", SdfValueTypeNames->Bool, false);
     return stage;
+}
+
+static UsdStageRefPtr
+_EnvelopeChainStage()
+{
+    return _EnvelopeChainStageWith(false);
 }
 
 // Phased consumers: a float chain (multiply by 2, then add 0.25) read at
@@ -1957,43 +2009,62 @@ _DefaultPhaseStage()
     return stage;
 }
 
-// Bases a chain cannot use and results it refuses: a float base keyed to
-// +inf at frame 3 and NaN at frame 5; a double base of 1e300, finite as a
-// double but not as the float it is tested through; a multiply that
-// overflows a float from frame 7 on; an add whose input is +inf.
+// Bases a chain cannot use and results that fail: a float base keyed to
+// +inf at frame 3 and NaN at frame 5 (\p bad); a double base of 1e300,
+// finite as a double but not as the float it is tested through (\p huge);
+// an add whose input is +inf, disabled unless \p infEnabled, then a
+// multiply that overflows a float from frame 5 on (\p blow).
 static UsdStageRefPtr
-_NonFiniteStage()
+_NonFiniteStageWith(bool bad, bool huge, bool blow, bool infEnabled)
 {
     const UsdStageRefPtr stage = _ChainBaseStage();
-    const UsdAttribute bad =
-        _Channel(stage, "Bad", "rigExec:amount", SdfValueTypeNames->Float);
-    bad.Set(0.5f, UsdTimeCode(1.0));
-    bad.Set(std::numeric_limits<float>::infinity(), UsdTimeCode(3.0));
-    bad.Set(std::numeric_limits<float>::quiet_NaN(), UsdTimeCode(5.0));
-    bad.Set(0.25f, UsdTimeCode(7.0));
-    const UsdPrim plus =
-        _MathMover(stage, "Plus", "RigExecFloatMathMover", "add", bad);
-    _SetInput(plus, "inputs:value", SdfValueTypeNames->Float, 1.0f);
-
-    const UsdAttribute huge =
-        _Channel(stage, "Huge", "rigExec:level", SdfValueTypeNames->Double);
-    huge.Set(1e300);
-    const UsdPrim keep =
-        _MathMover(stage, "Keep", "RigExecFloatMathMover", "multiply", huge);
-    _SetInput(keep, "inputs:value", SdfValueTypeNames->Float, 1.0f);
-
-    const UsdAttribute blow =
-        _Channel(stage, "Blow", "rigExec:amount", SdfValueTypeNames->Float);
-    blow.Set(0.5f, UsdTimeCode(1.0));
-    blow.Set(2.0f, UsdTimeCode(7.0));
-    const UsdPrim inf =
-        _MathMover(stage, "Inf", "RigExecFloatMathMover", "add", blow);
-    _SetInput(inf, "inputs:value", SdfValueTypeNames->Float,
-              std::numeric_limits<float>::infinity());
-    const UsdPrim overflow = _MathMover(
-        stage, "Inf/Overflow", "RigExecFloatMathMover", "multiply", blow);
-    _SetInput(overflow, "inputs:value", SdfValueTypeNames->Float, 3e38f);
+    if (bad) {
+        const UsdAttribute amount =
+            _Channel(stage, "Bad", "rigExec:amount", SdfValueTypeNames->Float);
+        amount.Set(0.5f, UsdTimeCode(1.0));
+        amount.Set(std::numeric_limits<float>::infinity(), UsdTimeCode(3.0));
+        amount.Set(std::numeric_limits<float>::quiet_NaN(), UsdTimeCode(5.0));
+        amount.Set(0.25f, UsdTimeCode(7.0));
+        const UsdPrim plus =
+            _MathMover(stage, "Plus", "RigExecFloatMathMover", "add", amount);
+        _SetInput(plus, "inputs:value", SdfValueTypeNames->Float, 1.0f);
+    }
+    if (huge) {
+        const UsdAttribute level =
+            _Channel(stage, "Huge", "rigExec:level", SdfValueTypeNames->Double);
+        level.Set(1e300);
+        const UsdPrim keep = _MathMover(stage, "Keep", "RigExecFloatMathMover",
+                                        "multiply", level);
+        _SetInput(keep, "inputs:value", SdfValueTypeNames->Float, 1.0f);
+    }
+    if (blow) {
+        const UsdAttribute amount =
+            _Channel(stage, "Blow", "rigExec:amount", SdfValueTypeNames->Float);
+        amount.Set(0.5f, UsdTimeCode(1.0));
+        amount.Set(2.0f, UsdTimeCode(7.0));
+        const UsdPrim inf =
+            _MathMover(stage, "Inf", "RigExecFloatMathMover", "add", amount);
+        _SetInput(inf, "inputs:value", SdfValueTypeNames->Float,
+                  std::numeric_limits<float>::infinity());
+        if (!infEnabled)
+            _SetInput(inf, "inputs:enabled", SdfValueTypeNames->Bool, false);
+        const UsdPrim overflow = _MathMover(
+            stage, "Inf/Overflow", "RigExecFloatMathMover", "multiply", amount);
+        _SetInput(overflow, "inputs:value", SdfValueTypeNames->Float, 3e38f);
+    }
     return stage;
+}
+
+static UsdStageRefPtr
+_NonFiniteBaseStage()
+{
+    return _NonFiniteStageWith(true, false, false, false);
+}
+
+static UsdStageRefPtr
+_NonFiniteResultStage()
+{
+    return _NonFiniteStageWith(false, false, true, false);
 }
 
 static float
@@ -2072,14 +2143,16 @@ TestOraclePublicationGeneration()
         int driverFinal = -1, receiverRevision = -1;
         for (size_t s = 0; s < file->steps.size(); ++s) {
             const auto &step = file->steps[s];
-            if (!step.isHead || step.kind != fb::StepKind::PropertyRevision)
+            size_t chainIndex = 0, part = 0;
+            if (!step.isHead ||
+                !RigExecFormatPropertyPart(*file, step, &chainIndex, &part))
                 continue;
-            const auto &chain = file->propertyChains[size_t(step.object)];
+            const auto &chain = file->propertyChains[chainIndex];
             const auto target =
                 RigExecFormatPathText(*file, file->inputs[chain.target].name());
-            if (target == driver && size_t(step.part) == chain.revisions.size())
+            if (target == driver && part == chain.revisions.size())
                 driverFinal = int(s);
-            if (target == receiver && step.part == 1)
+            if (target == receiver && part == 1)
                 receiverRevision = int(s);
         }
         CHECK(driverFinal >= 0 && receiverRevision >= 0);
@@ -2368,16 +2441,14 @@ TestMatrixChain()
         return;
     }
     // The evaluator's kernels over the authored base: multiply under 0.5,
-    // then blend under 0.25; the non-finite multiply passes through with its
-    // line.
+    // then blend under 0.25; the disabled non-finite multiply passes
+    // through.
     const UsdStageRefPtr stage = _MatrixChainStage();
     const UsdAttribute local = stage->GetAttributeAtPath(
         SdfPath("/Asset/Rig/Channels/Space.rigExec:local"));
     const GfMatrix4d offset(GfRotation(GfVec3d(0, 0, 1), 30.0),
                             GfVec3d(0.0, 5.0, 0.0));
     const GfMatrix4d snap = GfMatrix4d(1.0).SetTranslate(GfVec3d(2, 2, 2));
-    const std::string unusable =
-        "diag /Asset/Rig/Movers/Bad: inputs unusable; revision passed through";
     for (size_t f = 0; f < frames.size(); ++f) {
         GfMatrix4d base;
         CHECK(local.Get(&base, UsdTimeCode(frames[f])));
@@ -2390,7 +2461,26 @@ TestMatrixChain()
             rows[f].values.find("/Asset/Rig/Channels/Space.rigExec:local");
         CHECK(it != rows[f].values.end() &&
               _SamePropertyValue(VtValue(twice), it->second));
-        CHECK(_HasLine(rows[f], unusable));
+    }
+    // Enabled, its operand stops every frame with the op's error.
+    const UsdStageRefPtr failing = _MatrixChainStageWith(true);
+    RigExecRigEvaluator evaluator(failing, _FindRig(failing));
+    CHECK(evaluator.Compile(nullptr));
+    for (const double frame : frames) {
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(frame));
+        CHECK(!pose.valid);
+        const bool named = std::any_of(
+            pose.diagnostics.begin(), pose.diagnostics.end(),
+            [](const std::string &line) {
+                return line.find("/Asset/Rig/Movers/Bad") !=
+                           std::string::npos &&
+                       line.find("MatrixMath: value is not finite") !=
+                           std::string::npos;
+            });
+        CHECK(named);
+        if (!named)
+            for (const std::string &line : pose.diagnostics)
+                std::printf("matrix chain, enabled: %s\n", line.c_str());
     }
 }
 
@@ -2443,15 +2533,11 @@ TestDisabledRevision()
         return;
     }
     // Doubled where the toggle is on, passed through where it is off; the
-    // add of 100 never applies.
+    // add of 100 never applies. A disabled revision is a defined result and
+    // prints no line.
     const UsdStageRefPtr stage = _DisabledStage();
     const UsdAttribute amount = stage->GetAttributeAtPath(
         SdfPath("/Asset/Rig/Channels/Dial.rigExec:amount"));
-    const std::string off =
-        "diag /Asset/Rig/Movers/Off: disabled; revision passed through";
-    const std::string toggle =
-        "diag /Asset/Rig/Movers/Off/Toggle: disabled; revision passed "
-        "through";
     size_t passed = 0;
     for (size_t f = 0; f < frames.size(); ++f) {
         float base = 0.0f;
@@ -2461,8 +2547,11 @@ TestDisabledRevision()
         const float got =
             _Float(rows[f], "/Asset/Rig/Channels/Dial.rigExec:amount", &found);
         CHECK(found && got == (on ? base * 2.0f : base));
-        CHECK(_HasLine(rows[f], off));
-        CHECK(_HasLine(rows[f], toggle) == !on);
+        CHECK(std::none_of(rows[f].lines.begin(), rows[f].lines.end(),
+                           [](const std::string &line) {
+                               return line.find("disabled") !=
+                                      std::string::npos;
+                           }));
         passed += !on;
     }
     CHECK(passed == 4);
@@ -2473,34 +2562,36 @@ TestEnvelopeRevisions()
 {
     const std::vector<double> frames = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
     std::vector<_ChainFrame> rows;
+    // The strict weight leaves [0, 1] from frame 8 (ty 7/3 times 0.45),
+    // which fails frames 8 to 10 in both evaluators.
     if (!_RunChainCase("envelope-weighted revisions", _EnvelopeChainStage,
-                       frames, frames.size(), &rows)) {
+                       frames, 7, &rows)) {
         return;
     }
-    // The strict weight leaves [0, 1] from frame 8 (ty 7/3 times 0.45);
-    // the out-of-range defaultWeights refuse at every frame.
-    const std::string strict =
-        "diag /Asset/Rig/Movers/Over/Soft/Kick: strict range violation on "
-        "/Asset/Rig/Weights/Steep; revision passed through";
-    const auto outOfRange = [](const std::string &mover) {
-        return "diag /Asset/Rig/Movers/" + mover +
-               ": inputs:defaultWeight must be finite and in [0, 1]; "
-               "revision passed through";
-    };
-    const std::string over = outOfRange("Over");
-    const std::string negative =
-        outOfRange("Over/Soft/Kick/Nudge/Fade/Negative");
-    const std::string notANumber =
-        outOfRange("Over/Soft/Kick/Nudge/Fade/Negative/NotANumber");
-    size_t refused = 0;
+    size_t failed = 0;
     for (size_t f = 0; f < frames.size(); ++f) {
-        CHECK(_HasLine(rows[f], over));
-        CHECK(_HasLine(rows[f], negative));
-        CHECK(_HasLine(rows[f], notANumber));
-        CHECK(_HasLine(rows[f], strict) == (frames[f] >= 8.0));
-        refused += _HasLine(rows[f], strict);
+        const bool strict =
+            rows[f].lines.size() == 1 &&
+            rows[f].lines[0].find("/Asset/Rig/Movers/Over/Soft/Kick") !=
+                std::string::npos &&
+            rows[f].lines[0].find("/Asset/Rig/Weights/Steep") !=
+                std::string::npos;
+        CHECK(strict == (frames[f] >= 8.0));
+        CHECK(rows[f].values.empty() == (frames[f] >= 8.0));
+        failed += strict;
     }
-    CHECK(refused == 3);
+    CHECK(failed == 3);
+    // Enabled, a defaultWeight out of [0, 1] fails every frame.
+    const UsdStageRefPtr stage = _EnvelopeChainStageWith(true);
+    RigExecRigEvaluator evaluator(stage, _FindRig(stage));
+    CHECK(evaluator.Compile(nullptr));
+    const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(1.0));
+    CHECK(!pose.valid);
+    CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                      [](const std::string &line) {
+                          return line.find("weight must be finite and in "
+                                           "[0, 1]") != std::string::npos;
+                      }));
 }
 
 static void
@@ -2636,27 +2727,29 @@ TestDefaultReadPhaseRoundTrip()
 static void
 TestNonFiniteBase()
 {
-    const char *const name = "non-finite bases and results";
-    // Bad's base is +inf at frame 3 and NaN at frame 5. The sampler hands
-    // the reader the stage's own values, non-finite ones included, so one
-    // bake at frame 1 plays all four frames. Bad publishes at frames 1 and
-    // 7, Huge never, Blow at every frame.
+    // Bad's base is +inf at frame 3 and NaN at frame 5: those frames fail
+    // in both evaluators, and frames 1 and 7 publish.
     std::vector<_ChainFrame> rows;
-    if (!_RunChainCase(name, _NonFiniteStage, {1, 3, 5, 7}, 6, &rows)) {
+    if (!_RunChainCase("non-finite bases", _NonFiniteBaseStage, {1, 3, 5, 7}, 2,
+                       &rows)) {
         return;
     }
-    // A bake at frame 3 or 5 holds the non-finite base as its default.
-    for (const double frame : {3.0, 5.0}) {
-        std::vector<_ChainFrame> baked;
-        if (!_RunChainCase(name, _NonFiniteStage, {frame}, 1, &baked)) {
-            return;
-        }
-    }
     const std::string badPath = "/Asset/Rig/Channels/Bad.rigExec:amount";
+    const auto failedWith = [](const _ChainFrame &row, const char *a,
+                               const char *b) {
+        return row.values.empty() && row.lines.size() == 1 &&
+               row.lines[0].find(a) != std::string::npos &&
+               row.lines[0].find(b) != std::string::npos;
+    };
+    bool found = false;
+    CHECK(_Float(rows[0], badPath, &found) == 1.5f && found);
+    CHECK(failedWith(rows[1], badPath.c_str(), "authored base is not finite"));
+    CHECK(failedWith(rows[2], badPath.c_str(), "authored base is not finite"));
+    CHECK(_Float(rows[3], badPath, &found) == 1.25f && found);
     {
         // A host's set takes finite values only; the stage's +inf reaches
-        // the reader through the sampler alone.
-        const UsdStageRefPtr stage = _NonFiniteStage();
+        // the reader through the sampler alone, and fails its frame.
+        const UsdStageRefPtr stage = _NonFiniteBaseStage();
         RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
         std::vector<uint8_t> bytes;
         std::string error;
@@ -2667,43 +2760,51 @@ TestNonFiniteBase()
         CHECK(!player->SetInput(
             badPath, double(std::numeric_limits<float>::infinity()), &error));
         CHECK(error == badPath + " takes finite values only");
-        CHECK(player.Play(3.0, &error));
+        CHECK(!player.Play(3.0, &error));
         size_t index = 0;
         CHECK(player->FindInput(badPath, &index));
         const RrInputValue &held = player->GetInputValue(index);
         CHECK(held.tag == RrInputTag::Float && std::isinf(held.f32));
     }
-    const std::string hugePath = "/Asset/Rig/Channels/Huge.rigExec:level";
-    const std::string blowPath = "/Asset/Rig/Channels/Blow.rigExec:amount";
-    const std::string hugeLine = "property chain " + hugePath +
-                                 ": authored base is not finite; chain skipped";
-    const std::string infLine =
-        "diag /Asset/Rig/Movers/Inf: inputs unusable; revision passed through";
-    bool found = false;
-    CHECK(_Float(rows[0], badPath, &found) == 1.5f && found);
-    CHECK(!rows[1].values.count(badPath) && !rows[2].values.count(badPath));
-    CHECK(_Float(rows[3], badPath, &found) == 1.25f && found);
-    for (const _ChainFrame &row : rows) {
-        CHECK(!row.values.count(hugePath));
-        CHECK(_HasLine(row, hugeLine));
-        CHECK(_HasLine(row, infLine));
+    // 0.5 and 1.0 times 3e38 stay finite; 1.5 and 2.0 overflow and fail
+    // the frame.
+    rows.clear();
+    if (!_RunChainCase("non-finite results", _NonFiniteResultStage,
+                       {1, 3, 5, 7}, 2, &rows)) {
+        return;
     }
-    const std::string notFinite =
-        "property chain " + badPath +
-        ": authored base is not finite; chain skipped";
-    CHECK(!_HasLine(rows[0], notFinite) && _HasLine(rows[1], notFinite) &&
-          _HasLine(rows[2], notFinite) && !_HasLine(rows[3], notFinite));
-    // 0.5 and 1.0 times 3e38 stay finite; 1.5 and 2.0 overflow, and the
-    // revision passes the base through.
-    const std::string overflow =
-        "diag /Asset/Rig/Movers/Inf/Overflow: produced a non-finite value; "
-        "revision passed through";
+    const std::string blowPath = "/Asset/Rig/Channels/Blow.rigExec:amount";
     CHECK(_Float(rows[0], blowPath, &found) == 0.5f * 3e38f && found);
     CHECK(_Float(rows[1], blowPath, &found) == 1.0f * 3e38f && found);
-    CHECK(_Float(rows[2], blowPath, &found) == 1.5f && found);
-    CHECK(_Float(rows[3], blowPath, &found) == 2.0f && found);
-    CHECK(!_HasLine(rows[0], overflow) && !_HasLine(rows[1], overflow) &&
-          _HasLine(rows[2], overflow) && _HasLine(rows[3], overflow));
+    for (const size_t f : {size_t(2), size_t(3)})
+        CHECK(failedWith(rows[f], "/Asset/Rig/Movers/Inf/Overflow",
+                         "produced a non-finite value"));
+    // A double base past float's range and a non-finite operand fail every
+    // frame, so no bake holds them.
+    const auto failsEveryFrame = [](const UsdStageRefPtr &stage, const char *a,
+                                    const char *b) {
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        CHECK(evaluator.Compile(nullptr));
+        for (const double frame : {1.0, 3.0}) {
+            const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(frame));
+            CHECK(!pose.valid);
+            const bool named =
+                std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                            [&](const std::string &line) {
+                                return line.find(a) != std::string::npos &&
+                                       line.find(b) != std::string::npos;
+                            });
+            CHECK(named);
+            if (!named)
+                for (const std::string &line : pose.diagnostics)
+                    std::printf("non-finite, every frame: %s\n", line.c_str());
+        }
+    };
+    failsEveryFrame(_NonFiniteStageWith(false, true, false, false),
+                    "/Asset/Rig/Channels/Huge.rigExec:level",
+                    "authored base is not finite");
+    failsEveryFrame(_NonFiniteStageWith(false, false, true, true),
+                    "/Asset/Rig/Movers/Inf", "is not finite");
 }
 
 // tests/fixtures/computed_chains.usda: the chain cases together (a curve

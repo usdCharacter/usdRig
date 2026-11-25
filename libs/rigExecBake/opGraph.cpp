@@ -127,6 +127,22 @@ RigExecBakeOpGraph(const RigExecBakedProgramImpl &program,
         out->type = uint32_t(at - types.begin());
         graph->outputs.push_back(std::move(out));
     }
+    for (const eval::OpLookup &lookup : layout.lookups) {
+        auto out = std::make_unique<fb::RigExecWireOpLookup>();
+        out->source = lookup.source;
+        out->object = lookup.object;
+        out->part = lookup.part;
+        out->read = lookup.read;
+        graph->lookups.push_back(std::move(out));
+    }
+    for (const eval::OpHostOutput &output : layout.hostOutputs) {
+        auto out = std::make_unique<fb::RigExecWireOpHostOutput>();
+        out->node = output.node;
+        out->port = output.port;
+        out->target = output.target;
+        out->object = output.object;
+        graph->hostOutputs.push_back(std::move(out));
+    }
     for (const eval::OpChainLayout &chain : layout.chains) {
         auto out = std::make_unique<fb::RigExecWireOpChain>();
         out->pointChain = chain.pointChain;

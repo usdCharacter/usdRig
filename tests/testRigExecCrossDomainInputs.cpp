@@ -155,10 +155,9 @@ CountRecoveryAndCutoff(const std::string &fixture)
     RigExecBakedProgramTesting::SetOpObservers(
         *evaluator.GetBakedProgram(),
         [&](uint32_t op) {
-            const auto &step = B.steps[op];
-            if (step.kind == RigExecBakedStepKind::PropertyRevision &&
-                step.part > 0 &&
-                B.propertyChains[size_t(step.object)].target == downstream)
+            size_t chain = 0;
+            if (RigExecBakedPropertyPartOf(B, B.steps[op], &chain, nullptr) &&
+                B.propertyChains[chain].target == downstream)
                 ++runs;
         },
         {});

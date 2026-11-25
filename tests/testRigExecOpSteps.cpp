@@ -224,12 +224,15 @@ struct OpRig {
     RigExecOutputId out;
 };
 
+/// The ops, added to \p into when given, else built into their own
+/// description.
 OpRig
-MakeOps(bool envelope = false)
+MakeOps(bool envelope = false, RigExecRigDescBuilder *into = nullptr)
 {
     using namespace rigExecOps;
     OpRig rig;
-    RigExecRigDescBuilder b;
+    RigExecRigDescBuilder own;
+    RigExecRigDescBuilder &b = into ? *into : own;
     MathPayload math;
     math.op = RigExecPropertyOp::Multiply;
     MatrixDeformPayload deform;
@@ -248,6 +251,8 @@ MakeOps(bool envelope = false)
     if (envelope)
         b.BindInput(rig.deform, MatrixDeformEnvelope());
     rig.out = b.BindOutput(rig.smooth, SmoothOut());
+    if (into)
+        return rig;
     std::string error;
     rig.desc = b.Build(&error);
     if (!rig.desc)
@@ -291,8 +296,7 @@ Inject(const RigExecBakedProgramImpl &B, RigExecBakedOpInjection *out,
     const int slot = SlotOf(B, kMoving);
     if (chain < 0 || slot < 0)
         return false;
-    const OpRig rig = MakeOps(!envelope.empty());
-    out->desc = rig.desc;
+    const OpRig rig = MakeOps(!envelope.empty(), out->builder);
     out->hostInputs = {{rig.math, MatrixIn().Index(),
                         eval::OpHostSource::BaseMatrix, uint32_t(slot)},
                        {rig.deform, MatrixDeformPoints().Index(),

@@ -112,8 +112,8 @@ RigExecBakedStepKindName(RigExecBakedStepKind kind)
         return "Derived";
     case RigExecBakedStepKind::FrameMatrix:
         return "FrameMatrix";
-    case RigExecBakedStepKind::PropertyRevision:
-        return "PropertyRevision";
+    case RigExecBakedStepKind::ReservedPropertyRevision:
+        return "ReservedPropertyRevision";
     case RigExecBakedStepKind::RestCompose:
         return "RestCompose";
     case RigExecBakedStepKind::LadderCompose:
@@ -242,7 +242,7 @@ constexpr StepCostConstants kStepCosts[] = {
     {0.0000, 0.000336},  // ChainStatus       1 -- see below
     {0.0000, 0.003744},  // Derived           1
     {0.0000, 0.051952},  // FrameMatrix       unfitted -- ProviderMatrix's row
-    {0.0, 0.0},          // PropertyRevision: serial prologue
+    {0.0, 0.0},          // ReservedPropertyRevision
     {0.0, 0.0},          // RestCompose: serial prologue
     {0.0, 0.0},          // LadderCompose: serial prologue
     {0.0, 0.0},          // SkinTopology: serial prologue
@@ -2287,8 +2287,8 @@ RouteBakedStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
         case RigExecBakedStepKind::WeightField:
             RigExecBakedRunWeightField(B, step);
             break;
-        case RigExecBakedStepKind::PropertyRevision:
-            RigExecBakedRunPropertyStep(B, step, time);
+        case RigExecBakedStepKind::OpNode:
+            RigExecBakedRunOpStep(B, step);
             break;
         case RigExecBakedStepKind::RestCompose: {
             const auto &g = B->composeGroups[size_t(step->object)];
@@ -2386,11 +2386,13 @@ RigExecBakedNowNs()
 
 namespace {
 bool
-OriginalPreparationKind(RigExecBakedStepKind kind)
+OriginalPreparationStep(const RigExecBakedProgramImpl &B,
+                        const RigExecBakedStep &step)
 {
     using K = RigExecBakedStepKind;
-    return kind == K::PropertyRevision || kind == K::RestCompose ||
-           kind == K::LadderCompose || kind == K::SkinTopology;
+    return RigExecBakedPropertyPartOf(B, step, nullptr, nullptr) ||
+           step.kind == K::RestCompose || step.kind == K::LadderCompose ||
+           step.kind == K::SkinTopology;
 }
 } // namespace
 
@@ -2419,7 +2421,7 @@ RigExecBakedExpectedStageFramesAdmissionReads(
     std::vector<char> ancestry(B->steps.size(), 0);
     std::vector<size_t> pending;
     for (size_t i = 0; i < B->steps.size(); ++i)
-        if (OriginalPreparationKind(B->steps[i].kind)) {
+        if (OriginalPreparationStep(*B, B->steps[i])) {
             ancestry[i] = 1;
             pending.push_back(i);
         }
@@ -2443,7 +2445,7 @@ RigExecBakedExpectedStageFramesAdmissionReads(
     for (size_t i = 0; i < B->steps.size(); ++i) {
         const auto &step = B->steps[i];
         const bool preparation =
-            OriginalPreparationKind(step.kind) || step.kind == K::AvarInputs ||
+            OriginalPreparationStep(*B, step) || step.kind == K::AvarInputs ||
             (ancestry[i] &&
              (step.kind == K::SpaceExpression || step.kind == K::WeightField));
         required[i] = !preparation && step.kind != K::SnapshotFinals;
@@ -2474,11 +2476,10 @@ RigExecBakedPublishStageFramesRefusal(RigExecBakedProgramImpl *B,
         return false;
     std::vector<const RigExecBakedStep *> lines;
     for (const auto &step : B->steps)
-        if (step.kind == RigExecBakedStepKind::PropertyRevision)
+        if (RigExecBakedPropertyPartOf(*B, step, nullptr, nullptr))
             lines.push_back(&step);
     std::sort(lines.begin(), lines.end(), [](const auto *a, const auto *b) {
-        return std::make_pair(a->object, a->part) <
-               std::make_pair(b->object, b->part);
+        return a->object < b->object;
     });
     for (const auto *step : lines) {
         // Pre-refusal property tier replays cached lines;
@@ -3117,7 +3118,7 @@ RigExecBakedReplayStepTimings(const RigExecBakedProgramImpl &B)
         B.profiler->RecordOn(
             step.runner, step.label, "op", step.startUs, step.endUs,
             {{"kind", RigExecBakedStepKindName(step.kind)},
-             {"domain", RigExecBakedStepDomainName(step.kind)},
+             {"domain", RigExecBakedStepDomainName(B, step)},
              {"seq", std::to_string(B.opExecution.completion[index])}});
     }
 
@@ -3313,7 +3314,7 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
             }
         }
         const bool headKind =
-            step.kind == RigExecBakedStepKind::PropertyRevision ||
+            RigExecBakedPropertyPartOf(B, step, nullptr, nullptr) ||
             step.kind == RigExecBakedStepKind::RestCompose ||
             step.kind == RigExecBakedStepKind::LadderCompose ||
             step.kind == RigExecBakedStepKind::SkinTopology ||
@@ -3352,19 +3353,19 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
                     return r.domain == domain && r.begin <= id && id < r.end;
                 });
         };
-        if (step.kind == RigExecBakedStepKind::PropertyRevision) {
-            if (step.object < 0 ||
-                size_t(step.object) >= B.propertyChains.size() ||
-                step.part < 0 ||
-                size_t(step.part) >
-                    B.propertyChains[size_t(step.object)].revisions.size()) {
-                add("head step " + step.label +
-                    " has an invalid chain or revision part");
-                continue;
-            }
-            const auto &chain = B.propertyChains[size_t(step.object)];
-            const uint32_t own = chain.versionBase + uint32_t(step.part);
+        size_t propertyChain = 0, propertyPart = 0;
+        if (step.isHead && step.kind == RigExecBakedStepKind::OpNode &&
+            !RigExecBakedPropertyPartOf(B, step, &propertyChain,
+                                        &propertyPart)) {
+            add("head step " + step.label + " runs no property revision");
+            continue;
+        }
+        if (step.kind == RigExecBakedStepKind::OpNode && step.isHead) {
+            const auto &chain = B.propertyChains[propertyChain];
+            const uint32_t own = chain.versionBase + uint32_t(propertyPart);
             std::set<uint32_t> expected{own};
+            if (propertyPart == 1)
+                expected.insert(chain.versionBase);
             for (const uint32_t r : chain.records) {
                 if (r >= B.propertyRecords.size()) {
                     add("head step " + step.label +
@@ -3372,8 +3373,10 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
                     continue;
                 }
                 const auto &record = B.propertyRecords[r];
-                if (std::min(record.applied, chain.revisions.size()) ==
-                    size_t(step.part))
+                const size_t applied =
+                    std::min(record.applied, chain.revisions.size());
+                if (applied == propertyPart ||
+                    (propertyPart == 1 && applied == 0))
                     expected.insert(record.id);
             }
             std::set<uint32_t> actual;
@@ -3389,13 +3392,11 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
             if (actual != expected)
                 add("head step " + step.label +
                     " does not write exactly its version and owned records");
-            if (step.part > 0 &&
+            if (propertyPart > 1 &&
                 !contains(step.reads, RigExecBakedSlotDomain::PropertyResult,
                           own - 1))
                 add("head step " + step.label +
                     " omits its predecessor property version");
-            if (step.part == 0 && !step.reads.empty())
-                add("head step " + step.label + " base reads a produced value");
         } else if (step.kind == RigExecBakedStepKind::RestCompose ||
                    step.kind == RigExecBakedStepKind::LadderCompose) {
             if (step.object < 0 ||
@@ -3452,16 +3453,12 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
         }
         // Completeness: every chain target or record consumer a walk of a
         // property revision meets is declared.
-        if (step.kind != RigExecBakedStepKind::PropertyRevision ||
-            step.part == 0 || step.object < 0 ||
-            size_t(step.object) >= B.propertyChains.size()) {
+        if (!RigExecBakedPropertyPartOf(B, step, &propertyChain,
+                                        &propertyPart)) {
             continue;
         }
         const RigExecBakedPropertyChain &chain =
-            B.propertyChains[size_t(step.object)];
-        if (size_t(step.part) > chain.revisions.size()) {
-            continue;
-        }
+            B.propertyChains[propertyChain];
         const auto declares = [&step](uint32_t id) {
             for (const RigExecBakedSlotRange &range : step.reads) {
                 if (range.domain == RigExecBakedSlotDomain::PropertyResult &&
@@ -3472,7 +3469,7 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
             return false;
         };
         const RigExecBakedPropertyChain::Revision &r =
-            chain.revisions[size_t(step.part) - 1];
+            chain.revisions[propertyPart - 1];
         for (const RigExecBakedWalk *walk :
              {&r.enabled, &r.defaultWeight, &r.value, &r.minimum, &r.maximum,
               &r.keys, &r.tangents, &r.pathPoints}) {
@@ -3678,8 +3675,10 @@ void
 RigExecBakedFinishHeadOp(RigExecBakedProgramImpl *B,
                          const RigExecBakedStep &step)
 {
-    if (step.kind == RigExecBakedStepKind::PropertyRevision)
-        RigExecBakedFinishPropertyStep(B, step);
+    size_t chain = 0, part = 0;
+    if (!RigExecBakedPropertyPartOf(*B, step, &chain, &part))
+        return;
+    RigExecBakedFinishPropertyStep(B, chain, part);
 }
 bool
 RigExecBakedHeadValueChanged(const RigExecBakedProgramImpl &B,

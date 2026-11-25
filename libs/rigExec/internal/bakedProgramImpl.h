@@ -26,6 +26,7 @@
 #include "rigExec/internal/valueAddress.h"
 #include "rigExec/api/types.h"
 #include "rigExec/internal/weightPackets.h"
+#include "rigExec/api/rigDesc.h"
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecGraph/opGraph.h"
 #include "rigExecGraph/opValues.h"
@@ -56,7 +57,9 @@
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/tf/token.h"
 #include "pxr/base/tf/type.h"
+#include "pxr/base/gf/vec2f.h"
 #include "pxr/base/vt/array.h"
+#include "pxr/base/vt/types.h"
 #include "pxr/base/vt/value.h"
 #include "pxr/usd/sdf/path.h"
 #include "pxr/usd/usd/attribute.h"
@@ -1146,11 +1149,11 @@ struct RigExecBakedOpProgram {
     std::vector<std::vector<std::vector<std::vector<uint32_t>>>> halo;
 };
 
-/// Op nodes a test hands Build for a rig (RigExecBakedProgramTesting::
-/// SetOpInjector): a description, its inputs from the rig or fixed, and
-/// named outputs.
+/// Op nodes a test adds for a rig (RigExecBakedProgramTesting::
+/// SetOpInjector) to the description Build is writing, after the property
+/// chains' nodes: their inputs from the rig or fixed, and named outputs.
 struct RigExecBakedOpInjection {
-    std::shared_ptr<const RigExecRigDesc> desc;
+    RigExecRigDescBuilder *builder = nullptr;
     std::vector<eval::OpHostInput> hostInputs;
     /// An input fixed at Build: the node and port it feeds and its value.
     struct Constant {
@@ -2228,6 +2231,13 @@ struct RigExecBakedProgramImpl {
     /// The PropertyVersion domain's size: every chain's versions, then the
     /// records.
     uint32_t propertyVersionCount = 0;
+    /// Per property op node: its chain. Property nodes come first among
+    /// the op nodes.
+    std::vector<uint32_t> propertyNodeChain;
+    /// Per op lookup: the keys or points a property read lends its op
+    /// input until its next run.
+    std::vector<VtArray<GfVec2f>> propertyKeyHold;
+    std::vector<VtVec3fArray> propertyPointHold;
     std::vector<RigExecBakedHeadLeaf> headLeaves;
     /// Every path a head op reads an override at, and its slot.
     std::map<SdfPath, uint32_t> headOverrideSlots;
@@ -2715,12 +2725,13 @@ RigExecBakedSampleLeaves(RigExecBakedProgramImpl *program, UsdTimeCode time,
                          bool all,
                          RigExecBakedLeafPass pass = RigExecBakedLeafPass::All);
 
-/// Emits one PropertyRevision head step per part of every property chain
-/// (part 0 the base, part k revision k), numbers the PropertyVersion domain
-/// (`versionBase`, record ids) and sizes the head tier's run state. Each
-/// step declares the head leaves and override slots its body reads and,
-/// as head reads, the version before it and every chain version or record
-/// one of its walks meets. Build only.
+/// Emits one OpNode head step per revision of every property chain (the
+/// first also reads the base and writes version 0), numbers the op nodes
+/// (`firstNode`), the PropertyVersion domain (`versionBase`, record ids)
+/// and sizes the head tier's run state. Each step declares the head leaves
+/// and override slots its lookups read and, as head reads, the version
+/// before it and every chain version or record one of its walks meets.
+/// Build only.
 void RigExecBakedBuildPropertySteps(RigExecBakedProgramImpl *program);
 
 /// Re-reads every head leaf that can have moved since its last sample and
@@ -2753,15 +2764,41 @@ bool RigExecBakedHeadLeafHolds(const RigExecBakedHeadLeaf &leaf,
 /// code. Reads the stage: owning thread.
 bool RigExecBakedHeadLeafVaries(const RigExecBakedHeadLeaf &leaf);
 
-/// The body of one PropertyRevision head step: part 0 sets the base and the
-/// chain's valid byte, part k applies revision k. Each is the loop body of
-/// _EvaluatePropertyChains it replaces (rigEvaluatorProperties.cpp), over
-/// head leaves, overrides and earlier versions; its lines go to
-/// `step->lines`, and it sets the `propertyChanged` byte of the version it
-/// writes. A weight-object envelope consumes its declared WeightField result
-/// inside RigExecVolatileRead. Owning thread.
-void RigExecBakedRunPropertyStep(RigExecBakedProgramImpl *program,
-                                 RigExecBakedStep *step, UsdTimeCode time);
+/// The property chain and part (1 to its revision count) op step \p step
+/// runs: revision part, and for part 1 also the chain's base. False for any
+/// other step.
+bool RigExecBakedPropertyPartOf(const RigExecBakedProgramImpl &B,
+                                const RigExecBakedStep &step, size_t *chain,
+                                size_t *part);
+/// Adds the property chains' op nodes to \p builder, numbered from 0 as
+/// RigExecBakedBuildPropertySteps numbered them, with the lookups their
+/// inputs read and the versions they store. False with the reason when a
+/// chain cannot run: its target is gone or a revision names no operation.
+bool RigExecBakedAddPropertyOps(const RigExecBakedProgramImpl &B,
+                                RigExecRigDescBuilder *builder,
+                                eval::OpStepLayout *layout, std::string *error);
+/// Resolves property lookup \p lookup, the layout's \p index-th, into
+/// \p out, a value of its input's \p type. False with the error that stops
+/// the evaluation: a missing or non-finite base, a failed weight field.
+bool RigExecBakedLookUpProperty(RigExecBakedProgramImpl &B,
+                                const eval::OpLookup &lookup, size_t index,
+                                const RigExecTypeDesc &type, void *out,
+                                std::string *error);
+/// Stores a property node's value in version \p output.object; the base's
+/// store also marks its chain valid. Sets the version's `propertyChanged`
+/// byte by bitwise comparison.
+bool RigExecBakedStorePropertyVersion(RigExecBakedProgramImpl &B,
+                                      const eval::OpHostOutput &output,
+                                      const void *value, std::string *error);
+/// The cross-domain read diagnostics of revision \p part of \p chain.
+void RigExecBakedPropertyInputLines(const RigExecBakedProgramImpl &B,
+                                    size_t chain, size_t part,
+                                    std::vector<std::string> *lines);
+/// After the step writing version \p part of \p chain ran or replayed:
+/// when the version moved, the records that read it (value and `changed`
+/// byte) and, for the chain's last part, the chain's final value.
+void RigExecBakedFinishPropertyStep(RigExecBakedProgramImpl *program,
+                                    size_t chain, size_t part);
 
 /// Publishes chains [\p begin, \p end) as _EvaluatePropertyChains leaves
 /// them: each valid chain's final version at its target and each record
@@ -2785,12 +2822,6 @@ RigExecBakedPublishPropertyChains(RigExecBakedProgramImpl *program)
 /// record's whose hops' overrides moved. The head tier's first act on every
 /// run.
 void RigExecBakedPlaceHeadOverrides(RigExecBakedProgramImpl *program);
-
-/// After head step \p step ran or replayed: when the version it writes
-/// moved, the records that read that version (value and `changed` byte)
-/// and, for a chain's last part, the chain's final value.
-void RigExecBakedFinishPropertyStep(RigExecBakedProgramImpl *program,
-                                    const RigExecBakedStep &step);
 
 /// Whether two head values are the same bit for bit (a signed zero or a NaN
 /// payload is a difference); empty equals only empty.

@@ -780,8 +780,12 @@ struct RigExecBakedPropertyChain {
     /// The target's own value (no connection, no overlay) as the arm's type.
     int ownLeaf = -1;
     int targetSlot = -1;
-    /// The PropertyVersion id of part 0; part k writes versionBase + k.
+    /// The PropertyVersion id of part 0, the base; revision k writes
+    /// versionBase + k.
     uint32_t versionBase = 0;
+    /// The op node of revision 1; revision k runs node firstNode + k - 1,
+    /// whose step also reads the base.
+    uint32_t firstNode = 0;
     struct Revision {
         SdfPath mover;
         bool moverExists = false;
@@ -954,7 +958,8 @@ enum class RigExecBakedStepKind {
     /// One RigExecBakedFrameRecord. A pose step; appended after Derived so
     /// every earlier enumerator keeps its exported value.
     FrameMatrix,
-    PropertyRevision = 19,
+    /// Reserved; never emitted. Property revisions run as OpNode steps.
+    ReservedPropertyRevision = 19,
     RestCompose = 20,
     LadderCompose = 21,
     SkinTopology = 22,

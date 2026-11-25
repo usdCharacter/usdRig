@@ -62,9 +62,11 @@ RigExecBakedEffectiveMemo(const RigExecBakedProgramImpl &B, uint32_t c,
     covered.clear();
     auto &coveredTyped = *typed;
     coveredTyped.clear();
+    size_t propertyChain = 0, propertyPart = 0;
+    const bool propertyStep =
+        RigExecBakedPropertyPartOf(B, step, &propertyChain, &propertyPart);
     const bool projectedConsumer =
-        step.kind == RigExecBakedStepKind::PropertyRevision ||
-        step.kind == RigExecBakedStepKind::AvarInputs ||
+        propertyStep || step.kind == RigExecBakedStepKind::AvarInputs ||
         step.kind == RigExecBakedStepKind::ComposeSubtree;
     const bool exact = RigExecBakedOpEffectiveInputKey(
         B, step, &scratch, &covered,
@@ -92,11 +94,10 @@ RigExecBakedEffectiveMemo(const RigExecBakedProgramImpl &B, uint32_t c,
             value.domain == uint32_t(RigExecBakedSlotDomain::SpaceLeaf))
             continue;
         const bool incoming =
-            step.kind == RigExecBakedStepKind::PropertyRevision &&
-            step.part > 0 &&
+            propertyStep && propertyPart > 1 &&
             value.domain == uint32_t(RigExecBakedSlotDomain::PropertyResult) &&
-            value.slot == B.propertyChains[size_t(step.object)].versionBase +
-                              uint32_t(step.part - 1);
+            value.slot == B.propertyChains[propertyChain].versionBase +
+                              uint32_t(propertyPart - 1);
         if (exact && !incoming &&
             std::binary_search(coveredTyped.begin(), coveredTyped.end(),
                                std::make_pair(value.domain, value.slot)))
@@ -1329,7 +1330,7 @@ RigExecBakedCompileOpGraph(RigExecBakedProgramImpl *B, std::string *error)
     for (uint32_t i = 0; i < B->steps.size(); ++i) {
         const auto kind = B->steps[i].kind;
         if (RigExecBakedIsGeometryStep(kind) ||
-            kind == RigExecBakedStepKind::PropertyRevision)
+            RigExecBakedPropertyPartOf(*B, B->steps[i], nullptr, nullptr))
             B->opAdapter.skipEffects.push_back(i);
         if (kind == RigExecBakedStepKind::SkinTopology)
             B->skinTopologyLayouts.push_back(B->steps[i].object);
@@ -1394,16 +1395,17 @@ RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program, UsdTimeCode time,
         const auto &value = state.values[size_t(id)];
         ResetExcludedValue(&B, value.domain, value.slot);
     }
-    for (const auto &step : B.excludedSteps)
-        if (step.kind == RigExecBakedStepKind::PropertyRevision) {
-            const size_t chain = size_t(step.object);
+    for (const auto &step : B.excludedSteps) {
+        size_t chain = 0, part = 0;
+        if (RigExecBakedPropertyPartOf(B, step, &chain, &part)) {
             // Excluded outputs are invalid individually. A later excluded revision
             // cannot invalidate a surviving retained Base/AtPrim producer.
-            if (step.part == 0)
+            if (part == 1)
                 B.chainValid[chain] = 0;
-            if (size_t(step.part) == B.propertyChains[chain].revisions.size())
+            if (part == B.propertyChains[chain].revisions.size())
                 B.chainFinal[chain] = VtValue();
         }
+    }
     state.changedLeaves.clear();
     state.seeds.clear();
     state.candidateOps.clear();
@@ -1900,8 +1902,8 @@ EpilogueLists(const RigExecBakedProgramImpl &B, std::vector<char> *aliveSolver,
 // step order.
 template <class Visit>
 void
-AppendBlock(RigExecBakedStepLines block, const Visit &visit,
-            std::vector<std::string> *out)
+AppendBlock(const RigExecBakedProgramImpl &B, RigExecBakedStepLines block,
+            const Visit &visit, std::vector<std::string> *out)
 {
     using K = RigExecBakedStepKind;
     const auto append = [out](const std::vector<std::string> &lines) {
@@ -1913,13 +1915,13 @@ AppendBlock(RigExecBakedStepLines block, const Visit &visit,
         // interleave independent bases, and reporting must not show it.
         std::vector<const RigExecBakedStep *> property;
         visit([&](const RigExecBakedStep &step) {
-            if (step.kind == K::PropertyRevision && HoldsOutput(step))
+            if (RigExecBakedPropertyPartOf(B, step, nullptr, nullptr) &&
+                HoldsOutput(step))
                 property.push_back(&step);
         });
         std::sort(property.begin(), property.end(),
                   [](const RigExecBakedStep *a, const RigExecBakedStep *b) {
-                      return std::make_pair(a->object, a->part) <
-                             std::make_pair(b->object, b->part);
+                      return a->object < b->object;
                   });
         for (const RigExecBakedStep *step : property) {
             append(step->diagnostics);
@@ -1933,7 +1935,7 @@ AppendBlock(RigExecBakedStepLines block, const Visit &visit,
         visit([&](const RigExecBakedStep &step) {
             if (RigExecBakedIsGeometryStep(step.kind) ||
                 step.kind == K::PoseInterpolator ||
-                step.kind == K::PropertyRevision)
+                RigExecBakedPropertyPartOf(B, step, nullptr, nullptr))
                 return;
             append(step.diagnostics);
             append(step.lines);
@@ -2044,7 +2046,7 @@ RigExecBakedAppendStepLines(RigExecBakedProgramImpl *program,
     const std::vector<uint32_t> &held = E.held.Ascending();
     const size_t begin = out->size();
     AppendBlock(
-        block,
+        B, block,
         [&](const auto &each) {
             for (const uint32_t i : held)
                 each(B.steps[i]);
@@ -2054,7 +2056,7 @@ RigExecBakedAppendStepLines(RigExecBakedProgramImpl *program,
         return;
     std::vector<std::string> swept;
     AppendBlock(
-        block,
+        B, block,
         [&](const auto &each) {
             for (const auto &step : B.steps)
                 each(step);

@@ -706,8 +706,8 @@ TestProviderMatrixFallbackAdmission()
 // The walk resolver against the read it restates, over every reader walk
 // (chain-routed bindings and path leaves read through the resolved inputs)
 // of every fixture, at three frames: with no override, under a drag on a
-// chain target the walks meet and on a NaN there (which skips the chain,
-// leaving the override standing at its target), and lifted. The in-memory
+// chain target the walks meet, on a NaN there (which fails the frame with
+// the chain's error), and lifted. The in-memory
 // rig adds a float read of a double chain target.
 void
 TestWalkResolverEqualsGetAttribute(const std::string &examples)
@@ -725,7 +725,7 @@ TestWalkResolverEqualsGetAttribute(const std::string &examples)
         stages.emplace_back("float at double", stage);
         rigs.push_back(SdfPath("/Asset/Rig"));
     }
-    size_t checked = 0, doubleTails = 0, skipped = 0;
+    size_t checked = 0, doubleTails = 0, nanFailures = 0;
     for (size_t i = 0; i < stages.size(); ++i) {
         const std::string &name = stages[i].first;
         const UsdStageRefPtr &stage = stages[i].second;
@@ -751,23 +751,36 @@ TestWalkResolverEqualsGetAttribute(const std::string &examples)
         }
         for (const UsdTimeCode t : Frames(stage)) {
             std::vector<std::vector<RigExecValueOverride>> cases = {{}};
+            size_t nanCase = SIZE_MAX;
             if (!target.IsEmpty()) {
                 cases.push_back(DragBy(stage, target, t, 0.25));
                 const UsdAttribute a = stage->GetAttributeAtPath(target);
+                nanCase = cases.size();
                 if (a.GetTypeName() == SdfValueTypeNames->Double) {
                     cases.push_back({DragOf(target, std::nan(""))});
                 } else if (a.GetTypeName() == SdfValueTypeNames->Float) {
                     cases.push_back({DragOf(target, std::nanf(""))});
-                }
+                } else
+                    nanCase = SIZE_MAX;
                 cases.push_back({});
             }
             for (size_t c = 0; c < cases.size(); ++c) {
                 evaluator->SetInteractiveOverrides(cases[c]);
                 const RigExecRigPose pose = evaluator->Evaluate(t);
-                CHECK(pose.valid);
-                for (const char valid : program->chainValid) {
-                    skipped += valid ? 0 : 1;
+                if (c == nanCase) {
+                    CHECK(!pose.valid);
+                    CHECK(std::any_of(
+                        pose.diagnostics.begin(), pose.diagnostics.end(),
+                        [&](const std::string &line) {
+                            return line.find("property chain " +
+                                             target.GetString() +
+                                             ": authored base is not "
+                                             "finite") != std::string::npos;
+                        }));
+                    ++nanFailures;
+                    continue;
                 }
+                CHECK(pose.valid);
                 const std::string what = "walk resolver " + name + " at " +
                                          Text(t.GetValue()) + " case " +
                                          std::to_string(c);
@@ -777,11 +790,11 @@ TestWalkResolverEqualsGetAttribute(const std::string &examples)
         }
     }
     std::printf("walk resolver: %zu walk read(s) checked, %zu float walk(s) "
-                "of a double hop, %zu skipped chain(s) seen\n",
-                checked, doubleTails, skipped);
+                "of a double hop, %zu NaN drag(s) failed their frame\n",
+                checked, doubleTails, nanFailures);
     CHECK(checked > 0);
     CHECK(doubleTails > 0);
-    CHECK(skipped > 0);
+    CHECK(nanFailures > 0);
 }
 
 // For every visited binding, after every run, the leaf is the read: with no

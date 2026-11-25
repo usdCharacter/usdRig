@@ -327,10 +327,11 @@ RigExecBakedFinalizeCrossDomainReads(RigExecBakedProgramImpl *program,
     for (auto &step : B.steps) {
         if (step.kind == RigExecBakedStepKind::WeightField)
             RigExecBakedDeclareWeightPointInputs(B, step.object, &step.reads);
-        if (step.kind == RigExecBakedStepKind::PropertyRevision &&
-            step.part > 0) {
-            const auto &revision = B.propertyChains[size_t(step.object)]
-                                       .revisions[size_t(step.part) - 1];
+        size_t propertyChain = 0, propertyPart = 0;
+        if (RigExecBakedPropertyPartOf(B, step, &propertyChain,
+                                       &propertyPart)) {
+            const auto &revision =
+                B.propertyChains[propertyChain].revisions[propertyPart - 1];
             RevisionCrossReads(revision, [&](int read) {
                 RigExecBakedDeclareCrossDomainRead(B, read, &step.reads);
                 const int leaf = B.crossDomainReads[size_t(read)].rawLeaf;

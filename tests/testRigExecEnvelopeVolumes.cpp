@@ -110,10 +110,9 @@ PlacementGeometryAndRecovery(const std::string &fixture)
                     geometryEdge = true;
     CHECK(geometryEdge); // Final sample points are a real same-frame producer.
     const auto builds = evaluator.GetBakedProgramBuildCount();
+    // A property envelope whose field fails stops the frame with its error.
     const auto shortField = evaluator.Evaluate(UsdTimeCode(2));
-    CHECK(shortField.valid);
-    CHECK(Scalar(shortField, "base") == 0 && JointX(shortField, "Base") == 0);
-    CHECK(Scalar(shortField, "geometry") == 5);
+    CHECK(!shortField.valid);
     CHECK(CountFailure(shortField));
     const auto recovered = evaluator.Evaluate(UsdTimeCode(3));
     CHECK(recovered.valid);
@@ -121,18 +120,15 @@ PlacementGeometryAndRecovery(const std::string &fixture)
     CHECK(!CountFailure(recovered));
     CHECK(evaluator.GetBakedProgramBuildCount() == builds);
     const auto empty = evaluator.Evaluate(UsdTimeCode(4));
-    CHECK(empty.valid);
-    CHECK(Scalar(empty, "base") == 0 && JointX(empty, "Base") == 0);
+    CHECK(!empty.valid);
     CHECK(CountFailure(empty));
     const auto blocked = evaluator.Evaluate(UsdTimeCode(5));
-    CHECK(blocked.valid);
-    CHECK(Scalar(blocked, "base") == 0 && JointX(blocked, "Base") == 0);
+    CHECK(!blocked.valid);
     bool unavailable = false;
     for (const auto &line : blocked.diagnostics)
         unavailable |= line.find("could not read the points to sample") !=
                        std::string::npos;
     CHECK(unavailable);
-    CHECK(Scalar(blocked, "geometry") == 5);
     const auto restored = evaluator.Evaluate(UsdTimeCode(6));
     CHECK(restored.valid);
     CHECK(Scalar(restored, "base") == 10 && JointX(restored, "Base") == 6);

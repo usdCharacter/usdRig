@@ -729,12 +729,6 @@ RrRunOpBody(RrProgram *p, size_t i, std::string *error)
                 });
         },
         [&] {
-            if (step.kind == RigExecWireStepKind::PropertyRevision) {
-                auto &lines = s.headLines[i];
-                lines.clear();
-                return RrRunPropertyPart(p, size_t(step.object),
-                                         size_t(step.part), &lines);
-            }
             if (step.kind == RigExecWireStepKind::RestCompose ||
                 step.kind == RigExecWireStepKind::LadderCompose) {
                 RrRunRestHead(p, size_t(step.object),
@@ -757,10 +751,7 @@ RrRunOpBody(RrProgram *p, size_t i, std::string *error)
                 return RrRunGeometryStep(p, i, error);
             return RrRunPoseStep(p, i, error);
         },
-        [&] {
-            if (step.kind == RigExecWireStepKind::PropertyRevision && error)
-                *error = "step " + RrStepLabel(*p, i) + " has no property part";
-        });
+        [] {});
     return ran != eval::StepRun::Failed;
 }
 } // namespace
@@ -1743,9 +1734,11 @@ RrExecuteOpGraph(RrProgram *p, bool force, std::string *error)
         covered.clear();
         auto &coveredTyped = state.coveredTypedInputs[c];
         coveredTyped.clear();
+        size_t propertyChain = 0, propertyPart = 0;
+        const bool propertyStep =
+            RrPropertyPartOf(p, step, &propertyChain, &propertyPart);
         const bool scalarConsumer =
-            step.kind == RigExecWireStepKind::PropertyRevision ||
-            step.kind == RigExecWireStepKind::AvarInputs ||
+            propertyStep || step.kind == RigExecWireStepKind::AvarInputs ||
             step.kind == RigExecWireStepKind::ComposeSubtree;
         const bool exact = RrEffectiveInputMemo(
             p, i, &scratch, &covered, scalarConsumer ? &coveredTyped : nullptr);
@@ -1759,14 +1752,13 @@ RrExecuteOpGraph(RrProgram *p, bool force, std::string *error)
                 value.domain == uint32_t(RigExecWireSlotDomain::SpaceLeaf))
                 continue;
             const bool incoming =
-                step.kind == RigExecWireStepKind::PropertyRevision &&
-                step.part > 0 &&
+                propertyStep && propertyPart > 1 &&
                 value.domain ==
                     uint32_t(RigExecWireSlotDomain::PropertyResult) &&
                 value.slot ==
-                    uint32_t(p->file->propertyChains[size_t(step.object)]
-                                 .versionBase) +
-                        uint32_t(step.part - 1);
+                    uint32_t(
+                        p->file->propertyChains[propertyChain].versionBase) +
+                        uint32_t(propertyPart - 1);
             if (exact && !incoming &&
                 std::binary_search(coveredTyped.begin(), coveredTyped.end(),
                                    std::make_pair(value.domain, value.slot)))

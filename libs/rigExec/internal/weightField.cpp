@@ -388,11 +388,10 @@ RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator,
         B.steps.push_back(std::move(step));
     }
     for (auto &step : B.steps) {
-        if (step.kind != RigExecBakedStepKind::PropertyRevision ||
-            step.part <= 0)
+        size_t chain = 0, part = 0;
+        if (!RigExecBakedPropertyPartOf(B, step, &chain, &part))
             continue;
-        auto &revision = B.propertyChains[size_t(step.object)]
-                             .revisions[size_t(step.part - 1)];
+        auto &revision = B.propertyChains[chain].revisions[part - 1];
         if (revision.weightField >= 0) {
             step.reads.push_back(RigExecBakedOne(
                 RigExecBakedSlotDomain::WeightField, revision.weightField));

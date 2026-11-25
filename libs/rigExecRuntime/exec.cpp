@@ -1000,15 +1000,13 @@ RigExecRuntimeReader::Execute(std::string *error)
     if (!program.requiredStageFramesAdmission.admitted) {
         std::vector<size_t> propertySteps;
         for (size_t i = 0; i < program.steps->size(); ++i)
-            if ((*program.steps)[i].kind ==
-                RigExecWireStepKind::PropertyRevision)
+            if (RrPropertyPartOf(&program, (*program.steps)[i], nullptr,
+                                 nullptr))
                 propertySteps.push_back(i);
         std::sort(propertySteps.begin(), propertySteps.end(),
                   [&](size_t a, size_t b) {
-                      const auto &left = (*program.steps)[a];
-                      const auto &right = (*program.steps)[b];
-                      return std::make_pair(left.object, left.part) <
-                             std::make_pair(right.object, right.part);
+                      return (*program.steps)[a].object <
+                             (*program.steps)[b].object;
                   });
         for (size_t i : propertySteps) {
             poseDiagnostics.insert(poseDiagnostics.end(),

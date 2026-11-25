@@ -50,8 +50,10 @@ starting its workflow, and keep this list current when adding or changing skills
   headers are `step.h` and `kinds.h` (step identity and wire ordinals),
   `host.h` (the compile-time `Math`/`Inputs`/`State` binding), and the
   family headers `envelope.h`, `skin.h`, `chain.h`, `gate.h`, `closure.h`,
-  `pose.h`, `weights.h`, `spaces.h` and `properties.h`, which define
-  `RunGeometryStep` and `RunValueStep` as header-only templates. The baked
+  `pose.h`, `weights.h` and `spaces.h`, which define
+  `RunGeometryStep` and `RunValueStep` as header-only templates, and
+  `opSteps.h` with `propertyLookups.h`, which run op nodes as steps:
+  property revisions are op nodes whose inputs the host looks up per frame. The baked
   program and `rigExecRuntime` each bind inputs and publish outputs through
   their own host; neither keeps a second CPU step switch. Keep the headers
   free of `pxr/` includes and of new `.cpp` files so the installed source

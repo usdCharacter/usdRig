@@ -528,10 +528,47 @@ static_assert(uint8_t(fb::ArraySource::Pool) == 0 &&
                   fb::ArraySource::MAX == fb::ArraySource::SkinWeights,
               "the array sources are frozen");
 
+/// The property chain and part (1 to its revision count) op node \p node
+/// runs: the chain version below its base its value is stored in.
+bool
+_PropertyNodePart(const RigExecWireFile &file, int64_t node, size_t *chain,
+                  size_t *part)
+{
+    if (!file.opGraph || node < 0)
+        return false;
+    for (const auto &output : file.opGraph->hostOutputs) {
+        if (!output || output->node != uint64_t(node) || output->target != 0)
+            continue;
+        for (size_t c = 0; c < file.propertyChains.size(); ++c) {
+            const uint32_t base = file.propertyChains[c].versionBase;
+            if (output->object > base &&
+                output->object <=
+                    base + file.propertyChains[c].revisions.size()) {
+                if (chain)
+                    *chain = c;
+                if (part)
+                    *part = output->object - base;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 class _Validator {
 public:
     explicit _Validator(const RigExecWireFile &file) : _f(file)
     {
+        const size_t nodes = file.opGraph ? file.opGraph->nodes.size() : 0;
+        _propertyChainOf.assign(nodes, kNoProperty);
+        _propertyPartOf.assign(nodes, kNoProperty);
+        for (size_t n = 0; n < nodes; ++n) {
+            size_t chain = 0, part = 0;
+            if (_PropertyNodePart(file, int64_t(n), &chain, &part)) {
+                _propertyChainOf[n] = chain;
+                _propertyPartOf[n] = part;
+            }
+        }
     }
 
     bool Run(std::string *error)
@@ -543,12 +580,105 @@ public:
     }
 
 private:
+    static constexpr size_t kNoProperty = SIZE_MAX;
+
+    /// The property chain and part (1 to its revision count) op step
+    /// \p step runs; false for any other step.
+    bool _PropertyPart(const RigExecWireStep &step, size_t *chain,
+                       size_t *part) const
+    {
+        if (step.kind != fb::StepKind::OpNode || step.object < 0 ||
+            size_t(step.object) >= _propertyChainOf.size() ||
+            _propertyChainOf[size_t(step.object)] == kNoProperty)
+            return false;
+        if (chain)
+            *chain = _propertyChainOf[size_t(step.object)];
+        if (part)
+            *part = _propertyPartOf[size_t(step.object)];
+        return true;
+    }
+
+    /// Every revision of every property chain runs as exactly one op node,
+    /// whose step is a head; the first stores the base as well.
+    bool _PropertyNodes()
+    {
+        size_t versions = 0;
+        for (size_t c = 0; c < _f.propertyChains.size(); ++c) {
+            if (_f.propertyChains[c].versionBase != versions)
+                return _Bad("PropertyRevision chain " + _N(c) +
+                            ": noncanonical version_base");
+            versions += _f.propertyChains[c].revisions.size() + 1;
+        }
+        std::vector<std::vector<size_t>> nodes(_f.propertyChains.size());
+        for (size_t c = 0; c < nodes.size(); ++c)
+            nodes[c].assign(_f.propertyChains[c].revisions.size(), kNoProperty);
+        for (size_t n = 0; n < _propertyChainOf.size(); ++n) {
+            if (_propertyChainOf[n] == kNoProperty)
+                continue;
+            size_t &at = nodes[_propertyChainOf[n]][_propertyPartOf[n] - 1];
+            if (at != kNoProperty)
+                return _Bad("op node " + _N(n) +
+                            ": a property revision runs twice");
+            at = n;
+        }
+        for (size_t c = 0; c < nodes.size(); ++c)
+            for (size_t r = 0; r < nodes[c].size(); ++r)
+                if (nodes[c][r] == kNoProperty)
+                    return _Bad("property chain " + _N(c) + " revision " +
+                                _N(r + 1) + ": runs as no op node");
+        if (!_f.opGraph)
+            return true;
+        std::vector<uint8_t> stored;
+        for (const auto &output : _f.opGraph->hostOutputs) {
+            if (!output)
+                return _Bad("op_graph.host_outputs: an entry is missing");
+            if (output->target != 0)
+                return _Bad("op_graph.host_outputs: unknown target " +
+                            _N(output->target));
+            if (output->node >= _f.opGraph->nodes.size())
+                return _Bad("op_graph.host_outputs: no node " +
+                            _N(output->node));
+            const size_t node = size_t(output->node);
+            if (_propertyChainOf[node] == kNoProperty)
+                return _Bad("op_graph.host_outputs: node " + _N(node) +
+                            " stores no property version");
+            const auto &chain = _f.propertyChains[_propertyChainOf[node]];
+            const size_t part = _propertyPartOf[node];
+            if (output->object != chain.versionBase + part &&
+                !(part == 1 && output->object == chain.versionBase))
+                return _Bad("op_graph.host_outputs: node " + _N(node) +
+                            " stores version " + _N(output->object) +
+                            ", which is no property version it writes");
+            const size_t v = output->object;
+            if (stored.size() <= v)
+                stored.resize(v + 1, 0);
+            if (stored[v]++)
+                return _Bad("op_graph.host_outputs: version " + _N(v) +
+                            " is stored twice");
+        }
+        for (const auto &chain : _f.propertyChains)
+            for (size_t v = chain.versionBase;
+                 v <= chain.versionBase + chain.revisions.size(); ++v)
+                if (v >= stored.size() || !stored[v])
+                    return _Bad("op_graph.host_outputs: property version " +
+                                _N(v) + " is never stored");
+        for (const auto &lookup : _f.opGraph->lookups)
+            if (!lookup || lookup->source != 0 ||
+                !_Has(_f.propertyChains, lookup->object) || lookup->read > 8 ||
+                (lookup->read != 0 &&
+                 !_Has(_f.propertyChains[lookup->object].revisions,
+                       lookup->part)))
+                return _Bad("op_graph.lookups: a lookup reads nothing the "
+                            "file holds");
+        return true;
+    }
+
     bool _Run()
     {
         return _Root() && _Paths() && _Values() && _Pools() && _Slots() &&
-               _SlotMeta() && _Constants() && _Steps() && _Cones() && _Pose() &&
-               _Geometry() && _LayoutValues() && _PhaseBindings() &&
-               _PropertyChains() && _CrossDomainTables() &&
+               _SlotMeta() && _Constants() && _PropertyNodes() && _Steps() &&
+               _Cones() && _Pose() && _Geometry() && _LayoutValues() &&
+               _PhaseBindings() && _PropertyChains() && _CrossDomainTables() &&
                _ConsumerLeafSites() && _WeightFieldTables() &&
                _ProviderTables() && _PoseBodyDeclarations() && _HeadChecks() &&
                _StepGraph() && _SolverSemanticRequirements() &&
@@ -572,6 +702,9 @@ private:
             const fb::StepKind kind = _f.steps[i].kind;
             if (kind == fb::StepKind::ReservedOpGraph)
                 return _Bad(_StepName(i) + ": the retired OpGraph step");
+            if (kind == fb::StepKind::ReservedPropertyRevision)
+                return _Bad(_StepName(i) +
+                            ": the retired PropertyRevision step");
             const bool op = kind == fb::StepKind::OpNode ||
                             kind == fb::StepKind::OpChainHead ||
                             kind == fb::StepKind::OpChainRange;
@@ -627,10 +760,14 @@ private:
                     if (input.object >= _slots)
                         return _Bad(at + ": slot " + _N(input.object) +
                                     " out of range");
+                } else if (input.host == 4) {
+                    if (input.object >= graph->lookups.size())
+                        return _Bad(at + ": lookup " + _N(input.object) +
+                                    " out of range");
                 } else {
                     return _Bad(at + ": rig value " + _N(size_t(input.host)) +
-                                " is not a point chain, a matrix or a "
-                                "constant");
+                                " is not a point chain, a matrix, a lookup "
+                                "or a constant");
                 }
             }
         }
@@ -4390,9 +4527,11 @@ private:
                     uint32_t(D::RequiredStageFramesAdmission))
                 return _Bad("common_graph.excluded_values: required "
                             "stage-frame admission cannot be excluded");
-        const auto prep = [](K kind) {
-            return kind == K::PropertyRevision || kind == K::RestCompose ||
-                   kind == K::LadderCompose || kind == K::SkinTopology;
+        const auto prep = [this](const RigExecWireStep &step) {
+            return _PropertyPart(step, nullptr, nullptr) ||
+                   step.kind == K::RestCompose ||
+                   step.kind == K::LadderCompose ||
+                   step.kind == K::SkinTopology;
         };
         std::map<std::pair<D, uint32_t>, std::vector<size_t>> producers;
         std::vector<size_t> pending;
@@ -4404,14 +4543,16 @@ private:
                         _StepName(i) +
                         ": required stage-frame admission is source-only");
             }
-            if (!prep(step.kind))
+            if (!prep(step))
                 continue;
             pending.push_back(i);
-            if (step.kind == K::PropertyRevision && step.part > 0) {
-                const auto &chain = _f.propertyChains[size_t(step.object)];
-                const auto &revision = chain.revisions[size_t(step.part - 1)];
-                if (!_BodyRead(i, D::PropertyResult,
-                               chain.versionBase + uint32_t(step.part) - 1))
+            size_t propertyChain = 0, propertyPart = 0;
+            if (_PropertyPart(step, &propertyChain, &propertyPart)) {
+                const auto &chain = _f.propertyChains[propertyChain];
+                const auto &revision = chain.revisions[propertyPart - 1];
+                if (propertyPart > 1 &&
+                    !_BodyRead(i, D::PropertyResult,
+                               chain.versionBase + uint32_t(propertyPart) - 1))
                     return false;
                 if (revision.weightField >= 0 &&
                     !_BodyRead(i, D::WeightField,
@@ -4465,9 +4606,9 @@ private:
             const auto &step = _f.steps[i];
             const bool helper =
                 step.kind == K::WeightField || step.kind == K::SpaceExpression;
-            const bool required =
-                step.kind != K::SnapshotFinals && !prep(step.kind) &&
-                step.kind != K::AvarInputs && !(helper && ancestors.count(i));
+            const bool required = step.kind != K::SnapshotFinals &&
+                                  !prep(step) && step.kind != K::AvarInputs &&
+                                  !(helper && ancestors.count(i));
             size_t count = 0;
             for (const auto &range : step.reads)
                 if (range.domain() == D::RequiredStageFramesAdmission) {
@@ -4492,11 +4633,7 @@ private:
                                _f.geometry->derivedIndex.size();
         size_t versions = 0;
         for (size_t c = 0; c < _f.propertyChains.size(); ++c) {
-            const auto &chain = _f.propertyChains[c];
-            if (chain.versionBase != versions)
-                return _Bad("PropertyRevision chain " + _N(c) +
-                            ": noncanonical version_base");
-            versions += chain.revisions.size() + 1;
+            versions += _f.propertyChains[c].revisions.size() + 1;
         }
         for (size_t r = 0; r < _f.phasedConsumers.size(); ++r)
             if (_f.phasedConsumers[r].version != versions++)
@@ -4513,8 +4650,12 @@ private:
         };
         for (size_t i = 0; i < _f.steps.size(); ++i) {
             const auto &step = _f.steps[i];
+            size_t propertyChain = 0, propertyPart = 0;
+            const bool property =
+                _PropertyPart(step, &propertyChain, &propertyPart);
             const bool kindHead =
-                (step.kind >= fb::StepKind::PropertyRevision &&
+                property ||
+                (step.kind >= fb::StepKind::RestCompose &&
                  step.kind <= fb::StepKind::SkinTopology) ||
                 (step.kind == fb::StepKind::WeightField && step.object >= 0 &&
                  size_t(step.object) < _f.geometry->weightFields.size() &&
@@ -4540,13 +4681,14 @@ private:
                     return _Bad(_StepName(i) + ": head write out of range");
                 const auto required =
                     range.domain() == fb::SlotDomain::PropertyResult
-                        ? fb::StepKind::PropertyRevision
+                        ? fb::StepKind::OpNode
                     : range.domain() == fb::SlotDomain::Rest
                         ? fb::StepKind::RestCompose
                     : range.domain() == fb::SlotDomain::Ladder
                         ? fb::StepKind::LadderCompose
                         : fb::StepKind::SkinTopology;
-                if (step.kind != required)
+                if (step.kind != required ||
+                    (required == fb::StepKind::OpNode && !property))
                     return _Bad(_StepName(i) +
                                 ": wrong head domain writer kind");
                 for (uint32_t v = range.begin(); v < range.end(); ++v) {
@@ -4556,17 +4698,16 @@ private:
                     (*table)[v] = int64_t(i);
                 }
             }
-            if (step.kind == fb::StepKind::PropertyRevision) {
-                if (!_Has(_f.propertyChains, step.object))
-                    return _Bad(_StepName(i) + ": invalid chain object");
-                const auto &chain = _f.propertyChains[size_t(step.object)];
-                if (step.part < 0 || size_t(step.part) > chain.revisions.size())
-                    return _Bad(_StepName(i) + ": invalid property part");
+            if (property) {
+                const auto &chain = _f.propertyChains[propertyChain];
                 std::set<uint32_t> expected{chain.versionBase +
-                                            uint32_t(step.part)};
+                                            uint32_t(propertyPart)};
+                if (propertyPart == 1)
+                    expected.insert(chain.versionBase);
                 for (const auto &record : _f.phasedConsumers)
-                    if (record.chain == uint32_t(step.object) &&
-                        record.applied == uint32_t(step.part))
+                    if (record.chain == uint32_t(propertyChain) &&
+                        (record.applied == uint32_t(propertyPart) ||
+                         (propertyPart == 1 && record.applied == 0)))
                         expected.insert(record.version);
                 std::set<uint32_t> actual;
                 for (const auto &range : step.writes) {
@@ -4579,9 +4720,9 @@ private:
                 if (actual != expected)
                     return _Bad(_StepName(i) +
                                 ": property version/record ownership differs");
-                if (step.part &&
+                if (propertyPart > 1 &&
                     !_Declares(i, fb::SlotDomain::PropertyResult,
-                               chain.versionBase + uint32_t(step.part) - 1))
+                               chain.versionBase + uint32_t(propertyPart) - 1))
                     return _Bad(_StepName(i) +
                                 ": part does not declare predecessor version");
             } else if (step.kind == fb::StepKind::RestCompose ||
@@ -4619,15 +4760,14 @@ private:
                     step.headInputSlots.end())
                 return _Bad(_StepName(i) +
                             ": memo slots are not sorted unique");
-            if (step.kind == fb::StepKind::PropertyRevision) {
-                const auto &chain = _f.propertyChains[size_t(step.object)];
+            if (property) {
+                const auto &chain = _f.propertyChains[propertyChain];
                 std::set<uint32_t> expectedSlots;
                 bool volatileBody = false;
-                if (step.part == 0)
+                if (propertyPart == 1)
                     expectedSlots.insert(chain.target);
-                else {
-                    const auto &revision =
-                        chain.revisions[size_t(step.part - 1)];
+                {
+                    const auto &revision = chain.revisions[propertyPart - 1];
                     volatileBody = false;
 
                     for (const auto *input :
@@ -4693,8 +4833,7 @@ private:
                     return _Bad(_StepName(i) + ": topology memo does not cover "
                                                "exactly its layout leaves");
             }
-            if (step.kind == fb::StepKind::PropertyRevision ||
-                step.kind == fb::StepKind::SkinTopology) {
+            if (property || step.kind == fb::StepKind::SkinTopology) {
                 if (step.headVaryingLeaves)
                     return _Bad(_StepName(i) +
                                 ": raw head carries binding-varying flag");
@@ -4778,10 +4917,11 @@ private:
             const auto &step = _f.steps[i];
             for (const auto &read : step.headInputReads)
                 owners.emplace(&read, i);
-            if (step.kind != fb::StepKind::PropertyRevision || step.part == 0)
+            size_t propertyChain = 0, propertyPart = 0;
+            if (!_PropertyPart(step, &propertyChain, &propertyPart))
                 continue;
-            const auto &revision = _f.propertyChains[size_t(step.object)]
-                                       .revisions[size_t(step.part - 1)];
+            const auto &revision =
+                _f.propertyChains[propertyChain].revisions[propertyPart - 1];
             for (const auto *read :
                  {revision.enabled.get(), revision.defaultWeight.get(),
                   revision.value.get(), revision.min.get(), revision.max.get()})
@@ -4793,10 +4933,11 @@ private:
             const auto owner = owners.find(input);
             // Bound property reads use per-consumer typed phase authority;
             // producer chain discovery order does not constrain visibility.
+            size_t ownerChain = 0;
             const int readerChain =
-                owner != owners.end() && _f.steps[owner->second].kind ==
-                                             fb::StepKind::PropertyRevision
-                    ? _f.steps[owner->second].object
+                owner != owners.end() && _PropertyPart(_f.steps[owner->second],
+                                                       &ownerChain, nullptr)
+                    ? int(ownerChain)
                     : -1;
             // Property revisions own entering phases and suppress later target overlays.
             // Ordinary readers retain conditional Final fallbacks after typed records.
@@ -9019,6 +9160,7 @@ private:
     std::vector<std::vector<std::vector<char>>> _groupWritten;
     std::vector<std::vector<std::vector<int>>> _groupEntering;
     const RigExecWireFile &_f;
+    std::vector<size_t> _propertyChainOf, _propertyPartOf;
     std::string _error;
     size_t _slots = 0;
     size_t _clusters = 0;
@@ -9200,13 +9342,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 36,
+    static_assert(RigExecFormatOldestReadable == 37,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: op nodes as steps of the common graph"
+                ? "re-export: property revisions as op nodes"
                 : "rebake");
 }
 
@@ -9264,6 +9406,15 @@ _OpenAligned(const uint8_t *bytes, size_t size,
 }
 
 } // namespace
+
+bool
+RigExecFormatPropertyPart(const RigExecWireFile &file,
+                          const RigExecWireStep &step, size_t *chain,
+                          size_t *part)
+{
+    return step.kind == fb::StepKind::OpNode &&
+           _PropertyNodePart(file, step.object, chain, part);
+}
 
 bool
 RigExecFormatOpen(const uint8_t *bytes, size_t size,
@@ -9440,8 +9591,8 @@ _StepKindName(fb::StepKind kind)
         return "Derived";
     case fb::StepKind::FrameMatrix:
         return "FrameMatrix";
-    case fb::StepKind::PropertyRevision:
-        return "PropertyRevision";
+    case fb::StepKind::ReservedPropertyRevision:
+        return "ReservedPropertyRevision";
     case fb::StepKind::RestCompose:
         return "RestCompose";
     case fb::StepKind::LadderCompose:
@@ -9520,21 +9671,8 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
     case fb::StepKind::SnapshotFinals:
         *out = "every provider";
         return true;
-    case fb::StepKind::PropertyRevision: {
-        if (!_Has(file.propertyChains, object))
-            return false;
-        const auto &chain = file.propertyChains[size_t(object)];
-        if (step.part == 0) {
-            if (chain.target >= file.inputs.size())
-                return false;
-            *out = text(file.inputs[chain.target].name()) + " base";
-        } else {
-            if (!_Has(chain.revisions, int64_t(step.part) - 1))
-                return false;
-            *out = text(chain.revisions[size_t(step.part - 1)].mover);
-        }
-        return true;
-    }
+    case fb::StepKind::ReservedPropertyRevision:
+        return false;
     case fb::StepKind::RestCompose:
     case fb::StepKind::LadderCompose: {
         if (!pose || !meta || !_Has(pose->composeGroups, object))
@@ -9558,11 +9696,15 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
         return true;
     case fb::StepKind::ReservedOpGraph:
         return false;
-    case fb::StepKind::OpNode:
+    case fb::StepKind::OpNode: {
         if (!file.opGraph || !_Has(file.opGraph->nodes, object))
             return false;
-        *out = "op node " + std::to_string(object);
+        size_t chain = 0, part = 0;
+        *out = _PropertyNodePart(file, object, &chain, &part)
+                   ? text(file.propertyChains[chain].revisions[part - 1].mover)
+                   : "op node " + std::to_string(object);
         return true;
+    }
     case fb::StepKind::OpChainHead:
     case fb::StepKind::OpChainRange:
         if (!file.opGraph || !_Has(file.opGraph->chains, object))

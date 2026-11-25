@@ -218,7 +218,8 @@ target_link_libraries(rigExec PUBLIC
 )
 
 target_link_libraries(rigExec PRIVATE
-    rigExecGraph rigExecMath rigExecEvalCore rigExecInputValues ts)
+    rigExecGraph rigExecMath rigExecEvalCore rigExecInputValues rigExecBuiltins
+    ts)
 # On Windows the consumers of rigExec need those two archives as well.
 
 # Scene translation calls back into the evaluator. The evaluator does not

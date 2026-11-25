@@ -1015,15 +1015,28 @@ bool RrWeightSizeScratch(RrProgram *program, std::string *error);
 /// Runs after the reads are bound.
 bool RrPropertySizeScratch(RrProgram *program, std::string *error);
 
-/// The property chains (RigExecRigEvaluator::_EvaluatePropertyChains,
-/// rigEvaluatorProperties.cpp) over this run's slot values, in dependency
-/// order, before every prologue: each published result lands in
-/// RrStore::propertyResults at once, so a later chain or any read crossing
-/// the target sees it. Diagnostics are appended to \p poseDiagnostics in
-/// chain order. False only when the file and the classified chains
-/// disagree.
-bool RrRunPropertyPart(RrProgram *program, size_t chain, size_t part,
-                       std::vector<std::string> *diagnostics);
+/// Resolves property lookup \p lookup (OpLookup source kPropertyLookup)
+/// into \p out, a value of its op input's \p type. False with the error
+/// that stops the evaluation: a missing or non-finite base, a failed
+/// weight field.
+bool RrLookUpProperty(const RrProgram *program, const eval::OpLookup &lookup,
+                      const RigExecTypeDesc &type, void *out,
+                      std::string *error);
+/// Stores a property op node's value in version \p version and in the
+/// phased records that read it; the base's store marks its chain valid.
+bool RrStorePropertyVersion(RrProgram *program, uint32_t version,
+                            const void *value, std::string *error);
+/// "diag <mover>" of revision \p part (from 1) of \p chain.
+std::string RrPropertyRevisionLabel(const RrProgram *program, size_t chain,
+                                    size_t part);
+/// The chain and part (0 the base) version \p version belongs to.
+bool RrPropertyPartOfVersion(const RrProgram *program, uint32_t version,
+                             size_t *chain, size_t *part);
+/// The property chain and part (1 to its revision count) op step \p step
+/// runs: revision part, and for part 1 also the chain's base. False for
+/// any other step.
+bool RrPropertyPartOf(const RrProgram *program, const RigExecWireStep &step,
+                      size_t *chain, size_t *part);
 void RrPropertyBegin(RrProgram *program);
 void RrPropertyPublish(RrProgram *program);
 void RrPropertyPublishFinished(RrProgram *program,

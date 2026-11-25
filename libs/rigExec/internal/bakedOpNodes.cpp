@@ -5,7 +5,9 @@
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/compile/rigDescData.h"
 #include "rigExec/api/registry.h"
+#include "rigExecBuiltins/builtins.h"
 #include "rigExecEvalCore/opSteps.h"
+#include "rigExecEvalCore/propertyLookups.h"
 #include "rigExecStdTypes/array.h"
 #include "rigExecStdTypes/stdTypes.h"
 
@@ -32,9 +34,17 @@ using K = RigExecBakedStepKind;
 std::function<bool(const RigExecBakedProgramImpl &, RigExecBakedOpInjection *)>
     gOpInjector;
 
-/// What the op steps read from the baked program.
+bool
+Fail(std::string *error, const std::string &why)
+{
+    if (error)
+        *error = "op nodes: " + why;
+    return false;
+}
+
+/// What the op steps read from the baked program and store in it.
 struct BakedOpHost {
-    const RigExecBakedProgramImpl &B;
+    RigExecBakedProgramImpl &B;
 
     const void *Matrix(eval::OpHostSource source, uint32_t slot) const
     {
@@ -50,15 +60,24 @@ struct BakedOpHost {
         const RigExecBakedProgramImpl::GeomChain &c = B.chains[chain];
         return RigExecBakedGroupAt(c, c.revisions.size(), g).data;
     }
+    bool Lookup(uint32_t index, const eval::OpLookup &lookup,
+                const RigExecTypeDesc &type, void *value,
+                std::string *error) const
+    {
+        if (lookup.source != eval::kPropertyLookup)
+            return Fail(error,
+                        "no lookup source " + std::to_string(lookup.source));
+        return RigExecBakedLookUpProperty(B, lookup, index, type, value, error);
+    }
+    bool Output(const eval::OpHostOutput &output, const void *value,
+                std::string *error) const
+    {
+        if (output.target != eval::kPropertyVersion)
+            return Fail(error,
+                        "no output target " + std::to_string(output.target));
+        return RigExecBakedStorePropertyVersion(B, output, value, error);
+    }
 };
-
-bool
-Fail(std::string *error, const std::string &why)
-{
-    if (error)
-        *error = "op nodes: " + why;
-    return false;
-}
 
 template <class T>
 void
@@ -253,7 +272,8 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
                 d.values[p] != kRigExecInvalidIndex)
                 visit(d.values[p]);
     };
-    for (uint32_t n = 0; n < layout.nodes.size(); ++n) {
+    for (uint32_t n = uint32_t(B->propertyNodeChain.size());
+         n < layout.nodes.size(); ++n) {
         if (layout.chainOf[n] != kRigExecInvalidIndex)
             continue;
         RigExecBakedStep &step = AddOpStep(B, K::OpNode, int(n), -1);
@@ -331,20 +351,30 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
     RigExecBakedProgramImpl &B = *program;
     B.opProgram.reset();
     B.opState.reset();
-    RigExecBakedOpInjection injection;
-    if (!gOpInjector || !gOpInjector(B, &injection))
-        return true;
-    if (!injection.desc)
-        return Fail(error, "the injection has no description");
     auto op = std::make_shared<RigExecBakedOpProgram>();
     eval::OpStepLayout &layout = op->layout;
+    if (!B.propertyChains.empty() && !RigExecEnsureBuiltinRegistry(error))
+        return false;
+    RigExecRigDescBuilder builder;
+    if (!RigExecBakedAddPropertyOps(B, &builder, &layout, error))
+        return false;
+    RigExecBakedOpInjection injection;
+    injection.builder = &builder;
+    const bool injected = gOpInjector && gOpInjector(B, &injection);
+    if (B.propertyNodeChain.empty() && !injected)
+        return true;
+    std::string why;
+    const std::shared_ptr<const RigExecRigDesc> desc = builder.Build(&why);
+    if (!desc)
+        return Fail(error, why);
     RigExecCompileOptions options;
     options.hostOrder = true;
-    std::string why;
-    layout.program = RigExecCompile(*injection.desc, options, &why);
+    layout.program = RigExecCompile(*desc, options, &why);
     if (!layout.program)
         return Fail(error, why);
-    layout.hostInputs = injection.hostInputs;
+    layout.hostInputs.insert(layout.hostInputs.end(),
+                             injection.hostInputs.begin(),
+                             injection.hostInputs.end());
     const size_t chains = RigExecProgramChainCount(*layout.program);
     layout.chains.assign(chains, eval::OpChainLayout());
     std::vector<uint32_t> chainOfNode(RigExecProgramNodeCount(*layout.program),
@@ -402,8 +432,10 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
     }
     if (!eval::LayOutOpSteps(&layout, error))
         return false;
+    B.propertyKeyHold.assign(layout.lookups.size(), VtArray<GfVec2f>());
+    B.propertyPointHold.assign(layout.lookups.size(), VtVec3fArray());
     op->outputs = injection.outputs;
-    for (const RigExecDescNode &node : injection.desc->Data().nodes) {
+    for (const RigExecDescNode &node : desc->Data().nodes) {
         const RigExecOpDesc &desc = *registry.OpAt(node.op).desc;
         std::vector<uint8_t> bytes;
         bool savable = true;
@@ -455,12 +487,21 @@ RigExecBakedRunOpStep(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
     const BakedOpHost host{B};
     eval::OpStepState &state = *B.opState;
     std::string error;
+    size_t chain = 0, part = 0;
+    const bool property = RigExecBakedPropertyPartOf(B, *step, &chain, &part);
+    if (property) {
+        step->lines.clear();
+        RigExecBakedPropertyInputLines(B, chain, part, &step->lines);
+    }
     const eval::OpStepKind kind = eval::OpStepKind(uint8_t(step->kind));
     if (eval::RunOpStep(B.opProgram->layout, host, &state, kind, step->object,
                         step->part, &error))
         return;
     step->failed = true;
-    step->diagnostics.push_back(error);
+    step->diagnostics.push_back(
+        property ? B.propertyChains[chain].revisions[part - 1].linePrefix +
+                       ": " + error
+                 : error);
 }
 
 bool

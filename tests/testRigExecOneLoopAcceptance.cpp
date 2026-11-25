@@ -159,7 +159,7 @@ CrossDomainChain
 FindChain(const std::vector<RigExecOpGraphNode> &graph)
 {
     CrossDomainChain c;
-    c.property = OneStep(graph, "PropertyRevision", "/ClampBlendWeight");
+    c.property = OneStep(graph, "OpNode", "/ClampBlendWeight");
     c.precedingField = OneStep(graph, "WeightField", "/FingerVolume");
     c.blendSolve = OneStep(graph, "Solve", "/IKFKBlend");
     c.constraint = OneStep(graph, "Constraint", "/FingerToWrist");
@@ -566,8 +566,9 @@ TestSkipEffects(const std::string &fixturesDir)
     for (uint32_t c = 0; c < B.opGraph.ops.size(); ++c) {
         CHECK(B.opExecution.ran[c]);
         const auto &step = B.steps[B.opGraph.ops[c].originalIndex];
-        const bool effect = RigExecBakedIsGeometryStep(step.kind) ||
-                            step.kind == RigExecBakedStepKind::PropertyRevision;
+        const bool effect =
+            RigExecBakedIsGeometryStep(step.kind) ||
+            RigExecBakedPropertyPartOf(B, step, nullptr, nullptr);
         const bool found =
             std::binary_search(effects.begin(), effects.end(), c);
         CHECK(found == effect);
@@ -850,9 +851,9 @@ TestCycle(const std::string &fixturesDir)
     CHECK(
         rigExecTest::FindOpGraphSteps(E.GetOpGraph(), "Solve", "/Solvers/Lift")
             .size() == 1);
-    CHECK(rigExecTest::FindOpGraphSteps(E.GetOpGraph(), "PropertyRevision",
-                                        "/RawSelected")
-              .size() == 1);
+    CHECK(
+        rigExecTest::FindOpGraphSteps(E.GetOpGraph(), "OpNode", "/RawSelected")
+            .size() == 1);
     bool diagnosed = false;
     for (const auto &line : pose.diagnostics)
         diagnosed |= line.find("cycle") != std::string::npos;

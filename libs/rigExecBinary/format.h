@@ -608,7 +608,12 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// feeds node inputs from a point chain's vertex groups or a joint's final
 /// matrix, and gives each range chain its point chain and group bounds
 /// (OpGraph.chains). It retires format 35's one OpGraph step.
-inline constexpr uint32_t RigExecFormatVersion = 36;
+///
+/// Format 37 runs each property revision as an op node (OpNode steps):
+/// node inputs read the rig through OpGraph.lookups, and node values are
+/// stored in property versions through OpGraph.host_outputs. It retires the
+/// PropertyRevision step.
+inline constexpr uint32_t RigExecFormatVersion = 37;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -616,7 +621,7 @@ inline constexpr uint32_t RigExecFormatVersion = 36;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 36;
+inline constexpr uint32_t RigExecFormatOldestReadable = 37;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool
@@ -738,6 +743,13 @@ bool RigExecFormatValidate(const fb::RigExecWireFile &file, std::string *error);
 bool RigExecFormatOpen(const uint8_t *bytes, size_t size,
                        std::unique_ptr<fb::RigExecWireFile> *file,
                        std::string *error);
+
+/// The property chain and part (1 to its revision count) op step \p step
+/// of \p file runs: revision part, and for part 1 also the chain's base.
+/// False for any other step.
+bool RigExecFormatPropertyPart(const RigExecWireFile &file,
+                               const RigExecWireStep &step, size_t *chain,
+                               size_t *part);
 
 /// Validates \p file, refuses any format version but RigExecFormatVersion,
 /// then packs it with the file identifier. The bytes are a pure function of

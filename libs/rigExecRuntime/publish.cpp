@@ -100,13 +100,12 @@ _RrAppendBlock(const RrProgram &program, RrStepLines block, const Visit &visit,
         // independently of the canonical execution graph's interleaving.
         std::vector<size_t> property;
         visit([&](size_t i) {
-            if (steps[i].kind == RigExecWireStepKind::PropertyRevision &&
+            if (RrPropertyPartOf(&program, steps[i], nullptr, nullptr) &&
                 _RrHoldsOutput(store, i))
                 property.push_back(i);
         });
         std::sort(property.begin(), property.end(), [&](size_t a, size_t b) {
-            return std::make_pair(steps[a].object, steps[a].part) <
-                   std::make_pair(steps[b].object, steps[b].part);
+            return steps[a].object < steps[b].object;
         });
         for (size_t i : property) {
             diagnostics(i);
@@ -119,7 +118,7 @@ _RrAppendBlock(const RrProgram &program, RrStepLines block, const Visit &visit,
     case RrStepLines::Walk:
         visit([&](size_t i) {
             const RigExecWireStepKind kind = steps[i].kind;
-            if (kind != RigExecWireStepKind::PropertyRevision &&
+            if (!RrPropertyPartOf(&program, steps[i], nullptr, nullptr) &&
                 kind != RigExecWireStepKind::PoseInterpolator &&
                 !_RrPublishedGeometryKind(kind))
                 diagnostics(i);

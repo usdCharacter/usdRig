@@ -9,7 +9,6 @@
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/moverGraph.h"
 #include "rigExecScene/constraintSceneTranslation.h"
-#include "rigExecScene/propertyOps.h"
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecStdTypes/stdTypes.h"
 
@@ -795,170 +794,6 @@ ProbeDerived(const B &b)
     }
 }
 
-template <class T>
-bool
-RunProperty(const RigExecScenePropertyDescriptor &descriptor, const T &in,
-            float envelope, T *out, std::string &error)
-{
-    RigExecRigDescBuilder builder;
-    RigExecPropertyOpNode node;
-    if (!RigExecAddPropertyOp(descriptor, &builder, nullptr, &node, &error))
-        return false;
-    auto desc = builder.Build(&error);
-    auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
-    auto evaluator =
-        program ? RigExecEvaluator::Create(program, {}, &error) : nullptr;
-    if (!evaluator || !evaluator->SetInput(node.in, &in, &error) ||
-        !RigExecWritePropertyOpInputs(descriptor, node, envelope,
-                                      evaluator.get(), &error) ||
-        !evaluator->Evaluate(&error))
-        return false;
-    *out = *static_cast<const T *>(evaluator->GetOutput(node.out));
-    return true;
-}
-
-template <class T>
-T
-WalkRead(const B &b, const RigExecBakedWalk &walk, T fallback)
-{
-    VtValue value;
-    if (!RigExecBakedResolveWalkValue(b, walk, &value) || !value.IsHolding<T>())
-        return fallback;
-    return value.UncheckedGet<T>();
-}
-
-// PropertyRevision: one revision of a chain, from the version entering it to
-// the version it wrote. The record is built from the operands the body read
-// through the revision's walks, with the body's fallbacks.
-void
-ProbeProperty(const B &b)
-{
-    using Arm = RigExecBakedPropertyChain::Arm;
-    for (const auto &chain : b.propertyChains) {
-        const char *armName = chain.arm == Arm::Float    ? "float"
-                              : chain.arm == Arm::Vec3f  ? "vec3f"
-                              : chain.arm == Arm::Double ? "double"
-                                                         : "matrix4d";
-        for (size_t k = 0; k < chain.revisions.size(); ++k) {
-            const auto &revision = chain.revisions[k];
-            if (chain.arm == Arm::Double) {
-                Unprobed("PropertyRevision", armName,
-                         "no math op for a double target");
-                continue;
-            }
-            const uint32_t in = chain.versionBase + uint32_t(k);
-            const uint32_t out = in + 1;
-            if (!b.propertyVersionValid[in] || !revision.moverExists) {
-                Unprobed("PropertyRevision", armName,
-                         "the entering version is invalid or the mover is "
-                         "gone");
-                continue;
-            }
-            bool admitted = WalkRead(b, revision.enabled, true);
-            float envelope = WalkRead(b, revision.defaultWeight, 1.0f);
-            if (!revision.weightObject.IsEmpty()) {
-                const auto &field =
-                    b.weightFields[size_t(revision.weightField)];
-                admitted = admitted && field.ok && field.values.size() == 1;
-                envelope = admitted ? field.values[0] : 0.0f;
-            } else if (!std::isfinite(envelope) || envelope < 0.0f ||
-                       envelope > 1.0f)
-                admitted = false;
-            RigExecScenePropertyDescriptor descriptor;
-            descriptor.mover = revision.mover;
-            descriptor.target = chain.target;
-            descriptor.targetType = chain.valueType;
-            const VtVec3fArray pathPoints =
-                WalkRead(b, revision.pathPoints, VtVec3fArray());
-            if (chain.arm == Arm::Float) {
-                RigExecFloatPropertyRecord record;
-                record.op = revision.op;
-                record.opValid = revision.opValid;
-                record.hasTangents = revision.hasTangents;
-                record.value = WalkRead(b, revision.value, 0.0f);
-                record.minimum = WalkRead(b, revision.minimum, 0.0f);
-                record.maximum = WalkRead(b, revision.maximum, 0.0f);
-                const auto keys =
-                    WalkRead(b, revision.keys, VtArray<GfVec2f>());
-                record.keys.assign(keys.cbegin(), keys.cend());
-                if (revision.hasTangents) {
-                    const auto tangents =
-                        WalkRead(b, revision.tangents, VtArray<GfVec2f>());
-                    record.tangents.assign(tangents.cbegin(), tangents.cend());
-                }
-                record.pathPointData = pathPoints.cdata();
-                record.pathPointCount = pathPoints.size();
-                record.path = revision.path;
-                descriptor.record = record;
-            } else if (chain.arm == Arm::Vec3f) {
-                RigExecVec3PropertyRecord record;
-                record.op = revision.op;
-                record.opValid = revision.opValid;
-                record.value = WalkRead(b, revision.value, GfVec3f(0.0f));
-                record.minimum = WalkRead(b, revision.minimum, GfVec3f(0.0f));
-                record.maximum = WalkRead(b, revision.maximum, GfVec3f(0.0f));
-                descriptor.record = record;
-            } else {
-                RigExecMatrixPropertyRecord record;
-                record.op = revision.op;
-                record.opValid = revision.opValid;
-                record.value = WalkRead(b, revision.value, GfMatrix4d(1.0));
-                descriptor.record = record;
-            }
-            const auto &entering = b.propertyValues[in];
-            const auto &written = b.propertyValues[out];
-            const bool valid = b.propertyVersionValid[out];
-            std::string error;
-            bool applied = false;
-            VtValue baked, op, passed;
-            if (chain.arm == Arm::Float) {
-                float value = entering.f;
-                if (admitted)
-                    applied = RunProperty(descriptor, entering.f, envelope,
-                                          &value, error);
-                baked = valid ? VtValue(written.f) : VtValue();
-                op = VtValue(applied ? value : entering.f);
-                passed = VtValue(entering.f);
-            } else if (chain.arm == Arm::Vec3f) {
-                const rigExecStd::Vec3f from(entering.v[0], entering.v[1],
-                                             entering.v[2]);
-                rigExecStd::Vec3f value = from;
-                if (admitted)
-                    applied =
-                        RunProperty(descriptor, from, envelope, &value, error);
-                baked = valid ? VtValue(written.v) : VtValue();
-                op = VtValue(applied ? GfVec3f(value[0], value[1], value[2])
-                                     : entering.v);
-                passed = VtValue(entering.v);
-            } else {
-                rigExecStd::Mat4d from, value;
-                for (int row = 0; row < 4; ++row)
-                    for (int col = 0; col < 4; ++col)
-                        from._mtx[row][col] = entering.m[row][col];
-                value = from;
-                if (admitted)
-                    applied =
-                        RunProperty(descriptor, from, envelope, &value, error);
-                GfMatrix4d matrix = entering.m;
-                for (int row = 0; applied && row < 4; ++row)
-                    for (int col = 0; col < 4; ++col)
-                        matrix[row][col] = value._mtx[row][col];
-                baked = valid ? VtValue(written.m) : VtValue();
-                op = VtValue(matrix);
-                passed = VtValue(entering.m);
-            }
-            if (admitted && !applied) {
-                OpFailed("PropertyRevision", armName,
-                         revision.mover.GetString(), !valid || baked == passed,
-                         error);
-                continue;
-            }
-            Compare("PropertyRevision", armName, revision.mover.GetString(),
-                    baked, op, !applied);
-        }
-    }
-}
-
 // WeightPacket: a combine weight's packet from the packets, target count,
 // strength and invert the body read. Other weight kinds have no op.
 void
@@ -1172,7 +1007,6 @@ ProbeStage(const UsdStageRefPtr &stage, const std::string &rig, Paint paint)
         ProbeRevisions(b);
         ProbeRangeChains(b);
         ProbeDerived(b);
-        ProbeProperty(b);
         ProbeWeights(b);
     }
 }
@@ -1297,9 +1131,8 @@ main(int argc, char **argv)
                     return 1;
                 }
     }
-    for (const char *family :
-         {"Solve/", "RevisionChunk/", "RangeChain/", "Derived/",
-          "PropertyRevision/", "WeightPacket/", "Constraint/"}) {
+    for (const char *family : {"Solve/", "RevisionChunk/", "RangeChain/",
+                               "Derived/", "WeightPacket/", "Constraint/"}) {
         size_t compared = 0;
         for (const auto &[key, tally] : g_tally)
             if (key.compare(0, std::strlen(family), family) == 0)

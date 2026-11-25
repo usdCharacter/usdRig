@@ -4609,9 +4609,9 @@ _BlinkReadout(const RigExecRigPose &pose, const char *name)
 // expects while dragged. Dragged to 1.4, the base readers read 1.4 and the
 // final readers 1.0; with the clamp disabled every revision passes
 // through, so both read 1.4; with no authored value the drag is still a
-// base, so the chain runs from it; and a drag that is not finite skips the
-// chain with the line an authored one prints, leaving every reader on the
-// dragged value. A held drag moved without being lifted reads at each step
+// base, so the chain runs from it, while the undragged frame fails with no
+// base; and a drag that is not finite fails the frame with the line an
+// authored one prints. A held drag moved without being lifted reads at each step
 // what a drag placed straight at that value reads: 1.4 -> 1.5 leaves the
 // clamped final on 1.0 while the base readers move, and 1.5 -> 0.5 moves
 // both. A double drag on the float blink is the float base it narrows to.
@@ -4633,7 +4633,7 @@ TestBlinkDragEqualsRelease()
         {"blink 1.4", true, true, true, 1.4f, 1.4f, 1.0f},
         {"blink 1.4, clamp disabled", true, true, false, 1.4f, 1.4f, 1.4f},
         {"blink 0.5, nothing authored", true, false, true, 0.5f, 0.5f, 0.5f},
-        // The readouts cannot add a NaN and pass through, keeping 0.
+        // A NaN base fails the frame.
         {"blink NaN", false, true, true, nan, 0.0f, 0.0f},
     };
     {
@@ -4651,6 +4651,30 @@ TestBlinkDragEqualsRelease()
                 {RigExecValueOverride{blink.GetPrimPath(), TfToken(),
                                       blink.GetNameToken(), VtValue(c.drag)}});
             const RigExecRigPose dragged = evaluator.Evaluate(time);
+            if (!std::isfinite(c.drag)) {
+                const auto nonFinite = [&](const RigExecRigPose &pose) {
+                    const std::string text = "property chain " +
+                                             blink.GetString() +
+                                             ": authored base is not finite";
+                    return !pose.valid &&
+                           std::any_of(
+                               pose.diagnostics.begin(), pose.diagnostics.end(),
+                               [&](const std::string &line) {
+                                   return line.find(text) != std::string::npos;
+                               });
+                };
+                CHECK(nonFinite(dragged));
+                CHECK(nonFinite(evaluator.Evaluate(time)));
+                evaluator.ClearInteractiveOverrides();
+                CHECK(_SameReadings(label + ", lifted", authored,
+                                    evaluator.Evaluate(time)));
+                stage->GetAttributeAtPath(blink).Set(c.drag);
+                CHECK(nonFinite(evaluator.Evaluate(time)));
+                RigExecRigEvaluator fresh(stage, rigPath);
+                CHECK(fresh.Compile(nullptr));
+                CHECK(nonFinite(fresh.Evaluate(time)));
+                continue;
+            }
             CHECK(dragged.valid);
             {
                 // The program answered the drag, not a dynamic fallback.
@@ -4666,17 +4690,8 @@ TestBlinkDragEqualsRelease()
             }
             CHECK(read);
             const auto published = dragged.movedProperties.find(blink);
-            if (std::isfinite(c.drag)) {
-                CHECK(published != dragged.movedProperties.end() &&
-                      published->second == VtValue(c.final));
-            } else {
-                CHECK(published == dragged.movedProperties.end());
-                CHECK(std::count(dragged.diagnostics.begin(),
-                                 dragged.diagnostics.end(),
-                                 "property chain " + blink.GetString() +
-                                     ": authored base is not finite; chain "
-                                     "skipped") == 1);
-            }
+            CHECK(published != dragged.movedProperties.end() &&
+                  published->second == VtValue(c.final));
             if (c.lid) {
                 const auto frame = dragged.controlFrames.find(lid);
                 CHECK(frame != dragged.controlFrames.end() &&
@@ -4686,8 +4701,25 @@ TestBlinkDragEqualsRelease()
             CHECK(_SameReadings(label + ", held", dragged,
                                 evaluator.Evaluate(time)));
             evaluator.ClearInteractiveOverrides();
-            CHECK(_SameReadings(label + ", lifted", authored,
-                                evaluator.Evaluate(time)));
+            if (c.authored) {
+                CHECK(_SameReadings(label + ", lifted", authored,
+                                    evaluator.Evaluate(time)));
+            } else {
+                // With no drag and nothing authored the chain has no base.
+                const auto unbased = [&](const RigExecRigPose &pose) {
+                    const std::string text = "property chain " +
+                                             blink.GetString() +
+                                             ": target has no authored value";
+                    return !pose.valid &&
+                           std::any_of(
+                               pose.diagnostics.begin(), pose.diagnostics.end(),
+                               [&](const std::string &line) {
+                                   return line.find(text) != std::string::npos;
+                               });
+                };
+                CHECK(unbased(authored));
+                CHECK(unbased(evaluator.Evaluate(time)));
+            }
 
             stage->GetAttributeAtPath(blink).Set(c.drag);
             const RigExecRigPose released = evaluator.Evaluate(time);

@@ -45,7 +45,7 @@ _RIGEXEC_BAKE_PIN_STEP(RevisionFuse);
 _RIGEXEC_BAKE_PIN_STEP(ChainStatus);
 _RIGEXEC_BAKE_PIN_STEP(Derived);
 _RIGEXEC_BAKE_PIN_STEP(FrameMatrix);
-_RIGEXEC_BAKE_PIN_STEP(PropertyRevision);
+_RIGEXEC_BAKE_PIN_STEP(ReservedPropertyRevision);
 _RIGEXEC_BAKE_PIN_STEP(RestCompose);
 _RIGEXEC_BAKE_PIN_STEP(LadderCompose);
 _RIGEXEC_BAKE_PIN_STEP(SkinTopology);

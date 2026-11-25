@@ -5,6 +5,7 @@
 #include "rigExec/api/compile.h"
 #include "rigExecRuntime/runtime.h"
 #include "rigExecRuntime/store.h"
+#include "rigExecEvalCore/propertyLookups.h"
 
 #include <cstring>
 #include <utility>
@@ -79,9 +80,9 @@ private:
     std::vector<std::max_align_t> _storage;
 };
 
-/// What the runtime's op steps read from the program.
+/// What the runtime's op steps read from the program and store in it.
 struct RrOpHost {
-    const RrProgram &p;
+    RrProgram &p;
 
     const void *Matrix(eval::OpHostSource source, uint32_t slot) const
     {
@@ -93,6 +94,23 @@ struct RrOpHost {
     const void *ChainGroupPoints(uint32_t chain, uint32_t g) const
     {
         return RrGeoFinalGroupPoints(&p, chain, g);
+    }
+    bool Lookup(uint32_t, const eval::OpLookup &lookup,
+                const RigExecTypeDesc &type, void *value,
+                std::string *error) const
+    {
+        if (lookup.source != eval::kPropertyLookup)
+            return Fail(error,
+                        "no lookup source " + std::to_string(lookup.source));
+        return RrLookUpProperty(&p, lookup, type, value, error);
+    }
+    bool Output(const eval::OpHostOutput &output, const void *value,
+                std::string *error) const
+    {
+        if (output.target != eval::kPropertyVersion)
+            return Fail(error,
+                        "no output target " + std::to_string(output.target));
+        return RrStorePropertyVersion(&p, output.object, value, error);
     }
 };
 
@@ -226,6 +244,32 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
         published.type = type;
         nodes->outputs.push_back(std::move(published));
     }
+    for (const auto &lookup : graph.lookups)
+        layout.lookups.push_back(
+            {lookup->source, lookup->object, lookup->part, lookup->read});
+    nodes->propertyChain.assign(graph.nodes.size(), kRigExecInvalidIndex);
+    nodes->propertyPart.assign(graph.nodes.size(), kRigExecInvalidIndex);
+    for (const auto &output : graph.hostOutputs) {
+        if (output->node >= graph.nodes.size())
+            return Fail(error, "a stored value names no node");
+        const RigExecOpDesc &desc = *opOf(output->node).desc;
+        if (output->port >= desc.portCount)
+            return Fail(error, "node " + std::to_string(output->node) +
+                                   " has no port " +
+                                   std::to_string(output->port));
+        layout.hostOutputs.push_back(
+            {output->node, output->port, output->target, output->object});
+        if (!(desc.ports[output->port].flags & kRigExecPortOutput))
+            continue;
+        builder.BindOutput(output->node, *desc.ports[output->port].port);
+        size_t chain = 0, part = 0;
+        if (output->target == eval::kPropertyVersion &&
+            RrPropertyPartOfVersion(p, output->object, &chain, &part) &&
+            part > 0) {
+            nodes->propertyChain[output->node] = uint32_t(chain);
+            nodes->propertyPart[output->node] = uint32_t(part);
+        }
+    }
     for (const auto &chain : graph.chains) {
         eval::OpChainLayout steps;
         steps.pointChain = chain->pointChain;
@@ -263,9 +307,30 @@ RrRunOpStep(RrProgram *p, size_t i, std::string *error)
         return Fail(error, "an op step without op nodes");
     const fb::RigExecWireStep &step = (*p->steps)[i];
     const RrOpHost host{*p};
-    return eval::RunOpStep(nodes->layout, host, nodes->state.get(),
-                           eval::OpStepKind(uint8_t(step.kind)), step.object,
-                           step.part, error);
+    if (eval::RunOpStep(nodes->layout, host, nodes->state.get(),
+                        eval::OpStepKind(uint8_t(step.kind)), step.object,
+                        step.part, error))
+        return true;
+    size_t chain = 0, part = 0;
+    if (error && RrPropertyPartOf(p, step, &chain, &part))
+        *error = RrPropertyRevisionLabel(p, chain, part) + ": " + *error;
+    return false;
+}
+
+bool
+RrPropertyPartOf(const RrProgram *p, const RigExecWireStep &step, size_t *chain,
+                 size_t *part)
+{
+    const RrOpNodes *nodes = p->opNodes.get();
+    if (!nodes || step.kind != RigExecWireStepKind::OpNode || step.object < 0 ||
+        size_t(step.object) >= nodes->propertyChain.size() ||
+        nodes->propertyChain[size_t(step.object)] == kRigExecInvalidIndex)
+        return false;
+    if (chain)
+        *chain = nodes->propertyChain[size_t(step.object)];
+    if (part)
+        *part = nodes->propertyPart[size_t(step.object)];
+    return true;
 }
 
 uint64_t

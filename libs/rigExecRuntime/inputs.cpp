@@ -1113,9 +1113,12 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
         // and CommitTable semantic revisions, including did-commit guards.
         return true;
     }
+    size_t propertyChain = 0, propertyPart = 0;
+    const bool propertyStep =
+        RrPropertyPartOf(program, step, &propertyChain, &propertyPart);
     const bool crossCoverage =
-        coveredTyped && (step.kind == RigExecWireStepKind::PropertyRevision ||
-                         step.kind == RigExecWireStepKind::AvarInputs);
+        coveredTyped &&
+        (propertyStep || step.kind == RigExecWireStepKind::AvarInputs);
     const auto read = [&](const RigExecWireInput &input) {
         _RrCoveredRead(input, covered);
         RrEffectiveReadMemo(program, input, key);
@@ -1202,18 +1205,18 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
             }
         }
     };
-    if (step.kind == RigExecWireStepKind::PropertyRevision &&
-        step.object >= 0) {
-        const auto &chain = program->file->propertyChains[size_t(step.object)];
-        if (step.part == 0) {
+    if (propertyStep) {
+        const auto &chain = program->file->propertyChains[propertyChain];
+        if (propertyPart == 1) {
             RigExecWireInput raw;
             raw.tag = program->file->inputs[chain.target].type();
             raw.mode = RigExecWireReadMode::Raw;
             raw.walk = {chain.target};
             raw.constant = program->file->inputs[chain.target].value();
             RrSourceReadMemo(program, raw, key);
-        } else {
-            const auto &revision = chain.revisions[size_t(step.part) - 1];
+        }
+        {
+            const auto &revision = chain.revisions[propertyPart - 1];
             for (const auto *input :
                  {revision.enabled.get(), revision.defaultWeight.get(),
                   revision.value.get(), revision.min.get(), revision.max.get()})

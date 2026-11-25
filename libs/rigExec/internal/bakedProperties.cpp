@@ -19,7 +19,9 @@
 #include "pathText.h"
 #include "rigEvaluatorPropertyBindings.h"
 
-#include "rigExecEvalCore/properties.h"
+#include "rigExecEvalCore/opSteps.h"
+#include "rigExecEvalCore/propertyLookups.h"
+#include "rigExecOps/property/mathOps.h"
 #include "rigExecMath/propertyMath.h"
 
 #include "pxr/base/gf/half.h"
@@ -1659,30 +1661,38 @@ RigExecBakedBuildPropertySteps(RigExecBakedProgramImpl *program)
     for (size_t r = 0; r < B.propertyRecords.size(); ++r)
         B.propertyRecordById[B.propertyRecords[r].id] = int(r);
     B.steps.clear();
+    B.propertyNodeChain.clear();
+    for (size_t c = 0; c < B.propertyChains.size(); ++c) {
+        Chain &chain = B.propertyChains[c];
+        chain.firstNode = uint32_t(B.propertyNodeChain.size());
+        B.propertyNodeChain.resize(
+            B.propertyNodeChain.size() + chain.revisions.size(), uint32_t(c));
+    }
     for (size_t c = 0; c < B.propertyChains.size(); ++c) {
         const Chain &chain = B.propertyChains[c];
         const size_t n = chain.revisions.size();
-        for (size_t k = 0; k <= n; ++k) {
+        for (size_t k = 1; k <= n; ++k) {
             RigExecBakedStep step;
             step.isHead = true;
-            step.kind = RigExecBakedStepKind::PropertyRevision;
-            step.object = int(c);
-            step.part = int(k);
+            step.kind = RigExecBakedStepKind::OpNode;
+            step.object = int(chain.firstNode + k - 1);
+            step.part = -1;
+            step.maxDiagnostics = 1;
             std::set<uint32_t> reads, writes, leaves, slots, poseWeights;
             std::set<std::pair<uint32_t, uint32_t>> shadowed;
             std::set<uint32_t> unshadowed;
-            if (k == 0) {
+            if (k == 1) {
                 if (chain.ownLeaf >= 0) {
                     leaves.insert(uint32_t(chain.ownLeaf));
                 }
                 if (chain.targetSlot >= 0) {
                     slots.insert(uint32_t(chain.targetSlot));
                 }
-                step.label =
-                    "PropertyRevision " + pathText(chain.target) + " base";
-            } else {
+            }
+            {
                 const Chain::Revision &r = chain.revisions[k - 1];
-                reads.insert(chain.versionBase + uint32_t(k) - 1);
+                if (k > 1)
+                    reads.insert(chain.versionBase + uint32_t(k) - 1);
                 ForEachWalk(r, [&](const RigExecBakedWalk &walk) {
                     // The record that answered the walk last, per chain.
                     std::map<int, uint32_t> metRecord;
@@ -1730,13 +1740,24 @@ RigExecBakedBuildPropertySteps(RigExecBakedProgramImpl *program)
                 step.alwaysRuns = !r.weightObject.IsEmpty();
                 step.label = "PropertyRevision " + pathText(r.mover);
             }
+            if (k == 1)
+                writes.insert(chain.versionBase);
             writes.insert(chain.versionBase + uint32_t(k));
             for (const uint32_t record : chain.records) {
                 const RigExecBakedPropertyRecord &rec =
                     B.propertyRecords[record];
-                if (std::min(rec.applied, n) == k) {
+                const size_t applied = std::min(rec.applied, n);
+                if (applied == k || (k == 1 && applied == 0)) {
                     writes.insert(rec.id);
                 }
+            }
+            // The first step stores the base and its records before it looks
+            // up an operand, so a read of them is its own.
+            if (k == 1) {
+                reads.erase(chain.versionBase);
+                for (const uint32_t record : chain.records)
+                    if (B.propertyRecords[record].applied == 0)
+                        reads.erase(B.propertyRecords[record].id);
             }
             step.reads = Ranges(reads);
             for (const uint32_t slot : poseWeights) {
@@ -2021,230 +2042,393 @@ Read(const RigExecBakedProgramImpl &B, const RigExecBakedWalk &walk, T fallback)
     return RigExecBakedResolveWalk(B, walk, &value) ? value : fallback;
 }
 
-struct BakedPropertyHost {
-    struct Math {
-        using Matrix = GfMatrix4d;
-        using Vec3 = GfVec3f;
-        using Key = GfVec2f;
-    };
+using eval::PropertyRead;
 
-    struct Revision {
-        const RigExecBakedProgramImpl &program;
-        const Chain::Revision &bound;
+bool
+PropertyFail(std::string *error, const std::string &why)
+{
+    if (error)
+        *error = why;
+    return false;
+}
 
-        bool exists() const
-        {
-            return bound.moverExists;
-        }
-        const std::string &label() const
-        {
-            return bound.linePrefix;
-        }
-        void appendInputDiagnostics(std::vector<std::string> &lines) const
-        {
-            ForEachWalk(bound, [&](const RigExecBakedWalk &walk) {
-                for (const auto *hops : {&walk.hops, &walk.doubleHops})
-                    for (const auto &hop : *hops)
-                        if (hop.crossDomain >= 0) {
-                            VtValue value;
-                            std::string diagnostic;
-                            if (!RigExecBakedReadCrossDomain(
-                                    program, hop.crossDomain, &value,
-                                    &diagnostic) &&
-                                !diagnostic.empty())
-                                lines.push_back(std::move(diagnostic));
-                        }
-            });
-        }
-        bool enabled() const
-        {
-            return Read(program, bound.enabled, true);
-        }
-        bool hasWeightField() const
-        {
-            return !bound.weightObject.IsEmpty();
-        }
-        eval::properties::WeightFieldView weightField() const
-        {
-            const auto &field = program.weightFields[size_t(bound.weightField)];
-            return {field.ok, field.values.size(), field.values.data(),
-                    field.error};
-        }
-        float defaultWeight() const
-        {
-            return Read(program, bound.defaultWeight, 1.0f);
-        }
-        bool opValid() const
-        {
-            return bound.opValid;
-        }
-        RigExecPropertyOp op() const
-        {
-            return bound.op;
-        }
-        template <class T> T read(eval::properties::Operand operand) const
-        {
-            using O = eval::properties::Operand;
-            const auto &walk = operand == O::Value     ? bound.value
-                               : operand == O::Minimum ? bound.minimum
-                                                       : bound.maximum;
-            if constexpr (std::is_same_v<T, GfMatrix4d>)
-                return Read(program, walk, T(1.0));
-            else
-                return Read(program, walk, T(0.0f));
-        }
-        VtArray<GfVec2f> keys() const
-        {
-            return Read(program, bound.keys, VtArray<GfVec2f>());
-        }
-        VtArray<GfVec2f> tangents() const
-        {
-            return bound.hasTangents
-                       ? Read(program, bound.tangents, VtArray<GfVec2f>())
-                       : VtArray<GfVec2f>();
-        }
-        bool keysValid(const VtArray<GfVec2f> &keys) const
-        {
-            return RigExecValidateLinearKeysKernel(keys.cdata(), keys.size());
-        }
-        VtVec3fArray pathPoints() const
-        {
-            return Read(program, bound.pathPoints, VtVec3fArray());
-        }
-        const RigExecPathSettings &pathSettings() const
-        {
-            return bound.path;
-        }
-    };
+/// \p value as a port value of \p type, which holds exactly its bytes.
+template <class T>
+bool
+PutPort(const T &value, const RigExecTypeDesc &type, void *out)
+{
+    if (type.size != sizeof(T) || !type.triviallyCopyable)
+        return false;
+    std::memcpy(out, &value, sizeof(T));
+    return true;
+}
 
-    struct Inputs {
-        const RigExecBakedProgramImpl &program;
-        size_t chainCount() const
-        {
-            return program.propertyChains.size();
-        }
-        size_t revisionCount(size_t c) const
-        {
-            return program.propertyChains[c].revisions.size();
-        }
-        size_t versionBase(size_t c) const
-        {
-            return program.propertyChains[c].versionBase;
-        }
-        auto valueType(size_t c) const
-        {
-            using Type = eval::properties::ValueType;
-            switch (program.propertyChains[c].arm) {
-            case Chain::Arm::Float:
-                return Type::Float;
-            case Chain::Arm::Double:
-                return Type::Double;
-            case Chain::Arm::Matrix4d:
-                return Type::Matrix4d;
-            case Chain::Arm::Vec3f:
-                return Type::Vec3f;
-            }
-            return Type::Float;
-        }
-        const std::string &baseLabel(size_t c) const
-        {
-            return program.propertyChains[c].linePrefix;
-        }
-        template <class T>
-        eval::properties::BaseRead readBase(size_t c, T &value) const
-        {
-            using B = eval::properties::BaseRead;
-            const auto &chain = program.propertyChains[c];
-            if (!chain.targetExists)
-                return B::NoTarget;
-            return ReadBase(program, chain, &value) ? B::Present : B::Missing;
-        }
-        Revision revision(size_t c, size_t r) const
-        {
-            return {program, program.propertyChains[c].revisions[r]};
-        }
-        // Baked phased consumers box the committed version in FinishPropertyStep.
-        template <class Fn> void forEachRecord(size_t, Fn) const
-        {
-        }
-    };
+/// \p array's elements lent to an array port value of \p type; \p hold
+/// keeps them alive until the next lookup.
+template <class T>
+bool
+BorrowPort(const VtArray<T> &array, const RigExecTypeDesc &type, void *out,
+           VtArray<T> *hold)
+{
+    if (!type.borrow)
+        return false;
+    *hold = array;
+    type.borrow(out, hold->cdata(), hold->size());
+    return true;
+}
 
-    struct State {
-        RigExecBakedProgramImpl &program;
-        std::vector<std::string> &lines;
-        void setChainValid(size_t c, bool valid)
-        {
-            program.chainValid[c] = valid;
-        }
-        bool predecessorValid(size_t, size_t id) const
-        {
-            return program.propertyVersionValid[id];
-        }
-        template <class T> const T &version(size_t id) const
-        {
-            return Member<T>(program.propertyValues[id]);
-        }
-        template <class T>
-        void storeVersion(size_t id, const T *value, bool valid)
-        {
-            T &stored = Member<T>(program.propertyValues[id]);
-            const bool wasValid = program.propertyVersionValid[id] != 0;
-            program.propertyChanged[id] =
-                valid != wasValid || (valid && !BitSame(*value, stored));
-            if (valid)
-                stored = *value;
-            program.propertyVersionValid[id] = valid;
-        }
-        bool recordStoodAside(size_t r) const
-        {
-            return program.recordStoodAside[r];
-        }
-    };
+bool
+BaseFinite(float value)
+{
+    return eval::PropertyFinite(value);
+}
+bool
+BaseFinite(double value)
+{
+    return eval::PropertyFinite(value);
+}
+bool
+BaseFinite(const GfVec3f &value)
+{
+    return eval::PropertyFinite(value.data(), 3);
+}
+bool
+BaseFinite(const GfMatrix4d &value)
+{
+    return eval::PropertyFinite(value.data(), 16);
+}
 
-    Inputs input;
-    State output;
-    const Inputs &inputs() const
-    {
-        return input;
+template <class T>
+bool
+LookUpBase(const RigExecBakedProgramImpl &B, const Chain &chain,
+           const RigExecTypeDesc &type, void *out, std::string *error)
+{
+    T value;
+    if (!ReadBase(B, chain, &value))
+        return PropertyFail(error, chain.linePrefix +
+                                       ": target has no authored value");
+    if (!BaseFinite(value))
+        return PropertyFail(error,
+                            chain.linePrefix + ": authored base is not finite");
+    return PutPort(value, type, out) ||
+           PropertyFail(error, chain.linePrefix +
+                                   ": the base does not fit its op input");
+}
+
+/// The revision's operand \p walk in its chain's operand type: float for
+/// float and double chains.
+bool
+LookUpOperand(const RigExecBakedProgramImpl &B, const Chain &chain,
+              const RigExecBakedWalk &walk, const RigExecTypeDesc &type,
+              void *out)
+{
+    switch (chain.arm) {
+    case Chain::Arm::Matrix4d:
+        return PutPort(Read(B, walk, GfMatrix4d(1.0)), type, out);
+    case Chain::Arm::Vec3f:
+        return PutPort(Read(B, walk, GfVec3f(0.0f)), type, out);
+    default:
+        return PutPort(Read(B, walk, 0.0f), type, out);
     }
-    State &state()
-    {
-        return output;
-    }
-    const RigExecRangeRunner *ranges() const
-    {
-        return nullptr;
-    }
+}
+
+bool
+Enabled(const RigExecBakedProgramImpl &B, const Chain::Revision &revision)
+{
+    return revision.moverExists && Read(B, revision.enabled, true);
+}
+
+template <class T>
+void
+StoreVersion(RigExecBakedProgramImpl &B, uint32_t id, const void *value)
+{
+    T next;
+    std::memcpy(&next, value, sizeof(T));
+    T &stored = Member<T>(B.propertyValues[id]);
+    B.propertyChanged[id] =
+        !B.propertyVersionValid[id] || !BitSame(next, stored);
+    stored = next;
+    B.propertyVersionValid[id] = 1;
+}
+
+/// What a chain's op nodes take and give: the op, and its In, Out,
+/// Enabled, Weight and operand ports (null where it has none).
+struct ChainPorts {
+    const RigExecOpHandle *op;
+    const RigExecPortHandle *in, *out, *enabled, *weight, *value, *min, *max,
+        *keys, *tangents, *pathPoints;
 };
+
+ChainPorts
+PortsOf(Chain::Arm arm)
+{
+    using namespace rigExecOps;
+    switch (arm) {
+    case Chain::Arm::Float:
+        return {&FloatMath(),     &FloatIn(),        &FloatOut(),
+                &FloatEnabled(),  &FloatWeight(),    &FloatValue(),
+                &FloatMin(),      &FloatMax(),       &FloatKeys(),
+                &FloatTangents(), &FloatPathPoints()};
+    case Chain::Arm::Double:
+        return {&DoubleMath(),     &DoubleIn(),        &DoubleOut(),
+                &DoubleEnabled(),  &DoubleWeight(),    &DoubleValue(),
+                &DoubleMin(),      &DoubleMax(),       &DoubleKeys(),
+                &DoubleTangents(), &DoublePathPoints()};
+    case Chain::Arm::Vec3f:
+        return {&Vec3fMath(),   &Vec3fIn(),    &Vec3fOut(), &Vec3fEnabled(),
+                &Vec3fWeight(), &Vec3fValue(), &Vec3fMin(), &Vec3fMax(),
+                nullptr,        nullptr,       nullptr};
+    case Chain::Arm::Matrix4d:
+        break;
+    }
+    return {&MatrixMath(),   &MatrixIn(),    &MatrixOut(), &MatrixEnabled(),
+            &MatrixWeight(), &MatrixValue(), nullptr,      nullptr,
+            nullptr,         nullptr,        nullptr};
+}
 
 } // namespace
 
-void
-RigExecBakedRunPropertyStep(RigExecBakedProgramImpl *program,
-                            RigExecBakedStep *step, UsdTimeCode)
+bool
+RigExecBakedPropertyPartOf(const RigExecBakedProgramImpl &B,
+                           const RigExecBakedStep &step, size_t *chain,
+                           size_t *part)
 {
-    // Recompute memo diagnostics only when this body executes.
-    step->lines.clear();
-    const eval::StepRef ref{uint32_t(step->kind), step->object, step->part,
-                            step->writes.front().begin};
-    BakedPropertyHost host{{*program}, {*program, step->lines}};
-    eval::RunValueStep(host, ref);
+    if (step.kind != RigExecBakedStepKind::OpNode || step.object < 0 ||
+        size_t(step.object) >= B.propertyNodeChain.size())
+        return false;
+    const size_t c = B.propertyNodeChain[size_t(step.object)];
+    if (chain)
+        *chain = c;
+    if (part)
+        *part = size_t(step.object) - B.propertyChains[c].firstNode + 1;
+    return true;
+}
+
+bool
+RigExecBakedAddPropertyOps(const RigExecBakedProgramImpl &B,
+                           RigExecRigDescBuilder *builder,
+                           eval::OpStepLayout *layout, std::string *error)
+{
+    const auto lookup = [&](RigExecNodeId node, const RigExecPortHandle &port,
+                            uint32_t chain, int32_t revision,
+                            PropertyRead read) {
+        builder->BindInput(node, port);
+        layout->hostInputs.push_back({node, port.Index(),
+                                      eval::OpHostSource::Lookup,
+                                      uint32_t(layout->lookups.size())});
+        layout->lookups.push_back(
+            {eval::kPropertyLookup, chain, revision, uint8_t(read)});
+    };
+    const auto store = [&](RigExecNodeId node, const RigExecPortHandle &port,
+                           uint32_t version) {
+        layout->hostOutputs.push_back(
+            {node, port.Index(), eval::kPropertyVersion, version});
+    };
+    for (uint32_t c = 0; c < B.propertyChains.size(); ++c) {
+        const Chain &chain = B.propertyChains[c];
+        if (!chain.targetExists)
+            return PropertyFail(error, chain.linePrefix +
+                                           ": target attribute disappeared");
+        if (chain.revisions.empty())
+            return PropertyFail(error, chain.linePrefix + ": no revisions");
+        const ChainPorts ports = PortsOf(chain.arm);
+        RigExecNodeId previous = 0;
+        for (uint32_t r = 0; r < chain.revisions.size(); ++r) {
+            const Chain::Revision &revision = chain.revisions[r];
+            if (revision.moverExists && !revision.opValid)
+                return PropertyFail(error, revision.linePrefix +
+                                               ": names no valid operation");
+            rigExecOps::MathPayload payload;
+            if (revision.moverExists) {
+                payload.op = revision.op;
+                if (revision.op == RigExecPropertyOp::Path)
+                    payload.path = revision.path;
+            }
+            const RigExecNodeId node = builder->AddOp(*ports.op, &payload);
+            if (node != chain.firstNode + r)
+                return PropertyFail(error, revision.linePrefix +
+                                               ": op node numbered out of "
+                                               "order");
+            if (r == 0) {
+                lookup(node, *ports.in, c, -1, PropertyRead::Base);
+                store(node, *ports.in, chain.versionBase);
+            } else {
+                builder->Connect(previous, *ports.out, node, *ports.in);
+            }
+            builder->BindOutput(node, *ports.out);
+            store(node, *ports.out, chain.versionBase + r + 1);
+            lookup(node, *ports.enabled, c, int32_t(r), PropertyRead::Enabled);
+            lookup(node, *ports.weight, c, int32_t(r), PropertyRead::Weight);
+            lookup(node, *ports.value, c, int32_t(r), PropertyRead::Value);
+            if (ports.min) {
+                lookup(node, *ports.min, c, int32_t(r), PropertyRead::Minimum);
+                lookup(node, *ports.max, c, int32_t(r), PropertyRead::Maximum);
+            }
+            if (ports.keys && payload.op == RigExecPropertyOp::Curve) {
+                lookup(node, *ports.keys, c, int32_t(r), PropertyRead::Keys);
+                lookup(node, *ports.tangents, c, int32_t(r),
+                       PropertyRead::Tangents);
+            }
+            if (ports.pathPoints && payload.op == RigExecPropertyOp::Path)
+                lookup(node, *ports.pathPoints, c, int32_t(r),
+                       PropertyRead::PathPoints);
+            previous = node;
+        }
+    }
+    return true;
+}
+
+bool
+RigExecBakedLookUpProperty(RigExecBakedProgramImpl &B,
+                           const eval::OpLookup &lookup, size_t index,
+                           const RigExecTypeDesc &type, void *out,
+                           std::string *error)
+{
+    if (lookup.object >= B.propertyChains.size())
+        return PropertyFail(error, "op nodes: no property chain " +
+                                       std::to_string(lookup.object));
+    const Chain &chain = B.propertyChains[lookup.object];
+    const PropertyRead read = PropertyRead(lookup.read);
+    if (read == PropertyRead::Base) {
+        switch (chain.arm) {
+        case Chain::Arm::Float:
+            return LookUpBase<float>(B, chain, type, out, error);
+        case Chain::Arm::Double:
+            return LookUpBase<double>(B, chain, type, out, error);
+        case Chain::Arm::Vec3f:
+            return LookUpBase<GfVec3f>(B, chain, type, out, error);
+        case Chain::Arm::Matrix4d:
+            return LookUpBase<GfMatrix4d>(B, chain, type, out, error);
+        }
+    }
+    if (lookup.part < 0 || size_t(lookup.part) >= chain.revisions.size())
+        return PropertyFail(error, chain.linePrefix + " has no revision " +
+                                       std::to_string(lookup.part));
+    const Chain::Revision &revision = chain.revisions[size_t(lookup.part)];
+    if (index >= B.propertyKeyHold.size() ||
+        index >= B.propertyPointHold.size())
+        return PropertyFail(error,
+                            "op nodes: no lookup " + std::to_string(index));
+    bool put = false;
+    switch (read) {
+    case PropertyRead::Base:
+        break;
+    case PropertyRead::Enabled:
+        put = PutPort(uint8_t(Enabled(B, revision) ? 1 : 0), type, out);
+        break;
+    case PropertyRead::Weight: {
+        float weight = 1.0f;
+        if (!Enabled(B, revision)) {
+        } else if (!revision.weightObject.IsEmpty()) {
+            const auto &field = B.weightFields[size_t(revision.weightField)];
+            if (!field.ok)
+                return PropertyFail(error, field.error);
+            if (field.values.size() != 1)
+                return PropertyFail(error,
+                                    "the weight object holds " +
+                                        std::to_string(field.values.size()) +
+                                        " weights, not one");
+            weight = field.values[0];
+        } else {
+            weight = Read(B, revision.defaultWeight, 1.0f);
+        }
+        put = PutPort(weight, type, out);
+        break;
+    }
+    case PropertyRead::Value:
+        put = LookUpOperand(B, chain, revision.value, type, out);
+        break;
+    case PropertyRead::Minimum:
+        put = LookUpOperand(B, chain, revision.minimum, type, out);
+        break;
+    case PropertyRead::Maximum:
+        put = LookUpOperand(B, chain, revision.maximum, type, out);
+        break;
+    case PropertyRead::Keys:
+        put = BorrowPort(Read(B, revision.keys, VtArray<GfVec2f>()), type, out,
+                         &B.propertyKeyHold[index]);
+        break;
+    case PropertyRead::Tangents:
+        put = BorrowPort(revision.hasTangents
+                             ? Read(B, revision.tangents, VtArray<GfVec2f>())
+                             : VtArray<GfVec2f>(),
+                         type, out, &B.propertyKeyHold[index]);
+        break;
+    case PropertyRead::PathPoints:
+        put = BorrowPort(Read(B, revision.pathPoints, VtVec3fArray()), type,
+                         out, &B.propertyPointHold[index]);
+        break;
+    }
+    return put || PropertyFail(error, "a read does not fit its op input");
+}
+
+bool
+RigExecBakedStorePropertyVersion(RigExecBakedProgramImpl &B,
+                                 const eval::OpHostOutput &output,
+                                 const void *value, std::string *error)
+{
+    if (output.node >= B.propertyNodeChain.size() ||
+        output.object >= B.propertyVersionCount)
+        return PropertyFail(error, "op nodes: node " +
+                                       std::to_string(output.node) +
+                                       " stores no property version");
+    const size_t c = B.propertyNodeChain[output.node];
+    const Chain &chain = B.propertyChains[c];
+    switch (chain.arm) {
+    case Chain::Arm::Float:
+        StoreVersion<float>(B, output.object, value);
+        break;
+    case Chain::Arm::Double:
+        StoreVersion<double>(B, output.object, value);
+        break;
+    case Chain::Arm::Vec3f:
+        StoreVersion<GfVec3f>(B, output.object, value);
+        break;
+    case Chain::Arm::Matrix4d:
+        StoreVersion<GfMatrix4d>(B, output.object, value);
+        break;
+    }
+    if (output.object == chain.versionBase) {
+        B.chainValid[c] = 1;
+        RigExecBakedFinishPropertyStep(&B, c, 0);
+    }
+    return true;
+}
+
+void
+RigExecBakedPropertyInputLines(const RigExecBakedProgramImpl &B, size_t chain,
+                               size_t part, std::vector<std::string> *lines)
+{
+    const Chain::Revision &revision =
+        B.propertyChains[chain].revisions[part - 1];
+    ForEachWalk(revision, [&](const RigExecBakedWalk &walk) {
+        for (const auto *hops : {&walk.hops, &walk.doubleHops})
+            for (const auto &hop : *hops)
+                if (hop.crossDomain >= 0) {
+                    VtValue value;
+                    std::string diagnostic;
+                    if (!RigExecBakedReadCrossDomain(B, hop.crossDomain, &value,
+                                                     &diagnostic) &&
+                        !diagnostic.empty())
+                        lines->push_back(std::move(diagnostic));
+                }
+    });
 }
 
 void
 RigExecBakedFinishPropertyStep(RigExecBakedProgramImpl *program,
-                               const RigExecBakedStep &step)
+                               size_t chainIndex, size_t part)
 {
     RigExecBakedProgramImpl &B = *program;
-    const Chain &chain = B.propertyChains[size_t(step.object)];
+    const Chain &chain = B.propertyChains[chainIndex];
     const size_t n = chain.revisions.size();
-    const uint32_t id = chain.versionBase + uint32_t(step.part);
+    const uint32_t id = chain.versionBase + uint32_t(part);
     if (B.propertyChanged[id]) {
         // What the version feeds, refreshed only when it moved: the records
         // reading it and, for the last part, the chain's final value.
         for (const uint32_t r : chain.records) {
             RigExecBakedPropertyRecord &record = B.propertyRecords[r];
-            if (std::min(record.applied, n) != size_t(step.part)) {
+            if (std::min(record.applied, n) != part) {
                 continue;
             }
             B.propertyChanged[record.id] = 1;
@@ -2253,11 +2437,11 @@ RigExecBakedFinishPropertyStep(RigExecBakedProgramImpl *program,
                     VersionValue(B, chain, id), record.consumerType);
             }
         }
-        if (size_t(step.part) == n && B.propertyVersionValid[id]) {
-            B.chainFinal[size_t(step.object)] = VersionValue(B, chain, id);
+        if (part == n && B.propertyVersionValid[id]) {
+            B.chainFinal[chainIndex] = VersionValue(B, chain, id);
         }
     }
-    if (size_t(step.part) == n && B.oraclePublications) {
+    if (part == n && B.oraclePublications) {
         RigExecOraclePublicationContext::Writes writes;
         if (B.propertyVersionValid[id]) {
             writes.emplace_back(chain.target, VersionValue(B, chain, id));
@@ -2267,7 +2451,7 @@ RigExecBakedFinishPropertyStep(RigExecBakedProgramImpl *program,
                                         B.recordValues[record]);
                 }
         }
-        B.oraclePublications->Finish(size_t(step.object), writes);
+        B.oraclePublications->Finish(chainIndex, writes);
     }
 }
 

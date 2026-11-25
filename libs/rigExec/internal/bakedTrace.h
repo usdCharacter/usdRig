@@ -14,11 +14,16 @@
 namespace rigExec {
 
 struct RigExecBakedProgramImpl;
+struct RigExecBakedStep;
 enum class RigExecBakedStepKind;
 
 /// The evaluation domain a step kind belongs to: "pose", "weight" or
 /// "geometry".
 const char *RigExecBakedStepDomainName(RigExecBakedStepKind kind);
+/// The domain of \p step: "property" for a property chain's op node,
+/// otherwise its kind's.
+const char *RigExecBakedStepDomainName(const RigExecBakedProgramImpl &B,
+                                       const RigExecBakedStep &step);
 
 /// One step the last run executed.
 struct RigExecOpTraceEntry {

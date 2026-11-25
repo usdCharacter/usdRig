@@ -122,7 +122,10 @@ enum StepKind : ubyte { ComposeSubtree = 0, Solve, SolverCommit, Constraint,
   CommitDelta, PropagateChunk, CommitApply, ProviderMatrix, SnapshotFinals,
   PoseInterpolator, VolumePlacements, WeightPacket, InfluenceFold,
   RevisionStatic, RevisionChunk, RevisionFuse, ChainStatus, Derived,
-  FrameMatrix, PropertyRevision, RestCompose, LadderCompose, SkinTopology, WeightField, SpaceExpression, ChainInputs, AvarInputs, SpaceCheckpoint, ProviderRefresh,
+  FrameMatrix,
+  /// Reserved: a property revision before format 37, which runs as OpNode
+  /// steps since. Open refuses it.
+  ReservedPropertyRevision, RestCompose, LadderCompose, SkinTopology, WeightField, SpaceExpression, ChainInputs, AvarInputs, SpaceCheckpoint, ProviderRefresh,
   /// Reserved: format 35's whole op graph as one step. Open refuses it.
   ReservedOpGraph,
   /// Format 36: File.op_graph's nodes as steps: one node that does not run
@@ -1867,7 +1870,7 @@ table OpNodeInput {
   /// Format 36, what else feeds the port, or -1: 0 a point chain's final
   /// points (object: its chains[] index), 1 and 2 a joint's or control's
   /// final and base matrix (object: its slot), 3 the constant `constant`
-  /// holds.
+  /// holds, 4 (format 37) OpGraph.lookups[object].
   host: byte = -1;
   object: uint;
   /// For a constant: the value's bytes, an array's elements one after
@@ -1900,6 +1903,26 @@ table OpChain {
   point_chain: uint;
   bounds: [int];
 }
+/// Format 37: a value of the rig an op input (OpNodeInput.host 4) reads
+/// each time its node runs, found by the runtime as the evaluator finds it.
+table OpLookup {
+  /// 0: a read of property chain `object` (property_chains index):
+  /// `read` 0 its base, else of revision `part`: 1 enabled, 2 the
+  /// weight, 3 value, 4 min, 5 max, 6 keys, 7 tangents, 8 path points.
+  source: ubyte;
+  object: uint;
+  part: int = -1;
+  read: ubyte;
+}
+/// Format 37: a node port's value the runtime stores in its own slot after
+/// the node runs: an output, or an input a lookup feeds.
+table OpHostOutput {
+  node: uint;
+  port: uint;
+  /// 0: property version `object`.
+  target: ubyte;
+  object: uint;
+}
 /// Format 36: op nodes the common graph runs as OpNode, OpChainHead and
 /// OpChainRange steps, ordered by their declared reads like any other.
 table OpGraph {
@@ -1908,6 +1931,9 @@ table OpGraph {
   order: [IntPair];
   outputs: [OpGraphOutput];
   chains: [OpChain];
+  /// Format 37.
+  lookups: [OpLookup];
+  host_outputs: [OpHostOutput];
 }
 
 // -------------------------------------------------------------------- root

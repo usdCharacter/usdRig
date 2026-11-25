@@ -1178,10 +1178,10 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error,
             RigExecExecCheckDescriptor d;
             d.key = std::string(RigExecExecCheckSkipText::noEquivalent) + " " +
                     step.label;
-            if (step.kind == Kind::PropertyRevision)
-                d.key +=
-                    " target " +
-                    b.propertyChains[size_t(step.object)].target.GetString();
+            size_t propertyChain = 0;
+            if (RigExecBakedPropertyPartOf(b, step, &propertyChain, nullptr))
+                d.key += " target " +
+                         b.propertyChains[propertyChain].target.GetString();
             if (step.kind == Kind::RevisionStatic ||
                 step.kind == Kind::RevisionChunk ||
                 step.kind == Kind::RevisionFuse ||

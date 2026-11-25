@@ -334,20 +334,67 @@ _MinimalFile()
     return f;
 }
 
+// Fixture authoring only: each property revision as one op node, the
+// first reading its chain's base through a lookup, every node storing its
+// version. The validator does not resolve the op, so one entry stands in.
+void
+_AddPropertyOpGraph(RigExecWireFile &f)
+{
+    f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    f.manifest->coreOps.clear();
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = "FloatMath";
+    entry->version = 1;
+    f.manifest->coreOps.push_back(std::move(entry));
+    constexpr uint32_t kIn = 0, kOut = 6;
+    const auto store = [&](uint32_t node, uint32_t port, uint32_t version) {
+        auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+        output->node = node;
+        output->port = port;
+        output->object = version;
+        f.opGraph->hostOutputs.push_back(std::move(output));
+    };
+    uint32_t node = 0;
+    for (uint32_t c = 0; c < f.propertyChains.size(); ++c) {
+        const auto &chain = f.propertyChains[c];
+        for (uint32_t r = 0; r < chain.revisions.size(); ++r, ++node) {
+            auto op = std::make_unique<fb::RigExecWireOpNode>();
+            auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+            in->port = kIn;
+            if (r == 0) {
+                in->host = 4;
+                in->object = uint32_t(f.opGraph->lookups.size());
+                auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+                lookup->object = c;
+                f.opGraph->lookups.push_back(std::move(lookup));
+                store(node, kIn, chain.versionBase);
+            } else {
+                in->node = int32_t(node - 1);
+                in->output = kOut;
+            }
+            op->inputs.push_back(std::move(in));
+            store(node, kOut, chain.versionBase + r + 1);
+            f.opGraph->nodes.push_back(std::move(op));
+        }
+    }
+}
+
 // Fixture authoring only: declare the new source role before malformed copies are made.
 void
 _DeclareFixtureStageFrames(RigExecWireFile &f)
 {
     using D = fb::SlotDomain;
     using K = fb::StepKind;
-    const auto prep = [](K kind) {
-        return kind == K::PropertyRevision || kind == K::RestCompose ||
-               kind == K::LadderCompose || kind == K::SkinTopology;
+    const auto prep = [&f](const RigExecWireStep &step) {
+        return RigExecFormatPropertyPart(f, step, nullptr, nullptr) ||
+               step.kind == K::RestCompose || step.kind == K::LadderCompose ||
+               step.kind == K::SkinTopology;
     };
     std::map<std::pair<D, uint32_t>, std::vector<size_t>> producers;
     std::vector<size_t> pending;
     for (size_t i = 0; i < f.steps.size(); ++i) {
-        if (prep(f.steps[i].kind))
+        if (prep(f.steps[i]))
             pending.push_back(i);
         for (const auto &range : f.steps[i].writes)
             for (uint32_t slot = range.begin(); slot < range.end(); ++slot)
@@ -378,7 +425,7 @@ _DeclareFixtureStageFrames(RigExecWireFile &f)
             step.reads.end());
         const bool helper =
             step.kind == K::WeightField || step.kind == K::SpaceExpression;
-        if (prep(step.kind) || step.kind == K::AvarInputs ||
+        if (prep(step) || step.kind == K::AvarInputs ||
             step.kind == K::SnapshotFinals || (helper && ancestors.count(i)))
             continue;
         if (std::none_of(
@@ -958,21 +1005,14 @@ _AddFixtureHeads(RigExecWireFile &f)
     // The rich fixture has exactly one float chain and one record.
     f.propertyChains[0].versionBase = 0;
     f.phasedConsumers[0].version = 2;
-    fb::RigExecWireStep base;
-    base.kind = fb::StepKind::PropertyRevision;
-    base.object = 0;
-    base.part = 0;
-    base.isHead = true;
-    base.headInputSlots = {2};
-    base.writes = {fb::SlotRange(fb::SlotDomain::PropertyResult, 0, 1)};
-    heads.push_back(base);
-    fb::RigExecWireStep revision = base;
-    revision.part = 1;
-    revision.headInputSlots = {};
-    revision.reads = {fb::SlotRange(fb::SlotDomain::PropertyResult, 0, 1)};
-    revision.writes = {fb::SlotRange(fb::SlotDomain::PropertyResult, 1, 3)};
-    revision.preds = {0};
-    heads[0].succs = {1};
+    _AddPropertyOpGraph(f);
+    fb::RigExecWireStep revision;
+    revision.kind = fb::StepKind::OpNode;
+    revision.object = 0;
+    revision.part = -1;
+    revision.isHead = true;
+    revision.headInputSlots = {2};
+    revision.writes = {fb::SlotRange(fb::SlotDomain::PropertyResult, 0, 3)};
     for (auto *read : {f.propertyChains[0].revisions[0].defaultWeight.get(),
                        f.propertyChains[0].revisions[0].value.get()}) {
         for (uint32_t slot : read->walk) {
@@ -1023,8 +1063,8 @@ _AddFixtureHeads(RigExecWireFile &f)
         for (const auto &read : ladder.headInputReads)
             ladder.headVaryingLeaves |=
                 bool(read.flags & uint16_t(fb::InputReadFlags::Varying));
-        rest.succs = {3};
-        ladder.preds = {2};
+        rest.succs = {2};
+        ladder.preds = {1};
         heads.push_back(std::move(rest));
         heads.push_back(std::move(ladder));
         for (auto &step : f.steps) {
@@ -1565,11 +1605,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 36 &&
-                      RigExecFormatOldestReadable == 36,
-                  "format 36 runs op nodes as steps of the common graph and "
-                  "is the only format Open reads");
-    // Every older format requires re-export: its op nodes ran as one step.
+    static_assert(RigExecFormatVersion == 37 &&
+                      RigExecFormatOldestReadable == 37,
+                  "format 37 runs property revisions as op nodes and is the "
+                  "only format Open reads");
+    // Every older format requires re-export: its property revisions ran as
+    // their own steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1580,14 +1621,14 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 36 through " +
+            " (this reader reads 37 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 36 ? "re-export: op nodes as steps of the common graph"
+            (version < 37 ? "re-export: property revisions as op nodes"
                           : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 36 ? reexports : rebakes);
+        ++(version < 37 ? reexports : rebakes);
     }
-    CHECK(reexports == 36 && rebakes == 1);
+    CHECK(reexports == 37 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;

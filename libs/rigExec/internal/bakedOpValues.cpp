@@ -1765,12 +1765,12 @@ InputKey(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
             }
         }
     }
-    if (effective && step.kind == RigExecBakedStepKind::PropertyRevision) {
-        if (step.object < 0 || size_t(step.object) >= B.propertyChains.size())
-            return false;
-        const auto &chain = B.propertyChains[size_t(step.object)];
+    size_t propertyChain = 0, propertyPart = 0;
+    if (effective &&
+        RigExecBakedPropertyPartOf(B, step, &propertyChain, &propertyPart)) {
+        const auto &chain = B.propertyChains[propertyChain];
         Put(out, chain.targetExists);
-        if (step.part == 0) {
+        if (propertyPart == 1) {
             VtValue selected;
             if (chain.targetSlot >= 0 &&
                 size_t(chain.targetSlot) < B.headOverrides.size() &&
@@ -1790,11 +1790,9 @@ InputKey(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
                                    size_t(chain.ownLeaf) < B.headLeaves.size()
                                ? B.headLeaves[size_t(chain.ownLeaf)].value
                                : VtValue();
-            return Box(out, selected);
+            exact = Box(out, selected) && exact;
         }
-        if (step.part < 0 || size_t(step.part) > chain.revisions.size())
-            return false;
-        const auto &revision = chain.revisions[size_t(step.part) - 1];
+        const auto &revision = chain.revisions[propertyPart - 1];
         auto selected = [&](const RigExecBakedWalk &walk, auto fallback) {
             coverWalk(walk);
             auto value = fallback;

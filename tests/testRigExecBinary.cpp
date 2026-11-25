@@ -904,8 +904,6 @@ _ComputedRunChains(const fb::RigExecWireFile &file,
             }
             const std::string mover = _BinaryText(file, revision.mover);
             if (_ChainRead(file, *overlay, *revision.enabled).bits == 0) {
-                diagnostics->push_back("diag " + mover +
-                                       ": disabled; revision passed through");
                 continue;
             }
             float weight = 1.0f;
@@ -2176,7 +2174,7 @@ TestComputedChainBake()
             chains[slotName(chain.target)] = &chain;
             CHECK(file.inputs[chain.target].chain() == int32_t(c));
         }
-        CHECK(chains.size() == 8);
+        CHECK(chains.size() == 7);
         const fb::RigExecWirePropertyChain *dial =
             chains["/Asset/Rig/Channels/Dial.rigExec:amount"];
         const fb::RigExecWirePropertyChain *wide =
@@ -2185,10 +2183,8 @@ TestComputedChainBake()
             chains["/Asset/Rig/Channels/Vec.rigExec:offset"];
         const fb::RigExecWirePropertyChain *space =
             chains["/Asset/Rig/Channels/Space.rigExec:local"];
-        const fb::RigExecWirePropertyChain *missing =
-            chains["/Asset/Rig/Channels/Missing.rigExec:none"];
-        CHECK(dial && wide && vec && space && missing);
-        if (!dial || !wide || !vec || !space || !missing) {
+        CHECK(dial && wide && vec && space);
+        if (!dial || !wide || !vec || !space) {
             return;
         }
         // A consumer chain runs after the chain it reads.
@@ -2201,15 +2197,14 @@ TestComputedChainBake()
         CHECK(wide->valueType == fb::PropertyValueType::Double);
         CHECK(vec->valueType == fb::PropertyValueType::Vec3f);
         CHECK(space->valueType == fb::PropertyValueType::Matrix4d);
-        CHECK(!_HasValue(file.inputs[missing->target]));
-        const char *order[] = {"Gain", "Shape", "Fade", "Nudge",
-                               "Off",  "Over",  "Limit"};
-        CHECK(dial->revisions.size() == 7);
-        for (size_t r = 0; r < dial->revisions.size() && r < 7; ++r) {
+        const char *order[] = {"Gain",  "Shape", "Fade",
+                               "Nudge", "Off",   "Limit"};
+        CHECK(dial->revisions.size() == 6);
+        for (size_t r = 0; r < dial->revisions.size() && r < 6; ++r) {
             CHECK(text(dial->revisions[r].mover) ==
                   std::string("/Asset/Rig/Movers/Dial/") + order[r]);
         }
-        if (dial->revisions.size() == 7) {
+        if (dial->revisions.size() == 6) {
             // Gain multiplies by the control's double avar, read through its
             // connection.
             const fb::RigExecWirePropertyRevision &gain = dial->revisions[0];
@@ -2252,10 +2247,7 @@ TestComputedChainBake()
             if (enabled.walk.size() == 1) {
                 CHECK(_SlotValue(file, enabled.walk[0]).bits == 1);
             }
-            const fb::RigExecWirePropertyRevision &over = dial->revisions[5];
-            CHECK(over.defaultWeight->mode == fb::ReadMode::Pinned &&
-                  over.defaultWeight->walk.size() == 1);
-            CHECK(dial->revisions[6].op == fb::PropertyOp::Clamp);
+            CHECK(dial->revisions[5].op == fb::PropertyOp::Clamp);
         }
         CHECK(wide->revisions.size() == 1 &&
               wide->revisions[0].value->tag == fb::InputTag::Float);
@@ -2329,8 +2321,8 @@ TestComputedChainBake()
             CHECK(memoCopies > 0);
         }
 
-        // Every property result, with the envelopes resolved, and the
-        // chains' lines as the evaluator printed them first at the time.
+        // Every property result, with the envelopes resolved; a valid rig's
+        // chains print no line.
         size_t skipped = 0, chainReads = 0;
         std::vector<std::string> lines;
         const size_t compared =
@@ -2342,21 +2334,13 @@ TestComputedChainBake()
         CHECK(skipped == 0);
         CHECK(compared == 10);
         CHECK(chainReads == 1);
-        CHECK(lines.size() == 3);
+        CHECK(lines.empty());
         RigExecRigEvaluator replay(stage, rigPath);
         const RigExecRigPose pose = replay.Evaluate(UsdTimeCode(time));
-        const auto at =
-            std::search(pose.diagnostics.begin(), pose.diagnostics.end(),
-                        lines.begin(), lines.end());
-        if (at == pose.diagnostics.end()) {
-            for (const std::string &line : lines) {
-                std::printf("  reference line: %s\n", line.c_str());
-            }
-            for (const std::string &line : pose.diagnostics) {
-                std::printf("  evaluator line: %s\n", line.c_str());
-            }
+        CHECK(pose.valid);
+        for (const std::string &line : lines) {
+            std::printf("  reference line: %s\n", line.c_str());
         }
-        CHECK(at != pose.diagnostics.end());
     }
 }
 

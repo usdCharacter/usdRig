@@ -24,8 +24,8 @@ bump here, and update the pinned sidecars.
 
 | Contract | Value | Defined in | Enforced by |
 |---|---|---|---|
-| `.rigexec` format (writer) | **36** | `RigExecFormatVersion` in `libs/rigExecBinary/format.h` | every bake stamps it |
-| `.rigexec` format (reader) | **36** | `RigExecFormatOldestReadable` in `libs/rigExecBinary/format.h` | `libs/rigExecBinary/format.cpp` refuses others at open with a re-export suggestion; a `static_assert` pins the oldest readable, and `tests/testRigExecFormat.cpp` and `tests/testRigExecRuntimeLoader.cpp` pin the accepted range |
+| `.rigexec` format (writer) | **37** | `RigExecFormatVersion` in `libs/rigExecBinary/format.h` | every bake stamps it |
+| `.rigexec` format (reader) | **37** | `RigExecFormatOldestReadable` in `libs/rigExecBinary/format.h` | `libs/rigExecBinary/format.cpp` refuses others at open with a re-export suggestion; a `static_assert` pins the oldest readable, and `tests/testRigExecFormat.cpp` and `tests/testRigExecRuntimeLoader.cpp` pin the accepted range |
 | Mover plugin API | **8** | `RigExecMoverPluginApiVersion` in `libs/rigExec/api/moverRegistry.h` | the loader (`moverRegistry.cpp`) rejects a plugin whose metadata `RigExecMoverPlugin` value differs; `cmake/rigExecMoverPlugin.cmake` stamps the same number into plugin metadata |
 | External-mover wire type IDs | plain API4 IDs, pinned | `RigExecExternalInputType` in `libs/rigExecBinary/external.h` | the format's `InputTag` numeric inventory; IDs never renumber |
 
@@ -79,9 +79,10 @@ in usdRig history.
 | 33 | 2026-11-22 | the manifest: stable ids of revision, property and provider ops and value types |
 | 34 | 2026-11-22 | single-chain IK joint orientation |
 | 35 | 2026-11-23 | op nodes run through the op core |
-| 36 | 2026-11-24 | op nodes as steps of the common schedule; **oldest readable from here on** |
+| 36 | 2026-11-24 | op nodes as steps of the common schedule |
+| 37 | 2026-11-25 | property revisions as op nodes reading the rig through lookups; **oldest readable from here on** |
 
-Versions 6 and 11–16 never appeared on `main`. Files written before version 36
+Versions 6 and 11–16 never appeared on `main`. Files written before version 37
 are outside every current reader: re-export them.
 
 ## Mover plugin API history
@@ -125,7 +126,7 @@ The known drifts as of this survey:
 - **usdRig_movers is one major API behind** (5 vs 8) and cannot load in a
   `v0.2.0` host until rebuilt — [usdRig_movers#3](https://github.com/usdCharacter/usdRig_movers/issues/3).
 - **usdRig_unreal's vendored runtime reads only up to format 24**, so `.rigexec`
-  files baked by current usdRig (writer 36) refuse to open there until the
+  files baked by current usdRig (writer 37) refuse to open there until the
   plugin re-vendors its libraries from a current usdRig commit.
 - Godot, Maya, iOS and Android follow their checkouts and have no drift while
   they build against the same usdRig they bake with.

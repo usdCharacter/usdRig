@@ -862,14 +862,6 @@ RigExecBakedProgram::_BuildStepGraph(_BuildAttempt &build)
                 target = B.paths[size_t(commit.slots.front())];
             break;
         }
-        case K::PropertyRevision: {
-            const auto &chain = B.propertyChains[size_t(step.object)];
-            target = chain.target;
-            revision = step.part;
-            owner = step.part > 0 ? chain.revisions[size_t(step.part - 1)].mover
-                                  : chain.target;
-            break;
-        }
         case K::SkinTopology: {
             if (step.object < 0) {
                 ctx.Refuse("layout has no authored revision", E._rigPath);
@@ -992,8 +984,19 @@ RigExecBakedProgram::_BuildStepGraph(_BuildAttempt &build)
         case K::SnapshotFinals:
             expression = "retired";
             break;
+        case K::OpNode: {
+            size_t chain = 0, part = 0;
+            if (RigExecBakedPropertyPartOf(B, step, &chain, &part)) {
+                target = B.propertyChains[chain].target;
+                revision = int(part);
+                owner = B.propertyChains[chain].revisions[part - 1].mover;
+            } else {
+                expression = "op/" + std::to_string(step.object);
+            }
+            break;
+        }
+        case K::ReservedPropertyRevision:
         case K::ReservedOpGraph:
-        case K::OpNode:
         case K::OpChainHead:
         case K::OpChainRange:
             expression = "op/" + std::to_string(step.object);

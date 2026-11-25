@@ -3227,15 +3227,18 @@ HandBuiltHeadTier(RigExecBakedProgramImpl *B)
     CHECK(ScheduleByHand(B));
 }
 
-// The head step of chain \p chain, part \p part.
+// The head step of chain \p chain, part \p part (1 to its revision count).
 uint32_t
-HeadStepOf(const RigExecBakedProgramImpl &B, int chain, int part)
+HeadStepOf(const RigExecBakedProgramImpl &B, size_t chain, size_t part)
 {
     for (uint32_t i : RigExecBakedHeadIndices(B)) {
-        if (B.steps[i].object == chain && B.steps[i].part == part) {
+        size_t c = 0, p = 0;
+        if (RigExecBakedPropertyPartOf(B, B.steps[i], &c, &p) && c == chain &&
+            p == part) {
             return i;
         }
     }
+    CHECK(false);
     return 0;
 }
 
@@ -3324,7 +3327,7 @@ TestTheHeadValidatorRejectsAMalformedTier(const BuiltProgram &built)
     {
         RigExecBakedProgramImpl B;
         HandBuiltHeadTier(&B);
-        auto &step = B.steps[HeadStepOf(B, 0, 1)];
+        auto &step = B.steps[HeadStepOf(B, 0, 2)];
         step.reads.clear();
         ExpectHeadRejected(B, "a missing predecessor version",
                            "omits its predecessor property version");
@@ -3341,8 +3344,8 @@ TestTheHeadValidatorRejectsAMalformedTier(const BuiltProgram &built)
     {
         RigExecBakedProgramImpl B;
         HandBuiltHeadTier(&B);
-        auto &step = B.steps[HeadStepOf(B, 0, 1)];
-        step.writes.push_back(B.steps[HeadStepOf(B, 0, 0)].writes.front());
+        auto &step = B.steps[HeadStepOf(B, 0, 2)];
+        step.writes.push_back(B.steps[HeadStepOf(B, 0, 1)].writes.front());
         ExpectHeadRejected(B, "duplicate version producer",
                            "has more than one head producer");
     }

@@ -1444,8 +1444,8 @@ TestBlinkDragWarmsAsReleased()
 // The frozen sampler's own copy of the base rule, at its edges, each warmed
 // bit-identically to live at frame 3 (frozen after frame 2): with nothing
 // authored a drag of 0.5 is the base, so the chain runs and its result
-// travels with the vector; a NaN drag skips the chain with the line an
-// authored NaN prints, and nothing travels; with a Gain before the clamp,
+// travels with the vector (undragged frames fail: no base); a NaN drag
+// fails the frame live and declines the job; with a Gain before the clamp,
 // a drag of 0.75 reads 0.75 at the base, 1.5 at Gain's checkpoint and 1.0
 // at `final`; and a double drag of 1.4 reads what the float 1.4 reads.
 void
@@ -1459,15 +1459,15 @@ TestBlinkDragEdgesWarmBitIdentical()
         RigExecFrameInputs inputs;
     };
     const auto warm = [&](const char *what, const _BlinkRigOptions &options,
-                          const VtValue &value) {
+                          const VtValue &value, bool valid = true) {
         Warmed out;
         UsdStageRefPtr stage = MakeBlinkRig(options);
         RigExecRigEvaluator evaluator(stage, rig);
         std::vector<std::string> errors;
         CHECK(evaluator.Compile(&errors));
         CHECK(evaluator.GetSkippedOperations().empty());
-        CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
-        CHECK(evaluator.Evaluate(UsdTimeCode(2.0)).valid);
+        CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid == options.authored);
+        CHECK(evaluator.Evaluate(UsdTimeCode(2.0)).valid == options.authored);
         RigExecCancellationSource cancellation;
         std::shared_ptr<const RigExecFrozenProgram> frozen;
         std::string error;
@@ -1481,6 +1481,11 @@ TestBlinkDragEdgesWarmBitIdentical()
         out.warmed = RunWarmingJob(&evaluator, rig, frozen, out.inputs,
                                    &cancellation, nullptr);
         out.live = evaluator.Evaluate(UsdTimeCode(3.0));
+        if (!valid) {
+            CHECK(!out.live.valid);
+            CHECK(!out.warmed.valid);
+            return out;
+        }
         CHECK(out.live.valid);
         CheckPosesBitIdentical(what, out.live, out.warmed);
         CheckJobAccepted(what, out.inputs, out.warmed);
@@ -1505,16 +1510,15 @@ TestBlinkDragEdgesWarmBitIdentical()
 
     _BlinkRigOptions noLid;
     noLid.lid = false;
-    const Warmed skipped =
-        warm("blink NaN drag", noLid, VtValue(std::nanf("")));
-    CHECK(skipped.live.movedProperties.count(blink) == 0);
-    CHECK(skipped.warmed.movedProperties.count(blink) == 0);
-    for (const RigExecRigPose *pose : {&skipped.live, &skipped.warmed}) {
-        CHECK(std::count(pose->diagnostics.begin(), pose->diagnostics.end(),
-                         "property chain " + blink.GetString() +
-                             ": authored base is not finite; chain "
-                             "skipped") == 1);
-    }
+    const Warmed failed =
+        warm("blink NaN drag", noLid, VtValue(std::nanf("")), false);
+    CHECK(std::count_if(
+              failed.live.diagnostics.begin(), failed.live.diagnostics.end(),
+              [&](const std::string &line) {
+                  return line.find("property chain " + blink.GetString() +
+                                   ": authored base is not "
+                                   "finite") != std::string::npos;
+              }) == 1);
 
     _BlinkRigOptions gained;
     gained.gain = true;
@@ -8713,6 +8717,8 @@ TestFrozenPropertySkinLayoutRecovery()
     }
 }
 
+// Frames 2, 4 and 5 fail their property envelope's field, which stops the
+// frame live and declines the job; the frames after them recover.
 static void
 TestFrozenEnvelopeVolumesRecovery(const std::string &examples)
 {
@@ -8748,15 +8754,17 @@ TestFrozenEnvelopeVolumesRecovery(const std::string &examples)
             context, inputs, RigExecMakeProductionStepRunner(),
             RigExecCancellationToken(), &report);
         const auto live = evaluator.Evaluate(UsdTimeCode(frame));
+        if (frame == 2 || frame == 4 || frame == 5) {
+            CHECK(!pose.valid && !live.valid && !live.diagnostics.empty());
+            continue;
+        }
         CHECK(report.ran && pose.valid && live.valid);
         CheckPosesBitIdentical("envelope volume phase recovery", live, pose);
         const auto scalar = pose.movedProperties.find(
             SdfPath("/EnvelopeAsset/Rig/Channels.base"));
         CHECK(scalar != pose.movedProperties.end());
         if (scalar != pose.movedProperties.end())
-            CHECK(
-                scalar->second ==
-                VtValue(frame == 1 || frame == 3 || frame == 6 ? 10.0f : 0.0f));
+            CHECK(scalar->second == VtValue(10.0f));
         RigExecFrozenRunReport heldReport;
         const auto held = RigExecEvaluateFrozen(
             context, inputs, RigExecMakeProductionStepRunner(),

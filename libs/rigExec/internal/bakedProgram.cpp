@@ -610,11 +610,16 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
     }
     if (bailed) {
         _lastBail = RigExecBakedBail::Step;
-        for (const RigExecBakedStep &step : B.steps)
-            if (step.failed)
+        // Only a step this frame ran: an earlier frame's failure of a step
+        // the stop left unrun is no error of this frame.
+        for (size_t c = 0; c < B.opGraph.ops.size(); ++c) {
+            const size_t index = B.opGraph.ops[c].originalIndex;
+            if (c < B.opExecution.ran.size() && B.opExecution.ran[c] &&
+                index < B.steps.size() && B.steps[index].failed)
                 pose->diagnostics.insert(pose->diagnostics.end(),
-                                         step.diagnostics.begin(),
-                                         step.diagnostics.end());
+                                         B.steps[index].diagnostics.begin(),
+                                         B.steps[index].diagnostics.end());
+        }
         pose->valid = false;
         return false;
     }

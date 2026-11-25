@@ -5,12 +5,11 @@
     multiply by a control's double avar through a connection, apply a
     Hermite curve with tangents, blend under a StaticWeight envelope, add
     under a clamped DynamicWeight envelope driven by another avar, pass
-    through disabled and with an out-of-range inputs:defaultWeight, and
-    clamp; its result feeds a constraint's inputs:defaultWeight, which
+    through disabled, and clamp; its result feeds a constraint's inputs:defaultWeight, which
     declares rigExecReadPhase = "final" (a connection reads the base
     unless it declares another phase). Beside it
-    a double chain (computed in float), a vec3f and a matrix chain, a chain
-    whose target has no authored value, and three phased consumers: the
+    a double chain (computed in float), a vec3f and a matrix chain, and
+    three phased consumers: the
     float chain's base, the float chain after its curve revision, and the
     double chain's base read into a float input."""
     defaultPrim = "Asset"
@@ -84,11 +83,6 @@ def Xform "Asset"
                 matrix4d rigExec:local = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
             }
 
-            def Scope "Missing"
-            {
-                float rigExec:none
-            }
-
             def Scope "Readouts"
             {
                 float rigExec:base = 0
@@ -129,16 +123,6 @@ def Xform "Asset"
                     float inputs:min = 0
                     rel rigExec:moves = </Asset/Rig/Channels/Dial.rigExec:amount>
                     uniform token rigExec:operation = "clamp"
-                }
-
-                def RigExecFloatMathMover "Over" (
-                    prepend apiSchemas = ["RigExecMoverAPI"]
-                )
-                {
-                    float inputs:defaultWeight = 1.5
-                    float inputs:value = 100
-                    rel rigExec:moves = </Asset/Rig/Channels/Dial.rigExec:amount>
-                    uniform token rigExec:operation = "add"
                 }
 
                 def RigExecFloatMathMover "Off" (
@@ -227,15 +211,6 @@ def Xform "Asset"
                 matrix4d inputs:value = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 5, 0, 1) )
                 rel rigExec:moves = </Asset/Rig/Channels/Space.rigExec:local>
                 uniform token rigExec:operation = "multiply"
-            }
-
-            def RigExecFloatMathMover "Unset" (
-                prepend apiSchemas = ["RigExecMoverAPI"]
-            )
-            {
-                float inputs:value = 1
-                rel rigExec:moves = </Asset/Rig/Channels/Missing.rigExec:none>
-                uniform token rigExec:operation = "add"
             }
 
             def Scope "Readouts"

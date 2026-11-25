@@ -17,8 +17,6 @@ const char *
 RigExecBakedStepDomainName(RigExecBakedStepKind kind)
 {
     switch (kind) {
-    case RigExecBakedStepKind::PropertyRevision:
-        return "property";
     case RigExecBakedStepKind::RestCompose:
     case RigExecBakedStepKind::LadderCompose:
     case RigExecBakedStepKind::ComposeSubtree:
@@ -50,6 +48,7 @@ RigExecBakedStepDomainName(RigExecBakedStepKind kind)
     case RigExecBakedStepKind::Derived:
     case RigExecBakedStepKind::ChainInputs:
         return SchemaValueText::geometry;
+    case RigExecBakedStepKind::ReservedPropertyRevision:
     case RigExecBakedStepKind::ReservedOpGraph:
     case RigExecBakedStepKind::OpNode:
     case RigExecBakedStepKind::OpChainHead:
@@ -57,6 +56,15 @@ RigExecBakedStepDomainName(RigExecBakedStepKind kind)
         return "op";
     }
     return "unknown";
+}
+
+const char *
+RigExecBakedStepDomainName(const RigExecBakedProgramImpl &B,
+                           const RigExecBakedStep &step)
+{
+    return RigExecBakedPropertyPartOf(B, step, nullptr, nullptr)
+               ? "property"
+               : RigExecBakedStepDomainName(step.kind);
 }
 
 std::vector<RigExecOpTraceEntry>
@@ -75,7 +83,7 @@ RigExecBakedLastRunTrace(const RigExecBakedProgramImpl &B)
         RigExecOpTraceEntry entry;
         entry.step = canonical;
         entry.kind = RigExecBakedStepKindName(step.kind);
-        entry.domain = RigExecBakedStepDomainName(step.kind);
+        entry.domain = RigExecBakedStepDomainName(B, step);
         entry.label = step.label;
         entry.seq = uint32_t(B.opExecution.completion[canonical]);
         entry.cluster = canonical < B.opGraph.opClusters.size()
@@ -139,7 +147,7 @@ RigExecBakedOpGraph(const RigExecBakedProgramImpl &B)
         auto &node = graph[canonical];
         node.step = canonical;
         node.kind = RigExecBakedStepKindName(step.kind);
-        node.domain = RigExecBakedStepDomainName(step.kind);
+        node.domain = RigExecBakedStepDomainName(B, step);
         node.label = step.label;
         node.preds.assign(op.predecessors.begin(), op.predecessors.end());
         node.succs.assign(op.successors.begin(), op.successors.end());
@@ -218,12 +226,13 @@ RigExecBakedProgram::_GetCycleSkips(
             member.pose = true;
             break;
         }
-        case K::PropertyRevision:
-            if (step.part > 0)
-                member.owner = B.propertyChains[object]
-                                   .revisions[size_t(step.part - 1)]
-                                   .mover;
+        case K::OpNode: {
+            size_t chain = 0, part = 0;
+            if (RigExecBakedPropertyPartOf(B, step, &chain, &part))
+                member.owner =
+                    B.propertyChains[chain].revisions[part - 1].mover;
             break;
+        }
         case K::SkinTopology:
             if (const auto *revision =
                     RigExecBakedLayoutRevision(B, step.object))

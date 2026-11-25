@@ -131,7 +131,7 @@ ChainPartsRan(const RigExecRigEvaluator &evaluator, const SdfPath &target)
         return parts;
     const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     for (const auto &entry : evaluator.GetLastOpTrace()) {
-        if (entry.kind != "PropertyRevision")
+        if (entry.kind != "OpNode")
             continue;
         CHECK(entry.step < B.opGraph.ops.size());
         if (entry.step >= B.opGraph.ops.size())
@@ -141,16 +141,15 @@ ChainPartsRan(const RigExecRigEvaluator &evaluator, const SdfPath &target)
         if (body >= B.steps.size())
             continue;
         const auto &step = B.steps[body];
-        CHECK(step.kind == RigExecBakedStepKind::PropertyRevision);
-        CHECK(step.object >= 0 &&
-              size_t(step.object) < B.propertyChains.size());
-        if (step.object < 0 || size_t(step.object) >= B.propertyChains.size())
+        size_t chainIndex = 0, part = 0;
+        CHECK(RigExecBakedPropertyPartOf(B, step, &chainIndex, &part));
+        if (!RigExecBakedPropertyPartOf(B, step, &chainIndex, &part))
             continue;
-        const auto &chain = B.propertyChains[size_t(step.object)];
+        const auto &chain = B.propertyChains[chainIndex];
         if (chain.target != target)
             continue;
-        CHECK(step.part >= 0 && size_t(step.part) <= chain.revisions.size());
-        CHECK(parts.insert(step.part).second);
+        CHECK(part >= 1 && part <= chain.revisions.size());
+        CHECK(parts.insert(int(part)).second);
     }
     return parts;
 }

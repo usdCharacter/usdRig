@@ -29,6 +29,58 @@ enum class OpHostSource : uint8_t {
     FinalMatrix = 1,
     /// A joint's or control's base matrix.
     BaseMatrix = 2,
+    /// A value the host looks up before the node runs: \p object indexes
+    /// the layout's lookups. Which source answers may change per frame.
+    Lookup = 4,
+};
+
+/// A per-frame read of the rig the host resolves for a Lookup input; what
+/// \p object, \p part and \p read name depends on \p source.
+struct OpLookup {
+    uint8_t source = 0;
+    uint32_t object = 0;
+    int32_t part = -1;
+    uint8_t read = 0;
+};
+
+/// A port value the host stores in one of its own slots after the node
+/// runs: an output, or an input a lookup feeds. What \p object names
+/// depends on \p target.
+struct OpHostOutput {
+    uint32_t node = 0;
+    uint32_t port = 0;
+    uint8_t target = 0;
+    uint32_t object = 0;
+};
+
+/// One value of a port's type, constructed and destroyed with it.
+class OpPortValue {
+public:
+    explicit OpPortValue(const RigExecTypeDesc &type)
+        : _type(type), _storage(type.size / sizeof(std::max_align_t) + 1)
+    {
+        if (_type.construct)
+            _type.construct(_storage.data());
+    }
+    ~OpPortValue()
+    {
+        if (_type.destroy)
+            _type.destroy(_storage.data());
+    }
+    OpPortValue(const OpPortValue &) = delete;
+    OpPortValue &operator=(const OpPortValue &) = delete;
+    const RigExecTypeDesc &Type() const
+    {
+        return _type;
+    }
+    void *Value()
+    {
+        return _storage.data();
+    }
+
+private:
+    const RigExecTypeDesc &_type;
+    std::vector<std::max_align_t> _storage;
 };
 
 /// An op input the host writes from the rig: the node and port it feeds,
@@ -115,6 +167,8 @@ enum class OpStepKind : uint8_t { Node = 30, ChainHead = 31, ChainRange = 32 };
 struct OpStepLayout {
     std::shared_ptr<const RigExecProgram> program;
     std::vector<OpHostInput> hostInputs;
+    std::vector<OpLookup> lookups;
+    std::vector<OpHostOutput> hostOutputs;
     std::vector<OpConstant> constants;
     std::vector<OpChainLayout> chains;
     /// Filled by LayOutOpSteps.
@@ -126,6 +180,9 @@ struct OpStepLayout {
     std::vector<uint32_t> chainOf, memberOf;
     /// Per hostInputs entry: the program input it writes.
     std::vector<uint32_t> hostInputIds;
+    /// Per program node: its Lookup hostInputs entries and its hostOutputs
+    /// entries.
+    std::vector<std::vector<uint32_t>> lookupsOf, hostOutputsOf;
     /// Per value number: its first OpGroupValue slot, or kRigExecInvalidIndex,
     /// and the node writing it, or kRigExecInvalidIndex for an input.
     std::vector<uint32_t> groupBase, producerOf;
@@ -203,6 +260,8 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
         }
     }
     layout->hostInputIds.clear();
+    layout->lookupsOf.assign(nodes, std::vector<uint32_t>());
+    layout->hostOutputsOf.assign(nodes, std::vector<uint32_t>());
     for (const OpHostInput &input : layout->hostInputs) {
         if (input.node >= nodes ||
             input.port >= layout->nodes[input.node].inputs.size() ||
@@ -223,7 +282,45 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
                                         ", which does not read them point "
                                         "by point in a range chain");
         }
+        if (input.source == OpHostSource::Lookup) {
+            if (input.object >= layout->lookups.size())
+                return OpLayoutFail(
+                    error, "node " + std::to_string(input.node) +
+                               " reads lookup " + std::to_string(input.object) +
+                               ", which the layout lacks");
+            if (layout->nodes[input.node].op->ports[input.port].flags &
+                kRigExecPortChecked)
+                return OpLayoutFail(error, "a lookup feeds checked input " +
+                                               std::to_string(input.port) +
+                                               " of node " +
+                                               std::to_string(input.node));
+            layout->lookupsOf[input.node].push_back(
+                uint32_t(layout->hostInputIds.size()));
+        }
         layout->hostInputIds.push_back(id);
+    }
+    for (uint32_t o = 0; o < layout->hostOutputs.size(); ++o) {
+        const OpHostOutput &output = layout->hostOutputs[o];
+        bool stored = output.node < nodes &&
+                      output.port < layout->nodes[output.node].values.size() &&
+                      layout->nodes[output.node].values[output.port] !=
+                          kRigExecInvalidIndex;
+        if (stored &&
+            !(layout->nodes[output.node].op->ports[output.port].flags &
+              kRigExecPortOutput)) {
+            stored = false;
+            for (const OpHostInput &input : layout->hostInputs)
+                stored = stored || (input.node == output.node &&
+                                    input.port == output.port &&
+                                    input.source == OpHostSource::Lookup);
+        }
+        if (!stored)
+            return OpLayoutFail(error, "node " + std::to_string(output.node) +
+                                           " has no output or looked-up "
+                                           "input " +
+                                           std::to_string(output.port) +
+                                           " to store");
+        layout->hostOutputsOf[output.node].push_back(o);
     }
     layout->constantValues.clear();
     layout->constantIds.clear();
@@ -257,6 +354,8 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
 /// version of every op value, bumped by the step that writes it.
 struct OpStepState {
     std::unique_ptr<RigExecRunState> run;
+    /// Per hostInputs entry: the value a Lookup input reads, else null.
+    std::vector<std::unique_ptr<OpPortValue>> lookedUp;
     std::vector<std::vector<const void *>> groupPoints;
     std::vector<RigExecOpGroups> groups;
     std::vector<uint64_t> versions, groupVersions;
@@ -274,6 +373,8 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
     state->groupPoints.assign(layout.hostInputs.size(),
                               std::vector<const void *>());
     state->groups.assign(layout.hostInputs.size(), RigExecOpGroups());
+    state->lookedUp.clear();
+    state->lookedUp.resize(layout.hostInputs.size());
     state->versions.resize(layout.OpValueCount(), 0);
     state->groupVersions.resize(layout.groupValueCount, 0);
     for (size_t i = 0; i < layout.constantIds.size(); ++i)
@@ -282,6 +383,17 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
     for (size_t i = 0; i < layout.hostInputs.size(); ++i) {
         const OpHostInput &input = layout.hostInputs[i];
         const RigExecInputId id{layout.hostInputIds[i]};
+        if (input.source == OpHostSource::Lookup) {
+            const RigExecPortDesc &port =
+                layout.nodes[input.node].op->ports[input.port];
+            state->lookedUp[i] = std::make_unique<OpPortValue>(
+                *RigExecRegistry::Get().TypeAt(port.type->Index()).desc);
+            if (!state->run->PointInput(id, state->lookedUp[i]->Value()))
+                return OpLayoutFail(
+                    error, "node " + std::to_string(input.node) +
+                               " has no input " + std::to_string(input.port));
+            continue;
+        }
         if (input.source != OpHostSource::ChainPoints) {
             const void *value = host.Matrix(input.source, input.object);
             if (!value || !state->run->PointInput(id, value))
@@ -302,10 +414,14 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
     return true;
 }
 
-/// Runs op step (\p kind, \p object, \p part): node \p object; chain
-/// \p object's head; or group part % G of the segment starting at member
-/// part / G of chain \p object. False with the reason in \p error.
-/// Steps that do not feed each other may run at once.
+/// Runs op step (\p kind, \p object, \p part): node \p object, after
+/// \p host.Lookup(index, lookup, type, value, error) resolved each of its
+/// Lookup inputs in layout order, a hostOutput of a looked-up input stored
+/// by \p host.Output(output, value, error) before the next lookup, and the
+/// hostOutputs of its outputs stored after it ran; chain \p object's head;
+/// or group part % G of the
+/// segment starting at member part / G of chain \p object. False with the
+/// reason in \p error. Steps that do not feed each other may run at once.
 template <class Host>
 bool
 RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
@@ -316,10 +432,36 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
         return OpLayoutFail(error, "an op step names no object");
     const size_t index = size_t(object);
     if (kind == OpStepKind::Node) {
-        if (index >= layout.nodes.size() ||
-            !run.RunNode(RigExecNodeId(object), error))
-            return false;
+        if (index >= layout.nodes.size())
+            return OpLayoutFail(error, "no node " + std::to_string(object));
         const RigExecNodeDesc &d = layout.nodes[index];
+        for (const uint32_t i : layout.lookupsOf[index]) {
+            OpPortValue &value = *state->lookedUp[i];
+            const uint32_t lookup = layout.hostInputs[i].object;
+            if (!host.Lookup(lookup, layout.lookups[lookup], value.Type(),
+                             value.Value(), error))
+                return false;
+            for (const uint32_t o : layout.hostOutputsOf[index])
+                if (layout.hostOutputs[o].port == layout.hostInputs[i].port &&
+                    !host.Output(layout.hostOutputs[o], value.Value(), error))
+                    return false;
+        }
+        if (!run.RunNode(RigExecNodeId(object), error))
+            return false;
+        for (const uint32_t o : layout.hostOutputsOf[index]) {
+            const OpHostOutput &output = layout.hostOutputs[o];
+            if (!(d.op->ports[output.port].flags & kRigExecPortOutput))
+                continue;
+            RigExecValueRef ref;
+            ref.value = d.values[output.port];
+            const void *value = run.GetValue(ref);
+            if (!value)
+                return OpLayoutFail(error, "node " + std::to_string(object) +
+                                               " holds no value at port " +
+                                               std::to_string(output.port));
+            if (!host.Output(output, value, error))
+                return false;
+        }
         for (size_t p = 0; p < d.values.size(); ++p)
             if ((d.op->ports[p].flags & kRigExecPortOutput) &&
                 d.values[p] != kRigExecInvalidIndex)
