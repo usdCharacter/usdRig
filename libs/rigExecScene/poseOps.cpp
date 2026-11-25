@@ -1249,7 +1249,6 @@ RigExecAddHarmonicsOp(const RigExecHarmonicsOpConstants &constants,
     n.termination = b.BindInput(id, HarmonicsTermination());
     n.axisAmplitude = b.BindInput(id, HarmonicsAxisAmplitude());
     n.out = b.BindOutput(id, HarmonicsOut());
-    n.status = b.BindOutput(id, HarmonicsStatusOut());
     *node = std::move(n);
     return true;
 }
@@ -1279,14 +1278,12 @@ RigExecWriteHarmonicsOpInputs(const RigExecHarmonicsOpConstants &constants,
 bool
 RigExecReadHarmonicsOpOutput(const RigExecHarmonicsOpNode &node,
                              const RigExecEvaluator &e,
-                             RigExecPointFrame *frame, uint32_t *status)
+                             RigExecPointFrame *frame)
 {
     const auto *out = static_cast<const PointFrame *>(e.GetOutput(node.out));
-    const auto *why = static_cast<const uint32_t *>(e.GetOutput(node.status));
-    if (!out || !why)
+    if (!out)
         return false;
     *frame = FromStd(*out);
-    *status = *why;
     return true;
 }
 
@@ -1395,7 +1392,6 @@ RigExecAddIkFkMatchOp(const RigExecIkFkMatchOpConstants &constants,
     n.active = b.BindInput(id, IkFkMatchActive());
     n.ikValues = b.BindOutput(id, IkFkMatchIkValues());
     n.fkValues = b.BindOutput(id, IkFkMatchFkValues());
-    n.valid = b.BindOutput(id, IkFkMatchValid());
     n.shown = b.BindOutput(id, IkFkMatchShown());
     n.shownMask = b.BindOutput(id, IkFkMatchShownMask());
     *node = std::move(n);
@@ -1471,17 +1467,15 @@ RigExecReadIkFkMatchOpOutput(const RigExecIkFkMatchOpNode &node,
         static_cast<const RigExecArray<double> *>(e.GetOutput(node.ikValues));
     const auto *fk =
         static_cast<const RigExecArray<double> *>(e.GetOutput(node.fkValues));
-    const auto *valid = static_cast<const uint8_t *>(e.GetOutput(node.valid));
     const auto *shown =
         static_cast<const RigExecArray<Mat4d> *>(e.GetOutput(node.shown));
     const auto *mask =
         static_cast<const uint32_t *>(e.GetOutput(node.shownMask));
-    if (!ik || !fk || !valid || !shown || !mask || ik->Size() != 11 ||
-        fk->Size() != 20 || shown->Size() != 5)
+    if (!ik || !fk || !shown || !mask || ik->Size() != 11 || fk->Size() != 20 ||
+        shown->Size() != 5)
         return false;
     std::copy(ik->begin(), ik->end(), output->ikValues.begin());
     std::copy(fk->begin(), fk->end(), output->fkValues.begin());
-    output->valid = *valid != 0;
     for (size_t k = 0; k < 5; ++k)
         output->shown[k] = FromStd((*shown)[k]);
     output->shownMask = *mask;

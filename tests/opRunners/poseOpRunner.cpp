@@ -2,7 +2,6 @@
 
 #include "rigExec/api/compile.h"
 #include "rigExec/api/types.h"
-#include "rigExecOps/constraint/harmonicsOps.h"
 
 namespace rigExec {
 
@@ -159,9 +158,9 @@ RigExecRunHarmonicsOp(const RigExecHarmonicsOpConstants &constants,
                       const RigExecWindowRing *ring, bool captureOnly,
                       RigExecPoseOpRunner &runner,
                       RigExecWindowPacketPtr *capture, RigExecPointFrame *frame,
-                      uint32_t *status, std::string *error)
+                      std::string *error)
 {
-    if (!capture || !frame || !status)
+    if (!capture || !frame)
         return Fail(error, "null harmonics output");
     capture->reset();
     *frame = input.incoming;
@@ -195,14 +194,13 @@ RigExecRunHarmonicsOp(const RigExecHarmonicsOpConstants &constants,
         const RigExecWindowRing &pushed = runner.evaluator->GetWindowRings()[0];
         if (!pushed.empty())
             *capture = pushed.back();
-        *status = uint32_t(rigExecOps::HarmonicsStatus::PassedThrough);
         return true;
     }
     if (!runner.evaluator->Evaluate(error))
         return false;
     *capture = runner.evaluator->GetWindowCaptures()[0];
     if (!RigExecReadHarmonicsOpOutput(runner.harmonics, *runner.evaluator,
-                                      frame, status))
+                                      frame))
         return Fail(error, "harmonics op has no output");
     return true;
 }

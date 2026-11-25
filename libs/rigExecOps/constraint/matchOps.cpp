@@ -43,7 +43,6 @@ RIGEXEC_DEFINE_PORT_HANDLE(IkFkMatchSourcePosed)
 RIGEXEC_DEFINE_PORT_HANDLE(IkFkMatchActive)
 RIGEXEC_DEFINE_PORT_HANDLE(IkFkMatchIkValues)
 RIGEXEC_DEFINE_PORT_HANDLE(IkFkMatchFkValues)
-RIGEXEC_DEFINE_PORT_HANDLE(IkFkMatchValid)
 RIGEXEC_DEFINE_PORT_HANDLE(IkFkMatchShown)
 RIGEXEC_DEFINE_PORT_HANDLE(IkFkMatchShownMask)
 
@@ -60,7 +59,6 @@ RIGEXEC_DEFINE_PORT_HANDLE(SpaceMatchSpacePosed)
 RIGEXEC_DEFINE_PORT_HANDLE(SpaceMatchSourceDefaults)
 RIGEXEC_DEFINE_PORT_HANDLE(SpaceMatchSourcePosed)
 RIGEXEC_DEFINE_PORT_HANDLE(SpaceMatchValues)
-RIGEXEC_DEFINE_PORT_HANDLE(SpaceMatchValid)
 
 namespace {
 
@@ -269,6 +267,50 @@ struct SpaceSwitchPorts {
     const rigExec::RigExecPortHandle &sourcePosed = SpaceMatchSourcePosed();
 };
 
+/// A space switch's sources and carry agree with its setup where known.
+template <class Port>
+bool
+CheckSwitch(const rigExec::RigExecOpCheck &check, const Port &port,
+            const char *op, std::string *error)
+{
+    const SwitchSettings setup = SwitchAt(check.batch, check.k);
+    if (setup.hasCarry &&
+        (!Fed(check, port.spaceDefault) || !Fed(check, port.spacePosed)))
+        return Fail(error, op, "its switch's carry space is not fed");
+    const size_t count = setup.world.Size();
+    if (!SameCount(CheckElements(check, port.sourceDefaults), count) ||
+        !SameCount(CheckElements(check, port.sourcePosed), count))
+        return Fail(error, op, "its switch's sources do not match it");
+    return true;
+}
+
+bool
+CheckIkFkMatch(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (!SameCount(CheckElements(check, IkFkMatchSources()), 10) ||
+        !SameCount(CheckElements(check, IkFkMatchRests()), 8) ||
+        !SameCount(CheckElements(check, IkFkMatchChannels()),
+                   5 * kMatchChannelStride))
+        return Fail(error, "IkFkMatch",
+                    "needs 10 sources, 8 rests and 5 controls' channels");
+    if (SwitchAt(check.batch, check.k).hasCarry &&
+        (!Fed(check, IkFkMatchSwitchSpaceDefault()) ||
+         !Fed(check, IkFkMatchSwitchSpacePosed())))
+        return Fail(error, "IkFkMatch", "its switch's carry space is not fed");
+    return true;
+}
+
+bool
+CheckSpaceMatch(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (!SwitchAt(check.batch, check.k).world.Size())
+        return Fail(error, "SpaceMatch", "needs at least one space");
+    if (!SameCount(CheckElements(check, SpaceMatchChannels()),
+                   kMatchChannelStride))
+        return Fail(error, "SpaceMatch", "needs one control's channels");
+    return CheckSwitch(check, SpaceSwitchPorts(), "SpaceMatch", error);
+}
+
 // RigExecIkFkMatchConstraint's arithmetic, as the evaluator runs it over
 // Gf: the IK half, the pole's parent once the IK control has moved,
 // the FK half, and the half presented on the joints.
@@ -290,7 +332,6 @@ IkFkMatchOne(const RigExecOpBatch &batch, size_t k, std::string *error)
                  FlagAt(batch, kStretchLimb, k)};
     auto &ikValues = Out<RigExecArray<double>>(io, IkFkMatchIkValues());
     auto &fkValues = Out<RigExecArray<double>>(io, IkFkMatchFkValues());
-    uint8_t &valid = Out<uint8_t>(io, IkFkMatchValid());
     auto &shown = Out<RigExecArray<Mat4d>>(io, IkFkMatchShown());
     uint32_t &shownMask = Out<uint32_t>(io, IkFkMatchShownMask());
     ikValues.Resize(11);
@@ -302,7 +343,6 @@ IkFkMatchOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     shown.Resize(5);
     for (size_t k = 0; k < 5; ++k)
         shown[k] = Mat4d(1.0);
-    valid = 0;
     shownMask = 0;
     if (!*In<uint8_t>(io, IkFkMatchEnabled()))
         return true;
@@ -412,11 +452,11 @@ IkFkMatchOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     fkIn.restLower = restLower;
     rigExec::RigExecIkFkMatchFkResult fk;
     rigExec::RigExecIkFkMatchFk(fkIn, &fk);
-    if (ik.ok && poleOk && fk.ok) {
-        rigExec::RigExecIkFkMatchPack(ik, pole, fk, ikValues.Data(),
-                                      fkValues.Data());
-        valid = 1;
-    }
+    if (!ik.ok || !poleOk || !fk.ok)
+        return Fail(error, "IkFkMatch",
+                    "could not match its limb's other half");
+    rigExec::RigExecIkFkMatchPack(ik, pole, fk, ikValues.Data(),
+                                  fkValues.Data());
     const auto show = [&](size_t k, const double *frame) {
         shown[k] = FromRows(frame);
         shownMask |= 1u << k;
@@ -458,8 +498,6 @@ SpaceMatchOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         SwitchSettings space;
     } p = {SwitchAt(batch, k)};
     auto &values = Out<RigExecArray<double>>(io, SpaceMatchValues());
-    uint8_t &valid = Out<uint8_t>(io, SpaceMatchValid());
-    valid = 0;
     SwitchInputs trial;
     if (!SwitchInputsOf(io, p.space, SpaceSwitchPorts(), &trial))
         return Fail(error, "SpaceMatch", "its sources do not match it");
@@ -477,13 +515,18 @@ SpaceMatchOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         return rigExec::RigExecRunSpaceSwitchArithmetic<SwitchMath>(
             record, trial, composed);
     };
-    valid = rigExec::RigExecSpaceMatchT<rigExec::RrMat3d, Vec3d>(
-                *In<Mat4d>(io, SpaceMatchTarget()),
-                ChannelsAt(channelValues, 0), spaces, compose,
-                values.Data()) == rigExec::RigExecSpaceMatchOutcome::Matched
-                ? 1
-                : 0;
-    return true;
+    switch (rigExec::RigExecSpaceMatchT<rigExec::RrMat3d, Vec3d>(
+        *In<Mat4d>(io, SpaceMatchTarget()), ChannelsAt(channelValues, 0),
+        spaces, compose, values.Data())) {
+    case rigExec::RigExecSpaceMatchOutcome::Matched:
+        return true;
+    case rigExec::RigExecSpaceMatchOutcome::NotFinite:
+        return Fail(error, "SpaceMatch",
+                    rigExec::kRigExecSpaceMatchNotFinite + 1);
+    case rigExec::RigExecSpaceMatchOutcome::Unsolved:
+        break;
+    }
+    return Fail(error, "SpaceMatch", "could not match its spaces");
 }
 
 bool
@@ -544,7 +587,6 @@ const rigExec::RigExecPortDesc kIkFkPorts[] = {
     {&IkFkMatchFkValues(), &rigExecStd::DoubleArray(), kOut, "fkValues",
      rigExec::RigExecOutputBound::Fixed, nullptr, nullptr,
      rigExec::kRigExecInvalidIndex, 20},
-    {&IkFkMatchValid(), &rigExecStd::BoolType(), kOut, "valid"},
     {&IkFkMatchShown(), &rigExecStd::Mat4dArray(), kOut, "shown",
      rigExec::RigExecOutputBound::Fixed, nullptr, nullptr,
      rigExec::kRigExecInvalidIndex, 5},
@@ -620,6 +662,7 @@ const rigExec::RigExecOpDesc kIkFk = [] {
     op.ports = kIkFkPorts;
     op.portCount = std::size(kIkFkPorts);
     op.runBatch = &RunIkFkMatch;
+    op.validate = &CheckIkFkMatch;
     op.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     op.payloadFields = kIkFkFields;
@@ -648,7 +691,6 @@ const rigExec::RigExecPortDesc kSpacePorts[] = {
     {&SpaceMatchValues(), &rigExecStd::DoubleArray(), kOut, "values",
      rigExec::RigExecOutputBound::Input, &SpaceMatchSourceDefaults(), nullptr,
      rigExec::kRigExecInvalidIndex, rigExec::RigExecSpaceMatchStride},
-    {&SpaceMatchValid(), &rigExecStd::BoolType(), kOut, "valid"},
 };
 
 const rigExec::RigExecOpDesc kSpace = [] {
@@ -658,6 +700,7 @@ const rigExec::RigExecOpDesc kSpace = [] {
     op.ports = kSpacePorts;
     op.portCount = std::size(kSpacePorts);
     op.runBatch = &RunSpaceMatch;
+    op.validate = &CheckSpaceMatch;
     op.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     op.payloadFields = kIkFkFields;

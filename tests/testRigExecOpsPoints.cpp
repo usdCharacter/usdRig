@@ -18,7 +18,9 @@
 #include "rigExecMath/weightFields.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecRuntime/dualQuatMath.h"
+#include "rigExecOps/constraint/autoClavicleOps.h"
 #include "rigExecOps/constraint/constraintOps.h"
+#include "rigExecOps/constraint/matchOps.h"
 #include "rigExecOps/solver/chainSolverOps.h"
 #include "rigExecOps/solver/frameBlendOps.h"
 #include "rigExecOps/solver/ribbonFramesOps.h"
@@ -176,6 +178,12 @@ RunEach(const RigExecOpHandle &op,
         results->push_back(
             *static_cast<const Points *>(evaluator->GetOutput(out)));
     return true;
+}
+
+bool
+Contains(const std::string &text, const char *part)
+{
+    return text.find(part) != std::string::npos;
 }
 
 std::unique_ptr<RigExecTaskSystem> gTasks;
@@ -2046,19 +2054,24 @@ TestConstraints()
         RigExecApplyPositionConstraint(input, brokenSources, positionParams),
         actual));
 
-    // Weights of another length, or offsets, are refused.
+    // Weights of another length, or offsets, fail the evaluation that binds
+    // them, before the node runs.
     const auto shortWeights = ToArray(std::vector<double>{1.0});
     std::string error;
     CHECK(!positionNode.Run({&in, &sources, &shortWeights, &weight}, &actual,
                             &error));
-    CHECK(error.find("one source weight per source") != std::string::npos);
+    CHECK(Contains(error, "(rig:PositionConstraint) is invalid: "
+                          "PositionConstraint: needs one source weight per "
+                          "source"));
     parent.translationOffsets.pop_back();
     Node shortParent(ParentConstraint(),
                      {&ParentConstraintIn(), &ParentConstraintSources(),
                       &ParentConstraintWeight()},
                      ParentConstraintOut(), &parent);
     CHECK(!shortParent.Run({&in, &sources, &weight}, &actual, &error));
-    CHECK(error.find("one per source") != std::string::npos);
+    CHECK(Contains(error, "(rig:ParentConstraint) is invalid: "
+                          "ParentConstraint: needs no offsets or one per "
+                          "source"));
 }
 
 /// The native field for \p points under \p placement, divided by \p scale,
@@ -3203,12 +3216,6 @@ TestRetainedStateBatches()
     }
 }
 
-bool
-Contains(const std::string &text, const char *part)
-{
-    return text.find(part) != std::string::npos;
-}
-
 /// Checks that need no frame fail compile, or the first evaluation that
 /// gives a node inputs it cannot take, naming the node and the reason; a
 /// failure only a frame can show stops that evaluation and publishes
@@ -3329,6 +3336,107 @@ TestBuildTimeChecks()
     CHECK(!evaluator->GetOutput(out, &why));
     CHECK(Contains(why, "no valid value: node 0 (rig:Skin) failed"));
     CHECK(SamePoints(kept, *good.As<Points>(rigExecStd::Vec3fArray())));
+}
+
+/// What compile, or the first evaluation that binds the inputs, refuses of
+/// the pose and solver ops, naming the node and the reason.
+void
+TestOpChecks()
+{
+    using namespace rigExecOps;
+    std::string error;
+    const auto compiles = [&](RigExecRigDescBuilder &b) {
+        auto desc = b.Build(&error);
+        return desc && RigExecCompile(*desc, {}, &error) != nullptr;
+    };
+    const auto bind = [](RigExecRigDescBuilder &b, RigExecNodeId n,
+                         std::initializer_list<const RigExecPortHandle *> ins) {
+        for (const RigExecPortHandle *port : ins)
+            b.BindInput(n, *port);
+    };
+    {
+        AutoClavicleOpPayload clavicle;
+        clavicle.hasLimb = true;
+        RigExecRigDescBuilder b;
+        const RigExecNodeId n = b.AddOp(AutoClavicle(), &clavicle);
+        bind(b, n,
+             {&AutoClavicleTarget(), &AutoClaviclePivot(),
+              &AutoClavicleAnchor(), &AutoClavicleAnchorDefault(),
+              &AutoClavicleFkPosed(), &AutoClavicleFkDefault(),
+              &AutoClavicleIkTarget(), &AutoClaviclePole(),
+              &AutoClavicleIkBlend(), &AutoClavicleAmount()});
+        b.BindOutput(n, AutoClavicleOut());
+        CHECK(!compiles(b));
+        CHECK(Contains(error, "node 0 (rig:AutoClavicle) is invalid: "
+                              "AutoClavicle: needs three limb rest frames"));
+    }
+    {
+        SpaceMatchPayload space;
+        RigExecRigDescBuilder b;
+        const RigExecNodeId n = b.AddOp(SpaceMatch(), &space);
+        bind(b, n,
+             {&SpaceMatchTarget(), &SpaceMatchChannels(),
+              &SpaceMatchPosedDefault(), &SpaceMatchParentDefaultInverse(),
+              &SpaceMatchParentPosed(), &SpaceMatchParentDefault(),
+              &SpaceMatchSourceDefaults(), &SpaceMatchSourcePosed()});
+        b.BindOutput(n, SpaceMatchValues());
+        CHECK(!compiles(b));
+        CHECK(Contains(error, "SpaceMatch: needs at least one space"));
+        space.space.world = {0};
+        space.space.hasCarry = true;
+        RigExecRigDescBuilder carry;
+        const RigExecNodeId c = carry.AddOp(SpaceMatch(), &space);
+        bind(carry, c,
+             {&SpaceMatchTarget(), &SpaceMatchChannels(),
+              &SpaceMatchPosedDefault(), &SpaceMatchParentDefaultInverse(),
+              &SpaceMatchParentPosed(), &SpaceMatchParentDefault(),
+              &SpaceMatchSourceDefaults(), &SpaceMatchSourcePosed()});
+        carry.BindOutput(c, SpaceMatchValues());
+        CHECK(!compiles(carry));
+        CHECK(Contains(error, "its switch's carry space is not fed"));
+    }
+    {
+        IkFkMatchPayload match;
+        RigExecRigDescBuilder b;
+        const RigExecNodeId n = b.AddOp(IkFkMatch(), &match);
+        const RigExecInputId sources = b.BindInput(n, IkFkMatchSources());
+        bind(b, n,
+             {&IkFkMatchEnabled(),
+              &IkFkMatchWeight(),
+              &IkFkMatchSwitch(),
+              &IkFkMatchStretch(),
+              &IkFkMatchSoftDistance(),
+              &IkFkMatchUpperScale(),
+              &IkFkMatchLowerScale(),
+              &IkFkMatchPin(),
+              &IkFkMatchTwist(),
+              &IkFkMatchRests(),
+              &IkFkMatchChannels(),
+              &IkFkMatchHasSpace(),
+              &IkFkMatchSpaceRest(),
+              &IkFkMatchSpacePosed(),
+              &IkFkMatchPoleMode(),
+              &IkFkMatchPosedDefault(),
+              &IkFkMatchParentDefaultInverse(),
+              &IkFkMatchParentPosed(),
+              &IkFkMatchParentDefault(),
+              &IkFkMatchSourceDefaults(),
+              &IkFkMatchSourcePosed(),
+              &IkFkMatchActive()});
+        b.BindOutput(n, IkFkMatchIkValues());
+        auto desc = b.Build(&error);
+        auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
+        auto evaluator = program ? RigExecEvaluator::Create(program) : nullptr;
+        CHECK(evaluator);
+        if (!evaluator)
+            return;
+        const RigExecArray<rigExecStd::Mat4d> nine(9);
+        CHECK(evaluator->SetInput(sources, &nine));
+        CHECK(!evaluator->Evaluate(&error));
+        CHECK(Contains(error, "node 0 (rig:IkFkMatch) is invalid: IkFkMatch: "
+                              "needs 10 sources, 8 rests and 5 controls' "
+                              "channels"));
+    }
 }
 
 /// A skin, matrix, smooth and delta mush chain runs as one range chain:
@@ -3640,6 +3748,7 @@ main()
     TestSplineIk();
     TestRangeChain();
     TestBuildTimeChecks();
+    TestOpChecks();
     ReportRangeTiming();
     if (failures) {
         std::printf("%d failure(s)\n", failures);

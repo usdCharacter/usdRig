@@ -25,7 +25,6 @@ RIGEXEC_DEFINE_PORT_HANDLE(HarmonicsDecay)
 RIGEXEC_DEFINE_PORT_HANDLE(HarmonicsTermination)
 RIGEXEC_DEFINE_PORT_HANDLE(HarmonicsAxisAmplitude)
 RIGEXEC_DEFINE_PORT_HANDLE(HarmonicsOut)
-RIGEXEC_DEFINE_PORT_HANDLE(HarmonicsStatusOut)
 
 namespace {
 
@@ -65,6 +64,16 @@ Usable(const PointFrame &frame)
 }
 
 bool
+CheckHarmonics(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (FlagAt(check.batch, kHasSpace, check.k) != Fed(check, HarmonicsSpace()))
+        return Fail(
+            error, "Harmonics",
+            "its space is fed exactly when its settings measure in one");
+    return true;
+}
+
+bool
 HarmonicsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
@@ -77,33 +86,27 @@ HarmonicsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     p.hasSpace = FlagAt(batch, kHasSpace, k);
     const PointFrame &in = *In<PointFrame>(io, HarmonicsIn());
     PointFrame &out = Out<PointFrame>(io, HarmonicsOut());
-    uint32_t &status = Out<uint32_t>(io, HarmonicsStatusOut());
-    const auto finish = [&](HarmonicsStatus why) {
+    const auto passThrough = [&] {
         out = in;
-        status = uint32_t(why);
         return true;
     };
     if (!io.window)
         return Fail(error, "Harmonics", "runs only with a window");
     RigExecWindowPacketPtr &capture = *io.window->capture;
     capture.reset();
-    if (!Usable(in))
-        return finish(HarmonicsStatus::Unusable);
+    const bool usable = Usable(in);
 
     // The capture is the incoming origin in the space, taken before any gate.
     Mat4d space(1.0), toSpace(1.0);
     bool spaceUsable = true;
     if (p.hasSpace) {
-        const Mat4d *fed = In<Mat4d>(io, HarmonicsSpace());
-        if (!fed)
-            return Fail(error, "Harmonics", "its space is not fed");
-        space = *fed;
+        space = *In<Mat4d>(io, HarmonicsSpace());
         const double det = space.GetDeterminant();
         spaceUsable = std::isfinite(det) && det != 0.0;
         if (spaceUsable)
             toSpace = space.GetInverse();
     }
-    if (spaceUsable) {
+    if (usable && spaceUsable) {
         const Vec3d origin =
             p.hasSpace ? toSpace.Transform(in.points[0]) : in.points[0];
         if (std::isfinite(origin[0]) && std::isfinite(origin[1]) &&
@@ -114,15 +117,18 @@ HarmonicsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         }
     }
     if (io.window->captureOnly)
-        return finish(HarmonicsStatus::PassedThrough);
+        return passThrough();
     if (!*In<uint8_t>(io, HarmonicsEnabled()))
-        return finish(HarmonicsStatus::PassedThrough);
+        return passThrough();
     const double weight = *In<double>(io, HarmonicsWeight());
     if (weight <= 0.0)
-        return finish(HarmonicsStatus::PassedThrough);
+        return passThrough();
+    if (!usable)
+        return Fail(error, "Harmonics", "its incoming frame is not usable");
     if (!capture)
-        return finish(spaceUsable ? HarmonicsStatus::NoMeasure
-                                  : HarmonicsStatus::NoMeasureDegenerateSpace);
+        return Fail(error, "Harmonics",
+                    spaceUsable ? "its origin is not finite in its space"
+                                : "its space is degenerate");
 
     // The usable tail of the ring, then this tick, as one position array.
     const RigExecWindowRing &ring = *io.window->ring;
@@ -148,14 +154,14 @@ HarmonicsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     if (!std::isfinite(params.amplitude) || !std::isfinite(params.decay) ||
         !std::isfinite(params.termination) || !std::isfinite(axis[0]) ||
         !std::isfinite(axis[1]) || !std::isfinite(axis[2]))
-        return finish(HarmonicsStatus::NonFinite);
+        return Fail(error, "Harmonics", "a parameter is not finite");
     double ring3[3];
     // Fewer than two samples: no history yet, nothing rings.
     if (!rigExec::RigExecHarmonicsOffset(
             p.settings, params,
             reinterpret_cast<const double(*)[3]>(positions.data()),
             positions.size() / 3, ring3))
-        return finish(HarmonicsStatus::PassedThrough);
+        return passThrough();
     Vec3d offset(ring3[0], ring3[1], ring3[2]);
     if (p.hasSpace)
         offset = space.TransformDir(offset);
@@ -166,9 +172,8 @@ HarmonicsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         for (size_t a = 0; a < 3; ++a)
             q[a] += offset[a];
     if (!Usable(candidate))
-        return finish(HarmonicsStatus::InvalidResult);
+        return Fail(error, "Harmonics", "its result is not a usable frame");
     out = candidate;
-    status = uint32_t(HarmonicsStatus::Applied);
     return true;
 }
 
@@ -215,8 +220,6 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&HarmonicsAxisAmplitude(), &rigExecStd::Vec3dType(), kRigExecPortInput,
      "axisAmplitude"},
     {&HarmonicsOut(), &rigExecRig::PointFrameType(), kRigExecPortOutput, "out"},
-    {&HarmonicsStatusOut(), &rigExecStd::UIntType(), kRigExecPortOutput,
-     "status"},
 };
 
 void
@@ -249,6 +252,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     op.ports = kPorts;
     op.portCount = std::size(kPorts);
     op.runBatch = &RunHarmonics;
+    op.validate = &CheckHarmonics;
     op.threading = rigExec::RigExecOpThreading::Windowed;
     op.windowFrames = &HarmonicsFrames;
     op.capabilities =

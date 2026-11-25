@@ -78,7 +78,7 @@ const rigExec::RigExecOpHandle &IkFkMatch();
 // controls' at kMatchChannelStride each); HasSpace (Bool) with SpaceRest and
 // SpacePosed (Mat4d), the IK solve's space. PoleMode (UInt, an
 // IkFkPoleMode) and the pole switch's ports, read in Switch mode.
-// IkValues (DoubleArray, 11) and FkValues (DoubleArray, 20), Valid (Bool),
+// IkValues (DoubleArray, 11) and FkValues (DoubleArray, 20),
 // Shown (Mat4dArray, 5: the IK control, pole and FK controls as presented)
 // and ShownMask (UInt, which of Shown are presented).
 const rigExec::RigExecPortHandle &IkFkMatchEnabled();
@@ -108,7 +108,6 @@ const rigExec::RigExecPortHandle &IkFkMatchSourcePosed();
 const rigExec::RigExecPortHandle &IkFkMatchActive();
 const rigExec::RigExecPortHandle &IkFkMatchIkValues();
 const rigExec::RigExecPortHandle &IkFkMatchFkValues();
-const rigExec::RigExecPortHandle &IkFkMatchValid();
 const rigExec::RigExecPortHandle &IkFkMatchShown();
 const rigExec::RigExecPortHandle &IkFkMatchShownMask();
 
@@ -127,8 +126,7 @@ const rigExec::RigExecOpHandle &SpaceMatch();
 // control at kMatchChannelStride), and the switch's PosedDefault,
 // ParentDefaultInverse, ParentPosed, ParentDefault, optional SpaceDefault
 // and SpacePosed (Mat4d), SourceDefaults and SourcePosed (Mat4dArray, one
-// per source). Values (DoubleArray, RigExecSpaceMatchStride per source) and
-// Valid (Bool).
+// per source). Values (DoubleArray, RigExecSpaceMatchStride per source).
 const rigExec::RigExecPortHandle &SpaceMatchTarget();
 const rigExec::RigExecPortHandle &SpaceMatchChannels();
 const rigExec::RigExecPortHandle &SpaceMatchPosedDefault();
@@ -140,7 +138,6 @@ const rigExec::RigExecPortHandle &SpaceMatchSpacePosed();
 const rigExec::RigExecPortHandle &SpaceMatchSourceDefaults();
 const rigExec::RigExecPortHandle &SpaceMatchSourcePosed();
 const rigExec::RigExecPortHandle &SpaceMatchValues();
-const rigExec::RigExecPortHandle &SpaceMatchValid();
 
 } // namespace rigExecOps
 

@@ -233,7 +233,7 @@ struct RigExecHarmonicsOpInputs {
 struct RigExecHarmonicsOpNode {
     RigExecInputId in, space, enabled, weight, amplitude, decay, termination,
         axisAmplitude;
-    RigExecOutputId out, status;
+    RigExecOutputId out;
     RigExecHarmonicsOpConstants constants;
     bool hasSpace = false;
 };
@@ -252,11 +252,10 @@ bool RigExecWriteHarmonicsOpInputs(const RigExecHarmonicsOpConstants &constants,
                                    RigExecEvaluator *evaluator,
                                    std::string *error = nullptr);
 
-/// The op's frame and its rigExecOps::HarmonicsStatus. False where the node
-/// has no output.
+/// The op's frame. False where the node has no valid output.
 bool RigExecReadHarmonicsOpOutput(const RigExecHarmonicsOpNode &node,
                                   const RigExecEvaluator &evaluator,
-                                  RigExecPointFrame *frame, uint32_t *status);
+                                  RigExecPointFrame *frame);
 
 /// An IK/FK match's settings, baked into its op's payload: the pole's space
 /// switch and which of its sources ride the IK control.
@@ -288,7 +287,6 @@ struct RigExecIkFkMatchOpInputs {
 struct RigExecIkFkMatchOpOutputs {
     std::array<double, 11> ikValues{};
     std::array<double, 20> fkValues{};
-    bool valid = false;
     std::array<GfMatrix4d, 5> shown;
     unsigned shownMask = 0;
 };
@@ -300,7 +298,7 @@ struct RigExecIkFkMatchOpNode {
         parentPosed, parentDefault, spaceDefault, switchSpacePosed,
         sourceDefaults, sourcePosed, active;
     std::array<RigExecInputId, 7> scalars;
-    RigExecOutputId ikValues, fkValues, valid, shown, shownMask;
+    RigExecOutputId ikValues, fkValues, shown, shownMask;
     RigExecIkFkMatchOpConstants constants;
 };
 

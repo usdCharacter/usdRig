@@ -792,13 +792,14 @@ TestAutoClavicle()
     CHECK(shifted > 0);
 }
 
-/// A harmonics constraint's frame: what the op published, its
-/// rigExecOps::HarmonicsStatus and the window capture it took.
+/// A harmonics constraint's frame: what the op published and the window
+/// capture it took, or the evaluation's error. applied: the offset moved it.
 struct HarmonicsRun {
     RigExecWindowPacketPtr capture;
     RigExecPointFrame frame;
-    uint32_t status = 0;
     bool ran = false;
+    bool applied = false;
+    bool published = true;
     std::string error;
 };
 
@@ -810,12 +811,12 @@ NativeHarmonics(const RigExecHarmonicsOpConstants &constants,
                 const RigExecHarmonicsOpInputs &in,
                 const RigExecWindowRing &ring, bool captureOnly)
 {
-    using rigExecOps::HarmonicsStatus;
     HarmonicsRun run;
     run.ran = true;
     run.frame = in.incoming;
-    const auto finish = [&](HarmonicsStatus why) {
-        run.status = uint32_t(why);
+    const auto fail = [&](const char *why) {
+        run.ran = false;
+        run.error = std::string("Harmonics: ") + why;
         return run;
     };
     const bool usable = RigExecConstraintFrameUsable(in.incoming);
@@ -837,15 +838,13 @@ NativeHarmonics(const RigExecHarmonicsOpConstants &constants,
             run.capture = std::move(packet);
         }
     }
-    if (captureOnly)
-        return finish(HarmonicsStatus::PassedThrough);
+    if (captureOnly || !in.enabled || in.weight <= 0.0)
+        return run;
     if (!usable)
-        return finish(HarmonicsStatus::Unusable);
-    if (!in.enabled || in.weight <= 0.0)
-        return finish(HarmonicsStatus::PassedThrough);
+        return fail("its incoming frame is not usable");
     if (!run.capture)
-        return finish(spaceUsable ? HarmonicsStatus::NoMeasure
-                                  : HarmonicsStatus::NoMeasureDegenerateSpace);
+        return fail(spaceUsable ? "its origin is not finite in its space"
+                                : "its space is degenerate");
     size_t begin = ring.size();
     while (begin > 0 && ring[begin - 1] && ring[begin - 1]->scalars.size() == 3)
         --begin;
@@ -867,13 +866,13 @@ NativeHarmonics(const RigExecHarmonicsOpConstants &constants,
         !std::isfinite(in.axisAmplitude[0]) ||
         !std::isfinite(in.axisAmplitude[1]) ||
         !std::isfinite(in.axisAmplitude[2]))
-        return finish(HarmonicsStatus::NonFinite);
+        return fail("a parameter is not finite");
     double ring3[3];
     if (!RigExecHarmonicsOffset(
             constants.settings, params,
             reinterpret_cast<const double(*)[3]>(positions.data()),
             positions.size() / 3, ring3))
-        return finish(HarmonicsStatus::PassedThrough);
+        return run;
     GfVec3d offset(ring3[0], ring3[1], ring3[2]);
     if (in.space)
         offset = space.TransformDir(offset);
@@ -882,9 +881,10 @@ NativeHarmonics(const RigExecHarmonicsOpConstants &constants,
     for (auto &q : candidate.points)
         q += offset;
     if (!RigExecConstraintFrameUsable(candidate))
-        return finish(HarmonicsStatus::InvalidResult);
+        return fail("its result is not a usable frame");
     run.frame = candidate;
-    return finish(HarmonicsStatus::Applied);
+    run.applied = true;
+    return run;
 }
 
 HarmonicsRun
@@ -894,23 +894,30 @@ OpHarmonics(const RigExecHarmonicsOpConstants &constants,
 {
     HarmonicsRun run;
     run.ran = RigExecRunHarmonicsOp(constants, in, ring, captureOnly, runner,
-                                    &run.capture, &run.frame, &run.status,
-                                    &run.error);
+                                    &run.capture, &run.frame, &run.error);
+    RigExecPointFrame published;
+    run.published = runner.evaluator &&
+                    RigExecReadHarmonicsOpOutput(runner.harmonics,
+                                                 *runner.evaluator, &published);
     return run;
 }
 
 bool
 SameHarmonics(const HarmonicsRun &a, const HarmonicsRun &b)
 {
-    return a.ran == b.ran && a.status == b.status &&
-           SameFrame(a.frame, b.frame) &&
+    if (!a.ran || !b.ran)
+        return a.ran == b.ran && !b.published &&
+               b.error.find(a.error) != std::string::npos;
+    return SameFrame(a.frame, b.frame) &&
            RigExecWindowPacketsEqual(a.capture, b.capture);
 }
 
 /// Frame by frame over a ring the native captures fill, on one runner that
 /// rebuilds when a setting moves: with and without a space (a singular and
 /// an unreadable one), on capture-only ticks, disabled, at zero and partial
-/// weights, with a non-finite amplitude and an unusable incoming frame.
+/// weights. A non-finite amplitude, an unusable incoming frame and a space
+/// that measures nothing stop the evaluation with an error and publish
+/// nothing; so does a space the settings do not expect, at compile.
 void
 TestHarmonics()
 {
@@ -937,7 +944,7 @@ TestHarmonics()
         {"unusable frame", 0, true, 0.8, 1.3, true, true},
     };
     RigExecPoseOpRunner runner;
-    int applied = 0;
+    int applied = 0, errors = 0;
     for (const Case &c : cases) {
         RigExecHarmonicsOpConstants constants;
         constants.settings.waves = 2.0;
@@ -978,16 +985,16 @@ TestHarmonics()
                     OpHarmonics(constants, in, &ring, captureOnly, runner);
                 const bool same = SameHarmonics(native, op);
                 if (!same)
-                    std::printf("harmonics %s at %d%s: native status %u, op "
-                                "%d status %u (%s)\n",
+                    std::printf("harmonics %s at %d%s: native %d (%s), op "
+                                "%d (%s)\n",
                                 c.label, t, captureOnly ? " captured only" : "",
-                                native.status, int(op.ran), op.status,
-                                op.error.c_str());
+                                int(native.ran), native.error.c_str(),
+                                int(op.ran), op.error.c_str());
                 CHECK(same);
-                if (!captureOnly &&
-                    native.status ==
-                        uint32_t(rigExecOps::HarmonicsStatus::Applied))
+                if (!captureOnly && native.applied)
                     ++applied;
+                if (!native.ran)
+                    ++errors;
                 if (!captureOnly) {
                     ring.push_back(native.capture);
                     if (ring.size() > constants.frames)
@@ -1003,8 +1010,30 @@ TestHarmonics()
             std::printf("harmonics %s without a window differs\n", c.label);
         CHECK(same);
     }
-    std::printf("harmonics: %d applied comparisons\n", applied);
+    std::printf("harmonics: %d applied comparisons, %d errors\n", applied,
+                errors);
     CHECK(applied > 0);
+    CHECK(errors > 0);
+
+    // A space fed where the settings measure in none fails compile.
+    rigExecOps::HarmonicsPayload payload;
+    payload.frames = 4;
+    RigExecRigDescBuilder builder;
+    const RigExecNodeId id = builder.AddOp(rigExecOps::Harmonics(), &payload);
+    for (const auto *port :
+         {&rigExecOps::HarmonicsIn(), &rigExecOps::HarmonicsSpace(),
+          &rigExecOps::HarmonicsEnabled(), &rigExecOps::HarmonicsWeight(),
+          &rigExecOps::HarmonicsAmplitude(), &rigExecOps::HarmonicsDecay(),
+          &rigExecOps::HarmonicsTermination(),
+          &rigExecOps::HarmonicsAxisAmplitude()})
+        builder.BindInput(id, *port);
+    builder.BindOutput(id, rigExecOps::HarmonicsOut());
+    std::string error;
+    const auto desc = builder.Build(&error);
+    CHECK(desc);
+    CHECK(desc && !RigExecCompile(*desc, {}, &error));
+    CHECK(error.find("Harmonics: its space is fed exactly when its settings "
+                     "measure in one") != std::string::npos);
 }
 
 /// The baked space match (bakedSpaces.cpp): per space, the channels that
@@ -1310,7 +1339,8 @@ TestNonFiniteLandmarks()
 /// rotation filters, axis masks, a carry, a world source and channels in
 /// several orders, signs, spins and scales. Past the ordinary variants a
 /// space's posed frame, or the target, holds a NaN or an infinity in one
-/// landmark position: both refuse it (NotFinite, valid 0).
+/// landmark position: the baked match refuses it (NotFinite) and the op's
+/// evaluation stops with the same diagnostic, publishing nothing.
 void
 TestSpaceMatch()
 {
@@ -1423,8 +1453,6 @@ TestSpaceMatch()
             builder.BindInput(id, SpaceMatchSourcePosed());
         const RigExecOutputId values =
             builder.BindOutput(id, SpaceMatchValues());
-        const RigExecOutputId validOut =
-            builder.BindOutput(id, SpaceMatchValid());
         std::string error;
         const auto desc = builder.Build(&error);
         const auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
@@ -1466,15 +1494,17 @@ TestSpaceMatch()
         }
         set(sourceDefaults, defaults);
         set(sourcePosed, posed);
-        CHECK(evaluator->Evaluate(&error));
+        const bool ran = evaluator->Evaluate(&error);
         const auto *got = static_cast<const rigExecStd::RigExecArray<double> *>(
             evaluator->GetOutput(values));
-        const auto *valid =
-            static_cast<const uint8_t *>(evaluator->GetOutput(validOut));
-        const bool same = got && valid && (*valid != 0) == native &&
-                          (!native || (got->Size() == want.size() &&
-                                       Bits(got->Data(), want.data(),
-                                            want.size() * sizeof(double))));
+        const bool same = native
+                              ? ran && got && got->Size() == want.size() &&
+                                    Bits(got->Data(), want.data(),
+                                         want.size() * sizeof(double))
+                              : !ran && !got &&
+                                    error.find(std::string("SpaceMatch:") +
+                                               kRigExecSpaceMatchNotFinite) !=
+                                        std::string::npos;
         if (!same)
             std::printf("space match variant %d differs\n", variant);
         CHECK(same);
@@ -1488,11 +1518,13 @@ TestSpaceMatch()
 }
 
 /// RigExecIkFkMatchConstraint's arithmetic over Gf with the ikFkMatchKernel
-/// functions, as the evaluator runs it, from the op's inputs.
+/// functions, as the evaluator runs it, from the op's inputs. \p matched:
+/// both halves matched; the op's evaluation fails otherwise.
 RigExecIkFkMatchOpOutputs
 NativeIkFkMatch(const RigExecIkFkMatchOpConstants &m,
-                const RigExecIkFkMatchOpInputs &in)
+                const RigExecIkFkMatchOpInputs &in, bool *matched)
 {
+    *matched = false;
     using rigExecOps::IkFkPoleMode;
     RigExecIkFkMatchOpOutputs out;
     const GfMatrix4d *input = in.sources.data();
@@ -1591,7 +1623,7 @@ NativeIkFkMatch(const RigExecIkFkMatchOpConstants &m,
     if (ik.ok && poleOk && fk.ok) {
         RigExecIkFkMatchPack(ik, pole, fk, out.ikValues.data(),
                              out.fkValues.data());
-        out.valid = true;
+        *matched = true;
     }
     const auto show = [&](size_t k, const double *frame) {
         std::copy(frame, frame + 16, out.shown[k].data());
@@ -1618,8 +1650,9 @@ NativeIkFkMatch(const RigExecIkFkMatchOpConstants &m,
 /// An IK/FK match on the op core against NativeIkFkMatch on a two-bone arm:
 /// the published values and the presented frames bit for bit, on either
 /// side and between, with the pole kept, riding the IK control and switched,
-/// with and without a stretching limb and a space, and with a non-finite IK
-/// control channel.
+/// with and without a stretching limb and a space. Where a half cannot be
+/// matched, a non-finite IK control channel among them, the op's evaluation
+/// stops with the native diagnostic and publishes nothing.
 void
 TestIkFkMatch()
 {
@@ -1677,30 +1710,39 @@ TestIkFkMatch()
     const auto compare = [&](const RigExecIkFkMatchOpConstants &constants,
                              const RigExecIkFkMatchOpInputs &in,
                              const std::string &label) {
-        const RigExecIkFkMatchOpOutputs want = NativeIkFkMatch(constants, in);
+        bool matched = false;
+        const RigExecIkFkMatchOpOutputs want =
+            NativeIkFkMatch(constants, in, &matched);
         RigExecIkFkMatchOpOutputs got;
         std::string error;
         const bool ran =
             RigExecRunIkFkMatchOp(constants, in, runner, &got, &error);
-        bool same =
-            ran && got.valid == want.valid && got.shownMask == want.shownMask;
-        if (same && want.valid)
-            same = Bits(got.ikValues.data(), want.ikValues.data(),
+        bool same = ran == matched;
+        if (same && !matched) {
+            RigExecIkFkMatchOpOutputs published;
+            same = error.find("IkFkMatch: could not match its limb's other "
+                              "half") != std::string::npos &&
+                   !RigExecReadIkFkMatchOpOutput(runner.match,
+                                                 *runner.evaluator, &published);
+        } else if (same) {
+            same = got.shownMask == want.shownMask &&
+                   Bits(got.ikValues.data(), want.ikValues.data(),
                         sizeof(want.ikValues)) &&
                    Bits(got.fkValues.data(), want.fkValues.data(),
                         sizeof(want.fkValues));
-        for (size_t k = 0; same && k < 5; ++k)
-            if (want.shownMask & (1u << k))
-                same = Bits(got.shown[k].data(), want.shown[k].data(),
-                            16 * sizeof(double));
+            for (size_t k = 0; same && k < 5; ++k)
+                if (want.shownMask & (1u << k))
+                    same = Bits(got.shown[k].data(), want.shown[k].data(),
+                                16 * sizeof(double));
+        }
         if (!same)
-            std::printf("IK/FK match %s differs: ran %d (%s), valid %d/%d, "
+            std::printf("IK/FK match %s differs: ran %d (%s), matched %d, "
                         "shown %u/%u\n",
-                        label.c_str(), int(ran), error.c_str(), int(got.valid),
-                        int(want.valid), got.shownMask, want.shownMask);
+                        label.c_str(), int(ran), error.c_str(), int(matched),
+                        got.shownMask, want.shownMask);
         CHECK(same);
         ++compared;
-        valid += want.valid ? 1 : 0;
+        valid += matched ? 1 : 0;
     };
     for (const IkFkPoleMode mode :
          {IkFkPoleMode::Keep, IkFkPoleMode::Ride, IkFkPoleMode::Switch})
@@ -1741,8 +1783,9 @@ TestIkFkMatch()
             in.channels[0].r[a] = poison;
             compare(constants, in, "non-finite rotation");
         }
-    std::printf("IK/FK match: %d comparisons, %d valid\n", compared, valid);
+    std::printf("IK/FK match: %d comparisons, %d matched\n", compared, valid);
     CHECK(valid > 0);
+    CHECK(valid < compared);
 }
 
 } // namespace

@@ -105,6 +105,19 @@ OriginDistance(const Mat4d &a, const Mat4d &b)
 }
 
 bool
+CheckAutoClavicle(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (!SameCount(CheckElements(check, AutoClavicleFkDefault()), 3))
+        return Fail(error, "AutoClavicle", "needs three FK default frames");
+    if (!FlagAt(check.batch, kHasLimb, check.k))
+        return true;
+    if (!Fed(check, AutoClavicleLimbRests()) ||
+        !SameCount(CheckElements(check, AutoClavicleLimbRests()), 3))
+        return Fail(error, "AutoClavicle", "needs three limb rest frames");
+    return true;
+}
+
+bool
 AutoClavicleOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
@@ -257,6 +270,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.runBatch = &RunAutoClavicle;
+    d.validate = &CheckAutoClavicle;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kFields;
     d.payloadFieldCount = std::size(kFields);

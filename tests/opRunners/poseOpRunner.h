@@ -65,13 +65,13 @@ bool RigExecRunAutoClavicleOp(const RigExecAutoClavicleConstants &constants,
 /// the caller's: \p ring (null without a window) is set as the op's window,
 /// and this tick's capture comes back in \p capture. A \p captureOnly tick
 /// runs as the op evaluator's history tick and answers the incoming frame.
-/// \p status is a rigExecOps::HarmonicsStatus.
+/// False with \p error where the op's compile or evaluation fails.
 bool RigExecRunHarmonicsOp(const RigExecHarmonicsOpConstants &constants,
                            const RigExecHarmonicsOpInputs &input,
                            const RigExecWindowRing *ring, bool captureOnly,
                            RigExecPoseOpRunner &runner,
                            RigExecWindowPacketPtr *capture,
-                           RigExecPointFrame *frame, uint32_t *status,
+                           RigExecPointFrame *frame,
                            std::string *error = nullptr);
 
 /// An IK/FK match's values and presented frames on the op core.

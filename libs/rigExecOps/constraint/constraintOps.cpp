@@ -200,6 +200,60 @@ GatherSources(const char *op, const ConstraintSettings &p,
     return true;
 }
 
+/// The source weights, and Parent's offsets, agree with the sources where
+/// their counts are known before the node runs.
+bool
+CheckSources(const rigExec::RigExecOpCheck &check, const char *op,
+             const RigExecPortHandle &sourcesPort,
+             const RigExecPortHandle &weightsPort, bool withOffsets,
+             std::string *error)
+{
+    const size_t n = CheckElements(check, sourcesPort);
+    if (Fed(check, weightsPort) &&
+        !SameCount(CheckElements(check, weightsPort), n))
+        return Fail(error, op, "needs one source weight per source");
+    if (!withOffsets)
+        return true;
+    const ConstraintSettings p = SettingsAt(check.batch, check.k);
+    const size_t translations = p.translationOffsets.Size();
+    const size_t rotations = p.rotationOffsetsDegrees.Size();
+    if ((translations && !SameCount(translations, n)) ||
+        (rotations && !SameCount(rotations, n)) ||
+        (translations && rotations && translations != rotations))
+        return Fail(error, op, "needs no offsets or one per source");
+    return true;
+}
+
+bool
+CheckPosition(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    return CheckSources(check, "PositionConstraint",
+                        PositionConstraintSources(),
+                        PositionConstraintSourceWeights(), false, error);
+}
+
+bool
+CheckRotation(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    return CheckSources(check, "RotationConstraint",
+                        RotationConstraintSources(),
+                        RotationConstraintSourceWeights(), false, error);
+}
+
+bool
+CheckScale(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    return CheckSources(check, "ScaleConstraint", ScaleConstraintSources(),
+                        ScaleConstraintSourceWeights(), false, error);
+}
+
+bool
+CheckParent(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    return CheckSources(check, "ParentConstraint", ParentConstraintSources(),
+                        ParentConstraintSourceWeights(), true, error);
+}
+
 /// The kernel's frame: a constraint that cannot solve gives the input flagged
 /// degenerate.
 void
@@ -395,7 +449,8 @@ const rigExec::RigExecFieldDesc kConstraintFields[] = {
 
 rigExec::RigExecOpDesc
 ConstraintDesc(const char *name, const rigExec::RigExecPortDesc *ports,
-               size_t portCount, rigExec::RigExecOpBatchFn runBatch)
+               size_t portCount, rigExec::RigExecOpBatchFn runBatch,
+               bool (*validate)(const rigExec::RigExecOpCheck &, std::string *))
 {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -403,6 +458,7 @@ ConstraintDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.ports = ports;
     d.portCount = portCount;
     d.runBatch = runBatch;
+    d.validate = validate;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kConstraintFields;
     d.payloadFieldCount = std::size(kConstraintFields);
@@ -488,20 +544,22 @@ const rigExec::RigExecPortDesc kAimPorts[] = {
 
 const rigExec::RigExecOpDesc kPositionDesc =
     ConstraintDesc("PositionConstraint", kPositionPorts,
-                   std::size(kPositionPorts), &RunPosition);
+                   std::size(kPositionPorts), &RunPosition, &CheckPosition);
 
 const rigExec::RigExecOpDesc kRotationDesc =
     ConstraintDesc("RotationConstraint", kRotationPorts,
-                   std::size(kRotationPorts), &RunRotation);
+                   std::size(kRotationPorts), &RunRotation, &CheckRotation);
 
-const rigExec::RigExecOpDesc kScaleDesc = ConstraintDesc(
-    "ScaleConstraint", kScalePorts, std::size(kScalePorts), &RunScale);
+const rigExec::RigExecOpDesc kScaleDesc =
+    ConstraintDesc("ScaleConstraint", kScalePorts, std::size(kScalePorts),
+                   &RunScale, &CheckScale);
 
-const rigExec::RigExecOpDesc kParentDesc = ConstraintDesc(
-    "ParentConstraint", kParentPorts, std::size(kParentPorts), &RunParent);
+const rigExec::RigExecOpDesc kParentDesc =
+    ConstraintDesc("ParentConstraint", kParentPorts, std::size(kParentPorts),
+                   &RunParent, &CheckParent);
 
-const rigExec::RigExecOpDesc kAimDesc =
-    ConstraintDesc("AimConstraint", kAimPorts, std::size(kAimPorts), &RunAim);
+const rigExec::RigExecOpDesc kAimDesc = ConstraintDesc(
+    "AimConstraint", kAimPorts, std::size(kAimPorts), &RunAim, nullptr);
 
 } // namespace
 
