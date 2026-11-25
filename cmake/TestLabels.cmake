@@ -5,6 +5,9 @@
 # require a fixture another test produces.
 # fast: usd-free, or a test whose direct project library is only rigExecMath.
 # Each directly linked project library is also a label.
+# variant: the same suite rerun under another schedule, environment or driver
+# (Serial, FineClusters, Graph_*, _serial/_parallel, DigestGate, ScopedClears,
+# Python). `ctest -LE variant` is the quick tier; the whole suite runs all.
 
 # rigexec_add_test(NAME <name> COMMAND <exe-or-target> [args...] [add_test keywords])
 # calls add_test with the same arguments. Only a COMMAND that names a target,
@@ -118,6 +121,11 @@ endfunction()
 function(rigexec_label_tests)
     get_property(_tests DIRECTORY PROPERTY TESTS)
     foreach(_test IN LISTS _tests)
+        if(_test MATCHES "(Serial|FineClusters|FineClustersReference|DigestGate|ScopedClears|Python)$"
+           OR _test MATCHES "Graph_(serial|parallel)$"
+           OR _test MATCHES "_(serial|parallel)$")
+            set_property(TEST ${_test} APPEND PROPERTY LABELS variant)
+        endif()
         get_property(_exe GLOBAL PROPERTY "RIGEXEC_TEST_EXE:${_test}")
         if(NOT _exe OR NOT TARGET "${_exe}")
             continue()

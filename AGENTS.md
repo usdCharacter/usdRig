@@ -457,7 +457,15 @@ scripts; their defaults look for a sibling dependency install.
    For a header edit, read the `--explain` output: the selector follows one
    level of `#include`, so a header reached only through another header
    selects nothing. Pass the `.cpp` files that include it as well.
-   `ctest --test-dir build -L fast` is the short tier. `ctest -L usd-free`
+   `ctest --test-dir build -L fast` is the short tier.
+   Tiers: tests that rerun a suite under another schedule, environment or
+   driver (`*Serial`, `*FineClusters`, `*Graph_*`, `*_serial`/`*_parallel`,
+   `*DigestGate`, `*ScopedClears`, the `*Python` tests) carry the `variant`
+   label. The quick tier, for a prepare commit, is
+   `ctest --test-dir build -LE variant -E 'Cones_|ExampleParity' -j 4`. The
+   whole suite, `ctest --test-dir build -E 'Cones_|ExampleParity' -j 4`, is
+   required before pushing and before a change that touches scheduling,
+   environment switches, serial/parallel evaluation or the Python bindings. `ctest -L usd-free`
    runs without a stage. `tests/fixtures/minimal.rigexec` is the checked-in
    program `testRigExecRuntimeFixture` opens. Files of an older format are
    refused, not upgraded: re-bake the fixtures when the format changes.
