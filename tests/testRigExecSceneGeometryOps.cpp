@@ -534,7 +534,8 @@ CompareMatrix(RigExecRevisionOp op, const RigExecRevisionBinding &binding,
         RigExecRunGeometryMatrix(op, binding, frames, reads, base, final, who,
                                  &expected, &diagnostics, nullptr);
 
-    // The scene runner refuses with the native run's first diagnostic.
+    // Where the native run refuses, the op's evaluation stops with an error
+    // holding each of the native run's notes.
     RigExecGeometryOpRunner runner;
     runner.compile.useSimd = g_useSimd;
     GfMatrix4d ran(1.0);
@@ -543,12 +544,14 @@ CompareMatrix(RigExecRevisionOp op, const RigExecRevisionBinding &binding,
         op, binding, frames, reads, base, final, runner, ran, diagnostic);
     CHECK(runnerOk == nativeOk);
     if (!nativeOk) {
-        const std::string first =
-            diagnostics.empty() ? std::string() : diagnostics.front();
-        if (diagnostic != first) {
-            std::printf("%s: native '%s' runner '%s'\n", label, first.c_str(),
-                        diagnostic.c_str());
-            CHECK(false);
+        for (const std::string &line : diagnostics) {
+            const std::string body = line.substr(line.find(": ") + 2);
+            if (diagnostic.find("SurfaceProjector: ") == std::string::npos ||
+                diagnostic.find(body) == std::string::npos) {
+                std::printf("%s: native '%s' runner '%s'\n", label,
+                            line.c_str(), diagnostic.c_str());
+                CHECK(false);
+            }
         }
     } else {
         CHECK(std::memcmp(&ran, &expected, sizeof(ran)) == 0);
@@ -571,21 +574,18 @@ CompareMatrix(RigExecRevisionOp op, const RigExecRevisionBinding &binding,
     CHECK(evaluator);
     CHECK(RigExecWriteGeometryMatrixInputs(binding, frames, reads, base, final,
                                            node, evaluator.get(), &error));
-    bool opOk = evaluator->Evaluate(&error);
-    if (opOk && op == RigExecRevisionOp::SurfaceProjector) {
-        const auto *reason =
-            static_cast<const uint32_t *>(evaluator->GetOutput(node.reason));
-        CHECK(reason);
-        opOk = reason && *reason == rigExecOps::kSurfaceProjectorSolved;
-    }
+    const bool opOk = evaluator->Evaluate(&error);
     if (opOk != nativeOk) {
         std::printf("%s: native %d op %d (%s)\n", label, int(nativeOk),
                     int(opOk), error.c_str());
         CHECK(false);
         return false;
     }
-    if (!opOk)
+    if (!opOk) {
+        CHECK(error.find(") failed: ") == std::string::npos ||
+              !evaluator->GetOutput(node.out));
         return false;
+    }
     const auto *actual =
         static_cast<const Mat4d *>(evaluator->GetOutput(node.out));
     CHECK(actual);

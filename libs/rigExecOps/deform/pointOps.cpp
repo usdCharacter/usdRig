@@ -155,6 +155,13 @@ VolumeCorrectOne(const RigExecOpIo &io, std::string *error)
 }
 
 bool
+CheckVolumeCorrect(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    return EnvelopeFits(check, VolumeCorrectPoints(), VolumeCorrectEnvelope(),
+                        "VolumeCorrect", error);
+}
+
+bool
 RunVolumeCorrect(const rigExec::RigExecOpBatch &batch, size_t *failed,
                  std::string *error)
 {
@@ -234,9 +241,13 @@ const rigExec::RigExecOpDesc kSmoothDesc = [] {
     return d;
 }();
 
-const rigExec::RigExecOpDesc kVolumeDesc =
-    PointDesc("VolumeCorrect", kVolumePorts, std::size(kVolumePorts),
-              &RunVolumeCorrect, rigExec::kRigExecOpSeparateBlend);
+const rigExec::RigExecOpDesc kVolumeDesc = [] {
+    rigExec::RigExecOpDesc d =
+        PointDesc("VolumeCorrect", kVolumePorts, std::size(kVolumePorts),
+                  &RunVolumeCorrect, rigExec::kRigExecOpSeparateBlend);
+    d.validate = &CheckVolumeCorrect;
+    return d;
+}();
 
 } // namespace
 

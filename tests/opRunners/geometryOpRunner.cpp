@@ -4,7 +4,6 @@
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecMath/rangeRunner.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
-#include "rigExecOps/deform/projectorOps.h"
 #include "rigExecScene/opPlugins.h"
 #include "rigExecStdTypes/stdTypes.h"
 
@@ -53,27 +52,6 @@ Ready(RigExecGeometryOpRunner &runner, bool built, const Add &add,
     runner.evaluator.reset();
     RigExecRigDescBuilder builder;
     return add(builder) && Compile(builder, runner, error) && write();
-}
-
-/// The surface projector's first note from its outputs.
-RigExecSurfaceProjectorNote
-FirstNote(uint32_t reason, const RigExecEvaluator &evaluator,
-          const RigExecGeometryMatrixNode &node)
-{
-    RigExecSurfaceProjectorNote note;
-    note.kind = RigExecSurfaceProjectorNote::Kind(reason);
-    const auto *ray = static_cast<const RigExecArray<double> *>(
-        evaluator.GetOutput(node.ray));
-    for (size_t i = 0; ray && i < ray->Size() && i < 9; ++i)
-        note.ray[i] = (*ray)[i];
-    const auto *probe =
-        static_cast<const uint32_t *>(evaluator.GetOutput(node.probe));
-    const uint32_t bits = probe ? *probe : 0u;
-    note.castHit = bits & rigExecOps::kSurfaceProjectorCastHit;
-    note.recastHit = bits & rigExecOps::kSurfaceProjectorRecastHit;
-    note.restFrame = bits & rigExecOps::kSurfaceProjectorRestFrame;
-    note.posedFrame = bits & rigExecOps::kSurfaceProjectorPosedFrame;
-    return note;
 }
 
 } // namespace
@@ -248,22 +226,6 @@ RigExecRunGeometryMatrixOp(RigExecRevisionOp op,
     if (!runner.evaluator->Evaluate(&error)) {
         diagnostic = error;
         return false;
-    }
-    if (op == RigExecRevisionOp::SurfaceProjector) {
-        const auto *reason = static_cast<const uint32_t *>(
-            runner.evaluator->GetOutput(runner.matrix.reason));
-        if (!reason) {
-            diagnostic = "surface projector op has no reason";
-            return false;
-        }
-        if (*reason != rigExecOps::kSurfaceProjectorSolved) {
-            // The native run reports the kernel's first note.
-            if (*reason != rigExecOps::kSurfaceProjectorNoFrameNoted)
-                diagnostic = RigExecSurfaceProjectorNoteText(
-                    FirstNote(*reason, *runner.evaluator, runner.matrix),
-                    RigExecGeometryMoverText(binding));
-            return false;
-        }
     }
     const auto *out = static_cast<const Mat4d *>(
         runner.evaluator->GetOutput(runner.matrix.out));

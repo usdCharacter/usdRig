@@ -125,6 +125,55 @@ PatchOne(const rigExec::RigExecOpIo &io, const PatchPayload &p,
 }
 
 bool
+Check(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    const PatchPayload p = PayloadAt(check.batch, check.k);
+    const auto *controls = CheckValue<Points>(check, PatchControlPoints());
+    const auto *pointWeights = CheckValue<Doubles>(check, PatchPointWeights());
+    const auto *uKnots = CheckValue<Doubles>(check, PatchUKnots());
+    const auto *vKnots = CheckValue<Doubles>(check, PatchVKnots());
+    if (controls && pointWeights && uKnots && vKnots) {
+        rigExec::RigExecNurbsPatchKernel<Vec3f> patch;
+        patch.points = controls->Data();
+        patch.pointCount = controls->Size();
+        patch.pointWeights = pointWeights->Data();
+        patch.pointWeightCount = pointWeights->Size();
+        patch.uVertexCount = p.uVertexCount;
+        patch.vVertexCount = p.vVertexCount;
+        patch.uOrder = p.uOrder;
+        patch.vOrder = p.vOrder;
+        patch.uKnots = uKnots->Data();
+        patch.uKnotCount = uKnots->Size();
+        patch.vKnots = vKnots->Data();
+        patch.vKnotCount = vKnots->Size();
+        patch.uPeriodic = p.uPeriodic;
+        patch.vPeriodic = p.vPeriodic;
+        if (!patch.IsValid())
+            return Fail(error, "Patch", "unusable NURBS patch");
+    }
+    const size_t uv = CheckElements(check, PatchUvPoints());
+    if (!SameCount(CheckElements(check, PatchUvWeights()),
+                   Fed(check, PatchUvShapes())
+                       ? CheckElements(check, PatchUvShapes())
+                       : 0))
+        return Fail(error, "Patch", "one UV weight per UV shape");
+    if (uv != 1 && !SameCount(uv, CheckElements(check, PatchPoints())))
+        return Fail(error, "Patch",
+                    "UV point count differs from the points, or a point on "
+                    "the patch is not finite");
+    const auto *lower = CheckValue<Ints>(check, PatchContactLower());
+    const auto *upper = CheckValue<Ints>(check, PatchContactUpper());
+    if (lower && upper && uv < rigExec::kRigExecPortUnfed &&
+        (lower->Size() || upper->Size())) {
+        const std::string why = rigExec::RigExecPatchContactError(
+            lower->Data(), lower->Size(), upper->Data(), upper->Size(), uv);
+        if (!why.empty())
+            return Fail(error, "Patch", why);
+    }
+    return EnvelopeFits(check, PatchPoints(), PatchEnvelope(), "Patch", error);
+}
+
+bool
 Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
     return EachInstance(batch, failed, [&](size_t k) {
@@ -162,25 +211,24 @@ using rigExec::kRigExecPortArray;
 using rigExec::kRigExecPortInput;
 using rigExec::kRigExecPortOptional;
 using rigExec::kRigExecPortOutput;
+constexpr uint32_t kChecked = kRigExecPortInput | rigExec::kRigExecPortChecked;
 
 const rigExec::RigExecPortDesc kPorts[] = {
     {&PatchPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "points"},
     {&PatchControlPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
      "controlPoints"},
-    {&PatchPointWeights(), &rigExecStd::DoubleArray(), kRigExecPortInput,
+    {&PatchPointWeights(), &rigExecStd::DoubleArray(), kChecked,
      "pointWeights"},
-    {&PatchUKnots(), &rigExecStd::DoubleArray(), kRigExecPortInput, "uKnots"},
-    {&PatchVKnots(), &rigExecStd::DoubleArray(), kRigExecPortInput, "vKnots"},
+    {&PatchUKnots(), &rigExecStd::DoubleArray(), kChecked, "uKnots"},
+    {&PatchVKnots(), &rigExecStd::DoubleArray(), kChecked, "vKnots"},
     {&PatchUvPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
      "uvPoints"},
     {&PatchUvShapes(), &rigExecStd::Vec3fArray(),
      kRigExecPortInput | kRigExecPortArray | kRigExecPortOptional, "uvShapes"},
     {&PatchUvWeights(), &rigExecStd::DoubleArray(), kRigExecPortInput,
      "uvWeights"},
-    {&PatchContactLower(), &rigExecStd::IntArray(), kRigExecPortInput,
-     "uvContactLower"},
-    {&PatchContactUpper(), &rigExecStd::IntArray(), kRigExecPortInput,
-     "uvContactUpper"},
+    {&PatchContactLower(), &rigExecStd::IntArray(), kChecked, "uvContactLower"},
+    {&PatchContactUpper(), &rigExecStd::IntArray(), kChecked, "uvContactUpper"},
     {&PatchEnvelope(), &rigExecStd::FloatArray(),
      kRigExecPortInput | kRigExecPortOptional, "envelope"},
     {&PatchOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
@@ -194,6 +242,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.runBatch = &Run;
+    d.validate = &Check;
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;

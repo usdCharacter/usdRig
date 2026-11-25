@@ -806,11 +806,6 @@ RigExecAddGeometryMatrixOp(RigExecRevisionOp op,
             result.frameFinal[k] = builder->BindInput(n, *finals[k]);
         }
         result.outPort = &rigExecOps::SurfaceProjectorOut();
-        result.reason =
-            builder->BindOutput(n, rigExecOps::SurfaceProjectorReason());
-        result.ray = builder->BindOutput(n, rigExecOps::SurfaceProjectorRay());
-        result.probe =
-            builder->BindOutput(n, rigExecOps::SurfaceProjectorProbe());
     } else {
         return Fail(error, "not a derived matrix op");
     }

@@ -69,6 +69,29 @@ SkinOne(const rigExec::RigExecOpIo &io, int32_t elementSize,
 }
 
 bool
+Check(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    const int elementSize = rigExec::RigExecPayloadColumnOf<int32_t>(
+        check.batch, kElementSize)[check.k];
+    const size_t points = CheckElements(check, LayeredSkinPoints());
+    const size_t indices = CheckElements(check, LayeredSkinIndices());
+    const size_t mask = CheckElements(check, LayeredSkinMask());
+    if (elementSize < 1 || CheckElements(check, LayeredSkinTransforms()) == 0 ||
+        !SameCount(indices, CheckElements(check, LayeredSkinWeights())) ||
+        (points < rigExec::kRigExecPortUnfed &&
+         !SameCount(indices, points * size_t(elementSize))) ||
+        (mask != 0 && !SameCount(mask, points)))
+        return Fail(error, "LayeredSkin", "unusable skin layout or mask");
+    const size_t base = CheckElements(check, LayeredSkinBase());
+    if (base != 0 && !SameCount(base, points))
+        return Fail(error, "LayeredSkin",
+                    "the base does not fit, the blend is degenerate or a "
+                    "point is not finite");
+    return EnvelopeFits(check, LayeredSkinPoints(), LayeredSkinEnvelope(),
+                        "LayeredSkin", error);
+}
+
+bool
 Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
     const int32_t *elementSizes =
@@ -129,6 +152,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.runBatch = &Run;
+    d.validate = &Check;
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;

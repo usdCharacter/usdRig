@@ -60,9 +60,8 @@ bool RigExecRunExternalOp(const RigExecRevisionBinding &binding,
                           RigExecWindowRun *window = nullptr);
 
 /// The derived matrix op (surface projector, shader dials) for one frame.
-/// A refused projection sets \p diagnostic to the line
-/// RigExecRunGeometryMatrix would report first, or clears it when that
-/// reports none.
+/// False with the compile or evaluation error in \p diagnostic where the
+/// op fails.
 bool RigExecRunGeometryMatrixOp(RigExecRevisionOp op,
                                 const RigExecRevisionBinding &binding,
                                 const RigExecSurfaceProjectorFrames &frames,

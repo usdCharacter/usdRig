@@ -26,9 +26,6 @@ RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorSourceSpaceFinal)
 RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorSpaceFinal)
 RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorWorldToMesh)
 RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorOut)
-RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorReason)
-RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorRay)
-RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorProbe)
 
 RIGEXEC_DEFINE_PORT_HANDLE(ShaderDialsDials)
 RIGEXEC_DEFINE_PORT_HANDLE(ShaderDialsOut)
@@ -87,9 +84,6 @@ ProjectorOne(const RigExecOpIo &io, const SurfaceProjectorPayload &p,
     const Mat4d *sourceFinal = In<Mat4d>(io, SurfaceProjectorSourceFinal());
     const Mat4d *spaceBase = In<Mat4d>(io, SurfaceProjectorSourceSpaceBase());
     const Mat4d *spaceFinal = In<Mat4d>(io, SurfaceProjectorSourceSpaceFinal());
-    if (!sourceBase != !sourceFinal || !spaceBase != !spaceFinal)
-        return Fail(error, "SurfaceProjector",
-                    "a source or source space needs its base and final");
     rigExec::RigExecSurfaceProjectorInputs<Mat4d, Vec3d> in;
     in.rayOrigin = p.rayOrigin;
     in.rayDirection = p.rayDirection;
@@ -120,13 +114,6 @@ ProjectorOne(const RigExecOpIo &io, const SurfaceProjectorPayload &p,
     };
     std::vector<rigExec::RigExecSurfaceProjectorNote> notes;
     Mat4d &out = Out<Mat4d>(io, SurfaceProjectorOut());
-    uint32_t &reason = Out<uint32_t>(io, SurfaceProjectorReason());
-    RigExecArray<double> &ray =
-        Out<RigExecArray<double>>(io, SurfaceProjectorRay());
-    uint32_t &probe = Out<uint32_t>(io, SurfaceProjectorProbe());
-    reason = kSurfaceProjectorSolved;
-    ray.Resize(0);
-    probe = 0;
     if (rigExec::RigExecSolveSurfaceProjectorNotesT(
             in, ToVector(*In<Points>(io, SurfaceProjectorBasePoints())),
             ToVector(*In<Points>(io, SurfaceProjectorPoints())),
@@ -134,18 +121,29 @@ ProjectorOne(const RigExecOpIo &io, const SurfaceProjectorPayload &p,
             ToVector(*In<RigExecArray<int>>(io, SurfaceProjectorIndices())),
             normals, &out, &notes))
         return true;
-    out = Mat4d(1.0);
-    if (notes.empty()) {
-        reason = kSurfaceProjectorNoFrameNoted;
-        return true;
+    std::string why;
+    for (const rigExec::RigExecSurfaceProjectorNote &note : notes) {
+        const std::string text =
+            rigExec::RigExecSurfaceProjectorNoteText(note, std::string());
+        why += (why.empty() ? "" : "; ") + text.substr(text.find(": ") + 2);
     }
-    const rigExec::RigExecSurfaceProjectorNote &first = notes.front();
-    reason = uint32_t(first.kind);
-    ray.Assign(first.ray, std::size(first.ray));
-    probe = (first.castHit ? kSurfaceProjectorCastHit : 0u) |
-            (first.recastHit ? kSurfaceProjectorRecastHit : 0u) |
-            (first.restFrame ? kSurfaceProjectorRestFrame : 0u) |
-            (first.posedFrame ? kSurfaceProjectorPosedFrame : 0u);
+    return Fail(error, "SurfaceProjector",
+                why.empty() ? std::string("measured no frame") : why);
+}
+
+bool
+CheckProjector(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (Fed(check, SurfaceProjectorSourceBase()) !=
+            Fed(check, SurfaceProjectorSourceFinal()) ||
+        Fed(check, SurfaceProjectorSourceSpaceBase()) !=
+            Fed(check, SurfaceProjectorSourceSpaceFinal()))
+        return Fail(error, "SurfaceProjector",
+                    "a source or source space needs its base and final");
+    if (CheckElements(check, SurfaceProjectorBasePoints()) == 0 ||
+        CheckElements(check, SurfaceProjectorPoints()) == 0)
+        return Fail(error, "SurfaceProjector",
+                    "surface has no usable points or topology");
     return true;
 }
 
@@ -244,13 +242,6 @@ const rigExec::RigExecPortDesc kProjectorPorts[] = {
      "worldToMesh"},
     {&SurfaceProjectorOut(), &rigExecStd::Mat4dType(), kRigExecPortOutput,
      "out"},
-    {&SurfaceProjectorReason(), &rigExecStd::UIntType(), kRigExecPortOutput,
-     "reason"},
-    {&SurfaceProjectorRay(), &rigExecStd::DoubleArray(), kRigExecPortOutput,
-     "ray", rigExec::RigExecOutputBound::Fixed, nullptr, nullptr,
-     rigExec::kRigExecInvalidIndex, 9},
-    {&SurfaceProjectorProbe(), &rigExecStd::UIntType(), kRigExecPortOutput,
-     "probe"},
 };
 
 const rigExec::RigExecPortDesc kDialPorts[] = {
@@ -267,6 +258,7 @@ const rigExec::RigExecOpDesc kProjectorDesc = [] {
     d.payloadFieldCount = std::size(kProjectorFields);
     d.payloadVersion = 1;
     d.payloadValues = &ProjectorValues;
+    d.validate = &CheckProjector;
     return d;
 }();
 

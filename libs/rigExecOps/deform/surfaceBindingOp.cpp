@@ -116,6 +116,19 @@ BindOne(const rigExec::RigExecOpIo &io, const SurfaceBindingPayload &p,
 }
 
 bool
+Check(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    const bool framed = rigExec::RigExecPayloadColumnOf<uint8_t>(
+                            check.batch, kFramed)[check.k] != 0;
+    if (framed && (!Fed(check, SurfaceBindingFrames()) ||
+                   !SameCount(CheckElements(check, SurfaceBindingFrames()), 2)))
+        return Fail(error, "SurfaceBinding",
+                    "needs the surface's and the target's frames");
+    return EnvelopeFits(check, SurfaceBindingPoints(), SurfaceBindingEnvelope(),
+                        "SurfaceBinding", error);
+}
+
+bool
 Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
     const uint8_t *limit =
@@ -218,6 +231,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.runBatch = &Run;
+    d.validate = &Check;
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;

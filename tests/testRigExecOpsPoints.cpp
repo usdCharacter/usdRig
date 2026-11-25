@@ -1775,8 +1775,8 @@ TestSurfaceProjector()
     Mat4d actual(0.0);
     CHECK(bare.Run({&base, &posedArray, &counts, &indices}, &actual));
     CHECK(SameBits(expected, actual));
-    // A ray that misses the surface measures no frame: the reason is the
-    // kernel's note, its ray and probe what the kernel reports.
+    // A ray that misses the surface measures no frame: the evaluation stops
+    // with the kernel's note.
     payload.rayOrigin = Vec3d(40.0, 40.0, 5.0);
     const std::vector<const RigExecPortHandle *> missInputs = {
         &SurfaceProjectorBasePoints(), &SurfaceProjectorPoints(),
@@ -1784,19 +1784,12 @@ TestSurfaceProjector()
     const std::vector<const void *> missValues = {&base, &posedArray, &counts,
                                                   &indices};
     Node miss(SurfaceProjector(), missInputs, SurfaceProjectorOut(), &payload);
-    CHECK(miss.Run(missValues, &actual));
-    CHECK(SameBits(GfMatrix4d(1.0), actual));
-    uint32_t reason = 0, probe = 0;
-    Node missReason(SurfaceProjector(), missInputs, SurfaceProjectorReason(),
-                    &payload);
-    CHECK(missReason.Run(missValues, &reason));
-    CHECK(reason == uint32_t(RigExecSurfaceProjectorNote::Kind::NoFrame));
-    Node missProbe(SurfaceProjector(), missInputs, SurfaceProjectorProbe(),
-                   &payload);
-    CHECK(missProbe.Run(missValues, &probe));
-    CHECK(!(probe & kSurfaceProjectorCastHit));
     std::string error;
-    // Half a source is refused.
+    CHECK(!miss.Run(missValues, &actual, &error));
+    CHECK(Contains(error, "(rig:SurfaceProjector) failed: SurfaceProjector: "
+                          "ray "));
+    CHECK(Contains(error, "cast=MISS"));
+    // Half a source fails compile.
     Node half(SurfaceProjector(),
               {&SurfaceProjectorBasePoints(), &SurfaceProjectorPoints(),
                &SurfaceProjectorCounts(), &SurfaceProjectorIndices(),
@@ -1805,7 +1798,9 @@ TestSurfaceProjector()
     error.clear();
     CHECK(!half.Run({&base, &posedArray, &counts, &indices, &sourceBaseArray},
                     &actual, &error));
-    CHECK(error.find("base and final") != std::string::npos);
+    CHECK(Contains(error, "(rig:SurfaceProjector) is invalid: "
+                          "SurfaceProjector: a source or source space needs "
+                          "its base and final"));
 }
 
 void

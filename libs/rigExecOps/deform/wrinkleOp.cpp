@@ -121,6 +121,16 @@ WrinkleOne(const rigExec::RigExecOpIo &io,
 }
 
 bool
+Check(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (!SameCount(CheckElements(check, WrinkleRest()),
+                   CheckElements(check, WrinklePoints())))
+        return Fail(error, "Wrinkle", "needs one rest point per point");
+    return EnvelopeFits(check, WrinklePoints(), WrinkleEnvelope(), "Wrinkle",
+                        error);
+}
+
+bool
 Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
 {
     return EachInstance(batch, failed, [&](size_t k) {
@@ -199,6 +209,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.runBatch = &Run;
+    d.validate = &Check;
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
         rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;

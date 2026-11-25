@@ -41,27 +41,11 @@ const rigExec::RigExecOpHandle &SurfaceProjector();
 /// is zero.
 const rigExec::RigExecOpHandle &ShaderDials();
 
-/// SurfaceProjectorReason when the projector measured a frame, and when it
-/// measured none and the kernel noted nothing; otherwise the reason is the
-/// kernel's first note's kind (RigExecSurfaceProjectorNote::Kind).
-inline constexpr uint32_t kSurfaceProjectorSolved = 0;
-inline constexpr uint32_t kSurfaceProjectorNoFrameNoted = 0xffffffffu;
-
-/// SurfaceProjectorProbe bits: the first note's cast, re-cast, rest frame and
-/// posed frame.
-enum SurfaceProjectorProbeBits : uint32_t {
-    kSurfaceProjectorCastHit = 1u << 0,
-    kSurfaceProjectorRecastHit = 1u << 1,
-    kSurfaceProjectorRestFrame = 1u << 2,
-    kSurfaceProjectorPosedFrame = 1u << 3,
-};
-
 // SurfaceProjector: BasePoints and Points (Vec3fArray), Counts and Indices
 // (IntArray); optional SourceBase and SourceFinal (Mat4d, together),
 // SourceSpaceBase and SourceSpaceFinal (together), SpaceFinal and
-// WorldToMesh (identity when unfed); Out (Mat4d, identity unless Reason is
-// kSurfaceProjectorSolved), Reason (UInt), and the first note's Ray
-// (DoubleArray: origin, direction, up) and Probe (UInt, probe bits).
+// WorldToMesh (identity when unfed); Out (Mat4d). A solve that measures no
+// frame fails the evaluation with the kernel's notes.
 const rigExec::RigExecPortHandle &SurfaceProjectorBasePoints();
 const rigExec::RigExecPortHandle &SurfaceProjectorPoints();
 const rigExec::RigExecPortHandle &SurfaceProjectorCounts();
@@ -73,9 +57,6 @@ const rigExec::RigExecPortHandle &SurfaceProjectorSourceSpaceFinal();
 const rigExec::RigExecPortHandle &SurfaceProjectorSpaceFinal();
 const rigExec::RigExecPortHandle &SurfaceProjectorWorldToMesh();
 const rigExec::RigExecPortHandle &SurfaceProjectorOut();
-const rigExec::RigExecPortHandle &SurfaceProjectorReason();
-const rigExec::RigExecPortHandle &SurfaceProjectorRay();
-const rigExec::RigExecPortHandle &SurfaceProjectorProbe();
 
 // ShaderDials: Dials (DoubleArray), Out (Mat4d).
 const rigExec::RigExecPortHandle &ShaderDialsDials();

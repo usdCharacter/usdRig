@@ -58,6 +58,35 @@ RibbonOne(const RigExecOpIo &io, std::string *error)
 }
 
 bool
+CheckRibbon(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    const size_t frames = CheckElements(check, RibbonFrames());
+    if (!SameCount(CheckElements(check, RibbonBindCoords()),
+                   CheckElements(check, RibbonPoints())) ||
+        (frames < rigExec::kRigExecPortUnfed && frames < 2))
+        return Fail(error, "Ribbon",
+                    "needs one bind per point and two frame samples");
+    if (const auto *value =
+            CheckValue<rigExecRig::PointFrameArray>(check, RibbonFrames());
+        value && value->rests.Size() != value->frames.Size())
+        return Fail(error, "Ribbon", "rests are not parallel to frames");
+    return EnvelopeFits(check, RibbonPoints(), RibbonEnvelope(), "Ribbon",
+                        error);
+}
+
+bool
+CheckGuidePoints(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (const auto *value =
+            CheckValue<rigExecRig::PointFrameArray>(check, GuidePointsFrames());
+        value && !SameCount(value->frames.Size(),
+                            CheckElements(check, GuidePointsPoints())))
+        return Fail(error, "GuidePoints", "needs one frame per point");
+    return EnvelopeFits(check, GuidePointsPoints(), GuidePointsEnvelope(),
+                        "GuidePoints", error);
+}
+
+bool
 GuidePointsOne(const RigExecOpIo &io, std::string *error)
 {
     const Points &in = *In<Points>(io, GuidePointsPoints());
@@ -96,6 +125,7 @@ RunGuidePoints(const rigExec::RigExecOpBatch &batch, size_t *failed,
 rigExec::RigExecOpDesc
 FrameDesc(const char *name, const rigExec::RigExecPortDesc *ports,
           size_t portCount, rigExec::RigExecOpBatchFn runBatch,
+          bool (*validate)(const rigExec::RigExecOpCheck &, std::string *),
           uint32_t capabilities)
 {
     rigExec::RigExecOpDesc d;
@@ -104,6 +134,7 @@ FrameDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.ports = ports;
     d.portCount = portCount;
     d.runBatch = runBatch;
+    d.validate = validate;
     d.capabilities = rigExec::kRigExecOpBakeable |
                      rigExec::kRigExecOpFreezable |
                      rigExec::kRigExecOpFromLeaves | capabilities;
@@ -142,12 +173,12 @@ const rigExec::RigExecPortDesc kGuidePorts[] = {
 };
 
 const rigExec::RigExecOpDesc kRibbonDesc =
-    FrameDesc("Ribbon", kPorts, std::size(kPorts), &RunRibbon,
+    FrameDesc("Ribbon", kPorts, std::size(kPorts), &RunRibbon, &CheckRibbon,
               rigExec::kRigExecOpSeparateBlend);
 
-const rigExec::RigExecOpDesc kGuideDesc =
-    FrameDesc("GuidePoints", kGuidePorts, std::size(kGuidePorts),
-              &RunGuidePoints, rigExec::kRigExecOpSeparateBlend);
+const rigExec::RigExecOpDesc kGuideDesc = FrameDesc(
+    "GuidePoints", kGuidePorts, std::size(kGuidePorts), &RunGuidePoints,
+    &CheckGuidePoints, rigExec::kRigExecOpSeparateBlend);
 
 } // namespace
 

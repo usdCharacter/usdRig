@@ -97,6 +97,56 @@ ExtentOne(const RigExecOpIo &io, std::string *error)
         In<Envelope>(io, RecomputeExtentEnvelope()), "RecomputeExtent", error);
 }
 
+/// The authored value and envelope agree with a result of \p result
+/// elements where the counts are known.
+bool
+CheckBlend(const rigExec::RigExecOpCheck &check,
+           const rigExec::RigExecPortHandle &authored,
+           const rigExec::RigExecPortHandle &envelope, size_t result,
+           const char *op, std::string *error)
+{
+    if (Fed(check, envelope) && !Fed(check, authored))
+        return Fail(error, op, "an envelope needs the authored value");
+    if (Fed(check, authored) &&
+        !SameCount(CheckElements(check, authored), result))
+        return Fail(error, op, "authored length differs from the result");
+    if (Fed(check, envelope) &&
+        !SameCount(CheckElements(check, envelope), result))
+        return Fail(error, op, "envelope length differs from the result");
+    return true;
+}
+
+bool
+CheckNormals(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    const size_t points = CheckElements(check, RecomputeNormalsPoints());
+    if (points == 0)
+        return Fail(error, "RecomputeNormals", "no points");
+    const bool perCorner = rigExec::RigExecPayloadColumnOf<uint8_t>(
+                               check.batch, kPerCorner)[check.k] != 0;
+    if (const auto *indices =
+            CheckValue<RigExecArray<int>>(check, RecomputeNormalsIndices());
+        perCorner && indices && points < rigExec::kRigExecPortUnfed)
+        for (const int index : *indices)
+            if (index < 0 || size_t(index) >= points)
+                return Fail(error, "RecomputeNormals",
+                            "a corner names no point");
+    return CheckBlend(
+        check, RecomputeNormalsAuthored(), RecomputeNormalsEnvelope(),
+        CheckElements(check, perCorner ? RecomputeNormalsIndices()
+                                       : RecomputeNormalsPoints()),
+        "RecomputeNormals", error);
+}
+
+bool
+CheckExtent(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (CheckElements(check, RecomputeExtentPoints()) == 0)
+        return Fail(error, "RecomputeExtent", "no points");
+    return CheckBlend(check, RecomputeExtentAuthored(),
+                      RecomputeExtentEnvelope(), 2, "RecomputeExtent", error);
+}
+
 bool
 RunNormals(const rigExec::RigExecOpBatch &batch, size_t *failed,
            std::string *error)
@@ -136,6 +186,7 @@ const rigExec::RigExecFieldDesc kNormalsFields[] = {
 rigExec::RigExecOpDesc
 DerivedDesc(const char *name, const rigExec::RigExecPortDesc *ports,
             size_t portCount, rigExec::RigExecOpBatchFn runBatch,
+            bool (*validate)(const rigExec::RigExecOpCheck &, std::string *),
             uint32_t capabilities)
 {
     rigExec::RigExecOpDesc d;
@@ -144,6 +195,7 @@ DerivedDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.ports = ports;
     d.portCount = portCount;
     d.runBatch = runBatch;
+    d.validate = validate;
     d.capabilities = rigExec::kRigExecOpBakeable |
                      rigExec::kRigExecOpFreezable |
                      rigExec::kRigExecOpFromLeaves | capabilities;
@@ -164,8 +216,8 @@ const rigExec::RigExecPortDesc kNormalsPorts[] = {
      "points"},
     {&RecomputeNormalsCounts(), &rigExecStd::IntArray(), kRigExecPortInput,
      "faceVertexCounts"},
-    {&RecomputeNormalsIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
-     "faceVertexIndices"},
+    {&RecomputeNormalsIndices(), &rigExecStd::IntArray(),
+     kRigExecPortInput | rigExec::kRigExecPortChecked, "faceVertexIndices"},
     {&RecomputeNormalsAuthored(), &rigExecStd::Vec3fArray(), kOptional,
      "authored"},
     {&RecomputeNormalsEnvelope(), &rigExecStd::FloatArray(), kOptional,
@@ -191,7 +243,7 @@ const rigExec::RigExecPortDesc kExtentPorts[] = {
 const rigExec::RigExecOpDesc kNormalsDesc = [] {
     rigExec::RigExecOpDesc d =
         DerivedDesc("RecomputeNormals", kNormalsPorts, std::size(kNormalsPorts),
-                    &RunNormals, 0);
+                    &RunNormals, &CheckNormals, 0);
     d.payloadFields = kNormalsFields;
     d.payloadFieldCount = std::size(kNormalsFields);
     d.payloadVersion = 1;
@@ -199,8 +251,9 @@ const rigExec::RigExecOpDesc kNormalsDesc = [] {
     return d;
 }();
 
-const rigExec::RigExecOpDesc kExtentDesc = DerivedDesc(
-    "RecomputeExtent", kExtentPorts, std::size(kExtentPorts), &RunExtent, 0);
+const rigExec::RigExecOpDesc kExtentDesc =
+    DerivedDesc("RecomputeExtent", kExtentPorts, std::size(kExtentPorts),
+                &RunExtent, &CheckExtent, 0);
 
 } // namespace
 
