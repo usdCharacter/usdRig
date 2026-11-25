@@ -4,7 +4,8 @@
 
 Binds torso, spine and head into /Demo with every fit value in the fit layer,
 then checks the rejected bindings, a compiling assembly, weighted motion with no
-skincluster in sight, and a clean reopen.
+skincluster in sight, and that the entry asset alone reopens clean with the
+manifest control hierarchy.
 """
 import json
 import math
@@ -33,6 +34,9 @@ POINTS = ((.12, 0, .15), (.1, .02, .45), (-.11, .03, .7),
           (0, .13, .95), (-.09, -.06, 1.2), (.05, 0, 1.45))
 POSED = (('torso', 'Control_COG', 'tz', .06), ('spine', 'Control_Chest', 'rz', 14.),
          ('head', 'Control_Neck', 'rx', 9.))
+# The SKILL.md guide quotes this diagnostic verbatim.
+PARENT_ERROR = ('Provider parent differs for /Demo/Rig/World/COG/Hips/Spine1; '
+                'expected /Demo/Rig/World/COG')
 
 
 def manifest(component):
@@ -123,7 +127,9 @@ def scaffold(stage, nodes, depths, attachments):
 
 
 def write(folder, prefix, nodes, ports, depths, attachments):
-    """Write fit, bindings, composition, entry and model layers; return the model."""
+    """Write the fit, bindings, composition, entry and model layers.
+
+    Returns the written entry and model layer paths."""
     names = {kind: prefix + suffix for kind, suffix in
              (('fit', '_rig.fit.usda'), ('composition', '_rig.components.usda'),
               ('entry', '_rig.usda'), ('model', '_model.usda'))}
@@ -147,7 +153,7 @@ def write(folder, prefix, nodes, ports, depths, attachments):
     model_stage = Usd.Stage.Open(model)
     UsdGeom.Points.Define(model_stage, MESH).CreatePointsAttr(list(POINTS))
     model.Save()
-    return model.realPath
+    return entry.realPath, model.realPath
 
 
 def check_ports(stage, nodes, ports):
@@ -166,13 +172,19 @@ def check_parents(folder, nodes):
     # spine hangs off Hips, whose provider is torso, not the COG provider.
     spine_parent = nodes['torso']['Control_Hips']
     wrong_nodes, wrong_ports, wrong_depths, wrong_attachments = plan(spine_parent)
-    stage = Usd.Stage.Open(write(folder, 'wrong', wrong_nodes, wrong_ports,
-                                 wrong_depths, wrong_attachments))
+    _, model = write(folder, 'wrong', wrong_nodes, wrong_ports,
+                     wrong_depths, wrong_attachments)
+    stage = Usd.Stage.Open(model)
     try:
         validate_component(stage, 'spine', wrong_nodes['spine'], wrong_ports['spine'],
                            wrong_attachments['spine'])
     except ValueError as error:
-        assert 'Provider parent differs for' in str(error), error
+        # The expected provider is the bound COG port, not the enclosing Hips.
+        expected = ('Provider parent differs for '
+                    + wrong_nodes['spine']['Control_Spine1']
+                    + '; expected ' + wrong_ports['spine']['COG'])
+        assert str(error) == expected, error
+        assert expected == PARENT_ERROR, expected
     else:
         raise AssertionError('A spine chain under another provider was accepted')
     print('PASS provider parents enforced')
@@ -222,18 +234,21 @@ def check_motion(stage, rig, nodes):
     print('PASS weighted motion without a skincluster')
 
 
-def check_reopen(path, nodes, ports, attachments):
+def check_reopen(path, nodes, ports):
+    """Reopen the entry asset on its own; only the model layer adds the mesh."""
     stage = Usd.Stage.Open(path)
     assert not list(stage.GetCompositionErrors()), list(stage.GetCompositionErrors())
+    # The mesh lives in the model layer, so this stage is the entry, not the model.
+    assert not stage.GetPrimAtPath(MESH).IsValid(), MESH
     for instance in CHAIN:
         for role, definition in manifest(instance)['nodes'].items():
             prim = stage.GetPrimAtPath(nodes[instance][role])
             assert prim and prim.IsDefined(), (instance, role)
             assert prim.GetTypeName() == definition['type'], (instance, role)
-        validate_component(stage, instance, nodes[instance], ports[instance],
-                           attachments[instance])
-    neck = stage.GetPrimAtPath(nodes['head']['Control_Neck'])
-    assert neck.GetParent().GetPath() == Sdf.Path(nodes['spine']['Control_Chest'])
+            parent = definition['parent']
+            above = (ports[instance][parent[len('port:'):]] if parent.startswith('port:')
+                     else nodes[instance][parent[len('node:'):]])
+            assert prim.GetParent().GetPath() == Sdf.Path(above), (nodes[instance][role], above)
     print('PASS entry reopens with no composition errors')
 
 
@@ -241,10 +256,10 @@ if __name__ == '__main__':
     with tempfile.TemporaryDirectory(prefix='rig-trunk-head-') as name:
         folder = Path(name)
         nodes, ports, depths, attachments = plan()
-        model = write(folder, 'demo', nodes, ports, depths, attachments)
+        entry, model = write(folder, 'demo', nodes, ports, depths, attachments)
         stage = Usd.Stage.Open(model)
         check_ports(stage, nodes, ports)
         check_parents(folder, nodes)
         rig = check_assembly(stage, nodes, ports, attachments)
         check_motion(stage, rig, nodes)
-        check_reopen(model, nodes, ports, attachments)
+        check_reopen(entry, nodes, ports)

@@ -102,7 +102,9 @@ refuses a port name taken from another component (`spine` takes `COG`, `head`
 takes `Chest`, and `Hips` is `leg`'s port), that the validator refuses a node
 whose nearest provider ancestor differs from the manifest `parent`, that the
 corrected assembly compiles and moves only the weighted point indices without
-any skin cluster, and that the written entry asset reopens headlessly with no
-composition errors. The `eye`, `arm`, `leg` and `mouth` instances are not
-exercised by this example, so it is not a substitute for the full character
-validation the compose-character skill describes.
+any skin cluster, and that the written entry asset, opened on its own without
+the model layer that carries its geometry, reopens headlessly with no
+composition errors and every control under the provider its manifest declares.
+The `eye`, `arm`, `leg` and `mouth` instances are not exercised by this
+example, so it is not a substitute for the full character validation the
+compose-character skill describes.

@@ -202,11 +202,14 @@ node's own parent is `node:Control_Spine2`, and the spine chain ends at port
 port is `Rig -> /Demo/Rig`. The assembled chain is
 `/Demo/Rig/World/COG/Spine1/Spine2/Chest/Neck/Head`. Grouping scopes may
 intervene, but the nearest control, joint, or root ancestor must be the
-declared provider: `validate_component` rejects a correctly named port whose
-node hangs under another control with `Provider parent differs for
-/Demo/Rig/World/Spine1; expected /Demo/Rig/World/Hips`. Define every enclosing
-scope; an undefined ancestor hides the referenced nodes and fails with
-`Missing or incompatible node: …`.
+declared provider. `validate_component` names the offending node and the
+provider it wanted: hang `Spine1` under the `torso` instance's `Hips` control
+while the `spine` `COG` port still points at `/Demo/Rig/World/COG` and it
+rejects the instance with `Provider parent differs for
+/Demo/Rig/World/COG/Hips/Spine1; expected /Demo/Rig/World/COG`, because the
+port contract, not the incidental ancestor, is the provider. Define every
+enclosing scope; an undefined ancestor hides the referenced nodes and fails
+with `Missing or incompatible node: …`.
 
 The fit layer carries the character-specific weight data: sparse
 `rigExec:indices` and `rigExec:values` per `Weight` prim, written for the
