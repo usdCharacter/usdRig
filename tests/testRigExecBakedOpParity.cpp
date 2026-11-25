@@ -1811,16 +1811,16 @@ ProbeSpaceCheckpoint(const B &b, const RigExecBakedStep &step)
     const auto &context = b.switchFrameContexts[object];
     SpaceCheckpointPayload payload;
     rigExecStd::RigExecArray<double> avars;
+    std::vector<uint32_t> orders, signs;
     std::vector<rigExecStd::Mat4d> posedD, parentDinv, parentM, posedM;
     std::vector<uint8_t> parentAuthored, posedAuthored;
     std::vector<double> a;
     for (const int slot : context.recompose) {
         const size_t s = size_t(slot);
         const TfToken &order = b.rotOrder[s];
-        payload.rotOrders.push_back(
+        orders.push_back(
             SpaceCheckpointRotOrderCode(order.GetText(), order.size()));
-        payload.rotationSigns.push_back(
-            s < b.rotationSign.size() ? b.rotationSign[s] : 0u);
+        signs.push_back(s < b.rotationSign.size() ? b.rotationSign[s] : 0u);
         payload.noScale.push_back(b.noScaleAvars[s] != 0);
         a.insert(a.end(), &b.avars[s * 11], &b.avars[s * 11] + 11);
         posedD.push_back(OpMatrix(b.posedD[s]));
@@ -1838,12 +1838,15 @@ ProbeSpaceCheckpoint(const B &b, const RigExecBakedStep &step)
         return out;
     };
     const auto avarArray = array(a);
+    const auto orderArray = array(orders), signArray = array(signs);
     const auto posedDArray = array(posedD), parentDinvArray = array(parentDinv),
                parentMArray = array(parentM), posedMArray = array(posedM);
     const auto parentAuthoredArray = array(parentAuthored),
                posedAuthoredArray = array(posedAuthored);
     std::vector<const RigExecPortHandle *> ins = {
         &SpaceCheckpointAvars(),
+        &SpaceCheckpointRotOrders(),
+        &SpaceCheckpointRotationSigns(),
         &SpaceCheckpointPosedDefault(),
         &SpaceCheckpointParentDefaultInverse(),
         &SpaceCheckpointParentExpression(),
@@ -1851,9 +1854,9 @@ ProbeSpaceCheckpoint(const B &b, const RigExecBakedStep &step)
         &SpaceCheckpointPosedAuthored(),
         &SpaceCheckpointPosedAuthoredMatrix()};
     std::vector<const void *> values = {
-        &avarArray,    &posedDArray,         &parentDinvArray,
-        &parentMArray, &parentAuthoredArray, &posedAuthoredArray,
-        &posedMArray};
+        &avarArray,           &orderArray,         &signArray,
+        &posedDArray,         &parentDinvArray,    &parentMArray,
+        &parentAuthoredArray, &posedAuthoredArray, &posedMArray};
     rigExecStd::Mat4d anchor;
     if (context.anchor >= 0) {
         anchor = OpMatrix(b.posedM[size_t(context.anchor)]);
@@ -1861,10 +1864,8 @@ ProbeSpaceCheckpoint(const B &b, const RigExecBakedStep &step)
         values.push_back(&anchor);
     }
     std::string key = "SpaceCheckpoint/" + std::to_string(context.anchor >= 0);
-    for (size_t s = 0; s < payload.rotOrders.size(); ++s)
-        key += "/" + std::to_string(payload.rotOrders[s]) + ":" +
-               std::to_string(payload.rotationSigns[s]) + ":" +
-               std::to_string(payload.noScale[s]);
+    for (const uint8_t noScale : payload.noScale)
+        key += "/" + std::to_string(noScale);
     SpaceNode &node = SpaceNodeFor(key, SpaceCheckpoint(), &payload, ins,
                                    {&SpaceCheckpointOut()});
     std::string error;

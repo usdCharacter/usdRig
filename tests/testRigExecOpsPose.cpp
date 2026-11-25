@@ -150,11 +150,11 @@ TestSpaceCheckpoint()
 {
     using Math = RrPoseMathT<rigExecRig::PointFrame>;
     SpaceCheckpointPayload p;
-    p.rotOrders = {SpaceCheckpointRotOrderCode("ZXY", 3), 0};
-    p.rotationSigns = {0, 1};
     p.noScale = {0, 1};
     const std::vector<const RigExecPortHandle *> ins = {
         &SpaceCheckpointAvars(),
+        &SpaceCheckpointRotOrders(),
+        &SpaceCheckpointRotationSigns(),
         &SpaceCheckpointPosedDefault(),
         &SpaceCheckpointParentDefaultInverse(),
         &SpaceCheckpointParentExpression(),
@@ -168,6 +168,9 @@ TestSpaceCheckpoint()
     const std::vector<double> a = {1, 0, 0, 1,   1, 1, 0,  30, 0, 0, 1,
                                    0, 2, 0, 0.5, 1, 1, 15, 0,  0, 0, 1};
     const auto avars = ArrayOf(a);
+    const auto orders =
+        ArrayOf<uint32_t>({SpaceCheckpointRotOrderCode("ZXY", 3), 0});
+    const auto signs = ArrayOf<uint32_t>({0, 1});
     const auto identities =
         ArrayOf<Mat4d>({Math::Identity4(), Translate(0, 0, 3)});
     const auto parentM =
@@ -178,8 +181,8 @@ TestSpaceCheckpoint()
         ArrayOf<Mat4d>({Translate(9, 9, 9), Translate(9, 9, 9)});
     const Mat4d anchor = Translate(0, 2, 0);
     const std::vector<const void *> values = {
-        &avars,          &identities,    &identities,     &parentM,
-        &parentAuthored, &posedAuthored, &posedAuthoredM, &anchor};
+        &avars,   &orders,         &signs,         &identities,     &identities,
+        &parentM, &parentAuthored, &posedAuthored, &posedAuthoredM, &anchor};
     CHECK(h.Run(values));
     std::vector<RigExecSpaceCheckpointInputT<Mat4d>> inputs(2);
     for (size_t s = 0; s < 2; ++s) {
@@ -187,7 +190,7 @@ TestSpaceCheckpoint()
         view.avars11 = &a[s * 11];
         if (s == 0)
             view.rotOrder = "ZXY";
-        view.rotationSign = p.rotationSigns[s];
+        view.rotationSign = signs[s];
         view.noScaleAvars = p.noScale[s] != 0;
         view.posedAuthoredM = &posedAuthoredM[s];
         view.posedD = &identities[s];
@@ -206,8 +209,8 @@ TestSpaceCheckpoint()
     const auto degenerate = ArrayOf<Mat4d>({collapsed, collapsed});
     const auto authoredAll = ArrayOf<uint8_t>({1, 1});
     const std::vector<const void *> broken = {
-        &avars,          &identities,  &identities, &parentM,
-        &parentAuthored, &authoredAll, &degenerate, &anchor};
+        &avars,   &orders,         &signs,       &identities, &identities,
+        &parentM, &parentAuthored, &authoredAll, &degenerate, &anchor};
     CHECK(h.Run(broken));
     CHECK(std::isnan(h.Out<Mat4d>(0)._mtx[3][0]));
 
@@ -220,7 +223,7 @@ TestSpaceCheckpoint()
     SpaceCheckpointPayload uneven = p;
     uneven.noScale = {0};
     Harness bad(SpaceCheckpoint(), &uneven, ins, {&SpaceCheckpointOut()});
-    CHECK(!bad.evaluator);
+    CHECK(!bad.Run(values));
     CHECK(bad.error.find("per slot") != std::string::npos);
 }
 

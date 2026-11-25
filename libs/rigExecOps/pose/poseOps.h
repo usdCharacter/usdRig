@@ -34,34 +34,33 @@ const rigExec::RigExecPortHandle &AvarInputsValues();
 const rigExec::RigExecPortHandle &AvarInputsOut();
 
 struct SpaceCheckpointPayload {
-    /// Per recomposed slot, outermost first: its rotation order's three
-    /// axis letters in the low three bytes, 0 for the default order.
-    std::vector<uint32_t> rotOrders;
-    /// Per slot, the avars:rotationSign mask (RigExecRotationSignMask).
-    std::vector<uint32_t> rotationSigns;
-    /// Per slot, whether its scale avars are ignored.
+    /// Per recomposed slot, outermost first: whether its scale avars are
+    /// ignored.
     std::vector<uint8_t> noScale;
 
     bool operator==(const SpaceCheckpointPayload &o) const
     {
-        return rotOrders == o.rotOrders && rotationSigns == o.rotationSigns &&
-               noScale == o.noScale;
+        return noScale == o.noScale;
     }
 };
 
-/// The payload code of a rotation order's text: 0 unless it has three
+/// A rotation order's code as the pose ops read it: its three axis letters
+/// in the low three bytes, or 0 (the default order) unless it has three
 /// letters.
 uint32_t SpaceCheckpointRotOrderCode(const char *text, size_t size);
 
 const rigExec::RigExecOpHandle &SpaceCheckpoint();
 
 // Per recomposed slot, outermost first: Avars (DoubleArray, 11 each),
-// PosedDefault, ParentDefaultInverse, ParentExpression and
+// RotOrders (UIntArray, SpaceCheckpointRotOrderCode), RotationSigns
+// (UIntArray, RigExecRotationSignMask), PosedDefault, ParentDefaultInverse, ParentExpression and
 // PosedAuthoredMatrix (Mat4dArray), ParentExpressionAuthored and
 // PosedAuthored (BoolArray). Optional Anchor (Mat4d, the posed matrix the
 // outermost slot composes under; identity when unfed). Out (Mat4d): the
 // switch frame, NaN in [3][0] where a slot's frame is unusable.
 const rigExec::RigExecPortHandle &SpaceCheckpointAvars();
+const rigExec::RigExecPortHandle &SpaceCheckpointRotOrders();
+const rigExec::RigExecPortHandle &SpaceCheckpointRotationSigns();
 const rigExec::RigExecPortHandle &SpaceCheckpointPosedDefault();
 const rigExec::RigExecPortHandle &SpaceCheckpointParentDefaultInverse();
 const rigExec::RigExecPortHandle &SpaceCheckpointParentExpression();

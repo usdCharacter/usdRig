@@ -21,6 +21,8 @@ RIGEXEC_DEFINE_PORT_HANDLE(AvarInputsOut)
 
 RIGEXEC_DEFINE_OP_HANDLE(SpaceCheckpoint)
 RIGEXEC_DEFINE_PORT_HANDLE(SpaceCheckpointAvars)
+RIGEXEC_DEFINE_PORT_HANDLE(SpaceCheckpointRotOrders)
+RIGEXEC_DEFINE_PORT_HANDLE(SpaceCheckpointRotationSigns)
 RIGEXEC_DEFINE_PORT_HANDLE(SpaceCheckpointPosedDefault)
 RIGEXEC_DEFINE_PORT_HANDLE(SpaceCheckpointParentDefaultInverse)
 RIGEXEC_DEFINE_PORT_HANDLE(SpaceCheckpointParentExpression)
@@ -161,18 +163,23 @@ RunAvarInputs(const RigExecOpBatch &batch, size_t *failed, std::string *error)
 
 // ---- SpaceCheckpoint ----
 
-enum SpaceCheckpointField : uint32_t {
-    kRotOrderCount,
-    kRotOrders,
-    kSignCount,
-    kRotationSigns,
-    kNoScaleCount,
-    kNoScale
-};
+enum SpaceCheckpointField : uint32_t { kNoScaleCount, kNoScale };
 
 using CheckpointMath = rigExec::RrPoseMathT<rigExecRig::PointFrame>;
 
+void
+AssignRotOrder(uint32_t code, std::string *text)
+{
+    if (!code)
+        return;
+    const char letters[3] = {char(code & 0xff), char((code >> 8) & 0xff),
+                             char((code >> 16) & 0xff)};
+    text->assign(letters, 3);
+}
+
 const rigExec::RigExecPortHandle *const kCheckpointSlotPorts[] = {
+    &SpaceCheckpointRotOrders(),
+    &SpaceCheckpointRotationSigns(),
     &SpaceCheckpointPosedDefault(),
     &SpaceCheckpointParentDefaultInverse(),
     &SpaceCheckpointParentExpression(),
@@ -184,21 +191,15 @@ const rigExec::RigExecPortHandle *const kCheckpointSlotPorts[] = {
 bool
 CheckSpaceCheckpoint(const rigExec::RigExecOpCheck &check, std::string *error)
 {
-    const size_t slots =
-        ListAt<uint32_t>(check.batch, kRotOrders, check.k).Size();
-    if (ListAt<uint32_t>(check.batch, kRotationSigns, check.k).Size() !=
-            slots ||
-        ListAt<uint8_t>(check.batch, kNoScale, check.k).Size() != slots)
-        return Fail(error, "SpaceCheckpoint",
-                    "needs one rotation order, sign mask and scale flag per "
-                    "slot");
+    const size_t slots = ListAt<uint8_t>(check.batch, kNoScale, check.k).Size();
     bool fits =
         SameCount(CheckElements(check, SpaceCheckpointAvars()), slots * 11);
     for (const rigExec::RigExecPortHandle *port : kCheckpointSlotPorts)
         fits = fits && SameCount(CheckElements(check, *port), slots);
     if (!fits)
         return Fail(error, "SpaceCheckpoint",
-                    "needs 11 avars and one of each matrix and flag per slot");
+                    "needs 11 avars and one of each order, sign, matrix and "
+                    "flag per slot");
     return true;
 }
 
@@ -206,11 +207,13 @@ bool
 SpaceCheckpointOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
-    const auto orders = ListAt<uint32_t>(batch, kRotOrders, k);
-    const auto signs = ListAt<uint32_t>(batch, kRotationSigns, k);
     const auto noScale = ListAt<uint8_t>(batch, kNoScale, k);
-    const size_t slots = orders.Size();
+    const size_t slots = noScale.Size();
     const auto &avars = *In<RigExecArray<double>>(io, SpaceCheckpointAvars());
+    const auto &orders =
+        *In<RigExecArray<uint32_t>>(io, SpaceCheckpointRotOrders());
+    const auto &signs =
+        *In<RigExecArray<uint32_t>>(io, SpaceCheckpointRotationSigns());
     const auto &posedD =
         *In<RigExecArray<Mat4d>>(io, SpaceCheckpointPosedDefault());
     const auto &parentDinv =
@@ -223,23 +226,20 @@ SpaceCheckpointOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         *In<RigExecArray<uint8_t>>(io, SpaceCheckpointPosedAuthored());
     const auto &posedAuthoredM =
         *In<RigExecArray<Mat4d>>(io, SpaceCheckpointPosedAuthoredMatrix());
-    if (avars.Size() != slots * 11 || posedD.Size() != slots ||
+    if (avars.Size() != slots * 11 || orders.Size() != slots ||
+        signs.Size() != slots || posedD.Size() != slots ||
         parentDinv.Size() != slots || parentM.Size() != slots ||
         parentAuthored.Size() != slots || posedAuthored.Size() != slots ||
         posedAuthoredM.Size() != slots)
         return Fail(error, "SpaceCheckpoint",
-                    "needs 11 avars and one of each matrix and flag per slot");
+                    "needs 11 avars and one of each order, sign, matrix and "
+                    "flag per slot");
     std::vector<rigExec::RigExecSpaceCheckpointInputT<Mat4d>> inputs(slots);
     for (size_t s = 0; s < slots; ++s) {
         rigExec::eval::PoseSlotComposeT<CheckpointMath> view;
         view.avars11 = &avars[s * 11];
-        const uint32_t code = orders.data[s];
-        if (code) {
-            const char text[3] = {char(code & 0xff), char((code >> 8) & 0xff),
-                                  char((code >> 16) & 0xff)};
-            view.rotOrder.assign(text, 3);
-        }
-        view.rotationSign = signs.data[s];
+        AssignRotOrder(orders[s], &view.rotOrder);
+        view.rotationSign = signs[s];
         view.noScaleAvars = noScale.data[s] != 0;
         view.posedAuthored = posedAuthored[s] != 0;
         view.posedAuthoredM = &posedAuthoredM[s];
@@ -760,6 +760,10 @@ const rigExec::RigExecOpDesc kAvarInputsDesc = [] {
 const rigExec::RigExecPortDesc kSpaceCheckpointPorts[] = {
     {&SpaceCheckpointAvars(), &rigExecStd::DoubleArray(), kRigExecPortInput,
      "avars"},
+    {&SpaceCheckpointRotOrders(), &rigExecStd::UIntArray(), kRigExecPortInput,
+     "rotOrders"},
+    {&SpaceCheckpointRotationSigns(), &rigExecStd::UIntArray(),
+     kRigExecPortInput, "rotationSigns"},
     {&SpaceCheckpointPosedDefault(), &rigExecStd::Mat4dArray(),
      kRigExecPortInput, "posedDefault"},
     {&SpaceCheckpointParentDefaultInverse(), &rigExecStd::Mat4dArray(),
@@ -782,16 +786,10 @@ void
 SpaceCheckpointValuesOf(const void *payload, RigExecFieldValues &out)
 {
     const auto &p = *static_cast<const SpaceCheckpointPayload *>(payload);
-    SetList(out, kRotOrderCount, p.rotOrders);
-    SetList(out, kSignCount, p.rotationSigns);
     SetList(out, kNoScaleCount, p.noScale);
 }
 
 const rigExec::RigExecFieldDesc kSpaceCheckpointFields[] = {
-    Count("rotOrderCount"),
-    Items("rotOrders", rigExecStd::UIntType(), kRotOrderCount),
-    Count("rotationSignCount"),
-    Items("rotationSigns", rigExecStd::UIntType(), kSignCount),
     Count("noScaleCount"),
     Items("noScale", rigExecStd::BoolType(), kNoScaleCount),
 };
