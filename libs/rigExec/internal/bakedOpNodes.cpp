@@ -53,6 +53,19 @@ struct BakedOpHost {
                                                       : B.baseMatrix;
         return slot < matrices.size() ? matrices[slot].data() : nullptr;
     }
+    const void *PresentMatrix(const eval::OpLookup &lookup) const
+    {
+        const bool record =
+            lookup.source == uint8_t(eval::OpLookupSource::FrameRecord);
+        const std::vector<GfMatrix4d> &matrices =
+            record ? B.frameMatrix : B.deltaValues;
+        const std::vector<char> &present =
+            record ? B.frameMatrixValid : B.deltaPresent;
+        return lookup.object < matrices.size() &&
+                       lookup.object < present.size() && present[lookup.object]
+                   ? matrices[lookup.object].data()
+                   : nullptr;
+    }
     const void *ChainGroupPoints(uint32_t chain, uint32_t g) const
     {
         if (chain >= B.chains.size())
@@ -236,11 +249,24 @@ DeclarePortReads(const RigExecBakedProgramImpl &B,
     value(d.values[p], false);
     for (const uint32_t element : d.lists[p])
         value(element, true);
-    const auto matrices = [&](const eval::OpLookup &lookup) {
+    const auto matrix = [&](const eval::OpLookup &lookup) {
         if (lookup.source == uint8_t(eval::OpLookupSource::Matrix))
             reads->push_back(
                 RigExecBakedOne(lookup.part ? D::BaseMatrix : D::FinalMatrix,
                                 int(lookup.object)));
+        else if (lookup.source == uint8_t(eval::OpLookupSource::FrameRecord))
+            reads->push_back(
+                RigExecBakedOne(D::FrameMatrix, int(lookup.object)));
+        else if (lookup.source ==
+                 uint8_t(eval::OpLookupSource::ConstraintDelta))
+            reads->push_back(
+                RigExecBakedOne(D::ConstraintDelta, int(lookup.object)));
+    };
+    const auto matrices = [&](const eval::OpLookup &lookup) {
+        matrix(lookup);
+        if (lookup.source == uint8_t(eval::OpLookupSource::Selected))
+            for (int32_t e = 0; e < lookup.part; ++e)
+                matrix(layout.lookups[lookup.object + uint32_t(e)]);
     };
     for (size_t i = 0; i < layout.hostInputs.size(); ++i) {
         const eval::OpHostInput &input = layout.hostInputs[i];
@@ -330,6 +356,28 @@ FindHaloGroups(RigExecBakedOpProgram *op, RigExecRunState &run)
     }
 }
 
+/// Removes the RevisionChunk steps of the revisions \p stored names, whose
+/// groups op chains store instead, keeping B's step indices current.
+void
+DropRevisionChunks(RigExecBakedProgramImpl *B, std::vector<int> stored)
+{
+    std::sort(stored.begin(), stored.end());
+    const auto dropped = [&](const RigExecBakedStep &step) {
+        return step.kind == K::RevisionChunk &&
+               std::binary_search(stored.begin(), stored.end(), step.object);
+    };
+    std::vector<int> moved(B->steps.size(), -1);
+    int kept = 0;
+    for (size_t i = 0; i < B->steps.size(); ++i)
+        if (!dropped(B->steps[i]))
+            moved[i] = kept++;
+    B->steps.erase(std::remove_if(B->steps.begin(), B->steps.end(), dropped),
+                   B->steps.end());
+    for (int &step : B->revisionFuseStep)
+        if (step >= 0)
+            step = moved[size_t(step)];
+}
+
 RigExecBakedStep &
 AddOpStep(RigExecBakedProgramImpl *B, K kind, int object, int part)
 {
@@ -391,6 +439,8 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
                 continue;
             const bool whole = desc.whole[s] != 0;
             for (uint32_t g = 0; g < (whole ? 1 : groups); ++g) {
+                if (!eval::OpSegmentWrites(layout.chains[c], desc, s, g))
+                    continue;
                 RigExecBakedStep &step =
                     AddOpStep(B, K::OpChainRange, int(c), int(s * groups + g));
                 step.reads.push_back(
@@ -507,7 +557,8 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
         layout.hostInputs.push_back(input);
     }
     for (eval::OpLookup lookup : injection.lookups) {
-        if (lookup.source == uint8_t(eval::OpLookupSource::List))
+        if (lookup.source == uint8_t(eval::OpLookupSource::List) ||
+            lookup.source == uint8_t(eval::OpLookupSource::Selected))
             lookup.object += lookupBase;
         layout.lookups.push_back(lookup);
     }
@@ -518,11 +569,17 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
     layout.chains.assign(chains, eval::OpChainLayout());
     std::vector<uint32_t> chainOfNode(RigExecProgramNodeCount(*layout.program),
                                       kRigExecInvalidIndex);
+    std::vector<uint32_t> memberOfNode(chainOfNode.size(),
+                                       kRigExecInvalidIndex);
+    std::vector<size_t> members(chains, 0);
     for (size_t c = 0; c < chains; ++c) {
         RigExecChainDesc desc;
         RigExecProgramChainAt(*layout.program, c, &desc);
-        for (const RigExecNodeId node : desc.members)
-            chainOfNode[node] = uint32_t(c);
+        members[c] = desc.members.size();
+        for (uint32_t m = 0; m < desc.members.size(); ++m) {
+            chainOfNode[desc.members[m]] = uint32_t(c);
+            memberOfNode[desc.members[m]] = m;
+        }
     }
     std::vector<char> placed(chains, 0);
     for (const eval::OpHostInput &input : layout.hostInputs) {
@@ -562,6 +619,40 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
         if (!placed[c])
             return Fail(error, "range chain " + std::to_string(c) +
                                    " reads no point chain");
+    std::vector<int> stored;
+    for (const eval::OpHostOutput &output : layout.hostOutputs) {
+        if (output.target != uint8_t(eval::OpOutputTarget::ChainGroup) ||
+            output.node >= chainOfNode.size() ||
+            chainOfNode[output.node] == kRigExecInvalidIndex)
+            continue;
+        eval::OpChainLayout &chain = layout.chains[chainOfNode[output.node]];
+        const size_t groups = chain.Groups();
+        if (output.object >= B.revisionIndex.size() ||
+            uint32_t(B.revisionIndex[output.object].first) != chain.pointChain)
+            return Fail(error, "node " + std::to_string(output.node) +
+                                   " stores into revision " +
+                                   std::to_string(output.object) +
+                                   ", which is not of its point chain");
+        const auto &[pointChain, r] = B.revisionIndex[output.object];
+        const std::vector<char> &written =
+            B.chains[size_t(pointChain)].revisions[size_t(r)].groupWritten;
+        if (written.size() != groups)
+            return Fail(error, "revision " + std::to_string(output.object) +
+                                   " is cut into " +
+                                   std::to_string(written.size()) +
+                                   " groups, its range chain into " +
+                                   std::to_string(groups));
+        if (chain.writes.empty())
+            chain.writes.assign(members[chainOfNode[output.node]] * groups, 1);
+        const size_t row = size_t(memberOfNode[output.node]) * groups;
+        for (size_t g = 0; g < groups; ++g)
+            chain.writes[row + g] = chain.writes[row + g] && written[g];
+        stored.push_back(int(output.object));
+    }
+    for (eval::OpChainLayout &chain : layout.chains)
+        if (std::find(chain.writes.begin(), chain.writes.end(), 0) ==
+            chain.writes.end())
+            chain.writes.clear();
     const RigExecRegistry &registry = RigExecRegistry::Get();
     for (const RigExecBakedOpInjection::Constant &constant :
          injection.constants) {
@@ -619,6 +710,8 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
     if (!eval::BindOpStepState(layout, host, state.get(), error))
         return false;
     FindHaloGroups(op.get(), *state->run);
+    if (!stored.empty())
+        DropRevisionChunks(&B, stored);
     EmitOpSteps(&B, *op);
     state->run->ReleaseOwner();
     B.opProgram = std::move(op);

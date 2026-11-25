@@ -51,7 +51,26 @@ enum class OpLookupSource : uint8_t {
     List = 5,
     /// Mat4d: the final (part 0) or base (part 1) matrix of slot `object`.
     Matrix = 6,
+    /// Mat4d: frame record `object`, present when its writer found it
+    /// valid this frame.
+    FrameRecord = 7,
+    /// Mat4d: the delta geometry-domain constraint `object` measured,
+    /// present when it measured one this frame.
+    ConstraintDelta = 8,
+    /// Mat4d: the first present of the `part` lookups from `object`, each
+    /// a FrameRecord, ConstraintDelta or (always present) Matrix lookup.
+    Selected = 9,
 };
+
+/// Whether a lookup of \p source answers a Mat4d that may be absent or,
+/// for Matrix, always is present: a candidate of a Selected lookup.
+constexpr bool
+OpLookupSourceSelectable(uint8_t source)
+{
+    return source == uint8_t(OpLookupSource::Matrix) ||
+           source == uint8_t(OpLookupSource::FrameRecord) ||
+           source == uint8_t(OpLookupSource::ConstraintDelta);
+}
 
 /// OpLookup::read of a WeightArrays lookup, whose object is a weight object:
 /// which of its inputs, at the frame. The numbers are part of the file
@@ -143,7 +162,8 @@ OpLookupSourceRuns(uint8_t source)
            source == uint8_t(OpLookupSource::ChainVersion) ||
            source == uint8_t(OpLookupSource::WeightFieldInputs) ||
            source == uint8_t(OpLookupSource::List) ||
-           source == uint8_t(OpLookupSource::Matrix);
+           source == uint8_t(OpLookupSource::Selected) ||
+           OpLookupSourceSelectable(source);
 }
 
 /// Whether OpStoreOutput stores outputs of \p target, or, for a range chain
@@ -273,15 +293,38 @@ private:
 };
 
 /// One range chain as steps: the point chain whose vertex groups it runs
-/// in and their bounds; per member output, its first OpGroupValue slot.
+/// in and their bounds; and, member by member, the groups each member
+/// writes (member-major), empty when every member writes every group. A
+/// group no member of a segment writes gets no range step; the host's
+/// version of a group a member does not write is the previous writer's.
 struct OpChainLayout {
     uint32_t pointChain = 0;
     std::vector<int> bounds;
+    std::vector<uint8_t> writes;
     uint32_t Groups() const
     {
         return bounds.size() > 1 ? uint32_t(bounds.size() - 1) : 0;
     }
+    bool Writes(uint32_t member, uint32_t g) const
+    {
+        return writes.empty() || writes[size_t(member) * Groups() + g] != 0;
+    }
 };
+
+/// Whether a member of the segment starting at member \p segment of
+/// \p desc writes group \p g, or any group when the segment runs whole.
+inline bool
+OpSegmentWrites(const OpChainLayout &chain, const RigExecChainDesc &desc,
+                uint32_t segment, uint32_t g)
+{
+    for (uint32_t m = segment;
+         m < desc.members.size() && desc.segments[m] == segment; ++m)
+        for (uint32_t h = desc.whole[m] ? 0 : g;
+             h < (desc.whole[m] ? chain.Groups() : g + 1); ++h)
+            if (chain.Writes(m, h))
+                return true;
+    return false;
+}
 
 /// The step kinds' wire and baked numbers.
 enum class OpStepKind : uint8_t { Node = 30, ChainHead = 31, ChainRange = 32 };
@@ -389,6 +432,51 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
             }
         }
     }
+    for (size_t c = 0; c < chains; ++c) {
+        const OpChainLayout &chain = layout->chains[c];
+        const RigExecChainDesc &desc = layout->chainDescs[c];
+        if (chain.writes.empty())
+            continue;
+        if (chain.writes.size() != desc.members.size() * chain.Groups())
+            return OpLayoutFail(error, "chain " + std::to_string(c) +
+                                           " names the groups its members "
+                                           "write in " +
+                                           std::to_string(chain.writes.size()) +
+                                           " entries");
+        for (uint32_t m = 0; m < desc.members.size(); ++m) {
+            bool all = true;
+            for (uint32_t g = 0; g < chain.Groups(); ++g)
+                all = all && chain.Writes(m, g);
+            if (all)
+                continue;
+            const RigExecNodeDesc &member = layout->nodes[desc.members[m]];
+            for (size_t n = 0; n < nodes; ++n) {
+                const RigExecNodeDesc &d = layout->nodes[n];
+                const bool inSegment =
+                    layout->chainOf[n] == c &&
+                    desc.segments[layout->memberOf[n]] == desc.segments[m];
+                for (size_t p = 0; !inSegment && p < d.values.size(); ++p) {
+                    if (!(d.op->ports[p].flags & kRigExecPortInput))
+                        continue;
+                    for (size_t q = 0; q < member.values.size(); ++q) {
+                        const uint32_t v = member.values[q];
+                        if (!(member.op->ports[q].flags & kRigExecPortOutput) ||
+                            v == kRigExecInvalidIndex)
+                            continue;
+                        if (d.values[p] == v ||
+                            std::find(d.lists[p].begin(), d.lists[p].end(),
+                                      v) != d.lists[p].end())
+                            return OpLayoutFail(
+                                error, "node " + std::to_string(n) +
+                                           " reads node " +
+                                           std::to_string(desc.members[m]) +
+                                           " outside its segment, which "
+                                           "leaves groups unwritten");
+                    }
+                }
+            }
+        }
+    }
     layout->hostInputIds.clear();
     layout->grouped.clear();
     layout->lookupsOf.assign(nodes, std::vector<uint32_t>());
@@ -463,7 +551,8 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
                     const uint8_t source =
                         layout->lookups[lookup.object + uint32_t(e)].source;
                     listed = OpLookupSourceRuns(source) &&
-                             source != uint8_t(OpLookupSource::List);
+                             source != uint8_t(OpLookupSource::List) &&
+                             source != uint8_t(OpLookupSource::Selected);
                 }
                 if (!listed)
                     return OpLayoutFail(
@@ -472,6 +561,21 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
                                    std::to_string(input.object) +
                                    ", whose elements the layout lacks or "
                                    "its input cannot hold");
+            }
+            if (lookup.source == uint8_t(OpLookupSource::Selected)) {
+                bool selectable = lookup.part > 0 &&
+                                  size_t(lookup.object) + size_t(lookup.part) <=
+                                      layout->lookups.size();
+                for (int32_t e = 0; selectable && e < lookup.part; ++e)
+                    selectable = OpLookupSourceSelectable(
+                        layout->lookups[lookup.object + uint32_t(e)].source);
+                if (!selectable)
+                    return OpLayoutFail(error,
+                                        "node " + std::to_string(input.node) +
+                                            " selects among lookups from " +
+                                            std::to_string(lookup.object) +
+                                            ", which the layout lacks or which "
+                                            "answer no matrix");
             }
             if (points)
                 layout->grouped.back() = grouped;
@@ -650,8 +754,9 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
 /// Resolves lookup \p index through the \p host method of its source's
 /// family: LookUpProperty, LookUpPoseVersion, LookUpWeight,
 /// LookUpChainVersion or LookUpWeightField(index, lookup, type, value,
-/// error), or a Matrix lookup through Matrix(source, slot). A List lookup
-/// resolves through OpLookUpAt.
+/// error), a Matrix lookup through Matrix(source, slot), and a FrameRecord
+/// or ConstraintDelta lookup through PresentMatrix(lookup), null when
+/// absent. A List or Selected lookup resolves through OpLookUpAt.
 template <class Host>
 bool
 OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
@@ -679,7 +784,23 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
         std::memcpy(value, matrix, type.size);
         return true;
     }
+    case OpLookupSource::FrameRecord:
+    case OpLookupSource::ConstraintDelta: {
+        const void *matrix = host.PresentMatrix(lookup);
+        if (!matrix || !type.triviallyCopyable ||
+            type.size != 16 * sizeof(double))
+            return OpLayoutFail(
+                error, std::string(lookup.source ==
+                                           uint8_t(OpLookupSource::FrameRecord)
+                                       ? "frame record "
+                                       : "constraint delta ") +
+                           std::to_string(lookup.object) +
+                           " holds no matrix this frame");
+        std::memcpy(value, matrix, type.size);
+        return true;
+    }
     case OpLookupSource::List:
+    case OpLookupSource::Selected:
         break;
     }
     return OpLayoutFail(error, "no host resolves lookup source " +
@@ -712,13 +833,27 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
 }
 
 /// Resolves lookup \p index of \p layout: a List lookup element by element
-/// into an array of its length, any other through OpLookUp.
+/// into an array of its length, a Selected lookup as its first present
+/// candidate, any other through OpLookUp.
 template <class Host>
 bool
 OpLookUpAt(const OpStepLayout &layout, Host &host, uint32_t index,
            const RigExecTypeDesc &type, void *value, std::string *error)
 {
     const OpLookup &lookup = layout.lookups[index];
+    if (lookup.source == uint8_t(OpLookupSource::Selected)) {
+        for (uint32_t e = 0; e < uint32_t(lookup.part); ++e) {
+            const OpLookup &candidate = layout.lookups[lookup.object + e];
+            if (candidate.source != uint8_t(OpLookupSource::Matrix) &&
+                !host.PresentMatrix(candidate))
+                continue;
+            return OpLookUp(host, lookup.object + e, candidate, type, value,
+                            error);
+        }
+        return OpLayoutFail(error, "lookup " + std::to_string(index) +
+                                       " selects among matrices none of "
+                                       "which is present");
+    }
     if (lookup.source != uint8_t(OpLookupSource::List))
         return OpLookUp(host, index, lookup, type, value, error);
     const RigExecTypeDesc &element =
@@ -866,6 +1001,8 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
             ref.value = d.values[output.port];
             for (uint32_t h = desc.whole[m] ? 0 : g;
                  h < (desc.whole[m] ? groups : g + 1); ++h) {
+                if (!chain.Writes(m, h))
+                    continue;
                 size_t count = 0;
                 const void *elements = run.GetGroupValue(ref, h, &count);
                 if (!elements && count)

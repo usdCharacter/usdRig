@@ -91,6 +91,19 @@ struct RrOpHost {
                                                       : p.store.baseMatrix;
         return slot < matrices.size() ? &matrices[slot] : nullptr;
     }
+    const void *PresentMatrix(const eval::OpLookup &lookup) const
+    {
+        const bool record =
+            lookup.source == uint8_t(eval::OpLookupSource::FrameRecord);
+        const std::vector<RrMat4d> &matrices =
+            record ? p.store.frameMatrix : p.store.deltaValues;
+        const std::vector<char> &present =
+            record ? p.store.frameMatrixValid : p.store.deltaPresent;
+        return lookup.object < matrices.size() &&
+                       lookup.object < present.size() && present[lookup.object]
+                   ? &matrices[lookup.object]
+                   : nullptr;
+    }
     const void *ChainGroupPoints(uint32_t chain, uint32_t g) const
     {
         return RrGeoFinalGroupPoints(&p, chain, g);
