@@ -16,8 +16,12 @@ static_assert(static_cast<uint8_t>(fb::StepKind::AvarInputs) == 26,
               "AvarInputs keeps its ordinal");
 static_assert(static_cast<uint8_t>(fb::StepKind::ProviderRefresh) == 28,
               "ProviderRefresh keeps its ordinal");
-static_assert(static_cast<uint8_t>(fb::StepKind::OpGraph) == 29,
-              "OpGraph is the last ordinal");
+static_assert(static_cast<uint8_t>(fb::StepKind::ReservedOpGraph) == 29,
+              "the retired op graph ordinal is 29");
+static_assert(static_cast<uint8_t>(fb::StepKind::OpNode) == 30 &&
+                  static_cast<uint8_t>(fb::StepKind::OpChainHead) == 31 &&
+                  static_cast<uint8_t>(fb::StepKind::OpChainRange) == 32,
+              "the op step kinds are 30, 31 and 32 (eval::OpStepKind)");
 
 const char *
 StepKindName(StepKind kind)
@@ -28,7 +32,8 @@ StepKindName(StepKind kind)
 bool
 IsReservedStepKind(StepKind kind)
 {
-    return kind == fb::StepKind::SnapshotFinals;
+    return kind == fb::StepKind::SnapshotFinals ||
+           kind == fb::StepKind::ReservedOpGraph;
 }
 
 } // namespace eval

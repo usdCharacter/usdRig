@@ -166,14 +166,15 @@ Deform(const rigExec::RigExecOpBatch &batch, size_t k,
     const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     rigExec::eval::EnvelopePacketView view;
     ViewOf(io, false, &view, nullptr);
-    const Points &in = *In<Points>(io, MatrixDeformPoints());
+    const Vec3f *in = RangeIn<Vec3f>(io, range, MatrixDeformPoints());
     const Mat4d &transform = *In<Mat4d>(io, MatrixDeformTransform());
-    const Envelope *envelope = In<Envelope>(io, MatrixDeformEnvelope());
+    const float *envelope = RangeIn<float>(io, range, MatrixDeformEnvelope());
     const bool radial =
         rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kRadial)[k] != 0;
-    Points &out = Out<Points>(io, MatrixDeformOut());
+    Vec3f *out = RangeOut<Vec3f>(io, range, MatrixDeformOut());
+    const size_t count = range.end - range.begin;
     if (rigExec::eval::EnvelopeIsSparseWalk(view)) {
-        CopyRange(in, out, range.begin, range.end);
+        std::copy(in, in + count, out);
         if (transform == Math::Identity())
             return true;
         const auto *first = view.indices;
@@ -183,15 +184,13 @@ Deform(const rigExec::RigExecOpBatch &batch, size_t k,
         const size_t to =
             size_t(std::lower_bound(first, last, int(range.end)) - first);
         rigExec::eval::ApplyMatrixSparseWalk<Math>(radial, transform, view,
-                                                   from, to, out.Data());
+                                                   from, to, out, range.begin);
         return true;
     }
     rigExec::eval::ApplyMatrixKernelRange<Math>(
         radial, transform,
-        rigExec::eval::EnvelopeIsFullStrength(view)
-            ? nullptr
-            : (envelope ? envelope->Data() : nullptr),
-        range.begin, range.end, in.Data(), out.Data(), io.useSimd);
+        rigExec::eval::EnvelopeIsFullStrength(view) ? nullptr : envelope, 0,
+        count, in, out, io.useSimd);
     return true;
 }
 

@@ -1,6 +1,7 @@
 // .rigexec baking.
 #include "rigExecBake/bake.h"
 #include "rigExecBake/computedCapture.h"
+#include "rigExecBake/opGraph.h"
 #include "rigExecBake/pathTable.h"
 #include "rigExecBake/revisionReads.h"
 #include "rigExecBake/serialize.h"
@@ -407,6 +408,8 @@ RigExecBakeToBinary(RigExecRigEvaluator &evaluator, const RigExecBakeOpts &opts,
                   &file.externalMovers);
     file.formatVersion = RigExecFormatVersion;
     file.manifest = RigExecManifestBuild(RigExecManifestCurrent());
+    if (!RigExecBakeOpGraph(program, &file, &why))
+        return Fail("cannot build the .rigexec file: " + why);
     file.rig = paths.Path(evaluator.GetRigPath());
     file.bakeTime = bakeTime;
     file.compileDiagnostics = compileErrors;

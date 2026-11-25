@@ -753,6 +753,13 @@ RigExecBakedProgram::_BuildStepGraph(_BuildAttempt &build)
     RigExecBakedBuildWeightSteps(&B);
     graphPhases.Next("Bake.the_step_graph.geometry_steps");
     RigExecBakedBuildGeometrySteps(&B);
+    {
+        std::string invalid;
+        if (!RigExecBakedBuildOpSteps(&B, &invalid)) {
+            ctx.Refuse(invalid, E._rigPath);
+            return nullptr;
+        }
+    }
     graphPhases.Close();
     // The skin layouts as head ops, one per fixed skin revision, now that
     // the geometry steps number the revisions; ordered after the rest and
@@ -984,6 +991,12 @@ RigExecBakedProgram::_BuildStepGraph(_BuildAttempt &build)
         }
         case K::SnapshotFinals:
             expression = "retired";
+            break;
+        case K::ReservedOpGraph:
+        case K::OpNode:
+        case K::OpChainHead:
+        case K::OpChainRange:
+            expression = "op/" + std::to_string(step.object);
             break;
         }
         const auto position = E._nativePoseOrdinals.find(owner);

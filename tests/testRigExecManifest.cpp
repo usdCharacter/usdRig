@@ -1,4 +1,4 @@
-// The .rigexec manifest (format 33): a file's op ordinals are read through
+// The .rigexec manifest: a file's op ordinals are read through
 // its manifest, and an id this build does not know is refused at Open.
 #include "rigExecBinary/format.h"
 #include "rigExecBinary/manifest.h"
@@ -131,33 +131,22 @@ TestRefusals()
         CHECK(Contains(error, "needs a manifest"));
         CHECK(!RigExecManifestValidate(file, &error));
     }
-    {
-        // A format-32 file needs no manifest and is refused holding one.
-        fb::RigExecWireFile file = Permuted();
-        file.formatVersion = 32;
-        CHECK(!RigExecManifestValidate(file, &error));
-        file.manifest.reset();
-        CHECK(RigExecManifestValidate(file, &error));
-    }
 }
 
-// The checked-in format-32 program opens with the format-32 manifest and
-// writes, at the current format, the bytes of the checked-in current program.
+// The checked-in current program opens with its manifest and writes its
+// own bytes back.
 void
-TestUpgrade(const char *format32, const char *currentPath)
+TestOpen(const char *currentPath)
 {
-    const std::vector<uint8_t> old = Read(format32);
     const std::vector<uint8_t> current = Read(currentPath);
     std::unique_ptr<fb::RigExecWireFile> file;
     std::string error;
-    CHECK(RigExecFormatOpen(old.data(), old.size(), &file, &error));
+    CHECK(RigExecFormatOpen(current.data(), current.size(), &file, &error));
     if (!file) {
         std::printf("%s\n", error.c_str());
         return;
     }
-    CHECK(file->formatVersion == 32);
     CHECK(file->manifest && RigExecManifestValidate(*file, &error));
-    file->formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> rewritten;
     CHECK(RigExecFormatWrite(*file, &rewritten, &error));
     CHECK(rewritten == current);
@@ -181,14 +170,13 @@ TestUpgrade(const char *format32, const char *currentPath)
 int
 main(int argc, char **argv)
 {
-    if (argc != 3) {
-        std::printf("usage: testRigExecManifest minimal_format32.rigexec "
-                    "minimal.rigexec\n");
+    if (argc != 2) {
+        std::printf("usage: testRigExecManifest minimal.rigexec\n");
         return 2;
     }
     TestTranslate();
     TestRefusals();
-    TestUpgrade(argv[1], argv[2]);
+    TestOpen(argv[1]);
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

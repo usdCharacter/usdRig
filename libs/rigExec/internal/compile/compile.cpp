@@ -829,6 +829,44 @@ FormRangeChains(CompileState &s)
     }
 }
 
+void
+GroupChainOutputs(CompileState &s)
+{
+    RigExecProgram &program = s.program;
+    program.groupedSlots.assign(program.slots.size(), 0);
+    std::vector<char> bound(program.slots.size(), 0);
+    for (const uint32_t slot : program.outputSlots)
+        bound[slot] = 1;
+    for (uint32_t c = 0; c < program.chains.size(); ++c) {
+        const RigExecProgramChain &chain = program.chains[c];
+        for (uint32_t m = 0; m < chain.memberCount; ++m) {
+            const uint32_t at = program.chainMembers[chain.firstMember + m];
+            if (program.wholePositions[at])
+                continue;
+            const RigExecProgramNode &node =
+                program.nodes[program.batchNodes[at]];
+            const RigExecRegisteredOp &op = s.registry.OpAt(node.op);
+            for (const uint32_t port : op.rangeOutputs) {
+                const uint32_t slot = program.portSlots[node.firstPort + port];
+                const RigExecTypeDesc &type =
+                    *s.registry.TypeAt(op.portTypes[port]).desc;
+                if (slot == kRigExecInvalidIndex || bound[slot] ||
+                    !type.borrow || !type.data || !type.element)
+                    continue;
+                bool inside = true;
+                for (uint32_t r = program.readerStart[slot];
+                     inside && r < program.readerStart[slot + 1]; ++r) {
+                    const uint32_t reader =
+                        program.batchPosition[program.readers[r]];
+                    inside = program.positionChain[reader] == c &&
+                             !program.wholePositions[reader];
+                }
+                program.groupedSlots[slot] = inside ? 1 : 0;
+            }
+        }
+    }
+}
+
 /// Places \p count values of \p size and \p align from \p end, one every
 /// \p stride bytes; returns the first one's offset and moves \p end past
 /// the last.
@@ -1061,6 +1099,7 @@ RigExecCompile(const RigExecRigDesc &desc, const RigExecCompileOptions &options,
     if (!CheckNodes(s))
         return nullptr;
     FormRangeChains(s);
+    GroupChainOutputs(s);
     if (!SettleBounds(s))
         return nullptr;
     return program;

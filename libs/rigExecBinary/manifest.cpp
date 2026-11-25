@@ -9,9 +9,9 @@ namespace rigExec {
 
 namespace {
 
-// Format 20 to 32 ordinals. Never edit: a new op appends to the current
-// tables below, and these keep describing old files.
-constexpr RigExecManifestId kRevisionOps32[] = {
+// This build's ordinals. A new op appends; an ordinal never changes meaning
+// within one format.
+constexpr RigExecManifestId kRevisionOps[] = {
     {"rig", "Matrix", 1},
     {"rig", "Skin", 1},
     {"rig", "BlendShape", 1},
@@ -32,14 +32,14 @@ constexpr RigExecManifestId kRevisionOps32[] = {
     {"rig", "SurfaceProjector", 1},
     {"rig", "ShaderDials", 1},
 };
-constexpr RigExecManifestId kPropertyOps32[] = {
+constexpr RigExecManifestId kPropertyOps[] = {
     {"rig", "PropertyAdd", 1},    {"rig", "PropertyMultiply", 1},
     {"rig", "PropertyClamp", 1},  {"rig", "PropertyRemap", 1},
     {"rig", "PropertyBlend", 1},  {"rig", "PropertyCurve", 1},
     {"reserved", "Property6", 1}, {"rig", "PropertyQuantize", 1},
     {"rig", "PropertyPath", 1},
 };
-constexpr RigExecManifestId kProviderOps32[] = {
+constexpr RigExecManifestId kProviderOps[] = {
     {"rig", "ProviderAttribute", 1},    {"rig", "ProviderSpaceExpression", 1},
     {"rig", "ProviderRestFrame", 1},    {"rig", "ProviderDefaultSpace", 1},
     {"rig", "ProviderFrameToSpace", 1}, {"rig", "ProviderMatrixToFrame", 1},
@@ -48,7 +48,7 @@ constexpr RigExecManifestId kProviderOps32[] = {
     {"rig", "ProviderAvarMatrix", 1},   {"rig", "ProviderRelativeXform", 1},
     {"rig", "ProviderAffineFrame", 1},
 };
-constexpr RigExecManifestId kValueTypes32[] = {
+constexpr RigExecManifestId kValueTypes[] = {
     {"std", "Double", 1},      {"std", "Float", 1},
     {"std", "Bool", 1},        {"std", "Int", 1},
     {"std", "Mat4d", 1},       {"wire", "Token", 1},
@@ -60,11 +60,11 @@ constexpr RigExecManifestId kValueTypes32[] = {
     {"std", "BoolArray", 1},   {"std", "Vec3i", 1},
 };
 
-static_assert(std::size(kRevisionOps32) == size_t(fb::RevisionOp::MAX) + 1);
-static_assert(std::size(kPropertyOps32) == size_t(fb::PropertyOp::MAX) + 1);
-static_assert(std::size(kProviderOps32) ==
+static_assert(std::size(kRevisionOps) == size_t(fb::RevisionOp::MAX) + 1);
+static_assert(std::size(kPropertyOps) == size_t(fb::PropertyOp::MAX) + 1);
+static_assert(std::size(kProviderOps) ==
               size_t(RigExecProviderOpKind::AffineFrame) + 1);
-static_assert(std::size(kValueTypes32) == size_t(fb::InputTag::MAX) + 1);
+static_assert(std::size(kValueTypes) == size_t(fb::InputTag::MAX) + 1);
 
 template <size_t N>
 constexpr RigExecManifestTable
@@ -73,12 +73,9 @@ Table(const RigExecManifestId (&ids)[N])
     return {ids, N};
 }
 
-const RigExecManifestTables kFormat32 = {
-    Table(kRevisionOps32), Table(kPropertyOps32), Table(kProviderOps32),
-    Table(kValueTypes32)};
-
-// This build's ordinals still equal format 32's.
-const RigExecManifestTables kCurrent = kFormat32;
+const RigExecManifestTables kCurrent = {
+    Table(kRevisionOps), Table(kPropertyOps), Table(kProviderOps),
+    Table(kValueTypes)};
 
 bool
 Fail(std::string *error, std::string message)
@@ -167,12 +164,6 @@ RigExecManifestCurrent()
     return kCurrent;
 }
 
-const RigExecManifestTables &
-RigExecManifestFormat32()
-{
-    return kFormat32;
-}
-
 std::unique_ptr<fb::RigExecWireManifest>
 RigExecManifestBuild(const RigExecManifestTables &tables)
 {
@@ -196,10 +187,7 @@ RigExecManifestBuild(const RigExecManifestTables &tables)
 bool
 RigExecManifestResolve(fb::RigExecWireFile *file, std::string *error)
 {
-    if (file->formatVersion < RigExecFormatManifestVersion) {
-        // The upgrade: old ordinals mean what format 32 says.
-        file->manifest = RigExecManifestBuild(RigExecManifestFormat32());
-    } else if (!file->manifest) {
+    if (!file->manifest) {
         return Fail(error, "format " + std::to_string(file->formatVersion) +
                                " needs a manifest");
     }
@@ -251,11 +239,8 @@ RigExecManifestResolve(fb::RigExecWireFile *file, std::string *error)
 bool
 RigExecManifestValidate(const fb::RigExecWireFile &file, std::string *error)
 {
-    if (!file.manifest) {
-        if (file.formatVersion >= RigExecFormatManifestVersion)
-            return Fail(error, "manifest is missing");
-        return true;
-    }
+    if (!file.manifest)
+        return Fail(error, "manifest is missing");
     const RigExecManifestTables &current = RigExecManifestCurrent();
     const auto check = [&](const char *what, const Entries &entries,
                            const RigExecManifestTable &table) {

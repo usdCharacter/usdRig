@@ -2,13 +2,13 @@
 #define RIGEXEC_RUNTIME_OP_NODES_H
 
 /// File.op_graph in the runtime: Open resolves its ops and types against
-/// the op registry, decodes its payloads and compiles it into an op-core
-/// program; the OpGraph step writes the slots its nodes read into the
-/// evaluator, evaluates, and keeps the named outputs.
+/// the op registry, decodes its payloads and compiles it for the common
+/// graph's schedule; its OpNode, OpChainHead and OpChainRange steps run it
+/// (rigExecEvalCore/opSteps.h).
 
-#include "rigExec/api/compile.h"
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
+#include "rigExecEvalCore/opSteps.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -20,61 +20,33 @@ namespace rigExec {
 
 struct RrProgram;
 
-/// How a slot's value becomes an op input of the matching standard type.
-enum class RrOpSlotKind : uint8_t {
-    Double,
-    Float,
-    Bool,
-    Int,
-    Mat4d,
-    Vec3d,
-    Vec3f,
-    IntArray,
-    FloatArray,
-    DoubleArray,
-    Vec2fArray,
-    Vec3fArray,
-    Vec3dArray,
-    Mat4dArray,
-    BoolArray,
-};
-
-struct RrOpNodeInput {
-    RigExecInputId id;
-    uint32_t slot = 0;
-    RrOpSlotKind kind = RrOpSlotKind::Double;
-};
-
-/// A published output: a copy of the evaluator's value, owned here and
-/// replaced by each run of the step.
+/// A published output: its name, the program output and its type.
 struct RrOpNodeOutput {
     std::string name;
     RigExecOutputId id;
     uint32_t type = kRigExecInvalidIndex;
-    std::vector<std::max_align_t> storage;
-    bool held = false;
 };
 
 struct RrOpNodes {
-    std::shared_ptr<const RigExecProgram> program;
-    std::unique_ptr<RigExecEvaluator> evaluator;
-    std::vector<RrOpNodeInput> inputs;
+    eval::OpStepLayout layout;
+    std::unique_ptr<eval::OpStepState> state;
     std::vector<RrOpNodeOutput> outputs;
-
-    RrOpNodes() = default;
-    RrOpNodes(const RrOpNodes &) = delete;
-    RrOpNodes &operator=(const RrOpNodes &) = delete;
-    ~RrOpNodes();
 };
 
 /// Builds \p program's op nodes from its file, when it holds any. False
 /// with the reason for an op or type the registry does not know, a port
-/// past its op's, a payload that does not decode, a slot or connection of
-/// another type, or a program the op core refuses.
+/// past its op's, a payload that does not decode, a constant or connection
+/// of another type, a program the op core refuses, or range chains that
+/// are not the file's.
 bool RrOpenOpNodes(RrProgram *program, std::string *error);
 
-/// The OpGraph step's body.
-bool RrRunOpNodes(RrProgram *program, std::string *error);
+/// The body of op step \p step.
+bool RrRunOpStep(RrProgram *program, size_t step, std::string *error);
+
+/// Op value \p slot's version in \p domain (OpValue or OpGroupValue); 0
+/// when there is none.
+uint64_t RrOpValueVersion(const RrProgram *program, uint32_t domain,
+                          uint32_t slot);
 
 } // namespace rigExec
 

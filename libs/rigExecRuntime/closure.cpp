@@ -570,6 +570,10 @@ RrOpValue(const RrProgram *p, uint32_t domain, uint32_t slot, std::string *key)
     case RigExecWireSlotDomain::SwitchFrame:
         RigExecOpKeyAppend(key, s.switchFrames[slot]);
         break;
+    case RigExecWireSlotDomain::OpValue:
+    case RigExecWireSlotDomain::OpGroupValue:
+        RigExecOpKeyAppend(key, RrOpValueVersion(p, domain, slot));
+        break;
     case RigExecWireSlotDomain::RequiredStageFramesAdmission:
         RigExecOpKeyAppend(key,
                            uint8_t(p->requiredStageFramesAdmission.admitted));
@@ -743,8 +747,10 @@ RrRunOpBody(RrProgram *p, size_t i, std::string *error)
             }
             if (step.kind == RigExecWireStepKind::SpaceExpression)
                 return RrRunSpaceExpression(p, step, error);
-            if (step.kind == RigExecWireStepKind::OpGraph)
-                return RrRunOpNodes(p, error);
+            if (step.kind == RigExecWireStepKind::OpNode ||
+                step.kind == RigExecWireStepKind::OpChainHead ||
+                step.kind == RigExecWireStepKind::OpChainRange)
+                return RrRunOpStep(p, i, error);
             if (_RrIsWeightKind(step.kind))
                 return RrRunWeightStep(p, i, error);
             if (_RrIsGeometryKind(step.kind))

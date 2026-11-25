@@ -250,6 +250,11 @@ public:
     /// through a neighbourhood input.
     std::vector<uint32_t> chainSegment;
     std::vector<RigExecProgramChainFeed> chainFeeds;
+    /// Per slot: 1 for a pointwise output a range chain keeps as one
+    /// buffer per range instead of one array, because only later members
+    /// of its chain that run in ranges read it and it is not bound as an
+    /// output. Its value holds the element count and no elements.
+    std::vector<char> groupedSlots;
     size_t inputArenaSize = 0;
     /// The work arena: values from 0, op state from stateBase.
     size_t workSize = 0;

@@ -27,7 +27,7 @@ public:
     RigExecArray(const T *data, size_t size)
     {
         _Allocate(size);
-        if (size)
+        if (size && data)
             std::memcpy(_data, data, size * sizeof(T));
     }
     RigExecArray(const RigExecArray &other)
@@ -45,12 +45,22 @@ public:
                 RigExecArray copy(other);
                 _Take(copy);
             } else {
-                if (other._size)
+                if (other._size && other._data)
                     std::memcpy(_data, other._data, other._size * sizeof(T));
                 _size = other._size;
             }
         }
         return *this;
+    }
+    /// An array reading the \p size elements at \p data, which stay the
+    /// caller's and unchanged while it is read. Resizing or assigning it
+    /// copies them into storage of its own first; copying it copies them.
+    static RigExecArray Borrow(const T *data, size_t size)
+    {
+        RigExecArray view;
+        view._data = const_cast<T *>(data);
+        view._size = size;
+        return view;
     }
     RigExecArray &operator=(RigExecArray &&other) noexcept
     {
@@ -77,7 +87,7 @@ public:
             return;
         RigExecArray grown;
         grown._Allocate(capacity);
-        if (_size)
+        if (_size && _data)
             std::memcpy(grown._data, _data, _size * sizeof(T));
         grown._size = _size;
         _Take(grown);

@@ -3322,6 +3322,9 @@ TestHostSchedule()
         return static_cast<const Floats *>(state.GetValue(ref))->v;
     };
     for (const uint32_t groups : {1u, 3u, 7u, 1000u}) {
+        std::vector<int> cut;
+        for (uint32_t g = 0; g <= groups; ++g)
+            cut.push_back(int(1000 * g / groups));
         auto state = RigExecRunState::Create(program);
         Floats held{input};
         CHECK(state->PointInput(in, &held));
@@ -3330,7 +3333,7 @@ TestHostSchedule()
         for (size_t c = 0; c < RigExecProgramChainCount(*program); ++c) {
             RigExecChainDesc chain;
             RigExecProgramChainAt(*program, c, &chain);
-            CHECK(state->RunChainHead(c, groups, &error));
+            CHECK(state->RunChainHead(c, cut.data(), groups, &error));
             const size_t count = state->ChainElements(c);
             CHECK(count == 1000);
             for (uint32_t segment = 0; segment < chain.members.size();
@@ -3338,31 +3341,34 @@ TestHostSchedule()
                 if (chain.segments[segment] != segment)
                     continue;
                 for (uint32_t g = 0; g < groups; ++g)
-                    CHECK(state->RunChainRange(c, segment, count * g / groups,
-                                               count * (g + 1) / groups, g,
-                                               &error));
+                    CHECK(state->RunChainRange(c, segment, g, &error));
             }
         }
         CHECK(SameFloats(value(*state, n[2]), m));
         CHECK(SameFloats(value(*state, n[4]), l));
         CHECK(SameFloats(value(*state, n[6]), s));
         size_t lo = 0, hi = 0;
-        state->ChainReads(0, 1, 10, 20, 0, &lo, &hi);
-        CHECK(lo == 8 && hi == 22);
+        if (groups == 7) {
+            state->ChainReads(0, 1, 1, &lo, &hi);
+            CHECK(lo == 140 && hi == 287);
+        }
         CHECK(!state->RunNode(n[0], &error));
         CHECK(Contains(error, "runs in ranges, through its chain"));
         held.v[500] = -1.0f;
-        CHECK(state->RunChainHead(0, groups, &error));
+        CHECK(state->RunChainHead(0, cut.data(), groups, &error));
         bool failed = false;
         for (uint32_t g = 0; g < groups && !failed; ++g)
-            failed = !state->RunChainRange(0, 0, 1000 * g / groups,
-                                           1000 * (g + 1) / groups, g, &error);
+            failed = !state->RunChainRange(0, 0, g, &error);
         CHECK(failed && Contains(error, "node 0 (test:RScale) failed: "
                                         "element 500 is -1"));
-        CHECK(!state->RunChainRange(0, 2, 0, 10, 0, &error));
+        CHECK(!state->RunChainRange(0, 2, 0, &error));
+        const int wrong[2] = {0, 999};
+        CHECK(!state->RunChainHead(0, wrong, 1, &error));
+        CHECK(Contains(error, "do not cover them"));
     }
     auto plain = RigExecCompile(*desc, {}, &error);
-    CHECK(!RigExecRunState::Create(plain)->RunChainHead(0, 1, &error));
+    const int all[2] = {0, 1000};
+    CHECK(!RigExecRunState::Create(plain)->RunChainHead(0, all, 1, &error));
     RigExecRigDescBuilder backwards;
     const RigExecNodeId later = backwards.AddOp(RBlur());
     const RigExecNodeId early = backwards.AddOp(RBlur());

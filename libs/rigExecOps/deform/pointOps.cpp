@@ -128,21 +128,16 @@ SmoothRange(const rigExec::RigExecOpBatch &batch, size_t k,
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const SmoothState &state =
         *static_cast<const SmoothState *>(rigExec::RigExecBatchState(batch, k));
-    const Points &in = *In<Points>(io, SmoothPoints());
-    Points &out = Out<Points>(io, SmoothOut());
-    const int bounds[2] = {0, int(in.Size())};
-    const Vec3f *const groupPoints[1] = {in.Data()};
-    rigExec::RigExecGroupPoints<Vec3f> groups;
-    groups.bounds = bounds;
-    groups.groups = 1;
-    groups.points = groupPoints;
+    const rigExec::RigExecGroupPoints<Vec3f> groups =
+        RangeGroups<Vec3f>(range, SmoothPoints());
+    Vec3f *out = RangeOut<Vec3f>(io, range, SmoothOut());
     if (!rigExec::RigExecApplyLaplacianSmoothGroup(
             state.adjacency, StrengthOr1(In<float>(io, SmoothStrength())),
-            in.Size(), groups, range.begin, range.end,
-            out.Data() + range.begin))
+            range.count, groups, range.begin, range.end, out))
         return Fail(error, "Smooth", "topology addresses no point");
-    BlendEnvelopeRange(in, In<RigExecArray<float>>(io, SmoothEnvelope()), out,
-                       range.begin, range.end);
+    BlendEnvelopeAt(groups.At(range.begin),
+                    RangeIn<float>(io, range, SmoothEnvelope()), out,
+                    range.end - range.begin);
     return true;
 }
 

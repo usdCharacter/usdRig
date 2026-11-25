@@ -134,10 +134,9 @@ WireRange(const rigExec::RigExecOpBatch &batch, size_t k,
     const WireInstance p = PayloadAt(batch, k);
     const WireState &state =
         *static_cast<const WireState *>(rigExec::RigExecBatchState(batch, k));
-    const Points &in = *In<Points>(io, WirePoints());
-    Points &out = Out<Points>(io, WireOut());
-    CopyRange(in, out, range.begin, range.end);
-    Vec3f *const at = out.Data() + range.begin;
+    const Vec3f *in = RangeIn<Vec3f>(io, range, WirePoints());
+    Vec3f *const at = RangeOut<Vec3f>(io, range, WireOut());
+    std::copy(in, in + (range.end - range.begin), at);
     if (In<RigExecArray<int>>(io, WireWeightIndices())) {
         if (!rigExec::RigExecApplyWireBasisGroupKernel<Vec3f, Vec3d, Vec2f>(
                 at, range.begin, range.end, state.basis, state.indices,
@@ -153,8 +152,8 @@ WireRange(const rigExec::RigExecOpBatch &batch, size_t k,
             at, range.begin, range.end, range.count, rest, posed, bind.Data(),
             bind.Size(), p.dropoffDistance, nullptr, 0))
         return Fail(error, "Wire", "curves or binds do not fit");
-    BlendEnvelopeRange(in, In<Envelope>(io, WireEnvelope()), out, range.begin,
-                       range.end);
+    BlendEnvelopeAt(in, RangeIn<float>(io, range, WireEnvelope()), at,
+                    range.end - range.begin);
     return true;
 }
 

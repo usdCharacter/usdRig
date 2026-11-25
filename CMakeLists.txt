@@ -523,7 +523,7 @@ set_target_properties(rigExecLzma PROPERTIES POSITION_INDEPENDENT_CODE ON
 add_library(rigExec::rigExecLzma ALIAS rigExecLzma)
 
 add_library(rigExecBinary STATIC libs/rigExecBinary/format.cpp
-    libs/rigExecBinary/manifest.cpp libs/rigExecBinary/opGraphWriter.cpp
+    libs/rigExecBinary/manifest.cpp
     libs/rigExecBinary/transport.cpp)
 add_library(rigExec::rigExecBinary ALIAS rigExecBinary)
 target_include_directories(rigExecBinary PUBLIC
@@ -674,6 +674,7 @@ add_library(rigExecBake SHARED
     libs/rigExecBake/arrayReads.cpp
     libs/rigExecBake/bake.cpp
     libs/rigExecBake/serialize.cpp
+    libs/rigExecBake/opGraph.cpp
     libs/rigExecBake/computedCapture.cpp
     libs/rigExecBake/pathTable.cpp
     libs/rigExecBake/revisionReads.cpp
@@ -908,23 +909,16 @@ rigexec_add_test(NAME testRigExecSkinSplit COMMAND testRigExecSkinSplit)
 add_executable(testRigExecRuntimeFixture tests/testRigExecRuntimeFixture.cpp)
 target_link_libraries(testRigExecRuntimeFixture PRIVATE rigExecRuntime)
 rigexec_add_test(NAME testRigExecRuntimeFixture COMMAND testRigExecRuntimeFixture
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal.rigexec"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal_format32.rigexec"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal_format34.rigexec")
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal.rigexec")
 add_executable(testRigExecRuntimeOpCore tests/testRigExecRuntimeOpCore.cpp)
 target_include_directories(testRigExecRuntimeOpCore PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests")
 target_link_libraries(testRigExecRuntimeOpCore PRIVATE rigExecRuntime rigExecOpCore)
 rigexec_add_test(NAME testRigExecRuntimeOpCore COMMAND testRigExecRuntimeOpCore
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal.rigexec")
-add_executable(testRigExecRuntimeOpNodes tests/testRigExecRuntimeOpNodes.cpp)
-target_link_libraries(testRigExecRuntimeOpNodes PRIVATE rigExecRuntime)
-rigexec_add_test(NAME testRigExecRuntimeOpNodes COMMAND testRigExecRuntimeOpNodes)
-set_tests_properties(testRigExecRuntimeOpNodes PROPERTIES LABELS "rigExecOpCore")
 add_executable(testRigExecManifest tests/testRigExecManifest.cpp)
 target_link_libraries(testRigExecManifest PRIVATE rigExecBinary)
 rigexec_add_test(NAME testRigExecManifest COMMAND testRigExecManifest
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal_format32.rigexec"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/minimal.rigexec")
 add_executable(testRigExecSharedBuffers tests/testRigExecSharedBuffers.cpp)
 target_link_libraries(testRigExecSharedBuffers PRIVATE rigExecRuntime)
@@ -1403,8 +1397,6 @@ rigexec_link_registrations(testRigExecRegistry
     TYPE_LIBRARIES rigExecTestFakeTypes OP_LIBRARIES rigExecTestFakeOps)
 rigexec_link_registrations(testRigExecRuntimeOpCore
     TYPE_LIBRARIES rigExecTestFakeTypes OP_LIBRARIES rigExecTestFakeOps)
-rigexec_link_registrations(testRigExecRuntimeOpNodes
-    TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 rigexec_add_test(NAME testRigExecRegistry COMMAND testRigExecRegistry)
 
 add_executable(testRigExecCore tests/testRigExecCore.cpp)
@@ -2177,6 +2169,17 @@ foreach(_schedule serial parallel)
     rigexec_add_test(NAME testRigExecGroupForwarding_${_schedule}
         COMMAND testRigExecGroupForwarding "${CMAKE_CURRENT_SOURCE_DIR}/examples")
     set_tests_properties(testRigExecGroupForwarding_${_schedule} PROPERTIES
+        ENVIRONMENT "RIGEXEC_BAKED_SCHEDULE=${_schedule}")
+endforeach()
+
+add_executable(testRigExecOpSteps tests/testRigExecOpSteps.cpp)
+target_link_libraries(testRigExecOpSteps PRIVATE
+    rigExec rigExecBuiltins rigExecBake rigExecRuntime rigExecSampler)
+target_compile_definitions(testRigExecOpSteps PRIVATE ${_rigexec_schema_resource_define})
+foreach(_schedule serial parallel)
+    rigexec_add_test(NAME testRigExecOpSteps_${_schedule}
+        COMMAND testRigExecOpSteps)
+    set_tests_properties(testRigExecOpSteps_${_schedule} PROPERTIES
         ENVIRONMENT "RIGEXEC_BAKED_SCHEDULE=${_schedule}")
 endforeach()
 
@@ -3339,6 +3342,7 @@ foreach(_rigexec_scene_exe IN ITEMS
     testRigExecFrozenContext testRigExecGeometryOpsBakedParity
     testRigExecGeometryProgram testRigExecGraphBindings
     testRigExecGroupForwarding testRigExecInputActions testRigExecInputReplayHosting
+    testRigExecOpSteps
     testRigExecInteractive testRigExecInteropNotices testRigExecLattice testRigExecLeaves
     testRigExecOneLoopAcceptance testRigExecOpTrace
     testRigExecPatchMover testRigExecPhaseBindings testRigExecPoseInterpolator

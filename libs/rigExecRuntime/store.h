@@ -1048,6 +1048,10 @@ void RrShareLatticeBinds(RrProgram *program);
 // Step bodies by family.
 bool RrRunPoseStep(RrProgram *program, size_t step, std::string *error);
 bool RrRunGeometryStep(RrProgram *program, size_t step, std::string *error);
+// Group \p g of point chain \p chain's final points; null when the chain has
+// none this run.
+const void *RrGeoFinalGroupPoints(const RrProgram *program, size_t chain,
+                                  size_t g);
 bool RrWeightFieldEffectiveInputMemo(const RrProgram *, uint32_t, std::string *,
                                      std::vector<uint32_t> *);
 bool RrRunWeightStep(RrProgram *program, size_t step, std::string *error);

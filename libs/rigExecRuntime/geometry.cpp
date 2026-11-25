@@ -3875,6 +3875,17 @@ RrGeoNoteSparseSource(const RrProgram *program, size_t pointCount,
 
 } // namespace
 
+const void *
+RrGeoFinalGroupPoints(const RrProgram *program, size_t chain, size_t g)
+{
+    const auto *scratch =
+        static_cast<const RrGeometryScratch *>(program->geo.get());
+    if (!scratch || chain >= scratch->chains.size())
+        return nullptr;
+    const RrGeometryScratch::Chain &c = scratch->chains[chain];
+    return RrGeoGroupAt(c, c.revisions.size(), g, nullptr).data;
+}
+
 bool
 RrGeometryPartitionStaleForTesting(const RrProgram *program,
                                    const std::string &moverPath)

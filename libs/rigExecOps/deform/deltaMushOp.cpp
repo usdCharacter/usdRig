@@ -197,21 +197,17 @@ MushRange(const rigExec::RigExecOpBatch &batch, size_t k,
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const MushState &state =
         *static_cast<const MushState *>(rigExec::RigExecBatchState(batch, k));
-    const Points &in = *In<Points>(io, DeltaMushPoints());
-    Points &out = Out<Points>(io, DeltaMushOut());
-    const int bounds[2] = {0, int(in.Size())};
-    const Vec3f *const groupPoints[1] = {in.Data()};
-    rigExec::RigExecGroupPoints<Vec3f> groups;
-    groups.bounds = bounds;
-    groups.groups = 1;
-    groups.points = groupPoints;
+    const rigExec::RigExecGroupPoints<Vec3f> groups =
+        RangeGroups<Vec3f>(range, DeltaMushPoints());
+    Vec3f *out = RangeOut<Vec3f>(io, range, DeltaMushOut());
     if (!rigExec::RigExecApplyDeltaMushGroup<Vec3f, rigExecStd::Vec3d, Mat4d>(
             state.rest, ValueAt<double>(batch, kDisplacement, k), MapOf(io),
-            groups, range.begin, range.end, out.Data() + range.begin,
+            groups, range.begin, range.end, out,
             static_cast<GroupState *>(range.scratch)))
         return Fail(error, "DeltaMush", kUnusable);
-    BlendEnvelopeRange(in, In<Envelope>(io, DeltaMushEnvelope()), out,
-                       range.begin, range.end);
+    BlendEnvelopeAt(groups.At(range.begin),
+                    RangeIn<float>(io, range, DeltaMushEnvelope()), out,
+                    range.end - range.begin);
     return true;
 }
 

@@ -610,6 +610,11 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
     }
     if (bailed) {
         _lastBail = RigExecBakedBail::Step;
+        for (const RigExecBakedStep &step : B.steps)
+            if (step.failed)
+                pose->diagnostics.insert(pose->diagnostics.end(),
+                                         step.diagnostics.begin(),
+                                         step.diagnostics.end());
         pose->valid = false;
         return false;
     }
@@ -627,6 +632,7 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
         RigExecBakedPublishVolumePlacements(B, &pose->weightFrames);
         RigExecBakedResolveGpuChains(&B, time);
         RigExecBakedPublishGeometry(&B, pose);
+        RigExecBakedPublishOpOutputs(B, pose);
         RigExecBakedAppendCycleDiagnostics(B, pose);
     }
     const bool scalarReferenceValid =

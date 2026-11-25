@@ -194,7 +194,7 @@ BlendRange(const rigExec::RigExecOpBatch &batch, size_t k,
     const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     if (!SumsInRanges(p))
         return Whole(p, io, error);
-    const Points &in = *In<Points>(io, BlendShapePoints());
+    const Vec3f *in = RangeIn<Vec3f>(io, range, BlendShapePoints());
     const Envelope &weights = *In<Envelope>(io, BlendShapeWeights());
     std::vector<Vec3f> &deltas =
         static_cast<BlendScratch *>(range.scratch)->deltas;
@@ -203,11 +203,12 @@ BlendRange(const rigExec::RigExecOpBatch &batch, size_t k,
         rigExec::RigExecAccumulateBlendRange(p.channels[c].samples, weights[c],
                                              range.begin, range.end,
                                              deltas.data());
-    Points &out = Out<Points>(io, BlendShapeOut());
-    for (size_t i = range.begin; i < range.end; ++i)
-        out[i] = in[i] + deltas[i - range.begin];
-    BlendEnvelopeRange(in, In<Envelope>(io, BlendShapeEnvelope()), out,
-                       range.begin, range.end);
+    Vec3f *out = RangeOut<Vec3f>(io, range, BlendShapeOut());
+    const size_t count = range.end - range.begin;
+    for (size_t i = 0; i < count; ++i)
+        out[i] = in[i] + deltas[i];
+    BlendEnvelopeAt(in, RangeIn<float>(io, range, BlendShapeEnvelope()), out,
+                    count);
     return true;
 }
 

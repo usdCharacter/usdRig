@@ -111,7 +111,10 @@ enum SlotDomain : ubyte { Avars = 0, PoseBase, PoseFin, PosedM, FinalMatrix,
   BaseMatrix, Aggregate, SolverPoints, Candidates, CommitTable, CommitDelta,
   CommitStaging, ConstraintDelta, PropertyResult, ChainBase, RevisionPacket,
   RevisionTransforms, RevisionOut, RevisionDone, ChainDirty, ChainPoints,
-  DerivedOut, WeightPacket, WeightFrames, PoseWeight, Snapshots, FrameMatrix, Rest, Ladder, SkinTopology, WeightField, WeightFramesBase, SpaceValue, SpaceLeaf, DerivedBase, ChainInput, ConstraintInputs, SwitchFrame, RequiredStageFramesAdmission }
+  DerivedOut, WeightPacket, WeightFrames, PoseWeight, Snapshots, FrameMatrix, Rest, Ladder, SkinTopology, WeightField, WeightFramesBase, SpaceValue, SpaceLeaf, DerivedBase, ChainInput, ConstraintInputs, SwitchFrame, RequiredStageFramesAdmission,
+  /// Format 36: an op value or a range chain's plan, and one vertex group
+  /// of an op value a range chain member writes.
+  OpValue, OpGroupValue }
 
 /// RigExecBakedStepKind, in the same order. SnapshotFinals (8) is reserved:
 /// never written, and Open refuses a file that holds one.
@@ -120,8 +123,12 @@ enum StepKind : ubyte { ComposeSubtree = 0, Solve, SolverCommit, Constraint,
   PoseInterpolator, VolumePlacements, WeightPacket, InfluenceFold,
   RevisionStatic, RevisionChunk, RevisionFuse, ChainStatus, Derived,
   FrameMatrix, PropertyRevision, RestCompose, LadderCompose, SkinTopology, WeightField, SpaceExpression, ChainInputs, AvarInputs, SpaceCheckpoint, ProviderRefresh,
-  /// Format 35: runs File.op_graph through the op core.
-  OpGraph }
+  /// Reserved: format 35's whole op graph as one step. Open refuses it.
+  ReservedOpGraph,
+  /// Format 36: File.op_graph's nodes as steps: one node that does not run
+  /// in ranges, a range chain's head, and one (segment, vertex group) of
+  /// a range chain (part = segment * groups + group).
+  OpNode, OpChainHead, OpChainRange }
 
 /// RigExecBakedSlotKind.
 enum SlotKind : ubyte { FirstFramePose = 0, XformDerived = 1 }
@@ -1847,18 +1854,25 @@ table Manifest {
 
 // ---------------------------------------------------------------- op graph
 
-/// Format 35: what feeds one input port of an op node: another node's
-/// output port, or the value of an inputs[] slot (a listed slot is an input
-/// a host sets, an unlisted one a constant). Exactly one source is set.
+/// What feeds one input port of an op node: another node's output port,
+/// or (format 36) a value of the rig or a constant. Exactly one source is
+/// set.
 table OpNodeInput {
   /// The fed port: its index in the op's port list.
   port: uint;
-  /// The feeding node, or -1 when a slot feeds the port.
+  /// The feeding node, or -1.
   node: int = -1;
   /// The feeding node's output port index.
   output: uint;
-  /// The feeding inputs[] slot, or -1 when a node feeds the port.
-  slot: int = -1;
+  /// Format 36, what else feeds the port, or -1: 0 a point chain's final
+  /// points (object: its chains[] index), 1 and 2 a joint's or control's
+  /// final and base matrix (object: its slot), 3 the constant `constant`
+  /// holds.
+  host: byte = -1;
+  object: uint;
+  /// For a constant: the value's bytes, an array's elements one after
+  /// another.
+  constant: [ubyte];
 }
 /// Format 35: one op instance. Its op and ports are named by index only;
 /// the names live in Manifest.core_ops.
@@ -1879,15 +1893,21 @@ table OpGraphOutput {
   type: uint;
   name: string (required);
 }
-/// Format 35: op nodes the op core runs as one OpGraph step of the common
-/// graph, which orders that step by its declared reads like any other.
+/// Format 36: one range chain of the op nodes, in the order the op core
+/// compiles them: the point chain whose vertex groups it runs in and their
+/// bounds.
+table OpChain {
+  point_chain: uint;
+  bounds: [int];
+}
+/// Format 36: op nodes the common graph runs as OpNode, OpChainHead and
+/// OpChainRange steps, ordered by their declared reads like any other.
 table OpGraph {
   nodes: [OpNode];
   /// (first, second) node pairs: first runs before second.
   order: [IntPair];
   outputs: [OpGraphOutput];
-  /// The steps[] index of the OpGraph step.
-  step: int = -1;
+  chains: [OpChain];
 }
 
 // -------------------------------------------------------------------- root

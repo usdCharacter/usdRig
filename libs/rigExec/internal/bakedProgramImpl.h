@@ -26,6 +26,7 @@
 #include "rigExec/internal/valueAddress.h"
 #include "rigExec/api/types.h"
 #include "rigExec/internal/weightPackets.h"
+#include "rigExecEvalCore/opSteps.h"
 #include "rigExecGraph/opGraph.h"
 #include "rigExecGraph/opValues.h"
 #include "rigExecGraph/windowHistory.h"
@@ -1130,6 +1131,37 @@ struct RigExecBakedWeightObject {
 /// refuses every later run.
 enum class RigExecBakedRunState : uint8_t { Cold, RanUnadmitted, Ran, Retired };
 
+/// Op nodes the baked schedule runs as OpNode, OpChainHead and
+/// OpChainRange steps (eval::OpStepLayout): the layout, the inputs fixed at
+/// Build and the named outputs. Immutable once built; clones share it.
+struct RigExecBakedOpProgram {
+    eval::OpStepLayout layout;
+    std::vector<std::pair<std::string, RigExecOutputId>> outputs;
+    /// Per node: its settings as its payload encode writes them, and
+    /// whether they could be written.
+    std::vector<std::vector<uint8_t>> payloads;
+    std::vector<char> savable;
+    /// Per chain, member and vertex group: the groups the member's
+    /// neighbourhood input reads there; empty for a member without one.
+    std::vector<std::vector<std::vector<std::vector<uint32_t>>>> halo;
+};
+
+/// Op nodes a test hands Build for a rig (RigExecBakedProgramTesting::
+/// SetOpInjector): a description, its inputs from the rig or fixed, and
+/// named outputs.
+struct RigExecBakedOpInjection {
+    std::shared_ptr<const RigExecRigDesc> desc;
+    std::vector<eval::OpHostInput> hostInputs;
+    /// An input fixed at Build: the node and port it feeds and its value.
+    struct Constant {
+        uint32_t node = 0;
+        uint32_t port = 0;
+        VtValue value;
+    };
+    std::vector<Constant> constants;
+    std::vector<std::pair<std::string, RigExecOutputId>> outputs;
+};
+
 struct RigExecBakedProgramImpl {
     using ConstraintArrays = RigExecBakedConstraintArray;
     using NativeXformSource = RigExecBakedNativeXformSource;
@@ -1953,6 +1985,10 @@ struct RigExecBakedProgramImpl {
     RigExecOpWorkspace opWorkspace;
     RigExecOpExecution opExecution;
     RigExecOpAdapterState opAdapter;
+    /// The op nodes the schedule runs, and this program's run of them; null
+    /// without op nodes.
+    std::shared_ptr<const RigExecBakedOpProgram> opProgram;
+    std::shared_ptr<eval::OpStepState> opState;
     /// RIGEXEC_VERIFY_CHAIN_VERSIONS, read at compile. After a run, the
     /// owner rebuilds each published point-version key over the points'
     /// bytes (RigExecBakedChainContentKey) and checks the two told the same
@@ -3489,6 +3525,33 @@ void RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program);
 /// RevisionStatic, its chunks and a RevisionFuse, then the chain's status
 /// sweep, then its derived targets.
 void RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program);
+/// The op nodes' steps (bakedOpNodes.cpp), after the geometry steps: what
+/// RigExecBakedProgramTesting::SetOpInjector hands, compiled for the
+/// schedule, with a run of it. False with the reason when they cannot run.
+bool RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program,
+                              std::string *error);
+/// Whether \p kind is an op step.
+inline bool
+RigExecBakedIsOpStep(RigExecBakedStepKind kind)
+{
+    return kind == RigExecBakedStepKind::OpNode ||
+           kind == RigExecBakedStepKind::OpChainHead ||
+           kind == RigExecBakedStepKind::OpChainRange;
+}
+/// Runs op step \p step; on failure marks it failed with the reason.
+void RigExecBakedRunOpStep(RigExecBakedProgramImpl *program,
+                           RigExecBakedStep *step);
+/// The op nodes' named outputs into \p pose's opOutputs.
+void RigExecBakedPublishOpOutputs(const RigExecBakedProgramImpl &program,
+                                  RigExecRigPose *pose);
+/// A clone's own run of the source's op nodes, pointed at the clone.
+bool RigExecBakedCloneOpState(const RigExecBakedProgramImpl &source,
+                              RigExecBakedProgramImpl *clone,
+                              std::string *error);
+/// Op value \p slot's version in \p domain (OpValue or OpGroupValue).
+bool RigExecBakedOpValueVersion(const RigExecBakedProgramImpl &program,
+                                RigExecBakedSlotDomain domain, uint32_t slot,
+                                uint64_t *version);
 
 /// Runs one pose step. Never touches the pose: everything it produces goes
 /// into \p step.
@@ -4381,6 +4444,13 @@ struct RigExecBakedProgramTesting {
                                      std::string *error = nullptr);
     static std::shared_ptr<RigExecBakedExecCheckRows>
     ExecCrossCheckRows(const RigExecBakedProgram &program);
+    /// Builds after this one call \p injector on the program being built;
+    /// when it returns true, its op nodes run as steps of the program.
+    /// Null stops. Set it on the thread that builds, while none builds.
+    static void
+    SetOpInjector(std::function<bool(const RigExecBakedProgramImpl &,
+                                     RigExecBakedOpInjection *)>
+                      injector);
     static void SetOpObservers(const RigExecBakedProgram &program,
                                std::function<void(uint32_t)> before,
                                std::function<void(uint32_t)> after);

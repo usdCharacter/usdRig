@@ -106,8 +106,7 @@ RIGEXEC_RENDER_UPDATE_BASELINES=1 build/testRigExecImagingRender \
 `minimal.rigexec` is the smallest valid program at the current format
 version; `testRigExecRuntimeFixture` rebuilds it and compares bytes. After a
 format bump, run that test with `RIGEXEC_UPDATE_FIXTURES=1` to rewrite it.
-`minimal_format34.rigexec` is the same program at format 34, before op
-nodes; keep it at 34.
-`minimal_format32.rigexec` and `registeredMover.rigexec` were baked at format
-32, before the manifest. Keep them at 32: they are what proves older files
-still open, through the format-32 manifest, and play.
+Open reads the current format only: an older file is refused and is baked
+again from its stage. `registeredMover.rigexec` is a rig with a registered
+external mover at the current format; `testRigExecExternalMovers` writes the
+same program to the build tree, so after a format bump copy that file over it.

@@ -1565,26 +1565,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 35 &&
-                      RigExecFormatOldestReadable == 20,
-                  "format 22 adds the IK/FK match, format 23 the property "
-                  "movers' quantize and path operations, format 24 "
-                  "RigLogic's solves, format 25 windowed operations, "
-                  "format 26 the cloth's material model (RCL3) and format "
-                  "27 volume falloff sample inputs, format 28 Range "
-                  "Smooth revisions, format 29 sparse blend channel keys, "
-                  "format 30 Range DQ and independent summaries and format 31 "
-                  "the 2D skeleton, unclamped animated map and scalar primvar "
-                  "records, format 32 the recomputed normals layout, format 33 "
-                  "the manifest, format 34 IK joint orientation, format 35 op "
-                  "nodes; per-group "
-                  "range chains pin the oldest readable "
-                  "format at 20");
-    // Every format before 20, 19 among them, requires re-export: a chain
-    // with groups' records (gated parts, Whole revisions' published groups,
-    // Range skins, private constants) mean something else to an older
-    // reader. Future versions require a supported exporter. Format 20 opens
-    // (it holds no extended deformer settings) but is never written.
+    static_assert(RigExecFormatVersion == 36 &&
+                      RigExecFormatOldestReadable == 36,
+                  "format 36 runs op nodes as steps of the common graph and "
+                  "is the only format Open reads");
+    // Every older format requires re-export: its op nodes ran as one step.
+    // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
     for (uint32_t version = 0; version <= RigExecFormatVersion + 1; ++version) {
@@ -1594,27 +1580,14 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 20 through " +
+            " (this reader reads 36 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 20 ? "re-export: per-group range chains" : "rebake");
+            (version < 36 ? "re-export: op nodes as steps of the common graph"
+                          : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 20 ? reexports : rebakes);
+        ++(version < 36 ? reexports : rebakes);
     }
-    CHECK(reexports == 20 && rebakes == 1);
-    _context = "open refusals: version 20";
-    versioned.formatVersion = 20;
-    const auto previous = _Open(_PackUnchecked(versioned), &why);
-    CHECK(previous && previous->formatVersion == 20);
-    std::vector<uint8_t> unwritten = {1, 2, 3};
-    CHECK(!_Write(versioned, &unwritten, &why) && unwritten.empty() &&
-          _Contains(why, "format_version is 20; a writer writes " +
-                             std::to_string(RigExecFormatVersion)));
-    for (uint32_t older = 21; older < RigExecFormatVersion; ++older) {
-        _context = "open refusals: version " + std::to_string(older);
-        versioned.formatVersion = older;
-        const auto opened = _Open(_PackUnchecked(versioned), &why);
-        CHECK(opened && opened->formatVersion == older);
-    }
+    CHECK(reexports == 36 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -4964,12 +4937,6 @@ TestRangeChunkTables()
                r.op = uint8_t(fb::RevisionOp::VolumeCorrect);
            }),
            text(row + ": 3 chunks, but not chunked"));
-    refuse("a range-shaped smooth revision in format 27",
-           matrix([](F &f, R &r) {
-               r.op = uint8_t(fb::RevisionOp::Smooth);
-               f.formatVersion = 27;
-           }),
-           text(row + ": 3 chunks, but not chunked"));
     refuse("a key on a range", matrix([](F &, R &r) { r.chunks[1].key = {0}; }),
            text(row + ".chunks[1]: a key on an unchunked revision"));
     refuse("a gap", matrix([](F &, R &r) {
@@ -5218,17 +5185,10 @@ TestRangeChunkTables()
            }),
            text(row + ": a Range Skin's rigExec:skinningMethod is not one "
                       "private, unanimated slot"));
-    refuse("a legacy Range dual-quaternion method", rangeSkin([](F &f, R &) {
-               f.formatVersion = 29;
-               f.inputs[_sgMethod] =
-                   fb::InputSlot(_pgMethod, _vgDual, -1, -1, InputTag::Token,
-                                 uint8_t(fb::InputSlotFlags::HasValue));
-           }),
-           text(row + ": unsupported Range Skin method 'dualQuaternion'"));
     std::printf("group tables: %d chains with groups accepted; %d group "
                 "table, step and constant violations refused\n",
                 accepted, refused);
-    CHECK(refused == 29);
+    CHECK(refused == 27);
 }
 
 // ----------------------------------------------------------------- arrays
@@ -6497,10 +6457,6 @@ TestSkeleton2dWireShapes()
         CHECK(!RigExecFormatValidate(bad, &error));
         CHECK(error.find(fragment) != std::string::npos);
     };
-    // A skeleton2d is refused in a file older than format 31.
-    RigExecWireFile older = file;
-    older.formatVersion = 30;
-    reject(std::move(older), "skeleton2d: in a format older than 31");
     // A bad range, space, tip, selector, candidate, member, enabled flag or
     // channel tag is refused.
     RigExecWireFile badBegin = file;
@@ -6559,15 +6515,6 @@ TestJointGroupWireShapes()
         CHECK(!RigExecFormatValidate(bad, &error));
         CHECK(error.find(fragment) != std::string::npos);
     };
-    // Joint groups are refused in a file older than format 31, each field
-    // on its own.
-    RigExecWireFile older = file;
-    older.formatVersion = 30;
-    reject(std::move(older), "joint_groups: in a format older than 31");
-    RigExecWireFile olderParents = _RichFile();
-    olderParents.formatVersion = 30;
-    olderParents.pose->solvers[0].jointGroupParents = {-1};
-    reject(std::move(olderParents), "joint_groups: in a format older than 31");
     // A range past the members, a member past the joints, a parent past
     // the joints, a parent cycle, or a missing selector is refused.
     RigExecWireFile longRange = file;
@@ -6654,14 +6601,6 @@ TestAnimatedMapsWireShapes()
     RigExecWireFile badValue = file;
     badValue.pose->poseInterpolators[0].maps->mapUnclamped = {0, 2};
     reject(std::move(badValue), "malformed animated maps");
-    // A non-empty field in a file older than format 31 is refused; the same
-    // file without it opens.
-    RigExecWireFile older = unclamped;
-    older.formatVersion = 30;
-    reject(std::move(older), "malformed animated maps");
-    RigExecWireFile olderClamped = file;
-    olderClamped.formatVersion = 30;
-    CHECK(RigExecFormatValidate(olderClamped, &why));
 }
 
 void

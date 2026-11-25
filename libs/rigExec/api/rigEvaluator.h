@@ -159,6 +159,10 @@ struct RigExecRigPose {
     /// parity).
     std::map<SdfPath, VtValue> movedPropertiesCpu;
 
+    /// The rig's named op node outputs (point arrays op nodes computed), as
+    /// VtVec3fArray.
+    std::map<std::string, VtValue> opOutputs;
+
     /// Resolved weight field of every weight object a mover consumed this
     /// generation, keyed by the weight object's prim path.
     ///

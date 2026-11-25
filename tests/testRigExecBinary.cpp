@@ -1525,35 +1525,6 @@ _HeldSettings(fb::RigExecWireFile *file, const std::string &mover)
     return held;
 }
 
-/// \p file with every format-21 setting of its Delta Mush, lattice and
-/// surface revisions taken out (path reads and leaf sites), relabelled
-/// format 20: what a format-20 export of the same legacy rig holds.
-static void
-_AsFormat20(fb::RigExecWireFile *file)
-{
-    auto &reads = file->geometry->pathReads;
-    for (fb::RigExecWireChain &chain : file->geometry->chains) {
-        for (fb::RigExecWireRevision &revision : chain.revisions) {
-            const auto extended = [&](uint32_t path) {
-                return _IsExtendedSetting(*file, revision, path);
-            };
-            for (auto *sites :
-                 {&revision.leafSites, &revision.layoutLeafSites}) {
-                sites->erase(std::remove_if(sites->begin(), sites->end(),
-                                            [&](const auto &site) {
-                                                return extended(site.path);
-                                            }),
-                             sites->end());
-            }
-            reads.erase(std::remove_if(reads.begin(), reads.end(),
-                                       [&](const auto &read) {
-                                           return extended(read.path);
-                                       }),
-                        reads.end());
-        }
-    }
-    file->formatVersion = 20;
-}
 
 /// \p stage's file baked at time 1 into \p bytes; false with a diagnostic.
 static bool
@@ -1635,7 +1606,7 @@ TestExtendedDeformerSettingsBake()
               rewritten == bytes);
         fb::RigExecWireFile relabelled(*file);
         relabelled.formatVersion = 20;
-        CHECK(_Refused(relabelled, "format 20 holds no"));
+        CHECK(_Refused(relabelled, "this reader reads"));
         relabelled.formatVersion = RigExecFormatVersion + 1;
         const std::vector<uint8_t> future =
             RigExecTestPackUnchecked(relabelled);
@@ -1672,40 +1643,12 @@ TestExtendedDeformerSettingsBake()
                 lone->influenceRecords.pop_back();
             }
             CHECK(_Refused(one, "1 frame providers on a Lattice revision"));
-            fb::RigExecWireFile previous(*file);
-            _AsFormat20(&previous);
-            CHECK(_Refused(previous, "holds no frame providers"));
         }
     }
 
-    // The legacy Delta Mush, as format 20.
-    bool legacyOpened = false;
-    if (const UsdStageRefPtr stage = _StageFromText(_kLegacyMushStage)) {
-        std::vector<uint8_t> bytes;
-        CHECK(_BakeAtOne(stage, &bytes));
-        const std::unique_ptr<fb::RigExecWireFile> file =
-            bytes.empty() ? nullptr : RigExecTestUnpack(bytes);
-        if (file) {
-            CHECK(!_HeldSettings(file.get(), "/Rig/Mush").empty());
-            _AsFormat20(file.get());
-            CHECK(_HeldSettings(file.get(), "/Rig/Mush").empty());
-            const std::vector<uint8_t> previous =
-                RigExecTestPackUnchecked(*file);
-            std::unique_ptr<fb::RigExecWireFile> opened;
-            std::string why;
-            legacyOpened = RigExecFormatOpen(previous.data(), previous.size(),
-                                             &opened, &why) &&
-                           opened && opened->formatVersion == 20;
-            if (!legacyOpened) {
-                std::printf("  legacy format 20: %s\n", why.c_str());
-            }
-            CHECK(legacyOpened);
-        }
-    }
     std::printf("extended deformer settings: %zu held over %zu rigs, %zu "
-                "frame providers, legacy format 20 %s\n",
-                settings, std::size(rows), framed,
-                legacyOpened ? "opens" : "REFUSED");
+                "frame providers\n",
+                settings, std::size(rows), framed);
 }
 
 // Format 21 holds affine frame expressions as provider ops. A joint whose
@@ -1769,7 +1712,7 @@ TestAffineFrameRecords()
     CHECK(RigExecFormatWrite(*file, &rewritten, &why) && rewritten == bytes);
     fb::RigExecWireFile previous(*file);
     previous.formatVersion = 20;
-    CHECK(_Refused(previous, "holds no affine frame expressions"));
+    CHECK(_Refused(previous, "this reader reads"));
     fb::RigExecWireFile unknown(*file);
     affineOp(&unknown)->affineKind = RigExecAffineFrameTypeCount;
     CHECK(_Refused(unknown, "affine frame expression does not match"));
@@ -2786,13 +2729,6 @@ TestRangeChainBake()
         },
         " does not declare RevisionOut[" +
             std::to_string(firstBase + ranges - 1) + "]");
-    {
-        fb::RigExecWireFile legacy(*file);
-        legacy.formatVersion = 29;
-        std::string why;
-        CHECK(!RigExecFormatValidate(legacy, &why));
-        CHECK(_Contains(why, "does not declare RevisionDone["));
-    }
     std::printf("range chain bake: %zu Range revisions of %zu groups "
                 "accepted; %d group rule violations refused\n",
                 chain.revisions.size(), ranges, refused);

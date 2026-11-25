@@ -173,6 +173,25 @@ struct RigExecRun {
     /// Per input: the host storage it is read from (PointInput), or null
     /// for the channel's.
     std::vector<const void *> hostInputs;
+    /// Per input a host feeds as groups (PointInputGroups): the groups, and
+    /// the value standing for it, which holds their count; per slot, the
+    /// input feeding it that way or kRigExecInvalidIndex.
+    std::vector<RigExecOpGroups> hostGroups;
+    std::vector<RigExecAlignedBuffer> hostGroupValues;
+    std::vector<uint32_t> hostGroupOfSlot;
+    /// Per chain: this frame's range bounds, ranges + 1 of them.
+    std::vector<std::vector<int>> chainBounds;
+    /// Per grouped slot (RigExecProgram::groupedSlots): one buffer per
+    /// range, kept from frame to frame.
+    std::vector<std::vector<RigExecAlignedBuffer>> groupStore;
+    /// Per slot a neighbourhood input reads: the groups its ranges are
+    /// handed, their points, and the bounds of a value kept whole.
+    std::vector<RigExecOpGroups> slotGroups;
+    std::vector<std::vector<const void *>> slotGroupPoints;
+    std::vector<std::vector<int>> slotGroupBounds;
+    /// Per batchNodes entry of a ranged op: per range, its port pointers
+    /// (RigExecOpRange::at).
+    std::vector<std::vector<void *>> rangeAt;
 
     RigExecRun() = default;
     RigExecRun(const RigExecRun &) = delete;
@@ -211,12 +230,18 @@ struct RigExecRun {
     /// \p groups groups, one segment of a chain over [begin, end) as group
     /// \p group, and the elements a member's range reads.
     void PointInput(uint32_t input, const void *value);
+    bool PointInputGroups(uint32_t input, const RigExecOpGroups *groups,
+                          std::string *error);
     bool RunNode(uint32_t node, std::string *error);
-    bool RunChainHead(uint32_t chain, uint32_t groups, std::string *error);
-    bool RunChainRange(uint32_t chain, uint32_t segment, size_t begin,
-                       size_t end, uint32_t group, std::string *error);
-    void ChainReads(uint32_t chain, uint32_t member, size_t begin, size_t end,
-                    uint32_t group, size_t *lo, size_t *hi) const;
+    bool RunChainHead(uint32_t chain, const int *bounds, uint32_t groups,
+                      std::string *error);
+    bool RunChainRange(uint32_t chain, uint32_t segment, uint32_t group,
+                       std::string *error);
+    void ChainReads(uint32_t chain, uint32_t member, uint32_t group, size_t *lo,
+                    size_t *hi) const;
+    /// Copies grouped slot \p slot's ranges into \p value, a value of its
+    /// type.
+    void Gather(uint32_t slot, void *value) const;
     size_t ChainElements(uint32_t chain) const
     {
         return elementCounts
@@ -252,6 +277,8 @@ private:
     void _ForEachRead(uint32_t c, uint32_t start, uint32_t r,
                       const Visit &visit) const;
     bool _RangeOf(uint32_t at, uint32_t index, RigExecOpRange *range) const;
+    void _PrepareGroups(uint32_t chain);
+    void _PointRange(uint32_t at, RigExecOpRange *range);
     bool _RunSlot(uint32_t s);
     void _CompleteChains();
     void _Fail(uint32_t b, uint32_t instance, const std::string &error);

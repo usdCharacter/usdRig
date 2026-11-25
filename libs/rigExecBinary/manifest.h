@@ -34,23 +34,15 @@ struct RigExecManifestTables {
     RigExecManifestTable valueTypes;
 };
 
-/// The first format version that stores a manifest.
-inline constexpr uint32_t RigExecFormatManifestVersion = 33;
-
 /// This build's ordinals.
 const RigExecManifestTables &RigExecManifestCurrent();
-
-/// What the ordinals of format 20 to 32 files mean. Frozen: it never
-/// changes when this build's ordinals do.
-const RigExecManifestTables &RigExecManifestFormat32();
 
 /// A manifest holding \p tables, as a writer stores it.
 std::unique_ptr<fb::RigExecWireManifest>
 RigExecManifestBuild(const RigExecManifestTables &tables);
 
-/// Open's step between unpacking and validating. A file older than format
-/// 33 gets the format-32 manifest; a newer one must carry its own. Each op
-/// field is then rewritten from the file's ordinal to this build's, and the
+/// Open's step between unpacking and validating. The file must carry a
+/// manifest. Each op field is rewritten from the file's ordinal to this build's, and the
 /// manifest replaced by this build's, keeping the file's core_ops and
 /// core_types, which the runtime resolves against its op registry. Fails naming an id this build does
 /// not know or an id listed twice, or on value types out of this build's

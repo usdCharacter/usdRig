@@ -432,6 +432,10 @@ struct OpGraphOutput;
 struct OpGraphOutputBuilder;
 struct RigExecWireOpGraphOutput;
 
+struct OpChain;
+struct OpChainBuilder;
+struct RigExecWireOpChain;
+
 struct OpGraph;
 struct OpGraphBuilder;
 struct RigExecWireOpGraph;
@@ -669,6 +673,8 @@ inline const ::flatbuffers::TypeTable *OpNodeInputTypeTable();
 inline const ::flatbuffers::TypeTable *OpNodeTypeTable();
 
 inline const ::flatbuffers::TypeTable *OpGraphOutputTypeTable();
+
+inline const ::flatbuffers::TypeTable *OpChainTypeTable();
 
 inline const ::flatbuffers::TypeTable *OpGraphTypeTable();
 
@@ -1043,11 +1049,15 @@ enum class SlotDomain : uint8_t {
   ConstraintInputs = 36,
   SwitchFrame = 37,
   RequiredStageFramesAdmission = 38,
+  /// Format 36: an op value or a range chain's plan, and one vertex group
+  /// of an op value a range chain member writes.
+  OpValue = 39,
+  OpGroupValue = 40,
   MIN = Avars,
-  MAX = RequiredStageFramesAdmission
+  MAX = OpGroupValue
 };
 
-inline const SlotDomain (&EnumValuesSlotDomain())[39] {
+inline const SlotDomain (&EnumValuesSlotDomain())[41] {
   static const SlotDomain values[] = {
     SlotDomain::Avars,
     SlotDomain::PoseBase,
@@ -1087,13 +1097,15 @@ inline const SlotDomain (&EnumValuesSlotDomain())[39] {
     SlotDomain::ChainInput,
     SlotDomain::ConstraintInputs,
     SlotDomain::SwitchFrame,
-    SlotDomain::RequiredStageFramesAdmission
+    SlotDomain::RequiredStageFramesAdmission,
+    SlotDomain::OpValue,
+    SlotDomain::OpGroupValue
   };
   return values;
 }
 
 inline const char * const *EnumNamesSlotDomain() {
-  static const char * const names[40] = {
+  static const char * const names[42] = {
     "Avars",
     "PoseBase",
     "PoseFin",
@@ -1133,13 +1145,15 @@ inline const char * const *EnumNamesSlotDomain() {
     "ConstraintInputs",
     "SwitchFrame",
     "RequiredStageFramesAdmission",
+    "OpValue",
+    "OpGroupValue",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameSlotDomain(SlotDomain e) {
-  if (::flatbuffers::IsOutRange(e, SlotDomain::Avars, SlotDomain::RequiredStageFramesAdmission)) return "";
+  if (::flatbuffers::IsOutRange(e, SlotDomain::Avars, SlotDomain::OpGroupValue)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesSlotDomain()[index];
 }
@@ -1176,13 +1190,19 @@ enum class StepKind : uint8_t {
   AvarInputs = 26,
   SpaceCheckpoint = 27,
   ProviderRefresh = 28,
-  /// Format 35: runs File.op_graph through the op core.
-  OpGraph = 29,
+  /// Reserved: format 35's whole op graph as one step. Open refuses it.
+  ReservedOpGraph = 29,
+  /// Format 36: File.op_graph's nodes as steps: one node that does not run
+  /// in ranges, a range chain's head, and one (segment, vertex group) of
+  /// a range chain (part = segment * groups + group).
+  OpNode = 30,
+  OpChainHead = 31,
+  OpChainRange = 32,
   MIN = ComposeSubtree,
-  MAX = OpGraph
+  MAX = OpChainRange
 };
 
-inline const StepKind (&EnumValuesStepKind())[30] {
+inline const StepKind (&EnumValuesStepKind())[33] {
   static const StepKind values[] = {
     StepKind::ComposeSubtree,
     StepKind::Solve,
@@ -1213,13 +1233,16 @@ inline const StepKind (&EnumValuesStepKind())[30] {
     StepKind::AvarInputs,
     StepKind::SpaceCheckpoint,
     StepKind::ProviderRefresh,
-    StepKind::OpGraph
+    StepKind::ReservedOpGraph,
+    StepKind::OpNode,
+    StepKind::OpChainHead,
+    StepKind::OpChainRange
   };
   return values;
 }
 
 inline const char * const *EnumNamesStepKind() {
-  static const char * const names[31] = {
+  static const char * const names[34] = {
     "ComposeSubtree",
     "Solve",
     "SolverCommit",
@@ -1249,14 +1272,17 @@ inline const char * const *EnumNamesStepKind() {
     "AvarInputs",
     "SpaceCheckpoint",
     "ProviderRefresh",
-    "OpGraph",
+    "ReservedOpGraph",
+    "OpNode",
+    "OpChainHead",
+    "OpChainRange",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameStepKind(StepKind e) {
-  if (::flatbuffers::IsOutRange(e, StepKind::ComposeSubtree, StepKind::OpGraph)) return "";
+  if (::flatbuffers::IsOutRange(e, StepKind::ComposeSubtree, StepKind::OpChainRange)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesStepKind()[index];
 }
@@ -21892,12 +21918,14 @@ struct RigExecWireOpNodeInput : public ::flatbuffers::NativeTable {
   uint32_t port = 0;
   int32_t node = -1;
   uint32_t output = 0;
-  int32_t slot = -1;
+  int8_t host = -1;
+  uint32_t object = 0;
+  std::vector<uint8_t> constant{};
 };
 
-/// Format 35: what feeds one input port of an op node: another node's
-/// output port, or the value of an inputs[] slot (a listed slot is an input
-/// a host sets, an unlisted one a constant). Exactly one source is set.
+/// What feeds one input port of an op node: another node's output port,
+/// or (format 36) a value of the rig or a constant. Exactly one source is
+/// set.
 struct OpNodeInput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef RigExecWireOpNodeInput NativeTableType;
   typedef OpNodeInputBuilder Builder;
@@ -21909,13 +21937,15 @@ struct OpNodeInput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_PORT = 4,
     VT_NODE = 6,
     VT_OUTPUT = 8,
-    VT_SLOT = 10
+    VT_HOST = 10,
+    VT_OBJECT = 12,
+    VT_CONSTANT = 14
   };
   /// The fed port: its index in the op's port list.
   uint32_t port() const {
     return GetField<uint32_t>(VT_PORT, 0);
   }
-  /// The feeding node, or -1 when a slot feeds the port.
+  /// The feeding node, or -1.
   int32_t node() const {
     return GetField<int32_t>(VT_NODE, -1);
   }
@@ -21923,9 +21953,20 @@ struct OpNodeInput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t output() const {
     return GetField<uint32_t>(VT_OUTPUT, 0);
   }
-  /// The feeding inputs[] slot, or -1 when a node feeds the port.
-  int32_t slot() const {
-    return GetField<int32_t>(VT_SLOT, -1);
+  /// Format 36, what else feeds the port, or -1: 0 a point chain's final
+  /// points (object: its chains[] index), 1 and 2 a joint's or control's
+  /// final and base matrix (object: its slot), 3 the constant `constant`
+  /// holds.
+  int8_t host() const {
+    return GetField<int8_t>(VT_HOST, -1);
+  }
+  uint32_t object() const {
+    return GetField<uint32_t>(VT_OBJECT, 0);
+  }
+  /// For a constant: the value's bytes, an array's elements one after
+  /// another.
+  const ::flatbuffers::Vector<uint8_t> *constant() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_CONSTANT);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -21933,7 +21974,10 @@ struct OpNodeInput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint32_t>(verifier, VT_PORT, 4) &&
            VerifyField<int32_t>(verifier, VT_NODE, 4) &&
            VerifyField<uint32_t>(verifier, VT_OUTPUT, 4) &&
-           VerifyField<int32_t>(verifier, VT_SLOT, 4) &&
+           VerifyField<int8_t>(verifier, VT_HOST, 1) &&
+           VerifyField<uint32_t>(verifier, VT_OBJECT, 4) &&
+           VerifyOffset(verifier, VT_CONSTANT) &&
+           verifier.VerifyVector(constant()) &&
            verifier.EndTable();
   }
   RigExecWireOpNodeInput *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -21954,8 +21998,14 @@ struct OpNodeInputBuilder {
   void add_output(uint32_t output) {
     fbb_.AddElement<uint32_t>(OpNodeInput::VT_OUTPUT, output, 0);
   }
-  void add_slot(int32_t slot) {
-    fbb_.AddElement<int32_t>(OpNodeInput::VT_SLOT, slot, -1);
+  void add_host(int8_t host) {
+    fbb_.AddElement<int8_t>(OpNodeInput::VT_HOST, host, -1);
+  }
+  void add_object(uint32_t object) {
+    fbb_.AddElement<uint32_t>(OpNodeInput::VT_OBJECT, object, 0);
+  }
+  void add_constant(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> constant) {
+    fbb_.AddOffset(OpNodeInput::VT_CONSTANT, constant);
   }
   explicit OpNodeInputBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
@@ -21973,12 +22023,16 @@ inline ::flatbuffers::Offset<OpNodeInput> CreateOpNodeInput(
     uint32_t port = 0,
     int32_t node = -1,
     uint32_t output = 0,
-    int32_t slot = -1) {
+    int8_t host = -1,
+    uint32_t object = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> constant = 0) {
   OpNodeInputBuilder builder_(_fbb);
-  builder_.add_slot(slot);
+  builder_.add_constant(constant);
+  builder_.add_object(object);
   builder_.add_output(output);
   builder_.add_node(node);
   builder_.add_port(port);
+  builder_.add_host(host);
   return builder_.Finish();
 }
 
@@ -21986,6 +22040,25 @@ struct OpNodeInput::Traits {
   using type = OpNodeInput;
   static auto constexpr Create = CreateOpNodeInput;
 };
+
+inline ::flatbuffers::Offset<OpNodeInput> CreateOpNodeInputDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t port = 0,
+    int32_t node = -1,
+    uint32_t output = 0,
+    int8_t host = -1,
+    uint32_t object = 0,
+    const std::vector<uint8_t> *constant = nullptr) {
+  auto constant__ = constant ? _fbb.CreateVector<uint8_t>(*constant) : 0;
+  return rigExec::fb::CreateOpNodeInput(
+      _fbb,
+      port,
+      node,
+      output,
+      host,
+      object,
+      constant__);
+}
 
 ::flatbuffers::Offset<OpNodeInput> CreateOpNodeInput(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpNodeInput *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
@@ -22214,20 +22287,108 @@ inline ::flatbuffers::Offset<OpGraphOutput> CreateOpGraphOutputDirect(
 
 ::flatbuffers::Offset<OpGraphOutput> CreateOpGraphOutput(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpGraphOutput *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct RigExecWireOpChain : public ::flatbuffers::NativeTable {
+  typedef OpChain TableType;
+  uint32_t pointChain = 0;
+  std::vector<int32_t> bounds{};
+};
+
+/// Format 36: one range chain of the op nodes, in the order the op core
+/// compiles them: the point chain whose vertex groups it runs in and their
+/// bounds.
+struct OpChain FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireOpChain NativeTableType;
+  typedef OpChainBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return OpChainTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_POINTCHAIN = 4,
+    VT_BOUNDS = 6
+  };
+  uint32_t pointChain() const {
+    return GetField<uint32_t>(VT_POINTCHAIN, 0);
+  }
+  const ::flatbuffers::Vector<int32_t> *bounds() const {
+    return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_BOUNDS);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_POINTCHAIN, 4) &&
+           VerifyOffset(verifier, VT_BOUNDS) &&
+           verifier.VerifyVector(bounds()) &&
+           verifier.EndTable();
+  }
+  RigExecWireOpChain *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireOpChain *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<OpChain> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpChain* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct OpChainBuilder {
+  typedef OpChain Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_pointChain(uint32_t pointChain) {
+    fbb_.AddElement<uint32_t>(OpChain::VT_POINTCHAIN, pointChain, 0);
+  }
+  void add_bounds(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> bounds) {
+    fbb_.AddOffset(OpChain::VT_BOUNDS, bounds);
+  }
+  explicit OpChainBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<OpChain> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<OpChain>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<OpChain> CreateOpChain(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t pointChain = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> bounds = 0) {
+  OpChainBuilder builder_(_fbb);
+  builder_.add_bounds(bounds);
+  builder_.add_pointChain(pointChain);
+  return builder_.Finish();
+}
+
+struct OpChain::Traits {
+  using type = OpChain;
+  static auto constexpr Create = CreateOpChain;
+};
+
+inline ::flatbuffers::Offset<OpChain> CreateOpChainDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t pointChain = 0,
+    const std::vector<int32_t> *bounds = nullptr) {
+  auto bounds__ = bounds ? _fbb.CreateVector<int32_t>(*bounds) : 0;
+  return rigExec::fb::CreateOpChain(
+      _fbb,
+      pointChain,
+      bounds__);
+}
+
+::flatbuffers::Offset<OpChain> CreateOpChain(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpChain *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct RigExecWireOpGraph : public ::flatbuffers::NativeTable {
   typedef OpGraph TableType;
   std::vector<std::unique_ptr<rigExec::fb::RigExecWireOpNode>> nodes{};
   std::vector<::rigExec::RigExecWireIntPair> order{};
   std::vector<std::unique_ptr<rigExec::fb::RigExecWireOpGraphOutput>> outputs{};
-  int32_t step = -1;
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireOpChain>> chains{};
   RigExecWireOpGraph() = default;
   RigExecWireOpGraph(const RigExecWireOpGraph &o);
   RigExecWireOpGraph(RigExecWireOpGraph&&) FLATBUFFERS_NOEXCEPT = default;
   RigExecWireOpGraph &operator=(RigExecWireOpGraph o) FLATBUFFERS_NOEXCEPT;
 };
 
-/// Format 35: op nodes the op core runs as one OpGraph step of the common
-/// graph, which orders that step by its declared reads like any other.
+/// Format 36: op nodes the common graph runs as OpNode, OpChainHead and
+/// OpChainRange steps, ordered by their declared reads like any other.
 struct OpGraph FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef RigExecWireOpGraph NativeTableType;
   typedef OpGraphBuilder Builder;
@@ -22239,7 +22400,7 @@ struct OpGraph FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_NODES = 4,
     VT_ORDER = 6,
     VT_OUTPUTS = 8,
-    VT_STEP = 10
+    VT_CHAINS = 10
   };
   const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpNode>> *nodes() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpNode>> *>(VT_NODES);
@@ -22251,9 +22412,8 @@ struct OpGraph FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpGraphOutput>> *outputs() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpGraphOutput>> *>(VT_OUTPUTS);
   }
-  /// The steps[] index of the OpGraph step.
-  int32_t step() const {
-    return GetField<int32_t>(VT_STEP, -1);
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpChain>> *chains() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpChain>> *>(VT_CHAINS);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -22266,7 +22426,9 @@ struct OpGraph FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffset(verifier, VT_OUTPUTS) &&
            verifier.VerifyVector(outputs()) &&
            verifier.VerifyVectorOfTables(outputs()) &&
-           VerifyField<int32_t>(verifier, VT_STEP, 4) &&
+           VerifyOffset(verifier, VT_CHAINS) &&
+           verifier.VerifyVector(chains()) &&
+           verifier.VerifyVectorOfTables(chains()) &&
            verifier.EndTable();
   }
   RigExecWireOpGraph *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -22287,8 +22449,8 @@ struct OpGraphBuilder {
   void add_outputs(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpGraphOutput>>> outputs) {
     fbb_.AddOffset(OpGraph::VT_OUTPUTS, outputs);
   }
-  void add_step(int32_t step) {
-    fbb_.AddElement<int32_t>(OpGraph::VT_STEP, step, -1);
+  void add_chains(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpChain>>> chains) {
+    fbb_.AddOffset(OpGraph::VT_CHAINS, chains);
   }
   explicit OpGraphBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
@@ -22306,9 +22468,9 @@ inline ::flatbuffers::Offset<OpGraph> CreateOpGraph(
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpNode>>> nodes = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::IntPair *>> order = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpGraphOutput>>> outputs = 0,
-    int32_t step = -1) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpChain>>> chains = 0) {
   OpGraphBuilder builder_(_fbb);
-  builder_.add_step(step);
+  builder_.add_chains(chains);
   builder_.add_outputs(outputs);
   builder_.add_order(order);
   builder_.add_nodes(nodes);
@@ -22325,16 +22487,17 @@ inline ::flatbuffers::Offset<OpGraph> CreateOpGraphDirect(
     const std::vector<::flatbuffers::Offset<rigExec::fb::OpNode>> *nodes = nullptr,
     const std::vector<rigExec::fb::IntPair> *order = nullptr,
     const std::vector<::flatbuffers::Offset<rigExec::fb::OpGraphOutput>> *outputs = nullptr,
-    int32_t step = -1) {
+    const std::vector<::flatbuffers::Offset<rigExec::fb::OpChain>> *chains = nullptr) {
   auto nodes__ = nodes ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpNode>>(*nodes) : 0;
   auto order__ = order ? _fbb.CreateVectorOfStructs<rigExec::fb::IntPair>(*order) : 0;
   auto outputs__ = outputs ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpGraphOutput>>(*outputs) : 0;
+  auto chains__ = chains ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpChain>>(*chains) : 0;
   return rigExec::fb::CreateOpGraph(
       _fbb,
       nodes__,
       order__,
       outputs__,
-      step);
+      chains__);
 }
 
 ::flatbuffers::Offset<OpGraph> CreateOpGraph(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpGraph *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -28902,7 +29065,9 @@ inline void OpNodeInput::UnPackTo(RigExecWireOpNodeInput *_o, const ::flatbuffer
   { auto _e = port(); _o->port = _e; }
   { auto _e = node(); _o->node = _e; }
   { auto _e = output(); _o->output = _e; }
-  { auto _e = slot(); _o->slot = _e; }
+  { auto _e = host(); _o->host = _e; }
+  { auto _e = object(); _o->object = _e; }
+  { auto _e = constant(); if (_e) { _o->constant.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->constant.begin()); } }
 }
 
 inline ::flatbuffers::Offset<OpNodeInput> CreateOpNodeInput(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpNodeInput *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -28916,13 +29081,17 @@ inline ::flatbuffers::Offset<OpNodeInput> OpNodeInput::Pack(::flatbuffers::FlatB
   auto _port = _o->port;
   auto _node = _o->node;
   auto _output = _o->output;
-  auto _slot = _o->slot;
+  auto _host = _o->host;
+  auto _object = _o->object;
+  auto _constant = _o->constant.size() ? _fbb.CreateVector(_o->constant) : 0;
   return rigExec::fb::CreateOpNodeInput(
       _fbb,
       _port,
       _node,
       _output,
-      _slot);
+      _host,
+      _object,
+      _constant);
 }
 
 inline RigExecWireOpNode::RigExecWireOpNode(const RigExecWireOpNode &o)
@@ -29006,20 +29175,50 @@ inline ::flatbuffers::Offset<OpGraphOutput> OpGraphOutput::Pack(::flatbuffers::F
       _name);
 }
 
+inline RigExecWireOpChain *OpChain::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireOpChain>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void OpChain::UnPackTo(RigExecWireOpChain *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = pointChain(); _o->pointChain = _e; }
+  { auto _e = bounds(); if (_e) { _o->bounds.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->bounds[_i] = _e->Get(_i); } } else { _o->bounds.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<OpChain> CreateOpChain(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpChain *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return OpChain::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<OpChain> OpChain::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpChain* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireOpChain* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _pointChain = _o->pointChain;
+  auto _bounds = _o->bounds.size() ? _fbb.CreateVector(_o->bounds) : 0;
+  return rigExec::fb::CreateOpChain(
+      _fbb,
+      _pointChain,
+      _bounds);
+}
+
 inline RigExecWireOpGraph::RigExecWireOpGraph(const RigExecWireOpGraph &o)
-      : order(o.order),
-        step(o.step) {
+      : order(o.order) {
   nodes.reserve(o.nodes.size());
   for (const auto &nodes_ : o.nodes) { nodes.emplace_back((nodes_) ? new rigExec::fb::RigExecWireOpNode(*nodes_) : nullptr); }
   outputs.reserve(o.outputs.size());
   for (const auto &outputs_ : o.outputs) { outputs.emplace_back((outputs_) ? new rigExec::fb::RigExecWireOpGraphOutput(*outputs_) : nullptr); }
+  chains.reserve(o.chains.size());
+  for (const auto &chains_ : o.chains) { chains.emplace_back((chains_) ? new rigExec::fb::RigExecWireOpChain(*chains_) : nullptr); }
 }
 
 inline RigExecWireOpGraph &RigExecWireOpGraph::operator=(RigExecWireOpGraph o) FLATBUFFERS_NOEXCEPT {
   std::swap(nodes, o.nodes);
   std::swap(order, o.order);
   std::swap(outputs, o.outputs);
-  std::swap(step, o.step);
+  std::swap(chains, o.chains);
   return *this;
 }
 
@@ -29035,7 +29234,7 @@ inline void OpGraph::UnPackTo(RigExecWireOpGraph *_o, const ::flatbuffers::resol
   { auto _e = nodes(); if (_e) { _o->nodes.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->nodes[_i]) { _e->Get(_i)->UnPackTo(_o->nodes[_i].get(), _resolver); } else { _o->nodes[_i] = std::unique_ptr<rigExec::fb::RigExecWireOpNode>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->nodes.resize(0); } }
   { auto _e = order(); if (_e) { _o->order.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->order[_i] = ::flatbuffers::UnPackIntPair(*_e->Get(_i)); } } else { _o->order.resize(0); } }
   { auto _e = outputs(); if (_e) { _o->outputs.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->outputs[_i]) { _e->Get(_i)->UnPackTo(_o->outputs[_i].get(), _resolver); } else { _o->outputs[_i] = std::unique_ptr<rigExec::fb::RigExecWireOpGraphOutput>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->outputs.resize(0); } }
-  { auto _e = step(); _o->step = _e; }
+  { auto _e = chains(); if (_e) { _o->chains.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->chains[_i]) { _e->Get(_i)->UnPackTo(_o->chains[_i].get(), _resolver); } else { _o->chains[_i] = std::unique_ptr<rigExec::fb::RigExecWireOpChain>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->chains.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<OpGraph> CreateOpGraph(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpGraph *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -29049,13 +29248,13 @@ inline ::flatbuffers::Offset<OpGraph> OpGraph::Pack(::flatbuffers::FlatBufferBui
   auto _nodes = _o->nodes.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpNode>> (_o->nodes.size(), [](size_t i, _VectorArgs *__va) { return CreateOpNode(*__va->__fbb, __va->__o->nodes[i].get(), __va->__rehasher); }, &_va ) : 0;
   auto _order = _o->order.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::IntPair, ::rigExec::RigExecWireIntPair>(_o->order, ::flatbuffers::PackIntPair) : 0;
   auto _outputs = _o->outputs.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpGraphOutput>> (_o->outputs.size(), [](size_t i, _VectorArgs *__va) { return CreateOpGraphOutput(*__va->__fbb, __va->__o->outputs[i].get(), __va->__rehasher); }, &_va ) : 0;
-  auto _step = _o->step;
+  auto _chains = _o->chains.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpChain>> (_o->chains.size(), [](size_t i, _VectorArgs *__va) { return CreateOpChain(*__va->__fbb, __va->__o->chains[i].get(), __va->__rehasher); }, &_va ) : 0;
   return rigExec::fb::CreateOpGraph(
       _fbb,
       _nodes,
       _order,
       _outputs,
-      _step);
+      _chains);
 }
 
 inline RigExecWireFile::RigExecWireFile(const RigExecWireFile &o)
@@ -29435,13 +29634,15 @@ inline const ::flatbuffers::TypeTable *SlotDomainTypeTable() {
     { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::SlotDomainTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_ENUM, 39, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_ENUM, 41, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }
@@ -29477,13 +29678,16 @@ inline const ::flatbuffers::TypeTable *StepKindTypeTable() {
     { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::StepKindTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_ENUM, 30, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_ENUM, 33, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }
@@ -32324,10 +32528,12 @@ inline const ::flatbuffers::TypeTable *OpNodeInputTypeTable() {
     { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_INT, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 },
-    { ::flatbuffers::ET_INT, 0, -1 }
+    { ::flatbuffers::ET_CHAR, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 1, -1 }
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 4, type_codes, nullptr, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 6, type_codes, nullptr, nullptr, nullptr, nullptr
   };
   return &tt;
 }
@@ -32360,17 +32566,29 @@ inline const ::flatbuffers::TypeTable *OpGraphOutputTypeTable() {
   return &tt;
 }
 
+inline const ::flatbuffers::TypeTable *OpChainTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_INT, 1, -1 }
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, nullptr, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
 inline const ::flatbuffers::TypeTable *OpGraphTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
     { ::flatbuffers::ET_SEQUENCE, 1, 0 },
     { ::flatbuffers::ET_SEQUENCE, 1, 1 },
     { ::flatbuffers::ET_SEQUENCE, 1, 2 },
-    { ::flatbuffers::ET_INT, 0, -1 }
+    { ::flatbuffers::ET_SEQUENCE, 1, 3 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::OpNodeTypeTable,
     rigExec::fb::IntPairTypeTable,
-    rigExec::fb::OpGraphOutputTypeTable
+    rigExec::fb::OpGraphOutputTypeTable,
+    rigExec::fb::OpChainTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
     ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, nullptr

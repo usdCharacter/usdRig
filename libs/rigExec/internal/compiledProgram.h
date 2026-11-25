@@ -538,12 +538,16 @@ enum class RigExecBakedSlotDomain : uint8_t {
     ConstraintInputs = 36,
     SwitchFrame = 37,
     RequiredStageFramesAdmission = 38,
+    /// An op value or a range chain's plan (eval::OpStepLayout).
+    OpValue = 39,
+    /// One vertex group of an op value a range chain member writes.
+    OpGroupValue = 40,
 };
 /// Derived from the last enumerator rather than written out: an array
 /// indexed by domain is how the edge sweep is written, and a count that
 /// drifted from the enum is an out-of-bounds write with no symptom at Build.
 inline constexpr size_t RigExecBakedSlotDomainCount =
-    size_t(RigExecBakedSlotDomain::RequiredStageFramesAdmission) + 1;
+    size_t(RigExecBakedSlotDomain::OpGroupValue) + 1;
 
 /// A slot id: the domain in the top 8 bits, the index in the low 24.
 using RigExecBakedSlot = uint32_t;
@@ -960,8 +964,14 @@ enum class RigExecBakedStepKind {
     SpaceCheckpoint = 27,
     ProviderRefresh = 28,
     ChainInputs = 25,
-    /// File.op_graph's op nodes, run through the op core.
-    OpGraph = 29,
+    /// Reserved; never emitted. The step-graph validator refuses it.
+    ReservedOpGraph = 29,
+    /// One op node that does not run in ranges (eval::OpStepKind).
+    OpNode = 30,
+    /// One range chain of op nodes' head: its members' checks and plans.
+    OpChainHead = 31,
+    /// One (segment, vertex group) of a range chain of op nodes.
+    OpChainRange = 32,
 };
 
 /// The name of \p kind, for the schedule report.
@@ -1125,6 +1135,9 @@ struct RigExecBakedStep {
     /// touches shared state.
     std::vector<std::string> diagnostics;
     size_t maxDiagnostics = RigExecBakedMaxStepDiagnostics;
+    /// An op step that could not run this frame, which stops the frame; the
+    /// reason is its one diagnostic.
+    bool failed = false;
     RigExecBakedStepCounters counters;
     /// When the profiler is on: the step's interval, replayed into it by the
     /// epilogue in step order so the trace is deterministic.

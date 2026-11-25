@@ -4,6 +4,7 @@
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
 #include "rigExec/api/rigDesc.h"
+#include "rigExec/api/runState.h"
 #include "rigExec/api/taskSystem.h"
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/geometryKernels.h"
@@ -3454,6 +3455,53 @@ TestRangeChain()
                                 int(simd), grain);
                 CHECK(same);
             }
+        }
+        // In a host's schedule over groups it cuts, the skin reading the
+        // host's points group by group and the chain keeping the values
+        // only its own members read as one buffer per group.
+        RigExecCompileOptions options;
+        options.useSimd = simd;
+        options.hostOrder = true;
+        auto program = RigExecCompile(*desc, options);
+        RigExecChainDesc chain;
+        CHECK(program && RigExecProgramChainCount(*program) == 1 &&
+              RigExecProgramChainAt(*program, 0, &chain));
+        if (!program)
+            continue;
+        CHECK(chain.grouped == std::vector<char>({1, 1, 1, 0}));
+        for (const uint32_t groups : {1u, 4u, 9u}) {
+            std::vector<int> cut;
+            for (uint32_t g = 0; g <= groups; ++g)
+                cut.push_back(int(n * g / groups));
+            std::vector<const void *> pointsAt(groups);
+            for (uint32_t g = 0; g < groups; ++g)
+                pointsAt[g] = in.Data() + cut[g];
+            const RigExecOpGroups given{cut.data(), groups, pointsAt.data()};
+            auto state = RigExecRunState::Create(program);
+            for (const auto &[id, value] : inputs)
+                CHECK(state->PointInput(id, value));
+            std::string error;
+            CHECK(state->PointInputGroups(inputs[0].first, &given, &error));
+            CHECK(state->RunChainHead(0, cut.data(), groups, &error));
+            for (uint32_t segment = 0; segment < chain.members.size();
+                 ++segment)
+                if (chain.segments[segment] == segment)
+                    for (uint32_t g = 0; g < groups; ++g)
+                        CHECK(state->RunChainRange(0, segment, g, &error));
+            RigExecValueRef ref;
+            CHECK(RigExecResolveNodeOutput(*program, dm, DeltaMushOut(), &ref));
+            const auto *result =
+                static_cast<const Points *>(state->GetValue(ref));
+            const bool same = result && SamePoints(stepped, *result);
+            if (!same)
+                std::printf("host range chain: simd %d groups %u differs\n",
+                            int(simd), groups);
+            CHECK(same);
+            CHECK(
+                RigExecResolveNodeOutput(*program, m, MatrixDeformOut(), &ref));
+            CHECK(!state->GetValue(ref));
+            const RigExecInputId transform = inputs[4].first;
+            CHECK(!state->PointInputGroups(transform, &given, &error));
         }
     }
 }

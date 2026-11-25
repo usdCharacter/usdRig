@@ -23,7 +23,7 @@ int failures = 0;
 void
 CheckOrdinals()
 {
-    CHECK(eval::StepKindCount == 30);
+    CHECK(eval::StepKindCount == 33);
     for (size_t i = 0; i < eval::StepKindCount; ++i) {
         eval::StepKind kind = static_cast<eval::StepKind>(i);
         RigExecBakedStepKind baked = static_cast<RigExecBakedStepKind>(i);
@@ -32,13 +32,16 @@ CheckOrdinals()
                           RigExecBakedStepKindName(baked)) == 0);
     }
     CHECK(eval::IsReservedStepKind(eval::StepKind::SnapshotFinals));
+    CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedOpGraph));
     CHECK(!eval::IsReservedStepKind(eval::StepKind::ComposeSubtree));
     CHECK(eval::StepKindName(
               static_cast<eval::StepKind>(eval::StepKindCount))[0] == '\0');
     CHECK(static_cast<uint8_t>(eval::StepKind::ChainInputs) == 25);
     CHECK(static_cast<uint8_t>(eval::StepKind::AvarInputs) == 26);
     CHECK(static_cast<uint8_t>(eval::StepKind::ProviderRefresh) == 28);
-    CHECK(static_cast<uint8_t>(eval::StepKind::OpGraph) == 29);
+    CHECK(static_cast<uint8_t>(eval::StepKind::ReservedOpGraph) == 29);
+    CHECK(static_cast<uint8_t>(eval::StepKind::OpNode) == 30);
+    CHECK(static_cast<uint8_t>(eval::StepKind::OpChainRange) == 32);
 }
 
 void

@@ -2,10 +2,9 @@
 
 #include "rigExec/api/opFields.h"
 
-#include "rigExecRuntime/inputs.h"
+#include "rigExec/api/compile.h"
 #include "rigExecRuntime/runtime.h"
 #include "rigExecRuntime/store.h"
-#include "rigExecStdTypes/array.h"
 
 #include <cstring>
 #include <utility>
@@ -13,73 +12,6 @@
 namespace rigExec {
 
 namespace {
-
-using rigExecStd::RigExecArray;
-
-struct SlotType {
-    RrOpSlotKind kind;
-    const char *name;
-};
-
-/// The standard type each slot tag feeds, by registered name; looked up
-/// once at Open. Token, TokenArray and Vec3i slots feed no op.
-bool
-SlotTypeOf(RigExecWireInputTag tag, SlotType *out)
-{
-    using T = RigExecWireInputTag;
-    using K = RrOpSlotKind;
-    switch (tag) {
-    case T::Double:
-        *out = {K::Double, "Double"};
-        return true;
-    case T::Float:
-        *out = {K::Float, "Float"};
-        return true;
-    case T::Bool:
-        *out = {K::Bool, "Bool"};
-        return true;
-    case T::Int:
-        *out = {K::Int, "Int"};
-        return true;
-    case T::Matrix4d:
-        *out = {K::Mat4d, "Mat4d"};
-        return true;
-    case T::Vec3d:
-        *out = {K::Vec3d, "Vec3d"};
-        return true;
-    case T::Vec3f:
-        *out = {K::Vec3f, "Vec3f"};
-        return true;
-    case T::IntArray:
-        *out = {K::IntArray, "IntArray"};
-        return true;
-    case T::FloatArray:
-        *out = {K::FloatArray, "FloatArray"};
-        return true;
-    case T::DoubleArray:
-        *out = {K::DoubleArray, "DoubleArray"};
-        return true;
-    case T::Vec2fArray:
-        *out = {K::Vec2fArray, "Vec2fArray"};
-        return true;
-    case T::Vec3fArray:
-        *out = {K::Vec3fArray, "Vec3fArray"};
-        return true;
-    case T::Vec3dArray:
-        *out = {K::Vec3dArray, "Vec3dArray"};
-        return true;
-    case T::Matrix4dArray:
-        *out = {K::Mat4dArray, "Mat4dArray"};
-        return true;
-    case T::BoolArray:
-        *out = {K::BoolArray, "BoolArray"};
-        return true;
-    default:
-        return false;
-    }
-}
-
-constexpr char kStdTypes[] = "std";
 
 bool
 Fail(std::string *error, std::string why)
@@ -147,105 +79,24 @@ private:
     std::vector<std::max_align_t> _storage;
 };
 
-template <class T, class Wire = T>
-bool
-SetArray(RigExecEvaluator &evaluator, const RrProgram &program,
-         const RrOpNodeInput &input, std::string *error)
-{
-    static_assert(sizeof(T) == sizeof(Wire), "array element layouts differ");
-    const std::vector<Wire> *values = RrInputArray<Wire>(&program, input.slot);
-    const RigExecArray<T> array =
-        values ? RigExecArray<T>(reinterpret_cast<const T *>(values->data()),
-                                 values->size())
-               : RigExecArray<T>();
-    return evaluator.SetInput(input.id, &array, error);
-}
+/// What the runtime's op steps read from the program.
+struct RrOpHost {
+    const RrProgram &p;
 
-template <class T>
-bool
-SetValue(RigExecEvaluator &evaluator, const RrOpNodeInput &input,
-         const T &value, std::string *error)
-{
-    return evaluator.SetInput(input.id, &value, error);
-}
-
-bool
-SetInput(RigExecEvaluator &evaluator, const RrProgram &program,
-         const RrOpNodeInput &input, std::string *error)
-{
-    using K = RrOpSlotKind;
-    const RrInputValue value =
-        RrValueFromWire(program.inputState.slotCurrent[input.slot]);
-    switch (input.kind) {
-    case K::Double:
-        return SetValue(evaluator, input, value.f64, error);
-    case K::Float:
-        return SetValue(evaluator, input, value.f32, error);
-    case K::Bool:
-        return SetValue(evaluator, input, uint8_t(value.boolean ? 1 : 0),
-                        error);
-    case K::Int:
-        return SetValue(evaluator, input, int32_t(value.i32), error);
-    case K::Mat4d:
-        return SetValue(evaluator, input, value.matrix, error);
-    case K::Vec3d:
-        return SetValue(evaluator, input, value.vec, error);
-    case K::Vec3f:
-        return SetValue(evaluator, input, value.vec3f, error);
-    case K::IntArray:
-        return SetArray<int32_t>(evaluator, program, input, error);
-    case K::FloatArray:
-        return SetArray<float>(evaluator, program, input, error);
-    case K::DoubleArray:
-        return SetArray<double>(evaluator, program, input, error);
-    case K::Vec2fArray:
-        return SetArray<RrVec2f>(evaluator, program, input, error);
-    case K::Vec3fArray:
-        return SetArray<RrVec3f>(evaluator, program, input, error);
-    case K::Vec3dArray:
-        return SetArray<RrVec3d, RigExecWireVec3d>(evaluator, program, input,
-                                                   error);
-    case K::Mat4dArray:
-        return SetArray<RrMat4d, RigExecWireMatrix4d>(evaluator, program, input,
-                                                      error);
-    case K::BoolArray:
-        return SetArray<uint8_t>(evaluator, program, input, error);
+    const void *Matrix(eval::OpHostSource source, uint32_t slot) const
+    {
+        const std::vector<RrMat4d> &matrices =
+            source == eval::OpHostSource::FinalMatrix ? p.store.finalMatrix
+                                                      : p.store.baseMatrix;
+        return slot < matrices.size() ? &matrices[slot] : nullptr;
     }
-    return false;
-}
-
-void
-Release(RrOpNodeOutput &output)
-{
-    const RigExecTypeDesc &type =
-        *RigExecRegistry::Get().TypeAt(output.type).desc;
-    if (output.held && type.destroy)
-        type.destroy(output.storage.data());
-    output.held = false;
-}
-
-/// A type's copy assigns over a constructed value.
-void
-Hold(RrOpNodeOutput &output, const void *value)
-{
-    const RigExecTypeDesc &type =
-        *RigExecRegistry::Get().TypeAt(output.type).desc;
-    if (!output.held && type.construct)
-        type.construct(output.storage.data());
-    output.held = true;
-    if (type.copy)
-        type.copy(output.storage.data(), value);
-    else
-        std::memcpy(output.storage.data(), value, type.size);
-}
+    const void *ChainGroupPoints(uint32_t chain, uint32_t g) const
+    {
+        return RrGeoFinalGroupPoints(&p, chain, g);
+    }
+};
 
 } // namespace
-
-RrOpNodes::~RrOpNodes()
-{
-    for (RrOpNodeOutput &output : outputs)
-        Release(output);
-}
 
 bool
 RrOpenOpNodes(RrProgram *p, std::string *error)
@@ -278,6 +129,7 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
     }
 
     auto nodes = std::make_unique<RrOpNodes>();
+    eval::OpStepLayout &layout = nodes->layout;
     RigExecRigDescBuilder builder;
     const auto opOf = [&](size_t node) -> const RigExecRegisteredOp & {
         return registry.OpAt(ops[graph.nodes[node]->op]);
@@ -341,22 +193,21 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
                                 RigExecNodeId(n), *in);
                 continue;
             }
-            const uint32_t slot = uint32_t(input->slot);
-            SlotType slotType;
-            const auto tag = file->inputs[slot].type();
-            const uint32_t wanted = opOf(n).portTypes[input->port];
-            if (!SlotTypeOf(tag, &slotType) ||
-                FindType(registry, kStdTypes, slotType.name, 1) != wanted)
-                return Fail(error, "slot " + std::to_string(slot) +
-                                       " is not of the type input port " +
-                                       std::to_string(input->port) +
-                                       " of node " + std::to_string(n) +
-                                       " takes");
-            RrOpNodeInput bound;
-            bound.id = builder.BindInput(RigExecNodeId(n), *in);
-            bound.slot = slot;
-            bound.kind = slotType.kind;
-            nodes->inputs.push_back(bound);
+            builder.BindInput(RigExecNodeId(n), *in);
+            if (input->host == 3) {
+                eval::OpConstant constant;
+                constant.node = uint32_t(n);
+                constant.port = input->port;
+                constant.bytes = input->constant;
+                layout.constants.push_back(std::move(constant));
+                continue;
+            }
+            eval::OpHostInput host;
+            host.node = uint32_t(n);
+            host.port = input->port;
+            host.source = eval::OpHostSource(input->host);
+            host.object = input->object;
+            layout.hostInputs.push_back(host);
         }
     }
     for (const auto &pair : graph.order)
@@ -369,53 +220,65 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
         if (types[output->type] != type)
             return Fail(error, "output " + output->name +
                                    " is not of its port's type");
-        if (registry.TypeAt(type).desc->align > alignof(std::max_align_t))
-            return Fail(error, "output " + output->name +
-                                   " needs more alignment than it can get");
         RrOpNodeOutput published;
         published.name = output->name;
         published.id = builder.BindOutput(output->node, *out);
         published.type = type;
-        published.storage.resize(
-            registry.TypeAt(type).desc->size / sizeof(std::max_align_t) + 1);
         nodes->outputs.push_back(std::move(published));
+    }
+    for (const auto &chain : graph.chains) {
+        eval::OpChainLayout steps;
+        steps.pointChain = chain->pointChain;
+        steps.bounds = chain->bounds;
+        layout.chains.push_back(std::move(steps));
     }
     std::string why;
     std::shared_ptr<const RigExecRigDesc> desc = builder.Build(&why);
     RigExecCompileOptions options;
     options.useSimd = p->geoSettings.useSimd;
+    options.hostOrder = true;
     if (desc)
-        nodes->program = RigExecCompile(*desc, options, &why);
-    if (nodes->program)
-        nodes->evaluator = RigExecEvaluator::Create(nodes->program, {}, &why);
-    if (!nodes->evaluator)
+        layout.program = RigExecCompile(*desc, options, &why);
+    if (!layout.program)
         return Fail(error, why);
-    // The evaluator belongs to the thread that opened the reader, so the
-    // step runs there: Execute stays serial for this program.
-    p->parallelSafe = false;
+    if (!eval::LayOutOpSteps(&layout, error))
+        return false;
+    nodes->state = std::make_unique<eval::OpStepState>();
+    nodes->state->run = RigExecRunState::Create(layout.program, {}, &why);
+    if (!nodes->state->run)
+        return Fail(error, why);
+    const RrOpHost host{*p};
+    if (!eval::BindOpStepState(layout, host, nodes->state.get(), error))
+        return false;
+    nodes->state->run->ReleaseOwner();
     p->opNodes = std::move(nodes);
     return true;
 }
 
 bool
-RrRunOpNodes(RrProgram *p, std::string *error)
+RrRunOpStep(RrProgram *p, size_t i, std::string *error)
 {
     RrOpNodes *nodes = p->opNodes.get();
     if (!nodes)
-        return Fail(error, "the OpGraph step has no op nodes");
-    RigExecEvaluator &evaluator = *nodes->evaluator;
-    for (const RrOpNodeInput &input : nodes->inputs)
-        if (!SetInput(evaluator, *p, input, error))
-            return false;
-    if (!evaluator.Evaluate(error))
-        return false;
-    for (RrOpNodeOutput &output : nodes->outputs) {
-        const void *value = evaluator.GetOutput(output.id);
-        if (!value)
-            return Fail(error, "output " + output.name + " has no value");
-        Hold(output, value);
-    }
-    return true;
+        return Fail(error, "an op step without op nodes");
+    const fb::RigExecWireStep &step = (*p->steps)[i];
+    const RrOpHost host{*p};
+    return eval::RunOpStep(nodes->layout, host, nodes->state.get(),
+                           eval::OpStepKind(uint8_t(step.kind)), step.object,
+                           step.part, error);
+}
+
+uint64_t
+RrOpValueVersion(const RrProgram *p, uint32_t domain, uint32_t slot)
+{
+    const RrOpNodes *nodes = p->opNodes.get();
+    if (!nodes || !nodes->state)
+        return 0;
+    const std::vector<uint64_t> &versions =
+        domain == uint32_t(RigExecWireSlotDomain::OpValue)
+            ? nodes->state->versions
+            : nodes->state->groupVersions;
+    return slot < versions.size() ? versions[slot] : 0;
 }
 
 namespace {
@@ -479,10 +342,14 @@ RigExecRuntimeReader::GetOpOutput(size_t index,
 {
     if (index >= GetOpOutputCount())
         return false;
-    const RrOpNodeOutput &output = _program->opNodes->outputs[index];
+    const RrOpNodes &nodes = *_program->opNodes;
+    const RrOpNodeOutput &output = nodes.outputs[index];
     out->name = output.name;
     out->type = output.type;
-    out->value = output.held ? output.storage.data() : nullptr;
+    RigExecValueRef ref;
+    out->value = RigExecResolveOutput(*nodes.layout.program, output.id, &ref)
+                     ? nodes.state->run->GetValue(ref)
+                     : nullptr;
     return true;
 }
 

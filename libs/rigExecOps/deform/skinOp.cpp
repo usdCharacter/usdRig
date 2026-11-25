@@ -172,8 +172,8 @@ SkinRange(const rigExec::RigExecOpBatch &batch, size_t k,
     const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const SkinState &state =
         *static_cast<const SkinState *>(rigExec::RigExecBatchState(batch, k));
-    const Points &in = *In<Points>(io, SkinPoints());
-    Points &out = Out<Points>(io, SkinOut());
+    const Vec3f *in = RangeIn<Vec3f>(io, range, SkinPoints());
+    Vec3f *out = RangeOut<Vec3f>(io, range, SkinOut());
     const size_t begin = range.begin, end = range.end;
     Layout part = LayoutOf(batch, k);
     part.indices += begin * part.elementSize;
@@ -185,16 +185,16 @@ SkinRange(const rigExec::RigExecOpBatch &batch, size_t k,
     if (method == SkinMethod::ClassicLinear) {
         if (io.useSimd)
             rigExec::RigExecApplyLinearBlendSkinSimdKernel<Vec3f, Vec3d>(
-                in.Data() + begin, out.Data() + begin, part, state.rows.data());
+                in, out, part, state.rows.data());
         else
-            rigExec::RigExecApplyLinearBlendSkinKernel<Vec3f, Vec3d>(
-                in.Data() + begin, out.Data() + begin, part);
+            rigExec::RigExecApplyLinearBlendSkinKernel<Vec3f, Vec3d>(in, out,
+                                                                     part);
     } else if (!rigExec::RigExecApplyDualQuatSkinKernel<Vec3f, Vec3d>(
-                   in.Data() + begin, out.Data() + begin, part,
-                   state.palette.data(), state.palette.size())) {
+                   in, out, part, state.palette.data(), state.palette.size())) {
         return Fail(error, "Skin", "dual quaternion blend is degenerate");
     }
-    BlendEnvelopeRange(in, In<Envelope>(io, SkinEnvelope()), out, begin, end);
+    BlendEnvelopeAt(in, RangeIn<float>(io, range, SkinEnvelope()), out,
+                    end - begin);
     return true;
 }
 

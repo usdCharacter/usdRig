@@ -66,6 +66,8 @@ constexpr RigExecBakedSlotDomainOps kDomains[] = {
     {D::SwitchFrame, "SwitchFrame", &RigExecBakedResetSwitchFrame, nullptr},
     {D::RequiredStageFramesAdmission, "RequiredStageFramesAdmission", nullptr,
      &RigExecBakedStageFramesIdentity},
+    {D::OpValue, "OpValue", nullptr, nullptr},
+    {D::OpGroupValue, "OpGroupValue", nullptr, nullptr},
 };
 
 constexpr RigExecBakedSlotDomainOps kNoDomain = {D(0xff), "unknown", nullptr,

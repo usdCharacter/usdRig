@@ -1611,6 +1611,8 @@ RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program, UsdTimeCode time,
         if (B.opBeforeBody)
             B.opBeforeBody(B.opGraph.ops[c].originalIndex);
         RigExecBakedRunStepBody(&B, &step, time, timing);
+        if (step.failed)
+            return false;
         RigExecBakedFinishHeadOp(&B, step);
         // ChainDirty's key is its revision's RevisionDone key. Writes run in
         // (domain, slot) order, so the fuse has built that exact key already.

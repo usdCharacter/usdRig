@@ -7,6 +7,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -14,9 +15,37 @@ namespace rigExec {
 
 namespace {
 
+/// A value a range chain keeps in groups, gathered for a tap.
+class GatheredValue {
+public:
+    explicit GatheredValue(uint32_t type)
+        : _type(*RigExecRegistry::Get().TypeAt(type).desc)
+    {
+        _storage.Allocate(_type.size);
+        if (_type.construct)
+            _type.construct(_storage.Data());
+    }
+    ~GatheredValue()
+    {
+        if (_type.destroy)
+            _type.destroy(_storage.Data());
+    }
+    GatheredValue(const GatheredValue &) = delete;
+    GatheredValue &operator=(const GatheredValue &) = delete;
+    void *Data() const
+    {
+        return _storage.Data();
+    }
+
+private:
+    const RigExecTypeDesc &_type;
+    RigExecAlignedBuffer _storage;
+};
+
 struct ResolvedTap {
     uint32_t slot = kRigExecInvalidIndex;
     const RigExecTypeHandle *type = nullptr;
+    std::shared_ptr<GatheredValue> gathered;
 };
 
 /// Slots for \p taps on \p program; false with \p error if one names a
@@ -38,8 +67,13 @@ ResolveTaps(const RigExecProgram &program, const RigExecTapList &taps,
             return false;
         }
         const RigExecProgramNode &node = program.nodes[tap.node];
-        out.push_back({program.portSlots[node.firstPort + tap.output->Index()],
-                       ref.type});
+        const uint32_t slot =
+            program.portSlots[node.firstPort + tap.output->Index()];
+        out.push_back(
+            {slot, ref.type,
+             program.groupedSlots[slot]
+                 ? std::make_shared<GatheredValue>(program.slots[slot].type)
+                 : nullptr});
     }
     *resolved = std::move(out);
     return true;
@@ -165,7 +199,12 @@ RigExecEvaluator::Evaluate(std::string *error)
     if (s.tapCallback) {
         for (size_t i = 0; i < s.taps.size(); ++i) {
             RigExecTapValue value;
-            value.data = s.main.Value(s.taps[i].slot);
+            if (s.taps[i].gathered) {
+                s.main.Gather(s.taps[i].slot, s.taps[i].gathered->Data());
+                value.data = s.taps[i].gathered->Data();
+            } else {
+                value.data = s.main.Value(s.taps[i].slot);
+            }
             value.type = s.taps[i].type;
             s.tapCallback(s.tapContext, i, value);
         }

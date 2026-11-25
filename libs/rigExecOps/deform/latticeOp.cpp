@@ -196,13 +196,15 @@ LatticeRange(const rigExec::RigExecOpBatch &batch, size_t k,
     const Points &restCage = *In<Points>(io, LatticeRestCage());
     const LatticeState &state = *static_cast<const LatticeState *>(
         rigExec::RigExecBatchState(batch, k));
-    Points &out = Out<Points>(io, LatticeOut());
+    const Vec3f *from = RangeIn<Vec3f>(io, range, LatticePoints());
+    Vec3f *out = RangeOut<Vec3f>(io, range, LatticeOut());
     rigExec::RigExecApplyLatticeKernelGroup(
-        in.Data() + range.begin, out.Data() + range.begin, in.Size(),
-        range.begin, range.end, rest.Data(), rest.Size(), restCage.Data(),
-        restCage.Size(), posedCage.Data(), posedCage.Size(), p.divisions[0],
-        p.divisions[1], p.divisions[2], state.basis);
-    BlendEnvelopeRange(in, envelope, out, range.begin, range.end);
+        from, out, range.count, range.begin, range.end, rest.Data(),
+        rest.Size(), restCage.Data(), restCage.Size(), posedCage.Data(),
+        posedCage.Size(), p.divisions[0], p.divisions[1], p.divisions[2],
+        state.basis);
+    BlendEnvelopeAt(from, RangeIn<float>(io, range, LatticeEnvelope()), out,
+                    range.end - range.begin);
     return true;
 }
 

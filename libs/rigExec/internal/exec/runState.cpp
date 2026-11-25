@@ -117,14 +117,28 @@ RigExecRunState::RunNode(RigExecNodeId node, std::string *error)
 }
 
 bool
-RigExecRunState::RunChainHead(size_t chain, uint32_t groups, std::string *error)
+RigExecRunState::PointInputGroups(RigExecInputId input,
+                                  const RigExecOpGroups *groups,
+                                  std::string *error)
 {
-    return _data->run.RunChainHead(uint32_t(chain), groups, error);
+    if (input.index >= _data->program->inputSlots.size()) {
+        if (error)
+            *error = "no input " + std::to_string(input.index);
+        return false;
+    }
+    return _data->run.PointInputGroups(input.index, groups, error);
 }
 
 bool
-RigExecRunState::RunChainRange(size_t chain, uint32_t segment, size_t begin,
-                               size_t end, uint32_t group, std::string *error)
+RigExecRunState::RunChainHead(size_t chain, const int *bounds, uint32_t groups,
+                              std::string *error)
+{
+    return _data->run.RunChainHead(uint32_t(chain), bounds, groups, error);
+}
+
+bool
+RigExecRunState::RunChainRange(size_t chain, uint32_t segment, uint32_t group,
+                               std::string *error)
 {
     const RigExecProgram &p = *_data->program;
     if (chain >= p.chains.size() || segment >= p.chains[chain].memberCount ||
@@ -134,16 +148,14 @@ RigExecRunState::RunChainRange(size_t chain, uint32_t segment, size_t begin,
                      std::to_string(segment);
         return false;
     }
-    return _data->run.RunChainRange(uint32_t(chain), segment, begin, end, group,
-                                    error);
+    return _data->run.RunChainRange(uint32_t(chain), segment, group, error);
 }
 
 void
-RigExecRunState::ChainReads(size_t chain, uint32_t member, size_t begin,
-                            size_t end, uint32_t group, size_t *lo,
-                            size_t *hi) const
+RigExecRunState::ChainReads(size_t chain, uint32_t member, uint32_t group,
+                            size_t *lo, size_t *hi) const
 {
-    _data->run.ChainReads(uint32_t(chain), member, begin, end, group, lo, hi);
+    _data->run.ChainReads(uint32_t(chain), member, group, lo, hi);
 }
 
 size_t
@@ -155,9 +167,50 @@ RigExecRunState::ChainElements(size_t chain) const
 const void *
 RigExecRunState::GetValue(const RigExecValueRef &ref) const
 {
-    if (ref.value >= _data->program->slots.size())
+    if (ref.value >= _data->program->slots.size() ||
+        _data->program->groupedSlots[ref.value])
         return nullptr;
     return _data->run.Value(ref.value);
+}
+
+size_t
+RigExecProgramNodeCount(const RigExecProgram &program)
+{
+    return program.nodes.size();
+}
+
+bool
+RigExecProgramNodeAt(const RigExecProgram &program, size_t node,
+                     RigExecNodeDesc *desc)
+{
+    if (node >= program.nodes.size() || !desc)
+        return false;
+    const RigExecProgramNode &n = program.nodes[node];
+    *desc = RigExecNodeDesc();
+    desc->op = RigExecRegistry::Get().OpAt(n.op).desc;
+    desc->values.assign(n.portCount, kRigExecInvalidIndex);
+    desc->producers.assign(n.portCount, kRigExecInvalidIndex);
+    desc->inputs.assign(n.portCount, kRigExecInvalidIndex);
+    desc->lists.assign(n.portCount, std::vector<uint32_t>());
+    for (uint32_t p = 0; p < n.portCount; ++p) {
+        const uint32_t slot = program.portSlots[n.firstPort + p];
+        desc->values[p] = slot;
+        if (slot == kRigExecInvalidIndex ||
+            !(desc->op->ports[p].flags & kRigExecPortInput))
+            continue;
+        desc->producers[p] = program.producer[slot];
+        for (uint32_t i = 0; i < program.inputSlots.size(); ++i)
+            if (program.inputSlots[i] == slot)
+                desc->inputs[p] = i;
+    }
+    for (const RigExecProgramList &list : program.lists) {
+        if (list.port < n.firstPort || list.port >= n.firstPort + n.portCount)
+            continue;
+        desc->lists[list.port - n.firstPort].assign(
+            program.listSlots.begin() + list.firstSlot,
+            program.listSlots.begin() + list.firstSlot + list.count);
+    }
+    return true;
 }
 
 size_t
@@ -180,6 +233,11 @@ RigExecProgramChainAt(const RigExecProgram &program, size_t chain,
         desc->members.push_back(program.batchNodes[at]);
         desc->segments.push_back(program.chainSegment[g]);
         desc->whole.push_back(program.wholePositions[at]);
+        char grouped = 0;
+        for (uint32_t o = program.nodeOutputStart[program.batchNodes[at]];
+             o < program.nodeOutputStart[program.batchNodes[at] + 1]; ++o)
+            grouped |= program.groupedSlots[program.nodeOutputs[o]];
+        desc->grouped.push_back(grouped);
         desc->feeds.emplace_back();
         for (uint32_t f = program.chainFeedStart[g];
              f < program.chainFeedStart[g + 1]; ++f)

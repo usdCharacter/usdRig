@@ -392,6 +392,15 @@ TypeDescFor(const char *nameSpace, const char *name,
         d.resize = [](void *value, size_t count) {
             static_cast<T *>(value)->Resize(count);
         };
+        d.data = [](void *value) -> void * {
+            return static_cast<T *>(value)->Data();
+        };
+        d.borrow = [](void *value, const void *data, size_t count) {
+            using Element =
+                std::remove_reference_t<decltype(*std::declval<T &>().Data())>;
+            *static_cast<T *>(value) =
+                T::Borrow(static_cast<const Element *>(data), count);
+        };
     }
     if constexpr (HoldsArrays<T>()) {
         d.reserve = &TypeOps<T>::Reserve;

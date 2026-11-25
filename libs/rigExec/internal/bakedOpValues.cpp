@@ -1197,6 +1197,15 @@ RigExecBakedOpValueKey(const RigExecBakedProgramImpl &B,
             return;
         }
         break;
+    case D::OpValue:
+    case D::OpGroupValue: {
+        uint64_t version = 0;
+        if (RigExecBakedOpValueVersion(B, domain, slot, &version)) {
+            Put(out, version);
+            return;
+        }
+        break;
+    }
     case D::RequiredStageFramesAdmission:
         if (slot == 0) {
             Put(out, B.requiredStageFramesAdmission.admitted);

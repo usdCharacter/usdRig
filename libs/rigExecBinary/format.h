@@ -600,13 +600,15 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// Format 34 adds ConstraintFlags.PreserveJointOrientation: a SingleChainIK
 /// constraint's rigExec:orientationMode "preserve".
 ///
-/// Format 35 adds File.op_graph, op nodes the op core runs as one OpGraph step
-/// that reads only the stage-frame admission, and Manifest.core_ops and
-/// core_types, which name the ops and types those nodes use.
-inline constexpr uint32_t RigExecFormatVersion = 35;
-
-/// The first format version that may hold op nodes.
-inline constexpr uint32_t RigExecFormatOpGraphVersion = 35;
+/// Format 35 adds File.op_graph and Manifest.core_ops and core_types, which
+/// name the ops and types its nodes use.
+///
+/// Format 36 runs op_graph's nodes as steps of the common graph (OpNode,
+/// OpChainHead and OpChainRange, on the OpValue and OpGroupValue domains),
+/// feeds node inputs from a point chain's vertex groups or a joint's final
+/// matrix, and gives each range chain its point chain and group bounds
+/// (OpGraph.chains). It retires format 35's one OpGraph step.
+inline constexpr uint32_t RigExecFormatVersion = 36;
 
 /// The first format version whose constraints may carry
 /// PreserveJointOrientation.
@@ -625,7 +627,7 @@ inline constexpr uint32_t RigExecFormatRangeSmoothVersion = 28;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 20;
+inline constexpr uint32_t RigExecFormatOldestReadable = 36;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

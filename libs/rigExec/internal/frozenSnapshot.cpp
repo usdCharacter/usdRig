@@ -527,6 +527,11 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
     // Adopt only a completed snapshot whose owned outputs still match the
     // signatures copied from that completion. A patched or poisoned payload
     // must run cold rather than borrowing a signature for a different value.
+    {
+        std::string opError;
+        TF_VERIFY(RigExecBakedCloneOpState(src, &D, &opError), "%s",
+                  opError.c_str());
+    }
     switch (verdict) {
     case _CloneVerdict::Compute:
         _AdoptCloneVerdict(&D, _CloneKeysStand(src, D));

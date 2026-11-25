@@ -7,6 +7,7 @@
 #include "rigExec/api/opPorts.h"
 #include "rigExec/api/registry.h"
 #include "rigExecMath/envelope.h"
+#include "rigExecMath/smoothKernel.h"
 #include "rigExecStdTypes/stdTypes.h"
 
 #include <algorithm>
@@ -166,6 +167,63 @@ inline void
 CopyRange(const Points &in, Points &out, size_t begin, size_t end)
 {
     std::copy(in.Data() + begin, in.Data() + end, out.Data() + begin);
+}
+
+/// Element range.begin of input \p port of a ranged node, then the rest of
+/// the range's: through RigExecOpRange::at for a pointwise port, else in
+/// the whole value; null for an unfed or empty input.
+template <class T>
+const T *
+RangeIn(const rigExec::RigExecOpIo &io, const rigExec::RigExecOpRange &range,
+        const rigExec::RigExecPortHandle &port)
+{
+    if (range.at && range.at[port.Index()])
+        return static_cast<const T *>(range.at[port.Index()]);
+    const auto *whole = In<rigExecStd::RigExecArray<T>>(io, port);
+    return whole && whole->Size() ? whole->Data() + range.begin : nullptr;
+}
+
+/// Element range.begin of pointwise output \p port, then the rest of the
+/// range's.
+template <class T>
+T *
+RangeOut(const rigExec::RigExecOpIo &io, const rigExec::RigExecOpRange &range,
+         const rigExec::RigExecPortHandle &port)
+{
+    if (range.at && range.at[port.Index()])
+        return static_cast<T *>(range.at[port.Index()]);
+    return Out<rigExecStd::RigExecArray<T>>(io, port).Data() + range.begin;
+}
+
+/// The groups of neighbourhood input \p port a range reads.
+template <class V>
+rigExec::RigExecGroupPoints<V>
+RangeGroups(const rigExec::RigExecOpRange &range,
+            const rigExec::RigExecPortHandle &port)
+{
+    rigExec::RigExecGroupPoints<V> out;
+    const auto *groups = range.at
+                             ? static_cast<const rigExec::RigExecOpGroups *>(
+                                   range.at[port.Index()])
+                             : nullptr;
+    if (!groups)
+        return out;
+    out.bounds = groups->bounds;
+    out.groups = groups->groups;
+    out.points = reinterpret_cast<const V *const *>(groups->points);
+    return out;
+}
+
+/// Blends the \p count points at \p out back toward \p in by \p envelope;
+/// null is 1 everywhere.
+inline void
+BlendEnvelopeAt(const rigExecStd::Vec3f *in, const float *envelope,
+                rigExecStd::Vec3f *out, size_t count)
+{
+    if (!envelope)
+        return;
+    for (size_t i = 0; i < count; ++i)
+        out[i] = rigExec::RigExecBlendEnvelope(in[i], out[i], envelope[i]);
 }
 
 /// Writes \p points to \p port, blended toward \p in by \p envelope.

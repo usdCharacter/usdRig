@@ -161,7 +161,7 @@ _TestFileRefusals(const std::vector<uint8_t> &bytes)
     CHECK(got == "unsupported .rigexec format version 4 (this reader reads " +
                      std::to_string(RigExecFormatOldestReadable) + " through " +
                      std::to_string(RigExecFormatVersion) +
-                     "); re-export: per-group range chains");
+                     "); re-export: op nodes as steps of the common graph");
     if (got.find("format version 4") == std::string::npos) {
         std::printf("version 4: open said '%s'\n", got.c_str());
     }
@@ -894,7 +894,7 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
         "unsupported .rigexec format version " + std::to_string(previous) +
         " (this reader reads " + std::to_string(RigExecFormatOldestReadable) +
         " through " + std::to_string(RigExecFormatVersion) +
-        "); re-export: per-group range chains";
+        "); re-export: op nodes as steps of the common graph";
     CHECK(got == want);
     if (got != want) {
         std::printf("%s, previous version: open said '%s', expected '%s'\n",

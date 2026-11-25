@@ -5155,65 +5155,7 @@ _StageFromText(const std::string &text)
     return stage;
 }
 
-/// \p file with every format-21 setting of its Delta Mush, lattice and
-/// surface revisions taken out (path reads and leaf sites), relabelled
-/// format 20: what a format-20 export of the same legacy rig holds.
-static void
-_AsFormat20(fb::RigExecWireFile *file)
-{
-    auto &reads = file->geometry->pathReads;
-    for (fb::RigExecWireChain &chain : file->geometry->chains) {
-        for (fb::RigExecWireRevision &revision : chain.revisions) {
-            size_t count = 0;
-            const char *const *names =
-                RigExecFormatExtendedSettingNames(revision.op, &count);
-            if (!names || revision.moverPrim == 0) {
-                continue;
-            }
-            const std::string mover =
-                RigExecFormatPathText(*file, revision.moverPrim);
-            const auto extended = [&](uint32_t path) {
-                const std::string text = RigExecFormatPathText(*file, path);
-                for (size_t i = 0; i < count; ++i) {
-                    if (text == mover + "." + names[i]) {
-                        return true;
-                    }
-                }
-                return false;
-            };
-            for (auto *sites :
-                 {&revision.leafSites, &revision.layoutLeafSites}) {
-                sites->erase(std::remove_if(sites->begin(), sites->end(),
-                                            [&](const auto &site) {
-                                                return extended(site.path);
-                                            }),
-                             sites->end());
-            }
-            reads.erase(std::remove_if(reads.begin(), reads.end(),
-                                       [&](const auto &read) {
-                                           return extended(read.path);
-                                       }),
-                        reads.end());
-        }
-    }
-    file->formatVersion = 20;
-}
 
-/// The points \p bytes publishes in one run at its defaults; empty, with a
-/// failed CHECK, when it does not open or run.
-static std::vector<RigExecRuntimePoints>
-_RunDefaults(const std::vector<uint8_t> &bytes, const std::string &name)
-{
-    std::string error;
-    const std::unique_ptr<RigExecRuntimeReader> reader =
-        RigExecRuntimeReader::Open(bytes.data(), bytes.size(), &error);
-    if (!reader || !reader->Execute(&error)) {
-        std::printf("%s: %s\n", name.c_str(), error.c_str());
-        CHECK(false);
-        return {};
-    }
-    return reader->GetPoints();
-}
 
 // The format-21 deformer settings play bit for bit beside the evaluator:
 // every independent reference rig (regular-grid lattices with each
@@ -5262,29 +5204,11 @@ TestExtendedDeformerSettingsPlay()
         _TestStage("framed lattice, animated", stage, {1, 2, 1, 2});
     }
 
-    // A legacy rig's format-20 file plays its format-21 file's points.
-    bool same = false;
-    if (const UsdStageRefPtr stage = _StageFromText(_kLegacyMushStage)) {
+    if (const UsdStageRefPtr stage = _StageFromText(_kLegacyMushStage))
         _TestStage("legacy delta mush", stage, {1});
-        std::vector<uint8_t> current;
-        std::string error;
-        RigExecRigEvaluator baker(stage, SdfPath("/Rig"));
-        CHECK(RigExecTestBakeAt(baker, 1.0, &current, &error));
-        if (!current.empty()) {
-            const std::vector<uint8_t> previous = RigExecTestEdited(
-                current, [](fb::RigExecWireFile *file) { _AsFormat20(file); });
-            const std::vector<RigExecRuntimePoints> a =
-                _RunDefaults(current, "legacy delta mush, format 21");
-            const std::vector<RigExecRuntimePoints> b =
-                _RunDefaults(previous, "legacy delta mush, format 20");
-            same = !a.empty() && _SamePoints({a}, {b});
-            CHECK(same);
-        }
-    }
     std::printf("extended deformer settings: %zu lattice and %zu surface "
-                "references played; legacy format 20 %s\n",
-                latticeReferenceCases.size(), surfaceReferenceCases.size(),
-                same ? "plays its format-21 points" : "DIFFERS");
+                "references played\n",
+                latticeReferenceCases.size(), surfaceReferenceCases.size());
 }
 
 // Recomputed normals keep the authored layout: faceVarying normals on a

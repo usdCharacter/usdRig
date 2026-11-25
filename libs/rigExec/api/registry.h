@@ -29,7 +29,7 @@ inline constexpr uint32_t kRigExecInvalidIndex = 0xffffffffu;
 /// Version of the descriptor structs below. Each library records the version
 /// it was built with, and Initialize rejects one built with another. Raise
 /// it whenever a descriptor's layout changes.
-inline constexpr uint32_t kRigExecRegistryAbiVersion = 12;
+inline constexpr uint32_t kRigExecRegistryAbiVersion = 13;
 
 /// Refers to one registered data type. A type library defines one per type
 /// with RIGEXEC_DEFINE_TYPE_HANDLE, and Initialize gives it its index; read
@@ -179,6 +179,14 @@ struct RigExecTypeDesc {
     /// For an array: makes \p value hold \p count elements, keeping the
     /// first ones it holds, in storage reserve made room for.
     void (*resize)(void *value, size_t count) = nullptr;
+    /// For an array: where its first element is.
+    void *(*data)(void *value) = nullptr;
+    /// For an array: makes \p value read the \p count elements at \p data,
+    /// which stay the caller's and unchanged while it is read; resizing or
+    /// assigning it copies them into storage of its own first. Null \p data
+    /// gives a value only whose count is read: its elements are elsewhere
+    /// (RigExecOpRange::at).
+    void (*borrow)(void *value, const void *data, size_t count) = nullptr;
 };
 
 /// One column of a registered type. `run` says how many values the column
@@ -525,6 +533,15 @@ RigExecBatchInstance(const RigExecOpBatch &batch, size_t k)
 bool RigExecRunEachInstance(const RigExecOpBatch &batch, size_t *failed,
                             std::string *error);
 
+/// The elements of a neighbourhood input, cut into groups: group h holds
+/// elements [bounds[h], bounds[h + 1]) at points[h], which is null for a
+/// group the range does not read. bounds holds groups + 1 entries.
+struct RigExecOpGroups {
+    const int *bounds = nullptr;
+    size_t groups = 0;
+    const void *const *points = nullptr;
+};
+
 /// Elements [begin, end) of a ranged node's pointwise ports: range
 /// \p index of the \p ranges its \p count elements are cut into.
 struct RigExecOpRange {
@@ -536,6 +553,11 @@ struct RigExecOpRange {
     /// This range's own scratch (RigExecOpRangeHandling::scratch), kept
     /// from frame to frame; null when the op has none.
     void *scratch = nullptr;
+    /// By port index: for a pointwise port, where element begin is, with
+    /// elements (begin, end) after it; for a neighbourhood input, its
+    /// RigExecOpGroups. A range reads and writes these ports only here:
+    /// their values may hold no elements of their own.
+    void *const *at = nullptr;
 };
 
 /// How a ranged node runs for the life of its program, from its settings.

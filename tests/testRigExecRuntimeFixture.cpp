@@ -70,9 +70,8 @@ MinimalFile()
 int
 main(int argc, char **argv)
 {
-    if (argc != 4) {
-        std::cerr << "expected the minimal.rigexec, minimal_format32.rigexec "
-                     "and minimal_format34.rigexec fixtures\n";
+    if (argc != 2) {
+        std::cerr << "expected the minimal.rigexec fixture\n";
         return 2;
     }
     std::ifstream file(argv[1], std::ios::binary);
@@ -108,16 +107,20 @@ main(int argc, char **argv)
         std::cerr << "minimal program published outputs\n";
         return 1;
     }
-    // The same program baked before the manifest (format 32) and before
-    // op nodes (format 34) still plays.
-    for (const int older : {2, 3}) {
-        std::ifstream stream(argv[older], std::ios::binary);
-        const std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(stream),
-                                         {}};
-        auto upgraded = rigExec::RigExecRuntimeReader::Open(
-            bytes.data(), bytes.size(), &error);
-        if (!upgraded || !upgraded->Execute(&error)) {
-            std::cerr << argv[older] << ": " << error << "\n";
+    // The same program at the format before this one is refused: Open reads
+    // only the current format.
+    {
+        rigExec::fb::RigExecWireFile older = MinimalFile();
+        older.formatVersion = rigExec::RigExecFormatVersion - 1;
+        flatbuffers::FlatBufferBuilder builder;
+        rigExec::fb::FinishFileBuffer(builder,
+                                      rigExec::fb::File::Pack(builder, &older));
+        error.clear();
+        if (rigExec::RigExecRuntimeReader::Open(builder.GetBufferPointer(),
+                                                builder.GetSize(), &error) ||
+            error.find("unsupported .rigexec format version") ==
+                std::string::npos) {
+            std::cerr << "an older format was not refused: " << error << "\n";
             return 1;
         }
     }

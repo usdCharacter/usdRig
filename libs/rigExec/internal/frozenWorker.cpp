@@ -952,6 +952,7 @@ _RunFrozenWith(const RigExecFrozenEvalContext &context,
     RigExecBakedPublishVolumePlacements(B, &working.weightFrames);
     RigExecBakedResolveGpuChains(&B, time);
     _FrozenPublishGeometry(B, &working);
+    RigExecBakedPublishOpOutputs(B, &working);
     RigExecBakedAppendCycleDiagnostics(B, &working);
     const bool scalarReferenceValid =
         RigExecBakedRunScalarReference(&B, time, &working);

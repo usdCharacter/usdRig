@@ -511,9 +511,8 @@ _Has(const Table &table, int64_t index)
 
 // The step rules, the step labels and the step graph's domain names cover
 // every kind and domain up to these; an appended one needs its own.
-static_assert(fb::StepKind::MAX == fb::StepKind::OpGraph &&
-                  fb::SlotDomain::MAX ==
-                      fb::SlotDomain::RequiredStageFramesAdmission,
+static_assert(fb::StepKind::MAX == fb::StepKind::OpChainRange &&
+                  fb::SlotDomain::MAX == fb::SlotDomain::OpGroupValue,
               "a step kind or slot domain was appended: give it its rules");
 // The array tags and sources are frozen; the runtime mirrors the numbers.
 static_assert(uint8_t(fb::InputTag::IntArray) == 8 &&
@@ -557,40 +556,43 @@ private:
                _Presentation() && _OpGraph();
     }
 
-    /// File.op_graph: every index in range, each node input fed by one
-    /// source, outputs named once, the nodes acyclic, and exactly one
-    /// OpGraph step, which reads and writes no slots and memoizes exactly
-    /// the slots its nodes read. What only the op registry knows (ports,
-    /// types, payloads) the runtime checks at Open.
+    /// File.op_graph: every index in range, each node input fed by exactly
+    /// one source (a node, a constant, or a rig value whose chain or joint
+    /// exists), outputs named once, the nodes acyclic, each
+    /// chain's bounds a cut of its point chain into groups, and op steps
+    /// only with op nodes. What only the op registry knows (ports, types,
+    /// payloads, the chains' membership) the runtime checks at Open.
     bool _OpGraph()
     {
         const fb::RigExecWireOpGraph *graph = _f.opGraph.get();
         const fb::RigExecWireManifest *manifest = _f.manifest.get();
         const size_t coreOps = manifest ? manifest->coreOps.size() : 0;
         const size_t coreTypes = manifest ? manifest->coreTypes.size() : 0;
-        int64_t opGraphStep = -1;
         for (size_t i = 0; i < _f.steps.size(); ++i) {
-            if (_f.steps[i].kind != fb::StepKind::OpGraph)
+            const fb::StepKind kind = _f.steps[i].kind;
+            if (kind == fb::StepKind::ReservedOpGraph)
+                return _Bad(_StepName(i) + ": the retired OpGraph step");
+            const bool op = kind == fb::StepKind::OpNode ||
+                            kind == fb::StepKind::OpChainHead ||
+                            kind == fb::StepKind::OpChainRange;
+            if (op && !graph)
+                return _Bad(_StepName(i) + ": an op step without op_graph");
+            if (!op || _f.steps[i].object < 0)
                 continue;
-            if (opGraphStep >= 0)
-                return _Bad(_StepName(i) + ": a second OpGraph step");
-            opGraphStep = int64_t(i);
+            const size_t object = size_t(_f.steps[i].object);
+            if (kind == fb::StepKind::OpNode ? object >= graph->nodes.size()
+                                             : object >= graph->chains.size())
+                return _Bad(_StepName(i) + ": object " + _N(object) +
+                            " out of range");
         }
         if (!graph) {
-            if (opGraphStep >= 0)
-                return _Bad(_StepName(size_t(opGraphStep)) +
-                            ": an OpGraph step without op_graph");
             if (coreOps || coreTypes)
                 return _Bad("manifest core_ops or core_types without op_graph");
             return true;
         }
-        if (_f.formatVersion < RigExecFormatOpGraphVersion)
-            return _Bad("op_graph needs format " +
-                        _N(RigExecFormatOpGraphVersion));
         const size_t nodes = graph->nodes.size();
         if (!nodes)
             return _Bad("op_graph holds no nodes");
-        std::set<uint32_t> slots;
         std::vector<std::vector<uint32_t>> after(nodes);
         for (size_t n = 0; n < nodes; ++n) {
             const std::string row = "op_graph.nodes[" + _N(n) + "]";
@@ -605,19 +607,30 @@ private:
                 if (!node.inputs[k])
                     return _Bad(at + " is missing");
                 const fb::RigExecWireOpNodeInput &input = *node.inputs[k];
-                if ((input.node >= 0) == (input.slot >= 0))
-                    return _Bad(at + ": names both or neither of a node "
-                                     "and a slot");
+                if ((input.node >= 0) == (input.host >= 0))
+                    return _Bad(at + ": names other than one of a node and "
+                                     "a rig value or constant");
+                if (input.host != 3 && !input.constant.empty())
+                    return _Bad(at + ": holds a constant it does not read");
                 if (input.node >= 0) {
                     if (size_t(input.node) >= nodes)
                         return _Bad(at + ": node " + _N(size_t(input.node)) +
                                     " out of range");
                     after[size_t(input.node)].push_back(uint32_t(n));
-                } else {
-                    if (size_t(input.slot) >= _f.inputs.size())
-                        return _Bad(at + ": slot " + _N(size_t(input.slot)) +
+                } else if (input.host == 3) {
+                    continue;
+                } else if (input.host == 0) {
+                    if (input.object >= _chains)
+                        return _Bad(at + ": chain " + _N(input.object) +
                                     " out of range");
-                    slots.insert(uint32_t(input.slot));
+                } else if (input.host == 1 || input.host == 2) {
+                    if (input.object >= _slots)
+                        return _Bad(at + ": slot " + _N(input.object) +
+                                    " out of range");
+                } else {
+                    return _Bad(at + ": rig value " + _N(size_t(input.host)) +
+                                " is not a point chain, a matrix or a "
+                                "constant");
                 }
             }
         }
@@ -658,25 +671,20 @@ private:
             if (output.name.empty() || !names.insert(output.name).second)
                 return _Bad(row + ": name is empty or repeated");
         }
-        if (graph->step < 0 || graph->step != opGraphStep)
-            return _Bad("op_graph.step names no OpGraph step");
-        const fb::RigExecWireStep &step = _f.steps[size_t(graph->step)];
-        const bool admissionOnly =
-            step.reads.size() == 1 &&
-            step.reads[0].domain() ==
-                fb::SlotDomain::RequiredStageFramesAdmission;
-        if (step.object != 0 || step.part != -1 || !admissionOnly ||
-            !step.writes.empty() || step.isHead || step.isSource ||
-            step.externalReads || step.headAlwaysRuns ||
-            !step.headInputReads.empty() || !step.overrideInputs.empty())
-            return _Bad(_StepName(size_t(graph->step)) +
-                        ": an OpGraph step is object 0, part -1, reads only "
-                        "the stage-frame admission and writes nothing");
-        if (std::set<uint32_t>(step.headInputSlots.begin(),
-                               step.headInputSlots.end()) != slots)
-            return _Bad(_StepName(size_t(graph->step)) +
-                        ": OpGraph memo does not cover exactly the slots its "
-                        "nodes read");
+        for (size_t c = 0; c < graph->chains.size(); ++c) {
+            const std::string row = "op_graph.chains[" + _N(c) + "]";
+            if (!graph->chains[c])
+                return _Bad(row + " is missing");
+            const fb::RigExecWireOpChain &chain = *graph->chains[c];
+            if (chain.pointChain >= _chains)
+                return _Bad(row + ": point chain " + _N(chain.pointChain) +
+                            " out of range");
+            bool cut = chain.bounds.size() >= 2 && chain.bounds.front() == 0;
+            for (size_t g = 1; cut && g < chain.bounds.size(); ++g)
+                cut = chain.bounds[g - 1] <= chain.bounds[g];
+            if (!cut)
+                return _Bad(row + ": its bounds are no cut into groups");
+        }
         return true;
     }
 
@@ -2808,6 +2816,9 @@ private:
                         uint64_t(_f.geometry->revisionChunkCount[i]))
                     return true;
             return false;
+        case D::OpValue:
+        case D::OpGroupValue:
+            return _f.opGraph != nullptr;
         case D::DerivedOut:
         case D::DerivedBase:
             width = _derived;
@@ -9284,13 +9295,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 20,
+    static_assert(RigExecFormatOldestReadable == 36,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: per-group range chains"
+                ? "re-export: op nodes as steps of the common graph"
                 : "rebake");
 }
 
@@ -9538,8 +9549,14 @@ _StepKindName(fb::StepKind kind)
         return "SpaceCheckpoint";
     case fb::StepKind::ProviderRefresh:
         return "ProviderRefresh";
-    case fb::StepKind::OpGraph:
-        return "OpGraph";
+    case fb::StepKind::ReservedOpGraph:
+        return "ReservedOpGraph";
+    case fb::StepKind::OpNode:
+        return "OpNode";
+    case fb::StepKind::OpChainHead:
+        return "OpChainHead";
+    case fb::StepKind::OpChainRange:
+        return "OpChainRange";
     }
     return "unknown";
 }
@@ -9634,10 +9651,18 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
             return false;
         *out = pose->providerRefreshes[size_t(object)].key;
         return true;
-    case fb::StepKind::OpGraph:
-        if (!file.opGraph)
+    case fb::StepKind::ReservedOpGraph:
+        return false;
+    case fb::StepKind::OpNode:
+        if (!file.opGraph || !_Has(file.opGraph->nodes, object))
             return false;
-        *out = "op nodes";
+        *out = "op node " + std::to_string(object);
+        return true;
+    case fb::StepKind::OpChainHead:
+    case fb::StepKind::OpChainRange:
+        if (!file.opGraph || !_Has(file.opGraph->chains, object))
+            return false;
+        *out = "op chain " + std::to_string(object);
         return true;
     case fb::StepKind::WeightField: {
         if (!geometry || !_Has(geometry->weightFields, object))
