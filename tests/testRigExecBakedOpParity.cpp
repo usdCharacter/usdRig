@@ -910,7 +910,7 @@ ProbeProperty(const B &b)
             const bool valid = b.propertyVersionValid[out];
             std::string error;
             bool applied = false;
-            VtValue baked, op;
+            VtValue baked, op, passed;
             if (chain.arm == Arm::Float) {
                 float value = entering.f;
                 if (admitted)
@@ -918,6 +918,7 @@ ProbeProperty(const B &b)
                                           &value, error);
                 baked = valid ? VtValue(written.f) : VtValue();
                 op = VtValue(applied ? value : entering.f);
+                passed = VtValue(entering.f);
             } else if (chain.arm == Arm::Vec3f) {
                 const rigExecStd::Vec3f from(entering.v[0], entering.v[1],
                                              entering.v[2]);
@@ -928,6 +929,7 @@ ProbeProperty(const B &b)
                 baked = valid ? VtValue(written.v) : VtValue();
                 op = VtValue(applied ? GfVec3f(value[0], value[1], value[2])
                                      : entering.v);
+                passed = VtValue(entering.v);
             } else {
                 rigExecStd::Mat4d from, value;
                 for (int row = 0; row < 4; ++row)
@@ -943,11 +945,16 @@ ProbeProperty(const B &b)
                         matrix[row][col] = value._mtx[row][col];
                 baked = valid ? VtValue(written.m) : VtValue();
                 op = VtValue(matrix);
+                passed = VtValue(entering.m);
+            }
+            if (admitted && !applied) {
+                OpFailed("PropertyRevision", armName,
+                         revision.mover.GetString(), !valid || baked == passed,
+                         error);
+                continue;
             }
             Compare("PropertyRevision", armName, revision.mover.GetString(),
-                    baked, op, !applied,
-                    applied || !admitted ? std::string()
-                                         : "op refused: " + error);
+                    baked, op, !applied);
         }
     }
 }
