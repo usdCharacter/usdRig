@@ -60,10 +60,11 @@ Stage()
 }
 
 /// The Quadratic op on \p points with the mover's declared \p inputs under a
-/// constant \p weight; \p points stay as they are where the op refuses.
-void
+/// constant \p weight. False with the compile or evaluation error, and
+/// nothing published, where the op fails.
+bool
 RunOp(const std::vector<VtValue> &inputs, float weight,
-      std::vector<GfVec3f> &points)
+      std::vector<GfVec3f> &points, std::string *error)
 {
     RigExecRevisionBinding binding;
     binding.moverPath = SdfPath("/Rig/External");
@@ -75,34 +76,37 @@ RunOp(const std::vector<VtValue> &inputs, float weight,
     values.basePoints = &base;
     RigExecRigDescBuilder builder;
     RigExecExternalOpNode node;
-    std::string error;
-    if (!RigExecAddExternalOp(binding, values, &builder, &node, &error))
-        return;
-    auto rig = builder.Build(&error);
-    auto program = rig ? RigExecCompile(*rig, {}, &error) : nullptr;
+    if (!RigExecAddExternalOp(binding, values, &builder, &node, error))
+        return false;
+    auto rig = builder.Build(error);
+    auto program = rig ? RigExecCompile(*rig, {}, error) : nullptr;
     auto evaluator =
-        program ? RigExecEvaluator::Create(program, {}, &error) : nullptr;
+        program ? RigExecEvaluator::Create(program, {}, error) : nullptr;
     CHECK(evaluator);
     if (!evaluator ||
         !RigExecWriteExternalOpInputs(binding, values,
                                       RigExecWeightPacket::Constant(weight),
-                                      points, node, evaluator.get(), &error) ||
-        !evaluator->Evaluate(&error))
-        return;
+                                      points, node, evaluator.get(), error))
+        return false;
+    if (!evaluator->Evaluate(error))
+        return false;
     const auto *out =
         static_cast<const rigExecStd::RigExecArray<rigExecStd::Vec3f> *>(
             evaluator->GetOutput(node.out));
     CHECK(out && out->Size() == points.size());
     if (!out || out->Size() != points.size())
-        return;
+        return false;
     for (size_t i = 0; i < points.size(); ++i)
         points[i] = GfVec3f((*out)[i][0], (*out)[i][1], (*out)[i][2]);
+    return true;
 }
 
-/// The native evaluator and the op agree on the body's points.
+/// The native evaluator and the op agree on the body's points. With
+/// \p expect the native evaluator refuses the mover and leaves the rest,
+/// and the op fails with an error holding \p expect.
 void
 Compare(const UsdStageRefPtr &stage, const std::vector<VtValue> &inputs,
-        float weight, const char *what)
+        float weight, const char *what, const char *expect = nullptr)
 {
     RigExecRigEvaluator rig(stage, SdfPath("/Rig"));
     std::vector<std::string> errors;
@@ -117,12 +121,24 @@ Compare(const UsdStageRefPtr &stage, const std::vector<VtValue> &inputs,
                                     ? moved->second.Get<VtVec3fArray>()
                                     : rest;
     std::vector<GfVec3f> points(rest.cbegin(), rest.cend());
-    RunOp(inputs, weight, points);
-    const bool same = points.size() == native.size() &&
+    std::string error;
+    const bool ran = RunOp(inputs, weight, points, &error);
+    if (expect) {
+        const bool refused = !ran && error.find(expect) != std::string::npos &&
+                             native.size() == rest.size() &&
+                             std::memcmp(native.cdata(), rest.cdata(),
+                                         rest.size() * sizeof(GfVec3f)) == 0;
+        if (!refused)
+            std::printf("%s: ran %d (%s)\n", what, int(ran), error.c_str());
+        CHECK(refused);
+        return;
+    }
+    const bool same = ran && points.size() == native.size() &&
                       std::memcmp(points.data(), native.cdata(),
                                   native.size() * sizeof(GfVec3f)) == 0;
     if (!same)
-        std::printf("%s: the op differs from native\n", what);
+        std::printf("%s: the op differs from native (%s)\n", what,
+                    error.c_str());
     CHECK(same);
 }
 
@@ -161,12 +177,18 @@ main(int argc, char **argv)
                 {VtValue(0.75f), VtValue(VtVec3fArray{GfVec3f(0, 0.25f, 0)})},
                 0.5f, "reference, half weight");
     }
+    // Where the native evaluator refuses the mover, the op's evaluation
+    // stops with an error before it runs.
     for (const float gain : {-1.0f, -2.0f, -3.0f}) {
         auto stage = Stage();
         CHECK(stage->GetAttributeAtPath(SdfPath("/Rig/External.inputs:gain"))
                   .Set(gain));
         Compare(stage, {VtValue(gain)}, 1.0f,
-                ("refused, gain " + std::to_string(gain)).c_str());
+                ("gain " + std::to_string(gain)).c_str(),
+                gain == -2.0f
+                    ? "is invalid: Quadratic: the result changes the point "
+                      "count"
+                    : "is invalid: Quadratic: a negative gain");
     }
     if (failures) {
         std::printf("%d failure(s)\n", failures);

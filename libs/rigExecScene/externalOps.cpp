@@ -728,8 +728,6 @@ AddCloth(const RigExecRevisionBinding &binding,
     node.points = builder.BindInput(node.node, rigExecOps::ClothPoints());
     node.envelope = builder.BindInput(node.node, rigExecOps::ClothEnvelope());
     node.out = builder.BindOutput(node.node, rigExecOps::ClothOut());
-    node.status = builder.BindOutput(node.node, rigExecOps::ClothStatusOut());
-    node.solved = uint32_t(rigExecOps::ClothStatus::Solved);
     node.windowed = true;
     node.source = in;
     return true;
@@ -873,8 +871,7 @@ RigExecWriteExternalOpInputs(const RigExecRevisionBinding &binding,
                              const RigExecWeightPacket &weights,
                              const std::vector<GfVec3f> &points,
                              const RigExecExternalOpNode &node,
-                             RigExecEvaluator *evaluator, std::string *error,
-                             bool *envelopeResolved)
+                             RigExecEvaluator *evaluator, std::string *error)
 {
     const RigExecExternalOpBinder *op = Find(binding);
     if (!op || node.op != &op->op())
@@ -884,15 +881,8 @@ RigExecWriteExternalOpInputs(const RigExecRevisionBinding &binding,
     if (!op->write(binding, values, node, *evaluator, error))
         return false;
     std::vector<float> resolved;
-    const bool resolves = weights.ResolveAll(points.size(), &resolved);
-    if (envelopeResolved)
-        *envelopeResolved = resolves;
-    if (!resolves) {
-        if (!node.windowed)
-            return Fail(error, "envelope does not resolve over the points");
-        // The tick still records; the run's result is refused.
-        resolved.assign(points.size(), 1.0f);
-    }
+    if (!weights.ResolveAll(points.size(), &resolved))
+        return Fail(error, "envelope does not resolve over the points");
     const RigExecArray<float> envelope(resolved.data(), resolved.size());
     const RigExecArray<Vec3f> in = ToStd(points.data(), points.size());
     return (!Valid(node.envelope) ||

@@ -41,6 +41,27 @@ Fail(std::string *error, const char *why)
     return false;
 }
 
+/// What can be known before the node runs: a gain the host writes, and the
+/// envelope's length.
+bool
+Validate(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    const auto *gain = static_cast<const float *>(
+        check.batch
+            .inputs[check.k * check.batch.portCount + QuadraticGain().Index()]);
+    // The mover's payload sentinel for a result of another point count.
+    if (gain && *gain == -2.0f)
+        return Fail(error, "the result changes the point count");
+    if (gain && *gain < 0.0f)
+        return Fail(error, "a negative gain");
+    const size_t points = check.elements[QuadraticPoints().Index()];
+    const size_t envelope = check.elements[QuadraticEnvelope().Index()];
+    if (envelope < rigExec::kRigExecPortUnfed &&
+        points < rigExec::kRigExecPortUnfed && envelope != points)
+        return Fail(error, "envelope length differs from the points");
+    return true;
+}
+
 bool
 Run(const void *, void *, const rigExec::RigExecOpIo &io, std::string *error)
 {
@@ -48,7 +69,6 @@ Run(const void *, void *, const rigExec::RigExecOpIo &io, std::string *error)
     using rigExec::opPorts::Out;
     const Points &in = *In<Points>(io, QuadraticPoints());
     const float gain = *In<float>(io, QuadraticGain());
-    // The mover's payload sentinel for a result of another point count.
     if (gain == -2.0f)
         return Fail(error, "the result changes the point count");
     std::vector<Vec3f> points(in.begin(), in.end());
@@ -75,8 +95,8 @@ Run(const void *, void *, const rigExec::RigExecOpIo &io, std::string *error)
 const rigExec::RigExecPortDesc kPorts[] = {
     {&QuadraticPoints(), &rigExecStd::Vec3fArray(), rigExec::kRigExecPortInput,
      "points"},
-    {&QuadraticGain(), &rigExecStd::FloatType(), rigExec::kRigExecPortInput,
-     "gain"},
+    {&QuadraticGain(), &rigExecStd::FloatType(),
+     rigExec::kRigExecPortInput | rigExec::kRigExecPortChecked, "gain"},
     {&QuadraticReferenceY(), &rigExecStd::FloatType(),
      rigExec::kRigExecPortInput, "referenceY"},
     {&QuadraticEnvelope(), &rigExecStd::FloatArray(),
@@ -92,6 +112,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.run = &Run;
+    d.validate = &Validate;
     return d;
 }();
 

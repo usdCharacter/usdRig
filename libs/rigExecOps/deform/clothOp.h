@@ -24,31 +24,18 @@ struct ClothPayload {
     }
 };
 
-/// What a run did, on the Status output.
-enum class ClothStatus : uint32_t {
-    Solved,
-    /// A history tick that only records: the points pass through.
-    PassedThrough,
-    /// The tick's inputs could not be recorded: the run fails.
-    NotRecorded,
-    /// The compiled rig, the window or the solve was unusable: the run
-    /// fails, the tick stays recorded.
-    Failed,
-};
-
 const rigExec::RigExecOpHandle &Cloth();
 
 // Points (Vec3fArray), Parameters (FloatArray, RigExecClothParameterCount
 // in packet order), Colliders (Vec3fArray each, in compiled rig order; any
-// number), Envelope (optional FloatArray, one per point), Out, Status
-// (UInt, a ClothStatus). Out holds the entering points unless Status is
-// Solved.
+// number), Envelope (optional FloatArray, one per point), Out. A history
+// tick that only records passes the points through; a solve that fails
+// fails the evaluation, the tick staying recorded.
 const rigExec::RigExecPortHandle &ClothPoints();
 const rigExec::RigExecPortHandle &ClothParameters();
 const rigExec::RigExecPortHandle &ClothColliders();
 const rigExec::RigExecPortHandle &ClothEnvelope();
 const rigExec::RigExecPortHandle &ClothOut();
-const rigExec::RigExecPortHandle &ClothStatusOut();
 
 } // namespace rigExecOps
 

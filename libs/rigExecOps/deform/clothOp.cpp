@@ -19,7 +19,6 @@ RIGEXEC_DEFINE_PORT_HANDLE(ClothParameters)
 RIGEXEC_DEFINE_PORT_HANDLE(ClothColliders)
 RIGEXEC_DEFINE_PORT_HANDLE(ClothEnvelope)
 RIGEXEC_DEFINE_PORT_HANDLE(ClothOut)
-RIGEXEC_DEFINE_PORT_HANDLE(ClothStatusOut)
 
 namespace {
 
@@ -28,6 +27,11 @@ using rigExec::RigExecClothPrepared;
 using rigExec::RigExecWindowPacket;
 using rigExecStd::RigExecArray;
 using rigExecStd::Vec3f;
+
+constexpr char kParameterCount[] =
+    "needs RigExecClothParameterCount parameters in packet order";
+constexpr char kPointCount[] = "its points differ from its compiled rig's";
+constexpr char kUnusable[] = "its compiled rig is unusable";
 
 /// A node's prepared compiled rig, built on its first solve from the
 /// payload, which does not change for the node's life.
@@ -56,13 +60,6 @@ Run(const void *payload, void *state, const rigExec::RigExecOpIo &io,
 {
     const ClothPayload &p = *static_cast<const ClothPayload *>(payload);
     const Points &in = *In<Points>(io, ClothPoints());
-    Points &out = Out<Points>(io, ClothOut());
-    uint32_t &status = Out<uint32_t>(io, ClothStatusOut());
-    const auto finish = [&](ClothStatus why) {
-        out = in;
-        status = uint32_t(why);
-        return true;
-    };
     if (!io.window)
         return Fail(error, "Cloth", "runs only with a window");
     rigExec::RigExecWindowPacketPtr &capture = *io.window->capture;
@@ -70,7 +67,7 @@ Run(const void *payload, void *state, const rigExec::RigExecOpIo &io,
 
     const Envelope &parameters = *In<Envelope>(io, ClothParameters());
     if (parameters.Size() != rigExec::RigExecClothParameterCount)
-        return finish(ClothStatus::NotRecorded);
+        return Fail(error, "Cloth", kParameterCount);
     const InList<Points> colliders(io, ClothColliders());
     std::vector<const float *> colliderPoints(colliders.Size());
     std::vector<size_t> colliderCounts(colliders.Size());
@@ -85,13 +82,17 @@ Run(const void *payload, void *state, const rigExec::RigExecOpIo &io,
         colliderPoints.data(), colliderCounts.data(), colliderPoints.size(),
         parameters.Data(), packet.get());
     capture = std::move(packet);
-    if (io.window->captureOnly)
-        return finish(ClothStatus::PassedThrough);
+    if (io.window->captureOnly) {
+        Out<Points>(io, ClothOut()) = in;
+        return true;
+    }
 
     const RigExecClothPrepared *prepared =
         PreparedOf(p, *static_cast<ClothState *>(state));
-    if (!prepared || in.Size() != prepared->compiledRig.pointCount)
-        return finish(ClothStatus::Failed);
+    if (!prepared)
+        return Fail(error, "Cloth", kUnusable);
+    if (in.Size() != prepared->compiledRig.pointCount)
+        return Fail(error, "Cloth", kPointCount);
     std::vector<const RigExecWindowPacket *> ticks;
     rigExec::RigExecWindowUsableTail(*io.window->ring, capture.get(), &ticks);
     std::vector<Vec3f> points = ToVector(in);
@@ -99,10 +100,27 @@ Run(const void *payload, void *state, const rigExec::RigExecOpIo &io,
             *prepared, ticks.data(), ticks.size(),
             reinterpret_cast<float *>(points.data()), nullptr) ||
         !AllFinite(points))
-        return finish(ClothStatus::Failed);
-    status = uint32_t(ClothStatus::Solved);
+        return Fail(error, "Cloth",
+                    "the solve failed or gave a point that is not finite");
     return WritePoints(io, ClothOut(), in, points,
                        In<Envelope>(io, ClothEnvelope()), "Cloth", error);
+}
+
+bool
+Check(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    const auto &p = *static_cast<const ClothPayload *>(
+        rigExec::RigExecBatchPayload(check.batch, check.k));
+    if (!SameCount(CheckElements(check, ClothParameters()),
+                   rigExec::RigExecClothParameterCount))
+        return Fail(error, "Cloth", kParameterCount);
+    if (!SameCount(CheckElements(check, ClothPoints()),
+                   p.compiledRig.pointCount))
+        return Fail(error, "Cloth", kPointCount);
+    if (ClothState *state = CheckState<ClothState>(check);
+        state && !PreparedOf(p, *state))
+        return Fail(error, "Cloth", kUnusable);
+    return EnvelopeFits(check, ClothPoints(), ClothEnvelope(), "Cloth", error);
 }
 
 uint32_t
@@ -133,7 +151,6 @@ const rigExec::RigExecPortDesc kPorts[] = {
      kRigExecPortInput | kRigExecPortOptional, "envelope"},
     {&ClothOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
      rigExec::RigExecOutputBound::Input, &ClothPoints()},
-    {&ClothStatusOut(), &rigExecStd::UIntType(), kRigExecPortOutput, "status"},
 };
 
 using payloadIo::Reader;
@@ -170,6 +187,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.run = &Run;
+    d.validate = &Check;
     d.threading = rigExec::RigExecOpThreading::Windowed;
     d.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |

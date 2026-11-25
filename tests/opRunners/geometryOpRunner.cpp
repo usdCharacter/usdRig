@@ -130,7 +130,6 @@ RigExecRunExternalOp(const RigExecRevisionBinding &binding,
                      RigExecWindowRun *window)
 {
     const RigExecOpHandle *op = RigExecExternalOpHandle(binding);
-    bool envelopeResolved = true;
     const bool ready =
         op && Ready(
                   runner, runner.evaluator && runner.external.op == op,
@@ -141,7 +140,7 @@ RigExecRunExternalOp(const RigExecRevisionBinding &binding,
                   [&] {
                       return RigExecWriteExternalOpInputs(
                           binding, values, p.weights, points, runner.external,
-                          runner.evaluator.get(), error, &envelopeResolved);
+                          runner.evaluator.get(), error);
                   },
                   [&] {
                       return RigExecExternalOpNodeStale(binding, values,
@@ -165,18 +164,12 @@ RigExecRunExternalOp(const RigExecRevisionBinding &binding,
                 return false;
             const RigExecWindowRing &pushed = evaluator.GetWindowRings()[0];
             *window->capture = pushed.empty() ? nullptr : pushed.back();
-            return envelopeResolved;
+            return true;
         }
         if (!evaluator.Evaluate(error))
             return false;
         *window->capture = evaluator.GetWindowCaptures()[0];
-        const auto *status = static_cast<const uint32_t *>(
-            evaluator.GetOutput(runner.external.status));
-        if (!status || *status != runner.external.solved)
-            return Fail(error, "the windowed op did not solve");
     }
-    if (!envelopeResolved)
-        return Fail(error, "envelope does not resolve over the points");
     const auto *out = static_cast<const RigExecArray<Vec3f> *>(
         evaluator.GetOutput(runner.external.out));
     if (!out || out->Size() != points.size()) {

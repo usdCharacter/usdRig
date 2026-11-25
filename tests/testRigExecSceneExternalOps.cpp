@@ -599,12 +599,16 @@ RunOpWindow(const Revision &r, const RigExecWeightPacket &weights,
 /// The native cloth and its op played side by side: \p ticks lists each
 /// tick's frame, negative for a jump to minus it (the history cleared, then
 /// rebuilt from the frames before it by record-only ticks), and each tick
-/// must give the same success, points and record. \p edit, when set, changes
-/// the inputs before the tick it names. Returns how many ticks solved.
+/// must give the same points and record. Where the native tick refuses,
+/// and on every tick of inputs the op cannot take, the op's evaluation
+/// fails with an error holding \p expect; the host then starts both
+/// histories over. \p edit, when set, changes the inputs before the tick it
+/// names. Returns how many ticks solved.
 int
 PlayCloth(const char *name, ClothInputs inputs, const std::vector<int> &ticks,
           const RigExecWeightPacket &weights,
-          const std::function<void(int, ClothInputs &)> &edit = {})
+          const std::function<void(int, ClothInputs &)> &edit = {},
+          const char *expect = nullptr)
 {
     History native, op;
     native.frames = op.frames = size_t(RigExecClothHistoryFrames(
@@ -621,15 +625,25 @@ PlayCloth(const char *name, ClothInputs inputs, const std::vector<int> &ticks,
             RunNativeWindow(r, weights, native, captureOnly, &a);
         const bool opOk =
             RunOpWindow(r, weights, op, captureOnly, runner, &b, &error);
-        const bool same = nativeOk == opOk && (!nativeOk || SameBits(a, b)) &&
-                          RigExecWindowPacketsEqual(native.capture, op.capture);
+        const bool same =
+            opOk ? nativeOk && SameBits(a, b) &&
+                       RigExecWindowPacketsEqual(native.capture, op.capture)
+                 : (!nativeOk || captureOnly) && expect &&
+                       error.find(expect) != std::string::npos;
         if (!same) {
             std::printf("%s, t=%d%s: native %d, op %d (%s)\n", name, t,
                         captureOnly ? " (record only)" : "", int(nativeOk),
                         int(opOk), error.c_str());
             CHECK(false);
         }
-        solved += nativeOk && !captureOnly ? 1 : 0;
+        solved += opOk && !captureOnly ? 1 : 0;
+        if (!opOk) {
+            native.ring.clear();
+            op.ring.clear();
+            native.capture.reset();
+            op.capture.reset();
+            return;
+        }
         native.Push();
         op.Push();
     };
@@ -690,23 +704,27 @@ TestCloth()
                         if (t == 5)
                             in.pins[7] = 1.0f;
                     }) > 0);
-    // Refusals: a record that cannot be made, an unusable mesh and an
-    // envelope that does not resolve still match tick by tick.
-    CHECK(PlayCloth("cloth, collider points missing", inputs, play, full,
-                    [](int t, ClothInputs &in) {
-                        if (t == 4)
-                            in.colliders[0].points = {GfVec3f(0)};
-                    }) > 0);
+    // A record that cannot be made, an unusable mesh and an envelope that
+    // does not resolve fail the op's evaluation with an error.
+    CHECK(PlayCloth(
+              "cloth, collider points missing", inputs, play, full,
+              [](int t, ClothInputs &in) {
+                  if (t == 4)
+                      in.colliders[0].points = {GfVec3f(0)};
+              },
+              "Cloth: ") > 0);
     {
         ClothInputs broken = inputs;
         broken.counts[0] = 9;
-        CHECK(PlayCloth("cloth, unusable mesh", broken, {0, 1, 2}, full) == 0);
+        CHECK(PlayCloth("cloth, unusable mesh", broken, {0, 1, 2}, full, {},
+                        "Cloth: its compiled rig is unusable") == 0);
     }
     {
         RigExecWeightPacket bad = Dense(n);
         bad.values.pop_back();
         CHECK(PlayCloth("cloth, envelope does not resolve", inputs,
-                        {0, 1, 2, 3}, bad) == 0);
+                        {0, 1, 2, 3}, bad, {},
+                        "envelope does not resolve over the points") == 0);
     }
 }
 
