@@ -2941,6 +2941,112 @@ FrameUsable(const std::array<typename Math::Vec3, 4> &points, unsigned flags)
                                (flags & pose_ops::kPoseFrameDegenerate) != 0);
 }
 
+// One slot's rest compose: the rest avars against the rest space, the
+// intervening space and the parent's rest round trip.
+template <class Math> struct PoseRestComposeT {
+    typename Math::Mat4 restM = Math::Identity4();
+    std::array<typename Math::Vec3, 4> points = {
+        Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0),
+        Math::Vec3Of(0, 0, 0)};
+    unsigned flags = 0;
+    typename Math::Mat4 roundTrip = Math::Identity4();
+};
+
+template <class Math>
+PoseRestComposeT<Math>
+RestComposeSlot(const double *restAvars, const typename Math::Mat4 &restSpace,
+                const typename Math::Mat4 &intervening,
+                const typename Math::Mat4 &parentRest)
+{
+    typename Math::Mat4 rest = pose_ops::ComposeAvars<Math>(
+        restAvars[0], restAvars[1], restAvars[2], 1, 1, 1, restAvars[3],
+        restAvars[4], restAvars[5], 0, std::string_view(SchemaValueText::xyz));
+    rest = pose_ops::Multiply4<Math>(rest, restSpace);
+    pose_ops::Orthonormalize4<Math>(&rest);
+    if (!SameBitsMat4<Math>(intervening, Math::Identity4())) {
+        rest = pose_ops::Multiply4<Math>(rest, intervening);
+    }
+    PoseRestComposeT<Math> out;
+    out.restM = pose_ops::Multiply4<Math>(rest, parentRest);
+    pose_ops::FrameFromMatrix<Math>(out.restM, &out.points, &out.flags);
+    out.roundTrip = pose_ops::RoundTripMatrix<Math>(out.restM);
+    return out;
+}
+
+// One slot's ladder reads, each channel resolved to its provider value or
+// leaf. authored[c] is channel c's authoritative state; the default
+// channels (1/4/5/6) also count a ready provider value. The parent
+// pointers are null for a slot without a parent.
+template <class Math> struct PoseLadderInputT {
+    typename Math::Mat4 spaces[7];
+    bool authored[7] = {};
+    typename Math::Mat4 parentSpaceLeaf;
+    typename Math::Vec3 rotationSign;
+    double defaultAvars[6] = {};
+    typename Math::Mat4 ownRest;
+    const typename Math::Mat4 *parentRest = nullptr;
+    const typename Math::Mat4 *parentDefault = nullptr;
+};
+
+template <class Math> struct PoseLadderT {
+    typename Math::Mat4 selfD, parentDinv, defaultRoundTrip, posedD;
+    typename Math::Mat4 parentSpaceM, posed;
+    bool posedAuthored = false;
+    bool parentSpaceAuthored = false;
+    unsigned char rotationSign = 0;
+};
+
+template <class Math>
+PoseLadderT<Math>
+LadderComposeSlot(const PoseLadderInputT<Math> &in)
+{
+    using Mat4 = typename Math::Mat4;
+    const Mat4 identity = Math::Identity4();
+    const auto authored = [&](int channel) {
+        return in.authored[channel] ||
+               !SameBitsMat4<Math>(in.spaces[channel], identity);
+    };
+    PoseLadderT<Math> out;
+    out.posed = in.spaces[kPoseLadderPosedSpace];
+    out.posedAuthored = authored(kPoseLadderPosedSpace);
+    const Mat4 parentRest = in.parentRest ? *in.parentRest : identity;
+    Mat4 parentDefault = identity;
+    if (authored(kPoseLadderParentDefaultSpace)) {
+        parentDefault = in.spaces[kPoseLadderParentDefaultSpace];
+    } else if (in.parentDefault) {
+        parentDefault = *in.parentDefault;
+    }
+    if (authored(kPoseLadderDefaultSpace)) {
+        out.selfD = in.spaces[kPoseLadderDefaultSpace];
+    } else {
+        const double *d = in.defaultAvars;
+        const Mat4 offset = pose_ops::ComposeAvars<Math>(
+            d[0], d[1], d[2], 1, 1, 1, d[3], d[4], d[5], 0,
+            std::string_view(SchemaValueText::xyz));
+        Mat4 parentRestInv = identity;
+        pose_ops::Invert4<Math>(parentRest, 0.0, &parentRestInv, nullptr);
+        out.selfD = pose_ops::Multiply4<Math>(
+            pose_ops::Multiply4<Math>(
+                pose_ops::Multiply4<Math>(offset, in.ownRest), parentRestInv),
+            parentDefault);
+    }
+    out.defaultRoundTrip = pose_ops::RoundTripMatrix<Math>(out.selfD);
+    const Mat4 avarDefault = authored(kPoseLadderAvarDefaultSpace)
+                                 ? in.spaces[kPoseLadderAvarDefaultSpace]
+                                 : out.selfD;
+    out.posedD = authored(kPoseLadderPosedDefaultSpace)
+                     ? in.spaces[kPoseLadderPosedDefaultSpace]
+                     : avarDefault;
+    out.parentDinv = identity;
+    pose_ops::Invert4<Math>(parentDefault, 0.0, &out.parentDinv, nullptr);
+    out.parentSpaceM = in.spaces[kPoseLadderParentSpace];
+    out.parentSpaceAuthored = in.authored[kPoseLadderParentSpace] ||
+                              !SameBitsMat4<Math>(in.parentSpaceLeaf, identity);
+    out.rotationSign = RigExecRotationSignMask(
+        in.rotationSign[0], in.rotationSign[1], in.rotationSign[2]);
+    return out;
+}
+
 template <class Host>
 StepResult
 RunRestComposeRange(Host &host, int begin, int end, bool trackMoves)
@@ -2960,35 +3066,22 @@ RunRestComposeRange(Host &host, int begin, int end, bool trackMoves)
                                    UnavailableSpace<Math>());
             continue;
         }
-        typename Math::Mat4 rest = pose_ops::ComposeAvars<Math>(
-            host.inputs().restAvar(slot, 0), host.inputs().restAvar(slot, 1),
-            host.inputs().restAvar(slot, 2), 1, 1, 1,
-            host.inputs().restAvar(slot, 3), host.inputs().restAvar(slot, 4),
-            host.inputs().restAvar(slot, 5), 0,
-            std::string_view(SchemaValueText::xyz));
-        rest = pose_ops::Multiply4<Math>(
-            rest, host.inputs().ladderSpace(slot, kPoseLadderRestSpace));
-        pose_ops::Orthonormalize4<Math>(&rest);
+        double restAvars[6];
+        for (size_t k = 0; k < 6; ++k) {
+            restAvars[k] = host.inputs().restAvar(slot, k);
+        }
         const int parent = host.inputs().parent(slot);
         typename Math::Mat4 parentRest = identity;
         if (parent >= 0 &&
             !host.inputs().restRoundTrip(size_t(parent), &parentRest)) {
             return {Outcome::Invalid, pose_detail::kPoseDetailNoSlot};
         }
-        const typename Math::Mat4 intervening =
-            host.inputs().interveningSpace(slot);
-        if (!SameBitsMat4<Math>(intervening, identity)) {
-            rest = pose_ops::Multiply4<Math>(rest, intervening);
-        }
-        const typename Math::Mat4 restM =
-            pose_ops::Multiply4<Math>(rest, parentRest);
-        std::array<typename Math::Vec3, 4> points = {
-            Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0),
-            Math::Vec3Of(0, 0, 0)};
-        unsigned flags = 0;
-        pose_ops::FrameFromMatrix<Math>(restM, &points, &flags);
-        host.state().writeRest(slot, restM, points, flags,
-                               pose_ops::RoundTripMatrix<Math>(restM));
+        const PoseRestComposeT<Math> composed = RestComposeSlot<Math>(
+            restAvars, host.inputs().ladderSpace(slot, kPoseLadderRestSpace),
+            host.inputs().interveningSpace(slot), parentRest);
+        const typename Math::Mat4 &restM = composed.restM;
+        host.state().writeRest(slot, restM, composed.points, composed.flags,
+                               composed.roundTrip);
         if (trackMoves) {
             auto lasts = host.state().ladderLasts(slot);
             if (!BitEqualMat4<Math>(restM, *lasts.restM)) {
@@ -3033,91 +3126,51 @@ RunLadderComposeRange(Host &host, int begin, int end, bool trackMoves)
             host.state().writeLadderUnavailable(slot);
             continue;
         }
-        // Only the default channels (1/4/5/6) consult provider
-        // readiness; every other channel answers its connected or
-        // overridden state alone.
-        const auto authoritative = [&](int channel) {
-            return host.inputs().ladderAuthoritative(slot, channel);
-        };
-        const auto authoritativeDefault = [&](int channel) {
-            return host.inputs().ladderChannelReady(slot, channel) ||
-                   host.inputs().ladderAuthoritative(slot, channel);
-        };
-        const typename Math::Mat4 posed =
-            host.inputs().ladderSpace(slot, kPoseLadderPosedSpace);
-        const bool posedAuthored = authoritative(kPoseLadderPosedSpace) ||
-                                   !SameBitsMat4<Math>(posed, identity);
-        const int parent = host.inputs().parent(slot);
-        typename Math::Mat4 parentRest = identity;
-        if (parent >= 0 &&
-            !host.inputs().restRoundTrip(size_t(parent), &parentRest)) {
+        PoseLadderInputT<Math> in;
+        in.spaces[kPoseLadderRestSpace] = identity;
+        for (int channel = kPoseLadderDefaultSpace;
+             channel <= kPoseLadderPosedDefaultSpace; ++channel) {
+            const bool defaultChannel =
+                channel == kPoseLadderDefaultSpace ||
+                channel == kPoseLadderParentDefaultSpace ||
+                channel == kPoseLadderAvarDefaultSpace ||
+                channel == kPoseLadderPosedDefaultSpace;
+            in.spaces[channel] = host.inputs().ladderSpace(slot, channel);
+            in.authored[channel] =
+                (defaultChannel &&
+                 host.inputs().ladderChannelReady(slot, channel)) ||
+                host.inputs().ladderAuthoritative(slot, channel);
+        }
+        in.parentSpaceLeaf = host.inputs().ladderParentSpaceLeaf(slot);
+        in.rotationSign = host.inputs().ladderRotationSign(slot);
+        for (size_t k = 0; k < 6; ++k) {
+            in.defaultAvars[k] = host.inputs().defaultAvar(slot, k);
+        }
+        if (!host.inputs().restRoundTrip(slot, &in.ownRest)) {
             return {Outcome::Invalid, pose_detail::kPoseDetailNoSlot};
         }
-        const typename Math::Mat4 authoredParentDefault =
-            host.inputs().ladderSpace(slot, kPoseLadderParentDefaultSpace);
+        const int parent = host.inputs().parent(slot);
+        typename Math::Mat4 parentRest = identity;
         typename Math::Mat4 parentDefault = identity;
-        if (authoritativeDefault(kPoseLadderParentDefaultSpace) ||
-            !SameBitsMat4<Math>(authoredParentDefault, identity)) {
-            parentDefault = authoredParentDefault;
-        } else if (parent >= 0) {
-            if (!host.inputs().defaultRoundTrip(size_t(parent),
+        if (parent >= 0) {
+            if (!host.inputs().restRoundTrip(size_t(parent), &parentRest) ||
+                !host.inputs().defaultRoundTrip(size_t(parent),
                                                 &parentDefault)) {
                 return {Outcome::Invalid, pose_detail::kPoseDetailNoSlot};
             }
+            in.parentRest = &parentRest;
+            in.parentDefault = &parentDefault;
         }
-        const typename Math::Mat4 authoredDefault =
-            host.inputs().ladderSpace(slot, kPoseLadderDefaultSpace);
-        typename Math::Mat4 selfD = identity;
-        if (authoritativeDefault(kPoseLadderDefaultSpace) ||
-            !SameBitsMat4<Math>(authoredDefault, identity)) {
-            selfD = authoredDefault;
-        } else {
-            const typename Math::Mat4 offset = pose_ops::ComposeAvars<Math>(
-                host.inputs().defaultAvar(slot, 0),
-                host.inputs().defaultAvar(slot, 1),
-                host.inputs().defaultAvar(slot, 2), 1, 1, 1,
-                host.inputs().defaultAvar(slot, 3),
-                host.inputs().defaultAvar(slot, 4),
-                host.inputs().defaultAvar(slot, 5), 0,
-                std::string_view(SchemaValueText::xyz));
-            typename Math::Mat4 parentRestInv = identity;
-            pose_ops::Invert4<Math>(parentRest, 0.0, &parentRestInv, nullptr);
-            typename Math::Mat4 ownRest = identity;
-            if (!host.inputs().restRoundTrip(slot, &ownRest)) {
-                return {Outcome::Invalid, pose_detail::kPoseDetailNoSlot};
-            }
-            selfD = pose_ops::Multiply4<Math>(
-                pose_ops::Multiply4<Math>(
-                    pose_ops::Multiply4<Math>(offset, ownRest), parentRestInv),
-                parentDefault);
-        }
-        const typename Math::Mat4 defaultRoundTrip =
-            pose_ops::RoundTripMatrix<Math>(selfD);
-        const typename Math::Mat4 authoredAvarDefault =
-            host.inputs().ladderSpace(slot, kPoseLadderAvarDefaultSpace);
-        const typename Math::Mat4 avarDefault =
-            authoritativeDefault(kPoseLadderAvarDefaultSpace) ||
-                    !SameBitsMat4<Math>(authoredAvarDefault, identity)
-                ? authoredAvarDefault
-                : selfD;
-        const typename Math::Mat4 authoredPosedDefault =
-            host.inputs().ladderSpace(slot, kPoseLadderPosedDefaultSpace);
-        const typename Math::Mat4 posedD =
-            authoritativeDefault(kPoseLadderPosedDefaultSpace) ||
-                    !SameBitsMat4<Math>(authoredPosedDefault, identity)
-                ? authoredPosedDefault
-                : avarDefault;
-        typename Math::Mat4 parentDinv = identity;
-        pose_ops::Invert4<Math>(parentDefault, 0.0, &parentDinv, nullptr);
-        const typename Math::Mat4 parentSpaceM =
-            host.inputs().ladderSpace(slot, kPoseLadderParentSpace);
-        const bool parentSpaceAuthored =
-            host.inputs().ladderAuthoritative(slot, kPoseLadderParentSpace) ||
-            !SameBitsMat4<Math>(host.inputs().ladderParentSpaceLeaf(slot),
-                                identity);
-        const typename Math::Vec3 sign = host.inputs().ladderRotationSign(slot);
-        const unsigned char rotationSign =
-            RigExecRotationSignMask(sign[0], sign[1], sign[2]);
+        const PoseLadderT<Math> ladder = LadderComposeSlot<Math>(in);
+        const typename Math::Mat4 &selfD = ladder.selfD;
+        const typename Math::Mat4 &parentDinv = ladder.parentDinv;
+        const typename Math::Mat4 &defaultRoundTrip = ladder.defaultRoundTrip;
+        const typename Math::Mat4 &posedD = ladder.posedD;
+        const typename Math::Mat4 &parentSpaceM = ladder.parentSpaceM;
+        const typename Math::Mat4 &posed = ladder.posed;
+        const bool posedAuthored = ladder.posedAuthored;
+        const bool parentSpaceAuthored = ladder.parentSpaceAuthored;
+        const unsigned char rotationSign = ladder.rotationSign;
         host.state().writeLadder(slot, selfD, parentDinv, defaultRoundTrip,
                                  posedD, parentSpaceM, posed, posedAuthored,
                                  parentSpaceAuthored, rotationSign);

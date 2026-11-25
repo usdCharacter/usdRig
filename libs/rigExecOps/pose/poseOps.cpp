@@ -10,6 +10,7 @@
 #include "rigExecRuntime/rbfSolver.h"
 #include "rigExecStdTypes/stdTypes.h"
 
+#include <array>
 #include <iterator>
 #include <string>
 
@@ -45,6 +46,48 @@ RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorExtraRests)
 RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorExtraParentFinals)
 RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorExtraParentRests)
 RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorOut)
+
+RIGEXEC_DEFINE_OP_HANDLE(RestCompose)
+RIGEXEC_DEFINE_PORT_HANDLE(RestComposeRestAvars)
+RIGEXEC_DEFINE_PORT_HANDLE(RestComposeRestSpace)
+RIGEXEC_DEFINE_PORT_HANDLE(RestComposeIntervening)
+RIGEXEC_DEFINE_PORT_HANDLE(RestComposeParentRest)
+RIGEXEC_DEFINE_PORT_HANDLE(RestComposeRestMatrix)
+RIGEXEC_DEFINE_PORT_HANDLE(RestComposeRest)
+RIGEXEC_DEFINE_PORT_HANDLE(RestComposeRoundTrip)
+
+RIGEXEC_DEFINE_OP_HANDLE(LadderCompose)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposeSpaces)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposeAuthored)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposeParentSpaceLeaf)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposeRotationSign)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposeDefaultAvars)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposeOwnRest)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposeParentRest)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposeParentDefault)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposeSelfDefault)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposeParentDefaultInverse)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposeDefaultRoundTrip)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposePosedDefault)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposeParentSpace)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposePosedAuthoredMatrix)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposePosedAuthored)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposeParentSpaceAuthored)
+RIGEXEC_DEFINE_PORT_HANDLE(LadderComposeOutRotationSign)
+
+RIGEXEC_DEFINE_OP_HANDLE(ComposeSlot)
+RIGEXEC_DEFINE_PORT_HANDLE(ComposeSlotAvars)
+RIGEXEC_DEFINE_PORT_HANDLE(ComposeSlotRotOrder)
+RIGEXEC_DEFINE_PORT_HANDLE(ComposeSlotRotationSign)
+RIGEXEC_DEFINE_PORT_HANDLE(ComposeSlotPosedAuthored)
+RIGEXEC_DEFINE_PORT_HANDLE(ComposeSlotPosedAuthoredMatrix)
+RIGEXEC_DEFINE_PORT_HANDLE(ComposeSlotPosedDefault)
+RIGEXEC_DEFINE_PORT_HANDLE(ComposeSlotParentDefaultInverse)
+RIGEXEC_DEFINE_PORT_HANDLE(ComposeSlotParentSpace)
+RIGEXEC_DEFINE_PORT_HANDLE(ComposeSlotParentSpaceAuthored)
+RIGEXEC_DEFINE_PORT_HANDLE(ComposeSlotParentPosed)
+RIGEXEC_DEFINE_PORT_HANDLE(ComposeSlotBase)
+RIGEXEC_DEFINE_PORT_HANDLE(ComposeSlotPosedMatrix)
 
 bool
 PoseInterpolatorPayload::operator==(const PoseInterpolatorPayload &o) const
@@ -712,6 +755,210 @@ RunPoseInterpolator(const RigExecOpBatch &batch, size_t *failed,
     });
 }
 
+// ---- RestCompose / LadderCompose / ComposeSlot ----
+
+using SlotMath = CheckpointMath;
+using PointFrame = rigExecRig::PointFrame;
+
+enum SlotActivityField : uint32_t { kActive };
+enum ComposeSlotField : uint32_t { kSlotActive, kSlotNoScale };
+
+PointFrame
+FrameOf(const std::array<rigExecStd::Vec3d, 4> &points, unsigned flags)
+{
+    PointFrame frame;
+    frame.points = points;
+    frame.flags = flags;
+    return frame;
+}
+
+PointFrame
+UnavailableFrame()
+{
+    return FrameOf(rigExec::eval::pose_ops::IdentityLandmarks<SlotMath>(), 0);
+}
+
+bool
+CheckRestCompose(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (!SameCount(CheckElements(check, RestComposeRestAvars()), 6))
+        return Fail(error, "RestCompose", "needs six rest avars");
+    return true;
+}
+
+bool
+RestComposeOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    Mat4d &restM = Out<Mat4d>(io, RestComposeRestMatrix());
+    PointFrame &rest = Out<PointFrame>(io, RestComposeRest());
+    Mat4d &roundTrip = Out<Mat4d>(io, RestComposeRoundTrip());
+    if (!FlagAt(batch, kActive, k)) {
+        restM = rigExec::eval::UnavailableSpace<SlotMath>();
+        rest = UnavailableFrame();
+        roundTrip = rigExec::eval::UnavailableSpace<SlotMath>();
+        return true;
+    }
+    const auto &avars = *In<RigExecArray<double>>(io, RestComposeRestAvars());
+    if (avars.Size() != 6)
+        return Fail(error, "RestCompose", "needs six rest avars");
+    const Mat4d identity = SlotMath::Identity4();
+    const auto composed = rigExec::eval::RestComposeSlot<SlotMath>(
+        &avars[0], *In<Mat4d>(io, RestComposeRestSpace()),
+        InOr(io, RestComposeIntervening(), identity),
+        InOr(io, RestComposeParentRest(), identity));
+    restM = composed.restM;
+    rest = FrameOf(composed.points, composed.flags);
+    roundTrip = composed.roundTrip;
+    return true;
+}
+
+bool
+RunRestCompose(const RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return RestComposeOne(batch, k, error);
+    });
+}
+
+bool
+CheckLadderCompose(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (!SameCount(CheckElements(check, LadderComposeSpaces()), 6) ||
+        !SameCount(CheckElements(check, LadderComposeAuthored()), 6) ||
+        !SameCount(CheckElements(check, LadderComposeDefaultAvars()), 6))
+        return Fail(error, "LadderCompose",
+                    "needs six channel spaces, authored flags and default "
+                    "avars");
+    if (Fed(check, LadderComposeParentRest()) !=
+        Fed(check, LadderComposeParentDefault()))
+        return Fail(error, "LadderCompose",
+                    "needs its parent's rest and default round trips fed "
+                    "together");
+    return true;
+}
+
+bool
+LadderComposeOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    Mat4d &selfD = Out<Mat4d>(io, LadderComposeSelfDefault());
+    Mat4d &parentDinv = Out<Mat4d>(io, LadderComposeParentDefaultInverse());
+    Mat4d &defaultRoundTrip = Out<Mat4d>(io, LadderComposeDefaultRoundTrip());
+    Mat4d &posedD = Out<Mat4d>(io, LadderComposePosedDefault());
+    Mat4d &parentSpaceM = Out<Mat4d>(io, LadderComposeParentSpace());
+    Mat4d &posedM = Out<Mat4d>(io, LadderComposePosedAuthoredMatrix());
+    uint8_t &posedAuthored = Out<uint8_t>(io, LadderComposePosedAuthored());
+    uint8_t &parentAuthored =
+        Out<uint8_t>(io, LadderComposeParentSpaceAuthored());
+    uint32_t &sign = Out<uint32_t>(io, LadderComposeOutRotationSign());
+    if (!FlagAt(batch, kActive, k)) {
+        const Mat4d unavailable = rigExec::eval::UnavailableSpace<SlotMath>();
+        selfD = parentDinv = defaultRoundTrip = posedD = parentSpaceM = posedM =
+            unavailable;
+        posedAuthored = parentAuthored = 0;
+        sign = 0;
+        return true;
+    }
+    const auto &spaces = *In<RigExecArray<Mat4d>>(io, LadderComposeSpaces());
+    const auto &authored =
+        *In<RigExecArray<uint8_t>>(io, LadderComposeAuthored());
+    const auto &avars =
+        *In<RigExecArray<double>>(io, LadderComposeDefaultAvars());
+    if (spaces.Size() != 6 || authored.Size() != 6 || avars.Size() != 6)
+        return Fail(error, "LadderCompose",
+                    "needs six channel spaces, authored flags and default "
+                    "avars");
+    rigExec::eval::PoseLadderInputT<SlotMath> in;
+    in.spaces[rigExec::eval::kPoseLadderRestSpace] = SlotMath::Identity4();
+    for (size_t c = 0; c < 6; ++c) {
+        in.spaces[c + 1] = spaces[c];
+        in.authored[c + 1] = authored[c] != 0;
+        in.defaultAvars[c] = avars[c];
+    }
+    in.parentSpaceLeaf = *In<Mat4d>(io, LadderComposeParentSpaceLeaf());
+    in.rotationSign = *In<rigExecStd::Vec3d>(io, LadderComposeRotationSign());
+    in.ownRest = *In<Mat4d>(io, LadderComposeOwnRest());
+    in.parentRest = In<Mat4d>(io, LadderComposeParentRest());
+    in.parentDefault = In<Mat4d>(io, LadderComposeParentDefault());
+    const auto ladder = rigExec::eval::LadderComposeSlot<SlotMath>(in);
+    selfD = ladder.selfD;
+    parentDinv = ladder.parentDinv;
+    defaultRoundTrip = ladder.defaultRoundTrip;
+    posedD = ladder.posedD;
+    parentSpaceM = ladder.parentSpaceM;
+    posedM = ladder.posed;
+    posedAuthored = ladder.posedAuthored ? 1 : 0;
+    parentAuthored = ladder.parentSpaceAuthored ? 1 : 0;
+    sign = ladder.rotationSign;
+    return true;
+}
+
+bool
+RunLadderCompose(const RigExecOpBatch &batch, size_t *failed,
+                 std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return LadderComposeOne(batch, k, error);
+    });
+}
+
+bool
+CheckComposeSlot(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (!SameCount(CheckElements(check, ComposeSlotAvars()), 11))
+        return Fail(error, "ComposeSlot", "needs 11 avars");
+    return true;
+}
+
+bool
+ComposeSlotOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    PointFrame &base = Out<PointFrame>(io, ComposeSlotBase());
+    Mat4d &posedM = Out<Mat4d>(io, ComposeSlotPosedMatrix());
+    if (!FlagAt(batch, kSlotActive, k)) {
+        base = UnavailableFrame();
+        posedM = rigExec::eval::UnavailableSpace<SlotMath>();
+        return true;
+    }
+    const auto &avars = *In<RigExecArray<double>>(io, ComposeSlotAvars());
+    if (avars.Size() != 11)
+        return Fail(error, "ComposeSlot", "needs 11 avars");
+    rigExec::eval::PoseSlotComposeT<SlotMath> view;
+    view.avars11 = &avars[0];
+    AssignRotOrder(InOr(io, ComposeSlotRotOrder(), uint32_t(0)),
+                   &view.rotOrder);
+    view.rotationSign = *In<uint32_t>(io, ComposeSlotRotationSign());
+    view.noScaleAvars = FlagAt(batch, kSlotNoScale, k);
+    view.posedAuthored = *In<uint8_t>(io, ComposeSlotPosedAuthored()) != 0;
+    view.posedAuthoredM = In<Mat4d>(io, ComposeSlotPosedAuthoredMatrix());
+    view.posedD = In<Mat4d>(io, ComposeSlotPosedDefault());
+    view.parentDinv = In<Mat4d>(io, ComposeSlotParentDefaultInverse());
+    view.parentSpaceM = In<Mat4d>(io, ComposeSlotParentSpace());
+    view.parentSpaceAuthored =
+        *In<uint8_t>(io, ComposeSlotParentSpaceAuthored()) != 0;
+    std::array<rigExecStd::Vec3d, 4> points = {
+        SlotMath::Vec3Of(0, 0, 0), SlotMath::Vec3Of(0, 0, 0),
+        SlotMath::Vec3Of(0, 0, 0), SlotMath::Vec3Of(0, 0, 0)};
+    unsigned flags = 0;
+    rigExec::eval::pose_ops::FrameFromMatrix<SlotMath>(
+        rigExec::eval::ComposeUnswitchedMatrix<SlotMath>(
+            view, InOr(io, ComposeSlotParentPosed(), SlotMath::Identity4())),
+        &points, &flags);
+    base = FrameOf(points, flags);
+    posedM = rigExec::eval::pose_ops::SpaceOfFrame<SlotMath>(points, flags);
+    return true;
+}
+
+bool
+RunComposeSlot(const RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return ComposeSlotOne(batch, k, error);
+    });
+}
+
 } // namespace
 
 namespace {
@@ -993,6 +1240,144 @@ const rigExec::RigExecOpDesc kPoseInterpolatorDesc = [] {
     return d;
 }();
 
+const rigExec::RigExecPortDesc kRestComposePorts[] = {
+    {&RestComposeRestAvars(), &rigExecStd::DoubleArray(), kRigExecPortInput,
+     "restAvars"},
+    {&RestComposeRestSpace(), &rigExecStd::Mat4dType(), kRigExecPortInput,
+     "restSpace"},
+    {&RestComposeIntervening(), &rigExecStd::Mat4dType(), kOptionalInput,
+     "intervening"},
+    {&RestComposeParentRest(), &rigExecStd::Mat4dType(), kOptionalInput,
+     "parentRest"},
+    {&RestComposeRestMatrix(), &rigExecStd::Mat4dType(), kRigExecPortOutput,
+     "restMatrix"},
+    {&RestComposeRest(), &rigExecRig::PointFrameType(), kRigExecPortOutput,
+     "rest"},
+    {&RestComposeRoundTrip(), &rigExecStd::Mat4dType(), kRigExecPortOutput,
+     "roundTrip"},
+};
+
+void
+SlotActivityValuesOf(const void *payload, RigExecFieldValues &out)
+{
+    SetFlag(out, kActive,
+            static_cast<const SlotActivityPayload *>(payload)->active);
+}
+
+const rigExec::RigExecFieldDesc kSlotActivityFields[] = {Flag("active")};
+
+rigExec::RigExecOpDesc
+SlotOpDesc(const char *name, const rigExec::RigExecPortDesc *ports,
+           size_t portCount, rigExec::RigExecOpBatchFn run,
+           bool (*validate)(const rigExec::RigExecOpCheck &, std::string *),
+           const rigExec::RigExecFieldDesc *fields, size_t fieldCount,
+           void (*values)(const void *, RigExecFieldValues &))
+{
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = name;
+    d.ports = ports;
+    d.portCount = portCount;
+    d.runBatch = run;
+    d.validate = validate;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    d.payloadFields = fields;
+    d.payloadFieldCount = fieldCount;
+    d.payloadVersion = 1;
+    d.payloadValues = values;
+    return d;
+}
+
+const rigExec::RigExecOpDesc kRestComposeDesc =
+    SlotOpDesc("RestCompose", kRestComposePorts, std::size(kRestComposePorts),
+               &RunRestCompose, &CheckRestCompose, kSlotActivityFields,
+               std::size(kSlotActivityFields), &SlotActivityValuesOf);
+
+const rigExec::RigExecPortDesc kLadderComposePorts[] = {
+    {&LadderComposeSpaces(), &rigExecStd::Mat4dArray(), kRigExecPortInput,
+     "spaces"},
+    {&LadderComposeAuthored(), &rigExecStd::BoolArray(), kRigExecPortInput,
+     "authored"},
+    {&LadderComposeParentSpaceLeaf(), &rigExecStd::Mat4dType(),
+     kRigExecPortInput, "parentSpaceLeaf"},
+    {&LadderComposeRotationSign(), &rigExecStd::Vec3dType(), kRigExecPortInput,
+     "rotationSign"},
+    {&LadderComposeDefaultAvars(), &rigExecStd::DoubleArray(),
+     kRigExecPortInput, "defaultAvars"},
+    {&LadderComposeOwnRest(), &rigExecStd::Mat4dType(), kRigExecPortInput,
+     "ownRest"},
+    {&LadderComposeParentRest(), &rigExecStd::Mat4dType(), kOptionalInput,
+     "parentRest"},
+    {&LadderComposeParentDefault(), &rigExecStd::Mat4dType(), kOptionalInput,
+     "parentDefault"},
+    {&LadderComposeSelfDefault(), &rigExecStd::Mat4dType(), kRigExecPortOutput,
+     "selfDefault"},
+    {&LadderComposeParentDefaultInverse(), &rigExecStd::Mat4dType(),
+     kRigExecPortOutput, "parentDefaultInverse"},
+    {&LadderComposeDefaultRoundTrip(), &rigExecStd::Mat4dType(),
+     kRigExecPortOutput, "defaultRoundTrip"},
+    {&LadderComposePosedDefault(), &rigExecStd::Mat4dType(), kRigExecPortOutput,
+     "posedDefault"},
+    {&LadderComposeParentSpace(), &rigExecStd::Mat4dType(), kRigExecPortOutput,
+     "parentSpace"},
+    {&LadderComposePosedAuthoredMatrix(), &rigExecStd::Mat4dType(),
+     kRigExecPortOutput, "posedAuthoredMatrix"},
+    {&LadderComposePosedAuthored(), &rigExecStd::BoolType(), kRigExecPortOutput,
+     "posedAuthored"},
+    {&LadderComposeParentSpaceAuthored(), &rigExecStd::BoolType(),
+     kRigExecPortOutput, "parentSpaceAuthored"},
+    {&LadderComposeOutRotationSign(), &rigExecStd::UIntType(),
+     kRigExecPortOutput, "rotationSignMask"},
+};
+
+const rigExec::RigExecOpDesc kLadderComposeDesc = SlotOpDesc(
+    "LadderCompose", kLadderComposePorts, std::size(kLadderComposePorts),
+    &RunLadderCompose, &CheckLadderCompose, kSlotActivityFields,
+    std::size(kSlotActivityFields), &SlotActivityValuesOf);
+
+const rigExec::RigExecPortDesc kComposeSlotPorts[] = {
+    {&ComposeSlotAvars(), &rigExecStd::DoubleArray(), kRigExecPortInput,
+     "avars"},
+    {&ComposeSlotRotOrder(), &rigExecStd::UIntType(), kOptionalInput,
+     "rotOrder"},
+    {&ComposeSlotRotationSign(), &rigExecStd::UIntType(), kRigExecPortInput,
+     "rotationSign"},
+    {&ComposeSlotPosedAuthored(), &rigExecStd::BoolType(), kRigExecPortInput,
+     "posedAuthored"},
+    {&ComposeSlotPosedAuthoredMatrix(), &rigExecStd::Mat4dType(),
+     kRigExecPortInput, "posedAuthoredMatrix"},
+    {&ComposeSlotPosedDefault(), &rigExecStd::Mat4dType(), kRigExecPortInput,
+     "posedDefault"},
+    {&ComposeSlotParentDefaultInverse(), &rigExecStd::Mat4dType(),
+     kRigExecPortInput, "parentDefaultInverse"},
+    {&ComposeSlotParentSpace(), &rigExecStd::Mat4dType(), kRigExecPortInput,
+     "parentSpace"},
+    {&ComposeSlotParentSpaceAuthored(), &rigExecStd::BoolType(),
+     kRigExecPortInput, "parentSpaceAuthored"},
+    {&ComposeSlotParentPosed(), &rigExecStd::Mat4dType(), kOptionalInput,
+     "parentPosed"},
+    {&ComposeSlotBase(), &rigExecRig::PointFrameType(), kRigExecPortOutput,
+     "base"},
+    {&ComposeSlotPosedMatrix(), &rigExecStd::Mat4dType(), kRigExecPortOutput,
+     "posedMatrix"},
+};
+
+void
+ComposeSlotValuesOf(const void *payload, RigExecFieldValues &out)
+{
+    const auto &p = *static_cast<const ComposeSlotPayload *>(payload);
+    SetFlag(out, kSlotActive, p.active);
+    SetFlag(out, kSlotNoScale, p.noScale);
+}
+
+const rigExec::RigExecFieldDesc kComposeSlotFields[] = {Flag("active"),
+                                                        Flag("noScale")};
+
+const rigExec::RigExecOpDesc kComposeSlotDesc =
+    SlotOpDesc("ComposeSlot", kComposeSlotPorts, std::size(kComposeSlotPorts),
+               &RunComposeSlot, &CheckComposeSlot, kComposeSlotFields,
+               std::size(kComposeSlotFields), &ComposeSlotValuesOf);
+
 } // namespace
 
 void
@@ -1001,6 +1386,9 @@ RegisterPoseOps(rigExec::RigExecOpRegistrar &registrar)
     registrar.Add(AvarInputs(), kAvarInputsDesc);
     registrar.Add(SpaceCheckpoint(), kSpaceCheckpointDesc);
     registrar.Add(PoseInterpolator(), kPoseInterpolatorDesc);
+    registrar.Add(RestCompose(), kRestComposeDesc);
+    registrar.Add(LadderCompose(), kLadderComposeDesc);
+    registrar.Add(ComposeSlot(), kComposeSlotDesc);
 }
 
 } // namespace rigExecOps

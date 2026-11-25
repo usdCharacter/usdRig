@@ -1,6 +1,6 @@
 // The pose input ops evaluated through the core: bound avar values, a space
-// checkpoint's switch frame, a pose interpolator's weights, and what fails
-// compile or the evaluation.
+// checkpoint's switch frame, a pose interpolator's weights, one slot's rest,
+// ladder and compose, and what fails compile or the evaluation.
 #include "rigExec/api/compile.h"
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
@@ -324,6 +324,93 @@ TestPoseInterpolator()
     CHECK(lone.error.find("pairs") != std::string::npos);
 }
 
+void
+TestSlotCompose()
+{
+    using Math = RrPoseMathT<rigExecRig::PointFrame>;
+    const Mat4d identity = Math::Identity4();
+    SlotActivityPayload active, inactive;
+    inactive.active = false;
+    const std::vector<const RigExecPortHandle *> restIns = {
+        &RestComposeRestAvars(), &RestComposeRestSpace()};
+    const std::vector<const RigExecPortHandle *> restOuts = {
+        &RestComposeRestMatrix(), &RestComposeRest(), &RestComposeRoundTrip()};
+    const auto restAvars = ArrayOf<double>({1, 2, 3, 0, 0, 0});
+    {
+        Harness h(RestCompose(), &active, restIns, restOuts);
+        CHECK(h.Run({&restAvars, &identity}));
+        const Mat4d restM = h.Out<Mat4d>(0);
+        CHECK(restM._mtx[3][0] == 1.0 && restM._mtx[3][2] == 3.0);
+        CHECK(h.Out<rigExecRig::PointFrame>(1).flags != 0);
+        const auto five = ArrayOf<double>({1, 2, 3, 0, 0});
+        CHECK(!h.Run({&five, &identity}));
+        CHECK(h.error.find("six rest avars") != std::string::npos);
+        Harness off(RestCompose(), &inactive, restIns, restOuts);
+        CHECK(off.Run({&restAvars, &identity}));
+        CHECK(std::isnan(off.Out<Mat4d>(0)._mtx[3][0]));
+        CHECK(off.Out<rigExecRig::PointFrame>(1).flags == 0);
+    }
+
+    const std::vector<const RigExecPortHandle *> ladderIns = {
+        &LadderComposeSpaces(),          &LadderComposeAuthored(),
+        &LadderComposeParentSpaceLeaf(), &LadderComposeRotationSign(),
+        &LadderComposeDefaultAvars(),    &LadderComposeOwnRest()};
+    const std::vector<const RigExecPortHandle *> ladderOuts = {
+        &LadderComposeSelfDefault(), &LadderComposePosedDefault(),
+        &LadderComposePosedAuthored(), &LadderComposeOutRotationSign()};
+    const auto spaces = ArrayOf<Mat4d>(std::vector<Mat4d>(6, identity));
+    const auto authored = ArrayOf<uint8_t>(std::vector<uint8_t>(6, 0));
+    const auto defaultAvars = ArrayOf<double>({1, 0, 0, 0, 0, 0});
+    const rigExecStd::Vec3d sign(1.0, -1.0, 1.0);
+    {
+        Harness h(LadderCompose(), &active, ladderIns, ladderOuts);
+        CHECK(h.Run(
+            {&spaces, &authored, &identity, &sign, &defaultAvars, &identity}));
+        const Mat4d selfD = h.Out<Mat4d>(0);
+        CHECK(selfD._mtx[3][0] == 1.0);
+        CHECK(SameBits(h.Out<Mat4d>(1), selfD));
+        CHECK(h.Out<uint8_t>(2) == 0);
+        CHECK(h.Out<uint32_t>(3) == RigExecRotationSignMask(1.0, -1.0, 1.0));
+        std::vector<const RigExecPortHandle *> half = ladderIns;
+        half.push_back(&LadderComposeParentRest());
+        Harness bad(LadderCompose(), &active, half, ladderOuts);
+        CHECK(!bad.evaluator);
+        CHECK(bad.error.find("fed together") != std::string::npos);
+    }
+
+    const std::vector<const RigExecPortHandle *> slotIns = {
+        &ComposeSlotAvars(),         &ComposeSlotRotationSign(),
+        &ComposeSlotPosedAuthored(), &ComposeSlotPosedAuthoredMatrix(),
+        &ComposeSlotPosedDefault(),  &ComposeSlotParentDefaultInverse(),
+        &ComposeSlotParentSpace(),   &ComposeSlotParentSpaceAuthored(),
+        &ComposeSlotParentPosed()};
+    const std::vector<const RigExecPortHandle *> slotOuts = {
+        &ComposeSlotBase(), &ComposeSlotPosedMatrix()};
+    const auto slotAvars = ArrayOf<double>({2, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1});
+    const uint32_t noSign = 0;
+    const uint8_t no = 0, yes = 1;
+    const Mat4d authoredM = Translate(0, 5, 0),
+                parentPosed = Translate(0, 0, 4);
+    ComposeSlotPayload slot;
+    Harness h(ComposeSlot(), &slot, slotIns, slotOuts);
+    CHECK(h.Run({&slotAvars, &noSign, &no, &authoredM, &identity, &identity,
+                 &identity, &no, &parentPosed}));
+    auto base = h.Out<rigExecRig::PointFrame>(0);
+    CHECK(base.points[0][0] == 2.0 && base.points[0][2] == 4.0);
+    CHECK(h.Out<Mat4d>(1)._mtx[3][0] == 2.0);
+    CHECK(h.Run({&slotAvars, &noSign, &yes, &authoredM, &identity, &identity,
+                 &identity, &no, &parentPosed}));
+    base = h.Out<rigExecRig::PointFrame>(0);
+    CHECK(base.points[0][1] == 5.0 && base.points[0][2] == 0.0);
+    ComposeSlotPayload off;
+    off.active = false;
+    Harness unavailable(ComposeSlot(), &off, slotIns, slotOuts);
+    CHECK(unavailable.Run({&slotAvars, &noSign, &no, &authoredM, &identity,
+                           &identity, &identity, &no, &parentPosed}));
+    CHECK(unavailable.Out<rigExecRig::PointFrame>(0).flags == 0);
+    CHECK(std::isnan(unavailable.Out<Mat4d>(1)._mtx[3][0]));
+}
+
 } // namespace
 
 int
@@ -338,6 +425,7 @@ main()
     TestAvarInputs();
     TestSpaceCheckpoint();
     TestPoseInterpolator();
+    TestSlotCompose();
     if (failures) {
         std::printf("%d failures\n", failures);
         return 1;

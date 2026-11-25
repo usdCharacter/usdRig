@@ -459,6 +459,13 @@ TestFilledPayloads()
         interpolator.mapBegin = {0, 1};
         interpolator.mapUnclamped = {1};
         CheckRoundTrip(Op(PoseInterpolator()), &interpolator);
+        SlotActivityPayload activity;
+        activity.active = false;
+        CheckRoundTrip(Op(RestCompose()), &activity);
+        CheckRoundTrip(Op(LadderCompose()), &activity);
+        ComposeSlotPayload slot;
+        slot.noScale = true;
+        CheckRoundTrip(Op(ComposeSlot()), &slot);
     }
     {
         BlendFramesPayload p;

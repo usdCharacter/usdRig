@@ -2,7 +2,8 @@
 #define RIGEXEC_OPS_POSE_POSE_OPS_H
 
 /// The pose inputs a rig composes from: bound avar values, a space switch's
-/// checkpoint frame, and a pose interpolator's weights. The kernels are
+/// checkpoint frame, a pose interpolator's weights, and one slot's rest,
+/// default ladder and first pose. The kernels are
 /// rigExecMath/avarScale.h, rigExecEvalCore/pose.h's SpaceCheckpointMatrix and
 /// rigExecMath/poseArithmeticKernel.h.
 
@@ -165,6 +166,99 @@ const rigExec::RigExecPortHandle &PoseInterpolatorExtraRests();
 const rigExec::RigExecPortHandle &PoseInterpolatorExtraParentFinals();
 const rigExec::RigExecPortHandle &PoseInterpolatorExtraParentRests();
 const rigExec::RigExecPortHandle &PoseInterpolatorOut();
+
+/// RestCompose's and LadderCompose's payload.
+struct SlotActivityPayload {
+    /// Whether the slot's provider is active.
+    bool active = true;
+
+    bool operator==(const SlotActivityPayload &o) const
+    {
+        return active == o.active;
+    }
+};
+
+const rigExec::RigExecOpHandle &RestCompose();
+
+// One slot's rest: RestAvars (DoubleArray, 6: translate then rotate),
+// RestSpace (Mat4d), optional Intervening (Mat4d; identity when unfed) and
+// ParentRest (Mat4d, the parent's RoundTrip; identity when unfed).
+// RestMatrix (Mat4d), Rest (PointFrame) and RoundTrip (Mat4d); an inactive
+// slot gives the unavailable space and a flagless identity frame.
+const rigExec::RigExecPortHandle &RestComposeRestAvars();
+const rigExec::RigExecPortHandle &RestComposeRestSpace();
+const rigExec::RigExecPortHandle &RestComposeIntervening();
+const rigExec::RigExecPortHandle &RestComposeParentRest();
+const rigExec::RigExecPortHandle &RestComposeRestMatrix();
+const rigExec::RigExecPortHandle &RestComposeRest();
+const rigExec::RigExecPortHandle &RestComposeRoundTrip();
+
+const rigExec::RigExecOpHandle &LadderCompose();
+
+// One slot's default ladder: Spaces and Authored (Mat4dArray and BoolArray,
+// six each, in channel order default, posed, parent, parentDefault,
+// avarDefault, posedDefault: each channel's provider value or leaf, and
+// whether it is authoritative, a default channel also counting a ready
+// provider value), ParentSpaceLeaf (Mat4d), RotationSign (Vec3d),
+// DefaultAvars (DoubleArray, 6), OwnRest (Mat4d, this slot's rest
+// RoundTrip), and for a slot with a parent ParentRest and ParentDefault
+// (Mat4d, the parent's rest and default round trips, fed together).
+// SelfDefault, ParentDefaultInverse, DefaultRoundTrip, PosedDefault,
+// ParentSpace and PosedAuthoredMatrix (Mat4d), PosedAuthored and
+// ParentSpaceAuthored (Bool), OutRotationSign (UInt mask). An inactive slot
+// gives the unavailable space and clear flags.
+const rigExec::RigExecPortHandle &LadderComposeSpaces();
+const rigExec::RigExecPortHandle &LadderComposeAuthored();
+const rigExec::RigExecPortHandle &LadderComposeParentSpaceLeaf();
+const rigExec::RigExecPortHandle &LadderComposeRotationSign();
+const rigExec::RigExecPortHandle &LadderComposeDefaultAvars();
+const rigExec::RigExecPortHandle &LadderComposeOwnRest();
+const rigExec::RigExecPortHandle &LadderComposeParentRest();
+const rigExec::RigExecPortHandle &LadderComposeParentDefault();
+const rigExec::RigExecPortHandle &LadderComposeSelfDefault();
+const rigExec::RigExecPortHandle &LadderComposeParentDefaultInverse();
+const rigExec::RigExecPortHandle &LadderComposeDefaultRoundTrip();
+const rigExec::RigExecPortHandle &LadderComposePosedDefault();
+const rigExec::RigExecPortHandle &LadderComposeParentSpace();
+const rigExec::RigExecPortHandle &LadderComposePosedAuthoredMatrix();
+const rigExec::RigExecPortHandle &LadderComposePosedAuthored();
+const rigExec::RigExecPortHandle &LadderComposeParentSpaceAuthored();
+const rigExec::RigExecPortHandle &LadderComposeOutRotationSign();
+
+struct ComposeSlotPayload {
+    /// Whether the slot's provider is active.
+    bool active = true;
+    /// Whether its scale avars are ignored.
+    bool noScale = false;
+
+    bool operator==(const ComposeSlotPayload &o) const
+    {
+        return active == o.active && noScale == o.noScale;
+    }
+};
+
+const rigExec::RigExecOpHandle &ComposeSlot();
+
+// One unswitched slot's first pose: Avars (DoubleArray, 11), optional
+// RotOrder (UInt, SpaceCheckpointRotOrderCode; 0 when unfed), RotationSign
+// (UInt mask), PosedAuthored (Bool), PosedAuthoredMatrix, PosedDefault,
+// ParentDefaultInverse and ParentSpace (Mat4d), ParentSpaceAuthored (Bool),
+// optional ParentPosed (Mat4d, the parent's PosedMatrix; identity when
+// unfed). Base (PointFrame) and PosedMatrix (Mat4d, the space of Base).
+// An inactive slot gives a flagless identity frame and the unavailable
+// space.
+const rigExec::RigExecPortHandle &ComposeSlotAvars();
+const rigExec::RigExecPortHandle &ComposeSlotRotOrder();
+const rigExec::RigExecPortHandle &ComposeSlotRotationSign();
+const rigExec::RigExecPortHandle &ComposeSlotPosedAuthored();
+const rigExec::RigExecPortHandle &ComposeSlotPosedAuthoredMatrix();
+const rigExec::RigExecPortHandle &ComposeSlotPosedDefault();
+const rigExec::RigExecPortHandle &ComposeSlotParentDefaultInverse();
+const rigExec::RigExecPortHandle &ComposeSlotParentSpace();
+const rigExec::RigExecPortHandle &ComposeSlotParentSpaceAuthored();
+const rigExec::RigExecPortHandle &ComposeSlotParentPosed();
+const rigExec::RigExecPortHandle &ComposeSlotBase();
+const rigExec::RigExecPortHandle &ComposeSlotPosedMatrix();
 
 } // namespace rigExecOps
 

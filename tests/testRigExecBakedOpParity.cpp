@@ -8,6 +8,7 @@
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/moverGraph.h"
+#include "rigExec/internal/poseEvalHost.h"
 #include "rigExecScene/constraintSceneTranslation.h"
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecStdTypes/stdTypes.h"
@@ -2051,6 +2052,238 @@ ProbePoseInterpolator(const B &b, const RigExecBakedStep &step)
     CompareBits("Pose", kind, object, baked, op, !step.diagnostics.empty());
 }
 
+// Rest, ladder and compose of one slot each, from the values their steps
+// read, against what the steps stored.
+template <class T>
+rigExecStd::RigExecArray<T>
+OpArray(const std::vector<T> &values)
+{
+    rigExecStd::RigExecArray<T> out(values.size());
+    for (size_t i = 0; i < values.size(); ++i)
+        out[i] = values[i];
+    return out;
+}
+
+void
+ProbeRestCompose(const B &b, const RigExecBakedStep &step)
+{
+    using namespace rigExecOps;
+    const RigExecBakedComposeGroup &group =
+        b.composeGroups[size_t(step.object)];
+    const BakedPoseInputs in(&b);
+    for (int i = group.begin; i < group.end; ++i) {
+        const size_t slot = size_t(i);
+        if (!in.isPoseSlot(slot))
+            continue;
+        SlotActivityPayload payload;
+        payload.active = in.providerActive(slot);
+        std::vector<double> avars;
+        for (size_t k = 0; k < 6; ++k)
+            avars.push_back(in.restAvar(slot, k));
+        const auto avarArray = OpArray(avars);
+        const rigExecStd::Mat4d restSpace =
+            OpMatrix(in.ladderSpace(slot, eval::kPoseLadderRestSpace));
+        const rigExecStd::Mat4d intervening =
+            OpMatrix(in.interveningSpace(slot));
+        std::vector<const RigExecPortHandle *> ins = {
+            &RestComposeRestAvars(), &RestComposeRestSpace(),
+            &RestComposeIntervening()};
+        std::vector<const void *> values = {&avarArray, &restSpace,
+                                            &intervening};
+        const int parent = in.parent(slot);
+        rigExecStd::Mat4d parentRest;
+        if (parent >= 0) {
+            parentRest = OpMatrix(b.restRoundTrip[size_t(parent)]);
+            ins.push_back(&RestComposeParentRest());
+            values.push_back(&parentRest);
+        }
+        const std::string key = "RestCompose/" +
+                                std::to_string(payload.active) + "/" +
+                                std::to_string(parent >= 0);
+        SpaceNode &node =
+            SpaceNodeFor(key, RestCompose(), &payload, ins,
+                         {&RestComposeRestMatrix(), &RestComposeRest(),
+                          &RestComposeRoundTrip()});
+        std::string error;
+        const std::string object = b.paths[slot].GetString();
+        if (!RunSpaceNode(node, values, &error)) {
+            OpFailed("Pose", "RestCompose", object, false, error);
+            continue;
+        }
+        std::vector<double> baked, op;
+        PutBits(&baked, b.restM[slot]);
+        PutBits(&baked, OpFrame(b.restFrames[slot]));
+        PutBits(&baked, b.restRoundTrip[slot]);
+        PutBits(&op, SpaceOut<rigExecStd::Mat4d>(node, 0));
+        PutBits(&op, SpaceOut<rigExecRig::PointFrame>(node, 1));
+        PutBits(&op, SpaceOut<rigExecStd::Mat4d>(node, 2));
+        CompareBits("Pose", "RestCompose", object, baked, op, false);
+    }
+}
+
+void
+ProbeLadderCompose(const B &b, const RigExecBakedStep &step)
+{
+    using namespace rigExecOps;
+    const RigExecBakedComposeGroup &group =
+        b.composeGroups[size_t(step.object)];
+    const BakedPoseInputs in(&b);
+    for (int i = group.begin; i < group.end; ++i) {
+        const size_t slot = size_t(i);
+        if (!in.isPoseSlot(slot))
+            continue;
+        SlotActivityPayload payload;
+        payload.active = in.providerActive(slot);
+        std::vector<rigExecStd::Mat4d> spaces;
+        std::vector<uint8_t> authored;
+        std::vector<double> avars;
+        for (int c = eval::kPoseLadderDefaultSpace;
+             c <= eval::kPoseLadderPosedDefaultSpace; ++c) {
+            const bool defaultChannel =
+                c == eval::kPoseLadderDefaultSpace ||
+                c == eval::kPoseLadderParentDefaultSpace ||
+                c == eval::kPoseLadderAvarDefaultSpace ||
+                c == eval::kPoseLadderPosedDefaultSpace;
+            spaces.push_back(OpMatrix(in.ladderSpace(slot, c)));
+            authored.push_back(
+                (defaultChannel && in.ladderChannelReady(slot, c)) ||
+                in.ladderAuthoritative(slot, c));
+        }
+        for (size_t k = 0; k < 6; ++k)
+            avars.push_back(in.defaultAvar(slot, k));
+        const auto spaceArray = OpArray(spaces);
+        const auto authoredArray = OpArray(authored);
+        const auto avarArray = OpArray(avars);
+        const rigExecStd::Mat4d leaf = OpMatrix(in.ladderParentSpaceLeaf(slot));
+        const rigExecStd::Vec3d sign = OpVector(in.ladderRotationSign(slot));
+        const rigExecStd::Mat4d ownRest = OpMatrix(b.restRoundTrip[slot]);
+        std::vector<const RigExecPortHandle *> ins = {
+            &LadderComposeSpaces(),          &LadderComposeAuthored(),
+            &LadderComposeParentSpaceLeaf(), &LadderComposeRotationSign(),
+            &LadderComposeDefaultAvars(),    &LadderComposeOwnRest()};
+        std::vector<const void *> values = {
+            &spaceArray, &authoredArray, &leaf, &sign, &avarArray, &ownRest};
+        const int parent = in.parent(slot);
+        rigExecStd::Mat4d parentRest, parentDefault;
+        if (parent >= 0) {
+            parentRest = OpMatrix(b.restRoundTrip[size_t(parent)]);
+            parentDefault = OpMatrix(b.defaultRoundTrip[size_t(parent)]);
+            ins.push_back(&LadderComposeParentRest());
+            ins.push_back(&LadderComposeParentDefault());
+            values.push_back(&parentRest);
+            values.push_back(&parentDefault);
+        }
+        const std::string key = "LadderCompose/" +
+                                std::to_string(payload.active) + "/" +
+                                std::to_string(parent >= 0);
+        SpaceNode &node = SpaceNodeFor(
+            key, LadderCompose(), &payload, ins,
+            {&LadderComposeSelfDefault(), &LadderComposeParentDefaultInverse(),
+             &LadderComposeDefaultRoundTrip(), &LadderComposePosedDefault(),
+             &LadderComposeParentSpace(), &LadderComposePosedAuthoredMatrix(),
+             &LadderComposePosedAuthored(), &LadderComposeParentSpaceAuthored(),
+             &LadderComposeOutRotationSign()});
+        std::string error;
+        const std::string object = b.paths[slot].GetString();
+        if (!RunSpaceNode(node, values, &error)) {
+            OpFailed("Pose", "LadderCompose", object, false, error);
+            continue;
+        }
+        std::vector<double> baked, op;
+        for (const auto *table :
+             {&b.selfD, &b.parentDinv, &b.defaultRoundTrip, &b.posedD,
+              &b.parentSpaceM, &b.posedAuthoredM})
+            PutBits(&baked, (*table)[slot]);
+        baked.push_back(b.posedAuthored[slot] != 0);
+        baked.push_back(b.parentSpaceAuthored[slot] != 0);
+        baked.push_back(double(b.rotationSign[slot]));
+        for (size_t o = 0; o < 6; ++o)
+            PutBits(&op, SpaceOut<rigExecStd::Mat4d>(node, o));
+        op.push_back(SpaceOut<uint8_t>(node, 6) != 0);
+        op.push_back(SpaceOut<uint8_t>(node, 7) != 0);
+        op.push_back(double(SpaceOut<uint32_t>(node, 8)));
+        CompareBits("Pose", "LadderCompose", object, baked, op, false);
+    }
+}
+
+void
+ProbeComposeSlot(const B &b, const RigExecBakedStep &step)
+{
+    using namespace rigExecOps;
+    const RigExecBakedComposeGroup &group =
+        b.composeGroups[size_t(step.object)];
+    const BakedPoseInputs in(&b);
+    for (int i = group.begin; i < group.end; ++i) {
+        const size_t slot = size_t(i);
+        if (!in.isPoseSlot(slot))
+            continue;
+        if (!b.spaceSwitchBySlot.empty() && b.spaceSwitchBySlot[slot] >= 0) {
+            Unprobed("Pose", "ComposeSlot", "space-switched slot");
+            continue;
+        }
+        if (slot < b.autoClavicleBySlot.size() &&
+            b.autoClavicleBySlot[slot] >= 0) {
+            Unprobed("Pose", "ComposeSlot", "auto clavicle slot");
+            continue;
+        }
+        ComposeSlotPayload payload;
+        payload.active = in.providerActive(slot);
+        payload.noScale = b.noScaleAvars[slot] != 0;
+        const auto avars = OpArray(
+            std::vector<double>(&b.avars[slot * 11], &b.avars[slot * 11] + 11));
+        const TfToken &order = b.rotOrder[slot];
+        const uint32_t rotOrder =
+            SpaceCheckpointRotOrderCode(order.GetText(), order.size());
+        const uint32_t sign =
+            slot < b.rotationSign.size() ? b.rotationSign[slot] : 0u;
+        const uint8_t posedAuthored = b.posedAuthored[slot] != 0;
+        const uint8_t parentAuthored = b.parentSpaceAuthored[slot] != 0;
+        const rigExecStd::Mat4d posedAuthoredM =
+                                    OpMatrix(b.posedAuthoredM[slot]),
+                                posedD = OpMatrix(b.posedD[slot]),
+                                parentDinv = OpMatrix(b.parentDinv[slot]),
+                                parentM = OpMatrix(b.parentSpaceM[slot]);
+        std::vector<const RigExecPortHandle *> ins = {
+            &ComposeSlotAvars(),
+            &ComposeSlotRotOrder(),
+            &ComposeSlotRotationSign(),
+            &ComposeSlotPosedAuthored(),
+            &ComposeSlotPosedAuthoredMatrix(),
+            &ComposeSlotPosedDefault(),
+            &ComposeSlotParentDefaultInverse(),
+            &ComposeSlotParentSpace(),
+            &ComposeSlotParentSpaceAuthored()};
+        std::vector<const void *> values = {
+            &avars,  &rotOrder,   &sign,    &posedAuthored, &posedAuthoredM,
+            &posedD, &parentDinv, &parentM, &parentAuthored};
+        const int parent = in.parent(slot);
+        rigExecStd::Mat4d parentPosed;
+        if (parent >= 0) {
+            parentPosed = OpMatrix(b.posedM[size_t(parent)]);
+            ins.push_back(&ComposeSlotParentPosed());
+            values.push_back(&parentPosed);
+        }
+        const std::string key =
+            "ComposeSlot/" + std::to_string(payload.active) + "/" +
+            std::to_string(payload.noScale) + "/" + std::to_string(parent >= 0);
+        SpaceNode &node =
+            SpaceNodeFor(key, ComposeSlot(), &payload, ins,
+                         {&ComposeSlotBase(), &ComposeSlotPosedMatrix()});
+        std::string error;
+        const std::string object = b.paths[slot].GetString();
+        if (!RunSpaceNode(node, values, &error)) {
+            OpFailed("Pose", "ComposeSlot", object, false, error);
+            continue;
+        }
+        std::vector<double> baked, op;
+        PutBits(&baked, OpFrame(b.base[slot]));
+        PutBits(&baked, b.posedM[slot]);
+        PutBits(&op, SpaceOut<rigExecRig::PointFrame>(node, 0));
+        PutBits(&op, SpaceOut<rigExecStd::Mat4d>(node, 1));
+        CompareBits("Pose", "ComposeSlot", object, baked, op, false);
+    }
+}
+
 void
 ProbePose(const B &b)
 {
@@ -2065,6 +2298,15 @@ ProbePose(const B &b)
                  step.object >= 0 &&
                  size_t(step.object) < b.poseInterpolators.size())
             ProbePoseInterpolator(b, step);
+        else if (step.object >= 0 &&
+                 size_t(step.object) < b.composeGroups.size()) {
+            if (step.kind == RigExecBakedStepKind::RestCompose)
+                ProbeRestCompose(b, step);
+            else if (step.kind == RigExecBakedStepKind::LadderCompose)
+                ProbeLadderCompose(b, step);
+            else if (step.kind == RigExecBakedStepKind::ComposeSubtree)
+                ProbeComposeSlot(b, step);
+        }
     }
 }
 
@@ -2549,16 +2791,28 @@ main(int argc, char **argv)
                     return 1;
                 }
     }
-    for (const char *family :
-         {"Solve/", "RevisionChunk/", "RangeChain/", "Derived/",
-          "WeightPacket/", "Constraint/", "Spaces/ProviderMatrix/",
-          "Spaces/FrameMatrix/", "Spaces/ProviderRefresh",
-          "Spaces/SpaceExpression/SpaceExpression",
-          "Spaces/SpaceExpression/AffineFrame", "Commit/",
-          "Solve/RigExecFkChain groups", "Pose/AvarInputs",
-          "Pose/SpaceCheckpoint", "Pose/PoseInterpolator Rbf",
-          "Pose/PoseInterpolator RbfMethod", "Pose/PoseInterpolator Network",
-          "Pose/PoseInterpolator Maps"}) {
+    for (const char *family : {"Solve/",
+                               "RevisionChunk/",
+                               "RangeChain/",
+                               "Derived/",
+                               "WeightPacket/",
+                               "Constraint/",
+                               "Spaces/ProviderMatrix/",
+                               "Spaces/FrameMatrix/",
+                               "Spaces/ProviderRefresh",
+                               "Spaces/SpaceExpression/SpaceExpression",
+                               "Spaces/SpaceExpression/AffineFrame",
+                               "Commit/",
+                               "Solve/RigExecFkChain groups",
+                               "Pose/AvarInputs",
+                               "Pose/SpaceCheckpoint",
+                               "Pose/PoseInterpolator Rbf",
+                               "Pose/PoseInterpolator RbfMethod",
+                               "Pose/PoseInterpolator Network",
+                               "Pose/PoseInterpolator Maps",
+                               "Pose/RestCompose",
+                               "Pose/LadderCompose",
+                               "Pose/ComposeSlot"}) {
         size_t compared = 0;
         for (const auto &[key, tally] : g_tally)
             if (key.compare(0, std::strlen(family), family) == 0)
