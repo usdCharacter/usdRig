@@ -18,6 +18,7 @@
 #include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usd/stage.h"
 
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -52,22 +53,22 @@ VisitTime(const std::string &line)
 }
 
 bool
-IsHexBits(const std::string &token)
+IsHexDigit(char ch)
 {
-    std::string bits = token;
-    if (bits.compare(0, 3, "in=") == 0)
-        bits = bits.substr(3);
-    if (bits.size() != 8 && bits.size() != 16)
-        return false;
-    for (const char ch : bits)
-        if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')))
-            return false;
-    return true;
+    return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
+}
+
+bool
+IsWordChar(char ch)
+{
+    return std::isalnum(static_cast<unsigned char>(ch)) != 0;
 }
 
 // The golden with every floating-point bit pattern and input digest masked
 // and the reference line dropped: which rows were judged, in which order,
-// and the type and length of each value.
+// and the type and length of each value. A bit pattern is any run of 8 or 16
+// lowercase hex digits between non-alphanumeric characters, so one embedded
+// in a string value is masked the same way as a bare one.
 std::string
 Shape(const std::string &golden)
 {
@@ -76,9 +77,23 @@ Shape(const std::string &golden)
     for (std::string line; std::getline(lines, line);) {
         if (line.compare(0, 9, "protocol ") == 0)
             continue;
-        std::istringstream tokens(line);
-        for (std::string token; tokens >> token;)
-            out += (IsHexBits(token) ? std::string("#") : token) + " ";
+        for (size_t i = 0; i < line.size();) {
+            size_t end = i;
+            while (end < line.size() && IsHexDigit(line[end]))
+                ++end;
+            const size_t length = end - i;
+            const bool bounded = (i == 0 || !IsWordChar(line[i - 1])) &&
+                                 (end == line.size() || !IsWordChar(line[end]));
+            if (bounded && (length == 8 || length == 16)) {
+                out += '#';
+                i = end;
+            } else if (length) {
+                out.append(line, i, length);
+                i = end;
+            } else {
+                out += line[i++];
+            }
+        }
         out += "\n";
     }
     return out;
