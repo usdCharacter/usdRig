@@ -76,6 +76,43 @@ Near(const GfVec3d &a, const GfVec3d &b, double tol = 1e-6)
     return (a - b).GetLength() <= tol;
 }
 
+static bool
+SameFrame(const RigExecPointFrame &a, const RigExecPointFrame &b)
+{
+    return a.flags == b.flags &&
+           std::memcmp(a.points.data(), b.points.data(), sizeof a.points) == 0;
+}
+
+static bool
+SameFrames(const std::vector<RigExecPointFrame> &a,
+           const std::vector<RigExecPointFrame> &b)
+{
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(), SameFrame);
+}
+
+// The compiled rig's pose at \p time, solver aggregates included.
+static RigExecRigPose
+CompiledPose(const UsdStageRefPtr &stage, const SdfPath &rigPath,
+             UsdTimeCode time)
+{
+    RigExecRigEvaluator eval(stage, rigPath);
+    eval.SetSolverGuidesEnabled(true);
+    std::vector<std::string> errors;
+    CHECK(eval.Compile(&errors));
+    const RigExecRigPose pose = eval.Evaluate(time);
+    CHECK(pose.valid);
+    return pose;
+}
+
+template <class Map>
+static typename Map::mapped_type
+Published(const Map &map, const SdfPath &path)
+{
+    const auto it = map.find(path);
+    CHECK(it != map.end());
+    return it != map.end() ? it->second : typename Map::mapped_type();
+}
+
 static std::array<GfVec3d, 4>
 MatrixLandmarks(const GfMatrix4d &m)
 {
@@ -214,10 +251,15 @@ TestRestPose(const std::string &examplesDir)
     // masquerade as a result).
     CHECK(snap.IsComplete());
 
+    const RigExecRigPose pose =
+        CompiledPose(stage, SdfPath("/ArmAsset/Rig"), UsdTimeCode::Default());
+
     // Rest pose in, rest pose out (weight 0 selects FK; FK inputs equal
     // their rests).
-    const auto shoulder = snap.Get<RigExecPointFrame>(shoulderTap);
-    const auto wrist = snap.Get<RigExecPointFrame>(wristTap);
+    const auto shoulder = Published(pose.jointFramesBase, shoulderPath);
+    const auto wrist = Published(pose.jointFramesBase, wristPath);
+    CHECK(SameFrame(shoulder, snap.Get<RigExecPointFrame>(shoulderTap)));
+    CHECK(SameFrame(wrist, snap.Get<RigExecPointFrame>(wristTap)));
     CHECK(shoulder.IsValid());
     CHECK(Near(shoulder.Origin(), GfVec3d(0, 10, 0)));
     CHECK(Near(wrist.Origin(), GfVec3d(8, 10, 0)));
@@ -228,10 +270,12 @@ TestRestPose(const std::string &examplesDir)
                1e-9));
 
     // Aggregate solver result is extractable and complete.
-    const auto fk = snap.Get<RigExecPointFrameArray>(fkTap);
-    CHECK(fk.GetSize() == 3);
-    if (fk.GetSize() == 3) {
-        CHECK(Near(fk.frames[2].Origin(), GfVec3d(8, 10, 0)));
+    const auto fk =
+        Published(pose.solverFrames, SdfPath("/ArmAsset/Rig/Solvers/FK"));
+    CHECK(SameFrames(fk, snap.Get<RigExecPointFrameArray>(fkTap).frames));
+    CHECK(fk.size() == 3);
+    if (fk.size() == 3) {
+        CHECK(Near(fk[2].Origin(), GfVec3d(8, 10, 0)));
     }
 }
 
@@ -295,19 +339,24 @@ TestIkAndBlend(const std::string &examplesDir)
         DirectControlFrame(pole, UsdTimeCode::Default()), rests, params);
 
     const auto ik = snap.Get<RigExecPointFrameArray>(ikTap);
-    CHECK(ik.GetSize() == 3);
-    if (ik.GetSize() == 3) {
+    const auto ikFrames = Published(
+        CompiledPose(stage, SdfPath("/ArmAsset/Rig"), UsdTimeCode::Default())
+            .solverFrames,
+        SdfPath("/ArmAsset/Rig/Solvers/IK"));
+    CHECK(SameFrames(ikFrames, ik.frames));
+    CHECK(ikFrames.size() == 3);
+    if (ikFrames.size() == 3) {
         for (int i = 0; i < 3; ++i) {
             for (int p = 0; p < 4; ++p) {
                 const bool ok =
-                    Near(ik.frames[i].points[p], expected[i].points[p], 1e-9);
+                    Near(ikFrames[i].points[p], expected[i].points[p], 1e-9);
                 CHECK(ok);
                 if (!ok) {
                     std::printf(
                         "  frame %d point %d exec (%g %g %g) "
                         "expected (%g %g %g)\n",
-                        i, p, ik.frames[i].points[p][0],
-                        ik.frames[i].points[p][1], ik.frames[i].points[p][2],
+                        i, p, ikFrames[i].points[p][0],
+                        ikFrames[i].points[p][1], ikFrames[i].points[p][2],
                         expected[i].points[p][0], expected[i].points[p][1],
                         expected[i].points[p][2]);
                 }

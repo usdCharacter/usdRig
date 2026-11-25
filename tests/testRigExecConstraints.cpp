@@ -27,6 +27,8 @@
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usdGeom/xform.h"
 
+#include <memory>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -72,6 +74,43 @@ static bool
 Near(const GfVec3d &a, const GfVec3d &b, double tolerance = 1e-5)
 {
     return (a - b).GetLength() <= tolerance;
+}
+
+static bool
+SameFrame(const RigExecPointFrame &a, const RigExecPointFrame &b)
+{
+    return a.flags == b.flags &&
+           std::memcmp(a.points.data(), b.points.data(), sizeof a.points) == 0;
+}
+
+// \p tapped with its frames replaced by the ones \p evaluator publishes for
+// \p solver, which must equal them.
+static RigExecPointFrameArray
+PublishedSolve(RigExecRigEvaluator &evaluator, const SdfPath &solver,
+               RigExecPointFrameArray tapped)
+{
+    const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
+    CHECK(pose.valid);
+    const auto it = pose.solverFrames.find(solver);
+    CHECK(it != pose.solverFrames.end());
+    if (it == pose.solverFrames.end())
+        return tapped;
+    CHECK(std::equal(it->second.begin(), it->second.end(),
+                     tapped.frames.begin(), tapped.frames.end(), SameFrame));
+    tapped.frames = it->second;
+    return tapped;
+}
+
+static std::unique_ptr<RigExecRigEvaluator>
+CompiledWithSolverFrames(const UsdStageRefPtr &stage, const SdfPath &rigPath)
+{
+    auto evaluator = std::make_unique<RigExecRigEvaluator>(stage, rigPath);
+    evaluator->SetSolverGuidesEnabled(true);
+    std::vector<std::string> errors;
+    CHECK(evaluator->Compile(&errors));
+    for (const std::string &error : errors)
+        std::printf("  compile: %s\n", error.c_str());
+    return evaluator;
 }
 
 // GfRotation's default constructor has an EMPTY body and its members are
@@ -2622,6 +2661,7 @@ TestTwoBoneIkRestFrameInputs()
 {
     {
         const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+        stage->DefinePrim(SdfPath("/Rig"), TfToken("RigExecRoot"));
         const auto provider = [&](const char *path, const char *type,
                                   double tx) {
             const UsdPrim prim =
@@ -2630,14 +2670,15 @@ TestTwoBoneIkRestFrameInputs()
             prim.GetAttribute(TfToken("rest:rx")).Set(0.0);
             return prim;
         };
-        const UsdPrim root = provider("/Root", "RigExecControl", 0.0);
-        const UsdPrim goal = provider("/Goal", "RigExecControl", 6.0);
-        const UsdPrim pole = provider("/Pole", "RigExecControl", 2.0);
-        const UsdPrim jointRoot = provider("/JointRoot", "RigExecJoint", 0.0);
-        const UsdPrim jointMid = provider("/JointMid", "RigExecJoint", 3.0);
-        const UsdPrim jointEnd = provider("/JointEnd", "RigExecJoint", 7.0);
+        const UsdPrim root = provider("/Rig/Root", "RigExecControl", 0.0);
+        const UsdPrim goal = provider("/Rig/Goal", "RigExecControl", 6.0);
+        const UsdPrim pole = provider("/Rig/Pole", "RigExecControl", 2.0);
+        const UsdPrim jointRoot =
+            provider("/Rig/JointRoot", "RigExecJoint", 0.0);
+        const UsdPrim jointMid = provider("/Rig/JointMid", "RigExecJoint", 3.0);
+        const UsdPrim jointEnd = provider("/Rig/JointEnd", "RigExecJoint", 7.0);
         const UsdPrim ik =
-            stage->DefinePrim(SdfPath("/IK"), TfToken("RigExecTwoBoneIk"));
+            stage->DefinePrim(SdfPath("/Rig/IK"), TfToken("RigExecTwoBoneIk"));
         ik.GetRelationship(TfToken("rigExec:rootControl"))
             .SetTargets({root.GetPath()});
         ik.GetRelationship(TfToken("rigExec:effectorControl"))
@@ -2657,11 +2698,13 @@ TestTwoBoneIkRestFrameInputs()
         const RigExecTapId tap = taps.Add(RigExecValueAddress::Prim(
             ik.GetPath(), SchemaComputation::computePointFrameArray));
         CHECK(taps.Prepare());
+        const auto evaluator = CompiledWithSolverFrames(stage, SdfPath("/Rig"));
         const auto solve = [&]() {
             const RigExecSnapshot snapshot =
                 taps.Evaluate(UsdTimeCode::Default());
             CHECK(snapshot.IsValid() && snapshot.IsComplete());
-            return snapshot.Get<RigExecPointFrameArray>(tap);
+            return PublishedSolve(*evaluator, ik.GetPath(),
+                                  snapshot.Get<RigExecPointFrameArray>(tap));
         };
         const auto before = solve();
         CHECK(before.frames.size() == 3 && before.rests.size() == 3);
@@ -2698,6 +2741,7 @@ static void
 TestAggregateSolverValueUpdates()
 {
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/Rig"), TfToken("RigExecRoot"));
     const auto control = [&](const char *path, double tx) {
         const UsdPrim prim =
             stage->DefinePrim(SdfPath(path), TfToken("RigExecControl"));
@@ -2705,21 +2749,21 @@ TestAggregateSolverValueUpdates()
         prim.GetAttribute(TfToken("avars:ty")).Set(0.0);
         return prim;
     };
-    const UsdPrim start = control("/Start", 0.0);
-    const UsdPrim mid = control("/Mid", 2.0);
-    const UsdPrim end = control("/End", 4.0);
+    const UsdPrim start = control("/Rig/Start", 0.0);
+    const UsdPrim mid = control("/Rig/Mid", 2.0);
+    const UsdPrim end = control("/Rig/End", 4.0);
     const UsdPrim fk =
-        stage->DefinePrim(SdfPath("/FK"), TfToken("RigExecFkChain"));
+        stage->DefinePrim(SdfPath("/Rig/FK"), TfToken("RigExecFkChain"));
     fk.GetRelationship(TfToken("rigExec:controls"))
         .SetTargets({start.GetPath(), mid.GetPath(), end.GetPath()});
     const UsdPrim twist = stage->DefinePrim(
-        SdfPath("/Twist"), TfToken("RigExecTwistDistribution"));
+        SdfPath("/Rig/Twist"), TfToken("RigExecTwistDistribution"));
     twist.GetRelationship(TfToken("rigExec:start"))
         .SetTargets({start.GetPath()});
     twist.GetRelationship(TfToken("rigExec:end")).SetTargets({end.GetPath()});
     twist.GetAttribute(TfToken("rigExec:weights"))
         .Set(VtFloatArray{0, 0.5f, 1});
-    const UsdPrim blend = stage->DefinePrim(SdfPath("/Blend"),
+    const UsdPrim blend = stage->DefinePrim(SdfPath("/Rig/Blend"),
                                             TfToken("RigExecBlendPointFrames"));
     blend.GetRelationship(TfToken("rigExec:inputA")).SetTargets({fk.GetPath()});
     blend.GetRelationship(TfToken("rigExec:inputB"))
@@ -2730,10 +2774,13 @@ TestAggregateSolverValueUpdates()
     const RigExecTapId tap = taps.Add(RigExecValueAddress::Prim(
         blend.GetPath(), SchemaComputation::computePointFrameArray));
     CHECK(taps.Prepare());
+    const auto evaluator = CompiledWithSolverFrames(stage, SdfPath("/Rig"));
     const auto middle = [&]() {
         const auto snapshot = taps.Evaluate(UsdTimeCode::Default());
         CHECK(snapshot.IsValid() && snapshot.IsComplete());
-        const auto frames = snapshot.Get<RigExecPointFrameArray>(tap);
+        const auto frames =
+            PublishedSolve(*evaluator, blend.GetPath(),
+                           snapshot.Get<RigExecPointFrameArray>(tap));
         CHECK(frames.GetSize() == 3);
         return frames.GetSize() == 3 ? frames.frames[1].Origin() : GfVec3d(0);
     };
@@ -3971,7 +4018,10 @@ SplineIkSolve(const SplineIkStage &s)
     CHECK(taps.Prepare());
     const RigExecSnapshot snapshot = taps.Evaluate(UsdTimeCode::Default());
     CHECK(snapshot.IsValid() && snapshot.IsComplete());
-    return snapshot.Get<RigExecPointFrameArray>(tap);
+    const auto evaluator =
+        CompiledWithSolverFrames(s.stage, SdfPath("/Asset/Rig"));
+    return PublishedSolve(*evaluator, s.solver.GetPath(),
+                          snapshot.Get<RigExecPointFrameArray>(tap));
 }
 
 static void
