@@ -44,8 +44,9 @@ const rigExec::RigExecOpHandle &ShaderDials();
 // SurfaceProjector: BasePoints and Points (Vec3fArray), Counts and Indices
 // (IntArray); optional SourceBase and SourceFinal (Mat4d, together),
 // SourceSpaceBase and SourceSpaceFinal (together), SpaceFinal and
-// WorldToMesh (identity when unfed); Out (Mat4d). A solve that measures no
-// frame fails the evaluation with the kernel's notes.
+// WorldToMesh (identity when unfed); Out (Mat4d). A ray that measures no
+// frame on the surface outputs the payload's shaderOffset; a surface or
+// ray it cannot cast with fails the evaluation with the kernel's notes.
 const rigExec::RigExecPortHandle &SurfaceProjectorBasePoints();
 const rigExec::RigExecPortHandle &SurfaceProjectorPoints();
 const rigExec::RigExecPortHandle &SurfaceProjectorCounts();

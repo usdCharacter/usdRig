@@ -1791,20 +1791,44 @@ TestSurfaceProjector()
     Mat4d actual(0.0);
     CHECK(bare.Run({&base, &posedArray, &counts, &indices}, &actual));
     CHECK(SameBits(expected, actual));
-    // A ray that misses the surface measures no frame: the evaluation stops
-    // with the kernel's note.
+    // A ray that misses the surface measures no frame: the output is the
+    // shaderOffset, in material and reproject mode alike.
     payload.rayOrigin = Vec3d(40.0, 40.0, 5.0);
+    payload.shaderOffset = ToStd(offset);
     const std::vector<const RigExecPortHandle *> missInputs = {
         &SurfaceProjectorBasePoints(), &SurfaceProjectorPoints(),
         &SurfaceProjectorCounts(), &SurfaceProjectorIndices()};
     const std::vector<const void *> missValues = {&base, &posedArray, &counts,
                                                   &indices};
-    Node miss(SurfaceProjector(), missInputs, SurfaceProjectorOut(), &payload);
+    for (const bool reproject : {false, true}) {
+        payload.reproject = reproject;
+        Node miss(SurfaceProjector(), missInputs, SurfaceProjectorOut(),
+                  &payload);
+        actual = Mat4d(0.0);
+        CHECK(miss.Run(missValues, &actual));
+        CHECK(SameBits(offset, actual));
+    }
+    payload.reproject = false;
     std::string error;
-    CHECK(!miss.Run(missValues, &actual, &error));
+    // A ray with no direction cannot be cast: the evaluation stops.
+    payload.rayDirection = Vec3d(0.0, 0.0, 0.0);
+    Node noDirection(SurfaceProjector(), missInputs, SurfaceProjectorOut(),
+                     &payload);
+    CHECK(!noDirection.Run(missValues, &actual, &error));
     CHECK(Contains(error, "(rig:SurfaceProjector) failed: SurfaceProjector: "
                           "ray "));
-    CHECK(Contains(error, "cast=MISS"));
+    CHECK(Contains(error, "is not finite or has no direction"));
+    payload.rayDirection = Vec3d(0.0, 0.0, -1.0);
+    // A face corner past the surface's points stops the evaluation.
+    std::vector<int> pastEnd = grid.indices;
+    pastEnd[0] = int(grid.points.size());
+    const auto badIndices = ToArray(pastEnd);
+    Node badTopology(SurfaceProjector(), missInputs, SurfaceProjectorOut(),
+                     &payload);
+    error.clear();
+    CHECK(!badTopology.Run({&base, &posedArray, &counts, &badIndices}, &actual,
+                           &error));
+    CHECK(Contains(error, "surface has no usable points or topology"));
     // Half a source fails compile.
     Node half(SurfaceProjector(),
               {&SurfaceProjectorBasePoints(), &SurfaceProjectorPoints(),

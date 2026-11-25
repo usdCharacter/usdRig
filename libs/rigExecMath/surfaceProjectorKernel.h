@@ -73,6 +73,19 @@ MeanRowLength(const Mat4 &m)
     return sum;
 }
 
+/// Finite origin, direction and up, and a direction with a length.
+template <class Vec3d>
+bool
+UsableRay(const Vec3d &origin, const Vec3d &direction, const Vec3d &up)
+{
+    for (int i = 0; i < 3; ++i)
+        if (!std::isfinite(origin[i]) || !std::isfinite(direction[i]) ||
+            !std::isfinite(up[i]))
+            return false;
+    const double length = direction.GetLength();
+    return length > 0 && std::isfinite(length);
+}
+
 inline std::string
 Format3(const char *label, double x, double y, double z)
 {
@@ -84,17 +97,19 @@ Format3(const char *label, double x, double y, double z)
 } // namespace surfaceProjectorDetail
 
 /// One thing a projector solve reports, in the order it meets them. A
-/// solve that fails reports a NoFrame note last: the ray it cast and which
-/// of its steps worked.
+/// solve that fails reports its reason last: NoSurface or InvalidRay for
+/// input it cannot cast with, or NoFrame, a ray that measured no frame on
+/// a usable surface, with the ray it cast and which of its steps worked.
 struct RigExecSurfaceProjectorNote {
     enum class Kind : uint32_t {
         NoSurface = 1,
         SpaceNotProvider,
         RecastMissed,
         NoFrame,
+        InvalidRay,
     };
     Kind kind = Kind::NoFrame;
-    /// The posed ray, origin, direction and up, for NoFrame.
+    /// The posed ray, origin, direction and up, for NoFrame and InvalidRay.
     double ray[9] = {};
     bool castHit = false, recastHit = false;
     bool restFrame = false, posedFrame = false;
@@ -120,13 +135,16 @@ RigExecSurfaceProjectorNoteText(const RigExecSurfaceProjectorNote &note,
         return head + "the re-cast missed the deformed surface; falling back "
                       "to the material point";
     case Kind::NoFrame:
+    case Kind::InvalidRay:
         break;
     }
     const double *r = note.ray;
-    return head + "ray " + Format3("o", r[0], r[1], r[2]) + " " +
-           Format3("d", r[3], r[4], r[5]) + " " +
-           Format3("up", r[6], r[7], r[8]) +
-           " cast=" + (note.castHit ? "hit" : "MISS") +
+    const std::string ray = head + "ray " + Format3("o", r[0], r[1], r[2]) +
+                            " " + Format3("d", r[3], r[4], r[5]) + " " +
+                            Format3("up", r[6], r[7], r[8]);
+    if (note.kind == Kind::InvalidRay)
+        return ray + " is not finite or has no direction";
+    return ray + " cast=" + (note.castHit ? "hit" : "MISS") +
            " recast=" + (note.recastHit ? "hit" : "MISS") +
            " restFrame=" + (note.restFrame ? "ok" : "FAILED") +
            " posedFrame=" + (note.posedFrame ? "ok" : "FAILED");
@@ -362,7 +380,9 @@ template <class Mat4, class Vec3d> struct RigExecSurfaceProjectorInputs {
 /// The projector's target-local shader matrix: rigExec:shaderOffset carried by the look
 /// of its source and by how the material point under its ray moved from the
 /// rest points to the posed points, scaled with the rig. False when no frame
-/// could be measured; \p notes then say which step failed.
+/// could be measured; \p notes then say which step failed. A usable ray that
+/// measures no frame (a NoFrame note) sets \p shaderMatrix to
+/// in.shaderOffset, the projector's defined result for a miss.
 template <class Mat4, class Vec3d, class Vec3f, class Normals>
 bool
 RigExecSolveSurfaceProjectorNotesT(
@@ -471,6 +491,20 @@ RigExecSolveSurfaceProjectorNotesT(
         }
     }
 
+    if (!surfaceProjectorDetail::UsableRay(rayOrigin, rayDirection, rayUp) ||
+        !surfaceProjectorDetail::UsableRay(restRayOrigin, restRayDirection,
+                                           restRayUp)) {
+        Note note;
+        note.kind = Note::Kind::InvalidRay;
+        for (int i = 0; i < 3; ++i) {
+            note.ray[i] = rayOrigin[i];
+            note.ray[3 + i] = rayDirection[i];
+            note.ray[6 + i] = rayUp[i];
+        }
+        notes->push_back(note);
+        return false;
+    }
+
     // material: one ray at the base surface, followed onto the posed one.
     // reproject: cast again at the posed surface, falling back to the
     // material point when the re-cast misses.
@@ -486,6 +520,12 @@ RigExecSolveSurfaceProjectorNotesT(
         cache ? cache->FanTriangles(basePoints.size(), faceVertexCounts,
                                     faceVertexIndices)
               : localFan;
+    if (!fan.valid) {
+        Note note;
+        note.kind = Note::Kind::NoSurface;
+        notes->push_back(note);
+        return false;
+    }
     RigExecSurfaceHit hit;
     Mat4 restFrame, posedFrame;
     restFrame.SetIdentity();
@@ -542,6 +582,7 @@ RigExecSolveSurfaceProjectorNotesT(
         note.restFrame = restOk;
         note.posedFrame = posedOk;
         notes->push_back(note);
+        *shaderMatrix = in.shaderOffset;
         return false;
     }
 
@@ -595,6 +636,16 @@ RigExecSolveSurfaceProjectorNotesT(
     }
     *shaderMatrix = in.shaderOffset * look * carried;
     return true;
+}
+
+/// True when a failed solve's \p notes end in a miss (NoFrame): the solve
+/// then wrote its defined fallback, and nothing in its input was unusable.
+inline bool
+RigExecSurfaceProjectorMissed(
+    const std::vector<RigExecSurfaceProjectorNote> &notes)
+{
+    return !notes.empty() &&
+           notes.back().kind == RigExecSurfaceProjectorNote::Kind::NoFrame;
 }
 
 /// RigExecSolveSurfaceProjectorNotesT with each note as the diagnostic line

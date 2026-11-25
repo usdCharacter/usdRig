@@ -119,7 +119,8 @@ ProjectorOne(const RigExecOpIo &io, const SurfaceProjectorPayload &p,
             ToVector(*In<Points>(io, SurfaceProjectorPoints())),
             ToVector(*In<RigExecArray<int>>(io, SurfaceProjectorCounts())),
             ToVector(*In<RigExecArray<int>>(io, SurfaceProjectorIndices())),
-            normals, &out, &notes))
+            normals, &out, &notes) ||
+        rigExec::RigExecSurfaceProjectorMissed(notes))
         return true;
     std::string why;
     for (const rigExec::RigExecSurfaceProjectorNote &note : notes) {
@@ -127,8 +128,7 @@ ProjectorOne(const RigExecOpIo &io, const SurfaceProjectorPayload &p,
             rigExec::RigExecSurfaceProjectorNoteText(note, std::string());
         why += (why.empty() ? "" : "; ") + text.substr(text.find(": ") + 2);
     }
-    return Fail(error, "SurfaceProjector",
-                why.empty() ? std::string("measured no frame") : why);
+    return Fail(error, "SurfaceProjector", why);
 }
 
 bool
