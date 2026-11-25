@@ -4,6 +4,7 @@
 #include "poseEvalHost.h"
 #include "spaces.h"
 #include "rigExecMath/poseArithmeticKernel.h"
+#include "rigExecMath/providerMatrixKernel.h"
 #include <algorithm>
 #include <limits>
 #include <utility>
@@ -717,7 +718,11 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
             return false;
         }
         const size_t slot = size_t(wire.object);
-        RrMat4d matrix = _RrIdentity();
+        using Frame = RigExecProviderFrameT<RrVec3d>;
+        const auto view = [](const RrPointFrame &frame) {
+            return Frame{frame.points, frame.IsValid(), frame.IsDegenerate()};
+        };
+        const RrPointFrame &restFrame = scratch->restFrames[slot];
         if (wire.part) {
             if (size_t(store.finLast[slot]) >= store.fin.size() ||
                 size_t(store.baseLast[slot]) >= store.base.size() ||
@@ -728,30 +733,15 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
                 }
                 return false;
             }
-            const RrPointFrame &frame = store.fin[size_t(store.finLast[slot])];
-            const bool converted =
-                RrFrameUsable(scratch->restFrames[slot]) &&
-                RrFrameUsable(frame) &&
-                RrPointsToMatrix(scratch->restPts[slot], frame.points, &matrix);
-            // Mirror the native provider admission: an unavailable final
-            // frame retains identity rather than entering the base fallback.
-            if (!converted && RrFrameUsable(frame)) {
-                const RrPointFrame &base =
-                    store.base[size_t(store.baseLast[slot])];
-                RrMat4d execM = _RrIdentity();
-                if (scratch->restFrames[slot].IsValid() && base.IsValid())
-                    RrPointsToMatrix(scratch->restPts[slot], base.points,
-                                     &execM);
-                matrix = execM;
-                const auto &jointSlots = program->slotMeta->jointSlots;
-                if (std::find(jointSlots.begin(), jointSlots.end(),
-                              int32_t(slot)) != jointSlots.end()) {
-                    RrMat4d delta = _RrIdentity();
-                    if (RrPointsToMatrix(base.points, frame.points, &delta))
-                        matrix = execM * delta;
-                }
-            }
-            store.finalMatrix[slot] = matrix;
+            const auto &jointSlots = program->slotMeta->jointSlots;
+            const bool joint = std::find(jointSlots.begin(), jointSlots.end(),
+                                         int32_t(slot)) != jointSlots.end();
+            store.finalMatrix[slot] =
+                RigExecProviderFinalMatrixT<RrMat3d, RrVec3d, RrMat4d>(
+                    Frame{scratch->restPts[slot], restFrame.IsValid(),
+                          restFrame.IsDegenerate()},
+                    view(store.fin[size_t(store.finLast[slot])]),
+                    view(store.base[size_t(store.baseLast[slot])]), joint);
         } else {
             if (size_t(store.baseLast[slot]) >= store.base.size() ||
                 slot >= scratch->restPts.size()) {
@@ -761,13 +751,11 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
                 }
                 return false;
             }
-            const RrPointFrame &frame =
-                store.base[size_t(store.baseLast[slot])];
-            if (RrFrameUsable(scratch->restFrames[slot]) &&
-                RrFrameUsable(frame)) {
-                RrPointsToMatrix(scratch->restPts[slot], frame.points, &matrix);
-            }
-            store.baseMatrix[slot] = matrix;
+            store.baseMatrix[slot] =
+                RigExecProviderBaseMatrixT<RrMat3d, RrVec3d, RrMat4d>(
+                    Frame{scratch->restPts[slot], restFrame.IsValid(),
+                          restFrame.IsDegenerate()},
+                    view(store.base[size_t(store.baseLast[slot])]));
         }
         return true;
     }

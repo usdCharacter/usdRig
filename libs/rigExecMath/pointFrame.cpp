@@ -72,20 +72,14 @@ RigExecMatrixToPoints(const std::array<GfVec3d, 4> &restPoints,
                       const GfMatrix4d &matrix)
 {
     RigExecPointFrame frame;
-    for (size_t i = 0; i < 4; ++i) {
-        frame.points[i] = matrix.TransformAffine(restPoints[i]);
-    }
+    bool reflected = false, degenerate = false;
+    frame.points = RigExecMatrixToPointsT<GfMatrix3d>(restPoints, matrix,
+                                                      &reflected, &degenerate);
     frame.flags = RigExecPointFrameValid;
-
-    // Classify: reflection and shear/nonuniform-scale.
-    const GfMatrix3d posed = _RowBasis(frame.points);
-    if (posed.GetDeterminant() < 0) {
+    if (reflected)
         frame.flags |= RigExecPointFrameReflected;
-    }
-    const double eps = RigExecFrameEpsilon(restPoints);
-    if (std::abs(posed.GetDeterminant()) <= eps * eps * eps) {
+    if (degenerate)
         frame.flags |= RigExecPointFrameDegenerate;
-    }
     return frame;
 }
 

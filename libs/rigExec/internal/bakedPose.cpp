@@ -30,10 +30,12 @@
 
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecMath/pointFrame.h"
+#include "rigExecMath/providerMatrixKernel.h"
 #include "rigExecMath/solvers.h"
 #include "rigExecMath/splineIk.h"
 
 #include "pxr/base/gf/math.h"
+#include "pxr/base/gf/matrix3d.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3d.h"
 #include "pxr/base/vt/types.h"
@@ -5250,44 +5252,29 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
 
     case RigExecBakedStepKind::ProviderMatrix: {
         const size_t slot = size_t(step->object);
-        // Never a bail: RigExecPointsToMatrix leaves the identity and says
-        // so, and the one failure this phase can report -- a published joint
-        // whose rest or final frame is not usable -- is the epilogue's.
-        GfMatrix4d matrix(1.0);
+        // Never a bail: the one failure this phase can report -- a published
+        // joint whose rest or final frame is not usable -- is the epilogue's.
+        using Frame = RigExecProviderFrameT<GfVec3d>;
+        const auto view = [](const RigExecPointFrame &frame) {
+            return Frame{frame.points, frame.IsValid(), frame.IsDegenerate()};
+        };
+        const Frame rest{B.restPts[slot], B.restFrames[slot].IsValid(),
+                         B.restFrames[slot].IsDegenerate()};
+        // The LAST version of the slot: these steps run after the whole
+        // walk, so what they describe is where the provider ended up.
+        const RigExecPointFrame &base = B.base[size_t(B.baseLast[slot])];
         if (step->part) {
-            // The LAST version of the slot: these steps run after the whole
-            // walk, so what they describe is where the provider ended up.
-            const RigExecPointFrame &frame = B.fin[size_t(B.finLast[slot])];
-            const bool primary =
-                RigExecBakedUsable(B.restFrames[slot]) &&
-                RigExecBakedUsable(frame) &&
-                RigExecPointsToMatrix(B.restPts[slot], frame.points, &matrix);
-            // Unavailable finals keep the identity provider.
-            // The rest/base fallback is only meaningful for a usable final;
-            // PointsToMatrix validates its reference basis, not NaN pose data.
-            if (!primary && RigExecBakedUsable(frame)) {
-                const auto &baseFrame = B.base[size_t(B.baseLast[slot])];
-                matrix = GfMatrix4d(1.0);
-                if (B.restFrames[slot].IsValid() && baseFrame.IsValid()) {
-                    RigExecPointsToMatrix(B.restPts[slot], baseFrame.points,
-                                          &matrix);
-                }
-                if (std::find(B.jointSlots.begin(), B.jointSlots.end(),
-                              int(slot)) != B.jointSlots.end()) {
-                    GfMatrix4d delta(1.0);
-                    if (RigExecPointsToMatrix(baseFrame.points, frame.points,
-                                              &delta))
-                        matrix = matrix * delta;
-                }
-            }
-            B.finalMatrix[slot] = matrix;
+            const bool joint =
+                std::find(B.jointSlots.begin(), B.jointSlots.end(),
+                          int(slot)) != B.jointSlots.end();
+            B.finalMatrix[slot] =
+                RigExecProviderFinalMatrixT<GfMatrix3d, GfVec3d, GfMatrix4d>(
+                    rest, view(B.fin[size_t(B.finLast[slot])]), view(base),
+                    joint);
         } else {
-            const RigExecPointFrame &frame = B.base[size_t(B.baseLast[slot])];
-            if (RigExecBakedUsable(B.restFrames[slot]) &&
-                RigExecBakedUsable(frame)) {
-                RigExecPointsToMatrix(B.restPts[slot], frame.points, &matrix);
-            }
-            B.baseMatrix[slot] = matrix;
+            B.baseMatrix[slot] =
+                RigExecProviderBaseMatrixT<GfMatrix3d, GfVec3d, GfMatrix4d>(
+                    rest, view(base));
         }
         return;
     }

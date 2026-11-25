@@ -73,6 +73,23 @@ RigExecPointsToMatrixT(const std::array<Vec3, 4> &restPoints,
     return true;
 }
 
+/// \p matrix applied to \p restPoints, and whether the posed basis is
+/// reflected and whether it is singular at the rest frame's epsilon.
+template <class Mat3, class Vec3, class Mat4>
+std::array<Vec3, 4>
+RigExecMatrixToPointsT(const std::array<Vec3, 4> &restPoints,
+                       const Mat4 &matrix, bool *reflected, bool *degenerate)
+{
+    std::array<Vec3, 4> points;
+    for (size_t i = 0; i < 4; ++i)
+        points[i] = matrix.TransformAffine(restPoints[i]);
+    const double det = RigExecRowBasisT<Mat3>(points).GetDeterminant();
+    const double eps = RigExecFrameEpsilonT(restPoints);
+    *reflected = det < 0;
+    *degenerate = std::abs(det) <= eps * eps * eps;
+    return points;
+}
+
 /// \p m's identity landmarks. False at the first non-finite one, which is
 /// kept; the later ones stay at their identity values.
 template <class Mat4, class Vec3>

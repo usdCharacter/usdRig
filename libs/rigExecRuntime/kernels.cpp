@@ -47,19 +47,14 @@ RrMatrixToPoints(const std::array<RrVec3d, 4> &restPoints,
                  const RrMat4d &matrix)
 {
     RrPointFrame frame;
-    for (size_t i = 0; i < 4; ++i) {
-        frame.points[i] = matrix.TransformAffine(restPoints[i]);
-    }
+    bool reflected = false, degenerate = false;
+    frame.points = RigExecMatrixToPointsT<RrMat3d>(restPoints, matrix,
+                                                   &reflected, &degenerate);
     frame.flags = RrPointFrameValid;
-
-    const RrMat3d posed = RrDualQuatRowBasis(frame.points);
-    if (posed.GetDeterminant() < 0) {
+    if (reflected)
         frame.flags |= RrPointFrameReflected;
-    }
-    const double eps = RrFrameEpsilon(restPoints);
-    if (std::abs(posed.GetDeterminant()) <= eps * eps * eps) {
+    if (degenerate)
         frame.flags |= RrPointFrameDegenerate;
-    }
     return frame;
 }
 
