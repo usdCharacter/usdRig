@@ -878,7 +878,6 @@ set_tests_properties(testRigExecPxrLibraryChecker PROPERTIES LABELS "fast")
 rigexec_add_test(NAME testRigExecLegalPackaging
     COMMAND ${Python3_EXECUTABLE}
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/testRigExecLegalPackaging.py")
-set_tests_properties(testRigExecLegalPackaging PROPERTIES LABELS "fast")
 
 rigexec_add_test(NAME testRigExecLicenseManifest
     COMMAND ${Python3_EXECUTABLE}
