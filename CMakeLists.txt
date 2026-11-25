@@ -1360,17 +1360,17 @@ rigexec_add_test(NAME testRigExecOutsideTransforms
     COMMAND testRigExecOutsideTransforms
         "${CMAKE_CURRENT_SOURCE_DIR}/examples"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
-# Findings: the contract these cases assert does not hold today. Each fails
-# until the engine is fixed; drop WILL_FAIL then.
-foreach(_finding IN ITEMS outside-target outside-target-far
-                          projector-animated-ancestor)
-    rigexec_add_test(NAME testRigExecOutsideTransforms_${_finding}
+foreach(_case IN ITEMS outside-target outside-target-far
+                       projector-animated-ancestor)
+    rigexec_add_test(NAME testRigExecOutsideTransforms_${_case}
         COMMAND testRigExecOutsideTransforms
             "${CMAKE_CURRENT_SOURCE_DIR}/examples"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures" ${_finding})
-    set_tests_properties(testRigExecOutsideTransforms_${_finding}
-        PROPERTIES WILL_FAIL TRUE)
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures" ${_case})
 endforeach()
+# Finding: compile skips a projector under an animated ancestor above the
+# asset root; drop WILL_FAIL once fixed.
+set_tests_properties(testRigExecOutsideTransforms_projector-animated-ancestor
+    PROPERTIES WILL_FAIL TRUE)
 
 add_executable(testRigExecGeometryOpsBakedParity
     tests/testRigExecGeometryOpsBakedParity.cpp)

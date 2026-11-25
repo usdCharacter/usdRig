@@ -55,6 +55,26 @@ namespace {
 
 RigExecPointFrame _SolvePositionConstraint(const _ConstraintSolveContext &);
 
+// world(prim) * world(assetRoot)^-1 for a prim outside the asset, each side
+// composed below their nearest common ancestor, whose transform cancels.
+GfMatrix4d
+_OutsideAssetTransform(UsdGeomXformCache &cache, const UsdPrim &prim,
+                       const UsdPrim &assetRoot)
+{
+    const UsdPrim common = prim.GetStage()->GetPrimAtPath(
+        prim.GetPath().GetCommonPrefix(assetRoot.GetPath()));
+    bool primResets = false, assetResets = false;
+    GfMatrix4d local =
+        cache.ComputeRelativeTransform(prim, common, &primResets);
+    GfMatrix4d asset =
+        cache.ComputeRelativeTransform(assetRoot, common, &assetResets);
+    if (primResets || assetResets) {
+        local = cache.GetLocalToWorldTransform(prim);
+        asset = cache.GetLocalToWorldTransform(assetRoot);
+    }
+    return local * asset.GetInverse();
+}
+
 RigExecPointFrame _SolveRotationConstraint(const _ConstraintSolveContext &);
 
 RigExecPointFrame _SolveScaleConstraint(const _ConstraintSolveContext &);
@@ -492,6 +512,10 @@ RigExecRigEvaluator::_FrameFromXformRelativeToAsset(
         // prim; row vectors: local-to-asset = local-to-world * world-to-asset.
         relative = xformCache->GetLocalToWorldTransform(prim) *
                    xformCache->GetLocalToWorldTransform(assetRoot).GetInverse();
+    } else if (!path.HasPrefix(assetRoot.GetPath()) &&
+               xformCache->GetLocalToWorldTransform(assetRoot) !=
+                   GfMatrix4d(1.0)) {
+        relative = _OutsideAssetTransform(*xformCache, prim, assetRoot);
     }
     if (outFrame) {
         *outFrame = RigExecFrameFromMatrix(relative);

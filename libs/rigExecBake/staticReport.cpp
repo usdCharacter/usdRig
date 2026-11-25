@@ -49,18 +49,27 @@ _TransformAnimated(const UsdPrim &prim)
     return false;
 }
 
-// A transform read relative to \p root (UsdGeomXformCache::
-// ComputeRelativeTransform): the prim's own and every ancestor's up to the
-// root, exclusive, or up to the pseudo-root when the root is not above it.
+// A transform read relative to \p root (RigExecRigEvaluator::
+// _FrameFromXformRelativeToAsset): the prim's own and every ancestor's below
+// the nearest common ancestor of the prim and the root, and, for a prim
+// outside the root, the root's own and its ancestors' below it too.
 void
 _Transform(const UsdStageRefPtr &stage, const UsdPrim &root,
            const SdfPath &path, const std::string &field, _Entries *entries)
 {
-    for (UsdPrim p = stage->GetPrimAtPath(path);
-         p && !p.IsPseudoRoot() && p != root; p = p.GetParent()) {
-        if (_TransformAnimated(p)) {
-            entries->emplace(field, p.GetPath().GetString());
+    const SdfPath common =
+        root ? path.GetCommonPrefix(root.GetPath()) : SdfPath();
+    const auto walk = [&](UsdPrim p) {
+        for (; p && !p.IsPseudoRoot() && p.GetPath() != common;
+             p = p.GetParent()) {
+            if (_TransformAnimated(p)) {
+                entries->emplace(field, p.GetPath().GetString());
+            }
         }
+    };
+    walk(stage->GetPrimAtPath(path));
+    if (root && common != root.GetPath()) {
+        walk(root);
     }
 }
 

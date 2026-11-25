@@ -132,7 +132,8 @@ StageFrame(const UsdStageRefPtr &stage, const UsdPrim &asset,
         return false;
     bool resets = false;
     auto relative = cache->ComputeRelativeTransform(prim, asset, &resets);
-    if (resets)
+    if (resets || (!path.HasPrefix(asset.GetPath()) &&
+                   cache->GetLocalToWorldTransform(asset) != GfMatrix4d(1.0)))
         relative = cache->GetLocalToWorldTransform(prim) *
                    cache->GetLocalToWorldTransform(asset).GetInverse();
     if (frame)

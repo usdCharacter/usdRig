@@ -7,6 +7,7 @@
 #include "rigExecRuntimeDrive.h"
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/api/cancellation.h"
+#include "rigExec/api/frameCache.h"
 #include "rigExec/api/frozenContext.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExecSchema/schemaNames.h"
@@ -585,15 +586,66 @@ TestInsideAsset()
 }
 
 // (b) a position constraint and (d) an aim whose target lies outside the
-// asset under a differently placed, animated parent. Today native and frozen
-// read such a target in world space, ignoring the asset's ancestors
-// (FINDING, registered WILL_FAIL). The target's asset
+// asset under a differently placed, animated parent. The target's asset
 // space position is computed two ways that differ only by rounding
-// (world(target) * world(asset)^-1 against B * A^-1 composed in the test),
-// a few double ulps of the placements' magnitude (~1e2). Published points
-// are float, so they agree to one float ulp at their magnitude; published
-// matrices are double, held to kNearMatrixTolerance.
-constexpr double kNearMatrixTolerance = 1e-12;
+// (world(target) * world(asset)^-1 against B * A^-1 composed in the test).
+// Published points are float, so they agree to one float ulp at their
+// magnitude; published matrices are double. Measured (Windows, MSVC): points
+// bit-identical, matrices 1.3e-15; kNearMatrixTolerance is the bound the
+// float32 switch has to meet or consciously relax.
+constexpr double kNearMatrixTolerance = 1e-14;
+
+// Times past every sample the example authors, where only the asset's
+// ancestor moves. The outside target's asset-space frame is a stage seed of
+// the frame-cache key, so a frame there must not be served from the cache
+// entry of another such time, and the control (a static ancestor) shows
+// nothing else moved.
+void
+TestCacheKeyFollowsAncestor()
+{
+    const Case c = Sweep();
+    const std::vector<double> times = {2000, 2001};
+    const SdfPath mover = RigOf(c).AppendPath(SdfPath("Movers/Sweep"));
+    const Motion moving = AncestorMotion(kNear);
+    const Motion still = [moving](double) { return moving(2000); };
+    const auto digests = [&](const Motion &ancestor, bool *posesDiffer) {
+        const UsdStageRefPtr stage =
+            AssetStage(c.file, c.asset, ancestor, times);
+        AddOutsideTarget(stage, {}, times, "Target", {{1001, GfVec3d(0, 5, 0)}},
+                         mover, kSources);
+        const auto run = Evaluate(stage, RigOf(c), times);
+        std::vector<uint64_t> out;
+        CHECK(run->compiled && run->poses.size() == times.size());
+        if (!run->compiled || run->poses.size() != times.size()) {
+            return out;
+        }
+        Deviation deviation;
+        deviation.Poses(run->poses[0], run->poses[1]);
+        *posesDiffer = !deviation.exact;
+        for (const double t : times) {
+            RigExecFrameInputs inputs;
+            std::string error;
+            CHECK(RigExecSampleFrameInputs(*run->evaluator, UsdTimeCode(t), {},
+                                           &inputs, &error));
+            CHECK(RigExecControlStateDigestible(inputs));
+            out.push_back(RigExecControlStateDigest(inputs));
+        }
+        return out;
+    };
+    bool stillDiffers = true, movingDiffers = false;
+    const std::vector<uint64_t> fixed = digests(still, &stillDiffers);
+    const std::vector<uint64_t> moved = digests(moving, &movingDiffers);
+    std::printf("cache key, static ancestor: poses %s, digests %s\n",
+                stillDiffers ? "differ" : "equal",
+                fixed.size() == 2 && fixed[0] == fixed[1] ? "equal" : "differ");
+    std::printf("cache key, animated ancestor: poses %s, digests %s\n",
+                movingDiffers ? "differ" : "equal",
+                moved.size() == 2 && moved[0] == moved[1] ? "equal" : "differ");
+    CHECK(!stillDiffers);
+    CHECK(fixed.size() == 2 && fixed[0] == fixed[1]);
+    CHECK(movingDiffers);
+    CHECK(moved.size() == 2 && moved[0] != moved[1]);
+}
 
 void
 TestOutsideTarget()
@@ -621,11 +673,11 @@ TestOutsideTarget()
 // The asset ~1e6 units from the origin and the outside target's parent a
 // modest offset O(t) from it (B = O * A, so B * A^-1 = O exactly). Forming
 // world(target) * world(asset)^-1 from world matrices whose translations are
-// ~1e6 leaves about 1e6 * 2^-52 ~ 2e-10 of cancellation in double, a few
-// times that through the aim: the bounds below, which the float32 switch has
-// to meet or consciously relax. Today's engine reads the target in world
-// space (the outside-target finding), so they are not yet met.
-constexpr double kFarMatrixBound = 1e-9;
+// ~1e6 cancels in double. Measured (Windows, MSVC): constraint points
+// bit-identical, aim matrices 4.3e-12. The bounds below are what the float32
+// switch has to meet or consciously relax; points keep one float ulp because
+// a double residue rounds to float either way.
+constexpr double kFarMatrixBound = 1e-11;
 constexpr double kFarPointUlpBound = 1.0;
 
 void
@@ -787,7 +839,7 @@ main(int argc, char **argv)
 {
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     if (argc < 3) {
-        std::printf("usage: %s <examples dir> <fixtures dir> [finding]\n",
+        std::printf("usage: %s <examples dir> <fixtures dir> [case]\n",
                     argv[0]);
         return 1;
     }
@@ -799,6 +851,7 @@ main(int argc, char **argv)
         TestProjector();
     } else if (only == "outside-target") {
         TestOutsideTarget();
+        TestCacheKeyFollowsAncestor();
     } else if (only == "outside-target-far") {
         TestFarFromOrigin();
     } else if (only == "projector-animated-ancestor") {
