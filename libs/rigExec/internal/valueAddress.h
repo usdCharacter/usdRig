@@ -1,6 +1,5 @@
-// Backend-neutral value contract: the addresses production code names rig
-// values by, the overrides it supplies, and the extracted generation they
-// resolve into. Plain data types; no extraction backend is named here.
+// Value contract: the addresses production code names rig values by and the
+// overrides it supplies. Plain data types.
 #ifndef RIGEXEC_VALUE_ADDRESS_H
 #define RIGEXEC_VALUE_ADDRESS_H
 
@@ -18,15 +17,12 @@ namespace rigExec {
 
 const TfToken &RigExecFinalPhase();
 
-/// Backend-neutral value address.
+/// Value address.
 ///
 /// A prim target with publicComputation names a rig value provider
 /// (e.g. computePointFrame). A property target with an empty
-/// publicComputation resolves to the stock computeValue bridge. The
-/// canonical public address never names a generated provider; the
-/// compiler-private resolution (RigExecTapSet::AddResolved) maps a public
-/// address to its hidden chain-head provider (generated
-/// provider paths never enter a public or durable tap address).
+/// publicComputation names the property's value. A public address never
+/// names a generated provider.
 struct RigExecValueAddress {
     SdfPath target;
     TfToken publicComputation;
@@ -47,28 +43,13 @@ struct RigExecValueAddress {
     }
 };
 
-using RigExecTapId = int;
-
-/// A computed value the engine supplies rather than lets exec derive.
-///
-/// Used for the solver->joint pose. OpenExec can only reach a
-/// provider through a relationship authored on the consuming prim, and the
-/// authored direction here is the wrong way round: a solver names its joints,
-/// not the reverse (there is no reverse-relationship accessor -- see the
-/// accessor list in exec/computationBuilders.h). Supplying
-/// the frame as an override keeps the binding in the compiled graph
-/// where it belongs, and exec's own consumers -- computeMatrix, frame-chain
-/// applications, and the NamespaceAncestor fallback that unbound descendants
-/// follow -- all read the overridden value with nothing authored anywhere.
+/// A value the engine supplies for a prim computation or an attribute.
 struct RigExecValueOverride {
     SdfPath prim;
     /// Prim computation to override. Ignored when \p attribute is set.
     TfToken computation;
     /// When non-empty, overrides this attribute's value on \p prim instead
-    /// of a prim computation. Used for inputs an exec accessor cannot reach
-    /// from the consuming prim -- a ribbon's driver-curve points live on the
-    /// curve, and a relationship accessor can only request computations on
-    /// the targets, not a named attribute of them.
+    /// of a prim computation.
     TfToken attribute;
     VtValue value;
 
@@ -85,53 +66,6 @@ struct RigExecValueOverride {
     {
         return !(*this == other);
     }
-};
-
-/// Immutable extracted generation: one value per tap.
-class RigExecSnapshot {
-public:
-    const VtValue &Get(RigExecTapId tap) const;
-
-    template <class T> T Get(RigExecTapId tap) const
-    {
-        const VtValue &v = Get(tap);
-        return v.IsHolding<T>() ? v.UncheckedGet<T>() : T();
-    }
-
-    /// Borrowed access to the tapped value without copying: null when the
-    /// tap is missing or holds another type. The pointer stays valid while
-    /// this snapshot is alive; callers needing ownership keep Get<T>.
-    template <class T> const T *TryGet(RigExecTapId tap) const
-    {
-        const VtValue &v = Get(tap);
-        return v.IsHolding<T>() ? &v.UncheckedGet<T>() : nullptr;
-    }
-
-    UsdTimeCode GetTime() const
-    {
-        return _time;
-    }
-
-    /// True when evaluation ran and produced this snapshot.
-    bool IsValid() const
-    {
-        return _valid;
-    }
-
-    /// True when every requested tap produced a value. A valid snapshot
-    /// with missing values means some computations failed to compile or
-    /// evaluate; consumers must not treat defaulted values as results.
-    bool IsComplete() const
-    {
-        return _valid && _complete;
-    }
-
-private:
-    friend class RigExecTapSet;
-    std::vector<VtValue> _values;
-    UsdTimeCode _time = UsdTimeCode::Default();
-    bool _valid = false;
-    bool _complete = false;
 };
 
 } // namespace rigExec

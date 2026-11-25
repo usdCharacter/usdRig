@@ -339,8 +339,8 @@ public:
     RigExecRigEvaluator(const UsdStageRefPtr &stage, const SdfPath &rigPath);
     ~RigExecRigEvaluator();
 
-    /// Discovers joints and movers, validates targets, and prepares the
-    /// exec tap set. Returns false with messages on validation failure.
+    /// Discovers joints and movers, validates targets, and builds the baked
+    /// program. Returns false with messages on validation failure.
     /// Requires rigExecScene; a missing registration also returns false.
     ///
     /// Always compiles: a failure the settle path memoized (see
@@ -452,17 +452,12 @@ public:
     ///
     /// An interactive drag asks "what would the rig look like if this avar
     /// were 3.2", once per mouse sample. Authoring the answer to ask it
-    /// invalidates exec through the authoring stage, rewrites a layer spec,
-    /// and notifies every observer of the stage -- for a value the artist
-    /// has not committed to. These overrides ask the same question through
-    /// the route exec already provides for it (ExecUsdSystem::
-    /// ComputeWithOverrides, tapSet.cpp), so the generation Hydra draws is
-    /// the previewed one while the document still holds the authored value.
+    /// rewrites a layer spec and notifies every observer of the stage -- for
+    /// a value the artist has not committed to. These overrides answer it
+    /// without authoring, so the generation Hydra draws is the previewed one
+    /// while the document still holds the authored value.
     ///
-    /// Each override is delivered TWICE, because there are two ways a value
-    /// reaches a consumer and they must not disagree: as an exec override
-    /// for everything exec computes, and through _resolvedInputs for the
-    /// property chains and the CPU oracle that exec never runs. An override
+    /// Overrides reach every consumer through _resolvedInputs. An override
     /// replaces any earlier one on the same key rather than joining it. One
     /// on a property math movers revise is that property's base: the chain
     /// revises it as it would the value authored there and publishes its
@@ -1728,8 +1723,8 @@ private:
     std::vector<RigExecMoverRecord> _movers;
 
     /// Baked falloff remaps for every volumetric weight object reachable
-    /// in this compiled rig, ready to hand to RigExecTapSet::Evaluate as value
-    /// overrides on each volume's computeFalloffLut.
+    /// in this compiled rig, as value overrides on each volume's
+    /// computeFalloffLut.
     ///
     /// They live here rather than being rebuilt per frame because a
     /// falloff curve is structural: it is resampled once at Compile and

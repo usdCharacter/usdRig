@@ -8,7 +8,7 @@
 // same order over dense arrays, and publishes the same RigExecRigPose.
 // Evaluate runs this program. A feature the program cannot express does not
 // select another evaluator: Evaluate returns an invalid pose and the
-// IsBakeable reasons. The OpenExec tap set remains for cross-check and tests.
+// IsBakeable reasons.
 #ifndef RIGEXEC_BAKED_PROGRAM_H
 #define RIGEXEC_BAKED_PROGRAM_H
 

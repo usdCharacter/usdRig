@@ -284,8 +284,8 @@ struct RigExecPublishedPrim {
 
 class RigExecFrameTable;
 
-/// One complete immutable generation (consumers see complete
-/// RigExecSnapshot generations only).
+/// One complete immutable generation (consumers see complete generations
+/// only).
 struct RigExecImagingSnapshot {
     uint64_t generation = 0;
     std::map<SdfPath, RigExecPublishedPrim> prims;

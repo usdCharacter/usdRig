@@ -14,7 +14,6 @@
 #include "rigExec/api/frozenContext.h"
 #include "rigExec/internal/outputAffectedIndex.h"
 #include "rigExec/api/profiler.h"
-#include "rigExec/api/tapSet.h"
 
 #include "pxr/base/tf/stringUtils.h"
 #include "pxr/base/tf/token.h"
@@ -545,7 +544,6 @@ RigExecImagingRegistry::_OnObjectsChanged(
                                    guideTime, automatic, retryOnValues);
         return;
     }
-    RigExecTapSet::PrepareStageChange(UsdStageRefPtr(sender), notice);
     std::shared_ptr<RigExecBackgroundScheduler> scheduler;
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -580,7 +578,7 @@ RigExecImagingRegistry::_OnObjectsChanged(
     // the final frame (solvers, joints, movers, controls, weights, driver geometry,
     // guide styling): re-evaluate at the current time. The evaluator's
     // compiled rig signature turns structural edits into recompiles; value edits
-    // flow through exec invalidation on the shared layers.
+    // reach it through its own notice handling.
     auto touchesInput = [&readRoots](const SdfPath &path) {
         const SdfPath primPath = path.GetPrimPath();
         for (const SdfPath &root : readRoots) {

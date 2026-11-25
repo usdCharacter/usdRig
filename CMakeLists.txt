@@ -214,7 +214,6 @@ target_include_directories(rigExec PUBLIC
 target_link_libraries(rigExec PUBLIC
     rigExecOpCore
     plug sdf usd usdGeom work
-    exec execUsd ef vdf
 )
 
 target_link_libraries(rigExec PRIVATE
@@ -1139,11 +1138,10 @@ foreach(_entry testRigExecAffineFramesGolden
     endif()
 endforeach()
 
-# The exec cross-check rows of one rig: exec_rows_<name> records them, judged
-# by OpenExec, into the build tree at the first, middle and last of FRAMES;
-# testRigExecExecGoldens_<name> compares the checked-in set with the
-# production evaluator (tests/fixtures/README.md).
-file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/execRows")
+# The exec-row goldens of one rig: testRigExecExecGoldens_<name> compares the
+# production evaluator's rows with the checked-in set, and with
+# RIGEXEC_RECORD_EXEC_ROWS=1 records them at the first, middle and last of
+# FRAMES (tests/fixtures/README.md).
 function(rigexec_add_exec_rows_test)
     cmake_parse_arguments(A "" "NAME;STAGE;FRAMES" "" ${ARGN})
     string(REPLACE "," ";" _all "${A_FRAMES}")
@@ -1152,15 +1150,9 @@ function(rigexec_add_exec_rows_test)
     math(EXPR _last "${_count} - 1")
     list(GET _all 0 ${_middle} ${_last} _frames)
     list(REMOVE_DUPLICATES _frames)
-    list(GET _frames 0 _first)
-    rigexec_add_test(NAME exec_rows_${A_NAME} COMMAND testRigExecExecCrossCheckRows
-        "${A_STAGE}" ${_first} --golden-out
-        "${CMAKE_CURRENT_BINARY_DIR}/execRows/${A_NAME}.golden" ${_frames})
-    set_tests_properties(exec_rows_${A_NAME} PROPERTIES
-        LABELS "exec" ENVIRONMENT "RIGEXEC_ENABLE_SIMD=0")
     rigexec_add_test(NAME testRigExecExecGoldens_${A_NAME} COMMAND testRigExecExecGoldens
         "${A_STAGE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/execRows"
-        ${A_NAME})
+        ${A_NAME} ${_frames})
     set_tests_properties(testRigExecExecGoldens_${A_NAME} PROPERTIES
         LABELS "golden" ENVIRONMENT "RIGEXEC_ENABLE_SIMD=0")
 endfunction()
@@ -1188,7 +1180,7 @@ function(rigexec_add_example_graph_test)
     endif()
     rigexec_add_test(NAME example_graph_${A_NAME} COMMAND rigExecPose
         "${A_STAGE}"
-        --frames "${A_FRAMES}" --exec-crosscheck --cpu-reference ${_guides})
+        --frames "${A_FRAMES}" --cpu-reference ${_guides})
     set_tests_properties(example_graph_${A_NAME} PROPERTIES
         ENVIRONMENT "RIGEXEC_ENABLE_PARALLEL_EVAL=1"
         FAIL_REGULAR_EXPRESSION "FAIL:")
@@ -1645,7 +1637,6 @@ target_link_libraries(testRigExecExecCrossCheck PRIVATE rigExec)
 target_compile_definitions(testRigExecExecCrossCheck PRIVATE ${_rigexec_schema_resource_define})
 rigexec_add_test(NAME testRigExecExecCrossCheck COMMAND testRigExecExecCrossCheck
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/independentConstraints")
-set_tests_properties(testRigExecExecCrossCheck PROPERTIES LABELS "exec")
 
 add_executable(testRigExecOpValues tests/testRigExecOpValues.cpp)
 target_link_libraries(testRigExecOpValues PRIVATE rigExec)
@@ -1675,19 +1666,6 @@ rigexec_add_test(NAME testRigExecEvalCoreProperties COMMAND testRigExecEvalCoreP
 add_executable(testRigExecSurfaceKernelCache tests/testRigExecSurfaceKernelCache.cpp)
 target_link_libraries(testRigExecSurfaceKernelCache PRIVATE rigExecMath)
 rigexec_add_test(NAME testRigExecSurfaceKernelCache COMMAND testRigExecSurfaceKernelCache)
-
-add_executable(testRigExecExecCrossCheckRows tests/testRigExecExecCrossCheckRows.cpp)
-target_link_libraries(testRigExecExecCrossCheckRows PRIVATE rigExec)
-target_compile_definitions(testRigExecExecCrossCheckRows PRIVATE ${_rigexec_schema_resource_define})
-foreach(_fixture 01_FkChainTail 03_IkFkBlendClamp 05_TwistRibbonSpine 11_VolumeWeights 13_ReadPhases ArmRig)
-    rigexec_add_test(NAME exec_crosscheck_${_fixture} COMMAND testRigExecExecCrossCheckRows
-        "${CMAKE_CURRENT_SOURCE_DIR}/examples/${_fixture}.usda" 1001)
-    set_tests_properties(exec_crosscheck_${_fixture} PROPERTIES LABELS "exec")
-endforeach()
-
-rigexec_add_test(NAME exec_crosscheck_computed_ik_space COMMAND testRigExecExecCrossCheckRows
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/computed_ik_space.usda" 1)
-set_tests_properties(exec_crosscheck_computed_ik_space PROPERTIES LABELS "exec")
 
 add_executable(testRigExecExecGoldens tests/testRigExecExecGoldens.cpp)
 target_link_libraries(testRigExecExecGoldens PRIVATE rigExec)
@@ -2706,10 +2684,6 @@ add_executable(probeImagingPipeline tests/probeImagingPipeline.cpp)
 target_link_libraries(probeImagingPipeline PRIVATE rigExecImaging usdImaging usdGeom)
 target_compile_definitions(probeImagingPipeline PRIVATE ${_rigexec_schema_resource_define})
 
-# The non-public Esf/Exec seam must qualify separately on each stock USD
-add_executable(probeEsfCompatibility EXCLUDE_FROM_ALL tests/probeEsfCompatibility.cpp)
-target_link_libraries(probeEsfCompatibility PRIVATE exec esfUsd usd)
-
 function(rigexec_add_serial_test name)
     rigexec_add_test(NAME ${name}Serial COMMAND ${name} ${ARGN})
     set(_env)
@@ -3417,7 +3391,7 @@ foreach(_rigexec_scene_exe IN ITEMS
     testRigExecChainLevels testRigExecConstraints testRigExecCrossDomainInputs
     testRigExecDefaultSpaces testRigExecDeltaMush testRigExecEnvelopeVolumes
     testRigExecCompiledProgram testRigExecCompiledRigRests testRigExecExampleParity testRigExecExecCrossCheck
-    testRigExecExecCrossCheckRows testRigExecExecGoldens testRigExecExternalMovers
+    testRigExecExecGoldens testRigExecExternalMovers
     testRigExecFrameCacheCones_Verify testRigExecFrameCacheSparsity
     testRigExecFrozenContext testRigExecGeometryOpsBakedParity
     testRigExecGeometryProgram testRigExecGraphBindings
@@ -3439,13 +3413,13 @@ foreach(_rigexec_scene_exe IN ITEMS
 endforeach()
 
 # Oracles are linked only where a test runs cpu-reference, golden capture,
-# or an exec cross-check. Imaging, playback, and runtime tests do not.
+# or an exec-row capture. Imaging, playback, and runtime tests do not.
 foreach(_rigexec_oracle_exe IN ITEMS
     rigExecPose benchEditLatency
     testRigExecArm testRigExecBakedAttribute testRigExecBakedMode
     testRigExecBakedSchedule testRigExecConstraints testRigExecDeltaMush
     testRigExecCompiledRigRests testRigExecExampleParity
-    testRigExecExecCrossCheck testRigExecExecCrossCheckRows testRigExecExecGoldens
+    testRigExecExecCrossCheck testRigExecExecGoldens
     testRigExecExternalMovers testRigExecFrozenContext
     testRigExecBakedOpParity
     testRigExecGeometryOpsBakedParity testRigExecGoldenPose

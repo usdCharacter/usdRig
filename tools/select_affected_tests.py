@@ -50,11 +50,11 @@ LAYER_CMAKE = (
     "cmake/rigExecVerifySources.cmake",
 )
 
-# Imported OpenUSD/OpenExec targets. A test that reaches one of these
+# Imported OpenUSD targets. A test that reaches one of these
 # cannot be built or run without the USD prefix.
 PXR_LIBS = {
     "arch", "tf", "gf", "vt", "sdf", "ts", "usd", "usdGeom",
-    "plug", "work", "exec", "execUsd", "ef", "vdf", "esf", "hd",
+    "plug", "work", "hd",
     "usdImaging", "usdUtils", "hio", "sdr", "js", "garch", "glf", "hf",
     "hdSt", "hgi", "trace",
 }

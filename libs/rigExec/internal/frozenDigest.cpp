@@ -177,15 +177,6 @@ RigExecFrozenPurityAudit()
         {"libs/rigExec/solverKernels.{h,cpp}", RigExecFrozenPurity::Pure,
          "ribbon/twist/rotation glue over caller buffers; no statics, no "
          "locks, no USD"},
-        {"libs/rigExec/internal/moverKernels.cpp exec callbacks and helpers",
-         RigExecFrozenPurity::Pure,
-         "only static const tokens and the SIMD switch, read once at "
-         "library load (RigExecSimdEnabled); per-evaluation state lives in "
-         "the VdfContext, never in the kernel"},
-        {"libs/rigExec/internal/computations.cpp frame helpers",
-         RigExecFrozenPurity::Pure,
-         "static free functions over frames and params; guards and packing "
-         "only, no retained state"},
         {"libs/rigExec/internal/weightPackets.cpp packet math",
          RigExecFrozenPurity::Pure,
          "one token table, touched at Build; assembly over caller "
@@ -254,8 +245,8 @@ RigExecFrozenPurityAudit()
          RigExecFrozenPurity::LiveOnly,
          "every prologue read; sampled into the input vector on the UI "
          "thread, never named by the context, inputs, arena, or runner"},
-        {"RigExecRigEvaluator (resolved inputs, live graphs, tap sets, "
-         "overrides, profiler, compiled rig rests)",
+        {"RigExecRigEvaluator (resolved inputs, live graphs, overrides, "
+         "profiler, compiled rig rests)",
          RigExecFrozenPurity::LiveOnly,
          "live state by definition; the program's captured pointers to it "
          "are why workers run a private arena, never the live program"},
@@ -266,10 +257,6 @@ RigExecFrozenPurityAudit()
          "snapshot construction clears live pointers; each frozen lane "
          "rebinds only its private resolver, profiler, and copied compiled rig "
          "tables"},
-        {"ExecUsdSystem / TapSet / Snapshot (dynamic path)",
-         RigExecFrozenPurity::LiveOnly,
-         "owning-thread source capture and optional reference checks only; "
-         "workers consume fresh detached facts and compiled operations"},
         {"wire-basis memo (moverGraph.h RigExecWireBasisCache, per owner)",
          RigExecFrozenPurity::Pure,
          "one per revision (GeomRevision::wireBasis) and one per dynamic "

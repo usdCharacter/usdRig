@@ -17,11 +17,9 @@ add_library(rigExecEval OBJECT
     libs/rigExec/internal/bakedOpNodes.cpp
     libs/rigExec/internal/bakedTrace.cpp
     libs/rigExec/internal/moverGraph.cpp
-    libs/rigExec/internal/moverKernels.cpp
     libs/rigExec/internal/solverKernels.cpp
     libs/rigExec/internal/weightField.cpp
     libs/rigExec/internal/weightPackets.cpp
-    libs/rigExec/internal/affineFrameComputations.cpp
     libs/rigExec/internal/movers/moverRegistry.cpp
     libs/rigExec/internal/movers/matrixMover.cpp
     libs/rigExec/internal/movers/skinMover.cpp
@@ -53,5 +51,5 @@ target_include_directories(rigExecEval PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/libs")
 target_link_libraries(rigExecEval PRIVATE
     rigExecGraph rigExecMath rigExecEvalCore
-    tf gf vt sdf ts usd usdGeom plug work exec execUsd ef vdf)
+    tf gf vt sdf ts usd usdGeom plug work)
 set_target_properties(rigExecEval PROPERTIES POSITION_INDEPENDENT_CODE ON)

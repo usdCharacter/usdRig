@@ -705,7 +705,6 @@ main(int argc, char **argv)
     }
     PlugRegistry::GetInstance().RegisterPlugins(
         TfAbsPath(RIGEXEC_SCHEMA_RESOURCE_DIR));
-    RigExecLoadComputations();
     if (argc == 3) {
         SetPaths(argv[2]);
         const std::string mode = argv[1];

@@ -4755,8 +4755,8 @@ TestPurityAuditNamesEveryUnit()
     CHECK(!audit.empty());
     size_t pure = 0, pinned = 0, liveOnly = 0;
     bool sawWireMemo = false;
-    bool sawStage = false, sawEvaluator = false, sawDynamic = false;
-    bool sawSolverKernels = false, sawMoverKernels = false;
+    bool sawStage = false, sawEvaluator = false;
+    bool sawSolverKernels = false;
     for (const RigExecPurityFinding &finding : audit) {
         CHECK(finding.unit != nullptr);
         CHECK(finding.note != nullptr);
@@ -4783,14 +4783,8 @@ TestPurityAuditNamesEveryUnit()
         if (std::strstr(finding.unit, "RigExecRigEvaluator")) {
             sawEvaluator = isLive;
         }
-        if (std::strstr(finding.unit, "dynamic path")) {
-            sawDynamic = isLive;
-        }
         if (std::strstr(finding.unit, "solverKernels")) {
             sawSolverKernels = finding.verdict == RigExecFrozenPurity::Pure;
-        }
-        if (std::strstr(finding.unit, "moverKernels")) {
-            sawMoverKernels = finding.verdict == RigExecFrozenPurity::Pure;
         }
     }
     CHECK(pure > 0);
@@ -4799,9 +4793,7 @@ TestPurityAuditNamesEveryUnit()
     CHECK(sawWireMemo);
     CHECK(sawStage);
     CHECK(sawEvaluator);
-    CHECK(sawDynamic);
     CHECK(sawSolverKernels);
-    CHECK(sawMoverKernels);
 }
 
 } // namespace

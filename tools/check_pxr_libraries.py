@@ -8,8 +8,8 @@ checks, each textual:
 
 1. Links. A CMake file the repository owns names a forbidden library outside
    a comment (a target_link_libraries edge, a component list, a label list).
-2. C/C++ includes. A source includes a header under pxr/usd/<library>/ or
-   pxr/usdImaging/<library>/.
+2. C/C++ includes. A source includes a header under pxr/usd/<library>/,
+   pxr/usdImaging/<library>/ or pxr/exec/<library>/.
 3. Python imports. A module imports pxr.<Module> or names <Module> in a
    `from pxr import` list.
 
@@ -25,6 +25,13 @@ import sys
 # OpenUSD library name -> its Python module name.
 FORBIDDEN = {
     "usdSkel": "UsdSkel",
+    "exec": "Exec",
+    "execUsd": "ExecUsd",
+    "execGeom": "ExecGeom",
+    "ef": "Ef",
+    "vdf": "Vdf",
+    "esf": "Esf",
+    "esfUsd": "EsfUsd",
 }
 SCANNED_DIRS = [
     "cmake",
@@ -52,10 +59,12 @@ PY_SUFFIXES = {".py"}
 SELF = "tools/check_pxr_libraries.py"
 SELF_TEST = "tests/testRigExecPxrLibraryChecker.py"
 
+# A path segment (libs/rigExec/internal/exec/run.cpp) is not a library name.
 _LIB_WORD = re.compile(
-    r"(?<![A-Za-z0-9_])(?:usd_)?(" + "|".join(FORBIDDEN) + r")(?![A-Za-z0-9_])")
+    r"(?<![A-Za-z0-9_/])(?:usd_)?(" + "|".join(FORBIDDEN)
+    + r")(?![A-Za-z0-9_/])")
 _INCLUDE = re.compile(
-    r'^\s*#\s*include\s*[<"]pxr/(?:usd|usdImaging)/('
+    r'^\s*#\s*include\s*[<"]pxr/(?:usd|usdImaging|exec)/('
     + "|".join(FORBIDDEN) + r')[A-Za-z]*/')
 _PY_MODULES = "|".join(FORBIDDEN.values())
 _PY_DOTTED = re.compile(
@@ -158,6 +167,16 @@ _SELF_CASES = [
     ("CMakeLists.txt", "target_link_libraries(t usd) # not usdSkel", []),
     ("CMakeLists.txt", "target_link_libraries(t usdSkelImaging)", []),
     ("CMakeLists.txt", "target_link_libraries(t myusdSkel)", []),
+    ("CMakeLists.txt", "target_link_libraries(t PUBLIC usd exec execUsd)",
+     ["link"]),
+    ("cmake/x.cmake", "set(libs tf ef vdf)", ["link"]),
+    ("CMakeLists.txt", "add_library(x libs/rigExec/internal/exec/run.cpp)", []),
+    ("CMakeLists.txt", "add_library(x libs/rigExecRuntime/exec.cpp)", []),
+    ("CMakeLists.txt", 'set(dll "usd_esfUsd.dll")', ["link"]),
+    ("a.cpp", '#include "pxr/exec/execUsd/system.h"', ["include"]),
+    ("a.cpp", '#include "pxr/exec/vdf/context.h"', ["include"]),
+    ("a.cpp", '#include "rigExec/internal/exec/run.h"', []),
+    ("a.py", "from pxr import Usd, Exec", ["import"]),
     ("CMakeLists.txt", 'message("# usdSkel")', ["link"]),
     ("a.cpp", '#include "pxr/usd/usdSkel/blendShape.h"', ["include"]),
     ("a.h", "  #  include <pxr/usd/usdSkel/tokens.h>", ["include"]),

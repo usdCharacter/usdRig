@@ -1,9 +1,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/api/moverRegistry.h"
-#include "rigExec/internal/movers/moverExecCommon.h"
+#include "rigExec/internal/moverPacket.h"
 #include "rigExecMath/geometryKernels.h"
-#include "pxr/exec/exec/builtinComputations.h"
-#include "pxr/exec/exec/registerSchema.h"
 #include "pxr/usd/usdGeom/mesh.h"
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -37,67 +35,6 @@ TF_DEFINE_PRIVATE_TOKENS(_wrinkle,
 namespace {
 const TfToken _oracleToken0("faceVertexCounts");
 const TfToken _oracleToken1("faceVertexIndices");
-
-template <class T>
-T
-Input(const VdfContext &ctx, const TfToken &name, T fallback)
-{
-    const auto *value = ctx.GetInputValuePtr<T>(name);
-    return value ? *value : fallback;
-}
-
-RigExecMoverParameters
-Parameters(const VdfContext &ctx)
-{
-    RigExecMoverParameters p;
-    p.kind = _wrinkleTokens->wrinkle;
-    p.enabled = Input(ctx, RigExecMoverExecTokens->inputsEnabled, true);
-    if (!p.enabled) {
-        p.valid = true;
-        return p;
-    }
-    if (!RigExecMoverSetCommonEnvelope(ctx, &p))
-        return p;
-    p.restPoints = RigExecMoverCollect<GfVec3f>(ctx, _wrinkle->rest);
-    if (p.restPoints.empty()) {
-        p.restPoints = RigExecMoverCollect<GfVec3f>(
-            ctx, RigExecMoverExecTokens->basePoints);
-    }
-    p.topologyCounts =
-        RigExecMoverCollect<int>(ctx, RigExecMoverExecTokens->topologyCounts);
-    p.topologyIndices =
-        RigExecMoverCollect<int>(ctx, RigExecMoverExecTokens->topologyIndices);
-    auto &s = p.wrinkleSettings;
-    const TfToken topology = Input(ctx, _wrinkle->topology, _wrinkle->cloth);
-    if (topology != _wrinkle->cloth && topology != _wrinkle->surfaceStruts)
-        return p;
-    s.topology = topology == _wrinkle->cloth
-                     ? RigExecWrinkleTopology::Cloth
-                     : RigExecWrinkleTopology::SurfaceStruts;
-    s.pinPoints = RigExecMoverCollect<int>(ctx, _wrinkle->pinPoints);
-    s.iterations = Input(ctx, _wrinkle->iterations, s.iterations);
-    s.neighborDistance =
-        Input(ctx, _wrinkle->neighborDistance, s.neighborDistance);
-    s.restLengthScale =
-        Input(ctx, _wrinkle->restLengthScale, s.restLengthScale);
-    s.stretchStiffness =
-        Input(ctx, _wrinkle->stretchStiffness, s.stretchStiffness);
-    s.compressionStiffness =
-        Input(ctx, _wrinkle->compressionStiffness, s.compressionStiffness);
-    s.bendStiffness = Input(ctx, _wrinkle->bendStiffness, s.bendStiffness);
-    s.maxDisplacement =
-        Input(ctx, _wrinkle->maxDisplacement, s.maxDisplacement);
-    s.pinBorders = Input(ctx, _wrinkle->pinBorders, s.pinBorders);
-    s.tangentPlaneCollisions =
-        Input(ctx, _wrinkle->tangentPlaneCollisions, s.tangentPlaneCollisions);
-    s.tangentPlaneInset =
-        Input(ctx, _wrinkle->tangentPlaneInset, s.tangentPlaneInset);
-    s.wrinkleScale = Input(ctx, _wrinkle->wrinkleScale, s.wrinkleScale);
-    s.smoothingIterations =
-        Input(ctx, _wrinkle->smoothingIterations, s.smoothingIterations);
-    p.valid = !p.restPoints.empty() && !p.topologyCounts.empty();
-    return p;
-}
 
 void
 Bind(const RigExecMoverBindContext &ctx)
@@ -210,44 +147,5 @@ Handler()
 }
 
 } // namespace
-
-EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecWrinkleMover)
-{
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverParameters)
-        .Callback<RigExecMoverParameters>(&Parameters)
-        .Inputs(
-            RIGEXEC_MOVER_COMMON_INPUTS,
-            AttributeValue<GfVec3f>(_wrinkle->rest),
-            AttributeValue<int>(_wrinkle->iterations),
-            AttributeValue<TfToken>(_wrinkle->topology),
-            AttributeValue<int>(_wrinkle->neighborDistance),
-            AttributeValue<float>(_wrinkle->restLengthScale),
-            AttributeValue<float>(_wrinkle->stretchStiffness),
-            AttributeValue<float>(_wrinkle->compressionStiffness),
-            AttributeValue<float>(_wrinkle->bendStiffness),
-            AttributeValue<float>(_wrinkle->maxDisplacement),
-            AttributeValue<bool>(_wrinkle->pinBorders),
-            AttributeValue<int>(_wrinkle->pinPoints),
-            AttributeValue<bool>(_wrinkle->tangentPlaneCollisions),
-            AttributeValue<float>(_wrinkle->tangentPlaneInset),
-            AttributeValue<float>(_wrinkle->wrinkleScale),
-            AttributeValue<int>(_wrinkle->smoothingIterations),
-            Relationship(RigExecMoverExecTokens->resolvedBase)
-                .TargetedObjects<GfVec3f>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->basePoints),
-            Relationship(RigExecMoverExecTokens->resolvedTopologyCounts)
-                .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->topologyCounts),
-            Relationship(RigExecMoverExecTokens->resolvedTopologyIndices)
-                .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->topologyIndices));
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverStatus)
-        .Callback<RigExecMoverStatus>(&RigExecMoverBuildStatus)
-        .Inputs(Computation<RigExecMoverParameters>(
-                    RigExecMoverExecTokens->computeMoverParameters)
-                    .Required(),
-                Computation<SdfPath>(ExecBuiltinComputations->computePath)
-                    .InputName(RigExecMoverExecTokens->moverPath));
-}
 
 RIGEXEC_REGISTER_MOVER(Handler());

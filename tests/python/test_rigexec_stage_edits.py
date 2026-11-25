@@ -5,11 +5,9 @@ evaluator must not post USD errors, and must not leave the evaluator
 permanently broken.
 
 Removing a prim on a stage with a compiled evaluator used to raise
-"Applying predicate to invalid prim" out of stage.RemovePrim(): OpenExec's
-EsfUsdStageData::_UpdateForResync applied UsdPrimDefaultPredicate to the
-prim at the resynced path without first checking that the prim still
-existed (pxr/exec/esfUsd/stageData.cpp). Every script or panel that
-removed a prim in usdview with the RigExec plugin active hit it.
+"Applying predicate to invalid prim" out of stage.RemovePrim(). Every
+script or panel that removed a prim in usdview with the RigExec plugin
+active hit it.
 
 Usage: test_rigexec_stage_edits.py [<generated schema resources dir>]
 Requires the native _rigexec binding (build-python/python on PYTHONPATH).

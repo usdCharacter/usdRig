@@ -1,9 +1,8 @@
-// RigExec exec type registrations.
+// RigExec value type behavior.
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/api/types.h"
 #include "rigExec/internal/moverPacket.h"
-
-#include "pxr/exec/exec/typeRegistry.h"
+#include "rigExec/internal/valueAddress.h"
 
 #include <algorithm>
 #include <cmath>
@@ -13,12 +12,13 @@ namespace rigExec {
 
 namespace {
 const TfToken constantWeightRepresentation(SchemaValueText::constant),
-    strictWeightRange(SchemaValueText::strict);
+    strictWeightRange(SchemaValueText::strict), finalPhase("final");
 }
 
-void
-RigExecLoadComputations()
+const TfToken &
+RigExecFinalPhase()
 {
+    return finalPhase;
 }
 
 float
@@ -200,20 +200,3 @@ RigExecWeightPacket::ResolvesAll(size_t count) const
 }
 
 } // namespace rigExec
-
-PXR_NAMESPACE_OPEN_SCOPE
-
-TF_REGISTRY_FUNCTION(ExecTypeRegistry)
-{
-    ExecTypeRegistry::RegisterType(rigExec::RigExecPointFrame{});
-    ExecTypeRegistry::RegisterType(rigExec::RigExecPointFrameArray{});
-    ExecTypeRegistry::RegisterType(rigExec::RigExecPointsPacket{});
-    ExecTypeRegistry::RegisterType(rigExec::RigExecWeightPacket{});
-    ExecTypeRegistry::RegisterType(rigExec::RigExecFalloffLut{});
-    ExecTypeRegistry::RegisterType(rigExec::RigExecBlendSampleData{});
-    ExecTypeRegistry::RegisterType(rigExec::RigExecBlendChannel{});
-    ExecTypeRegistry::RegisterType(rigExec::RigExecMoverParameters{});
-    ExecTypeRegistry::RegisterType(rigExec::RigExecMoverStatus{});
-}
-
-PXR_NAMESPACE_CLOSE_SCOPE

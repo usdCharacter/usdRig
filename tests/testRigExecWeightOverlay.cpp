@@ -1501,13 +1501,12 @@ TestRegistrySetWeightOverlay()
 // The cause is delivery ORDER, and it is why this case has to go through
 // the registry's own UsdNotice::ObjectsChanged handler rather than calling
 // SetTime directly. Tf_NoticeRegistry::_Register prepends, so the
-// last-registered listener is delivered first, and OpenExec's
-// ExecUsdSystem::_NoticeListener -- which drops every cached computed
-// value on an authored change -- is constructed inside Compile(). Register
-// after Compile and the re-evaluation runs against exec's pre-edit cache.
-// A direct SetTime() call cannot see that: by then the dispatch has ended
-// and exec is invalidated, which is exactly why the original bug survived
-// a test suite full of SetTime assertions.
+// last-registered listener is delivered first, and each evaluator
+// registers its own listener when it is built. Register after the
+// evaluators and the re-evaluation runs before they have seen the edit.
+// A direct SetTime() call cannot see that: by then the dispatch has ended,
+// which is exactly why the original bug survived a test suite full of
+// SetTime assertions.
 // Both authoring shapes are covered because they are NOT equivalent
 // through USD's change classification: a plain default Set and the spline
 // knot the authoring panel writes arrive as different notices, and only

@@ -5,7 +5,6 @@
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/heldProgramGolden.h"
 #include "rigExec/internal/compileGolden.h"
-#include "rigExec/api/tapSet.h"
 #include "pxr/base/tf/notice.h"
 #include "pxr/base/tf/scopeDescription.h"
 #include "pxr/base/tf/type.h"

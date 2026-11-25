@@ -39,7 +39,6 @@ RunReplay(int argc, char **argv)
 #endif
     for (int i = 2; i < argc; ++i)
         PlugRegistry::GetInstance().RegisterPlugins(argv[i]);
-    rigExec::RigExecLoadComputations();
     std::vector<std::string> diagnostics;
     if (!rigExec::RigExecLoadMoverPlugins(&diagnostics)) {
         for (const auto &message : diagnostics)

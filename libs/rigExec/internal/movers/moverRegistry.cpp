@@ -1,6 +1,5 @@
 // RigExec mover registry storage and shared stage-reading helpers.
 #include "rigExec/api/moverRegistry.h"
-#include "rigExec/internal/movers/moverExecCommon.h"
 #include "rigExec/internal/moverGraph.h"
 #include "rigExecScene/geometryProgram.h"
 
@@ -21,8 +20,6 @@
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExec {
-
-TF_DEFINE_PUBLIC_TOKENS(RigExecMoverExecTokens, RIGEXEC_MOVER_EXEC_TOKENS);
 
 TF_DEFINE_PRIVATE_TOKENS(_tokens,
     ((blendShapeType, BlendShapeText::typeName))

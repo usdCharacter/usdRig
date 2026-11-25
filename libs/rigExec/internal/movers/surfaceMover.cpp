@@ -1,22 +1,15 @@
-// RigExecSurfaceMover: everything about the surface mover.
-// A surface mover projects points onto a driver surface. This TU owns
-// its exec-side computeMoverParameters registration and builder, its
-// revision binder, and its parity-oracle branch, and registers the row
-// that points at them. Compile validation is the generic points-target
-// rules.
+// RigExecSurfaceMover: everything about the surface mover. A surface mover
+// projects points onto a driver surface. This TU owns its revision binder
+// and its parity-oracle branch, and registers the row that points at them.
+// Compile validation is the generic points-target rules.
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/api/moverRegistry.h"
-#include "rigExec/internal/movers/moverExecCommon.h"
+#include "rigExec/internal/moverPacket.h"
 
 #include "rigExecMath/geometryKernels.h"
 
-#include "pxr/exec/exec/builtinComputations.h"
-#include "pxr/exec/exec/registerSchema.h"
-#include "pxr/exec/vdf/context.h"
-#include "pxr/exec/vdf/readIterator.h"
 #include "pxr/usd/usd/attribute.h"
 
-using rigExec::RigExecMoverExecTokens;
 using rigExec::RigExecMoverParameters;
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -94,64 +87,6 @@ SetSettings(RigExecMoverParameters *p, const TfToken &snap,
     } else
         return false;
     return true;
-}
-
-RigExecMoverParameters
-_BuildSurfaceMoverParameters(const VdfContext &ctx)
-{
-    RigExecMoverParameters params;
-    params.kind = _surfaceTokens->surfaceProject;
-    const bool *enabled =
-        ctx.GetInputValuePtr<bool>(RigExecMoverExecTokens->enabled);
-    params.enabled = enabled ? *enabled : true;
-    if (!params.enabled) {
-        params.valid = true;
-        return params;
-    }
-    if (!rigExec::RigExecMoverSetCommonEnvelope(ctx, &params)) {
-        return params;
-    }
-    params.strength = 1.0f; // attach/project maps fully
-    params.auxPoints = rigExec::RigExecMoverCollect<GfVec3f>(
-        ctx, RigExecMoverExecTokens->surfacePoints);
-    params.topologyCounts = rigExec::RigExecMoverCollect<int>(
-        ctx, RigExecMoverExecTokens->topologyCounts);
-    params.topologyIndices = rigExec::RigExecMoverCollect<int>(
-        ctx, RigExecMoverExecTokens->topologyIndices);
-    const auto read = [&](const TfToken &name, auto fallback) {
-        using T = decltype(fallback);
-        const T *value = ctx.GetInputValuePtr<T>(name);
-        return value ? *value : fallback;
-    };
-    auto surface = read(_surfaceTokens->surfaceMatrix, GfMatrix4d(1.0)),
-         target = read(_surfaceTokens->targetMatrix, GfMatrix4d(1.0));
-    if (!rigExec::RigExecSurfaceSnapValidMatrix(surface) ||
-        !rigExec::RigExecSurfaceSnapValidMatrix(target))
-        return params;
-    const auto frames = rigExec::RigExecMoverCollect<GfMatrix4d>(
-        ctx, _surfaceTokens->surfaceFrames);
-    if (!frames.empty()) {
-        if (frames.size() != 2)
-            return params;
-        surface *= frames[0];
-        target *= frames[1];
-        if (!rigExec::RigExecSurfaceSnapCanonicalComputedMatrix(&surface) ||
-            !rigExec::RigExecSurfaceSnapCanonicalComputedMatrix(&target))
-            return params;
-    }
-    const auto mask =
-        rigExec::RigExecMoverCollect<float>(ctx, _surfaceTokens->mask);
-    const auto triangles =
-        rigExec::RigExecMoverCollect<int>(ctx, _surfaceTokens->triangles);
-    params.valid =
-        !params.auxPoints.empty() &&
-        (!params.topologyCounts.empty() || !triangles.empty()) &&
-        SetSettings(&params,
-                    read(_surfaceTokens->snapMode, _surfaceTokens->onSurface),
-                    read(_surfaceTokens->pointSpace, _surfaceTokens->local),
-                    read(_surfaceTokens->offset, 0.f), mask, triangles, surface,
-                    target);
-    return params;
 }
 
 void
@@ -364,44 +299,5 @@ _MakeHandler()
 }
 
 } // namespace
-
-// EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA opens/closes the pxr namespace
-// itself, so the registration block stays at global scope.
-EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecSurfaceMover)
-{
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverParameters)
-        .Callback<RigExecMoverParameters>(&_BuildSurfaceMoverParameters)
-        .Inputs(
-            RIGEXEC_MOVER_COMMON_INPUTS,
-            AttributeValue<TfToken>(_surfaceTokens->snapMode),
-            AttributeValue<TfToken>(_surfaceTokens->pointSpace),
-            AttributeValue<float>(_surfaceTokens->offset),
-            AttributeValue<float>(_surfaceTokens->mask),
-            AttributeValue<int>(_surfaceTokens->triangles),
-            AttributeValue<GfMatrix4d>(_surfaceTokens->surfaceMatrix),
-            AttributeValue<GfMatrix4d>(_surfaceTokens->targetMatrix),
-            Relationship(_surfaceTokens->frames)
-                .TargetedObjects<GfMatrix4d>(
-                    RigExecMoverExecTokens->computeMatrix)
-                .InputName(_surfaceTokens->surfaceFrames),
-            Relationship(RigExecMoverExecTokens->resolvedSurfacePoints)
-                .TargetedObjects<GfVec3f>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->surfacePoints),
-            Relationship(RigExecMoverExecTokens->resolvedTopologyCounts)
-                .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->topologyCounts),
-            Relationship(RigExecMoverExecTokens->resolvedTopologyIndices)
-                .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->topologyIndices));
-
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverStatus)
-        .Callback<rigExec::RigExecMoverStatus>(
-            &rigExec::RigExecMoverBuildStatus)
-        .Inputs(Computation<RigExecMoverParameters>(
-                    RigExecMoverExecTokens->computeMoverParameters)
-                    .Required(),
-                Computation<SdfPath>(ExecBuiltinComputations->computePath)
-                    .InputName(RigExecMoverExecTokens->moverPath));
-}
 
 RIGEXEC_REGISTER_MOVER(_MakeHandler());

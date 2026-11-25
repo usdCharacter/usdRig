@@ -1,24 +1,17 @@
-// RigExecLatticeMover: everything about the lattice mover.
-// A lattice mover deforms points through a posed lattice cage measured
-// against its rest cage. This TU owns its exec-side
-// computeMoverParameters registration and builder, its revision binder,
-// and its parity-oracle branch, and registers the row that points at
-// them. Compile validation is the generic points-target + single-target
-// rules.
+// RigExecLatticeMover: everything about the lattice mover. A lattice mover
+// deforms points through a posed lattice cage measured against its rest
+// cage. This TU owns its revision binder and its parity-oracle branch, and
+// registers the row that points at them. Compile validation is the generic
+// points-target + single-target rules.
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/api/moverRegistry.h"
-#include "rigExec/internal/movers/moverExecCommon.h"
+#include "rigExec/internal/moverPacket.h"
 
 #include "rigExecMath/geometryKernels.h"
 
-#include "pxr/exec/exec/builtinComputations.h"
-#include "pxr/exec/exec/registerSchema.h"
-#include "pxr/exec/vdf/context.h"
-#include "pxr/exec/vdf/readIterator.h"
 #include "pxr/usd/usd/attribute.h"
 #include <type_traits>
 
-using rigExec::RigExecMoverExecTokens;
 using rigExec::RigExecMoverParameters;
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -104,60 +97,6 @@ Configure(RigExecMoverParameters *p, Read read,
     return RigExecLatticeCoordinateMaps(
         read(_latticeTokens->pointSpace, _localToken).GetText(), cage, target,
         &p->targetToLattice, &p->latticeToTarget, &p->cageToLattice);
-}
-
-// Synthesized derived-maintenance parameters: the
-// hosts are compiler-authored with no authored mover and no enable; the
-// rig-level derived policy gates synthesis at compile time.
-RigExecMoverParameters
-_BuildLatticeMoverParameters(const VdfContext &ctx)
-{
-    RigExecMoverParameters params;
-    params.kind = _latticeTokens->lattice;
-    const bool *enabled =
-        ctx.GetInputValuePtr<bool>(RigExecMoverExecTokens->enabled);
-    params.enabled = enabled ? *enabled : true;
-    if (!params.enabled) {
-        params.valid = true;
-        return params;
-    }
-    if (!rigExec::RigExecMoverSetCommonEnvelope(ctx, &params)) {
-        return params;
-    }
-    const GfVec3i *divisions =
-        ctx.GetInputValuePtr<GfVec3i>(RigExecMoverExecTokens->divisionsAttr);
-    params.divisions = divisions ? *divisions : GfVec3i(0);
-    params.restPoints = rigExec::RigExecMoverCollect<GfVec3f>(
-        ctx, RigExecMoverExecTokens->basePoints);
-    params.auxPoints = rigExec::RigExecMoverCollect<GfVec3f>(
-        ctx, RigExecMoverExecTokens->restCagePointsAttr);
-    params.auxPointsB = rigExec::RigExecMoverCollect<GfVec3f>(
-        ctx, RigExecMoverExecTokens->cagePoints);
-    const auto read = [&](const TfToken &name, auto fallback) {
-        using T = decltype(fallback);
-        if constexpr (std::is_same_v<T, VtFloatArray>) {
-            const auto a = rigExec::RigExecMoverCollect<float>(ctx, name);
-            return VtFloatArray(a.begin(), a.end());
-        } else {
-            const T *v = ctx.GetInputValuePtr<T>(name);
-            return v ? *v : fallback;
-        }
-    };
-    if (!Configure(&params, read,
-                   rigExec::RigExecMoverCollect<GfMatrix4d>(
-                       ctx, _latticeTokens->latticeFrames)))
-        return params;
-    const size_t cageCount = size_t(params.divisions[0]) *
-                             size_t(params.divisions[1]) *
-                             size_t(params.divisions[2]);
-    const int minimum = params.latticeSettings.regularGrid ? 1 : 2;
-    params.valid =
-        params.divisions[0] >= minimum && params.divisions[1] >= minimum &&
-        params.divisions[2] >= minimum &&
-        (params.latticeSettings.regularGrid ||
-         params.auxPoints.size() == cageCount) &&
-        params.auxPointsB.size() == cageCount && !params.restPoints.empty();
-    return params;
 }
 
 void
@@ -377,47 +316,5 @@ _MakeHandler()
 }
 
 } // namespace
-
-// EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA opens/closes the pxr namespace
-// itself, so the registration block stays at global scope.
-EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecLatticeMover)
-{
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverParameters)
-        .Callback<RigExecMoverParameters>(&_BuildLatticeMoverParameters)
-        .Inputs(
-            RIGEXEC_MOVER_COMMON_INPUTS,
-            AttributeValue<TfToken>(_latticeTokens->evaluation),
-            AttributeValue<TfToken>(_latticeTokens->interpolationU),
-            AttributeValue<TfToken>(_latticeTokens->interpolationV),
-            AttributeValue<TfToken>(_latticeTokens->interpolationW),
-            AttributeValue<GfVec3f>(_latticeTokens->origin),
-            AttributeValue<GfVec3f>(_latticeTokens->spacing),
-            AttributeValue<float>(_latticeTokens->strength),
-            AttributeValue<float>(_latticeTokens->mask),
-            AttributeValue<TfToken>(_latticeTokens->pointSpace),
-            AttributeValue<GfMatrix4d>(_latticeTokens->cageMatrix),
-            AttributeValue<GfMatrix4d>(_latticeTokens->targetMatrix),
-            Relationship(_latticeTokens->frames)
-                .TargetedObjects<GfMatrix4d>(
-                    RigExecMoverExecTokens->computeMatrix)
-                .InputName(_latticeTokens->latticeFrames),
-            AttributeValue<GfVec3i>(RigExecMoverExecTokens->divisionsAttr),
-            AttributeValue<GfVec3f>(RigExecMoverExecTokens->restCagePointsAttr),
-            Relationship(RigExecMoverExecTokens->resolvedBase)
-                .TargetedObjects<GfVec3f>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->basePoints),
-            Relationship(RigExecMoverExecTokens->resolvedCagePoints)
-                .TargetedObjects<GfVec3f>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->cagePoints));
-
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverStatus)
-        .Callback<rigExec::RigExecMoverStatus>(
-            &rigExec::RigExecMoverBuildStatus)
-        .Inputs(Computation<RigExecMoverParameters>(
-                    RigExecMoverExecTokens->computeMoverParameters)
-                    .Required(),
-                Computation<SdfPath>(ExecBuiltinComputations->computePath)
-                    .InputName(RigExecMoverExecTokens->moverPath));
-}
 
 RIGEXEC_REGISTER_MOVER(_MakeHandler());

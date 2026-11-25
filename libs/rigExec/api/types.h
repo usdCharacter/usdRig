@@ -1,6 +1,4 @@
-// RigExec exec-facing value types.
-// Only genuinely RigExec-specific, non-geometry value types are registered
-// with ExecTypeRegistry. Geometry stays native (VtArray never registered).
+// RigExec value types: frames, packets and mover parameters.
 #ifndef RIGEXEC_TYPES_H
 #define RIGEXEC_TYPES_H
 
@@ -21,9 +19,6 @@
 #include <vector>
 
 namespace rigExec {
-
-/// Retain the shared computation/type registration library in headless hosts.
-void RigExecLoadComputations();
 
 /// Aggregate result of a packed solver boundary: an immutable
 /// sequence of frames plus the per-element reference (rest) landmark sets
@@ -48,32 +43,6 @@ struct RigExecPointFrameArray {
     size_t GetSize() const
     {
         return frames.size();
-    }
-};
-
-/// A point array carried as ONE exec value.
-///
-/// Exec models a `point3f[]` attribute as an output holding a vector of
-/// GfVec3f elements, so a value override for one is type-checked against
-/// GfVec3f and there is no way to hand it a whole array
-/// (exec/system.cpp `_ComputeWithOverrides`). Boxing the array inside a
-/// struct makes it a single scalar value, which an override can carry --
-/// the same shape as every other packet type here.
-///
-/// This is what lets a ribbon's driver-curve points reach exec with nothing
-/// authored: a relationship accessor can request computations on its targets
-/// but not a named attribute of them, so the points cannot be reached from
-/// the ribbon prim directly.
-struct RigExecPointsPacket {
-    std::vector<GfVec3f> points;
-
-    bool operator==(const RigExecPointsPacket &o) const
-    {
-        return points == o.points;
-    }
-    bool operator!=(const RigExecPointsPacket &o) const
-    {
-        return !(*this == o);
     }
 };
 

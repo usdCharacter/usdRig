@@ -50,7 +50,6 @@ namespace {
 int
 TestBoundFrameOracleInputs()
 {
-    RigExecLoadComputations();
     const auto *handler = RigExecFindMoverHandler(TfToken("RigExecCurveMover"));
     CHECK_ORACLE(handler && handler->oracle);
     const SdfPath mover("/Rig/Guides"), owner("/Rig/Spline"),

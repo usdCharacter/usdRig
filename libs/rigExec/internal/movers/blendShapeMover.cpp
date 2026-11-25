@@ -1,20 +1,15 @@
-// RigExecBlendShapeMover: everything about the blend-shape mover.
-// A blend-shape mover accumulates channel-weighted delta samples onto
-// the points: p'_i = p_i + sum_k alpha_k(w_k) d_{k,i}, with deltas
-// derived against the authored base. This TU owns its exec-side
-// computeMoverParameters registration and builder, its revision binder,
-// its compile validator, and its parity-oracle branch, and registers
-// the row that points at them.
+// RigExecBlendShapeMover: everything about the blend-shape mover. A
+// blend-shape mover accumulates channel-weighted delta samples onto the
+// points: p'_i = p_i + sum_k alpha_k(w_k) d_{k,i}, with deltas derived
+// against the authored base. This TU owns its revision binder, its compile
+// validator, and its parity-oracle branch, and registers the row that
+// points at them.
 #include "rigExec/api/moverRegistry.h"
-#include "rigExec/internal/movers/moverExecCommon.h"
+#include "rigExec/internal/moverPacket.h"
 #include "rigExec/internal/moverGraph.h"
 
 #include "rigExecMath/geometryKernels.h"
 
-#include "pxr/exec/exec/builtinComputations.h"
-#include "pxr/exec/exec/registerSchema.h"
-#include "pxr/exec/vdf/context.h"
-#include "pxr/exec/vdf/readIterator.h"
 #include "pxr/base/tf/stringUtils.h"
 #include "pxr/usd/usdGeom/mesh.h"
 
@@ -23,7 +18,6 @@
 
 using rigExec::RigExecBlendChannel;
 using rigExec::RigExecBlendSampleData;
-using rigExec::RigExecMoverExecTokens;
 using rigExec::RigExecMoverParameters;
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -68,79 +62,6 @@ const TfToken _oracleToken9("target");
 // the token registry's lock.
 const TfToken
     _removedPointsPhase(rigExec::SchemaAttrText::rigExecPointsReadPhase);
-
-RigExecMoverParameters
-_BuildBlendMoverParameters(const VdfContext &ctx)
-{
-    RigExecMoverParameters params;
-    params.kind = _blendShapeTokens->blendShape;
-    const bool *enabled =
-        ctx.GetInputValuePtr<bool>(RigExecMoverExecTokens->enabled);
-    params.enabled = enabled ? *enabled : true;
-    if (!params.enabled) {
-        params.valid = true;
-        return params;
-    }
-
-    // Base points for delta derivation: deltas derive against
-    // the authored base, never the preceding revision.
-    std::vector<GfVec3f> base;
-    {
-        VdfReadIterator<GfVec3f> it(ctx, RigExecMoverExecTokens->basePoints);
-        base.reserve(it.ComputeSize());
-        for (; !it.IsAtEnd(); ++it) {
-            base.push_back(*it);
-        }
-    }
-    if (base.empty()) {
-        return params;
-    }
-    const TfToken *deltaSpace =
-        ctx.GetInputValuePtr<TfToken>(RigExecMoverExecTokens->deltaSpace);
-    if (deltaSpace && *deltaSpace != "target" &&
-        *deltaSpace != "surfaceFrame") {
-        return params;
-    }
-    params.blendSurfaceFrame = deltaSpace && *deltaSpace == "surfaceFrame";
-    if (params.blendSurfaceFrame) {
-        params.restPoints = base;
-        for (VdfReadIterator<int> it(ctx,
-                                     RigExecMoverExecTokens->topologyCounts);
-             !it.IsAtEnd(); ++it) {
-            params.topologyCounts.push_back(*it);
-        }
-        for (VdfReadIterator<int> it(ctx,
-                                     RigExecMoverExecTokens->topologyIndices);
-             !it.IsAtEnd(); ++it) {
-            params.topologyIndices.push_back(*it);
-        }
-        if (params.topologyCounts.empty()) {
-            return params;
-        }
-    }
-    // Summed by the shared kernel (moverGraph.h): RigExecRigEvaluator builds
-    // the same packet from tapped channels with no derived stage, and the two
-    // must agree exactly.
-    std::vector<RigExecBlendChannel> channelValues;
-    {
-        VdfReadIterator<RigExecBlendChannel> channels(
-            ctx, RigExecMoverExecTokens->blendChannels);
-        channelValues.reserve(channels.ComputeSize());
-        for (; !channels.IsAtEnd(); ++channels) {
-            channelValues.push_back(*channels);
-        }
-    }
-    if (!rigExec::RigExecSumBlendChannels(channelValues, base,
-                                          &params.blendDeltas)) {
-        return params; // structural error: fails atomically
-    }
-    // Common MoverAPI envelope. A bound object supersedes the scalar.
-    if (!rigExec::RigExecMoverSetCommonEnvelope(ctx, &params)) {
-        return params;
-    }
-    params.valid = true;
-    return params;
-}
 
 void
 _BindBlendShapeMover(const rigExec::RigExecMoverBindContext &ctx)
@@ -622,70 +543,6 @@ _MakeMlHandler()
 }
 
 } // namespace
-
-// EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA opens/closes the pxr namespace
-// itself, so the registration block stays at global scope.
-EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecBlendShapeMover)
-{
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverParameters)
-        .Callback<RigExecMoverParameters>(&_BuildBlendMoverParameters)
-        .Inputs(
-            RIGEXEC_MOVER_COMMON_INPUTS,
-            AttributeValue<TfToken>(RigExecMoverExecTokens->deltaSpace),
-            Relationship(RigExecMoverExecTokens->resolvedTopologyCounts)
-                .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->topologyCounts),
-            Relationship(RigExecMoverExecTokens->resolvedTopologyIndices)
-                .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->topologyIndices),
-            Relationship(RigExecMoverExecTokens->resolvedBlendInputs)
-                .TargetedObjects<RigExecBlendChannel>(
-                    RigExecMoverExecTokens->computeBlendChannel)
-                .InputName(RigExecMoverExecTokens->blendChannels),
-            Relationship(RigExecMoverExecTokens->resolvedBase)
-                .TargetedObjects<GfVec3f>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->basePoints));
-
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverStatus)
-        .Callback<rigExec::RigExecMoverStatus>(
-            &rigExec::RigExecMoverBuildStatus)
-        .Inputs(Computation<RigExecMoverParameters>(
-                    RigExecMoverExecTokens->computeMoverParameters)
-                    .Required(),
-                Computation<SdfPath>(ExecBuiltinComputations->computePath)
-                    .InputName(RigExecMoverExecTokens->moverPath));
-}
-
-EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecMlMover)
-{
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverParameters)
-        .Callback<RigExecMoverParameters>(&_BuildBlendMoverParameters)
-        .Inputs(
-            RIGEXEC_MOVER_COMMON_INPUTS,
-            AttributeValue<TfToken>(RigExecMoverExecTokens->deltaSpace),
-            Relationship(RigExecMoverExecTokens->resolvedTopologyCounts)
-                .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->topologyCounts),
-            Relationship(RigExecMoverExecTokens->resolvedTopologyIndices)
-                .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->topologyIndices),
-            Relationship(RigExecMoverExecTokens->resolvedBlendInputs)
-                .TargetedObjects<RigExecBlendChannel>(
-                    RigExecMoverExecTokens->computeBlendChannel)
-                .InputName(RigExecMoverExecTokens->blendChannels),
-            Relationship(RigExecMoverExecTokens->resolvedBase)
-                .TargetedObjects<GfVec3f>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->basePoints));
-
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverStatus)
-        .Callback<rigExec::RigExecMoverStatus>(
-            &rigExec::RigExecMoverBuildStatus)
-        .Inputs(Computation<RigExecMoverParameters>(
-                    RigExecMoverExecTokens->computeMoverParameters)
-                    .Required(),
-                Computation<SdfPath>(ExecBuiltinComputations->computePath)
-                    .InputName(RigExecMoverExecTokens->moverPath));
-}
 
 RIGEXEC_REGISTER_MOVER(_MakeHandler());
 RIGEXEC_REGISTER_MOVER(_MakeMlHandler());

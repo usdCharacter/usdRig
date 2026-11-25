@@ -202,20 +202,12 @@ RigExecImagingRegistry::_Activate(const UsdStageRefPtr &stage,
 
     // Edit-driven re-evaluation: listen on the source stage so property
     // edits under any active character asset republish at the current time.
-    // REGISTERED FIRST, BEFORE Compile(), AND THAT ORDER IS LOAD-BEARING.
-    // Tf_NoticeRegistry::_Register PREPENDS its deliverer, so listeners are
-    // delivered most-recently-registered FIRST. OpenExec's own
-    // ExecUsdSystem::_NoticeListener -- the thing that invalidates every
-    // cached computed value when an attribute is authored -- is created by
-    // the ExecUsdSystem constructor, which happens inside Compile(). So
-    // registering after Compile() would put us AHEAD of exec in delivery
-    // order, and _OnObjectsChanged would re-evaluate while exec still held
-    // the pre-edit value: every generation published from an edit would be
-    // one edit stale, and a second Evaluate in the same dispatch equally so.
-    // Registering first puts us at the BACK of the list, which is where a
-    // re-evaluating listener belongs: every recompile builds a new
-    // ExecUsdSystem that prepends ahead of us again, so this holds for the
-    // life of the rig rather than only until the first structural edit.
+    // REGISTERED FIRST, BEFORE the evaluators exist, AND THAT ORDER IS
+    // LOAD-BEARING. Tf_NoticeRegistry::_Register PREPENDS its deliverer, so
+    // listeners are delivered most-recently-registered FIRST. Each evaluator
+    // registers its own listener, which notes the edit; registering this
+    // re-evaluating listener first keeps it at the BACK of the list, so it
+    // never evaluates before an evaluator has seen the edit.
     // Registering this early also arms _OnObjectsChanged across the whole
     // compile-and-evaluate window, so _assetRoots -- what arms it -- stays
     // empty until the commit below, and a failure retains the previously
@@ -234,8 +226,8 @@ RigExecImagingRegistry::_Activate(const UsdStageRefPtr &stage,
     // leaves the previously published generation, and the listener feeding
     // it, exactly as they were rather than tearing the viewport down.
     // Keep the previous key registered until commit: re-registering it on
-    // rollback would put it ahead of the retained ExecUsdSystem listener,
-    // causing the next edit to publish before exec invalidates its cache.
+    // rollback would put it ahead of the retained evaluators' listeners,
+    // causing the next edit to publish before they see it.
     RigSessions candidate;
     candidate.reserve(rigPaths.size());
     const auto abandon = [&](bool evaluationFailed) {

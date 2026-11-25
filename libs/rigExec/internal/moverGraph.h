@@ -113,10 +113,8 @@ RigExecRevisionOpForSchema(const TfToken &schemaType, const TfToken &curveMode);
 
 /// Assembles a matrix mover's parameter packet.
 ///
-/// Peer of _BuildMatrixMoverParameters in movers/matrixMover.cpp, but built from
-/// values rather than from a VdfContext: \p transform and \p weights are the
-/// already-evaluated results of the providers named by the revision binding,
-/// pulled through a tap set on the authored stage. A null transform fails the
+/// \p transform and \p weights are the already-evaluated results of the
+/// providers named by the revision binding. A null transform fails the
 /// application. Null weights mean no object is bound, so the assembler reads
 /// inputs:defaultWeight and synthesizes the common constant envelope.
 /// The kind token an assembled packet carries for op (the table the
@@ -872,13 +870,12 @@ bool RigExecSumBlendChannels(const std::vector<RigExecBlendChannel> &channels,
 
 /// Assembles any revision's parameter packet without a derived stage.
 ///
-/// Peer of the _Build*MoverParameters family in movers/. Static inputs
+/// Static inputs
 /// (strength, divisions, mode, topology, cage and bind arrays) are read from the
 /// authored stage through \p binding; dynamic ones arrive in \p values.
 /// \p time is the evaluation time for every static scene read the packet
-/// needs (cage, surface, topology, bind coords, strength, enable). The kernels
-/// read the same inputs through exec at the current time, so passing anything
-/// else silently diverges on animated input. An External revision's payload
+/// needs (cage, surface, topology, bind coords, strength, enable); passing
+/// anything but the evaluation time diverges on animated input. An External revision's payload
 /// goes to \p external; null drops it.
 RigExecMoverParameters
 RigExecAssembleParameters(const UsdPrim &moverPrim, RigExecRevisionOp op,

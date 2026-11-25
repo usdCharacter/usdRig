@@ -1,9 +1,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/api/moverRegistry.h"
-#include "rigExec/internal/movers/moverExecCommon.h"
+#include "rigExec/internal/moverPacket.h"
 #include "rigExecMath/geometryKernels.h"
-#include "pxr/exec/exec/builtinComputations.h"
-#include "pxr/exec/exec/registerSchema.h"
 #include "pxr/usd/usdGeom/mesh.h"
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -36,65 +34,6 @@ const TfToken _oracleToken1("faceVertexIndices");
 const TfToken _restToken("rest");
 const TfToken _vertexToken("vertex");
 
-template <class T>
-T
-Input(const VdfContext &ctx, const TfToken &name, T fallback)
-{
-    const auto *value = ctx.GetInputValuePtr<T>(name);
-    return value ? *value : fallback;
-}
-RigExecMoverParameters
-Parameters(const VdfContext &ctx)
-{
-    RigExecMoverParameters p;
-    p.kind = _deltaMushTokens->deltaMush;
-    p.enabled = Input(ctx, RigExecMoverExecTokens->enabled, true);
-    if (!p.enabled) {
-        p.valid = true;
-        return p;
-    }
-    if (!RigExecMoverSetCommonEnvelope(ctx, &p))
-        return p;
-    p.restPoints = RigExecMoverCollect<GfVec3f>(ctx, _mush->rest);
-    p.mushComputationToTarget =
-        Input(ctx, _mush->computationToTarget, GfMatrix4d(1));
-    const auto frames =
-        RigExecMoverCollect<GfMatrix4d>(ctx, _mush->frameTransforms);
-    if (frames.size() > 1)
-        return p;
-    const bool needsRest =
-        p.mushComputationToTarget != GfMatrix4d(1) || !frames.empty();
-    if (!frames.empty())
-        p.mushComputationToTarget *= frames.front();
-    p.mushSettings.onlySmooth = Input(ctx, _mush->onlySmooth, false);
-    if (p.restPoints.empty()) {
-        if (needsRest && !p.mushSettings.onlySmooth)
-            return p;
-        p.restPoints = RigExecMoverCollect<GfVec3f>(
-            ctx, RigExecMoverExecTokens->basePoints);
-    }
-    if (!RigExecParseDeltaMushSmoothing(
-            Input(ctx, _mush->smoothing, _restToken).GetText(),
-            &p.mushSettings.smoothing) ||
-        !RigExecParseDeltaMushFrameTransport(
-            Input(ctx, _mush->transport, _vertexToken).GetText(),
-            &p.mushSettings.frameTransport))
-        return p;
-    p.mushSettings.smoothWeights =
-        RigExecMoverCollect<float>(ctx, _mush->smoothWeights);
-    p.mushSettings.edges = RigExecMoverCollect<int>(ctx, _mush->edges);
-    p.topologyCounts =
-        RigExecMoverCollect<int>(ctx, RigExecMoverExecTokens->topologyCounts);
-    p.topologyIndices =
-        RigExecMoverCollect<int>(ctx, RigExecMoverExecTokens->topologyIndices);
-    p.mushIterations = Input(ctx, _mush->iterations, 10);
-    p.mushStep = Input(ctx, _mush->step, 0.5f);
-    p.mushPinBorders = Input(ctx, _mush->pin, true);
-    p.mushDistanceWeight = Input(ctx, _mush->distance, 0.0f);
-    p.mushDisplacement = Input(ctx, _mush->detail, 1.0f);
-    p.valid = !p.restPoints.empty() && !p.topologyCounts.empty();
-    return p;
-}
 void
 Bind(const RigExecMoverBindContext &ctx)
 {
@@ -251,42 +190,4 @@ Handler()
     return h;
 }
 } // namespace
-EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecDeltaMushMover)
-{
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverParameters)
-        .Callback<RigExecMoverParameters>(&Parameters)
-        .Inputs(
-            RIGEXEC_MOVER_COMMON_INPUTS, AttributeValue<GfVec3f>(_mush->rest),
-            AttributeValue<int>(_mush->iterations),
-            AttributeValue<float>(_mush->step),
-            AttributeValue<bool>(_mush->pin),
-            AttributeValue<float>(_mush->distance),
-            AttributeValue<float>(_mush->detail),
-            AttributeValue<TfToken>(_mush->smoothing),
-            AttributeValue<TfToken>(_mush->transport),
-            AttributeValue<float>(_mush->smoothWeights),
-            AttributeValue<int>(_mush->edges),
-            AttributeValue<bool>(_mush->onlySmooth),
-            AttributeValue<GfMatrix4d>(_mush->computationToTarget),
-            Relationship(_mush->frame)
-                .TargetedObjects<GfMatrix4d>(
-                    RigExecMoverExecTokens->computeMatrix)
-                .InputName(_mush->frameTransforms),
-            Relationship(RigExecMoverExecTokens->resolvedBase)
-                .TargetedObjects<GfVec3f>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->basePoints),
-            Relationship(RigExecMoverExecTokens->resolvedTopologyCounts)
-                .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->topologyCounts),
-            Relationship(RigExecMoverExecTokens->resolvedTopologyIndices)
-                .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->topologyIndices));
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverStatus)
-        .Callback<RigExecMoverStatus>(&RigExecMoverBuildStatus)
-        .Inputs(Computation<RigExecMoverParameters>(
-                    RigExecMoverExecTokens->computeMoverParameters)
-                    .Required(),
-                Computation<SdfPath>(ExecBuiltinComputations->computePath)
-                    .InputName(RigExecMoverExecTokens->moverPath));
-}
 RIGEXEC_REGISTER_MOVER(Handler());

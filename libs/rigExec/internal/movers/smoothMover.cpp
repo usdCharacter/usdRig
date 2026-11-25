@@ -1,22 +1,14 @@
-// RigExecSmoothMover: everything about the smooth mover.
-// A smooth mover applies fixed-adjacency Laplacian smoothing over the
-// destination's standard topology. This TU owns its exec-side
-// computeMoverParameters registration and builder, its revision binder,
-// and its parity-oracle branch, and registers the row that points at
-// them. Compile validation is the generic points-target + single-target
-// rules.
+// RigExecSmoothMover: everything about the smooth mover. A smooth mover
+// applies fixed-adjacency Laplacian smoothing over the destination's
+// standard topology. This TU owns its revision binder and its
+// parity-oracle branch, and registers the row that points at them. Compile
+// validation is the generic points-target + single-target rules.
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/api/moverRegistry.h"
-#include "rigExec/internal/movers/moverExecCommon.h"
+#include "rigExec/internal/moverPacket.h"
 
 #include "rigExecMath/geometryKernels.h"
 
-#include "pxr/exec/exec/builtinComputations.h"
-#include "pxr/exec/exec/registerSchema.h"
-#include "pxr/exec/vdf/context.h"
-#include "pxr/exec/vdf/readIterator.h"
-
-using rigExec::RigExecMoverExecTokens;
 using rigExec::RigExecMoverParameters;
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -31,32 +23,6 @@ TF_DEFINE_PRIVATE_TOKENS(_smoothTokens,
 namespace {
 const TfToken _oracleToken0("faceVertexCounts");
 const TfToken _oracleToken1("faceVertexIndices");
-
-// RigExecSmoothMover parameters: fixed-adjacency Laplacian smoothing of
-// the destination's standard topology.
-RigExecMoverParameters
-_BuildSmoothMoverParameters(const VdfContext &ctx)
-{
-    RigExecMoverParameters params;
-    params.kind = _smoothTokens->smooth;
-    const bool *enabled =
-        ctx.GetInputValuePtr<bool>(RigExecMoverExecTokens->enabled);
-    params.enabled = enabled ? *enabled : true;
-    if (!params.enabled) {
-        params.valid = true;
-        return params;
-    }
-    if (!rigExec::RigExecMoverSetCommonEnvelope(ctx, &params)) {
-        return params;
-    }
-    params.strength = 1.0f;
-    params.topologyCounts = rigExec::RigExecMoverCollect<int>(
-        ctx, RigExecMoverExecTokens->topologyCounts);
-    params.topologyIndices = rigExec::RigExecMoverCollect<int>(
-        ctx, RigExecMoverExecTokens->topologyIndices);
-    params.valid = !params.topologyCounts.empty();
-    return params;
-}
 
 void
 _BindSmoothMover(const rigExec::RigExecMoverBindContext &ctx)
@@ -106,29 +72,5 @@ _MakeHandler()
 }
 
 } // namespace
-
-// EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA opens/closes the pxr namespace
-// itself, so the registration block stays at global scope.
-EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecSmoothMover)
-{
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverParameters)
-        .Callback<RigExecMoverParameters>(&_BuildSmoothMoverParameters)
-        .Inputs(RIGEXEC_MOVER_COMMON_INPUTS,
-                Relationship(RigExecMoverExecTokens->resolvedTopologyCounts)
-                    .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
-                    .InputName(RigExecMoverExecTokens->topologyCounts),
-                Relationship(RigExecMoverExecTokens->resolvedTopologyIndices)
-                    .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
-                    .InputName(RigExecMoverExecTokens->topologyIndices));
-
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverStatus)
-        .Callback<rigExec::RigExecMoverStatus>(
-            &rigExec::RigExecMoverBuildStatus)
-        .Inputs(Computation<RigExecMoverParameters>(
-                    RigExecMoverExecTokens->computeMoverParameters)
-                    .Required(),
-                Computation<SdfPath>(ExecBuiltinComputations->computePath)
-                    .InputName(RigExecMoverExecTokens->moverPath));
-}
 
 RIGEXEC_REGISTER_MOVER(_MakeHandler());

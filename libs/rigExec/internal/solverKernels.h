@@ -1,12 +1,7 @@
-// RigExec solver glue shared by the exec callbacks and the baked program.
-// The solver MATH lives in rigExecMath (geometryKernels.h, solvers.h) and is
-// already shared. What is not is the glue around it: the guards that decide
-// when a solver publishes nothing, the defaulting of an unauthored input, and
-// the packing of sampled math results into a RigExecPointFrameArray. It lives
-// here once so the exec callbacks and the baked program share it -- a second
-// expression of a guard is a second chance to get it wrong.
-// These functions are the guard and the packing, with the ctx reads left
-// behind in the callback. They live here rather than in rigExecMath because
+// RigExec solver glue around the rigExecMath solver math: the guards that
+// decide when a solver publishes nothing, the defaulting of an unauthored
+// input, and the packing of sampled math results into a
+// RigExecPointFrameArray. They live here rather than in rigExecMath because
 // RigExecPointFrameArray is a rigExec type (types.h) and rigExecMath must not
 // depend on rigExec.
 #ifndef RIGEXEC_SOLVER_KERNELS_H
@@ -36,16 +31,6 @@ struct RigExecPointFrameArray;
 /// either side, fewer than two samples, or a sampler that returned a different
 /// count than was asked of it -- which is how an authoring error reaches the
 /// consumer here: no frames rather than stale ones.
-///
-/// ONE definition, called by the RigExecRibbon exec callback and by the baked
-/// program: the empty-aggregate guard IS the ribbon's error behavior, so two
-/// hand-copied versions of it could disagree about which rigs publish, and the
-/// only rigs that would show it are the malformed ones no fixture has.
-/// \p jointRests, when non-empty and one per sample, re-bases each sample:
-/// the rest->pose map the curve gives is applied to the joint's rest
-/// reference instead of to the rest curve's own sample, so a pose step below
-/// the ribbon is carried through it. \p jointRestLive selects the
-/// samples that were really written; the others keep the rest curve.
 RigExecPointFrameArray RigExecSampleRibbonFrames(
     const std::vector<GfVec3f> &posed, const std::vector<GfVec3f> &rest,
     int sampleCount, const std::vector<std::array<GfVec3d, 4>> &jointRests = {},
@@ -56,26 +41,18 @@ RigExecPointFrameArray RigExecSampleRibbonFrames(
 /// spread evenly over [0, 1] (a single sample sits at the start).
 ///
 /// Defaults in place rather than answering a fresh vector so that a caller
-/// that has already drained the authored array into \p weights -- which both
-/// callers do, from a VdfReadIterator and from a VtArray -- pays for one
+/// that has already drained the authored array into \p weights -- which the
+/// caller does from a VtArray -- pays for one
 /// vector per solver per frame and not two. Pass \p count = 1 for an
 /// unauthored rigExec:count; the clamp to >= 1 is the kernel's.
-///
-/// ONE definition, called by the RigExecTwistDistribution exec callback and by
-/// the baked program, because "no weights authored" is a defaulting rule and
-/// not arithmetic the two paths may each invent.
 void RigExecResolveTwistWeights(int count, std::vector<double> *weights);
 
 /// Distributes twist from \p start to \p end over \p weights and pairs every
 /// resulting frame with the START rest landmarks, which is what makes the
 /// aggregate a rest-relative value its consumers can re-solve against.
 ///
-/// \p startRest / \p endRest are the controls' rest frames; the callback
+/// \p startRest / \p endRest are the controls' rest frames; the caller
 /// substitutes identity landmarks for an unwired one.
-///
-/// ONE definition, called by the RigExecTwistDistribution exec callback and by
-/// the baked program: the rests half is the part a second expression would
-/// most easily get wrong, since it is not what RigExecDistributeTwist returns.
 RigExecPointFrameArray RigExecSolveTwistDistribution(
     const RigExecPointFrame &start, const RigExecPointFrame &end,
     const std::array<GfVec3d, 4> &startRest,
@@ -98,10 +75,6 @@ RigExecPointFrameArray RigExecSolveTwistDistribution(
 /// quaternion product (q1 * q2) corresponds to M(q2) * M(q1). That is why a
 /// pose interpolator's `parent^-1 * world` IS the local rotation and not its
 /// reverse.
-///
-/// ONE definition, called by the dynamic pose-interpolator phase and by the
-/// baked PoseInterpolator step: the delta both measure is compared against
-/// the same authored poses, so two spellings of it would be two rigs.
 bool RigExecFrameRotation(const RigExecPointFrame &frame, GfQuatd *out);
 
 /// A pose interpolator driver's TRANSLATION relative to its own rest, in its

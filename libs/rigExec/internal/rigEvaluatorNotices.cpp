@@ -738,8 +738,7 @@ RigExecRigEvaluator::_OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
         return;
     }
     ++_stageEditSerial;
-    // Never evaluate in a notice callback: ExecUsd must finish invalidating
-    // its own caches before the next pull. External inputs can live anywhere
+    // Never evaluate in a notice callback. External inputs can live anywhere
     // on the stage, so retain conservative structural checks after edits.
     // EXCEPT for a notice that is provably nothing but new VALUES on the
     // numeric avar channels: an Avar Editor slider tick, a typed value, a

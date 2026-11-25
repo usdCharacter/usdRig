@@ -19,7 +19,7 @@ set(rigExec_PLUGINPATHS
     "${rigExec_PYTHON_DIR}/rigExecUsdview")
 
 # RigExec's public link interface exposes OpenUSD imported targets (usd, sdf,
-# exec, vdf, ...), so consumers need the same pxr package this was built
+# ...), so consumers need the same pxr package this was built
 # against. The build-time prefix is recorded as a default; override it with
 # rigExec_USD_INSTALL_DIR or the usual CMAKE_PREFIX_PATH / pxr_DIR.
 set(rigExec_USD_INSTALL_DIR "@USD_INSTALL_DIR@"

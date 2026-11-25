@@ -1,10 +1,16 @@
 #ifndef RIGEXEC_BAKED_EXEC_CROSS_CHECK_H
 #define RIGEXEC_BAKED_EXEC_CROSS_CHECK_H
 
-#include "rigExec/api/tapSet.h"
+#include "rigExec/internal/valueAddress.h"
+
+#include "pxr/base/vt/value.h"
+#include "pxr/usd/usd/stage.h"
+#include "pxr/usd/usd/timeCode.h"
+
 #include <functional>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace rigExec {
 
@@ -27,12 +33,12 @@ inline constexpr const char *const noEquivalent = "NoEquivalent";
 struct RigExecExecCheckDescriptor {
     std::string key;
     uint32_t kind = 0;
-    /// A row with no public equivalent has no request and must explicitly skip.
+    /// A row with no public equivalent must explicitly skip.
     bool skipOnly = false;
     RigExecValueAddress address;
     /// A required override names a bound value, never the op's output.
     std::vector<RigExecValueAddress> requiredOverrides;
-    /// Optional pure conversion from the public exec result to stored op type.
+    /// Optional pure conversion from a reference result to the stored op type.
     std::function<bool(const VtValue &, VtValue *)> project;
     using Reference = std::function<bool(VtValue *, std::string *)>;
     /// Owning-thread acquisition of independent ORIGINAL input context.
@@ -69,10 +75,10 @@ struct RigExecExecCrossCheckReport {
     }
 };
 
-/// Owning-thread verification only. Each request contains exactly one public
-/// builtin key or an independent ORIGINAL constraint witness. Inputs are
-/// immutable copies of the values the operation read.
-/// No network, sampling, or stage access occurs in the production executor.
+/// Owning-thread verification only. A row with an independent ORIGINAL
+/// constraint witness is judged against it; any other row has no judge and
+/// is counted as NoEquivalent (the exec-row goldens pin its value). Inputs
+/// are immutable copies of the values the operation read.
 class RigExecBakedExecCrossCheck {
 public:
     explicit RigExecBakedExecCrossCheck(const UsdStageRefPtr &stage)
@@ -89,12 +95,8 @@ public:
     }
 
 private:
-    struct Row {
-        RigExecExecCheckDescriptor descriptor;
-        std::unique_ptr<RigExecTapSet> tap;
-    };
     UsdStageRefPtr _stage;
-    std::vector<Row> _rows;
+    std::vector<RigExecExecCheckDescriptor> _rows;
 };
 } // namespace rigExec
 #endif

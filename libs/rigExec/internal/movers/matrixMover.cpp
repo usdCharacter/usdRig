@@ -1,24 +1,18 @@
-// RigExecMatrixMover: everything about the matrix mover.
-// A matrix mover applies one provider's transform to a points array,
-// measured against an optional transform space: p' = q + w (T q - q).
-// This TU owns its exec-side computeMoverParameters registration and
-// builder, its revision binder, its compile validator, and its
-// parity-oracle branch, and registers the row that points at them.
+// RigExecMatrixMover: everything about the matrix mover. A matrix mover
+// applies one provider's transform to a points array, measured against an
+// optional transform space: p' = q + w (T q - q). This TU owns its revision
+// binder, its compile validator, and its parity-oracle branch, and
+// registers the row that points at them.
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/api/moverRegistry.h"
-#include "rigExec/internal/movers/moverExecCommon.h"
+#include "rigExec/internal/moverPacket.h"
 #include "rigExec/internal/moverGraph.h"
 #include "rigExecMath/geometryKernels.h"
 
-#include "pxr/exec/exec/builtinComputations.h"
-#include "pxr/exec/exec/registerSchema.h"
-#include "pxr/exec/vdf/context.h"
-#include "pxr/exec/vdf/readIterator.h"
 #include "pxr/usd/usdGeom/pointBased.h"
 
 #include <cmath>
 
-using rigExec::RigExecMoverExecTokens;
 using rigExec::RigExecMoverParameters;
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -41,7 +35,8 @@ TF_DEFINE_PRIVATE_TOKENS(_matrixTokens,
     (RigExecControl)
     (RigExecJoint)
     ((transformSpace, rigExec::SchemaAttrText::rigExecTransformSpace))
-    ((space, rigExec::SchemaAttrText::rigExecSpace)));
+    ((space, rigExec::SchemaAttrText::rigExecSpace))
+    ((weightBlend, rigExec::SchemaAttrText::rigExecWeightBlend)));
 
 namespace {
 const TfToken _oraclePointFrame(rigExec::SchemaAttrText::rigExecPointFrame);
@@ -49,49 +44,6 @@ const TfToken _oracleRestFrame("rest");
 
 const TfToken _oracleToken0(rigExec::SchemaAttrText::rigExecTransform);
 const TfToken _oracleToken1(rigExec::SchemaAttrText::rigExecTransformSpace);
-
-RigExecMoverParameters
-_BuildMatrixMoverParameters(const VdfContext &ctx)
-{
-    RigExecMoverParameters params;
-    params.kind = _matrixTokens->matrix;
-    const bool *enabled =
-        ctx.GetInputValuePtr<bool>(RigExecMoverExecTokens->enabled);
-    params.enabled = enabled ? *enabled : true;
-    if (!params.enabled) {
-        params.valid = true; // disabled is an ordinary pass-through
-        return params;
-    }
-
-    // radial takes a fraction of the transform's ROTATION instead of a
-    // fraction of the resulting position, so a partially weighted point
-    // keeps its distance from the axis rather than cutting the chord.
-    // Also read by RigExecAssembleMatrixParameters (baked path).
-    const TfToken *blend =
-        ctx.GetInputValuePtr<TfToken>(RigExecMoverExecTokens->weightBlendAttr);
-    params.radialWeight = blend && *blend == _matrixTokens->radial;
-
-    const GfMatrix4d *transform =
-        ctx.GetInputValuePtr<GfMatrix4d>(RigExecMoverExecTokens->transform);
-    if (!transform || !rigExec::RigExecMoverSetCommonEnvelope(ctx, &params)) {
-        return params; // MoverFailed
-    }
-    // The matrix must be finite and affine.
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            if (!std::isfinite((*transform)[i][j])) {
-                return params;
-            }
-        }
-    }
-    if ((*transform)[0][3] != 0 || (*transform)[1][3] != 0 ||
-        (*transform)[2][3] != 0 || (*transform)[3][3] != 1) {
-        return params;
-    }
-    params.transform = *transform;
-    params.valid = true;
-    return params;
-}
 
 void
 _BindMatrixMover(const rigExec::RigExecMoverBindContext &ctx)
@@ -414,8 +366,7 @@ _OracleMatrixMover(const rigExec::RigExecMoverOracleContext &ctx)
         }
     }
     TfToken weightBlend;
-    prim.GetAttribute(RigExecMoverExecTokens->weightBlendAttr)
-        .Get(&weightBlend, ctx.time);
+    prim.GetAttribute(_matrixTokens->weightBlend).Get(&weightBlend, ctx.time);
     if (weightBlend == "radial" && ctx.envelope) {
         if (ctx.envelope->size() != points.size())
             return RigExecOracleResult::PassThrough;
@@ -457,29 +408,5 @@ _MakeHandler()
 }
 
 } // namespace
-
-// EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA opens/closes the pxr namespace
-// itself, so the registration block stays at global scope.
-EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecMatrixMover)
-{
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverParameters)
-        .Callback<RigExecMoverParameters>(&_BuildMatrixMoverParameters)
-        .Inputs(
-            RIGEXEC_MOVER_COMMON_INPUTS,
-            AttributeValue<TfToken>(RigExecMoverExecTokens->weightBlendAttr),
-            Relationship(RigExecMoverExecTokens->resolvedTransform)
-                .TargetedObjects<GfMatrix4d>(
-                    RigExecMoverExecTokens->computeMatrix)
-                .InputName(RigExecMoverExecTokens->transform));
-
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverStatus)
-        .Callback<rigExec::RigExecMoverStatus>(
-            &rigExec::RigExecMoverBuildStatus)
-        .Inputs(Computation<RigExecMoverParameters>(
-                    RigExecMoverExecTokens->computeMoverParameters)
-                    .Required(),
-                Computation<SdfPath>(ExecBuiltinComputations->computePath)
-                    .InputName(RigExecMoverExecTokens->moverPath));
-}
 
 RIGEXEC_REGISTER_MOVER(_MakeHandler());

@@ -197,8 +197,6 @@ libs/rigExec/internal/rigEvaluatorNotices.cpp | env | if (!TfGetenvBool("RIGEXEC
 
 libs/rigExec/internal/rigEvaluatorValidation.cpp | token-text | TfToken value(fallback);
 
-libs/rigExec/internal/tapSet.cpp | lock | static std::mutex mutex;
-libs/rigExec/internal/tapSet.cpp | lock | std::lock_guard<std::mutex> lock(mutex);
 
 libs/rigExec/internal/taskListCache.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);
 libs/rigExec/internal/taskListCache.cpp | lock | std::lock_guard<std::mutex> lock(_mutex);

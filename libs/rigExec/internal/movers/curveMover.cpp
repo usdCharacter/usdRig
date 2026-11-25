@@ -1,27 +1,19 @@
-// RigExecCurveMover: everything about the curve mover.
-// A curve mover deforms points from a driver curve in one of three
-// modes: ribbon (rotation-minimizing frame transport), wire (NURBS
-// displacement at the bind parameter), or emitGuidePoints. This TU owns
-// its exec-side computeMoverParameters registration and builder, its
-// revision binder, and its parity-oracle branch, and registers the row
-// that points at them. Compile validation is the generic points-target
-// rules.
+// RigExecCurveMover: everything about the curve mover. A curve mover
+// deforms points from a driver curve in one of three modes: ribbon
+// (rotation-minimizing frame transport), wire (NURBS displacement at the
+// bind parameter), or emitGuidePoints. This TU owns its revision binder
+// and its parity-oracle branch, and registers the row that points at them.
+// Compile validation is the generic points-target rules.
 #include "rigExec/api/moverRegistry.h"
-#include "rigExec/internal/movers/moverExecCommon.h"
+#include "rigExec/internal/moverPacket.h"
 #include "rigExec/internal/moverGraph.h"
 
 #include "rigExecMath/geometryKernels.h"
-
-#include "pxr/exec/exec/builtinComputations.h"
-#include "pxr/exec/exec/registerSchema.h"
-#include "pxr/exec/vdf/context.h"
-#include "pxr/exec/vdf/readIterator.h"
 
 #include <algorithm>
 #include <cmath>
 #include "rigExecSchema/schemaNames.h"
 
-using rigExec::RigExecMoverExecTokens;
 using rigExec::RigExecMoverParameters;
 using rigExec::RigExecPointFrameArray;
 
@@ -74,41 +66,6 @@ const TfToken _oracleToken18(rigExec::SchemaAttrText::rigExecDriverFrames);
 const TfToken _oracleToken19(rigExec::SchemaAttrText::rigExecSampleCount);
 const TfToken _oracleToken20("ribbon");
 const TfToken _oracleToken21("rest");
-
-RigExecMoverParameters
-_BuildCurveMoverParameters(const VdfContext &ctx)
-{
-    RigExecMoverParameters params;
-    const TfToken *mode =
-        ctx.GetInputValuePtr<TfToken>(RigExecMoverExecTokens->modeAttr);
-    params.kind = mode ? *mode : _oracleToken20;
-    const bool *enabled =
-        ctx.GetInputValuePtr<bool>(RigExecMoverExecTokens->enabled);
-    params.enabled = enabled ? *enabled : true;
-    if (!params.enabled) {
-        params.valid = true;
-        return params;
-    }
-    if (!rigExec::RigExecMoverSetCommonEnvelope(ctx, &params)) {
-        return params;
-    }
-    const RigExecPointFrameArray *frames =
-        ctx.GetInputValuePtr<RigExecPointFrameArray>(
-            RigExecMoverExecTokens->driverFrames);
-    if (!frames || frames->IsEmpty() ||
-        frames->rests.size() != frames->GetSize()) {
-        return params;
-    }
-    params.frames = *frames;
-    if (params.kind == "ribbon") {
-        params.bindCoords = rigExec::RigExecMoverCollect<GfVec2f>(
-            ctx, RigExecMoverExecTokens->bindCoords);
-        params.valid = !params.bindCoords.empty();
-    } else if (params.kind == "emitGuidePoints") {
-        params.valid = true;
-    }
-    return params;
-}
 
 std::optional<rigExec::RigExecRevisionOp>
 _ResolveCurveOp(const TfToken &curveMode)
@@ -666,32 +623,5 @@ _MakeHandler()
 }
 
 } // namespace
-
-// EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA opens/closes the pxr namespace
-// itself, so the registration block stays at global scope.
-EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecCurveMover)
-{
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverParameters)
-        .Callback<RigExecMoverParameters>(&_BuildCurveMoverParameters)
-        .Inputs(
-            RIGEXEC_MOVER_COMMON_INPUTS,
-            AttributeValue<TfToken>(RigExecMoverExecTokens->modeAttr),
-            Relationship(RigExecMoverExecTokens->resolvedBindCoords)
-                .TargetedObjects<GfVec2f>(ExecBuiltinComputations->computeValue)
-                .InputName(RigExecMoverExecTokens->bindCoords),
-            Relationship(RigExecMoverExecTokens->resolvedDriverFrames)
-                .TargetedObjects<rigExec::RigExecPointFrameArray>(
-                    RigExecMoverExecTokens->computePointFrameArray)
-                .InputName(RigExecMoverExecTokens->driverFrames));
-
-    self.PrimComputation(RigExecMoverExecTokens->computeMoverStatus)
-        .Callback<rigExec::RigExecMoverStatus>(
-            &rigExec::RigExecMoverBuildStatus)
-        .Inputs(Computation<RigExecMoverParameters>(
-                    RigExecMoverExecTokens->computeMoverParameters)
-                    .Required(),
-                Computation<SdfPath>(ExecBuiltinComputations->computePath)
-                    .InputName(RigExecMoverExecTokens->moverPath));
-}
 
 RIGEXEC_REGISTER_MOVER(_MakeHandler());

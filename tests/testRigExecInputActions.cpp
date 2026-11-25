@@ -393,7 +393,6 @@ main(int argc, char **argv)
         if (argc != 4)
             return 2;
         PlugRegistry::GetInstance().RegisterPlugins(argv[3]);
-        RigExecLoadComputations();
         std::string error;
         const bool okay = RigExecReplayInputActions(argv[2], &error);
         if (!okay)
@@ -403,6 +402,5 @@ main(int argc, char **argv)
     if (argc != 4)
         return 2;
     PlugRegistry::GetInstance().RegisterPlugins(argv[3]);
-    RigExecLoadComputations();
     return Fixture(argv[2]);
 }

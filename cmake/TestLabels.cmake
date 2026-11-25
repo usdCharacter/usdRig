@@ -46,8 +46,7 @@ function(rigexec_add_test)
 endfunction()
 
 set(_rigexec_pxr_libs
-    arch tf gf vt sdf ts usd usdGeom plug work exec execUsd ef vdf
-    esf esfUsd hd usdImaging usdUtils hio sdr js trace pcp usdShade usdLux
+    arch tf gf vt sdf ts usd usdGeom plug work hd usdImaging usdUtils hio sdr js trace pcp usdShade usdLux
     usdRender usdVol usdMedia usdPhysics cameraUtil pxOsd geomUtil glf garch hf
     usdImagingGL)
 # The four rigExec layers are object libraries: they compose into rigExec

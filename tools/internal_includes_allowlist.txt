@@ -77,7 +77,6 @@ libs/rigExecScene/weightProgram.h | rigExec/internal/weightPackets.h
 libs/rigExecScene/weightSceneTranslation.cpp | rigExec/internal/pathText.h
 python/_rigexec.cpp | rigExec/internal/evaluatorTesting.h
 tools/rigExecBake.cpp | rigExec/internal/bakedProgramImpl.h
-tools/rigExecPose.cpp | rigExec/internal/bakedExecCrossCheckRows.h
 tools/rigExecPose.cpp | rigExec/internal/bakedProgramImpl.h
 tools/rigExecPose.cpp | rigExec/internal/frameExtraction.h
 tools/rigExecPose.cpp | rigExec/internal/frozenContextInternal.h

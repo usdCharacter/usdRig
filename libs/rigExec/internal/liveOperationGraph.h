@@ -1,8 +1,8 @@
 // RigExec live operation graph: the evaluator's in-memory operation
 // structures as one diagnostic graph.
 // The compiled rig is scattered across a dozen members -- solver
-// batches, pose steps, frame constraints, geometry revision chains with
-// their live VdfNetworks, property chains, tap sets -- and each answers
+// batches, pose steps, frame constraints, geometry revision chains,
+// property chains -- and each answers
 // only its own question. This is the union: every operation as a node,
 // every dependency the compile derived as an edge, so a visualizer (or
 // a test holding the compile to account) reads the whole compiled rig at once.
@@ -11,7 +11,7 @@
 // Built only on request (RigExecRigEvaluator::DescribeLiveOperations);
 // compile and evaluation never build or read it.
 // Ids are stable within the compiled rig and read as paths where they can be:
-//   batch:<index>              one solver batch (the exec request unit)
+//   batch:<index>              one solver batch
 //   solver:<path>              one aggregate solver
 //   constraint:<mover path>    one compiled frame constraint
 //   chain:<target>             one geometry revision chain
@@ -21,8 +21,6 @@
 //   drev:<target>@<i>          its i-th revision, in execution order
 //   prop:<target>              one property chain
 //   proprev:<target>@<i>       its i-th revision, in execution order
-//   tap:<set>:<id>             one exec tap (sets: main, rest, first,
-//                              guide, batch<k>, conn:<path>)
 //   provider:<path>            one transform provider value
 //   switch:<path>              one space switch
 //   interp:<path>              one pose interpolator
@@ -31,9 +29,8 @@
 //   member   part -> whole (solver -> batch, revision -> chain, ...)
 //   order    predecessor -> successor in walk order
 //   dep      user -> used (solver -> solver it reads)
-//   read     consumer -> tap or provider it reads
+//   read     consumer -> provider it reads
 //   write    operation -> provider or value it revises
-//   provides tap -> the provider value it computes
 //   phase    consumer -> chain it reads at a phase; the chain node's
 //            phased_readers list names the revision each one reads
 //   rides    follower batch -> the leader batch whose request it shares
@@ -46,11 +43,11 @@
 
 namespace rigExec {
 
-/// One operation, value, or exec tap of the compiled rig.
+/// One operation or value of the compiled rig.
 struct RigExecLiveOpNode {
     std::string id;
     /// batch, solver, constraint, chain, revision, propchain, proprev,
-    /// tap, provider, switch, interp or skipped.
+    /// provider, switch, interp or skipped.
     std::string domain;
     /// The schema type, revision op, computation, or role within the domain.
     std::string kind;

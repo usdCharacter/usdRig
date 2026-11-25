@@ -1,11 +1,12 @@
-// The exec cross-check's recorded values, compared with what the production
-// evaluator gives now, without OpenExec. The rows are captured from the baked
-// program's step bodies exactly as the cross-check captures them; only rows
-// the cross-check judged when the golden was recorded are in the file.
-// argv[1] = the rig stage, argv[2] = the golden directory, which holds one
-// subdirectory per reference configuration. The configuration that recorded
-// a golden compares every bit; any other compares the rows and value shapes.
-// argv[3] = the golden's name, <name>.golden in each subdirectory.
+// The exec-row goldens: the rows the baked program's step bodies store,
+// captured from the production evaluator and compared with the checked-in
+// set. argv[1] = the rig stage, argv[2] = the golden directory, which holds
+// one subdirectory per reference configuration. The configuration that
+// recorded a golden compares every bit; any other compares the rows and
+// value shapes. argv[3] = the golden's name, <name>.golden in each
+// subdirectory. With RIGEXEC_RECORD_EXEC_ROWS=1 the rows at the frames
+// argv[4...] are written to this configuration's subdirectory instead
+// (tests/fixtures/README.md).
 #include "rigExec/api/goldenPose.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/bakedExecCrossCheckRows.h"
@@ -14,6 +15,7 @@
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/fileUtils.h"
+#include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/pathUtils.h"
 #include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usd/stage.h"
@@ -104,17 +106,23 @@ Shape(const std::string &golden)
 int
 main(int argc, char **argv)
 {
-    if (argc != 4) {
-        std::printf("usage: %s <stage> <golden directory> <name>\n", argv[0]);
+    if (argc < 4) {
+        std::printf("usage: %s <stage> <golden directory> <name> [frame...]\n",
+                    argv[0]);
         return 1;
     }
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     const std::string stagePath = argv[1], directory = argv[2], name = argv[3];
     const std::string reference = RigExecExecRowsReference();
+    const bool record = TfGetenvBool("RIGEXEC_RECORD_EXEC_ROWS", false);
+    if (record && argc < 5) {
+        std::printf("FAIL: recording %s needs frames\n", name.c_str());
+        return 1;
+    }
     std::string golden = TfStringCatPaths(
         directory, TfStringCatPaths(reference, name + ".golden"));
     const bool exact = TfIsFile(golden);
-    if (!exact) {
+    if (!exact && !record) {
         golden.clear();
         for (const auto &sub : TfListDir(directory))
             if (TfIsFile(TfStringCatPaths(sub, name + ".golden"))) {
@@ -127,7 +135,17 @@ main(int argc, char **argv)
                     directory.c_str());
         return 1;
     }
-    const std::string expected = ReadFile(golden);
+    const std::string expected = record ? std::string() : ReadFile(golden);
+    std::vector<UsdTimeCode> times;
+    if (record) {
+        for (int i = 4; i < argc; ++i)
+            times.emplace_back(std::stod(argv[i]));
+    } else {
+        std::istringstream lines(expected);
+        for (std::string line; std::getline(lines, line);)
+            if (line.compare(0, 6, "visit ") == 0)
+                times.emplace_back(VisitTime(line));
+    }
     const auto stage = UsdStage::Open(stagePath);
     if (!stage) {
         std::printf("FAIL: cannot open %s\n", stagePath.c_str());
@@ -160,13 +178,8 @@ main(int argc, char **argv)
         TfGetBaseName(stagePath), rigPath,
         RigExecBakedProgramAccess::StepGraph(*evaluator.GetBakedProgram())
             .useSimd);
-    std::istringstream lines(expected);
-    std::string line;
     size_t visits = 0;
-    while (std::getline(lines, line)) {
-        if (line.compare(0, 6, "visit ") != 0)
-            continue;
-        const UsdTimeCode time(VisitTime(line));
+    for (const UsdTimeCode time : times) {
         if (!evaluator.Evaluate(time).valid) {
             std::printf("FAIL: invalid pose at %g\n", time.GetValue());
             return 1;
@@ -176,6 +189,19 @@ main(int argc, char **argv)
     if (!visits) {
         std::printf("FAIL: %s holds no visit\n", golden.c_str());
         return 1;
+    }
+    if (record) {
+        TfMakeDirs(TfGetPathName(golden), -1, true);
+        std::ofstream out(golden, std::ios::binary);
+        out << actual;
+        out.close();
+        if (!out) {
+            std::printf("FAIL: cannot write %s\n", golden.c_str());
+            return 1;
+        }
+        std::printf("%s: recorded %zu visit(s) to %s\n", name.c_str(), visits,
+                    golden.c_str());
+        return 0;
     }
     if (exact) {
         if (!RigExecCompareGolden(expected, actual, &error)) {
