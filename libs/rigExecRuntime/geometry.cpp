@@ -6509,27 +6509,31 @@ RrRevisionWeightFieldInput(const RrProgram *program, size_t fieldIndex,
 }
 
 bool
-RrRunRevisionWeightField(RrProgram *program, size_t fieldIndex)
+RrLookUpChainVersion(const RrProgram *program, const eval::OpLookup &lookup,
+                     const RigExecTypeDesc &type, void *out, std::string *error)
 {
-    const auto &field = program->geometry->weightFields[fieldIndex];
-    const auto &entry =
-        program->geometry->revisionIndex[size_t(field.consumer)];
-    const auto &chain = RrGeoScratch(program)->chains[size_t(entry.first)];
-    if (!chain.haveBase) {
-        auto &result = program->store.weightFieldResults[fieldIndex];
-        result.count = 0;
-        result.ok = false;
-        result.values.clear();
-        result.error.clear();
+    const auto *scratch =
+        static_cast<const RrGeometryScratch *>(program->geo.get());
+    const auto fail = [&](const std::string &why) {
+        if (error)
+            *error = "point chain " + std::to_string(lookup.object) + why;
         return false;
-    }
+    };
+    if (!scratch || lookup.object >= scratch->chains.size() ||
+        lookup.part < 0 ||
+        size_t(lookup.part) >
+            program->geometry->chains[lookup.object].revisions.size())
+        return fail(" has no version " + std::to_string(lookup.part));
+    const auto &chain = scratch->chains[lookup.object];
+    if (!chain.haveBase)
+        return fail(" has no points this frame");
+    if (!type.borrow)
+        return fail(" is looked up as no point array");
     const RrVec3f *points = nullptr;
     size_t count = 0;
-    RrGeoPointsBefore(chain, size_t(entry.second), &points, &count);
-    std::vector<RrVec3f> current;
-    if (count)
-        current.assign(points, points + count);
-    return RrResolveDeclaredWeightField(program, fieldIndex, count, &current);
+    RrGeoPointsBefore(chain, size_t(lookup.part), &points, &count);
+    type.borrow(out, points, count);
+    return true;
 }
 
 // EvalCore chain host (rigExecEvalCore/chain.h) over the runtime's
@@ -6800,35 +6804,30 @@ struct RrChainState {
                 }
                 return false;
             }
-            rev.currentPhasePacket = RrGeoStorePacket(
-                program, store.weightPackets[object], &rev.nativePacketCache);
             const auto &field =
                 store.weightFieldResults[size_t(wire.weightField)];
-            if (field.ok) {
-                rev.currentPhasePacket.representation = SchemaValueText::dense;
-                const bool same =
-                    rev.currentPhaseArrays &&
-                    rev.currentPhaseArrays->values.size() ==
-                        field.values.size() &&
-                    (field.values.empty() ||
-                     std::memcmp(rev.currentPhaseArrays->values.data(),
-                                 field.values.data(),
-                                 field.values.size() * sizeof(float)) == 0);
-                if (!same) {
-                    auto arrays = std::make_shared<RrGeoWeightPacket::Arrays>();
-                    arrays->values = field.values;
-                    rev.currentPhaseArrays = std::move(arrays);
-                }
-                rev.currentPhasePacket.arrays = rev.currentPhaseArrays;
-                rev.currentPhasePacket.values.clear();
-                rev.currentPhasePacket.indices.clear();
-                rev.currentPhasePacket.defaultWeight = 0.0f;
-                rev.currentPhasePacket.valid = true;
-            } else {
-                rev.currentPhasePacket = RrGeoWeightPacket();
-                store.stepOutputs[step].diagnostics.push_back(
-                    "current-phase weight failed: " + field.error);
+            if (!field.ok)
+                return false;
+            RrGeoWeightPacket packet;
+            packet.representation = SchemaValueText::dense;
+            packet.rangePolicy = program->TextOrEmpty(
+                program->geometry->weightObjects[object].rangePolicy);
+            const bool same =
+                rev.currentPhaseArrays &&
+                rev.currentPhaseArrays->values.size() == field.values.size() &&
+                (field.values.empty() ||
+                 std::memcmp(rev.currentPhaseArrays->values.data(),
+                             field.values.data(),
+                             field.values.size() * sizeof(float)) == 0);
+            if (!same) {
+                auto arrays = std::make_shared<RrGeoWeightPacket::Arrays>();
+                arrays->values = field.values;
+                rev.currentPhaseArrays = std::move(arrays);
             }
+            packet.arrays = rev.currentPhaseArrays;
+            packet.defaultWeight = 0.0f;
+            packet.valid = true;
+            rev.currentPhasePacket = std::move(packet);
         }
         return true;
     }
@@ -8139,12 +8138,8 @@ RrSkipGeometryStep(RrProgram *program, size_t step)
     }
     RrGeometryScratch *scratch = RrGeoScratch(program);
     const RigExecWireStep &wireStep = (*program->steps)[step];
-    if (wireStep.kind == RigExecWireStepKind::WeightField) {
-        // Field IDs do not index revision bookkeeping.
-        return;
-    }
     // EvalCore's one skip switch (rigExecEvalCore/chain.h) over this
-    // adapter's host; the WeightField arm above stays in this half.
+    // adapter's host.
     RrChainHost host(RrChainInputs{program, scratch},
                      RrChainState{program, scratch, step, nullptr});
     eval::RunSkipGeometryStep(host, eval::StepRef{uint32_t(wireStep.kind),

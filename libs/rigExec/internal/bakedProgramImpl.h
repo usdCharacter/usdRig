@@ -1156,6 +1156,9 @@ enum class RigExecBakedOpFamily : uint8_t {
     Property,
     VolumePlacement,
     WeightPacket,
+    /// One weight object of a weight field: object the field, part the
+    /// node's place in the field's nodeObjects.
+    WeightField,
 };
 
 /// Where an op node's step comes from: its family, that family's object and
@@ -1992,17 +1995,12 @@ struct RigExecBakedProgramImpl {
             RigExecBakedPointsBinding binding;
         };
         std::vector<PointInput> pointReads;
+        /// The weight objects the field's op nodes weigh, each after the
+        /// objects it composes; the field's own object last.
+        std::vector<int> nodeObjects;
+        /// A weight object of the closure that composes itself.
+        bool cyclic = false;
         std::vector<float> values;
-        std::vector<float>
-            nextValues; ///< producer-owned reusable result scratch
-        /// The entering view's gather scratch for a range chain's version
-        /// that is not one buffer; the producer's own.
-        std::vector<GfVec3f> enteringGather;
-        RigExecWeightFieldWorkspace workspace;
-        std::vector<RigExecWeightFieldInputs>
-            currentInputs; ///< producer-owned current packet scratch
-        mutable std::vector<RigExecWeightFieldInputs>
-            effectiveInputs; ///< exclusive producer key scratch
         size_t count = 0;
         bool ok = false;
         std::string error;
@@ -2261,6 +2259,9 @@ struct RigExecBakedProgramImpl {
     /// input until its next run.
     std::vector<VtArray<GfVec2f>> propertyKeyHold;
     std::vector<VtVec3fArray> propertyPointHold;
+    /// Per op lookup: a ChainVersion lookup's gathered points, when the
+    /// version is not one buffer.
+    std::vector<std::vector<GfVec3f>> chainVersionGather;
     std::vector<RigExecBakedHeadLeaf> headLeaves;
     /// Every path a head op reads an override at, and its slot.
     std::map<SdfPath, uint32_t> headOverrideSlots;
@@ -2845,6 +2846,34 @@ bool RigExecBakedLookUpWeight(RigExecBakedProgramImpl &B,
                               const eval::OpLookup &lookup,
                               const RigExecTypeDesc &type, void *out,
                               std::string *error);
+/// Adds the op nodes of each WeightField origin of a revision's field
+/// (\p revisions) or of an envelope's: per weight object of the field,
+/// StaticWeightField, DynamicWeightField, CombineWeightFields or a Sphere,
+/// Plane or Curve weight, fed by the nodes of the objects it composes and by
+/// WeightFieldInputs lookups (a volume's in-flight points by a ChainVersion
+/// lookup), the root's weights stored in weightFields. False with the reason
+/// for a field no frame can weigh.
+bool RigExecBakedAddWeightFieldOps(const RigExecBakedProgramImpl &B,
+                                   RigExecRigDescBuilder *builder,
+                                   eval::OpStepLayout *layout, bool revisions,
+                                   std::string *error);
+/// Resolves a WeightFieldInputs lookup: input \p lookup.read of weight
+/// object \p lookup.part as weight field \p lookup.object reads it.
+bool RigExecBakedLookUpWeightField(const RigExecBakedProgramImpl &B,
+                                   const eval::OpLookup &lookup,
+                                   const RigExecTypeDesc &type, void *out,
+                                   std::string *error);
+/// Resolves a ChainVersion lookup: the points entering revision
+/// \p lookup.part of point chain \p lookup.object, lent in place, or
+/// gathered into chainVersionGather[\p index].
+bool RigExecBakedLookUpChainVersion(RigExecBakedProgramImpl &B, uint32_t index,
+                                    const eval::OpLookup &lookup,
+                                    const RigExecTypeDesc &type, void *out,
+                                    std::string *error);
+/// Stores a weight field's weights as weightFields[output.object].
+bool RigExecBakedStoreWeightField(RigExecBakedProgramImpl &B,
+                                  const eval::OpHostOutput &output,
+                                  const void *value, std::string *error);
 /// Stores a weight packet op's packet as weightPackets[output.object].
 bool RigExecBakedStoreWeightPacket(RigExecBakedProgramImpl &B,
                                    const eval::OpHostOutput &output,

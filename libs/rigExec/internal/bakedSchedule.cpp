@@ -1617,12 +1617,11 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
         if (step.kind == RigExecBakedStepKind::RevisionChunk ||
             step.kind == RigExecBakedStepKind::RevisionFuse)
             enteringRevision = step.object;
-        else if (step.kind == RigExecBakedStepKind::WeightField &&
-                 step.object >= 0 &&
-                 size_t(step.object) < B.weightFields.size() &&
-                 B.weightFields[size_t(step.object)].form ==
+        else if (const int f = RigExecBakedWeightFieldOf(B, step);
+                 f >= 0 &&
+                 B.weightFields[size_t(f)].form ==
                      RigExecBakedProgramImpl::WeightField::Form::Revision)
-            enteringRevision = B.weightFields[size_t(step.object)].consumer;
+            enteringRevision = B.weightFields[size_t(f)].consumer;
         else if (step.kind == RigExecBakedStepKind::RevisionStatic &&
                  step.object >= 0 && size_t(step.object) < revisions) {
             const auto [chain, r] = B.revisionIndex[size_t(step.object)];
@@ -2118,8 +2117,8 @@ RigExecBakedBuildCones(RigExecBakedProgramImpl *program)
         if (step.isHead)
             continue;
         const int index = int(&step - B.steps.data());
-        if (step.kind == RigExecBakedStepKind::WeightField)
-            cones.fieldSteps[size_t(step.object)] = index;
+        if (const int f = RigExecBakedWeightFieldOf(B, step); f >= 0)
+            cones.fieldSteps[size_t(f)] = index;
         for (const RigExecBakedSlotRange &range : step.reads) {
             std::vector<std::vector<int>> *readers =
                 range.domain == RigExecBakedSlotDomain::PropertyResult
@@ -2285,9 +2284,6 @@ RouteBakedStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
 {
     if (step->isHead) {
         switch (step->kind) {
-        case RigExecBakedStepKind::WeightField:
-            RigExecBakedRunWeightField(B, step);
-            break;
         case RigExecBakedStepKind::OpNode:
             RigExecBakedRunOpStep(B, step);
             break;
@@ -2325,8 +2321,6 @@ RouteBakedStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
         RigExecBakedRunProviderRefresh(B, step);
     } else if (step->kind == RigExecBakedStepKind::AvarInputs) {
         RigExecBakedRunAvarOp(B, step);
-    } else if (step->kind == RigExecBakedStepKind::WeightField) {
-        RigExecBakedRunWeightField(B, step);
     } else if (RigExecBakedIsOpStep(step->kind)) {
         RigExecBakedRunOpStep(B, step);
     } else if (RigExecBakedIsGeometryStep(step->kind)) {
@@ -2441,8 +2435,8 @@ RigExecBakedExpectedStageFramesAdmissionReads(
         const auto &step = B->steps[i];
         const bool preparation =
             OriginalPreparationStep(*B, step) || step.kind == K::AvarInputs ||
-            (ancestry[i] &&
-             (step.kind == K::SpaceExpression || step.kind == K::WeightField));
+            (ancestry[i] && (step.kind == K::SpaceExpression ||
+                             RigExecBakedWeightFieldOf(*B, step) >= 0));
         required[i] = !preparation && step.kind != K::SnapshotFinals;
     }
     return required;
@@ -2887,17 +2881,6 @@ StepLabel(const RigExecBakedProgramImpl &B, const RigExecBakedStep &bakedStep,
                    (step.part == 2 ? " base" : "");
         }
         return "every volume weight";
-    case RigExecBakedStepKind::WeightField:
-        return text(B
-                        .weightObjects[size_t(
-                            B.weightFields[size_t(step.object)].object)]
-                        .path) +
-               " form " +
-               std::to_string(int(B.weightFields[size_t(step.object)].form)) +
-               " consumer " +
-               std::to_string(B.weightFields[size_t(step.object)].consumer) +
-               " part " +
-               std::to_string(B.weightFields[size_t(step.object)].part);
     case RigExecBakedStepKind::WeightPacket:
         return text(B.weightObjects[size_t(step.object)].path);
     case RigExecBakedStepKind::InfluenceFold:
@@ -3195,14 +3178,13 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
         }
     };
     for (const auto &step : B.steps) {
-        if (step.kind == RigExecBakedStepKind::WeightField) {
-            if (step.object < 0 ||
-                size_t(step.object) >= B.weightFields.size()) {
+        if (const int f = RigExecBakedWeightFieldOf(B, step); f >= 0) {
+            if (size_t(f) >= B.weightFields.size()) {
                 add("WeightField step " + step.label +
                     " names an invalid field");
                 continue;
             }
-            const auto &field = B.weightFields[size_t(step.object)];
+            const auto &field = B.weightFields[size_t(f)];
             if (field.object < 0 ||
                 size_t(field.object) >= B.weightObjects.size())
                 add("WeightField step " + step.label +
@@ -3211,11 +3193,16 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
                 field.scalarReads.size() != field.scalarMembers.size())
                 add("WeightField step " + step.label +
                     " has inconsistent scalar provenance");
-            const auto own = RigExecBakedOne(
-                RigExecBakedSlotDomain::WeightField, step.object);
-            if (step.writes.size() != 1 || !(step.writes[0] == own))
+            const auto own =
+                RigExecBakedOne(RigExecBakedSlotDomain::WeightField, f);
+            const bool root =
+                size_t(B.opNodeOrigins[size_t(step.object)].part) + 1 ==
+                field.nodeObjects.size();
+            if (root != (std::find(step.writes.begin(), step.writes.end(),
+                                   own) != step.writes.end()))
                 add("WeightField step " + step.label +
-                    " does not write exactly its field");
+                    (root ? " does not write its field"
+                          : " writes a field it does not finish"));
             if (field.form ==
                 RigExecBakedProgramImpl::WeightField::Form::EnvelopeProperty) {
                 if (field.consumer < 0 ||
@@ -3226,7 +3213,7 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
                             .revisions.size() ||
                     B.propertyChains[size_t(field.consumer)]
                             .revisions[size_t(field.part - 1)]
-                            .weightField != step.object)
+                            .weightField != f)
                     add("WeightField step " + step.label +
                         " has no matching property consumer");
             } else if (field.form == RigExecBakedProgramImpl::WeightField::
@@ -3239,8 +3226,7 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
                     const auto &walk = B.walkSteps[size_t(field.consumer)];
                     if (walk.solverBatch || walk.index < 0 ||
                         size_t(walk.index) >= B.constraints.size() ||
-                        B.constraints[size_t(walk.index)].weightField !=
-                            step.object)
+                        B.constraints[size_t(walk.index)].weightField != f)
                         add("WeightField step " + step.label +
                             " has no matching constraint consumer");
                 }
@@ -3274,8 +3260,7 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
                             add("WeightField step " + step.label +
                                 " omits an entering completed revision");
                     }
-                    if (B.chains[chain].revisions[part].weightField !=
-                        step.object)
+                    if (B.chains[chain].revisions[part].weightField != f)
                         add("WeightField step " + step.label +
                             " has no matching revision consumer");
                 }
@@ -3316,9 +3301,8 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
             step.kind == RigExecBakedStepKind::RestCompose ||
             step.kind == RigExecBakedStepKind::LadderCompose ||
             step.kind == RigExecBakedStepKind::SkinTopology ||
-            (step.kind == RigExecBakedStepKind::WeightField &&
-             step.object >= 0 && size_t(step.object) < B.weightFields.size() &&
-             B.weightFields[size_t(step.object)].form !=
+            (RigExecBakedWeightFieldOf(B, step) >= 0 &&
+             B.weightFields[size_t(RigExecBakedWeightFieldOf(B, step))].form !=
                  RigExecBakedProgramImpl::WeightField::Form::Revision);
         if (step.isHead != headKind)
             add("step " + step.label + " has inconsistent head kind");

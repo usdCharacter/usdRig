@@ -8,21 +8,19 @@ namespace rigExec {
 class RigExecRigEvaluator;
 struct RigExecBakedProgramImpl;
 struct RigExecBakedStep;
-struct RigExecWeightFieldInputs;
-struct RigExecWeightPointView;
 bool RigExecBakedBuildWeightFields(const RigExecRigEvaluator &,
                                    RigExecBakedProgramImpl *,
                                    std::string *error);
-void RigExecBakedRunWeightField(RigExecBakedProgramImpl *, RigExecBakedStep *);
+/// The weight field whose op node \p step runs, or -1.
+int RigExecBakedWeightFieldOf(const RigExecBakedProgramImpl &,
+                              const RigExecBakedStep &step);
+/// Adds an OpNode step per weight object of field \p field, each after the
+/// objects it composes; \p head marks envelope fields' steps head steps.
+void RigExecBakedAddWeightFieldSteps(RigExecBakedProgramImpl *, int field,
+                                     bool head);
+/// What a weight field op step reads, and the field's root node writes.
 void RigExecBakedDeclareWeightField(RigExecBakedProgramImpl *,
                                     RigExecBakedStep *);
-/// Fresh source-free numerical input packet, shared by body and exact key capture.
-/// All views remain immutable and live with B through the consuming call.
-bool
-RigExecBakedCaptureWeightFieldInputs(const RigExecBakedProgramImpl &, int field,
-                                     std::vector<RigExecWeightFieldInputs> *,
-                                     RigExecWeightPointView *entering,
-                                     size_t *count);
 void RigExecBakedWeightFieldCoveredVersions(const RigExecBakedProgramImpl &,
                                             int field,
                                             std::vector<uint32_t> *versions);

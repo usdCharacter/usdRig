@@ -4,6 +4,7 @@
 
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/weightField.h"
 #include "rigExec/api/rigEvaluator.h"
 
 #include <algorithm>
@@ -62,6 +63,8 @@ const char *
 RigExecBakedStepDomainName(const RigExecBakedProgramImpl &B,
                            const RigExecBakedStep &step)
 {
+    if (RigExecBakedWeightFieldOf(B, step) >= 0)
+        return "weight";
     return RigExecBakedPropertyPartOf(B, step, nullptr, nullptr)
                ? "property"
                : RigExecBakedStepDomainName(
@@ -236,6 +239,10 @@ RigExecBakedProgram::_GetCycleSkips(
             if (RigExecBakedPropertyPartOf(B, step, &chain, &part))
                 member.owner =
                     B.propertyChains[chain].revisions[part - 1].mover;
+            else if (const int f = RigExecBakedWeightFieldOf(B, step); f >= 0)
+                member.owner =
+                    B.weightObjects[size_t(B.weightFields[size_t(f)].object)]
+                        .path;
             break;
         }
         case K::SkinTopology:
@@ -270,10 +277,6 @@ RigExecBakedProgram::_GetCycleSkips(
             break;
         case K::WeightPacket:
             member.owner = B.weightObjects[object].path;
-            break;
-        case K::WeightField:
-            member.owner =
-                B.weightObjects[size_t(B.weightFields[object].object)].path;
             break;
         default:
             // Provider seeds/bridges and chain bookkeeping are not authored

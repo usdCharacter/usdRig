@@ -928,37 +928,6 @@ RigExecBakedProgram::_BuildStepGraph(_BuildAttempt &build)
         case K::WeightPacket:
             owner = B.weightObjects[size_t(step.object)].path;
             break;
-        case K::WeightField: {
-            const auto &field = B.weightFields[size_t(step.object)];
-            owner = B.weightObjects[size_t(field.object)].path;
-            revision = field.part;
-            if (field.form == RigExecBakedProgramImpl::WeightField::Form::
-                                  EnvelopeConstraint) {
-                if (field.consumer < 0 ||
-                    size_t(field.consumer) >= B.walkSteps.size() ||
-                    B.walkSteps[size_t(field.consumer)].solverBatch ||
-                    B.walkSteps[size_t(field.consumer)].index < 0 ||
-                    size_t(B.walkSteps[size_t(field.consumer)].index) >=
-                        B.constraints.size()) {
-                    ctx.Refuse("weight field has no constraint owner", owner);
-                    return nullptr;
-                }
-                target = B
-                             .constraints[size_t(
-                                 B.walkSteps[size_t(field.consumer)].index)]
-                             .path;
-            } else if (field.form ==
-                       RigExecBakedProgramImpl::WeightField::Form::Revision) {
-                const auto &entry = B.revisionIndex[size_t(field.consumer)];
-                target = B.chains[size_t(entry.first)].target;
-                const auto &geometry = B.chains[size_t(entry.first)]
-                                           .revisions[size_t(entry.second)];
-                revision =
-                    authoredRevision(target, geometry.moverPath, target, false);
-            } else
-                target = B.propertyChains[size_t(field.consumer)].target;
-            break;
-        }
         case K::SpaceCheckpoint:
             expression = B.switchFrameContexts[size_t(step.object)].key;
             break;
@@ -992,6 +961,38 @@ RigExecBakedProgram::_BuildStepGraph(_BuildAttempt &build)
                 target = B.propertyChains[chain].target;
                 revision = int(part);
                 owner = B.propertyChains[chain].revisions[part - 1].mover;
+            } else if (const int f = RigExecBakedWeightFieldOf(B, bakedStep);
+                       f >= 0) {
+                const auto &field = B.weightFields[size_t(f)];
+                const size_t node =
+                    size_t(B.opNodeOrigins[size_t(bakedStep.object)].part);
+                owner = B.weightObjects[size_t(field.nodeObjects[node])].path;
+                revision = field.part;
+                using Form = RigExecBakedProgramImpl::WeightField::Form;
+                if (field.form == Form::EnvelopeConstraint) {
+                    if (field.consumer < 0 ||
+                        size_t(field.consumer) >= B.walkSteps.size() ||
+                        B.walkSteps[size_t(field.consumer)].solverBatch ||
+                        B.walkSteps[size_t(field.consumer)].index < 0 ||
+                        size_t(B.walkSteps[size_t(field.consumer)].index) >=
+                            B.constraints.size()) {
+                        ctx.Refuse("weight field has no constraint owner",
+                                   owner);
+                        return nullptr;
+                    }
+                    target = B
+                                 .constraints[size_t(
+                                     B.walkSteps[size_t(field.consumer)].index)]
+                                 .path;
+                } else if (field.form == Form::Revision) {
+                    const auto &entry = B.revisionIndex[size_t(field.consumer)];
+                    target = B.chains[size_t(entry.first)].target;
+                    const auto &geometry = B.chains[size_t(entry.first)]
+                                               .revisions[size_t(entry.second)];
+                    revision = authoredRevision(target, geometry.moverPath,
+                                                target, false);
+                } else
+                    target = B.propertyChains[size_t(field.consumer)].target;
             } else {
                 expression = "op/" + std::to_string(step.object);
             }

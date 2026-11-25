@@ -4,6 +4,7 @@
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/bakedSchedule.h"
 #include "rigExec/internal/bakedTrace.h"
+#include "rigExec/internal/weightField.h"
 #include "rigExec/api/frozenContext.h"
 #include "rigExecBake/bake.h"
 #include "rigExecBinary/format.h"
@@ -160,7 +161,7 @@ FindChain(const std::vector<RigExecOpGraphNode> &graph)
 {
     CrossDomainChain c;
     c.property = OneStep(graph, "OpNode", "/ClampBlendWeight");
-    c.precedingField = OneStep(graph, "WeightField", "/FingerVolume");
+    c.precedingField = OneStep(graph, "OpNode", "/FingerVolume");
     c.blendSolve = OneStep(graph, "Solve", "/IKFKBlend");
     c.constraint = OneStep(graph, "Constraint", "/FingerToWrist");
     c.fingerSolve = OneStep(graph, "Solve", "/FingerFK");
@@ -400,8 +401,8 @@ TestPrecedingWeight(const std::string &fixturesDir)
                     c.precedingField) != graph[c.smoothStatic].preds.end());
     CHECK(rigExecTest::Precedes(trace, c.skinFuse, c.precedingField));
     CHECK(rigExecTest::Precedes(trace, c.precedingField, c.smoothStatic));
-    const auto &bound =
-        B.weightFields[size_t(B.steps[c.precedingField].object)];
+    const auto &bound = B.weightFields[size_t(
+        rigExec::RigExecBakedWeightFieldOf(B, B.steps[c.precedingField]))];
     CHECK(bound.form == RigExecBakedProgramImpl::WeightField::Form::Revision);
     CHECK(bound.placementPhase ==
           RigExecBakedProgramImpl::WeightField::PlacementPhase::Base);

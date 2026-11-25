@@ -1093,9 +1093,6 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
         // Continue through ordinary active-switch input fingerprints below.
         // All other declared typed inputs retain independent revision reasons.
     }
-    if (step.kind == RigExecWireStepKind::WeightField)
-        return RrWeightFieldEffectiveInputMemo(program, uint32_t(step.object),
-                                               key, covered);
     if (step.kind == RigExecWireStepKind::SpaceExpression)
         return RrProviderEffectiveInputMemo(program, step, key, covered);
     if (step.kind == RigExecWireStepKind::ProviderRefresh) {

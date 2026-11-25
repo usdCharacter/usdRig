@@ -30,6 +30,7 @@
 // argv[1] = path to the examples directory (containing biped/Biped.usda).
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/weightField.h"
 #include "rigExec/internal/bakedSchedule.h"
 #include "rigExec/internal/bakedOpGraph.h"
 #include "rigExec/internal/bakedOpValues.h"
@@ -4033,6 +4034,12 @@ TestAPlacementReadNeedsItsVolumesStep()
         auto &field = B->weightFields[0];
         field.object = field.consumer = 0;
         field.form = RigExecBakedProgramImpl::WeightField::Form::Revision;
+        field.nodeObjects = {0};
+        RigExecBakedOpOrigin origin;
+        origin.family = RigExecBakedOpFamily::WeightField;
+        origin.object = 0;
+        origin.part = 0;
+        B->opNodeOrigins = {origin};
         field.placementPhase =
             RigExecBakedProgramImpl::WeightField::PlacementPhase::Final;
         for (const auto &range : placementReads)
@@ -4059,7 +4066,7 @@ TestAPlacementReadNeedsItsVolumesStep()
             B->steps.push_back(step);
         }
         RigExecBakedStep measure;
-        measure.kind = RigExecBakedStepKind::WeightField;
+        measure.kind = RigExecBakedStepKind::OpNode;
         measure.object = 0;
         measure.reads = std::move(placementReads);
         measure.reads.push_back(RigExecBakedOne(D::ChainBase, 0));
@@ -4104,7 +4111,7 @@ TestAPlacementReadNeedsItsVolumesStep()
         CHECK(error.empty());
         const int a = index(B, RigExecBakedStepKind::VolumePlacements, 1);
         const int b = index(B, RigExecBakedStepKind::VolumePlacements, 2);
-        const int measured = index(B, RigExecBakedStepKind::WeightField, 0);
+        const int measured = index(B, RigExecBakedStepKind::OpNode, 0);
         const int assembled = index(B, RigExecBakedStepKind::RevisionStatic, 0);
         CHECK(a >= 0 && b >= 0 && measured >= 0 && assembled >= 0);
         if (a < 0 || b < 0 || measured < 0 || assembled < 0)
@@ -4709,18 +4716,17 @@ TestEachChainReaderBindsOneVersion(const BuiltProgram &built, const char *name)
             CHECK(out.empty());
             continue;
         }
+        const int field = RigExecBakedWeightFieldOf(B, step);
         const bool fieldReader =
-            step.kind == RigExecBakedStepKind::WeightField &&
-            step.object >= 0 && size_t(step.object) < B.weightFields.size() &&
-            B.weightFields[size_t(step.object)].form ==
+            field >= 0 &&
+            B.weightFields[size_t(field)].form ==
                 RigExecBakedProgramImpl::WeightField::Form::Revision;
         if (step.kind != RigExecBakedStepKind::RevisionChunk &&
             step.kind != RigExecBakedStepKind::RevisionFuse &&
             step.kind != RigExecBakedStepKind::RevisionStatic && !fieldReader)
             continue;
-        const int id = fieldReader
-                           ? B.weightFields[size_t(step.object)].consumer
-                           : step.object;
+        const int id =
+            fieldReader ? B.weightFields[size_t(field)].consumer : step.object;
         const auto &[c, r] = B.revisionIndex[size_t(id)];
         const auto &revision = B.chains[size_t(c)].revisions[size_t(r)];
         const bool reader = step.kind != RigExecBakedStepKind::RevisionStatic;
@@ -4730,9 +4736,14 @@ TestEachChainReaderBindsOneVersion(const BuiltProgram &built, const char *name)
                   std::vector<int>{revision.weightField});
             const auto producer = std::find_if(
                 B.steps.begin(), B.steps.end(), [&](const auto &candidate) {
-                    return candidate.kind ==
-                               RigExecBakedStepKind::WeightField &&
-                           candidate.object == revision.weightField;
+                    return RigExecBakedWeightFieldOf(B, candidate) ==
+                               revision.weightField &&
+                           std::find(candidate.writes.begin(),
+                                     candidate.writes.end(),
+                                     RigExecBakedOne(
+                                         RigExecBakedSlotDomain::WeightField,
+                                         revision.weightField)) !=
+                               candidate.writes.end();
                 });
             CHECK(producer != B.steps.end());
             if (producer != B.steps.end())
@@ -4835,7 +4846,7 @@ TestEachChainReaderBindsOneVersion(const BuiltProgram &built, const char *name)
             expectedDirty.push_back(id - 1);
         }
         if (fieldReader) {
-            const auto &field = B.weightFields[size_t(step.object)];
+            const auto &fieldOf = B.weightFields[size_t(field)];
             const auto bases =
                 slots(step.reads, RigExecBakedSlotDomain::ChainBase);
             const auto finals =
@@ -4843,7 +4854,7 @@ TestEachChainReaderBindsOneVersion(const BuiltProgram &built, const char *name)
             CHECK(std::binary_search(bases.begin(), bases.end(), c));
             // The entering point view and explicitly phased oracle inputs are
             // separate body reads, even when both select the same revision.
-            for (const auto &input : field.pointReads)
+            for (const auto &input : fieldOf.pointReads)
                 for (const auto &candidate : input.binding.candidates) {
                     CHECK(candidate.chain >= 0 &&
                           size_t(candidate.chain) < B.chains.size());

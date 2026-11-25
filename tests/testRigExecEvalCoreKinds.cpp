@@ -44,11 +44,19 @@ CheckOrdinals()
                               "WeightPacket") == 0);
             continue;
         }
+        if (kind == eval::StepKind::ReservedWeightField) {
+            CHECK(std::strcmp(eval::StepKindName(kind),
+                              "ReservedWeightField") == 0);
+            CHECK(std::strcmp(RigExecBakedStepKindName(baked), "WeightField") ==
+                  0);
+            continue;
+        }
         CHECK(std::strcmp(eval::StepKindName(kind),
                           RigExecBakedStepKindName(baked)) == 0);
     }
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedVolumePlacements));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedWeightPacket));
+    CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedWeightField));
     CHECK(eval::IsReservedStepKind(eval::StepKind::SnapshotFinals));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedOpGraph));
     CHECK(!eval::IsReservedStepKind(eval::StepKind::ComposeSubtree));

@@ -1202,7 +1202,9 @@ enum class StepKind : uint8_t {
   RestCompose = 20,
   LadderCompose = 21,
   SkinTopology = 22,
-  WeightField = 23,
+  /// Reserved: a weight field before format 40, which runs as OpNode steps
+  /// since. Open refuses it.
+  ReservedWeightField = 23,
   SpaceExpression = 24,
   ChainInputs = 25,
   AvarInputs = 26,
@@ -1245,7 +1247,7 @@ inline const StepKind (&EnumValuesStepKind())[33] {
     StepKind::RestCompose,
     StepKind::LadderCompose,
     StepKind::SkinTopology,
-    StepKind::WeightField,
+    StepKind::ReservedWeightField,
     StepKind::SpaceExpression,
     StepKind::ChainInputs,
     StepKind::AvarInputs,
@@ -1284,7 +1286,7 @@ inline const char * const *EnumNamesStepKind() {
     "RestCompose",
     "LadderCompose",
     "SkinTopology",
-    "WeightField",
+    "ReservedWeightField",
     "SpaceExpression",
     "ChainInputs",
     "AvarInputs",
@@ -22429,6 +22431,17 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// scales, 11 extentU, 12 extentV, 13 values, 14 indices, 15 sample, 16
   /// target and 17 curve points, 18 the falloff samples, 19 the combine
   /// target point count.
+  /// 3 (format 40): the points entering revision `part` of point chain
+  /// `object` (geometry.chains index), as one array.
+  /// 4 (format 40): input `read` of weight object `part` as weight field
+  /// `object` (geometry.weight_fields index) reads it: 0 defaultWeight, 1
+  /// driver, 2 scale, 3 bias, 4 strength, 5 invert, 6 falloffMin, 7
+  /// falloffMax, 8-10 the x, y, z scales, 11-13 the positive and 14-16 the
+  /// negative scales, 17 extentU, 18 extentV (floats); 19 the scales, 20
+  /// the positive and 21 the negative scales (Vec3f); 22 the sampled
+  /// points, 23 the curve points, 24 the falloff samples, 25 the placement,
+  /// 26 the field's point count, 27 values, 28 indices, 29 the plane axis
+  /// and 30 whether the plane is bounded (uint).
   uint8_t source() const {
     return GetField<uint8_t>(VT_SOURCE, 0);
   }
@@ -22534,7 +22547,8 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   /// 0: property version `object`; 1 and 2 (format 38): the final and
   /// the base placement of volume slot `object`; 3 (format 39): the
-  /// packet of weight object `object`.
+  /// packet of weight object `object`; 5 (format 40): the weights of weight
+  /// field `object`.
   uint8_t target() const {
     return GetField<uint8_t>(VT_TARGET, 0);
   }

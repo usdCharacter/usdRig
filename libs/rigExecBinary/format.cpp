@@ -590,8 +590,23 @@ public:
         _placementBase.assign(nodes, 0);
         _placementLookup.assign(nodes, -1);
         _packetObject.assign(nodes, -1);
+        _fieldNode.assign(nodes, -1);
+        _fieldStored.assign(nodes, -1);
         if (!nodes)
             return;
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 5 &&
+                _fieldStored[output->node] < 0)
+                _fieldStored[output->node] = int64_t(output->object);
+        for (size_t n = 0; n < nodes; ++n)
+            if (file.opGraph->nodes[n])
+                for (const auto &input : file.opGraph->nodes[n]->inputs)
+                    if (input && input->host == 4 &&
+                        input->object < file.opGraph->lookups.size() &&
+                        file.opGraph->lookups[input->object] &&
+                        file.opGraph->lookups[input->object]->source == 4)
+                        _fieldNode[n] = int64_t(
+                            file.opGraph->lookups[input->object]->object);
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node < nodes && output->target == 3 &&
                 _packetObject[output->node] < 0)
@@ -667,17 +682,32 @@ private:
                                 _N(r + 1) + ": runs as no op node");
         if (!_f.opGraph)
             return true;
-        std::vector<uint8_t> stored, packets;
+        std::vector<uint8_t> stored, packets, fields;
         for (const auto &output : _f.opGraph->hostOutputs) {
             if (!output)
                 return _Bad("op_graph.host_outputs: an entry is missing");
-            if (output->target > 3)
+            if (output->target > 5 || output->target == 4)
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
             if (output->node >= _f.opGraph->nodes.size())
                 return _Bad("op_graph.host_outputs: no node " +
                             _N(output->node));
             const size_t node = size_t(output->node);
+            if (output->target == 5) {
+                if (!_f.geometry ||
+                    !_Has(_f.geometry->weightFields, int64_t(output->object)) ||
+                    _fieldNode[node] != int64_t(output->object) ||
+                    _fieldStored[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the weights of a field it does not "
+                                "weigh");
+                if (fields.size() <= output->object)
+                    fields.resize(size_t(output->object) + 1, 0);
+                if (fields[size_t(output->object)]++)
+                    return _Bad("op_graph.host_outputs: the weights of field " +
+                                _N(output->object) + " are stored twice");
+                continue;
+            }
             if (output->target == 3) {
                 if (_propertyChainOf[node] != kNoProperty ||
                     _placementSlot[node] >= 0 ||
@@ -747,6 +777,26 @@ private:
                                 "input of a weight object a step builds");
                 continue;
             }
+            if (lookup && lookup->source == 3) {
+                if (!_f.geometry ||
+                    !_Has(_f.geometry->chains, lookup->object) ||
+                    lookup->part < 0 ||
+                    size_t(lookup->part) >
+                        _f.geometry->chains[lookup->object].revisions.size() ||
+                    lookup->read)
+                    return _Bad("op_graph.lookups: a chain version lookup "
+                                "reads no version of a point chain");
+                continue;
+            }
+            if (lookup && lookup->source == 4) {
+                if (!_f.geometry ||
+                    !_Has(_f.geometry->weightFields, lookup->object) ||
+                    !_Has(_f.geometry->weightObjects, lookup->part) ||
+                    lookup->read > 30)
+                    return _Bad("op_graph.lookups: a weight field lookup "
+                                "reads no input of a field's weight object");
+                continue;
+            }
             if (!lookup || lookup->source != 0 ||
                 !_Has(_f.propertyChains, lookup->object) || lookup->read > 8 ||
                 (lookup->read != 0 &&
@@ -795,6 +845,8 @@ private:
                             ": the retired VolumePlacements step");
             if (kind == fb::StepKind::ReservedWeightPacket)
                 return _Bad(_StepName(i) + ": the retired WeightPacket step");
+            if (kind == fb::StepKind::ReservedWeightField)
+                return _Bad(_StepName(i) + ": the retired WeightField step");
             const bool op = kind == fb::StepKind::OpNode ||
                             kind == fb::StepKind::OpChainHead ||
                             kind == fb::StepKind::OpChainRange;
@@ -2019,6 +2071,24 @@ private:
 
     /// The weight object whose packet the op step \p step builds, or -1 for
     /// any other step.
+    int64_t _FieldStoredBy(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _fieldStored.size()
+                   ? _fieldStored[size_t(step.object)]
+                   : -1;
+    }
+
+    /// The weight field the op step \p step weighs part of, or -1 for any
+    /// other step.
+    int64_t _FieldOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _fieldNode.size()
+                   ? _fieldNode[size_t(step.object)]
+                   : -1;
+    }
+
     int64_t _PacketObjectOf(const fb::RigExecWireStep &step) const
     {
         return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
@@ -3205,20 +3275,23 @@ private:
         std::vector<int64_t> producers(_f.geometry->weightFields.size(), -1);
         for (size_t i = 0; i < _f.steps.size(); ++i) {
             const auto &step = _f.steps[i];
-            if (step.kind == fb::StepKind::WeightField) {
-                if (!_Has(_f.geometry->weightFields, step.object) ||
-                    step.part != -1)
+            if (const int64_t stored = _FieldStoredBy(step); stored >= 0) {
+                if (!_Has(_f.geometry->weightFields, stored))
                     return _Bad(_StepName(i) +
                                 ": invalid WeightField descriptor");
-                const size_t field = size_t(step.object);
+                const size_t field = size_t(stored);
                 if (producers[field] >= 0)
                     return _Bad(_StepName(i) +
                                 ": duplicate WeightField producer");
                 producers[field] = int64_t(i);
-                if (step.writes.size() != 1 ||
-                    step.writes[0].domain() != fb::SlotDomain::WeightField ||
-                    step.writes[0].begin() != uint32_t(field) ||
-                    step.writes[0].end() != uint32_t(field + 1))
+                size_t own = 0;
+                for (const auto &range : step.writes)
+                    if (range.domain() == fb::SlotDomain::WeightField &&
+                        (range.begin() != uint32_t(field) ||
+                         range.end() != uint32_t(field + 1) || own++))
+                        return _Bad(_StepName(i) +
+                                    ": WeightField output ownership differs");
+                if (!own)
                     return _Bad(_StepName(i) +
                                 ": WeightField output ownership differs");
             } else {
@@ -4397,9 +4470,9 @@ private:
                          _bodyBaseLast[size_t(weight.providerSlot)]);
                 continue;
             }
-            if (step.kind == K::WeightField &&
-                _Has(g.weightFields, step.object)) {
-                const auto &field = g.weightFields[size_t(step.object)];
+            if (const int64_t f = _FieldOf(step);
+                f >= 0 && _Has(g.weightFields, f)) {
+                const auto &field = g.weightFields[size_t(f)];
                 if (field.form == fb::WeightFieldForm::Revision &&
                     _Has(g.revisionIndex, field.consumer)) {
                     const auto &index = g.revisionIndex[size_t(field.consumer)];
@@ -4740,7 +4813,7 @@ private:
         for (size_t i = 0; i < _f.steps.size(); ++i) {
             const auto &step = _f.steps[i];
             const bool helper =
-                step.kind == K::WeightField || step.kind == K::SpaceExpression;
+                _FieldOf(step) >= 0 || step.kind == K::SpaceExpression;
             const bool required = step.kind != K::SnapshotFinals &&
                                   !prep(step) && step.kind != K::AvarInputs &&
                                   !(helper && ancestors.count(i));
@@ -4792,9 +4865,9 @@ private:
                 property ||
                 (step.kind >= fb::StepKind::RestCompose &&
                  step.kind <= fb::StepKind::SkinTopology) ||
-                (step.kind == fb::StepKind::WeightField && step.object >= 0 &&
-                 size_t(step.object) < _f.geometry->weightFields.size() &&
-                 _f.geometry->weightFields[size_t(step.object)].form !=
+                (_FieldOf(step) >= 0 &&
+                 _Has(_f.geometry->weightFields, _FieldOf(step)) &&
+                 _f.geometry->weightFields[size_t(_FieldOf(step))].form !=
                      fb::WeightFieldForm::Revision);
             if (step.isHead != kindHead)
                 return _Bad(_StepName(i) +
@@ -9301,6 +9374,9 @@ private:
     std::vector<int64_t> _placementSlot, _placementLookup;
     /// Per op node: the weight object whose packet it stores, or -1.
     std::vector<int64_t> _packetObject;
+    /// Per op node: the weight field it weighs part of, and the field whose
+    /// weights it stores; -1 for none.
+    std::vector<int64_t> _fieldNode, _fieldStored;
     std::vector<uint8_t> _placementBase;
     std::string _error;
     size_t _slots = 0;
@@ -9483,13 +9559,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 39,
+    static_assert(RigExecFormatOldestReadable == 40,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: weight packets as op nodes"
+                ? "re-export: weight fields as op nodes"
                 : "rebake");
 }
 
@@ -9740,8 +9816,8 @@ _StepKindName(fb::StepKind kind)
         return "LadderCompose";
     case fb::StepKind::SkinTopology:
         return "SkinTopology";
-    case fb::StepKind::WeightField:
-        return "WeightField";
+    case fb::StepKind::ReservedWeightField:
+        return "ReservedWeightField";
     case fb::StepKind::SpaceCheckpoint:
         return "SpaceCheckpoint";
     case fb::StepKind::ProviderRefresh:
@@ -9855,6 +9931,20 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
                 *out = text(geometry->weightObjects[output->object].path);
                 return true;
             }
+        if (_Has(file.opGraph->nodes, object) && file.opGraph->nodes[object])
+            for (const auto &input : file.opGraph->nodes[object]->inputs)
+                if (input && input->host == 4 && geometry &&
+                    _Has(file.opGraph->lookups, input->object) &&
+                    file.opGraph->lookups[input->object]->source == 4 &&
+                    _Has(geometry->weightObjects,
+                         file.opGraph->lookups[input->object]->part)) {
+                    *out = text(
+                        geometry
+                            ->weightObjects[size_t(
+                                file.opGraph->lookups[input->object]->part)]
+                            .path);
+                    return true;
+                }
         size_t chain = 0, part = 0;
         *out = _PropertyNodeParts(file).Of(object, &chain, &part)
                    ? text(file.propertyChains[chain].revisions[part - 1].mover)
@@ -9867,18 +9957,8 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
             return false;
         *out = "op chain " + std::to_string(object);
         return true;
-    case fb::StepKind::WeightField: {
-        if (!geometry || !_Has(geometry->weightFields, object))
-            return false;
-        const auto &field = geometry->weightFields[size_t(object)];
-        if (!_Has(geometry->weightObjects, field.object))
-            return false;
-        *out = text(geometry->weightObjects[size_t(field.object)].path) +
-               " form " + std::to_string(int(field.form)) + " consumer " +
-               std::to_string(field.consumer) + " part " +
-               std::to_string(field.part);
-        return true;
-    }
+    case fb::StepKind::ReservedWeightField:
+        return false;
     case fb::StepKind::SkinTopology: {
         if (!geometry || object < 0)
             return false;

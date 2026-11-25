@@ -367,9 +367,8 @@ RigExecBakedProgram::_BuildWithSceneCapture(
                 size_t(step.object) < B.frameRecords.size())
                 return withdrawnCommit(
                     B.frameRecords[size_t(step.object)].commit);
-            if (step.kind == K::WeightField && step.object >= 0 &&
-                size_t(step.object) < B.weightFields.size()) {
-                const auto &field = B.weightFields[size_t(step.object)];
+            if (const int f = RigExecBakedWeightFieldOf(B, step); f >= 0) {
+                const auto &field = B.weightFields[size_t(f)];
                 return field.form == RigExecBakedProgramImpl::WeightField::
                                          Form::EnvelopeConstraint &&
                        withdrawnCommit(field.consumer);
@@ -388,6 +387,11 @@ RigExecBakedProgram::_BuildWithSceneCapture(
                     .revisions[size_t(revision.second)]
                     .moverPath;
             };
+            if (const int f = RigExecBakedWeightFieldOf(B, step);
+                f >= 0 &&
+                B.weightFields[size_t(f)].form ==
+                    RigExecBakedProgramImpl::WeightField::Form::Revision)
+                owner = revisionOwner(B.weightFields[size_t(f)].consumer);
             switch (step.kind) {
             case K::SkinTopology:
                 if (step.object >= 0)
@@ -414,15 +418,6 @@ RigExecBakedProgram::_BuildWithSceneCapture(
                 if (step.object >= 0 &&
                     size_t(step.object) < B.frameRecords.size())
                     owner = B.frameRecords[size_t(step.object)].mover;
-                break;
-            case K::WeightField:
-                if (step.object >= 0 &&
-                    size_t(step.object) < B.weightFields.size()) {
-                    const auto &field = B.weightFields[size_t(step.object)];
-                    if (field.form ==
-                        RigExecBakedProgramImpl::WeightField::Form::Revision)
-                        owner = revisionOwner(field.consumer);
-                }
                 break;
             default:
                 break;

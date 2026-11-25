@@ -423,8 +423,14 @@ _DeclareFixtureStageFrames(RigExecWireFile &f)
                                       D::RequiredStageFramesAdmission;
                            }),
             step.reads.end());
-        const bool helper =
-            step.kind == K::WeightField || step.kind == K::SpaceExpression;
+        bool field = false;
+        if (step.kind == K::OpNode && f.opGraph && step.object >= 0 &&
+            size_t(step.object) < f.opGraph->nodes.size())
+            for (const auto &input : f.opGraph->nodes[step.object]->inputs)
+                field =
+                    field || (input->host == 4 &&
+                              f.opGraph->lookups[input->object]->source == 4);
+        const bool helper = field || step.kind == K::SpaceExpression;
         if (prep(step) || step.kind == K::AvarInputs ||
             step.kind == K::SnapshotFinals || (helper && ancestors.count(i)))
             continue;
@@ -1605,11 +1611,11 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 39 &&
-                      RigExecFormatOldestReadable == 39,
-                  "format 39 runs weight packets as op nodes and is the "
+    static_assert(RigExecFormatVersion == 40 &&
+                      RigExecFormatOldestReadable == 40,
+                  "format 40 runs weight fields as op nodes and is the "
                   "only format Open reads");
-    // Every older format requires re-export: its weight packets ran as
+    // Every older format requires re-export: its weight fields ran as
     // their own steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
@@ -1621,13 +1627,13 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 39 through " +
+            " (this reader reads 40 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 39 ? "re-export: weight packets as op nodes" : "rebake");
+            (version < 40 ? "re-export: weight fields as op nodes" : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 39 ? reexports : rebakes);
+        ++(version < 40 ? reexports : rebakes);
     }
-    CHECK(reexports == 39 && rebakes == 1);
+    CHECK(reexports == 40 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -2745,6 +2751,49 @@ _PacketStep(RigExecWireFile &f, uint32_t object)
     step.object = int32_t(node);
     step.writes = {
         fb::SlotRange(fb::SlotDomain::WeightPacket, object, object + 1)};
+    return step;
+}
+
+/// A StaticWeightField op node weighing weight object \p object for weight
+/// field \p field, its values read through a WeightFieldInputs lookup and
+/// its weights stored as the field's, and the OpNode step that runs it
+/// writing those weights alone.
+fb::RigExecWireStep
+_FieldStep(RigExecWireFile &f, uint32_t field, int32_t object)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = "StaticWeightField";
+    entry->version = 1;
+    f.manifest->coreOps.push_back(std::move(entry));
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = uint32_t(f.manifest->coreOps.size() - 1);
+    auto input = std::make_unique<fb::RigExecWireOpNodeInput>();
+    input->port = 0;
+    input->host = 4;
+    input->object = uint32_t(f.opGraph->lookups.size());
+    op->inputs.push_back(std::move(input));
+    auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+    lookup->source = 4;
+    lookup->object = field;
+    lookup->part = object;
+    lookup->read = 27;
+    f.opGraph->lookups.push_back(std::move(lookup));
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+    output->node = node;
+    output->port = 4;
+    output->target = 5;
+    output->object = field;
+    f.opGraph->hostOutputs.push_back(std::move(output));
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    step.writes = {
+        fb::SlotRange(fb::SlotDomain::WeightField, field, field + 1)};
     return step;
 }
 

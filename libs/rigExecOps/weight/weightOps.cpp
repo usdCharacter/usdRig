@@ -8,6 +8,7 @@
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecRuntime/dualQuatMath.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <iterator>
@@ -58,6 +59,27 @@ RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsNegativeScale)
 RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsExtentU)
 RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsExtentV)
 RIGEXEC_DEFINE_PORT_HANDLE(VolumeWeightsOut)
+RIGEXEC_DEFINE_OP_HANDLE(StaticWeightField)
+RIGEXEC_DEFINE_PORT_HANDLE(StaticWeightFieldValues)
+RIGEXEC_DEFINE_PORT_HANDLE(StaticWeightFieldIndices)
+RIGEXEC_DEFINE_PORT_HANDLE(StaticWeightFieldDefaultWeight)
+RIGEXEC_DEFINE_PORT_HANDLE(StaticWeightFieldTargetCount)
+RIGEXEC_DEFINE_PORT_HANDLE(StaticWeightFieldOut)
+RIGEXEC_DEFINE_OP_HANDLE(DynamicWeightField)
+RIGEXEC_DEFINE_PORT_HANDLE(DynamicWeightFieldBase)
+RIGEXEC_DEFINE_PORT_HANDLE(DynamicWeightFieldDriver)
+RIGEXEC_DEFINE_PORT_HANDLE(DynamicWeightFieldScale)
+RIGEXEC_DEFINE_PORT_HANDLE(DynamicWeightFieldBias)
+RIGEXEC_DEFINE_PORT_HANDLE(DynamicWeightFieldTargetCount)
+RIGEXEC_DEFINE_PORT_HANDLE(DynamicWeightFieldOut)
+RIGEXEC_DEFINE_PORT_HANDLE(DynamicWeightFieldIndices)
+RIGEXEC_DEFINE_PORT_HANDLE(DynamicWeightFieldBaseIndices)
+RIGEXEC_DEFINE_OP_HANDLE(CombineWeightFields)
+RIGEXEC_DEFINE_PORT_HANDLE(CombineWeightFieldsInputs)
+RIGEXEC_DEFINE_PORT_HANDLE(CombineWeightFieldsTargetCount)
+RIGEXEC_DEFINE_PORT_HANDLE(CombineWeightFieldsStrength)
+RIGEXEC_DEFINE_PORT_HANDLE(CombineWeightFieldsInvert)
+RIGEXEC_DEFINE_PORT_HANDLE(CombineWeightFieldsOut)
 
 #define RIGEXEC_DEFINE_WEIGHT_FIELD_PORTS(Op)                                  \
     RIGEXEC_DEFINE_PORT_HANDLE(Op##Points)                                     \
@@ -77,6 +99,8 @@ RIGEXEC_DEFINE_PORT_HANDLE(SphereWeightNegativeScale)
 RIGEXEC_DEFINE_WEIGHT_FIELD_PORTS(PlaneWeight)
 RIGEXEC_DEFINE_PORT_HANDLE(PlaneWeightExtentU)
 RIGEXEC_DEFINE_PORT_HANDLE(PlaneWeightExtentV)
+RIGEXEC_DEFINE_PORT_HANDLE(PlaneWeightAxis)
+RIGEXEC_DEFINE_PORT_HANDLE(PlaneWeightBounded)
 
 RIGEXEC_DEFINE_WEIGHT_FIELD_PORTS(CurveWeight)
 RIGEXEC_DEFINE_PORT_HANDLE(CurveWeightScale)
@@ -245,16 +269,21 @@ PlaneWeightOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     Field f;
     if (!BeginField(p, io, ports, "PlaneWeight", error, &f))
         return false;
+    const uint32_t axis = InOr(io, PlaneWeightAxis(), uint32_t(p.planeAxis));
+    const bool bounded =
+        InOr(io, PlaneWeightBounded(), uint32_t(p.planeBounded)) != 0;
+    if (axis > uint32_t(WeightFieldAxis::Z))
+        return Fail(error, "PlaneWeight", "unknown axis");
     const float extentU = InOr(io, PlaneWeightExtentU(), 1.0f);
     const float extentV = InOr(io, PlaneWeightExtentV(), 1.0f);
-    if (p.planeBounded)
+    if (bounded)
         for (float extent : {extentU, extentV})
             if (!std::isfinite(extent) || extent <= 0.0f)
                 return Fail(error, "PlaneWeight",
                             "extents must be finite and positive");
     rigExec::RigExecPlaneWeightFieldKernel<Vec3f, Vec3d>(
-        f.points->Data(), 0, f.points->Size(), f.worldToLocal, int(p.planeAxis),
-        f.falloff, p.planeBounded, extentU, extentV,
+        f.points->Data(), 0, f.points->Size(), f.worldToLocal, int(axis),
+        f.falloff, bounded, extentU, extentV,
         Out<Weights>(io, ports.out).Data());
     return FinishField(p, io, ports, "PlaneWeight", error);
 }
@@ -746,6 +775,8 @@ const RigExecPortDesc kPlanePorts[] = {
     RIGEXEC_FIELD_PORT_DESCS(PlaneWeight),
     {&PlaneWeightExtentU(), &rigExecStd::FloatType(), kOptional, "extentU"},
     {&PlaneWeightExtentV(), &rigExecStd::FloatType(), kOptional, "extentV"},
+    {&PlaneWeightAxis(), &rigExecStd::UIntType(), kOptional, "axis"},
+    {&PlaneWeightBounded(), &rigExecStd::UIntType(), kOptional, "bounded"},
 };
 const RigExecPortDesc kCurvePorts[] = {
     RIGEXEC_FIELD_PORT_DESCS(CurveWeight),
@@ -977,6 +1008,237 @@ PacketDesc(const char *name, const RigExecPortDesc *ports, size_t count,
     return d;
 }
 
+/// Applies the range policy to every weight of \p out.
+bool
+FinishWeightField(Weights &out, bool clamp, const char *op, std::string *error)
+{
+    for (float &w : out)
+        if (!rigExec::RigExecApplyWeightRangeKernel(clamp, &w))
+            return Fail(error, op, rigExec::RigExecWeightRangeFailure(clamp));
+    return true;
+}
+
+/// Op state: which points a sparse field painted, by generation.
+struct StaticFieldState {
+    std::vector<uint32_t> seen;
+    uint32_t generation = 0;
+};
+
+bool
+StaticWeightFieldOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const char *const kOp = "StaticWeightField";
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const auto representation =
+        EnumAt<rigExecRig::WeightRepresentation>(batch, kRepresentation, k);
+    const bool clamp = FlagAt(batch, kPacketClamp, k);
+    auto &s =
+        *static_cast<StaticFieldState *>(rigExec::RigExecBatchState(batch, k));
+    const size_t count =
+        size_t(InOr(io, StaticWeightFieldTargetCount(), uint32_t(0)));
+    const float defaultWeight =
+        InOr(io, StaticWeightFieldDefaultWeight(), 0.0f);
+    const Weights &values = *In<Weights>(io, StaticWeightFieldValues());
+    const auto *indices =
+        In<rigExecStd::RigExecArray<int32_t>>(io, StaticWeightFieldIndices());
+    Weights &out = Out<Weights>(io, StaticWeightFieldOut());
+    using Representation = rigExecRig::WeightRepresentation;
+    if (representation == Representation::Constant) {
+        if (values.Size())
+            return Fail(error, kOp, "a constant field paints no values");
+        out.Resize(count);
+        std::fill(out.begin(), out.end(), defaultWeight);
+    } else if (representation == Representation::Dense) {
+        if (values.Size() != count)
+            return Fail(error, kOp, "dense weights do not cover the target");
+        if (defaultWeight != 0.0f)
+            return Fail(error, kOp, "dense weights need defaultWeight 0");
+        out.Resize(count);
+        if (count)
+            std::memcpy(out.Data(), values.Data(), count * sizeof(float));
+    } else {
+        const size_t painted = indices ? indices->Size() : 0;
+        if (painted != values.Size())
+            return Fail(error, kOp,
+                        "sparse indices and values differ in length");
+        out.Resize(count);
+        std::fill(out.begin(), out.end(), defaultWeight);
+        s.seen.resize(count, 0);
+        if (++s.generation == 0) {
+            std::fill(s.seen.begin(), s.seen.end(), 0);
+            s.generation = 1;
+        }
+        for (size_t i = 0; i < painted; ++i) {
+            const int32_t index = indices->Data()[i];
+            if (index < 0 || size_t(index) >= count)
+                return Fail(error, kOp, "sparse index out of range");
+            if (s.seen[size_t(index)] == s.generation)
+                return Fail(error, kOp, "duplicate sparse index");
+            s.seen[size_t(index)] = s.generation;
+            out.Data()[size_t(index)] = values.Data()[i];
+        }
+    }
+    return FinishWeightField(out, clamp, kOp, error);
+}
+
+bool
+RunStaticWeightField(const RigExecOpBatch &batch, size_t *failed,
+                     std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return StaticWeightFieldOne(batch, k, error);
+    });
+}
+
+bool
+DynamicWeightFieldOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const bool clamp = FlagAt(batch, kPacketClamp, k);
+    const Weights *base = In<Weights>(io, DynamicWeightFieldBase());
+    const size_t count =
+        base ? base->Size()
+             : size_t(InOr(io, DynamicWeightFieldTargetCount(), uint32_t(0)));
+    const float driver = InOr(io, DynamicWeightFieldDriver(), 1.0f);
+    const float scale = InOr(io, DynamicWeightFieldScale(), 1.0f);
+    const float bias = InOr(io, DynamicWeightFieldBias(), 0.0f);
+    using Indices = rigExecStd::RigExecArray<int32_t>;
+    const auto *own = In<Indices>(io, DynamicWeightFieldIndices());
+    const auto *baseOwn = In<Indices>(io, DynamicWeightFieldBaseIndices());
+    if (own && own->Size()) {
+        const auto normalized = [](const Indices *indices) {
+            std::vector<int32_t> set;
+            if (indices)
+                set.assign(indices->Data(), indices->Data() + indices->Size());
+            std::sort(set.begin(), set.end());
+            set.erase(std::unique(set.begin(), set.end()), set.end());
+            return set;
+        };
+        if (normalized(own) != normalized(baseOwn))
+            return Fail(error, "DynamicWeightField",
+                        "dynamic/base sparse support mismatch");
+    }
+    Weights &out = Out<Weights>(io, DynamicWeightFieldOut());
+    out.Resize(count);
+    for (size_t i = 0; i < count; ++i) {
+        const float b = base ? base->Data()[i] : 1.0f;
+        out.Data()[i] = (b * driver) * scale + bias;
+    }
+    return FinishWeightField(out, clamp, "DynamicWeightField", error);
+}
+
+bool
+RunDynamicWeightField(const RigExecOpBatch &batch, size_t *failed,
+                      std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return DynamicWeightFieldOne(batch, k, error);
+    });
+}
+
+/// CombineWeightFields' declared fields, in saved order.
+enum CombineFieldsField : uint32_t { kFieldsMode, kFieldsClamp };
+
+bool
+CombineWeightFieldsOne(const RigExecOpBatch &batch, size_t k,
+                       std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const auto mode = EnumAt<WeightCombineMode>(batch, kFieldsMode, k);
+    const bool clamp = FlagAt(batch, kFieldsClamp, k);
+    auto &folded = *static_cast<std::vector<float> *>(
+        rigExec::RigExecBatchState(batch, k));
+    const InList<Weights> inputs(io, CombineWeightFieldsInputs());
+    const size_t count =
+        size_t(InOr(io, CombineWeightFieldsTargetCount(), uint32_t(0)));
+    if (!rigExec::RigExecCombineWeightFieldsStreamed(
+            rigExec::RigExecWeightCombine(mode), inputs.Size(), count,
+            [&](size_t i, const float **data, size_t *size) {
+                *data = inputs[i].Data();
+                *size = inputs[i].Size();
+                return true;
+            },
+            &folded))
+        return Fail(error, "CombineWeightFields",
+                    "inputs disagree on element count");
+    const float strength = InOr(io, CombineWeightFieldsStrength(), 1.0f);
+    const float invert = InOr(io, CombineWeightFieldsInvert(), 0.0f);
+    Weights &out = Out<Weights>(io, CombineWeightFieldsOut());
+    out.Resize(folded.size());
+    for (size_t i = 0; i < folded.size(); ++i) {
+        const float w = folded[i];
+        out.Data()[i] = (w + (1.0f - 2.0f * w) * invert) * strength;
+    }
+    return FinishWeightField(out, clamp, "CombineWeightFields", error);
+}
+
+bool
+RunCombineWeightFields(const RigExecOpBatch &batch, size_t *failed,
+                       std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return CombineWeightFieldsOne(batch, k, error);
+    });
+}
+
+void
+CombineFieldsValues(const void *payload, RigExecFieldValues &out)
+{
+    const auto &p = *static_cast<const CombineWeightFieldsPayload *>(payload);
+    SetEnum(out, kFieldsMode, p.mode);
+    SetFlag(out, kFieldsClamp, p.clamp);
+}
+
+const rigExec::RigExecFieldDesc kCombineFieldsFields[] = {
+    Enum("mode", WeightCombineMode::Overlay),
+    Flag("clamp"),
+};
+
+const RigExecPortDesc kStaticFieldPorts[] = {
+    {&StaticWeightFieldValues(), &rigExecStd::FloatArray(), kRigExecPortInput,
+     "values"},
+    {&StaticWeightFieldIndices(), &rigExecStd::IntArray(), kOptional,
+     "indices"},
+    {&StaticWeightFieldDefaultWeight(), &rigExecStd::FloatType(), kOptional,
+     "defaultWeight"},
+    {&StaticWeightFieldTargetCount(), &rigExecStd::UIntType(),
+     kRigExecPortInput, "targetCount"},
+    {&StaticWeightFieldOut(), &rigExecStd::FloatArray(), kRigExecPortOutput,
+     "out", rigExec::RigExecOutputBound::InputValue,
+     &StaticWeightFieldTargetCount()},
+};
+
+const RigExecPortDesc kDynamicFieldPorts[] = {
+    {&DynamicWeightFieldBase(), &rigExecStd::FloatArray(), kOptional, "base"},
+    {&DynamicWeightFieldDriver(), &rigExecStd::FloatType(), kOptional,
+     "driver"},
+    {&DynamicWeightFieldScale(), &rigExecStd::FloatType(), kOptional, "scale"},
+    {&DynamicWeightFieldBias(), &rigExecStd::FloatType(), kOptional, "bias"},
+    {&DynamicWeightFieldTargetCount(), &rigExecStd::UIntType(), kOptional,
+     "targetCount"},
+    {&DynamicWeightFieldOut(), &rigExecStd::FloatArray(), kRigExecPortOutput,
+     "out", rigExec::RigExecOutputBound::InputValue,
+     &DynamicWeightFieldTargetCount(), &DynamicWeightFieldBase()},
+    {&DynamicWeightFieldIndices(), &rigExecStd::IntArray(), kOptional,
+     "indices"},
+    {&DynamicWeightFieldBaseIndices(), &rigExecStd::IntArray(), kOptional,
+     "baseIndices"},
+};
+
+const RigExecPortDesc kCombineFieldPorts[] = {
+    {&CombineWeightFieldsInputs(), &rigExecStd::FloatArray(),
+     kOptional | rigExec::kRigExecPortArray, "inputs"},
+    {&CombineWeightFieldsTargetCount(), &rigExecStd::UIntType(),
+     kRigExecPortInput, "targetCount"},
+    {&CombineWeightFieldsStrength(), &rigExecStd::FloatType(), kOptional,
+     "strength"},
+    {&CombineWeightFieldsInvert(), &rigExecStd::FloatType(), kOptional,
+     "invert"},
+    {&CombineWeightFieldsOut(), &rigExecStd::FloatArray(), kRigExecPortOutput,
+     "out", rigExec::RigExecOutputBound::InputValue,
+     &CombineWeightFieldsTargetCount(), &CombineWeightFieldsInputs()},
+};
+
 const rigExec::RigExecOpDesc kStatic = PacketDesc<StaticState>(
     "StaticWeights", kStaticPorts, std::size(kStaticPorts), &RunStaticWeights,
     kPacketFields, std::size(kPacketFields), &PacketValues);
@@ -988,6 +1250,18 @@ const rigExec::RigExecOpDesc kDynamic =
 const rigExec::RigExecOpDesc kVolume = PacketDesc<VolumeState>(
     "VolumeWeights", kVolumePorts, std::size(kVolumePorts), &RunVolumeWeights,
     kVolumeFields, std::size(kVolumeFields), &VolumeValues);
+const rigExec::RigExecOpDesc kStaticField = PacketDesc<StaticFieldState>(
+    "StaticWeightField", kStaticFieldPorts, std::size(kStaticFieldPorts),
+    &RunStaticWeightField, kPacketFields, std::size(kPacketFields),
+    &PacketValues);
+const rigExec::RigExecOpDesc kDynamicField =
+    PacketDesc<char>("DynamicWeightField", kDynamicFieldPorts,
+                     std::size(kDynamicFieldPorts), &RunDynamicWeightField,
+                     kPacketFields, std::size(kPacketFields), &PacketValues);
+const rigExec::RigExecOpDesc kCombineFieldsOp = PacketDesc<std::vector<float>>(
+    "CombineWeightFields", kCombineFieldPorts, std::size(kCombineFieldPorts),
+    &RunCombineWeightFields, kCombineFieldsFields,
+    std::size(kCombineFieldsFields), &CombineFieldsValues);
 
 } // namespace
 
@@ -1002,6 +1276,9 @@ RegisterWeightOps(rigExec::RigExecOpRegistrar &registrar)
     registrar.Add(StaticWeights(), kStatic);
     registrar.Add(DynamicWeights(), kDynamic);
     registrar.Add(VolumeWeights(), kVolume);
+    registrar.Add(StaticWeightField(), kStaticField);
+    registrar.Add(DynamicWeightField(), kDynamicField);
+    registrar.Add(CombineWeightFields(), kCombineFieldsOp);
 }
 
 } // namespace rigExecOps

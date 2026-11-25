@@ -2179,13 +2179,9 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
                 fold.writes.push_back(RigExecBakedOne(
                     RigExecBakedSlotDomain::RevisionTransforms, id));
             };
-            if (revision.weightField >= 0) {
-                RigExecBakedStep &field =
-                    AddGeometryStep(&B, RigExecBakedStepKind::WeightField,
-                                    revision.weightField);
-                field.maxDiagnostics = 0;
-                RigExecBakedDeclareWeightField(&B, &field);
-            }
+            if (revision.weightField >= 0)
+                RigExecBakedAddWeightFieldSteps(&B, revision.weightField,
+                                                false);
             const auto addStatic = [&] {
                 RigExecBakedStep &assemble = AddGeometryStep(
                     &B, RigExecBakedStepKind::RevisionStatic, id);
@@ -4207,22 +4203,19 @@ struct BakedChainState {
     bool applyCurrentPhasePacket(size_t chain, size_t revision)
     {
         Revision &rev = revisionAt(chain, revision);
-        if (rev.weightCurrentPhase && rev.weightObject >= 0) {
-            rev.currentPhasePacket = B->weightPackets[size_t(rev.weightObject)];
-            const auto &weightField = B->weightFields[size_t(rev.weightField)];
-            if (weightField.ok) {
-                rev.currentPhasePacket.representation =
-                    _tokens->denseRepresentation;
-                rev.currentPhasePacket.values = weightField.values;
-                rev.currentPhasePacket.indices.clear();
-                rev.currentPhasePacket.defaultWeight = 0.0f;
-                rev.currentPhasePacket.valid = true;
-            } else {
-                rev.currentPhasePacket = RigExecWeightPacket();
-                step->diagnostics.push_back("current-phase weight failed: " +
-                                            weightField.error);
-            }
-        }
+        if (!rev.weightCurrentPhase || rev.weightObject < 0)
+            return true;
+        const auto &weightField = B->weightFields[size_t(rev.weightField)];
+        if (!weightField.ok)
+            return false;
+        RigExecWeightPacket &packet = rev.currentPhasePacket;
+        packet.representation = _tokens->denseRepresentation;
+        packet.rangePolicy =
+            B->weightObjects[size_t(rev.weightObject)].rangePolicy;
+        packet.values = weightField.values;
+        packet.indices.clear();
+        packet.defaultWeight = 0.0f;
+        packet.valid = true;
         return true;
     }
     void assembleRevision(size_t chain, size_t revision)
@@ -5268,12 +5261,8 @@ RigExecBakedSkipGeometryStep(RigExecBakedProgramImpl *program,
                              RigExecBakedStep *step)
 {
     RigExecBakedProgramImpl &B = *program;
-    if (step->kind == RigExecBakedStepKind::WeightField) {
-        // Field IDs are not revision IDs; a clean skip preserves the field.
-        return;
-    }
     // EvalCore's one skip switch (rigExecEvalCore/chain.h) over this
-    // adapter's host; the WeightField arm above stays in this half.
+    // adapter's host.
     BakedChainHost host(BakedChainInputs{&B},
                         BakedChainState{&B, step, UsdTimeCode::Default()});
     eval::RunSkipGeometryStep(host,

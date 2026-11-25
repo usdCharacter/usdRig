@@ -1502,34 +1502,6 @@ TestBulkValueKeyBytes()
     RefPut(&rest, frame.flags);
     rest += RefRun(frame.points) + RefRun(points);
     CHECK(Key(R, RigExecBakedSlotDomain::Rest) == rest);
-
-    // A weight field's raw point leaf inside its effective input key.
-    RigExecBakedProgramImpl W;
-    W.weightFields.resize(1);
-    auto &field = W.weightFields[0];
-    field.form = RigExecBakedProgramImpl::WeightField::Form::EnvelopeProperty;
-    field.objects = {0};
-    W.weightProgram.resize(1);
-    W.weightProgram[0].kind = 3;
-    W.weightObjects.resize(1);
-    RigExecBakedStep step;
-    step.kind = RigExecBakedStepKind::WeightField;
-    step.object = 0;
-    const auto fieldKey = [&](const VtVec3fArray &leaf) {
-        W.weightObjects[0].fieldLeaves.values = {VtValue(leaf)};
-        std::string key;
-        std::vector<uint32_t> covered;
-        CHECK(RigExecBakedOpEffectiveInputKey(W, step, &key, &covered));
-        return key;
-    };
-    const VtVec3fArray leaf{GfVec3f(-0.0f, kNaN, 1.0f), GfVec3f(kNaN2),
-                            GfVec3f(0.25f)};
-    const auto emptyLeaf = fieldKey(VtVec3fArray()), fullLeaf = fieldKey(leaf);
-    const std::string run = U64(leaf.size()) + RefRun(leaf);
-    const size_t at = fullLeaf.find(run);
-    CHECK(at != std::string::npos &&
-          fullLeaf.substr(0, at) + U64(0) + fullLeaf.substr(at + run.size()) ==
-              emptyLeaf);
 }
 std::string
 PlainKey(const RigExecProviderPlainValue &value)

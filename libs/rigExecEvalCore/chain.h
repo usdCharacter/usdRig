@@ -1078,17 +1078,13 @@ RunDerivedStep(Host &host, const StepRef &step)
 }
 
 /// The paired skip switch: the same per-kind flag clears on both front
-/// ends, publishing nothing fabricated. The WeightField arm stays in
-/// each adapter's geometry half exactly as it stands there, so it
-/// answers without touching revision state here too.
+/// ends, publishing nothing fabricated.
 template <class Host>
 void
 RunSkipGeometryStep(Host &host, const StepRef &step)
 {
     static_assert(IsBoundHost<Host>::value, "chain Host is not bound");
     switch (StepKind(step.kind)) {
-    case StepKind::WeightField:
-        return;
     case StepKind::ChainInputs: {
         size_t chain = 0;
         if (host.inputs().chainIndexForObject(step.object, &chain)) {

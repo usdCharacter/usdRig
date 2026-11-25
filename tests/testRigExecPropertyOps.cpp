@@ -7,6 +7,7 @@
 #include "rigExec/api/cancellation.h"
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/weightField.h"
 #include "rigExec/internal/bakedTrace.h"
 #include "rigExec/api/frozenContext.h"
 #include "rigExec/api/rigEvaluator.h"
@@ -1157,9 +1158,14 @@ CheckAuthoredPropertyHeads(const UsdStageRefPtr &stage, const SdfPath &rig,
                             }));
                         std::vector<size_t> producers;
                         for (size_t i = 0; i < B.steps.size(); ++i)
-                            if (B.steps[i].kind ==
-                                    RigExecBakedStepKind::WeightField &&
-                                B.steps[i].object == int(f))
+                            if (RigExecBakedWeightFieldOf(B, B.steps[i]) ==
+                                    int(f) &&
+                                std::find(
+                                    B.steps[i].writes.begin(),
+                                    B.steps[i].writes.end(),
+                                    RigExecBakedOne(
+                                        RigExecBakedSlotDomain::WeightField,
+                                        int(f))) != B.steps[i].writes.end())
                                 producers.push_back(i);
                         CHECK(producers.size() == 1);
                         if (producers.size() == 1) {

@@ -997,7 +997,6 @@ RigExecBakedIsGeometryStep(RigExecBakedStepKind kind)
 {
     switch (kind) {
     case RigExecBakedStepKind::ChainInputs:
-    case RigExecBakedStepKind::WeightField:
     case RigExecBakedStepKind::InfluenceFold:
     case RigExecBakedStepKind::RevisionStatic:
     case RigExecBakedStepKind::RevisionChunk:

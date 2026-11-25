@@ -2859,32 +2859,31 @@ TestVolumeMixCurrentPhase()
     }
 }
 
-// An authored empty rigExec:planeAxis: the oracle reads the attribute as
-// authored and fails ("unknown rigExec:planeAxis "), so every current-phase
-// resolve fails with the program's diagnostic, though the plane's own
-// packet substitutes the fallback axis.
+// An authored empty rigExec:planeAxis is an unknown axis: every frame
+// stops with the error, so nothing bakes.
 static void
 TestEmptyPlaneAxis()
 {
     const char *const name = "volume mix, empty planeAxis";
-    const std::vector<double> frames = {1, 2, 3, 4};
     _MixOptions options;
     options.axis = "";
-    _TestStage(name, _VolumeMixStage(options), frames);
-    std::vector<std::vector<std::string>> diagnostics;
+    const UsdStageRefPtr stage = _VolumeMixStage(options);
+    const SdfPath rigPath = _FindRig(stage);
+    const std::string failed =
+        "/Asset/Rig/Weights/Plane: unknown rigExec:planeAxis ";
+    RigExecRigEvaluator evaluator(stage, rigPath);
+    for (const double frame : {1., 2., 3., 4.}) {
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(frame));
+        CHECK(!pose.valid);
+        CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                          [&](const std::string &line) {
+                              return line.find(failed) != std::string::npos;
+                          }));
+    }
+    RigExecRigEvaluator baker(stage, rigPath);
+    std::vector<uint8_t> bytes;
     std::string error;
-    CHECK(_RunDiagnostics(_VolumeMixStage(options), frames, &diagnostics,
-                          &error));
-    if (!error.empty()) {
-        std::printf("%s: %s\n", name, error.c_str());
-    }
-    const std::string failed = "current-phase weight failed: "
-                               "/Asset/Rig/Weights/Plane: unknown "
-                               "rigExec:planeAxis ";
-    CHECK(diagnostics.size() == frames.size());
-    for (const std::vector<std::string> &lines : diagnostics) {
-        CHECK(_HasLine(lines, failed));
-    }
+    CHECK(!RigExecTestBakeAt(baker, 1.0, &bytes, &error));
     std::printf("%s: checked\n", name);
 }
 
@@ -3667,8 +3666,8 @@ TestStageArrayOracleAndChain()
         CHECK(sampler.Bind(stage, *reader, &error));
         CHECK(sampler.GetWarnings().empty());
         const std::string countFailure =
-            "current-phase weight failed: /Asset/Rig/Weights/Plane: "
-            "sampled point count does not match the target";
+            "/Asset/Rig/Weights/Plane: sampled point count does not match "
+            "the target";
         const std::string missingFailure =
             "current-phase weight failed: /Asset/Rig/Weights/Plane: "
             "could not read the points to sample";
@@ -3705,9 +3704,9 @@ TestStageArrayOracleAndChain()
                                             0) == 0);
                 } else {
                     const auto &lines = reader->GetDiagnostics();
-                    CHECK(ran);
-                    CHECK(_HasLine(lines, countFailure) ==
-                          (time == 3 || time == 4));
+                    CHECK(ran == !(time == 3 || time == 4));
+                    if (!ran)
+                        CHECK(failure.find(countFailure) != std::string::npos);
                     // A blocked primary sampleSource falls back to raw
                     // weightTarget points. A successful empty primary does not.
                     CHECK(_HasLine(lines, missingFailure) == false);
@@ -4012,12 +4011,10 @@ _DynamicSupportStage()
 }
 
 // The dynamic support check over the painted indices, which the export
-// lists as inputs: an indices set off the base's support fails the
-// dynamic weight with the
-// oracle's words on every run, where the evaluators' compile refuses the
-// authored edit and skips its consumer, with the same pass-through; a set
-// of the base's support in another order passes, as the session edit
-// does.
+// lists as inputs: an indices set off the base's support stops the run
+// with an error, where the evaluators' compile refuses the authored edit;
+// a set of the base's support in another order passes, as the session
+// edit does.
 static void
 TestDynamicSupportFromSlots()
 {
@@ -4085,19 +4082,14 @@ TestDynamicSupportFromSlots()
     // Off the base's support.
     const std::vector<RigExecTestArraySet> off = {
         {indices, VtValue(VtIntArray{0, 2}), false}};
-    CHECK(RigExecTestApplyArraySets(reader.get(), off, &error) &&
-          reader->Execute(&error));
-    CHECK(hasLine(*reader));
-    {
-        RigExecRigPose pose;
-        CHECK(
-            RigExecTestArrayReference(stage, rigPath, off, 2.0, &pose, &error));
-        std::vector<std::string> diffs;
-        CHECK(RigExecCompareRuntimeRun(pose, *reader, &diffs, true));
-        for (const std::string &diff : diffs) {
-            std::printf("  %s, off the support: %s\n", name, diff.c_str());
-        }
-    }
+    CHECK(RigExecTestApplyArraySets(reader.get(), off, &error));
+    std::string failure;
+    CHECK(!reader->Execute(&failure));
+    CHECK(failure.find("dynamic/base sparse support mismatch") !=
+          std::string::npos);
+    if (failure.find("dynamic/base sparse support mismatch") ==
+        std::string::npos)
+        std::printf("  %s, off the support: %s\n", name, failure.c_str());
     // The base's support in another order passes, as live passes it.
     CHECK(_ArraySetsMatch(name, "the base's support", stage, rigPath,
                           reader.get(),

@@ -846,25 +846,25 @@ TestComputedEnvelopes()
     _CheckFramesDiffer("computed envelopes", rows);
 
     // The dynamic envelope driven to 1.6 at frame 10 breaks its strict
-    // range: the oracle's error passes the constraint through with the
-    // program's diagnostic (compared verbatim by the parity path).
+    // range, which stops that frame in both evaluators.
     rows.clear();
     _TestStage("computed envelopes, strict violation", _EnvelopeStage(1.6),
                frames, &rows);
     _CheckFramesDiffer("computed envelopes, strict violation", rows);
     // The violation happens at frame 10 alone: the driver reaches 1.6 there
     // and stays inside the range at frames 1 and 5.
-    const auto violates = [](const _PlayedFrame &row) {
-        for (const std::string &line : row.diagnostics) {
-            if (line.find("strict range violation") != std::string::npos) {
-                return true;
-            }
-        }
-        return false;
-    };
-    CHECK(rows.size() == frames.size());
-    if (rows.size() == frames.size()) {
-        CHECK(!violates(rows[0]) && !violates(rows[1]) && violates(rows[2]));
+    CHECK(rows.size() == 2);
+    const UsdStageRefPtr stage = _EnvelopeStage(1.6);
+    RigExecRigEvaluator evaluator(stage, _FindRig(stage));
+    for (const double frame : frames) {
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(frame));
+        CHECK(pose.valid == (frame != 10.0));
+        if (frame == 10.0)
+            CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                              [](const std::string &line) {
+                                  return line.find("outside [0, 1]") !=
+                                         std::string::npos;
+                              }));
     }
 }
 
@@ -2572,10 +2572,9 @@ TestEnvelopeRevisions()
     for (size_t f = 0; f < frames.size(); ++f) {
         const bool strict =
             rows[f].lines.size() == 1 &&
-            rows[f].lines[0].find("/Asset/Rig/Movers/Over/Soft/Kick") !=
-                std::string::npos &&
             rows[f].lines[0].find("/Asset/Rig/Weights/Steep") !=
-                std::string::npos;
+                std::string::npos &&
+            rows[f].lines[0].find("outside [0, 1]") != std::string::npos;
         CHECK(strict == (frames[f] >= 8.0));
         CHECK(rows[f].values.empty() == (frames[f] >= 8.0));
         failed += strict;

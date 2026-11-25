@@ -13,6 +13,8 @@ static_assert(static_cast<uint8_t>(fb::StepKind::ReservedVolumePlacements) ==
               "the retired volume placement ordinal is 10");
 static_assert(static_cast<uint8_t>(fb::StepKind::ReservedWeightPacket) == 11,
               "the retired weight packet ordinal is 11");
+static_assert(static_cast<uint8_t>(fb::StepKind::ReservedWeightField) == 23,
+              "the retired weight field ordinal is 23");
 static_assert(static_cast<uint8_t>(fb::StepKind::ReservedPropertyRevision) ==
                   19,
               "the retired property revision ordinal is 19");
@@ -41,6 +43,7 @@ IsReservedStepKind(StepKind kind)
     return kind == fb::StepKind::SnapshotFinals ||
            kind == fb::StepKind::ReservedVolumePlacements ||
            kind == fb::StepKind::ReservedWeightPacket ||
+           kind == fb::StepKind::ReservedWeightField ||
            kind == fb::StepKind::ReservedPropertyRevision ||
            kind == fb::StepKind::ReservedOpGraph;
 }

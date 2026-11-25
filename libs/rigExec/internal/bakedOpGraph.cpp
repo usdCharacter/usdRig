@@ -88,8 +88,6 @@ RigExecBakedEffectiveMemo(const RigExecBakedProgramImpl &B, uint32_t c,
     }
     for (auto id : *reads) {
         const auto &value = B.opAdapter.values[size_t(id)];
-        if (exact && step.kind == RigExecBakedStepKind::WeightField)
-            continue;
         if (exact && step.kind == RigExecBakedStepKind::ProviderRefresh &&
             value.domain == uint32_t(RigExecBakedSlotDomain::SpaceLeaf))
             continue;

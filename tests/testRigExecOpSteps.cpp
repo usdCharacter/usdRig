@@ -767,6 +767,24 @@ struct GroupHost {
         *error = "no weight packets";
         return false;
     }
+    bool LookUpChainVersion(uint32_t, const eval::OpLookup &,
+                            const RigExecTypeDesc &, void *, std::string *error)
+    {
+        *error = "no point chains";
+        return false;
+    }
+    bool LookUpWeightField(uint32_t, const eval::OpLookup &,
+                           const RigExecTypeDesc &, void *, std::string *error)
+    {
+        *error = "no weight fields";
+        return false;
+    }
+    bool StoreWeightField(const eval::OpHostOutput &, const void *,
+                          std::string *error)
+    {
+        *error = "no weight fields";
+        return false;
+    }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t g,
                     const void *elements, size_t count, std::string *error)
     {
@@ -924,12 +942,8 @@ TestHostLookupsAndGroupOutputs()
                         reason.c_str());
         CHECK(!laid && reason.find(expected) != std::string::npos);
     };
-    refused(
-        [](eval::OpStepLayout *bad) {
-            bad->lookups[0].source =
-                uint8_t(eval::OpLookupSource::ChainVersion);
-        },
-        "reads lookup source 3, which no host resolves");
+    refused([](eval::OpStepLayout *bad) { bad->lookups[0].source = 5; },
+            "reads lookup source 5, which no host resolves");
     refused(
         [&](eval::OpStepLayout *bad) {
             bad->hostInputs[1].source = eval::OpHostSource::Lookup;

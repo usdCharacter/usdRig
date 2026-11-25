@@ -1080,29 +1080,23 @@ bool RrRunGeometryStep(RrProgram *program, size_t step, std::string *error);
 // none this run.
 const void *RrGeoFinalGroupPoints(const RrProgram *program, size_t chain,
                                   size_t g);
-bool RrWeightFieldEffectiveInputMemo(const RrProgram *, uint32_t, std::string *,
-                                     std::vector<uint32_t> *);
-bool RrRunWeightStep(RrProgram *program, size_t step, std::string *error);
 bool RrRevisionWeightFieldInput(const RrProgram *, size_t, const RrVec3f **,
                                 size_t *);
-bool RrRunRevisionWeightField(RrProgram *program, size_t fieldIndex);
-// Evaluate one compiled per-consumer field without stage or publication-map
-// lookup. The graph producer supplies the actual entering point count.
-bool RrResolveDeclaredWeightField(RrProgram *program, size_t fieldIndex,
-                                  size_t count,
-                                  const std::vector<RrVec3f> *current);
+/// Resolves ChainVersion lookup \p lookup: the points entering revision
+/// \p lookup.part of point chain \p lookup.object, lent in place.
+bool RrLookUpChainVersion(const RrProgram *program,
+                          const eval::OpLookup &lookup,
+                          const RigExecTypeDesc &type, void *out,
+                          std::string *error);
+/// Resolves WeightFieldInputs lookup \p lookup: input \p lookup.read of
+/// weight object \p lookup.part as weight field \p lookup.object reads it.
+bool RrLookUpWeightField(const RrProgram *program, const eval::OpLookup &lookup,
+                         const RigExecTypeDesc &type, void *out,
+                         std::string *error);
+/// Stores a weight field's weights as weightFieldResults[output.object].
+bool RrStoreWeightField(RrProgram *program, const eval::OpHostOutput &output,
+                        const void *value, std::string *error);
 void RrSkipGeometryStep(RrProgram *program, size_t step);
-
-/// The weight field resolution over the file's weight objects: the field a constraint envelope
-/// (count 1) and a current-phase revision (count = the entering points,
-/// passed as \p current) copy, as the baked program does
-/// (bakedWeights.cpp). \p object indexes geometry.weight_objects.
-/// False with the field's own error text, checked in the field's order;
-/// \p weights is then unspecified. Pure: reads slot values, the run's
-/// property-chain results, the weight placements and static tables only.
-bool RrResolveWeightField(const RrProgram *program, size_t object, size_t count,
-                          const std::vector<RrVec3f> *current,
-                          std::vector<float> *weights, std::string *error);
 
 // Executor and epilogue (framework). The closure dirties what the inputs
 // set since the last run reach; RrStore::animatedTouched stands for a

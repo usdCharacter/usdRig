@@ -9019,8 +9019,9 @@ _HeldScratch(const RigExecBakedProgramImpl &B)
             revisionScratch(derived.revision);
         }
     }
+    for (const auto &gather : B.chainVersionGather)
+        held += gather.capacity();
     for (const auto &field : B.weightFields) {
-        held += field.enteringGather.capacity();
         for (const auto &input : field.pointReads) {
             held += input.binding.gather.capacity();
         }

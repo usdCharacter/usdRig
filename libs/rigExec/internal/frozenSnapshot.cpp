@@ -391,7 +391,6 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
     D.weightCycleBlocked = src.weightCycleBlocked;
     D.weightFields = src.weightFields;
     for (auto &field : D.weightFields) {
-        _DropScratch(&field.enteringGather);
         for (auto &input : field.pointReads)
             _DropScratch(&input.binding.gather);
     }
@@ -497,6 +496,7 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
     D.opNodeOrigins = src.opNodeOrigins;
     D.propertyKeyHold.assign(src.propertyKeyHold.size(), VtArray<GfVec2f>());
     D.propertyPointHold.assign(src.propertyPointHold.size(), VtVec3fArray());
+    D.chainVersionGather.assign(src.chainVersionGather.size(), {});
     D.headLeaves = src.headLeaves;
     D.headOverrideSlots = src.headOverrideSlots;
     D.headOverrideSlotsByName = src.headOverrideSlotsByName;

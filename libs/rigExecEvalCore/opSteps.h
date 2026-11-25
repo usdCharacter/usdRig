@@ -40,7 +40,11 @@ enum class OpLookupSource : uint8_t {
     Property = 0,
     PoseVersion = 1,
     WeightArrays = 2,
+    /// The points entering revision `part` of point chain `object`, as one
+    /// array.
     ChainVersion = 3,
+    /// An input of weight object `part` as weight field `object` reads it.
+    WeightFieldInputs = 4,
 };
 
 /// OpLookup::read of a WeightArrays lookup, whose object is a weight object:
@@ -76,6 +80,39 @@ enum class OpWeightRead : uint8_t {
     CombineTargetCount = 19,
 };
 
+/// OpLookup::read of a WeightFieldInputs lookup. The numbers are part of
+/// the file format.
+enum class OpFieldRead : uint8_t {
+    /// Float: the weight object's scalar inputs, by the field's member
+    /// number: 0 defaultWeight, 1 driver, 2 scale, 3 bias, 4 strength, 5
+    /// invert, 6 falloffMin, 7 falloffMax, 17 extentU, 18 extentV.
+    LastScalar = 18,
+    /// Vec3f: the x, y and z scale; the positive and the negative scales.
+    ScaleAxes = 19,
+    PositiveScales = 20,
+    NegativeScales = 21,
+    /// The points a volume samples, as many as the field's points.
+    SamplePoints = 22,
+    CurvePoints = 23,
+    /// The falloff remap: the sampled falloff, else the compiled curve.
+    FalloffSamples = 24,
+    /// Mat4d: the volume's placement at the field's placement phase.
+    Placement = 25,
+    /// UInt: how many points the field weighs.
+    TargetCount = 26,
+    /// The painted values and indices.
+    Values = 27,
+    Indices = 28,
+    /// UInt: the plane's axis (0 x, 1 y, 2 z) and whether it is bounded.
+    PlaneAxis = 29,
+    PlaneBounded = 30,
+};
+
+/// The value of each scalar OpFieldRead a weight object does not author.
+inline constexpr float kOpFieldScalarDefaults[19] = {
+    0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,
+    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+
 /// OpHostOutput::target: the family of host slots a port value is stored
 /// in. The numbers are part of the file format.
 enum class OpOutputTarget : uint8_t {
@@ -86,6 +123,8 @@ enum class OpOutputTarget : uint8_t {
     /// A range chain member's output, group by group, into the host's
     /// vertex-group state.
     ChainGroup = 4,
+    /// The weight field `object`'s weights.
+    WeightField = 5,
 };
 
 /// Whether OpLookUp resolves lookups of \p source.
@@ -94,7 +133,9 @@ OpLookupSourceRuns(uint8_t source)
 {
     return source == uint8_t(OpLookupSource::Property) ||
            source == uint8_t(OpLookupSource::PoseVersion) ||
-           source == uint8_t(OpLookupSource::WeightArrays);
+           source == uint8_t(OpLookupSource::WeightArrays) ||
+           source == uint8_t(OpLookupSource::ChainVersion) ||
+           source == uint8_t(OpLookupSource::WeightFieldInputs);
 }
 
 /// Whether OpStoreOutput stores outputs of \p target, or, for a range chain
@@ -107,7 +148,8 @@ OpOutputTargetRuns(uint8_t target, bool chainMember)
                : target == uint8_t(OpOutputTarget::PropertyVersion) ||
                      target == uint8_t(OpOutputTarget::VolumePlacement) ||
                      target == uint8_t(OpOutputTarget::VolumePlacementBase) ||
-                     target == uint8_t(OpOutputTarget::WeightPacket);
+                     target == uint8_t(OpOutputTarget::WeightPacket) ||
+                     target == uint8_t(OpOutputTarget::WeightField);
 }
 
 /// A per-frame read of the rig the host resolves for a Lookup input; what
@@ -515,8 +557,9 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
 }
 
 /// Resolves lookup \p index through the \p host method of its source's
-/// family: LookUpProperty, LookUpPoseVersion or LookUpWeight(index, lookup,
-/// type, value, error).
+/// family: LookUpProperty, LookUpPoseVersion, LookUpWeight,
+/// LookUpChainVersion or LookUpWeightField(index, lookup, type, value,
+/// error).
 template <class Host>
 bool
 OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
@@ -530,15 +573,17 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
     case OpLookupSource::WeightArrays:
         return host.LookUpWeight(index, lookup, type, value, error);
     case OpLookupSource::ChainVersion:
-        break;
+        return host.LookUpChainVersion(index, lookup, type, value, error);
+    case OpLookupSource::WeightFieldInputs:
+        return host.LookUpWeightField(index, lookup, type, value, error);
     }
     return OpLayoutFail(error, "no host resolves lookup source " +
                                    std::to_string(lookup.source));
 }
 
 /// Stores \p value through the \p host method of \p output's target
-/// family: StorePropertyVersion, StoreVolumePlacement or
-/// StoreWeightPacket(output, value, error).
+/// family: StorePropertyVersion, StoreVolumePlacement, StoreWeightPacket
+/// or StoreWeightField(output, value, error).
 template <class Host>
 bool
 OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
@@ -552,6 +597,8 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
         return host.StoreVolumePlacement(output, value, error);
     case OpOutputTarget::WeightPacket:
         return host.StoreWeightPacket(output, value, error);
+    case OpOutputTarget::WeightField:
+        return host.StoreWeightField(output, value, error);
     case OpOutputTarget::ChainGroup:
         break;
     }

@@ -20,6 +20,9 @@
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExec/api/opFields.h"
+#include "rigExec/api/compile.h"
+#include "rigExec/api/evaluator.h"
+#include "rigExec/api/rigDesc.h"
 #include "rigExec/api/registry.h"
 #include "rigExecOps/weight/weightOps.h"
 #include "rigExecMath/weightFieldKernel.h"
@@ -2102,107 +2105,7 @@ _TestComputedReadsAndOracle()
     CHECK(f(read(9.0f, ReadMode::Resolved, 0, {1})) == narrowed);
     clearPublication();
 
-    // The oracle.
-    const auto resolve = [&](size_t index, size_t count,
-                             const std::vector<RrVec3f> *current,
-                             std::vector<float> *weights) {
-        error.clear();
-        return RrResolveWeightField(&program, index, count, current, weights,
-                                    &error);
-    };
-    std::vector<float> w;
-    CHECK(resolve(0, 1, nullptr, &w) && w == std::vector<float>{0.5f});
-    CHECK(resolve(1, 2, nullptr, &w) && w == (std::vector<float>{0.25f, 1.0f}));
-    CHECK(!resolve(1, 3, nullptr, &w) &&
-          error == "dense weight cardinality mismatch on /W1");
-    CHECK(!resolve(2, 3, nullptr, &w) &&
-          error == "duplicate sparse index on /W2");
-    const std::vector<float> sparse = {0.1f, 0.0f, 0.2f};
-    CHECK(resolve(3, 3, nullptr, &w) && w == sparse);
-    CHECK(!resolve(3, 2, nullptr, &w) &&
-          error == "sparse index out of range on /W3");
-    CHECK(w.empty());
-    CHECK(RrResolveDeclaredWeightField(&program, 0, 3, nullptr));
-    CHECK(program.store.weightFieldResults[0].values == sparse);
-    CHECK(RrResolveDeclaredWeightField(&program, 0, 3, nullptr));
-    CHECK(program.store.weightFieldResults[0].values == sparse);
-    CHECK(!RrResolveDeclaredWeightField(&program, 0, 2, nullptr));
-    CHECK(program.store.weightFieldResults[0].values.empty() &&
-          program.store.weightFieldResults[0].count == 2 &&
-          program.store.weightFieldResults[0].error ==
-              "sparse index out of range on /W3");
-    CHECK(RrResolveDeclaredWeightField(&program, 0, 3, nullptr));
-    CHECK(program.store.weightFieldResults[0].values == sparse);
-    CHECK(RrResolveDeclaredWeightField(&program, 1, 3, nullptr));
-    CHECK(program.store.weightFieldResults[1].values ==
-          (std::vector<float>{.2f, 0.0f, .4f}));
-    CHECK(RrResolveDeclaredWeightField(&program, 1, 3, nullptr));
-    CHECK(program.store.weightFieldResults[1].values ==
-          (std::vector<float>{.2f, 0.0f, .4f}));
-    std::vector<float> dynamic(3);
-    size_t reassociated = 0;
-    for (size_t i = 0; i < 3; ++i) {
-        dynamic[i] = (sparse[i] * narrowed) * 0.85f + 0.0f;
-        const float other = sparse[i] * (narrowed * 0.85f) + 0.0f;
-        reassociated += std::memcmp(&other, &dynamic[i], sizeof(float)) != 0;
-    }
-    CHECK(reassociated == 2);
-    CHECK(resolve(4, 3, nullptr, &w) && w == dynamic);
-    // The driver through a double result published at its hop.
-    publish(1, RrPropertyValue::Tag::Double, 0.5);
-    std::vector<float> driven(3);
-    for (size_t i = 0; i < 3; ++i) {
-        driven[i] = (sparse[i] * 0.5f) * 0.85f + 0.0f;
-    }
-    CHECK(resolve(4, 3, nullptr, &w) && w == driven);
-    clearPublication();
-    std::vector<float> combined(3);
-    for (size_t i = 0; i < 3; ++i) {
-        float acc = (0.0f + sparse[i]) + dynamic[i];
-        combined[i] = (acc + (1.0f - 2.0f * acc) * 0.25f) * 0.75f;
-    }
-    CHECK(resolve(5, 3, nullptr, &w) && w == combined);
-    {
-        std::vector<float> subtract(3), minimum(3), average(3), over(3),
-            product(3);
-        for (size_t i = 0; i < 3; ++i) {
-            subtract[i] = 0.75f - sparse[i];
-            minimum[i] = std::min(std::min(1.0f, 0.75f), sparse[i]);
-            average[i] = ((0.0f + 0.75f) + sparse[i]) * (1.0f / 2.0f);
-            over[i] = sparse[i] < 0.5f
-                          ? 2.0f * sparse[i] * 0.75f
-                          : 1.0f - 2.0f * (1.0f - sparse[i]) * (1.0f - 0.75f);
-            product[i] = (1.0f * 0.75f) * sparse[i];
-        }
-        const std::vector<float> *expected[] = {&subtract, &minimum, &average,
-                                                &over, &product};
-        for (size_t m = 0; m < 5; ++m) {
-            CHECK(resolve(12 + m, 3, nullptr, &w) && w == *expected[m]);
-        }
-    }
-    CHECK(!resolve(6, 1, nullptr, &w) && error == "unknown rangePolicy on /W6");
-    CHECK(!resolve(7, 1, nullptr, &w) && error == "unknown rangePolicy on /W6");
-    CHECK(!resolve(8, 3, nullptr, &w) &&
-          error == "/W8: no resolved placement for this volume weight");
-    program.store.volumePlacement[0] = RrMat4d(1.0);
-    program.store.volumePlaced[0] = 1;
-    CHECK(!resolve(8, 3, nullptr, &w) &&
-          error == "/W8: rigExec:weightTarget reads `preceding` but no "
-                   "in-flight points were supplied");
-    const std::vector<RrVec3f> two(2, RrVec3f(0.0f));
-    CHECK(!resolve(8, 3, &two, &w) &&
-          error == "/W8: sampled point count does not match the target");
-    const std::vector<RrVec3f> three = {RrVec3f(0.0f), RrVec3f(0.5f, 0, 0),
-                                        RrVec3f(3.0f, 0, 0)};
-    CHECK(resolve(8, 3, &three, &w) && w.size() == 3);
-    CHECK(!resolve(9, 1, nullptr, &w) &&
-          error == "strict range violation on /W9");
-    CHECK(!resolve(10, 1, nullptr, &w) &&
-          error == "weight range violation on /W10");
-    CHECK(!resolve(objects.size(), 1, nullptr, &w) &&
-          error == "the file holds no weight object " +
-                       std::to_string(objects.size()));
-    std::printf("computed reads and oracle: checked\n");
+    std::printf("computed reads: checked\n");
 }
 
 // A volume placement that does not run keeps its slot's placement and
@@ -2323,16 +2226,20 @@ _TestVolumePlacementSkip()
             std::printf("  volume placement %u: %s\n", slot, error.c_str());
         }
     };
-    const std::vector<RrVec3f> samples = {
-        RrVec3f(0.0f), RrVec3f(0.0f, 0.5f, 0.0f), RrVec3f(0.25f, 0.0f, 0.0f)};
-    const auto resolve = [&](std::vector<float> *weights) {
+    RigExecTypeDesc matrixType;
+    matrixType.size = sizeof(RrMat4d);
+    matrixType.triviallyCopyable = true;
+    const auto resolve = [&](RrMat4d *placement) {
         error.clear();
-        return RrResolveWeightField(&program, 1, samples.size(), &samples,
-                                    weights, &error);
+        const eval::OpLookup lookup{
+            uint8_t(eval::OpLookupSource::WeightFieldInputs), 1, 1,
+            uint8_t(eval::OpFieldRead::Placement)};
+        return RrLookUpWeightField(&program, lookup, matrixType, placement,
+                                   &error);
     };
 
     // No step has run: no placement.
-    std::vector<float> weights;
+    RrMat4d weights(1.0);
     CHECK(!resolve(&weights) &&
           error == "/Volume2: no resolved placement for this volume weight");
     run(0);
@@ -2341,33 +2248,24 @@ _TestVolumePlacementSkip()
     CHECK(placedAt(0, first) && placedAt(1, second));
     store.volumePlacementBase = store.volumePlacement;
     store.volumePlacedBase = store.volumePlaced;
-    const std::vector<RrVec3f> singleton{RrVec3f(0.0f)};
     for (size_t field = 0; field < 2; ++field) {
-        CHECK(RrResolveDeclaredWeightField(&program, field, 1, &singleton));
-        const auto standing = store.weightFieldResults[field].values;
         auto &selected =
             field == 0 ? store.volumePlacedBase : store.volumePlaced;
-        auto &matrix =
-            field == 0 ? store.volumePlacementBase : store.volumePlacement;
         selected[1] = 0;
-        CHECK(!RrResolveDeclaredWeightField(&program, field, 1, &singleton));
-        CHECK(store.weightFieldResults[field].values.empty() &&
-              store.weightFieldResults[field].error ==
+        const eval::OpLookup lookup{
+            uint8_t(eval::OpLookupSource::WeightFieldInputs), uint32_t(field),
+            1, uint8_t(eval::OpFieldRead::Placement)};
+        RrMat4d placement(1.0);
+        CHECK(!RrLookUpWeightField(&program, lookup, matrixType, &placement,
+                                   &error) &&
+              error ==
                   "/Volume2: no resolved placement for this volume weight");
-        CHECK(RrResolveDeclaredWeightField(&program, 1 - field, 1, &singleton));
         selected[1] = 1;
-        matrix[1][3][0] = std::numeric_limits<double>::quiet_NaN();
-        CHECK(!RrResolveDeclaredWeightField(&program, field, 1, &singleton));
-        CHECK(store.weightFieldResults[field].values.empty() &&
-              store.weightFieldResults[field].error ==
-                  "/Volume2: degenerate volume placement");
-        matrix[1] = field == 0 ? store.volumePlacement[1]
-                               : store.volumePlacementBase[1];
-        CHECK(RrResolveDeclaredWeightField(&program, field, 1, &singleton));
-        CHECK(store.weightFieldResults[field].values == standing);
+        CHECK(RrLookUpWeightField(&program, lookup, matrixType, &placement,
+                                  &error));
     }
-    std::vector<float> placedWeights;
-    CHECK(resolve(&placedWeights) && placedWeights.size() == samples.size());
+    RrMat4d placedWeights(1.0);
+    CHECK(resolve(&placedWeights));
     const RrMat4d kept = store.volumePlacement[1];
     const RrMat4d other = store.volumePlacement[0];
 
@@ -2379,15 +2277,17 @@ _TestVolumePlacementSkip()
     CHECK(std::memcmp(&store.volumePlacement[1], &kept, sizeof(RrMat4d)) == 0);
     CHECK(store.volumePlaced[0] == 1);
     CHECK(std::memcmp(&store.volumePlacement[0], &other, sizeof(RrMat4d)) == 0);
-    std::vector<float> keptWeights;
-    CHECK(resolve(&keptWeights) && keptWeights == placedWeights);
+    RrMat4d keptWeights(1.0);
+    CHECK(resolve(&keptWeights) &&
+          std::memcmp(&keptWeights, &placedWeights, sizeof(RrMat4d)) == 0);
 
     // Its own step moves it.
     run(1);
     CHECK(placedAt(1, moved) && placedAt(0, first));
     CHECK(std::memcmp(&store.volumePlacement[1], &kept, sizeof(RrMat4d)) != 0);
-    std::vector<float> movedWeights;
-    CHECK(resolve(&movedWeights) && movedWeights != placedWeights);
+    RrMat4d movedWeights(1.0);
+    CHECK(resolve(&movedWeights) &&
+          std::memcmp(&movedWeights, &placedWeights, sizeof(RrMat4d)) != 0);
 
     // A store past the placements fails by name and changes nothing.
     const std::vector<RrMat4d> before = store.volumePlacement;
@@ -2486,7 +2386,7 @@ _TestVolumePlacementDrags(const std::string &stagePath)
             }
             const std::string label = RigExecFormatStepLabel(*file, s);
             for (size_t v = 0; v < 2; ++v) {
-                if (label == "OpNode " + volumes[v]) {
+                if (label == "OpNode " + volumes[v] && placer[v] < 0) {
                     placer[v] = int64_t(s);
                 }
             }
@@ -2809,9 +2709,21 @@ _TestS9VolumeEnvelope()
                                         values[frame].data(),
                                         values[frame].size()},
                     &why));
-            CHECK(reader->Execute(&why));
+            const bool expectRun = frame == 0 || frame == 4;
+            const bool ran = reader->Execute(&why);
             const RigExecRigPose expected =
                 native.Evaluate(UsdTimeCode(double(frame + 1)));
+            CHECK(ran == expectRun && expected.valid == expectRun);
+            if (!ran) {
+                const char *cause = frame == 3
+                                        ? "could not read the points to sample"
+                                        : "sampled point count does not match";
+                CHECK(why.find(cause) != std::string::npos);
+                if (why.find(cause) == std::string::npos)
+                    std::printf("S9 %s frame %zu: %s\n", phase, frame + 1,
+                                why.c_str());
+                continue;
+            }
             std::vector<std::string> diffs;
             const bool same =
                 RigExecCompareRuntimeRun(expected, *reader, &diffs);
@@ -2829,26 +2741,7 @@ _TestS9VolumeEnvelope()
                 continue;
             const RrMat4d standing = found->matrix;
             published.push_back(standing);
-            if (frame == 0 || frame == 4)
-                CHECK(found->matrix[3][0] != (0.0));
-            else
-                CHECK(found->matrix[3][0] == 0.0);
-            if (frame == 1 || frame == 2)
-                CHECK(std::any_of(
-                    reader->GetDiagnostics().begin(),
-                    reader->GetDiagnostics().end(), [](const auto &line) {
-                        return line.find(
-                                   "sampled point count does not match") !=
-                               std::string::npos;
-                    }));
-            if (frame == 3)
-                CHECK(std::any_of(
-                    reader->GetDiagnostics().begin(),
-                    reader->GetDiagnostics().end(), [](const auto &line) {
-                        return line.find(
-                                   "could not read the points to sample") !=
-                               std::string::npos;
-                    }));
+            CHECK(found->matrix[3][0] != (0.0));
             CHECK(reader->Execute(&why));
             CHECK(reader->GetLastRunTraceForTesting().empty());
             const auto held = std::find_if(
@@ -2859,9 +2752,10 @@ _TestS9VolumeEnvelope()
             CHECK(held != reader->GetJointMatrices().end() &&
                   held->matrix == standing);
         }
-        CHECK(published.size() == 5 && published.front() != published.back());
+        CHECK(published.size() == 2 && published.front() != published.back());
         std::printf("S9 NoEquivalent: %s volume envelope count "
-                    "loss/missing/empty/recovery + held exact playback\n",
+                    "loss/missing/empty stop the frame; recovery + held exact "
+                    "playback\n",
                     phase);
     }
 }
@@ -3081,6 +2975,145 @@ _TestFalloffSampleInputs()
                .HasAuthoredValueOpinion());
 }
 
+// The field ops weigh what the field resolution weighed: painted, remapped
+// and combined fields over a point count, range policy last.
+static void
+_TestWeightFieldOps()
+{
+    using rigExec::RigExecPortHandle;
+    using Weights = rigExecStd::RigExecArray<float>;
+    using Indices = rigExecStd::RigExecArray<int32_t>;
+    using Feed = std::pair<const RigExecPortHandle *, const void *>;
+    std::string error;
+    const auto run = [&](const rigExec::RigExecOpHandle &op,
+                         const void *payload, const std::vector<Feed> &feeds,
+                         const RigExecPortHandle &port,
+                         std::vector<float> *out) {
+        error.clear();
+        rigExec::RigExecRigDescBuilder builder;
+        const rigExec::RigExecNodeId node = builder.AddOp(op, payload);
+        std::vector<rigExec::RigExecInputId> ids;
+        for (const Feed &feed : feeds)
+            ids.push_back(builder.BindInput(node, *feed.first));
+        const rigExec::RigExecOutputId id = builder.BindOutput(node, port);
+        const auto desc = builder.Build(&error);
+        const auto program =
+            desc ? rigExec::RigExecCompile(*desc, {}, &error) : nullptr;
+        const auto evaluator =
+            program ? rigExec::RigExecEvaluator::Create(program, {}, &error)
+                    : nullptr;
+        if (!evaluator)
+            return false;
+        for (size_t i = 0; i < feeds.size(); ++i)
+            if (!evaluator->SetInput(ids[i], feeds[i].second, &error))
+                return false;
+        if (!evaluator->Evaluate(&error))
+            return false;
+        const auto *w =
+            static_cast<const Weights *>(evaluator->GetOutput(id, &error));
+        if (!w)
+            return false;
+        out->assign(w->begin(), w->end());
+        return true;
+    };
+    const auto array = [](const std::vector<float> &v) {
+        Weights a;
+        a.Resize(v.size());
+        if (!v.empty())
+            std::memcpy(a.Data(), v.data(), v.size() * sizeof(float));
+        return a;
+    };
+    const auto indices = [](const std::vector<int32_t> &v) {
+        Indices a;
+        a.Resize(v.size());
+        if (!v.empty())
+            std::memcpy(a.Data(), v.data(), v.size() * sizeof(int32_t));
+        return a;
+    };
+    using namespace rigExecOps;
+    const WeightPacketPayload sparsePayload{
+        rigExecRig::WeightRepresentation::Sparse, false};
+    const WeightPacketPayload densePayload{
+        rigExecRig::WeightRepresentation::Dense, false};
+    const auto painted = [&](const WeightPacketPayload &payload,
+                             const Weights &values, const Indices &at,
+                             uint32_t count, std::vector<float> *out) {
+        const float zero = 0.0f;
+        return run(StaticWeightField(), &payload,
+                   {{&StaticWeightFieldValues(), &values},
+                    {&StaticWeightFieldIndices(), &at},
+                    {&StaticWeightFieldDefaultWeight(), &zero},
+                    {&StaticWeightFieldTargetCount(), &count}},
+                   StaticWeightFieldOut(), out);
+    };
+    std::vector<float> w;
+    const Weights values = array({0.1f, 0.2f});
+    const std::vector<float> sparse = {0.1f, 0.0f, 0.2f};
+    CHECK(painted(sparsePayload, values, indices({0, 2}), 3, &w) &&
+          w == sparse);
+    CHECK(!painted(sparsePayload, values, indices({0, 2}), 2, &w) &&
+          error.find("sparse index out of range") != std::string::npos);
+    CHECK(!painted(sparsePayload, values, indices({0, 0}), 3, &w) &&
+          error.find("duplicate sparse index") != std::string::npos);
+    CHECK(painted(densePayload, array({0.25f, 1.0f}), indices({}), 2, &w) &&
+          w == (std::vector<float>{0.25f, 1.0f}));
+    CHECK(!painted(densePayload, array({0.25f, 1.0f}), indices({}), 3, &w) &&
+          error.find("dense weights do not cover") != std::string::npos);
+    const Weights base = array(sparse);
+    const float driver = 0.3f, scale = 0.85f, bias = 0.0f;
+    std::vector<float> dynamic(3);
+    for (size_t i = 0; i < 3; ++i)
+        dynamic[i] = (sparse[i] * driver) * scale + bias;
+    CHECK(run(DynamicWeightField(), &densePayload,
+              {{&DynamicWeightFieldBase(), &base},
+               {&DynamicWeightFieldDriver(), &driver},
+               {&DynamicWeightFieldScale(), &scale},
+               {&DynamicWeightFieldBias(), &bias}},
+              DynamicWeightFieldOut(), &w) &&
+          std::memcmp(w.data(), dynamic.data(), 3 * sizeof(float)) == 0);
+    const float over = 2.0f;
+    CHECK(!run(DynamicWeightField(), &densePayload,
+               {{&DynamicWeightFieldBase(), &base},
+                {&DynamicWeightFieldBias(), &over}},
+               DynamicWeightFieldOut(), &w) &&
+          error.find("DynamicWeightField") != std::string::npos);
+    const WeightPacketPayload clamped{rigExecRig::WeightRepresentation::Dense,
+                                      true};
+    CHECK(run(DynamicWeightField(), &clamped,
+              {{&DynamicWeightFieldBase(), &base},
+               {&DynamicWeightFieldBias(), &over}},
+              DynamicWeightFieldOut(), &w) &&
+          w == std::vector<float>(3, 1.0f));
+    CombineWeightFieldsPayload add;
+    add.mode = WeightCombineMode::Add;
+    add.clamp = true;
+    const Weights second = array(dynamic);
+    const uint32_t three = 3;
+    const float invert = 0.25f, strength = 0.75f;
+    std::vector<float> combined(3);
+    for (size_t i = 0; i < 3; ++i) {
+        float acc = (0.0f + sparse[i]) + dynamic[i];
+        combined[i] = (acc + (1.0f - 2.0f * acc) * invert) * strength;
+    }
+    CHECK(run(CombineWeightFields(), &add,
+              {{&CombineWeightFieldsInputs(), &base},
+               {&CombineWeightFieldsInputs(), &second},
+               {&CombineWeightFieldsTargetCount(), &three},
+               {&CombineWeightFieldsInvert(), &invert},
+               {&CombineWeightFieldsStrength(), &strength}},
+              CombineWeightFieldsOut(), &w) &&
+          std::memcmp(w.data(), combined.data(), 3 * sizeof(float)) == 0);
+    const Weights shorter = array({0.5f});
+    CHECK(!run(CombineWeightFields(), &add,
+               {{&CombineWeightFieldsInputs(), &base},
+                {&CombineWeightFieldsInputs(), &shorter},
+                {&CombineWeightFieldsTargetCount(), &three}},
+               CombineWeightFieldsOut(), &w) &&
+          error.find("element count") != std::string::npos);
+    std::printf("weight field ops: painted, remapped and combined fields "
+                "checked\n");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -3096,6 +3129,7 @@ main(int argc, char **argv)
     _TestComputedReadsAndOracle();
     _TestPaintedEnvelopeSet();
     _TestVolumePlacementSkip();
+    _TestWeightFieldOps();
     _TestVolumePlacementDrags(std::string(RIGEXEC_TEST_FIXTURES_DIR) +
                               "/volume_placements.usda");
 

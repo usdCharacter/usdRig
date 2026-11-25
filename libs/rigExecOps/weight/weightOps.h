@@ -95,6 +95,10 @@ const rigExec::RigExecPortHandle &SphereWeightNegativeScale();
 RIGEXEC_WEIGHT_FIELD_PORTS(PlaneWeight)
 const rigExec::RigExecPortHandle &PlaneWeightExtentU();
 const rigExec::RigExecPortHandle &PlaneWeightExtentV();
+/// Optional UInt inputs that replace the payload's plane axis (0 x, 1 y, 2
+/// z) and bounds (non-zero bounded) for one run.
+const rigExec::RigExecPortHandle &PlaneWeightAxis();
+const rigExec::RigExecPortHandle &PlaneWeightBounded();
 
 RIGEXEC_WEIGHT_FIELD_PORTS(CurveWeight)
 const rigExec::RigExecPortHandle &CurveWeightScale();
@@ -211,6 +215,61 @@ const rigExec::RigExecPortHandle &CombineWeightsTargetCount();
 const rigExec::RigExecPortHandle &CombineWeightsStrength();
 const rigExec::RigExecPortHandle &CombineWeightsInvert();
 const rigExec::RigExecPortHandle &CombineWeightsOut();
+
+/// A weight object's field over TargetCount (UInt) points, one weight per
+/// point to Out (FloatArray), its range policy applied last: a weight that
+/// is not finite, or outside [0, 1] without clamp, is an error.
+///
+/// StaticWeightField: the painted Values (FloatArray) as the payload's
+/// representation lays them out: a constant field is DefaultWeight (Float,
+/// 0) everywhere and paints no values; a dense one paints every point and
+/// its default is 0; a sparse one paints Values at Indices (IntArray,
+/// optional) over the default. Painting outside that layout, an index out
+/// of range or repeated, is an error. The payload is a
+/// WeightPacketPayload.
+const rigExec::RigExecOpHandle &StaticWeightField();
+const rigExec::RigExecPortHandle &StaticWeightFieldValues();
+const rigExec::RigExecPortHandle &StaticWeightFieldIndices();
+const rigExec::RigExecPortHandle &StaticWeightFieldDefaultWeight();
+const rigExec::RigExecPortHandle &StaticWeightFieldTargetCount();
+const rigExec::RigExecPortHandle &StaticWeightFieldOut();
+
+/// DynamicWeightField: each weight w of Base (FloatArray, optional; 1
+/// everywhere without it) as (w * Driver) * Scale + Bias (Float; 1, 1, 0).
+/// The payload is a WeightPacketPayload; only its clamp is read. Non-empty
+/// Indices (IntArray, optional) must name the same set as BaseIndices.
+const rigExec::RigExecOpHandle &DynamicWeightField();
+const rigExec::RigExecPortHandle &DynamicWeightFieldBase();
+const rigExec::RigExecPortHandle &DynamicWeightFieldDriver();
+const rigExec::RigExecPortHandle &DynamicWeightFieldScale();
+const rigExec::RigExecPortHandle &DynamicWeightFieldBias();
+const rigExec::RigExecPortHandle &DynamicWeightFieldTargetCount();
+const rigExec::RigExecPortHandle &DynamicWeightFieldOut();
+const rigExec::RigExecPortHandle &DynamicWeightFieldIndices();
+const rigExec::RigExecPortHandle &DynamicWeightFieldBaseIndices();
+
+/// What a CombineWeightFields op is configured with at compile.
+struct CombineWeightFieldsPayload {
+    WeightCombineMode mode = WeightCombineMode::Multiply;
+    /// Out-of-range weights clamp (true) or fail the op (false).
+    bool clamp = false;
+
+    bool operator==(const CombineWeightFieldsPayload &o) const
+    {
+        return mode == o.mode && clamp == o.clamp;
+    }
+};
+
+/// CombineWeightFields: Inputs (FloatArray list, optional), each a field of
+/// TargetCount weights, folded in feed order as CombineWeights folds, then
+/// Invert (Float, 0) and Strength (Float, 1). An input of another length is
+/// an error.
+const rigExec::RigExecOpHandle &CombineWeightFields();
+const rigExec::RigExecPortHandle &CombineWeightFieldsInputs();
+const rigExec::RigExecPortHandle &CombineWeightFieldsTargetCount();
+const rigExec::RigExecPortHandle &CombineWeightFieldsStrength();
+const rigExec::RigExecPortHandle &CombineWeightFieldsInvert();
+const rigExec::RigExecPortHandle &CombineWeightFieldsOut();
 
 } // namespace rigExecOps
 

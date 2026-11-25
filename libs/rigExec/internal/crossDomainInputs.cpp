@@ -1,5 +1,6 @@
 #include "rigExecSchema/schemaNames.h"
 #include "rigExec/internal/crossDomainInputs.h"
+#include "rigExec/internal/weightField.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/rigEvaluatorInternal.h"
 #include "rigExecMath/pointFrame.h"
@@ -325,8 +326,8 @@ RigExecBakedFinalizeCrossDomainReads(RigExecBakedProgramImpl *program,
                 B, solver.ribbonPointsPath, solver.ribbonPointsPhase,
                 solver.path);
     for (auto &step : B.steps) {
-        if (step.kind == RigExecBakedStepKind::WeightField)
-            RigExecBakedDeclareWeightPointInputs(B, step.object, &step.reads);
+        if (const int f = RigExecBakedWeightFieldOf(B, step); f >= 0)
+            RigExecBakedDeclareWeightPointInputs(B, f, &step.reads);
         size_t propertyChain = 0, propertyPart = 0;
         if (RigExecBakedPropertyPartOf(B, step, &propertyChain,
                                        &propertyPart)) {

@@ -5,6 +5,7 @@
 // comparison below reports through it. Numbers compare bit for bit: the bake
 // copies values and the file preserves bits, with no arithmetic between.
 #include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/weightField.h"
 #include "rigExec/internal/frozenContextInternal.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/rigEvaluatorInternal.h"
@@ -1253,12 +1254,11 @@ _BinaryCompareHeadMemo(const rigExec::RigExecBakedProgramImpl &program,
         rigExec::RigExecBakedIdentityOf(program, live);
     if (identity.kind == rigExec::RigExecBakedStepKind::WeightPacket)
         painted(identity.object);
-    if (live.kind == rigExec::RigExecBakedStepKind::WeightField) {
-        CHECK(live.object >= 0 &&
-              size_t(live.object) < program.weightFields.size());
-        if (live.object >= 0 &&
-            size_t(live.object) < program.weightFields.size())
-            for (int object : program.weightFields[size_t(live.object)].objects)
+    if (const int field = rigExec::RigExecBakedWeightFieldOf(program, live);
+        field >= 0) {
+        CHECK(size_t(field) < program.weightFields.size());
+        if (size_t(field) < program.weightFields.size())
+            for (int object : program.weightFields[size_t(field)].objects)
                 painted(object);
     }
     for (uint32_t id : live.leaves) {

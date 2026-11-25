@@ -11,6 +11,7 @@
 // expected at <examples>/../plugin/rigExecSchema/resources.
 #include "rigExec/internal/inputReplay.h"
 #include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/weightField.h"
 #include "rigExec/internal/bakedTrace.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/api/types.h"
@@ -1787,10 +1788,13 @@ TestTheOracleReadsTheProgramsPlacements()
     CHECK(E.GetBakedGenerationCount() == 2);
     CHECK(second.comparisonMismatches == 0);
     size_t placements = 0, assembles = 0, fields = 0;
+    const auto fieldStep = [](const RigExecOpTraceEntry &entry) {
+        return entry.kind == "OpNode" && entry.domain == "weight";
+    };
     for (const RigExecOpTraceEntry &entry : E.GetLastOpTrace()) {
         placements += entry.kind == "VolumePlacements";
         assembles += entry.kind == "RevisionStatic";
-        fields += entry.kind == "WeightField";
+        fields += fieldStep(entry);
     }
     // Animated incoming points rerun the field and consumer without replacing placement.
     CHECK(placements == 0);
@@ -1801,7 +1805,7 @@ TestTheOracleReadsTheProgramsPlacements()
     const auto held = E.Evaluate(UsdTimeCode(2));
     CHECK(held.valid && held.movedProperties == second.movedProperties);
     for (const auto &entry : E.GetLastOpTrace()) {
-        CHECK(entry.kind != "WeightField");
+        CHECK(!fieldStep(entry));
         CHECK(entry.kind != "RevisionStatic");
     }
 
@@ -2024,7 +2028,7 @@ CheckPlacementReads(const UsdStageRefPtr &stage, const std::string &label,
     CHECK(expected.size() == 2);
     size_t fieldStep = SIZE_MAX;
     for (size_t pred : graph[smoothStatic].preds) {
-        if (graph[pred].kind != "WeightField")
+        if (graph[pred].kind != "OpNode" || graph[pred].domain != "weight")
             continue;
         CHECK(fieldStep == SIZE_MAX);
         fieldStep = pred;
@@ -2512,7 +2516,8 @@ TestResolveAllVtFloatArrayParity()
 }
 
 // A real current-phase producer samples an animated private Token leaf.
-// Unknown authored tokens invalidate the field; recovery must not reuse it.
+// An unknown authored token stops the frame in live and the frozen job
+// declines it; recovery must not reuse the failed field.
 static void
 TestWeightFieldTokenProducer()
 {
@@ -2559,18 +2564,21 @@ TestWeightFieldTokenProducer()
         CHECK(got.diagnostics == want.diagnostics);
         const auto a = got.movedProperties.find(Fixture::Target());
         const auto b = want.movedProperties.find(Fixture::Target());
-        CHECK(a != got.movedProperties.end());
-        CHECK(b != want.movedProperties.end());
-        if (a == got.movedProperties.end() || b == want.movedProperties.end())
-            continue;
-        const auto points = a->second.Get<VtVec3fArray>();
-        CHECK(points == b->second.Get<VtVec3fArray>());
-        if (frame == 1)
-            first = points;
-        if (frame == 2)
-            CHECK(points != first);
-        if (frame == 3)
-            CHECK(points == base);
+        if (frame == 3) {
+            CHECK(!got.valid);
+            CHECK(a == got.movedProperties.end());
+        } else {
+            CHECK(a != got.movedProperties.end());
+            CHECK(b != want.movedProperties.end());
+        }
+        if (a != got.movedProperties.end() && b != want.movedProperties.end()) {
+            const auto points = a->second.Get<VtVec3fArray>();
+            CHECK(points == b->second.Get<VtVec3fArray>());
+            if (frame == 1)
+                first = points;
+            if (frame == 2)
+                CHECK(points != first);
+        }
         std::shared_ptr<const RigExecFrozenProgram> snapshot;
         std::string frozenError;
         CHECK(RigExecFreezeProgram(baked, &snapshot, &frozenError));
@@ -2595,12 +2603,12 @@ TestWeightFieldTokenProducer()
             const auto frozen = RigExecEvaluateFrozen(
                 context, inputs, RigExecMakeProductionStepRunner(),
                 RigExecCancellationToken(), &report);
-            CHECK(report.ran);
-            CHECK(frozen.valid == got.valid);
-            CHECK(frozen.diagnostics == got.diagnostics);
-            CHECK(frozen.movedProperties == got.movedProperties);
-            for (const auto &entry : report.region)
-                CHECK(entry.kind != "WeightField");
+            CHECK(report.ran == got.valid);
+            CHECK(!frozen.valid || got.valid);
+            if (report.ran) {
+                CHECK(frozen.diagnostics == got.diagnostics);
+                CHECK(frozen.movedProperties == got.movedProperties);
+            }
         }
         const auto *program = baked.GetBakedProgram();
         CHECK(program != nullptr);
@@ -2615,15 +2623,18 @@ TestWeightFieldTokenProducer()
               RigExecBakedProgramImpl::WeightField::Form::Revision);
         CHECK(field.placementPhase ==
               RigExecBakedProgramImpl::WeightField::PlacementPhase::Base);
-        CHECK(field.ok == (frame != 3));
-        if (frame == 3) {
-            CHECK(field.values.empty());
-            CHECK(field.error.find("unknown rigExec:planeAxis invalidAxis") !=
-                  std::string::npos);
-        }
+        if (frame == 3)
+            CHECK(std::any_of(got.diagnostics.begin(), got.diagnostics.end(),
+                              [](const std::string &line) {
+                                  return line.find("unknown rigExec:planeAxis "
+                                                   "invalidAxis") !=
+                                         std::string::npos;
+                              }));
+        else
+            CHECK(field.ok);
         size_t producers = 0;
         for (const auto &step : B.steps) {
-            if (step.kind != RigExecBakedStepKind::WeightField)
+            if (rigExec::RigExecBakedWeightFieldOf(B, step) < 0)
                 continue;
             ++producers;
             CHECK(!step.externalReads);
@@ -2641,6 +2652,45 @@ TestWeightFieldTokenProducer()
                                       field.volumes[0])) != step.reads.end());
         }
         CHECK(producers == 1);
+    }
+    // A job frozen at frame 4 reruns the field node for frame 1's axis.
+    {
+        std::shared_ptr<const RigExecFrozenProgram> snapshot;
+        std::string frozenError;
+        CHECK(RigExecFreezeProgram(baked, &snapshot, &frozenError));
+        RigExecFrameInputs inputs;
+        CHECK(RigExecSampleFrameInputs(baked, UsdTimeCode(1), {}, {}, &inputs,
+                                       &frozenError));
+        if (snapshot) {
+            RigExecFrozenEvalContext context;
+            context.compiledRigSignature = baked.GetCompiledRigSignature();
+            context.slotCount = baked.GetBakedProgram()->GetProviderCount();
+            context.varyingInputCount = inputs.values.size();
+            context.flags = (baked.GetPublishWeightFields()
+                                 ? kRigExecFrozenPublishWeightFields
+                                 : 0) |
+                            (baked.GetSolverGuidesEnabled()
+                                 ? kRigExecFrozenSolverGuidesEnabled
+                                 : 0);
+            context.frozen = snapshot.get();
+            auto workspace = RigExecCreateFrozenWorkspace(snapshot);
+            context.workspace = workspace.get();
+            RigExecFrozenRunReport report;
+            const auto frozen = RigExecEvaluateFrozen(
+                context, inputs, RigExecMakeProductionStepRunner(),
+                RigExecCancellationToken(), &report);
+            CHECK(report.ran && frozen.valid);
+            size_t fieldNodes = 0;
+            for (const auto &entry : report.region)
+                fieldNodes +=
+                    entry.kind == "OpNode" && entry.domain == "weight";
+            CHECK(fieldNodes > 0);
+            const auto live = baked.Evaluate(UsdTimeCode(1));
+            CHECK(live.valid && frozen.movedProperties == live.movedProperties);
+            const auto moved = frozen.movedProperties.find(Fixture::Target());
+            CHECK(moved != frozen.movedProperties.end() &&
+                  moved->second.Get<VtVec3fArray>() == first);
+        }
     }
     (void)mover;
 }

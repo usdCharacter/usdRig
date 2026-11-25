@@ -64,12 +64,6 @@ _RrGetenvBool(const char *name, bool fallback)
     return fallback;
 }
 
-bool
-_RrIsWeightKind(RigExecWireStepKind kind)
-{
-    return kind == RigExecWireStepKind::WeightField;
-}
-
 // The skip callback changes state only through MarkSkipped, whose counters
 // only geometry bodies set, and RrSkipGeometryStep; other skips are no-ops.
 void
@@ -234,9 +228,8 @@ _RrInputMemo(const RrProgram *program, const RigExecWireStep &step,
     const auto &state = program->inputState;
     // Geometry and weight inputs key array elements by content version.
     const bool versioned =
-        !contentArrays &&
-        (_RrIsGeometryKind(step.kind) || _RrIsWeightKind(step.kind) ||
-         step.kind == RigExecWireStepKind::SkinTopology);
+        !contentArrays && (_RrIsGeometryKind(step.kind) ||
+                           step.kind == RigExecWireStepKind::SkinTopology);
     const auto appendSlot = [&](uint32_t slot) {
         _RrRawSlotMemo(program, int(slot), key, versioned);
     };
@@ -743,8 +736,6 @@ RrRunOpBody(RrProgram *p, size_t i, std::string *error)
                 step.kind == RigExecWireStepKind::OpChainHead ||
                 step.kind == RigExecWireStepKind::OpChainRange)
                 return RrRunOpStep(p, i, error);
-            if (_RrIsWeightKind(step.kind))
-                return RrRunWeightStep(p, i, error);
             if (_RrIsGeometryKind(step.kind))
                 return RrRunGeometryStep(p, i, error);
             return RrRunPoseStep(p, i, error);
@@ -1744,8 +1735,6 @@ RrExecuteOpGraph(RrProgram *p, bool force, std::string *error)
         std::sort(coveredTyped.begin(), coveredTyped.end());
         for (auto id : p->opGraph.ops[c].descriptor.reads) {
             const auto &value = state.values[size_t(id)];
-            if (exact && step.kind == RigExecWireStepKind::WeightField)
-                continue;
             if (exact && step.kind == RigExecWireStepKind::ProviderRefresh &&
                 value.domain == uint32_t(RigExecWireSlotDomain::SpaceLeaf))
                 continue;

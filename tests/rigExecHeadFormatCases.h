@@ -606,9 +606,7 @@ _HeadEnvelopeFile()
     }
     f.steps[0].succs = {2, 3};
     f.steps[1].succs = {2, 3};
-    fb::RigExecWireStep producer;
-    producer.kind = fb::StepKind::WeightField;
-    producer.object = 0;
+    fb::RigExecWireStep producer = _FieldStep(f, 0, 2);
     producer.isHead = true;
     producer.reads = {fb::SlotRange(fb::SlotDomain::WeightPacket, 0, 3)};
     producer.writes = {fb::SlotRange(fb::SlotDomain::WeightField, 0, 1)};

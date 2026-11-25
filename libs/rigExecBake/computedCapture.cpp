@@ -9,6 +9,7 @@
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/frozenContextInternal.h"
 #include "rigExec/internal/moverGraph.h"
+#include "rigExec/internal/weightField.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/rigEvaluatorInternal.h"
 #include "rigExecScene/skeleton2dTranslation.h"
@@ -2365,8 +2366,8 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
             RigExecBakedIdentityOf(B, step);
         if (identity.kind == RigExecBakedStepKind::WeightPacket)
             paintedSlots(identity.object);
-        else if (step.kind == RigExecBakedStepKind::WeightField)
-            for (int object : B.weightFields[size_t(step.object)].objects)
+        else if (const int f = RigExecBakedWeightFieldOf(B, step); f >= 0)
+            for (int object : B.weightFields[size_t(f)].objects)
                 paintedSlots(object);
         for (const auto leafId : step.leaves) {
             const auto &leaf = B.headLeaves[leafId];

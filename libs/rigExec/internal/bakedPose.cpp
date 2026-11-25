@@ -3340,8 +3340,7 @@ RigExecBakedDeclareInputDependencies(RigExecBakedProgramImpl *program)
     RigExecBakedProgramImpl &B = *program;
     for (RigExecBakedStep &step : B.steps) {
         if (step.isHead) {
-            if (step.kind == RigExecBakedStepKind::WeightField)
-                RigExecBakedDeclareWeightField(&B, &step);
+            RigExecBakedDeclareWeightField(&B, &step);
             continue;
         }
         step.varyingInputs = false;
@@ -3355,9 +3354,9 @@ RigExecBakedDeclareInputDependencies(RigExecBakedProgramImpl *program)
                          step.reads.end());
         RigExecBakedDependencySink sink{&step};
         NoteStepInputs(B, &sink);
-        if (step.kind == RigExecBakedStepKind::WeightField) {
+        if (const int f = RigExecBakedWeightFieldOf(B, step); f >= 0) {
             RigExecBakedDeclareWeightField(&B, &step);
-            const auto &field = B.weightFields[size_t(step.object)];
+            const auto &field = B.weightFields[size_t(f)];
             for (const auto &read : field.scalarReads)
                 for (uint32_t leaf : read.leaves)
                     step.varyingInputs =
@@ -3670,7 +3669,7 @@ RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
     // Weight-field path leaves are allocated by field capture after the initial
     // census; bind field memo IDs only against this final numbered census.
     for (auto &step : B.steps)
-        if (step.kind == RigExecBakedStepKind::WeightField) {
+        if (RigExecBakedWeightFieldOf(B, step) >= 0) {
             step.bindingLeaves.clear();
             RigExecBakedDeclareWeightField(&B, &step);
         }

@@ -131,7 +131,11 @@ enum StepKind : ubyte { ComposeSubtree = 0, Solve, SolverCommit, Constraint,
   FrameMatrix,
   /// Reserved: a property revision before format 37, which runs as OpNode
   /// steps since. Open refuses it.
-  ReservedPropertyRevision, RestCompose, LadderCompose, SkinTopology, WeightField, SpaceExpression, ChainInputs, AvarInputs, SpaceCheckpoint, ProviderRefresh,
+  ReservedPropertyRevision, RestCompose, LadderCompose, SkinTopology,
+  /// Reserved: a weight field before format 40, which runs as OpNode steps
+  /// since. Open refuses it.
+  ReservedWeightField, SpaceExpression, ChainInputs, AvarInputs,
+  SpaceCheckpoint, ProviderRefresh,
   /// Reserved: format 35's whole op graph as one step. Open refuses it.
   ReservedOpGraph,
   /// Format 36: File.op_graph's nodes as steps: one node that does not run
@@ -1925,6 +1929,17 @@ table OpLookup {
   /// scales, 11 extentU, 12 extentV, 13 values, 14 indices, 15 sample, 16
   /// target and 17 curve points, 18 the falloff samples, 19 the combine
   /// target point count.
+  /// 3 (format 40): the points entering revision `part` of point chain
+  /// `object` (geometry.chains index), as one array.
+  /// 4 (format 40): input `read` of weight object `part` as weight field
+  /// `object` (geometry.weight_fields index) reads it: 0 defaultWeight, 1
+  /// driver, 2 scale, 3 bias, 4 strength, 5 invert, 6 falloffMin, 7
+  /// falloffMax, 8-10 the x, y, z scales, 11-13 the positive and 14-16 the
+  /// negative scales, 17 extentU, 18 extentV (floats); 19 the scales, 20
+  /// the positive and 21 the negative scales (Vec3f); 22 the sampled
+  /// points, 23 the curve points, 24 the falloff samples, 25 the placement,
+  /// 26 the field's point count, 27 values, 28 indices, 29 the plane axis
+  /// and 30 whether the plane is bounded (uint).
   source: ubyte;
   object: uint;
   part: int = -1;
@@ -1937,7 +1952,8 @@ table OpHostOutput {
   port: uint;
   /// 0: property version `object`; 1 and 2 (format 38): the final and
   /// the base placement of volume slot `object`; 3 (format 39): the
-  /// packet of weight object `object`.
+  /// packet of weight object `object`; 5 (format 40): the weights of weight
+  /// field `object`.
   target: ubyte;
   object: uint;
 }

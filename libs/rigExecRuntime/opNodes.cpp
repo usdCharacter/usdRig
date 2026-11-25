@@ -128,6 +128,23 @@ struct RrOpHost {
     {
         return RrStoreWeightPacket(&p, output, value, error);
     }
+    bool LookUpChainVersion(uint32_t, const eval::OpLookup &lookup,
+                            const RigExecTypeDesc &type, void *value,
+                            std::string *error) const
+    {
+        return RrLookUpChainVersion(&p, lookup, type, value, error);
+    }
+    bool LookUpWeightField(uint32_t, const eval::OpLookup &lookup,
+                           const RigExecTypeDesc &type, void *value,
+                           std::string *error) const
+    {
+        return RrLookUpWeightField(&p, lookup, type, value, error);
+    }
+    bool StoreWeightField(const eval::OpHostOutput &output, const void *value,
+                          std::string *error) const
+    {
+        return RrStoreWeightField(&p, output, value, error);
+    }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t, const void *,
                     size_t, std::string *error) const
     {
@@ -219,6 +236,7 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
             return Fail(error, where + ": settings do not decode: " + why);
         builder.AddOp(*op.handle, payload.Data());
     }
+    std::vector<std::pair<uint32_t, uint32_t>> fieldObjects;
     for (size_t n = 0; n < graph.nodes.size(); ++n) {
         for (const auto &input : graph.nodes[n]->inputs) {
             const RigExecPortHandle *in = nullptr;
@@ -248,6 +266,13 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
             host.source = eval::OpHostSource(input->host);
             host.object = input->object;
             layout.hostInputs.push_back(host);
+            if (host.source == eval::OpHostSource::Lookup &&
+                host.object < graph.lookups.size() &&
+                graph.lookups[host.object]->source ==
+                    uint8_t(eval::OpLookupSource::WeightFieldInputs) &&
+                graph.lookups[host.object]->part >= 0)
+                fieldObjects.emplace_back(
+                    uint32_t(n), uint32_t(graph.lookups[host.object]->part));
         }
     }
     for (const auto &pair : graph.order)
@@ -272,6 +297,8 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
     nodes->propertyChain.assign(graph.nodes.size(), kRigExecInvalidIndex);
     nodes->propertyPart.assign(graph.nodes.size(), kRigExecInvalidIndex);
     nodes->weightObject.assign(graph.nodes.size(), kRigExecInvalidIndex);
+    for (const auto &[node, object] : fieldObjects)
+        nodes->weightObject[node] = object;
     for (const auto &output : graph.hostOutputs) {
         if (output->node >= graph.nodes.size())
             return Fail(error, "a stored value names no node");

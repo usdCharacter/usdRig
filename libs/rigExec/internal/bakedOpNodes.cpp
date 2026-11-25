@@ -93,6 +93,24 @@ struct BakedOpHost {
     {
         return RigExecBakedStoreWeightPacket(B, output, value, error);
     }
+    bool LookUpChainVersion(uint32_t index, const eval::OpLookup &lookup,
+                            const RigExecTypeDesc &type, void *value,
+                            std::string *error) const
+    {
+        return RigExecBakedLookUpChainVersion(B, index, lookup, type, value,
+                                              error);
+    }
+    bool LookUpWeightField(uint32_t, const eval::OpLookup &lookup,
+                           const RigExecTypeDesc &type, void *value,
+                           std::string *error) const
+    {
+        return RigExecBakedLookUpWeightField(B, lookup, type, value, error);
+    }
+    bool StoreWeightField(const eval::OpHostOutput &output, const void *value,
+                          std::string *error) const
+    {
+        return RigExecBakedStoreWeightField(B, output, value, error);
+    }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t, const void *,
                     size_t, std::string *error) const
     {
@@ -295,6 +313,16 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
                 d.values[p] != kRigExecInvalidIndex)
                 visit(d.values[p]);
     };
+    for (RigExecBakedStep &step : B->steps) {
+        const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(*B, step);
+        if (!origin || origin->family != RigExecBakedOpFamily::WeightField)
+            continue;
+        const uint32_t n = uint32_t(step.object);
+        DeclareNodeReads(*B, op, n, OpReader(), &step.reads);
+        outputs(n, [&](uint32_t v) {
+            step.writes.push_back(RigExecBakedOne(D::OpValue, int(v)));
+        });
+    }
     for (uint32_t n = 0; n < layout.nodes.size(); ++n) {
         if (layout.chainOf[n] != kRigExecInvalidIndex ||
             n < B->opNodeOrigins.size())
@@ -399,10 +427,12 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
     if (!B.opNodeOrigins.empty() && !RigExecEnsureBuiltinRegistry(error))
         return false;
     RigExecRigDescBuilder builder;
-    if (!RigExecBakedAddPropertyOps(B, &builder, &layout, error))
+    if (!RigExecBakedAddPropertyOps(B, &builder, &layout, error) ||
+        !RigExecBakedAddWeightFieldOps(B, &builder, &layout, false, error))
         return false;
     RigExecBakedAddVolumePlacementOps(B, &builder, &layout);
-    if (!RigExecBakedAddWeightPacketOps(B, &builder, &layout, error))
+    if (!RigExecBakedAddWeightPacketOps(B, &builder, &layout, error) ||
+        !RigExecBakedAddWeightFieldOps(B, &builder, &layout, true, error))
         return false;
     RigExecBakedOpInjection injection;
     injection.builder = &builder;
@@ -480,6 +510,7 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
         return false;
     B.propertyKeyHold.assign(layout.lookups.size(), VtArray<GfVec2f>());
     B.propertyPointHold.assign(layout.lookups.size(), VtVec3fArray());
+    B.chainVersionGather.assign(layout.lookups.size(), {});
     op->outputs = injection.outputs;
     for (const RigExecDescNode &node : desc->Data().nodes) {
         const RigExecOpDesc &desc = *registry.OpAt(node.op).desc;
@@ -553,6 +584,12 @@ RigExecBakedRunOpStep(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
         step->diagnostics.push_back(
             B.weightObjects[size_t(origin->object)].path.GetString() + ": " +
             error);
+    else if (origin && origin->family == RigExecBakedOpFamily::WeightField)
+        step->diagnostics.push_back(
+            B.weightObjects[size_t(B.weightFields[size_t(origin->object)]
+                                       .nodeObjects[size_t(origin->part)])]
+                .path.GetString() +
+            ": " + error);
     else
         step->diagnostics.push_back(error);
 }

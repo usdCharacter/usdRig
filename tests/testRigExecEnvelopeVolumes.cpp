@@ -1,6 +1,7 @@
 // S9 newly admitted singleton envelopes; the old walk refused this domain.
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/weightField.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"
@@ -104,7 +105,7 @@ PlacementGeometryAndRecovery(const std::string &fixture)
     CHECK(property == 3 && constraint == 2 && base == 3 && final == 2);
     bool geometryEdge = false;
     for (const auto &step : B.steps)
-        if (step.kind == RigExecBakedStepKind::WeightField)
+        if (RigExecBakedWeightFieldOf(B, step) >= 0)
             for (const auto &read : step.reads)
                 if (read.domain == RigExecBakedSlotDomain::ChainPoints)
                     geometryEdge = true;

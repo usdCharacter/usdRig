@@ -5,8 +5,13 @@
 #include "rigExecScene/weightProgram.h"
 #include "rigExec/internal/parallel.h"
 #include "rigExec/internal/pathText.h"
+#include "rigExecEvalCore/opSteps.h"
 #include "rigExecEvalCore/weights.h"
 #include "rigExecMath/affineFrameKernels.h"
+#include "rigExecOps/weight/weightOps.h"
+#include "rigExecStdTypes/array.h"
+#include "rigExecStdTypes/stdTypes.h"
+#include "rigExec/api/rigDesc.h"
 #include <pxr/base/tf/staticTokens.h>
 #include <pxr/usd/usdGeom/pointBased.h>
 #include <pxr/usd/sdf/types.h>
@@ -33,6 +38,7 @@ TF_DEFINE_PRIVATE_TOKENS(_weightFieldTokens,
     ((curve, rigExec::SchemaAttrText::rigExecCurve))
     ((falloffSamples, rigExec::SchemaAttrText::inputsFalloffSamples))
     ((weightObject, rigExec::SchemaAttrText::rigExecWeightObject))
+    ((readPhase, rigExec::RigExecReadPhaseMetadataName))
     ((rigExecDefaultWeight, rigExec::SchemaAttrText::rigExecDefaultWeight))
     ((inputsDriver, rigExec::SchemaAttrText::inputsDriver))
     ((inputsScale, rigExec::SchemaAttrText::inputsScale))
@@ -243,7 +249,6 @@ RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator,
         Field field;
         field.object = found->second;
         field.form = form;
-        field.currentInputs.resize(B.weightObjects.size());
         field.scalarReadIndex.assign(B.weightObjects.size() * 19, -1);
         field.consumer = consumer;
         field.part = part;
@@ -316,6 +321,26 @@ RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator,
         };
         visit(visit, field.object);
         field.objects.assign(objects.begin(), objects.end());
+        std::vector<char> mark(B.weightObjects.size(), 0);
+        const auto order = [&](const auto &self, int object) -> void {
+            if (object < 0 || size_t(object) >= mark.size() ||
+                mark[size_t(object)] == 2)
+                return;
+            if (mark[size_t(object)] == 1) {
+                field.cyclic = true;
+                return;
+            }
+            mark[size_t(object)] = 1;
+            const auto &weight = B.weightObjects[size_t(object)];
+            if (weight.fieldKind == eval::kWeightKindDynamic)
+                self(self, weight.base);
+            if (weight.fieldKind == eval::kWeightKindCombine)
+                for (int input : weight.inputs)
+                    self(self, input);
+            mark[size_t(object)] = 2;
+            field.nodeObjects.push_back(object);
+        };
+        order(order, field.object);
         for (auto &read : field.scalarReads)
             for (auto &hop : read.walk.hops) {
                 const auto pose = B.poseWeightIndex.find(hop.path);
@@ -374,19 +399,9 @@ RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator,
     B.lastHeadOverrides.resize(B.headOverrideSlots.size());
     B.headOverrideMoved.resize(B.headOverrideSlots.size(), 0);
     B.volumePlacementBase.assign(B.paths.size(), GfMatrix4d(1.0));
-    for (size_t f = 0; f < B.weightFields.size(); ++f) {
-        const auto &field = B.weightFields[f];
-        if (field.form == Field::Form::Revision)
-            continue;
-        RigExecBakedStep step;
-        step.kind = RigExecBakedStepKind::WeightField;
-        step.object = int(f);
-        step.isHead = true;
-        step.alwaysRuns = false;
-        step.maxDiagnostics = 0;
-        RigExecBakedDeclareWeightField(&B, &step);
-        B.steps.push_back(std::move(step));
-    }
+    for (size_t f = 0; f < B.weightFields.size(); ++f)
+        if (B.weightFields[f].form != Field::Form::Revision)
+            RigExecBakedAddWeightFieldSteps(&B, int(f), true);
     for (auto &step : B.steps) {
         size_t chain = 0, part = 0;
         if (!RigExecBakedPropertyPartOf(B, step, &chain, &part))
@@ -400,12 +415,48 @@ RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator,
     }
     return true;
 }
+int
+RigExecBakedWeightFieldOf(const Baked &B, const RigExecBakedStep &step)
+{
+    const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(B, step);
+    return origin && origin->family == RigExecBakedOpFamily::WeightField
+               ? origin->object
+               : -1;
+}
+void
+RigExecBakedAddWeightFieldSteps(Baked *program, int index, bool head)
+{
+    auto &B = *program;
+    const size_t nodes = B.weightFields[size_t(index)].nodeObjects.size();
+    for (size_t i = 0; i < nodes; ++i) {
+        RigExecBakedOpOrigin origin;
+        origin.family = RigExecBakedOpFamily::WeightField;
+        origin.object = index;
+        origin.part = int32_t(i);
+        RigExecBakedStep step;
+        step.kind = RigExecBakedStepKind::OpNode;
+        step.object = int(B.opNodeOrigins.size());
+        step.maxDiagnostics = 1;
+        if (head) {
+            step.isHead = true;
+            step.alwaysRuns = false;
+        }
+        B.opNodeOrigins.push_back(origin);
+        RigExecBakedDeclareWeightField(&B, &step);
+        B.steps.push_back(std::move(step));
+    }
+}
 void
 RigExecBakedDeclareWeightField(Baked *program, RigExecBakedStep *step)
 {
-    const auto &field = program->weightFields[size_t(step->object)];
-    step->writes.push_back(
-        RigExecBakedOne(RigExecBakedSlotDomain::WeightField, step->object));
+    const int index = RigExecBakedWeightFieldOf(*program, *step);
+    if (index < 0)
+        return;
+    const auto &field = program->weightFields[size_t(index)];
+    if (size_t(program->opNodeOrigins[size_t(step->object)].part) + 1 ==
+        field.nodeObjects.size())
+        step->writes.push_back(
+            RigExecBakedOne(RigExecBakedSlotDomain::WeightField, index));
     for (const auto &read : field.scalarReads) {
         for (uint32_t version : read.versions)
             step->reads.push_back(RigExecBakedOne(
@@ -483,96 +534,6 @@ RigExecBakedDeclareWeightField(Baked *program, RigExecBakedStep *step)
         std::unique(step->overrideSlots.begin(), step->overrideSlots.end()),
         step->overrideSlots.end());
 }
-bool
-RigExecBakedCaptureWeightFieldInputs(
-    const Baked &B, int index, std::vector<RigExecWeightFieldInputs> *inputs,
-    RigExecWeightPointView *entering, size_t *count)
-{
-    if (!inputs || !entering || !count || index < 0 ||
-        size_t(index) >= B.weightFields.size())
-        return false;
-    const auto &field = B.weightFields[size_t(index)];
-    *entering = {};
-    *count = 1;
-    bool haveContext = true;
-    if (field.form == Field::Form::Revision) {
-        const auto [c, k] = B.revisionIndex[size_t(field.consumer)];
-        const auto &chain = B.chains[size_t(c)];
-        haveContext = chain.haveBase;
-        if (haveContext) {
-            // The version entering the consumer as one array: in place, or
-            // gathered into the field's own scratch, which only its step and
-            // that step's key read, one after the other.
-            const GfVec3f *points = nullptr;
-            size_t pointCount = 0;
-            RigExecBakedVersionPoints(
-                chain, size_t(k), &const_cast<Field &>(field).enteringGather,
-                &points, &pointCount);
-            *entering = {points, pointCount};
-        }
-        *count = entering->count;
-    }
-    inputs->resize(B.weightObjects.size());
-    // All borrowed views are from this generation's leaves or selected graph versions.
-    for (int objectIndex : field.objects) {
-        const size_t id = size_t(objectIndex);
-        const auto &object = B.weightObjects[id];
-        auto &input = (*inputs)[id];
-        input = RigExecWeightFieldInputs{};
-        input.blocked =
-            id < B.weightCycleBlocked.size() && B.weightCycleBlocked[id];
-        const int samplesLeaf = object.fieldFalloffSamplesLeaf;
-        if (samplesLeaf >= 0 &&
-            size_t(samplesLeaf) < object.fieldLeaves.values.size() &&
-            object.fieldLeaves.values[size_t(samplesLeaf)]
-                .IsHolding<VtFloatArray>()) {
-            const auto &samples = object.fieldLeaves.values[size_t(samplesLeaf)]
-                                      .UncheckedGet<VtFloatArray>();
-            input.falloffSamples = samples.cdata();
-            input.falloffSampleCount = samples.size();
-        }
-        for (int member = 0; member < 19; ++member)
-            input.scalars[size_t(member)] = Scalar(
-                B, field, int(id), member, input.scalars[size_t(member)]);
-        for (int key = 0; key < 3; ++key) {
-            const auto chosen =
-                RigExecBakedReadWeightPointInput(B, index, int(id), key);
-            input.phasedPoints[size_t(key)] = {
-                chosen.declared, chosen.available, chosen.data, chosen.count};
-            if (size_t(key) < object.fieldLeaves.values.size() &&
-                object.fieldLeaves.values[size_t(key)]
-                    .IsHolding<VtVec3fArray>()) {
-                const auto &points = object.fieldLeaves.values[size_t(key)]
-                                         .UncheckedGet<VtVec3fArray>();
-                input.rawPoints[size_t(key)] = {false, true, points.data(),
-                                                points.size()};
-            }
-        }
-        // GetString() on an empty token reads a function-local static.
-        const auto token = [&](size_t key, bool exists, const char *fallback) {
-            const auto &values = object.fieldLeaves.values;
-            if (key < values.size() && values[key].IsHolding<TfToken>()) {
-                const TfToken &value = values[key].UncheckedGet<TfToken>();
-                return value.IsEmpty() ? std::string() : value.GetString();
-            }
-            return exists ? std::string() : std::string(fallback);
-        };
-        input.axis = token(3, object.fieldAxisAttribute, SchemaValueText::x);
-        input.bounds =
-            token(4, object.fieldBoundsAttribute, SchemaValueText::unbounded);
-        const auto &placements =
-            field.placementPhase == Field::PlacementPhase::Base
-                ? B.volumePlacementBase
-                : B.volumePlacement;
-        const int slot = object.providerSlot;
-        input.hasPlacement =
-            slot >= 0 && size_t(slot) < B.placedVolumes.size() &&
-            B.placedVolumes[size_t(slot)] && size_t(slot) < placements.size();
-        if (input.hasPlacement)
-            input.placement = placements[size_t(slot)];
-    }
-    return haveContext;
-}
 void
 RigExecBakedWeightFieldCoveredVersions(const Baked &B, int index,
                                        std::vector<uint32_t> *versions)
@@ -584,170 +545,546 @@ RigExecBakedWeightFieldCoveredVersions(const Baked &B, int index,
                          read.versions.end());
 }
 namespace {
-struct FieldMath : RigExecGfAffineMath {
-    static Mat4 RemoveScaleShear(const Mat4 &m)
-    {
-        return m.RemoveScaleShear();
-    }
-};
-struct FieldInputs {
-    const Baked &b;
-    const Field &field;
-    eval::WeightObjectFacts weightFacts(size_t i) const
-    {
-        const auto &r = b.weightProgram[i];
-        eval::WeightObjectFacts f;
-        f.kind = r.kind;
-        f.representation = r.representation;
-        f.combineMode = r.combineMode;
-        f.base = r.base;
-        f.clamp = r.clamp;
-        // Baked descriptor errors already reject unknown range policies.
-        f.strict = !r.clamp;
-        f.samplesInFlight = r.samplesInFlight;
-        f.blocked = field.currentInputs[i].blocked;
-        f.blockedBeforeStaticError = true;
-        f.inputCount = r.inputs.size();
-        f.inputIndices = r.inputs.data();
-        f.falloffCurve = r.falloffCurve.data();
-        f.falloffCurveCount = r.falloffCurve.size();
-        return f;
-    }
-    const std::string &weightName(size_t i) const
-    {
-        return b.weightProgram[i].name;
-    }
-    const char *weightTypeText(size_t i) const
-    {
-        return b.weightProgram[i].type.GetText();
-    }
-    std::string weightCombineText(size_t i) const
-    {
-        return b.weightProgram[i].combineToken.GetText();
-    }
-    const std::string &weightStaticError(size_t i) const
-    {
-        return b.weightProgram[i].staticError;
-    }
-    const std::string &weightPhaseError(size_t i) const
-    {
-        return b.weightProgram[i].phaseError;
-    }
-    bool dynamicSupportMatches(size_t, size_t) const
-    {
+bool
+FieldFail(std::string *error, const std::string &why)
+{
+    if (error)
+        *error = why;
+    return false;
+}
+
+template <class T>
+bool
+PutFieldValue(const T &value, const RigExecTypeDesc &type, void *out)
+{
+    if (type.size != sizeof(T) || !type.triviallyCopyable)
+        return false;
+    std::memcpy(out, &value, sizeof(T));
+    return true;
+}
+
+bool
+LendFieldArray(const void *data, size_t count, const RigExecTypeDesc &type,
+               void *out)
+{
+    if (!type.borrow)
+        return false;
+    type.borrow(out, data, count);
+    return true;
+}
+
+/// How many points field \p field weighs this frame: one for an envelope,
+/// the entering points of its revision's chain otherwise.
+bool
+FieldCount(const Baked &B, const Field &field, size_t *count,
+           std::string *error)
+{
+    *count = 1;
+    if (field.form != Field::Form::Revision)
         return true;
+    const auto [c, k] = B.revisionIndex[size_t(field.consumer)];
+    const auto &chain = B.chains[size_t(c)];
+    if (!chain.haveBase)
+        return FieldFail(error, "point chain " + std::to_string(c) +
+                                    " has no points this frame");
+    *count = chain.lastBase.size();
+    return true;
+}
+
+/// Whether \p w's weight target is read at a phase other than base.
+bool
+PhasedTarget(const Baked &B, const Baked::WeightObject &w)
+{
+    const auto relation = B.stage->GetPrimAtPath(w.path).GetRelationship(
+        _weightFieldTokens->weightTarget);
+    if (!relation ||
+        !relation.HasAuthoredMetadata(_weightFieldTokens->readPhase))
+        return false;
+    RigExecReadPhase phase;
+    std::string why;
+    return RigExecResolveReadPhase(relation, &phase, &why) && !phase.IsBase();
+}
+
+/// What makes weight object \p object of \p field unable to weigh any
+/// frame, or empty.
+std::string
+FieldStructureError(const Baked &B, const Field &field, size_t object)
+{
+    const auto &w = B.weightObjects[object];
+    const auto &record = B.weightProgram[object];
+    const std::string &who = record.name;
+    if (field.cyclic)
+        return "operation cycle: " + who +
+               " composes a weight that composes it";
+    if (!record.staticError.empty())
+        return record.staticError;
+    switch (record.kind) {
+    case eval::kWeightKindStatic: {
+        if (record.representation < eval::kWeightConstant ||
+            record.representation > eval::kWeightSparse)
+            return "unknown weight representation on " + who;
+        if (record.representation == eval::kWeightConstant &&
+            !record.values.empty())
+            return "constant weight must not author values on " + who;
+        if (record.representation != eval::kWeightSparse)
+            return {};
+        if (record.indices.size() != record.values.size())
+            return "sparse index/value size mismatch on " + who;
+        std::set<int> seen;
+        for (const int index : record.indices) {
+            if (index < 0)
+                return "sparse index out of range on " + who;
+            if (!seen.insert(index).second)
+                return "duplicate sparse index on " + who;
+        }
+        return {};
     }
-    float fieldScalar(size_t i, int m, float) const
-    {
-        return field.currentInputs[i].scalars[size_t(m)];
+    case eval::kWeightKindDynamic:
+        return {};
+    case eval::kWeightKindCombine:
+        if (record.combineMode < 0 ||
+            record.combineMode > eval::kWeightCombineOverlay)
+            return who + ": unknown rigExec:combineMode " +
+                   record.combineToken.GetString();
+        return {};
+    case eval::kWeightKindSphere:
+    case eval::kWeightKindPlane:
+    case eval::kWeightKindCurve: {
+        const int slot = w.providerSlot;
+        if (slot < 0 || size_t(slot) >= B.placedVolumes.size() ||
+            !B.placedVolumes[size_t(slot)])
+            return who + ": no resolved placement for this volume weight";
+        if (!record.phaseError.empty())
+            return record.phaseError;
+        if (w.fieldFacts.samplesInFlight && !PhasedTarget(B, w) &&
+            field.form != Field::Form::Revision)
+            return who + ": rigExec:weightTarget reads `preceding` but no "
+                         "in-flight points were supplied";
+        return {};
     }
-    const GfMatrix4d *fieldPlacement(size_t i) const
-    {
-        const auto &in = field.currentInputs[i];
-        return in.hasPlacement ? &in.placement : nullptr;
+    default:
+        return "unknown weight object type " + record.type.GetString() +
+               " on " + who;
     }
-    RigExecWeightPointInput fieldPoints(size_t i, int leaf, bool phased) const
-    {
-        const auto &in = field.currentInputs[i];
-        return (phased ? in.phasedPoints : in.rawPoints)[size_t(leaf)];
+}
+
+/// The points volume \p object of \p field samples this frame: its phased
+/// target, else its sample source, else its raw target.
+bool
+SamplePoints(const Baked &B, int index, const Field &field, int object,
+             RigExecBakedPointInputValue *points, std::string *error)
+{
+    const auto &w = B.weightObjects[size_t(object)];
+    const std::string &who = B.weightProgram[size_t(object)].name;
+    const auto raw = [&](int key) {
+        RigExecBakedPointInputValue value;
+        const auto &values = w.fieldLeaves.values;
+        if (size_t(key) < values.size() &&
+            values[size_t(key)].IsHolding<VtVec3fArray>()) {
+            const auto &array =
+                values[size_t(key)].UncheckedGet<VtVec3fArray>();
+            value.available = true;
+            value.data = array.cdata();
+            value.count = array.size();
+        }
+        return value;
+    };
+    *points = RigExecBakedReadWeightPointInput(B, index, object, 1);
+    if (!points->declared) {
+        if (w.fieldFacts.samplesInFlight)
+            return FieldFail(error, who + ": rigExec:weightTarget reads "
+                                          "`preceding` but no in-flight "
+                                          "points were supplied");
+        *points = RigExecBakedReadWeightPointInput(B, index, object, 0);
+        if (!points->declared)
+            *points = raw(0);
+        if (!points->available)
+            *points = raw(1);
     }
-    auto fieldFalloff(size_t i) const
-    {
-        const auto &in = field.currentInputs[i];
-        return std::make_pair(in.falloffSamples, in.falloffSampleCount);
-    }
-    const std::string &fieldPlaneToken(size_t i, bool bounds) const
-    {
-        const auto &in = field.currentInputs[i];
-        return bounds ? in.bounds : in.axis;
-    }
-    auto fieldValues(size_t i) const
-    {
-        const auto &in = field.currentInputs[i];
-        const auto &v = b.weightProgram[i].values;
-        return in.paintedArraysDeclared
-                   ? std::make_pair(in.paintedValues, in.paintedValueCount)
-                   : std::make_pair(v.data(), v.size());
-    }
-    auto fieldIndices(size_t i) const
-    {
-        const auto &in = field.currentInputs[i];
-        const auto &v = b.weightProgram[i].indices;
-        return in.paintedArraysDeclared
-                   ? std::make_pair(in.paintedIndices, in.paintedIndexCount)
-                   : std::make_pair(v.data(), v.size());
-    }
-};
-struct FieldState {
-    size_t count;
-    RigExecWeightFieldWorkspace &work;
-    size_t weightObjectCount() const
-    {
-        return count;
-    }
-    auto &fieldWorkspace() const
-    {
-        return work;
-    }
-    auto *fieldCurveScratch() const
-    {
-        return &work.localCurve;
-    }
-};
-struct FieldHost {
-    using Math = FieldMath;
-    using Inputs = FieldInputs;
-    using State = FieldState;
-    Inputs in;
-    State out;
-    const Inputs &inputs() const
-    {
-        return in;
-    }
-    State &state()
-    {
-        return out;
-    }
-    const RigExecRangeRunner *ranges() const
-    {
-        return out.work.ranges;
-    }
-};
+    if (!points->available)
+        return FieldFail(error, who + ": could not read the points to sample");
+    size_t count = 0;
+    if (!FieldCount(B, field, &count, error))
+        return false;
+    if (points->count != count)
+        return FieldFail(
+            error, who + ": sampled point count does not match the target");
+    return true;
+}
+
 } // namespace
 
-void
-RigExecBakedRunWeightField(Baked *program, RigExecBakedStep *step)
+bool
+RigExecBakedLookUpWeightField(const Baked &B, const eval::OpLookup &lookup,
+                              const RigExecTypeDesc &type, void *out,
+                              std::string *error)
 {
-    auto &B = *program;
-    auto &field = B.weightFields[size_t(step->object)];
-    const auto &before = field.values;
-    const bool beforeOk = field.ok;
-    const auto beforeError = field.error;
-    const size_t beforeCount = field.count;
-    RigExecWeightPointView entering;
-    size_t count = 1;
-    auto &inputs = field.currentInputs;
-    const bool haveContext = RigExecBakedCaptureWeightFieldInputs(
-        B, step->object, &inputs, &entering, &count);
-    const eval::WeightPointViewT<FieldMath> view{entering.data, entering.count};
-    const auto *current = field.form == Field::Form::Revision ? &view : nullptr;
+    using R = eval::OpFieldRead;
+    if (lookup.object >= B.weightFields.size() || lookup.part < 0 ||
+        size_t(lookup.part) >= B.weightObjects.size())
+        return FieldFail(error, "weight field " +
+                                    std::to_string(lookup.object) +
+                                    " reads no weight object " +
+                                    std::to_string(lookup.part));
+    const int index = int(lookup.object);
+    const Field &field = B.weightFields[lookup.object];
+    const int object = lookup.part;
+    const auto &w = B.weightObjects[size_t(object)];
+    const auto &record = B.weightProgram[size_t(object)];
+    const auto scalar = [&](int member) {
+        return Scalar(B, field, object, member,
+                      eval::kOpFieldScalarDefaults[size_t(member)]);
+    };
+    bool ok = false;
+    if (lookup.read <= uint8_t(R::LastScalar)) {
+        ok = PutFieldValue(scalar(lookup.read), type, out);
+    } else if (lookup.read <= uint8_t(R::NegativeScales)) {
+        const int first = 8 + 3 * (lookup.read - uint8_t(R::ScaleAxes));
+        ok = PutFieldValue(
+            GfVec3f(scalar(first), scalar(first + 1), scalar(first + 2)), type,
+            out);
+    } else if (lookup.read == uint8_t(R::SamplePoints)) {
+        RigExecBakedPointInputValue points;
+        if (!SamplePoints(B, index, field, object, &points, error))
+            return false;
+        ok = LendFieldArray(points.data, points.count, type, out);
+    } else if (lookup.read == uint8_t(R::CurvePoints)) {
+        RigExecBakedPointInputValue curve =
+            RigExecBakedReadWeightPointInput(B, index, object, 2);
+        if (!curve.declared) {
+            const auto &values = w.fieldLeaves.values;
+            curve = {};
+            if (values.size() > 2 && values[2].IsHolding<VtVec3fArray>()) {
+                const auto &array = values[2].UncheckedGet<VtVec3fArray>();
+                curve.available = true;
+                curve.data = array.cdata();
+                curve.count = array.size();
+            }
+        }
+        ok = LendFieldArray(curve.available ? curve.data : nullptr,
+                            curve.available ? curve.count : 0, type, out);
+    } else if (lookup.read == uint8_t(R::FalloffSamples)) {
+        const int leaf = w.fieldFalloffSamplesLeaf;
+        const auto &values = w.fieldLeaves.values;
+        const VtFloatArray *samples =
+            leaf >= 0 && size_t(leaf) < values.size() &&
+                    values[size_t(leaf)].IsHolding<VtFloatArray>()
+                ? &values[size_t(leaf)].UncheckedGet<VtFloatArray>()
+                : nullptr;
+        ok = samples && !samples->empty()
+                 ? LendFieldArray(samples->cdata(), samples->size(), type, out)
+                 : LendFieldArray(record.falloffCurve.data(),
+                                  record.falloffCurve.size(), type, out);
+    } else if (lookup.read == uint8_t(R::Placement)) {
+        const auto &placements =
+            field.placementPhase == Field::PlacementPhase::Base
+                ? B.volumePlacementBase
+                : B.volumePlacement;
+        const size_t slot = size_t(w.providerSlot);
+        if (w.providerSlot < 0 || slot >= placements.size())
+            return FieldFail(error, record.name +
+                                        ": no resolved placement for this "
+                                        "volume weight");
+        ok = type.size == sizeof(GfMatrix4d) && type.triviallyCopyable;
+        if (ok)
+            std::memcpy(out, placements[slot].data(), sizeof(GfMatrix4d));
+    } else if (lookup.read == uint8_t(R::TargetCount)) {
+        size_t count = 0;
+        if (!FieldCount(B, field, &count, error))
+            return false;
+        ok = PutFieldValue(uint32_t(count), type, out);
+    } else if (lookup.read == uint8_t(R::PlaneAxis) ||
+               lookup.read == uint8_t(R::PlaneBounded)) {
+        const bool bounds = lookup.read == uint8_t(R::PlaneBounded);
+        const auto &values = w.fieldLeaves.values;
+        const size_t key = bounds ? 4 : 3;
+        std::string name;
+        if (key < values.size() && values[key].IsHolding<TfToken>()) {
+            const TfToken &token = values[key].UncheckedGet<TfToken>();
+            if (!token.IsEmpty())
+                name = token.GetString();
+        } else if (!(bounds ? w.fieldBoundsAttribute : w.fieldAxisAttribute)) {
+            name = bounds ? SchemaValueText::unbounded : SchemaValueText::x;
+        }
+        uint32_t code = 0;
+        if (bounds) {
+            if (name != SchemaValueText::bounded &&
+                name != SchemaValueText::unbounded)
+                return FieldFail(
+                    error, RigExecUnknownPlaneBoundsMessage(record.name, name));
+            code = name == SchemaValueText::bounded ? 1 : 0;
+        } else {
+            const int axis = eval::WeightAxis(name);
+            if (axis == eval::kWeightPlaneAxisUnknown)
+                return FieldFail(
+                    error, record.name + ": unknown rigExec:planeAxis " + name);
+            code = uint32_t(axis);
+        }
+        ok = PutFieldValue(code, type, out);
+    } else if (lookup.read == uint8_t(R::Values)) {
+        ok = LendFieldArray(record.values.data(), record.values.size(), type,
+                            out);
+    } else if (lookup.read == uint8_t(R::Indices)) {
+        static_assert(sizeof(int) == sizeof(int32_t), "indices are int32");
+        ok = LendFieldArray(record.indices.data(), record.indices.size(), type,
+                            out);
+    }
+    if (!ok)
+        return FieldFail(error,
+                         "weight field " + std::to_string(lookup.object) +
+                             " has no input " + std::to_string(lookup.read) +
+                             " of the looked-up type");
+    return true;
+}
+
+bool
+RigExecBakedLookUpChainVersion(Baked &B, uint32_t index,
+                               const eval::OpLookup &lookup,
+                               const RigExecTypeDesc &type, void *out,
+                               std::string *error)
+{
+    if (lookup.object >= B.chains.size() || lookup.part < 0 ||
+        size_t(lookup.part) > B.chains[lookup.object].revisions.size() ||
+        index >= B.chainVersionGather.size())
+        return FieldFail(error, "point chain " + std::to_string(lookup.object) +
+                                    " has no version " +
+                                    std::to_string(lookup.part));
+    const auto &chain = B.chains[lookup.object];
+    if (!chain.haveBase)
+        return FieldFail(error, "point chain " + std::to_string(lookup.object) +
+                                    " has no points this frame");
+    const GfVec3f *points = nullptr;
+    size_t count = 0;
+    RigExecBakedVersionPoints(chain, size_t(lookup.part),
+                              &B.chainVersionGather[index], &points, &count);
+    if (!LendFieldArray(points, count, type, out))
+        return FieldFail(error, "point chain " + std::to_string(lookup.object) +
+                                    " is looked up as no point array");
+    return true;
+}
+
+bool
+RigExecBakedStoreWeightField(Baked &B, const eval::OpHostOutput &output,
+                             const void *value, std::string *error)
+{
+    if (output.object >= B.weightFields.size())
+        return FieldFail(error,
+                         "no weight field " + std::to_string(output.object));
+    const auto &in =
+        *static_cast<const rigExecStd::RigExecArray<float> *>(value);
+    Field &field = B.weightFields[output.object];
+    const size_t count = in.Size();
+    // Equality preserves signed-zero bits.
+    const bool same = field.ok && field.error.empty() && field.count == count &&
+                      field.values.size() == count &&
+                      (count == 0 || std::memcmp(field.values.data(), in.Data(),
+                                                 count * sizeof(float)) == 0);
+    field.changed = !same;
+    field.values.assign(in.Data(), in.Data() + count);
     field.count = count;
+    field.ok = true;
     field.error.clear();
-    field.workspace.ranges = RigExecGeometryRanges();
-    FieldHost host{{B, field}, {B.weightProgram.size(), field.workspace}};
-    field.ok = haveContext &&
-               eval::RunWeightField(host, size_t(field.object), count, current,
-                                    &field.nextValues, &field.error);
-    // Failed fields publish no partial values. Equality preserves signed-zero bits.
-    if (!field.ok)
-        field.nextValues.clear();
-    const bool sameValues =
-        before.size() == field.nextValues.size() &&
-        (before.empty() || std::memcmp(before.data(), field.nextValues.data(),
-                                       before.size() * sizeof(float)) == 0);
-    field.changed = beforeCount != field.count || beforeOk != field.ok ||
-                    beforeError != field.error || !sameValues;
-    field.values.swap(field.nextValues);
+    return true;
+}
+
+bool
+RigExecBakedAddWeightFieldOps(const Baked &B, RigExecRigDescBuilder *builder,
+                              eval::OpStepLayout *layout, bool revisions,
+                              std::string *error)
+{
+    using R = eval::OpFieldRead;
+    using namespace rigExecOps;
+    std::vector<RigExecNodeId> nodeOf;
+    std::vector<const RigExecPortHandle *> outOf;
+    int current = -1;
+    for (size_t o = 0; o < B.opNodeOrigins.size(); ++o) {
+        const RigExecBakedOpOrigin &origin = B.opNodeOrigins[o];
+        if (origin.family != RigExecBakedOpFamily::WeightField)
+            continue;
+        const int f = origin.object;
+        const Field &field = B.weightFields[size_t(f)];
+        if ((field.form == Field::Form::Revision) != revisions)
+            continue;
+        if (f != current) {
+            current = f;
+            nodeOf.assign(field.nodeObjects.size(), kRigExecInvalidIndex);
+            outOf.assign(field.nodeObjects.size(), nullptr);
+        }
+        const size_t part = size_t(origin.part);
+        const int object = field.nodeObjects[part];
+        const auto &w = B.weightObjects[size_t(object)];
+        const auto &record = B.weightProgram[size_t(object)];
+        const std::string why = FieldStructureError(B, field, size_t(object));
+        if (!why.empty())
+            return FieldFail(error, why);
+        const auto lookAt = [&](RigExecNodeId node,
+                                const RigExecPortHandle &port, int from,
+                                R read) {
+            builder->BindInput(node, port);
+            layout->hostInputs.push_back({node, port.Index(),
+                                          eval::OpHostSource::Lookup,
+                                          uint32_t(layout->lookups.size())});
+            layout->lookups.push_back(
+                {uint8_t(eval::OpLookupSource::WeightFieldInputs), uint32_t(f),
+                 int32_t(from), uint8_t(read)});
+        };
+        const auto look = [&](RigExecNodeId node, const RigExecPortHandle &port,
+                              R read) { lookAt(node, port, object, read); };
+        const auto scalar = [&](RigExecNodeId node,
+                                const RigExecPortHandle &port,
+                                int member) { look(node, port, R(member)); };
+        const auto feed = [&](int from, RigExecNodeId node,
+                              const RigExecPortHandle &port) {
+            const auto at = std::find(field.nodeObjects.begin(),
+                                      field.nodeObjects.end(), from);
+            const size_t i = size_t(at - field.nodeObjects.begin());
+            if (at == field.nodeObjects.end() ||
+                nodeOf[i] == kRigExecInvalidIndex)
+                return false;
+            builder->Connect(nodeOf[i], *outOf[i], node, port);
+            return true;
+        };
+        const bool clamp = record.clamp;
+        RigExecNodeId node = kRigExecInvalidIndex;
+        const RigExecPortHandle *out = nullptr;
+        bool fed = true;
+        switch (record.kind) {
+        case eval::kWeightKindStatic: {
+            const WeightPacketPayload payload{
+                rigExecRig::WeightRepresentation(record.representation), clamp};
+            node = builder->AddOp(StaticWeightField(), &payload);
+            look(node, StaticWeightFieldValues(), R::Values);
+            if (record.representation == eval::kWeightSparse)
+                look(node, StaticWeightFieldIndices(), R::Indices);
+            scalar(node, StaticWeightFieldDefaultWeight(), 0);
+            look(node, StaticWeightFieldTargetCount(), R::TargetCount);
+            out = &StaticWeightFieldOut();
+            break;
+        }
+        case eval::kWeightKindDynamic: {
+            const WeightPacketPayload payload{
+                rigExecRig::WeightRepresentation::Dense, clamp};
+            node = builder->AddOp(DynamicWeightField(), &payload);
+            if (w.base >= 0) {
+                fed = feed(w.base, node, DynamicWeightFieldBase());
+                if (record.representation == eval::kWeightSparse) {
+                    look(node, DynamicWeightFieldIndices(), R::Indices);
+                    lookAt(node, DynamicWeightFieldBaseIndices(), w.base,
+                           R::Indices);
+                }
+            } else
+                look(node, DynamicWeightFieldTargetCount(), R::TargetCount);
+            scalar(node, DynamicWeightFieldDriver(), 1);
+            scalar(node, DynamicWeightFieldScale(), 2);
+            scalar(node, DynamicWeightFieldBias(), 3);
+            out = &DynamicWeightFieldOut();
+            break;
+        }
+        case eval::kWeightKindCombine: {
+            CombineWeightFieldsPayload payload;
+            payload.mode = WeightCombineMode(record.combineMode);
+            payload.clamp = clamp;
+            node = builder->AddOp(CombineWeightFields(), &payload);
+            for (const int input : w.inputs)
+                fed = fed && feed(input, node, CombineWeightFieldsInputs());
+            look(node, CombineWeightFieldsTargetCount(), R::TargetCount);
+            scalar(node, CombineWeightFieldsStrength(), 4);
+            scalar(node, CombineWeightFieldsInvert(), 5);
+            out = &CombineWeightFieldsOut();
+            break;
+        }
+        default: {
+            WeightFieldPayload payload;
+            payload.clamp = clamp;
+            const RigExecOpHandle &op =
+                record.kind == eval::kWeightKindSphere  ? SphereWeight()
+                : record.kind == eval::kWeightKindPlane ? PlaneWeight()
+                                                        : CurveWeight();
+            node = builder->AddOp(op, &payload);
+            const bool sphere = record.kind == eval::kWeightKindSphere;
+            const bool plane = record.kind == eval::kWeightKindPlane;
+            const RigExecPortHandle &points = sphere  ? SphereWeightPoints()
+                                              : plane ? PlaneWeightPoints()
+                                                      : CurveWeightPoints();
+            if (w.fieldFacts.samplesInFlight && !PhasedTarget(B, w)) {
+                const auto [c, k] = B.revisionIndex[size_t(field.consumer)];
+                builder->BindInput(node, points);
+                layout->hostInputs.push_back(
+                    {node, points.Index(), eval::OpHostSource::Lookup,
+                     uint32_t(layout->lookups.size())});
+                layout->lookups.push_back(
+                    {uint8_t(eval::OpLookupSource::ChainVersion), uint32_t(c),
+                     int32_t(k), 0});
+            } else {
+                look(node, points, R::SamplePoints);
+            }
+            look(node,
+                 sphere  ? SphereWeightPlacement()
+                 : plane ? PlaneWeightPlacement()
+                         : CurveWeightPlacement(),
+                 R::Placement);
+            scalar(node,
+                   sphere  ? SphereWeightStrength()
+                   : plane ? PlaneWeightStrength()
+                           : CurveWeightStrength(),
+                   4);
+            scalar(node,
+                   sphere  ? SphereWeightInvert()
+                   : plane ? PlaneWeightInvert()
+                           : CurveWeightInvert(),
+                   5);
+            scalar(node,
+                   sphere  ? SphereWeightFalloffMin()
+                   : plane ? PlaneWeightFalloffMin()
+                           : CurveWeightFalloffMin(),
+                   6);
+            scalar(node,
+                   sphere  ? SphereWeightFalloffMax()
+                   : plane ? PlaneWeightFalloffMax()
+                           : CurveWeightFalloffMax(),
+                   7);
+            look(node,
+                 sphere  ? SphereWeightFalloffSamples()
+                 : plane ? PlaneWeightFalloffSamples()
+                         : CurveWeightFalloffSamples(),
+                 R::FalloffSamples);
+            if (sphere) {
+                look(node, SphereWeightScale(), R::ScaleAxes);
+                look(node, SphereWeightPositiveScale(), R::PositiveScales);
+                look(node, SphereWeightNegativeScale(), R::NegativeScales);
+                out = &SphereWeightOut();
+            } else if (plane) {
+                look(node, PlaneWeightAxis(), R::PlaneAxis);
+                look(node, PlaneWeightBounded(), R::PlaneBounded);
+                scalar(node, PlaneWeightExtentU(), 17);
+                scalar(node, PlaneWeightExtentV(), 18);
+                out = &PlaneWeightOut();
+            } else {
+                look(node, CurveWeightScale(), R::ScaleAxes);
+                look(node, CurveWeightCurve(), R::CurvePoints);
+                out = &CurveWeightOut();
+            }
+            break;
+        }
+        }
+        if (!fed)
+            return FieldFail(error, record.name +
+                                        ": composes a weight its field "
+                                        "does not weigh");
+        if (node != RigExecNodeId(o))
+            return FieldFail(error, "weight field " + std::to_string(f) +
+                                        ": node " + std::to_string(node) +
+                                        " is out of origin order");
+        nodeOf[part] = node;
+        outOf[part] = out;
+        if (part + 1 != field.nodeObjects.size())
+            continue;
+        builder->BindOutput(node, *out);
+        layout->hostOutputs.push_back(
+            {node, out->Index(), uint8_t(eval::OpOutputTarget::WeightField),
+             uint32_t(f)});
+    }
+    return true;
 }
 
 void
@@ -757,7 +1094,6 @@ RigExecBakedResetWeightField(Baked *program, int index)
         return;
     auto &field = program->weightFields[size_t(index)];
     field.values.clear();
-    field.nextValues.clear();
     field.count = 0;
     field.ok = false;
     field.error = "operation cycle";
