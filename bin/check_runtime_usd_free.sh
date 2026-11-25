@@ -158,14 +158,14 @@ for manifest in runtimeIncludes.txt evalCoreIncludes.txt; do
 done
 
 objs=()
+units=()
 declare -A object_of=()  # object key -> the source that claimed it
 # Each manifest entry is a translation unit: C for .c, C++ for the other final
 # suffixes cmake/exportManifests.cmake accepts. The list is case-sensitive here,
 # in the exporter, and in the Godot example's SConstruct. Anything else is a
 # producer bug and stops the check rather than being skipped.
-compile_one() {
-    local src="$1" key obj extension
-    extension="${src##*.}"
+plan_one() {
+    local src="$1" key obj
     # The object key carries the whole manifest spelling with '/' folded, so
     # mesh.cpp, a mesh.cxx beside it and a mesh.scalar.cxx each get their own
     # object, and one unit named by two manifests compiles once.
@@ -182,17 +182,25 @@ compile_one() {
         fi
         return 0
     fi
-    object_of["$key"]="$src"
-    case "$extension" in
-        c)
-            gcc "${CFLAGS[@]}" -c "$src" -o "$obj" ;;
-        cc|cxx|cpp|c++)
-            g++ "${CXXFLAGS[@]}" -c "$src" -o "$obj" ;;
+    case "${src##*.}" in
+        c|cc|cxx|cpp|c++) ;;
         *)
             echo "$src: not a translation unit (supported: .c .cc .cxx .cpp .c++)" >&2
             exit 1 ;;
     esac
+    object_of["$key"]="$src"
+    units+=("$src")
     objs+=("$obj")
+}
+
+# Output goes to a per-unit log so parallel compiles do not interleave.
+compile_unit() {
+    local src="$1" obj="$2"
+    local log="$obj.log"
+    case "${src##*.}" in
+        c) gcc "${CFLAGS[@]}" -c "$src" -o "$obj" >"$log" 2>&1 ;;
+        *) g++ "${CXXFLAGS[@]}" -c "$src" -o "$obj" >"$log" 2>&1 ;;
+    esac
 }
 
 sources=()
@@ -230,8 +238,34 @@ sources+=(
 )
 
 for src in "${sources[@]}"; do
-    compile_one "$src"
+    plan_one "$src"
 done
+
+jobs_max="$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
+failed=0
+running=0
+for i in "${!units[@]}"; do
+    if [[ $running -ge $jobs_max ]]; then
+        wait -n || failed=1
+        running=$((running - 1))
+    fi
+    compile_unit "${units[$i]}" "${objs[$i]}" &
+    running=$((running + 1))
+done
+while [[ $running -gt 0 ]]; do
+    wait -n || failed=1
+    running=$((running - 1))
+done
+for i in "${!units[@]}"; do
+    if [[ -s "${objs[$i]}.log" ]]; then
+        echo "== ${units[$i]}" >&2
+        cat "${objs[$i]}.log" >&2
+    fi
+done
+if [[ $failed -ne 0 ]]; then
+    echo "runtime sources failed to compile" >&2
+    exit 1
+fi
 
 # Symbol lines only: with several objects nm also prints each object's
 # path, and a mktemp directory name such as tmp.VtYcwFeMAb matches.
