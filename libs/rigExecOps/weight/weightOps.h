@@ -106,10 +106,11 @@ const rigExec::RigExecPortHandle &CurveWeightCurve();
 /// dense). Subtract and Overlay seed from the first input; Average divides
 /// by the input count; no inputs is the mode's identity.
 ///
-/// Packets: the packet combine. An invalid input, dense inputs of different
-/// lengths, a negative resolved weight or no element count (a dense input's
-/// length, else TargetCount (UInt, 0)) give an invalid Out; a result
-/// outside the range policy fails the op.
+/// Packets: the packet combine. No input and no TargetCount fails compile
+/// or the evaluation that binds them. An invalid input, dense inputs of
+/// different lengths, a negative resolved weight, no element count (a dense
+/// input's length, else TargetCount (UInt, 0)) or a result outside the range
+/// policy fails the op.
 /// Fields: every input is a dense field of TargetCount weights, folded as
 /// it is; one of another length fails the op. No range policy applies.
 const rigExec::RigExecOpHandle &CombineWeights();

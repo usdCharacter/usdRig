@@ -63,19 +63,19 @@ Ready(std::vector<std::unique_ptr<RigExecCombineOpNode>> &nodes, size_t record,
     return node.get();
 }
 
-/// Writes the shared inputs and runs; the output, or null where the op
-/// refused.
+/// Writes the shared inputs and runs; the output, or null with \p error
+/// where the evaluation fails.
 const PointWeights *
 Run(RigExecCombineOpNode &node, size_t targetCount, float strength,
-    float invert)
+    float invert, std::string *error)
 {
     const uint32_t count = uint32_t(targetCount);
     RigExecEvaluator &e = *node.evaluator;
-    if (!e.SetInput(node.target, &count) ||
-        !e.SetInput(node.strength, &strength) ||
-        !e.SetInput(node.invert, &invert) || !e.Evaluate())
+    if (!e.SetInput(node.target, &count, error) ||
+        !e.SetInput(node.strength, &strength, error) ||
+        !e.SetInput(node.invert, &invert, error) || !e.Evaluate(error))
         return nullptr;
-    return static_cast<const PointWeights *>(e.GetOutput(node.out));
+    return static_cast<const PointWeights *>(e.GetOutput(node.out, error));
 }
 
 template <class T>
@@ -124,33 +124,36 @@ RigExecWeightCombineOps::Combine(size_t record, const RigExecWeightRecord &r,
         if (!node->evaluator->SetInput(node->items[k], &field))
             return false;
     }
-    const PointWeights *result = Run(*node, count, strength, invert);
+    std::string why;
+    const PointWeights *result = Run(*node, count, strength, invert, &why);
     if (!result)
         return false;
     out->assign(result->values.begin(), result->values.end());
     return true;
 }
 
-RigExecWeightPacket
+bool
 RigExecWeightCombineOps::CombinePackets(
     size_t record, const RigExecWeightRecord &r,
     const std::vector<const RigExecWeightPacket *> &inputs, size_t targetCount,
-    float strength, float invert)
+    float strength, float invert, RigExecWeightPacket *packet,
+    std::string *error)
 {
-    RigExecWeightPacket packet;
-    packet.representation = r.representationToken;
-    packet.rangePolicy = r.rangePolicy;
+    *packet = RigExecWeightPacket();
     if (r.representation != 1 ||
         (!r.clamp && r.rangePolicy != SchemaValueText::strict) ||
-        r.combineMode < 0)
-        return packet;
+        r.combineMode < 0) {
+        if (error)
+            *error = "the combine record has no CombineWeights form";
+        return false;
+    }
     CombineWeightsPayload payload;
     payload.mode = rigExecOps::WeightCombineMode(r.combineMode);
     payload.clamp = r.clamp;
-    RigExecCombineOpNode *node = Ready(_nodes, record, payload, inputs.size(),
-                                       compile, evaluate, nullptr);
+    RigExecCombineOpNode *node =
+        Ready(_nodes, record, payload, inputs.size(), compile, evaluate, error);
     if (!node)
-        return RigExecWeightPacket();
+        return false;
     PointWeights &w = node->scratch;
     for (size_t k = 0; k < inputs.size(); ++k) {
         const RigExecWeightPacket *in = inputs[k];
@@ -168,17 +171,18 @@ RigExecWeightCombineOps::CombinePackets(
         } else {
             w = PointWeights();
         }
-        if (!node->evaluator->SetInput(node->items[k], &w))
-            return RigExecWeightPacket();
+        if (!node->evaluator->SetInput(node->items[k], &w, error))
+            return false;
     }
-    const PointWeights *result = Run(*node, targetCount, strength, invert);
+    const PointWeights *result =
+        Run(*node, targetCount, strength, invert, error);
     if (!result)
-        return RigExecWeightPacket();
-    if (!result->valid)
-        return packet;
-    packet.values.assign(result->values.begin(), result->values.end());
-    packet.valid = true;
-    return packet;
+        return false;
+    packet->representation = r.representationToken;
+    packet->rangePolicy = r.rangePolicy;
+    packet->values.assign(result->values.begin(), result->values.end());
+    packet->valid = true;
+    return true;
 }
 
 } // namespace rigExec

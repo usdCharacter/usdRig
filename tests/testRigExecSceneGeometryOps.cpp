@@ -1199,17 +1199,16 @@ SameWeights(const std::vector<float> &a, const RigExecArray<float> &b)
            (a.empty() || !std::memcmp(a.data(), b.Data(), a.size() * 4));
 }
 
-/// The op's outcome is the native packet: valid with the same bits, invalid,
-/// or (for the bare packet a range failure gives) a refusal.
+/// The op's outcome is the native packet: valid with the same bits, or,
+/// where the native packet is invalid or bare (a range failure), an error of
+/// the op's compile or evaluation.
 bool
 MatchesNative(const RigExecWeightPacket &native, bool ran,
-              const rigExecRig::PointWeights &op)
+              const rigExecRig::PointWeights &op, const std::string &error)
 {
-    if (native.representation.IsEmpty())
-        return !ran;
-    if (!ran || bool(op.valid) != native.valid)
-        return false;
-    return !native.valid || SameWeights(native.values, op.values);
+    if (native.representation.IsEmpty() || !native.valid)
+        return !ran && error.find("CombineWeights: ") != std::string::npos;
+    return ran && op.valid && SameWeights(native.values, op.values);
 }
 
 void
@@ -1288,12 +1287,13 @@ TestCombineWeights()
                         for (const RigExecWeightPacket *w : inputs)
                             packed.push_back(ToPointWeights(*w));
                         Combine node(payload, inputs.size());
+                        std::string error;
                         const bool ran =
-                            node.Run(packed, target, s, i, &result);
-                        CHECK(MatchesNative(native, ran, result));
-                        if (!MatchesNative(native, ran, result))
-                            std::printf("combine %s %zu inputs differs\n",
-                                        token, inputs.size());
+                            node.Run(packed, target, s, i, &result, &error);
+                        CHECK(MatchesNative(native, ran, result, error));
+                        if (!MatchesNative(native, ran, result, error))
+                            std::printf("combine %s %zu inputs differs: %s\n",
+                                        token, inputs.size(), error.c_str());
                     }
         }
 
@@ -1324,7 +1324,7 @@ TestCombineWeights()
     CHECK(chained.Run({ToPointWeights(B), ToPointWeights(S), ToPointWeights(C),
                        ToPointWeights(A)},
                       uint32_t(n), 0.9f, 0.1f, &result));
-    CHECK(MatchesNative(outer, true, result));
+    CHECK(MatchesNative(outer, true, result, std::string()));
 
     // Fields: folded as they are over the target count, as the field
     // resolver folds them, with no range policy.

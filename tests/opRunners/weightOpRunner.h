@@ -28,12 +28,12 @@ public:
                  const void *context, std::vector<float> *out,
                  std::string *error) override;
 
-    /// The packet combine of \p record. A refusing op gives the bare packet
-    /// a result outside the range policy gives.
-    RigExecWeightPacket
-    CombinePackets(size_t record, const RigExecWeightRecord &,
-                   const std::vector<const RigExecWeightPacket *> &inputs,
-                   size_t targetCount, float strength, float invert);
+    /// The packet combine of \p record into \p packet. False with the
+    /// compile or evaluation error where the op fails.
+    bool CombinePackets(size_t record, const RigExecWeightRecord &,
+                        const std::vector<const RigExecWeightPacket *> &inputs,
+                        size_t targetCount, float strength, float invert,
+                        RigExecWeightPacket *packet, std::string *error);
 
     RigExecCompileOptions compile;
     RigExecEvaluatorOptions evaluate;

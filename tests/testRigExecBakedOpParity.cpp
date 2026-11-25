@@ -985,10 +985,17 @@ ProbeWeights(const B &b)
                 w.pointLeaves.Value<VtVec3fArray>(int(w.combineLeaves + i), {})
                     .size();
         RigExecWeightCombineOps ops;
-        const RigExecWeightPacket packet = ops.CombinePackets(
-            0, record, inputs, targetCount, RigExecBakedLeafRead(b, w.strength),
-            RigExecBakedLeafRead(b, w.invert));
+        RigExecWeightPacket packet;
+        std::string error;
         const auto &baked = b.weightPackets[size_t(step.object)];
+        if (!ops.CombinePackets(0, record, inputs, targetCount,
+                                RigExecBakedLeafRead(b, w.strength),
+                                RigExecBakedLeafRead(b, w.invert), &packet,
+                                &error)) {
+            OpFailed("WeightPacket", kind, w.path.GetString(), !baked.valid,
+                     error);
+            continue;
+        }
         Compare("WeightPacket", kind, w.path.GetString(), VtValue(baked),
                 VtValue(packet), !baked.valid);
     }

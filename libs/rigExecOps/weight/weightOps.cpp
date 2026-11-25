@@ -422,7 +422,32 @@ CombineWeightsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     if (s.result.bare)
         return Fail(error, "CombineWeights",
                     p.clamp ? "non-finite weight" : "weight out of range");
-    WriteDense(s.result.values, p, s.result.valid, &out);
+    if (!s.result.valid)
+        return Fail(error, "CombineWeights",
+                    "its inputs do not combine: an input is invalid, dense "
+                    "inputs differ in length, a weight resolves negative or "
+                    "no element count is known");
+    WriteDense(s.result.values, p, true, &out);
+    return true;
+}
+
+bool
+CheckCurveWeight(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (CheckElements(check, CurveWeightCurve()) == 0)
+        return Fail(error, "CurveWeight", "needs a curve");
+    return true;
+}
+
+bool
+CheckCombineWeights(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (EnumAt<WeightCombineInputs>(check.batch, kInputs, check.k) ==
+            WeightCombineInputs::Packets &&
+        CheckElements(check, CombineWeightsInputs()) == 0 &&
+        !Fed(check, CombineWeightsTargetCount()))
+        return Fail(error, "CombineWeights",
+                    "needs an input or a target count for its element count");
     return true;
 }
 
@@ -514,7 +539,9 @@ const rigExec::RigExecFieldDesc kCombineFields[] = {
 
 rigExec::RigExecOpDesc
 FieldDesc(const char *name, const RigExecPortDesc *ports, size_t count,
-          rigExec::RigExecOpBatchFn runBatch)
+          rigExec::RigExecOpBatchFn runBatch,
+          bool (*validate)(const rigExec::RigExecOpCheck &,
+                           std::string *) = nullptr)
 {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
@@ -522,6 +549,7 @@ FieldDesc(const char *name, const RigExecPortDesc *ports, size_t count,
     d.ports = ports;
     d.portCount = count;
     d.runBatch = runBatch;
+    d.validate = validate;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kFieldFields;
     d.payloadFieldCount = std::size(kFieldFields);
@@ -534,8 +562,9 @@ const rigExec::RigExecOpDesc kSphere = FieldDesc(
     "SphereWeight", kSpherePorts, std::size(kSpherePorts), &RunSphereWeight);
 const rigExec::RigExecOpDesc kPlane = FieldDesc(
     "PlaneWeight", kPlanePorts, std::size(kPlanePorts), &RunPlaneWeight);
-const rigExec::RigExecOpDesc kCurve = FieldDesc(
-    "CurveWeight", kCurvePorts, std::size(kCurvePorts), &RunCurveWeight);
+const rigExec::RigExecOpDesc kCurve =
+    FieldDesc("CurveWeight", kCurvePorts, std::size(kCurvePorts),
+              &RunCurveWeight, &CheckCurveWeight);
 
 const RigExecPortDesc kCombinePorts[] = {
     {&CombineWeightsInputs(), &rigExecRig::PointWeightsType(),
@@ -557,6 +586,7 @@ const rigExec::RigExecOpDesc kCombine = [] {
     d.ports = kCombinePorts;
     d.portCount = std::size(kCombinePorts);
     d.runBatch = &RunCombineWeights;
+    d.validate = &CheckCombineWeights;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kCombineFields;
     d.payloadFieldCount = std::size(kCombineFields);
