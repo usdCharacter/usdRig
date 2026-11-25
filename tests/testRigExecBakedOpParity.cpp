@@ -10,6 +10,9 @@
 #include "rigExec/internal/moverGraph.h"
 #include "rigExec/internal/poseEvalHost.h"
 #include "rigExecScene/constraintSceneTranslation.h"
+#include "rigExecScene/geometrySceneTranslation.h"
+#include "rigExecScene/sceneDescriptors.h"
+#include "rigExecScene/usdSceneAccess.h"
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecStdTypes/stdTypes.h"
 
@@ -30,6 +33,7 @@
 #include "rigExecOps/space/spaceOps.h"
 #include "rigExecRigTypes/rigTypes.h"
 
+#include "pxr/base/gf/rotation.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"
 #include "pxr/base/tf/stringUtils.h"
@@ -2942,6 +2946,51 @@ ProbeSkinMatrices(const B &b)
     }
 }
 
+// A surface projector's scene translation forms the asset-to-mesh transform
+// with the bits native compile bound into the baked revision.
+void
+ProbeSceneProjectors(const UsdStageRefPtr &stage, const SdfPath &rigPath,
+                     const B &b)
+{
+    RigExecSceneDescriptors scene;
+    bool captured = false;
+    std::string error;
+    for (const auto &chain : b.chains)
+        for (const auto &derived : chain.derived) {
+            const auto &revision = derived.revision;
+            if (!derived.matrixTarget ||
+                revision.op != RigExecRevisionOp::SurfaceProjector)
+                continue;
+            const std::string key = "SceneTranslation/SurfaceProjector";
+            if (!captured) {
+                const RigExecUsdSceneAccess access(stage);
+                if (!RigExecCaptureSceneDescriptors(access, rigPath,
+                                                    {UsdTimeCode::Default()},
+                                                    &scene, &error)) {
+                    Report(key, rigPath.GetString(), "capture: " + error);
+                    return;
+                }
+                captured = true;
+            }
+            std::vector<RigExecSceneGeometryDescriptor> variants;
+            if (!RigExecTranslateSceneGeometryVariants(
+                    scene, revision.binding.moverPath, revision.binding.base,
+                    &variants, &error) ||
+                variants.empty()) {
+                Report(key, derived.targetText, "translation: " + error);
+                continue;
+            }
+            const GfMatrix4d &native = revision.binding.meshWorldInverse;
+            const GfMatrix4d &translated =
+                variants.front().record.binding.meshWorldInverse;
+            Compare("SceneTranslation", "SurfaceProjector", derived.targetText,
+                    VtValue(native), VtValue(translated), false);
+            if (std::memcmp(native.GetArray(), translated.GetArray(),
+                            sizeof(double) * 16) != 0)
+                Report(key, derived.targetText, "asset-to-mesh bits differ");
+        }
+}
+
 void
 ProbeStage(const UsdStageRefPtr &stage, const std::string &rig, Paint paint,
            bool dense = false)
@@ -2971,8 +3020,9 @@ ProbeStage(const UsdStageRefPtr &stage, const std::string &rig, Paint paint,
         ++g_unprobed["rig " + name + ": no baked program"];
         return;
     }
-    for (const UsdTimeCode time :
-         dense ? DenseFrames(stage, 12) : Frames(stage)) {
+    const std::vector<UsdTimeCode> frames =
+        dense ? DenseFrames(stage, 12) : Frames(stage);
+    for (const UsdTimeCode time : frames) {
         if (!evaluator.Evaluate(time).valid) {
             ++g_unprobed["rig " + name + ": invalid pose"];
             continue;
@@ -2982,6 +3032,8 @@ ProbeStage(const UsdStageRefPtr &stage, const std::string &rig, Paint paint,
             continue;
         const B &b = RigExecBakedProgramAccess::StepGraph(*program);
         g_where = name + "@" + TfStringify(time.GetValue());
+        if (time == frames.front())
+            ProbeSceneProjectors(stage, rigPath, b);
         ProbeSolve(b);
         ProbeConstraint(b);
         ProbeCommits(b);
@@ -3471,6 +3523,87 @@ def Xform "Asset"
     return stage;
 }
 
+// A surface projector inside an asset under /World: no ancestor transform,
+// a static one, or an animated one (translation, rotation, non-uniform scale).
+enum class Ancestor { None, Static, Animated };
+
+UsdStageRefPtr
+ProjectorRig(Ancestor ancestor)
+{
+    const auto stage = UsdStage::CreateInMemory("projector.usda");
+    if (!stage->GetRootLayer()->ImportFromString(R"USD(#usda 1.0
+(
+    startTimeCode = 1
+    endTimeCode = 3
+)
+def Xform "World"
+{
+    def Xform "Asset"
+    {
+        def RigExecRoot "Rig"
+        {
+            def RigExecControl "Driver"
+            {
+                double avars:tx.timeSamples = {1: 0, 2: 0.25, 3: 0}
+            }
+            def RigExecControl "Source"
+            {
+                double rest:tx = 4
+                double rest:ty = -2
+                double rest:tz = 6
+                double avars:ty.timeSamples = {1: 0, 2: 0.5, 3: -0.25}
+            }
+            def RigExecMatrixMover "Deform" (
+                prepend apiSchemas = ["RigExecMoverAPI"]
+            )
+            {
+                float inputs:defaultWeight = 1
+                rel rigExec:moves = </World/Asset/Surface.points>
+                rel rigExec:transform = </World/Asset/Rig/Driver>
+            }
+            def RigExecSurfaceProjector "Project" (
+                prepend apiSchemas = ["RigExecMoverAPI"]
+            )
+            {
+                rel rigExec:moves = </World/Asset/Surface.points>
+                rel rigExec:sources = </World/Asset/Rig/Source>
+                token rigExec:shaderPrimvar = "projectionFrame"
+            }
+        }
+        def Mesh "Surface"
+        {
+            double3 xformOp:translate = (4, -2, 7)
+            float xformOp:rotateY = 20
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
+            point3f[] points = [(-2, -2, 0), (2, -2, 0), (2, 2, 0), (-2, 2, 0)]
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+        }
+    }
+}
+)USD"))
+        return nullptr;
+    if (ancestor == Ancestor::None)
+        return stage;
+    const auto placement = [](double t) {
+        return GfMatrix4d(1.0).SetScale(GfVec3d(2.0 + 0.25 * t, 0.5, 3.0)) *
+               GfMatrix4d(1.0).SetRotate(
+                   GfRotation(GfVec3d(1, 2, 3), 25.0 + 7.0 * t)) *
+               GfMatrix4d(1.0).SetTranslate(
+                   GfVec3d(1.0e6 + 4.0 * t, -7.0e5, 3.0e5 - 2.0 * t));
+    };
+    const UsdGeomXformOp op =
+        UsdGeomXform(stage->GetPrimAtPath(SdfPath("/World")))
+            .AddTransformOp(UsdGeomXformOp::PrecisionDouble);
+    if (ancestor == Ancestor::Static) {
+        op.Set(placement(1.0));
+    } else {
+        for (const double t : {1.0, 2.0, 3.0})
+            op.Set(placement(t), UsdTimeCode(t));
+    }
+    return stage;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -3508,6 +3641,11 @@ main(int argc, char **argv)
     ProbeStage(JointGroupRig(), "joint group rig", Paint::None);
     ProbeStage(AutoClavicleRig(), "auto clavicle rig", Paint::None, true);
     ProbeStage(TranslationPoseRig(), "translation pose rig", Paint::None, true);
+    ProbeStage(ProjectorRig(Ancestor::None), "projector rig", Paint::None);
+    ProbeStage(ProjectorRig(Ancestor::Static), "projector rig, static ancestor",
+               Paint::None);
+    ProbeStage(ProjectorRig(Ancestor::Animated),
+               "projector rig, animated ancestor", Paint::None);
     std::printf("%-44s %9s %9s %9s %9s %9s\n", "family/kind", "compared",
                 "refusals", "compile", "run", "mismatch");
     for (const auto &[key, tally] : g_tally)
