@@ -439,6 +439,11 @@ TestFilledPayloads()
         avars.avarCount = 3;
         avars.targets = {2, 0, 1, 0};
         CheckRoundTrip(Op(AvarInputs()), &avars);
+        SpaceCheckpointPayload checkpoint;
+        checkpoint.rotOrders = {SpaceCheckpointRotOrderCode("YZX", 3), 0};
+        checkpoint.rotationSigns = {5, 0};
+        checkpoint.noScale = {1, 0};
+        CheckRoundTrip(Op(SpaceCheckpoint()), &checkpoint);
     }
     {
         BlendFramesPayload p;

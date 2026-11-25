@@ -2809,6 +2809,30 @@ RoundTripCheckpoint(const typename Math::Mat4 &matrix)
     return result;
 }
 
+// A checkpoint's switch frame: each recomposed slot, outermost first, over
+// the one before it (\p anchor's posed matrix for the first), round-tripped.
+template <class Math>
+typename Math::Mat4
+SpaceCheckpointMatrix(
+    const RigExecSpaceCheckpointInputT<typename Math::Mat4> *inputs,
+    size_t count, typename Math::Mat4 anchor)
+{
+    typename Math::Mat4 posed = anchor;
+    for (size_t k = 0; k < count; ++k) {
+        const auto &input = inputs[k];
+        const typename Math::Mat4 matrix =
+            input.posedAuthored
+                ? input.posedAuthoredMatrix
+                : ComposeUnswitched<Math>(input.avars, input.posedDefault,
+                                          input.parentDefaultInverse,
+                                          input.parentExpressionAuthored
+                                              ? input.parentExpression
+                                              : posed);
+        posed = RoundTripCheckpoint<Math>(matrix);
+    }
+    return posed;
+}
+
 template <class Host>
 StepResult
 RunSpaceCheckpointStep(Host &host, const StepRef &step)
@@ -2837,19 +2861,8 @@ RunSpaceCheckpointStep(Host &host, const StepRef &step)
     if (anchor >= 0 && !host.inputs().posedMatrix(size_t(anchor), &posed)) {
         return {Outcome::Invalid, kNoStepDetail};
     }
-    for (size_t k = 0; k < count; ++k) {
-        const auto &input = inputs[k];
-        const typename Math::Mat4 matrix =
-            input.posedAuthored
-                ? input.posedAuthoredMatrix
-                : ComposeUnswitched<Math>(input.avars, input.posedDefault,
-                                          input.parentDefaultInverse,
-                                          input.parentExpressionAuthored
-                                              ? input.parentExpression
-                                              : posed);
-        posed = RoundTripCheckpoint<Math>(matrix);
-    }
-    host.state().writeSwitchFrame(object, posed);
+    host.state().writeSwitchFrame(
+        object, SpaceCheckpointMatrix<Math>(inputs.data(), count, posed));
     return {Outcome::Applied, kNoStepDetail};
 }
 

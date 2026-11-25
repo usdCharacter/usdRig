@@ -1,12 +1,15 @@
-// The pose input ops evaluated through the core: bound avar values, and what
-// fails compile or the evaluation.
+// The pose input ops evaluated through the core: bound avar values, a space
+// checkpoint's switch frame, and what fails compile or the evaluation.
 #include "rigExec/api/compile.h"
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
 #include "rigExec/api/rigDesc.h"
 #include "rigExecOps/pose/poseOps.h"
+#include "rigExecEvalCore/pose.h"
+#include "rigExecRuntime/poseMath.h"
 #include "rigExecRigTypes/rigTypes.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -15,6 +18,7 @@
 
 using namespace rigExec;
 using namespace rigExecOps;
+using rigExecStd::Mat4d;
 using rigExecStd::RigExecArray;
 
 namespace {
@@ -118,6 +122,106 @@ TestAvarInputs()
     }
 }
 
+Mat4d
+Translate(double x, double y, double z)
+{
+    Mat4d m;
+    m.SetIdentity();
+    m._mtx[3][0] = x;
+    m._mtx[3][1] = y;
+    m._mtx[3][2] = z;
+    return m;
+}
+
+template <class T>
+RigExecArray<T>
+ArrayOf(const std::vector<T> &values)
+{
+    RigExecArray<T> out(values.size());
+    for (size_t i = 0; i < values.size(); ++i)
+        out[i] = values[i];
+    return out;
+}
+
+void
+TestSpaceCheckpoint()
+{
+    using Math = RrPoseMathT<rigExecRig::PointFrame>;
+    SpaceCheckpointPayload p;
+    p.rotOrders = {SpaceCheckpointRotOrderCode("ZXY", 3), 0};
+    p.rotationSigns = {0, 1};
+    p.noScale = {0, 1};
+    const std::vector<const RigExecPortHandle *> ins = {
+        &SpaceCheckpointAvars(),
+        &SpaceCheckpointPosedDefault(),
+        &SpaceCheckpointParentDefaultInverse(),
+        &SpaceCheckpointParentExpression(),
+        &SpaceCheckpointParentExpressionAuthored(),
+        &SpaceCheckpointPosedAuthored(),
+        &SpaceCheckpointPosedAuthoredMatrix(),
+        &SpaceCheckpointAnchor()};
+    Harness h(SpaceCheckpoint(), &p, ins, {&SpaceCheckpointOut()});
+    CHECK(h.evaluator != nullptr);
+    // tx ty tz sx sy sz rx ry rz spin units, per slot.
+    const std::vector<double> a = {1, 0, 0, 1,   1, 1, 0,  30, 0, 0, 1,
+                                   0, 2, 0, 0.5, 1, 1, 15, 0,  0, 0, 1};
+    const auto avars = ArrayOf(a);
+    const auto identities =
+        ArrayOf<Mat4d>({Math::Identity4(), Translate(0, 0, 3)});
+    const auto parentM =
+        ArrayOf<Mat4d>({Translate(5, 0, 0), Translate(0, 7, 0)});
+    const auto parentAuthored = ArrayOf<uint8_t>({0, 1});
+    const auto posedAuthored = ArrayOf<uint8_t>({0, 0});
+    const auto posedAuthoredM =
+        ArrayOf<Mat4d>({Translate(9, 9, 9), Translate(9, 9, 9)});
+    const Mat4d anchor = Translate(0, 2, 0);
+    const std::vector<const void *> values = {
+        &avars,          &identities,    &identities,     &parentM,
+        &parentAuthored, &posedAuthored, &posedAuthoredM, &anchor};
+    CHECK(h.Run(values));
+    std::vector<RigExecSpaceCheckpointInputT<Mat4d>> inputs(2);
+    for (size_t s = 0; s < 2; ++s) {
+        eval::PoseSlotComposeT<Math> view;
+        view.avars11 = &a[s * 11];
+        if (s == 0)
+            view.rotOrder = "ZXY";
+        view.rotationSign = p.rotationSigns[s];
+        view.noScaleAvars = p.noScale[s] != 0;
+        view.posedAuthoredM = &posedAuthoredM[s];
+        view.posedD = &identities[s];
+        view.parentDinv = &identities[s];
+        view.parentSpaceM = &parentM[s];
+        view.parentSpaceAuthored = parentAuthored[s] != 0;
+        inputs[s] = eval::CheckpointInputOf<Math>(view);
+    }
+    const Mat4d expected =
+        eval::SpaceCheckpointMatrix<Math>(inputs.data(), 2, anchor);
+    CHECK(SameBits(h.Out<Mat4d>(0), expected));
+    CHECK(std::abs(expected._mtx[3][1] - 9.0) < 1e-9);
+
+    Mat4d collapsed = Math::Identity4();
+    collapsed._mtx[0][0] = std::nan("");
+    const auto degenerate = ArrayOf<Mat4d>({collapsed, collapsed});
+    const auto authoredAll = ArrayOf<uint8_t>({1, 1});
+    const std::vector<const void *> broken = {
+        &avars,          &identities,  &identities, &parentM,
+        &parentAuthored, &authoredAll, &degenerate, &anchor};
+    CHECK(h.Run(broken));
+    CHECK(std::isnan(h.Out<Mat4d>(0)._mtx[3][0]));
+
+    const auto shortAvars = ArrayOf(std::vector<double>(11, 1.0));
+    std::vector<const void *> mismatched = values;
+    mismatched[0] = &shortAvars;
+    CHECK(!h.Run(mismatched));
+    CHECK(h.error.find("11 avars") != std::string::npos);
+
+    SpaceCheckpointPayload uneven = p;
+    uneven.noScale = {0};
+    Harness bad(SpaceCheckpoint(), &uneven, ins, {&SpaceCheckpointOut()});
+    CHECK(!bad.evaluator);
+    CHECK(bad.error.find("per slot") != std::string::npos);
+}
+
 } // namespace
 
 int
@@ -130,6 +234,7 @@ main()
         return 1;
     }
     TestAvarInputs();
+    TestSpaceCheckpoint();
     if (failures) {
         std::printf("%d failures\n", failures);
         return 1;

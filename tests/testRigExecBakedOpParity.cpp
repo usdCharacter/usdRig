@@ -1801,12 +1801,95 @@ ProbeAvarInputs(const B &b, const RigExecBakedStep &step)
     CompareBits("Pose", "AvarInputs", object, baked, op, false);
 }
 
+// A space checkpoint's switch frame from the slots it recomposes and its
+// anchor's posed matrix, against the frame the step stored.
+void
+ProbeSpaceCheckpoint(const B &b, const RigExecBakedStep &step)
+{
+    using namespace rigExecOps;
+    const size_t object = size_t(step.object);
+    const auto &context = b.switchFrameContexts[object];
+    SpaceCheckpointPayload payload;
+    rigExecStd::RigExecArray<double> avars;
+    std::vector<rigExecStd::Mat4d> posedD, parentDinv, parentM, posedM;
+    std::vector<uint8_t> parentAuthored, posedAuthored;
+    std::vector<double> a;
+    for (const int slot : context.recompose) {
+        const size_t s = size_t(slot);
+        const TfToken &order = b.rotOrder[s];
+        payload.rotOrders.push_back(
+            SpaceCheckpointRotOrderCode(order.GetText(), order.size()));
+        payload.rotationSigns.push_back(
+            s < b.rotationSign.size() ? b.rotationSign[s] : 0u);
+        payload.noScale.push_back(b.noScaleAvars[s] != 0);
+        a.insert(a.end(), &b.avars[s * 11], &b.avars[s * 11] + 11);
+        posedD.push_back(OpMatrix(b.posedD[s]));
+        parentDinv.push_back(OpMatrix(b.parentDinv[s]));
+        parentM.push_back(OpMatrix(b.parentSpaceM[s]));
+        parentAuthored.push_back(b.parentSpaceAuthored[s] != 0);
+        posedAuthored.push_back(b.posedAuthored[s] != 0);
+        posedM.push_back(OpMatrix(b.posedAuthoredM[s]));
+    }
+    auto array = [](const auto &values) {
+        rigExecStd::RigExecArray<std::decay_t<decltype(values[0])>> out(
+            values.size());
+        for (size_t i = 0; i < values.size(); ++i)
+            out[i] = values[i];
+        return out;
+    };
+    const auto avarArray = array(a);
+    const auto posedDArray = array(posedD), parentDinvArray = array(parentDinv),
+               parentMArray = array(parentM), posedMArray = array(posedM);
+    const auto parentAuthoredArray = array(parentAuthored),
+               posedAuthoredArray = array(posedAuthored);
+    std::vector<const RigExecPortHandle *> ins = {
+        &SpaceCheckpointAvars(),
+        &SpaceCheckpointPosedDefault(),
+        &SpaceCheckpointParentDefaultInverse(),
+        &SpaceCheckpointParentExpression(),
+        &SpaceCheckpointParentExpressionAuthored(),
+        &SpaceCheckpointPosedAuthored(),
+        &SpaceCheckpointPosedAuthoredMatrix()};
+    std::vector<const void *> values = {
+        &avarArray,    &posedDArray,         &parentDinvArray,
+        &parentMArray, &parentAuthoredArray, &posedAuthoredArray,
+        &posedMArray};
+    rigExecStd::Mat4d anchor;
+    if (context.anchor >= 0) {
+        anchor = OpMatrix(b.posedM[size_t(context.anchor)]);
+        ins.push_back(&SpaceCheckpointAnchor());
+        values.push_back(&anchor);
+    }
+    std::string key = "SpaceCheckpoint/" + std::to_string(context.anchor >= 0);
+    for (size_t s = 0; s < payload.rotOrders.size(); ++s)
+        key += "/" + std::to_string(payload.rotOrders[s]) + ":" +
+               std::to_string(payload.rotationSigns[s]) + ":" +
+               std::to_string(payload.noScale[s]);
+    SpaceNode &node = SpaceNodeFor(key, SpaceCheckpoint(), &payload, ins,
+                                   {&SpaceCheckpointOut()});
+    std::string error;
+    const std::string label = "checkpoint " + std::to_string(object);
+    if (!RunSpaceNode(node, values, &error)) {
+        OpFailed("Pose", "SpaceCheckpoint", label, false, error);
+        return;
+    }
+    std::vector<double> baked, op;
+    PutBits(&baked, b.switchFrames[object]);
+    PutBits(&op, SpaceOut<rigExecStd::Mat4d>(node, 0));
+    CompareBits("Pose", "SpaceCheckpoint", label, baked, op, false);
+}
+
 void
 ProbePose(const B &b)
 {
-    for (const auto &step : b.steps)
+    for (const auto &step : b.steps) {
         if (step.kind == RigExecBakedStepKind::AvarInputs && step.object >= 0)
             ProbeAvarInputs(b, step);
+        else if (step.kind == RigExecBakedStepKind::SpaceCheckpoint &&
+                 step.object >= 0 &&
+                 size_t(step.object) < b.switchFrameContexts.size())
+            ProbeSpaceCheckpoint(b, step);
+    }
 }
 
 std::vector<UsdTimeCode>
@@ -2296,7 +2379,8 @@ main(int argc, char **argv)
           "Spaces/FrameMatrix/", "Spaces/ProviderRefresh",
           "Spaces/SpaceExpression/SpaceExpression",
           "Spaces/SpaceExpression/AffineFrame", "Commit/",
-          "Solve/RigExecFkChain groups", "Pose/AvarInputs"}) {
+          "Solve/RigExecFkChain groups", "Pose/AvarInputs",
+          "Pose/SpaceCheckpoint"}) {
         size_t compared = 0;
         for (const auto &[key, tally] : g_tally)
             if (key.compare(0, std::strlen(family), family) == 0)

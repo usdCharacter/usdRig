@@ -1453,7 +1453,8 @@ add_executable(testRigExecOpsPose tests/testRigExecOpsPose.cpp)
 target_link_libraries(testRigExecOpsPose PRIVATE rigExecOpCore)
 target_include_directories(testRigExecOpsPose PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/libs")
-target_link_libraries(testRigExecOpsPose PRIVATE Threads::Threads)
+target_link_libraries(testRigExecOpsPose PRIVATE rigExecEvalCore
+    Threads::Threads)
 rigexec_link_registrations(testRigExecOpsPose
     TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 rigexec_add_test(NAME testRigExecOpsPose COMMAND testRigExecOpsPose)
@@ -1567,6 +1568,10 @@ set(_rigexec_op_parity_rigs
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/volume_placements.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/frame_record_fallbacks.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/solver_checkpoint.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/space_switch_carry.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/space_switch_dial.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/space_switch_nested.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/space_switch_same_round.usda"
     --painted
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/matrix_mover.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/skin_mover.usda"
