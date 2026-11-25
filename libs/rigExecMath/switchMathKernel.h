@@ -350,6 +350,30 @@ RigExecMaskTransformT(const Mat4 &m, const bool translation[3],
     return switchMathDetail::Recompose(d);
 }
 
+/// RigExecRunSpaceSwitchArithmetic's matrix primitives over one set of
+/// types. \p Slerp is a functor called as GfSlerp(alpha, q0, q1).
+template <class Mat3, class Vec3, class Mat4, class Slerp>
+struct RigExecSpaceSwitchMathT {
+    using Matrix = Mat4;
+    static Matrix RoundTrip(const Matrix &m)
+    {
+        return RigExecRoundTripT<Mat3, Vec3>(m);
+    }
+    static Matrix Filter(const Matrix &m, const Vec3 &axis, int filter)
+    {
+        return RigExecFilterSpaceRotationT(m, axis, filter);
+    }
+    static Matrix Blend(const Matrix &a, const Matrix &b, double weight)
+    {
+        return RigExecBlendTransformsT(a, b, weight, Slerp());
+    }
+    static Matrix Mask(const Matrix &m, const bool *translation,
+                       const bool *rotation, const bool *scale)
+    {
+        return RigExecMaskTransformT(m, translation, rotation, scale);
+    }
+};
+
 } // namespace rigExec
 
 #endif // RIGEXEC_MATH_SWITCH_MATH_KERNEL_H

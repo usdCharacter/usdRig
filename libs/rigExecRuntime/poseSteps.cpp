@@ -3,6 +3,7 @@
 #include "poseInternal.h"
 #include "poseEvalHost.h"
 #include "spaces.h"
+#include "rigExecRuntime/spaceSwitchMath.h"
 #include "rigExecMath/avarScale.h"
 #include "rigExecMath/poseArithmeticKernel.h"
 #include "rigExecMath/providerMatrixKernel.h"
@@ -15,27 +16,6 @@ namespace rigExec {
 using namespace runtimePoseDetail;
 
 namespace {
-
-struct RrSpaceSwitchMath {
-    using Matrix = RrMat4d;
-    static Matrix RoundTrip(const Matrix &m)
-    {
-        return RrRoundTrip(m);
-    }
-    static Matrix Filter(const Matrix &m, const RrVec3d &axis, int filter)
-    {
-        return RrFilterSpaceRotation(m, axis, RrRotationFilter(filter));
-    }
-    static Matrix Blend(const Matrix &a, const Matrix &b, double t)
-    {
-        return RrBlendTransforms(a, b, t);
-    }
-    static Matrix Mask(const Matrix &m, const bool *t, const bool *r,
-                       const bool *scale)
-    {
-        return RrMaskTransform(m, t, r, scale);
-    }
-};
 
 struct RrPosePropagateMath {
     static bool Usable(const RrPointFrame &frame)
@@ -553,7 +533,7 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
                                 matrices[k] =
                                     scratch->posedAuthoredM[size_t(child)];
                             else
-                                matrices[k] = RrRoundTrip(
+                                matrices[k] = RrSpaceSwitchMath::RoundTrip(
                                     _RrComposeAvarsOf(*program, *scratch,
                                                       size_t(child)) *
                                     scratch->posedD[size_t(child)] *

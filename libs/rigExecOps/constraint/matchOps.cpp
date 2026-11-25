@@ -5,6 +5,7 @@
 #include "rigExecMath/spaceMatchKernel.h"
 #include "rigExecMath/switchMathKernel.h"
 #include "rigExecOps/fieldIo.h"
+#include "rigExecOps/constraint/spaceSwitchFields.h"
 #include "rigExecOps/opIo.h"
 
 #include <array>
@@ -69,86 +70,19 @@ using rigExecStd::RigExecArray;
 using rigExecStd::Vec3d;
 using namespace opIo;
 using namespace fieldIo;
+using namespace spaceSwitchFields;
 using rigExec::RigExecOpBatch;
 
 /// The match payloads' declared fields, in saved order: the space switch,
 /// then IkFkMatch's own.
 enum MatchField : uint32_t {
-    kFilterCount,
-    kFilters,
-    kTwistAxis,
-    kAffectTranslation,
-    kAffectRotation,
-    kAffectScale,
-    kHasCarry,
-    kWorldCount,
-    kWorld,
-    kRideCount,
+    kRideCount = spaceSwitchFields::kSpaceSwitchFieldCount,
     kRides,
     kIkValue,
     kScaleCalibration,
     kUpperLengthOffset,
     kLowerLengthOffset,
     kStretchLimb,
-};
-
-/// One instance's SpaceSwitchSetup, its lists read in place.
-struct SwitchSettings {
-    rigExec::RigExecFieldView<const int32_t> filters;
-    Vec3d twistAxis;
-    std::array<bool, 3> affectTranslation, affectRotation, affectScale;
-    bool hasCarry = false;
-    rigExec::RigExecFieldView<const uint8_t> world;
-};
-
-std::array<bool, 3>
-FlagsAt(const RigExecOpBatch &batch, uint32_t field, size_t k)
-{
-    const auto flags = rigExec::RigExecPayloadField<uint8_t>(batch, field, k);
-    return {{flags[0] != 0, flags[1] != 0, flags[2] != 0}};
-}
-
-SwitchSettings
-SwitchAt(const RigExecOpBatch &batch, size_t k)
-{
-    SwitchSettings s;
-    s.filters = ListAt<int32_t>(batch, kFilters, k);
-    s.twistAxis = ValueAt<Vec3d>(batch, kTwistAxis, k);
-    s.affectTranslation = FlagsAt(batch, kAffectTranslation, k);
-    s.affectRotation = FlagsAt(batch, kAffectRotation, k);
-    s.affectScale = FlagsAt(batch, kAffectScale, k);
-    s.hasCarry = FlagAt(batch, kHasCarry, k);
-    s.world = ListAt<uint8_t>(batch, kWorld, k);
-    return s;
-}
-
-using SwitchRecord = rigExec::RigExecSpaceSwitchRecordT<Vec3d>;
-using SwitchInputs = rigExec::RigExecSpaceSwitchInputsT<Mat4d>;
-
-struct SwitchMath {
-    using Matrix = Mat4d;
-    static Matrix RoundTrip(const Matrix &m)
-    {
-        return rigExec::RigExecRoundTripT<rigExec::RrMat3d, Vec3d>(m);
-    }
-    static Matrix Filter(const Matrix &m, const Vec3d &axis, int filter)
-    {
-        return rigExec::RigExecFilterSpaceRotationT(m, axis, filter);
-    }
-    static Matrix Blend(const Matrix &a, const Matrix &b, double t)
-    {
-        return rigExec::RigExecBlendTransformsT(
-            a, b, t,
-            [](double w, const rigExec::RrQuatd &q0,
-               const rigExec::RrQuatd &q1) {
-                return rigExec::RrSlerp(w, q0, q1);
-            });
-    }
-    static Matrix Mask(const Matrix &m, const bool *t, const bool *r,
-                       const bool *s)
-    {
-        return rigExec::RigExecMaskTransformT(m, t, r, s);
-    }
 };
 
 const double *
@@ -165,18 +99,6 @@ FromRows(const double *rows)
     return m;
 }
 
-SwitchRecord
-RecordOf(const SwitchSettings &setup)
-{
-    SwitchRecord record;
-    record.filters.assign(setup.filters.begin(), setup.filters.end());
-    record.twistAxis = setup.twistAxis;
-    record.affectTranslation = setup.affectTranslation;
-    record.affectRotation = setup.affectRotation;
-    record.affectScale = setup.affectScale;
-    return record;
-}
-
 /// RigExecRunSpaceSwitch, then its frame's matrix; false for a frame the
 /// pose walk would refuse (RigExecReadLandmarkMatrixT).
 bool
@@ -187,40 +109,6 @@ RunSwitch(const SwitchRecord &record, const SwitchInputs &input, Mat4d *out)
                                                                 &composed) &&
            rigExec::RigExecReadLandmarkMatrixT<rigExec::RrMat3d, Vec3d>(
                composed, out) == rigExec::RigExecLandmarkRead::Read;
-}
-
-/// The switch's inputs from its ports; false when the sources and the setup
-/// disagree.
-template <class Port>
-bool
-SwitchInputsOf(const RigExecOpIo &io, const SwitchSettings &setup,
-               const Port &port, SwitchInputs *in)
-{
-    in->posedDefault = *In<Mat4d>(io, port.posedDefault);
-    in->parentDefaultInverse = *In<Mat4d>(io, port.parentDefaultInverse);
-    in->parentPosed = *In<Mat4d>(io, port.parentPosed);
-    in->parentDefault = *In<Mat4d>(io, port.parentDefault);
-    in->hasCarry = setup.hasCarry;
-    if (setup.hasCarry) {
-        const Mat4d *spaceDefault = In<Mat4d>(io, port.spaceDefault);
-        const Mat4d *spacePosed = In<Mat4d>(io, port.spacePosed);
-        if (!spaceDefault || !spacePosed)
-            return false;
-        in->spaceDefault = *spaceDefault;
-        in->spacePosed = *spacePosed;
-    }
-    const auto &defaults = *In<RigExecArray<Mat4d>>(io, port.sourceDefaults);
-    const auto &posed = *In<RigExecArray<Mat4d>>(io, port.sourcePosed);
-    const size_t count = setup.world.Size();
-    if (defaults.Size() != count || posed.Size() != count)
-        return false;
-    in->sources.resize(count);
-    for (size_t k = 0; k < count; ++k) {
-        in->sources[k].world = setup.world[k] != 0;
-        in->sources[k].defaultSpace = defaults[k];
-        in->sources[k].posedSpace = posed[k];
-    }
-    return true;
 }
 
 RigExecIkFkMatchChannels
@@ -592,27 +480,6 @@ const rigExec::RigExecPortDesc kIkFkPorts[] = {
      rigExec::kRigExecInvalidIndex, 5},
     {&IkFkMatchShownMask(), &rigExecStd::UIntType(), kOut, "shownMask"},
 };
-
-void
-SetFlags(RigExecFieldValues &values, uint32_t field,
-         const std::array<bool, 3> &flags)
-{
-    const uint8_t bytes[3] = {uint8_t(flags[0]), uint8_t(flags[1]),
-                              uint8_t(flags[2])};
-    values.Set(field, bytes, 3);
-}
-
-void
-SetSwitch(RigExecFieldValues &out, const SpaceSwitchSetup &s)
-{
-    SetList(out, kFilterCount, s.filters);
-    out.Set(kTwistAxis, s.twistAxis);
-    SetFlags(out, kAffectTranslation, s.affectTranslation);
-    SetFlags(out, kAffectRotation, s.affectRotation);
-    SetFlags(out, kAffectScale, s.affectScale);
-    SetFlag(out, kHasCarry, s.hasCarry);
-    SetList(out, kWorldCount, s.world);
-}
 
 void
 IkFkValues(const void *payload, RigExecFieldValues &out)

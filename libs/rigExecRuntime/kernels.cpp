@@ -116,12 +116,6 @@ RrExtractElementFrame(const RrPointFrameArray *source, size_t index)
     return degenerate;
 }
 
-RrMat4d
-RrRoundTrip(const RrMat4d &m)
-{
-    return RigExecRoundTripT<RrMat3d, RrVec3d>(m);
-}
-
 bool
 RrFrameTranslation(const RrPointFrame &driverFinal,
                    const RrPointFrame &driverRest,
@@ -130,29 +124,6 @@ RrFrameTranslation(const RrPointFrame &driverFinal,
 {
     return RrPoseInterpolatorMathT<RrPointFrame>::FrameTranslation(
         driverFinal, driverRest, parentFinal, parentRest, out);
-}
-
-RrMat4d
-RrBlendTransforms(const RrMat4d &a, const RrMat4d &b, double weight)
-{
-    return RigExecBlendTransformsT(
-        a, b, weight, [](double t, const RrQuatd &q0, const RrQuatd &q1) {
-            return RrSlerp(t, q0, q1);
-        });
-}
-
-RrMat4d
-RrFilterSpaceRotation(const RrMat4d &m, const RrVec3d &axis,
-                      RrRotationFilter filter)
-{
-    return RigExecFilterSpaceRotationT(m, axis, int(filter));
-}
-
-RrMat4d
-RrMaskTransform(const RrMat4d &m, const bool translation[3],
-                const bool rotation[3], const bool scale[3])
-{
-    return RigExecMaskTransformT(m, translation, rotation, scale);
 }
 
 } // namespace rigExec

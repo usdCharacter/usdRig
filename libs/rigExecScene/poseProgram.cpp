@@ -10,8 +10,14 @@
 #include "rigExec/internal/frameExtraction.h"
 namespace rigExec {
 namespace {
-struct PoseMath {
-    using Matrix = GfMatrix4d;
+struct GfSlerpOp {
+    GfQuatd operator()(double alpha, const GfQuatd &q0, const GfQuatd &q1) const
+    {
+        return GfSlerp(alpha, q0, q1);
+    }
+};
+struct PoseMath
+    : RigExecSpaceSwitchMathT<GfMatrix3d, GfVec3d, GfMatrix4d, GfSlerpOp> {
     using Vector = GfVec3d;
     using Quaternion = GfQuatd;
     using Rotation = GfRotation;
@@ -24,10 +30,6 @@ struct PoseMath {
     {
         return RigExecMatrixToPoints(frame.points, delta);
     }
-    static Matrix RoundTrip(const Matrix &matrix)
-    {
-        return RigExecRoundTripT<GfMatrix3d, GfVec3d>(matrix);
-    }
     static Matrix RoundTripCheckpoint(const Matrix &matrix)
     {
         const auto frame = RigExecFrameFromMatrix(matrix);
@@ -39,20 +41,6 @@ struct PoseMath {
             result[3][0] = std::numeric_limits<double>::quiet_NaN();
         }
         return result;
-    }
-    static Matrix Filter(const Matrix &matrix, const Vector &axis, int filter)
-    {
-        return RigExecFilterSpaceRotation(matrix, axis,
-                                          RigExecRotationFilter(filter));
-    }
-    static Matrix Blend(const Matrix &a, const Matrix &b, double weight)
-    {
-        return RigExecBlendTransforms(a, b, weight);
-    }
-    static Matrix Mask(const Matrix &matrix, const bool *t, const bool *r,
-                       const bool *s)
-    {
-        return RigExecMaskTransform(matrix, t, r, s);
     }
     static bool FrameRotation(const RigExecPointFrame &frame, Quaternion *out)
     {

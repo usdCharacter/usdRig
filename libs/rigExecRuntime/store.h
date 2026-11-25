@@ -1138,7 +1138,6 @@ bool RrFrameRotation(const RrPointFrame &frame, RrQuatd *out);
 RrMat4d RrElementOutSpace(const RrPointFrameArray *source, size_t index);
 RrPointFrame RrExtractElementFrame(const RrPointFrameArray *source,
                                    size_t index);
-RrMat4d RrRoundTrip(const RrMat4d &m);
 
 /// RigExecFrameTranslation: the driver's local translation measured against
 /// its own rest, which is what a pose interpolator's translation channel
@@ -1147,24 +1146,6 @@ bool RrFrameTranslation(const RrPointFrame &driverFinal,
                         const RrPointFrame &driverRest,
                         const RrPointFrame *parentFinal,
                         const RrPointFrame *parentRest, RrVec3d *out);
-
-/// RigExecBlendTransforms: decomposed lerp, with both endpoints returning
-/// their operand untouched so a space switch on a whole number is
-/// bit-identical to selecting that space.
-RrMat4d RrBlendTransforms(const RrMat4d &a, const RrMat4d &b, double weight);
-
-/// RigExecMaskTransform: zero the masked channels per axis, in the
-/// transform's own decomposition. An all-true mask returns \p m untouched.
-RrMat4d RrMaskTransform(const RrMat4d &m, const bool translation[3],
-                        const bool rotation[3], const bool scale[3]);
-
-/// Mirrors RigExecRotationFilter bit for bit.
-enum class RrRotationFilter : uint8_t { All = 0, Twist = 1, Swing = 2 };
-
-/// RigExecFilterSpaceRotation: keep only the twist of \p m's rotation about
-/// \p axis, or only the swing. `All` returns \p m untouched.
-RrMat4d RrFilterSpaceRotation(const RrMat4d &m, const RrVec3d &axis,
-                              RrRotationFilter filter);
 
 } // namespace rigExec
 
