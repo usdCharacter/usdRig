@@ -1505,7 +1505,8 @@ target_compile_definitions(testRigExecScenePoseOps PRIVATE
 rigexec_add_test(NAME testRigExecScenePoseOps COMMAND testRigExecScenePoseOps)
 
 add_executable(testRigExecBakedOpParity tests/testRigExecBakedOpParity.cpp)
-target_link_libraries(testRigExecBakedOpParity PRIVATE rigExecTestOpRunners)
+target_link_libraries(testRigExecBakedOpParity PRIVATE rigExecTestOpRunners
+    rigExecEvalCore)
 target_compile_definitions(testRigExecBakedOpParity PRIVATE
     ${_rigexec_schema_resource_define})
 set(_rigexec_op_parity_rigs
