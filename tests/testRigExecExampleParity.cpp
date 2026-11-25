@@ -85,6 +85,52 @@ BumpedValue(const UsdAttribute &attribute, double delta, VtValue *out)
     return false;
 }
 
+// Operator drags the table's +0.25 takes to a value the operator refuses:
+// each such generation is invalid and reports the operator's own error,
+// "<operatorPrim>: node N (<op>) failed: <why>". Every drag not listed
+// here must stay valid.
+struct InvalidDrag {
+    const char *stage;
+    const char *why;
+};
+const InvalidDrag kInvalidOperatorDrags[] = {
+    // Seg2W paints every point: a default weight other than 0 is refused.
+    {"01_FkChainTail.usda",
+     "StaticWeights: a dense packet's default weight is not 0"},
+    // FinW and CageW are strict constants at 1: 1.25 is out of range.
+    {"05_TwistRibbonSpine.usda",
+     "StaticWeights: a weight is not finite or outside [0, 1]"},
+    {"13_ReadPhases.usda",
+     "StaticWeights: a weight is not finite or outside [0, 1]"},
+};
+
+const char *
+ExpectedDragError(const std::string &stage)
+{
+    for (const InvalidDrag &drag : kInvalidOperatorDrags) {
+        if (stage == drag.stage) {
+            return drag.why;
+        }
+    }
+    return nullptr;
+}
+
+bool
+ReportsOperatorError(const RigExecRigPose &pose, const std::string &prim,
+                     const std::string &why)
+{
+    const std::string head = prim + ": node ";
+    const std::string tail = " failed: " + why;
+    for (const std::string &line : pose.diagnostics) {
+        if (line.compare(0, head.size(), head) == 0 &&
+            line.size() >= tail.size() &&
+            line.compare(line.size() - tail.size(), tail.size(), tail) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // One drag, held across the fixture's frames. \p generations is the running
 // count the caller has already seen; it is advanced by the frames evaluated
 // here, and a mismatch between the two is the whole point of the exercise --
@@ -96,16 +142,44 @@ BumpedValue(const UsdAttribute &attribute, double delta, VtValue *out)
 void
 DragOne(const std::string &where, RigExecRigEvaluator *rig,
         const std::vector<RigExecValueOverride> &overrides,
-        const std::vector<UsdTimeCode> &frames, size_t *generations)
+        const std::vector<UsdTimeCode> &frames, size_t *generations,
+        const char *expectedError = nullptr,
+        const std::string &failingPrim = std::string())
 {
+    // A drag is placed on the standing program: valid or not, it never
+    // rebuilds it.
+    const size_t buildAttempts = rig->GetBakedProgramBuildAttemptCount();
     rig->SetInteractiveOverrides(overrides);
     for (const UsdTimeCode frame : frames) {
         for (int pass = 0; pass < 2; ++pass) {
             const RigExecRigPose pose = rig->Evaluate(frame);
-            if (!pose.valid) {
-                ++failures;
-                std::printf("FAIL %s: an invalid generation under a drag\n",
-                            where.c_str());
+            if (expectedError) {
+                // A failed generation is not one the program answered.
+                if (pose.valid) {
+                    ++failures;
+                    std::printf("FAIL %s: valid at %g; expected \"%s\"\n",
+                                where.c_str(), frame.GetValue(), expectedError);
+                    ++*generations;
+                } else if (!ReportsOperatorError(pose, failingPrim,
+                                                 expectedError)) {
+                    ++failures;
+                    std::printf("FAIL %s: invalid at %g without \"%s\"\n",
+                                where.c_str(), frame.GetValue(), expectedError);
+                    for (const std::string &diagnostic : pose.diagnostics) {
+                        std::printf("    %s\n", diagnostic.c_str());
+                    }
+                }
+            } else {
+                if (!pose.valid) {
+                    ++failures;
+                    std::printf("FAIL %s: an invalid generation under a "
+                                "drag at %g\n",
+                                where.c_str(), frame.GetValue());
+                    for (const std::string &diagnostic : pose.diagnostics) {
+                        std::printf("    %s\n", diagnostic.c_str());
+                    }
+                }
+                ++*generations;
             }
             CHECK(pose.referenceMismatches == 0);
             if (pose.comparisonMismatches) {
@@ -117,10 +191,15 @@ DragOne(const std::string &where, RigExecRigEvaluator *rig,
                     std::printf("    %s\n", diagnostic.c_str());
                 }
             }
-            ++*generations;
         }
     }
-    // Every requested generation must execute through the graph.
+    if (rig->GetBakedProgramBuildAttemptCount() != buildAttempts) {
+        ++failures;
+        std::printf("FAIL %s: the drag rebuilt the program %zu time(s)\n",
+                    where.c_str(),
+                    rig->GetBakedProgramBuildAttemptCount() - buildAttempts);
+    }
+    // Every valid generation must execute through the graph.
     if (rig->GetBakedGenerationCount() != *generations) {
         ++failures;
         std::printf("FAIL %s: %zu of %zu generation(s) came from the "
@@ -240,7 +319,8 @@ TestOneFixture(const std::string &examplesDir,
         } else {
             DragOne(where + " (operator input)", &rig,
                     {RigExecValueOverride{op, TfToken(), input, dragged}},
-                    frames, &generations);
+                    frames, &generations, ExpectedDragError(where),
+                    op.GetString());
         }
     }
 
