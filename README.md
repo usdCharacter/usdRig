@@ -60,7 +60,7 @@ and [Matt Schiller](https://github.com/matthewschiller).
   experimental `.rigexec` export with a standalone binary runtime.
 - `usdview` tools for controls, curves, layers, picking, and node graphs.
 
-RigExec builds against an OpenUSD installation with OpenExec.
+RigExec builds against an OpenUSD installation.
 The [architecture guide](docs/specs/spec.md) explains the evaluation layers;
 the [node reference](docs/index.md) describes authoring and parameters.
 
@@ -95,7 +95,7 @@ The documentation is published at **[usdcharacter.github.io/usdRig](https://usdc
 
 ## Build and run
 
-Install OpenUSD **26.08** with OpenExec and `usdview`, CMake **3.26+**, Ninja,
+Install OpenUSD **26.08** with `usdview`, CMake **3.26+**, Ninja,
 and a C++17 compiler. Use the same Python version and architecture as your
 OpenUSD build. See the upstream [build instructions](https://github.com/PixarAnimationStudios/OpenUSD/blob/v26.08/BUILDING.md).
 
@@ -224,37 +224,16 @@ to preview it. `.github/workflows/docs.yml` publishes it to GitHub Pages.
 The binary runtime supports a subset of the authoring surface. Changes to
 OpenUSD versions or binary formats require explicit compatibility testing.
 
-## OpenExec usage
+## Independent checks
 
-RigExec builds against [OpenExec](https://openusd.org/release/intro_to_openexec.html)
-from an unmodified OpenUSD 26.08 installation: the `rigExec` target links `exec`,
-`execUsd`, `ef` and `vdf` in [CMakeLists.txt](CMakeLists.txt). Native, frozen
-and `.rigexec` evaluation run the shared operation graph, and the
-binary runtime links no USD or OpenExec library. No option selects OpenExec
-evaluation and no failure falls back to it.
-
-OpenExec runs in these places:
-
-- [libs/rigExec/internal/types.cpp](libs/rigExec/internal/types.cpp) registers the value types with
-  `ExecTypeRegistry`; [libs/rigExec/internal/computations.cpp](libs/rigExec/internal/computations.cpp)
-  and [libs/rigExec/internal/moverKernels.cpp](libs/rigExec/internal/moverKernels.cpp) register the
-  schema computations against the production kernels.
-- [libs/rigExec/internal/tapSet.cpp](libs/rigExec/internal/tapSet.cpp) owns the one `ExecUsdSystem`
-  per stage and builds its batched requests.
-- `rigExecPose --exec-crosscheck` compares each eligible native row, bit for bit,
-  with a one-key request fed that operation's captured inputs as overrides:
-  [tools/rigExecPose.cpp](tools/rigExecPose.cpp),
-  [libs/rigExecOracle/bakedExecCrossCheck.cpp](libs/rigExecOracle/bakedExecCrossCheck.cpp),
-  [libs/rigExecOracle/bakedExecCrossCheckRows.cpp](libs/rigExecOracle/bakedExecCrossCheckRows.cpp).
-  The registrations share the production kernels, so this checks input binding,
-  not arithmetic.
-- Tests ask the same registrations for reference values, for example
-  [tests/testRigExecArm.cpp](tests/testRigExecArm.cpp) and
-  [tests/testRigExecExecCrossCheck.cpp](tests/testRigExecExecCrossCheck.cpp).
-
-[OpenExec reference checks](docs/concepts/baked-vs-dynamic.md#openexec-reference-checks)
-lists what is judged and where the code is. Other upstream and published
-sources are listed in the [method references](docs/references.md).
+RigExec links no OpenExec library: native, frozen and `.rigexec` evaluation
+run the shared operation graph, and no failure falls back to another
+evaluator. The values each operation stores are pinned by the
+[exec-row goldens](docs/concepts/baked-vs-dynamic.md#exec-row-goldens), which
+OpenExec judged bit for bit when they were first recorded and which are
+re-recorded from the production evaluator after a deliberate change. Other
+upstream and published sources are listed in the
+[method references](docs/references.md).
 
 ## Integrations
 

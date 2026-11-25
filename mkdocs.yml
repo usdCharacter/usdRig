@@ -162,8 +162,6 @@ nav:
       - Volume weights: specs/volume-weights.md
       - Default spaces: specs/xformable-default-spaces.md
       - The biped rig: specs/biped-rig.md
-      - OpenExec notes: specs/exec-api-notes.md
-      - ExecUsd notes: specs/execusd-api-notes.md
       - Hydra notes: specs/hydra-integration-notes.md
       - Evaluation core parity: specs/eval-core-parity.md
   - References: references.md

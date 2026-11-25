@@ -93,8 +93,8 @@ at library load in `moverGraph.cpp`, playback once per reader at Open in
 `Derived` deferral and discardable probes stay native around the shared
 bodies; `WeightField` dispatch-half routing, `SnapshotFinals` (8) and the
 `Snapshots` slot domain (25) stay reserved as the wire declares them; and
-the OpenExec oracle's `NoEquivalent` geometry rows stay independent checks,
-never playback coverage.
+the row capture's `NoEquivalent` geometry rows stay skip-only rows in the
+exec-row goldens, never playback coverage.
 
 ## Maintenance qualification
 
@@ -116,17 +116,16 @@ below describe their earlier heads, not a new full-suite validation result.
 
 ## How to read the tables
 
-- **oracle key** is the identity
+- **oracle key** is the identity the row capture in
   `libs/rigExecOracle/bakedExecCrossCheckRows.cpp` gives a step. Every geometry
-  kind falls through to the same skip-only row
-  (`bakedExecCrossCheckRows.cpp:1175-1211`):
+  kind falls through to the same skip-only row:
   `NoEquivalent <label or kind:object:part> [target <chain target>] part <N> op
   <descriptorKey>`. Geometry steps carry no compiled label except
   `SkinTopology <mover>` (`libs/rigExec/internal/bakedGeometry.cpp:6862`), and the four
-  revision kinds get the `target <chain target>` clause (1183-1188). **No
-  geometry step has an OpenExec result row**: the oracle compares baked with
-  OpenExec and never with RigExecRuntime. The runtime's witnesses are the ones
-  in [Snapshot](#snapshot).
+  revision kinds get the `target <chain target>` clause. **No geometry step
+  has a result row**: the exec-row goldens record the baked program's values
+  and never RigExecRuntime's. The runtime's witnesses are the ones in
+  [Snapshot](#snapshot).
 - **core** means the RigExec baked path in `libs/rigExec`; **playback** means
   RigExecRuntime in `libs/rigExecRuntime`.
 - Line numbers are the base SHA's, and point at the function's name line.
@@ -162,7 +161,7 @@ into `RrRunRevisionWeightField` (`geometry.cpp:9295`).
 | `… ChainStatus …` | `ChainStatus` | unused (object = chain) | `bakedGeometry.cpp:5306-5403` | `RrGeoRunChainStatusStep` `geometry.cpp:8249-8346` | both sweep the per-revision statuses and publish `ChainPoints`; a chain cut into groups is re-gathered only when its group content ids moved | `ChainPoints` content version moves exactly when the bytes do | `testRigExecRuntimeGeometry`, `testRigExecGroupForwarding_*` | `unified` — `chain.h` (`RunChainStatusStep`) |
 | `… Derived …` | `Derived` | unused (object = derived target) | `bakedGeometry.cpp:5205-5303` (inline in `RigExecBakedRunGeometryStep`) | `RrGeoRunDerivedStep` `geometry.cpp:8063-8246` | both recompute the derived target from the chain's published points; the core defers a GPU chain's derived step to the publication boundary (`5212-5216`), the playback path has no GPU chain | `DerivedOut` content version, held by handle | `testRigExecSurfaceBinding`, `testRigExecRuntimeGeometry` | `unified` for the CPU body — `chain.h` (`RunDerivedStep`); the GPU deferral stays `adapter-only` with the baked adapter (confirmed: `RigExecBakedResolveGpuChains` still defers to the publication boundary) |
 | `… WeightField …` (unpaired dispatch) | `WeightField` | field index | `bakedGeometry.cpp:2184` (Build) + `bakedSchedule.cpp:2406`, `2446` | `closure.cpp:741` routes it away from `RrRunGeometryStep` to `geometry.cpp:9295` | core treats it as a geometry-half step for diagnostics and scheduling; playback treats it as a weight step | `WeightField` result `ok`/`count`/`values` | `testRigExecWeightFields`, `testRigExecRuntimeWeights` | `adapter-only` (dispatch-half only) — confirmed: the core counts `WeightField` in the geometry half, playback routes it from `RrRunOpBody` to the weights family; the field body is unified in `weights.h` (`RunValueStep`) |
-| `NoEquivalent … <kind>:<object>:<part> …` | all eight geometry kinds | — | — | — | the oracle emits a `skipOnly`, `NoEquivalent` row for every geometry step; there is no OpenExec equivalent of a revision chunk, fuse, chain-status or derived body | none (row is skipped, never a result) | `testRigExecExecCrossCheckRows` | keep as-is: `parity-test-transition` may replace these with IR property rows but must not delete the independent OpenExec rows that do exist |
+| `NoEquivalent … <kind>:<object>:<part> …` | all eight geometry kinds | — | — | — | the row capture emits a `skipOnly`, `NoEquivalent` row for every geometry step; a revision chunk, fuse, chain-status or derived body has no recorded value | none (row is skipped, never a result) | `testRigExecExecGoldens_*` | keep as-is: `parity-test-transition` may replace these with IR property rows |
 | `SnapshotFinals` (reserved) | `StepKind` value 8 | — | refused at Open | refused at Open | never written; a file holding one is refused (`rigexec.fbs:116-122`) | none | `testRigExecFormat` | no body: nothing to unify — confirmed reserved at this head (`kinds.h`, the wire `StepKind`); refused at Open on both sides |
 | `Snapshots` slot domain 25 (reserved) | slot domain | — | refused at Open | refused at Open | no step declares it (`rigexec.fbs:106-113`) | none | `testRigExecFormat` | no body — confirmed reserved at this head; no step declares it |
 
@@ -294,7 +293,7 @@ sparse envelope, lattice acceptance, role classification, and SIMD selection.
 | `ChainStatus / chain point gather` | `unified` | `chain.h` (`RunChainStatusStep`, `ChainGroupAt`) | `bakedGeometry.cpp:5306-5403` vs `geometry.cpp:8249-8346`: the core re-gathers through the group source memo (`RigExecBakedGroupSourceAt`), the runtime through `RrGeoGroupAt`'s id out-parameter. Same `ChainPoints` content-version rule; one body must keep the identity short-circuit. |
 | `Derived / GPU deferral` | `adapter-only` — confirmed at this head | the baked adapter around `chain.h` `RunDerivedStep` | The core skips a GPU chain's derived step at `bakedGeometry.cpp:5212-5216` and re-runs it at the publication boundary (`5153`). RigExecRuntime has no GPU chain. The skip stays in the core adapter around the shared body. |
 | `WeightField / dispatch half` | `adapter-only` — confirmed at this head | dispatch stays split as recorded; the body is unified in `weights.h` | The core counts `WeightField` in the geometry half (`bakedProgramImpl.h:1379`); the runtime routes it to its weight dispatch (`closure.cpp:741` → `geometry.cpp:9295`). Only the half/diagnostic ordering differs; no body is deleted by the geometry chain. |
-| `RevisionStatic / oracle coverage (every geometry kind)` | `adapter-only` — confirmed at this head | the oracle stays an independent check; no row was converted into playback coverage | Every geometry row in the OpenExec cross-check is a `NoEquivalent`, `skipOnly` descriptor (`bakedExecCrossCheckRows.cpp:1175-1211`), and `rigExecOracle` is not linked into the runtime, imaging or playback tests (`CMakeLists.txt:262-280`). The runtime's evidence is bit-for-bit comparison in `tests/testRigExecRuntimeGeometry.cpp`, the shared drivers in `tests/rigExecRuntimeDrive.h` (26 includers) and `tests/rigExecFrozenParity.h` (12 includers), `tests/fixtures/minimal.rigexec` with `testRigExecRuntimeFixture`, and `rigExecPose --verify-binary` (61 `verify_binary_*` entries). That coverage must not be relaxed while the bodies merge; the independent OpenExec rows that do exist stay. |
+| `RevisionStatic / oracle coverage (every geometry kind)` | `adapter-only` — confirmed at this head | the oracle stays an independent check; no row was converted into playback coverage | Every geometry row of the row capture is a `NoEquivalent`, `skipOnly` descriptor (`bakedExecCrossCheckRows.cpp`), and `rigExecOracle` is not linked into the runtime, imaging or playback tests (`CMakeLists.txt:262-280`). The runtime's evidence is bit-for-bit comparison in `tests/testRigExecRuntimeGeometry.cpp`, the shared drivers in `tests/rigExecRuntimeDrive.h` (26 includers) and `tests/rigExecFrozenParity.h` (12 includers), `tests/fixtures/minimal.rigexec` with `testRigExecRuntimeFixture`, and `rigExecPose --verify-binary` (61 `verify_binary_*` entries). That coverage must not be relaxed while the bodies merge. |
 | `FrameMatrix / native↔playback pose bytes` (out of geometry scope, recorded here) | `unified` (value families) | `pose.h`, `weights.h`, `spaces.h` (`RunValueStep`) | The `verify_binary_*` failures in [Snapshot](#snapshot) are 1–2 ULP differences in `jointFramesFinal`, `jointFramesBase` and `controlFrames` between the native program and playback in one invocation. They are pose-side, and the geometry chain must not be blamed for them or fix them by editing a capture. |
 
 ## Rules carried into the lifts
@@ -304,9 +303,10 @@ sparse envelope, lattice acceptance, role classification, and SIMD selection.
   still calls two host revision loops was not accepted as a lift; the two
   step wrappers (`RigExecBakedRunGeometryStep`, `RrRunGeometryStep`) each
   hold no second CPU step switch at the integrated head.
-- The oracle rows in `libs/rigExecOracle/bakedExecCrossCheckRows.cpp` compare
-  baked with OpenExec. Never treat them as runtime coverage: the runtime is
-  witnessed only by the tests named in [Snapshot](#snapshot).
+- The exec-row goldens that `libs/rigExecOracle/bakedExecCrossCheckRows.cpp`
+  captures record the baked program's values. Never treat them as runtime
+  coverage: the runtime is witnessed only by the tests named in
+  [Snapshot](#snapshot).
 - Topology, partitions, group bounds and roles are fixed per compiled rig;
   playback binds what the file recorded and never recomputes a partition.
 - Scalar/SIMD arithmetic differences stay front-end facts with the explicit

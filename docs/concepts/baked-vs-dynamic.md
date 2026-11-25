@@ -95,9 +95,8 @@ phase values. The pose reports `reference_agreements` and
 `movedPropertiesCpu`. This check does not select a production engine.
 
 `rigExecPose --cpu-reference` checks that reference coverage matches the
-published point chains. `--exec-crosscheck` checks actual operation rows against
-OpenExec requests fed with captured original inputs; see
-[OpenExec reference checks](#openexec-reference-checks). Exact golden
+published point chains. The [exec-row goldens](#exec-row-goldens) pin the
+values the operation rows store. Exact golden
 verification compares published values, status and ordered semantic
 diagnostics against independent original captures;
 work counters are outside that value contract. CPU point agreement retains its
@@ -109,49 +108,20 @@ the same explicit first, held, forward, reverse, cold and action visit protocol.
 An unsupported checker/backend or interactive/runtime combination fails
 explicitly.
 
-## OpenExec reference checks
+## Exec-row goldens
 
-RigExec builds against [OpenExec](https://openusd.org/release/intro_to_openexec.html)
-and registers computations with it, but production evaluation never runs it.
-Native, frozen, frame-cache and `.rigexec` runtime evaluation all
-compile and execute the shared operation graph. No environment variable or
-option selects OpenExec evaluation, and no failure falls back to it. OpenExec
-answers only the requests of one optional check and of tests.
+RigExec links no OpenExec library. Native, frozen, frame-cache and
+`.rigexec` runtime evaluation all compile and execute the shared operation
+graph.
 
-### What is registered
+For every compiled step, `RigExecBakedExecCheckRows::Build`
+(`libs/rigExecOracle/bakedExecCrossCheckRows.cpp`) records rows: before the
+operation body runs, a row captures the values the operation read, and after
+it, the value the operation stored. `RigExecBakedProgramTesting::EnableExecRowCapture`
+attaches the rows to a native program; the frozen clone omits them. These step
+kinds store comparable values:
 
-`libs/rigExec` registers nine value types with `ExecTypeRegistry` and these
-schema computations with `EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA`:
-
-- Joint, Control and VolumeWeight: `computeRestFrame`, the default-space
-  ladder (`computedDefaultSpace` and its parent, avar and posed variants, plus
-  expressions on the five `*:space` matrices), `computePointFrame` and
-  `computeMatrix`.
-- FkChain, TwoBoneIk, BlendPointFrames, TwistDistribution, SplineIk and Ribbon:
-  `computePointFrameArray`.
-- Static, dynamic, volume and combine weights: `computeWeightPacket`.
-  BlendInput and BlendSample: channel and sample descriptors.
-- Nine built-in geometry movers (matrix, blend shape, curve, Delta Mush,
-  lattice, smooth, surface, volume-correct and wrinkle):
-  `computeMoverParameters` and `computeMoverStatus`.
-  Affine-frame providers: expressions on `outputs:matrix`.
-
-The registered callbacks call the same kernels as the compiled operations; for
-example, the solver glue in `libs/rigExec/internal/solverKernels.h` serves both. A
-matching row shows that a registration binds the same inputs as the compiled
-operation. It is not an independent check of the arithmetic.
-
-Nothing requests the mover-parameter or affine-frame registrations.
-`computeFalloffLut` is a stub that returns an empty table; a check supplies
-the compiled table as an override.
-
-### What the check judges
-
-`rigExecPose --exec-crosscheck` enables the check on a native program. For
-every compiled step, `RigExecBakedExecCheckRows::Build` records one row. These
-step kinds are judged by OpenExec:
-
-| Step kind | Requested computation |
+| Step kind | Row value |
 |---|---|
 | ComposeSubtree | `computePointFrame`, one row per slot |
 | RestCompose | `computeRestFrame`, one row per slot |
@@ -161,54 +131,22 @@ step kinds are judged by OpenExec:
 | WeightPacket | `computeWeightPacket` |
 | VolumePlacements | `computePointFrame`, converted to a volume placement |
 
-Each judged row owns a `RigExecTapSet` with one value key. Before the
-operation body runs, the row captures the values the operation read, and the
-check passes them to OpenExec as value overrides, so OpenExec recomputes only
-that operation. A row fails when an override for a declared input is missing
-or dropped, when an override names the row's own result, when OpenExec returns
-no value, or when the encoded result differs in any bit.
+Other step kinds are skip-only `NoEquivalent` rows. `testRigExecExecGoldens`
+compares the rows of 55 rigs, at three frames each, with the sets checked in
+under `tests/fixtures/execRows`; OpenExec judged those sets bit for bit when
+they were first recorded. A deliberate change re-records them from the
+production evaluator (see [fixture checks](../../tests/fixtures/README.md)).
 
-Other rows are not judged by OpenExec:
-
-- Aim, rotation and parent constraints in supported configurations are judged
-  by an independent C++ witness (`libs/rigExec/internal/independentConstraintCheck.h`).
-- Other constraints, every other step kind, and rows whose provider slot is
-  not a first-frame pose are skip-only `NoEquivalent` rows. Blend channels and
-  samples are recorded for presence only.
-
-### Switches and coverage
-
-- `RigExecBakedProgramTesting::EnableExecCrossCheck` builds the rows;
-  `rigExecPose --exec-crosscheck` calls it. Operation inputs are captured
-  only while rows exist, and the frozen snapshot does not copy them.
-- The check is native-only. `rigExecPose` refuses `--exec-crosscheck` with
-  `--golden-backend frozen` or `runtime`.
-- CTest runs every `example_graph_*` test with
-  `--exec-crosscheck --cpu-reference`. The `exec_crosscheck_*` fixtures and
-  `testRigExecExecCrossCheck` carry the `exec` label (`ctest -L exec`).
-- `testRigExecDefaultSpaces`, `testRigExecArm`, `testRigExecConstraints`
-  and `testRigExecInteractive` use `RigExecTapSet`
-  requests directly as reference values.
-- `TF_DEBUG=RIGEXEC_TAP_TIMING` reports the time spent building and computing
-  `ExecUsdSystem` requests.
-
-### Stage edits and shared types
-
-Production invalidation uses the compiled dependency edges. All
-`RigExecTapSet` objects on one stage share one `ExecUsdSystem`, created on
-first use. The imaging registry calls `RigExecTapSet::PrepareStageChange` on
-source-stage notices, and the shared context also listens to its stage,
-registered after the system so that it runs ahead of OpenExec's own
-listener. Without tap sets this does nothing; with them, it retires their
-requests before a prim removal reaches OpenExec, which works around the
-`EsfUsd` resync defect described in
-`tests/python/test_rigexec_stage_edits.py`.
+Aim, rotation and parent constraints in supported configurations are also
+judged by an independent C++ witness
+(`libs/rigExec/internal/independentConstraintCheck.h`) through
+`RigExecBakedProgramTesting::EnableExecCrossCheck`;
+`testRigExecExecCrossCheck` runs it over `tests/fixtures/independentConstraints`.
+Rows without such a witness are counted as `NoEquivalent` there.
 
 `RigExecValueAddress` and `RigExecValueOverride` are declared in
-`libs/rigExec/internal/valueAddress.h` as plain data types. Production uses them for
-interactive overrides, falloff tables and input replay; the ExecUsd-backed
-`RigExecTapSet` sits on top of that contract and its header includes no
-OpenExec header.
+`libs/rigExec/internal/valueAddress.h` as plain data types. Production uses them
+for interactive overrides, falloff tables and input replay.
 
 ## Scene and binary playback
 
@@ -259,44 +197,3 @@ See [architecture](../specs/spec.md), [frame warming](frame-cache-warming.md),
 
 [Godot and baked rigs](tutorial-godot-baked-rig.md) describes a self-contained
 `.rigexec` asset with embedded visuals and exposed controllers.
-
-## OpenExec code pointers
-
-Paths are relative to the repository root.
-
-| Role | What | Where |
-|---|---|---|
-| Production graph | Shared compiler and readiness executor; OpenExec is not called | `libs/rigExecGraph/opGraph.cpp:97`, `libs/rigExecGraph/opGraph.cpp:409` |
-| Build and link | `rigExec` links `exec execUsd ef vdf` publicly | `CMakeLists.txt:166-170` |
-| | `rigExecRuntime` links neither USD nor OpenExec | `CMakeLists.txt:343` |
-| | The installed package requires the same OpenUSD targets | `cmake/rigExecConfig.cmake.in:20-25` |
-| | The schema plugin's library is `rigExecImaging`; there is no `Exec` plugInfo block | `CMakeLists.txt:2610-2612` |
-| | `RigExecLoadComputations()` is an empty link anchor | `libs/rigExec/internal/types.cpp:16` |
-| | `probeEsfCompatibility` is built only on request and has no test | `CMakeLists.txt:1898-1899` |
-| Value types | Nine `ExecTypeRegistry::RegisterType` calls | `libs/rigExec/internal/types.cpp:205-215` |
-| Schema computations | Joint, Control and VolumeWeight providers (macros, then uses) | `libs/rigExec/internal/computations.cpp:434-563`, `:565`, `:567`, `:590` |
-| | FkChain, TwoBoneIk, BlendPointFrames, TwistDistribution, SplineIk | `libs/rigExec/internal/computations.cpp:764`, `:951`, `:1088`, `:1151`, `:1378` |
-| | Weight packets, blend descriptors and Ribbon | `libs/rigExec/internal/moverKernels.cpp:665-884` |
-| | `computeFalloffLut` stub | `libs/rigExec/internal/moverKernels.cpp:730-733` |
-| | Mover parameters and status, never requested | `libs/rigExec/internal/movers/matrixMover.cpp:437`, `blendShapeMover.cpp:625`, `curveMover.cpp:662`, `deltaMushMover.cpp:151`, `latticeMover.cpp:286`, `smoothMover.cpp:117`, `surfaceMover.cpp:276`, `volumeCorrectMover.cpp:106`, `wrinkleMover.cpp:174` |
-| | Affine-frame expressions, never requested | `libs/rigExec/internal/affineFrameComputations.cpp:231-315` |
-| | Production affine-frame operation | `libs/rigExecScene/providerProgram.cpp:631` |
-| Requests | One `ExecUsdSystem` per stage in a weak table, created only here | `libs/rigExec/internal/tapSet.cpp:82-147`, `libs/rigExec/internal/tapSet.cpp:108` |
-| | Value keys, request build and preparation | `libs/rigExec/internal/tapSet.cpp:213-255` |
-| | Time change, overrides, compute and extraction | `libs/rigExec/internal/tapSet.cpp:316`, `:319-340`, `:344-346`, `:350-357` |
-| | `RIGEXEC_TAP_TIMING` | `libs/rigExec/internal/debugCodes.h:19`, `libs/rigExec/internal/tapSet.cpp:44-50` |
-| | The only tap-set creator under `libs` | `libs/rigExecOracle/bakedExecCrossCheck.cpp:50` |
-| Invalidation | Registry stage-notice hook | `libs/rigExecImaging/registryInvalidation.cpp:496` |
-| | Prim-removal workaround and its defect | `libs/rigExec/internal/tapSet.cpp:111-113`, `:118-136`, `tests/python/test_rigexec_stage_edits.py:7-12` |
-| Reference check | Row construction | `libs/rigExecOracle/bakedExecCrossCheckRows.cpp:441-608` |
-| | Constraint rows and their independent witness | `libs/rigExecOracle/bakedExecCrossCheckRows.cpp:505-542`, `libs/rigExec/internal/independentConstraintCheck.h` |
-| | Override coverage | `libs/rigExecOracle/bakedExecCrossCheck.cpp:37-43`, `:76-86` |
-| | Request evaluation and bit-exact comparison | `libs/rigExecOracle/bakedExecCrossCheck.cpp:103`, `:114-119` |
-| | Row capture around operation bodies | `libs/rigExec/internal/bakedSchedule.cpp:2360-2362`, `libs/rigExec/internal/bakedPose.cpp:3613`, `:3679`, `:4666`, `:5484-5485` |
-| | Frozen clone, which omits the rows | `libs/rigExec/internal/frozenSnapshot.cpp:89` |
-| | Enable hook | `libs/rigExecOracle/bakedExecCrossCheckRows.cpp:680-685` |
-| | `rigExecPose --exec-crosscheck` and backend refusals | `tools/rigExecPose.cpp:1435`, `:1551-1557`, `:1159`, `:1168` |
-| | CTest registration | `CMakeLists.txt:703-705`, `:909-910`, `:923-931` |
-| Direct test references | Tap sets built by tests | `tests/testRigExecDefaultSpaces.cpp:56`, `tests/testRigExecArm.cpp:198`, `tests/testRigExecConstraints.cpp:2630`, `tests/testRigExecInteractive.cpp:162` |
-| Shared data types | `RigExecValueAddress`, `RigExecValueOverride` | `libs/rigExec/internal/valueAddress.h:30-48`, `libs/rigExec/internal/valueAddress.h:63-88` |
-| | Production uses of the override type | `libs/rigExec/api/bakedProgram.h:456`, `libs/rigExec/api/frameCache.h:159` |

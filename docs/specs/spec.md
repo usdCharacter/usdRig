@@ -29,9 +29,9 @@ affected graphs. Normals and bounds follow the final evaluated geometry.
 The compiled program stores typed operation declarations and dense values.
 Native, frozen, and binary runtime execution use the shared graph compiler,
 readiness rules, and kernels. Independent source references and exact golden
-checks are optional judges; OpenExec answers only a native
-[reference check](../concepts/baked-vs-dynamic.md#openexec-reference-checks)
-and tests. Background warming evaluates detached snapshots;
+checks are optional judges, and the
+[exec-row goldens](../concepts/baked-vs-dynamic.md#exec-row-goldens) pin
+operation values. Background warming evaluates detached snapshots;
 edits invalidate incompatible cached results before they reach the viewport.
 See [evaluation and checks](../concepts/baked-vs-dynamic.md) and
 [frame warming](../concepts/frame-cache-warming.md).

@@ -14,7 +14,7 @@ fork to merged pull request.
 
 ## Environment
 
-Building from source requires OpenUSD 26.08 with OpenExec and `usdview`,
+Building from source requires OpenUSD 26.08 with `usdview`,
 CMake 3.26+, Ninja, and a C++17 compiler, matching the Python version and
 architecture of your OpenUSD build. See the README's
 [Build and run](README.md#build-and-run) section; the `bin/` helpers handle

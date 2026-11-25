@@ -157,8 +157,7 @@ with no further wiring.""",
             # rigExec:translationEnabled to RigExecXformable,
             # schema.usda:141-309; guide:source is read only by imaging and
             # rigExec:channelSpaces only by the usdview manipulator); consumers
-            # name it. FK chain: libs/rigExec/internal/computations.cpp:769-776
-            # registers rigExec:controls with .Required(). Matrix mover frames:
+            # name it. FK chain: rigExec:controls is required. Matrix mover frames:
             # libs/rigExec/internal/movers/matrixMover.cpp:223-226 rejects a matrix mover
             # whose rigExec:transform does not have exactly one target, and
             # _BindMatrixMover (matrixMover.cpp:100-118) binds that provider, or
@@ -471,9 +470,8 @@ several alternative chains among the joints: a joint under an inactive member
 publishes the frame the chain gives it at rest, carried by the start frame.
 Skinning movers then read the posed joints at the `final` phase.""",
         "wiring": [
-            # Both control inputs are .Required() on the computation
-            # (libs/rigExec/internal/computations.cpp:769-776), and the compiler enforces
-            # it from the other end: a bound joint's element index is checked
+            # The controls are required; the compiler enforces it from the
+            # joint end: a bound joint's element index is checked
             # against the control count
             # (libs/rigExec/internal/rigEvaluatorCompile.cpp:951-957 takes knownCount =
             # rigExec:controls size; 1028-1033 rejects an element >= it).
@@ -491,10 +489,9 @@ Skinning movers then read the posed joints at the `final` phase.""",
             # and :1111, schema.usda:641-645.
             ("`rigExec:joints`", "Ordered nested joints the chain poses; with "
              "none, the solver publishes frames nothing reads.", "no"),
-            # Plain AttributeValue input, no .Required(), default "world":
-            # libs/rigExec/internal/computations.cpp:791 and schema.usda:549. It must be
+            # Optional attribute, default "world" (schema.usda:549). It must be
             # "parentRelative" whenever the controls are nested, or the parent's
-            # motion is composed in twice (libs/rigExec/internal/computations.cpp:601-608).
+            # motion is composed in twice.
             ("`rigExec:controlSpace`", "`parentRelative` when the controls are "
              "nested under each other; `world` for sibling controls.", "no"),
             ("`rigExec:jointGroups`", "Ordered joint groups (prims with "
@@ -619,13 +616,13 @@ that reference length is the rest curve or the rest chain), gets
 published as `computePointFrameArray`, one frame per `rigExec:joints`
 entry, which the bound joints extract view-free.""",
         "wiring": [
-            # computations.cpp:1383-1386 -- computePointFrame input .Required()
+            # required computePointFrame input
             ("`rigExec:rootControl`", "Provider carrying cv0 and cv1 and the root roll.", "yes"),
-            # computations.cpp:1390-1393 -- .Required(); translation only, schema.usda:1057-1060
+            # required; translation only, schema.usda:1057-1060
             ("`rigExec:midControl`", "Provider whose translation offset bends cv1 and cv2.", "yes"),
-            # computations.cpp:1397-1400 -- .Required()
+            # required
             ("`rigExec:endControl`", "Provider carrying cv2 and cv3 and the end twist.", "yes"),
-            # computations.cpp:1221-1224 -- an empty list warns and produces no frames
+            # an empty list produces no frames
             # (compile simply skips a solver with no joints, rigEvaluatorCompile.cpp:907)
             ("`rigExec:joints`", "Ordered chain, root to tip: the solve's cardinality "
              "and its rest CVs. Naming a joint another step also writes stacks the "
@@ -696,14 +693,10 @@ left there ([How operators fire](../concepts/how-operators-fire.md#the-order-you
 — so a constrained joint carries its
 displacement through the blend rather than losing it.""",
         "wiring": [
-            # Both are declared .Required() in the exec registration
-            # (libs/rigExec/internal/computations.cpp:1093-1102), but nothing enforces
-            # either one: a stage with inputB deleted, and one with BOTH
+            # Nothing enforces either input: a stage with inputB deleted, and one with BOTH
             # deleted, compiles and evaluates (rigExecPose reports the pose
-            # valid). A missing target is the computation's
-            # null pointer, and a null pointer returns the OTHER input by
-            # value (libs/rigExec/internal/computations.cpp:1009-1014,
-            # libs/rigExecScene/solverProgram.cpp:70-72); with neither wired the
+            # valid). A missing target returns the OTHER input by value
+            # (libs/rigExecScene/solverProgram.cpp:70-72); with neither wired the
             # blend publishes nothing and its joints fall back to their rest
             # chain (libs/rigExec/internal/bakedPose.cpp:4835-4838, 5775-5784).
             ("`rigExec:inputA`", "Aggregate solver selected at weight 0; "
@@ -828,10 +821,9 @@ against is the bind-time curve.""",
             # bakedPose.cpp:723-728: "rigExec:parameterization, frameTransport,
             # startFrame, endFrame and twistFrames are
             # deliberately NOT read: the computation does not read them
-            # either". The exec computation's inputs are sampleCount, the
-            # joints' rest frames and the two point packets
-            # (moverKernels.cpp:864-872). The frame relationships declare
-            # authoring intent without adding inputs to this computation; a
+            # either". The solve's inputs are sampleCount, the joints' rest
+            # frames and the two point packets. The frame relationships declare
+            # authoring intent without adding inputs to the solve; a
             # solver they name is still a scheduling prerequisite
             # (RigExecSolverRelationshipPorts,
             # libs/rigExecScene/solverProgram.h:25).
@@ -887,8 +879,7 @@ ribbon.""",
             "are declared but never read: the solve's only inputs are the "
             "driver points, `rigExec:sampleCount` and the rests of the joints "
             "on `rigExec:joints` "
-            "(`libs/rigExec/internal/moverKernels.cpp:864-872`, "
-            "`libs/rigExec/internal/bakedPose.cpp:723-728`). A solver one of them names is "
+            "(`libs/rigExec/internal/bakedPose.cpp:723-728`). A solver one of them names is "
             "still scheduled before the ribbon. What actually pins the run is "
             "the bind-time driver curve.",
             "`rigExec:sampleCount` is the run's cardinality. Below two the "
@@ -1528,7 +1519,7 @@ is the Skin Mover's job. Naming a bare prim — a joint, a control or an
 Xformable — instead of a `points` property moves that prim's FRAME the
 same way, as a step of the pose stack.""",
         "how_it_works": """The provider publishes `computeMatrix`, the rest-to-posed map of its
-own frame (computations.cpp:416-432), and the mover blends it over the
+own frame, and the mover blends it over the
 incoming points as `p' = q + w (T q - q)` (schema.usda:2552-2553), where
 `w` is the bound weight field or, with none bound,
 `inputs:defaultWeight`. `rigExecReadPhase` metadata on
@@ -2755,8 +2746,8 @@ back to the stage.""",
             # representation ("a DynamicWeight without a base must be
             # constant"), libs/rigExecOracle/weightReference.cpp:431/:439 repeat
             # both in the CPU oracle, and weightPackets.cpp:190-194 is the same
-            # rule in the packet kernel exec and the baked path share
-            # (moverKernels.cpp:250; bakedWeights.cpp:286 through
+            # rule in the packet kernel the baked path runs
+            # (bakedWeights.cpp:286 through
             # libs/rigExecScene/weightProgram.cpp:220).
             ("`rigExec:baseWeight`", "Weight field this one modulates; required "
              "unless the representation is `constant`, and at most one target.",
@@ -2869,7 +2860,7 @@ structural and are baked to one lookup table per compiled rig.""",
              "the target — typically an unposed reference copy. The weighted "
              "domain stays the target.", "no"),
             # No relationship places the volume: the packet reads the prim's own
-            # posed point frame (libs/rigExec/internal/moverKernels.cpp:304), so an unwired
+            # posed point frame, so an unwired
             # volume follows its namespace-parent xformable (schema.usda:330).
             ("(placement)", "No wiring: the volume is posed by its own `rest:space` "
              "and avars, or follows its namespace-parent xformable when unwired.", "-"),
@@ -2951,9 +2942,8 @@ the stack.""",
             # exactly one target") and :344 (must equal the bound mover's target).
             ("`rigExec:weightTarget`", "Exact points property this field covers; "
              "must match the target of the mover that binds it.", "yes"),
-            # Nothing to author: computePointFrame is a .Required() input of the
-            # packet computation (moverKernels.cpp:711-713), but every
-            # RigExecXformable publishes one (computations.cpp:532), and the
+            # Nothing to author: computePointFrame is a required input of the
+            # weight packet, but every RigExecXformable publishes one, and the
             # baked program places every volume weight as a pose provider
             # (bakedWeights.cpp:159-161 refuses one that is not), so an unplaced
             # volume still has a posed frame.

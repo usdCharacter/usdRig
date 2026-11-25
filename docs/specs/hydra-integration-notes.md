@@ -1,9 +1,8 @@
 # How usdExecImaging integrates OpenExec into Hydra (OpenUSD v26.08)
 
 > OpenUSD 26.08 study notes, not a description of RigExec. RigExec
-> publishes through filtering scene indices (`libs/rigExecImaging/sceneIndices.h`);
-> see [OpenExec reference checks](../concepts/baked-vs-dynamic.md#openexec-reference-checks)
-> for how RigExec uses OpenExec.
+> publishes through filtering scene indices (`libs/rigExecImaging/sceneIndices.h`).
+> RigExec links no OpenExec library.
 
 Reference notes for implementing **rigExecImaging**, based on a source study of
 OpenUSD v26.08. All source paths below are relative to the OpenUSD root, and

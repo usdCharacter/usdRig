@@ -86,7 +86,7 @@ starting its workflow, and keep this list current when adding or changing skills
 - `libs/rigExecOracle`: test oracles and golden capture, built as
   `librigExecOracle.so`. `librigExec.so` does not link it. The Python
   module links it, and so does each test that runs a cpu-reference,
-  golden, or exec cross-check. Imaging, playback, and runtime tests do
+  golden, or exec-row capture. Imaging, playback, and runtime tests do
   not. The install ships this library because the installed Python module
   loads it.
 - `libs/rigExecGpu`: the OpenGL 4.5 compute path for per-vertex deformation
@@ -110,8 +110,7 @@ starting its workflow, and keep this list current when adding or changing skills
 - `libs/rigExec`: evaluator, mover graph, baked program, scheduling,
   invalidation, and frame caching. Preserve dynamic/baked parity.
   `Evaluate` runs that baked program, or returns an invalid pose and the
-  `IsBakeable` reasons. It does not evaluate through OpenExec. The tap set
-  remains for cross-check and tests. Its sources compile as the four
+  `IsBakeable` reasons. Its sources compile as the four
   OBJECT targets `rigExecCompile`, `rigExecEval`, `rigExecSchedule` and
   `rigExecVerify`, each declared with its own sources, includes and links
   in `cmake/rigExec<Layer>Sources.cmake` and composed into `librigExec`
@@ -430,7 +429,7 @@ Keep the exceptions above in sync with the code they describe.
 
 ### Build and test
 
-Use an unchanged OpenUSD 26.08 install with OpenExec, CMake 3.26+, Ninja,
+Use an unchanged OpenUSD 26.08 install, CMake 3.26+, Ninja,
 C++17, and a compatible Python interpreter. `USD` and `PY` configure helper
 scripts; their defaults look for a sibling dependency install.
 
@@ -508,13 +507,17 @@ Linking rules:
 
 - No target links `usdSkel`. Read and author a BlendShape prim by name
   (`BlendShapeText` in `libs/rigExecSchema/schemaNames.h`) through the
-  generic Usd/Sdf API. `tools/check_pxr_libraries.py` runs in CI and fails
-  on a link, an include under `pxr/usd/usdSkel` or a `UsdSkel` import.
+  generic Usd/Sdf API. No target links OpenExec (`exec`, `execUsd`,
+  `execGeom`, `ef`, `vdf`, `esf`, `esfUsd`): the exec-row goldens
+  (`tests/fixtures/README.md`) pin what it once judged.
+  `tools/check_pxr_libraries.py` runs in CI and fails on a link to either,
+  an include under `pxr/usd/usdSkel` or `pxr/exec`, or an import of their
+  Python modules.
 - A new test, bench, or probe that compiles a stage through `rigExec` alone
   joins the `rigExecScene` list near the end of `CMakeLists.txt`. Without
   it, compile returns false with a missing-scene diagnostic. Core-only tests
   of that failure deliberately omit the scene library. A test that runs a
-  cpu-reference, golden, or exec cross-check joins the `rigExecOracle` list
+  cpu-reference, golden, or exec-row capture joins the `rigExecOracle` list
   beside it. Missing oracle support returns false with diagnostics; golden
   APIs without an error channel throw `std::runtime_error`. Both scene and
   oracle targets register automatically in build and installed consumers.
