@@ -74,6 +74,60 @@ AllFinite(const std::vector<rigExecStd::Vec3f> &points)
     return true;
 }
 
+/// What validate knows of input \p port (RigExecOpCheck): its elements,
+/// and its value when the host writes it.
+inline size_t
+CheckElements(const rigExec::RigExecOpCheck &check,
+              const rigExec::RigExecPortHandle &port)
+{
+    return check.elements[port.Index()];
+}
+
+template <class T>
+const T *
+CheckValue(const rigExec::RigExecOpCheck &check,
+           const rigExec::RigExecPortHandle &port)
+{
+    return static_cast<const T *>(
+        check.batch.inputs[check.k * check.batch.portCount + port.Index()]);
+}
+
+inline bool
+Fed(const rigExec::RigExecOpCheck &check,
+    const rigExec::RigExecPortHandle &port)
+{
+    return CheckElements(check, port) != rigExec::kRigExecPortUnfed;
+}
+
+/// Whether \p a and \p b are equal where both are known.
+inline bool
+SameCount(size_t a, size_t b)
+{
+    return a >= rigExec::kRigExecPortUnfed || b >= rigExec::kRigExecPortUnfed ||
+           a == b;
+}
+
+/// The node's working state as validate sees it; null at compile.
+template <class State>
+State *
+CheckState(const rigExec::RigExecOpCheck &check)
+{
+    return static_cast<State *>(check.state);
+}
+
+/// Whether \p envelope, when fed, can hold one weight per point.
+inline bool
+EnvelopeFits(const rigExec::RigExecOpCheck &check,
+             const rigExec::RigExecPortHandle &points,
+             const rigExec::RigExecPortHandle &envelope, const char *op,
+             std::string *error)
+{
+    if (!SameCount(CheckElements(check, envelope),
+                   CheckElements(check, points)))
+        return Fail(error, op, "envelope length differs from the points");
+    return true;
+}
+
 /// Whether \p envelope, when given, holds one weight per point.
 inline bool
 EnvelopeFits(const Points &in, const Envelope *envelope, const char *op,

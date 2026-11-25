@@ -58,6 +58,8 @@ using Palette =
 struct SkinState {
     std::vector<float> rows;
     Palette palette;
+    /// The indices and weights validate could not see, checked each frame.
+    bool checkEachFrame = true;
 };
 
 Layout
@@ -79,46 +81,70 @@ LayoutOf(const rigExec::RigExecOpBatch &batch, size_t k)
     return layout;
 }
 
-rigExec::RigExecRangePlan
-Accept(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
-       std::string *error)
+/// Whether every index names one of \p transforms influences and every
+/// weight is finite and non-negative.
+bool
+IndicesAndWeightsFit(const Indices &indices, const Envelope &weights,
+                     size_t transforms, std::string *error)
 {
-    constexpr auto kRefuse = rigExec::RigExecRangePlan::Refuse;
-    const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
-    const Points &in = *In<Points>(io, SkinPoints());
-    const Envelope &weights = *In<Envelope>(io, SkinWeights());
-    const Indices &indices = *In<Indices>(io, SkinIndices());
-    const Layout layout = LayoutOf(batch, k);
-    if (!layout.elementSize || !layout.transformCount)
-        return Fail(error, "Skin", "needs an influence and elementSize >= 1"),
-               kRefuse;
-    if (weights.Size() != indices.Size() ||
-        indices.Size() != in.Size() * layout.elementSize)
-        return Fail(error, "Skin",
-                    "indices and weights need elementSize per point"),
-               kRefuse;
-    for (size_t i = 0; i < indices.Size(); ++i) {
-        if (indices[i] < 0 || size_t(indices[i]) >= layout.transformCount)
-            return Fail(error, "Skin", "an index is outside the influences"),
-                   kRefuse;
+    for (size_t i = 0; i < indices.Size(); ++i)
+        if (indices[i] < 0 || size_t(indices[i]) >= transforms)
+            return Fail(error, "Skin", "an index is outside the influences");
+    for (size_t i = 0; i < weights.Size(); ++i)
         if (!std::isfinite(weights[i]) || weights[i] < 0.0f)
             return Fail(error, "Skin",
-                        "weights must be finite and non-negative"),
-                   kRefuse;
-    }
-    if (!Usable(*In<Transforms>(io, SkinTransforms())))
-        return Fail(error, "Skin", "transforms must be finite and affine"),
-               kRefuse;
-    if (!EnvelopeFits(in, In<Envelope>(io, SkinEnvelope()), "Skin", error))
-        return kRefuse;
-    return rigExec::RigExecRangePlan::Ranges;
+                        "weights must be finite and non-negative");
+    return true;
 }
 
 bool
-Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t, std::string *)
+Validate(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    const int elementSize = rigExec::RigExecPayloadColumnOf<int32_t>(
+        check.batch, kElementSize)[check.k];
+    if (elementSize < 1)
+        return Fail(error, "Skin", "elementSize must be at least 1");
+    const size_t points = CheckElements(check, SkinPoints());
+    const size_t transforms = CheckElements(check, SkinTransforms());
+    const size_t indices = CheckElements(check, SkinIndices());
+    const size_t weights = CheckElements(check, SkinWeights());
+    if (transforms == 0)
+        return Fail(error, "Skin", "needs an influence");
+    if (!SameCount(indices, weights) ||
+        (points < rigExec::kRigExecPortUnfed &&
+         !SameCount(indices, points * size_t(elementSize))))
+        return Fail(error, "Skin",
+                    "indices and weights need elementSize per point");
+    if (!EnvelopeFits(check, SkinPoints(), SkinEnvelope(), "Skin", error))
+        return false;
+    const Indices *indexValues = CheckValue<Indices>(check, SkinIndices());
+    const Envelope *weightValues = CheckValue<Envelope>(check, SkinWeights());
+    const bool known =
+        indexValues && weightValues && transforms < rigExec::kRigExecPortUnfed;
+    if (SkinState *state = CheckState<SkinState>(check))
+        state->checkEachFrame = !known;
+    return !known ||
+           IndicesAndWeightsFit(*indexValues, *weightValues, transforms, error);
+}
+
+bool
+Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
+        std::string *error)
 {
     SkinState &state =
         *static_cast<SkinState *>(rigExec::RigExecBatchState(batch, k));
+    const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const Transforms &transforms = *In<Transforms>(io, SkinTransforms());
+    if (!Usable(transforms))
+        return Fail(error, "Skin", "transforms must be finite and affine");
+    if (!EnvelopeFits(*In<Points>(io, SkinPoints()),
+                      In<Envelope>(io, SkinEnvelope()), "Skin", error))
+        return false;
+    if (state.checkEachFrame &&
+        !IndicesAndWeightsFit(*In<Indices>(io, SkinIndices()),
+                              *In<Envelope>(io, SkinWeights()),
+                              transforms.Size(), error))
+        return false;
     const Layout layout = LayoutOf(batch, k);
     const auto method = SkinMethod(
         rigExec::RigExecPayloadColumnOf<uint32_t>(batch, kMethod)[k]);
@@ -199,8 +225,10 @@ const rigExec::RigExecPortDesc kPorts[] = {
      kRigExecPortInput | kRigExecPortPointwise, "points"},
     {&SkinTransforms(), &rigExecStd::Mat4dArray(), kRigExecPortInput,
      "transforms"},
-    {&SkinIndices(), &rigExecStd::IntArray(), kRigExecPortInput, "indices"},
-    {&SkinWeights(), &rigExecStd::FloatArray(), kRigExecPortInput, "weights"},
+    {&SkinIndices(), &rigExecStd::IntArray(),
+     kRigExecPortInput | rigExec::kRigExecPortChecked, "indices"},
+    {&SkinWeights(), &rigExecStd::FloatArray(),
+     kRigExecPortInput | rigExec::kRigExecPortChecked, "weights"},
     {&SkinEnvelope(), &rigExecStd::FloatArray(),
      kRigExecPortInput | kRigExecPortOptional | kRigExecPortPointwise,
      "envelope"},
@@ -215,7 +243,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.name = "Skin";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.range.accept = &Accept;
+    d.validate = &Validate;
     d.range.prepare = &Prepare;
     d.range.run = &SkinRange;
     d.state = StateOf<SkinState>();

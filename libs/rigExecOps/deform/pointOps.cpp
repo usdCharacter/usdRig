@@ -55,23 +55,22 @@ struct SmoothState {
     std::vector<std::array<size_t, 4>> reads;
 };
 
-rigExec::RigExecRangePlan
-SmoothAccept(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
-             std::string *error)
+bool
+SmoothValidate(const rigExec::RigExecOpCheck &check, std::string *error)
 {
-    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
-    return EnvelopeFits(*In<Points>(io, SmoothPoints()),
-                        In<RigExecArray<float>>(io, SmoothEnvelope()), "Smooth",
-                        error)
-               ? rigExec::RigExecRangePlan::Ranges
-               : rigExec::RigExecRangePlan::Refuse;
+    return EnvelopeFits(check, SmoothPoints(), SmoothEnvelope(), "Smooth",
+                        error);
 }
 
 bool
 SmoothPrepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
-              std::string *)
+              std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    if (!EnvelopeFits(*In<Points>(io, SmoothPoints()),
+                      In<RigExecArray<float>>(io, SmoothEnvelope()), "Smooth",
+                      error))
+        return false;
     SmoothState &state =
         *static_cast<SmoothState *>(rigExec::RigExecBatchState(batch, k));
     const auto &counts = *In<RigExecArray<int>>(io, SmoothCounts());
@@ -232,7 +231,7 @@ const rigExec::RigExecOpDesc kSmoothDesc = [] {
         PointDesc("Smooth", kSmoothPorts, std::size(kSmoothPorts), nullptr,
                   rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
                       rigExec::kRigExecOpGate);
-    d.range.accept = &SmoothAccept;
+    d.validate = &SmoothValidate;
     d.range.prepare = &SmoothPrepare;
     d.range.run = &SmoothRange;
     d.range.reads = &SmoothReads;

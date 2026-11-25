@@ -81,14 +81,80 @@ ViewOf(const rigExec::RigExecOpIo &io, bool check,
     return true;
 }
 
-rigExec::RigExecRangePlan
-Accept(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
-       std::string *error)
+/// Weights validate could not see, checked each frame.
+struct MatrixState {
+    bool checkEachFrame = true;
+};
+
+bool
+Validate(const rigExec::RigExecOpCheck &check, std::string *error)
 {
+    const bool sparse = Fed(check, MatrixDeformWeightIndices());
+    if (sparse != Fed(check, MatrixDeformWeights()))
+        return Fail(error, "MatrixDeform",
+                    "weight indices and weights go together");
+    if (sparse && Fed(check, MatrixDeformEnvelope()))
+        return Fail(error, "MatrixDeform",
+                    "an envelope or sparse weights, not both");
+    const size_t points = CheckElements(check, MatrixDeformPoints());
+    if (sparse && !SameCount(CheckElements(check, MatrixDeformWeightIndices()),
+                             CheckElements(check, MatrixDeformWeights())))
+        return Fail(error, "MatrixDeform",
+                    "sparse weights must name points in ascending order "
+                    "with weights finite and in [0, 1]");
+    if (!EnvelopeFits(check, MatrixDeformPoints(), MatrixDeformEnvelope(),
+                      "MatrixDeform", error))
+        return false;
+    bool known = points < rigExec::kRigExecPortUnfed;
+    if (sparse) {
+        const Indices *indices =
+            CheckValue<Indices>(check, MatrixDeformWeightIndices());
+        const Envelope *weights =
+            CheckValue<Envelope>(check, MatrixDeformWeights());
+        known = known && indices && weights;
+        if (known) {
+            rigExec::eval::EnvelopePacketView view;
+            view.valid = true;
+            view.rangePolicyEmpty = true;
+            view.representation = rigExec::eval::kWeightSparse;
+            view.values = weights->Data();
+            view.valueCount = weights->Size();
+            view.indices = indices->Data();
+            view.indexCount = indices->Size();
+            if (!rigExec::eval::SparseEnvelopeIsUsable(view, points))
+                return Fail(error, "MatrixDeform",
+                            "sparse weights must name points in ascending "
+                            "order with weights finite and in [0, 1]");
+        }
+    } else if (Fed(check, MatrixDeformEnvelope())) {
+        const Envelope *envelope =
+            CheckValue<Envelope>(check, MatrixDeformEnvelope());
+        known = envelope != nullptr;
+        if (known)
+            for (float w : *envelope)
+                if (!std::isfinite(w) || w < 0.0f || w > 1.0f)
+                    return Fail(error, "MatrixDeform",
+                                "envelope weights must be finite and in "
+                                "[0, 1]");
+    }
+    if (MatrixState *state = CheckState<MatrixState>(check))
+        state->checkEachFrame = !known;
+    return true;
+}
+
+bool
+Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
+        std::string *error)
+{
+    const auto &state =
+        *static_cast<const MatrixState *>(rigExec::RigExecBatchState(batch, k));
+    const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    if (!EnvelopeFits(*In<Points>(io, MatrixDeformPoints()),
+                      In<Envelope>(io, MatrixDeformEnvelope()), "MatrixDeform",
+                      error))
+        return false;
     rigExec::eval::EnvelopePacketView view;
-    return ViewOf(rigExec::RigExecBatchInstance(batch, k), true, &view, error)
-               ? rigExec::RigExecRangePlan::Ranges
-               : rigExec::RigExecRangePlan::Refuse;
+    return !state.checkEachFrame || ViewOf(io, true, &view, error);
 }
 
 /// ApplyAcceptedMatrixKernel's points [begin, end): the sparse walk over
@@ -155,12 +221,15 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&MatrixDeformTransform(), &rigExecStd::Mat4dType(), kRigExecPortInput,
      "transform"},
     {&MatrixDeformEnvelope(), &rigExecStd::FloatArray(),
-     kRigExecPortInput | kRigExecPortOptional | kRigExecPortPointwise,
+     kRigExecPortInput | kRigExecPortOptional | kRigExecPortPointwise |
+         rigExec::kRigExecPortChecked,
      "envelope"},
     {&MatrixDeformWeightIndices(), &rigExecStd::IntArray(),
-     kRigExecPortInput | kRigExecPortOptional, "weightIndices"},
+     kRigExecPortInput | kRigExecPortOptional | rigExec::kRigExecPortChecked,
+     "weightIndices"},
     {&MatrixDeformWeights(), &rigExecStd::FloatArray(),
-     kRigExecPortInput | kRigExecPortOptional, "weights"},
+     kRigExecPortInput | kRigExecPortOptional | rigExec::kRigExecPortChecked,
+     "weights"},
     {&MatrixDeformOut(), &rigExecStd::Vec3fArray(),
      kRigExecPortOutput | kRigExecPortPointwise, "out",
      rigExec::RigExecOutputBound::Input, &MatrixDeformPoints()},
@@ -172,8 +241,10 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.name = "MatrixDeform";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.range.accept = &Accept;
+    d.validate = &Validate;
+    d.range.prepare = &Prepare;
     d.range.run = &Deform;
+    d.state = StateOf<MatrixState>();
     d.capabilities = rigExec::kRigExecOpBakeable |
                      rigExec::kRigExecOpFreezable | rigExec::kRigExecOpRanged |
                      rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;

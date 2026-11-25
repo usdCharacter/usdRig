@@ -11,7 +11,8 @@ struct RigExecViewAccess {
     /// A pinned view of bound output \p output's current value in \p run;
     /// empty for an output the program does not have.
     static RigExecValueView Output(const RigExecRun &run,
-                                   RigExecOutputId output);
+                                   RigExecOutputId output,
+                                   std::string *error = nullptr);
 };
 
 } // namespace rigExec

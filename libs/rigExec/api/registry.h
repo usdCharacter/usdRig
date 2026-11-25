@@ -29,7 +29,7 @@ inline constexpr uint32_t kRigExecInvalidIndex = 0xffffffffu;
 /// Version of the descriptor structs below. Each library records the version
 /// it was built with, and Initialize rejects one built with another. Raise
 /// it whenever a descriptor's layout changes.
-inline constexpr uint32_t kRigExecRegistryAbiVersion = 11;
+inline constexpr uint32_t kRigExecRegistryAbiVersion = 12;
 
 /// Refers to one registered data type. A type library defines one per type
 /// with RIGEXEC_DEFINE_TYPE_HANDLE, and Initialize gives it its index; read
@@ -207,6 +207,10 @@ enum RigExecPortFlags : uint32_t {
     /// elements, through topology the node is given; each range keeps its
     /// halo plan in its scratch.
     kRigExecPortNeighbourhood = 1u << 5,
+    /// An input whose value the op's validate reads, not only its size:
+    /// a change of the host's value validates the node again before it
+    /// runs (RigExecOpDesc::validate).
+    kRigExecPortChecked = 1u << 6,
 };
 
 /// The most elements an output whose type holds arrays may hold. The
@@ -534,10 +538,8 @@ struct RigExecOpRange {
     void *scratch = nullptr;
 };
 
-/// What accept decides for a node before any of its ranges runs.
+/// How a ranged node runs for the life of its program, from its settings.
 enum class RigExecRangePlan : uint8_t {
-    /// The node fails as a whole.
-    Refuse,
     /// The node runs as its partition's ranges.
     Ranges,
     /// The node runs as one range over every element, whatever the
@@ -549,22 +551,22 @@ enum class RigExecRangePlan : uint8_t {
 /// parallel. The evaluator cuts a node's elements into ranges of the
 /// program's RigExecCompileOptions::rangeGrain; the partition depends only
 /// on the element count and the options. For each active instance k it
-/// sizes the pointwise outputs to the element count, then calls accept,
-/// then prepare, then run once per range. Results must be bitwise the same
+/// sizes the pointwise outputs to the element count, then calls prepare,
+/// then run once per range. Results must be bitwise the same
 /// for every partition. A range reads the inputs, the payload and the
 /// node's state, and writes only its elements of the pointwise outputs and
 /// its scratch; ranges of one node run concurrently. Ranged nodes that
 /// feed one another's pointwise or neighbourhood inputs form a range
-/// chain over one partition: accept and prepare run for every node of the
-/// chain first, then each range runs through the chain's nodes in order as
-/// one task, a neighbourhood input waiting only for the ranges it reads.
-/// So accept and prepare read the sizes of pointwise and neighbourhood
-/// inputs, never their elements.
+/// chain over one partition: prepare runs for every node of the chain
+/// first, then each range runs through the chain's nodes in order as one
+/// task, a neighbourhood input waiting only for the ranges it reads. So
+/// prepare reads the sizes of pointwise and neighbourhood inputs, never
+/// their elements.
 struct RigExecOpRangeHandling {
-    /// Decides from the node's inputs alone, never from computed elements;
-    /// null is Ranges.
-    RigExecRangePlan (*accept)(const RigExecOpBatch &batch, size_t k,
-                               size_t count, std::string *error) = nullptr;
+    /// Whether instance \p k runs in ranges or whole, from its settings
+    /// alone (the batch's payloads and payload fields; no inputs), decided
+    /// once at compile; null is Ranges.
+    RigExecRangePlan (*plan)(const RigExecOpBatch &batch, size_t k) = nullptr;
     /// Builds what every range shares this frame into the node's state.
     /// False fails the node before any range runs. Optional.
     bool (*prepare)(const RigExecOpBatch &batch, size_t k, size_t count,
@@ -583,6 +585,27 @@ struct RigExecOpRangeHandling {
     /// Each range's scratch: created when the range is first cut and kept
     /// until the evaluator unbinds. Results never depend on what it holds.
     RigExecOpStateHandling scratch;
+};
+
+/// The elements RigExecOpCheck gives an optional input nothing feeds.
+inline constexpr size_t kRigExecPortUnfed = SIZE_MAX - 1;
+
+/// What validate sees of node k of a batch, and per port what is known
+/// before it runs. For an input the host writes, the batch's input is its
+/// value and elements[port] what it holds; for an input another node
+/// feeds, the input is null and elements[port] what it holds when its
+/// bound says so exactly, else SIZE_MAX; for an unfed optional input,
+/// kRigExecPortUnfed. At compile no value is known and every fed input's
+/// elements are SIZE_MAX. A check that needs a value validate does not
+/// see is made while the node runs, as an error of the evaluation; state,
+/// the node's working state (null at compile), is where validate notes
+/// that.
+struct RigExecOpCheck {
+    RigExecOpBatch batch;
+    size_t k = 0;
+    const size_t *elements = nullptr;
+    void *state = nullptr;
+    bool compiling = false;
 };
 
 /// Describes one op: its name and version, its ports, how it runs, where
@@ -627,6 +650,14 @@ struct RigExecOpDesc {
     size_t stateFieldCount = 0;
     /// For a Ranged op, in place of run and runBatch.
     RigExecOpRangeHandling range;
+    /// Checks a node before it runs, from what RigExecOpCheck says is
+    /// known: at compile, and before the first evaluation and every one
+    /// after an input changed size or a kRigExecPortChecked input changed
+    /// value. False with \p error fails that compile or evaluation; the
+    /// node never runs on inputs it refused. What only the inputs' values
+    /// computed in the frame can show is an error of run itself. Null
+    /// accepts every node.
+    bool (*validate)(const RigExecOpCheck &check, std::string *error) = nullptr;
 };
 
 /// Receives a type library's types during Initialize.

@@ -74,17 +74,22 @@ public:
     /// ops that are not Pure, and the ops those feed run; every other value
     /// keeps what it held, which is what running it again would give. The
     /// first Evaluate, and the one after a failure, runs every op. If an
-    /// op fails, Evaluate returns false with that op's message, no tap
-    /// callback runs, and outputs may hold partial results.
+    /// op fails, evaluation stops there: Evaluate returns false with that
+    /// op's message, no tap callback runs, and every output the failed
+    /// evaluation wrote has no valid value until the next one succeeds. A
+    /// host that wants the last good value keeps a view of it.
     bool Evaluate(std::string *error = nullptr);
     /// One of the values the host reads back, as computed by the last
     /// Evaluate. The pointer stays valid until the next Evaluate or
-    /// SwapProgram; null for an unknown output.
-    const void *GetOutput(RigExecOutputId output) const;
+    /// SwapProgram; null for an unknown output, and, with "no valid value:"
+    /// and the failure in \p error, for one a failed evaluation wrote.
+    const void *GetOutput(RigExecOutputId output,
+                          std::string *error = nullptr) const;
     /// The same value as GetOutput, held for as long as the returned view
     /// is: later evaluations write that output elsewhere until the view is
-    /// released. Empty for an unknown output.
-    RigExecValueView ViewOutput(RigExecOutputId output) const;
+    /// released. Empty where GetOutput is null.
+    RigExecValueView ViewOutput(RigExecOutputId output,
+                                std::string *error = nullptr) const;
     /// A run state that continues from this evaluator: its inputs (with
     /// any SetInput values committed first), op state, outputs and history
     /// of earlier frames. Evaluating it leaves this evaluator untouched;

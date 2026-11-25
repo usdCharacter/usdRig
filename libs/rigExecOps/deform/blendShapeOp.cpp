@@ -57,52 +57,86 @@ PayloadOf(const rigExec::RigExecOpBatch &batch, size_t k)
 /// every sample an offset layout the range kernel reads as the whole
 /// kernel does.
 bool
-SumsInRanges(const BlendShapePayload &p, size_t count)
+SumsInRanges(const BlendShapePayload &p)
 {
     if (p.surfaceFrame)
         return false;
     for (const BlendShapeChannel &channel : p.channels)
         for (const BlendShapeSample &sample : channel.samples)
-            if (!sample.layout || (sample.layout->indices.empty() &&
-                                   !sample.layout->offsets.empty() &&
-                                   sample.layout->offsets.size() != count))
+            if (!sample.layout ||
+                (sample.layout->indices.empty() &&
+                 !sample.layout->offsets.empty() &&
+                 sample.layout->offsets.size() != sample.layout->pointCount))
                 return false;
     return true;
 }
 
 rigExec::RigExecRangePlan
-Accept(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
-       std::string *error)
+Plan(const rigExec::RigExecOpBatch &batch, size_t k)
 {
-    constexpr auto kRefuse = rigExec::RigExecRangePlan::Refuse;
-    const BlendShapePayload &p = PayloadOf(batch, k);
+    return SumsInRanges(PayloadOf(batch, k)) ? rigExec::RigExecRangePlan::Ranges
+                                             : rigExec::RigExecRangePlan::Whole;
+}
+
+/// The point count validate could not see, checked each frame.
+struct BlendState {
+    bool checkEachFrame = true;
+};
+
+bool
+ChannelsFit(const BlendShapePayload &p, size_t count, std::string *error)
+{
+    if (!count || !rigExec::RigExecBlendChannelsFitKernel<SampleTraits>(
+                      p.channels, count))
+        return Fail(error, "BlendShape",
+                    "a channel has no samples or a sample doesn't fit");
+    return true;
+}
+
+bool
+Validate(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    const BlendShapePayload &p = PayloadOf(check.batch, check.k);
+    const size_t weights = CheckElements(check, BlendShapeWeights());
+    if (!SameCount(weights, p.channels.size()))
+        return Fail(error, "BlendShape", "needs one weight per channel");
+    const size_t points = CheckElements(check, BlendShapePoints());
+    const size_t base = Fed(check, BlendShapeBase())
+                            ? CheckElements(check, BlendShapeBase())
+                            : points;
+    if (!SameCount(base, points))
+        return Fail(error, "BlendShape", "base length differs from the points");
+    if (p.surfaceFrame &&
+        (!Fed(check, BlendShapeRest()) || !Fed(check, BlendShapeCounts()) ||
+         !Fed(check, BlendShapeIndices())))
+        return Fail(error, "BlendShape",
+                    "surface frame needs a usable rest mesh");
+    if (!EnvelopeFits(check, BlendShapePoints(), BlendShapeEnvelope(),
+                      "BlendShape", error))
+        return false;
+    const bool known = base < rigExec::kRigExecPortUnfed;
+    if (BlendState *state = CheckState<BlendState>(check))
+        state->checkEachFrame = !known;
+    return !known || ChannelsFit(p, base, error);
+}
+
+bool
+Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
+        std::string *error)
+{
+    const auto &state =
+        *static_cast<const BlendState *>(rigExec::RigExecBatchState(batch, k));
     const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
-    const Points &in = *In<Points>(io, BlendShapePoints());
     const Points *base = In<Points>(io, BlendShapeBase());
-    if (!base)
-        base = &in;
-    if (In<Envelope>(io, BlendShapeWeights())->Size() != p.channels.size())
-        return Fail(error, "BlendShape", "needs one weight per channel"),
-               kRefuse;
-    if (base->Size() != in.Size())
-        return Fail(error, "BlendShape", "base length differs from the points"),
-               kRefuse;
-    if (!base->Size() || !rigExec::RigExecBlendChannelsFitKernel<SampleTraits>(
-                             p.channels, base->Size()))
-        return Fail(error, "BlendShape",
-                    "a channel has no samples or a sample doesn't fit"),
-               kRefuse;
-    if (p.surfaceFrame && (!In<Points>(io, BlendShapeRest()) ||
-                           !In<Ints>(io, BlendShapeCounts()) ||
-                           !In<Ints>(io, BlendShapeIndices())))
-        return Fail(error, "BlendShape",
-                    "surface frame needs a usable rest mesh"),
-               kRefuse;
-    if (!EnvelopeFits(in, In<Envelope>(io, BlendShapeEnvelope()), "BlendShape",
+    if (!EnvelopeFits(*In<Points>(io, BlendShapePoints()),
+                      In<Envelope>(io, BlendShapeEnvelope()), "BlendShape",
                       error))
-        return kRefuse;
-    return SumsInRanges(p, count) ? rigExec::RigExecRangePlan::Ranges
-                                  : rigExec::RigExecRangePlan::Whole;
+        return false;
+    if (!state.checkEachFrame)
+        return true;
+    if (base && base->Size() != count)
+        return Fail(error, "BlendShape", "base length differs from the points");
+    return ChannelsFit(PayloadOf(batch, k), count, error);
 }
 
 /// The whole node: the summed deltas, carried on the surface frames when
@@ -158,7 +192,7 @@ BlendRange(const rigExec::RigExecOpBatch &batch, size_t k,
 {
     const BlendShapePayload &p = PayloadOf(batch, k);
     const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
-    if (!SumsInRanges(p, range.count))
+    if (!SumsInRanges(p))
         return Whole(p, io, error);
     const Points &in = *In<Points>(io, BlendShapePoints());
     const Envelope &weights = *In<Envelope>(io, BlendShapeWeights());
@@ -264,8 +298,11 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.name = "BlendShape";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.range.accept = &Accept;
+    d.validate = &Validate;
+    d.range.plan = &Plan;
+    d.range.prepare = &Prepare;
     d.range.run = &BlendRange;
+    d.state = StateOf<BlendState>();
     d.range.scratch = StateOf<BlendScratch>();
     d.capabilities = rigExec::kRigExecOpBakeable |
                      rigExec::kRigExecOpFreezable | rigExec::kRigExecOpRanged |

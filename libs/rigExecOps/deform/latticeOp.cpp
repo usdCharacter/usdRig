@@ -120,37 +120,46 @@ BasisOf(LatticeState &state, const Points &rest, const Points &restCage,
 }
 
 rigExec::RigExecRangePlan
-Accept(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
-       std::string *error)
+Plan(const rigExec::RigExecOpBatch &batch, size_t k)
 {
-    constexpr auto kRefuse = rigExec::RigExecRangePlan::Refuse;
+    // A regular grid can fail at any point it reads: only the whole run
+    // answers.
+    return FlagAt(batch, kRegularGrid, k) ? rigExec::RigExecRangePlan::Whole
+                                          : rigExec::RigExecRangePlan::Ranges;
+}
+
+bool
+Validate(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (!EnvelopeFits(check, LatticePoints(), LatticeEnvelope(), "Lattice",
+                      error))
+        return false;
+    if (FlagAt(check.batch, kRegularGrid, check.k))
+        return true;
+    if (!Fed(check, LatticeRestPoints()) || !Fed(check, LatticeRestCage()))
+        return Fail(error, "Lattice",
+                    "a bound lattice needs rest points and a rest cage");
+    if (!SameCount(CheckElements(check, LatticeRestPoints()),
+                   CheckElements(check, LatticePoints())))
+        return Fail(error, "Lattice",
+                    "rest points differ in count from the points");
+    return true;
+}
+
+bool
+Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
+        std::string *error)
+{
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const Points &in = *In<Points>(io, LatticePoints());
     if (!EnvelopeFits(in, In<Envelope>(io, LatticeEnvelope()), "Lattice",
                       error))
-        return kRefuse;
-    // A regular grid can refuse at any point it reads: only the whole run
-    // answers.
-    if (FlagAt(batch, kRegularGrid, k))
-        return rigExec::RigExecRangePlan::Whole;
-    const Points *rest = In<Points>(io, LatticeRestPoints());
-    if (!rest || !In<Points>(io, LatticeRestCage()))
-        return Fail(error, "Lattice",
-                    "a bound lattice needs rest points and a rest cage"),
-               kRefuse;
-    if (rest->Size() != in.Size())
-        return Fail(error, "Lattice",
-                    "rest points differ in count from the points"),
-               kRefuse;
-    return rigExec::RigExecRangePlan::Ranges;
-}
-
-bool
-Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t, std::string *)
-{
+        return false;
     if (FlagAt(batch, kRegularGrid, k))
         return true;
-    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    if (In<Points>(io, LatticeRestPoints())->Size() != in.Size())
+        return Fail(error, "Lattice",
+                    "rest points differ in count from the points");
     LatticeState &state =
         *static_cast<LatticeState *>(rigExec::RigExecBatchState(batch, k));
     state.basis =
@@ -265,7 +274,8 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.name = "Lattice";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.range.accept = &Accept;
+    d.validate = &Validate;
+    d.range.plan = &Plan;
     d.range.prepare = &Prepare;
     d.range.run = &LatticeRange;
     d.capabilities =

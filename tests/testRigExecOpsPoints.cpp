@@ -220,6 +220,8 @@ struct Node {
     std::vector<std::unique_ptr<RigExecEvaluator>> evaluators;
     std::vector<RigExecInputId> inputs;
     RigExecOutputId out;
+    /// Why the node did not compile; Run answers it.
+    std::string compileError;
 
     Node(const RigExecOpHandle &op,
          const std::vector<const RigExecPortHandle *> &ins,
@@ -243,9 +245,11 @@ struct Node {
             auto evaluator =
                 program ? RigExecEvaluator::Create(program, evaluate, &error)
                         : nullptr;
-            if (!evaluator)
-                std::printf("node: %s\n", error.c_str());
-            CHECK(evaluator);
+            if (!evaluator) {
+                compileError = error;
+                evaluators.clear();
+                return;
+            }
             evaluators.push_back(std::move(evaluator));
         }
     }
@@ -254,6 +258,11 @@ struct Node {
     bool Run(const std::vector<const void *> &values, T *result,
              std::string *error = nullptr)
     {
+        if (evaluators.empty()) {
+            if (error)
+                *error = compileError;
+            return false;
+        }
         bool answer = false;
         bool wholeRan[2] = {false, false};
         T whole[2];
@@ -3193,6 +3202,134 @@ TestRetainedStateBatches()
     }
 }
 
+bool
+Contains(const std::string &text, const char *part)
+{
+    return text.find(part) != std::string::npos;
+}
+
+/// Checks that need no frame fail compile, or the first evaluation that
+/// gives a node inputs it cannot take, naming the node and the reason; a
+/// failure only a frame can show stops that evaluation and publishes
+/// nothing.
+void
+TestBuildTimeChecks()
+{
+    using namespace rigExecOps;
+    std::string error;
+    const auto compiles = [&](RigExecRigDescBuilder &b) {
+        auto desc = b.Build(&error);
+        return desc && RigExecCompile(*desc, {}, &error) != nullptr;
+    };
+    {
+        SkinPayload skin;
+        skin.elementSize = 0;
+        RigExecRigDescBuilder b;
+        const RigExecNodeId n = b.AddOp(Skin(), &skin);
+        for (const RigExecPortHandle *port :
+             {&SkinPoints(), &SkinTransforms(), &SkinIndices(), &SkinWeights()})
+            b.BindInput(n, *port);
+        b.BindOutput(n, SkinOut());
+        CHECK(!compiles(b));
+        CHECK(Contains(error, "node 0 (rig:Skin) is invalid: Skin: "
+                              "elementSize must be at least 1"));
+    }
+    {
+        MatrixDeformPayload matrix;
+        RigExecRigDescBuilder b;
+        const RigExecNodeId n = b.AddOp(MatrixDeform(), &matrix);
+        b.BindInput(n, MatrixDeformPoints());
+        b.BindInput(n, MatrixDeformTransform());
+        b.BindInput(n, MatrixDeformWeightIndices());
+        b.BindOutput(n, MatrixDeformOut());
+        CHECK(!compiles(b));
+        CHECK(Contains(error, "weight indices and weights go together"));
+    }
+    {
+        LatticePayload lattice;
+        RigExecRigDescBuilder b;
+        const RigExecNodeId n = b.AddOp(Lattice(), &lattice);
+        b.BindInput(n, LatticePoints());
+        b.BindInput(n, LatticePosedCage());
+        b.BindInput(n, LatticeRestPoints());
+        b.BindOutput(n, LatticeOut());
+        CHECK(!compiles(b));
+        CHECK(Contains(error, "needs rest points and a rest cage"));
+    }
+    {
+        BlendShapePayload blend;
+        blend.surfaceFrame = true;
+        RigExecRigDescBuilder b;
+        const RigExecNodeId n = b.AddOp(BlendShape(), &blend);
+        b.BindInput(n, BlendShapePoints());
+        b.BindInput(n, BlendShapeWeights());
+        b.BindOutput(n, BlendShapeOut());
+        CHECK(!compiles(b));
+        CHECK(Contains(error, "surface frame needs a usable rest mesh"));
+    }
+    // Counts the host writes: refused at the first evaluation that sees
+    // them, and accepted once they fit.
+    const Grid grid(4, 3);
+    const Points in = ToStd(grid.points);
+    const size_t n = grid.points.size();
+    SkinPayload skin;
+    skin.elementSize = 1;
+    RigExecRigDescBuilder b;
+    const RigExecNodeId node = b.AddOp(Skin(), &skin);
+    const RigExecInputId points = b.BindInput(node, SkinPoints());
+    const RigExecInputId transforms = b.BindInput(node, SkinTransforms());
+    const RigExecInputId indices = b.BindInput(node, SkinIndices());
+    const RigExecInputId weights = b.BindInput(node, SkinWeights());
+    const RigExecInputId envelope = b.BindInput(node, SkinEnvelope());
+    const RigExecOutputId out = b.BindOutput(node, SkinOut());
+    auto program = RigExecCompile(*b.Build(&error), {}, &error);
+    auto evaluator = RigExecEvaluator::Create(program);
+    std::vector<rigExecStd::Mat4d> mats(2, rigExecStd::Mat4d(1.0));
+    mats[1][3][0] = 0.5;
+    const auto matArray = ToArray(mats);
+    const RigExecArray<int> zeros(n);
+    const RigExecArray<int> shortIndices(n - 1);
+    std::vector<float> ones(n, 1.0f);
+    const auto weightArray = ToArray(ones);
+    std::vector<float> half(n, 0.5f);
+    const auto envelopeArray = ToArray(half);
+    const auto shortEnvelope = ToArray(std::vector<float>(n - 1, 0.5f));
+    std::vector<int> wrong(n, 0);
+    wrong[2] = 7;
+    const auto outside = ToArray(wrong);
+    CHECK(evaluator->SetInput(points, &in));
+    CHECK(evaluator->SetInput(transforms, &matArray));
+    CHECK(evaluator->SetInput(indices, &shortIndices));
+    CHECK(evaluator->SetInput(weights, &weightArray));
+    CHECK(evaluator->SetInput(envelope, &envelopeArray));
+    CHECK(!evaluator->Evaluate(&error));
+    CHECK(Contains(error, "node 0 (rig:Skin) is invalid: Skin: indices and "
+                          "weights need elementSize per point"));
+    CHECK(evaluator->SetInput(indices, &outside));
+    CHECK(!evaluator->Evaluate(&error));
+    CHECK(Contains(error, "an index is outside the influences"));
+    CHECK(evaluator->SetInput(indices, &zeros));
+    CHECK(evaluator->SetInput(envelope, &shortEnvelope));
+    CHECK(!evaluator->Evaluate(&error));
+    CHECK(Contains(error, "envelope length differs from the points"));
+    CHECK(evaluator->SetInput(envelope, &envelopeArray));
+    CHECK(evaluator->Evaluate(&error));
+    const RigExecValueView good = evaluator->ViewOutput(out);
+    const Points kept = *static_cast<const Points *>(evaluator->GetOutput(out));
+    // A transform that is not finite is a frame's error: the output it was
+    // writing holds no valid value; the view keeps the last good one.
+    mats[0][0][0] = std::numeric_limits<double>::quiet_NaN();
+    const auto badMats = ToArray(mats);
+    CHECK(evaluator->SetInput(transforms, &badMats));
+    CHECK(!evaluator->Evaluate(&error));
+    CHECK(Contains(error, "node 0 (rig:Skin) failed: Skin: transforms must "
+                          "be finite and affine"));
+    std::string why;
+    CHECK(!evaluator->GetOutput(out, &why));
+    CHECK(Contains(why, "no valid value: node 0 (rig:Skin) failed"));
+    CHECK(SamePoints(kept, *good.As<Points>(rigExecStd::Vec3fArray())));
+}
+
 /// A skin, matrix, smooth and delta mush chain runs as one range chain:
 /// every grain, thread count and the node-by-node run give the same bits,
 /// in each SIMD mode.
@@ -3454,6 +3591,7 @@ main()
     TestSingleChainIk();
     TestSplineIk();
     TestRangeChain();
+    TestBuildTimeChecks();
     ReportRangeTiming();
     if (failures) {
         std::printf("%d failure(s)\n", failures);

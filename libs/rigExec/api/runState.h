@@ -50,8 +50,10 @@ public:
     /// it was made; evaluating adds none.
     bool Evaluate(std::string *error = nullptr);
     /// As RigExecEvaluator::GetOutput and ViewOutput.
-    const void *GetOutput(RigExecOutputId output) const;
-    RigExecValueView ViewOutput(RigExecOutputId output) const;
+    const void *GetOutput(RigExecOutputId output,
+                          std::string *error = nullptr) const;
+    RigExecValueView ViewOutput(RigExecOutputId output,
+                                std::string *error = nullptr) const;
     /// A new run state that continues from this one: the same committed
     /// inputs, op state, outputs and history. Call it while no edit of
     /// this run state's inputs is open.

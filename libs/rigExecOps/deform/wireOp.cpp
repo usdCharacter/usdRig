@@ -75,24 +75,15 @@ struct WireState {
     Basis basis;
 };
 
-rigExec::RigExecRangePlan
-Accept(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
-       std::string *error)
+bool
+Validate(const rigExec::RigExecOpCheck &check, std::string *error)
 {
-    constexpr auto kRefuse = rigExec::RigExecRangePlan::Refuse;
-    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
-    const Envelope *envelope = In<Envelope>(io, WireEnvelope());
-    const auto *indices = In<RigExecArray<int>>(io, WireWeightIndices());
-    const auto *weights = In<RigExecArray<float>>(io, WireWeights());
-    if (!indices != !weights)
-        return Fail(error, "Wire", "weight indices and weights go together"),
-               kRefuse;
-    if (indices && envelope)
-        return Fail(error, "Wire", "an envelope or sparse weights, not both"),
-               kRefuse;
-    if (!EnvelopeFits(*In<Points>(io, WirePoints()), envelope, "Wire", error))
-        return kRefuse;
-    return rigExec::RigExecRangePlan::Ranges;
+    const bool sparse = Fed(check, WireWeightIndices());
+    if (sparse != Fed(check, WireWeights()))
+        return Fail(error, "Wire", "weight indices and weights go together");
+    if (sparse && Fed(check, WireEnvelope()))
+        return Fail(error, "Wire", "an envelope or sparse weights, not both");
+    return EnvelopeFits(check, WirePoints(), WireEnvelope(), "Wire", error);
 }
 
 bool
@@ -100,6 +91,9 @@ Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
         std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    if (!EnvelopeFits(*In<Points>(io, WirePoints()),
+                      In<Envelope>(io, WireEnvelope()), "Wire", error))
+        return false;
     const WireInstance p = PayloadAt(batch, k);
     WireState &state =
         *static_cast<WireState *>(rigExec::RigExecBatchState(batch, k));
@@ -212,7 +206,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.name = "Wire";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.range.accept = &Accept;
+    d.validate = &Validate;
     d.range.prepare = &Prepare;
     d.range.run = &WireRange;
     d.state = StateOf<WireState>();

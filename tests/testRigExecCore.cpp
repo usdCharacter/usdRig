@@ -2325,8 +2325,8 @@ TestDeclaredFieldErrors()
         CHECK(Contains(error, "needs its field values"));
     }
     {
-        // Node 1 has two gains for three input values: node 0, before it
-        // in the batch, still runs.
+        // Node 1 has two gains for three input values: the frame fails, and
+        // the outputs it wrote hold no valid value.
         RigExecRigDescBuilder builder;
         FieldsModel good = FieldsNode(2), bad = FieldsNode(2);
         bad.gains.resize(2);
@@ -2345,9 +2345,10 @@ TestDeclaredFieldErrors()
         CHECK(!evaluator->Evaluate(&error));
         CHECK(Contains(error, "node 1 (test:Fields) failed: field gains "
                               "holds 2 values for 3 input elements"));
-        const Vec3 expected = good.Step(in);
-        CHECK(Same(*static_cast<const Vec3 *>(evaluator->GetOutput(aOut)),
-                   expected));
+        std::string why;
+        CHECK(!evaluator->GetOutput(aOut, &why) &&
+              !evaluator->ViewOutput(aOut));
+        CHECK(Contains(why, "no valid value: node 1 (test:Fields) failed"));
     }
 }
 
@@ -2539,6 +2540,7 @@ const RigExecTypeLibraryDesc kRangeTypes = [] {
 }();
 
 RIGEXEC_DEFINE_OP_HANDLE(RScale)
+RIGEXEC_DEFINE_OP_HANDLE(RScaleWhole)
 RIGEXEC_DEFINE_PORT_HANDLE(RScaleIn)
 RIGEXEC_DEFINE_PORT_HANDLE(RScaleFactor)
 RIGEXEC_DEFINE_PORT_HANDLE(RScaleOut)
@@ -2570,26 +2572,35 @@ FloatsOut(const RigExecOpBatch &batch, size_t k, const RigExecPortHandle &port)
 }
 
 RigExecRangePlan
-AcceptScale(const RigExecOpBatch &batch, size_t k, size_t, std::string *error)
+WholeScale(const RigExecOpBatch &, size_t)
+{
+    return RigExecRangePlan::Whole;
+}
+
+/// Refuses a node whose input holds 13 elements, as a bind-time check.
+bool
+ValidateScale(const RigExecOpCheck &check, std::string *error)
 {
     acceptCalls.fetch_add(1);
+    if (check.elements[RScaleIn().Index()] == 13) {
+        *error = "13 elements are refused";
+        return false;
+    }
+    return true;
+}
+
+bool
+PrepareScale(const RigExecOpBatch &batch, size_t k, size_t, std::string *error)
+{
+    prepareCalls.fetch_add(1);
     const float factor = *static_cast<const float *>(
         batch.inputs[k * batch.portCount + RScaleFactor().Index()]);
     if (factor != factor) {
         *error = "factor is not a number";
-        return RigExecRangePlan::Refuse;
+        return false;
     }
-    return factor == 3.0f ? RigExecRangePlan::Whole : RigExecRangePlan::Ranges;
-}
-
-bool
-PrepareScale(const RigExecOpBatch &batch, size_t k, size_t, std::string *)
-{
-    prepareCalls.fetch_add(1);
     static_cast<ScaleState *>(RigExecBatchState(batch, k))->factor =
-        *static_cast<const float *>(
-            batch.inputs[k * batch.portCount + RScaleFactor().Index()]) *
-        0.5f;
+        factor * 0.5f;
     return true;
 }
 
@@ -2704,13 +2715,20 @@ RegisterRangeOps(RigExecOpRegistrar &registrar)
         d.ports = scalePorts;
         d.portCount = 3;
         d.capabilities = kRigExecOpRanged;
-        d.range.accept = &AcceptScale;
+        d.validate = &ValidateScale;
         d.range.prepare = &PrepareScale;
         d.range.run = &RunScale;
         d.state = HandlingOf<ScaleState>();
         return d;
     }();
     registrar.Add(RScale(), scale);
+    static const RigExecOpDesc scaleWhole = [] {
+        RigExecOpDesc d = scale;
+        d.name = "RScaleWhole";
+        d.range.plan = &WholeScale;
+        return d;
+    }();
+    registrar.Add(RScaleWhole(), scaleWhole);
     static const RigExecPortDesc blurPorts[] = {
         {&RBlurIn(), &FloatsType(),
          kRigExecPortInput | kRigExecPortNeighbourhood, "in"},
@@ -2770,14 +2788,16 @@ struct RangeRig {
 };
 
 RangeRig
-BuildRangeRig(const std::vector<size_t> &sizes, bool sides = true)
+BuildRangeRig(const std::vector<size_t> &sizes, bool sides = true,
+              bool wholeScales = false)
 {
     RangeRig rig;
     RigExecRigDescBuilder b;
+    const RigExecOpHandle &scale = wholeScales ? RScaleWhole() : RScale();
     for (size_t c = 0; c < sizes.size(); ++c) {
-        const RigExecNodeId first = b.AddOp(RScale());
+        const RigExecNodeId first = b.AddOp(scale);
         const RigExecNodeId blur = b.AddOp(RBlur());
-        const RigExecNodeId last = b.AddOp(RScale());
+        const RigExecNodeId last = b.AddOp(scale);
         b.Connect(first, RScaleOut(), blur, RBlurIn());
         b.Connect(blur, RBlurOut(), last, RScaleIn());
         rig.ins.push_back(b.BindInput(first, RScaleIn()));
@@ -2903,7 +2923,7 @@ TestRangePartitions()
                         rangeCalls = 0;
                         std::string error;
                         CHECK(evaluator->Evaluate(&error));
-                        CHECK(acceptCalls == 2 * sizes.size());
+                        CHECK(acceptCalls == (frame ? 0 : 2 * sizes.size()));
                         CHECK(prepareCalls == 2 * sizes.size());
                         CHECK(rangeCalls == expectedRanges);
                         for (size_t c = 0; c < sizes.size(); ++c) {
@@ -2940,7 +2960,7 @@ void
 TestRangeWholeAndDirty()
 {
     const std::vector<size_t> sizes = {300, 300};
-    const RangeRig rig = BuildRangeRig(sizes);
+    const RangeRig rig = BuildRangeRig(sizes, true, true);
     auto program = CompileRanges(*rig.desc, 16, 0, 0);
     CHECK(program);
     if (!program)
@@ -2975,7 +2995,7 @@ TestRangeWholeAndDirty()
     prepareCalls = 0;
     rangeCalls = 0;
     CHECK(evaluator->Evaluate());
-    CHECK(acceptCalls == 2);
+    CHECK(acceptCalls == 0);
     CHECK(prepareCalls == 2);
     CHECK(rangeCalls == 2 + 19);
     const auto *out =
@@ -3114,37 +3134,44 @@ RefBlur(const std::vector<float> &in)
 void
 TestRangeChains()
 {
-    RigExecRigDescBuilder b;
-    std::vector<RigExecNodeId> n;
-    n.push_back(b.AddOp(RScale()));
-    n.push_back(b.AddOp(RBlur()));
-    n.push_back(b.AddOp(RScale()));
-    n.push_back(b.AddOp(RBlur()));
-    n.push_back(b.AddOp(RScale()));
-    n.push_back(b.AddOp(RBlur()));
-    n.push_back(b.AddOp(RScale()));
-    b.Connect(n[0], RScaleOut(), n[1], RBlurIn());
-    b.Connect(n[1], RBlurOut(), n[2], RScaleIn());
-    b.Connect(n[2], RScaleOut(), n[3], RBlurIn());
-    b.Connect(n[3], RBlurOut(), n[4], RScaleIn());
-    b.Connect(n[0], RScaleOut(), n[5], RBlurIn());
-    b.Connect(n[5], RBlurOut(), n[6], RScaleIn());
-    const RigExecInputId in = b.BindInput(n[0], RScaleIn());
+    std::shared_ptr<const RigExecRigDesc> descs[2];
+    RigExecInputId in;
     std::vector<RigExecInputId> factors;
-    for (const RigExecNodeId node : {n[0], n[2], n[4], n[6]})
-        factors.push_back(b.BindInput(node, RScaleFactor()));
-    const RigExecOutputId middle = b.BindOutput(n[2], RScaleOut());
-    const RigExecOutputId last = b.BindOutput(n[4], RScaleOut());
-    const RigExecOutputId side = b.BindOutput(n[6], RScaleOut());
+    RigExecOutputId middle, last, side;
     std::string error;
-    auto desc = b.Build(&error);
-    CHECK(desc);
-    if (!desc)
-        return;
+    for (int whole = 0; whole < 2; ++whole) {
+        RigExecRigDescBuilder b;
+        std::vector<RigExecNodeId> n;
+        n.push_back(b.AddOp(RScale()));
+        n.push_back(b.AddOp(RBlur()));
+        n.push_back(b.AddOp(whole ? RScaleWhole() : RScale()));
+        n.push_back(b.AddOp(RBlur()));
+        n.push_back(b.AddOp(RScale()));
+        n.push_back(b.AddOp(RBlur()));
+        n.push_back(b.AddOp(RScale()));
+        b.Connect(n[0], RScaleOut(), n[1], RBlurIn());
+        b.Connect(n[1], RBlurOut(), n[2], RScaleIn());
+        b.Connect(n[2], RScaleOut(), n[3], RBlurIn());
+        b.Connect(n[3], RBlurOut(), n[4], RScaleIn());
+        b.Connect(n[0], RScaleOut(), n[5], RBlurIn());
+        b.Connect(n[5], RBlurOut(), n[6], RScaleIn());
+        in = b.BindInput(n[0], RScaleIn());
+        factors.clear();
+        for (const RigExecNodeId node : {n[0], n[2], n[4], n[6]})
+            factors.push_back(b.BindInput(node, RScaleFactor()));
+        middle = b.BindOutput(n[2], RScaleOut());
+        last = b.BindOutput(n[4], RScaleOut());
+        side = b.BindOutput(n[6], RScaleOut());
+        descs[whole] = b.Build(&error);
+        CHECK(descs[whole]);
+        if (!descs[whole])
+            return;
+    }
     std::vector<std::unique_ptr<RigExecTaskSystem>> pools;
     for (const size_t threads : {size_t(1), size_t(2), size_t(4), size_t(8)})
         pools.push_back(RigExecCreateThreadTaskSystem(threads));
     for (const float wholeFactor : {1.5f, 3.0f}) {
+        const RigExecRigDesc *desc = descs[wholeFactor == 3.0f].get();
         const std::vector<float> input = RangeInput(1000, 3, 1);
         const std::vector<float> a = RefScale(input, 1.5f);
         const std::vector<float> m = RefScale(RefBlur(a), wholeFactor);
@@ -3189,6 +3216,54 @@ TestRangeChains()
             }
         }
     }
+    blurCuts = 0;
+}
+
+// A node its op's validate refuses fails the evaluation with the node and
+// the reason, and runs once its inputs change to what it accepts; an error
+// while running stops the evaluation, and what it wrote holds no valid
+// value until a frame succeeds; a view keeps the last good value.
+void
+TestValidateAndErrors()
+{
+    const RangeRig rig = BuildRangeRig({20}, false);
+    auto program = CompileRanges(*rig.desc, 4, 0, 0);
+    auto evaluator = RigExecEvaluator::Create(program);
+    const float one = 1.0f;
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    CHECK(evaluator->SetInput(rig.factors[0], &one));
+    CHECK(evaluator->SetInput(rig.factors[1], &one));
+    Floats bad{RangeInput(13, 0, 0)};
+    CHECK(evaluator->SetInput(rig.ins[0], &bad));
+    std::string error;
+    CHECK(!evaluator->Evaluate(&error));
+    CHECK(Contains(error, "node 0 (test:RScale) is invalid: 13 elements"));
+    Floats good{RangeInput(20, 0, 0)};
+    CHECK(evaluator->SetInput(rig.ins[0], &good));
+    CHECK(evaluator->Evaluate(&error));
+    const RigExecValueView before = evaluator->ViewOutput(rig.outs[0]);
+    const std::vector<float> kept =
+        static_cast<const Floats *>(evaluator->GetOutput(rig.outs[0]))->v;
+    CHECK(SameFloats(kept, RangeChainReference(good.v, one)));
+    Floats moved{RangeInput(20, 0, 3)};
+    CHECK(evaluator->SetInput(rig.ins[0], &moved));
+    CHECK(evaluator->SetInput(rig.factors[1], &nan));
+    rangeCalls = 0;
+    CHECK(!evaluator->Evaluate(&error));
+    CHECK(Contains(error, "node 2 (test:RScale) failed") &&
+          Contains(error, "factor is not a number"));
+    // The failed frame's outputs hold no valid value; the view kept from
+    // the last good frame still holds it.
+    std::string why;
+    CHECK(!evaluator->GetOutput(rig.outs[0], &why));
+    CHECK(Contains(why, "no valid value: node 2 (test:RScale) failed"));
+    CHECK(!evaluator->ViewOutput(rig.outs[0]));
+    CHECK(SameFloats(before.As<Floats>(FloatsType())->v, kept));
+    CHECK(evaluator->SetInput(rig.factors[1], &one));
+    CHECK(evaluator->Evaluate(&error));
+    CHECK(SameFloats(
+        static_cast<const Floats *>(evaluator->GetOutput(rig.outs[0]))->v,
+        RangeChainReference(moved.v, one)));
     blurCuts = 0;
 }
 
@@ -3280,6 +3355,7 @@ main()
     TestRangeFailures();
     TestRangeNoAllocation();
     TestRangeChains();
+    TestValidateAndErrors();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

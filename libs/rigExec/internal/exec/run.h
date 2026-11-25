@@ -37,6 +37,9 @@ struct RigExecPublishedPool {
     uint32_t type = kRigExecInvalidIndex;
     uint32_t current = 0;
     size_t reserved = 0;
+    /// The failed frame wrote this output: it holds no valid value until
+    /// the next successful frame, which reruns every node.
+    bool invalid = false;
     std::vector<std::unique_ptr<RigExecPublishedArena>> arenas;
 };
 
@@ -68,6 +71,8 @@ struct RigExecRun {
     std::vector<size_t> reserved;
     /// Successful frames so far.
     uint64_t generation = 0;
+    /// Why the last frame failed; empty after a successful one.
+    std::string failure;
     /// Per program port: the value an op reads or writes there.
     std::vector<const void *> inputs;
     std::vector<void *> outputs;
@@ -98,6 +103,14 @@ struct RigExecRun {
     /// Whether the next frame runs every node: before the first frame and
     /// after a failed one.
     bool everything = true;
+    /// Per batchNodes entry: whether its op's validate accepted what its
+    /// inputs held when checkKeys were taken: per port, its elements and
+    /// a checked input's version. checkElements and checkInputs are what
+    /// validate is handed, per port.
+    std::vector<char> validated;
+    std::vector<size_t> checkKeys;
+    std::vector<size_t> checkElements;
+    std::vector<const void *> checkInputs;
     /// Per batch: whether it failed this frame and why.
     std::vector<uint8_t> failed;
     std::vector<std::string> errors;
@@ -186,6 +199,9 @@ struct RigExecRun {
     /// captures; both are bound to one program. The next frame runs every
     /// node.
     void CopyFrom(const RigExecRun &source);
+    /// False, with "no valid value: " and the failure in \p error, for an
+    /// output the last, failed frame wrote.
+    bool OutputValid(uint32_t slot, std::string *error) const;
 
 private:
     void _BindFields();
@@ -193,6 +209,7 @@ private:
     void _PointReaders(uint32_t slot, const void *value);
     void *_Written(uint32_t slot) const;
     void _SettleBounds();
+    bool _Validate(std::string *error);
     void _Reserve(uint32_t slot, size_t count);
     void _MarkDirty(bool historyTick);
     void _Mark(uint32_t node, const char *allowed);

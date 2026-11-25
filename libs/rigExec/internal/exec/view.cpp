@@ -98,11 +98,13 @@ RigExecValueView::Reset()
 }
 
 RigExecValueView
-RigExecViewAccess::Output(const RigExecRun &run, RigExecOutputId output)
+RigExecViewAccess::Output(const RigExecRun &run, RigExecOutputId output,
+                          std::string *error)
 {
     RigExecValueView view;
     const RigExecProgram &p = *run.program;
-    if (output.index >= p.outputSlots.size())
+    if (output.index >= p.outputSlots.size() ||
+        !run.OutputValid(p.outputSlots[output.index], error))
         return view;
     const RigExecProgramSlot &place = p.slots[p.outputSlots[output.index]];
     RigExecPublishedPool &pool = run.published->pools[place.arenaIndex];

@@ -235,6 +235,9 @@ public:
     /// chainFeeds[chainFeedStart[m], chainFeedStart[m + 1]), m indexing
     /// chainMembers.
     std::vector<RigExecProgramChain> chains;
+    /// Per batchNodes entry: 1 for a ranged node whose settings run it
+    /// whole (RigExecOpRangeHandling::plan).
+    std::vector<char> wholePositions;
     std::vector<uint32_t> chainMembers;
     std::vector<uint32_t> positionChain;
     std::vector<uint32_t> chainFeedStart;

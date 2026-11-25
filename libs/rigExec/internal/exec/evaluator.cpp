@@ -174,19 +174,20 @@ RigExecEvaluator::Evaluate(std::string *error)
 }
 
 const void *
-RigExecEvaluator::GetOutput(RigExecOutputId output) const
+RigExecEvaluator::GetOutput(RigExecOutputId output, std::string *error) const
 {
     const RigExecProgram &p = *_state->program;
-    if (output.index >= p.outputSlots.size())
+    if (output.index >= p.outputSlots.size() ||
+        !_state->main.OutputValid(p.outputSlots[output.index], error))
         return nullptr;
     return _state->main.Value(p.outputSlots[output.index]);
 }
 
 RigExecValueView
-RigExecEvaluator::ViewOutput(RigExecOutputId output) const
+RigExecEvaluator::ViewOutput(RigExecOutputId output, std::string *error) const
 {
     _AssertOwnerThread();
-    return RigExecViewAccess::Output(_state->main, output);
+    return RigExecViewAccess::Output(_state->main, output, error);
 }
 
 std::unique_ptr<RigExecRunState>

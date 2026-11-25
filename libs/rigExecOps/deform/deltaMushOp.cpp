@@ -105,27 +105,29 @@ MapOf(const RigExecOpIo &io)
     return map ? *map : Mat4d(1.0);
 }
 
-rigExec::RigExecRangePlan
-Accept(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
-       std::string *error)
+bool
+Validate(const rigExec::RigExecOpCheck &check, std::string *error)
 {
-    constexpr auto kRefuse = rigExec::RigExecRangePlan::Refuse;
-    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
-    if (!rigExec::deltaMushDetail::ComputationMapValid(MapOf(io)) ||
-        In<Points>(io, DeltaMushRest())->Size() != count)
-        return Fail(error, "DeltaMush", kUnusable), kRefuse;
-    if (!EnvelopeFits(*In<Points>(io, DeltaMushPoints()),
-                      In<Envelope>(io, DeltaMushEnvelope()), "DeltaMush",
-                      error))
-        return kRefuse;
-    return rigExec::RigExecRangePlan::Ranges;
+    if (!SameCount(CheckElements(check, DeltaMushRest()),
+                   CheckElements(check, DeltaMushPoints())))
+        return Fail(error, "DeltaMush", kUnusable);
+    return EnvelopeFits(check, DeltaMushPoints(), DeltaMushEnvelope(),
+                        "DeltaMush", error);
 }
 
 bool
-Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
+Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
         std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    if (!rigExec::deltaMushDetail::ComputationMapValid(MapOf(io)))
+        return Fail(error, "DeltaMush", kUnusable);
+    if (In<Points>(io, DeltaMushRest())->Size() != count)
+        return Fail(error, "DeltaMush", kUnusable);
+    if (!EnvelopeFits(*In<Points>(io, DeltaMushPoints()),
+                      In<Envelope>(io, DeltaMushEnvelope()), "DeltaMush",
+                      error))
+        return false;
     MushState &state =
         *static_cast<MushState *>(rigExec::RigExecBatchState(batch, k));
     const Points &rest = *In<Points>(io, DeltaMushRest());
@@ -277,7 +279,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.name = "DeltaMush";
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.range.accept = &Accept;
+    d.validate = &Validate;
     d.range.prepare = &Prepare;
     d.range.run = &MushRange;
     d.range.reads = &MushReads;

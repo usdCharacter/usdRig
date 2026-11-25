@@ -609,6 +609,73 @@ SettleBounds(CompileState &s)
     return true;
 }
 
+/// Asks each ranged node's settings whether it runs whole, and checks every
+/// node's settings with its op's validate, before any input is known.
+bool
+CheckNodes(CompileState &s)
+{
+    RigExecProgram &program = s.program;
+    program.wholePositions.assign(s.nodeCount, 0);
+    std::vector<RigExecFieldRunOf<const std::byte>> runs(
+        program.payloadRuns.size());
+    for (size_t i = 0; i < runs.size(); ++i)
+        runs[i] = {program.payloads.Data() + program.payloadRuns[i].offset,
+                   program.payloadRuns[i].count};
+    std::vector<RigExecPayloadColumn> columns(program.payloadColumns.size());
+    for (size_t i = 0; i < columns.size(); ++i) {
+        const RigExecProgramColumn &c = program.payloadColumns[i];
+        columns[i] = {program.payloads.Data() + c.offset, c.stride, c.count,
+                      c.firstRun == kRigExecInvalidIndex ? nullptr
+                                                         : &runs[c.firstRun]};
+    }
+    std::vector<const void *> inputs;
+    std::vector<size_t> elements;
+    for (const RigExecProgramBatch &batch : program.batches) {
+        const RigExecOpDesc &d = *s.registry.OpAt(batch.op).desc;
+        if (!d.range.plan && !d.validate)
+            continue;
+        RigExecOpBatch view;
+        view.op = &d;
+        view.count = batch.nodeCount;
+        view.portCount = d.portCount;
+        view.useSimd = program.useSimd;
+        if (batch.payloadOffset != SIZE_MAX) {
+            view.payloads = program.payloads.Data() + batch.payloadOffset;
+            view.payloadStride = batch.payloadStride;
+        }
+        if (d.payloadFieldCount)
+            view.payloadFields = columns.data() + batch.firstPayloadColumn;
+        inputs.assign(size_t(batch.nodeCount) * d.portCount, nullptr);
+        view.inputs = inputs.data();
+        for (uint32_t k = 0; k < batch.nodeCount; ++k) {
+            const uint32_t at = batch.firstNode + k;
+            elements.assign(d.portCount, SIZE_MAX);
+            for (uint32_t port = 0; port < d.portCount; ++port)
+                if ((d.ports[port].flags & kRigExecPortInput) &&
+                    !(d.ports[port].flags & kRigExecPortArray) &&
+                    program.portSlots[batch.firstPort + k * d.portCount +
+                                      port] == kRigExecInvalidIndex)
+                    elements[port] = kRigExecPortUnfed;
+            if (d.range.plan)
+                program.wholePositions[at] =
+                    d.range.plan(view, k) == RigExecRangePlan::Whole;
+            if (!d.validate)
+                continue;
+            RigExecOpCheck check;
+            check.batch = view;
+            check.k = k;
+            check.elements = elements.data();
+            check.compiling = true;
+            std::string why;
+            if (!d.validate(check, &why))
+                return Fail(s.error, NodeText(s.registry, s.data,
+                                              program.batchNodes[at]) +
+                                         " is invalid: " + why);
+        }
+    }
+    return true;
+}
+
 /// Puts every ranged node in a range chain, in canonical order. A node
 /// continues the chain of the node feeding the input its element count
 /// comes from when that node ends its chain, every input it reads from
@@ -957,6 +1024,8 @@ RigExecCompile(const RigExecRigDesc &desc, const RigExecCompileOptions &options,
     LayoutPayloadsAndState(s);
     PlaceCells(s);
     IndexReaders(s);
+    if (!CheckNodes(s))
+        return nullptr;
     FormRangeChains(s);
     if (!SettleBounds(s))
         return nullptr;

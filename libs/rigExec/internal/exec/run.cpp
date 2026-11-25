@@ -220,6 +220,10 @@ RigExecRun::Bind(const RigExecProgram &p, const RigExecInputChannel &input,
             _Reserve(slot, bounds[slot]);
         }
     }
+    validated.assign(p.batchNodes.size(), 0);
+    checkKeys.assign(2 * p.portSlots.size(), SIZE_MAX);
+    checkElements.assign(p.portSlots.size(), 0);
+    checkInputs.assign(p.portSlots.size(), nullptr);
     failed.assign(p.batches.size(), 0);
     errors.assign(p.batches.size(), std::string());
     active.assign(p.batchNodes.size(), 0);
@@ -459,11 +463,15 @@ void
 RigExecRun::_Publish()
 {
     ++generation;
-    for (RigExecPublishedPool &pool : published->pools)
-        if (_Runs(pool.slot))
-            pool.arenas[pool.current]->generation = generation;
+    for (RigExecPublishedPool &pool : published->pools) {
+        if (!_Runs(pool.slot))
+            continue;
+        pool.arenas[pool.current]->generation = generation;
+        pool.invalid = false;
+    }
     for (uint32_t i = 0; i < program->inputSlots.size(); ++i)
         seen[i] = channel->FrontVersion(i);
+    failure.clear();
     everything = false;
 }
 
@@ -736,19 +744,8 @@ RigExecRun::_RunHead(uint32_t at, std::string *error)
         }
         TypeOf(op.portTypes[port]).resize(view.outputs[ports + port], count);
     }
-    RigExecRangePlan plan = RigExecRangePlan::Ranges;
-    if (d.range.accept)
-        plan = d.range.accept(view, k, count, error);
-    if (plan == RigExecRangePlan::Refuse) {
-        if (error->empty())
-            *error = "refused";
-        return false;
-    }
     if (d.range.prepare && !d.range.prepare(view, k, count, error))
         return false;
-    if (plan == RigExecRangePlan::Ranges &&
-        _RangeCount(count) > instanceRanges[at])
-        plan = RigExecRangePlan::Whole;
     std::vector<RigExecAlignedBuffer> &buffers = scratch[at];
     if (d.range.scratch.size) {
         while (buffers.size() < instanceRanges[at]) {
@@ -757,7 +754,7 @@ RigExecRun::_RunHead(uint32_t at, std::string *error)
             d.range.scratch.create(buffers.back().Data());
         }
     }
-    plans[at] = plan == RigExecRangePlan::Whole ? kPlanWhole : kPlanRanges;
+    plans[at] = program->wholePositions[at] ? kPlanWhole : kPlanRanges;
     elementCounts[at] = count;
     return true;
 }
@@ -1066,6 +1063,89 @@ RigExecRun::_RunTask(void *context, uint32_t task)
 }
 
 bool
+RigExecRun::_Validate(std::string *error)
+{
+    const RigExecProgram &p = *program;
+    const RigExecRegistry &registry = RigExecRegistry::Get();
+    for (uint32_t b = 0; b < p.batches.size(); ++b) {
+        const RigExecProgramBatch &batch = p.batches[b];
+        const RigExecRegisteredOp &op = registry.OpAt(batch.op);
+        const RigExecOpDesc &d = *op.desc;
+        if (!d.validate)
+            continue;
+        for (uint32_t k = 0; k < batch.nodeCount; ++k) {
+            const uint32_t at = batch.firstNode + k;
+            const uint32_t first = batch.firstPort + k * d.portCount;
+            bool same = validated[at] != 0;
+            for (uint32_t port = 0; port < d.portCount; ++port) {
+                size_t elements = 0, version = 0;
+                const uint32_t slot = p.portSlots[first + port];
+                const uint32_t flags = d.ports[port].flags;
+                if (!(flags & kRigExecPortInput)) {
+                    continue;
+                } else if (flags & kRigExecPortArray) {
+                    elements = static_cast<const RigExecPortList *>(
+                                   inputs[first + port])
+                                   ->count;
+                } else if (slot == kRigExecInvalidIndex) {
+                    elements = kRigExecPortUnfed;
+                } else if (p.slots[slot].arena == RigExecArenaKind::Input) {
+                    const RigExecTypeDesc &t = TypeOf(p.slots[slot].type);
+                    elements =
+                        t.elements ? t.elements(inputs[first + port]) : 1;
+                    if (flags & kRigExecPortChecked)
+                        version = size_t(
+                            channel->FrontVersion(p.slots[slot].arenaIndex));
+                } else {
+                    const RigExecProgramBound &bound = p.bounds[slot];
+                    const bool exact =
+                        bound.kind == RigExecOutputBound::Input &&
+                        bound.sourceCount == 1 && bound.count == 1;
+                    elements = exact ? bounds[slot] : SIZE_MAX;
+                }
+                checkElements[first + port] = elements;
+                same = same && checkKeys[2 * (first + port)] == elements &&
+                       checkKeys[2 * (first + port) + 1] == version;
+                checkKeys[2 * (first + port)] = elements;
+                checkKeys[2 * (first + port) + 1] = version;
+            }
+            if (same)
+                continue;
+            validated[at] = 0;
+            for (uint32_t port = 0; port < d.portCount; ++port) {
+                const uint32_t slot = p.portSlots[first + port];
+                const bool host =
+                    slot != kRigExecInvalidIndex &&
+                    p.slots[slot].arena == RigExecArenaKind::Input;
+                checkInputs[first + port] =
+                    host || (d.ports[port].flags & kRigExecPortArray)
+                        ? inputs[first + port]
+                        : nullptr;
+            }
+            RigExecOpCheck check;
+            check.batch = _View(b);
+            check.batch.inputs = checkInputs.data() + batch.firstPort;
+            check.k = k;
+            check.elements = checkElements.data() + first;
+            const RigExecProgramNode &node = p.nodes[p.batchNodes[at]];
+            check.state = node.stateOffset == SIZE_MAX
+                              ? nullptr
+                              : State() + node.stateOffset;
+            std::string why;
+            if (!d.validate(check, &why)) {
+                if (error)
+                    *error = "node " + std::to_string(p.batchNodes[at]) + " (" +
+                             (d.nameSpace ? d.nameSpace : "") + ":" +
+                             (d.name ? d.name : "") + ") is invalid: " + why;
+                return false;
+            }
+            validated[at] = 1;
+        }
+    }
+    return true;
+}
+
+bool
 RigExecRun::Run(bool historyTick, RigExecTaskSystem *tasks, std::string *error)
 {
     const RigExecProgram &p = *program;
@@ -1075,6 +1155,10 @@ RigExecRun::Run(bool historyTick, RigExecTaskSystem *tasks, std::string *error)
             _PointReaders(slot, channel->Front() + p.slots[slot].offset);
     }
     _SettleBounds();
+    if (!_Validate(error)) {
+        everything = true;
+        return false;
+    }
     _MarkDirty(historyTick);
     _Schedule();
     _PrepareOutputs();
@@ -1097,16 +1181,33 @@ RigExecRun::Run(bool historyTick, RigExecTaskSystem *tasks, std::string *error)
     }
     _CompleteChains();
     // The first failure in batch order, whichever thread hit it.
+    failure.clear();
     for (size_t b = 0; b < p.batches.size(); ++b) {
         if (failed[b]) {
-            if (error)
-                *error = errors[b];
+            failure = errors[b];
             break;
         }
     }
+    if (error)
+        *error = failure;
     for (RigExecWindowPacketPtr &capture : captures)
         capture.reset();
+    for (RigExecPublishedPool &pool : published->pools)
+        if (_Runs(pool.slot))
+            pool.invalid = true;
     everything = true;
+    return false;
+}
+
+bool
+RigExecRun::OutputValid(uint32_t slot, std::string *error) const
+{
+    const RigExecProgramSlot &place = program->slots[slot];
+    if (place.arena != RigExecArenaKind::Published ||
+        !published->pools[place.arenaIndex].invalid)
+        return true;
+    if (error)
+        *error = "no valid value: " + failure;
     return false;
 }
 
@@ -1170,7 +1271,9 @@ RigExecRun::CopyFrom(const RigExecRun &source)
         else
             std::memcpy(to.storage.Data(), value.storage.Data(), t.size);
         to.generation = value.generation;
+        pool.invalid = from.invalid;
     }
+    failure = source.failure;
     captures = source.captures;
     generation = source.generation;
     everything = true;
