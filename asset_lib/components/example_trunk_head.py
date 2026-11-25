@@ -65,10 +65,8 @@ def destinations(component, start):
 
 def plan(spine_parent=None):
     """Nodes, ports and attachments for the trunk and head chain."""
-    # Each port binds to a prim of its providing instance: torso's Rig to this
-    # scaffold's root, spine's COG to torso's Control_COG, and head's Chest to
-    # spine's Control_Chest, so the traced chain reads World, COG, Spine1,
-    # Spine2, Chest, Neck, Head.
+    # torso.Rig binds to the scaffold root. spine.COG binds to torso's Control_COG,
+    # and head.Chest binds to spine's Control_Chest.
     nodes, ports, depths, attachments = {}, {}, {}, {}
     ports['torso'] = {'Rig': RIG}
     nodes['torso'], depths['torso'] = destinations('torso', RIG)
