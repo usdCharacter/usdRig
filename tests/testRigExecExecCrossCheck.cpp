@@ -24,29 +24,14 @@ PXR_NAMESPACE_USING_DIRECTIVE
     } while (false)
 
 int
-TestIndependentConstraintRows()
+TestIndependentConstraintRows(const std::string &fixtures)
 {
-    const char *types[] = {"RigExecAimConstraint", "RigExecRotationConstraint",
-                           "RigExecParentConstraint"};
-    for (const auto *type : types)
+    for (const char *type : {"aim", "rotation", "parent"})
         for (const bool geometry : {false, true}) {
-            const auto stage = UsdStage::CreateInMemory();
-            const std::string target =
-                geometry ? "/World/Target.points" : "/World/Target";
-            const std::string source =
-                std::string("#usda 1.0\n") +
-                "def Xform \"World\" {\n"
-                "def Mesh \"Target\" {\n point3f[] "
-                "points=[(0,0,0),(1,0,0),(0,1,0)]\n }\n"
-                "def Xform \"Source\" {\n double3 xformOp:translate=(0,0,2)\n "
-                "uniform token[] xformOpOrder=[\"xformOp:translate\"]\n }\n"
-                "def RigExecRoot \"Rig\" {\n def Scope \"Movers\" {\n def " +
-                type +
-                " \"C\" (apiSchemas=[\"RigExecMoverAPI\"]) {\n rel "
-                "rigExec:moves=<" +
-                target +
-                ">\n rel rigExec:sources=</World/Source>\n }\n }\n }\n }\n";
-            CHECK(stage->GetRootLayer()->ImportFromString(source));
+            const auto stage =
+                UsdStage::Open(fixtures + "/" + type +
+                               (geometry ? "_points.usda" : "_xform.usda"));
+            CHECK(stage);
             RigExecRigEvaluator evaluator(stage, SdfPath("/World/Rig"));
             std::vector<std::string> errors;
             CHECK(evaluator.Compile(&errors));
@@ -109,8 +94,9 @@ TestIndependentConstraintRows()
 }
 
 int
-main()
+main(int argc, char **argv)
 {
+    CHECK(argc == 2);
     RigExecLoadComputations();
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     const auto stage = UsdStage::CreateInMemory();
@@ -204,5 +190,5 @@ main()
     row.key = "vacuous";
     row.requiredOverrides = {row.address};
     CHECK(!checks.Add(row, &error));
-    return TestIndependentConstraintRows();
+    return TestIndependentConstraintRows(argv[1]);
 }

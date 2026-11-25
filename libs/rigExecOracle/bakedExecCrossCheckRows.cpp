@@ -1351,12 +1351,17 @@ RigExecBakedExecCheckRows::Judged(UsdTimeCode time) const
     return judged;
 }
 
+// A visit that judges more rows than this is stored as one digest per step
+// kind; the digest covers each row's key, input digest and value bits.
+constexpr size_t kGoldenRowsPerVisit = 512;
+
 std::string
 RigExecBakedExecCheckRows::GoldenVisit(size_t ordinal, UsdTimeCode time,
                                        const std::vector<char> &judged) const
 {
     std::string text = "visit \"frame\" " + std::to_string(ordinal) +
                        " time=" + RigExecGoldenDouble(time.GetValue()) + "\n";
+    std::vector<std::pair<std::string, std::string>> rows;
     for (size_t row = 0; row < _inputs.size() && row < judged.size(); ++row) {
         if (!judged[row])
             continue;
@@ -1371,10 +1376,31 @@ RigExecBakedExecCheckRows::GoldenVisit(size_t ordinal, UsdTimeCode time,
         }
         if (!RigExecEncodeGoldenValue(input.expected, &bits))
             bits = "unencodable " + input.expected.GetTypeName();
-        text += "v " + RigExecGoldenEscape(_descriptors[row].key) +
-                " in=" + RigExecGoldenHex(RigExecGoldenDigest(inputs)) + " " +
-                bits + "\n";
+        const std::string &key = _descriptors[row].key;
+        rows.emplace_back(key.substr(0, key.find(' ')),
+                          "v " + RigExecGoldenEscape(key) + " in=" +
+                              RigExecGoldenHex(RigExecGoldenDigest(inputs)) +
+                              " " + bits + "\n");
     }
+    if (rows.size() <= kGoldenRowsPerVisit) {
+        for (const auto &row : rows)
+            text += row.second;
+        return text;
+    }
+    std::vector<std::pair<std::string, std::pair<size_t, std::string>>> kinds;
+    for (const auto &[kind, line] : rows) {
+        auto found =
+            std::find_if(kinds.begin(), kinds.end(),
+                         [&](const auto &k) { return k.first == kind; });
+        if (found == kinds.end())
+            found = kinds.insert(kinds.end(), {kind, {0, std::string()}});
+        ++found->second.first;
+        found->second.second += line;
+    }
+    for (const auto &[kind, group] : kinds)
+        text += "g " + RigExecGoldenEscape(kind) + " " +
+                std::to_string(group.first) + " " +
+                RigExecGoldenHex(RigExecGoldenDigest(group.second)) + "\n";
     return text;
 }
 

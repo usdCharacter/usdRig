@@ -5,6 +5,7 @@
 // argv[1] = the rig stage, argv[2] = the golden directory, which holds one
 // subdirectory per reference configuration. The configuration that recorded
 // a golden compares every bit; any other compares the rows and value shapes.
+// argv[3] = the golden's name, <name>.golden in each subdirectory.
 #include "rigExec/api/goldenPose.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/bakedExecCrossCheckRows.h"
@@ -88,13 +89,12 @@ Shape(const std::string &golden)
 int
 main(int argc, char **argv)
 {
-    if (argc != 3) {
-        std::printf("usage: %s <stage> <golden directory>\n", argv[0]);
+    if (argc != 4) {
+        std::printf("usage: %s <stage> <golden directory> <name>\n", argv[0]);
         return 1;
     }
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
-    const std::string stagePath = argv[1], directory = argv[2];
-    const std::string name = TfStringGetBeforeSuffix(TfGetBaseName(stagePath));
+    const std::string stagePath = argv[1], directory = argv[2], name = argv[3];
     const std::string reference = RigExecExecRowsReference();
     std::string golden = TfStringCatPaths(
         directory, TfStringCatPaths(reference, name + ".golden"));

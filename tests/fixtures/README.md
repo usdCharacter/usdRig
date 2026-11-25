@@ -44,8 +44,11 @@ and `testRigExecVolumeWeights`; CPU/SIMD comparisons also run in
 `execRows/<reference>/<fixture>.golden` hold, per frame, every row the exec
 cross-check judged when the file was recorded: the row key, a digest of the
 inputs the baked step body read, and the exact value it stored, which OpenExec
-reproduced bit for bit at that time. `testRigExecExecGoldens` captures the same
-rows from the production evaluator without OpenExec and compares them.
+reproduced bit for bit at that time. A frame that judges more than 512 rows
+(the biped stages) is stored as one line per step kind instead: the kind, its
+row count and one digest over those rows' keys, input digests and values.
+`testRigExecExecGoldens` captures the same rows from the production evaluator
+without OpenExec and compares them.
 `<reference>` names the platform, architecture and compiler that recorded the
 file (`RigExecExecRowsReference`). That configuration compares every bit; any
 other compares which rows were judged and the type and length of each value.
@@ -54,19 +57,26 @@ The authoritative reference is the Linux configuration above
 (`linux-x86_64-gcc13`); the Linux CI job records it on every run and
 uploads it as the `exec-rows-linux` artifact. The files under
 `windows-x86_64-msvc1936` were recorded on a Windows development machine with
-the same rows and keys; 15 of the 870 rows differ from the Linux set in the
-last bits of a double (at most 20 ULP, from the math library), so that set is
-exact only for that compiler. Replace both sets together. To record, from a
-shell that sourced `bin/_env.sh`, with `RIGEXEC_ENABLE_SIMD=0`:
+the same rows and keys as the Linux set; some values differ in the last bits
+of a double (at most 20 ULP in the first seven rigs, from the math library),
+so that set is exact only for that compiler. Replace both sets together.
+
+Every rig the `example_graph_*` tests run, plus `computed_ik_space` and the
+six `independentConstraints` stages, has a golden: `rigexec_add_exec_rows_test`
+in `CMakeLists.txt` registers both `exec_rows_<name>`, which records the rows
+at the first, middle and last of the rig's frames into `build/execRows/`, and
+`testRigExecExecGoldens_<name>`. `exec_rows_*` fails unless every judged row
+matches OpenExec. To record a set, from a shell that sourced `bin/_env.sh`:
 
 ```sh
-build/testRigExecExecCrossCheckRows examples/01_FkChainTail.usda 1001 \
-  --golden-out tests/fixtures/execRows/<reference>/01_FkChainTail.golden \
-  1001 1024 1048
+ctest --test-dir build -R '^exec_rows_'
+cp build/execRows/*.golden tests/fixtures/execRows/<reference>/
 ```
 
-The examples use frames 1001, 1024 and 1048; `computed_ik_space` uses 1, 5
-and 10. Recording fails unless every judged row matches OpenExec.
+Without OpenExec, `testRigExecExecCrossCheckRows <stage> <frame>
+--unjudged-golden-out <file> <frames...>` captures the same rows from the
+production evaluator alone. Such a set is a regression capture: nothing
+judged its values when it was recorded.
 
 ## Rendered-image baselines
 

@@ -1142,6 +1142,32 @@ foreach(_entry testRigExecAffineFramesGolden
     endif()
 endforeach()
 
+# The exec cross-check rows of one rig: exec_rows_<name> records them, judged
+# by OpenExec, into the build tree at the first, middle and last of FRAMES;
+# testRigExecExecGoldens_<name> compares the checked-in set with the
+# production evaluator (tests/fixtures/README.md).
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/execRows")
+function(rigexec_add_exec_rows_test)
+    cmake_parse_arguments(A "" "NAME;STAGE;FRAMES" "" ${ARGN})
+    string(REPLACE "," ";" _all "${A_FRAMES}")
+    list(LENGTH _all _count)
+    math(EXPR _middle "${_count} / 2")
+    math(EXPR _last "${_count} - 1")
+    list(GET _all 0 ${_middle} ${_last} _frames)
+    list(REMOVE_DUPLICATES _frames)
+    list(GET _frames 0 _first)
+    rigexec_add_test(NAME exec_rows_${A_NAME} COMMAND testRigExecExecCrossCheckRows
+        "${A_STAGE}" ${_first} --golden-out
+        "${CMAKE_CURRENT_BINARY_DIR}/execRows/${A_NAME}.golden" ${_frames})
+    set_tests_properties(exec_rows_${A_NAME} PROPERTIES
+        LABELS "exec" ENVIRONMENT "RIGEXEC_ENABLE_SIMD=0")
+    rigexec_add_test(NAME testRigExecExecGoldens_${A_NAME} COMMAND testRigExecExecGoldens
+        "${A_STAGE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/execRows"
+        ${A_NAME})
+    set_tests_properties(testRigExecExecGoldens_${A_NAME} PROPERTIES
+        LABELS "golden" ENVIRONMENT "RIGEXEC_ENABLE_SIMD=0")
+endfunction()
+
 function(rigexec_add_example_graph_test)
     cmake_parse_arguments(A "GUIDES" "NAME;RIG;STAGE;FRAMES" "" ${ARGN})
     # DEFINED, not truthiness: a frame list that is the single frame 0 is
@@ -1173,6 +1199,8 @@ function(rigexec_add_example_graph_test)
         "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
     set_property(TEST example_graph_${A_NAME} APPEND PROPERTY ENVIRONMENT
         "PXR_PLUGINPATH_NAME=${_schema_resources}")
+    rigexec_add_exec_rows_test(NAME ${A_NAME} STAGE "${A_STAGE}"
+        FRAMES "${A_FRAMES}")
 endfunction()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/tests/exampleFixtures.cmake")
@@ -1552,7 +1580,8 @@ rigexec_add_test(NAME testRigExecOpGraph COMMAND testRigExecOpGraph)
 add_executable(testRigExecExecCrossCheck tests/testRigExecExecCrossCheck.cpp)
 target_link_libraries(testRigExecExecCrossCheck PRIVATE rigExec)
 target_compile_definitions(testRigExecExecCrossCheck PRIVATE ${_rigexec_schema_resource_define})
-rigexec_add_test(NAME testRigExecExecCrossCheck COMMAND testRigExecExecCrossCheck)
+rigexec_add_test(NAME testRigExecExecCrossCheck COMMAND testRigExecExecCrossCheck
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/independentConstraints")
 set_tests_properties(testRigExecExecCrossCheck PROPERTIES LABELS "exec")
 
 add_executable(testRigExecOpValues tests/testRigExecOpValues.cpp)
@@ -1597,20 +1626,18 @@ rigexec_add_test(NAME exec_crosscheck_computed_ik_space COMMAND testRigExecExecC
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/computed_ik_space.usda" 1)
 set_tests_properties(exec_crosscheck_computed_ik_space PROPERTIES LABELS "exec")
 
-# The rows the exec cross-check judged, recorded as goldens and compared
-# without OpenExec; see tests/fixtures/README.md.
 add_executable(testRigExecExecGoldens tests/testRigExecExecGoldens.cpp)
 target_link_libraries(testRigExecExecGoldens PRIVATE rigExec)
 target_compile_definitions(testRigExecExecGoldens PRIVATE ${_rigexec_schema_resource_define})
-foreach(_fixture examples/01_FkChainTail examples/03_IkFkBlendClamp
-        examples/05_TwistRibbonSpine examples/11_VolumeWeights
-        examples/13_ReadPhases examples/ArmRig tests/fixtures/computed_ik_space)
-    get_filename_component(_name "${_fixture}" NAME)
-    rigexec_add_test(NAME testRigExecExecGoldens_${_name} COMMAND testRigExecExecGoldens
-        "${CMAKE_CURRENT_SOURCE_DIR}/${_fixture}.usda"
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/execRows")
-    set_tests_properties(testRigExecExecGoldens_${_name} PROPERTIES
-        LABELS "golden" ENVIRONMENT "RIGEXEC_ENABLE_SIMD=0")
+rigexec_add_exec_rows_test(NAME computed_ik_space
+    STAGE "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/computed_ik_space.usda"
+    FRAMES 1,5,10)
+foreach(_constraint aim rotation parent)
+    foreach(_target xform points)
+        rigexec_add_exec_rows_test(NAME constraint_${_constraint}_${_target}
+            STAGE "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/independentConstraints/${_constraint}_${_target}.usda"
+            FRAMES 0)
+    endforeach()
 endforeach()
 
 add_executable(testRigExecInputActions tests/testRigExecInputActions.cpp)

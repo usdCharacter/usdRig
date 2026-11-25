@@ -7,6 +7,7 @@
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"
 #include "pxr/usd/usd/primRange.h"
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -93,11 +94,16 @@ static_assert(!_BraceConstructible<RigExecBakedExecCheckRows,
 // A stage path and reporting frame make this a supported fixture row,
 // using the native program's real bound inputs and stored outputs. With
 // --golden-out <file> <frame>..., the rows the cross-check judges at each
-// frame are recorded instead (testRigExecExecGoldens compares them).
+// frame are recorded instead (testRigExecExecGoldens compares them). With
+// --unjudged-golden-out the same rows are captured without OpenExec judging
+// them.
 int
 main(int argc, char **argv)
 {
-    const bool record = argc > 5 && std::string(argv[3]) == "--golden-out";
+    const std::string mode = argc > 5 ? argv[3] : "";
+    const bool judged = mode == "--golden-out";
+    const bool unjudged = mode == "--unjudged-golden-out";
+    const bool record = judged || unjudged;
     CHECK(argc == 3 || record);
     RigExecLoadComputations();
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
@@ -117,6 +123,28 @@ main(int argc, char **argv)
     const auto *program = evaluator.GetBakedProgram();
     CHECK(program);
     std::string error;
+    if (unjudged) {
+        CHECK(
+            RigExecBakedProgramTesting::EnableExecRowCapture(*program, &error));
+        const auto rows =
+            RigExecBakedProgramTesting::ExecCrossCheckRows(*program);
+        CHECK(rows);
+        std::string golden = RigExecExecRowsGoldenHeader(
+            TfGetBaseName(argv[1]), rigPath,
+            RigExecBakedProgramAccess::StepGraph(*program).useSimd);
+        for (int i = 5; i < argc; ++i) {
+            const UsdTimeCode at(std::stod(argv[i]));
+            CHECK(evaluator.Evaluate(at).valid);
+            golden += rows->GoldenVisit(size_t(i - 5), at, rows->Judged(at));
+        }
+        std::ofstream out(argv[4], std::ios::binary);
+        out << golden;
+        out.close();
+        CHECK(bool(out));
+        std::cout << "recorded " << argv[4]
+                  << " (capture only: NOT independently judged)\n";
+        return 0;
+    }
     const bool enabled =
         RigExecBakedProgramTesting::EnableExecCrossCheck(*program, &error);
     if (!enabled)
@@ -134,7 +162,10 @@ main(int argc, char **argv)
             const auto report = rows->Evaluate(at);
             for (const auto &line : report.diagnostics)
                 std::cerr << line << '\n';
-            CHECK(report.Passed() && report.checked > 0);
+            const bool checkable = std::any_of(
+                rows->Descriptors().begin(), rows->Descriptors().end(),
+                [](const auto &d) { return !d.skipOnly; });
+            CHECK(report.Passed() && (!checkable || report.checked > 0));
             const auto judged = rows->Judged(at);
             for (size_t row = 0; row < judged.size(); ++row)
                 CHECK(!judged[row] || rows->WasChecked(row));
