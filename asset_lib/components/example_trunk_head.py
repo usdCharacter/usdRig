@@ -1,11 +1,15 @@
 # Copyright (c) 2026 Nick Burkard
 # SPDX-License-Identifier: MIT
-"""Worked trunk and head binding; run with bin/_env configured.
+"""Worked trunk and head binding; run as a script with bin/_env configured.
 
 Binds torso, spine and head into /Demo with every fit value in the fit layer,
 then checks the rejected bindings, a compiling assembly, weighted motion with no
 skincluster in sight, and that the entry asset alone reopens clean with the
 manifest control hierarchy.
+
+The `compose` import below resolves from this file's folder, so run the script
+rather than importing it. Its fit values are arbitrary test numbers and its
+body is a `UsdGeom.Points` stand-in for a character mesh.
 """
 import json
 import math
@@ -20,6 +24,7 @@ from compose import LIBRARY, bind_component, compose_assembly, validate_componen
 
 ROOT = '/Demo'
 RIG = ROOT + '/Rig'
+# Stand-in for a character mesh: a real rig binds the same `.points` endpoint.
 MESH = ROOT + '/Geo/body'
 CHAIN = ('torso', 'spine', 'head')
 DRIVING = {'torso': 'Control_Hips', 'spine': 'Control_Chest', 'head': 'Control_Neck'}
@@ -34,7 +39,7 @@ POINTS = ((.12, 0, .15), (.1, .02, .45), (-.11, .03, .7),
           (0, .13, .95), (-.09, -.06, 1.2), (.05, 0, 1.45))
 POSED = (('torso', 'Control_COG', 'tz', .06), ('spine', 'Control_Chest', 'rz', 14.),
          ('head', 'Control_Neck', 'rx', 9.))
-# The SKILL.md guide quotes this diagnostic verbatim.
+# The worked-trunk-head walkthrough quotes this diagnostic verbatim.
 PARENT_ERROR = ('Provider parent differs for /Demo/Rig/World/COG/Hips/Spine1; '
                 'expected /Demo/Rig/World/COG')
 
@@ -71,7 +76,9 @@ def plan(spine_parent=None):
     nodes['head'], depths['head'] = destinations('head', ports['head']['Chest'])
     for instance in CHAIN:
         template = 'Deform_' + DRIVING[instance][len('Control_'):] + '_Weighted'
-        assert template in manifest(instance)['templates']
+        data = manifest(instance)
+        assert template in data['templates'], (instance, template,
+                                               sorted(data['templates']))
         weight = RIG + '/Weights/' + instance + '/Weight'
         attachments[instance] = [
             {'template': 'Weight', 'path': weight,
@@ -169,7 +176,8 @@ def check_ports(stage, nodes, ports):
 
 def check_parents(folder, nodes):
     """A correct port name with a node under another provider is still rejected."""
-    # spine hangs off Hips, whose provider is torso, not the COG provider.
+    # spine hangs off Hips, whose provider is torso, not the COG provider; the
+    # second write below emits that rig's layers under the 'wrong' prefix.
     spine_parent = nodes['torso']['Control_Hips']
     wrong_nodes, wrong_ports, wrong_depths, wrong_attachments = plan(spine_parent)
     _, model = write(folder, 'wrong', wrong_nodes, wrong_ports,

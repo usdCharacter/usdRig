@@ -105,6 +105,8 @@ corrected assembly compiles and moves only the weighted point indices without
 any skin cluster, and that the written entry asset, opened on its own without
 the model layer that carries its geometry, reopens headlessly with no
 composition errors and every control under the provider its manifest declares.
+Its body is a `UsdGeom.Points` stand-in and its fit values are arbitrary test
+numbers, so it proves the wiring rather than proportions or weight quality.
 The `eye`, `arm`, `leg` and `mouth` instances are not exercised by this
 example, so it is not a substitute for the full character validation the
 compose-character skill describes.

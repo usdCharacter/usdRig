@@ -162,91 +162,14 @@ in the fit and durable wiring edits in the bindings. USD layers are sufficient
 at runtime; the JSON and Python composer are authoring inputs. Retain referenced
 library files when moving or packaging an unflattened asset.
 
-## Worked example: bind the requested trunk and head chain
+## Worked example
 
-An illustrative intake asks for trunk and head controls, walk and run, and
-weighted deformation with no skincluster. This is an illustrative example, not
-a delivered character.
-
-| Requested control | Instance | Manifest node roles |
-| --- | --- | --- |
-| world, COG, hips | `torso` | `Control_World`, `Control_COG`, `Control_Hips` |
-| spine, chest | `spine` | `Control_Spine1`, `Control_Spine2`, `Control_Chest` |
-| neck, head, face | `head` | `Control_Neck`, `Control_Head`, plus cheek/ear/brow/nose/gaze roles |
-
-The request names what the animator sees, the instance set comes from the
-anatomy, and the role and port names come from the `component.json` of the
-component being bound, never from a neighbouring instance or another character.
-Each component declares the external prims it consumes:
-
-| Component | Manifest ports |
-| --- | --- |
-| `torso` | `Rig` |
-| `spine` | `COG` |
-| `head` | `Chest` |
-| `mouth` | `Head` |
-| `leg` | `Hips`, `World`, `Rig` |
-| `arm` | `Chest`, `World`, `Rig` |
-| `eye` | `LookAt`, `Head`, `Eye`, `LidUpper`, `LidLower` |
-
-`Hips` is `leg`'s port, so a `spine` or `head` instance bound through `Hips` is
-refused by `bind_component` with `Ports must exactly match the spine manifest`
-and `Ports must exactly match the head manifest`.
-
-Trace one binding end to end. `head`'s `Control_Neck` declares manifest parent
-`port:Chest`, so the `head` instance maps port `Chest` to a prim path — usually
-another instance's node destination in the same bindings document: the `spine`
-instance's `Control_Chest` at `/Demo/Rig/World/COG/Spine1/Spine2/Chest`. That
-node's own parent is `node:Control_Spine2`, and the spine chain ends at port
-`COG -> /Demo/Rig/World/COG`, the `torso` instance's `Control_COG`, whose root
-port is `Rig -> /Demo/Rig`. The assembled chain is
-`/Demo/Rig/World/COG/Spine1/Spine2/Chest/Neck/Head`. Grouping scopes may
-intervene, but the nearest control, joint, or root ancestor must be the
-declared provider. `validate_component` names the offending node and the
-provider it wanted: hang `Spine1` under the `torso` instance's `Hips` control
-while the `spine` `COG` port still points at `/Demo/Rig/World/COG` and it
-rejects the instance with `Provider parent differs for
-/Demo/Rig/World/COG/Hips/Spine1; expected /Demo/Rig/World/COG`, because the
-port contract, not the incidental ancestor, is the provider. Define every
-enclosing scope; an undefined ancestor hides the referenced nodes and fails
-with `Missing or incompatible node: …`.
-
-The fit layer carries the character-specific weight data: sparse
-`rigExec:indices` and `rigExec:values` per `Weight` prim, written for the
-actual bound mesh topology as a per-mover influence mask rather than one flat
-skin-weight set summing to one; `rest:space` per control in the USD row-vector
-convention `childWorld * inverse(parentWorld)`, rig space for a top-level joint;
-and the guide fields. Keep reusable component defaults, meshes, texture paths,
-and another character's weights out of the fit layer. Follow the layer
-arrangement in *Author the character layers* and the attachment shape in *Bind
-and compose*; this example only fixes where trunk and head data goes.
-
-Before keying a gait, evaluate the poses the animator needs. The animator's
-interface is control `avars:` channels plus IK goals and poles; there is no
-skincluster to key. Minimum set: rest; a symmetric lift/check pose; the gait
-extremes contact, down, passing and up at walk amplitude and again at run
-amplitude with trunk flexion/extension, lateral bend and COG bob; and a trunk
-twist with neck and head counter-rotation. For each pose require valid, finite
-results, motion confined to the weighted index set, points outside that set
-unchanged, and `reference_mismatches == 0` with `cpu_reference` enabled. Author
-the poses through an animation or session layer so delivered rest values stay
-unchanged.
-
-Run the proof from the repository root in the `bin/_env` environment:
-
-```text
-python3 asset_lib/components/example_trunk_head.py
-```
-
-It replays this example in a fresh `/Demo` namespace and prints:
-
-```text
-PASS spine and head ports come from their manifests
-PASS provider parents enforced
-PASS trunk and head bind, validate and compile
-PASS weighted motion without a skincluster
-PASS entry reopens with no composition errors
-```
+[worked-trunk-head.md](worked-trunk-head.md) walks one intake request — trunk
+and head controls, walk and run, weighted deformation with no skincluster —
+from that request to instances, manifest ports, node destinations, and provider
+parents, and names the pose checks the runnable proof
+(`asset_lib/components/example_trunk_head.py`) covers and skips. Read it when
+binding a chain of instances for the first time; a routine rebuild can skip it.
 
 ## Validate and deliver
 
