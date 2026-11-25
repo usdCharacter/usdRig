@@ -1571,6 +1571,7 @@ set(_rigexec_op_parity_rigs
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/space_switch_dial.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/space_switch_nested.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/space_switch_same_round.usda"
+    --dense
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/pose_interpolator.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/pose_interpolator_riglogic.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/ml_mover.usda"

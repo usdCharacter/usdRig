@@ -1975,6 +1975,8 @@ ProbePoseInterpolator(const B &b, const RigExecBakedStep &step)
             payload.rbfWeights.insert(payload.rbfWeights.end(), row.begin(),
                                       row.end());
     }
+    if (payload.solve == PoseSolve::Rbf && payload.rbfEnableTranslation)
+        kind += " translation";
     const bool extras = payload.solve == PoseSolve::RbfMethod ||
                         payload.solve == PoseSolve::Network;
     std::vector<const RigExecPortHandle *> ins = {&PoseInterpolatorEnabled()};
@@ -2968,6 +2970,91 @@ AffineRig()
     return stage;
 }
 
+// Pose interpolators measuring their driver's translation: one on the
+// translation alone, one on rotation and translation. The hand slides and
+// turns over frames 1 to 9.
+UsdStageRefPtr
+TranslationPoseRig()
+{
+    const auto stage = UsdStage::CreateInMemory("translationPose.usda");
+    std::string text = R"USD(#usda 1.0
+(
+    startTimeCode = 1
+    endTimeCode = 9
+)
+def Xform "Asset"
+{
+    def RigExecRoot "Rig"
+    {
+        def RigExecControl "Shoulder" (prepend apiSchemas = ["RigExecControlAPI"])
+        {
+            matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+        }
+        def RigExecControl "Hand" (prepend apiSchemas = ["RigExecControlAPI"])
+        {
+            matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (2, 0, 0, 1) )
+            double avars:tx.timeSamples = {1: 0, 3: 0.5, 5: 1.2, 7: 0.2, 9: -0.4}
+            double avars:ty.timeSamples = {1: 0, 3: 0.8, 5: 0.1, 7: 1.1, 9: 0.3}
+            double avars:rz.timeSamples = {1: 0, 4: 35, 7: -20, 9: 60}
+        }
+        def RigExecFkChain "Chain"
+        {
+            rel rigExec:controls = [</Asset/Rig/Shoulder>, </Asset/Rig/Hand>]
+            rel rigExec:joints = [</Asset/Rig/Upper>, </Asset/Rig/Upper/Hand>]
+        }
+        def RigExecJoint "Upper"
+        {
+            matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+            def RigExecJoint "Hand"
+            {
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (2, 0, 0, 1) )
+            }
+        }
+)USD";
+    const auto interpolator = [](const std::string &name, bool rotation) {
+        const std::string pose = [&] {
+            std::string out;
+            const char *names[] = {"rest", "out", "up", "turned"};
+            const char *moves[] = {"(0, 0, 0)", "(1, 0, 0)", "(0, 1, 0)",
+                                   "(0.5, 0.5, 0)"};
+            const char *turns[] = {"(1, 0, 0, 0)", "(1, 0, 0, 0)",
+                                   "(1, 0, 0, 0)", "(0.8660254, 0, 0, 0.5)"};
+            for (int k = 0; k < 4; ++k)
+                out += std::string("            def RigExecPose \"") +
+                       names[k] +
+                       "\"\n            {\n"
+                       "                uniform token rigExec:poseType = "
+                       "\"swing\"\n"
+                       "                quatf rigExec:rotation = " +
+                       turns[k] +
+                       "\n"
+                       "                float rigExec:rotationRadius = 0.7\n"
+                       "                float3 rigExec:translation = " +
+                       moves[k] +
+                       "\n"
+                       "                float rigExec:translationRadius = "
+                       "0.8\n"
+                       "            }\n";
+            return out;
+        }();
+        return "        def RigExecPoseInterpolator \"" + name +
+               "\"\n        {\n"
+               "            rel rigExec:driver = </Asset/Rig/Upper/Hand>\n"
+               "            bool rigExec:enableRotation = " +
+               (rotation ? "1" : "0") +
+               "\n"
+               "            bool rigExec:enableTranslation = 1\n"
+               "            uniform token rigExec:kernel = \"gaussian\"\n"
+               "            bool rigExec:normalize = 1\n" +
+               pose + "        }\n";
+    };
+    text += interpolator("Reach", false) + interpolator("ReachTurn", true) +
+            "    }\n}\n";
+    if (!stage->GetRootLayer()->ImportFromString(text))
+        return nullptr;
+    return stage;
+}
+
 // Auto clavicles: one carried by its FK arm alone, one also by an IK target
 // and pole blended in. The arms swing over frames 1 to 4 and the dial and
 // blend move, so the shift is zero on some frames and not on others.
@@ -3114,15 +3201,21 @@ main(int argc, char **argv)
         return 1;
     }
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
-    // Rigs after --painted are probed as they are and again under each
-    // painted partial envelope.
-    bool painted = false;
+    // Rigs after --dense are probed on up to 12 frames of their range; rigs
+    // after --painted are probed as they are and again under each painted
+    // partial envelope.
+    bool painted = false, dense = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--painted") == 0) {
             painted = true;
+            dense = false;
             continue;
         }
-        ProbeRig(argv[i], Paint::None, false);
+        if (std::strcmp(argv[i], "--dense") == 0) {
+            dense = true;
+            continue;
+        }
+        ProbeRig(argv[i], Paint::None, dense);
         if (painted)
             for (const Paint paint : kPaints)
                 ProbeRig(argv[i], paint, false);
@@ -3134,6 +3227,7 @@ main(int argc, char **argv)
             ProbeStage(WireRig(), "wire rig", paint);
     ProbeStage(JointGroupRig(), "joint group rig", Paint::None);
     ProbeStage(AutoClavicleRig(), "auto clavicle rig", Paint::None, true);
+    ProbeStage(TranslationPoseRig(), "translation pose rig", Paint::None, true);
     std::printf("%-44s %9s %9s %9s %9s %9s\n", "family/kind", "compared",
                 "refusals", "compile", "run", "mismatch");
     for (const auto &[key, tally] : g_tally)
@@ -3177,6 +3271,7 @@ main(int argc, char **argv)
                                "Pose/AvarInputs",
                                "Pose/SpaceCheckpoint",
                                "Pose/PoseInterpolator Rbf",
+                               "Pose/PoseInterpolator Rbf translation",
                                "Pose/PoseInterpolator RbfMethod",
                                "Pose/PoseInterpolator Network",
                                "Pose/PoseInterpolator Maps",
