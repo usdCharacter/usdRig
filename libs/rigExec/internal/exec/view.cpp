@@ -36,6 +36,7 @@ Describe(const RigExecProgram &program, uint32_t slot, RigExecValueRef *ref)
     ref->offset = place.offset;
     ref->count = 1;
     ref->type = RigExecRegistry::Get().TypeAt(place.type).handle;
+    ref->value = slot;
 }
 
 } // namespace
@@ -116,6 +117,12 @@ RigExecViewAccess::Output(const RigExecRun &run, RigExecOutputId output,
     view._type = RigExecRegistry::Get().TypeAt(place.type).handle;
     view._generation = arena.generation;
     return view;
+}
+
+size_t
+RigExecProgramValueCount(const RigExecProgram &program)
+{
+    return program.slots.size();
 }
 
 bool

@@ -42,7 +42,15 @@ struct RigExecValueRef {
     size_t offset = 0;
     size_t count = 0;
     const RigExecTypeHandle *type = nullptr;
+    /// The value's number in its program, from 0 to below
+    /// RigExecProgramValueCount. A host that runs the program in its own
+    /// schedule (RigExecCompileOptions::hostOrder) names each node's
+    /// inputs and outputs by it.
+    uint32_t value = 0;
 };
+
+/// How many values \p program holds: every node output and every input.
+size_t RigExecProgramValueCount(const RigExecProgram &program);
 
 /// Where input \p input of \p program lives; false when the program has
 /// no such input.

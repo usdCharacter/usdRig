@@ -172,6 +172,9 @@ public:
     bool useSimd = true;
     size_t rangeGrain = 0;
     size_t rangeThreshold = 0;
+    /// RigExecCompileOptions::hostOrder: every batch is one node, the
+    /// batches in node order.
+    bool hostOrder = false;
     /// The nodes as the shared dependency compiler ordered them, one op
     /// per node keyed by node id, reading and writing slot ids. Its
     /// readers map each slot to the nodes that read it.
@@ -241,6 +244,11 @@ public:
     std::vector<uint32_t> chainMembers;
     std::vector<uint32_t> positionChain;
     std::vector<uint32_t> chainFeedStart;
+    /// Per chain member: the member its segment starts at when every member
+    /// runs. A segment starts at the chain's first member, at a member that
+    /// runs whole or follows one, and at a member reading an earlier one
+    /// through a neighbourhood input.
+    std::vector<uint32_t> chainSegment;
     std::vector<RigExecProgramChainFeed> chainFeeds;
     size_t inputArenaSize = 0;
     /// The work arena: values from 0, op state from stateBase.

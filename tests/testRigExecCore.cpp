@@ -3267,6 +3267,114 @@ TestValidateAndErrors()
     blurCuts = 0;
 }
 
+// A host-ordered program run in a host's schedule: each chain's head, then
+// each segment group by group, in segment order, gives the evaluator's
+// bits for any grouping, reading inputs in place; values are numbered for
+// the host, and misuse is refused.
+void
+TestHostSchedule()
+{
+    RigExecRigDescBuilder b;
+    std::vector<RigExecNodeId> n;
+    for (int i = 0; i < 7; ++i)
+        n.push_back(b.AddOp(i % 2 ? RBlur() : RScale()));
+    b.Connect(n[0], RScaleOut(), n[1], RBlurIn());
+    b.Connect(n[1], RBlurOut(), n[2], RScaleIn());
+    b.Connect(n[2], RScaleOut(), n[3], RBlurIn());
+    b.Connect(n[3], RBlurOut(), n[4], RScaleIn());
+    b.Connect(n[0], RScaleOut(), n[5], RBlurIn());
+    b.Connect(n[5], RBlurOut(), n[6], RScaleIn());
+    const RigExecInputId in = b.BindInput(n[0], RScaleIn());
+    std::vector<RigExecInputId> factors;
+    for (const RigExecNodeId node : {n[0], n[2], n[4], n[6]})
+        factors.push_back(b.BindInput(node, RScaleFactor()));
+    std::string error;
+    auto desc = b.Build(&error);
+    RigExecCompileOptions options;
+    options.hostOrder = true;
+    auto program = RigExecCompile(*desc, options, &error);
+    CHECK(program && RigExecProgramChainCount(*program) == 2);
+    if (!program)
+        return;
+    RigExecChainDesc first;
+    CHECK(RigExecProgramChainAt(*program, 0, &first));
+    CHECK(first.members.size() == 5 &&
+          first.segments == std::vector<uint32_t>({0, 1, 1, 3, 3}));
+    std::vector<uint32_t> numbers;
+    for (size_t i = 0; i < n.size(); ++i) {
+        RigExecValueRef ref;
+        CHECK(RigExecResolveNodeOutput(*program, n[i],
+                                       i % 2 ? RBlurOut() : RScaleOut(), &ref));
+        CHECK(ref.value < RigExecProgramValueCount(*program));
+        numbers.push_back(ref.value);
+    }
+    std::sort(numbers.begin(), numbers.end());
+    CHECK(std::unique(numbers.begin(), numbers.end()) == numbers.end());
+    const std::vector<float> input = RangeInput(1000, 2, 1);
+    const float one = 1.5f;
+    const std::vector<float> a = RefScale(input, one);
+    const std::vector<float> m = RefScale(RefBlur(a), one);
+    const std::vector<float> l = RefScale(RefBlur(m), one);
+    const std::vector<float> s = RefScale(RefBlur(a), one);
+    const auto value = [&](RigExecRunState &state, RigExecNodeId node) {
+        RigExecValueRef ref;
+        RigExecResolveNodeOutput(*program, node, RScaleOut(), &ref);
+        return static_cast<const Floats *>(state.GetValue(ref))->v;
+    };
+    for (const uint32_t groups : {1u, 3u, 7u, 1000u}) {
+        auto state = RigExecRunState::Create(program);
+        Floats held{input};
+        CHECK(state->PointInput(in, &held));
+        for (const RigExecInputId factor : factors)
+            CHECK(state->PointInput(factor, &one));
+        for (size_t c = 0; c < RigExecProgramChainCount(*program); ++c) {
+            RigExecChainDesc chain;
+            RigExecProgramChainAt(*program, c, &chain);
+            CHECK(state->RunChainHead(c, groups, &error));
+            const size_t count = state->ChainElements(c);
+            CHECK(count == 1000);
+            for (uint32_t segment = 0; segment < chain.members.size();
+                 ++segment) {
+                if (chain.segments[segment] != segment)
+                    continue;
+                for (uint32_t g = 0; g < groups; ++g)
+                    CHECK(state->RunChainRange(c, segment, count * g / groups,
+                                               count * (g + 1) / groups, g,
+                                               &error));
+            }
+        }
+        CHECK(SameFloats(value(*state, n[2]), m));
+        CHECK(SameFloats(value(*state, n[4]), l));
+        CHECK(SameFloats(value(*state, n[6]), s));
+        size_t lo = 0, hi = 0;
+        state->ChainReads(0, 1, 10, 20, 0, &lo, &hi);
+        CHECK(lo == 8 && hi == 22);
+        CHECK(!state->RunNode(n[0], &error));
+        CHECK(Contains(error, "runs in ranges, through its chain"));
+        held.v[500] = -1.0f;
+        CHECK(state->RunChainHead(0, groups, &error));
+        bool failed = false;
+        for (uint32_t g = 0; g < groups && !failed; ++g)
+            failed = !state->RunChainRange(0, 0, 1000 * g / groups,
+                                           1000 * (g + 1) / groups, g, &error);
+        CHECK(failed && Contains(error, "node 0 (test:RScale) failed: "
+                                        "element 500 is -1"));
+        CHECK(!state->RunChainRange(0, 2, 0, 10, 0, &error));
+    }
+    auto plain = RigExecCompile(*desc, {}, &error);
+    CHECK(!RigExecRunState::Create(plain)->RunChainHead(0, 1, &error));
+    RigExecRigDescBuilder backwards;
+    const RigExecNodeId later = backwards.AddOp(RBlur());
+    const RigExecNodeId early = backwards.AddOp(RBlur());
+    backwards.BindInput(early, RBlurIn());
+    backwards.Connect(early, RBlurOut(), later, RBlurIn());
+    backwards.BindOutput(later, RBlurOut());
+    auto reversed = backwards.Build(&error);
+    CHECK(!RigExecCompile(*reversed, options, &error));
+    CHECK(Contains(error, "which was added after it"));
+    blurCuts = 0;
+}
+
 // After the first frames a ranged rig allocates nothing more in this
 // module, inline and on worker threads.
 void
@@ -3356,6 +3464,7 @@ main()
     TestRangeNoAllocation();
     TestRangeChains();
     TestValidateAndErrors();
+    TestHostSchedule();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

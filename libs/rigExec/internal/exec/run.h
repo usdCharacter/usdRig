@@ -170,6 +170,9 @@ struct RigExecRun {
     /// whether a task of that level failed.
     std::vector<char> levelSplit;
     std::unique_ptr<std::atomic<uint8_t>[]> levelFailed;
+    /// Per input: the host storage it is read from (PointInput), or null
+    /// for the channel's.
+    std::vector<const void *> hostInputs;
 
     RigExecRun() = default;
     RigExecRun(const RigExecRun &) = delete;
@@ -203,12 +206,33 @@ struct RigExecRun {
     /// output the last, failed frame wrote.
     bool OutputValid(uint32_t slot, std::string *error) const;
 
+    /// A host's schedule (RigExecRunState, runState.h): \p input read from
+    /// \p value, one node that does not run in ranges, a chain's head for
+    /// \p groups groups, one segment of a chain over [begin, end) as group
+    /// \p group, and the elements a member's range reads.
+    void PointInput(uint32_t input, const void *value);
+    bool RunNode(uint32_t node, std::string *error);
+    bool RunChainHead(uint32_t chain, uint32_t groups, std::string *error);
+    bool RunChainRange(uint32_t chain, uint32_t segment, size_t begin,
+                       size_t end, uint32_t group, std::string *error);
+    void ChainReads(uint32_t chain, uint32_t member, size_t begin, size_t end,
+                    uint32_t group, size_t *lo, size_t *hi) const;
+    size_t ChainElements(uint32_t chain) const
+    {
+        return elementCounts
+            [program->chainMembers[program->chains[chain].firstMember]];
+    }
+
 private:
     void _BindFields();
     void _Point(uint32_t slot, void *value);
     void _PointReaders(uint32_t slot, const void *value);
     void *_Written(uint32_t slot) const;
     void _SettleBounds();
+    void _SettleBound(uint32_t slot);
+    void _PreparePool(RigExecPublishedPool &pool);
+    bool _ValidateNode(uint32_t b, uint32_t k, std::string *error);
+    bool _HostStep(uint32_t node, std::string *error);
     bool _Validate(std::string *error);
     void _Reserve(uint32_t slot, size_t count);
     void _MarkDirty(bool historyTick);

@@ -110,6 +110,8 @@ RigExecRun::Value(uint32_t slot) const
     const RigExecProgramSlot &place = program->slots[slot];
     switch (place.arena) {
     case RigExecArenaKind::Input:
+        if (hostInputs[place.arenaIndex])
+            return hostInputs[place.arenaIndex];
         return channel->Front() + place.offset;
     case RigExecArenaKind::Published: {
         const RigExecPublishedPool &pool = published->pools[place.arenaIndex];
@@ -193,6 +195,7 @@ RigExecRun::Bind(const RigExecProgram &p, const RigExecInputChannel &input,
         inputs[list.port] = &lists[i];
     }
     boundFront = channel->front;
+    hostInputs.assign(p.inputSlots.size(), nullptr);
     for (uint32_t slot = 0; slot < p.slots.size(); ++slot) {
         if (p.slots[slot].arena == RigExecArenaKind::Input)
             _PointReaders(slot, Value(slot));
@@ -350,31 +353,36 @@ RigExecRun::_Reserve(uint32_t slot, size_t count)
 }
 
 void
-RigExecRun::_SettleBounds()
+RigExecRun::_SettleBound(uint32_t slot)
 {
     const RigExecProgram &p = *program;
-    for (const uint32_t slot : p.derivedBounds) {
-        const RigExecProgramBound &bound = p.bounds[slot];
-        size_t most = 0;
-        for (uint32_t i = 0; i < bound.sourceCount; ++i) {
-            const RigExecProgramBoundSource &source =
-                p.boundSources[bound.firstSource + i];
-            const RigExecProgramSlot &place = p.slots[source.slot];
-            size_t measured = SIZE_MAX;
-            if (place.arena == RigExecArenaKind::Input) {
-                const RigExecTypeDesc &t = TypeOf(place.type);
-                const void *value = channel->Front() + place.offset;
-                measured = source.integer ? IntegerOf(t, value)
-                           : t.elements   ? t.elements(value)
-                                          : SIZE_MAX;
-            } else if (!source.integer) {
-                measured = bounds[source.slot];
-            }
-            most = std::max(most, measured);
+    const RigExecProgramBound &bound = p.bounds[slot];
+    size_t most = 0;
+    for (uint32_t i = 0; i < bound.sourceCount; ++i) {
+        const RigExecProgramBoundSource &source =
+            p.boundSources[bound.firstSource + i];
+        const RigExecProgramSlot &place = p.slots[source.slot];
+        size_t measured = SIZE_MAX;
+        if (place.arena == RigExecArenaKind::Input) {
+            const RigExecTypeDesc &t = TypeOf(place.type);
+            const void *value = Value(source.slot);
+            measured = source.integer ? IntegerOf(t, value)
+                       : t.elements   ? t.elements(value)
+                                      : SIZE_MAX;
+        } else if (!source.integer) {
+            measured = bounds[source.slot];
         }
-        bounds[slot] = Scaled(most, bound.count);
-        _Reserve(slot, bounds[slot]);
+        most = std::max(most, measured);
     }
+    bounds[slot] = Scaled(most, bound.count);
+    _Reserve(slot, bounds[slot]);
+}
+
+void
+RigExecRun::_SettleBounds()
+{
+    for (const uint32_t slot : program->derivedBounds)
+        _SettleBound(slot);
 }
 
 void
@@ -436,27 +444,31 @@ RigExecRun::_Runs(uint32_t slot) const
 void
 RigExecRun::_PrepareOutputs()
 {
-    for (RigExecPublishedPool &pool : published->pools) {
-        if (!_Runs(pool.slot))
-            continue;
-        RigExecPublishedArena *arena = pool.arenas[pool.current].get();
-        if (arena->pins.load(std::memory_order_acquire) == 0)
-            continue;
-        uint32_t next = kRigExecInvalidIndex;
-        for (uint32_t i = 0; i < pool.arenas.size(); ++i) {
-            if (i != pool.current &&
-                pool.arenas[i]->pins.load(std::memory_order_acquire) == 0) {
-                next = i;
-                break;
-            }
+    for (RigExecPublishedPool &pool : published->pools)
+        if (_Runs(pool.slot))
+            _PreparePool(pool);
+}
+
+void
+RigExecRun::_PreparePool(RigExecPublishedPool &pool)
+{
+    RigExecPublishedArena *arena = pool.arenas[pool.current].get();
+    if (arena->pins.load(std::memory_order_acquire) == 0)
+        return;
+    uint32_t next = kRigExecInvalidIndex;
+    for (uint32_t i = 0; i < pool.arenas.size(); ++i) {
+        if (i != pool.current &&
+            pool.arenas[i]->pins.load(std::memory_order_acquire) == 0) {
+            next = i;
+            break;
         }
-        if (next == kRigExecInvalidIndex) {
-            next = uint32_t(pool.arenas.size());
-            published->Add(pool);
-        }
-        pool.current = next;
-        _Point(pool.slot, pool.arenas[next]->storage.Data());
     }
+    if (next == kRigExecInvalidIndex) {
+        next = uint32_t(pool.arenas.size());
+        published->Add(pool);
+    }
+    pool.current = next;
+    _Point(pool.slot, pool.arenas[next]->storage.Data());
 }
 
 void
@@ -1066,82 +1078,83 @@ bool
 RigExecRun::_Validate(std::string *error)
 {
     const RigExecProgram &p = *program;
-    const RigExecRegistry &registry = RigExecRegistry::Get();
-    for (uint32_t b = 0; b < p.batches.size(); ++b) {
-        const RigExecProgramBatch &batch = p.batches[b];
-        const RigExecRegisteredOp &op = registry.OpAt(batch.op);
-        const RigExecOpDesc &d = *op.desc;
-        if (!d.validate)
-            continue;
-        for (uint32_t k = 0; k < batch.nodeCount; ++k) {
-            const uint32_t at = batch.firstNode + k;
-            const uint32_t first = batch.firstPort + k * d.portCount;
-            bool same = validated[at] != 0;
-            for (uint32_t port = 0; port < d.portCount; ++port) {
-                size_t elements = 0, version = 0;
-                const uint32_t slot = p.portSlots[first + port];
-                const uint32_t flags = d.ports[port].flags;
-                if (!(flags & kRigExecPortInput)) {
-                    continue;
-                } else if (flags & kRigExecPortArray) {
-                    elements = static_cast<const RigExecPortList *>(
-                                   inputs[first + port])
-                                   ->count;
-                } else if (slot == kRigExecInvalidIndex) {
-                    elements = kRigExecPortUnfed;
-                } else if (p.slots[slot].arena == RigExecArenaKind::Input) {
-                    const RigExecTypeDesc &t = TypeOf(p.slots[slot].type);
-                    elements =
-                        t.elements ? t.elements(inputs[first + port]) : 1;
-                    if (flags & kRigExecPortChecked)
-                        version = size_t(
-                            channel->FrontVersion(p.slots[slot].arenaIndex));
-                } else {
-                    const RigExecProgramBound &bound = p.bounds[slot];
-                    const bool exact =
-                        bound.kind == RigExecOutputBound::Input &&
-                        bound.sourceCount == 1 && bound.count == 1;
-                    elements = exact ? bounds[slot] : SIZE_MAX;
-                }
-                checkElements[first + port] = elements;
-                same = same && checkKeys[2 * (first + port)] == elements &&
-                       checkKeys[2 * (first + port) + 1] == version;
-                checkKeys[2 * (first + port)] = elements;
-                checkKeys[2 * (first + port) + 1] = version;
-            }
-            if (same)
-                continue;
-            validated[at] = 0;
-            for (uint32_t port = 0; port < d.portCount; ++port) {
-                const uint32_t slot = p.portSlots[first + port];
-                const bool host =
-                    slot != kRigExecInvalidIndex &&
-                    p.slots[slot].arena == RigExecArenaKind::Input;
-                checkInputs[first + port] =
-                    host || (d.ports[port].flags & kRigExecPortArray)
-                        ? inputs[first + port]
-                        : nullptr;
-            }
-            RigExecOpCheck check;
-            check.batch = _View(b);
-            check.batch.inputs = checkInputs.data() + batch.firstPort;
-            check.k = k;
-            check.elements = checkElements.data() + first;
-            const RigExecProgramNode &node = p.nodes[p.batchNodes[at]];
-            check.state = node.stateOffset == SIZE_MAX
-                              ? nullptr
-                              : State() + node.stateOffset;
-            std::string why;
-            if (!d.validate(check, &why)) {
-                if (error)
-                    *error = "node " + std::to_string(p.batchNodes[at]) + " (" +
-                             (d.nameSpace ? d.nameSpace : "") + ":" +
-                             (d.name ? d.name : "") + ") is invalid: " + why;
+    for (uint32_t b = 0; b < p.batches.size(); ++b)
+        for (uint32_t k = 0; k < p.batches[b].nodeCount; ++k)
+            if (!_ValidateNode(b, k, error))
                 return false;
-            }
-            validated[at] = 1;
+    return true;
+}
+
+bool
+RigExecRun::_ValidateNode(uint32_t b, uint32_t k, std::string *error)
+{
+    const RigExecProgram &p = *program;
+    const RigExecProgramBatch &batch = p.batches[b];
+    const RigExecOpDesc &d = OpOf(batch.op);
+    if (!d.validate)
+        return true;
+    const uint32_t at = batch.firstNode + k;
+    const uint32_t first = batch.firstPort + k * d.portCount;
+    bool same = validated[at] != 0;
+    for (uint32_t port = 0; port < d.portCount; ++port) {
+        size_t elements = 0, version = 0;
+        const uint32_t slot = p.portSlots[first + port];
+        const uint32_t flags = d.ports[port].flags;
+        if (!(flags & kRigExecPortInput)) {
+            continue;
+        } else if (flags & kRigExecPortArray) {
+            elements =
+                static_cast<const RigExecPortList *>(inputs[first + port])
+                    ->count;
+        } else if (slot == kRigExecInvalidIndex) {
+            elements = kRigExecPortUnfed;
+        } else if (p.slots[slot].arena == RigExecArenaKind::Input) {
+            const RigExecTypeDesc &t = TypeOf(p.slots[slot].type);
+            elements = t.elements ? t.elements(inputs[first + port]) : 1;
+            if (flags & kRigExecPortChecked)
+                version =
+                    size_t(channel->FrontVersion(p.slots[slot].arenaIndex));
+        } else {
+            const RigExecProgramBound &bound = p.bounds[slot];
+            const bool exact = bound.kind == RigExecOutputBound::Input &&
+                               bound.sourceCount == 1 && bound.count == 1;
+            elements = exact ? bounds[slot] : SIZE_MAX;
         }
+        checkElements[first + port] = elements;
+        same = same && checkKeys[2 * (first + port)] == elements &&
+               checkKeys[2 * (first + port) + 1] == version;
+        checkKeys[2 * (first + port)] = elements;
+        checkKeys[2 * (first + port) + 1] = version;
     }
+    if (same)
+        return true;
+    validated[at] = 0;
+    for (uint32_t port = 0; port < d.portCount; ++port) {
+        const uint32_t slot = p.portSlots[first + port];
+        const bool host = slot != kRigExecInvalidIndex &&
+                          p.slots[slot].arena == RigExecArenaKind::Input;
+        checkInputs[first + port] =
+            host || (d.ports[port].flags & kRigExecPortArray)
+                ? inputs[first + port]
+                : nullptr;
+    }
+    RigExecOpCheck check;
+    check.batch = _View(b);
+    check.batch.inputs = checkInputs.data() + batch.firstPort;
+    check.k = k;
+    check.elements = checkElements.data() + first;
+    const RigExecProgramNode &node = p.nodes[p.batchNodes[at]];
+    check.state =
+        node.stateOffset == SIZE_MAX ? nullptr : State() + node.stateOffset;
+    std::string why;
+    if (!d.validate(check, &why)) {
+        if (error)
+            *error = "node " + std::to_string(p.batchNodes[at]) + " (" +
+                     (d.nameSpace ? d.nameSpace : "") + ":" +
+                     (d.name ? d.name : "") + ") is invalid: " + why;
+        return false;
+    }
+    validated[at] = 1;
     return true;
 }
 
@@ -1151,8 +1164,11 @@ RigExecRun::Run(bool historyTick, RigExecTaskSystem *tasks, std::string *error)
     const RigExecProgram &p = *program;
     if (channel->front != boundFront) {
         boundFront = channel->front;
-        for (const uint32_t slot : p.inputSlots)
-            _PointReaders(slot, channel->Front() + p.slots[slot].offset);
+        for (uint32_t i = 0; i < p.inputSlots.size(); ++i)
+            if (!hostInputs[i])
+                _PointReaders(p.inputSlots[i],
+                              channel->Front() +
+                                  p.slots[p.inputSlots[i]].offset);
     }
     _SettleBounds();
     if (!_Validate(error)) {
@@ -1209,6 +1225,161 @@ RigExecRun::OutputValid(uint32_t slot, std::string *error) const
     if (error)
         *error = "no valid value: " + failure;
     return false;
+}
+
+void
+RigExecRun::PointInput(uint32_t input, const void *value)
+{
+    hostInputs[input] = value;
+    const uint32_t slot = program->inputSlots[input];
+    _PointReaders(slot, value ? value
+                              : channel->Front() + program->slots[slot].offset);
+}
+
+bool
+RigExecRun::_HostStep(uint32_t node, std::string *error)
+{
+    const RigExecProgram &p = *program;
+    const uint32_t at = p.batchPosition[node];
+    const uint32_t b = p.positionBatch[at];
+    active[at] = 1;
+    batchActive[b] = 1;
+    failed[b] = 0;
+    if (!_ValidateNode(b, at - p.batches[b].firstNode, error))
+        return false;
+    for (uint32_t o = p.nodeOutputStart[node]; o < p.nodeOutputStart[node + 1];
+         ++o) {
+        const uint32_t slot = p.nodeOutputs[o];
+        if (p.bounds[slot].kind == RigExecOutputBound::Input ||
+            p.bounds[slot].kind == RigExecOutputBound::InputValue)
+            _SettleBound(slot);
+        if (p.slots[slot].arena == RigExecArenaKind::Published)
+            _PreparePool(published->pools[p.slots[slot].arenaIndex]);
+    }
+    return true;
+}
+
+bool
+RigExecRun::RunNode(uint32_t node, std::string *error)
+{
+    const RigExecProgram &p = *program;
+    if (!p.hostOrder || node >= p.nodes.size() ||
+        p.positionChain[p.batchPosition[node]] != kRigExecInvalidIndex) {
+        if (error)
+            *error = node >= p.nodes.size() ? "no node " + std::to_string(node)
+                     : !p.hostOrder
+                         ? std::string("the program was not compiled for a "
+                                       "host's schedule")
+                         : "node " + std::to_string(node) +
+                               " runs in ranges, through its chain";
+        return false;
+    }
+    if (!_HostStep(node, error))
+        return false;
+    const uint32_t b = p.positionBatch[p.batchPosition[node]];
+    _RunBatch(b);
+    if (!failed[b])
+        return true;
+    if (error)
+        *error = errors[b];
+    return false;
+}
+
+bool
+RigExecRun::RunChainHead(uint32_t c, uint32_t groups, std::string *error)
+{
+    const RigExecProgram &p = *program;
+    if (!p.hostOrder || c >= p.chains.size() || !groups) {
+        if (error)
+            *error = c >= p.chains.size() ? "no chain " + std::to_string(c)
+                     : !groups
+                         ? std::string("a chain runs in one group at least")
+                         : std::string("the program was not compiled "
+                                       "for a host's schedule");
+        return false;
+    }
+    const RigExecProgramChain &chain = p.chains[c];
+    for (uint32_t m = 0; m < chain.memberCount; ++m) {
+        const uint32_t at = p.chainMembers[chain.firstMember + m];
+        const uint32_t node = p.batchNodes[at];
+        if (!_HostStep(node, error))
+            return false;
+        instanceRanges[at] = groups;
+        std::string why;
+        if (!_RunHead(at, &why)) {
+            const uint32_t b = p.positionBatch[at];
+            _Fail(b, at - p.batches[b].firstNode, why);
+            if (error)
+                *error = errors[b];
+            return false;
+        }
+    }
+    return true;
+}
+
+bool
+RigExecRun::RunChainRange(uint32_t c, uint32_t segment, size_t begin,
+                          size_t end, uint32_t group, std::string *error)
+{
+    const RigExecProgram &p = *program;
+    const RigExecProgramChain &chain = p.chains[c];
+    for (uint32_t m = segment; m < chain.memberCount &&
+                               p.chainSegment[chain.firstMember + m] == segment;
+         ++m) {
+        const uint32_t at = p.chainMembers[chain.firstMember + m];
+        const uint32_t b = p.positionBatch[at];
+        const RigExecOpDesc &d = OpOf(p.batches[b].op);
+        RigExecOpRange range;
+        range.count = elementCounts[at];
+        range.begin = begin;
+        range.end = std::min(end, range.count);
+        range.index = group;
+        range.ranges = instanceRanges[at];
+        if (group >= scratch[at].size() && d.range.scratch.size) {
+            if (error)
+                *error = "group " + std::to_string(group) + " is past the " +
+                         std::to_string(instanceRanges[at]) +
+                         " groups the chain's head was given";
+            return false;
+        }
+        if (d.range.scratch.size)
+            range.scratch = scratch[at][group].Data();
+        if (range.begin >= range.end)
+            continue;
+        std::string why;
+        if (!d.range.run(_View(b), at - p.batches[b].firstNode, range, &why)) {
+            if (error)
+                *error = "node " + std::to_string(p.batchNodes[at]) + " (" +
+                         (d.nameSpace ? d.nameSpace : "") + ":" +
+                         (d.name ? d.name : "") + ") failed" +
+                         (why.empty() ? "" : ": " + why);
+            return false;
+        }
+    }
+    return true;
+}
+
+void
+RigExecRun::ChainReads(uint32_t c, uint32_t member, size_t begin, size_t end,
+                       uint32_t group, size_t *lo, size_t *hi) const
+{
+    const RigExecProgram &p = *program;
+    const uint32_t at = p.chainMembers[p.chains[c].firstMember + member];
+    const uint32_t b = p.positionBatch[at];
+    const RigExecOpDesc &d = OpOf(p.batches[b].op);
+    *lo = 0;
+    *hi = elementCounts[at];
+    if (!d.range.reads)
+        return;
+    RigExecOpRange range;
+    range.count = elementCounts[at];
+    range.begin = begin;
+    range.end = std::min(end, range.count);
+    range.index = group;
+    range.ranges = instanceRanges[at];
+    if (d.range.scratch.size && group < scratch[at].size())
+        range.scratch = scratch[at][group].Data();
+    d.range.reads(_View(b), at - p.batches[b].firstNode, range, lo, hi);
 }
 
 void

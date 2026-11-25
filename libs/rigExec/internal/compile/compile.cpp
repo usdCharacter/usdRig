@@ -285,6 +285,26 @@ OrderNodes(CompileState &s)
     if (!program.graph.cycles.empty())
         return Fail(s.error, CycleText(s, program.graph));
     s.level.assign(s.nodeCount, 0);
+    if (program.hostOrder) {
+        for (const RigExecCompiledOp &op : program.graph.ops) {
+            const uint32_t n = op.originalIndex;
+            if (s.OpDesc(n).threading == RigExecOpThreading::Windowed)
+                return Fail(s.error, NodeText(s.registry, s.data, n) +
+                                         " keeps history, which a host-ordered "
+                                         "program cannot run");
+            for (const uint32_t predecessor : op.predecessors)
+                if (program.graph.ops[predecessor].originalIndex > n)
+                    return Fail(
+                        s.error,
+                        NodeText(s.registry, s.data, n) + " depends on " +
+                            NodeText(
+                                s.registry, s.data,
+                                program.graph.ops[predecessor].originalIndex) +
+                            ", which was added after it");
+            s.level[n] = n;
+        }
+        return true;
+    }
     for (const RigExecCompiledOp &op : program.graph.ops)
         for (const uint32_t predecessor : op.predecessors)
             s.level[op.originalIndex] = std::max(
@@ -794,6 +814,19 @@ FormRangeChains(CompileState &s)
                 uint32_t(program.chainFeeds.size()));
         }
     }
+    program.chainSegment.assign(program.chainMembers.size(), 0);
+    for (const RigExecProgramChain &chain : program.chains) {
+        for (uint32_t m = 0; m < chain.memberCount; ++m) {
+            const uint32_t g = chain.firstMember + m;
+            bool starts = m == 0 ||
+                          program.wholePositions[program.chainMembers[g]] ||
+                          program.wholePositions[program.chainMembers[g - 1]];
+            for (uint32_t f = program.chainFeedStart[g];
+                 f < program.chainFeedStart[g + 1]; ++f)
+                starts = starts || program.chainFeeds[f].neighbourhood;
+            program.chainSegment[g] = starts ? m : program.chainSegment[g - 1];
+        }
+    }
 }
 
 /// Places \p count values of \p size and \p align from \p end, one every
@@ -1008,6 +1041,7 @@ RigExecCompile(const RigExecRigDesc &desc, const RigExecCompileOptions &options,
     program->useSimd = options.useSimd;
     program->rangeGrain = options.rangeGrain;
     program->rangeThreshold = options.rangeThreshold;
+    program->hostOrder = options.hostOrder;
 
     CompileState s{registry, data, *program, error};
     s.nodeCount = uint32_t(data.nodes.size());
