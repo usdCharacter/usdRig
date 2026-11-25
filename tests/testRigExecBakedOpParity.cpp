@@ -22,6 +22,7 @@
 #include "rigExecOps/deform/skinOp.h"
 #include "rigExecMath/skinKernel.h"
 #include "rigExecOps/pose/poseOps.h"
+#include "rigExecOps/deform/matrixDeformOp.h"
 #include "opRunners/geometryOpRunner.h"
 #include "opRunners/poseOpRunner.h"
 #include "opRunners/weightOpRunner.h"
@@ -1367,6 +1368,92 @@ OpMatrix(const GfMatrix4d &m)
         for (int c = 0; c < 4; ++c)
             out._mtx[r][c] = m[r][c];
     return out;
+}
+
+// MoverTransform: each revision's transform as its fold read it (provider
+// table, constraint delta, AtPrim record) replayed through the op, against
+// the transform the fold left.
+void
+ProbeMoverTransforms(const B &b)
+{
+    using namespace rigExecOps;
+    for (const auto &chain : b.chains) {
+        if (!chain.haveBase)
+            continue;
+        for (const auto &revision : chain.revisions) {
+            if (!revision.haveTransform || revision.gpuOwned ||
+                revision.rangeSetAside)
+                continue;
+            const auto table = [&](int slot) {
+                return revision.finalPhase ? b.finalMatrix[size_t(slot)]
+                                           : b.baseMatrix[size_t(slot)];
+            };
+            GfMatrix4d transform(1.0);
+            if (revision.transformSlot >= 0)
+                transform = table(revision.transformSlot);
+            if (revision.constraintDelta >= 0 &&
+                b.deltaPresent[size_t(revision.constraintDelta)])
+                transform = b.deltaValues[size_t(revision.constraintDelta)];
+            if (revision.binding.transformPhase.kind ==
+                RigExecReadPhaseKind::AtPrim)
+                for (const int record : revision.transformRecords)
+                    if (b.frameMatrixValid[size_t(record)]) {
+                        transform = b.frameMatrix[size_t(record)];
+                        break;
+                    }
+            const bool hasSpace = revision.transformSpaceSlot >= 0;
+            const bool hasReference =
+                revision.op == RigExecRevisionOp::Matrix &&
+                !revision.influenceSlots.empty();
+            const bool hasReferenceSpace =
+                hasSpace && hasReference && revision.influenceSlots.size() > 1;
+            MoverTransformPayload payload;
+            payload.posedPoints = revision.posedPoints;
+            std::vector<const RigExecPortHandle *> ins = {
+                &MoverTransformTransform()};
+            std::vector<rigExecStd::Mat4d> values = {OpMatrix(transform)};
+            std::string key = "MoverTransform/";
+            const auto feed = [&](bool fed, const RigExecPortHandle &port,
+                                  const GfMatrix4d &m, char tag) {
+                if (!fed)
+                    return;
+                ins.push_back(&port);
+                values.push_back(OpMatrix(m));
+                key += tag;
+            };
+            feed(hasSpace, MoverTransformSpace(),
+                 hasSpace ? table(revision.transformSpaceSlot) : transform,
+                 's');
+            feed(hasReference, MoverTransformReference(),
+                 hasReference ? table(revision.influenceSlots[0]) : transform,
+                 'r');
+            feed(hasReferenceSpace, MoverTransformReferenceSpace(),
+                 hasReferenceSpace ? table(revision.influenceSlots[1])
+                                   : transform,
+                 'R');
+            feed(revision.haveCarry, MoverTransformCarry(), revision.carry,
+                 'c');
+            key += payload.posedPoints ? "/posed" : "/rest";
+            SpaceNode &node = SpaceNodeFor(key, MoverTransform(), &payload, ins,
+                                           {&MoverTransformOut()});
+            std::vector<const void *> bound;
+            for (const auto &value : values)
+                bound.push_back(&value);
+            std::string error;
+            const std::string kind =
+                std::string("MoverTransform/") + OpName(revision.op);
+            if (!RunSpaceNode(node, bound, &error)) {
+                OpFailed("Transform", kind, revision.moverPathText, false,
+                         error);
+                continue;
+            }
+            std::vector<double> baked, op;
+            PutBits(&baked, revision.transform);
+            PutBits(&op, SpaceOut<rigExecStd::Mat4d>(node, 0));
+            CompareBits("Transform", kind, revision.moverPathText, baked, op,
+                        false);
+        }
+    }
 }
 
 rigExecStd::Vec3d
@@ -2899,6 +2986,7 @@ ProbeStage(const UsdStageRefPtr &stage, const std::string &rig, Paint paint,
         ProbeConstraint(b);
         ProbeCommits(b);
         ProbeRevisions(b);
+        ProbeMoverTransforms(b);
         ProbeRangeChains(b);
         ProbeDerived(b);
         ProbeSkinMatrices(b);
@@ -3449,6 +3537,7 @@ main(int argc, char **argv)
     }
     for (const char *family : {"Solve/",
                                "RevisionChunk/",
+                               "Transform/MoverTransform/Matrix",
                                "RangeChain/",
                                "Derived/",
                                "SkinMatrices/linear",

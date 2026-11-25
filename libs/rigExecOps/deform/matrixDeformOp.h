@@ -37,6 +37,33 @@ const rigExec::RigExecPortHandle &MatrixDeformWeightIndices();
 const rigExec::RigExecPortHandle &MatrixDeformWeights();
 const rigExec::RigExecPortHandle &MatrixDeformOut();
 
+/// What a mover transform is configured with at compile.
+struct MoverTransformPayload {
+    /// rigExec:pointFrame is "posed": the points were already carried, so a
+    /// measured transform is conjugated into their frame.
+    bool posedPoints = false;
+
+    bool operator==(const MoverTransformPayload &o) const
+    {
+        return posedPoints == o.posedPoints;
+    }
+};
+
+/// A mover's transform in its geometry's point frame
+/// (rigExecMath/moverTransformKernel.h).
+const rigExec::RigExecOpHandle &MoverTransform();
+
+// Transform (Mat4d). Optional Mat4d inputs, each only when the mover names
+// it: Space (rigExec:transformSpace), Reference (the transform's neutral),
+// ReferenceSpace (the space's neutral; needs Space and Reference) and Carry
+// (rigExec:space). Out (Mat4d).
+const rigExec::RigExecPortHandle &MoverTransformTransform();
+const rigExec::RigExecPortHandle &MoverTransformSpace();
+const rigExec::RigExecPortHandle &MoverTransformReference();
+const rigExec::RigExecPortHandle &MoverTransformReferenceSpace();
+const rigExec::RigExecPortHandle &MoverTransformCarry();
+const rigExec::RigExecPortHandle &MoverTransformOut();
+
 } // namespace rigExecOps
 
 #endif

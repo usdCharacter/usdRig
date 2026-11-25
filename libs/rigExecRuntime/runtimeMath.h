@@ -2707,18 +2707,6 @@ RrPartialTransform(const RrMat4d &transform, double weight)
                                        w);
 }
 
-// M(transform) * inverse(M(space)) with the projective column set exactly.
-// The USD twin is RigExecMeasureInSpace in moverGraph.h.
-inline RrMat4d
-RrMeasureInSpace(const RrMat4d &transform, const RrMat4d &space)
-{
-    RrMat4d m = transform * space.GetInverse();
-    m[0][3] = 0.0;
-    m[1][3] = 0.0;
-    m[2][3] = 0.0;
-    m[3][3] = 1.0;
-    return m;
-}
 } // namespace rigExec
 
 #endif // RIGEXEC_RUNTIME_MATH_H

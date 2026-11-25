@@ -26,6 +26,7 @@
 #include "rigExecMath/deltaMushSettings.h"
 #include "rigExecMath/latticeKernel.h"
 #include "rigExecMath/meshBoundsKernel.h"
+#include "rigExecMath/moverTransformKernel.h"
 #include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/skinAcceptance.h"
@@ -1868,81 +1869,19 @@ RrGeoCachedWireBasis(const RrGeoMoverParameters &p,
 RrMat4d
 RrGeoMeasureInSpace(const RrMat4d &transform, const RrMat4d &space)
 {
-    return RrMeasureInSpace(transform, space);
+    return RigExecMeasureInSpaceT(transform, space);
 }
 
-// inverse(space) * transform: the same offset, conjugated into the space's
-// CURRENT frame. The USD-side twin is RigExecMeasureInPosedSpace in
-// moverGraph.h; what rigExec:driverDeltaFrame = "posed" asks a wire for.
-// Same arithmetic in the same order, so the two agree bit for bit.
 RrMat4d
 RrGeoMeasureInPosedSpace(const RrMat4d &transform, const RrMat4d &space)
 {
-    RrMat4d m = space.GetInverse() * transform;
-    m[0][3] = 0.0;
-    m[1][3] = 0.0;
-    m[2][3] = 0.0;
-    m[3][3] = 1.0;
-    return m;
+    return RigExecMeasureInPosedSpaceT(transform, space);
 }
 
-// The scale a posed frame carries: the length of each column of its linear
-// part. The USD-side twin is RigExecFrameScale in moverGraph.h and the two
-// must agree to the last bit, so the arithmetic here is the same arithmetic
-// in the same order. A frame nothing has scaled returns (1, 1, 1) and every
-// caller skips its correction outright, which is what keeps an unscaled rig
-// bit for bit what it was.
 RrVec3d
 RrGeoFrameScale(const RrMat4d &frame)
 {
-    RrVec3d scale(1.0, 1.0, 1.0);
-    for (size_t c = 0; c < 3; ++c) {
-        const double length =
-            RrVec3d(frame[0][c], frame[1][c], frame[2][c]).GetLength();
-        if (length > 0.0) {
-            scale[c] = length;
-        }
-    }
-    return scale;
-}
-
-// The offset a cluster applies, in the frame its POINTS are already in.
-// The USD-side twin is RigExecClusterInPointFrame in moverGraph.h; the two
-// are compared bit for bit, so this is the same arithmetic in the same
-// order, including which of the two branches is taken.
-//
-// \p carry is rigExec:space's rest->pose map -- the rig's own carry,
-// normally a TRS master's -- and conjugating by it is what makes a
-// post-skin cluster ride a moved master instead of shearing the mesh by
-// T*R - T. A null \p carry falls back to conjugating by the space's own
-// SCALE; the two never compose, because a named carry already holds the
-// master's scale. A rig naming no space under an unscaled master measures
-// (1, 1, 1) and \p m comes back untouched.
-RrMat4d
-RrGeoClusterInPointFrame(const RrMat4d &m, const RrMat4d &space,
-                         bool posedPoints, const RrMat4d *carry)
-{
-    if (!posedPoints) {
-        return m;
-    }
-    RrMat4d out;
-    if (carry) {
-        out = carry->GetInverse() * m * *carry;
-    } else {
-        const RrVec3d k = RrGeoFrameScale(space);
-        if (k == RrVec3d(1.0, 1.0, 1.0)) {
-            return m;
-        }
-        RrMat4d scale(1.0), unscale(1.0);
-        scale.SetScale(k);
-        unscale.SetScale(RrVec3d(1.0 / k[0], 1.0 / k[1], 1.0 / k[2]));
-        out = unscale * m * scale;
-    }
-    out[0][3] = 0.0;
-    out[1][3] = 0.0;
-    out[2][3] = 0.0;
-    out[3][3] = 1.0;
-    return out;
+    return RigExecFrameScaleT<RrVec3d>(frame);
 }
 
 // Carries a transform-driven wire's two control polygons into the frame
@@ -5913,47 +5852,39 @@ RrGeoFoldInfluences(RrProgram *program, RrGeometryScratch *scratch,
     }
     const bool hasReference =
         wire.op == uint8_t(RrGeoOpMatrix) && !wire.influenceSlots.empty();
-    const auto normalize = [&](size_t index, RrMat4d *value) {
+    if (rev->haveTransform) {
         const RrMat4d *reference = nullptr;
-        if (!matrixAt(wire.influenceSlots[index], &reference)) {
+        const RrMat4d *space = nullptr;
+        const RrMat4d *referenceSpace = nullptr;
+        if (hasReference && !matrixAt(wire.influenceSlots[0], &reference)) {
             if (error)
                 *error = "reference slot names no provider matrix";
             return false;
         }
-        *value = reference->GetInverse() * *value;
-        (*value)[0][3] = (*value)[1][3] = (*value)[2][3] = 0.0;
-        (*value)[3][3] = 1.0;
-        return true;
-    };
-    if (rev->haveTransform && hasReference && !normalize(0, &rev->transform)) {
-        return false;
-    }
-    if (rev->haveTransform && wire.transformSpaceSlot >= 0) {
-        const RrMat4d *space = nullptr;
-        if (!matrixAt(wire.transformSpaceSlot, &space)) {
-            if (error) {
-                *error = "transform space slot names no provider matrix";
+        if (wire.transformSpaceSlot >= 0) {
+            if (!matrixAt(wire.transformSpaceSlot, &space)) {
+                if (error) {
+                    *error = "transform space slot names no provider matrix";
+                }
+                return false;
             }
-            return false;
+            if (hasReference && wire.influenceSlots.size() > 1 &&
+                !matrixAt(wire.influenceSlots[1], &referenceSpace)) {
+                if (error)
+                    *error = "reference slot names no provider matrix";
+                return false;
+            }
         }
-        const bool clusterPosedPoints =
-            RrGeoReadToken(program, scratch,
-                           RrGeoAttrRead(*rev, RrGeoAttrPointFrame),
-                           "rest") == "posed";
-        // The reference refines the SPACE first, then the carry consumes
-        // it -- the twin of the same two steps in bakedGeometry.cpp.
-        RrMat4d measuredSpace = *space;
-        if (hasReference && wire.influenceSlots.size() > 1 &&
-            !normalize(1, &measuredSpace)) {
-            return false;
-        }
-        // rigExec:space, as read above. A POINTER, because a revision
-        // naming no carry must take the untouched branch and not one
-        // multiplied by an identity.
+        const bool posedPoints =
+            space && RrGeoReadToken(program, scratch,
+                                    RrGeoAttrRead(*rev, RrGeoAttrPointFrame),
+                                    "rest") == "posed";
+        // A pointer: a revision naming no carry takes the untouched branch,
+        // not one multiplied by an identity.
         const RrMat4d *carry = rev->haveCarry ? &rev->carry : nullptr;
-        rev->transform = RrGeoClusterInPointFrame(
-            RrGeoMeasureInSpace(rev->transform, measuredSpace), measuredSpace,
-            clusterPosedPoints, carry);
+        rev->transform = RigExecMatrixInPointFrameT<RrVec3d>(
+            rev->transform, space, reference, referenceSpace, posedPoints,
+            carry);
     }
     if (rev->influences.size() != wire.influenceSlots.size()) {
         if (error) {

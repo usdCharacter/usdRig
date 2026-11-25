@@ -1,5 +1,6 @@
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecMath/blendLayoutKernel.h"
+#include "rigExecMath/moverTransformKernel.h"
 // Compiled revision bindings, typed leaves and pure revision kernels.
 #ifndef RIGEXEC_MOVER_GRAPH_H
 #define RIGEXEC_MOVER_GRAPH_H
@@ -163,140 +164,38 @@ RigExecMoverStatus
 RigExecStatusForParameters(const RigExecMoverParameters &parameters,
                            const std::string &moverText);
 
-/// The scale a posed frame carries: the length of each column of its linear
-/// part.
-///
-/// USD's row-vector convention puts a master's own transform on the RIGHT of
-/// its descendants (world = local * parent), so a frame under a scaled
-/// master factors as rigid * scale -- and for an orthonormal L,
-/// (L S)^T (L S) = S L^T L S = S^2, whose diagonal is exactly those column
-/// lengths. Unscaled frame returns (1,1,1).
-///
-/// A zero-length column is a degenerate frame that cannot be divided by, so
-/// it reports 1 and leaves that axis alone rather than producing infinities.
 inline GfVec3d
 RigExecFrameScale(const GfMatrix4d &frame)
 {
-    GfVec3d scale(1.0, 1.0, 1.0);
-    for (size_t c = 0; c < 3; ++c) {
-        const double length =
-            GfVec3d(frame[0][c], frame[1][c], frame[2][c]).GetLength();
-        if (length > 0.0) {
-            scale[c] = length;
-        }
-    }
-    return scale;
+    return RigExecFrameScaleT<GfVec3d>(frame);
 }
 
-/// M(transform) * inverse(M(space)) for rigExec:transformSpace, with the
-/// projective column set exactly: the product of an affine matrix and an
-/// affine inverse is affine, but not to the last bit, and the matrix mover
-/// refuses a transform whose last column is not exactly (0, 0, 0, 1).
 inline GfMatrix4d
 RigExecMeasureInSpace(const GfMatrix4d &transform, const GfMatrix4d &space)
 {
-    GfMatrix4d m = transform * space.GetInverse();
-    m[0][3] = 0.0;
-    m[1][3] = 0.0;
-    m[2][3] = 0.0;
-    m[3][3] = 1.0;
-    return m;
+    return RigExecMeasureInSpaceT(transform, space);
 }
 
-/// Remove an explicit neutral solve before applying the animated map.
-/// As above, restore the exact affine column after inverse multiplication.
 inline GfMatrix4d
 RigExecMeasureFromReference(const GfMatrix4d &transform,
                             const GfMatrix4d &reference)
 {
-    GfMatrix4d m = reference.GetInverse() * transform;
-    m[0][3] = m[1][3] = m[2][3] = 0.0;
-    m[3][3] = 1.0;
-    return m;
+    return RigExecMeasureFromReferenceT(transform, reference);
 }
 
-/// inverse(M(space)) * M(transform): the same offset RigExecMeasureInSpace
-/// measures, conjugated into the space's CURRENT frame rather than left in
-/// the space's own coordinates.
-///
-/// The pair exists because world = local * parent in USD's row-vector
-/// convention, so transform * space^-1 cancels the space and hands back the
-/// driver's plain LOCAL matrix. Applied to world-space control points that
-/// is a local offset used as a world one, and it points wherever it pointed
-/// at bind however far the space has since been carried. Reversing the
-/// product gives space^-1 * local * space, which rides the space.
-///
-/// Both return identity when the transform sits exactly at its space, so
-/// swapping one for the other never makes a still rig move.
 inline GfMatrix4d
 RigExecMeasureInPosedSpace(const GfMatrix4d &transform, const GfMatrix4d &space)
 {
-    GfMatrix4d m = space.GetInverse() * transform;
-    m[0][3] = 0.0;
-    m[1][3] = 0.0;
-    m[2][3] = 0.0;
-    m[3][3] = 1.0;
-    return m;
+    return RigExecMeasureInPosedSpaceT(transform, space);
 }
 
-/// The offset a cluster applies, in the frame its POINTS are already in.
-///
-/// RigExecMeasureInSpace hands back `transform * space^-1`, which IS
-/// invariant under anything applied above the rig: `(X*T) * (S*T)^-1` is
-/// `X * S^-1` again. What is NOT invariant is applying that offset to
-/// WORLD points, because those points have been carried:
-///
-///     gets    (p + T) * M  =  p*M + T*R
-///     wants    p*M + T
-///
-/// which agree only when M's rotation R is the identity.
-///
-/// \p carry is the rig's own rest->pose map -- rigExec:space's
-/// computeMatrix, normally a TRS master's -- and conjugating by it is the
-/// whole correction: `(p+T) * T^-1*M*T` is `p*M + T`, which is what
-/// rigidity wants, and the same product handles a rotated or scaled master
-/// because nothing about it assumed a translation. Without the carry a
-/// cluster under a moved master shears its geometry; with it, the only
-/// residual is what every OTHER mover contributes, which this function
-/// cannot see.
-///
-/// No carry: conjugate by the space's scale only.
-///
-/// The two never compose: a named carry already contains the master's
-/// scale, so applying the scale conjugation as well would apply it twice.
-///
-/// A rig naming no space and standing under an unscaled master measures
-/// (1,1,1) and gets \p m back untouched, so it is bit-identical.
+/// The offset a cluster applies in the frame its points are in
+/// (RigExecClusterInPointFrameT).
 inline GfMatrix4d
 RigExecClusterInPointFrame(const GfMatrix4d &m, const GfMatrix4d &space,
                            bool posedPoints, const GfMatrix4d *carry = nullptr)
 {
-    if (!posedPoints) {
-        return m;
-    }
-    GfMatrix4d out;
-    if (carry) {
-        // The guard is "a carry was NAMED", never "the carry is identity":
-        // `carry^-1 * m * carry` for a master standing at its rest is m to
-        // the last few ulps and not bit for bit, and a rig that named a
-        // space has asked for that product. No carry named: take the branch
-        // below.
-        out = carry->GetInverse() * m * *carry;
-    } else {
-        const GfVec3d k = RigExecFrameScale(space);
-        if (k == GfVec3d(1.0)) {
-            return m;
-        }
-        GfMatrix4d scale(1.0), unscale(1.0);
-        scale.SetScale(k);
-        unscale.SetScale(GfVec3d(1.0 / k[0], 1.0 / k[1], 1.0 / k[2]));
-        out = unscale * m * scale;
-    }
-    out[0][3] = 0.0;
-    out[1][3] = 0.0;
-    out[2][3] = 0.0;
-    out[3][3] = 1.0;
-    return out;
+    return RigExecClusterInPointFrameT<GfVec3d>(m, space, posedPoints, carry);
 }
 
 /// Carries a transform-driven wire's two control polygons into the frame

@@ -1,6 +1,7 @@
 #include "rigExecOps/deform/matrixDeformOp.h"
 
 #include "rigExecEvalCore/envelope.h"
+#include "rigExecMath/moverTransformKernel.h"
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
 
@@ -20,6 +21,15 @@ RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformEnvelope)
 RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformWeightIndices)
 RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformWeights)
 RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformOut)
+
+RIGEXEC_DEFINE_OP_HANDLE(MoverTransform)
+
+RIGEXEC_DEFINE_PORT_HANDLE(MoverTransformTransform)
+RIGEXEC_DEFINE_PORT_HANDLE(MoverTransformSpace)
+RIGEXEC_DEFINE_PORT_HANDLE(MoverTransformReference)
+RIGEXEC_DEFINE_PORT_HANDLE(MoverTransformReferenceSpace)
+RIGEXEC_DEFINE_PORT_HANDLE(MoverTransformCarry)
+RIGEXEC_DEFINE_PORT_HANDLE(MoverTransformOut)
 
 namespace {
 
@@ -205,6 +215,53 @@ const rigExec::RigExecFieldDesc kFields[] = {
     Flag("radial"),
 };
 
+enum MoverTransformField : uint32_t { kPosedPoints };
+
+bool
+CheckMoverTransform(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (Fed(check, MoverTransformReferenceSpace()) &&
+        !(Fed(check, MoverTransformSpace()) &&
+          Fed(check, MoverTransformReference())))
+        return Fail(error, "MoverTransform",
+                    "a reference space needs Space and Reference");
+    return true;
+}
+
+bool
+MoverTransformOne(const rigExec::RigExecOpBatch &batch, size_t k)
+{
+    const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    Out<Mat4d>(io, MoverTransformOut()) =
+        rigExec::RigExecMatrixInPointFrameT<Vec3d>(
+            *In<Mat4d>(io, MoverTransformTransform()),
+            In<Mat4d>(io, MoverTransformSpace()),
+            In<Mat4d>(io, MoverTransformReference()),
+            In<Mat4d>(io, MoverTransformReferenceSpace()),
+            FlagAt(batch, kPosedPoints, k),
+            In<Mat4d>(io, MoverTransformCarry()));
+    return true;
+}
+
+bool
+RunMoverTransform(const rigExec::RigExecOpBatch &batch, size_t *failed,
+                  std::string *)
+{
+    return EachInstance(batch, failed,
+                        [&](size_t k) { return MoverTransformOne(batch, k); });
+}
+
+void
+MoverTransformValues(const void *payload, rigExec::RigExecFieldValues &out)
+{
+    const auto &p = *static_cast<const MoverTransformPayload *>(payload);
+    SetFlag(out, kPosedPoints, p.posedPoints);
+}
+
+const rigExec::RigExecFieldDesc kMoverTransformFields[] = {
+    Flag("posedPoints"),
+};
+
 } // namespace
 
 namespace {
@@ -254,12 +311,43 @@ const rigExec::RigExecOpDesc kDesc = [] {
     return d;
 }();
 
+const rigExec::RigExecPortDesc kMoverTransformPorts[] = {
+    {&MoverTransformTransform(), &rigExecStd::Mat4dType(), kRigExecPortInput,
+     "transform"},
+    {&MoverTransformSpace(), &rigExecStd::Mat4dType(),
+     kRigExecPortInput | kRigExecPortOptional, "space"},
+    {&MoverTransformReference(), &rigExecStd::Mat4dType(),
+     kRigExecPortInput | kRigExecPortOptional, "reference"},
+    {&MoverTransformReferenceSpace(), &rigExecStd::Mat4dType(),
+     kRigExecPortInput | kRigExecPortOptional, "referenceSpace"},
+    {&MoverTransformCarry(), &rigExecStd::Mat4dType(),
+     kRigExecPortInput | kRigExecPortOptional, "carry"},
+    {&MoverTransformOut(), &rigExecStd::Mat4dType(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kMoverTransformDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "MoverTransform";
+    d.ports = kMoverTransformPorts;
+    d.portCount = std::size(kMoverTransformPorts);
+    d.runBatch = &RunMoverTransform;
+    d.validate = &CheckMoverTransform;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    d.payloadFields = kMoverTransformFields;
+    d.payloadFieldCount = std::size(kMoverTransformFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &MoverTransformValues;
+    return d;
+}();
+
 } // namespace
 
 void
 RegisterMatrixDeformOps(rigExec::RigExecOpRegistrar &registrar)
 {
     registrar.Add(MatrixDeform(), kDesc);
+    registrar.Add(MoverTransform(), kMoverTransformDesc);
 }
 
 } // namespace rigExecOps

@@ -8,6 +8,7 @@
 #include "rigExec/api/taskSystem.h"
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/geometryKernels.h"
+#include "rigExecMath/moverTransformKernel.h"
 #include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/ribbonFramesKernel.h"
 #include "rigExecMath/simdKernels.h"
@@ -2013,6 +2014,103 @@ SameBits(const RigExecPointFrame &expected, const rigExecRig::PointFrame &a)
 }
 
 void
+TestMoverTransform()
+{
+    using namespace rigExecOps;
+    GfMatrix4d transform(1.0);
+    transform.SetRotate(GfRotation(GfVec3d(0.2, 1, 0.4), 35.0));
+    transform.SetTranslateOnly(GfVec3d(1.5, -0.5, 2));
+    const GfMatrix4d space =
+        GfMatrix4d(1.0).SetScale(GfVec3d(1.3, 0.7, 2.0)) *
+        GfMatrix4d(1.0).SetRotate(GfRotation(GfVec3d(1, 0, 0.3), -20.0)) *
+        GfMatrix4d(1.0).SetTranslate(GfVec3d(0.25, 1, -3));
+    const GfMatrix4d unscaledSpace =
+        GfMatrix4d(1.0).SetRotate(GfRotation(GfVec3d(0, 1, 0), 15.0)) *
+        GfMatrix4d(1.0).SetTranslate(GfVec3d(-1, 0, 0.5));
+    const GfMatrix4d reference =
+        GfMatrix4d(1.0).SetRotate(GfRotation(GfVec3d(0, 0, 1), 10.0)) *
+        GfMatrix4d(1.0).SetTranslate(GfVec3d(0.5, 0.5, 0));
+    const GfMatrix4d referenceSpace =
+        GfMatrix4d(1.0).SetScale(GfVec3d(1.1, 1.1, 0.9)) *
+        GfMatrix4d(1.0).SetTranslate(GfVec3d(0, -2, 1));
+    const GfMatrix4d carry =
+        GfMatrix4d(1.0).SetRotate(GfRotation(GfVec3d(0, 1, 1), 50.0)) *
+        GfMatrix4d(1.0).SetTranslate(GfVec3d(4, 0, -1));
+    struct Case {
+        const GfMatrix4d *space, *reference, *referenceSpace, *carry;
+        bool posed;
+    };
+    const Case cases[] = {
+        {nullptr, nullptr, nullptr, nullptr, false},
+        {nullptr, nullptr, nullptr, nullptr, true},
+        {&space, nullptr, nullptr, nullptr, false},
+        {&space, nullptr, nullptr, nullptr, true},
+        {&unscaledSpace, nullptr, nullptr, nullptr, true},
+        {&space, nullptr, nullptr, &carry, true},
+        {&space, nullptr, nullptr, &carry, false},
+        {nullptr, &reference, nullptr, nullptr, true},
+        {&space, &reference, nullptr, nullptr, true},
+        {&space, &reference, &referenceSpace, nullptr, true},
+        {&space, &reference, &referenceSpace, &carry, true},
+    };
+    for (const Case &c : cases) {
+        MoverTransformPayload payload;
+        payload.posedPoints = c.posed;
+        std::vector<const RigExecPortHandle *> ports = {
+            &MoverTransformTransform()};
+        std::vector<rigExecStd::Mat4d> values = {ToStd(transform)};
+        const auto feed = [&](const GfMatrix4d *m,
+                              const RigExecPortHandle &port) {
+            if (m) {
+                ports.push_back(&port);
+                values.push_back(ToStd(*m));
+            }
+        };
+        feed(c.space, MoverTransformSpace());
+        feed(c.reference, MoverTransformReference());
+        feed(c.referenceSpace, MoverTransformReferenceSpace());
+        feed(c.carry, MoverTransformCarry());
+        std::vector<const void *> bound;
+        for (const auto &value : values)
+            bound.push_back(&value);
+        Node node(MoverTransform(), ports, MoverTransformOut(), &payload);
+        rigExecStd::Mat4d actual;
+        std::string error;
+        CHECK(node.Run(bound, &actual, &error));
+        const GfMatrix4d expected = RigExecMatrixInPointFrameT<GfVec3d>(
+            transform, c.space, c.reference, c.referenceSpace, c.posed,
+            c.carry);
+        if (!SameBits(expected, actual)) {
+            std::printf("mover transform case %zu differs: %s\n",
+                        size_t(&c - cases), error.c_str());
+            CHECK(false);
+        }
+    }
+
+    // Unposed points, no space: the transform unchanged; a still space with
+    // no carry and no scale: the offset alone.
+    const GfMatrix4d *none = nullptr;
+    CHECK(RigExecMatrixInPointFrameT<GfVec3d>(transform, none, none, none, true,
+                                              none) == transform);
+    CHECK(RigExecMatrixInPointFrameT<GfVec3d>(transform, &unscaledSpace, none,
+                                              none, true, none) ==
+          RigExecMeasureInSpaceT(transform, unscaledSpace));
+
+    // A reference space with no space to measure is a compile error.
+    MoverTransformPayload payload;
+    Node orphan(MoverTransform(),
+                {&MoverTransformTransform(), &MoverTransformReference(),
+                 &MoverTransformReferenceSpace()},
+                MoverTransformOut(), &payload);
+    const auto m = ToStd(transform);
+    rigExecStd::Mat4d actual;
+    std::string error;
+    CHECK(!orphan.Run({&m, &m, &m}, &actual, &error));
+    CHECK(error.find("a reference space needs Space and Reference") !=
+          std::string::npos);
+}
+
+void
 TestConstraints()
 {
     using namespace rigExecOps;
@@ -3951,6 +4049,7 @@ main()
     TestRetainedState();
     TestRetainedStateBatches();
     TestMatrixDeform();
+    TestMoverTransform();
     TestSkin();
     TestBlendShape();
     TestRecomputeNormals();

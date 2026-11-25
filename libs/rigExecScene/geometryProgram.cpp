@@ -64,19 +64,8 @@ RigExecGeometryMatrixInPointFrame(const GfMatrix4d &transform,
                                   const GfMatrix4d *referenceSpace,
                                   bool posedPoints, const GfMatrix4d *carry)
 {
-    GfMatrix4d result = reference
-                            ? RigExecMeasureFromReference(transform, *reference)
-                            : transform;
-    if (space) {
-        const auto measured =
-            referenceSpace
-                ? RigExecMeasureFromReference(*space, *referenceSpace)
-                : *space;
-        result =
-            RigExecClusterInPointFrame(RigExecMeasureInSpace(result, measured),
-                                       measured, posedPoints, carry);
-    }
-    return result;
+    return RigExecMatrixInPointFrameT<GfVec3d>(
+        transform, space, reference, referenceSpace, posedPoints, carry);
 }
 bool
 RigExecBuildGeometryBlendLayout(const VtVec3fArray &offsets,
