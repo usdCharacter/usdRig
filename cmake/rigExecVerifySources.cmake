@@ -13,6 +13,6 @@ target_compile_features(rigExecVerify PRIVATE cxx_std_17)
 target_include_directories(rigExecVerify PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/libs")
 target_link_libraries(rigExecVerify PRIVATE
-    rigExecGraph rigExecMath
+    rigExecGraph rigExecMath rigExecEvalCore
     tf gf vt sdf ts usd usdGeom plug work)
 set_target_properties(rigExecVerify PROPERTIES POSITION_INDEPENDENT_CODE ON)

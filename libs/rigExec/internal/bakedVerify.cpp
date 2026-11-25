@@ -10,6 +10,7 @@
 // RigExecBakedRunShadow.
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/pathText.h"
+#include "rigExecEvalCore/opSteps.h"
 
 #include "pxr/base/tf/getenv.h"
 
@@ -829,6 +830,12 @@ RigExecBakedRunShadow::Capture(const RigExecBakedProgramImpl &program)
     switchFrames = program.switchFrames;
     opAdapter = program.opAdapter;
     sourceWatch = program.sourceWatch;
+    opValueVersions.clear();
+    opGroupVersions.clear();
+    if (program.opState) {
+        opValueVersions = program.opState->versions;
+        opGroupVersions = program.opState->groupVersions;
+    }
     chainContentKeys = program.chainContentKeys;
     packetContentKeys = program.packetContentKeys;
     opExecution = program.opExecution;
@@ -974,6 +981,10 @@ RigExecBakedRunShadow::Restore(RigExecBakedProgramImpl *program) const
     B.switchFrames = switchFrames;
     B.opAdapter = opAdapter;
     B.sourceWatch = sourceWatch;
+    if (B.opState) {
+        B.opState->versions = opValueVersions;
+        B.opState->groupVersions = opGroupVersions;
+    }
     B.chainContentKeys = chainContentKeys;
     B.packetContentKeys = packetContentKeys;
     B.opExecution = opExecution;

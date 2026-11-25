@@ -4319,6 +4319,8 @@ struct RigExecBakedLadderTables {
 ///    flag, cluster `readyUs`/`startUs`/`endUs`, step `startUs`/`endUs` and
 ///    memo/publication stamps.
 ///  * per-step `measured*` calibration accumulators.
+///  * op-node run values in `opState`: the forced pass rewrites every one;
+///    their versions are restored.
 /// Invariant: every mutable field of RigExecBakedProgramImpl,
 /// RigExecBakedStep, GeomChain, GeomRevision and GeomChunk is compared or
 /// listed here.
@@ -4464,6 +4466,9 @@ struct RigExecBakedRunShadow {
     /// Travels with opAdapter: its sourceWatchSerial names this watch's
     /// generation, so a restore keeps the kept keys and their watch a pair.
     RigExecBakedSourceWatch sourceWatch;
+    /// Travels with opAdapter as well: its OpValue and OpGroupValue keys
+    /// spell these op-node value versions.
+    std::vector<uint64_t> opValueVersions, opGroupVersions;
     std::vector<std::string> chainContentKeys, packetContentKeys;
     RigExecOpExecution opExecution;
     std::vector<double> avars;

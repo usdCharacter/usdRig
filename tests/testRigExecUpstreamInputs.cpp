@@ -1108,6 +1108,25 @@ TestAnOracleReadInput()
             {Up(scale, VtValue(0.25f))}, {{scale, VtValue(0.25f), {}}});
 }
 
+// One value per op-node family feeding the weights: a property chain
+// operand under a `final` driver, the control a volume placement follows,
+// and a volume input a current-phase revision's field and packet read.
+void
+TestComputedWeightFamilies()
+{
+    const std::string stagePath = Fixture("computed_weights.usda");
+    const SdfPath rig("/Asset/Rig");
+    const SdfPath max("/Asset/Rig/Movers/Limit.inputs:max");
+    RunCase("property operand inputs:max", stagePath, rig, 5,
+            {Up(max, VtValue(0.5f))}, {{max, VtValue(0.5f), {}}});
+    const SdfPath ty("/Asset/Rig/Controls/Lift.avars:ty");
+    RunCase("volume frame avars:ty", stagePath, rig, 5, {Up(ty, VtValue(3.0))},
+            {{ty, VtValue(), {{5.0, VtValue(3.0)}}}});
+    const SdfPath falloff("/Asset/Rig/Weights/Sphere.inputs:falloffMin");
+    RunCase("packet input inputs:falloffMin", stagePath, rig, 5,
+            {Up(falloff, VtValue(2.0f))}, {{falloff, VtValue(2.0f), {}}});
+}
+
 // Keys admission drops, in both paths: the pose is the authored one and
 // each generation names the key and why.
 void
@@ -3049,6 +3068,7 @@ main(int argc, char **argv)
         TestTheSamplerAdmitsAsLiveDoes();
         TestAStandingValueCostsNothing();
         TestAnOracleReadInput();
+        TestComputedWeightFamilies();
         TestDroppedKeys();
         TestThePosedVariant();
         TestTheBakeGuard();
