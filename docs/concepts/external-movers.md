@@ -550,6 +550,30 @@ movers run on the registry without it.
 A host without OpenUSD passes its op libraries to
 `RigExecRegistry::Initialize` itself.
 
+## Report the schema an op registration implies
+
+`rigExecGenSchema` (`tools/rigExecGenSchema.cpp`) links the op core and the
+built-in type and op libraries only, so it uses no OpenUSD library. It reads
+the registry, takes an optional output path and writes one usda-like block per
+op, sorted by namespace and name: an attribute line per input and output port
+with the USD type its value type maps to, flags (`optional`, `list`,
+`pointwise`, `neighbourhood`, `checked`, output bounds) as a trailing
+comment, and each payload field as a `uniform` attribute.
+
+`tools/schema_report.py` (standard library only) compares that text with
+[schema.usda](../../libs/rigExecSchema/schema.usda) and prints, per op, the
+class it most plausibly corresponds to, the properties each side lacks and the
+type disagreements, then a summary table and the classes and ops without a
+counterpart:
+
+```bash
+python tools/schema_report.py --tool build/rigExecGenSchema \
+    --schema libs/rigExecSchema/schema.usda [--out report.txt]
+```
+
+The report changes nothing that ships. `testRigExecSchemaReport` passes
+whenever both programs run and a report is produced, whatever it shows.
+
 ## Discovery and supported evaluation
 
 For an independent build, add `mover-build/usd/rigExecMoverPlugins` to
