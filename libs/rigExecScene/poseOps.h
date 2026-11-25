@@ -54,13 +54,14 @@ struct RigExecSolverOpNode {
     bool hasStart = false;
     std::vector<uint32_t> bone2dOrder;
     std::vector<RigExecBone2dSetup> bone2dSetup;
-    std::vector<int32_t> spaceSources, targetCandidates, groupMembers;
+    std::vector<int32_t> spaceSources, targetCandidates, groupMembers,
+        groupParents;
     std::vector<RigExecJointGroup> groups;
 };
 
 /// True for the solver records this bridge maps. False for a degenerate
-/// record, an FK chain with joint groups, a frame blend whose rotation blend
-/// was refused and a spline IK without joints.
+/// record, a frame blend whose rotation blend was refused and a spline IK
+/// without joints.
 bool RigExecSolverOpSupported(const RigExecSolverRecord &record);
 
 /// Host-side port values, kept between frames so a write reuses their

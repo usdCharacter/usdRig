@@ -23,6 +23,7 @@
 #include "rigExecOps/property/mathOps.h"
 #include "rigExecOps/solver/chainSolverOps.h"
 #include "rigExecOps/solver/frameBlendOps.h"
+#include "rigExecOps/solver/poseCommitOps.h"
 #include "rigExecOps/solver/ribbonFramesOps.h"
 #include "rigExecOps/solver/singleChainIkOps.h"
 #include "rigExecOps/solver/skeleton2dOps.h"
@@ -421,6 +422,18 @@ TestFilledPayloads()
         ik.softDistancePolicy = true;
         ik.scaleCalibration = -0.25;
         CheckRoundTrip(Op(TwoBoneIk()), &ik);
+        FkJointGroupsPayload groups;
+        groups.jointBegin = 1;
+        groups.parents = {-1, 0, 0};
+        groups.groups = {{0, 2, true}, {2, 1, false}};
+        groups.members = {1, 2, 0};
+        CheckRoundTrip(Op(FkJointGroups()), &groups);
+        PoseCommitPayload commit;
+        commit.slotCount = 2;
+        commit.closest = {0, -1, 1};
+        commit.blocked = {0, 1, 0};
+        commit.solverOutput = true;
+        CheckRoundTrip(Op(PoseCommit()), &commit);
     }
     {
         BlendFramesPayload p;

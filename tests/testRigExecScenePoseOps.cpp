@@ -218,10 +218,25 @@ TestFkChain()
     shortInputs.controls.pop_back();
     CompareSolver("fk cardinality", FkRecord(true, false, false, false),
                   shortInputs, runner, "FK control/rest cardinality mismatch");
-    // Joint groups stay native.
-    RigExecSolverRecord grouped = FkRecord(false, false, false, false);
-    grouped.jointGroups.resize(1);
-    CHECK(!RigExecSolverOpSupported(grouped));
+    // Joint groups: two alternative branches under joint 0 and a disabled
+    // group, across in-range, rounded, clamped and NaN selectors.
+    for (const bool start : {false, true})
+        for (const bool live : {false, true}) {
+            RigExecSolverRecord grouped = FkRecord(start, false, false, live);
+            grouped.jointGroupParents = {-1, 0, 0, 1};
+            grouped.jointGroups = {{0, 2, true}, {2, 1, false}};
+            grouped.jointGroupMembers = {1, 2, 3};
+            RigExecPoseOpRunner grouping;
+            for (const double selector :
+                 {0.0, 1.0, 0.6, -3.0, 7.0, std::nan("")}) {
+                RigExecSolverInputs in = FkInputs(0.5);
+                in.jointGroupSelectors = {selector, 0.0};
+                CompareSolver("fkGroups " + std::to_string(start) +
+                                  std::to_string(live) + " " +
+                                  std::to_string(selector),
+                              grouped, in, grouping);
+            }
+        }
 }
 
 RigExecSolverRecord

@@ -5,7 +5,9 @@
 /// is rigExecMath/chainSolverKernel.h.
 
 #include "rigExecOps/library.h"
+#include "rigExecMath/jointGroupKernel.h"
 
+#include <cstdint>
 #include <vector>
 
 namespace rigExecOps {
@@ -40,8 +42,26 @@ struct TwoBoneIkPayload {
     }
 };
 
+/// An FK chain's joint groups (RigExecJointGroupAPI).
+struct FkJointGroupsPayload {
+    /// The first joint's element in In; earlier elements pass through.
+    int jointBegin = 0;
+    /// Each joint's parent among the joints, or -1.
+    std::vector<int32_t> parents;
+    std::vector<rigExec::RigExecJointGroup> groups;
+    /// The groups' concatenated members, each a joint index.
+    std::vector<int32_t> members;
+
+    bool operator==(const FkJointGroupsPayload &o) const
+    {
+        return jointBegin == o.jointBegin && parents == o.parents &&
+               groups == o.groups && members == o.members;
+    }
+};
+
 const rigExec::RigExecOpHandle &FkChain();
 const rigExec::RigExecOpHandle &TwoBoneIk();
+const rigExec::RigExecOpHandle &FkJointGroups();
 
 // FkChain: Controls (PointFrameArray, the posed controls and their rests),
 // optional OutRests (PointLandmarksList, one per control: the basis each
@@ -74,6 +94,17 @@ const rigExec::RigExecPortHandle &TwoBoneIkLowerScale();
 const rigExec::RigExecPortHandle &TwoBoneIkSoftDistance();
 const rigExec::RigExecPortHandle &TwoBoneIkTwist();
 const rigExec::RigExecPortHandle &TwoBoneIkOut();
+
+// FkJointGroups: In (PointFrameArray, an FkChain's Out), Selectors
+// (DoubleArray, each group's active member), optional Start (PointFrame) and
+// StartRest (PointLandmarks), fed together. Out (PointFrameArray): In, with
+// each joint under an inactive member set to its rest carried by the start's
+// rest-to-pose map.
+const rigExec::RigExecPortHandle &FkJointGroupsIn();
+const rigExec::RigExecPortHandle &FkJointGroupsSelectors();
+const rigExec::RigExecPortHandle &FkJointGroupsStart();
+const rigExec::RigExecPortHandle &FkJointGroupsStartRest();
+const rigExec::RigExecPortHandle &FkJointGroupsOut();
 
 } // namespace rigExecOps
 

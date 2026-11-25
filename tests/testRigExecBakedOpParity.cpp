@@ -16,6 +16,8 @@
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/rigDesc.h"
 #include "rigExec/api/taskSystem.h"
+#include "rigExecMath/poseCommitKernel.h"
+#include "rigExecOps/solver/poseCommitOps.h"
 #include "opRunners/geometryOpRunner.h"
 #include "opRunners/poseOpRunner.h"
 #include "opRunners/weightOpRunner.h"
@@ -244,7 +246,8 @@ ProbeSolve(const B &b)
         if (step.kind != RigExecBakedStepKind::Solve)
             continue;
         const auto &s = b.solvers[size_t(step.object)];
-        const std::string kind = TypeName(s.type);
+        const std::string kind =
+            TypeName(s.type) + (s.jointGroups.empty() ? "" : " groups");
         if (!RigExecSolverOpSupported(s)) {
             Unprobed("Solve", kind,
                      "RigExecSolverOpSupported refuses the record "
@@ -537,6 +540,195 @@ const RangeSetting kRangeSettings[] = {
 };
 
 std::unique_ptr<RigExecTaskSystem> g_tasks;
+
+// A revision's commit, replayed through PoseCommit on the frames the commit
+// read, and compared with every version it wrote. A commit the baked step
+// passed through is an error on the op.
+rigExecRig::PointFrame
+ToOp(const RigExecPointFrame &f)
+{
+    rigExecRig::PointFrame out;
+    for (size_t i = 0; i < 4; ++i)
+        out.points[i] =
+            rigExecStd::Vec3d(f.points[i][0], f.points[i][1], f.points[i][2]);
+    out.flags = f.flags;
+    return out;
+}
+
+RigExecPointFrame
+FromOp(const rigExecRig::PointFrame &f)
+{
+    RigExecPointFrame out;
+    for (size_t i = 0; i < 4; ++i)
+        out.points[i] = GfVec3d(f.points[i][0], f.points[i][1], f.points[i][2]);
+    out.flags = f.flags;
+    return out;
+}
+
+using OpFrames = rigExecStd::RigExecArray<rigExecRig::PointFrame>;
+
+OpFrames
+Gather(const std::vector<RigExecPointFrame> &store,
+       const std::vector<uint32_t> &versions)
+{
+    OpFrames out;
+    out.Resize(versions.size());
+    for (size_t k = 0; k < versions.size(); ++k)
+        out[k] = ToOp(store[size_t(versions[k])]);
+    return out;
+}
+
+RigExecPointFrameArray
+Published(const std::vector<RigExecPointFrame> &store,
+          const std::vector<uint32_t> &versions)
+{
+    RigExecPointFrameArray out;
+    for (const uint32_t v : versions)
+        out.frames.push_back(store[size_t(v)]);
+    return out;
+}
+
+RigExecPointFrameArray
+FromOp(const void *value)
+{
+    RigExecPointFrameArray out;
+    if (const auto *frames = static_cast<const OpFrames *>(value))
+        for (const rigExecRig::PointFrame &f : *frames)
+            out.frames.push_back(FromOp(f));
+    return out;
+}
+
+void
+ProbeCommits(const B &b)
+{
+    using namespace rigExecOps;
+    using Kind = RigExecBakedStepKind;
+    for (const auto &step : b.steps) {
+        if (step.kind != Kind::Constraint && step.kind != Kind::SolverCommit &&
+            step.kind != Kind::CommitApply)
+            continue;
+        const RigExecBakedCommit &commit = b.commits[size_t(step.object)];
+        if (commit.split != (step.kind == Kind::CommitApply))
+            continue;
+        const std::string kind =
+            std::string(commit.solverOutput ? "solver" : "constraint") +
+            (commit.split ? " split" : "");
+        const size_t slots = commit.slots.size();
+        const size_t pairs = commit.propagate.size();
+        PoseCommitPayload p;
+        p.slotCount = slots;
+        p.solverOutput = commit.solverOutput;
+        for (size_t k = 0; k < pairs; ++k) {
+            bool known = true;
+            const bool blocked = RigExecCommitParentBlocked(
+                commit.propagate[k].first, commit.propagate[k].second,
+                [&](int slot, bool *authored, int *next) {
+                    if (size_t(slot) >= b.propParent.size())
+                        return false;
+                    *authored = b.parentSpaceAuthored[size_t(slot)] != 0;
+                    *next = b.propParent[size_t(slot)];
+                    return true;
+                },
+                &known);
+            p.closest.push_back(commit.closestPos[k]);
+            p.blocked.push_back(blocked ? 1 : 0);
+        }
+        bool refused = false;
+        if (!commit.abandoned)
+            refused = RigExecFirstCommitFailure(commit.outcome.data(),
+                                                commit.outcome.size()) <
+                      commit.outcome.size();
+        RigExecRigDescBuilder builder;
+        const RigExecNodeId id = builder.AddOp(PoseCommit(), &p);
+        const auto bind = [&](const rigExec::RigExecPortHandle &port) {
+            return builder.BindInput(id, port);
+        };
+        const RigExecInputId candidates = bind(PoseCommitCandidates()),
+                             present = bind(PoseCommitPresent()),
+                             entering = bind(PoseCommitEntering()),
+                             carry = bind(PoseCommitCarry());
+        RigExecInputId baseCarry, current, closest, descendantCarry,
+            descendantBaseCarry;
+        if (commit.solverOutput)
+            baseCarry = bind(PoseCommitBaseCarry());
+        if (pairs) {
+            current = bind(PoseCommitCurrent());
+            closest = bind(PoseCommitClosest());
+            descendantCarry = bind(PoseCommitDescendantCarry());
+            if (commit.solverOutput)
+                descendantBaseCarry = bind(PoseCommitDescendantBaseCarry());
+        }
+        const RigExecOutputId outSlots =
+                                  builder.BindOutput(id, PoseCommitSlots()),
+                              outDescendants = builder.BindOutput(
+                                  id, PoseCommitDescendants()),
+                              outBaseSlots =
+                                  builder.BindOutput(id, PoseCommitBaseSlots()),
+                              outBaseDescendants = builder.BindOutput(
+                                  id, PoseCommitBaseDescendants());
+        std::string error;
+        const auto desc = builder.Build(&error);
+        const auto program =
+            desc ? RigExecCompile(*desc, RigExecCompileOptions(), &error)
+                 : nullptr;
+        auto evaluator = program
+                             ? RigExecEvaluator::Create(
+                                   program, RigExecEvaluatorOptions(), &error)
+                             : nullptr;
+        OpFrames candidateFrames;
+        candidateFrames.Resize(slots);
+        rigExecStd::RigExecArray<uint8_t> presentFlags;
+        presentFlags.Resize(slots);
+        for (size_t pos = 0; pos < slots; ++pos) {
+            candidateFrames[pos] = ToOp(commit.frames[pos]);
+            presentFlags[pos] = commit.present[pos] ? 1 : 0;
+        }
+        const auto set = [&](const RigExecInputId &input,
+                             const OpFrames &frames) {
+            return evaluator->SetInput(input, &frames, &error);
+        };
+        bool ran =
+            evaluator &&
+            evaluator->SetInput(candidates, &candidateFrames, &error) &&
+            evaluator->SetInput(present, &presentFlags, &error) &&
+            set(entering, Gather(b.fin, commit.slotReads)) &&
+            set(carry, Gather(b.fin, commit.slotCarry)) &&
+            (!commit.solverOutput ||
+             set(baseCarry, Gather(b.base, commit.slotBaseCarry))) &&
+            (!pairs ||
+             (set(current, Gather(b.fin, commit.descendantReads)) &&
+              set(closest, Gather(b.fin, commit.closestReads)) &&
+              set(descendantCarry, Gather(b.fin, commit.descendantCarry)) &&
+              (!commit.solverOutput ||
+               set(descendantBaseCarry,
+                   Gather(b.base, commit.descendantBaseCarry)))));
+        ran = ran && evaluator->Evaluate(&error);
+        if (!ran) {
+            OpFailed("Commit", kind, commit.moverPathText, refused, error);
+            continue;
+        }
+        if (refused) {
+            Report("Commit/" + kind, commit.moverPathText,
+                   "the baked commit passed through where the op ran");
+            continue;
+        }
+        Compare("Commit", kind, commit.moverPathText,
+                VtValue(Published(b.fin, commit.slotWrites)),
+                VtValue(FromOp(evaluator->GetOutput(outSlots))), false);
+        Compare("Commit", kind, commit.moverPathText + " descendants",
+                VtValue(Published(b.fin, commit.descendantWrites)),
+                VtValue(FromOp(evaluator->GetOutput(outDescendants))), false);
+        if (commit.solverOutput) {
+            Compare("Commit", kind, commit.moverPathText + " base",
+                    VtValue(Published(b.base, commit.slotBaseWrites)),
+                    VtValue(FromOp(evaluator->GetOutput(outBaseSlots))), false);
+            Compare("Commit", kind, commit.moverPathText + " base descendants",
+                    VtValue(Published(b.base, commit.descendantBaseWrites)),
+                    VtValue(FromOp(evaluator->GetOutput(outBaseDescendants))),
+                    false);
+        }
+    }
+}
 
 // RevisionChunk: the body runs a revision as vertex ranges; the op runs it
 // at the scene's grain, whole and cut into ranges of several sizes. Each
@@ -1719,6 +1911,7 @@ ProbeStage(const UsdStageRefPtr &stage, const std::string &rig, Paint paint)
         g_where = name + "@" + TfStringify(time.GetValue());
         ProbeSolve(b);
         ProbeConstraint(b);
+        ProbeCommits(b);
         ProbeRevisions(b);
         ProbeRangeChains(b);
         ProbeDerived(b);
@@ -1784,6 +1977,92 @@ def Xform "Asset"
         point3f[] points.timeSamples = {
             1: [(0, 0, 0), (0.33, 0.1, 0), (0.66, -0.2, 0), (1, 0, 0)],
             4: [(0, 0.3, 0), (0.33, 0.9, 0.2), (0.66, -0.5, 0.1), (1, 0.4, 0)],
+        }
+    }
+}
+)USD"))
+        return UsdStageRefPtr();
+    return stage;
+}
+
+// Joint groups: a torso with two alternative heads on an FK chain from a
+// start control, the active head switching over the frames.
+UsdStageRefPtr
+JointGroupRig()
+{
+    const auto stage = UsdStage::CreateInMemory("jointGroups.usda");
+    if (!stage->GetRootLayer()->ImportFromString(R"USD(#usda 1.0
+(
+    startTimeCode = 0
+    endTimeCode = 4
+)
+def Xform "Char"
+{
+    def RigExecRoot "Rig"
+    {
+        def Scope "Controls"
+        {
+            def RigExecControl "Torso"
+            {
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                double avars:rz.spline = { 0: 0; post held, 4: 40; post held, }
+                def RigExecControl "HeadA"
+                {
+                    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1, 0, 1) )
+                    double avars:rz = 30
+                    def RigExecControl "JawA"
+                    {
+                        matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1.5, 0, 1) )
+                    }
+                }
+                def RigExecControl "HeadB"
+                {
+                    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1, 0, 1) )
+                    double avars:rz = 30
+                }
+            }
+            def RigExecControl "Start"
+            {
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                double avars:tx = 5
+            }
+        }
+        def Scope "Joints"
+        {
+            def RigExecJoint "Torso"
+            {
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                def RigExecJoint "HeadA"
+                {
+                    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1, 0, 1) )
+                    def RigExecJoint "JawA"
+                    {
+                        matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1.5, 0, 1) )
+                    }
+                }
+                def RigExecJoint "HeadB"
+                {
+                    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1, 0, 1) )
+                }
+            }
+        }
+        def Scope "Groups"
+        {
+            def Scope "Heads" (
+                prepend apiSchemas = ["RigExecJointGroupAPI"]
+            )
+            {
+                rel collection:members:includes = [</Char/Rig/Joints/Torso/HeadA>, </Char/Rig/Joints/Torso/HeadB>]
+                double rigExec:activeMember.spline = { 1: 0; post held, 3: 1; post held, }
+            }
+        }
+        def RigExecFkChain "Chain"
+        {
+            uniform token rigExec:controlSpace = "parentRelative"
+            rel rigExec:startFrame = </Char/Rig/Controls/Start>
+            rel rigExec:controls = [</Char/Rig/Controls/Torso>, </Char/Rig/Controls/Torso/HeadA>, </Char/Rig/Controls/Torso/HeadA/JawA>, </Char/Rig/Controls/Torso/HeadB>]
+            rel rigExec:joints = [</Char/Rig/Joints/Torso>, </Char/Rig/Joints/Torso/HeadA>, </Char/Rig/Joints/Torso/HeadA/JawA>, </Char/Rig/Joints/Torso/HeadB>]
+            rel rigExec:jointGroups = </Char/Rig/Groups/Heads>
         }
     }
 }
@@ -1923,6 +2202,7 @@ main(int argc, char **argv)
     if (painted)
         for (const Paint paint : {Paint::None, Paint::Dense, Paint::Sparse})
             ProbeStage(WireRig(), "wire rig", paint);
+    ProbeStage(JointGroupRig(), "joint group rig", Paint::None);
     std::printf("%-44s %9s %9s %9s %9s %9s\n", "family/kind", "compared",
                 "refusals", "compile", "run", "mismatch");
     for (const auto &[key, tally] : g_tally)
@@ -1955,7 +2235,8 @@ main(int argc, char **argv)
           "WeightPacket/", "Constraint/", "Spaces/ProviderMatrix/",
           "Spaces/FrameMatrix/", "Spaces/ProviderRefresh",
           "Spaces/SpaceExpression/SpaceExpression",
-          "Spaces/SpaceExpression/AffineFrame"}) {
+          "Spaces/SpaceExpression/AffineFrame", "Commit/",
+          "Solve/RigExecFkChain groups"}) {
         size_t compared = 0;
         for (const auto &[key, tally] : g_tally)
             if (key.compare(0, std::strlen(family), family) == 0)

@@ -37,6 +37,7 @@ void RegisterSurfaceBindingOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterLayeredSkinOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterClothOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterSpaceOps(rigExec::RigExecOpRegistrar &registrar);
+void RegisterPoseCommitOps(rigExec::RigExecOpRegistrar &registrar);
 
 } // namespace rigExecOps
 

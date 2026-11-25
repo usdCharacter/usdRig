@@ -52,6 +52,7 @@
 #include "rigExecMath/ikFkMatchKernel.h"
 #include "rigExecMath/jointGroupKernel.h"
 #include "rigExecMath/poseArithmeticKernel.h"
+#include "rigExecMath/poseCommitKernel.h"
 #include "rigExecMath/rangeRunner.h"
 #include "rigExecMath/skeleton2dKernel.h"
 #include "rigExecMath/spaceMatchKernel.h"
@@ -3291,6 +3292,12 @@ template <class Math> struct PosePropagateMath {
     {
         return FrameUsable<Math>(frame.points, frame.flags);
     }
+    static bool PointsToMatrix(const std::array<typename Math::Vec3, 4> &rest,
+                               const std::array<typename Math::Vec3, 4> &pose,
+                               typename Math::Mat4 *matrix)
+    {
+        return pose_ops::PointsToMatrix<Math>(rest, pose, matrix);
+    }
     static typename Math::Frame Carry(const typename Math::Frame &frame,
                                       const typename Math::Mat4 &delta)
     {
@@ -3346,9 +3353,10 @@ RunCommitDeltaStep(Host &host, const StepRef &step)
         }
         host.state().commitFrame(object, pos, &after, &afterFlags);
         typename Math::Mat4 delta = Math::Identity4();
-        const bool ok = pose_ops::PointsToMatrix<Math>(before, after, &delta);
+        const uint8_t ok = RigExecMeasureCommitDelta<PosePropagateMath<Math>>(
+            before, after, &delta);
         host.state().writeCommitDelta(object, pos, delta);
-        state.deltaOk[pos] = ok ? 1 : 2;
+        state.deltaOk[pos] = char(ok);
     }
     return {Outcome::Applied, kNoStepDetail};
 }
@@ -3375,21 +3383,18 @@ StageCommitPairs(Host &host, size_t object, size_t begin, size_t end)
             k >= state.stagedCount || k >= state.outcomeCount) {
             return {Outcome::Invalid, kPoseDetailNoSlot};
         }
-        bool parentBlocked = false;
-        for (int slot = first; slot >= 0 && slot != second;) {
-            bool authored = false;
-            int next = -1;
-            if (!host.inputs().commitPropParent(slot, &authored, &next)) {
-                return {Outcome::Invalid, kPoseDetailNoSlot};
-            }
-            if (authored) {
-                parentBlocked = true;
-                break;
-            }
-            slot = next;
+        bool known = true;
+        const bool parentBlocked = RigExecCommitParentBlocked(
+            first, second,
+            [&](int slot, bool *authored, int *next) {
+                return host.inputs().commitPropParent(slot, authored, next);
+            },
+            &known);
+        if (!known) {
+            return {Outcome::Invalid, kPoseDetailNoSlot};
         }
-        if (parentBlocked || pos < 0 || size_t(pos) >= state.presentCount ||
-            !state.present[size_t(pos)]) {
+        if (RigExecCommitPairSkipped(parentBlocked, pos, state.present,
+                                     state.presentCount)) {
             state.outcome[k] = uint8_t(pose_detail::kPosePropagateSkipped);
             continue;
         }
@@ -3419,14 +3424,11 @@ StageCommitPairs(Host &host, size_t object, size_t begin, size_t end)
         host.state().commitDelta(object, size_t(pos), &delta);
         typename Math::Frame out = Math::MakeFrame(after, afterFlags);
         const RigExecPosePropagateOutcome outcome =
-            RigExecPropagatePoseArithmetic<PosePropagateMath<Math>,
-                                           typename Math::Frame,
-                                           typename Math::Mat4>(
+            RigExecStageCommitPair<PosePropagateMath<Math>>(
                 Math::MakeFrame(current, currentFlags),
                 Math::MakeFrame(before, beforeFlags),
                 Math::MakeFrame(after, afterFlags), delta,
-                state.deltaOk[size_t(pos)] == 1, facts.solverOutput, false,
-                true, &out);
+                state.deltaOk[size_t(pos)] == 1, facts.solverOutput, &out);
         state.outcome[k] = uint8_t(outcome);
         if (outcome == RigExecPosePropagateOutcome::Staged) {
             host.state().writeCommitStaged(object, k, out.points, out.flags);
@@ -3561,16 +3563,15 @@ RunCommitApplyStep(Host &host, const StepRef &step)
         return carryEverything() ? StepResult{Outcome::Applied, kNoStepDetail}
                                  : StepResult{Outcome::Invalid, carryDetail};
     }
-    for (size_t k = 0; k < pairs; ++k) {
-        if (k >= state.outcomeCount) {
-            return {Outcome::Invalid, kPoseDetailNoSlot};
-        }
+    const size_t recorded = std::min(pairs, state.outcomeCount);
+    const size_t failed = RigExecFirstCommitFailure(state.outcome, recorded);
+    if (failed == recorded && recorded < pairs) {
+        return {Outcome::Invalid, kPoseDetailNoSlot};
+    }
+    if (failed < pairs) {
+        const size_t k = failed;
         const pose_detail::PosePropagateOutcome outcome =
             pose_detail::PosePropagateOutcome(state.outcome[k]);
-        if (outcome == pose_detail::kPosePropagateStaged ||
-            outcome == pose_detail::kPosePropagateSkipped) {
-            continue;
-        }
         int first = -1;
         int second = -1;
         if (!host.inputs().commitPropagateAt(object, k, &first, &second) ||

@@ -38,6 +38,13 @@ RIGEXEC_DEFINE_PORT_HANDLE(TwoBoneIkSoftDistance)
 RIGEXEC_DEFINE_PORT_HANDLE(TwoBoneIkTwist)
 RIGEXEC_DEFINE_PORT_HANDLE(TwoBoneIkOut)
 
+RIGEXEC_DEFINE_OP_HANDLE(FkJointGroups)
+RIGEXEC_DEFINE_PORT_HANDLE(FkJointGroupsIn)
+RIGEXEC_DEFINE_PORT_HANDLE(FkJointGroupsSelectors)
+RIGEXEC_DEFINE_PORT_HANDLE(FkJointGroupsStart)
+RIGEXEC_DEFINE_PORT_HANDLE(FkJointGroupsStartRest)
+RIGEXEC_DEFINE_PORT_HANDLE(FkJointGroupsOut)
+
 namespace {
 
 using rigExec::RigExecOpBatch;
@@ -57,6 +64,20 @@ using namespace fieldIo;
 enum FkField : uint32_t { kParentCount, kParents, kScaleSegments };
 /// TwoBoneIk's.
 enum IkField : uint32_t { kSoftDistancePolicy, kIkScaleSegments, kCalibration };
+/// FkJointGroups'.
+enum GroupField : uint32_t {
+    kJointBegin,
+    kParentListCount,
+    kParentList,
+    kGroupCount,
+    kGroupBegins,
+    kGroupSizeCount,
+    kGroupSizes,
+    kGroupFlagCount,
+    kGroupEnabled,
+    kMemberCount,
+    kMembers
+};
 
 struct Element {
     PointLandmarks restPoints;
@@ -202,6 +223,103 @@ RunTwoBoneIk(const RigExecOpBatch &batch, size_t *failed, std::string *error)
         batch, failed, [&](size_t k) { return TwoBoneIkOne(batch, k, error); });
 }
 
+/// FkJointGroups' groups and members, from the payload columns; false when
+/// a group's members are not in the member list.
+bool
+GroupsAt(const RigExecOpBatch &batch, size_t k,
+         std::vector<rigExec::RigExecJointGroup> *groups)
+{
+    const auto begins = ListAt<uint32_t>(batch, kGroupBegins, k);
+    const auto sizes = ListAt<uint32_t>(batch, kGroupSizes, k);
+    const auto enabled = ListAt<uint8_t>(batch, kGroupEnabled, k);
+    const size_t members = ListAt<int32_t>(batch, kMembers, k).Size();
+    if (sizes.Size() != begins.Size() || enabled.Size() != begins.Size())
+        return false;
+    groups->resize(begins.Size());
+    for (size_t g = 0; g < begins.Size(); ++g) {
+        if (begins[g] > members || sizes[g] > members - begins[g])
+            return false;
+        (*groups)[g] = {begins[g], sizes[g], enabled[g] != 0};
+    }
+    return true;
+}
+
+bool
+CheckFkJointGroups(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    std::vector<rigExec::RigExecJointGroup> groups;
+    if (!GroupsAt(check.batch, check.k, &groups))
+        return Fail(error, "FkJointGroups",
+                    "needs each group's members inside the member list");
+    const int begin = ValueAt<int32_t>(check.batch, kJointBegin, check.k);
+    const size_t joints =
+        ListAt<int32_t>(check.batch, kParentList, check.k).Size();
+    if (begin < 0)
+        return Fail(error, "FkJointGroups", "needs a joint begin of 0 or more");
+    if (!SameCount(CheckElements(check, FkJointGroupsSelectors()),
+                   groups.size()))
+        return Fail(error, "FkJointGroups", "needs one selector per group");
+    if (Fed(check, FkJointGroupsStart()) !=
+        Fed(check, FkJointGroupsStartRest()))
+        return Fail(error, "FkJointGroups",
+                    "needs the start frame and its rest together");
+    if (const PointFrameArray *in =
+            CheckValue<PointFrameArray>(check, FkJointGroupsIn()))
+        if (in->frames.Size() != size_t(begin) + joints ||
+            in->rests.Size() != in->frames.Size())
+            return Fail(error, "FkJointGroups",
+                        "needs one frame and rest per joint after the begin");
+    return true;
+}
+
+bool
+FkJointGroupsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    std::vector<rigExec::RigExecJointGroup> groups;
+    if (!GroupsAt(batch, k, &groups))
+        return Fail(error, "FkJointGroups",
+                    "needs each group's members inside the member list");
+    const size_t begin = size_t(ValueAt<int32_t>(batch, kJointBegin, k));
+    const auto parents = ListAt<int32_t>(batch, kParentList, k);
+    const auto members = ListAt<int32_t>(batch, kMembers, k);
+    const PointFrameArray &in = *In<PointFrameArray>(io, FkJointGroupsIn());
+    const auto &selectors =
+        *In<RigExecArray<double>>(io, FkJointGroupsSelectors());
+    const size_t joints = parents.Size();
+    if (in.frames.Size() != begin + joints || in.rests.Size() != begin + joints)
+        return Fail(error, "FkJointGroups",
+                    "needs one frame and rest per joint after the begin");
+    if (selectors.Size() != groups.size())
+        return Fail(error, "FkJointGroups", "needs one selector per group");
+    const PointFrame *start = In<PointFrame>(io, FkJointGroupsStart());
+    const PointLandmarks *startRest =
+        In<PointLandmarks>(io, FkJointGroupsStartRest());
+    std::vector<int32_t> slots(groups.size());
+    std::vector<uint8_t> active(joints);
+    std::vector<PointFrame> frames(in.frames.begin(), in.frames.end());
+    rigExec::RigExecApplyFkJointGroupsKernel<Vec3f, Vec3d>(
+        joints, [&](size_t i) { return parents[i]; }, groups.data(),
+        groups.size(), members.begin(), selectors.Data(),
+        start && startRest ? startRest : nullptr,
+        start && startRest ? &start->points : nullptr,
+        [&](size_t j) { return in.rests[begin + j]; }, slots.data(),
+        active.data(), frames.data() + begin, joints);
+    PointFrameArray &out = Out<PointFrameArray>(io, FkJointGroupsOut());
+    out.frames.Assign(frames.data(), frames.size());
+    out.rests = in.rests;
+    return true;
+}
+
+bool
+RunFkJointGroups(const RigExecOpBatch &batch, size_t *failed,
+                 std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return FkJointGroupsOne(batch, k, error);
+    });
+}
+
 } // namespace
 
 namespace {
@@ -250,6 +368,68 @@ const rigExec::RigExecPortDesc kIkPorts[] = {
      "out", rigExec::RigExecOutputBound::Fixed, nullptr, nullptr,
      rigExec::kRigExecInvalidIndex, 3},
 };
+
+const rigExec::RigExecPortDesc kGroupPorts[] = {
+    {&FkJointGroupsIn(), &rigExecRig::PointFrameArrayType(), kRigExecPortInput,
+     "in"},
+    {&FkJointGroupsSelectors(), &rigExecStd::DoubleArray(), kRigExecPortInput,
+     "selectors"},
+    {&FkJointGroupsStart(), &rigExecRig::PointFrameType(), kOptional, "start"},
+    {&FkJointGroupsStartRest(), &rigExecRig::PointLandmarksType(), kOptional,
+     "startRest"},
+    {&FkJointGroupsOut(), &rigExecRig::PointFrameArrayType(),
+     kRigExecPortOutput, "out", rigExec::RigExecOutputBound::Input,
+     &FkJointGroupsIn()},
+};
+
+void
+GroupValues(const void *payload, RigExecFieldValues &out)
+{
+    const auto &p = *static_cast<const FkJointGroupsPayload *>(payload);
+    std::vector<uint32_t> begins, sizes;
+    std::vector<uint8_t> enabled;
+    for (const rigExec::RigExecJointGroup &g : p.groups) {
+        begins.push_back(g.memberBegin);
+        sizes.push_back(g.memberCount);
+        enabled.push_back(g.enabled ? 1 : 0);
+    }
+    out.Set(kJointBegin, int32_t(p.jointBegin));
+    SetList(out, kParentListCount, p.parents);
+    SetList(out, kGroupCount, begins);
+    SetList(out, kGroupSizeCount, sizes);
+    SetList(out, kGroupFlagCount, enabled);
+    SetList(out, kMemberCount, p.members);
+}
+
+const rigExec::RigExecFieldDesc kGroupFields[] = {
+    Value("jointBegin", rigExecStd::IntType()),
+    Count("parentCount"),
+    Items("parents", rigExecStd::IntType(), kParentListCount),
+    Count("groupCount"),
+    Items("groupBegins", rigExecStd::UIntType(), kGroupCount),
+    Count("groupSizeCount"),
+    Items("groupSizes", rigExecStd::UIntType(), kGroupSizeCount),
+    Count("groupFlagCount"),
+    Items("groupEnabled", rigExecStd::BoolType(), kGroupFlagCount),
+    Count("memberCount"),
+    Items("members", rigExecStd::IntType(), kMemberCount),
+};
+
+const rigExec::RigExecOpDesc kGroups = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "FkJointGroups";
+    d.ports = kGroupPorts;
+    d.portCount = std::size(kGroupPorts);
+    d.runBatch = &RunFkJointGroups;
+    d.validate = &CheckFkJointGroups;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    d.payloadFields = kGroupFields;
+    d.payloadFieldCount = std::size(kGroupFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &GroupValues;
+    return d;
+}();
 
 void
 FkValues(const void *payload, RigExecFieldValues &out)
@@ -319,6 +499,7 @@ RegisterChainSolverOps(rigExec::RigExecOpRegistrar &registrar)
 {
     registrar.Add(FkChain(), kFk);
     registrar.Add(TwoBoneIk(), kIk);
+    registrar.Add(FkJointGroups(), kGroups);
 }
 
 } // namespace rigExecOps

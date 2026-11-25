@@ -23,6 +23,7 @@
 #include "rigExecOps/constraint/matchOps.h"
 #include "rigExecOps/solver/chainSolverOps.h"
 #include "rigExecOps/solver/frameBlendOps.h"
+#include "rigExecOps/solver/poseCommitOps.h"
 #include "rigExecOps/solver/ribbonFramesOps.h"
 #include "rigExecOps/solver/singleChainIkOps.h"
 #include "rigExecOps/solver/splineIkOps.h"
@@ -220,6 +221,21 @@ SameResult(const RigExecArray<T> &a, const RigExecArray<T> &b)
     return a.Size() == b.Size() &&
            (a.Empty() ||
             std::memcmp(a.Data(), b.Data(), a.Size() * sizeof(T)) == 0);
+}
+
+/// Frames compared on their points and flags, not their padding.
+bool
+SameResult(const RigExecArray<rigExecRig::PointFrame> &a,
+           const RigExecArray<rigExecRig::PointFrame> &b)
+{
+    if (a.Size() != b.Size())
+        return false;
+    for (size_t k = 0; k < a.Size(); ++k)
+        if (a[k].flags != b[k].flags ||
+            std::memcmp(a[k].points.data(), b[k].points.data(),
+                        sizeof(a[k].points)) != 0)
+            return false;
+    return true;
 }
 
 /// One op node with the listed ports bound, the first output read. It runs
@@ -2808,6 +2824,91 @@ TestRibbonFrames()
     CHECK(!single.Run({&curve, &curve}, &actual, &error));
 }
 
+// PoseCommit: two joints and three descendants, the second blocked by an
+// authored parent space. Nothing present keeps every carry; a present
+// candidate writes itself and carries its delta onto the descendants under
+// it; a singular delta is an error; a descendant without its frames does
+// not compile.
+void
+TestPoseCommit()
+{
+    using namespace rigExecOps;
+    using Frames = RigExecArray<rigExecRig::PointFrame>;
+    const auto frames = [](std::vector<RigExecPointFrame> in) {
+        Frames out(in.size());
+        for (size_t k = 0; k < in.size(); ++k)
+            out[k] = ToRig(in[k]);
+        return out;
+    };
+    const auto frame = [](double x, double degrees) {
+        return MakeFrame(GfVec3d(x, 0.5, 0.0), GfVec3d(0, 0, 1), degrees,
+                         GfVec3d(1.0));
+    };
+    const std::vector<RigExecPointFrame> entering = {frame(0, 0), frame(2, 10)};
+    const std::vector<RigExecPointFrame> candidate = {frame(0.5, 30),
+                                                      frame(2, 10)};
+    const std::vector<RigExecPointFrame> current = {frame(1, 5), frame(3, 0),
+                                                    frame(4, 20)};
+    const Frames enteringIn = frames(entering), candidates = frames(candidate),
+                 carry = frames({frame(-1, 0), frame(-2, 0)}),
+                 currentIn = frames(current),
+                 closest = frames({entering[0], entering[0], entering[1]}),
+                 descendantCarry =
+                     frames({frame(-3, 0), frame(-4, 0), frame(-5, 0)});
+    PoseCommitPayload p;
+    p.slotCount = 2;
+    p.closest = {0, 0, 1};
+    p.blocked = {0, 1, 0};
+    const std::vector<const RigExecPortHandle *> ports = {
+        &PoseCommitCandidates(),     &PoseCommitPresent(),
+        &PoseCommitEntering(),       &PoseCommitCarry(),
+        &PoseCommitCurrent(),        &PoseCommitClosest(),
+        &PoseCommitDescendantCarry()};
+    Node slots(PoseCommit(), ports, PoseCommitSlots(), &p);
+    Node descendants(PoseCommit(), ports, PoseCommitDescendants(), &p);
+    RigExecArray<uint8_t> none(2), first(2);
+    none[0] = none[1] = 0;
+    first[0] = 1;
+    first[1] = 0;
+    Frames actual;
+    const auto values = [&](const RigExecArray<uint8_t> &present,
+                            const Frames &enter) {
+        return std::vector<const void *>{&candidates,     &present,   &enter,
+                                         &carry,          &currentIn, &closest,
+                                         &descendantCarry};
+    };
+    CHECK(slots.Run(values(none, enteringIn), &actual));
+    CHECK(actual.Size() == 2 && SameResult(actual, carry));
+    CHECK(descendants.Run(values(none, enteringIn), &actual));
+    CHECK(actual.Size() == 3 && SameResult(actual, descendantCarry));
+
+    CHECK(slots.Run(values(first, enteringIn), &actual));
+    CHECK(actual.Size() == 2 && SameBits(candidate[0], actual[0]) &&
+          SameBits(RigExecPointFrame(frame(-2, 0)), actual[1]));
+    GfMatrix4d delta(1.0);
+    CHECK(
+        RigExecPointsToMatrix(entering[0].points, candidate[0].points, &delta));
+    CHECK(descendants.Run(values(first, enteringIn), &actual));
+    CHECK(
+        actual.Size() == 3 &&
+        SameBits(RigExecMatrixToPoints(current[0].points, delta), actual[0]) &&
+        SameBits(frame(-4, 0), actual[1]) && SameBits(frame(-5, 0), actual[2]));
+
+    RigExecPointFrame collapsed = entering[0];
+    collapsed.points = {GfVec3d(1.0), GfVec3d(1.0), GfVec3d(1.0), GfVec3d(1.0)};
+    const Frames singular = frames({collapsed, entering[1]});
+    std::string error;
+    CHECK(!descendants.Run(values(first, singular), &actual, &error));
+    CHECK(error.find("singular hierarchy delta") != std::string::npos);
+
+    Node unfed(
+        PoseCommit(),
+        {&PoseCommitCandidates(), &PoseCommitEntering(), &PoseCommitCarry()},
+        PoseCommitSlots(), &p);
+    CHECK(!unfed.Run({&candidates, &enteringIn, &carry}, &actual, &error));
+    CHECK(error.find("per descendant") != std::string::npos);
+}
+
 void
 TestSingleChainIk()
 {
@@ -3740,6 +3841,7 @@ main()
     TestFrameBlend();
     TestRibbonFrames();
     TestSingleChainIk();
+    TestPoseCommit();
     TestSplineIk();
     TestRangeChain();
     TestBuildTimeChecks();

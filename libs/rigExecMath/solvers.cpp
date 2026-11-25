@@ -32,6 +32,30 @@ RigExecScaleFkSegments(const std::vector<RigExecFkChainElement> &elements,
         RigExecScaleFkSegmentsKernel<GfVec3d>(elements, frames);
 }
 
+void
+RigExecApplyFkJointGroups(const std::vector<RigExecFkChainElement> &elements,
+                          size_t base, const std::vector<int32_t> &parents,
+                          const std::vector<RigExecJointGroup> &groups,
+                          const std::vector<int32_t> &members,
+                          const std::vector<double> &selectors,
+                          const std::array<GfVec3d, 4> *startRest,
+                          const std::array<GfVec3d, 4> *startPose,
+                          std::vector<int32_t> *slots,
+                          std::vector<uint8_t> *active,
+                          std::vector<RigExecPointFrame> *frames)
+{
+    slots->resize(groups.size());
+    active->resize(parents.size());
+    RigExecApplyFkJointGroupsKernel<GfVec3f, GfVec3d>(
+        parents.size(), [&](size_t i) { return parents[i]; }, groups.data(),
+        groups.size(), members.data(), selectors.data(), startRest, startPose,
+        [&](size_t k) {
+            const RigExecFkChainElement &e = elements[k + base];
+            return e.hasOutRest ? e.outRestPoints : e.restPoints;
+        },
+        slots->data(), active->data(), frames->data(), frames->size());
+}
+
 namespace {
 
 // std::acos(-1) rather than M_PI, which MSVC and strict modes lack.

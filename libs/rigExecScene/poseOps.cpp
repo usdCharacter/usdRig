@@ -200,6 +200,17 @@ FkPayload(const RigExecSolverRecord &s)
     return p;
 }
 
+rigExecOps::FkJointGroupsPayload
+FkGroupsPayload(const RigExecSolverRecord &s)
+{
+    rigExecOps::FkJointGroupsPayload p;
+    p.jointBegin = s.hasStart ? 1 : 0;
+    p.parents = s.jointGroupParents;
+    p.groups = s.jointGroups;
+    p.members = s.jointGroupMembers;
+    return p;
+}
+
 rigExecOps::TwoBoneIkPayload
 IkPayload(const RigExecSolverRecord &s)
 {
@@ -407,7 +418,6 @@ RigExecSolverOpSupported(const RigExecSolverRecord &s)
         return false;
     switch (s.kind) {
     case RigExecSolverKind::FkChain:
-        return s.jointGroups.empty();
     case RigExecSolverKind::TwoBoneIk:
     case RigExecSolverKind::TwistDistribution:
     case RigExecSolverKind::Ribbon:
@@ -483,7 +493,24 @@ RigExecAddSolverOp(const RigExecSolverRecord &s,
         const RigExecNodeId id = b.AddOp(rigExecOps::FkChain(), &payload);
         r.controls = b.BindInput(id, rigExecOps::FkChainControls());
         r.outRests = b.BindInput(id, rigExecOps::FkChainOutRests());
-        r.out = b.BindOutput(id, rigExecOps::FkChainOut());
+        if (s.jointGroups.empty()) {
+            r.out = b.BindOutput(id, rigExecOps::FkChainOut());
+            break;
+        }
+        const rigExecOps::FkJointGroupsPayload groups = FkGroupsPayload(s);
+        r.groups = groups.groups;
+        r.groupMembers = groups.members;
+        r.groupParents = groups.parents;
+        r.hasStart = s.hasStart;
+        using namespace rigExecOps;
+        const RigExecNodeId g = b.AddOp(FkJointGroups(), &groups);
+        b.Connect(id, FkChainOut(), g, FkJointGroupsIn());
+        r.groupSelectors = b.BindInput(g, FkJointGroupsSelectors());
+        if (s.hasStart) {
+            r.start = b.BindInput(g, FkJointGroupsStart());
+            r.startRest = b.BindInput(g, FkJointGroupsStartRest());
+        }
+        r.out = b.BindOutput(g, FkJointGroupsOut());
         break;
     }
     case RigExecSolverKind::TwoBoneIk: {
@@ -653,8 +680,28 @@ RigExecWriteSolverOpInputs(const RigExecSolverRecord &s,
             v.landmarks[k + base] =
                 live ? ToStd(s.jointRests[k]) : controls.rests[k + base];
         }
-        return Set(e, node.controls, controls, error) &&
-               Set(e, node.outRests, v.landmarks, error);
+        if (!Set(e, node.controls, controls, error) ||
+            !Set(e, node.outRests, v.landmarks, error))
+            return false;
+        if (s.jointGroups.empty() != node.groups.empty())
+            return Fail(error, "FK chain settings moved");
+        if (s.jointGroups.empty())
+            return true;
+        const rigExecOps::FkJointGroupsPayload groups = FkGroupsPayload(s);
+        if (!(groups.groups == node.groups) ||
+            !SameVector(groups.members, node.groupMembers) ||
+            !SameVector(groups.parents, node.groupParents) ||
+            s.hasStart != node.hasStart)
+            return Fail(error, "FK joint groups moved");
+        Assign(input.jointGroupSelectors, &v.doubles);
+        if (!Set(e, node.groupSelectors, v.doubles, error))
+            return false;
+        if (!s.hasStart)
+            return true;
+        const PointFrame start = ToStd(input.start);
+        const auto startRest = ToStd(s.startRest);
+        return Set(e, node.start, start, error) &&
+               Set(e, node.startRest, startRest, error);
     }
     case RigExecSolverKind::TwoBoneIk: {
         const rigExecOps::TwoBoneIkPayload payload = IkPayload(s);

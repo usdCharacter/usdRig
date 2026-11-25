@@ -62,29 +62,12 @@ RigExecRunSolver(const RigExecSolverRecord &s, const RigExecSolverInputs &input,
                     *error = "FK joint group/selector cardinality mismatch";
                 return false;
             }
-            // A joint under an inactive member publishes its output rest
-            // through the start frame's rest-to-pose delta.
-            const size_t joints = s.jointGroupParents.size();
-            auto &active = scratch->jointGroupActive;
-            active.resize(joints);
-            scratch->jointGroupSlots.resize(s.jointGroups.size());
-            RigExecResolveJointGroups(
-                joints, [&](size_t i) { return s.jointGroupParents[i]; },
-                s.jointGroups.data(), s.jointGroups.size(),
-                s.jointGroupMembers.data(), input.jointGroupSelectors.data(),
-                scratch->jointGroupSlots.data(), active.data());
-            GfMatrix4d start(1.0);
-            if (base)
-                RigExecPointsToMatrix(s.startRest, input.start.points, &start);
-            for (size_t k = 0; k < joints && k < aggregate.frames.size(); ++k) {
-                if (active[k])
-                    continue;
-                const auto &element = elements[k + size_t(base)];
-                aggregate.frames[k] = RigExecMatrixToPoints(
-                    element.hasOutRest ? element.outRestPoints
-                                       : element.restPoints,
-                    start);
-            }
+            RigExecApplyFkJointGroups(
+                elements, size_t(base), s.jointGroupParents, s.jointGroups,
+                s.jointGroupMembers, input.jointGroupSelectors,
+                base ? &s.startRest : nullptr,
+                base ? &input.start.points : nullptr, &scratch->jointGroupSlots,
+                &scratch->jointGroupActive, &aggregate.frames);
         }
         return true;
     }

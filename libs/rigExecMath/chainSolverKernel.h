@@ -9,6 +9,7 @@
 #ifndef RIGEXEC_MATH_CHAIN_SOLVER_KERNEL_H
 #define RIGEXEC_MATH_CHAIN_SOLVER_KERNEL_H
 
+#include "jointGroupKernel.h"
 #include "limbStretchKernel.h"
 
 #include <algorithm>
@@ -155,6 +156,34 @@ RigExecScaleFkSegmentsKernel(const std::vector<E> &elements,
             RigExecScaleFrameAlong((*frames)[k].points.data(), bone,
                                    posed / rest);
     }
+}
+
+/// RigExecFkChain's joint groups: each of the first \p joints frames whose
+/// joint RigExecResolveJointGroups marks inactive is replaced by its rest
+/// \p basis(k) carried by the start frame's rest-to-pose map, the identity
+/// without a start. \p slots holds one value per group, \p active one per
+/// joint.
+template <class Point, class Double, class F, class ParentOf, class Basis>
+void
+RigExecApplyFkJointGroupsKernel(size_t joints, ParentOf &&parentOf,
+                                const RigExecJointGroup *groups,
+                                size_t groupCount, const int32_t *members,
+                                const double *selectors,
+                                const std::array<Double, 4> *startRest,
+                                const std::array<Double, 4> *startPose,
+                                Basis &&basis, int32_t *slots, uint8_t *active,
+                                F *frames, size_t frameCount)
+{
+    using Math = RigExecDualQuatMath<Point, Double>;
+    RigExecResolveJointGroups(joints, parentOf, groups, groupCount, members,
+                              selectors, slots, active);
+    typename Math::Mat4 start(1.0);
+    if (startRest && startPose)
+        Math::PointsToMatrix(*startRest, *startPose, &start);
+    for (size_t k = 0; k < joints && k < frameCount; ++k)
+        if (!active[k])
+            frames[k] = chainSolverDetail::MatrixToFrame<Point, Double, F>(
+                basis(k), start);
 }
 
 /// The chain's bone lengths measured in \p space, each offset riding its
