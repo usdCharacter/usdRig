@@ -90,3 +90,19 @@ python asset_lib/components/test_components.py
 
 This builds independently fitted legs at two sizes in a fresh namespace,
 evaluates their IK-driven geometry, and checks invalid fits are rejected.
+
+```text
+python asset_lib/components/example_trunk_head.py
+```
+
+This is the worked example for a multi-instance trunk and head chain: it binds
+the `torso`, `spine` and `head` instances in a fresh `/Demo` namespace through
+`compose_assembly` with a fit/composition split. It checks that the binder
+refuses a port name taken from another component (`spine` takes `COG`, `head`
+takes `Chest`, and `Hips` is `leg`'s port), that the validator refuses a node
+whose nearest provider ancestor differs from the manifest `parent`, that the
+corrected assembly compiles and moves only the weighted point indices without
+any skin cluster, and that the written entry asset reopens headlessly with no
+composition errors. The `eye`, `arm`, `leg` and `mouth` instances are not
+exercised by this example, so it is not a substitute for the full character
+validation the compose-character skill describes.
