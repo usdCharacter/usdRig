@@ -303,6 +303,7 @@ rigexec_add_op_library(rigExecOps
         libs/rigExecOps/solver/skeleton2dOps.cpp
         libs/rigExecOps/solver/splineIkOps.cpp
         libs/rigExecOps/space/spaceOps.cpp
+        libs/rigExecOps/space/providerOps.cpp
     USES_TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes)
 target_link_libraries(rigExecOps PRIVATE rigExecEvalCore)
 

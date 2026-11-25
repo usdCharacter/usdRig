@@ -19,6 +19,7 @@
 #include "opRunners/geometryOpRunner.h"
 #include "opRunners/poseOpRunner.h"
 #include "opRunners/weightOpRunner.h"
+#include "rigExecOps/space/providerOps.h"
 #include "rigExecOps/space/spaceOps.h"
 #include "rigExecRigTypes/rigTypes.h"
 
@@ -1154,6 +1155,394 @@ ProbeProviderRefresh(const B &b, const RigExecBakedStep &step)
     CompareBits("Spaces", "ProviderRefresh", object, baked, op, false);
 }
 
+// SpaceExpression part 0: a provider program operation replayed on the
+// values its inputs hold after the frame, against the value it published.
+rigExecStd::Mat4d
+OpMatrix(const GfMatrix4d &m)
+{
+    rigExecStd::Mat4d out;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            out._mtx[r][c] = m[r][c];
+    return out;
+}
+
+rigExecStd::Vec3d
+OpVector(const GfVec3d &v)
+{
+    return rigExecStd::Vec3d(v[0], v[1], v[2]);
+}
+
+const char *
+ProviderKindName(RigExecProviderOpKind kind)
+{
+    using K = RigExecProviderOpKind;
+    switch (kind) {
+    case K::Attribute:
+        return "Attribute";
+    case K::SpaceExpression:
+        return "SpaceExpression";
+    case K::RestFrame:
+        return "RestFrame";
+    case K::DefaultSpace:
+        return "DefaultSpace";
+    case K::FrameToSpace:
+        return "FrameToSpace";
+    case K::MatrixToFrame:
+        return "MatrixToFrame";
+    case K::PosedFrame:
+        return "PosedFrame";
+    case K::JointMatrix:
+        return "JointMatrix";
+    case K::LocalXform:
+        return "LocalXform";
+    case K::InterveningXform:
+        return "InterveningXform";
+    case K::AvarMatrix:
+        return "AvarMatrix";
+    case K::RelativeXform:
+        return "RelativeXform";
+    case K::AffineFrame:
+        return "AffineFrame";
+    }
+    return "Unknown";
+}
+
+/// Whether the order value \p id holds resets the xform stack.
+bool
+OrderResets(const B &b, RigExecValueId id)
+{
+    if (id >= b.providerValues.values.size())
+        return false;
+    const auto &order = b.providerValues.values[size_t(id)];
+    if (!order.initialized || order.blocked ||
+        !order.raw.IsHolding<VtTokenArray>())
+        return false;
+    for (const auto &token : order.raw.UncheckedGet<VtTokenArray>())
+        if (token == "!resetXformStack!")
+            return true;
+    return false;
+}
+
+template <class T>
+std::string
+SlotKey(const std::vector<T> &slots)
+{
+    std::string key;
+    for (const T slot : slots)
+        key += "/" + std::to_string(slot);
+    return key;
+}
+
+void
+ProbeProviderArithmetic(const B &b, const RigExecProviderOp &op,
+                        const std::string &kind, const std::string &object)
+{
+    using namespace rigExecOps;
+    using C = ProviderInputClass;
+    const auto &values = b.providerValues;
+    ProviderArithmeticPayload payload;
+    payload.kind = op.kind;
+    payload.scaleAvars = op.scaleAvars;
+    std::vector<rigExecStd::Mat4d> matrices;
+    std::vector<uint8_t> authority, resets;
+    std::vector<rigExecRig::PointFrame> frames;
+    std::vector<double> scalars;
+    std::vector<rigExecStd::Vec3d> vectors;
+    std::vector<int32_t> orders;
+    for (size_t p = 0; p < op.inputs.size(); ++p) {
+        const RigExecValueId id = op.inputs[p];
+        int32_t slot = -1;
+        switch (ProviderArithmeticInputClass(op.kind, p)) {
+        case C::Matrix:
+            if (const auto *m = values.Read<GfMatrix4d>(id)) {
+                slot = int32_t(matrices.size());
+                matrices.push_back(OpMatrix(*m));
+                authority.push_back(values.values[size_t(id)].authoritative);
+            }
+            break;
+        case C::Frame:
+            if (const auto *f = values.Read<RigExecPointFrame>(id)) {
+                slot = int32_t(frames.size());
+                frames.push_back(OpFrame(*f));
+            }
+            break;
+        case C::Scalar:
+            if (const auto *s = values.Read<double>(id)) {
+                slot = int32_t(scalars.size());
+                scalars.push_back(*s);
+            }
+            break;
+        case C::Vector:
+            if (const auto *v = values.Read<GfVec3d>(id)) {
+                slot = int32_t(vectors.size());
+                vectors.push_back(OpVector(*v));
+            }
+            break;
+        case C::Order:
+            if (const auto *t = values.Read<TfToken>(id)) {
+                slot = int32_t(orders.size());
+                orders.push_back(ProviderPackOrder(t->GetString()));
+            }
+            break;
+        case C::Reset:
+            slot = int32_t(resets.size());
+            resets.push_back(OrderResets(b, id) ? 1 : 0);
+            break;
+        case C::None:
+            break;
+        }
+        payload.slots.push_back(slot);
+    }
+    SpaceNode &node = SpaceNodeFor(
+        "ProviderArithmetic/" + kind + (op.scaleAvars ? "/s" : "/u") +
+            SlotKey(payload.slots),
+        ProviderArithmetic(), &payload,
+        {&ProviderArithmeticMatrices(), &ProviderArithmeticAuthoritative(),
+         &ProviderArithmeticFrames(), &ProviderArithmeticScalars(),
+         &ProviderArithmeticVectors(), &ProviderArithmeticOrders(),
+         &ProviderArithmeticResets()},
+        {&ProviderArithmeticMatrix(), &ProviderArithmeticFrame(),
+         &ProviderArithmeticAuthoritativeOut()});
+    const rigExecStd::RigExecArray<rigExecStd::Mat4d> matricesIn(
+        matrices.data(), matrices.size());
+    const rigExecStd::RigExecArray<uint8_t> authorityIn(authority.data(),
+                                                        authority.size());
+    const rigExecStd::RigExecArray<rigExecRig::PointFrame> framesIn(
+        frames.data(), frames.size());
+    const rigExecStd::RigExecArray<double> scalarsIn(scalars.data(),
+                                                     scalars.size());
+    const rigExecStd::RigExecArray<rigExecStd::Vec3d> vectorsIn(vectors.data(),
+                                                                vectors.size());
+    const rigExecStd::RigExecArray<int32_t> ordersIn(orders.data(),
+                                                     orders.size());
+    const rigExecStd::RigExecArray<uint8_t> resetsIn(resets.data(),
+                                                     resets.size());
+    std::string error;
+    if (!RunSpaceNode(node,
+                      {&matricesIn, &authorityIn, &framesIn, &scalarsIn,
+                       &vectorsIn, &ordersIn, &resetsIn},
+                      &error)) {
+        OpFailed("Spaces", kind, object, false, error);
+        return;
+    }
+    std::vector<double> baked, out;
+    const auto &published = values.values[size_t(op.output)];
+    if (const auto *m = values.Read<GfMatrix4d>(op.output)) {
+        PutBits(&baked, *m);
+        PutBits(&out, SpaceOut<rigExecStd::Mat4d>(node, 0));
+    } else if (const auto *f = values.Read<RigExecPointFrame>(op.output)) {
+        PutBits(&baked, OpFrame(*f));
+        PutBits(&out, SpaceOut<rigExecRig::PointFrame>(node, 1));
+    }
+    baked.push_back(published.authoritative ? 1.0 : 0.0);
+    out.push_back(SpaceOut<uint8_t>(node, 2) ? 1.0 : 0.0);
+    CompareBits("Spaces", kind, object, baked, out, false);
+}
+
+void
+ProbeAffineFrame(const B &b, const RigExecProviderOp &op,
+                 const std::string &kind, const std::string &object)
+{
+    using namespace rigExecOps;
+    using C = AffineInputClass;
+    const auto &values = b.providerValues;
+    const auto boxed = [&](RigExecValueId id) {
+        return values.Read<VtValue>(id);
+    };
+    AffineFramePayload payload;
+    payload.kind = op.affineKind;
+    payload.targets = op.affineTargets;
+    std::vector<rigExecStd::Mat4d> matrices, matrixItems;
+    std::vector<double> doubles, doubleItems;
+    std::vector<uint8_t> bools;
+    std::vector<int32_t> ints, intItems, spans;
+    std::vector<rigExecStd::Vec3d> vectors;
+    std::vector<rigExecStd::Vec3i> intVectors;
+    std::vector<rigExecRig::PointFrame> frames;
+    const auto span = [&](size_t begin, size_t count) {
+        const int32_t slot = int32_t(spans.size() / 2);
+        spans.push_back(int32_t(begin));
+        spans.push_back(int32_t(count));
+        return slot;
+    };
+    for (size_t p = 0; p < op.inputs.size(); ++p) {
+        const RigExecValueId id = op.inputs[p];
+        const VtValue *box = boxed(id);
+        int32_t slot = -1;
+        switch (AffineFrameInputClass(op.affineKind, p)) {
+        case C::Matrix:
+            if (const auto *m = values.Read<GfMatrix4d>(id)) {
+                slot = int32_t(matrices.size());
+                matrices.push_back(OpMatrix(*m));
+            }
+            break;
+        case C::Double:
+            if (const auto *d = values.Read<double>(id)) {
+                slot = int32_t(doubles.size());
+                doubles.push_back(*d);
+            } else if (const auto *f = values.Read<float>(id)) {
+                slot = int32_t(doubles.size());
+                doubles.push_back(*f);
+            }
+            break;
+        case C::Bool:
+            if (box && box->IsHolding<bool>()) {
+                slot = int32_t(bools.size());
+                bools.push_back(box->UncheckedGet<bool>() ? 1 : 0);
+            }
+            break;
+        case C::Int:
+            if (box && box->IsHolding<int>()) {
+                slot = int32_t(ints.size());
+                ints.push_back(box->UncheckedGet<int>());
+            }
+            break;
+        case C::Vector:
+            if (const auto *v = values.Read<GfVec3d>(id)) {
+                slot = int32_t(vectors.size());
+                vectors.push_back(OpVector(*v));
+            }
+            break;
+        case C::IntVector:
+            if (box && box->IsHolding<GfVec3i>()) {
+                const GfVec3i &v = box->UncheckedGet<GfVec3i>();
+                slot = int32_t(intVectors.size());
+                intVectors.push_back(rigExecStd::Vec3i(v[0], v[1], v[2]));
+            }
+            break;
+        case C::Text:
+            if (const auto *t = values.Read<TfToken>(id)) {
+                slot = int32_t(payload.texts.size());
+                payload.texts.push_back(t->GetString());
+            }
+            break;
+        case C::IntItems:
+            if (box && box->IsHolding<VtIntArray>() &&
+                !box->UncheckedGet<VtIntArray>().empty()) {
+                const auto &a = box->UncheckedGet<VtIntArray>();
+                slot = span(intItems.size(), a.size());
+                intItems.insert(intItems.end(), a.begin(), a.end());
+            }
+            break;
+        case C::DoubleItems:
+            if (box && box->IsHolding<VtDoubleArray>() &&
+                !box->UncheckedGet<VtDoubleArray>().empty()) {
+                const auto &a = box->UncheckedGet<VtDoubleArray>();
+                slot = span(doubleItems.size(), a.size());
+                doubleItems.insert(doubleItems.end(), a.begin(), a.end());
+            }
+            break;
+        case C::MatrixItems:
+            if (box && box->IsHolding<VtMatrix4dArray>() &&
+                !box->UncheckedGet<VtMatrix4dArray>().empty()) {
+                const auto &a = box->UncheckedGet<VtMatrix4dArray>();
+                slot = span(matrixItems.size(), a.size());
+                for (const GfMatrix4d &m : a)
+                    matrixItems.push_back(OpMatrix(m));
+            }
+            break;
+        case C::Frame:
+            if (const auto *f = values.Read<RigExecPointFrame>(id)) {
+                slot = int32_t(frames.size());
+                frames.push_back(OpFrame(*f));
+            }
+            break;
+        }
+        payload.slots.push_back(slot);
+    }
+    std::string key = "AffineFrame/" + std::to_string(op.affineKind) + "/" +
+                      std::to_string(op.affineTargets) + SlotKey(payload.slots);
+    for (const std::string &text : payload.texts)
+        key += "/" + text;
+    SpaceNode &node = SpaceNodeFor(
+        key, AffineFrame(), &payload,
+        {&AffineFrameMatrices(), &AffineFrameDoubles(), &AffineFrameBools(),
+         &AffineFrameInts(), &AffineFrameVectors(), &AffineFrameIntVectors(),
+         &AffineFrameIntItems(), &AffineFrameDoubleItems(),
+         &AffineFrameMatrixItems(), &AffineFrameItemSpans(),
+         &AffineFrameFrames()},
+        {&AffineFrameOut()});
+    const rigExecStd::RigExecArray<rigExecStd::Mat4d> matricesIn(
+        matrices.data(), matrices.size());
+    const rigExecStd::RigExecArray<double> doublesIn(doubles.data(),
+                                                     doubles.size());
+    const rigExecStd::RigExecArray<uint8_t> boolsIn(bools.data(), bools.size());
+    const rigExecStd::RigExecArray<int32_t> intsIn(ints.data(), ints.size());
+    const rigExecStd::RigExecArray<rigExecStd::Vec3d> vectorsIn(vectors.data(),
+                                                                vectors.size());
+    const rigExecStd::RigExecArray<rigExecStd::Vec3i> intVectorsIn(
+        intVectors.data(), intVectors.size());
+    const rigExecStd::RigExecArray<int32_t> intItemsIn(intItems.data(),
+                                                       intItems.size());
+    const rigExecStd::RigExecArray<double> doubleItemsIn(doubleItems.data(),
+                                                         doubleItems.size());
+    const rigExecStd::RigExecArray<rigExecStd::Mat4d> matrixItemsIn(
+        matrixItems.data(), matrixItems.size());
+    const rigExecStd::RigExecArray<int32_t> spansIn(spans.data(), spans.size());
+    const rigExecStd::RigExecArray<rigExecRig::PointFrame> framesIn(
+        frames.data(), frames.size());
+    const auto *published = values.Read<GfMatrix4d>(op.output);
+    const bool bakedFailed =
+        !published && values.values[size_t(op.output)].error.rfind(
+                          "affine frame expression failed", 0) == 0;
+    std::string error;
+    if (!RunSpaceNode(node,
+                      {&matricesIn, &doublesIn, &boolsIn, &intsIn, &vectorsIn,
+                       &intVectorsIn, &intItemsIn, &doubleItemsIn,
+                       &matrixItemsIn, &spansIn, &framesIn},
+                      &error)) {
+        OpFailed("Spaces", kind, object, bakedFailed, error);
+        return;
+    }
+    if (bakedFailed) {
+        Report("Spaces/" + kind, object,
+               "the op ran where the baked expression failed");
+        return;
+    }
+    std::vector<double> baked, out;
+    PutBits(&baked, *published);
+    PutBits(&out, SpaceOut<rigExecStd::Mat4d>(node, 0));
+    CompareBits("Spaces", kind, object, baked, out, false);
+}
+
+void
+ProbeSpaceExpression(const B &b, const RigExecBakedStep &step)
+{
+    if (step.part != 0) {
+        Unprobed("Spaces", "SpaceExpression",
+                 "a bridge part is input binding, not an op");
+        return;
+    }
+    const auto &program = b.GetProviderProgram();
+    if (step.object < 0 || size_t(step.object) >= program.ops.size())
+        return;
+    const auto &op = program.ops[size_t(step.object)];
+    const std::string kind =
+        std::string("SpaceExpression/") + ProviderKindName(op.kind);
+    if (op.kind == RigExecProviderOpKind::Attribute) {
+        Unprobed("Spaces", kind, "a connection lookup, not an op");
+        return;
+    }
+    if (op.kind == RigExecProviderOpKind::LocalXform ||
+        op.kind == RigExecProviderOpKind::InterveningXform) {
+        Unprobed("Spaces", kind, "no op");
+        return;
+    }
+    const auto &published = b.providerValues.values[size_t(op.output)];
+    if (op.kind != RigExecProviderOpKind::AffineFrame &&
+        (!published.initialized || published.blocked ||
+         std::holds_alternative<std::monostate>(published.value))) {
+        Unprobed("Spaces", kind, "the baked op published no value");
+        return;
+    }
+    const std::string object = step.label;
+    if (op.kind == RigExecProviderOpKind::AffineFrame)
+        ProbeAffineFrame(b, op, kind, object);
+    else
+        ProbeProviderArithmetic(b, op, kind, object);
+}
+
 void
 ProbeSpaces(const B &b)
 {
@@ -1164,6 +1553,8 @@ ProbeSpaces(const B &b)
             ProbeFrameMatrix(b, step);
         else if (step.kind == RigExecBakedStepKind::ProviderRefresh)
             ProbeProviderRefresh(b, step);
+        else if (step.kind == RigExecBakedStepKind::SpaceExpression)
+            ProbeSpaceExpression(b, step);
     }
 }
 
@@ -1431,6 +1822,79 @@ ConnectedBridgeRig()
         .stage;
 }
 
+// The six affine frame expressions feeding joints, the source control
+// animated, and a constraint that reads tokens and arrays: the rig that
+// has AffineFrame provider operations.
+UsdStageRefPtr
+AffineRig()
+{
+    const char *types[] = {"RigExecCopyFrame",      "RigExecMappedFrame",
+                           "RigExecSkinInfluence",  "RigExecArmatureParent",
+                           "RigExecBoneFrame",      "RigExecConstraintFrame",
+                           "RigExecConstraintFrame"};
+    const char *labels[] = {"copy", "mapped",     "influence", "parent",
+                            "bone", "constraint", "transforms"};
+    const auto translate = [](double x, double y) {
+        GfMatrix4d m(1);
+        m.SetTranslateOnly(GfVec3d(x, y, 0));
+        return m;
+    };
+    auto stage = UsdStage::CreateInMemory();
+    stage->SetStartTimeCode(1);
+    stage->SetEndTimeCode(3);
+    stage->DefinePrim(SdfPath("/Rig"), TfToken(SchemaTypeName::RigExecRoot));
+    auto source = stage->DefinePrim(SdfPath("/Rig/Controls/Source"),
+                                    TfToken("RigExecControl"));
+    const auto tx = source.GetAttribute(TfToken("avars:tx"));
+    tx.Set(2.0, UsdTimeCode(1));
+    tx.Set(-1.0, UsdTimeCode(3));
+    source.GetAttribute(TfToken("avars:rz")).Set(30.0, UsdTimeCode(2));
+    for (int i = 0; i < 7; ++i) {
+        auto c = stage->DefinePrim(
+            SdfPath(std::string("/Rig/Computations/") + labels[i]),
+            TfToken(types[i]));
+        if (c.GetRelationship(TfToken("rigExec:source")))
+            c.GetRelationship(TfToken("rigExec:source"))
+                .SetTargets({source.GetPath()});
+        c.GetRelationship(TfToken("rigExec:poseInputs"))
+            .SetTargets({source.GetPath()});
+        if (i == 1)
+            c.GetAttribute(TfToken("inputs:targetRest")).Set(translate(0, 1));
+        if (i == 3) {
+            c.GetAttribute(TfToken("inputs:useIncoming")).Set(true);
+            c.GetAttribute(TfToken("inputs:incoming")).Set(translate(0, 3));
+        }
+        if (i == 4) {
+            c.GetAttribute(TfToken("inputs:local")).Set(translate(0, 1));
+            c.GetAttribute(TfToken("inputs:tx")).Set(2.0);
+            c.GetRelationship(TfToken("rigExec:sourceObject"))
+                .SetTargets({source.GetPath()});
+        }
+        if (i == 5) {
+            c.GetAttribute(TfToken("inputs:incoming")).Set(translate(0, 3));
+            c.GetAttribute(TfToken("inputs:influence")).Set(.5);
+        }
+        if (i == 6) {
+            c.GetAttribute(TfToken("inputs:operation"))
+                .Set(TfToken("COPY_TRANSFORMS"));
+            c.GetAttribute(TfToken("inputs:rotationMix"))
+                .Set(TfToken("AFTER_FULL"));
+            c.GetAttribute(TfToken("inputs:incoming")).Set(translate(1, 1));
+            c.GetAttribute(TfToken("inputs:axisMask")).Set(5);
+            c.GetAttribute(TfToken("inputs:targetWeights"))
+                .Set(VtDoubleArray{.5});
+            c.GetAttribute(TfToken("inputs:influence")).Set(.75);
+        }
+        auto joint =
+            stage->DefinePrim(SdfPath(std::string("/Rig/Joints/") + labels[i]),
+                              TfToken("RigExecJoint"));
+        joint.GetAttribute(TfToken("posed:space"))
+            .SetConnections(
+                {c.GetAttribute(TfToken("outputs:matrix")).GetPath()});
+    }
+    return stage;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1455,6 +1919,7 @@ main(int argc, char **argv)
                 ProbeRig(argv[i], paint);
     }
     ProbeStage(ConnectedBridgeRig(), "connected bridge rig", Paint::None);
+    ProbeStage(AffineRig(), "affine rig", Paint::None);
     if (painted)
         for (const Paint paint : {Paint::None, Paint::Dense, Paint::Sparse})
             ProbeStage(WireRig(), "wire rig", paint);
@@ -1488,7 +1953,9 @@ main(int argc, char **argv)
     for (const char *family :
          {"Solve/", "RevisionChunk/", "RangeChain/", "Derived/",
           "WeightPacket/", "Constraint/", "Spaces/ProviderMatrix/",
-          "Spaces/FrameMatrix/", "Spaces/ProviderRefresh"}) {
+          "Spaces/FrameMatrix/", "Spaces/ProviderRefresh",
+          "Spaces/SpaceExpression/SpaceExpression",
+          "Spaces/SpaceExpression/AffineFrame"}) {
         size_t compared = 0;
         for (const auto &[key, tally] : g_tally)
             if (key.compare(0, std::strlen(family), family) == 0)

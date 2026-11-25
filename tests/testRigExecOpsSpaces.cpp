@@ -1,11 +1,14 @@
 // The provider matrix, frame record and provider refresh ops evaluated
 // through the core: the kernels' answers on hand-built frames, the
-// fallbacks and record gates, and what fails compile or the evaluation.
+// fallbacks and record gates, and what fails compile or the evaluation;
+// likewise the provider program's arithmetic and affine frame ops.
 #include "rigExec/api/compile.h"
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
 #include "rigExec/api/rigDesc.h"
+#include "rigExecMath/affineFrameKernel.h"
 #include "rigExecMath/providerMatrixKernel.h"
+#include "rigExecOps/space/providerOps.h"
 #include "rigExecOps/space/spaceOps.h"
 #include "rigExecRigTypes/rigTypes.h"
 
@@ -248,6 +251,169 @@ TestProviderRefresh()
         {&before, &before, &raw, &current, &none, &carry, &carry, &blocking}));
 }
 
+void
+TestProviderArithmetic()
+{
+    using K = rigExec::RigExecProviderOpKind;
+    const std::vector<const RigExecPortHandle *> ins = {
+        &ProviderArithmeticMatrices(), &ProviderArithmeticAuthoritative(),
+        &ProviderArithmeticFrames(),   &ProviderArithmeticScalars(),
+        &ProviderArithmeticVectors(),  &ProviderArithmeticOrders(),
+        &ProviderArithmeticResets()};
+    const std::vector<const RigExecPortHandle *> outs = {
+        &ProviderArithmeticMatrix(), &ProviderArithmeticFrame(),
+        &ProviderArithmeticAuthoritativeOut()};
+    const RigExecArray<Mat4d> noMatrices;
+    const RigExecArray<uint8_t> noFlags;
+    const RigExecArray<PointFrame> noFrames;
+    const RigExecArray<double> noScalars;
+    const RigExecArray<Vec3d> noVectors;
+    const RigExecArray<int32_t> noOrders;
+    ProviderArithmeticPayload payload;
+
+    // Avar channels: absent units read 1, absent scale and rotation 0.
+    payload.kind = K::AvarMatrix;
+    payload.slots = {-1, 0, 1, 2};
+    Harness avars(ProviderArithmetic(), &payload, ins, outs);
+    const double xyz[] = {1, 2, 3};
+    const RigExecArray<double> translate(xyz, 3);
+    CHECK(avars.Run({&noMatrices, &noFlags, &noFrames, &translate, &noVectors,
+                     &noOrders, &noFlags}));
+    CHECK(SameMatrix(avars.Out<Mat4d>(0), Translate(1, 2, 3)));
+    CHECK(avars.Out<uint8_t>(2) == 0);
+    CHECK(ProviderPackOrder("XYZ") != 0 && ProviderPackOrder("xy") == 0);
+
+    // An authoritative authored space wins over its connection, a
+    // connection over an unauthoritative authored space.
+    payload.kind = K::SpaceExpression;
+    payload.slots = {0, 1, -1};
+    Harness space(ProviderArithmetic(), &payload, ins, outs);
+    const Mat4d pair[] = {Translate(1, 0, 0), Translate(0, 2, 0)};
+    const RigExecArray<Mat4d> matrices(pair, 2);
+    const uint8_t authoredFlags[] = {1, 0}, connectedFlags[] = {0, 0};
+    const RigExecArray<uint8_t> authored(authoredFlags, 2),
+        connected(connectedFlags, 2);
+    CHECK(space.Run({&matrices, &authored, &noFrames, &noScalars, &noVectors,
+                     &noOrders, &noFlags}));
+    CHECK(SameMatrix(space.Out<Mat4d>(0), pair[0]));
+    CHECK(space.Out<uint8_t>(2) == 1);
+    CHECK(space.Run({&matrices, &connected, &noFrames, &noScalars, &noVectors,
+                     &noOrders, &noFlags}));
+    CHECK(SameMatrix(space.Out<Mat4d>(0), pair[1]));
+    payload.slots = {0, -1, -1};
+    Harness authoredOnly(ProviderArithmetic(), &payload, ins, outs);
+    CHECK(authoredOnly.Run({&matrices, &connected, &noFrames, &noScalars,
+                            &noVectors, &noOrders, &noFlags}));
+    CHECK(SameMatrix(authoredOnly.Out<Mat4d>(0), pair[0]));
+    CHECK(authoredOnly.Out<uint8_t>(2) == 0);
+
+    payload.kind = K::MatrixToFrame;
+    payload.slots = {1};
+    Harness toFrame(ProviderArithmetic(), &payload, ins, outs);
+    CHECK(toFrame.Run({&matrices, &noFlags, &noFrames, &noScalars, &noVectors,
+                       &noOrders, &noFlags}));
+    const PointFrame published = toFrame.Out<PointFrame>(1);
+    CHECK(SameBits(published.points, Moved(0, 2, 0).points) &&
+          published.flags == 1);
+
+    // A reset ends the walk up the ancestors.
+    payload.kind = K::RelativeXform;
+    payload.slots = {0, 0, 1};
+    Harness relative(ProviderArithmetic(), &payload, ins, outs);
+    const uint8_t resetFlags[] = {1};
+    const RigExecArray<uint8_t> resets(resetFlags, 1);
+    CHECK(relative.Run({&matrices, &noFlags, &noFrames, &noScalars, &noVectors,
+                        &noOrders, &resets}));
+    CHECK(SameMatrix(relative.Out<Mat4d>(0), pair[0]));
+
+    // Compile errors: a kind that is a lookup, a missing local.
+    payload.kind = K::Attribute;
+    payload.slots = {0, 1};
+    Harness attribute(ProviderArithmetic(), &payload, ins, outs);
+    CHECK(!attribute.evaluator);
+    payload.kind = K::RelativeXform;
+    payload.slots = {-1, 0};
+    Harness gap(ProviderArithmetic(), &payload, ins, outs);
+    CHECK(!gap.evaluator);
+    // A slot past its list fails the evaluation.
+    payload.kind = K::FrameToSpace;
+    payload.slots = {3};
+    Harness past(ProviderArithmetic(), &payload, ins, outs);
+    CHECK(past.evaluator);
+    CHECK(!past.Run({&noMatrices, &noFlags, &noFrames, &noScalars, &noVectors,
+                     &noOrders, &noFlags}));
+}
+
+void
+TestAffineFrame()
+{
+    const std::vector<const RigExecPortHandle *> ins = {
+        &AffineFrameMatrices(),    &AffineFrameDoubles(),
+        &AffineFrameBools(),       &AffineFrameInts(),
+        &AffineFrameVectors(),     &AffineFrameIntVectors(),
+        &AffineFrameIntItems(),    &AffineFrameDoubleItems(),
+        &AffineFrameMatrixItems(), &AffineFrameItemSpans(),
+        &AffineFrameFrames()};
+    const RigExecArray<Mat4d> noMatrices;
+    const RigExecArray<double> noDoubles;
+    const RigExecArray<uint8_t> noBools;
+    const RigExecArray<int32_t> noInts;
+    const RigExecArray<Vec3d> noVectors;
+    const RigExecArray<rigExecStd::Vec3i> noIntVectors;
+
+    // Copy frame: the source relation, everything else at its default.
+    AffineFramePayload payload;
+    payload.kind = 0;
+    payload.slots = {-1, -1, 0};
+    Harness copy(AffineFrame(), &payload, ins, {&AffineFrameOut()});
+    const PointFrame sources[] = {Moved(1, 2, 3)};
+    const RigExecArray<PointFrame> frames(sources, 1);
+    CHECK(copy.Run({&noMatrices, &noDoubles, &noBools, &noInts, &noVectors,
+                    &noIntVectors, &noInts, &noDoubles, &noMatrices, &noInts,
+                    &frames}));
+    CHECK(SameMatrix(copy.Out<Mat4d>(0), Translate(1, 2, 3)));
+    // Preserving the location keeps the incoming translation.
+    payload.slots = {0, 0, 0};
+    Harness keep(AffineFrame(), &payload, ins, {&AffineFrameOut()});
+    const Mat4d incomings[] = {Translate(9, 8, 7)};
+    const RigExecArray<Mat4d> incoming(incomings, 1);
+    const uint8_t preserve[] = {1};
+    const RigExecArray<uint8_t> preserveLocation(preserve, 1);
+    CHECK(keep.Run({&incoming, &noDoubles, &preserveLocation, &noInts,
+                    &noVectors, &noIntVectors, &noInts, &noDoubles, &noMatrices,
+                    &noInts, &frames}));
+    CHECK(SameMatrix(keep.Out<Mat4d>(0), Translate(9, 8, 7)));
+
+    // An Armature blend whose target arrays disagree fails the evaluation.
+    const auto &constraint = rigExec::RigExecAffineFrameTypes[5];
+    payload.kind = 5;
+    payload.slots.assign(constraint.attributeCount + constraint.relationCount,
+                         -1);
+    payload.slots[3] = 0;
+    payload.slots[8] = 0;
+    payload.texts = {"ARMATURE_BLEND"};
+    Harness armature(AffineFrame(), &payload, ins, {&AffineFrameOut()});
+    CHECK(armature.evaluator);
+    const double weights[] = {1};
+    const RigExecArray<double> weightItems(weights, 1);
+    const int32_t span[] = {0, 1};
+    const RigExecArray<int32_t> spans(span, 2);
+    CHECK(!armature.Run({&noMatrices, &noDoubles, &noBools, &noInts, &noVectors,
+                         &noIntVectors, &noInts, &weightItems, &noMatrices,
+                         &spans, &frames}));
+    CHECK(armature.error.find("Armature") != std::string::npos);
+
+    // An unknown expression and a layout of the wrong size do not compile.
+    payload.kind = 9;
+    Harness unknown(AffineFrame(), &payload, ins, {&AffineFrameOut()});
+    CHECK(!unknown.evaluator);
+    payload.kind = 0;
+    payload.slots = {-1, -1};
+    payload.texts.clear();
+    Harness shortLayout(AffineFrame(), &payload, ins, {&AffineFrameOut()});
+    CHECK(!shortLayout.evaluator);
+}
+
 } // namespace
 
 int
@@ -262,6 +428,8 @@ main()
     TestProviderMatrix();
     TestFrameMatrix();
     TestProviderRefresh();
+    TestProviderArithmetic();
+    TestAffineFrame();
     if (failures) {
         std::printf("%d failures\n", failures);
         return 1;

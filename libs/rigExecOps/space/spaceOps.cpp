@@ -1,4 +1,5 @@
 #include "rigExecOps/space/spaceOps.h"
+#include "rigExecOps/space/providerOps.h"
 
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
@@ -506,6 +507,7 @@ RegisterSpaceOps(rigExec::RigExecOpRegistrar &registrar)
     registrar.Add(ProviderMatrix(), kProviderMatrixDesc);
     registrar.Add(FrameMatrix(), kFrameMatrixDesc);
     registrar.Add(ProviderRefresh(), kProviderRefreshDesc);
+    RegisterProviderOps(registrar);
 }
 
 } // namespace rigExecOps
