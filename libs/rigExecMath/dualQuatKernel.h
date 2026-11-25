@@ -12,7 +12,7 @@
 /// and conversions the polar split reads, following the <Point, Double>
 /// convention of latticeKernel.h and affineFrameKernel.h: Point is the
 /// geometry's point type, Double its affine double-precision counterpart.
-/// Gf form: dualQuat.h. Runtime form: rigExecRuntime/affineMath.h.
+/// Gf form: dualQuat.h. Runtime form: rigExecMath/affineMath.h.
 
 #include "frameParamsKernel.h"
 

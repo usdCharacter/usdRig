@@ -6,7 +6,7 @@
 #include "rigExecOps/opIo.h"
 #include "rigExecMath/ribbonFramesKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
-#include "rigExecRuntime/dualQuatMath.h"
+#include "rigExecMath/dualQuatMath.h"
 
 #include <vector>
 

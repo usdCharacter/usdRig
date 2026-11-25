@@ -3,7 +3,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "poseEvalHost.h"
 #include "poseInternal.h"
-#include "dualQuatMath.h"
+#include "rigExecMath/dualQuatMath.h"
 #include "rigExecMath/chainSolverKernel.h"
 #include "rigExecMath/frameBlendKernel.h"
 #include "rigExecMath/ribbonFramesKernel.h"

@@ -50,7 +50,7 @@ Format 21 also adds affine frame expressions (copy, mapped, skin influence,
 armature parent, bone and constraint frames) to the provider program. The
 runtime runs them through `rigExecMath/affineFrameKernel.h`, the definition
 native evaluation instantiates over Gf, over its own math mirror
-(`affineMath.h`).
+(`rigExecMath/affineMath.h`).
 
 Plugin movers use revision opcode 16 and the file's `external_movers` table. The
 runtime stores their bytes and calls the kernel a host installs with

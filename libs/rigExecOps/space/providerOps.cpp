@@ -7,7 +7,7 @@
 #include "rigExecMath/affineFrameKernel.h"
 #include "rigExecMath/switchMathKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
-#include "rigExecRuntime/affineMath.h"
+#include "rigExecMath/affineMath.h"
 
 #include <array>
 #include <iterator>

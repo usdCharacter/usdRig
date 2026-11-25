@@ -3,7 +3,7 @@
 #include "rigExecMath/skinKernel.h"
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
-#include "rigExecRuntime/dualQuatMath.h"
+#include "rigExecMath/dualQuatMath.h"
 
 #include <cmath>
 #include <cstdint>

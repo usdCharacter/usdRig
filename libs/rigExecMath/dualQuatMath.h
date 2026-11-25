@@ -1,12 +1,12 @@
 // The runtime's dual-quaternion math policy (dualQuatKernel.h) over
 // runtimeMath.h's Gf mirror. Header-only and store-free, so the ops can skin
 // with it.
-#ifndef RIGEXEC_RUNTIME_DUAL_QUAT_MATH_H
-#define RIGEXEC_RUNTIME_DUAL_QUAT_MATH_H
+#ifndef RIGEXEC_MATH_DUAL_QUAT_MATH_H
+#define RIGEXEC_MATH_DUAL_QUAT_MATH_H
 
 #include "rigExecMath/dualQuatKernel.h"
 #include "rigExecMath/switchMathKernel.h"
-#include "rigExecRuntime/runtimeMath.h"
+#include "rigExecMath/runtimeMath.h"
 
 #include <algorithm>
 #include <array>

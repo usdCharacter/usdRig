@@ -1,7 +1,7 @@
 // Runtime pose decomposition and frame blending; no USD dependencies.
 
 #include "poseInternal.h"
-#include "dualQuatMath.h"
+#include "rigExecMath/dualQuatMath.h"
 #include "rigExecMath/frameBlendKernel.h"
 #include "rigExecMath/frameParamsKernel.h"
 #include <algorithm>

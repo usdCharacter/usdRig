@@ -6,7 +6,7 @@
 #include "rigExecMath/spatialAccel.h"
 #include "rigExecMath/weightFieldKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
-#include "rigExecRuntime/dualQuatMath.h"
+#include "rigExecMath/dualQuatMath.h"
 
 #include <algorithm>
 #include <cmath>

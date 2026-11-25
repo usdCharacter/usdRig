@@ -37,6 +37,9 @@ starting its workflow, and keep this list current when adding or changing skills
   privately. The header-only `*Kernel.h` files here (pose, provider, and
   blend-layout arithmetic among them) also compile into the USD-free
   runtime; keep them free of `pxr/` and `rigExecGraph` includes.
+  `runtimeMath.h`, `dualQuatMath.h` and `affineMath.h` are the engine's own
+  vector, matrix and quaternion types (a `pxr`-free mirror of Gf, checked bit
+  for bit by `testRigExecRuntimeMath`); the runtime and the ops include them.
   `skeleton2dKernel.h` is the 2D skeleton solve; its rules without a public
   source are listed in `docs/references.md`.
 - `libs/rigExecGraph`: the USD-free op scheduler. The archive is

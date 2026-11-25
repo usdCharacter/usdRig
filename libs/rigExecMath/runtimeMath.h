@@ -2,7 +2,7 @@
 // Licensed under the Tomorrow Open Source Technology License 1.0.
 // See https://openusd.org/license and plugin/usdNoodles/LICENSE.txt.
 
-// rigExecRuntime vendored scalar math: vectors.
+// rigExecMath vendored scalar math: vectors.
 // An operational mirror of the OpenUSD Gf subset the kernels use. Every
 // operation performs the SAME floating-point operations in the SAME order
 // as its Gf counterpart -- including Gf's quirks (division multiplies by
@@ -14,8 +14,8 @@
 // comparison, USD linked into the TEST only -- never here).
 // Only <algorithm>, <cmath>, <cstdint>: this header must compile with no
 // USD include path. The M4 import check enforces it.
-#ifndef RIGEXEC_RUNTIME_MATH_H
-#define RIGEXEC_RUNTIME_MATH_H
+#ifndef RIGEXEC_MATH_RUNTIME_MATH_H
+#define RIGEXEC_MATH_RUNTIME_MATH_H
 
 #include <algorithm>
 #include <cfloat>
@@ -2709,4 +2709,4 @@ RrPartialTransform(const RrMat4d &transform, double weight)
 
 } // namespace rigExec
 
-#endif // RIGEXEC_RUNTIME_MATH_H
+#endif // RIGEXEC_MATH_RUNTIME_MATH_H

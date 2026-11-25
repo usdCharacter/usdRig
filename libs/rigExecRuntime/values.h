@@ -8,7 +8,7 @@
 
 #include "rigExecBinary/wireTypes.h"
 #include "rigExecMath/switchMathKernel.h"
-#include "rigExecRuntime/runtimeMath.h"
+#include "rigExecMath/runtimeMath.h"
 
 #include <array>
 #include <cstddef>

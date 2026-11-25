@@ -62,7 +62,7 @@ struct IsBoundHost<
 //            pointBlocks.h (Point is the geometry's point type, Double its
 //            affine double counterpart): RigExecGfAffineMath and
 //            RigExecAffineFrameInputsT over Gf, the RrMat4d/RrVec3d mirror in
-//            rigExecRuntime/affineMath.h over the runtime types. Matrices
+//            rigExecMath/affineMath.h over the runtime types. Matrices
 //            stay row-vector, as in affineFrameKernel.h. Whole operation
 //            bodies do not live here, and no host method hides one.
 //

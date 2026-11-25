@@ -19,7 +19,7 @@
 #include "rigExecMath/surfaceProjectorKernel.h"
 #include "rigExecMath/weightFields.h"
 #include "rigExecRigTypes/rigTypes.h"
-#include "rigExecRuntime/dualQuatMath.h"
+#include "rigExecMath/dualQuatMath.h"
 #include "rigExecOps/constraint/autoClavicleOps.h"
 #include "rigExecOps/constraint/constraintOps.h"
 #include "rigExecOps/constraint/matchOps.h"

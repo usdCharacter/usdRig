@@ -4,7 +4,7 @@
 #include "rigExecOps/opIo.h"
 #include "rigExecMath/chainSolverKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
-#include "rigExecRuntime/dualQuatMath.h"
+#include "rigExecMath/dualQuatMath.h"
 
 #include <array>
 #include <cmath>

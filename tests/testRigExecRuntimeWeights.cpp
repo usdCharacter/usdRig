@@ -26,7 +26,7 @@
 #include "rigExec/api/registry.h"
 #include "rigExecOps/weight/weightOps.h"
 #include "rigExecMath/weightFieldKernel.h"
-#include "rigExecRuntime/dualQuatMath.h"
+#include "rigExecMath/dualQuatMath.h"
 #include "rigExecGraph/opValues.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/weightFields.h"

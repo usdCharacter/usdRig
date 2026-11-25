@@ -2,7 +2,7 @@
 // Portable provider kernels share the native arithmetic definition.
 #include "spaces.h"
 #include "poseInternal.h"
-#include "rigExecRuntime/affineMath.h"
+#include "rigExecMath/affineMath.h"
 #include "rigExecEvalCore/spaces.h"
 #include <algorithm>
 #include "rigExecGraph/providerArithmetic.h"

@@ -140,7 +140,7 @@
       "precedence": 1,
       "category": "derived",
       "globs": [
-        "libs/rigExecRuntime/runtimeMath.h"
+        "libs/rigExecMath/runtimeMath.h"
       ],
       "carve_outs": [],
       "spdx": "TOST-1.0",
@@ -528,7 +528,7 @@
       ],
       "carve_outs": [
         {
-          "glob": "libs/rigExecRuntime/runtimeMath.h",
+          "glob": "libs/rigExecMath/runtimeMath.h",
           "handled_by": "openusd-derived-runtime-math"
         },
         {

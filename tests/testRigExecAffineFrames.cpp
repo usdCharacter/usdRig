@@ -1,7 +1,7 @@
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/api/moverRegistry.h"
 #include "rigExecMath/affineFrameKernels.h"
-#include "rigExecRuntime/affineMath.h"
+#include "rigExecMath/affineMath.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/usd/usdGeom/points.h"
 #include <cmath>

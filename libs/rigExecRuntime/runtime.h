@@ -26,7 +26,7 @@
 #include "rigExec/api/registry.h"
 #include "rigExecBinary/external.h"
 #include "rigExecBinary/moverDefinition.h"
-#include "rigExecRuntime/runtimeMath.h"
+#include "rigExecMath/runtimeMath.h"
 #include "rigExecRuntime/values.h"
 
 #include <cstddef>

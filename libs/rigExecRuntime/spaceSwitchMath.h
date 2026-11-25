@@ -4,7 +4,7 @@
 #define RIGEXEC_RUNTIME_SPACE_SWITCH_MATH_H
 
 #include "rigExecMath/switchMathKernel.h"
-#include "rigExecRuntime/runtimeMath.h"
+#include "rigExecMath/runtimeMath.h"
 
 namespace rigExec {
 

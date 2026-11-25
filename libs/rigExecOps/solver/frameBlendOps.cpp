@@ -5,7 +5,7 @@
 #include "rigExecOps/solver/liveRests.h"
 #include "rigExecMath/frameBlendKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
-#include "rigExecRuntime/dualQuatMath.h"
+#include "rigExecMath/dualQuatMath.h"
 
 #include <cmath>
 #include <iterator>

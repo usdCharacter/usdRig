@@ -4,7 +4,7 @@
 #ifndef RIGEXEC_RUNTIME_POSE_MATH_H
 #define RIGEXEC_RUNTIME_POSE_MATH_H
 
-#include "rigExecRuntime/runtimeMath.h"
+#include "rigExecMath/runtimeMath.h"
 
 #include <array>
 

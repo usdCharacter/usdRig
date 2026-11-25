@@ -4,7 +4,7 @@
 // and libs/rigExec/solverKernels.cpp. Gf -> Rr, algorithm untouched.
 #include "rigExecRuntime/store.h"
 
-#include "rigExecRuntime/dualQuatMath.h"
+#include "rigExecMath/dualQuatMath.h"
 #include "rigExecRuntime/rbfSolver.h"
 #include "rigExecMath/switchMathKernel.h"
 

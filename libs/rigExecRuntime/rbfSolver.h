@@ -5,8 +5,8 @@
 #define RIGEXEC_RUNTIME_RBF_SOLVER_H
 
 #include "rigExecMath/rbfMethodKernel.h"
-#include "rigExecRuntime/dualQuatMath.h"
-#include "rigExecRuntime/runtimeMath.h"
+#include "rigExecMath/dualQuatMath.h"
+#include "rigExecMath/runtimeMath.h"
 #include "rigExecRuntime/values.h"
 
 #include <algorithm>

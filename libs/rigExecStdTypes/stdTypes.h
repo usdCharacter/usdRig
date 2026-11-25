@@ -6,7 +6,7 @@
 /// to the USD adapter.
 
 #include "rigExec/api/registry.h"
-#include "rigExecRuntime/runtimeMath.h"
+#include "rigExecMath/runtimeMath.h"
 #include "rigExecStdTypes/array.h"
 
 #include <cstdint>
