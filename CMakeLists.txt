@@ -1598,6 +1598,7 @@ set(_rigexec_op_parity_rigs
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/computed_weights.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/computed_chains.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/volume_placements.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/external_op_parity.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/frame_record_fallbacks.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/solver_checkpoint.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/space_switch_carry.usda"
@@ -1622,7 +1623,10 @@ set(_rigexec_op_parity_rigs
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/ribbon.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/examples/05_TwistRibbonSpine.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/examples/06_LatticeBulge.usda"
-    "${CMAKE_CURRENT_SOURCE_DIR}/examples/ArmRig.usda")
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/ArmRig.usda"
+    --chunked
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/skin_mover.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/oneloop_two_limbs.usda")
 rigexec_add_test(NAME testRigExecBakedOpParity COMMAND testRigExecBakedOpParity
     ${_rigexec_op_parity_rigs})
 set_tests_properties(testRigExecBakedOpParity PROPERTIES

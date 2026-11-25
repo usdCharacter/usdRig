@@ -13,6 +13,8 @@
 #include "rigExecScene/geometrySceneTranslation.h"
 #include "rigExecScene/sceneDescriptors.h"
 #include "rigExecScene/usdSceneAccess.h"
+#include "rigExecScene/externalOps.h"
+#include "rigExecGraph/windowHistory.h"
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecStdTypes/stdTypes.h"
 
@@ -35,7 +37,9 @@
 
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/plug/registry.h"
+#include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/pathUtils.h"
+#include "pxr/base/tf/setenv.h"
 #include "pxr/base/tf/stringUtils.h"
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/usd/editContext.h"
@@ -739,6 +743,200 @@ ProbeCommits(const B &b)
     }
 }
 
+// A blend's channels as its gather read them: each weight from its pose
+// slot or its leaf, and for a whole blend each sample's activation leaf and
+// sparse layout or consumed dense points, in activation order.
+std::vector<RigExecBlendChannel>
+BlendChannels(const B &b, const B::GeomRevision &revision)
+{
+    const std::vector<VtValue> &leaves =
+        RigExecBakedResolvePathLeaves(b, revision.leaves);
+    const auto leaf = [&](int k) {
+        if (revision.blendChunked)
+            return RigExecBakedResolvePathLeaf(b, revision.leaves, size_t(k));
+        return k >= 0 && size_t(k) < leaves.size() ? leaves[size_t(k)]
+                                                   : VtValue();
+    };
+    std::vector<RigExecBlendChannel> channels;
+    if (revision.blendChunked)
+        channels = revision.blendSamples;
+    else
+        for (const auto &bound : revision.blendChannels) {
+            RigExecBlendChannel channel;
+            for (const auto &s : bound.samples) {
+                RigExecBlendSampleData sample;
+                const VtValue activation = leaf(s.activationLeaf);
+                if (activation.IsHolding<float>())
+                    sample.activation = activation.UncheckedGet<float>();
+                if (s.blendShape.IsEmpty())
+                    sample.points = s.lastPoints;
+                else
+                    sample.layout = s.layout;
+                channel.samples.push_back(std::move(sample));
+            }
+            std::stable_sort(channel.samples.begin(), channel.samples.end(),
+                             [](const RigExecBlendSampleData &x,
+                                const RigExecBlendSampleData &y) {
+                                 return x.activation < y.activation;
+                             });
+            channels.push_back(std::move(channel));
+        }
+    for (size_t c = 0; c < channels.size() && c < revision.blendChannels.size();
+         ++c) {
+        const auto &bound = revision.blendChannels[c];
+        const VtValue held = leaf(bound.weightHeldLeaf);
+        if (bound.poseWeight >= 0 &&
+            !(held.IsHolding<bool>() && held.UncheckedGet<bool>())) {
+            channels[c].weight = b.poseWeights[size_t(bound.poseWeight)];
+        } else {
+            const VtValue value = leaf(bound.weightLeaf);
+            channels[c].weight =
+                value.IsHolding<float>() ? value.UncheckedGet<float>() : 0.0f;
+        }
+    }
+    return channels;
+}
+
+// An External revision's declared inputs, gathered from the leaves and
+// provider values its assembly read, and the op values over them.
+struct ExternalReplay {
+    std::vector<VtValue> declared;
+    std::vector<GfVec3f> base;
+    RigExecMoverParameters p;
+    RigExecExternalOpValues values;
+
+    ExternalReplay(const B &b, const B::GeomChain &chain,
+                   const B::GeomRevision &revision)
+        : base(chain.lastBase.cbegin(), chain.lastBase.cend())
+    {
+        RigExecRevisionLeafView view;
+        view.decl = &revision.leaves.decl;
+        view.values = &RigExecBakedResolvePathLeaves(b, revision.leaves);
+        view.external = &revision.externalPayload;
+        if (!revision.binding.phases.empty())
+            view.phased = &revision.revisionInputs;
+        RigExecProviderValues provider;
+        if (revision.haveTransform)
+            provider.transform = &revision.transform;
+        if (revision.haveCarry)
+            provider.carry = &revision.carry;
+        if (!revision.influences.empty())
+            provider.influenceTransforms = &revision.influences;
+        if (revision.weightObject >= 0)
+            provider.weights =
+                revision.weightCurrentPhase
+                    ? &revision.currentPhasePacket
+                    : &b.weightPackets[size_t(revision.weightObject)];
+        provider.basePoints = base;
+        p = RigExecGatherExternalInputs(revision.binding, view, provider,
+                                        &declared);
+        values.inputs = &declared;
+        values.transform = provider.transform;
+        values.influenceTransforms = provider.influenceTransforms;
+        values.basePoints = &base;
+    }
+    ExternalReplay(const ExternalReplay &) = delete;
+    ExternalReplay &operator=(const ExternalReplay &) = delete;
+};
+
+// A windowed op starts from an empty history.
+bool
+RunExternal(const B::GeomRevision &revision, const ExternalReplay &x,
+            RigExecGeometryOpRunner &runner, std::vector<GfVec3f> &points,
+            std::string *error)
+{
+    RigExecWindowRing ring;
+    RigExecWindowPacketPtr capture;
+    std::shared_ptr<const void> cache;
+    RigExecWindowRun window;
+    window.ring = &ring;
+    window.capture = &capture;
+    window.cache = &cache;
+    return RigExecRunExternalOp(revision.binding, x.p, x.values, runner, points,
+                                error, &window);
+}
+
+bool
+IsCloth(const B::GeomRevision &revision)
+{
+    return revision.binding.externalSchema == SchemaTypeName::RigExecClothMover;
+}
+
+std::string
+ExternalKind(const B::GeomRevision &revision)
+{
+    return "External " + TypeName(revision.binding.externalSchema);
+}
+
+// Cloth is exempt from bit identity: the op solves from an empty history
+// while the body read its window ring, so only the point count and
+// finiteness are compared.
+void
+CompareShape(const std::string &family, const std::string &kind,
+             const std::string &object, const std::vector<GfVec3f> &baked,
+             const std::vector<GfVec3f> &op, bool refusal,
+             const std::string &note)
+{
+    Tally &tally = g_tally[family + "/" + kind];
+    ++tally.compared;
+    if (refusal)
+        ++tally.refusals;
+    if (baked.size() != op.size()) {
+        Report(family + "/" + kind, object,
+               "point count baked " + std::to_string(baked.size()) + " op " +
+                   std::to_string(op.size()) +
+                   (note.empty() ? std::string() : " (" + note + ")"));
+        return;
+    }
+    for (size_t i = 0; i < op.size(); ++i)
+        for (size_t k = 0; k < 3; ++k)
+            if (std::isfinite(baked[i][k]) && !std::isfinite(op[i][k])) {
+                Report(family + "/" + kind, object,
+                       "point " + std::to_string(i) + " is not finite");
+                return;
+            }
+}
+
+void
+ProbeExternal(const B &b, const B::GeomChain &chain, size_t r)
+{
+    const auto &revision = chain.revisions[r];
+    const std::string kind = ExternalKind(revision);
+    const ExternalReplay x(b, chain, revision);
+    const bool admitted =
+        revision.parameters.valid && revision.status.AllowsApply();
+    CompareFlag("RevisionChunk", kind, revision.moverPathText, "packet valid",
+                revision.parameters.valid, x.p.valid);
+    const auto entering = VersionPoints(chain, r);
+    const auto published = VersionPoints(chain, r + 1);
+    for (const RangeSetting &setting : kRangeSettings) {
+        RigExecGeometryOpRunner runner;
+        runner.compile.useSimd = b.useSimd;
+        if (setting.grain != kGeometryGrain) {
+            runner.compile.rangeGrain = setting.grain;
+            runner.compile.rangeThreshold = 0;
+        }
+        if (setting.threads)
+            runner.evaluate.tasks = g_tasks.get();
+        std::vector<GfVec3f> points = entering;
+        std::string error;
+        const bool applied = admitted && x.p.valid &&
+                             RunExternal(revision, x, runner, points, &error);
+        if (!applied)
+            points = entering;
+        const std::string object = revision.moverPathText + setting.label;
+        const std::string note =
+            applied ? std::string() : "op refused: " + error;
+        if (IsCloth(revision))
+            CompareShape("RevisionChunk", kind, object, published, points,
+                         !admitted, note);
+        else
+            Compare("RevisionChunk", kind, object, Points(published),
+                    Points(points), !admitted, note);
+    }
+    ++g_envelopes[kind][EnvelopeShape(revision.parameters)];
+}
+
 // RevisionChunk: the body runs a revision as vertex ranges; the op runs it
 // at the scene's grain, whole and cut into ranges of several sizes. Each
 // revision is replayed over the version entering it and compared with the
@@ -762,10 +960,7 @@ ProbeRevisions(const B &b)
                 continue;
             }
             if (revision.op == RigExecRevisionOp::External) {
-                Unprobed("RevisionChunk", kind,
-                         "the baked External revision carries the handler's "
-                         "assembled payload, not the declared input list its "
-                         "op reads");
+                ProbeExternal(b, chain, r);
                 continue;
             }
             if (revision.op != RigExecRevisionOp::BlendShape &&
@@ -773,41 +968,20 @@ ProbeRevisions(const B &b)
                 Unprobed("RevisionChunk", kind, "no op for this revision");
                 continue;
             }
-            if (revision.op == RigExecRevisionOp::BlendShape &&
-                !revision.blendChunked) {
-                Unprobed("RevisionChunk", kind,
-                         "a whole blend's packet keeps only the summed deltas, "
-                         "not the channel samples the op reads");
-                continue;
-            }
             const auto entering = VersionPoints(chain, r);
             const auto published = VersionPoints(chain, r + 1);
             auto p = revision.parameters;
             if (revision.op == RigExecRevisionOp::Skin)
                 p.skinTransforms = revision.influences;
-            std::vector<RigExecBlendChannel> channels;
             const bool blend = revision.op == RigExecRevisionOp::BlendShape;
-            if (blend) {
-                channels = revision.blendSamples;
-                for (size_t c = 0;
-                     c < channels.size() && c < revision.blendChannels.size();
-                     ++c) {
-                    const auto &bound = revision.blendChannels[c];
-                    const auto held = RigExecBakedResolvePathLeaf(
-                        b, revision.leaves, size_t(bound.weightHeldLeaf));
-                    if (bound.poseWeight >= 0 &&
-                        !(held.IsHolding<bool>() && held.UncheckedGet<bool>()))
-                        channels[c].weight =
-                            b.poseWeights[size_t(bound.poseWeight)];
-                    else {
-                        const auto value = RigExecBakedResolvePathLeaf(
-                            b, revision.leaves, size_t(bound.weightLeaf));
-                        channels[c].weight = value.IsHolding<float>()
-                                                 ? value.UncheckedGet<float>()
-                                                 : 0.0f;
-                    }
-                }
-            }
+            const std::vector<RigExecBlendChannel> channels =
+                blend ? BlendChannels(b, revision)
+                      : std::vector<RigExecBlendChannel>();
+            const std::vector<GfVec3f> blendBase =
+                blend && !revision.blendChunked
+                    ? std::vector<GfVec3f>(chain.lastBase.cbegin(),
+                                           chain.lastBase.cend())
+                    : entering;
             for (const RangeSetting &setting : kRangeSettings) {
                 RigExecGeometryOpRunner runner;
                 runner.compile.useSimd = b.useSimd;
@@ -822,7 +996,7 @@ ProbeRevisions(const B &b)
                 bool applied = p.valid && revision.status.AllowsApply() &&
                                RigExecRunGeometryOp(
                                    revision.op, p, blend ? &channels : nullptr,
-                                   entering, runner, points, &error);
+                                   blendBase, runner, points, &error);
                 if (!applied)
                     points = entering;
                 const bool admitted = p.valid && revision.status.AllowsApply();
@@ -843,7 +1017,75 @@ ProbeRevisions(const B &b)
 
 // RangeChain: a chain's revisions as one op program, so consecutive ranged
 // ops run as one range chain, at every range setting, against the same ops
-// run node by node. Only chains every revision of which an op takes as is.
+// run node by node. An External op takes its points from the host, so it
+// runs between the programs of the segments around it.
+struct ChainReplay {
+    RigExecMoverParameters p;
+    std::vector<RigExecBlendChannel> channels;
+    std::vector<GfVec3f> base;
+    std::unique_ptr<ExternalReplay> external;
+};
+
+bool
+RunChainSegment(const B &b, const B::GeomChain &chain,
+                const std::vector<ChainReplay> &replays, size_t begin,
+                size_t end, const RangeSetting &setting,
+                std::vector<GfVec3f> &points, std::string *error)
+{
+    RigExecRigDescBuilder builder;
+    std::vector<RigExecGeometryOpNode> nodes(end - begin);
+    bool ok = true;
+    for (size_t k = 0; k < nodes.size() && ok; ++k) {
+        const auto &revision = chain.revisions[begin + k];
+        const ChainReplay &x = replays[begin + k];
+        const RigExecGeometryOpNode *upstream = k ? &nodes[k - 1] : nullptr;
+        ok = revision.op == RigExecRevisionOp::BlendShape
+                 ? RigExecAddGeometryBlendOp(x.channels, x.p, &builder,
+                                             upstream, &nodes[k], error)
+                 : RigExecAddGeometryOp(revision.op, x.p, &builder, upstream,
+                                        &nodes[k], error);
+    }
+    RigExecCompileOptions options = RigExecGeometryCompileOptions();
+    options.useSimd = b.useSimd;
+    if (setting.grain != kGeometryGrain) {
+        options.rangeGrain = setting.grain;
+        options.rangeThreshold = 0;
+    }
+    RigExecEvaluatorOptions evaluate;
+    if (setting.threads)
+        evaluate.tasks = g_tasks.get();
+    const auto desc = ok ? builder.Build(error) : nullptr;
+    const auto program = desc ? RigExecCompile(*desc, options, error) : nullptr;
+    auto evaluator =
+        program ? RigExecEvaluator::Create(program, evaluate, error) : nullptr;
+    if (!evaluator)
+        return false;
+    for (size_t k = 0; k < nodes.size(); ++k) {
+        const ChainReplay &x = replays[begin + k];
+        const std::vector<GfVec3f> *fed = k ? nullptr : &points;
+        const bool written =
+            chain.revisions[begin + k].op == RigExecRevisionOp::BlendShape
+                ? RigExecWriteGeometryBlendInputs(x.channels, x.p, nodes[k],
+                                                  x.base, fed, points.size(),
+                                                  evaluator.get(), error)
+                : RigExecWriteGeometryOpInputs(x.p, nodes[k], fed,
+                                               points.size(), evaluator.get(),
+                                               error);
+        if (!written)
+            return false;
+    }
+    if (!evaluator->Evaluate(error))
+        return false;
+    const auto *out =
+        static_cast<const rigExecStd::RigExecArray<rigExecStd::Vec3f> *>(
+            evaluator->GetOutput(nodes.back().out));
+    if (!out || out->Size() != points.size())
+        return false;
+    for (size_t i = 0; i < points.size(); ++i)
+        points[i] = GfVec3f((*out)[i][0], (*out)[i][1], (*out)[i][2]);
+    return true;
+}
+
 void
 ProbeRangeChains(const B &b)
 {
@@ -853,34 +1095,67 @@ ProbeRangeChains(const B &b)
         bool usable = true;
         std::string kinds;
         for (const auto &revision : chain.revisions) {
-            kinds +=
-                (kinds.empty() ? "" : ">") + std::string(OpName(revision.op));
-            usable = usable && !revision.gpuOwned && !revision.rangeSetAside &&
-                     revision.op != RigExecRevisionOp::BlendShape &&
-                     RigExecGeometryOpSupported(revision.op) &&
-                     revision.parameters.valid && revision.status.AllowsApply();
+            const bool external = revision.op == RigExecRevisionOp::External;
+            kinds += (kinds.empty() ? "" : ">") +
+                     (external ? ExternalKind(revision)
+                               : std::string(OpName(revision.op)));
+            usable =
+                usable && !revision.gpuOwned && !revision.rangeSetAside &&
+                (external ? RigExecExternalOpHandle(revision.binding) != nullptr
+                          : revision.op == RigExecRevisionOp::BlendShape ||
+                                RigExecGeometryOpSupported(revision.op)) &&
+                revision.parameters.valid && revision.status.AllowsApply();
         }
         if (!usable) {
             Unprobed("RangeChain", "chain", "a revision no op takes as is");
             continue;
         }
         const auto entering = VersionPoints(chain, 0);
-        std::vector<RigExecMoverParameters> params;
-        for (const auto &revision : chain.revisions) {
-            params.push_back(revision.parameters);
+        std::vector<ChainReplay> replays(chain.revisions.size());
+        for (size_t r = 0; r < chain.revisions.size(); ++r) {
+            const auto &revision = chain.revisions[r];
+            ChainReplay &x = replays[r];
+            x.p = revision.parameters;
             if (revision.op == RigExecRevisionOp::Skin)
-                params.back().skinTransforms = revision.influences;
+                x.p.skinTransforms = revision.influences;
+            if (revision.op == RigExecRevisionOp::BlendShape) {
+                x.channels = BlendChannels(b, revision);
+                x.base = revision.blendChunked
+                             ? VersionPoints(chain, r)
+                             : std::vector<GfVec3f>(chain.lastBase.cbegin(),
+                                                    chain.lastBase.cend());
+            }
+            if (revision.op == RigExecRevisionOp::External)
+                x.external =
+                    std::make_unique<ExternalReplay>(b, chain, revision);
         }
+        const bool cloth =
+            std::any_of(chain.revisions.begin(), chain.revisions.end(),
+                        [](const B::GeomRevision &revision) {
+                            return revision.op == RigExecRevisionOp::External &&
+                                   IsCloth(revision);
+                        });
         std::vector<GfVec3f> stepped = entering;
         bool stepsApplied = true;
         for (size_t r = 0; r < chain.revisions.size() && stepsApplied; ++r) {
+            const auto &revision = chain.revisions[r];
+            const ChainReplay &x = replays[r];
             RigExecGeometryOpRunner runner;
             runner.compile.useSimd = b.useSimd;
             runner.compile.rangeGrain = 0;
             std::vector<GfVec3f> next = stepped;
-            stepsApplied =
-                RigExecRunGeometryOp(chain.revisions[r].op, params[r], nullptr,
-                                     stepped, runner, next);
+            if (x.external)
+                stepsApplied =
+                    x.external->p.valid &&
+                    RunExternal(revision, *x.external, runner, next, nullptr);
+            else
+                stepsApplied = RigExecRunGeometryOp(
+                    revision.op, x.p,
+                    revision.op == RigExecRevisionOp::BlendShape ? &x.channels
+                                                                 : nullptr,
+                    revision.op == RigExecRevisionOp::BlendShape ? x.base
+                                                                 : stepped,
+                    runner, next);
             stepped = std::move(next);
         }
         if (!stepsApplied) {
@@ -888,47 +1163,42 @@ ProbeRangeChains(const B &b)
             continue;
         }
         for (const RangeSetting &setting : kRangeSettings) {
-            RigExecRigDescBuilder builder;
-            std::vector<RigExecGeometryOpNode> nodes(chain.revisions.size());
+            std::vector<GfVec3f> piped = entering;
             std::string error;
             bool ok = true;
-            for (size_t r = 0; r < nodes.size() && ok; ++r)
-                ok = RigExecAddGeometryOp(chain.revisions[r].op, params[r],
-                                          &builder, r ? &nodes[r - 1] : nullptr,
-                                          &nodes[r], &error);
-            RigExecCompileOptions options = RigExecGeometryCompileOptions();
-            options.useSimd = b.useSimd;
-            if (setting.grain != kGeometryGrain) {
-                options.rangeGrain = setting.grain;
-                options.rangeThreshold = 0;
+            for (size_t r = 0; r < chain.revisions.size() && ok;) {
+                if (replays[r].external) {
+                    RigExecGeometryOpRunner runner;
+                    runner.compile.useSimd = b.useSimd;
+                    if (setting.grain != kGeometryGrain) {
+                        runner.compile.rangeGrain = setting.grain;
+                        runner.compile.rangeThreshold = 0;
+                    }
+                    if (setting.threads)
+                        runner.evaluate.tasks = g_tasks.get();
+                    ok = RunExternal(chain.revisions[r], *replays[r].external,
+                                     runner, piped, &error);
+                    ++r;
+                    continue;
+                }
+                size_t end = r + 1;
+                while (end < chain.revisions.size() && !replays[end].external)
+                    ++end;
+                ok = RunChainSegment(b, chain, replays, r, end, setting, piped,
+                                     &error);
+                r = end;
             }
-            RigExecEvaluatorOptions evaluate;
-            if (setting.threads)
-                evaluate.tasks = g_tasks.get();
-            const auto desc = ok ? builder.Build(&error) : nullptr;
-            const auto program =
-                desc ? RigExecCompile(*desc, options, &error) : nullptr;
-            auto evaluator =
-                program ? RigExecEvaluator::Create(program, evaluate, &error)
-                        : nullptr;
-            for (size_t r = 0; evaluator && r < nodes.size(); ++r)
-                if (!RigExecWriteGeometryOpInputs(
-                        params[r], nodes[r], r ? nullptr : &entering,
-                        entering.size(), evaluator.get(), &error))
-                    evaluator.reset();
-            std::vector<GfVec3f> piped;
-            if (evaluator && evaluator->Evaluate(&error)) {
-                const auto *out = static_cast<
-                    const rigExecStd::RigExecArray<rigExecStd::Vec3f> *>(
-                    evaluator->GetOutput(nodes.back().out));
-                for (const auto &p : *out)
-                    piped.emplace_back(p[0], p[1], p[2]);
-            }
-            Compare("RangeChain", kinds,
-                    chain.target.GetString() + setting.label, Points(stepped),
-                    Points(piped), false,
-                    piped.empty() ? "chain program failed: " + error
-                                  : std::string());
+            if (!ok)
+                piped.clear();
+            const std::string object = chain.target.GetString() + setting.label;
+            const std::string note =
+                ok ? std::string() : "chain program failed: " + error;
+            if (cloth && ok)
+                CompareShape("RangeChain", kinds, object, stepped, piped, false,
+                             note);
+            else
+                Compare("RangeChain", kinds, object, Points(stepped),
+                        Points(piped), false, note);
         }
     }
 }
@@ -3054,6 +3324,25 @@ ProbeRig(const std::string &file, Paint paint, bool dense)
     ProbeStage(UsdStage::Open(file), TfGetBaseName(file), paint, dense);
 }
 
+void
+ProbeChunked(const std::string &file)
+{
+    const std::string always = TfGetenv("RIGEXEC_BAKED_CHUNK_ALWAYS");
+    const std::string verts = TfGetenv("RIGEXEC_BAKED_CHUNK_VERTS");
+    TfSetenv("RIGEXEC_BAKED_CHUNK_ALWAYS", "1");
+    TfSetenv("RIGEXEC_BAKED_CHUNK_VERTS", "2");
+    ProbeStage(UsdStage::Open(file), TfGetBaseName(file) + " chunked",
+               Paint::None);
+    const auto restore = [](const char *name, const std::string &value) {
+        if (value.empty())
+            TfUnsetenv(name);
+        else
+            TfSetenv(name, value);
+    };
+    restore("RIGEXEC_BAKED_CHUNK_ALWAYS", always);
+    restore("RIGEXEC_BAKED_CHUNK_VERTS", verts);
+}
+
 // A wire: no example rig runs a curve mover as one. The curve's control
 // points move over frames 1 to 4 and each point is bound at its own (u, d).
 UsdStageRefPtr
@@ -3616,16 +3905,26 @@ main(int argc, char **argv)
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     // Rigs after --dense are probed on up to 12 frames of their range; rigs
     // after --painted are probed as they are and again under each painted
-    // partial envelope.
-    bool painted = false, dense = false;
+    // partial envelope; rigs after --chunked are probed with every skin cut
+    // into chunks of two points.
+    bool painted = false, dense = false, chunked = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--painted") == 0) {
             painted = true;
-            dense = false;
+            dense = chunked = false;
             continue;
         }
         if (std::strcmp(argv[i], "--dense") == 0) {
             dense = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "--chunked") == 0) {
+            chunked = true;
+            dense = false;
+            continue;
+        }
+        if (chunked) {
+            ProbeChunked(argv[i]);
             continue;
         }
         ProbeRig(argv[i], Paint::None, dense);
@@ -3673,41 +3972,74 @@ main(int argc, char **argv)
                     return 1;
                 }
     }
-    for (const char *family : {"Solve/",
-                               "RevisionChunk/",
-                               "Transform/MoverTransform/Matrix",
-                               "RangeChain/",
-                               "Derived/",
-                               "SkinMatrices/linear",
-                               "SkinMatrices/dualQuaternion",
-                               "WeightPacket/",
-                               "Constraint/",
-                               "Spaces/ProviderMatrix/",
-                               "Spaces/FrameMatrix/",
-                               "Spaces/ProviderRefresh",
-                               "Spaces/SpaceExpression/SpaceExpression",
-                               "Spaces/SpaceExpression/AffineFrame",
-                               "Commit/",
-                               "Solve/RigExecFkChain groups",
-                               "Pose/AvarInputs",
-                               "Pose/SpaceCheckpoint",
-                               "Pose/PoseInterpolator Rbf",
-                               "Pose/PoseInterpolator Rbf translation",
-                               "Pose/PoseInterpolator RbfMethod",
-                               "Pose/PoseInterpolator Network",
-                               "Pose/PoseInterpolator Maps",
-                               "Pose/RestCompose",
-                               "Pose/LadderCompose",
-                               "Pose/ComposeSlot",
-                               "Pose/SwitchedComposeSlot",
-                               "Pose/ShiftedComposeSlot moved",
-                               "Pose/ShiftedComposeSlot still"}) {
+    for (const char *family :
+         {"Solve/",
+          "RevisionChunk/Matrix",
+          "RevisionChunk/Skin",
+          "RevisionChunk/BlendShape",
+          "RevisionChunk/Smooth",
+          "RevisionChunk/Lattice",
+          "RevisionChunk/Wire",
+          "RevisionChunk/DeltaMush",
+          "RevisionChunk/VolumeCorrect",
+          "RevisionChunk/SurfaceProject",
+          "RevisionChunk/Ribbon",
+          "RevisionChunk/EmitGuidePoints",
+          "RevisionChunk/Wrinkle",
+          "RevisionChunk/External RigExecPatchMover",
+          "RevisionChunk/External RigExecSurfaceBindingMover",
+          "RevisionChunk/External RigExecLayeredSkinMover",
+          "RevisionChunk/External RigExecClothMover",
+          "Derived/RecomputeNormals",
+          "Derived/RecomputeExtent",
+          "Derived/SurfaceProjector",
+          "Derived/ShaderDials",
+          "SkinMatrices/linear chunk",
+          "SkinMatrices/dualQuaternion chunk",
+          "Transform/MoverTransform/Matrix",
+          "RangeChain/",
+          "Derived/",
+          "SkinMatrices/linear",
+          "SkinMatrices/dualQuaternion",
+          "WeightPacket/",
+          "Constraint/",
+          "Spaces/ProviderMatrix/",
+          "Spaces/FrameMatrix/",
+          "Spaces/ProviderRefresh",
+          "Spaces/SpaceExpression/SpaceExpression",
+          "Spaces/SpaceExpression/AffineFrame",
+          "Commit/",
+          "Solve/RigExecFkChain groups",
+          "Pose/AvarInputs",
+          "Pose/SpaceCheckpoint",
+          "Pose/PoseInterpolator Rbf",
+          "Pose/PoseInterpolator Rbf translation",
+          "Pose/PoseInterpolator RbfMethod",
+          "Pose/PoseInterpolator Network",
+          "Pose/PoseInterpolator Maps",
+          "Pose/RestCompose",
+          "Pose/LadderCompose",
+          "Pose/ComposeSlot",
+          "Pose/SwitchedComposeSlot",
+          "Pose/ShiftedComposeSlot moved",
+          "Pose/ShiftedComposeSlot still"}) {
         size_t compared = 0;
         for (const auto &[key, tally] : g_tally)
             if (key.compare(0, std::strlen(family), family) == 0)
                 compared += tally.compared;
         if (!compared) {
             std::printf("FAIL: no %s step compared\n", family);
+            return 1;
+        }
+    }
+    for (const char *kind : {"BlendShape", "External"}) {
+        size_t compared = 0;
+        for (const auto &[key, tally] : g_tally)
+            if (key.compare(0, 11, "RangeChain/") == 0 &&
+                key.find(kind) != std::string::npos)
+                compared += tally.compared;
+        if (!compared) {
+            std::printf("FAIL: no range chain holding %s compared\n", kind);
             return 1;
         }
     }
