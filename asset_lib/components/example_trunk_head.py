@@ -146,7 +146,11 @@ def write(folder, prefix, nodes, ports, depths, attachments):
     layer.Save()
     instances = {name: {'component': name, 'nodes': nodes[name], 'ports': ports[name],
                         'attachments': attachments[name]} for name in CHAIN}
-    library = os.path.relpath(LIBRARY, folder).replace('\\', '/')
+    try:
+        library = os.path.relpath(LIBRARY, folder).replace('\\', '/')
+    except ValueError:
+        # Windows cannot express a relative library path across drive letters.
+        library = LIBRARY.resolve().as_posix()
     payload = {'version': 1, 'library': library, 'fit': names['fit'], 'instances': instances}
     (folder / (prefix + '_rig.bindings.json')).write_text(json.dumps(payload, indent=2))
     compose_assembly(folder / (prefix + '_rig.bindings.json'), folder / names['composition'])
