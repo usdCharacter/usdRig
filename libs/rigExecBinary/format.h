@@ -610,17 +610,6 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// (OpGraph.chains). It retires format 35's one OpGraph step.
 inline constexpr uint32_t RigExecFormatVersion = 36;
 
-/// The first format version whose constraints may carry
-/// PreserveJointOrientation.
-inline constexpr uint32_t RigExecFormatPreserveJointOrientationVersion = 34;
-
-/// The first format version whose RecomputeNormals binding may carry the
-/// normals layout.
-inline constexpr uint32_t RigExecFormatNormalsLayoutVersion = 32;
-
-/// The first format version that may hold a Range Smooth or DeltaMush.
-inline constexpr uint32_t RigExecFormatRangeSmoothVersion = 28;
-
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
 /// reads them by RrSolverField (store.h), and computedCapture places them.
@@ -636,15 +625,6 @@ RigExecFormatReads(uint32_t version)
     return version >= RigExecFormatOldestReadable &&
            version <= RigExecFormatVersion;
 }
-
-/// The first format version whose Delta Mush, lattice and surface
-/// revisions may carry the extended settings.
-inline constexpr uint32_t RigExecFormatExtendedSettingsVersion = 21;
-
-/// The first format version whose provider program may hold affine frame
-/// expressions (provider op kind AffineFrame, with its affine_kind and
-/// affine_targets).
-inline constexpr uint32_t RigExecFormatAffineFramesVersion = 21;
 
 /// The mover attributes format 21 adds to revision op \p op (DeltaMush,
 /// Lattice or SurfaceProject), in the order the assembly reads them, with

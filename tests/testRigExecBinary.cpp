@@ -1525,7 +1525,6 @@ _HeldSettings(fb::RigExecWireFile *file, const std::string &mover)
     return held;
 }
 
-
 /// \p stage's file baked at time 1 into \p bytes; false with a diagnostic.
 static bool
 _BakeAtOne(const UsdStageRefPtr &stage, std::vector<uint8_t> *bytes)

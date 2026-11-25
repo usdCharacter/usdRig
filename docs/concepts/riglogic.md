@@ -218,9 +218,7 @@ From format 24 on, the `PoseInterpolator` record carries the three solves:
 - `MlNetwork`, and the mask as an `Input`.
 - `AnimatedMaps`, with `primvar_slots` and `primvar_sources`.
 
-A file never has to re-derive a solve. A reader built before format 24
-refuses these files, and a current reader opens older ones back to
-format 20.
+A file never has to re-derive a solve.
 
 ## Verification
 

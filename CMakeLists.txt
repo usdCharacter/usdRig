@@ -2178,10 +2178,18 @@ target_link_libraries(testRigExecOpSteps PRIVATE
 target_compile_definitions(testRigExecOpSteps PRIVATE ${_rigexec_schema_resource_define})
 foreach(_schedule serial parallel)
     rigexec_add_test(NAME testRigExecOpSteps_${_schedule}
-        COMMAND testRigExecOpSteps)
+        COMMAND testRigExecOpSteps --write
+            "${CMAKE_CURRENT_BINARY_DIR}/opSteps_${_schedule}.rigexec")
     set_tests_properties(testRigExecOpSteps_${_schedule} PROPERTIES
         ENVIRONMENT "RIGEXEC_BAKED_SCHEDULE=${_schedule}")
 endforeach()
+set_tests_properties(testRigExecOpSteps_serial PROPERTIES
+    FIXTURES_SETUP rigExecOpStepsFile)
+rigexec_add_test(NAME testRigExecOpSteps_unregistered
+    COMMAND testRigExecOpSteps --unregistered
+        "${CMAKE_CURRENT_BINARY_DIR}/opSteps_serial.rigexec")
+set_tests_properties(testRigExecOpSteps_unregistered PROPERTIES
+    FIXTURES_REQUIRED rigExecOpStepsFile)
 
 add_executable(testRigExecCrossDomainInputs tests/testRigExecCrossDomainInputs.cpp)
 target_link_libraries(testRigExecCrossDomainInputs PRIVATE rigExec)

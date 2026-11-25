@@ -71,8 +71,7 @@ A nonempty `inputs:falloffSamples` array replaces that table: uniformly
 spaced samples of `Curve` from the outer boundary (0) to the inner
 boundary (1), read as an ordinary per-frame input. The weight editor
 previews a curve edit through it without authoring, then commits the
-spline on release. Binary format 27 and later carry it; an older
-`.rigexec` plays its compiled table.
+spline on release. A `.rigexec` file carries it.
 
 ## Three decisions worth knowing
 

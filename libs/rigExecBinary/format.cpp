@@ -1278,8 +1278,6 @@ private:
         _overrideCount = _f.pose->overrideCount;
         // A windowed op names a step, and reads at most the longest window any
         // windowed operation may ask for.
-        if (_f.formatVersion < 25 && !_f.windowedOps.empty())
-            return _Bad("windowed_ops in a format older than 25");
         for (size_t w = 0; w < _f.windowedOps.size(); ++w) {
             const auto &op = _f.windowedOps[w];
             if (op.step < 0 || size_t(op.step) >= _steps)
@@ -1289,10 +1287,8 @@ private:
                 return _Bad(_At("windowed_ops", "frames", long(w)) +
                             ": out of range");
         }
-        // Format 31 adds published scalar primvars: they name distinct float or
-        // double property chains.
-        if (_f.formatVersion < 31 && !_f.scalarPrimvarChains.empty())
-            return _Bad("scalar_primvar_chains in a format older than 31");
+        // Published scalar primvars name distinct float or double property
+        // chains.
         {
             std::vector<char> seen(_f.propertyChains.size(), 0);
             for (size_t k = 0; k < _f.scalarPrimvarChains.size(); ++k) {
@@ -3289,15 +3285,10 @@ private:
                 op.output >= n || op.owner.empty())
                 return _Bad("provider op " + _N(i) +
                             ": invalid kind/output/owner");
-            // An affine frame expression (format 21) names its expression
-            // and its inputs match that expression's layout; every other
-            // kind names none.
+            // An affine frame expression names its expression and its inputs
+            // match that expression's layout; every other kind names none.
             const bool affine =
                 op.kind == uint32_t(RigExecProviderOpKind::AffineFrame);
-            if (affine && _f.formatVersion < RigExecFormatAffineFramesVersion)
-                return _Bad("provider op " + _N(i) + ": format " +
-                            _N(_f.formatVersion) +
-                            " holds no affine frame expressions");
             if (affine ? !RigExecAffineFrameInputsMatch(
                              op.affineKind, op.inputs.size(), op.affineTargets)
                        : (op.affineKind != 0 || op.affineTargets != 0))
@@ -5706,11 +5697,10 @@ private:
                       m.mapBegin.size() == interp.poseSlots.size() + 1 &&
                       !m.mapBegin.empty() && m.mapBegin.front() == 0 &&
                       m.mapBegin.back() == rows;
-            // Format 31: map_unclamped is absent (every map clamped) or one
-            // 0/1 byte per map.
+            // map_unclamped is absent (every map clamped) or one 0/1 byte per
+            // map.
             ok = ok && (m.mapUnclamped.empty() ||
-                        (_f.formatVersion >= 31 &&
-                         m.mapUnclamped.size() + 1 == m.mapBegin.size()));
+                        m.mapUnclamped.size() + 1 == m.mapBegin.size());
             for (size_t map = 0; ok && map < m.mapUnclamped.size(); ++map) {
                 ok = m.mapUnclamped[map] <= 1;
             }
@@ -5770,9 +5760,6 @@ private:
     bool _Skeleton2d(const fb::RigExecWireSolver &s, const std::string &row)
     {
         const fb::RigExecWireSkeleton2d &k = *s.skeleton2d;
-        if (_f.formatVersion < 31) {
-            return _Bad(row + ".skeleton2d: in a format older than 31");
-        }
         const size_t perBone = kRigExecBone2dChannelCount;
         const size_t n = k.solveOrder.size();
         const size_t outside = s.controls.size();
@@ -5867,9 +5854,6 @@ private:
         if (s.jointGroups.empty() && s.jointGroupMembers.empty() &&
             s.jointGroupSelectors.empty() && s.jointGroupParents.empty()) {
             return true;
-        }
-        if (_f.formatVersion < 31) {
-            return _Bad(row + ".joint_groups: in a format older than 31");
         }
         const size_t n = s.skeleton2d ? s.skeleton2d->solveOrder.size()
                                       : s.jointGroupParents.size();
@@ -6003,11 +5987,9 @@ private:
             return _Bad(row + ": order, ik_mode or flags out of range");
         }
         if ((c.flags & RigExecWireConstraintPreserveJointOrientation) &&
-            (!c.singleChainIk ||
-             _f.formatVersion < RigExecFormatPreserveJointOrientationVersion)) {
-            return _Bad(row + ": preserve joint orientation outside a format " +
-                        _N(RigExecFormatPreserveJointOrientationVersion) +
-                        " SingleChainIK constraint");
+            !c.singleChainIk) {
+            return _Bad(row + ": preserve joint orientation outside a "
+                              "SingleChainIK constraint");
         }
         const bool envelope = c.weightObject != 0 && c.pointsTarget == 0;
         if ((c.weightObjectIndex >= 0) != envelope ||
@@ -6736,7 +6718,7 @@ private:
             if (!need(D::RevisionTransforms, id) ||
                 (revision.weightObject >= 0 &&
                  !need(D::WeightPacket, uint64_t(revision.weightObject))) ||
-                ((!range || _f.formatVersion < 30) && !needVersion())) {
+                (!range && !needVersion())) {
                 return false;
             }
             const uint64_t base = uint64_t(int64_t(revision.chunkBase));
@@ -6746,8 +6728,7 @@ private:
                         return false;
                     }
                     uint64_t aliased = 0;
-                    if (!written[r][k] && _f.formatVersion >= 30 &&
-                        enteringSlot(k, &aliased) &&
+                    if (!written[r][k] && enteringSlot(k, &aliased) &&
                         !need(D::RevisionOut, aliased)) {
                         return false;
                     }
@@ -6988,7 +6969,7 @@ private:
                                : std::string();
                 }
                 if (method && text != "classicLinear" &&
-                    !(_f.formatVersion >= 30 && text == "dualQuaternion")) {
+                    text != "dualQuaternion") {
                     return _Bad(row + ": unsupported Range Skin method '" +
                                 text + "'");
                 }
@@ -7204,11 +7185,9 @@ private:
             return false;
         }
         if ((r.binding->normalsPerCorner || r.binding->normalsLeftHanded) &&
-            (r.op != uint8_t(fb::RevisionOp::RecomputeNormals) ||
-             _f.formatVersion < RigExecFormatNormalsLayoutVersion)) {
-            return _Bad(row + ".binding: a normals layout outside a format " +
-                        _N(RigExecFormatNormalsLayoutVersion) +
-                        " RecomputeNormals revision");
+            r.op != uint8_t(fb::RevisionOp::RecomputeNormals)) {
+            return _Bad(row + ".binding: a normals layout outside a "
+                              "RecomputeNormals revision");
         }
         for (size_t ch = 0; ch < r.blendChannels.size(); ++ch) {
             if (!_BlendChannel(r.blendChannels[ch],
@@ -7231,85 +7210,17 @@ private:
         return derived || _Chunks(r, row);
     }
 
-    /// Whether path id \p path is one of the \p count properties \p names
-    /// of prim \p prim.
-    bool _IsPropertyOf(uint32_t path, uint32_t prim, const char *const *names,
-                       size_t count) const
-    {
-        if (path == 0 || path >= _f.paths.size()) {
-            return false;
-        }
-        const fb::PathNode &node = _f.paths[path];
-        if (node.kind() != PathKind::Property || node.parent() != prim ||
-            node.name() >= _f.names.size()) {
-            return false;
-        }
-        const std::string &name = _f.names[node.name()];
-        for (size_t k = 0; k < count; ++k) {
-            if (name == names[k]) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /// The format-21 settings of a Delta Mush, lattice or surface revision
-    /// \p r. Format 21: its frame providers, as many as the op takes.
-    /// Format 20: none of them -- no influence, no path read and no leaf
-    /// site of a settings attribute of its mover -- so the file plays the
-    /// legacy deformer.
+    /// The frame providers of a Delta Mush, lattice or surface revision
+    /// \p r, as many as the op takes.
     bool _ExtendedSettings(const fb::RigExecWireRevision &r,
                            const std::string &row)
     {
-        size_t count = 0;
-        const char *const *names =
-            RigExecFormatExtendedSettingNames(r.op, &count);
-        if (!names) {
-            return true;
-        }
-        const char *op = fb::EnumNameRevisionOp(fb::RevisionOp(r.op));
-        if (_f.formatVersion >= RigExecFormatExtendedSettingsVersion) {
-            if (!RigExecFormatExtendedInfluencesValid(
-                    r.op, r.influenceSlots.size())) {
-                return _Bad(_At(row, "influence_slots") + ": " +
-                            _N(r.influenceSlots.size()) +
-                            " frame providers on a " + op + " revision");
-            }
-            return true;
-        }
-        if (!r.influenceSlots.empty()) {
-            return _Bad(_At(row, "influence_slots") + ": format " +
-                        _N(_f.formatVersion) +
-                        " holds no frame providers "
-                        "on a " +
-                        op + " revision");
-        }
-        if (r.moverPrim == 0) {
-            return true;
-        }
-        const auto refuse = [&](uint32_t path, const std::string &where) {
-            return _Bad(where + ": format " + _N(_f.formatVersion) +
-                        " holds no " + op + " setting " +
-                        RigExecFormatPathText(_f, path));
-        };
-        for (const auto *sites : {&r.leafSites, &r.layoutLeafSites}) {
-            for (size_t k = 0; k < sites->size(); ++k) {
-                const uint32_t path = (*sites)[k].path;
-                if (_IsPropertyOf(path, r.moverPrim, names, count)) {
-                    return refuse(path, row +
-                                            (sites == &r.leafSites
-                                                 ? ".leaf_sites["
-                                                 : ".layout_leaf_sites[") +
-                                            _N(k) + "]");
-                }
-            }
-        }
-        const auto &reads = _f.geometry->pathReads;
-        for (size_t i = 0; i < reads.size(); ++i) {
-            if (_IsPropertyOf(reads[i].path, r.moverPrim, names, count)) {
-                return refuse(reads[i].path,
-                              "geometry.path_reads[" + _N(i) + "]");
-            }
+        if (!RigExecFormatExtendedInfluencesValid(r.op,
+                                                  r.influenceSlots.size())) {
+            return _Bad(_At(row, "influence_slots") + ": " +
+                        _N(r.influenceSlots.size()) + " frame providers on a " +
+                        fb::EnumNameRevisionOp(fb::RevisionOp(r.op)) +
+                        " revision");
         }
         return true;
     }
@@ -7452,14 +7363,8 @@ private:
         }
         const bool ranges = RigExecFormatIsRangeRevision(r);
         const bool blendGroups = RigExecFormatIsChunkBlend(r);
-        if (blendGroups && _f.formatVersion < 29)
-            return _Bad(row + ": blend channel keys require format 29");
         if (!keyed) {
-            if (ranges &&
-                (!RigExecFormatIsRangeOp(r.op) ||
-                 ((r.op == uint8_t(fb::RevisionOp::Smooth) ||
-                   r.op == uint8_t(fb::RevisionOp::DeltaMush)) &&
-                  _f.formatVersion < RigExecFormatRangeSmoothVersion))) {
+            if (ranges && !RigExecFormatIsRangeOp(r.op)) {
                 return _Bad(row + ": " + _N(r.chunks.size()) +
                             " chunks, but not chunked");
             }

@@ -100,9 +100,7 @@ Blender-generated fixture coordinates test the results independently.
 
 Newly authored surface, Delta Mush, or lattice settings require updated runtime
 consumers. Binary exports carry these settings on the existing SurfaceProject,
-DeltaMush and Lattice revisions from format 21
-(`RigExecFormatExtendedSettingsVersion` in `libs/rigExecBinary/format.h`); a
-format-20 file holds none of them and plays the legacy deformer.
+DeltaMush and Lattice revisions.
 USD assets must likewise be opened with the updated schema and runtime.
 
 

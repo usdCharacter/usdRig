@@ -457,10 +457,8 @@ scripts; their defaults look for a sibling dependency install.
    selects nothing. Pass the `.cpp` files that include it as well.
    `ctest --test-dir build -L fast` is the short tier. `ctest -L usd-free`
    runs without a stage. `tests/fixtures/minimal.rigexec` is the checked-in
-   program `testRigExecRuntimeFixture` opens; `minimal_format32.rigexec` is
-   the same program before the manifest, which it and `testRigExecManifest`
-   open through the upgrade, and `minimal_format34.rigexec` the same before
-   op nodes.
+   program `testRigExecRuntimeFixture` opens. Files of an older format are
+   refused, not upgraded: re-bake the fixtures when the format changes.
    `bin/build_rigexec.sh` writes `build/compile_commands.json` and uses
    ccache when it is on `PATH`. `.clangd` reads that database.
    `bin/check_runtime_usd_free.sh` compiles the runtime with no `pxr`

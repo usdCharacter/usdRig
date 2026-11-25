@@ -6,6 +6,7 @@
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/api/compile.h"
 #include "rigExec/api/evaluator.h"
+#include "rigExec/api/registry.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExecBinary/format.h"
@@ -33,6 +34,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <set>
 #include <string>
 #include <vector>
@@ -542,7 +545,7 @@ Refused(const fb::RigExecWireFile &file, const char *why)
 /// program, bit for bit, edits included; files whose op graph is damaged
 /// are refused at Open.
 void
-TestRuntime()
+TestRuntime(const char *writeTo)
 {
     RigExecBakedProgramTesting::SetOpInjector(
         [](const RigExecBakedProgramImpl &B, RigExecBakedOpInjection *out) {
@@ -562,6 +565,12 @@ TestRuntime()
     CHECK(opened);
     if (!opened)
         return;
+    if (writeTo) {
+        std::ofstream out(writeTo, std::ios::binary);
+        out.write(reinterpret_cast<const char *>(bytes.data()),
+                  std::streamsize(bytes.size()));
+        CHECK(bool(out));
+    }
     struct Edit {
         float lift;
         double moving;
@@ -665,12 +674,44 @@ TestFailingNode()
     RigExecBakedProgramTesting::SetOpInjector(nullptr);
 }
 
+/// The file \p path holds op steps: Open refuses it while no op or type
+/// library is registered, and opens it given the built-in libraries.
+void
+TestUnregistered(const char *path)
+{
+    std::ifstream in(path, std::ios::binary);
+    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)),
+                                     std::istreambuf_iterator<char>());
+    CHECK(!bytes.empty());
+    CHECK(!RigExecRegistry::IsInitialized());
+    std::string error;
+    CHECK(!RigExecRuntimeReader::Open(bytes.data(), bytes.size(), &error));
+    CHECK(Contains(error, "open it with the op and type libraries"));
+    CHECK(!RigExecRegistry::IsInitialized());
+    const bool opened =
+        bool(RigExecRuntimeReader::Open(bytes.data(), bytes.size(), nullptr, 0,
+                                        RigExecBuiltinRegistrations(), &error));
+    if (!opened)
+        std::printf("open with libraries: %s\n", error.c_str());
+    CHECK(opened && RigExecRegistry::IsInitialized());
+}
+
 } // namespace
 
+/// With --write FILE the baked file is also written to FILE; with
+/// --unregistered FILE only that file is opened, before any registry exists.
 int
-main()
+main(int argc, char **argv)
 {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+    const char *writeTo = nullptr;
+    if (argc == 3 && std::strcmp(argv[1], "--unregistered") == 0) {
+        TestUnregistered(argv[2]);
+        std::printf(failures ? "%d failure(s)\n" : "ok\n", failures);
+        return failures ? 1 : 0;
+    }
+    if (argc == 3 && std::strcmp(argv[1], "--write") == 0)
+        writeTo = argv[2];
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     std::string error;
     if (!RigExecEnsureBuiltinRegistry(&error)) {
@@ -678,7 +719,7 @@ main()
         return 1;
     }
     TestInjectedChain();
-    TestRuntime();
+    TestRuntime(writeTo);
     TestFailingNode();
     if (failures) {
         std::printf("%d failure(s)\n", failures);

@@ -271,11 +271,8 @@ contact.set_contact(thickness=0.1, friction=0.3)
 ```
 
 Live, frozen and binary playback use the same CPU profile solver. A
-`.rigexec` file from format 26 on carries the compiled cloth data `RCL3`, which holds
-`rigExec:maxWindowFrames`, the profiles and the resolved bindings. A format-25
-file carries `RCL1` and plays as it was exported: no reach-back window, no
-profiles, and its inputs in the format-25 order. A reader older than format 26
-refuses a format-26 file at the version check; rebake for it.
+`.rigexec` file carries the compiled cloth data `RCL3`, which holds
+`rigExec:maxWindowFrames`, the profiles and the resolved bindings.
 
 ## The cloth on the GPU
 

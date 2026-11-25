@@ -5155,8 +5155,6 @@ _StageFromText(const std::string &text)
     return stage;
 }
 
-
-
 // The format-21 deformer settings play bit for bit beside the evaluator:
 // every independent reference rig (regular-grid lattices with each
 // interpolation family, surface snaps under each policy), a lattice whose
