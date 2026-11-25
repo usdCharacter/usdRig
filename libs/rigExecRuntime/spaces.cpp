@@ -8,6 +8,7 @@
 #include "rigExecGraph/providerArithmetic.h"
 #include "rigExecMath/providerRefreshKernel.h"
 #include <cstring>
+#include <optional>
 #include <type_traits>
 namespace rigExec {
 namespace {
@@ -97,20 +98,16 @@ struct Store {
         scratch->frames[index].flags = v->flags;
         return &scratch->frames[index];
     }
-    const double *ReadScalar(uint64_t id)
+    std::optional<double> ReadScalar(uint64_t id)
     {
-        if (!Present(id) || values[id].blocked)
-            return nullptr;
-        const size_t index = ConversionIndex(id);
-        if (index == size_t(-1) || !scratch)
-            return nullptr;
+        if (!Present(id) || values[id].blocked ||
+            ConversionIndex(id) == size_t(-1) || !scratch)
+            return std::nullopt;
         if (const auto *v = std::get_if<double>(&values[id].value))
-            scratch->scalars[index] = *v;
-        else if (const auto *v = std::get_if<float>(&values[id].value))
-            scratch->scalars[index] = *v;
-        else
-            return nullptr;
-        return &scratch->scalars[index];
+            return *v;
+        if (const auto *v = std::get_if<float>(&values[id].value))
+            return double(*v);
+        return std::nullopt;
     }
     const RrVec3d *ReadVector(uint64_t id)
     {
@@ -726,7 +723,6 @@ RrOpenProviderProgram(RrProgram *program, std::string *error)
         converted[i].matrices.resize(count);
         converted[i].frames.resize(count);
         converted[i].vectors.resize(count);
-        converted[i].scalars.resize(count);
     }
     auto &refresh = program->store.providerRefreshScratch;
     refresh.resize(program->poses->providerRefreshes.size());

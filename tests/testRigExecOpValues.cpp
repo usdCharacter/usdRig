@@ -289,6 +289,32 @@ TestProviderOwnerText()
           program.ops[2].ownerText == program.ops[3].ownerText &&
           program.ownerTexts[program.ops[2].ownerText] == "/Rig/Other");
 }
+// A float scalar input reads its value, as the runtime's store reads it.
+void
+TestProviderFloatScalar()
+{
+    RigExecProviderProgram program;
+    program.valueKeys = {"out", "restSpace", "tx"};
+    RigExecProviderOp op;
+    op.kind = RigExecProviderOpKind::RestFrame;
+    op.owner = SdfPath("/Rig/Ctl");
+    op.output = 0;
+    op.inputs = {1, 2};
+    program.ops.push_back(op);
+    RigExecSpellProviderOwners(&program);
+    for (const bool narrow : {false, true}) {
+        RigExecTypedValueStore store(3);
+        store.Publish(1, GfMatrix4d(1.0));
+        if (narrow)
+            store.Publish(2, 1.5f);
+        else
+            store.Publish(2, 1.5);
+        std::string error;
+        CHECK(RigExecRunProviderOp(program, 0, &store, &error));
+        const auto *frame = store.Read<RigExecPointFrame>(0);
+        CHECK(frame && frame->points[0][0] == 1.5);
+    }
+}
 void
 TestFloatPayloadBits()
 {
@@ -1889,6 +1915,7 @@ main()
     TestHeadValueBits();
     TestCandidateFallbackBytes();
     TestProviderOwnerText();
+    TestProviderFloatScalar();
     TestBulkValueKeyBytes();
     TestSharedKeyRunsAndPlainValues();
     TestPointContentVersions();

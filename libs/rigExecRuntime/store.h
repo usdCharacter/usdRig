@@ -381,7 +381,6 @@ struct RrProviderConversionScratch {
     std::vector<RrMat4d> matrices;
     std::vector<RrPointFrame> frames;
     std::vector<RrVec3d> vectors;
-    std::vector<double> scalars;
 };
 
 struct RrProviderRefreshScratch {

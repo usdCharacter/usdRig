@@ -11,6 +11,7 @@
 
 #include <array>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -281,9 +282,11 @@ struct ArithmeticStore {
         return slot >= 0 && size_t(slot) < frames.size() ? &frames[size_t(slot)]
                                                          : nullptr;
     }
-    const double *ReadScalar(uint64_t id) const
+    std::optional<double> ReadScalar(uint64_t id) const
     {
-        return Element(scalars, Slot(id, ProviderInputClass::Scalar));
+        const double *value =
+            Element(scalars, Slot(id, ProviderInputClass::Scalar));
+        return value ? std::optional<double>(*value) : std::nullopt;
     }
     const Vec3d *ReadVector(uint64_t id) const
     {

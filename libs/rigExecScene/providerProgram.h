@@ -5,6 +5,7 @@
 #include "rigExecGraph/providerRecords.h"
 #include "pxr/base/vt/array.h"
 #include <limits>
+#include <optional>
 #include <set>
 #include <string_view>
 
@@ -141,9 +142,13 @@ struct GfProviderStore {
     {
         return store.Read<RigExecPointFrame>(id);
     }
-    const double *ReadScalar(uint64_t id) const
+    std::optional<double> ReadScalar(uint64_t id) const
     {
-        return store.Read<double>(id);
+        if (const auto *value = store.Read<double>(id))
+            return *value;
+        if (const auto *narrow = store.Read<float>(id))
+            return double(*narrow);
+        return std::nullopt;
     }
     const GfVec3d *ReadVector(uint64_t id) const
     {
