@@ -556,7 +556,10 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
         B.measurementSuspended = false;
         coneRun.Restore(&B);
         std::vector<std::string> differences;
-        size_t mismatches = after.Compare(B, &differences);
+        // A generation both passes stopped publishes nothing: the steps each
+        // reached before the stop are no result to compare.
+        size_t mismatches =
+            bailed && bailedFull ? 0 : after.Compare(B, &differences);
         // Verification must leave the frame's values and memo history intact.
         after.Restore(&B);
         coneRun.Restore(&B);
