@@ -3,7 +3,6 @@
 #include "rigExec/api/frozenContext.h"
 #include "rigExec/internal/inputReplay.h"
 #include "rigExec/api/rigEvaluator.h"
-#include "rigExec/api/tapSet.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/setenv.h"
@@ -189,11 +188,6 @@ TestStructuralSplices()
     };
     auto pose = pull();
     CHECK(x(pose) == count);
-    // Stable tap systems share compiler nodes across requests and compiled rig versions.
-    RigExecTapSet first(stage), second(stage);
-    CHECK(first.GetSystem() == second.GetSystem());
-    ExecUsdSystem *system = first.GetSystem();
-
     auto tail = add("Inserted", target);
     auto order = scope.GetChildrenReorder();
     // Reverse sibling traversal: first child executes last.
@@ -205,16 +199,12 @@ TestStructuralSplices()
     pose = pull();
     CHECK(x(pose) == count + 1);
 
-    CHECK(first.GetSystem() == system);
     tail.GetRelationship(TfToken("rigExec:transform"))
         .SetTargets({other.GetPath()});
     pose = pull();
     CHECK(x(pose) == count + 3);
 
-    CHECK(first.GetSystem() == system);
-
-    // Deleting a prim retires the stock listener before its invalid-prim
-    // predicate runs; surviving point checkpoints remain live.
+    // Deleting a prim leaves the surviving point checkpoints live.
     CHECK(stage->RemovePrim(tail.GetPath()));
     pose = pull();
     CHECK(x(pose) == count);

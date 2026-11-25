@@ -4,6 +4,7 @@
 #include "rigExecFrozenParity.h"
 #include "rigExecGraphDependencyCheck.h"
 #include "rigExecRuntimeDrive.h"
+#include "rigExecStoredSolve.h"
 #include "rigExec/api/frozenContext.h"
 #include "rigExecSampler/runtimePoseProjection.h"
 #include "rigExecRuntime/stageArrayInputs.h"
@@ -13,7 +14,6 @@
 #include "rigExec/internal/bakedTrace.h"
 #include "rigExec/internal/frameExtraction.h"
 #include "rigExec/api/frozenContext.h"
-#include "rigExec/api/tapSet.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/spaceMatchKernel.h"
 #include "rigExecMath/splineIk.h"
@@ -83,22 +83,25 @@ SameFrame(const RigExecPointFrame &a, const RigExecPointFrame &b)
            std::memcmp(a.points.data(), b.points.data(), sizeof a.points) == 0;
 }
 
-// \p tapped with its frames replaced by the ones \p evaluator publishes for
-// \p solver, which must equal them.
+// The frames \p evaluator publishes for \p solver, with the rests its
+// program stores beside them; both must hold the same frames.
 static RigExecPointFrameArray
-PublishedSolve(RigExecRigEvaluator &evaluator, const SdfPath &solver,
-               RigExecPointFrameArray tapped)
+PublishedSolve(RigExecRigEvaluator &evaluator, const UsdStageRefPtr &stage,
+               const SdfPath &rigPath, const SdfPath &solver)
 {
+    RigExecPointFrameArray stored;
+    CHECK(RigExecStoredSolve(stage, rigPath, solver, UsdTimeCode::Default(),
+                             &stored));
     const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
     CHECK(pose.valid);
     const auto it = pose.solverFrames.find(solver);
     CHECK(it != pose.solverFrames.end());
     if (it == pose.solverFrames.end())
-        return tapped;
+        return stored;
     CHECK(std::equal(it->second.begin(), it->second.end(),
-                     tapped.frames.begin(), tapped.frames.end(), SameFrame));
-    tapped.frames = it->second;
-    return tapped;
+                     stored.frames.begin(), stored.frames.end(), SameFrame));
+    stored.frames = it->second;
+    return stored;
 }
 
 static std::unique_ptr<RigExecRigEvaluator>
@@ -2694,17 +2697,10 @@ TestTwoBoneIkRestFrameInputs()
         ik.CreateAttribute(TfToken("rigExec:jointElements"),
                            SdfValueTypeNames->IntArray)
             .Set(VtIntArray{2, 0, 1});
-        RigExecTapSet taps(stage);
-        const RigExecTapId tap = taps.Add(RigExecValueAddress::Prim(
-            ik.GetPath(), SchemaComputation::computePointFrameArray));
-        CHECK(taps.Prepare());
         const auto evaluator = CompiledWithSolverFrames(stage, SdfPath("/Rig"));
         const auto solve = [&]() {
-            const RigExecSnapshot snapshot =
-                taps.Evaluate(UsdTimeCode::Default());
-            CHECK(snapshot.IsValid() && snapshot.IsComplete());
-            return PublishedSolve(*evaluator, ik.GetPath(),
-                                  snapshot.Get<RigExecPointFrameArray>(tap));
+            return PublishedSolve(*evaluator, stage, SdfPath("/Rig"),
+                                  ik.GetPath());
         };
         const auto before = solve();
         CHECK(before.frames.size() == 3 && before.rests.size() == 3);
@@ -2770,17 +2766,10 @@ TestAggregateSolverValueUpdates()
         .SetTargets({twist.GetPath()});
     blend.GetAttribute(TfToken("inputs:weight")).Set(0.5f);
 
-    RigExecTapSet taps(stage);
-    const RigExecTapId tap = taps.Add(RigExecValueAddress::Prim(
-        blend.GetPath(), SchemaComputation::computePointFrameArray));
-    CHECK(taps.Prepare());
     const auto evaluator = CompiledWithSolverFrames(stage, SdfPath("/Rig"));
     const auto middle = [&]() {
-        const auto snapshot = taps.Evaluate(UsdTimeCode::Default());
-        CHECK(snapshot.IsValid() && snapshot.IsComplete());
         const auto frames =
-            PublishedSolve(*evaluator, blend.GetPath(),
-                           snapshot.Get<RigExecPointFrameArray>(tap));
+            PublishedSolve(*evaluator, stage, SdfPath("/Rig"), blend.GetPath());
         CHECK(frames.GetSize() == 3);
         return frames.GetSize() == 3 ? frames.frames[1].Origin() : GfVec3d(0);
     };
@@ -4012,16 +4001,10 @@ SplineIkStraightOrigins()
 static RigExecPointFrameArray
 SplineIkSolve(const SplineIkStage &s)
 {
-    RigExecTapSet taps(s.stage);
-    const RigExecTapId tap = taps.Add(RigExecValueAddress::Prim(
-        s.solver.GetPath(), SchemaComputation::computePointFrameArray));
-    CHECK(taps.Prepare());
-    const RigExecSnapshot snapshot = taps.Evaluate(UsdTimeCode::Default());
-    CHECK(snapshot.IsValid() && snapshot.IsComplete());
     const auto evaluator =
         CompiledWithSolverFrames(s.stage, SdfPath("/Asset/Rig"));
-    return PublishedSolve(*evaluator, s.solver.GetPath(),
-                          snapshot.Get<RigExecPointFrameArray>(tap));
+    return PublishedSolve(*evaluator, s.stage, SdfPath("/Asset/Rig"),
+                          s.solver.GetPath());
 }
 
 static void

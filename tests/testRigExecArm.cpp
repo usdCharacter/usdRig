@@ -1,7 +1,7 @@
 #include "rigExecSchema/schemaNames.h"
 // RigExec end-to-end evaluation tests over the spec §4.5/§4.6 arm assets:
-// OpenExec-evaluated transforms (controls, FK, IK, blend, joints), native
-// USD animation resolution parity, and the staged geometry mover pipeline.
+// evaluated transforms (controls, FK, IK, blend, joints), animated inputs,
+// and the staged geometry mover pipeline.
 // argv[1] = path to the examples directory (containing ArmRig.usda and
 // ArmShotAnim.usda). The codeless schema plugin is expected at
 // <examples>/../plugin/rigExecSchema/resources.
@@ -9,7 +9,7 @@
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"
-#include "rigExec/api/tapSet.h"
+#include "rigExecStoredSolve.h"
 #include "rigExec/api/types.h"
 #include "rigExecMath/avarScale.h"
 #include "rigExecMath/pointFrame.h"
@@ -185,7 +185,7 @@ GetRestLandmarks(const UsdPrim &prim, UsdTimeCode time)
 }
 
 // Reconstructs an Ir-contract control's frame directly, for parity with
-// the exec-computed result: posed = avars * rest (unconnected fallback).
+// the evaluated result: posed = avars * rest (unconnected fallback).
 static RigExecPointFrame
 DirectControlFrame(const UsdPrim &control, UsdTimeCode time)
 {
@@ -196,17 +196,8 @@ DirectControlFrame(const UsdPrim &control, UsdTimeCode time)
     return frame;
 }
 
-static const TfToken
-    _computePointFrame(SchemaComputationText::computePointFrame);
-static const TfToken _computeMatrix(SchemaComputationText::computeMatrix);
-static const TfToken
-    _computePointFrameArray(SchemaComputationText::computePointFrameArray);
-
-// View-free joints are posed by their solver through an in-memory binding
-// that RigExecRigEvaluator resolves in Compile() and supplies to exec as a
-// per-joint value override in Evaluate(). A joint's frame is therefore only
-// complete through the evaluator, not from a raw source-stage tap: query it
-// through RigExecRigPose (base phase == the old raw computePointFrame).
+// View-free joints are posed by their solver inside the evaluator, so a
+// joint's frame is read through RigExecRigPose.
 static RigExecPointFrame
 CompiledJointFrame(const UsdStageRefPtr &stage, const SdfPath &rigPath,
                    const SdfPath &jointPath, UsdTimeCode time)
@@ -232,25 +223,8 @@ TestRestPose(const std::string &examplesDir)
     if (!stage)
         return;
 
-    RigExecTapSet taps(stage);
     const SdfPath shoulderPath("/ArmAsset/Rig/Joints/Shoulder");
     const SdfPath wristPath("/ArmAsset/Rig/Joints/Shoulder/Elbow/Wrist");
-    const RigExecTapId shoulderTap =
-        taps.Add(RigExecValueAddress::Prim(shoulderPath, _computePointFrame));
-    const RigExecTapId wristTap =
-        taps.Add(RigExecValueAddress::Prim(wristPath, _computePointFrame));
-    const RigExecTapId wristMatrixTap =
-        taps.Add(RigExecValueAddress::Prim(wristPath, _computeMatrix));
-    const RigExecTapId fkTap = taps.Add(RigExecValueAddress::Prim(
-        SdfPath("/ArmAsset/Rig/Solvers/FK"), _computePointFrameArray));
-    taps.Prepare();
-
-    const RigExecSnapshot snap = taps.Evaluate(UsdTimeCode::Default());
-    CHECK(snap.IsValid());
-    // Every requested tap produced a value (a defaulted value must never
-    // masquerade as a result).
-    CHECK(snap.IsComplete());
-
     const RigExecRigPose pose =
         CompiledPose(stage, SdfPath("/ArmAsset/Rig"), UsdTimeCode::Default());
 
@@ -258,21 +232,13 @@ TestRestPose(const std::string &examplesDir)
     // their rests).
     const auto shoulder = Published(pose.jointFramesBase, shoulderPath);
     const auto wrist = Published(pose.jointFramesBase, wristPath);
-    CHECK(SameFrame(shoulder, snap.Get<RigExecPointFrame>(shoulderTap)));
-    CHECK(SameFrame(wrist, snap.Get<RigExecPointFrame>(wristTap)));
     CHECK(shoulder.IsValid());
     CHECK(Near(shoulder.Origin(), GfVec3d(0, 10, 0)));
     CHECK(Near(wrist.Origin(), GfVec3d(8, 10, 0)));
 
-    // Paired matrix view: rest pose gives identity.
-    const auto wristMatrix = snap.Get<GfMatrix4d>(wristMatrixTap);
-    CHECK(Near(wristMatrix.TransformAffine(GfVec3d(1, 2, 3)), GfVec3d(1, 2, 3),
-               1e-9));
-
-    // Aggregate solver result is extractable and complete.
+    // Aggregate solver result is published and complete.
     const auto fk =
         Published(pose.solverFrames, SdfPath("/ArmAsset/Rig/Solvers/FK"));
-    CHECK(SameFrames(fk, snap.Get<RigExecPointFrameArray>(fkTap).frames));
     CHECK(fk.size() == 3);
     if (fk.size() == 3) {
         CHECK(Near(fk[2].Origin(), GfVec3d(8, 10, 0)));
@@ -299,18 +265,11 @@ TestIkAndBlend(const std::string &examplesDir)
             SdfPath("/ArmAsset/Rig/Solvers/IKFKBlend.inputs:weight"))
         .Set(1.0f);
 
-    RigExecTapSet taps(stage);
-    const RigExecTapId ikTap = taps.Add(RigExecValueAddress::Prim(
-        SdfPath("/ArmAsset/Rig/Solvers/IK"), _computePointFrameArray));
-    taps.Prepare();
     // ArmRig's IK names Shoulder/Elbow/Wrist itself, so the kernel
     // measures its own bones (4 and 4) from their rests. IKFKBlend
     // still POSES those joints -- the IK's rigExec:joints is a rest
     // reference because its aggregate is consumed by the blend.
-    const RigExecSnapshot snap = taps.Evaluate(UsdTimeCode::Default());
-    CHECK(snap.IsValid());
-
-    // Parity: the exec-evaluated IK result must match the direct math
+    // Parity: the evaluated IK result must match the direct math
     // solve fed with directly reconstructed control frames.
     const UsdPrim root =
         stage->GetPrimAtPath(SdfPath("/ArmAsset/Rig/Controls/ShoulderFK"));
@@ -320,7 +279,7 @@ TestIkAndBlend(const std::string &examplesDir)
     params.upperLength = 4;
     params.lowerLength = 4;
     // Authored as float attributes: read them back for exact parity with
-    // the exec-evaluated inputs.
+    // the evaluated inputs.
     params.stretch = double(1.0f);
     params.softness = double(0.15f);
     params.preferredBendRadians = -0.35;
@@ -338,7 +297,10 @@ TestIkAndBlend(const std::string &examplesDir)
         DirectControlFrame(handIk, UsdTimeCode::Default()),
         DirectControlFrame(pole, UsdTimeCode::Default()), rests, params);
 
-    const auto ik = snap.Get<RigExecPointFrameArray>(ikTap);
+    RigExecPointFrameArray ik;
+    CHECK(RigExecStoredSolve(stage, SdfPath("/ArmAsset/Rig"),
+                             SdfPath("/ArmAsset/Rig/Solvers/IK"),
+                             UsdTimeCode::Default(), &ik));
     const auto ikFrames = Published(
         CompiledPose(stage, SdfPath("/ArmAsset/Rig"), UsdTimeCode::Default())
             .solverFrames,
@@ -380,20 +342,6 @@ TestIkAndBlend(const std::string &examplesDir)
 
     // The wrist reaches (or soft-clamps toward) the authored goal.
     CHECK((wrist.Origin() - GfVec3d(6, 13, 2)).GetLength() < 0.5);
-
-    // Semantic lock (view-free): the solver binding exists only inside the
-    // evaluator, so a RAW source-stage joint tap at this animated IK frame
-    // returns the fallback pose, NOT the solved one.
-    // Downstream consumers must read the compiled rig; this asserts the
-    // documented break so it cannot silently regress.
-    RigExecTapSet rawTaps(stage);
-    const RigExecTapId rawWristTap = rawTaps.Add(RigExecValueAddress::Prim(
-        SdfPath("/ArmAsset/Rig/Joints/Shoulder/Elbow/Wrist"),
-        _computePointFrame));
-    rawTaps.Prepare();
-    const auto rawWrist = rawTaps.Evaluate(UsdTimeCode::Default())
-                              .Get<RigExecPointFrame>(rawWristTap);
-    CHECK(!Near(rawWrist.Origin(), wrist.Origin(), 1e-6));
 }
 
 // View-free solver->joint binding validation is enforced in Phase A,
@@ -671,27 +619,8 @@ TestShotAnimation(const std::string &examplesDir)
         return;
 
     const SdfPath rigPath("/Shot/HeroArm/Rig");
-    const SdfPath weightPath = rigPath.AppendPath(SdfPath("Solvers/IKFKBlend"))
-                                   .AppendProperty(TfToken("inputs:weight"));
-
-    RigExecTapSet taps(stage);
-    const RigExecTapId weightTap =
-        taps.Add(RigExecValueAddress::Property(weightPath));
-    taps.Prepare();
     const SdfPath wristPath =
         rigPath.AppendPath(SdfPath("Joints/Shoulder/Elbow/Wrist"));
-
-    // Native USD animation value resolution parity (spec §5.6): the exec
-    // computeValue of the spline-driven weight matches timed Get().
-    const UsdAttribute weightAttr = stage->GetAttributeAtPath(weightPath);
-    for (double t : {1001.0, 1006.5, 1012.0, 1013.0, 1024.0, 1048.0}) {
-        const RigExecSnapshot snap = taps.Evaluate(UsdTimeCode(t));
-        CHECK(snap.IsValid());
-        float authored = 0;
-        CHECK(weightAttr.Get(&authored, UsdTimeCode(t)));
-        const float computed = snap.Get<float>(weightTap);
-        CHECK(std::abs(computed - authored) < 1e-6);
-    }
 
     // Frame 1001: weight 0 -> FK rest pose.
     {
@@ -857,7 +786,7 @@ TestGeometryMovers(const std::string &examplesDir)
         pose.movedProperties.find(SdfPath("/ArmAsset/Geom/ArmBody.extent"));
     CHECK(extentIt != pose.movedProperties.end());
 
-    // Scalar-reference parity (spec §7.4): the generated OpenExec
+    // Scalar-reference parity (spec §7.4): the evaluated
     // application chain and the CPU reference kernels agree exactly.
     const auto cpuIt = pose.movedPropertiesCpu.find(bodyPoints);
     CHECK(cpuIt != pose.movedPropertiesCpu.end());

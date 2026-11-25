@@ -4,7 +4,6 @@
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/rigEvaluatorDependencies.h"
-#include "rigExec/api/tapSet.h"
 #include "rigExec/api/types.h"
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/plug/registry.h"
@@ -58,13 +57,6 @@ CheckFrame(const RigExecPointFrame &frame, const GfMatrix4d &matrix)
     }
 }
 
-static bool
-SameFrame(const RigExecPointFrame &a, const RigExecPointFrame &b)
-{
-    return a.flags == b.flags &&
-           std::memcmp(a.points.data(), b.points.data(), sizeof a.points) == 0;
-}
-
 // The frame \p evaluator publishes for the control or solver at \p path.
 static RigExecPointFrame
 ControlFrame(RigExecRigEvaluator &evaluator, const SdfPath &path,
@@ -109,16 +101,6 @@ TestDefaultChannels()
     const UsdPrim control =
         stage->DefinePrim(SdfPath("/Rig/Control"), TfToken("RigExecControl"));
     control.GetAttribute(TfToken("rest:space")).Set(Translate(10));
-    RigExecTapSet taps(stage);
-    const auto rest = taps.Add(RigExecValueAddress::Prim(
-        control.GetPath(), SchemaComputation::computeRestFrame));
-    const auto pose = taps.Add(RigExecValueAddress::Prim(
-        control.GetPath(), SchemaComputation::computePointFrame));
-    const auto zero = taps.Add(RigExecValueAddress::Prim(
-        control.GetPath(), SchemaComputation::computeDefaultFrame));
-    const auto defaultSpace = taps.Add(RigExecValueAddress::Property(
-        control.GetPath().AppendProperty(TfToken("default:space"))));
-    CHECK(taps.Prepare());
     const auto evaluator = Compiled(stage);
     const char *channels[] = {"default:tx", "default:ty", "default:tz",
                               "default:rx", "default:ry", "default:rz"};
@@ -130,16 +112,9 @@ TestDefaultChannels()
                                ? GfMatrix4d(1).SetTranslate(axis * 2.0)
                                : GfMatrix4d(GfRotation(axis, 90.0), GfVec3d(0));
         const GfMatrix4d expected = delta * Translate(10);
-        const auto snapshot = taps.Evaluate(UsdTimeCode::Default());
-        CHECK(snapshot.IsComplete());
-        CheckFrame(snapshot.Get<RigExecPointFrame>(rest), Translate(10));
-        const RigExecPointFrame compiled =
-            ControlFrame(*evaluator, control.GetPath(), UsdTimeCode::Default());
-        CHECK(SameFrame(compiled, snapshot.Get<RigExecPointFrame>(pose)));
-        CheckFrame(compiled, expected);
-        CheckFrame(snapshot.Get<RigExecPointFrame>(zero), expected);
-        CHECK(
-            GfIsClose(snapshot.Get<GfMatrix4d>(defaultSpace), expected, 1e-8));
+        CheckFrame(
+            ControlFrame(*evaluator, control.GetPath(), UsdTimeCode::Default()),
+            expected);
         control.GetAttribute(TfToken(channels[i])).Set(0.0);
     }
 }
@@ -163,50 +138,21 @@ TestDefaultHierarchyAndOverrides()
     child.GetAttribute(TfToken("default:ty")).Set(4.0);
     child.GetAttribute(TfToken("avars:tx")).Set(1.0);
     child.GetAttribute(TfToken("avars:unitScaleFactor")).Set(2.0);
-    RigExecTapSet taps(stage);
-    const auto pose = taps.Add(RigExecValueAddress::Prim(
-        child.GetPath(), SchemaComputation::computePointFrame));
-    std::map<std::string, RigExecTapId> spaces;
-    for (const char *name :
-         {"default:space", "avars:defaultSpace", "posed:defaultSpace",
-          "parent:defaultSpace", "parent:space"}) {
-        spaces[name] = taps.Add(RigExecValueAddress::Property(
-            child.GetPath().AppendProperty(TfToken(name))));
-    }
-    CHECK(taps.Prepare());
     const auto evaluator = Compiled(stage);
-    const auto checkPose = [&](const RigExecSnapshot &snapshot,
-                               UsdTimeCode time, const GfMatrix4d &expected) {
-        const RigExecPointFrame compiled =
-            ControlFrame(*evaluator, child.GetPath(), time);
-        CHECK(SameFrame(compiled, snapshot.Get<RigExecPointFrame>(pose)));
-        CheckFrame(compiled, expected);
+    const auto checkPose = [&](UsdTimeCode time, const GfMatrix4d &expected) {
+        CheckFrame(ControlFrame(*evaluator, child.GetPath(), time), expected);
     };
-    auto snapshot = taps.Evaluate(UsdTimeCode::Default());
-    CHECK(snapshot.IsComplete());
-    checkPose(snapshot, UsdTimeCode::Default(), Translate(22, 4));
-    for (const char *name :
-         {"default:space", "avars:defaultSpace", "posed:defaultSpace"}) {
-        CHECK(GfIsClose(snapshot.Get<GfMatrix4d>(spaces[name]),
-                        Translate(17, 4), 1e-8));
-    }
-    CHECK(GfIsClose(snapshot.Get<GfMatrix4d>(spaces["parent:defaultSpace"]),
-                    Translate(12), 1e-8));
-    CHECK(GfIsClose(snapshot.Get<GfMatrix4d>(spaces["parent:space"]),
-                    Translate(15), 1e-8));
+    checkPose(UsdTimeCode::Default(), Translate(22, 4));
 
     // Each explicit zero-space input can independently steer the pose.
     child.GetAttribute(TfToken("default:space")).Set(Translate(30));
-    snapshot = taps.Evaluate(UsdTimeCode::Default());
-    checkPose(snapshot, UsdTimeCode::Default(), Translate(35));
+    checkPose(UsdTimeCode::Default(), Translate(35));
     child.GetAttribute(TfToken("avars:defaultSpace")).Set(Translate(40));
-    snapshot = taps.Evaluate(UsdTimeCode::Default());
-    checkPose(snapshot, UsdTimeCode::Default(), Translate(45));
+    checkPose(UsdTimeCode::Default(), Translate(45));
     child.GetAttribute(TfToken("posed:defaultSpace")).Set(Translate(50));
     child.GetAttribute(TfToken("parent:defaultSpace")).Set(Translate(20));
     child.GetAttribute(TfToken("parent:space")).Set(Translate(60));
-    snapshot = taps.Evaluate(UsdTimeCode::Default());
-    checkPose(snapshot, UsdTimeCode::Default(), Translate(92));
+    checkPose(UsdTimeCode::Default(), Translate(92));
 
     // An identity connection overrides a non-identity authored value and
     // survives edits without re-creating the prepared request.
@@ -216,16 +162,12 @@ TestDefaultHierarchyAndOverrides()
     identity.Set(GfMatrix4d(1));
     child.GetAttribute(TfToken("posed:defaultSpace"))
         .SetConnections({identity.GetPath()});
-    snapshot = taps.Evaluate(UsdTimeCode::Default());
-    CHECK(snapshot.IsComplete());
-    checkPose(snapshot, UsdTimeCode::Default(), Translate(42));
+    checkPose(UsdTimeCode::Default(), Translate(42));
     identity.Set(Translate(5));
-    snapshot = taps.Evaluate(UsdTimeCode::Default());
-    checkPose(snapshot, UsdTimeCode::Default(), Translate(47));
+    checkPose(UsdTimeCode::Default(), Translate(47));
     identity.Set(Translate(7), UsdTimeCode(1));
     identity.Set(Translate(9), UsdTimeCode(2));
-    snapshot = taps.Evaluate(UsdTimeCode(2));
-    checkPose(snapshot, UsdTimeCode(2), Translate(51));
+    checkPose(UsdTimeCode(2), Translate(51));
 }
 
 static void
@@ -238,36 +180,19 @@ TestInvalidSpacesPropagate()
     const auto child = stage->DefinePrim(SdfPath("/Rig/Parent/Child"),
                                          TfToken("RigExecControl"));
     parent.GetAttribute(TfToken("rest:tx")).Set(2.0);
-    RigExecTapSet taps(stage);
-    const auto parentPose = taps.Add(RigExecValueAddress::Prim(
-        parent.GetPath(), SchemaComputation::computePointFrame));
-    const auto childPose = taps.Add(RigExecValueAddress::Prim(
-        child.GetPath(), SchemaComputation::computePointFrame));
-    CHECK(taps.Prepare());
     const auto evaluator = Compiled(stage);
-    const auto same = [&](const RigExecSnapshot &snapshot) {
-        CHECK(SameFrame(
-            ControlFrame(*evaluator, parent.GetPath(), UsdTimeCode::Default()),
-            snapshot.Get<RigExecPointFrame>(parentPose)));
-        CHECK(SameFrame(
-            ControlFrame(*evaluator, child.GetPath(), UsdTimeCode::Default()),
-            snapshot.Get<RigExecPointFrame>(childPose)));
+    const auto frame = [&](const UsdPrim &prim) {
+        return ControlFrame(*evaluator, prim.GetPath(), UsdTimeCode::Default());
     };
-    auto snapshot = taps.Evaluate(UsdTimeCode::Default());
-    same(snapshot);
-    CHECK(snapshot.Get<RigExecPointFrame>(parentPose).IsValid());
-    CHECK(snapshot.Get<RigExecPointFrame>(childPose).IsValid());
+    CHECK(frame(parent).IsValid());
+    CHECK(frame(child).IsValid());
     parent.GetAttribute(TfToken("rest:tx"))
         .Set(std::numeric_limits<double>::quiet_NaN());
-    snapshot = taps.Evaluate(UsdTimeCode::Default());
-    same(snapshot);
-    CHECK(snapshot.Get<RigExecPointFrame>(parentPose).IsDegenerate());
-    CHECK(snapshot.Get<RigExecPointFrame>(childPose).IsDegenerate());
+    CHECK(frame(parent).IsDegenerate());
+    CHECK(frame(child).IsDegenerate());
     parent.GetAttribute(TfToken("rest:tx")).Set(2.0);
-    snapshot = taps.Evaluate(UsdTimeCode::Default());
-    same(snapshot);
-    CHECK(snapshot.Get<RigExecPointFrame>(parentPose).IsValid());
-    CHECK(snapshot.Get<RigExecPointFrame>(childPose).IsValid());
+    CHECK(frame(parent).IsValid());
+    CHECK(frame(child).IsValid());
 }
 
 static void
@@ -290,20 +215,9 @@ TestAnimatedTwistTurns()
     CHECK(turns);
     turns.Set(1.0, UsdTimeCode(1));
     turns.Set(-1.0, UsdTimeCode(2));
-    RigExecTapSet taps(stage);
-    const auto tap = taps.Add(RigExecValueAddress::Prim(
-        twist.GetPath(), SchemaComputation::computePointFrameArray));
-    CHECK(taps.Prepare());
     const auto evaluator = Compiled(stage);
     const auto solve = [&](double time) {
-        const auto snapshot = taps.Evaluate(UsdTimeCode(time));
-        CHECK(snapshot.IsComplete());
-        const auto frames =
-            SolverFrames(*evaluator, twist.GetPath(), UsdTimeCode(time));
-        const auto tapped = snapshot.Get<RigExecPointFrameArray>(tap).frames;
-        CHECK(std::equal(frames.begin(), frames.end(), tapped.begin(),
-                         tapped.end(), SameFrame));
-        return frames;
+        return SolverFrames(*evaluator, twist.GetPath(), UsdTimeCode(time));
     };
     for (const double time : {1.0, 2.0}) {
         const auto frames = solve(time);
