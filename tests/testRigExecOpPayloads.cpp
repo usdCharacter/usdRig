@@ -466,6 +466,14 @@ TestFilledPayloads()
         ComposeSlotPayload slot;
         slot.noScale = true;
         CheckRoundTrip(Op(ComposeSlot()), &slot);
+        SwitchedComposeSlotPayload switched;
+        switched.noScale = true;
+        switched.space.filters = {0, 3};
+        switched.space.twistAxis = rigExecStd::Vec3d(0.0, 0.0, 1.0);
+        switched.space.affectRotation = {{true, false, true}};
+        switched.space.hasCarry = true;
+        switched.space.world = {1, 0};
+        CheckRoundTrip(Op(SwitchedComposeSlot()), &switched);
     }
     {
         BlendFramesPayload p;

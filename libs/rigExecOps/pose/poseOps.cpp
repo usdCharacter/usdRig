@@ -1,5 +1,6 @@
 #include "rigExecOps/pose/poseOps.h"
 
+#include "rigExecOps/constraint/spaceSwitchFields.h"
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecEvalCore/pose.h"
@@ -88,6 +89,31 @@ RIGEXEC_DEFINE_PORT_HANDLE(ComposeSlotParentSpaceAuthored)
 RIGEXEC_DEFINE_PORT_HANDLE(ComposeSlotParentPosed)
 RIGEXEC_DEFINE_PORT_HANDLE(ComposeSlotBase)
 RIGEXEC_DEFINE_PORT_HANDLE(ComposeSlotPosedMatrix)
+
+RIGEXEC_DEFINE_OP_HANDLE(SwitchedComposeSlot)
+RIGEXEC_DEFINE_PORT_HANDLE(SwitchedComposeSlotAvars)
+RIGEXEC_DEFINE_PORT_HANDLE(SwitchedComposeSlotRotOrder)
+RIGEXEC_DEFINE_PORT_HANDLE(SwitchedComposeSlotRotationSign)
+RIGEXEC_DEFINE_PORT_HANDLE(SwitchedComposeSlotPosedAuthored)
+RIGEXEC_DEFINE_PORT_HANDLE(SwitchedComposeSlotPosedAuthoredMatrix)
+RIGEXEC_DEFINE_PORT_HANDLE(SwitchedComposeSlotPosedDefault)
+RIGEXEC_DEFINE_PORT_HANDLE(SwitchedComposeSlotParentDefaultInverse)
+RIGEXEC_DEFINE_PORT_HANDLE(SwitchedComposeSlotParentPosed)
+RIGEXEC_DEFINE_PORT_HANDLE(SwitchedComposeSlotParentDefault)
+RIGEXEC_DEFINE_PORT_HANDLE(SwitchedComposeSlotActive)
+RIGEXEC_DEFINE_PORT_HANDLE(SwitchedComposeSlotSpaceDefault)
+RIGEXEC_DEFINE_PORT_HANDLE(SwitchedComposeSlotSpacePosed)
+RIGEXEC_DEFINE_PORT_HANDLE(SwitchedComposeSlotSourceDefaults)
+RIGEXEC_DEFINE_PORT_HANDLE(SwitchedComposeSlotSourcePosed)
+RIGEXEC_DEFINE_PORT_HANDLE(SwitchedComposeSlotBase)
+RIGEXEC_DEFINE_PORT_HANDLE(SwitchedComposeSlotPosedMatrix)
+
+RIGEXEC_DEFINE_OP_HANDLE(ShiftedComposeSlot)
+RIGEXEC_DEFINE_PORT_HANDLE(ShiftedComposeSlotBase)
+RIGEXEC_DEFINE_PORT_HANDLE(ShiftedComposeSlotDelta)
+RIGEXEC_DEFINE_PORT_HANDLE(ShiftedComposeSlotShifted)
+RIGEXEC_DEFINE_PORT_HANDLE(ShiftedComposeSlotOut)
+RIGEXEC_DEFINE_PORT_HANDLE(ShiftedComposeSlotPosedMatrix)
 
 bool
 PoseInterpolatorPayload::operator==(const PoseInterpolatorPayload &o) const
@@ -959,6 +985,151 @@ RunComposeSlot(const RigExecOpBatch &batch, size_t *failed, std::string *error)
     });
 }
 
+// ---- SwitchedComposeSlot / ShiftedComposeSlot ----
+
+enum SwitchedComposeSlotField : uint32_t {
+    kSwitchedActive = spaceSwitchFields::kSpaceSwitchFieldCount,
+    kSwitchedNoScale,
+};
+
+struct SwitchedSlotPorts {
+    const rigExec::RigExecPortHandle &posedDefault =
+        SwitchedComposeSlotPosedDefault();
+    const rigExec::RigExecPortHandle &parentDefaultInverse =
+        SwitchedComposeSlotParentDefaultInverse();
+    const rigExec::RigExecPortHandle &parentPosed =
+        SwitchedComposeSlotParentPosed();
+    const rigExec::RigExecPortHandle &parentDefault =
+        SwitchedComposeSlotParentDefault();
+    const rigExec::RigExecPortHandle &spaceDefault =
+        SwitchedComposeSlotSpaceDefault();
+    const rigExec::RigExecPortHandle &spacePosed =
+        SwitchedComposeSlotSpacePosed();
+    const rigExec::RigExecPortHandle &sourceDefaults =
+        SwitchedComposeSlotSourceDefaults();
+    const rigExec::RigExecPortHandle &sourcePosed =
+        SwitchedComposeSlotSourcePosed();
+};
+
+bool
+CheckSwitchedComposeSlot(const rigExec::RigExecOpCheck &check,
+                         std::string *error)
+{
+    const auto setup = spaceSwitchFields::SwitchAt(check.batch, check.k);
+    const size_t count = setup.world.Size();
+    if (!count)
+        return Fail(error, "SwitchedComposeSlot", "needs at least one space");
+    if (setup.filters.Size() && setup.filters.Size() != count)
+        return Fail(error, "SwitchedComposeSlot",
+                    "needs one filter per space or none");
+    if (!SameCount(CheckElements(check, SwitchedComposeSlotAvars()), 11))
+        return Fail(error, "SwitchedComposeSlot", "needs 11 avars");
+    if (Fed(check, SwitchedComposeSlotSpaceDefault()) != setup.hasCarry ||
+        Fed(check, SwitchedComposeSlotSpacePosed()) != setup.hasCarry)
+        return Fail(error, "SwitchedComposeSlot",
+                    "needs its carry space fed exactly when it has one");
+    if (!SameCount(CheckElements(check, SwitchedComposeSlotSourceDefaults()),
+                   count) ||
+        !SameCount(CheckElements(check, SwitchedComposeSlotSourcePosed()),
+                   count))
+        return Fail(error, "SwitchedComposeSlot",
+                    "needs one source default and posed space per space");
+    return true;
+}
+
+void
+PublishSlotFrame(const Mat4d &matrix, PointFrame &base, Mat4d &posedM)
+{
+    std::array<rigExecStd::Vec3d, 4> points = {
+        SlotMath::Vec3Of(0, 0, 0), SlotMath::Vec3Of(0, 0, 0),
+        SlotMath::Vec3Of(0, 0, 0), SlotMath::Vec3Of(0, 0, 0)};
+    unsigned flags = 0;
+    rigExec::eval::pose_ops::FrameFromMatrix<SlotMath>(matrix, &points, &flags);
+    base = FrameOf(points, flags);
+    posedM = rigExec::eval::pose_ops::SpaceOfFrame<SlotMath>(points, flags);
+}
+
+bool
+SwitchedComposeSlotOne(const RigExecOpBatch &batch, size_t k,
+                       std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    PointFrame &base = Out<PointFrame>(io, SwitchedComposeSlotBase());
+    Mat4d &posedM = Out<Mat4d>(io, SwitchedComposeSlotPosedMatrix());
+    if (!FlagAt(batch, kSwitchedActive, k)) {
+        base = UnavailableFrame();
+        posedM = rigExec::eval::UnavailableSpace<SlotMath>();
+        return true;
+    }
+    if (*In<uint8_t>(io, SwitchedComposeSlotPosedAuthored()) != 0) {
+        PublishSlotFrame(
+            *In<Mat4d>(io, SwitchedComposeSlotPosedAuthoredMatrix()), base,
+            posedM);
+        return true;
+    }
+    const auto &avars =
+        *In<RigExecArray<double>>(io, SwitchedComposeSlotAvars());
+    if (avars.Size() != 11)
+        return Fail(error, "SwitchedComposeSlot", "needs 11 avars");
+    rigExec::eval::PoseSlotComposeT<SlotMath> view;
+    view.avars11 = &avars[0];
+    AssignRotOrder(InOr(io, SwitchedComposeSlotRotOrder(), uint32_t(0)),
+                   &view.rotOrder);
+    view.rotationSign = *In<uint32_t>(io, SwitchedComposeSlotRotationSign());
+    view.noScaleAvars = FlagAt(batch, kSwitchedNoScale, k);
+    const auto setup = spaceSwitchFields::SwitchAt(batch, k);
+    spaceSwitchFields::SwitchInputs input;
+    if (!spaceSwitchFields::SwitchInputsOf(io, setup, SwitchedSlotPorts(),
+                                           &input))
+        return Fail(error, "SwitchedComposeSlot",
+                    "needs one source default and posed space per space");
+    input.avars = rigExec::eval::ComposeSlotAvars<SlotMath>(view);
+    input.active = *In<double>(io, SwitchedComposeSlotActive());
+    Mat4d matrix = SlotMath::Identity4();
+    if (!rigExec::RigExecRunSpaceSwitchArithmetic<
+            spaceSwitchFields::SwitchMath>(spaceSwitchFields::RecordOf(setup),
+                                           input, &matrix))
+        return Fail(error, "SwitchedComposeSlot", "has no space to switch to");
+    PublishSlotFrame(matrix, base, posedM);
+    return true;
+}
+
+bool
+RunSwitchedComposeSlot(const RigExecOpBatch &batch, size_t *failed,
+                       std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return SwitchedComposeSlotOne(batch, k, error);
+    });
+}
+
+bool
+ShiftedComposeSlotOne(const RigExecOpBatch &batch, size_t k)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    PointFrame &out = Out<PointFrame>(io, ShiftedComposeSlotOut());
+    const auto &delta = *In<rigExecStd::Vec3d>(io, ShiftedComposeSlotDelta());
+    if (delta[0] == 0 && delta[1] == 0 && delta[2] == 0) {
+        out = *In<PointFrame>(io, ShiftedComposeSlotBase());
+        Out<Mat4d>(io, ShiftedComposeSlotPosedMatrix()) =
+            rigExec::eval::pose_ops::SpaceOfFrame<SlotMath>(out.points,
+                                                            out.flags);
+        return true;
+    }
+    PublishSlotFrame(*In<Mat4d>(io, ShiftedComposeSlotShifted()), out,
+                     Out<Mat4d>(io, ShiftedComposeSlotPosedMatrix()));
+    return true;
+}
+
+bool
+RunShiftedComposeSlot(const RigExecOpBatch &batch, size_t *failed,
+                      std::string *)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return ShiftedComposeSlotOne(batch, k);
+    });
+}
+
 } // namespace
 
 namespace {
@@ -1378,6 +1549,94 @@ const rigExec::RigExecOpDesc kComposeSlotDesc =
                &RunComposeSlot, &CheckComposeSlot, kComposeSlotFields,
                std::size(kComposeSlotFields), &ComposeSlotValuesOf);
 
+const rigExec::RigExecPortDesc kSwitchedComposeSlotPorts[] = {
+    {&SwitchedComposeSlotAvars(), &rigExecStd::DoubleArray(), kRigExecPortInput,
+     "avars"},
+    {&SwitchedComposeSlotRotOrder(), &rigExecStd::UIntType(), kOptionalInput,
+     "rotOrder"},
+    {&SwitchedComposeSlotRotationSign(), &rigExecStd::UIntType(),
+     kRigExecPortInput, "rotationSign"},
+    {&SwitchedComposeSlotPosedAuthored(), &rigExecStd::BoolType(),
+     kRigExecPortInput, "posedAuthored"},
+    {&SwitchedComposeSlotPosedAuthoredMatrix(), &rigExecStd::Mat4dType(),
+     kRigExecPortInput, "posedAuthoredMatrix"},
+    {&SwitchedComposeSlotPosedDefault(), &rigExecStd::Mat4dType(),
+     kRigExecPortInput, "posedDefault"},
+    {&SwitchedComposeSlotParentDefaultInverse(), &rigExecStd::Mat4dType(),
+     kRigExecPortInput, "parentDefaultInverse"},
+    {&SwitchedComposeSlotParentPosed(), &rigExecStd::Mat4dType(),
+     kOptionalInput, "parentPosed"},
+    {&SwitchedComposeSlotParentDefault(), &rigExecStd::Mat4dType(),
+     kOptionalInput, "parentDefault"},
+    {&SwitchedComposeSlotActive(), &rigExecStd::DoubleType(), kRigExecPortInput,
+     "active"},
+    {&SwitchedComposeSlotSpaceDefault(), &rigExecStd::Mat4dType(),
+     kOptionalInput, "spaceDefault"},
+    {&SwitchedComposeSlotSpacePosed(), &rigExecStd::Mat4dType(), kOptionalInput,
+     "spacePosed"},
+    {&SwitchedComposeSlotSourceDefaults(), &rigExecStd::Mat4dArray(),
+     kRigExecPortInput, "sourceDefaults"},
+    {&SwitchedComposeSlotSourcePosed(), &rigExecStd::Mat4dArray(),
+     kRigExecPortInput, "sourcePosed"},
+    {&SwitchedComposeSlotBase(), &rigExecRig::PointFrameType(),
+     kRigExecPortOutput, "base"},
+    {&SwitchedComposeSlotPosedMatrix(), &rigExecStd::Mat4dType(),
+     kRigExecPortOutput, "posedMatrix"},
+};
+
+void
+SwitchedComposeSlotValuesOf(const void *payload, RigExecFieldValues &out)
+{
+    const auto &p = *static_cast<const SwitchedComposeSlotPayload *>(payload);
+    spaceSwitchFields::SetSwitch(out, p.space);
+    SetFlag(out, kSwitchedActive, p.active);
+    SetFlag(out, kSwitchedNoScale, p.noScale);
+}
+
+const rigExec::RigExecFieldDesc kSwitchedComposeSlotFields[] = {
+    Count("filterCount"),
+    Items("filters", rigExecStd::IntType(), spaceSwitchFields::kFilterCount),
+    Value("twistAxis", rigExecStd::Vec3dType()),
+    Fixed(Flag("affectTranslation"), 3),
+    Fixed(Flag("affectRotation"), 3),
+    Fixed(Flag("affectScale"), 3),
+    Flag("hasCarry"),
+    Count("worldCount"),
+    Items("world", rigExecStd::BoolType(), spaceSwitchFields::kWorldCount),
+    Flag("active"),
+    Flag("noScale"),
+};
+
+const rigExec::RigExecOpDesc kSwitchedComposeSlotDesc = SlotOpDesc(
+    "SwitchedComposeSlot", kSwitchedComposeSlotPorts,
+    std::size(kSwitchedComposeSlotPorts), &RunSwitchedComposeSlot,
+    &CheckSwitchedComposeSlot, kSwitchedComposeSlotFields,
+    std::size(kSwitchedComposeSlotFields), &SwitchedComposeSlotValuesOf);
+
+const rigExec::RigExecPortDesc kShiftedComposeSlotPorts[] = {
+    {&ShiftedComposeSlotBase(), &rigExecRig::PointFrameType(),
+     kRigExecPortInput, "base"},
+    {&ShiftedComposeSlotDelta(), &rigExecStd::Vec3dType(), kRigExecPortInput,
+     "delta"},
+    {&ShiftedComposeSlotShifted(), &rigExecStd::Mat4dType(), kRigExecPortInput,
+     "shifted"},
+    {&ShiftedComposeSlotOut(), &rigExecRig::PointFrameType(),
+     kRigExecPortOutput, "out"},
+    {&ShiftedComposeSlotPosedMatrix(), &rigExecStd::Mat4dType(),
+     kRigExecPortOutput, "posedMatrix"},
+};
+
+const rigExec::RigExecOpDesc kShiftedComposeSlotDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "ShiftedComposeSlot";
+    d.ports = kShiftedComposeSlotPorts;
+    d.portCount = std::size(kShiftedComposeSlotPorts);
+    d.runBatch = &RunShiftedComposeSlot;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    return d;
+}();
+
 } // namespace
 
 void
@@ -1389,6 +1648,8 @@ RegisterPoseOps(rigExec::RigExecOpRegistrar &registrar)
     registrar.Add(RestCompose(), kRestComposeDesc);
     registrar.Add(LadderCompose(), kLadderComposeDesc);
     registrar.Add(ComposeSlot(), kComposeSlotDesc);
+    registrar.Add(SwitchedComposeSlot(), kSwitchedComposeSlotDesc);
+    registrar.Add(ShiftedComposeSlot(), kShiftedComposeSlotDesc);
 }
 
 } // namespace rigExecOps

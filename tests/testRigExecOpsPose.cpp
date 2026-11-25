@@ -9,6 +9,7 @@
 #include "rigExecEvalCore/pose.h"
 #include "rigExecRuntime/poseMath.h"
 #include "rigExecRuntime/rbfSolver.h"
+#include "rigExecRuntime/spaceSwitchMath.h"
 #include "rigExecRigTypes/rigTypes.h"
 
 #include <cmath>
@@ -411,6 +412,141 @@ TestSlotCompose()
     CHECK(std::isnan(unavailable.Out<Mat4d>(1)._mtx[3][0]));
 }
 
+bool
+SameFrame(const rigExecRig::PointFrame &a, const rigExecRig::PointFrame &b)
+{
+    return SameBits(a.points, b.points) && a.flags == b.flags;
+}
+
+rigExecRig::PointFrame
+FrameOfMatrix(const Mat4d &m, Mat4d *space)
+{
+    using Math = RrPoseMathT<rigExecRig::PointFrame>;
+    rigExecRig::PointFrame frame;
+    unsigned flags = 0;
+    eval::pose_ops::FrameFromMatrix<Math>(m, &frame.points, &flags);
+    frame.flags = flags;
+    *space = eval::pose_ops::SpaceOfFrame<Math>(frame.points, flags);
+    return frame;
+}
+
+void
+TestSwitchedSlot()
+{
+    using Math = RrPoseMathT<rigExecRig::PointFrame>;
+    const Mat4d identity = Math::Identity4();
+    const std::vector<const RigExecPortHandle *> ins = {
+        &SwitchedComposeSlotAvars(),
+        &SwitchedComposeSlotRotationSign(),
+        &SwitchedComposeSlotPosedAuthored(),
+        &SwitchedComposeSlotPosedAuthoredMatrix(),
+        &SwitchedComposeSlotPosedDefault(),
+        &SwitchedComposeSlotParentDefaultInverse(),
+        &SwitchedComposeSlotParentPosed(),
+        &SwitchedComposeSlotActive(),
+        &SwitchedComposeSlotSourceDefaults(),
+        &SwitchedComposeSlotSourcePosed()};
+    const std::vector<const RigExecPortHandle *> outs = {
+        &SwitchedComposeSlotBase(), &SwitchedComposeSlotPosedMatrix()};
+    SwitchedComposeSlotPayload p;
+    p.space.world = {1, 0};
+    p.space.filters = {0, 1};
+    p.space.twistAxis = rigExecStd::Vec3d(0.0, 1.0, 0.0);
+    const auto avars = ArrayOf<double>({1, 0, 0, 1, 1, 1, 0, 30, 0, 0, 1});
+    const uint32_t noSign = 0;
+    const uint8_t no = 0, yes = 1;
+    Mat4d turned = Translate(0, 2, 0);
+    turned._mtx[0][0] = turned._mtx[2][2] = 0.0;
+    turned._mtx[0][2] = 1.0;
+    turned._mtx[2][0] = -1.0;
+    const auto defaults = ArrayOf<Mat4d>({identity, Translate(0, 1, 0)});
+    const auto posed = ArrayOf<Mat4d>({identity, turned});
+    const Mat4d parentPosed = Translate(3, 0, 0);
+    Harness h(SwitchedComposeSlot(), &p, ins, outs);
+    for (const double active : {0.0, 0.25, 1.0, 7.0}) {
+        CHECK(h.Run({&avars, &noSign, &no, &identity, &identity, &identity,
+                     &parentPosed, &active, &defaults, &posed}));
+        eval::PoseSlotComposeT<Math> view;
+        view.avars11 = &avars[0];
+        RigExecSpaceSwitchInputsT<Mat4d> in;
+        in.avars = eval::ComposeSlotAvars<Math>(view);
+        in.parentPosed = parentPosed;
+        in.active = active;
+        in.sources.resize(2);
+        in.sources[0].world = true;
+        in.sources[1].defaultSpace = defaults[1];
+        in.sources[1].posedSpace = posed[1];
+        RigExecSpaceSwitchRecordT<rigExecStd::Vec3d> record;
+        record.filters = {0, 1};
+        record.twistAxis = p.space.twistAxis;
+        Mat4d matrix = identity, space = identity;
+        CHECK(RigExecRunSpaceSwitchArithmetic<RrSpaceSwitchMath>(record, in,
+                                                                 &matrix));
+        const auto frame = FrameOfMatrix(matrix, &space);
+        CHECK(SameFrame(h.Out<rigExecRig::PointFrame>(0), frame));
+        CHECK(SameBits(h.Out<Mat4d>(1), space));
+    }
+    const double one = 1.0;
+    const Mat4d authoredM = Translate(0, 5, 0);
+    CHECK(h.Run({&avars, &noSign, &yes, &authoredM, &identity, &identity,
+                 &parentPosed, &one, &defaults, &posed}));
+    Mat4d authoredSpace = identity;
+    CHECK(SameFrame(h.Out<rigExecRig::PointFrame>(0),
+                    FrameOfMatrix(authoredM, &authoredSpace)));
+    CHECK(SameBits(h.Out<Mat4d>(1), authoredSpace));
+
+    SwitchedComposeSlotPayload off = p;
+    off.active = false;
+    Harness unavailable(SwitchedComposeSlot(), &off, ins, outs);
+    CHECK(unavailable.Run({&avars, &noSign, &no, &identity, &identity,
+                           &identity, &parentPosed, &one, &defaults, &posed}));
+    CHECK(unavailable.Out<rigExecRig::PointFrame>(0).flags == 0);
+    CHECK(std::isnan(unavailable.Out<Mat4d>(1)._mtx[3][0]));
+
+    SwitchedComposeSlotPayload none = p;
+    none.space.world.clear();
+    none.space.filters.clear();
+    Harness empty(SwitchedComposeSlot(), &none, ins, outs);
+    CHECK(!empty.evaluator);
+    CHECK(empty.error.find("at least one space") != std::string::npos);
+    SwitchedComposeSlotPayload filters = p;
+    filters.space.filters = {0};
+    Harness unfiltered(SwitchedComposeSlot(), &filters, ins, outs);
+    CHECK(!unfiltered.evaluator);
+    CHECK(unfiltered.error.find("one filter per space") != std::string::npos);
+    SwitchedComposeSlotPayload carry = p;
+    carry.space.hasCarry = true;
+    Harness uncarried(SwitchedComposeSlot(), &carry, ins, outs);
+    CHECK(!uncarried.evaluator);
+    CHECK(uncarried.error.find("carry space") != std::string::npos);
+    Harness wrongCount(SwitchedComposeSlot(), &p, ins, outs);
+    const auto three = ArrayOf<Mat4d>({identity, identity, identity});
+    CHECK(!wrongCount.Run({&avars, &noSign, &no, &identity, &identity,
+                           &identity, &parentPosed, &one, &three, &posed}));
+}
+
+void
+TestShiftedSlot()
+{
+    using Math = RrPoseMathT<rigExecRig::PointFrame>;
+    Harness h(ShiftedComposeSlot(), nullptr,
+              {&ShiftedComposeSlotBase(), &ShiftedComposeSlotDelta(),
+               &ShiftedComposeSlotShifted()},
+              {&ShiftedComposeSlotOut(), &ShiftedComposeSlotPosedMatrix()});
+    Mat4d baseSpace = Math::Identity4();
+    const auto base = FrameOfMatrix(Translate(1, 2, 3), &baseSpace);
+    const Mat4d shifted = Translate(1.5, 2, 3);
+    const rigExecStd::Vec3d still(0.0, 0.0, 0.0), moved(0.5, 0.0, 0.0);
+    CHECK(h.Run({&base, &still, &shifted}));
+    CHECK(SameFrame(h.Out<rigExecRig::PointFrame>(0), base));
+    CHECK(SameBits(h.Out<Mat4d>(1), baseSpace));
+    CHECK(h.Run({&base, &moved, &shifted}));
+    Mat4d shiftedSpace = Math::Identity4();
+    CHECK(SameFrame(h.Out<rigExecRig::PointFrame>(0),
+                    FrameOfMatrix(shifted, &shiftedSpace)));
+    CHECK(SameBits(h.Out<Mat4d>(1), shiftedSpace));
+}
+
 } // namespace
 
 int
@@ -426,6 +562,8 @@ main()
     TestSpaceCheckpoint();
     TestPoseInterpolator();
     TestSlotCompose();
+    TestSwitchedSlot();
+    TestShiftedSlot();
     if (failures) {
         std::printf("%d failures\n", failures);
         return 1;

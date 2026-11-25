@@ -3,10 +3,11 @@
 
 /// The pose inputs a rig composes from: bound avar values, a space switch's
 /// checkpoint frame, a pose interpolator's weights, and one slot's rest,
-/// default ladder and first pose. The kernels are
+/// default ladder and first pose, switched or shifted. The kernels are
 /// rigExecMath/avarScale.h, rigExecEvalCore/pose.h's SpaceCheckpointMatrix and
 /// rigExecMath/poseArithmeticKernel.h.
 
+#include "rigExecOps/constraint/matchOps.h"
 #include "rigExecOps/library.h"
 #include "rigExecStdTypes/stdTypes.h"
 
@@ -259,6 +260,61 @@ const rigExec::RigExecPortHandle &ComposeSlotParentSpaceAuthored();
 const rigExec::RigExecPortHandle &ComposeSlotParentPosed();
 const rigExec::RigExecPortHandle &ComposeSlotBase();
 const rigExec::RigExecPortHandle &ComposeSlotPosedMatrix();
+
+struct SwitchedComposeSlotPayload {
+    /// Whether the slot's provider is active.
+    bool active = true;
+    /// Whether its scale avars are ignored.
+    bool noScale = false;
+    SpaceSwitchSetup space;
+
+    bool operator==(const SwitchedComposeSlotPayload &o) const
+    {
+        return active == o.active && noScale == o.noScale && space == o.space;
+    }
+};
+
+const rigExec::RigExecOpHandle &SwitchedComposeSlot();
+
+// One space-switched slot's first pose: Avars (DoubleArray, 11), optional
+// RotOrder (UInt; 0 when unfed), RotationSign (UInt mask), PosedAuthored
+// (Bool; the frame of PosedAuthoredMatrix when set), PosedAuthoredMatrix,
+// PosedDefault and ParentDefaultInverse (Mat4d), optional ParentPosed (the
+// posed space the switch composes under) and ParentDefault (the parent's
+// default round trip), both identity when unfed, Active (Double, the
+// selected space, a label as its index), SpaceDefault and SpacePosed (Mat4d,
+// fed with a carry space), SourceDefaults and SourcePosed (Mat4dArray, one
+// per space; a world space's entries are unread). Base (PointFrame) and
+// PosedMatrix (Mat4d, the space of Base); an inactive slot gives a flagless
+// identity frame and the unavailable space.
+const rigExec::RigExecPortHandle &SwitchedComposeSlotAvars();
+const rigExec::RigExecPortHandle &SwitchedComposeSlotRotOrder();
+const rigExec::RigExecPortHandle &SwitchedComposeSlotRotationSign();
+const rigExec::RigExecPortHandle &SwitchedComposeSlotPosedAuthored();
+const rigExec::RigExecPortHandle &SwitchedComposeSlotPosedAuthoredMatrix();
+const rigExec::RigExecPortHandle &SwitchedComposeSlotPosedDefault();
+const rigExec::RigExecPortHandle &SwitchedComposeSlotParentDefaultInverse();
+const rigExec::RigExecPortHandle &SwitchedComposeSlotParentPosed();
+const rigExec::RigExecPortHandle &SwitchedComposeSlotParentDefault();
+const rigExec::RigExecPortHandle &SwitchedComposeSlotActive();
+const rigExec::RigExecPortHandle &SwitchedComposeSlotSpaceDefault();
+const rigExec::RigExecPortHandle &SwitchedComposeSlotSpacePosed();
+const rigExec::RigExecPortHandle &SwitchedComposeSlotSourceDefaults();
+const rigExec::RigExecPortHandle &SwitchedComposeSlotSourcePosed();
+const rigExec::RigExecPortHandle &SwitchedComposeSlotBase();
+const rigExec::RigExecPortHandle &SwitchedComposeSlotPosedMatrix();
+
+const rigExec::RigExecOpHandle &ShiftedComposeSlot();
+
+// A composed slot after an auto clavicle shifts it: Base (PointFrame, the
+// composed frame), Delta (Vec3d, the clavicle's shift) and Shifted (Mat4d,
+// the shifted frame's matrix). Out (PointFrame: Base when Delta is zero,
+// else the frame of Shifted) and PosedMatrix (Mat4d, the space of Out).
+const rigExec::RigExecPortHandle &ShiftedComposeSlotBase();
+const rigExec::RigExecPortHandle &ShiftedComposeSlotDelta();
+const rigExec::RigExecPortHandle &ShiftedComposeSlotShifted();
+const rigExec::RigExecPortHandle &ShiftedComposeSlotOut();
+const rigExec::RigExecPortHandle &ShiftedComposeSlotPosedMatrix();
 
 } // namespace rigExecOps
 
