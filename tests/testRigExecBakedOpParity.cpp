@@ -13,10 +13,14 @@
 #include "rigExecStdTypes/stdTypes.h"
 
 #include "rigExec/api/compile.h"
+#include "rigExec/api/evaluator.h"
+#include "rigExec/api/rigDesc.h"
 #include "rigExec/api/taskSystem.h"
 #include "opRunners/geometryOpRunner.h"
 #include "opRunners/poseOpRunner.h"
 #include "opRunners/weightOpRunner.h"
+#include "rigExecOps/space/spaceOps.h"
+#include "rigExecRigTypes/rigTypes.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"
@@ -26,7 +30,9 @@
 #include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usdGeom/tokens.h"
+#include "pxr/usd/usdGeom/xform.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -843,6 +849,324 @@ ProbeWeights(const B &b)
     }
 }
 
+// Spaces: a provider's matrices, a frame record's matrix and a connected
+// provider's refresh, each from the versions and gates its step read,
+// against what the step stored.
+struct SpaceNode {
+    std::unique_ptr<RigExecEvaluator> evaluator;
+    std::vector<RigExecInputId> inputs;
+    std::vector<RigExecOutputId> outputs;
+    std::string error;
+};
+
+std::map<std::string, SpaceNode> g_spaceNodes;
+
+SpaceNode &
+SpaceNodeFor(const std::string &key, const RigExecOpHandle &op,
+             const void *payload,
+             const std::vector<const RigExecPortHandle *> &ins,
+             const std::vector<const RigExecPortHandle *> &outs)
+{
+    SpaceNode &node = g_spaceNodes[key];
+    if (node.evaluator || !node.error.empty())
+        return node;
+    RigExecRigDescBuilder builder;
+    const RigExecNodeId id = builder.AddOp(op, payload);
+    for (const RigExecPortHandle *port : ins)
+        node.inputs.push_back(builder.BindInput(id, *port));
+    for (const RigExecPortHandle *port : outs)
+        node.outputs.push_back(builder.BindOutput(id, *port));
+    const auto desc = builder.Build(&node.error);
+    const auto program =
+        desc ? RigExecCompile(*desc, {}, &node.error) : nullptr;
+    node.evaluator =
+        program ? RigExecEvaluator::Create(program, {}, &node.error) : nullptr;
+    return node;
+}
+
+bool
+RunSpaceNode(SpaceNode &node, const std::vector<const void *> &values,
+             std::string *error)
+{
+    if (!node.evaluator) {
+        *error = node.error;
+        return false;
+    }
+    for (size_t i = 0; i < values.size(); ++i)
+        if (!node.evaluator->SetInput(node.inputs[i], values[i], error))
+            return false;
+    return node.evaluator->Evaluate(error);
+}
+
+template <class T>
+const T &
+SpaceOut(const SpaceNode &node, size_t i)
+{
+    return *static_cast<const T *>(node.evaluator->GetOutput(node.outputs[i]));
+}
+
+rigExecRig::PointFrame
+OpFrame(const std::array<GfVec3d, 4> &points, uint32_t flags)
+{
+    rigExecRig::PointFrame frame;
+    for (size_t i = 0; i < 4; ++i)
+        frame.points[i] =
+            rigExecStd::Vec3d(points[i][0], points[i][1], points[i][2]);
+    frame.flags = flags;
+    return frame;
+}
+
+rigExecRig::PointFrame
+OpFrame(const RigExecPointFrame &frame)
+{
+    return OpFrame(frame.points, frame.flags);
+}
+
+void
+PutBits(std::vector<double> *out, const GfMatrix4d &m)
+{
+    out->insert(out->end(), m.data(), m.data() + 16);
+}
+
+void
+PutBits(std::vector<double> *out, const rigExecStd::Mat4d &m)
+{
+    out->insert(out->end(), &m._mtx[0][0], &m._mtx[0][0] + 16);
+}
+
+void
+PutBits(std::vector<double> *out, const rigExecRig::PointFrame &frame)
+{
+    for (const auto &point : frame.points)
+        for (int a = 0; a < 3; ++a)
+            out->push_back(point[a]);
+    out->push_back(double(frame.flags));
+}
+
+/// Bit for bit, with the first differing value.
+void
+CompareBits(const std::string &family, const std::string &kind,
+            const std::string &object, const std::vector<double> &baked,
+            const std::vector<double> &op, bool refusal)
+{
+    Tally &tally = g_tally[family + "/" + kind];
+    ++tally.compared;
+    if (refusal)
+        ++tally.refusals;
+    if (baked.size() == op.size() &&
+        std::memcmp(baked.data(), op.data(), baked.size() * sizeof(double)) ==
+            0)
+        return;
+    size_t i = 0;
+    while (i < baked.size() && i < op.size() &&
+           std::memcmp(&baked[i], &op[i], sizeof(double)) == 0)
+        ++i;
+    Report(family + "/" + kind, object,
+           "value " + std::to_string(i) + " of " +
+               std::to_string(baked.size()) + "/" + std::to_string(op.size()) +
+               ": baked " +
+               (i < baked.size() ? TfStringify(baked[i]) : "<end>") + " op " +
+               (i < op.size() ? TfStringify(op[i]) : "<end>"));
+}
+
+void
+ProbeProviderMatrix(const B &b, const RigExecBakedStep &step)
+{
+    using namespace rigExecOps;
+    const size_t slot = size_t(step.object);
+    const bool posed = step.part != 0;
+    const std::string kind = posed ? "final" : "base";
+    ProviderMatrixPayload payload;
+    payload.posed = posed;
+    payload.joint = std::find(b.jointSlots.begin(), b.jointSlots.end(),
+                              int(slot)) != b.jointSlots.end();
+    std::vector<const RigExecPortHandle *> ins = {&ProviderMatrixRest(),
+                                                  &ProviderMatrixBase()};
+    if (posed)
+        ins.push_back(&ProviderMatrixFinal());
+    SpaceNode &node =
+        SpaceNodeFor("ProviderMatrix/" + kind + (payload.joint ? "/joint" : ""),
+                     ProviderMatrix(), &payload, ins, {&ProviderMatrixOut()});
+    const auto rest = OpFrame(b.restPts[slot], b.restFrames[slot].flags);
+    const auto base = OpFrame(b.base[size_t(b.baseLast[slot])]);
+    const auto fin = OpFrame(b.fin[size_t(b.finLast[slot])]);
+    std::vector<const void *> values = {&rest, &base};
+    if (posed)
+        values.push_back(&fin);
+    std::string error;
+    const std::string object = b.paths[slot].GetString();
+    if (!RunSpaceNode(node, values, &error)) {
+        OpFailed("Spaces", "ProviderMatrix/" + kind, object, false, error);
+        return;
+    }
+    std::vector<double> baked, op;
+    PutBits(&baked, posed ? b.finalMatrix[slot] : b.baseMatrix[slot]);
+    PutBits(&op, SpaceOut<rigExecStd::Mat4d>(node, 0));
+    CompareBits("Spaces", "ProviderMatrix/" + kind, object, baked, op, false);
+}
+
+void
+ProbeFrameMatrix(const B &b, const RigExecBakedStep &step)
+{
+    using namespace rigExecOps;
+    const size_t object = size_t(step.object);
+    const auto &record = b.frameRecords[object];
+    if (record.commit < 0 || size_t(record.commit) >= b.commits.size()) {
+        Unprobed("Spaces", "FrameMatrix", "the record names no commit");
+        return;
+    }
+    const auto &commit = b.commits[size_t(record.commit)];
+    const std::string kind = commit.solverOutput ? "solver" : "constraint";
+    FrameMatrixPayload payload;
+    payload.solverOutput = commit.solverOutput;
+    payload.position = record.position;
+    payload.target = record.target;
+    std::vector<const RigExecPortHandle *> ins = {&FrameMatrixRest(),
+                                                  &FrameMatrixFrame()};
+    if (commit.solverOutput)
+        ins.push_back(&FrameMatrixPresent());
+    else {
+        ins.push_back(&FrameMatrixRecordAfter());
+        ins.push_back(&FrameMatrixRecordEveryTarget());
+    }
+    SpaceNode &node = SpaceNodeFor(
+        "FrameMatrix/" + kind + "/" + std::to_string(record.position) + "/" +
+            std::to_string(record.target),
+        FrameMatrix(), &payload, ins, {&FrameMatrixOut(), &FrameMatrixValid()});
+    const auto rest = OpFrame(b.restFrames[size_t(record.slot)]);
+    const auto frame = OpFrame(b.fin[size_t(record.version)]);
+    rigExecStd::RigExecArray<uint8_t> present(commit.present.size());
+    for (size_t i = 0; i < commit.present.size(); ++i)
+        present[i] = commit.present[i] ? 1 : 0;
+    const uint8_t after = commit.recordAfter ? 1 : 0;
+    const uint8_t every = commit.recordEveryTarget ? 1 : 0;
+    std::vector<const void *> values = {&rest, &frame};
+    if (commit.solverOutput)
+        values.push_back(&present);
+    else {
+        values.push_back(&after);
+        values.push_back(&every);
+    }
+    std::string error;
+    const std::string where = "record " + std::to_string(object);
+    if (!RunSpaceNode(node, values, &error)) {
+        OpFailed("Spaces", "FrameMatrix/" + kind, where, false, error);
+        return;
+    }
+    std::vector<double> baked, op;
+    PutBits(&baked, b.frameMatrix[object]);
+    baked.push_back(b.frameMatrixValid[object] ? 1.0 : 0.0);
+    PutBits(&op, SpaceOut<rigExecStd::Mat4d>(node, 0));
+    op.push_back(SpaceOut<uint8_t>(node, 1) ? 1.0 : 0.0);
+    CompareBits("Spaces", "FrameMatrix/" + kind, where, baked, op, false);
+}
+
+void
+ProbeProviderRefresh(const B &b, const RigExecBakedStep &step)
+{
+    using namespace rigExecOps;
+    const auto &refresh = b.providerRefreshes[size_t(step.object)];
+    const auto *raw =
+        b.providerValues.Read<RigExecPointFrame>(refresh.baseValue);
+    const auto *current =
+        b.providerValues.Read<RigExecPointFrame>(refresh.currentValue);
+    if (!raw || !current) {
+        Unprobed("Spaces", "ProviderRefresh",
+                 "the re-evaluated base or current frame is missing");
+        return;
+    }
+    ProviderRefreshPayload payload;
+    std::vector<rigExecRig::PointFrame> carryBase, carryFinal;
+    std::vector<rigExecStd::Mat4d> parents;
+    for (const auto &carry : refresh.carries) {
+        payload.blockingCounts.push_back(uint32_t(carry.blockingSlots.size()));
+        carryBase.push_back(OpFrame(b.base[carry.baseRead]));
+        carryFinal.push_back(OpFrame(b.fin[carry.finRead]));
+        for (const int slot : carry.blockingSlots) {
+            const GfMatrix4d m = RigExecBakedProviderParentRaw(b, slot);
+            rigExecStd::Mat4d out;
+            for (int r = 0; r < 4; ++r)
+                for (int c = 0; c < 4; ++c)
+                    out._mtx[r][c] = m[r][c];
+            parents.push_back(out);
+        }
+    }
+    std::string key = "ProviderRefresh";
+    for (const uint32_t count : payload.blockingCounts)
+        key += "/" + std::to_string(count);
+    SpaceNode &node = SpaceNodeFor(
+        key, ProviderRefresh(), &payload,
+        {&ProviderRefreshBase(), &ProviderRefreshFinal(), &ProviderRefreshRaw(),
+         &ProviderRefreshCurrent(), &ProviderRefreshConstrained(),
+         &ProviderRefreshCarryBase(), &ProviderRefreshCarryFinal(),
+         &ProviderRefreshBlockingParents()},
+        {&ProviderRefreshBaseOut(), &ProviderRefreshFinalOut(),
+         &ProviderRefreshCarryBaseOut(), &ProviderRefreshCarryFinalOut()});
+    rigExecStd::RigExecArray<uint8_t> constrained(
+        refresh.priorConstraints.size());
+    for (size_t i = 0; i < refresh.priorConstraints.size(); ++i) {
+        const auto &[commit, position] = refresh.priorConstraints[i];
+        constrained[i] =
+            !b.commits[commit].abandoned && b.commits[commit].present[position]
+                ? 1
+                : 0;
+    }
+    const auto base = OpFrame(b.base[refresh.baseRead]);
+    const auto fin = OpFrame(b.fin[refresh.finRead]);
+    const auto rawFrame = OpFrame(*raw), currentFrame = OpFrame(*current);
+    const rigExecStd::RigExecArray<rigExecRig::PointFrame> carryBaseIn(
+        carryBase.data(), carryBase.size());
+    const rigExecStd::RigExecArray<rigExecRig::PointFrame> carryFinalIn(
+        carryFinal.data(), carryFinal.size());
+    const rigExecStd::RigExecArray<rigExecStd::Mat4d> parentsIn(parents.data(),
+                                                                parents.size());
+    const bool refused = !step.diagnostics.empty();
+    const std::string object = b.paths[size_t(refresh.slot)].GetString();
+    std::string error;
+    if (!RunSpaceNode(node,
+                      {&base, &fin, &rawFrame, &currentFrame, &constrained,
+                       &carryBaseIn, &carryFinalIn, &parentsIn},
+                      &error)) {
+        OpFailed("Spaces", "ProviderRefresh", object, refused, error);
+        return;
+    }
+    if (refused)
+        Report("Spaces/ProviderRefresh", object,
+               "the op ran where the baked step reported: " +
+                   step.diagnostics.front());
+    std::vector<double> baked, op;
+    PutBits(&baked, OpFrame(b.base[refresh.baseWrite]));
+    PutBits(&baked, OpFrame(b.fin[refresh.finWrite]));
+    for (const auto &carry : refresh.carries) {
+        PutBits(&baked, OpFrame(b.base[carry.baseWrite]));
+        PutBits(&baked, OpFrame(b.fin[carry.finWrite]));
+    }
+    PutBits(&op, SpaceOut<rigExecRig::PointFrame>(node, 0));
+    PutBits(&op, SpaceOut<rigExecRig::PointFrame>(node, 1));
+    const auto &opBase =
+        SpaceOut<rigExecStd::RigExecArray<rigExecRig::PointFrame>>(node, 2);
+    const auto &opFinal =
+        SpaceOut<rigExecStd::RigExecArray<rigExecRig::PointFrame>>(node, 3);
+    for (size_t k = 0; k < opBase.Size() && k < opFinal.Size(); ++k) {
+        PutBits(&op, opBase[k]);
+        PutBits(&op, opFinal[k]);
+    }
+    CompareBits("Spaces", "ProviderRefresh", object, baked, op, false);
+}
+
+void
+ProbeSpaces(const B &b)
+{
+    for (const auto &step : b.steps) {
+        if (step.kind == RigExecBakedStepKind::ProviderMatrix)
+            ProbeProviderMatrix(b, step);
+        else if (step.kind == RigExecBakedStepKind::FrameMatrix)
+            ProbeFrameMatrix(b, step);
+        else if (step.kind == RigExecBakedStepKind::ProviderRefresh)
+            ProbeProviderRefresh(b, step);
+    }
+}
+
 std::vector<UsdTimeCode>
 Frames(const UsdStageRefPtr &stage)
 {
@@ -1008,6 +1332,7 @@ ProbeStage(const UsdStageRefPtr &stage, const std::string &rig, Paint paint)
         ProbeRangeChains(b);
         ProbeDerived(b);
         ProbeWeights(b);
+        ProbeSpaces(b);
     }
 }
 
@@ -1078,6 +1403,34 @@ def Xform "Asset"
 
 } // namespace
 
+#include "rigExecConnectedBridgeFixture.h"
+
+// Connected controls whose providers re-evaluate in the walk: the rig that
+// has ProviderRefresh steps.
+UsdStageRefPtr
+ConnectedBridgeRig()
+{
+    return RigExecMakeConnectedBridgeFixture(
+               [](const UsdStageRefPtr &stage, const SdfPath &path,
+                  const GfMatrix4d &matrix) {
+                   const auto x = UsdGeomXform::Define(stage, path);
+                   x.MakeMatrixXform().Set(matrix);
+                   return x.GetPrim();
+               },
+               [](const UsdStageRefPtr &stage, const char *name,
+                  const char *type, const SdfPathVector &targets) {
+                   const auto prim = stage->DefinePrim(
+                       SdfPath(std::string("/Asset/Rig/Movers/") + name),
+                       TfToken(type));
+                   prim.ApplyAPI(TfToken("RigExecMoverAPI"));
+                   prim.CreateRelationship(
+                           TfToken(SchemaAttrText::rigExecMoves))
+                       .SetTargets(targets);
+                   return prim;
+               })
+        .stage;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1101,6 +1454,7 @@ main(int argc, char **argv)
             for (const Paint paint : kPaints)
                 ProbeRig(argv[i], paint);
     }
+    ProbeStage(ConnectedBridgeRig(), "connected bridge rig", Paint::None);
     if (painted)
         for (const Paint paint : {Paint::None, Paint::Dense, Paint::Sparse})
             ProbeStage(WireRig(), "wire rig", paint);
@@ -1131,8 +1485,10 @@ main(int argc, char **argv)
                     return 1;
                 }
     }
-    for (const char *family : {"Solve/", "RevisionChunk/", "RangeChain/",
-                               "Derived/", "WeightPacket/", "Constraint/"}) {
+    for (const char *family :
+         {"Solve/", "RevisionChunk/", "RangeChain/", "Derived/",
+          "WeightPacket/", "Constraint/", "Spaces/ProviderMatrix/",
+          "Spaces/FrameMatrix/", "Spaces/ProviderRefresh"}) {
         size_t compared = 0;
         for (const auto &[key, tally] : g_tally)
             if (key.compare(0, std::strlen(family), family) == 0)

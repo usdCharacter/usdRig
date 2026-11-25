@@ -302,6 +302,7 @@ rigexec_add_op_library(rigExecOps
         libs/rigExecOps/solver/singleChainIkOps.cpp
         libs/rigExecOps/solver/skeleton2dOps.cpp
         libs/rigExecOps/solver/splineIkOps.cpp
+        libs/rigExecOps/space/spaceOps.cpp
     USES_TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes)
 target_link_libraries(rigExecOps PRIVATE rigExecEvalCore)
 
@@ -1436,6 +1437,15 @@ rigexec_link_registrations(testRigExecOpsMath
     TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 rigexec_add_test(NAME testRigExecOpsMath COMMAND testRigExecOpsMath)
 set_tests_properties(testRigExecOpsMath PROPERTIES LABELS "fast")
+add_executable(testRigExecOpsSpaces tests/testRigExecOpsSpaces.cpp)
+target_link_libraries(testRigExecOpsSpaces PRIVATE rigExecOpCore)
+target_include_directories(testRigExecOpsSpaces PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/libs")
+target_link_libraries(testRigExecOpsSpaces PRIVATE Threads::Threads)
+rigexec_link_registrations(testRigExecOpsSpaces
+    TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
+rigexec_add_test(NAME testRigExecOpsSpaces COMMAND testRigExecOpsSpaces)
+set_tests_properties(testRigExecOpsSpaces PROPERTIES LABELS "fast")
 add_executable(testRigExecOpsPoints tests/testRigExecOpsPoints.cpp)
 target_link_libraries(testRigExecOpsPoints PRIVATE rigExecOpCore)
 target_include_directories(testRigExecOpsPoints PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libs")
@@ -1543,6 +1553,8 @@ set(_rigexec_op_parity_rigs
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/computed_weights.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/computed_chains.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/volume_placements.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/frame_record_fallbacks.usda"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/solver_checkpoint.usda"
     --painted
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/matrix_mover.usda"
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/skin_mover.usda"
