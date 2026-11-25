@@ -21,6 +21,21 @@ RIGEXEC_DEFINE_PORT_HANDLE(SkinIndices)
 RIGEXEC_DEFINE_PORT_HANDLE(SkinWeights)
 RIGEXEC_DEFINE_PORT_HANDLE(SkinEnvelope)
 RIGEXEC_DEFINE_PORT_HANDLE(SkinOut)
+RIGEXEC_DEFINE_PORT_HANDLE(SkinRows)
+RIGEXEC_DEFINE_PORT_HANDLE(SkinPaletteReal)
+RIGEXEC_DEFINE_PORT_HANDLE(SkinPaletteDual)
+RIGEXEC_DEFINE_PORT_HANDLE(SkinPaletteStretch)
+RIGEXEC_DEFINE_PORT_HANDLE(SkinPaletteRigid)
+
+RIGEXEC_DEFINE_OP_HANDLE(SkinMatrices)
+
+RIGEXEC_DEFINE_PORT_HANDLE(SkinMatricesInfluences)
+RIGEXEC_DEFINE_PORT_HANDLE(SkinMatricesMatrices)
+RIGEXEC_DEFINE_PORT_HANDLE(SkinMatricesRows)
+RIGEXEC_DEFINE_PORT_HANDLE(SkinMatricesReal)
+RIGEXEC_DEFINE_PORT_HANDLE(SkinMatricesDual)
+RIGEXEC_DEFINE_PORT_HANDLE(SkinMatricesStretch)
+RIGEXEC_DEFINE_PORT_HANDLE(SkinMatricesRigid)
 
 namespace {
 
@@ -31,6 +46,9 @@ using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 using Transforms = rigExecStd::RigExecArray<Mat4d>;
 using Indices = rigExecStd::RigExecArray<int32_t>;
+using Quats = rigExecStd::RigExecArray<rigExecStd::Quatd>;
+using Stretches = rigExecStd::RigExecArray<rigExecStd::Mat3d>;
+using Flags = rigExecStd::RigExecArray<uint8_t>;
 using Layout = rigExec::RigExecSkinLayoutOf<Mat4d>;
 
 bool
@@ -57,6 +75,7 @@ using Palette =
 /// linear blend, or a dual-quaternion blend's palette.
 struct SkinState {
     std::vector<float> rows;
+    const float *rowsData = nullptr;
     Palette palette;
     /// The indices and weights validate could not see, checked each frame.
     bool checkEachFrame = true;
@@ -117,6 +136,12 @@ Validate(const rigExec::RigExecOpCheck &check, std::string *error)
                     "indices and weights need elementSize per point");
     if (!EnvelopeFits(check, SkinPoints(), SkinEnvelope(), "Skin", error))
         return false;
+    const int paletteFed = int(Fed(check, SkinPaletteReal())) +
+                           int(Fed(check, SkinPaletteDual())) +
+                           int(Fed(check, SkinPaletteStretch())) +
+                           int(Fed(check, SkinPaletteRigid()));
+    if (paletteFed != 0 && paletteFed != 4)
+        return Fail(error, "Skin", "the palette needs all four of its ports");
     const Indices *indexValues = CheckValue<Indices>(check, SkinIndices());
     const Envelope *weightValues = CheckValue<Envelope>(check, SkinWeights());
     const bool known =
@@ -125,6 +150,31 @@ Validate(const rigExec::RigExecOpCheck &check, std::string *error)
         state->checkEachFrame = !known;
     return !known ||
            IndicesAndWeightsFit(*indexValues, *weightValues, transforms, error);
+}
+
+/// The palette SkinMatrices folded, one entry per influence, then the
+/// identity entry a weight shortfall blends.
+bool
+PaletteFrom(const rigExec::RigExecOpIo &io, size_t count, Palette *palette,
+            std::string *error)
+{
+    const Quats &real = *In<Quats>(io, SkinPaletteReal());
+    const Quats &dual = *In<Quats>(io, SkinPaletteDual());
+    const Stretches &stretch = *In<Stretches>(io, SkinPaletteStretch());
+    const Flags &rigid = *In<Flags>(io, SkinPaletteRigid());
+    if (real.Size() != count || dual.Size() != count ||
+        stretch.Size() != count || rigid.Size() != count)
+        return Fail(error, "Skin", "the palette does not match the transforms");
+    palette->resize(count + 1);
+    for (size_t t = 0; t < count; ++t) {
+        auto &entry = (*palette)[t];
+        entry.rigid.real = real[t];
+        entry.rigid.dual = dual[t];
+        entry.stretch = stretch[t];
+        entry.isRigid = rigid[t] != 0;
+    }
+    (*palette)[count] = Palette::value_type();
+    return true;
 }
 
 bool
@@ -148,18 +198,21 @@ Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
     const Layout layout = LayoutOf(batch, k);
     const auto method = SkinMethod(
         rigExec::RigExecPayloadColumnOf<uint32_t>(batch, kMethod)[k]);
-    if (method != SkinMethod::ClassicLinear) {
-        state.palette = rigExec::RigExecSkinDualQuatPaletteKernel<Vec3f, Vec3d>(
-            layout.transforms, layout.transformCount);
+    const bool dualQuat = method != SkinMethod::ClassicLinear;
+    const Envelope *rows = In<Envelope>(io, SkinRows());
+    if (dualQuat && In<Quats>(io, SkinPaletteReal()))
+        return PaletteFrom(io, layout.transformCount, &state.palette, error);
+    if (!dualQuat && batch.useSimd && rows) {
+        if (rows->Size() !=
+            layout.transformCount * rigExec::kRigExecSkinRowStride)
+            return Fail(error, "Skin", "the rows do not match the transforms");
+        state.rowsData = rows->Data();
         return true;
     }
-    if (!batch.useSimd)
-        return true;
-    state.rows.resize(layout.transformCount * rigExec::kRigExecSkinRowStride);
-    for (size_t t = 0; t < layout.transformCount; ++t)
-        rigExec::RigExecNarrowSkinRowsKernel(
-            layout.transforms[t],
-            &state.rows[t * rigExec::kRigExecSkinRowStride]);
+    rigExec::RigExecFoldSkinMatricesKernel<Vec3f, Vec3d>(
+        dualQuat, layout.transforms, layout.transformCount, batch.useSimd,
+        &state.rows, &state.palette);
+    state.rowsData = state.rows.data();
     return true;
 }
 
@@ -185,7 +238,7 @@ SkinRange(const rigExec::RigExecOpBatch &batch, size_t k,
     if (method == SkinMethod::ClassicLinear) {
         if (io.useSimd)
             rigExec::RigExecApplyLinearBlendSkinSimdKernel<Vec3f, Vec3d>(
-                in, out, part, state.rows.data());
+                in, out, part, state.rowsData);
         else
             rigExec::RigExecApplyLinearBlendSkinKernel<Vec3f, Vec3d>(in, out,
                                                                      part);
@@ -235,6 +288,16 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&SkinOut(), &rigExecStd::Vec3fArray(),
      kRigExecPortOutput | kRigExecPortPointwise, "out",
      rigExec::RigExecOutputBound::Input, &SkinPoints()},
+    {&SkinRows(), &rigExecStd::FloatArray(),
+     kRigExecPortInput | kRigExecPortOptional, "rows"},
+    {&SkinPaletteReal(), &rigExecStd::QuatdArray(),
+     kRigExecPortInput | kRigExecPortOptional, "paletteReal"},
+    {&SkinPaletteDual(), &rigExecStd::QuatdArray(),
+     kRigExecPortInput | kRigExecPortOptional, "paletteDual"},
+    {&SkinPaletteStretch(), &rigExecStd::Mat3dArray(),
+     kRigExecPortInput | kRigExecPortOptional, "paletteStretch"},
+    {&SkinPaletteRigid(), &rigExecStd::BoolArray(),
+     kRigExecPortInput | kRigExecPortOptional, "paletteRigid"},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {
@@ -260,10 +323,128 @@ const rigExec::RigExecOpDesc kDesc = [] {
 
 } // namespace
 
+namespace {
+
+enum SkinMatricesField : uint32_t { kMatricesMethod };
+
+/// The folded forms, kept between frames so a fold reuses their storage.
+struct SkinMatricesState {
+    std::vector<float> rows;
+    Palette palette;
+};
+
+bool
+MatricesOne(const rigExec::RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    SkinMatricesState &state =
+        *static_cast<SkinMatricesState *>(rigExec::RigExecBatchState(batch, k));
+    const Transforms &in = *In<Transforms>(io, SkinMatricesInfluences());
+    if (in.Size() == 0)
+        return Fail(error, "SkinMatrices", "needs an influence");
+    if (!Usable(in))
+        return Fail(error, "SkinMatrices",
+                    "transforms must be finite and affine");
+    const bool dualQuat =
+        SkinMethod(rigExec::RigExecPayloadColumnOf<uint32_t>(
+            batch, kMatricesMethod)[k]) != SkinMethod::ClassicLinear;
+    rigExec::RigExecFoldSkinMatricesKernel<Vec3f, Vec3d>(
+        dualQuat, in.Data(), in.Size(), io.useSimd, &state.rows,
+        &state.palette);
+    Out<Transforms>(io, SkinMatricesMatrices()).Assign(in.Data(), in.Size());
+    Out<Envelope>(io, SkinMatricesRows())
+        .Assign(state.rows.data(), state.rows.size());
+    const size_t count = state.palette.empty() ? 0 : in.Size();
+    Quats &real = Out<Quats>(io, SkinMatricesReal());
+    Quats &dual = Out<Quats>(io, SkinMatricesDual());
+    Stretches &stretch = Out<Stretches>(io, SkinMatricesStretch());
+    Flags &rigid = Out<Flags>(io, SkinMatricesRigid());
+    real.Resize(count);
+    dual.Resize(count);
+    stretch.Resize(count);
+    rigid.Resize(count);
+    for (size_t t = 0; t < count; ++t) {
+        const auto &entry = state.palette[t];
+        real[t] = entry.rigid.real;
+        dual[t] = entry.rigid.dual;
+        stretch[t] = entry.stretch;
+        rigid[t] = entry.isRigid ? 1 : 0;
+    }
+    return true;
+}
+
+bool
+RunMatrices(const rigExec::RigExecOpBatch &batch, size_t *failed,
+            std::string *error)
+{
+    return EachInstance(batch, failed,
+                        [&](size_t k) { return MatricesOne(batch, k, error); });
+}
+
+bool
+ValidateMatrices(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (CheckElements(check, SkinMatricesInfluences()) == 0)
+        return Fail(error, "SkinMatrices", "needs an influence");
+    return true;
+}
+
+void
+MatricesValues(const void *payload, rigExec::RigExecFieldValues &out)
+{
+    const SkinMatricesPayload &p =
+        *static_cast<const SkinMatricesPayload *>(payload);
+    SetEnum(out, kMatricesMethod, p.method);
+}
+
+const rigExec::RigExecFieldDesc kMatricesFields[] = {
+    Enum("method", SkinMethod::DualQuaternion),
+};
+
+constexpr auto kPerInfluence = rigExec::RigExecOutputBound::Input;
+
+const rigExec::RigExecPortDesc kMatricesPorts[] = {
+    {&SkinMatricesInfluences(), &rigExecStd::Mat4dArray(), kRigExecPortInput,
+     "influences"},
+    {&SkinMatricesMatrices(), &rigExecStd::Mat4dArray(), kRigExecPortOutput,
+     "matrices", kPerInfluence, &SkinMatricesInfluences()},
+    {&SkinMatricesRows(), &rigExecStd::FloatArray(), kRigExecPortOutput, "rows",
+     kPerInfluence, &SkinMatricesInfluences(), nullptr,
+     rigExec::kRigExecInvalidIndex, rigExec::kRigExecSkinRowStride},
+    {&SkinMatricesReal(), &rigExecStd::QuatdArray(), kRigExecPortOutput, "real",
+     kPerInfluence, &SkinMatricesInfluences()},
+    {&SkinMatricesDual(), &rigExecStd::QuatdArray(), kRigExecPortOutput, "dual",
+     kPerInfluence, &SkinMatricesInfluences()},
+    {&SkinMatricesStretch(), &rigExecStd::Mat3dArray(), kRigExecPortOutput,
+     "stretch", kPerInfluence, &SkinMatricesInfluences()},
+    {&SkinMatricesRigid(), &rigExecStd::BoolArray(), kRigExecPortOutput,
+     "rigid", kPerInfluence, &SkinMatricesInfluences()},
+};
+
+const rigExec::RigExecOpDesc kMatricesDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "SkinMatrices";
+    d.ports = kMatricesPorts;
+    d.portCount = std::size(kMatricesPorts);
+    d.validate = &ValidateMatrices;
+    d.runBatch = &RunMatrices;
+    d.state = StateOf<SkinMatricesState>();
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    d.payloadFields = kMatricesFields;
+    d.payloadFieldCount = std::size(kMatricesFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &MatricesValues;
+    return d;
+}();
+
+} // namespace
+
 void
 RegisterSkinOps(rigExec::RigExecOpRegistrar &registrar)
 {
     registrar.Add(Skin(), kDesc);
+    registrar.Add(SkinMatrices(), kMatricesDesc);
 }
 
 } // namespace rigExecOps

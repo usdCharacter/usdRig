@@ -11,6 +11,7 @@
 #include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/ribbonFramesKernel.h"
 #include "rigExecMath/simdKernels.h"
+#include "rigExecMath/skinKernel.h"
 #include "rigExecMath/singleChainIk.h"
 #include "rigExecMath/solvers.h"
 #include "rigExecMath/splineIk.h"
@@ -1110,6 +1111,105 @@ TestSkin()
         CHECK(single.Run(values, &actual) && SamePoints(actual, results[i]));
     }
     CHECK(results.size() == 3 && !SamePoints(results[0], results[1]));
+
+    // SkinMatrices folds the forms once; a skin fed them moves the points
+    // bit for bit as one that folds its own.
+    for (const bool simd : {false, true}) {
+        for (const SkinMethod method :
+             {SkinMethod::ClassicLinear, SkinMethod::DualQuaternion}) {
+            const bool dualQuat = method == SkinMethod::DualQuaternion;
+            SkinMatricesPayload folded;
+            folded.method = method;
+            SkinPayload skin;
+            skin.method = method;
+            skin.elementSize = elementSize;
+            const auto run = [&](bool fed, const void *influenceValue,
+                                 Points *out, RigExecArray<float> *rows,
+                                 size_t *paletteCount) {
+                RigExecRigDescBuilder b;
+                const RigExecNodeId fold = b.AddOp(SkinMatrices(), &folded);
+                const RigExecNodeId node = b.AddOp(Skin(), &skin);
+                const RigExecInputId influences =
+                    b.BindInput(fold, SkinMatricesInfluences());
+                const RigExecOutputId rowsOut =
+                    b.BindOutput(fold, SkinMatricesRows());
+                const RigExecOutputId realOut =
+                    b.BindOutput(fold, SkinMatricesReal());
+                RigExecInputId transformsIn;
+                if (fed) {
+                    b.Connect(fold, SkinMatricesMatrices(), node,
+                              SkinTransforms());
+                    if (dualQuat) {
+                        b.Connect(fold, SkinMatricesReal(), node,
+                                  SkinPaletteReal());
+                        b.Connect(fold, SkinMatricesDual(), node,
+                                  SkinPaletteDual());
+                        b.Connect(fold, SkinMatricesStretch(), node,
+                                  SkinPaletteStretch());
+                        b.Connect(fold, SkinMatricesRigid(), node,
+                                  SkinPaletteRigid());
+                    } else {
+                        b.Connect(fold, SkinMatricesRows(), node, SkinRows());
+                    }
+                } else {
+                    transformsIn = b.BindInput(node, SkinTransforms());
+                }
+                const RigExecInputId pointsIn = b.BindInput(node, SkinPoints()),
+                                     indicesIn =
+                                         b.BindInput(node, SkinIndices()),
+                                     weightsIn =
+                                         b.BindInput(node, SkinWeights());
+                const RigExecOutputId outId = b.BindOutput(node, SkinOut());
+                std::string error;
+                const auto desc = b.Build(&error);
+                RigExecCompileOptions options;
+                options.useSimd = simd;
+                const auto program =
+                    desc ? RigExecCompile(*desc, options, &error) : nullptr;
+                auto evaluator =
+                    program ? RigExecEvaluator::Create(
+                                  program, RigExecEvaluatorOptions(), &error)
+                            : nullptr;
+                const bool ran =
+                    evaluator &&
+                    evaluator->SetInput(influences, influenceValue, &error) &&
+                    (fed || evaluator->SetInput(transformsIn, influenceValue,
+                                                &error)) &&
+                    evaluator->SetInput(pointsIn, &in, &error) &&
+                    evaluator->SetInput(indicesIn, &indexArray, &error) &&
+                    evaluator->SetInput(weightsIn, &weightArray, &error) &&
+                    evaluator->Evaluate(&error);
+                if (!ran)
+                    return false;
+                *out =
+                    *static_cast<const Points *>(evaluator->GetOutput(outId));
+                *rows = *static_cast<const RigExecArray<float> *>(
+                    evaluator->GetOutput(rowsOut));
+                *paletteCount =
+                    static_cast<const RigExecArray<rigExecStd::Quatd> *>(
+                        evaluator->GetOutput(realOut))
+                        ->Size();
+                return true;
+            };
+            Points own, shared;
+            RigExecArray<float> rows;
+            size_t paletteCount = 0;
+            CHECK(run(false, &transforms, &own, &rows, &paletteCount));
+            CHECK(run(true, &transforms, &shared, &rows, &paletteCount));
+            CHECK(SamePoints(own, shared));
+            CHECK(paletteCount == (dualQuat ? mats.size() : 0));
+            const size_t rowCount =
+                !dualQuat && simd ? mats.size() * kRigExecSkinRowStride : 0;
+            CHECK(rows.Size() == rowCount);
+            std::vector<float> narrowed(kRigExecSkinRowStride);
+            for (size_t t = 0; t < rows.Size() / kRigExecSkinRowStride; ++t) {
+                RigExecNarrowSkinRowsKernel(mats[t], narrowed.data());
+                for (size_t c = 0; c < kRigExecSkinRowStride; ++c)
+                    CHECK(rows[t * kRigExecSkinRowStride + c] == narrowed[c]);
+            }
+            CHECK(!run(true, &projectiveArray, &shared, &rows, &paletteCount));
+        }
+    }
 }
 
 // The baked channel sum, spelled out in Gf: dense pairs lerp their deltas,

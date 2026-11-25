@@ -127,6 +127,35 @@ RigExecNarrowSkinRowsKernel(const M &transform, float *rows)
     }
 }
 
+/// The forms a skin reads its influence matrices through, folded once per
+/// run: a dual-quaternion palette (one entry per matrix, then the
+/// identity), or on the SIMD path the narrowed rows. The other form is
+/// left empty.
+template <class Point, class Double>
+void
+RigExecFoldSkinMatricesKernel(
+    bool dualQuat,
+    const typename RigExecDualQuatMath<Point, Double>::Mat4 *matrices,
+    size_t count, bool useSimd, std::vector<float> *rows,
+    std::vector<RigExecScaledDualQuatKernelT<Point, Double>> *palette)
+{
+    if (dualQuat) {
+        rows->clear();
+        *palette =
+            RigExecSkinDualQuatPaletteKernel<Point, Double>(matrices, count);
+        return;
+    }
+    palette->clear();
+    if (!useSimd) {
+        rows->clear();
+        return;
+    }
+    rows->resize(count * kRigExecSkinRowStride);
+    for (size_t t = 0; t < count; ++t)
+        RigExecNarrowSkinRowsKernel(matrices[t],
+                                    &(*rows)[t * kRigExecSkinRowStride]);
+}
+
 /// SSE2 linear blend in float. \p rows holds kRigExecSkinRowStride floats
 /// per influence from RigExecNarrowSkinRowsKernel, or null to narrow here.
 /// Without SSE2 this is the scalar kernel. in/out may alias.

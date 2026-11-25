@@ -19,6 +19,8 @@
 #include "rigExec/api/taskSystem.h"
 #include "rigExecMath/poseCommitKernel.h"
 #include "rigExecOps/solver/poseCommitOps.h"
+#include "rigExecOps/deform/skinOp.h"
+#include "rigExecMath/skinKernel.h"
 #include "rigExecOps/pose/poseOps.h"
 #include "opRunners/geometryOpRunner.h"
 #include "opRunners/poseOpRunner.h"
@@ -2662,6 +2664,197 @@ DenseFrames(const UsdStageRefPtr &stage, int count)
     return out;
 }
 
+// SkinMatrices: a skin revision's influence matrices, gathered as its
+// InfluenceFold gathers them, folded once by the op, against the table and
+// forms the fold wrote; a chunked revision's chunks are compared at their
+// own keys.
+const TfToken kSkinDualQuaternion("dualQuaternion");
+
+void
+PutPalette(std::vector<double> *out, const GfQuatd &real, const GfQuatd &dual,
+           const GfMatrix3d &stretch, bool rigid)
+{
+    for (const GfQuatd *q : {&real, &dual}) {
+        out->push_back(q->GetReal());
+        for (int a = 0; a < 3; ++a)
+            out->push_back(q->GetImaginary()[a]);
+    }
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c)
+            out->push_back(stretch[r][c]);
+    out->push_back(rigid ? 1.0 : 0.0);
+}
+
+void
+PutPalette(std::vector<double> *out, const rigExecStd::Quatd &real,
+           const rigExecStd::Quatd &dual, const rigExecStd::Mat3d &stretch,
+           bool rigid)
+{
+    for (const rigExecStd::Quatd *q : {&real, &dual}) {
+        out->push_back(q->GetReal());
+        for (int a = 0; a < 3; ++a)
+            out->push_back(q->GetImaginary()[a]);
+    }
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c)
+            out->push_back(stretch._mtx[r][c]);
+    out->push_back(rigid ? 1.0 : 0.0);
+}
+
+void
+ProbeSkinMatrices(const B &b)
+{
+    using namespace rigExecOps;
+    for (const auto &chain : b.chains) {
+        if (!chain.haveBase)
+            continue;
+        for (const auto &revision : chain.revisions) {
+            if (revision.op != RigExecRevisionOp::Skin)
+                continue;
+            const bool dualQuat =
+                revision.parameters.skinningMethod == kSkinDualQuaternion;
+            const std::string kind = dualQuat ? "dualQuaternion" : "linear";
+            if (revision.gpuOwned) {
+                Unprobed("SkinMatrices", kind, "GPU-owned chain");
+                continue;
+            }
+            const bool atPrim = revision.binding.transformPhase.kind ==
+                                RigExecReadPhaseKind::AtPrim;
+            std::vector<rigExecStd::Mat4d> gathered;
+            for (size_t k = 0; k < revision.influenceSlots.size(); ++k) {
+                const size_t slot = size_t(revision.influenceSlots[k]);
+                GfMatrix4d m = revision.finalPhase ? b.finalMatrix[slot]
+                                                   : b.baseMatrix[slot];
+                if (atPrim && k < revision.influenceRecords.size())
+                    for (const int record : revision.influenceRecords[k])
+                        if (b.frameMatrixValid[size_t(record)]) {
+                            m = b.frameMatrix[size_t(record)];
+                            break;
+                        }
+                gathered.push_back(OpMatrix(m));
+            }
+            SkinMatricesPayload p;
+            p.method = dualQuat ? SkinMethod::DualQuaternion
+                                : SkinMethod::ClassicLinear;
+            RigExecRigDescBuilder builder;
+            const RigExecNodeId id = builder.AddOp(SkinMatrices(), &p);
+            const RigExecInputId in =
+                builder.BindInput(id, SkinMatricesInfluences());
+            const RigExecOutputId
+                matricesOut = builder.BindOutput(id, SkinMatricesMatrices()),
+                rowsOut = builder.BindOutput(id, SkinMatricesRows()),
+                realOut = builder.BindOutput(id, SkinMatricesReal()),
+                dualOut = builder.BindOutput(id, SkinMatricesDual()),
+                stretchOut = builder.BindOutput(id, SkinMatricesStretch()),
+                rigidOut = builder.BindOutput(id, SkinMatricesRigid());
+            std::string error;
+            const auto desc = builder.Build(&error);
+            RigExecCompileOptions options;
+            options.useSimd = b.useSimd;
+            const auto program =
+                desc ? RigExecCompile(*desc, options, &error) : nullptr;
+            auto evaluator =
+                program ? RigExecEvaluator::Create(
+                              program, RigExecEvaluatorOptions(), &error)
+                        : nullptr;
+            const rigExecStd::RigExecArray<rigExecStd::Mat4d> influences(
+                gathered.data(), gathered.size());
+            if (!evaluator || !evaluator->SetInput(in, &influences, &error) ||
+                !evaluator->Evaluate(&error)) {
+                OpFailed("SkinMatrices", kind, revision.moverPathText,
+                         !revision.influencesValid, error);
+                continue;
+            }
+            const bool range = revision.role == RigExecBakedRevisionRole::Range;
+            if (!revision.influencesValid && !(range && dualQuat)) {
+                Report("SkinMatrices/" + kind, revision.moverPathText,
+                       "the baked fold refused where the op ran");
+                continue;
+            }
+            const auto &matrices = *static_cast<
+                const rigExecStd::RigExecArray<rigExecStd::Mat4d> *>(
+                evaluator->GetOutput(matricesOut));
+            const auto &rows =
+                *static_cast<const rigExecStd::RigExecArray<float> *>(
+                    evaluator->GetOutput(rowsOut));
+            using Quats = rigExecStd::RigExecArray<rigExecStd::Quatd>;
+            const auto &real =
+                *static_cast<const Quats *>(evaluator->GetOutput(realOut));
+            const auto &dual =
+                *static_cast<const Quats *>(evaluator->GetOutput(dualOut));
+            const auto &stretch = *static_cast<
+                const rigExecStd::RigExecArray<rigExecStd::Mat3d> *>(
+                evaluator->GetOutput(stretchOut));
+            const auto &rigid =
+                *static_cast<const rigExecStd::RigExecArray<uint8_t> *>(
+                    evaluator->GetOutput(rigidOut));
+            std::vector<double> baked, op;
+            for (const GfMatrix4d &m : revision.influences)
+                PutBits(&baked, m);
+            for (const rigExecStd::Mat4d &m : matrices)
+                PutBits(&op, m);
+            CompareBits("SkinMatrices", kind, revision.moverPathText, baked, op,
+                        !revision.influencesValid);
+            // The fold writes the forms of every revision but a ranged
+            // linear blend, whose chunks gather their own.
+            if (dualQuat || !range) {
+                baked.clear();
+                op.clear();
+                if (dualQuat) {
+                    for (size_t t = 0; t < revision.influences.size() &&
+                                       t < revision.palette.size();
+                         ++t) {
+                        const auto &e = revision.palette[t];
+                        PutPalette(&baked, e.rigid.real, e.rigid.dual,
+                                   e.stretch, e.isRigid);
+                    }
+                    for (size_t t = 0; t < real.Size(); ++t)
+                        PutPalette(&op, real[t], dual[t], stretch[t],
+                                   rigid[t] != 0);
+                } else {
+                    baked.assign(revision.rows.begin(), revision.rows.end());
+                    op.assign(rows.begin(), rows.end());
+                }
+                CompareBits("SkinMatrices", kind + " forms",
+                            revision.moverPathText, baked, op,
+                            !revision.influencesValid);
+            }
+            if (!revision.chunked)
+                continue;
+            for (size_t g = 0; g < revision.chunks.size(); ++g) {
+                const auto &chunk = revision.chunks[g];
+                baked.clear();
+                op.clear();
+                for (const int position : chunk.key) {
+                    const size_t t = size_t(position);
+                    if (t >= chunk.transforms.size() || t >= matrices.Size())
+                        continue;
+                    PutBits(&baked, chunk.transforms[t]);
+                    PutBits(&op, matrices[t]);
+                    const size_t stride = kRigExecSkinRowStride;
+                    if ((t + 1) * stride <= chunk.rows.size() &&
+                        (t + 1) * stride <= rows.Size())
+                        for (size_t c = 0; c < stride; ++c) {
+                            baked.push_back(chunk.rows[t * stride + c]);
+                            op.push_back(rows[t * stride + c]);
+                        }
+                    if (t < chunk.palette.size() && t < real.Size()) {
+                        const auto &e = chunk.palette[t];
+                        PutPalette(&baked, e.rigid.real, e.rigid.dual,
+                                   e.stretch, e.isRigid);
+                        PutPalette(&op, real[t], dual[t], stretch[t],
+                                   rigid[t] != 0);
+                    }
+                }
+                CompareBits("SkinMatrices", kind + " chunk",
+                            revision.moverPathText + " chunk " +
+                                std::to_string(g),
+                            baked, op, !revision.influencesValid);
+            }
+        }
+    }
+}
+
 void
 ProbeStage(const UsdStageRefPtr &stage, const std::string &rig, Paint paint,
            bool dense = false)
@@ -2708,6 +2901,7 @@ ProbeStage(const UsdStageRefPtr &stage, const std::string &rig, Paint paint,
         ProbeRevisions(b);
         ProbeRangeChains(b);
         ProbeDerived(b);
+        ProbeSkinMatrices(b);
         ProbeWeights(b);
         ProbeSpaces(b);
         ProbePose(b);
@@ -3257,6 +3451,8 @@ main(int argc, char **argv)
                                "RevisionChunk/",
                                "RangeChain/",
                                "Derived/",
+                               "SkinMatrices/linear",
+                               "SkinMatrices/dualQuaternion",
                                "WeightPacket/",
                                "Constraint/",
                                "Spaces/ProviderMatrix/",

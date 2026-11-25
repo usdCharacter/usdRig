@@ -37,6 +37,7 @@
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/rangeRunner.h"
 #include "rigExecMath/skinAcceptance.h"
+#include "rigExecMath/skinKernel.h"
 
 namespace rigExec {
 namespace eval {
@@ -547,22 +548,9 @@ FoldSkinTransformForms(int method, const typename Math::Mat4 *influences,
                        size_t count, bool useSimd, std::vector<float> *rows,
                        std::vector<typename Math::ScaledDualQuat> *palette)
 {
-    if (method == kSkinMethodDualQuaternion) {
-        rows->clear();
-        *palette = RigExecSkinDualQuatPaletteKernel<typename Math::Vec3f,
-                                                    typename Math::Vec3d>(
-            influences, count);
-        return;
-    }
-    palette->clear();
-    if (!useSimd) {
-        rows->clear();
-        return;
-    }
-    rows->resize(count * kSkinRowStride);
-    for (size_t t = 0; t < count; ++t) {
-        Math::NarrowSkinRows(influences[t], &(*rows)[t * kSkinRowStride]);
-    }
+    RigExecFoldSkinMatricesKernel<typename Math::Vec3f, typename Math::Vec3d>(
+        method == kSkinMethodDualQuaternion, influences, count, useSimd, rows,
+        palette);
 }
 
 /// Copies a chunk's own influences out of the matrices \p matrixAt
