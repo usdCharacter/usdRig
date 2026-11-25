@@ -137,6 +137,9 @@ Same(const Vec3 &a, const Vec3 &b)
 RIGEXEC_DEFINE_OP_HANDLE(Check)
 RIGEXEC_DEFINE_PORT_HANDLE(CheckIn)
 RIGEXEC_DEFINE_PORT_HANDLE(CheckOut)
+RIGEXEC_DEFINE_OP_HANDLE(Gate)
+RIGEXEC_DEFINE_PORT_HANDLE(GateIn)
+RIGEXEC_DEFINE_PORT_HANDLE(GateOut)
 
 std::atomic<uint32_t> checkRuns{0};
 
@@ -150,6 +153,29 @@ RunCheck(const void *, void *, const RigExecOpIo &io, std::string *error)
         return false;
     }
     *static_cast<Vec3 *>(io.outputs[CheckOut().Index()]) = in;
+    return true;
+}
+
+/// Gate: out = 2 * in; validate refuses a negative in, a checked input.
+bool
+ValidateGate(const RigExecOpCheck &check, std::string *error)
+{
+    const auto *in = static_cast<const float *>(
+        check.batch.inputs
+            ? check.batch
+                  .inputs[check.k * check.batch.portCount + GateIn().Index()]
+            : nullptr);
+    if (!in || *in >= 0.0f)
+        return true;
+    *error = "in is negative";
+    return false;
+}
+
+bool
+RunGate(const void *, void *, const RigExecOpIo &io, std::string *)
+{
+    *static_cast<float *>(io.outputs[GateOut().Index()]) =
+        2.0f * *static_cast<const float *>(io.inputs[GateIn().Index()]);
     return true;
 }
 
@@ -333,6 +359,23 @@ RegisterCheck(RigExecOpRegistrar &registrar)
         return d;
     }();
     registrar.Add(Check(), desc);
+
+    static const RigExecPortDesc gatePorts[] = {
+        {&GateIn(), &fakeTypes::Float(),
+         kRigExecPortInput | kRigExecPortChecked, "in"},
+        {&GateOut(), &fakeTypes::Float(), kRigExecPortOutput, "out"},
+    };
+    static const RigExecOpDesc gate = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "Gate";
+        d.ports = gatePorts;
+        d.portCount = 2;
+        d.run = &RunGate;
+        d.validate = &ValidateGate;
+        return d;
+    }();
+    registrar.Add(Gate(), gate);
 
     static const RigExecPortDesc weightedPorts[] = {
         {&WeightedItems(), &fakeTypes::Vec3Type(),
@@ -3267,6 +3310,45 @@ TestValidateAndErrors()
     blurCuts = 0;
 }
 
+// A node its validate refuses fails the evaluation, and every output then
+// holds no valid value, naming the refusal, until a frame succeeds: after
+// a failed first evaluation and after a checked input changes.
+void
+TestValidateFailureInvalidatesOutputs()
+{
+    RigExecRigDescBuilder b;
+    const RigExecNodeId gate = b.AddOp(Gate());
+    const RigExecInputId in = b.BindInput(gate, GateIn());
+    const RigExecOutputId out = b.BindOutput(gate, GateOut());
+    std::string error;
+    auto desc = b.Build(&error);
+    auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
+    auto evaluator = program ? RigExecEvaluator::Create(program) : nullptr;
+    CHECK(evaluator);
+    if (!evaluator)
+        return;
+    const float negative = -1.0f, positive = 1.5f;
+    std::string why;
+    CHECK(evaluator->SetInput(in, &negative));
+    CHECK(!evaluator->Evaluate(&error));
+    CHECK(Contains(error, "node 0 (test:Gate) is invalid: in is negative"));
+    CHECK(!evaluator->GetOutput(out, &why));
+    CHECK(Contains(why, "no valid value") && Contains(why, "in is negative"));
+    CHECK(evaluator->SetInput(in, &positive));
+    CHECK(evaluator->Evaluate(&error));
+    const auto *value = static_cast<const float *>(evaluator->GetOutput(out));
+    CHECK(value && *value == 3.0f);
+    CHECK(evaluator->SetInput(in, &negative));
+    CHECK(!evaluator->Evaluate(&error));
+    why.clear();
+    CHECK(!evaluator->GetOutput(out, &why));
+    CHECK(Contains(why, "no valid value") && Contains(why, "in is negative"));
+    CHECK(evaluator->SetInput(in, &positive));
+    CHECK(evaluator->Evaluate(&error));
+    value = static_cast<const float *>(evaluator->GetOutput(out));
+    CHECK(value && *value == 3.0f);
+}
+
 // A host-ordered program run in a host's schedule: each chain's head, then
 // each segment group by group, in segment order, gives the evaluator's
 // bits for any grouping, reading inputs in place; values are numbered for
@@ -3470,6 +3552,7 @@ main()
     TestRangeNoAllocation();
     TestRangeChains();
     TestValidateAndErrors();
+    TestValidateFailureInvalidatesOutputs();
     TestHostSchedule();
     if (failures) {
         std::printf("%d failure(s)\n", failures);

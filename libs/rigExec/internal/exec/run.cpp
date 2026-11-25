@@ -1217,7 +1217,13 @@ RigExecRun::Run(bool historyTick, RigExecTaskSystem *tasks, std::string *error)
                                   p.slots[p.inputSlots[i]].offset);
     }
     _SettleBounds();
-    if (!_Validate(error)) {
+    std::string refusal;
+    if (!_Validate(&refusal)) {
+        failure = refusal;
+        if (error)
+            *error = refusal;
+        for (RigExecPublishedPool &pool : published->pools)
+            pool.invalid = true;
         everything = true;
         return false;
     }
