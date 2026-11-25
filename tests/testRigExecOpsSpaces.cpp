@@ -43,6 +43,12 @@ SameBits(const T &a, const T &b)
     return std::memcmp(&a, &b, sizeof(T)) == 0;
 }
 
+bool
+SameBits(const PointFrame &a, const PointFrame &b)
+{
+    return SameBits(a.points, b.points) && a.flags == b.flags;
+}
+
 /// One op node with the given inputs bound, compiled and ready to run.
 struct Harness {
     std::unique_ptr<RigExecEvaluator> evaluator;
