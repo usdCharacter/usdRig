@@ -71,6 +71,17 @@ struct BakedOpHost {
     {
         return RigExecBakedStorePropertyVersion(B, output, value, error);
     }
+    bool LookUpPoseVersion(uint32_t, const eval::OpLookup &lookup,
+                           const RigExecTypeDesc &type, void *value,
+                           std::string *error) const
+    {
+        return RigExecBakedLookUpPoseVersion(B, lookup, type, value, error);
+    }
+    bool StoreVolumePlacement(const eval::OpHostOutput &output,
+                              const void *value, std::string *error) const
+    {
+        return RigExecBakedStoreVolumePlacement(B, output, value, error);
+    }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t, const void *,
                     size_t, std::string *error) const
     {
@@ -275,8 +286,7 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
     };
     for (uint32_t n = 0; n < layout.nodes.size(); ++n) {
         if (layout.chainOf[n] != kRigExecInvalidIndex ||
-            (n < B->opNodeOrigins.size() &&
-             B->opNodeOrigins[n].family == RigExecBakedOpFamily::Property))
+            n < B->opNodeOrigins.size())
             continue;
         RigExecBakedStep &step = AddOpStep(B, K::OpNode, int(n), -1);
         DeclareNodeReads(*B, op, n, OpReader(), &step.reads);
@@ -375,11 +385,12 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
     B.opState.reset();
     auto op = std::make_shared<RigExecBakedOpProgram>();
     eval::OpStepLayout &layout = op->layout;
-    if (!B.propertyChains.empty() && !RigExecEnsureBuiltinRegistry(error))
+    if (!B.opNodeOrigins.empty() && !RigExecEnsureBuiltinRegistry(error))
         return false;
     RigExecRigDescBuilder builder;
     if (!RigExecBakedAddPropertyOps(B, &builder, &layout, error))
         return false;
+    RigExecBakedAddVolumePlacementOps(B, &builder, &layout);
     RigExecBakedOpInjection injection;
     injection.builder = &builder;
     const bool injected = gOpInjector && gOpInjector(B, &injection);

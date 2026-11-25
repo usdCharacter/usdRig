@@ -9,7 +9,7 @@
 // corruptions; writing is deterministic; the validator refuses a smoke set of
 // rule violations, a step or cluster graph playback could not walk, the retired
 // snapshot step and domain, space switches out of resolution order,
-// VolumePlacements steps that do not place one volume each, a failed plugin
+// VolumePlacement op steps that do not place one volume each, a failed plugin
 // assembly holding frame bytes, and a presentation without its identifier,
 // orders listed inputs as their composed texts, and handles a path tree 100000
 // prims deep; step labels match the program's; sparse skin topologies encode
@@ -1605,11 +1605,11 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 37 &&
-                      RigExecFormatOldestReadable == 37,
-                  "format 37 runs property revisions as op nodes and is the "
+    static_assert(RigExecFormatVersion == 38 &&
+                      RigExecFormatOldestReadable == 38,
+                  "format 38 runs volume placements as op nodes and is the "
                   "only format Open reads");
-    // Every older format requires re-export: its property revisions ran as
+    // Every older format requires re-export: its volume placements ran as
     // their own steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
@@ -1621,14 +1621,14 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 37 through " +
+            " (this reader reads 38 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 37 ? "re-export: property revisions as op nodes"
+            (version < 38 ? "re-export: volume placements as op nodes"
                           : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 37 ? reexports : rebakes);
+        ++(version < 38 ? reexports : rebakes);
     }
-    CHECK(reexports == 37 && rebakes == 1);
+    CHECK(reexports == 38 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -2654,8 +2654,9 @@ TestSwitchOrder()
 }
 
 /// The rich file with slot 0 a volume and slot 1 (/Rig/Slot0) not, and the
-/// volume's VolumePlacements step after the compose: step 1, part 1,
-/// reading PoseFin[0] and writing WeightFrames[0], in cluster 0.
+/// volume's two VolumePlacement op nodes after the compose: step 1 runs node
+/// 0, reading PoseFin[0] through lookup 0 and storing WeightFrames[0]; step 2
+/// node 1, the base placement, in cluster 0.
 RigExecWireFile
 _VolumeFile()
 {
@@ -2663,17 +2664,46 @@ _VolumeFile()
     _AddSlots(f, 1);
     f.constants->noScaleAvars = {1, 0};
     f.pose->commits[0].slotWrites[0] = uint32_t(f.slotMeta->paths.size());
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    const uint32_t first = uint32_t(f.opGraph->nodes.size());
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = "VolumePlacement";
+    entry->version = 1;
+    f.manifest->coreOps.push_back(std::move(entry));
+    for (uint32_t base = 0; base < 2; ++base) {
+        auto op = std::make_unique<fb::RigExecWireOpNode>();
+        op->op = uint32_t(f.manifest->coreOps.size() - 1);
+        auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+        in->port = 0;
+        in->host = 4;
+        in->object = uint32_t(f.opGraph->lookups.size());
+        op->inputs.push_back(std::move(in));
+        f.opGraph->nodes.push_back(std::move(op));
+        auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+        lookup->source = 1;
+        lookup->object = 0;
+        lookup->part = int32_t(base);
+        f.opGraph->lookups.push_back(std::move(lookup));
+        auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+        output->node = first + base;
+        output->port = 1;
+        output->target = uint8_t(1 + base);
+        output->object = 0;
+        f.opGraph->hostOutputs.push_back(std::move(output));
+    }
     fb::RigExecWireStep place;
-    place.kind = fb::StepKind::VolumePlacements;
-    place.object = 0;
-    place.part = 1;
+    place.kind = fb::StepKind::OpNode;
+    place.object = int32_t(first);
+    place.part = -1;
     place.cluster = 0;
     place.reads = {fb::SlotRange(fb::SlotDomain::PoseFin, 0, 1)};
     place.writes = {fb::SlotRange(fb::SlotDomain::WeightFrames, 0, 1)};
     place.preds = _RegionIds(f, {0});
     _RegionStep(f, 0).succs = _RegionIds(f, {1});
     fb::RigExecWireStep base = place;
-    base.part = 2;
+    base.object = int32_t(first + 1);
     base.reads = {fb::SlotRange(fb::SlotDomain::PoseBase, 0, 1)};
     base.writes = {fb::SlotRange(fb::SlotDomain::WeightFramesBase, 0, 1)};
     _RegionStep(f, 0).writes.push_back(
@@ -2701,9 +2731,10 @@ _AppendStep(RigExecWireFile &f, fb::RigExecWireStep step)
     f.steps.push_back(std::move(step));
 }
 
-/// One VolumePlacements step per volume slot, each placing its own slot
-/// alone: the per-volume form is accepted and round-trips; the whole-map
-/// form, a step of a slot that is no volume, a write other than its own
+/// One VolumePlacement op step per volume slot and phase, each placing its
+/// own slot alone: the form is accepted and round-trips; the retired step
+/// kind, a node of a slot that is no volume, a pose lookup of no frame or of
+/// a version the step does not declare, a write other than its own
 /// WeightFrames slot, a second step of one volume, a volume with no step,
 /// another kind writing WeightFrames and a reader of a placement ahead of
 /// its step are refused, each naming the step.
@@ -2721,9 +2752,10 @@ TestVolumePlacementSteps()
     CHECK(_Write(valid, &bytes));
     const auto opened = _Open(bytes, &why);
     CHECK(opened && opened->steps.size() == _RegionBegin(*opened) + 3 &&
-          _RegionStep(*opened, 1).kind == fb::StepKind::VolumePlacements &&
-          _RegionStep(*opened, 1).object == 0 &&
-          _RegionStep(*opened, 1).part == 1);
+          _RegionStep(*opened, 1).kind == fb::StepKind::OpNode &&
+          _RegionStep(*opened, 1).object == _RegionStep(valid, 1).object &&
+          RigExecFormatStepLabel(*opened, _RegionBegin(*opened) + 2) ==
+              "OpNode /Rig/Ctl base");
     std::vector<uint8_t> again;
     CHECK(opened && _Write(*opened, &again) && again == bytes);
 
@@ -2742,61 +2774,67 @@ TestVolumePlacementSteps()
                         ok ? "(accepted)" : why.c_str(), text.c_str());
         }
     };
-    const auto wholeMap = [](F &f) { _RegionStep(f, 1).part = -1; };
-    const std::string retired = "step 1 (VolumePlacements every volume "
-                                "weight) is the retired whole-map placement "
-                                "(part -1)";
-    expect("whole-map form", retired, wholeMap);
+    const auto retiredKind = [](F &f) {
+        _RegionStep(f, 1).kind = fb::StepKind::ReservedVolumePlacements;
+    };
+    const std::string node = std::to_string(_RegionStep(valid, 1).object);
+    const size_t output = valid.opGraph->hostOutputs.size() - 2;
+    const size_t lookup = valid.opGraph->lookups.size() - 2;
+    const std::string retired = "step 1 (ReservedVolumePlacements " + node +
+                                "): the retired VolumePlacements step";
+    expect("the retired step kind", retired, retiredKind);
     {
-        _context = "volume placements open: whole-map form";
+        _context = "volume placements open: the retired step kind";
         ++cases;
         F file = _VolumeFile();
-        wholeMap(file);
+        retiredKind(file);
         CHECK(!_Open(_PackUnchecked(file), &why) &&
               why == "invalid .rigexec: " + _RegionDiagnostic(file, retired));
     }
-    expect("another part",
-           "step 1 (VolumePlacements every volume weight) has part 0, "
-           "which is no VolumePlacements form",
-           [](F &f) { _RegionStep(f, 1).part = 0; });
     expect("no volume slot",
-           "step 1 (VolumePlacements /Rig/Slot0) places slot 1, which is no "
-           "volume slot",
-           [](F &f) {
-               _RegionStep(f, 1).object = 1;
-               _RegionStep(f, 1).reads = {
-                   fb::SlotRange(fb::SlotDomain::PoseFin, 1, 2)};
+           "op_graph.host_outputs: node " + node +
+               " places slot 1, which is no volume slot",
+           [&](F &f) {
+               f.opGraph->hostOutputs[output]->object = 1;
                _RegionStep(f, 1).writes = {
                    fb::SlotRange(fb::SlotDomain::WeightFrames, 1, 2)};
            });
     expect("slot past the slots",
-           "step 1 (VolumePlacements every volume weight) places slot 2, "
-           "which is no volume slot",
-           [](F &f) { _RegionStep(f, 1).object = 2; });
+           "op_graph.host_outputs: node " + node +
+               " places slot 2, which is no volume slot",
+           [&](F &f) { f.opGraph->hostOutputs[output]->object = 2; });
+    expect("a lookup of no fin or base frame",
+           "op_graph.lookups: a pose version lookup reads neither a fin nor "
+           "a base frame",
+           [&](F &f) { f.opGraph->lookups[lookup]->part = 2; });
+    expect("a lookup of an undeclared version",
+           "step 1 (OpNode /Rig/Ctl) looks up PoseFin[1], which it does not "
+           "read",
+           [&](F &f) { f.opGraph->lookups[lookup]->object = 1; });
     expect("another volume's slot",
-           "step 1 (VolumePlacements /Rig/Ctl) writes other than "
+           "step 1 (OpNode /Rig/Ctl) writes other than "
            "WeightFrames[0]",
            [](F &f) {
                _RegionStep(f, 1).writes = {
                    fb::SlotRange(fb::SlotDomain::WeightFrames, 1, 2)};
            });
     expect("more than its slot",
-           "step 1 (VolumePlacements /Rig/Ctl) writes other than "
+           "step 1 (OpNode /Rig/Ctl) writes other than "
            "WeightFrames[0]",
            [](F &f) {
                _RegionStep(f, 1).writes = {
                    fb::SlotRange(fb::SlotDomain::WeightFrames, 0, 2)};
            });
     expect("no write",
-           "step 1 (VolumePlacements /Rig/Ctl) writes other than "
+           "step 1 (OpNode /Rig/Ctl) writes other than "
            "WeightFrames[0]",
            [](F &f) { _RegionStep(f, 1).writes.clear(); });
     expect("a second step of one volume",
-           "step 3 (VolumePlacements /Rig/Ctl) places volume slot 0 again; "
-           "step 1 (VolumePlacements /Rig/Ctl) already does",
+           "step 3 (OpNode /Rig/Ctl) places volume slot 0 again; "
+           "step 1 (OpNode /Rig/Ctl) already does",
            [](F &f) { _AppendStep(f, _RegionStep(f, 1)); });
     expect("a volume with no step",
-           "volume slot 1 (/Rig/Slot0) has no VolumePlacements step",
+           "volume slot 1 (/Rig/Slot0) has no VolumePlacement op step",
            [](F &f) { f.constants->noScaleAvars[1] = 1; });
     // A retired kind is named as one ahead of the WeightFrames rule its
     // write would break.
@@ -2805,7 +2843,7 @@ TestVolumePlacementSteps()
            [](F &f) { _RegionStep(f, 1).kind = fb::StepKind::SnapshotFinals; });
     expect("a weight packet writing WeightFrames",
            "step 3 (WeightPacket /Rig/W) writes WeightFrames, which only a "
-           "VolumePlacements step writes",
+           "VolumePlacement op step writes",
            [](F &f) {
                fb::RigExecWireStep packet;
                packet.kind = fb::StepKind::WeightPacket;
@@ -2867,7 +2905,7 @@ TestStepLabels()
           std::to_string(_RegionBegin(rich) + 1));
     const RigExecWireFile volume = _VolumeFile();
     CHECK(RigExecFormatStepLabel(volume, _RegionBegin(volume) + 1) ==
-          "VolumePlacements /Rig/Ctl");
+          "OpNode /Rig/Ctl");
 
     size_t checked = 3;
     const auto label =
@@ -2884,9 +2922,9 @@ TestStepLabels()
             }
         };
     using fb::StepKind;
-    label("VolumePlacements every volume weight", [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::VolumePlacements;
-        _RegionStep(f, 0).part = -1;
+    label("ReservedVolumePlacements 0", [](RigExecWireFile &f) {
+        _RegionStep(f, 0).kind = StepKind::ReservedVolumePlacements;
+        _RegionStep(f, 0).object = 0;
     });
     const auto group = [](RigExecWireFile &f) {
         f.pose->composeGroups.resize(1);

@@ -17,6 +17,10 @@
 #include "rigExec/internal/weightPackets.h"
 #include "rigExecBinary/format.h"
 #include "rigExecBinary/manifest.h"
+#include "rigExecBuiltins/builtins.h"
+#include "rigExecEvalCore/opSteps.h"
+#include "rigExecMath/weightFieldKernel.h"
+#include "rigExecRuntime/dualQuatMath.h"
 #include "rigExecGraph/opValues.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/weightFields.h"
@@ -615,6 +619,44 @@ _SynthCompare(const char *name, const RigExecWeightPacket &expected,
     return ok;
 }
 
+// A VolumePlacement op node placing slot \p slot, its base placement when
+// \p base, from pose version \p slot (the slot's sampled Xform seed); its
+// node index.
+static uint32_t
+_SynthPlacementNode(fb::RigExecWireFile *file, uint32_t slot, bool base)
+{
+    if (!file->opGraph) {
+        file->opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+        auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+        entry->nameSpace = "rig";
+        entry->name = "VolumePlacement";
+        entry->version = 1;
+        file->manifest->coreOps.push_back(std::move(entry));
+    }
+    auto &graph = *file->opGraph;
+    const uint32_t node = uint32_t(graph.nodes.size());
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = uint32_t(file->manifest->coreOps.size() - 1);
+    auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+    in->port = 0;
+    in->host = 4;
+    in->object = uint32_t(graph.lookups.size());
+    op->inputs.push_back(std::move(in));
+    graph.nodes.push_back(std::move(op));
+    auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+    lookup->source = 1;
+    lookup->object = slot;
+    lookup->part = base ? 1 : 0;
+    graph.lookups.push_back(std::move(lookup));
+    auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+    output->node = node;
+    output->port = 1;
+    output->target = base ? 2 : 1;
+    output->object = slot;
+    graph.hostOutputs.push_back(std::move(output));
+    return node;
+}
+
 // Compile the fixture's typed operations with the production compiler. The
 // identity volume frames are explicit sampled Xform seeds; every numerical
 // packet and chained points publication has an ordinary producer.
@@ -647,7 +689,9 @@ _SynthCompileGraph(fb::RigExecWireFile *file, std::string *error)
         add(K::AvarInputs, int(slot), -1, owner);
         file->steps.back().writes = {one(D::Avars, uint32_t(slot))};
         for (const int part : {1, 2}) {
-            add(K::VolumePlacements, int(slot), part, owner);
+            add(K::OpNode,
+                int(_SynthPlacementNode(file, uint32_t(slot), part == 2)), -1,
+                owner);
             auto &step = file->steps.back();
             step.reads = {
                 one(part == 2 ? D::PoseBase : D::PoseFin, uint32_t(slot))};
@@ -1465,34 +1509,33 @@ _TestSyntheticBuilders()
     std::printf("synthetic: %zu/%zu packets match, %zu weight frame(s)\n", ok,
                 expected.size(), frames.size());
 
-    // The whole-map form (part -1) is retired: Open refuses it by name.
-    if (const std::unique_ptr<fb::RigExecWireFile> wholeMap =
+    // The retired VolumePlacements step kind: Open refuses it by name.
+    if (const std::unique_ptr<fb::RigExecWireFile> retired =
             RigExecTestUnpack(bytes)) {
         const auto placement = std::find_if(
-            wholeMap->steps.begin(), wholeMap->steps.end(),
-            [](const auto &step) {
-                return step.kind == fb::StepKind::VolumePlacements &&
-                       step.part == 1 && step.object == 1;
-            });
-        CHECK(placement != wholeMap->steps.end());
-        if (placement == wholeMap->steps.end())
+            retired->steps.begin(), retired->steps.end(),
+            [](const auto &step) { return step.kind == fb::StepKind::OpNode; });
+        CHECK(placement != retired->steps.end());
+        if (placement == retired->steps.end())
             return;
-        const size_t place = size_t(placement - wholeMap->steps.begin());
-        wholeMap->steps[place].part = -1;
-        const std::vector<uint8_t> packed = RigExecTestPackUnchecked(*wholeMap);
+        const size_t place = size_t(placement - retired->steps.begin());
+        const std::string label = RigExecFormatStepLabel(*retired, place);
+        retired->steps[place].kind = fb::StepKind::ReservedVolumePlacements;
+        const std::vector<uint8_t> packed = RigExecTestPackUnchecked(*retired);
         std::string why;
         const std::unique_ptr<RigExecRuntimeReader> refused =
             RigExecRuntimeReader::Open(packed.data(), packed.size(), &why);
-        const std::string want =
-            "invalid .rigexec: step " + std::to_string(place) +
-            " (VolumePlacements every volume weight) is the retired "
-            "whole-map placement (part -1)";
+        const std::string want = "invalid .rigexec: step " +
+                                 std::to_string(place) + " (" +
+                                 RigExecFormatStepLabel(*retired, place) +
+                                 "): the retired VolumePlacements step";
+        CHECK(label.rfind("OpNode ", 0) == 0);
         CHECK(!refused && why == want);
         if (refused || why != want) {
-            std::printf("  whole-map open said '%s', expected '%s'\n",
+            std::printf("  retired step open said '%s', expected '%s'\n",
                         refused ? "(opened)" : why.c_str(), want.c_str());
         }
-        std::printf("synthetic, whole-map VolumePlacements refused: %s\n",
+        std::printf("synthetic, retired VolumePlacements refused: %s\n",
                     why.c_str());
     }
 
@@ -1939,9 +1982,9 @@ _TestComputedReadsAndOracle()
     std::printf("computed reads and oracle: checked\n");
 }
 
-// A VolumePlacements step the closure skips keeps its slot's placement and
+// A volume placement that does not run keeps its slot's placement and
 // placed byte bit for bit, the oracle reads that kept placement, and only
-// the slot's own step moves it. White-box over a hand-assembled program:
+// the slot's own placement moves it. White-box over a hand-assembled program:
 // Production scheduling independence is checked on the real bake below.
 static void
 _TestVolumePlacementSkip()
@@ -1962,14 +2005,6 @@ _TestVolumePlacementSkip()
         object.providerSlot = int32_t(slot);
         object.samplesInFlight = true;
         file.geometry->weightObjects.push_back(std::move(object));
-        fb::RigExecWireStep step;
-        step.kind = fb::StepKind::VolumePlacements;
-        step.object = int32_t(slot);
-        step.part = 1;
-        step.reads = {fb::SlotRange(fb::SlotDomain::PoseFin, slot, slot + 1)};
-        step.writes = {
-            fb::SlotRange(fb::SlotDomain::WeightFrames, slot, slot + 1)};
-        file.steps.push_back(std::move(step));
     }
     // Per-consumer envelope descriptors select independent placement tables.
     // This white-box failure test complements the actual exported S9 rig below.
@@ -2038,12 +2073,31 @@ _TestVolumePlacementSkip()
         }
         return true;
     };
-    const auto run = [&](size_t step) {
+    // What a VolumePlacement node of slot \p slot does: its pose version
+    // looked up, placed, and stored.
+    RigExecTypeDesc frameType;
+    frameType.size = sizeof(RrPointFrame);
+    const auto place = [&](uint32_t slot) {
         error.clear();
-        const bool ok = RrRunWeightStep(&program, step, &error);
+        const eval::OpLookup lookup{uint8_t(eval::OpLookupSource::PoseVersion),
+                                    store.finLast[slot], 0, 0};
+        RrPointFrame frame;
+        RrMat4d placement(1.0);
+        if (!RrLookUpPoseVersion(&program, lookup, frameType, &frame, &error))
+            return false;
+        RigExecVolumePlacement(frame.points,
+                               (frame.flags & RrPointFrameValid) != 0,
+                               (frame.flags & RrPointFrameDegenerate) != 0,
+                               RrDualQuatPointsToMatrix, &placement);
+        const eval::OpHostOutput output{
+            0, 1, uint8_t(eval::OpOutputTarget::VolumePlacement), slot};
+        return RrStoreVolumePlacement(&program, output, &placement, &error);
+    };
+    const auto run = [&](uint32_t slot) {
+        const bool ok = place(slot);
         CHECK(ok);
         if (!ok) {
-            std::printf("  volume step %zu: %s\n", step, error.c_str());
+            std::printf("  volume placement %u: %s\n", slot, error.c_str());
         }
     };
     const std::vector<RrVec3f> samples = {
@@ -2112,15 +2166,17 @@ _TestVolumePlacementSkip()
     std::vector<float> movedWeights;
     CHECK(resolve(&movedWeights) && movedWeights != placedWeights);
 
-    // A step naming no volume slot fails by name and changes nothing.
-    const RrMat4d before = store.volumePlacement[1];
-    constants.noScaleAvars[1] = 0;
+    // A store past the placements fails by name and changes nothing.
+    const std::vector<RrMat4d> before = store.volumePlacement;
     error.clear();
-    CHECK(!RrRunWeightStep(&program, 1, &error) &&
-          error == "weight step 1 places no volume slot");
-    constants.noScaleAvars[1] = 1;
-    CHECK(std::memcmp(&store.volumePlacement[1], &before, sizeof(RrMat4d)) ==
-          0);
+    const RrMat4d identity(1.0);
+    CHECK(!RrStoreVolumePlacement(
+              &program,
+              {0, 1, uint8_t(eval::OpOutputTarget::VolumePlacement), 2},
+              &identity, &error) &&
+          error == "slot 2 places no volume");
+    CHECK(std::memcmp(store.volumePlacement.data(), before.data(),
+                      before.size() * sizeof(RrMat4d)) == 0);
     std::printf("volume placement skip: a skipped step kept slot 1's "
                 "placement bit for bit and the oracle read it; its own step "
                 "moved it\n");
@@ -2196,18 +2252,18 @@ _TestVolumePlacementDrags(const std::string &stagePath)
         CHECK(entry);
         undragged[v] = entry ? entry->matrix : RrMat4d(1.0);
     }
-    // Each volume's VolumePlacements step, by its label.
+    // Each volume's VolumePlacement op step, by its label.
     int64_t placer[2] = {-1, -1};
     {
         std::unique_ptr<fb::RigExecWireFile> file;
         CHECK(RigExecFormatOpen(bytes.data(), bytes.size(), &file, &error));
         for (size_t s = 0; file && s < file->steps.size(); ++s) {
-            if (file->steps[s].kind != fb::StepKind::VolumePlacements) {
+            if (file->steps[s].kind != fb::StepKind::OpNode) {
                 continue;
             }
             const std::string label = RigExecFormatStepLabel(*file, s);
             for (size_t v = 0; v < 2; ++v) {
-                if (label == "VolumePlacements " + volumes[v]) {
+                if (label == "OpNode " + volumes[v]) {
                     placer[v] = int64_t(s);
                 }
             }
@@ -2802,6 +2858,11 @@ int
 main(int argc, char **argv)
 {
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
+    std::string registryError;
+    if (!RigExecEnsureBuiltinRegistry(&registryError)) {
+        std::printf("registry: %s\n", registryError.c_str());
+        return 1;
+    }
     _TestS9VolumeEnvelope();
     _TestFalloffSampleInputs();
     _TestSyntheticBuilders();

@@ -11,7 +11,10 @@
 #include "weightPackets.h"
 #include "parallel.h"
 
+#include "rigExecEvalCore/opSteps.h"
 #include "rigExecEvalCore/weights.h"
+#include "rigExecOps/weight/weightOps.h"
+#include "rigExecRigTypes/rigTypes.h"
 #include "rigExecMath/affineFrameKernels.h"
 
 #include "pxr/base/tf/staticTokens.h"
@@ -22,6 +25,7 @@
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/stage.h"
 
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -433,13 +437,6 @@ struct PacketInputs {
         }
         return {scratch.data(), scratch.size()};
     }
-    eval::WeightFrameView<WeightMath> volumePlacementFacts(size_t slot,
-                                                           bool base) const
-    {
-        const auto &frame = base ? b.base[size_t(b.baseLast[slot])]
-                                 : b.fin[size_t(b.finLast[slot])];
-        return {&frame.points, frame.IsValid(), frame.IsDegenerate()};
-    }
 };
 struct PacketState {
     Baked *b;
@@ -484,11 +481,6 @@ struct PacketState {
             out.indices = std::move(p.indices);
         }
         *result = std::move(out);
-    }
-    void setVolumePlacement(size_t slot, bool base,
-                            const GfMatrix4d &placement) const
-    {
-        (base ? b->volumePlacementBase : b->volumePlacement)[slot] = placement;
     }
 };
 struct PacketHost {
@@ -586,32 +578,36 @@ RigExecBakedBuildWeightSteps(RigExecBakedProgramImpl *program)
     // placement from the slot's last pose version is what every reader
     // sees. Every volume slot gets a step, bound to a mover or not: an
     // unbound volume still publishes a weightFrames entry.
-    // part = 1 marks the per-volume form (object = provider slot); the
-    // whole-map form (object 0, part -1) is not emitted.
+    // Each runs as a VolumePlacement op node keeping the VolumePlacements
+    // identity: object the provider slot, part 1 the final placement and 2
+    // the base one.
     for (size_t i = 0; i < B.noScaleAvars.size(); ++i) {
         if (B.noScaleAvars[i] == 0) {
             continue;
         }
-        RigExecBakedStep step;
-        step.kind = RigExecBakedStepKind::VolumePlacements;
-        step.object = int(i);
-        step.part = 1;
-        step.maxDiagnostics = 0;
-        step.reads.push_back(
-            RigExecBakedOne(RigExecBakedSlotDomain::PoseFin, B.finLast[i]));
-        step.writes.push_back(
-            RigExecBakedOne(RigExecBakedSlotDomain::WeightFrames, int(i)));
-        B.steps.push_back(std::move(step));
-        RigExecBakedStep base;
-        base.kind = RigExecBakedStepKind::VolumePlacements;
-        base.object = int(i);
-        base.part = 2;
-        base.maxDiagnostics = 0;
-        base.reads.push_back(
-            RigExecBakedOne(RigExecBakedSlotDomain::PoseBase, B.baseLast[i]));
-        base.writes.push_back(
-            RigExecBakedOne(RigExecBakedSlotDomain::WeightFramesBase, int(i)));
-        B.steps.push_back(std::move(base));
+        for (const int part : {1, 2}) {
+            const bool base = part == 2;
+            RigExecBakedOpOrigin origin;
+            origin.family = RigExecBakedOpFamily::VolumePlacement;
+            origin.kind = RigExecBakedStepKind::VolumePlacements;
+            origin.object = int32_t(i);
+            origin.part = part;
+            RigExecBakedStep step;
+            step.kind = RigExecBakedStepKind::OpNode;
+            step.object = int(B.opNodeOrigins.size());
+            step.part = -1;
+            step.maxDiagnostics = 1;
+            step.reads.push_back(
+                RigExecBakedOne(base ? RigExecBakedSlotDomain::PoseBase
+                                     : RigExecBakedSlotDomain::PoseFin,
+                                base ? B.baseLast[i] : B.finLast[i]));
+            step.writes.push_back(
+                RigExecBakedOne(base ? RigExecBakedSlotDomain::WeightFramesBase
+                                     : RigExecBakedSlotDomain::WeightFrames,
+                                int(i)));
+            B.opNodeOrigins.push_back(origin);
+            B.steps.push_back(std::move(step));
+        }
     }
     // The slot storage, sized once. A consumer holds a pointer into it for
     // the whole region, so it is never resized inside one.
@@ -653,17 +649,82 @@ RigExecBakedRunWeightStep(RigExecBakedProgramImpl *program,
                           RigExecBakedStep *step, UsdTimeCode time)
 {
     RigExecBakedProgramImpl &B = *program;
-    if (step->kind == RigExecBakedStepKind::VolumePlacements) {
-        PacketHost host{{B, nullptr}, {&B, B.weightPackets, nullptr, nullptr}};
-        eval::RunValueStep(host, {uint32_t(step->kind), step->object,
-                                  step->part, size_t(step->object)});
-        return;
-    }
     RigExecBakedProgramImpl::WeightObject &weight =
         B.weightObjects[size_t(step->object)];
     // Rebuilt every frame; one packet per object per frame.
     B.weightPackets[size_t(step->object)] =
         RigExecBakedWeightPacket(B, &weight, B.weightPackets, time);
+}
+
+void
+RigExecBakedAddVolumePlacementOps(const RigExecBakedProgramImpl &B,
+                                  RigExecRigDescBuilder *builder,
+                                  eval::OpStepLayout *layout)
+{
+    for (const RigExecBakedOpOrigin &origin : B.opNodeOrigins) {
+        if (origin.family != RigExecBakedOpFamily::VolumePlacement)
+            continue;
+        const bool base = origin.part == 2;
+        const size_t slot = size_t(origin.object);
+        const RigExecNodeId node =
+            builder->AddOp(rigExecOps::VolumePlacement());
+        builder->BindInput(node, rigExecOps::VolumePlacementFrame());
+        builder->BindOutput(node, rigExecOps::VolumePlacementOut());
+        layout->hostInputs.push_back(
+            {node, rigExecOps::VolumePlacementFrame().Index(),
+             eval::OpHostSource::Lookup, uint32_t(layout->lookups.size())});
+        layout->lookups.push_back(
+            {uint8_t(eval::OpLookupSource::PoseVersion),
+             uint32_t(base ? B.baseLast[slot] : B.finLast[slot]), base ? 1 : 0,
+             0});
+        layout->hostOutputs.push_back(
+            {node, rigExecOps::VolumePlacementOut().Index(),
+             uint8_t(base ? eval::OpOutputTarget::VolumePlacementBase
+                          : eval::OpOutputTarget::VolumePlacement),
+             uint32_t(slot)});
+    }
+}
+
+bool
+RigExecBakedLookUpPoseVersion(const RigExecBakedProgramImpl &B,
+                              const eval::OpLookup &lookup,
+                              const RigExecTypeDesc &type, void *out,
+                              std::string *error)
+{
+    const std::vector<RigExecPointFrame> &frames = lookup.part ? B.base : B.fin;
+    if (type.size != sizeof(rigExecRig::PointFrame) ||
+        lookup.object >= frames.size()) {
+        if (error)
+            *error = "pose version " + std::to_string(lookup.object) +
+                     " is no pose frame of the program";
+        return false;
+    }
+    const RigExecPointFrame &frame = frames[lookup.object];
+    auto &value = *static_cast<rigExecRig::PointFrame *>(out);
+    for (size_t i = 0; i < 4; ++i)
+        value.points[i] = rigExecStd::Vec3d(
+            frame.points[i][0], frame.points[i][1], frame.points[i][2]);
+    value.flags = frame.flags;
+    return true;
+}
+
+bool
+RigExecBakedStoreVolumePlacement(RigExecBakedProgramImpl &B,
+                                 const eval::OpHostOutput &output,
+                                 const void *value, std::string *error)
+{
+    const bool base =
+        output.target == uint8_t(eval::OpOutputTarget::VolumePlacementBase);
+    std::vector<GfMatrix4d> &placements =
+        base ? B.volumePlacementBase : B.volumePlacement;
+    if (output.object >= placements.size()) {
+        if (error)
+            *error =
+                "slot " + std::to_string(output.object) + " places no volume";
+        return false;
+    }
+    std::memcpy(placements[output.object].data(), value, sizeof(GfMatrix4d));
+    return true;
 }
 
 void

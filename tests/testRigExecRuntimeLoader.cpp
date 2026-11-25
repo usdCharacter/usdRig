@@ -161,7 +161,7 @@ _TestFileRefusals(const std::vector<uint8_t> &bytes)
     CHECK(got == "unsupported .rigexec format version 4 (this reader reads " +
                      std::to_string(RigExecFormatOldestReadable) + " through " +
                      std::to_string(RigExecFormatVersion) +
-                     "); re-export: property revisions as op nodes");
+                     "); re-export: volume placements as op nodes");
     if (got.find("format version 4") == std::string::npos) {
         std::printf("version 4: open said '%s'\n", got.c_str());
     }
@@ -820,10 +820,25 @@ static int versionRefusals = 0;
 // The retired values and forms edited into a real bake, each refused by
 // Open in the step graph's or the step rules' words: a Snapshots read; a
 // step of the SnapshotFinals kind, named as retired even where it stands
-// in for a commit's first step or a VolumePlacements step, whose own rules
-// would otherwise refuse the file first; a whole-map VolumePlacements step
-// and one placing a slot that is no volume; and the format version before
-// the oldest readable one, refused with its re-export message.
+// in for a commit's first step or a volume placement's op step, whose own
+// rules would otherwise refuse the file first; a step of the retired
+// VolumePlacements kind and a placement node storing a slot that is no
+// volume; and the format version before the oldest readable one, refused
+// with its re-export message.
+static int64_t
+_PlacementOutput(const fb::RigExecWireFile &file,
+                 const fb::RigExecWireStep &step)
+{
+    if (step.kind != fb::StepKind::OpNode || !file.opGraph || step.object < 0)
+        return -1;
+    const auto &outputs = file.opGraph->hostOutputs;
+    for (size_t o = 0; o < outputs.size(); ++o)
+        if (outputs[o]->node == uint64_t(step.object) &&
+            (outputs[o]->target == 1 || outputs[o]->target == 2))
+            return int64_t(o);
+    return -1;
+}
+
 static void
 _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
 {
@@ -858,14 +873,14 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
                 " is a retired SnapshotFinals step");
     }
     reservedRefusals += status >= 0 ? 2 : 1;
-    // The first step of the first commit and the first VolumePlacements
-    // step, relabelled.
+    // The first step of the first commit and the first volume placement's
+    // op step, relabelled.
     for (const bool commit : {true, false}) {
         int64_t at = -1;
         for (size_t s = 0; s < file->steps.size() && at < 0; ++s) {
             const fb::StepKind kind = file->steps[s].kind;
             if (commit ? _IsCommitStep(kind)
-                       : kind == fb::StepKind::VolumePlacements) {
+                       : _PlacementOutput(*file, file->steps[s]) >= 0) {
                 at = int64_t(s);
             }
         }
@@ -894,7 +909,7 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
         "unsupported .rigexec format version " + std::to_string(previous) +
         " (this reader reads " + std::to_string(RigExecFormatOldestReadable) +
         " through " + std::to_string(RigExecFormatVersion) +
-        "); re-export: property revisions as op nodes";
+        "); re-export: volume placements as op nodes";
     CHECK(got == want);
     if (got != want) {
         std::printf("%s, previous version: open said '%s', expected '%s'\n",
@@ -902,11 +917,11 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
     }
     ++versionRefusals;
 
-    // The first VolumePlacements step, in the whole-map form and placing a
-    // slot that is no volume.
+    // The first volume placement's op step, of the retired kind, and its
+    // node storing a slot that is no volume.
     int64_t place = -1;
     for (size_t s = 0; s < file->steps.size() && place < 0; ++s) {
-        if (file->steps[s].kind == fb::StepKind::VolumePlacements) {
+        if (_PlacementOutput(*file, file->steps[s]) >= 0) {
             place = int64_t(s);
         }
     }
@@ -915,18 +930,23 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
     if (place < 0 || plain == volumes.end()) {
         return;
     }
-    const auto wholeMap = [&](fb::RigExecWireFile *edited) {
-        edited->steps[size_t(place)].part = -1;
+    const auto retiredKind = [&](fb::RigExecWireFile *edited) {
+        edited->steps[size_t(place)].kind =
+            fb::StepKind::ReservedVolumePlacements;
     };
-    _ExpectShownRefusal(name, "whole-map VolumePlacements", bytes, wholeMap,
-                        _EditedStepName(bytes, wholeMap, size_t(place)) +
-                            " is the retired whole-map placement (part -1)");
+    _ExpectShownRefusal(name, "retired VolumePlacements step", bytes,
+                        retiredKind,
+                        _EditedStepName(bytes, retiredKind, size_t(place)) +
+                            ": the retired VolumePlacements step");
     const int32_t slot = int32_t(plain - volumes.begin());
+    const size_t output =
+        size_t(_PlacementOutput(*file, file->steps[size_t(place)]));
     const auto notVolume = [&](fb::RigExecWireFile *edited) {
-        edited->steps[size_t(place)].object = slot;
+        edited->opGraph->hostOutputs[output]->object = uint32_t(slot);
     };
-    _ExpectShownRefusal(name, "VolumePlacements of no volume", bytes, notVolume,
-                        _EditedStepName(bytes, notVolume, size_t(place)) +
+    _ExpectShownRefusal(name, "volume placement of no volume", bytes, notVolume,
+                        "op_graph.host_outputs: node " +
+                            std::to_string(file->steps[size_t(place)].object) +
                             " places slot " + std::to_string(slot) +
                             ", which is no volume slot");
     volumeRefusals += 2;

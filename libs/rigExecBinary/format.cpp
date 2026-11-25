@@ -585,6 +585,24 @@ public:
         _PropertyNodeParts parts(file);
         _propertyChainOf = std::move(parts.chain);
         _propertyPartOf = std::move(parts.part);
+        const size_t nodes = file.opGraph ? file.opGraph->nodes.size() : 0;
+        _placementSlot.assign(nodes, -1);
+        _placementBase.assign(nodes, 0);
+        _placementLookup.assign(nodes, -1);
+        if (!nodes)
+            return;
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes &&
+                (output->target == 1 || output->target == 2) &&
+                _placementSlot[output->node] < 0) {
+                _placementSlot[output->node] = int64_t(output->object);
+                _placementBase[output->node] = output->target == 2;
+            }
+        for (size_t n = 0; n < nodes; ++n)
+            if (file.opGraph->nodes[n])
+                for (const auto &input : file.opGraph->nodes[n]->inputs)
+                    if (input && input->host == 4)
+                        _placementLookup[n] = int64_t(input->object);
     }
 
     bool Run(std::string *error)
@@ -648,13 +666,27 @@ private:
         for (const auto &output : _f.opGraph->hostOutputs) {
             if (!output)
                 return _Bad("op_graph.host_outputs: an entry is missing");
-            if (output->target != 0)
+            if (output->target > 2)
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
             if (output->node >= _f.opGraph->nodes.size())
                 return _Bad("op_graph.host_outputs: no node " +
                             _N(output->node));
             const size_t node = size_t(output->node);
+            if (output->target != 0) {
+                const std::vector<uint8_t> &volumes =
+                    _f.constants->noScaleAvars;
+                if (_propertyChainOf[node] != kNoProperty ||
+                    _placementSlot[node] != int64_t(output->object) ||
+                    _placementBase[node] != (output->target == 2))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " places more than one volume");
+                if (!_Has(volumes, output->object) || !volumes[output->object])
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " places slot " + _N(output->object) +
+                                ", which is no volume slot");
+                continue;
+            }
             if (_propertyChainOf[node] == kNoProperty)
                 return _Bad("op_graph.host_outputs: node " + _N(node) +
                             " stores no property version");
@@ -678,7 +710,13 @@ private:
                 if (v >= stored.size() || !stored[v])
                     return _Bad("op_graph.host_outputs: property version " +
                                 _N(v) + " is never stored");
-        for (const auto &lookup : _f.opGraph->lookups)
+        for (const auto &lookup : _f.opGraph->lookups) {
+            if (lookup && lookup->source == 1) {
+                if ((lookup->part != 0 && lookup->part != 1) || lookup->read)
+                    return _Bad("op_graph.lookups: a pose version lookup "
+                                "reads neither a fin nor a base frame");
+                continue;
+            }
             if (!lookup || lookup->source != 0 ||
                 !_Has(_f.propertyChains, lookup->object) || lookup->read > 8 ||
                 (lookup->read != 0 &&
@@ -686,6 +724,7 @@ private:
                        lookup->part)))
                 return _Bad("op_graph.lookups: a lookup reads nothing the "
                             "file holds");
+        }
         return true;
     }
 
@@ -721,6 +760,9 @@ private:
             if (kind == fb::StepKind::ReservedPropertyRevision)
                 return _Bad(_StepName(i) +
                             ": the retired PropertyRevision step");
+            if (kind == fb::StepKind::ReservedVolumePlacements)
+                return _Bad(_StepName(i) +
+                            ": the retired VolumePlacements step");
             const bool op = kind == fb::StepKind::OpNode ||
                             kind == fb::StepKind::OpChainHead ||
                             kind == fb::StepKind::OpChainRange;
@@ -1933,29 +1975,47 @@ private:
                ")";
     }
 
-    /// One VolumePlacements step places one volume: part 1, its object a
-    /// volume slot (no_scale_avars), its one write that slot of
-    /// WeightFrames, and no other step placing the same slot. \p placer
-    /// maps each slot to the step that places it, or -1.
+    /// The volume slot the VolumePlacement node op step \p step runs
+    /// places, or -1 for any other step.
+    int64_t _PlacementSlotOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _placementSlot.size()
+                   ? _placementSlot[size_t(step.object)]
+                   : -1;
+    }
+
+    /// One VolumePlacement op step places one volume: its one write that
+    /// slot of WeightFrames (WeightFramesBase for the base placement), and no
+    /// other step placing the same slot. \p placer maps each slot to the
+    /// step that places it, or -1.
     bool _VolumePlacement(size_t i, std::vector<int64_t> *placer)
     {
         const fb::RigExecWireStep &step = _f.steps[i];
-        if (step.part != 1 && step.part != 2) {
-            return _Bad(_StepName(i) +
-                        (step.part == -1
-                             ? " is the retired whole-map placement (part -1)"
-                             : " has part " + std::to_string(step.part) +
-                                   ", which is no VolumePlacements form"));
+        const uint32_t slot = uint32_t(_PlacementSlotOf(step));
+        const auto domain = _placementBase[size_t(step.object)]
+                                ? fb::SlotDomain::WeightFramesBase
+                                : fb::SlotDomain::WeightFrames;
+        const int64_t lookup = _placementLookup[size_t(step.object)];
+        if (lookup < 0 || size_t(lookup) >= _f.opGraph->lookups.size() ||
+            !_f.opGraph->lookups[size_t(lookup)] ||
+            _f.opGraph->lookups[size_t(lookup)]->source != 1) {
+            return _Bad(_StepName(i) + " places from no pose version lookup");
         }
-        const std::vector<uint8_t> &volumes = _f.constants->noScaleAvars;
-        if (!_Has(volumes, step.object) || !volumes[size_t(step.object)]) {
-            return _Bad(_StepName(i) + " places slot " +
-                        std::to_string(step.object) +
-                        ", which is no volume slot");
+        const fb::RigExecWireOpLookup &version =
+            *_f.opGraph->lookups[size_t(lookup)];
+        const auto frames =
+            version.part ? fb::SlotDomain::PoseBase : fb::SlotDomain::PoseFin;
+        if (std::none_of(step.reads.begin(), step.reads.end(),
+                         [&](const fb::SlotRange &range) {
+                             return range.domain() == frames &&
+                                    range.begin() <= version.object &&
+                                    version.object < range.end();
+                         })) {
+            return _Bad(_StepName(i) + " looks up " +
+                        fb::EnumNameSlotDomain(frames) + "[" +
+                        _N(version.object) + "], which it does not read");
         }
-        const uint32_t slot = uint32_t(step.object);
-        const auto domain = step.part == 2 ? fb::SlotDomain::WeightFramesBase
-                                           : fb::SlotDomain::WeightFrames;
         if (step.writes.size() != 1 || step.writes[0].domain() != domain ||
             step.writes[0].begin() != slot ||
             step.writes[0].end() != slot + 1) {
@@ -2014,9 +2074,13 @@ private:
                             "]: a WeightPacket step names no step-backed "
                             "weight object");
             }
-            if (step.kind == fb::StepKind::VolumePlacements) {
-                if (!_VolumePlacement(i,
-                                      step.part == 2 ? &basePlacer : &placer)) {
+            if (step.kind == fb::StepKind::ReservedVolumePlacements)
+                return _Bad(_StepName(i) +
+                            ": the retired VolumePlacements step");
+            if (_PlacementSlotOf(step) >= 0) {
+                if (!_VolumePlacement(i, _placementBase[size_t(step.object)]
+                                             ? &basePlacer
+                                             : &placer)) {
                     return false;
                 }
                 continue;
@@ -2026,7 +2090,7 @@ private:
                     range.domain() == fb::SlotDomain::WeightFramesBase) {
                     return _Bad(_StepName(i) +
                                 " writes WeightFrames, which only a "
-                                "VolumePlacements step writes");
+                                "VolumePlacement op step writes");
                 }
             }
         }
@@ -2042,7 +2106,7 @@ private:
                 return _Bad(
                     "volume slot " + _N(slot) + " (" +
                     RigExecFormatPathText(_f, _f.slotMeta->paths[slot]) +
-                    ") has no VolumePlacements step");
+                    ") has no VolumePlacement op step");
             }
         }
         return true;
@@ -4308,12 +4372,17 @@ private:
                          uint32_t(slot));
                 continue;
             }
-            if (step.kind == K::VolumePlacements && step.object >= 0) {
-                if (size_t(step.object) < _bodyFinLast.size() && step.part == 1)
-                    read(D::PoseFin, _bodyFinLast[size_t(step.object)]);
-                else if (size_t(step.object) < _bodyBaseLast.size() &&
-                         step.part == 2)
-                    read(D::PoseBase, _bodyBaseLast[size_t(step.object)]);
+            if (_PlacementSlotOf(step) >= 0) {
+                const size_t node = size_t(step.object);
+                const int64_t lookup = _placementLookup[node];
+                if (lookup >= 0 &&
+                    size_t(lookup) < _f.opGraph->lookups.size() &&
+                    _f.opGraph->lookups[size_t(lookup)] &&
+                    _f.opGraph->lookups[size_t(lookup)]->source == 1) {
+                    const auto &version = *_f.opGraph->lookups[size_t(lookup)];
+                    read(version.part ? D::PoseBase : D::PoseFin,
+                         version.object);
+                }
                 continue;
             }
             if (step.kind == K::Constraint &&
@@ -9177,6 +9246,10 @@ private:
     std::vector<std::vector<std::vector<int>>> _groupEntering;
     const RigExecWireFile &_f;
     std::vector<size_t> _propertyChainOf, _propertyPartOf;
+    /// Per op node: the volume slot it places (-1 for none), whether its
+    /// base placement, and the lookup its frame input reads (-1 for none).
+    std::vector<int64_t> _placementSlot, _placementLookup;
+    std::vector<uint8_t> _placementBase;
     std::string _error;
     size_t _slots = 0;
     size_t _clusters = 0;
@@ -9358,13 +9431,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 37,
+    static_assert(RigExecFormatOldestReadable == 38,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: property revisions as op nodes"
+                ? "re-export: volume placements as op nodes"
                 : "rebake");
 }
 
@@ -9589,8 +9662,8 @@ _StepKindName(fb::StepKind kind)
         return "SnapshotFinals";
     case fb::StepKind::PoseInterpolator:
         return "PoseInterpolator";
-    case fb::StepKind::VolumePlacements:
-        return "VolumePlacements";
+    case fb::StepKind::ReservedVolumePlacements:
+        return "ReservedVolumePlacements";
     case fb::StepKind::WeightPacket:
         return "WeightPacket";
     case fb::StepKind::InfluenceFold:
@@ -9715,6 +9788,14 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
     case fb::StepKind::OpNode: {
         if (!file.opGraph || !_Has(file.opGraph->nodes, object))
             return false;
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
+                (output->target == 1 || output->target == 2) && meta &&
+                _Has(meta->paths, output->object)) {
+                *out = text(meta->paths[output->object]) +
+                       (output->target == 2 ? " base" : "");
+                return true;
+            }
         size_t chain = 0, part = 0;
         *out = _PropertyNodeParts(file).Of(object, &chain, &part)
                    ? text(file.propertyChains[chain].revisions[part - 1].mover)
@@ -9786,17 +9867,8 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
         }
         *out = text(pose->poseInterpolators[size_t(object)].path);
         return true;
-    case fb::StepKind::VolumePlacements:
-        // part 1 places one volume, at slot `object`; any other form has
-        // no slot to name.
-        if ((step.part == 1 || step.part == 2) && meta &&
-            _Has(meta->paths, object)) {
-            *out = text(meta->paths[size_t(object)]) +
-                   (step.part == 2 ? " base" : "");
-        } else {
-            *out = "every volume weight";
-        }
-        return true;
+    case fb::StepKind::ReservedVolumePlacements:
+        return false;
     case fb::StepKind::WeightPacket:
         if (!geometry || !_Has(geometry->weightObjects, object)) {
             return false;

@@ -36,7 +36,9 @@ _RIGEXEC_BAKE_PIN_STEP(CommitApply);
 _RIGEXEC_BAKE_PIN_STEP(ProviderMatrix);
 _RIGEXEC_BAKE_PIN_STEP(SnapshotFinals);
 _RIGEXEC_BAKE_PIN_STEP(PoseInterpolator);
-_RIGEXEC_BAKE_PIN_STEP(VolumePlacements);
+static_assert(uint8_t(RigExecBakedStepKind::VolumePlacements) ==
+                  uint8_t(RigExecWireStepKind::ReservedVolumePlacements),
+              "wire step order drifted");
 _RIGEXEC_BAKE_PIN_STEP(WeightPacket);
 _RIGEXEC_BAKE_PIN_STEP(InfluenceFold);
 _RIGEXEC_BAKE_PIN_STEP(RevisionStatic);

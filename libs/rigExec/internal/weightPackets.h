@@ -121,9 +121,9 @@ bool RigExecRigidWorldToLocal(const RigExecPointFrame &posed,
 /// The placement a volume publishes (pose.weightFrames) and the CPU oracle
 /// measures its field in: the map taking the identity landmarks to the
 /// volume's FINAL frame, scale and shear kept. Identity unless the frame is
-/// valid, non-degenerate and finite. The dynamic walk's refresh and the
-/// baked program's VolumePlacements steps, live and frozen, place a volume
-/// through this one function. The exec packet path above places against
+/// valid, non-degenerate and finite (RigExecVolumePlacement in
+/// weightFieldKernel.h, which the VolumePlacement op runs too). The exec
+/// packet path above places against
 /// the BASE frame instead, and the two differ for a volume a constraint
 /// revises.
 GfMatrix4d RigExecVolumePlacement(const RigExecPointFrame &final);

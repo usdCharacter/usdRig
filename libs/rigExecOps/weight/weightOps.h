@@ -101,6 +101,13 @@ const rigExec::RigExecPortHandle &CurveWeightCurve();
 
 #undef RIGEXEC_WEIGHT_FIELD_PORTS
 
+/// Where a volume ended up: Out (Mat4d), the map from the origin and unit
+/// axes to Frame (PointFrame), the identity for a frame that is not valid
+/// or is degenerate. A non-finite landmark of a valid frame is an error.
+const rigExec::RigExecOpHandle &VolumePlacement();
+const rigExec::RigExecPortHandle &VolumePlacementFrame();
+const rigExec::RigExecPortHandle &VolumePlacementOut();
+
 /// Folds Inputs (PointWeights list, optional) in feed order, then applies
 /// optional Invert (Float, 0) and Strength (Float, 1) to Out (PointWeights,
 /// dense). Subtract and Overlay seed from the first input; Average divides

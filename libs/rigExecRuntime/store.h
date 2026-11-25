@@ -1026,6 +1026,15 @@ bool RrLookUpProperty(const RrProgram *program, const eval::OpLookup &lookup,
 /// phased records that read it; the base's store marks its chain valid.
 bool RrStorePropertyVersion(RrProgram *program, uint32_t version,
                             const void *value, std::string *error);
+/// Resolves pose version lookup \p lookup (OpLookupSource::PoseVersion):
+/// the frame at fin (part 0) or base (part 1) version \p lookup.object.
+bool RrLookUpPoseVersion(const RrProgram *program, const eval::OpLookup &lookup,
+                         const RigExecTypeDesc &type, void *out,
+                         std::string *error);
+/// Stores a VolumePlacement op node's placement of slot output.object.
+bool RrStoreVolumePlacement(RrProgram *program,
+                            const eval::OpHostOutput &output, const void *value,
+                            std::string *error);
 /// "diag <mover>" of revision \p part (from 1) of \p chain.
 std::string RrPropertyRevisionLabel(const RrProgram *program, size_t chain,
                                     size_t part);

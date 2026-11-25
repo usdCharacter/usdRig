@@ -1297,7 +1297,6 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
     case RigExecWireStepKind::RevisionFuse:
     case RigExecWireStepKind::ChainStatus:
     case RigExecWireStepKind::ChainInputs:
-    case RigExecWireStepKind::VolumePlacements:
     case RigExecWireStepKind::SpaceCheckpoint:
     case RigExecWireStepKind::ProviderRefresh:
         return true;

@@ -1155,6 +1155,7 @@ struct RigExecBakedOpProgram {
 /// Which of the program's families an op node computes.
 enum class RigExecBakedOpFamily : uint8_t {
     Property,
+    VolumePlacement,
 };
 
 /// Where an op node's step comes from: its family, that family's object and
@@ -2820,6 +2821,23 @@ bool RigExecBakedLookUpProperty(RigExecBakedProgramImpl &B,
 /// store also marks its chain valid. Sets the version's `propertyChanged`
 /// byte by bitwise comparison.
 bool RigExecBakedStorePropertyVersion(RigExecBakedProgramImpl &B,
+                                      const eval::OpHostOutput &output,
+                                      const void *value, std::string *error);
+/// Adds a VolumePlacement op node per VolumePlacement origin to
+/// \p builder, numbered as RigExecBakedBuildWeightSteps numbered them after
+/// the property nodes: its frame looked up at the slot's last fin or base
+/// version, its placement stored in volumePlacement or volumePlacementBase.
+void RigExecBakedAddVolumePlacementOps(const RigExecBakedProgramImpl &B,
+                                       RigExecRigDescBuilder *builder,
+                                       eval::OpStepLayout *layout);
+/// Resolves a pose version lookup: the frame at fin (part 0) or base
+/// (part 1) version \p lookup.object, as a rig PointFrame.
+bool RigExecBakedLookUpPoseVersion(const RigExecBakedProgramImpl &B,
+                                   const eval::OpLookup &lookup,
+                                   const RigExecTypeDesc &type, void *out,
+                                   std::string *error);
+/// Stores a VolumePlacement node's placement of slot \p output.object.
+bool RigExecBakedStoreVolumePlacement(RigExecBakedProgramImpl &B,
                                       const eval::OpHostOutput &output,
                                       const void *value, std::string *error);
 /// The cross-domain read diagnostics of revision \p part of \p chain.

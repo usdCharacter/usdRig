@@ -947,14 +947,17 @@ enum class RigExecBakedStepKind {
     /// Reserved; never emitted.
     SnapshotFinals,
     PoseInterpolator, ///< one pose interpolator's weights, from the final pose
-    VolumePlacements, ///< one volume weight's placement, from the walk
-    WeightPacket,     ///< one weight object's packet, built once per frame
-    InfluenceFold,    ///< one revision's influence table
-    RevisionStatic,   ///< one revision's packet, status and executed decision
-    RevisionChunk,    ///< one vertex range of one revision
-    RevisionFuse,     ///< one revision's applied decision and chain dirty bit
-    ChainStatus,      ///< one chain's status sweep and published points
-    Derived,          ///< one derived target maintained from a chain
+    /// Never a step's kind: a VolumePlacement op node keeps it as its
+    /// identity, its object a volume's provider slot, part 1 the final
+    /// placement and 2 the base one.
+    VolumePlacements,
+    WeightPacket,   ///< one weight object's packet, built once per frame
+    InfluenceFold,  ///< one revision's influence table
+    RevisionStatic, ///< one revision's packet, status and executed decision
+    RevisionChunk,  ///< one vertex range of one revision
+    RevisionFuse,   ///< one revision's applied decision and chain dirty bit
+    ChainStatus,    ///< one chain's status sweep and published points
+    Derived,        ///< one derived target maintained from a chain
     /// One RigExecBakedFrameRecord. A pose step; appended after Derived so
     /// every earlier enumerator keeps its exported value.
     FrameMatrix,
@@ -1048,7 +1051,6 @@ struct RigExecBakedStep {
     ///     PropagateChunk/CommitApply                index into commits
     ///   ProviderMatrix                              provider slot
     ///   PoseInterpolator                            index into poseInterpolators
-    ///   VolumePlacements                            provider slot (part 1)
     ///   WeightPacket                                index into weightObjects
     ///   InfluenceFold/RevisionStatic/
     ///     RevisionChunk/RevisionFuse                index into revisionIndex
@@ -1058,9 +1060,7 @@ struct RigExecBakedStep {
     int object = -1;
     /// The part of it, by kind: the vertex chunk of a RevisionChunk, the
     /// propagation-pair chunk of a PropagateChunk, 1 for a final-phase
-    /// ProviderMatrix against 0 for a base-phase one, and 1 for the
-    /// per-volume VolumePlacements form (the whole-map form, -1, is no
-    /// longer emitted but keeps its wire meaning). -1 where unused.
+    /// ProviderMatrix against 0 for a base-phase one. -1 where unused.
     int part = -1;
 
     /// Sorted, deduplicated. Writes are an upper bound (see above).

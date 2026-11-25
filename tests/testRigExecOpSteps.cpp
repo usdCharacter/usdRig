@@ -728,10 +728,22 @@ struct GroupHost {
         *static_cast<float *>(value) = strength;
         return true;
     }
+    bool LookUpPoseVersion(uint32_t, const eval::OpLookup &,
+                           const RigExecTypeDesc &, void *, std::string *error)
+    {
+        *error = "no pose versions";
+        return false;
+    }
     bool StorePropertyVersion(const eval::OpHostOutput &, const void *,
                               std::string *error)
     {
         *error = "no property versions";
+        return false;
+    }
+    bool StoreVolumePlacement(const eval::OpHostOutput &, const void *,
+                              std::string *error)
+    {
+        *error = "no volume placements";
         return false;
     }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t g,

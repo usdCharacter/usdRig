@@ -83,7 +83,8 @@ RigExecBakedLastRunTrace(const RigExecBakedProgramImpl &B)
         const auto &step = B.steps[original];
         RigExecOpTraceEntry entry;
         entry.step = canonical;
-        entry.kind = RigExecBakedStepKindName(step.kind);
+        entry.kind =
+            RigExecBakedStepKindName(RigExecBakedIdentityOf(B, step).kind);
         entry.domain = RigExecBakedStepDomainName(B, step);
         entry.label = step.label;
         entry.seq = uint32_t(B.opExecution.completion[canonical]);
@@ -147,7 +148,8 @@ RigExecBakedOpGraph(const RigExecBakedProgramImpl &B)
         const auto &step = B.steps[op.originalIndex];
         auto &node = graph[canonical];
         node.step = canonical;
-        node.kind = RigExecBakedStepKindName(step.kind);
+        node.kind =
+            RigExecBakedStepKindName(RigExecBakedIdentityOf(B, step).kind);
         node.domain = RigExecBakedStepDomainName(B, step);
         node.label = step.label;
         node.preds.assign(op.predecessors.begin(), op.predecessors.end());

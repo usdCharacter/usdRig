@@ -2293,7 +2293,8 @@ VolumePlacementsClusters(const RigExecBakedProgramImpl &B)
 {
     std::vector<int> clusters;
     for (const RigExecBakedStep &step : B.steps) {
-        if (step.kind == RigExecBakedStepKind::VolumePlacements) {
+        if (RigExecBakedIdentityOf(B, step).kind ==
+            RigExecBakedStepKind::VolumePlacements) {
             clusters.push_back(step.cluster);
         }
     }
@@ -2343,7 +2344,8 @@ CheckFrozenWeightFramesMatchLive(RigExecRigEvaluator *evaluator,
     context.workspace = workspace.get();
     std::set<size_t> placementSteps;
     for (size_t i = 0; i < B.steps.size(); ++i)
-        if (B.steps[i].kind == RigExecBakedStepKind::VolumePlacements)
+        if (RigExecBakedIdentityOf(B, B.steps[i]).kind ==
+            RigExecBakedStepKind::VolumePlacements)
             placementSteps.insert(i);
     CHECK(!placementSteps.empty());
     for (int repeat = 0; repeat < 2; ++repeat) {
@@ -2521,13 +2523,14 @@ def Xform "Asset"
     std::set<int> placementParts;
     for (size_t i = 0; i < B.steps.size(); ++i) {
         const auto &step = B.steps[i];
-        if (step.kind != RigExecBakedStepKind::VolumePlacements ||
-            step.object != guideSlot->second)
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        if (id.kind != RigExecBakedStepKind::VolumePlacements ||
+            id.object != guideSlot->second)
             continue;
         CHECK(placementSteps.insert(i).second);
-        CHECK(placementParts.insert(step.part).second);
+        CHECK(placementParts.insert(id.part).second);
         CHECK(step.writes.size() == 1);
-        const auto domain = step.part == 1
+        const auto domain = id.part == 1
                                 ? RigExecBakedSlotDomain::WeightFrames
                                 : RigExecBakedSlotDomain::WeightFramesBase;
         if (step.writes.size() == 1) {
@@ -7980,10 +7983,10 @@ TestVolumePlacementsFixtureFreezes(const std::string &examplesDir)
     }
 }
 
-// The frozen VolumePlacements step places through the shared gate
+// The frozen VolumePlacement op step places through the shared kernel
 // (RigExecVolumePlacement): a final frame flagged valid and non-degenerate
-// but holding a NaN point places at the identity, and frozen publishes what
-// the live step publishes for the same frame. The step bodies run on clones
+// but holding a NaN or infinite point stops the frame with the op's error,
+// frozen and live alike, and places nothing. The steps run on clones
 // of 11_VolumeWeights' program whose fin entry for one volume is poisoned
 // directly, so the step reads exactly a frame flagged valid and
 // non-degenerate yet non-finite, independent of what upstream compose and
@@ -8029,8 +8032,10 @@ TestFrozenVolumePlacementUsesTheSharedGate(const std::string &examplesDir)
     }
     size_t stepIndex = B.steps.size();
     for (size_t k = 0; k < B.steps.size(); ++k) {
-        if (B.steps[k].kind == RigExecBakedStepKind::VolumePlacements &&
-            B.steps[k].object == int(slot) && B.steps[k].part == 1) {
+        const RigExecBakedStepIdentity id =
+            RigExecBakedIdentityOf(B, B.steps[k]);
+        if (id.kind == RigExecBakedStepKind::VolumePlacements &&
+            id.object == int(slot) && id.part == 1) {
             stepIndex = k;
         }
     }
@@ -8092,33 +8097,34 @@ TestFrozenVolumePlacementUsesTheSharedGate(const std::string &examplesDir)
         // The flags pass a validity-only gate, which would place at a
         // non-finite matrix.
         CHECK(poisoned.IsValid() && !poisoned.IsDegenerate());
-        worker->B.fin[finIndex] = poisoned;
         worker->B.stage = UsdStageRefPtr();
-        RigExecBakedRunWeightStep(&worker->B, &worker->B.steps[stepIndex],
-                                  time);
-        std::map<SdfPath, GfMatrix4d> frozenFrames;
-        RigExecBakedPublishVolumePlacements(worker->B, &frozenFrames);
-        const auto frozenEntry = frozenFrames.find(volume);
-        CHECK(frozenEntry != frozenFrames.end());
-        if (frozenEntry != frozenFrames.end() &&
-            frozenEntry->second != GfMatrix4d(1.0)) {
-            std::printf("FAIL %s: %s publishes a non-identity placement for "
-                        "%s\n",
-                        label, volume.GetText(), poison.what);
-            ++failures;
-        }
-
-        // Live's step body and publication over the same frame.
+        // A non-finite landmark of a valid frame stops the frame with the
+        // op's error, frozen and live alike, and places nothing.
+        const auto fails = [&](RigExecBakedProgramImpl &copy,
+                               const RigExecBakedProgramImpl &source) {
+            std::string why;
+            CHECK(RigExecBakedCloneOpState(source, &copy, &why));
+            copy.fin[finIndex] = poisoned;
+            const GfMatrix4d before = copy.volumePlacement[slot];
+            RigExecBakedStep &step = copy.steps[stepIndex];
+            RigExecBakedRunOpStep(&copy, &step);
+            const bool failed =
+                step.failed && step.diagnostics.size() == 1 &&
+                step.diagnostics[0].find(
+                    "VolumePlacement: a landmark of the volume's frame is "
+                    "not finite") != std::string::npos;
+            if (!failed)
+                std::printf("FAIL %s: %s did not stop the frame: %s\n", label,
+                            poison.what,
+                            step.diagnostics.empty()
+                                ? "(no diagnostic)"
+                                : step.diagnostics[0].c_str());
+            return failed && copy.volumePlacement[slot] == before;
+        };
+        CHECK(fails(worker->B, *frozen->program));
         auto liveCopy = std::make_unique<RigExecBakedProgramImpl>();
         frozenDetail::_CloneImpl(B, liveCopy.get());
-        liveCopy->fin[finIndex] = poisoned;
-        RigExecBakedRunWeightStep(liveCopy.get(), &liveCopy->steps[stepIndex],
-                                  time);
-        std::map<SdfPath, GfMatrix4d> liveFrames;
-        RigExecBakedPublishVolumePlacements(*liveCopy, &liveFrames);
-        CHECK(liveFrames.count(volume) == 1 &&
-              liveFrames.at(volume) == GfMatrix4d(1.0));
-        CheckWeightFramesEqual(label, poison.what, liveFrames, frozenFrames);
+        CHECK(fails(*liveCopy, B));
     }
 }
 

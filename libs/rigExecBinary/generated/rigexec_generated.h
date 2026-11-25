@@ -1183,7 +1183,9 @@ enum class StepKind : uint8_t {
   ProviderMatrix = 7,
   SnapshotFinals = 8,
   PoseInterpolator = 9,
-  VolumePlacements = 10,
+  /// Reserved: a volume placement before format 38, which runs as an
+  /// OpNode step since. Open refuses it.
+  ReservedVolumePlacements = 10,
   WeightPacket = 11,
   InfluenceFold = 12,
   RevisionStatic = 13,
@@ -1228,7 +1230,7 @@ inline const StepKind (&EnumValuesStepKind())[33] {
     StepKind::ProviderMatrix,
     StepKind::SnapshotFinals,
     StepKind::PoseInterpolator,
-    StepKind::VolumePlacements,
+    StepKind::ReservedVolumePlacements,
     StepKind::WeightPacket,
     StepKind::InfluenceFold,
     StepKind::RevisionStatic,
@@ -1267,7 +1269,7 @@ inline const char * const *EnumNamesStepKind() {
     "ProviderMatrix",
     "SnapshotFinals",
     "PoseInterpolator",
-    "VolumePlacements",
+    "ReservedVolumePlacements",
     "WeightPacket",
     "InfluenceFold",
     "RevisionStatic",
@@ -5585,15 +5587,15 @@ struct Step FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return static_cast<rigExec::fb::StepKind>(GetField<uint8_t>(VT_KIND, 0));
   }
   /// What the step works on, by kind: a compose group, a solver, a commit,
-  /// a provider slot (ProviderMatrix; VolumePlacements, the volume's slot),
+  /// a provider slot (ProviderMatrix),
   /// a pose interpolator, a weight object, a revision id, a chain, a
   /// derived id, or a pose.frame_records index (FrameMatrix).
   int32_t object() const {
     return GetField<int32_t>(VT_OBJECT, -1);
   }
   /// The part of it: a RevisionChunk's vertex chunk, a PropagateChunk's
-  /// pair chunk, a ProviderMatrix's phase (1 final, 0 base), 1 for the
-  /// per-volume VolumePlacements step; -1 where unused.
+  /// pair chunk, a ProviderMatrix's phase (1 final, 0 base); -1 where
+  /// unused.
   int32_t part() const {
     return GetField<int32_t>(VT_PART, -1);
   }
@@ -22415,6 +22417,8 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// 0: a read of property chain `object` (property_chains index):
   /// `read` 0 its base, else of revision `part`: 1 enabled, 2 the
   /// weight, 3 value, 4 min, 5 max, 6 keys, 7 tangents, 8 path points.
+  /// 1 (format 38): the pose frame of fin (`part` 0) or base (`part` 1)
+  /// version `object`.
   uint8_t source() const {
     return GetField<uint8_t>(VT_SOURCE, 0);
   }
@@ -22518,7 +22522,8 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t port() const {
     return GetField<uint32_t>(VT_PORT, 0);
   }
-  /// 0: property version `object`.
+  /// 0: property version `object`; 1 and 2 (format 38): the final and
+  /// the base placement of volume slot `object`.
   uint8_t target() const {
     return GetField<uint8_t>(VT_TARGET, 0);
   }

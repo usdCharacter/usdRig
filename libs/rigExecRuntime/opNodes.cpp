@@ -106,6 +106,17 @@ struct RrOpHost {
     {
         return RrStorePropertyVersion(&p, output.object, value, error);
     }
+    bool LookUpPoseVersion(uint32_t, const eval::OpLookup &lookup,
+                           const RigExecTypeDesc &type, void *value,
+                           std::string *error) const
+    {
+        return RrLookUpPoseVersion(&p, lookup, type, value, error);
+    }
+    bool StoreVolumePlacement(const eval::OpHostOutput &output,
+                              const void *value, std::string *error) const
+    {
+        return RrStoreVolumePlacement(&p, output, value, error);
+    }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t, const void *,
                     size_t, std::string *error) const
     {

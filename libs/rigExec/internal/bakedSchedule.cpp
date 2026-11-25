@@ -2327,8 +2327,7 @@ RouteBakedStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
         RigExecBakedRunAvarOp(B, step);
     } else if (step->kind == RigExecBakedStepKind::WeightField) {
         RigExecBakedRunWeightField(B, step);
-    } else if (step->kind == RigExecBakedStepKind::WeightPacket ||
-               step->kind == RigExecBakedStepKind::VolumePlacements) {
+    } else if (step->kind == RigExecBakedStepKind::WeightPacket) {
         // Neither half's: a weight object is bound by movers and by
         // constraints, so its packet is built between the two rather than
         // inside either (bakedWeights.cpp).
@@ -2800,9 +2799,10 @@ RigExecBakedStepTimingTable(const RigExecBakedProgramImpl &B)
 namespace {
 
 std::string
-StepLabel(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
+StepLabel(const RigExecBakedProgramImpl &B, const RigExecBakedStep &bakedStep,
           RigExecPathText &text)
 {
+    const RigExecBakedStepIdentity step = RigExecBakedIdentityOf(B, bakedStep);
     const auto revisionOf =
         [&B](int id) -> const RigExecBakedProgramImpl::GeomRevision & {
         const auto &[chain, revision] = B.revisionIndex[size_t(id)];
@@ -2958,7 +2958,8 @@ RigExecBakedScheduleReport(const RigExecBakedProgramImpl &B)
     std::map<std::string, size_t> byKind;
     for (const RigExecBakedStep &step : B.steps) {
         edges += step.preds.size();
-        ++byKind[RigExecBakedStepKindName(step.kind)];
+        ++byKind[RigExecBakedStepKindName(
+            RigExecBakedIdentityOf(B, step).kind)];
     }
     const RigExecBakedClustering &schedule = B.clustering;
     size_t clusterEdges = 0;
@@ -3118,7 +3119,8 @@ RigExecBakedReplayStepTimings(const RigExecBakedProgramImpl &B)
         }
         B.profiler->RecordOn(
             step.runner, step.label, "op", step.startUs, step.endUs,
-            {{"kind", RigExecBakedStepKindName(step.kind)},
+            {{"kind",
+              RigExecBakedStepKindName(RigExecBakedIdentityOf(B, step).kind)},
              {"domain", RigExecBakedStepDomainName(B, step)},
              {"seq", std::to_string(B.opExecution.completion[index])}});
     }

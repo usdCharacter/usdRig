@@ -8,12 +8,45 @@
 #include "matrixKernel.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <limits>
 #include <vector>
 
 namespace rigExec {
+
+/// The landmarks a volume's placement maps from: the origin and the unit
+/// axes. D is a double vector.
+template <class D>
+std::array<D, 4>
+RigExecVolumeLandmarks()
+{
+    return {D(0.0), D(1.0, 0.0, 0.0), D(0.0, 1.0, 0.0), D(0.0, 0.0, 1.0)};
+}
+
+enum class RigExecVolumePlacementResult { Placed, Identity, NotFinite };
+
+/// Where a volume ended up over its frame \p points: the map
+/// \p pointsToMatrix(RigExecVolumeLandmarks, points, placement) solves.
+/// Identity for a frame that is not \p valid or is \p degenerate, and
+/// NotFinite, with the identity, when a landmark is not finite.
+template <class D, class M, class PointsToMatrix>
+RigExecVolumePlacementResult
+RigExecVolumePlacement(const std::array<D, 4> &points, bool valid,
+                       bool degenerate, const PointsToMatrix &pointsToMatrix,
+                       M *placement)
+{
+    *placement = M(1.0);
+    if (!valid || degenerate)
+        return RigExecVolumePlacementResult::Identity;
+    for (const D &point : points)
+        if (!std::isfinite(point[0]) || !std::isfinite(point[1]) ||
+            !std::isfinite(point[2]))
+            return RigExecVolumePlacementResult::NotFinite;
+    pointsToMatrix(RigExecVolumeLandmarks<D>(), points, placement);
+    return RigExecVolumePlacementResult::Placed;
+}
 
 /// How one weight field folds into the accumulated result.
 ///

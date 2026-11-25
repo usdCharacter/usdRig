@@ -1741,7 +1741,8 @@ set_tests_properties(testRigExecRuntimePoseFineClusters PROPERTIES
     ENVIRONMENT "RIGEXEC_BAKED_GRAIN_US=0")
 
 add_executable(testRigExecRuntimeWeights tests/testRigExecRuntimeWeights.cpp)
-target_link_libraries(testRigExecRuntimeWeights PRIVATE rigExecRuntime rigExecBake rigExecSampler)
+target_link_libraries(testRigExecRuntimeWeights PRIVATE rigExecRuntime rigExecBake rigExecSampler
+    rigExecBuiltins)
 target_include_directories(testRigExecRuntimeWeights PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/tests")
 target_compile_definitions(testRigExecRuntimeWeights PRIVATE

@@ -5,6 +5,7 @@
 #include "rigExec/internal/frameExtraction.h"
 
 #include "rigExecMath/pointFrame.h"
+#include "rigExecMath/weightFieldKernel.h"
 
 #include "pxr/base/tf/staticTokens.h"
 
@@ -285,17 +286,13 @@ GfMatrix4d
 RigExecVolumePlacement(const RigExecPointFrame &final)
 {
     GfMatrix4d placement(1.0);
-    if (!final.IsValid() || final.IsDegenerate()) {
-        return placement;
-    }
-    for (const GfVec3d &point : final.points) {
-        if (!std::isfinite(point[0]) || !std::isfinite(point[1]) ||
-            !std::isfinite(point[2])) {
-            return placement;
-        }
-    }
-    // A failed decomposition writes the identity (pointFrame.cpp).
-    RigExecPointsToMatrix(RigExecIdentityLandmarks(), final.points, &placement);
+    RigExecVolumePlacement(
+        final.points, final.IsValid(), final.IsDegenerate(),
+        [](const std::array<GfVec3d, 4> &rest,
+           const std::array<GfVec3d, 4> &pose, GfMatrix4d *matrix) {
+            return RigExecPointsToMatrix(rest, pose, matrix);
+        },
+        &placement);
     return placement;
 }
 

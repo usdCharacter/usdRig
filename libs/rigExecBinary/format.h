@@ -613,7 +613,13 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// node inputs read the rig through OpGraph.lookups, and node values are
 /// stored in property versions through OpGraph.host_outputs. It retires the
 /// PropertyRevision step.
-inline constexpr uint32_t RigExecFormatVersion = 37;
+///
+/// Format 38 places each volume weight by a VolumePlacement op node
+/// (OpNode steps): its frame input reads a pose version through an
+/// OpGraph.lookups source 1 entry, and its placement is stored through
+/// OpGraph.host_outputs targets 1 and 2. It retires the VolumePlacements
+/// step.
+inline constexpr uint32_t RigExecFormatVersion = 38;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -621,7 +627,7 @@ inline constexpr uint32_t RigExecFormatVersion = 37;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 37;
+inline constexpr uint32_t RigExecFormatOldestReadable = 38;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

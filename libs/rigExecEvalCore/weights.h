@@ -22,6 +22,7 @@
 #include "rigExecMath/rangeRunner.h"
 #include "rigExecMath/spatialAccel.h"
 #include "rigExecMath/volumeFieldCheck.h"
+#include "rigExecMath/weightFieldKernel.h"
 #include "rigExecSchema/schemaNames.h"
 
 namespace rigExec {
@@ -128,10 +129,6 @@ struct WeightPacketView {
     size_t valueCount;
     const int32_t *indices;
     size_t indexCount;
-};
-template <class Math> struct WeightFrameView {
-    const std::array<typename Math::Vec3d, 4> *points;
-    bool valid, degenerate;
 };
 
 // What `storePacket` writes; the adapter supplies the tokens (the
@@ -362,16 +359,7 @@ CurveWeightField(WeightPointViewT<Math> points,
                      });
 }
 
-// The rigid placement of a volume weight, inverted: identity landmarks ->
-template <class Math>
-std::array<typename Math::Vec3d, 4>
-IdentityLandmarks()
-{
-    return {typename Math::Vec3d(0.0), typename Math::Vec3d(1.0, 0.0, 0.0),
-            typename Math::Vec3d(0.0, 1.0, 0.0),
-            typename Math::Vec3d(0.0, 0.0, 1.0)};
-}
-
+// The rigid placement of a volume weight, inverted: volume landmarks ->
 // the posed frame, scale and shear removed, non-degenerate, inverted.
 template <class Math>
 bool
@@ -383,7 +371,8 @@ RigidWorldToLocal(const std::array<typename Math::Vec3d, 4> &points, bool valid,
         return false;
     }
     Mat4 placement(1.0);
-    if (!Math::PointsToMatrix(IdentityLandmarks<Math>(), points, &placement)) {
+    if (!Math::PointsToMatrix(RigExecVolumeLandmarks<typename Math::Vec3d>(),
+                              points, &placement)) {
         return false;
     }
     for (int i = 0; i < 4; ++i) {
@@ -1428,35 +1417,6 @@ RunWeightPacketStep(Host &host, size_t index)
     }
 }
 
-// One VolumePlacements step: where the volume at \p slot ended up over
-// the frame this run walked to. Identity unless the frame is valid,
-// non-degenerate and finite; a failed decomposition leaves the identity
-// seed. Every other volume keeps what its own step last wrote.
-template <class Host>
-StepResult
-RunVolumePlacementsStep(Host &host, size_t slot, bool basePhase)
-{
-    using Math = typename Host::Math;
-    const auto facts = host.inputs().volumePlacementFacts(slot, basePhase);
-    typename Math::Mat4 placement(1.0);
-    bool usable = facts.valid && !facts.degenerate;
-    if (usable) {
-        for (const auto &point : *facts.points) {
-            if (!std::isfinite(point[0]) || !std::isfinite(point[1]) ||
-                !std::isfinite(point[2])) {
-                usable = false;
-                break;
-            }
-        }
-    }
-    if (usable) {
-        Math::PointsToMatrix(weights_detail::IdentityLandmarks<Math>(),
-                             *facts.points, &placement);
-    }
-    host.state().setVolumePlacement(slot, basePhase, placement);
-    return {Outcome::Applied, kNoStepDetail};
-}
-
 // The weights family tag: an adapter's RunValueStep entry selects this
 // family's dispatch through Host::EvalValueFamily (step.h names one
 // RunValueStep; each family header dispatches its own kinds).
@@ -1475,8 +1435,6 @@ RunValueStep(Host &host, const StepRef &step)
     if (step.object < 0)
         return {Outcome::Invalid, kNoStepDetail};
     switch (StepKind(step.kind)) {
-    case StepKind::VolumePlacements:
-        return RunVolumePlacementsStep(host, step.slot, step.part == 2);
     case StepKind::WeightPacket:
         return RunWeightPacketStep(host, step.slot);
     default:

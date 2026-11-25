@@ -193,7 +193,8 @@ FinalPlacementCycle(const std::string &fixture)
     if (!cycle) {
         for (const auto &step : B.steps) {
             if (step.label.find("Self") == std::string::npos &&
-                step.kind != RigExecBakedStepKind::VolumePlacements)
+                RigExecBakedIdentityOf(B, step).kind !=
+                    RigExecBakedStepKind::VolumePlacements)
                 continue;
             std::printf("cycle descriptor %s object=%d\n", step.label.c_str(),
                         step.object);

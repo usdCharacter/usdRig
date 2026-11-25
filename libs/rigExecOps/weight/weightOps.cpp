@@ -6,6 +6,7 @@
 #include "rigExecMath/spatialAccel.h"
 #include "rigExecMath/weightFieldKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
+#include "rigExecRuntime/dualQuatMath.h"
 
 #include <cmath>
 #include <cstring>
@@ -21,6 +22,9 @@ RIGEXEC_DEFINE_OP_HANDLE(SphereWeight)
 RIGEXEC_DEFINE_OP_HANDLE(PlaneWeight)
 RIGEXEC_DEFINE_OP_HANDLE(CurveWeight)
 RIGEXEC_DEFINE_OP_HANDLE(CombineWeights)
+RIGEXEC_DEFINE_OP_HANDLE(VolumePlacement)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumePlacementFrame)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumePlacementOut)
 RIGEXEC_DEFINE_PORT_HANDLE(CombineWeightsInputs)
 RIGEXEC_DEFINE_PORT_HANDLE(CombineWeightsTargetCount)
 RIGEXEC_DEFINE_PORT_HANDLE(CombineWeightsStrength)
@@ -460,6 +464,29 @@ RunCombineWeights(const RigExecOpBatch &batch, size_t *failed,
     });
 }
 
+bool
+RunVolumePlacement(const RigExecOpBatch &batch, size_t *failed,
+                   std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+        const rigExecRig::PointFrame &frame =
+            *In<rigExecRig::PointFrame>(io, VolumePlacementFrame());
+        const auto placed = rigExec::RigExecVolumePlacement(
+            frame.points, (frame.flags & rigExecRig::kPointFrameValid) != 0,
+            (frame.flags & rigExecRig::kPointFrameDegenerate) != 0,
+            [](const rigExecRig::PointLandmarks &rest,
+               const rigExecRig::PointLandmarks &pose, Mat4d *matrix) {
+                return rigExec::RrDualQuatPointsToMatrix(rest, pose, matrix);
+            },
+            &Out<Mat4d>(io, VolumePlacementOut()));
+        if (placed == rigExec::RigExecVolumePlacementResult::NotFinite)
+            return Fail(error, "VolumePlacement",
+                        "a landmark of the volume's frame is not finite");
+        return true;
+    });
+}
+
 using rigExec::kRigExecPortInput;
 using rigExec::kRigExecPortOptional;
 using rigExec::kRigExecPortOutput;
@@ -604,11 +631,30 @@ const rigExec::RigExecOpDesc kCombine = [] {
     return d;
 }();
 
+const RigExecPortDesc kVolumePlacementPorts[] = {
+    {&VolumePlacementFrame(), &rigExecRig::PointFrameType(), kRigExecPortInput,
+     "frame"},
+    {&VolumePlacementOut(), &rigExecStd::Mat4dType(), kRigExecPortOutput,
+     "out"},
+};
+
+const rigExec::RigExecOpDesc kVolumePlacement = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "VolumePlacement";
+    d.ports = kVolumePlacementPorts;
+    d.portCount = std::size(kVolumePlacementPorts);
+    d.runBatch = &RunVolumePlacement;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    return d;
+}();
+
 } // namespace
 
 void
 RegisterWeightOps(rigExec::RigExecOpRegistrar &registrar)
 {
+    registrar.Add(VolumePlacement(), kVolumePlacement);
     registrar.Add(SphereWeight(), kSphere);
     registrar.Add(PlaneWeight(), kPlane);
     registrar.Add(CurveWeight(), kCurve);

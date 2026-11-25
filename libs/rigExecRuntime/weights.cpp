@@ -924,10 +924,6 @@ struct RrWeightInputs {
             _RrGatherPointList(program, g.curves, w.curveValid, &out);
         return {out.data(), out.size()};
     }
-    eval::WeightFrameView<RrWeightMath> volumePlacementFacts(size_t, bool) const
-    {
-        return {&frame->points, frame->IsValid(), frame->IsDegenerate()};
-    }
 };
 
 struct RrWeightState {
@@ -982,13 +978,6 @@ struct RrWeightState {
             out.indices = std::move(p.indices);
         }
         store->weightPackets[i] = std::move(out);
-    }
-    void setVolumePlacement(size_t slot, bool base,
-                            const RrMat4d &placement) const
-    {
-        (base ? store->volumePlacementBase : store->volumePlacement)[slot] =
-            placement;
-        (base ? store->volumePlacedBase : store->volumePlaced)[slot] = 1;
     }
 };
 
@@ -1076,47 +1065,50 @@ _RrRunWeightPacket(RrProgram *program, size_t step, std::string *error)
                .outcome == eval::Outcome::Applied;
 }
 
+} // namespace
+
 bool
-_RrRunVolumePlacements(RrProgram *program, size_t step, std::string *error)
+RrLookUpPoseVersion(const RrProgram *program, const eval::OpLookup &lookup,
+                    const RigExecTypeDesc &type, void *out, std::string *error)
+{
+    const RrStore &store = program->store;
+    const std::vector<RrPointFrame> &frames =
+        lookup.part ? store.base : store.fin;
+    if (type.size != sizeof(RrPointFrame) || lookup.object >= frames.size()) {
+        if (error) {
+            *error = "pose version " + std::to_string(lookup.object) +
+                     " is no pose frame of the program";
+        }
+        return false;
+    }
+    *static_cast<RrPointFrame *>(out) = frames[lookup.object];
+    return true;
+}
+
+bool
+RrStoreVolumePlacement(RrProgram *program, const eval::OpHostOutput &output,
+                       const void *value, std::string *error)
 {
     RrStore &store = program->store;
-    const RigExecWireStep &wire = (*program->steps)[step];
-    const std::vector<uint8_t> &noScale = program->constants->noScaleAvars;
-    const size_t slot = size_t(wire.object);
-    if ((wire.part != 1 && wire.part != 2) || wire.object < 0 ||
-        slot >= program->slotMeta->paths.size() || slot >= noScale.size() ||
-        !noScale[slot]) {
+    const bool base =
+        output.target == uint8_t(eval::OpOutputTarget::VolumePlacementBase);
+    std::vector<RrMat4d> &placements =
+        base ? store.volumePlacementBase : store.volumePlacement;
+    std::vector<char> &placed =
+        base ? store.volumePlacedBase : store.volumePlaced;
+    if (output.object >= placements.size() || output.object >= placed.size()) {
         if (error) {
-            *error = "weight step " + _RrStepLabel(program, step) +
-                     " places no volume slot";
+            *error =
+                "slot " + std::to_string(output.object) + " places no volume";
         }
         return false;
     }
-    const bool base = wire.part == 2;
-    const auto &last = base ? store.baseLast : store.finLast;
-    const auto &frames = base ? store.base : store.fin;
-    if (slot >= last.size() || frames.empty() ||
-        slot >= store.volumePlacement.size() ||
-        slot >= store.volumePlaced.size()) {
-        if (error) {
-            *error = "weight step " + _RrStepLabel(program, step) +
-                     " runs with no pose frames";
-        }
-        return false;
-    }
-    if (size_t(last[slot]) >= frames.size()) {
-        if (error) {
-            *error = "weight step " + _RrStepLabel(program, step) +
-                     " reads a pose frame beyond the pools";
-        }
-        return false;
-    }
-    const RrPointFrame &frame = frames[size_t(last[slot])];
-    RrWeightHost host{{program, nullptr, &frame}, {program, &store, nullptr}};
-    return eval::RunValueStep(
-               host, {uint32_t(wire.kind), wire.object, wire.part, slot})
-               .outcome == eval::Outcome::Applied;
+    placements[output.object] = *static_cast<const RrMat4d *>(value);
+    placed[output.object] = 1;
+    return true;
 }
+
+namespace {
 
 } // namespace
 
@@ -1336,9 +1328,6 @@ RrRunWeightStep(RrProgram *program, size_t step, std::string *error)
         // Field failure is a published field outcome consumed by the
         // original consumer's failure policy, not an executor failure.
         return true;
-    }
-    if (kind == RigExecWireStepKind::VolumePlacements) {
-        return _RrRunVolumePlacements(program, step, error);
     }
     if (kind != RigExecWireStepKind::WeightPacket) {
         if (error) {

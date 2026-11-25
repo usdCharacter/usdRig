@@ -120,7 +120,10 @@ enum SlotDomain : ubyte { Avars = 0, PoseBase, PoseFin, PosedM, FinalMatrix,
 /// never written, and Open refuses a file that holds one.
 enum StepKind : ubyte { ComposeSubtree = 0, Solve, SolverCommit, Constraint,
   CommitDelta, PropagateChunk, CommitApply, ProviderMatrix, SnapshotFinals,
-  PoseInterpolator, VolumePlacements, WeightPacket, InfluenceFold,
+  PoseInterpolator,
+  /// Reserved: a volume placement before format 38, which runs as an
+  /// OpNode step since. Open refuses it.
+  ReservedVolumePlacements, WeightPacket, InfluenceFold,
   RevisionStatic, RevisionChunk, RevisionFuse, ChainStatus, Derived,
   FrameMatrix,
   /// Reserved: a property revision before format 37, which runs as OpNode
@@ -444,13 +447,13 @@ table Constants {
 table Step {
   kind: StepKind;
   /// What the step works on, by kind: a compose group, a solver, a commit,
-  /// a provider slot (ProviderMatrix; VolumePlacements, the volume's slot),
+  /// a provider slot (ProviderMatrix),
   /// a pose interpolator, a weight object, a revision id, a chain, a
   /// derived id, or a pose.frame_records index (FrameMatrix).
   object: int = -1;
   /// The part of it: a RevisionChunk's vertex chunk, a PropagateChunk's
-  /// pair chunk, a ProviderMatrix's phase (1 final, 0 base), 1 for the
-  /// per-volume VolumePlacements step; -1 where unused.
+  /// pair chunk, a ProviderMatrix's phase (1 final, 0 base); -1 where
+  /// unused.
   part: int = -1;
   reads: [SlotRange];
   writes: [SlotRange];
@@ -1909,6 +1912,8 @@ table OpLookup {
   /// 0: a read of property chain `object` (property_chains index):
   /// `read` 0 its base, else of revision `part`: 1 enabled, 2 the
   /// weight, 3 value, 4 min, 5 max, 6 keys, 7 tangents, 8 path points.
+  /// 1 (format 38): the pose frame of fin (`part` 0) or base (`part` 1)
+  /// version `object`.
   source: ubyte;
   object: uint;
   part: int = -1;
@@ -1919,7 +1924,8 @@ table OpLookup {
 table OpHostOutput {
   node: uint;
   port: uint;
-  /// 0: property version `object`.
+  /// 0: property version `object`; 1 and 2 (format 38): the final and
+  /// the base placement of volume slot `object`.
   target: ubyte;
   object: uint;
 }

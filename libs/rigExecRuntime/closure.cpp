@@ -68,8 +68,7 @@ bool
 _RrIsWeightKind(RigExecWireStepKind kind)
 {
     return kind == RigExecWireStepKind::WeightField ||
-           kind == RigExecWireStepKind::WeightPacket ||
-           kind == RigExecWireStepKind::VolumePlacements;
+           kind == RigExecWireStepKind::WeightPacket;
 }
 
 // The skip callback changes state only through MarkSkipped, whose counters

@@ -59,7 +59,8 @@ enum class OpOutputTarget : uint8_t {
 constexpr bool
 OpLookupSourceRuns(uint8_t source)
 {
-    return source == uint8_t(OpLookupSource::Property);
+    return source == uint8_t(OpLookupSource::Property) ||
+           source == uint8_t(OpLookupSource::PoseVersion);
 }
 
 /// Whether OpStoreOutput stores outputs of \p target, or, for a range chain
@@ -67,8 +68,11 @@ OpLookupSourceRuns(uint8_t source)
 constexpr bool
 OpOutputTargetRuns(uint8_t target, bool chainMember)
 {
-    return chainMember ? target == uint8_t(OpOutputTarget::ChainGroup)
-                       : target == uint8_t(OpOutputTarget::PropertyVersion);
+    return chainMember
+               ? target == uint8_t(OpOutputTarget::ChainGroup)
+               : target == uint8_t(OpOutputTarget::PropertyVersion) ||
+                     target == uint8_t(OpOutputTarget::VolumePlacement) ||
+                     target == uint8_t(OpOutputTarget::VolumePlacementBase);
 }
 
 /// A per-frame read of the rig the host resolves for a Lookup input; what
@@ -476,7 +480,8 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
 }
 
 /// Resolves lookup \p index through the \p host method of its source's
-/// family: \p host.LookUpProperty(index, lookup, type, value, error).
+/// family: LookUpProperty or LookUpPoseVersion(index, lookup, type, value,
+/// error).
 template <class Host>
 bool
 OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
@@ -486,6 +491,7 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
     case OpLookupSource::Property:
         return host.LookUpProperty(index, lookup, type, value, error);
     case OpLookupSource::PoseVersion:
+        return host.LookUpPoseVersion(index, lookup, type, value, error);
     case OpLookupSource::WeightArrays:
     case OpLookupSource::ChainVersion:
         break;
@@ -495,7 +501,8 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
 }
 
 /// Stores \p value through the \p host method of \p output's target
-/// family: \p host.StorePropertyVersion(output, value, error).
+/// family: StorePropertyVersion or StoreVolumePlacement(output, value,
+/// error).
 template <class Host>
 bool
 OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
@@ -506,6 +513,7 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
         return host.StorePropertyVersion(output, value, error);
     case OpOutputTarget::VolumePlacement:
     case OpOutputTarget::VolumePlacementBase:
+        return host.StoreVolumePlacement(output, value, error);
     case OpOutputTarget::WeightPacket:
     case OpOutputTarget::ChainGroup:
         break;

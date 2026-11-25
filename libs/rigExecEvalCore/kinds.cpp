@@ -8,6 +8,9 @@ static_assert(static_cast<uint8_t>(fb::StepKind::ComposeSubtree) == 0,
               "ComposeSubtree is ordinal 0");
 static_assert(static_cast<uint8_t>(fb::StepKind::SnapshotFinals) == 8,
               "the reserved ordinal is 8");
+static_assert(static_cast<uint8_t>(fb::StepKind::ReservedVolumePlacements) ==
+                  10,
+              "the retired volume placement ordinal is 10");
 static_assert(static_cast<uint8_t>(fb::StepKind::ReservedPropertyRevision) ==
                   19,
               "the retired property revision ordinal is 19");
@@ -34,6 +37,7 @@ bool
 IsReservedStepKind(StepKind kind)
 {
     return kind == fb::StepKind::SnapshotFinals ||
+           kind == fb::StepKind::ReservedVolumePlacements ||
            kind == fb::StepKind::ReservedPropertyRevision ||
            kind == fb::StepKind::ReservedOpGraph;
 }
