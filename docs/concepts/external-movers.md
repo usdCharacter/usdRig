@@ -504,6 +504,26 @@ call, so the two paths give the same bits. The test fixture's
 `Quadratic` op with the mover's own kernel, and
 `tests/testRigExecOpPluginScene.cpp` holds it to the native evaluator's bits.
 
+An op checks a node before it runs, then runs it. `validate`
+(`RigExecOpDesc::validate` in `rigExec/api/registry.h`) sees the node's
+settings and, per port, what is known before a frame (`RigExecOpCheck`): at
+compile, which optional inputs are fed; before the first evaluation, and
+again whenever an input changes size or a `kRigExecPortChecked` input
+changes value, the element counts and the values the host writes. Refuse
+there everything that settings, feeds, counts and host values can show: it
+fails the compile or that evaluation with the node, the op and the reason,
+and the node never runs on inputs it refused. A ranged op's `range.plan`
+picks ranges or one whole run from its settings alone, once at compile.
+`run` (or `runBatch`, or a ranged op's `prepare` and `run`) has no
+refusal of its own. What only the frame shows, such as a value that is not
+finite or a solve that fails, makes it return false with the reason, and
+that stops the whole evaluation: `Evaluate` returns the error, and every
+output the frame wrote reports no valid value until an evaluation succeeds.
+An op never passes its input through in place of a result it could not
+compute, and never publishes a status or validity output in place of an
+error. The fixture's `Quadratic` op validates the gain the host writes and
+the envelope's length, and fails its run only on a point that is not finite.
+
 The generated `plugInfo.json` marks the library with
 
 ```json
