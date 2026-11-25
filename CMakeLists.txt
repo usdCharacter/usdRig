@@ -1347,6 +1347,31 @@ target_compile_definitions(testRigExecSurfaceProjector PRIVATE
 rigexec_add_test(NAME testRigExecSurfaceProjector
     COMMAND testRigExecSurfaceProjector "${CMAKE_CURRENT_SOURCE_DIR}/examples")
 
+# Rigs under translated, rotated, non-uniformly scaled, animated ancestors
+# above the asset root, near and far from the origin: native, frozen and
+# .rigexec playback.
+add_executable(testRigExecOutsideTransforms
+    tests/testRigExecOutsideTransforms.cpp)
+target_link_libraries(testRigExecOutsideTransforms PRIVATE
+    rigExec rigExecBake rigExecRuntime rigExecSampler rigExecEvalCore)
+target_compile_definitions(testRigExecOutsideTransforms PRIVATE
+    ${_rigexec_schema_resource_define})
+rigexec_add_test(NAME testRigExecOutsideTransforms
+    COMMAND testRigExecOutsideTransforms
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+# Findings: the contract these cases assert does not hold today. Each fails
+# until the engine is fixed; drop WILL_FAIL then.
+foreach(_finding IN ITEMS outside-target outside-target-far
+                          projector-animated-ancestor)
+    rigexec_add_test(NAME testRigExecOutsideTransforms_${_finding}
+        COMMAND testRigExecOutsideTransforms
+            "${CMAKE_CURRENT_SOURCE_DIR}/examples"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures" ${_finding})
+    set_tests_properties(testRigExecOutsideTransforms_${_finding}
+        PROPERTIES WILL_FAIL TRUE)
+endforeach()
+
 add_executable(testRigExecGeometryOpsBakedParity
     tests/testRigExecGeometryOpsBakedParity.cpp)
 target_link_libraries(testRigExecGeometryOpsBakedParity PRIVATE rigExec)
@@ -3399,7 +3424,7 @@ foreach(_rigexec_scene_exe IN ITEMS
     testRigExecGroupForwarding testRigExecInputActions testRigExecInputReplayHosting
     testRigExecOpSteps
     testRigExecInteractive testRigExecInteropNotices testRigExecLattice testRigExecLeaves
-    testRigExecOneLoopAcceptance testRigExecOpTrace
+    testRigExecOneLoopAcceptance testRigExecOpTrace testRigExecOutsideTransforms
     testRigExecPatchMover testRigExecPhaseBindings testRigExecPoseInterpolator
     testRigExecPropertyOps testRigExecRestOps testRigExecRuntimeInputs
     testRigExecScenePoseOps testRigExecScopedClears testRigExecSkinTopology
