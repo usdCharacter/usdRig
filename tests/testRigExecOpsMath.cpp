@@ -1,6 +1,7 @@
 // The property math ops evaluated through the core give the same bits as
 // rigExecMath's Gf entry points, which the baked evaluator calls, for every
-// operation, and refuse what the movers refuse.
+// operation; a disabled node passes its input through, and what cannot be
+// computed fails compile or the evaluation.
 #include "rigExec/api/compile.h"
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
@@ -47,6 +48,7 @@ struct Harness {
     std::unique_ptr<RigExecEvaluator> evaluator;
     std::vector<RigExecInputId> inputs;
     RigExecOutputId out;
+    std::string error;
 
     Harness(const RigExecOpHandle &op, const rigExecOps::MathPayload &payload,
             const std::vector<const RigExecPortHandle *> &ins,
@@ -57,19 +59,18 @@ struct Harness {
         for (const RigExecPortHandle *port : ins)
             inputs.push_back(b.BindInput(node, *port));
         out = b.BindOutput(node, output);
-        std::string error;
         auto desc = b.Build(&error);
         auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
         evaluator =
             program ? RigExecEvaluator::Create(program, {}, &error) : nullptr;
-        if (!evaluator)
-            std::printf("harness: %s\n", error.c_str());
     }
 
     /// Sets every input in order and evaluates; false with \p error on a
     /// refused run.
     bool Run(const std::vector<const void *> &values, std::string *error)
     {
+        if (!evaluator)
+            return false;
         for (size_t i = 0; i < values.size(); ++i)
             if (!evaluator->SetInput(inputs[i], values[i], error))
                 return false;
@@ -100,6 +101,40 @@ Pick(std::mt19937 &rng)
     return std::uniform_real_distribution<float>(-10.0f, 10.0f)(rng);
 }
 
+/// A weight the ops mix with: finite and in [0, 1], the edges included.
+float
+PickWeight(std::mt19937 &rng)
+{
+    static const float edges[] = {0.0f, 1.0f, 0.5f};
+    std::uniform_int_distribution<int> which(0, 5);
+    const int w = which(rng);
+    if (w < int(std::size(edges)))
+        return edges[w];
+    return std::uniform_real_distribution<float>(0.0f, 1.0f)(rng);
+}
+
+bool
+Finite(float v)
+{
+    return std::isfinite(v);
+}
+
+bool
+Finite(const GfVec3f &v)
+{
+    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
+}
+
+bool
+Finite(const GfMatrix4d &m)
+{
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            if (!std::isfinite(m[r][c]))
+                return false;
+    return true;
+}
+
 void
 TestFloat()
 {
@@ -117,16 +152,18 @@ TestFloat()
             continue;
         for (int i = 0; i < 2000; ++i) {
             const float in = Pick(rng), value = Pick(rng), lo = Pick(rng),
-                        hi = Pick(rng), weight = Pick(rng);
-            std::string error;
-            CHECK(h.Run({&in, &value, &lo, &hi, &weight}, &error));
+                        hi = Pick(rng), weight = PickWeight(rng);
             RigExecPropertyMathParams<float> params;
             params.op = op;
             params.value = value;
             params.min = lo;
             params.max = hi;
             params.weight = weight;
-            CHECK(SameBits(h.Out<float>(), RigExecApplyFloatMath(in, params)));
+            const float expected = RigExecApplyFloatMath(in, params);
+            std::string error;
+            const bool ran = h.Run({&in, &value, &lo, &hi, &weight}, &error);
+            CHECK(ran == Finite(expected));
+            CHECK(!ran || SameBits(h.Out<float>(), expected));
         }
     }
 }
@@ -136,18 +173,26 @@ TestFloatCurve()
 {
     rigExecOps::MathPayload payload;
     payload.op = RigExecPropertyOp::Curve;
-    payload.keys = {Vec2f(-1.0f, 2.0f), Vec2f(0.0f, 0.0f), Vec2f(0.5f, 1.0f),
-                    Vec2f(3.0f, -4.0f)};
+    RigExecArray<Vec2f> keyIn(4), tangentIn;
+    keyIn[0] = Vec2f(-1.0f, 2.0f);
+    keyIn[1] = Vec2f(0.0f, 0.0f);
+    keyIn[2] = Vec2f(0.5f, 1.0f);
+    keyIn[3] = Vec2f(3.0f, -4.0f);
     const std::vector<GfVec2f> keys = {GfVec2f(-1, 2), GfVec2f(0, 0),
                                        GfVec2f(0.5f, 1), GfVec2f(3, -4)};
     const std::vector<GfVec2f> tangents = {GfVec2f(1, -2), GfVec2f(0, 0.5f),
                                            GfVec2f(3, 1), GfVec2f(-1, 2)};
     for (const bool hermite : {false, true}) {
-        if (hermite)
-            payload.tangents = {Vec2f(1.0f, -2.0f), Vec2f(0.0f, 0.5f),
-                                Vec2f(3.0f, 1.0f), Vec2f(-1.0f, 2.0f)};
+        if (hermite) {
+            tangentIn.Resize(4);
+            tangentIn[0] = Vec2f(1.0f, -2.0f);
+            tangentIn[1] = Vec2f(0.0f, 0.5f);
+            tangentIn[2] = Vec2f(3.0f, 1.0f);
+            tangentIn[3] = Vec2f(-1.0f, 2.0f);
+        }
         Harness h(rigExecOps::FloatMath(), payload,
-                  {&rigExecOps::FloatIn(), &rigExecOps::FloatWeight()},
+                  {&rigExecOps::FloatIn(), &rigExecOps::FloatWeight(),
+                   &rigExecOps::FloatKeys(), &rigExecOps::FloatTangents()},
                   rigExecOps::FloatOut());
         CHECK(h.evaluator);
         if (!h.evaluator)
@@ -155,7 +200,7 @@ TestFloatCurve()
         for (float in = -3.0f; in <= 4.0f; in += 0.125f) {
             const float weight = 0.75f;
             std::string error;
-            CHECK(h.Run({&in, &weight}, &error));
+            CHECK(h.Run({&in, &weight, &keyIn, &tangentIn}, &error));
             RigExecPropertyMathParams<float> params;
             params.op = RigExecPropertyOp::Curve;
             params.weight = weight;
@@ -169,16 +214,23 @@ TestFloatCurve()
         }
     }
 
-    // Unordered keys are refused, as compile refuses them on a mover.
-    payload.tangents.clear();
-    payload.keys = {Vec2f(1.0f, 0.0f), Vec2f(0.0f, 1.0f)};
+    // Unordered keys fail the evaluation; a curve fed no keys fails compile.
+    RigExecArray<Vec2f> unordered(2), none;
+    unordered[0] = Vec2f(1.0f, 0.0f);
+    unordered[1] = Vec2f(0.0f, 1.0f);
     Harness bad(rigExecOps::FloatMath(), payload,
-                {&rigExecOps::FloatIn(), &rigExecOps::FloatWeight()},
+                {&rigExecOps::FloatIn(), &rigExecOps::FloatWeight(),
+                 &rigExecOps::FloatKeys(), &rigExecOps::FloatTangents()},
                 rigExecOps::FloatOut());
     const float in = 0.0f, weight = 1.0f;
     std::string error;
-    CHECK(bad.evaluator && !bad.Run({&in, &weight}, &error));
+    CHECK(bad.evaluator && !bad.Run({&in, &weight, &unordered, &none}, &error));
     CHECK(error.find("curve") != std::string::npos);
+    Harness unfed(rigExecOps::FloatMath(), payload,
+                  {&rigExecOps::FloatIn(), &rigExecOps::FloatWeight()},
+                  rigExecOps::FloatOut());
+    CHECK(!unfed.evaluator &&
+          unfed.error.find("curve needs keys") != std::string::npos);
 }
 
 void
@@ -242,9 +294,9 @@ TestVec3f()
         for (int i = 0; i < 1000; ++i) {
             const Vec3f in = pick3(), value = pick3(), lo = pick3(),
                         hi = pick3();
-            const float weight = Pick(rng);
+            const float weight = PickWeight(rng);
             std::string error;
-            CHECK(h.Run({&in, &value, &lo, &hi, &weight}, &error));
+            const bool ran = h.Run({&in, &value, &lo, &hi, &weight}, &error);
             RigExecPropertyMathParams<GfVec3f> params;
             params.op = op;
             params.value = gf(value);
@@ -252,7 +304,8 @@ TestVec3f()
             params.max = gf(hi);
             params.weight = weight;
             const GfVec3f expected = RigExecApplyVec3fMath(gf(in), params);
-            CHECK(SameBits(gf(h.Out<Vec3f>()), expected));
+            CHECK(ran == Finite(expected));
+            CHECK(!ran || SameBits(gf(h.Out<Vec3f>()), expected));
         }
     }
     rigExecOps::MathPayload curve;
@@ -260,10 +313,7 @@ TestVec3f()
     Harness bad(rigExecOps::Vec3fMath(), curve,
                 {&rigExecOps::Vec3fIn(), &rigExecOps::Vec3fWeight()},
                 rigExecOps::Vec3fOut());
-    const Vec3f in(1.0f, 2.0f, 3.0f);
-    const float weight = 1.0f;
-    std::string error;
-    CHECK(bad.evaluator && !bad.Run({&in, &weight}, &error));
+    CHECK(!bad.evaluator && bad.error.find("float-only") != std::string::npos);
 }
 
 void
@@ -297,13 +347,14 @@ TestMatrix()
             continue;
         for (int i = 0; i < 500; ++i) {
             const Mat4d in = pick(), value = pick();
-            const float weight = Pick(rng);
+            const float weight = PickWeight(rng);
             std::string error;
-            CHECK(h.Run({&in, &value, &weight}, &error));
+            const bool ran = h.Run({&in, &value, &weight}, &error);
             GfMatrix4d expected;
             CHECK(RigExecApplyMatrixMath(gf(in), op, gf(value), weight,
                                          &expected));
-            CHECK(SameBits(gf(h.Out<Mat4d>()), expected));
+            CHECK(ran == Finite(expected));
+            CHECK(!ran || SameBits(gf(h.Out<Mat4d>()), expected));
         }
     }
     rigExecOps::MathPayload add;
@@ -311,10 +362,106 @@ TestMatrix()
     Harness bad(rigExecOps::MatrixMath(), add,
                 {&rigExecOps::MatrixIn(), &rigExecOps::MatrixWeight()},
                 rigExecOps::MatrixOut());
-    const Mat4d in(1.0);
-    const float weight = 1.0f;
-    std::string error;
-    CHECK(bad.evaluator && !bad.Run({&in, &weight}, &error));
+    CHECK(!bad.evaluator &&
+          bad.error.find("no matrix meaning") != std::string::npos);
+}
+
+/// DoubleMath computes in float on float(in) and widens the result, as a
+/// double property chain does.
+void
+TestDouble()
+{
+    std::mt19937 rng(17);
+    for (const RigExecPropertyOp op : kAllOps) {
+        rigExecOps::MathPayload payload;
+        payload.op = op;
+        Harness h(rigExecOps::DoubleMath(), payload,
+                  {&rigExecOps::DoubleIn(), &rigExecOps::DoubleValue(),
+                   &rigExecOps::DoubleMin(), &rigExecOps::DoubleMax(),
+                   &rigExecOps::DoubleWeight()},
+                  rigExecOps::DoubleOut());
+        CHECK(h.evaluator);
+        if (!h.evaluator)
+            continue;
+        for (int i = 0; i < 2000; ++i) {
+            const double in = double(Pick(rng)) * 1.0000001;
+            const float value = Pick(rng), lo = Pick(rng), hi = Pick(rng),
+                        weight = PickWeight(rng);
+            RigExecPropertyMathParams<float> params;
+            params.op = op;
+            params.value = value;
+            params.min = lo;
+            params.max = hi;
+            params.weight = weight;
+            const float expected = RigExecApplyFloatMath(float(in), params);
+            std::string error;
+            const bool ran = h.Run({&in, &value, &lo, &hi, &weight}, &error);
+            CHECK(ran == Finite(expected));
+            CHECK(!ran || SameBits(h.Out<double>(), double(expected)));
+        }
+    }
+}
+
+/// A disabled node passes its input through whatever its weight; an
+/// enabled one with an unusable weight or operand fails the evaluation.
+void
+TestEnabledAndErrors()
+{
+    rigExecOps::MathPayload payload;
+    payload.op = RigExecPropertyOp::Add;
+    const uint8_t off = 0, on = 1;
+    const float bad = 5.0f, nan = std::nanf(""), one = 1.0f;
+    {
+        Harness h(rigExecOps::FloatMath(), payload,
+                  {&rigExecOps::FloatIn(), &rigExecOps::FloatValue(),
+                   &rigExecOps::FloatWeight(), &rigExecOps::FloatEnabled()},
+                  rigExecOps::FloatOut());
+        const float in = -0.0f;
+        std::string error;
+        CHECK(h.evaluator && h.Run({&in, &nan, &bad, &off}, &error) &&
+              SameBits(h.Out<float>(), in));
+        CHECK(!h.Run({&in, &one, &bad, &on}, &error) &&
+              error.find("weight must be finite") != std::string::npos);
+        CHECK(!h.Run({&in, &nan, &one, &on}, &error) &&
+              error.find("not finite") != std::string::npos);
+        const float huge = 3e38f;
+        CHECK(!h.Run({&huge, &huge, &one, &on}, &error) &&
+              error.find("non-finite value") != std::string::npos);
+    }
+    {
+        Harness h(rigExecOps::DoubleMath(), payload,
+                  {&rigExecOps::DoubleIn(), &rigExecOps::DoubleWeight(),
+                   &rigExecOps::DoubleEnabled()},
+                  rigExecOps::DoubleOut());
+        const double in = 0.1;
+        std::string error;
+        CHECK(h.evaluator && h.Run({&in, &bad, &off}, &error) &&
+              SameBits(h.Out<double>(), in));
+    }
+    {
+        Harness h(rigExecOps::Vec3fMath(), payload,
+                  {&rigExecOps::Vec3fIn(), &rigExecOps::Vec3fWeight(),
+                   &rigExecOps::Vec3fEnabled()},
+                  rigExecOps::Vec3fOut());
+        const Vec3f in(1.0f, -0.0f, 2.0f);
+        std::string error;
+        CHECK(h.evaluator && h.Run({&in, &bad, &off}, &error) &&
+              SameBits(h.Out<Vec3f>(), in));
+        CHECK(!h.Run({&in, &bad, &on}, &error));
+    }
+    {
+        rigExecOps::MathPayload multiply;
+        multiply.op = RigExecPropertyOp::Multiply;
+        Harness h(rigExecOps::MatrixMath(), multiply,
+                  {&rigExecOps::MatrixIn(), &rigExecOps::MatrixWeight(),
+                   &rigExecOps::MatrixEnabled()},
+                  rigExecOps::MatrixOut());
+        const Mat4d in(2.0);
+        std::string error;
+        CHECK(h.evaluator && h.Run({&in, &bad, &off}, &error) &&
+              SameBits(h.Out<Mat4d>(), in));
+        CHECK(!h.Run({&in, &bad, &on}, &error));
+    }
 }
 
 /// Twelve FloatMath nodes of every operation in one program, run in batches
@@ -357,12 +504,13 @@ TestBatches()
         for (int round = 0; round < 50; ++round) {
             std::vector<std::vector<float>> values;
             for (const Node &node : nodes) {
-                values.push_back(
-                    {Pick(rng), Pick(rng), Pick(rng), Pick(rng), Pick(rng)});
+                values.push_back({Pick(rng), Pick(rng), Pick(rng), Pick(rng),
+                                  PickWeight(rng)});
                 for (size_t k = 0; k < 5; ++k)
                     CHECK(e->SetInput(node.inputs[k], &values.back()[k]));
             }
-            CHECK(e->Evaluate(&error));
+            std::vector<float> expected;
+            bool finite = true;
             for (size_t i = 0; i < nodes.size(); ++i) {
                 RigExecPropertyMathParams<float> params;
                 params.op = nodes[i].op;
@@ -370,10 +518,14 @@ TestBatches()
                 params.min = values[i][2];
                 params.max = values[i][3];
                 params.weight = values[i][4];
+                expected.push_back(RigExecApplyFloatMath(values[i][0], params));
+                finite = finite && Finite(expected.back());
+            }
+            CHECK(e->Evaluate(&error) == finite);
+            for (size_t i = 0; finite && i < nodes.size(); ++i)
                 CHECK(SameBits(
                     *static_cast<const float *>(e->GetOutput(nodes[i].out)),
-                    RigExecApplyFloatMath(values[i][0], params)));
-            }
+                    expected[i]));
         }
     }
 }
@@ -427,6 +579,8 @@ main()
     TestFloatPath();
     TestVec3f();
     TestMatrix();
+    TestDouble();
+    TestEnabledAndErrors();
     TestChain();
     TestBatches();
     if (failures) {

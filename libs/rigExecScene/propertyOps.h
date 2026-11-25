@@ -18,15 +18,15 @@ struct RigExecPropertyOpNode {
     RigExecNodeId node = 0;
     /// The descriptor's record kind: 0 float, 1 vec3f, 2 matrix.
     size_t kind = 0;
-    RigExecInputId in, value, min, max, weight, pathPoints;
+    RigExecInputId in, value, min, max, weight, pathPoints, keys, tangents;
     RigExecOutputId out;
 };
 
 /// Adds the math op for \p descriptor's record to \p builder. The op's In
 /// is fed by \p upstream's output when given, else bound as a host input.
-/// The operation, curve keys and tangents and path settings go into the
-/// payload, so animated keys need a rebuild; value, min, max, weight and
-/// path points are inputs written per frame. False with \p error for a
+/// The operation and path settings go into the payload; value, min, max,
+/// weight, curve keys and tangents and path points are inputs written per
+/// frame. False with \p error for a
 /// record the domain would pass through (unknown operation) or a kind
 /// mismatch with \p upstream.
 bool RigExecAddPropertyOp(const RigExecScenePropertyDescriptor &descriptor,
@@ -37,7 +37,7 @@ bool RigExecAddPropertyOp(const RigExecScenePropertyDescriptor &descriptor,
 
 /// Writes the resolved record's inputs and \p envelope into \p evaluator.
 /// False, writing nothing, where RigExecRunProperty would pass through:
-/// a non-finite value, min or max.
+/// a non-finite value, min or max, or unusable curve keys.
 bool
 RigExecWritePropertyOpInputs(const RigExecScenePropertyDescriptor &descriptor,
                              const RigExecPropertyOpNode &node, float envelope,

@@ -406,8 +406,6 @@ TestFilledPayloads()
     {
         MathPayload p;
         p.op = RigExecPropertyOp::Path;
-        p.keys = {Vec2f(0.0f, 1.0f), Vec2f(1.0f, 0.0f)};
-        p.tangents = {Vec2f(0.5f, 0.5f), Vec2f(-0.5f, 2.0f)};
         p.path.valid = true;
         p.path.basis = RigExecPathBasis::CatmullRom;
         p.path.component = RigExecPathComponent::Heading;
@@ -532,8 +530,8 @@ Hex(const char *text)
     return bytes;
 }
 
-/// The bytes the math ops saved before their fields were declared, written
-/// as they were: the declared fields save the same.
+/// The bytes the math ops' declared fields save: the operation, then the
+/// path settings.
 void
 TestMathBytes()
 {
@@ -541,24 +539,20 @@ TestMathBytes()
     MathPayload p;
     std::vector<uint8_t> bytes;
     CHECK(RigExecEncodeOpPayload(op, &p, bytes));
-    CHECK(bytes == Hex("01000000 00000000 0000000000000000 0000000000000000 "
+    CHECK(bytes == Hex("02000000 00000000 "
                        "00 00000000 00 00 00000000 00000000 00000000 "
                        "00000000"));
     p.op = RigExecPropertyOp::Path;
-    p.keys = {Vec2f(0.0f, 1.0f), Vec2f(1.0f, 0.0f)};
-    p.tangents = {Vec2f(0.5f, 0.5f), Vec2f(-0.5f, 2.0f)};
     p.path.valid = true;
     p.path.basis = RigExecPathBasis::CatmullRom;
     p.path.component = RigExecPathComponent::Heading;
     p.path.headingOffset = 90.0f;
     CHECK(RigExecEncodeOpPayload(op, &p, bytes));
-    CHECK(bytes == Hex("01000000 07000000 0200000000000000 "
-                       "00000000 0000803f 0000803f 00000000 "
-                       "0200000000000000 "
-                       "0000003f 0000003f 000000bf 00000040 "
+    CHECK(bytes == Hex("02000000 07000000 "
                        "01 03000000 00 00 03000000 00000000 00000000 "
                        "0000b442"));
-    for (const RigExecOpHandle *math : {&Vec3fMath(), &MatrixMath()}) {
+    for (const RigExecOpHandle *math :
+         {&Vec3fMath(), &MatrixMath(), &DoubleMath()}) {
         std::vector<uint8_t> same;
         CHECK(RigExecEncodeOpPayload(*Op(*math).desc, &p, same));
         CHECK(same == bytes);
@@ -571,14 +565,14 @@ TestMathBytes()
     CHECK(!FieldsDecode(op, bad, &error));
     CHECK(error.find("field op: a value is out of range") != std::string::npos);
     bad = bytes;
-    bad[56] = 2;
+    bad[8] = 2;
     CHECK(!FieldsDecode(op, bad, &error));
     CHECK(error.find("pathValid") != std::string::npos);
-    // A key count past the bytes left is refused before reading keys.
+    // Bytes a version 1 payload saved, keys and tangents among its settings,
+    // are refused.
     bad = bytes;
-    bad[15] = 0x7f;
+    bad[0] = 1;
     CHECK(!FieldsDecode(op, bad, &error));
-    CHECK(error.find("longer than") != std::string::npos);
 }
 
 std::string

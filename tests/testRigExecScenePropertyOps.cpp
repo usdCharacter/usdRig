@@ -298,7 +298,17 @@ TestRefusals()
     CHECK(unordered.Resolve(0, &d, &weight));
     CHECK(!RigExecRunProperty(std::get<RigExecFloatPropertyRecord>(d.record),
                               1.0f, 1.0f, &out));
-    CHECK(!RigExecAddPropertyOp(d, &builder, nullptr, &node, &error));
+    // Keys are per-frame inputs: the node builds, and writing them fails.
+    RigExecRigDescBuilder curveBuilder;
+    CHECK(RigExecAddPropertyOp(d, &curveBuilder, nullptr, &node, &error));
+    auto desc = curveBuilder.Build(&error);
+    auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
+    auto evaluator =
+        program ? RigExecEvaluator::Create(program, {}, &error) : nullptr;
+    CHECK(evaluator);
+    CHECK(evaluator && !RigExecWritePropertyOpInputs(d, node, 1.0f,
+                                                     evaluator.get(), &error));
+    CHECK(error.find("curve keys") != std::string::npos);
 }
 
 } // namespace

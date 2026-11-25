@@ -45,16 +45,17 @@ Finite(const GfVec3f &v)
 
 /// The record's curve keys and tangents as RigExecRunProperty reads them.
 bool
-CurveKeys(const RigExecFloatPropertyRecord &record,
-          rigExecOps::MathPayload *payload)
+CurveKeys(const RigExecFloatPropertyRecord &record, RigExecArray<Vec2f> *out,
+          RigExecArray<Vec2f> *outTangents)
 {
     const GfVec2f *keys = record.keyData ? record.keyData : record.keys.data();
     const size_t keyCount =
         record.keyData ? record.keyCount : record.keys.size();
     if (!keyCount || !RigExecValidateLinearKeys(keys, keyCount))
         return false;
+    out->Resize(keyCount);
     for (size_t i = 0; i < keyCount; ++i)
-        payload->keys.emplace_back(keys[i][0], keys[i][1]);
+        (*out)[i] = Vec2f(keys[i][0], keys[i][1]);
     const GfVec2f *tangents =
         record.tangentData ? record.tangentData : record.tangents.data();
     const size_t tangentCount =
@@ -62,8 +63,9 @@ CurveKeys(const RigExecFloatPropertyRecord &record,
     if (record.hasTangents && tangentCount) {
         if (tangentCount != keyCount)
             return false;
+        outTangents->Resize(tangentCount);
         for (size_t i = 0; i < tangentCount; ++i)
-            payload->tangents.emplace_back(tangents[i][0], tangents[i][1]);
+            (*outTangents)[i] = Vec2f(tangents[i][0], tangents[i][1]);
     }
     return true;
 }
@@ -91,8 +93,6 @@ RigExecAddPropertyOp(const RigExecScenePropertyDescriptor &descriptor,
         if (!f->opValid)
             return Fail(error, where + ": no valid operation");
         payload.op = f->op;
-        if (f->op == RigExecPropertyOp::Curve && !CurveKeys(*f, &payload))
-            return Fail(error, where + ": curve keys are not usable");
         if (f->op == RigExecPropertyOp::Path)
             payload.path = f->path;
         op = &rigExecOps::FloatMath();
@@ -133,6 +133,12 @@ RigExecAddPropertyOp(const RigExecScenePropertyDescriptor &descriptor,
         if (payload.op == RigExecPropertyOp::Path)
             result.pathPoints =
                 builder->BindInput(result.node, rigExecOps::FloatPathPoints());
+        if (payload.op == RigExecPropertyOp::Curve) {
+            result.keys =
+                builder->BindInput(result.node, rigExecOps::FloatKeys());
+            result.tangents =
+                builder->BindInput(result.node, rigExecOps::FloatTangents());
+        }
         break;
     case 1:
         result.value =
@@ -179,12 +185,19 @@ RigExecWritePropertyOpInputs(const RigExecScenePropertyDescriptor &descriptor,
             for (size_t i = 0; i < f->pathPointCount; ++i)
                 points[i] = ToStd(f->pathPointData[i]);
         }
+        RigExecArray<Vec2f> keys, tangents;
+        if (node.keys.index != kRigExecInvalidIndex &&
+            !CurveKeys(*f, &keys, &tangents))
+            return Fail(error, where + ": curve keys are not usable");
         return evaluator->SetInput(node.value, &f->value, error) &&
                evaluator->SetInput(node.min, &f->minimum, error) &&
                evaluator->SetInput(node.max, &f->maximum, error) &&
                evaluator->SetInput(node.weight, &envelope, error) &&
                (node.pathPoints.index == kRigExecInvalidIndex ||
-                evaluator->SetInput(node.pathPoints, &points, error));
+                evaluator->SetInput(node.pathPoints, &points, error)) &&
+               (node.keys.index == kRigExecInvalidIndex ||
+                (evaluator->SetInput(node.keys, &keys, error) &&
+                 evaluator->SetInput(node.tangents, &tangents, error)));
     }
     if (const auto *v =
             std::get_if<RigExecVec3PropertyRecord>(&descriptor.record)) {
