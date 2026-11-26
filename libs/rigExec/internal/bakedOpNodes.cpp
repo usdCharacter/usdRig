@@ -752,13 +752,12 @@ RigExecBakedRunOpStep(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
             error);
     else if (origin && origin->family == RigExecBakedOpFamily::WeightPacket)
         step->diagnostics.push_back(
-            B.weightObjects[size_t(origin->object)].path.GetString() + ": " +
-            error);
+            B.weightProgram[size_t(origin->object)].name + ": " + error);
     else if (origin && origin->family == RigExecBakedOpFamily::WeightField)
         step->diagnostics.push_back(
-            B.weightObjects[size_t(B.weightFields[size_t(origin->object)]
+            B.weightProgram[size_t(B.weightFields[size_t(origin->object)]
                                        .nodeObjects[size_t(origin->part)])]
-                .path.GetString() +
+                .name +
             ": " + error);
     else
         step->diagnostics.push_back(error);
