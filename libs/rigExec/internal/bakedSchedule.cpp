@@ -260,9 +260,7 @@ constexpr StepCostConstants kStepCosts[] = {
 static_assert(sizeof(kStepCosts) / sizeof(kStepCosts[0]) == kStepKindCount,
               "rigExec: every baked step kind needs a cost row");
 
-// PoseInterpolator row: unfitted estimate.
-// SnapshotFinals, VolumePlacements and WeightPacket: medians of nine runs,
-// fitted through the origin (see FitKind). Single-step kinds: fit at
+// PoseInterpolator row: unfitted estimate. Single-step kinds: fit at
 // RIGEXEC_BAKED_SCHEDULE_CALIBRATE=200.
 // ChainStatus is sized by the chain's vertices.
 // RevisionChunk: the fixed term carries the per-chunk gather of key matrices,

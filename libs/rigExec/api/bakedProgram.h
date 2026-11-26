@@ -245,7 +245,7 @@ public:
     Build(RigExecRigEvaluator *evaluator, std::vector<std::string> *reasons);
 
     /// Bake-time facts for the weight field resolution, the
-    /// envelope objects no WeightPacket step bakes, and the property
+    /// envelope objects no weight packet op node bakes, and the property
     /// chains. Members only because the evaluator's friendship reaches
     /// this class; called as RigExecBakedDescribeWeightFieldFacts,
     /// RigExecBakedComposeEnvelopeObjects and

@@ -343,8 +343,8 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
         _NoticeEditControls(notice, disposition, patchedPaths, *index);
     const RigExecBakedClusterSet dirty = index->AffectedByControls(controls);
     // Weight-object edits: a notice path at or under a weight object an
-    // entry read (WeightPacket steps resolve through step.object, outside
-    // the avar-only index, so the provenance read set is the oracle).
+    // entry read (weight packet op nodes resolve through their object,
+    // outside the avar-only index, so the provenance read set is the oracle).
     const std::vector<SdfPath> noticePaths = _NoticeEditPaths(notice);
     const uint64_t newConstants = [&]() {
         RigExecProfileScope scope(bridge.MutableProfiler(),

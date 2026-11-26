@@ -1,4 +1,5 @@
-// S9 newly admitted singleton envelopes; the old walk refused this domain.
+// Singleton volume envelopes: placement geometry and recovery, count
+// failures and a final-placement cycle.
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/weightField.h"

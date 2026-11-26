@@ -4193,10 +4193,9 @@ template <class Host> struct PoseConstraintPrologueT {
 };
 
 // The constraint prologue head: arrays, facts, and the envelope.
-// The single-chain IK exit sits between this and the sources below,
-// exactly where the legacy body puts it: past the envelope (whose
-// weight the solve takes) and past the arrays (whose pole tables it
-// reads), before any source resolves.
+// The single-chain IK exit sits between this and the sources below: past
+// the envelope (whose weight the solve takes) and past the arrays (whose
+// pole tables it reads), before any source resolves.
 template <class Host>
 StepResult
 ResolveConstraintHead(Host &host, size_t object,
@@ -4219,9 +4218,9 @@ ResolveConstraintHead(Host &host, size_t object,
     }
     double weight = 1.0;
     if (facts.hasWeightObject && !facts.pointsTarget) {
-        // Both legacy bodies copied the resolved field into the
-        // constraint's own scratch (baked program record, runtime store
-        // slot) before checking it; the front ends keep that record.
+        // The front ends record the resolved field in the constraint's own
+        // scratch (baked program record, runtime store slot) before it is
+        // checked.
         host.state().recordConstraintEnvelope(object);
         if (!facts.fieldOk || facts.fieldCount != 1) {
             host.state().diagnose(facts.pathText + ": " + facts.fieldError +

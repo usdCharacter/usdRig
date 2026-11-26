@@ -121,22 +121,18 @@ enum SlotDomain : ubyte { Avars = 0, PoseBase, PoseFin, PosedM, FinalMatrix,
 enum StepKind : ubyte { ComposeSubtree = 0, Solve, SolverCommit, Constraint,
   CommitDelta, PropagateChunk, CommitApply, ProviderMatrix, SnapshotFinals,
   PoseInterpolator,
-  /// Reserved: a volume placement before format 38, which runs as an
-  /// OpNode step since. Open refuses it.
+  /// Reserved. Open refuses it.
   ReservedVolumePlacements,
-  /// Reserved: a weight object's packet before format 39, which runs as an
-  /// OpNode step since. Open refuses it.
+  /// Reserved. Open refuses it.
   ReservedWeightPacket, InfluenceFold,
   RevisionStatic, RevisionChunk, RevisionFuse, ChainStatus, Derived,
   FrameMatrix,
-  /// Reserved: a property revision before format 37, which runs as OpNode
-  /// steps since. Open refuses it.
+  /// Reserved. Open refuses it.
   ReservedPropertyRevision, RestCompose, LadderCompose, SkinTopology,
-  /// Reserved: a weight field before format 40, which runs as OpNode steps
-  /// since. Open refuses it.
+  /// Reserved. Open refuses it.
   ReservedWeightField, SpaceExpression, ChainInputs, AvarInputs,
   SpaceCheckpoint, ProviderRefresh,
-  /// Reserved: format 35's whole op graph as one step. Open refuses it.
+  /// Reserved. Open refuses it.
   ReservedOpGraph,
   /// Format 36: File.op_graph's nodes as steps: one node that does not run
   /// in ranges, a range chain's head, and one (segment, vertex group) of

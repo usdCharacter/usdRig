@@ -456,9 +456,9 @@ struct RrStore {
     std::vector<RrChainPublish> chainPublish;
     std::vector<RrDerivedPublish> derivedPublish;
     std::vector<RrWeightPacket> weightPackets;
-    // Per provider slot, what that volume's VolumePlacements step last
-    // wrote (the program's slot-indexed volumePlacement) and whether it has
-    // run. Sized at Open and never cleared, so a step the closure skipped
+    // Per provider slot, what that volume's VolumePlacement op node last
+    // stored (the program's slot-indexed volumePlacement) and whether it has
+    // run. Sized at Open and never cleared, so a node the closure skipped
     // keeps its placement. The weight field and the published weight frames
     // read them.
     std::vector<RrMat4d> volumePlacement;

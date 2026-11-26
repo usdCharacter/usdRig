@@ -362,7 +362,7 @@ RigExecBakeStaticReport(RigExecRigEvaluator &evaluator,
         }
     }
 
-    // The arrays a WeightPacket step gathers.
+    // The arrays a weight packet op node gathers.
     for (const RigExecBakedProgramImpl::WeightObject &object :
          B.weightObjects) {
         const std::string field =

@@ -4,8 +4,8 @@
 // object types.
 // The slots are the attributes on the walks of every registered program
 // read (Baked mode, as RigExecBakedRead resolves it), of the weight
-// objects' scalar reads (the registered reads of every object a
-// WeightPacket step bakes, and the Resolved reads of every envelope-only
+// objects' scalar reads (the registered reads of every object a weight
+// packet op node bakes, and the Resolved reads of every envelope-only
 // object, as the weight field's _ResolvedRead does), of the property movers'
 // inputs (Pinned or Resolved, as _PinnedRead resolves them), of the
 // geometry assembly's blend weights, activations, default weights and

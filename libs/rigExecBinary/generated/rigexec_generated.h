@@ -1183,11 +1183,9 @@ enum class StepKind : uint8_t {
   ProviderMatrix = 7,
   SnapshotFinals = 8,
   PoseInterpolator = 9,
-  /// Reserved: a volume placement before format 38, which runs as an
-  /// OpNode step since. Open refuses it.
+  /// Reserved. Open refuses it.
   ReservedVolumePlacements = 10,
-  /// Reserved: a weight object's packet before format 39, which runs as an
-  /// OpNode step since. Open refuses it.
+  /// Reserved. Open refuses it.
   ReservedWeightPacket = 11,
   InfluenceFold = 12,
   RevisionStatic = 13,
@@ -1196,21 +1194,19 @@ enum class StepKind : uint8_t {
   ChainStatus = 16,
   Derived = 17,
   FrameMatrix = 18,
-  /// Reserved: a property revision before format 37, which runs as OpNode
-  /// steps since. Open refuses it.
+  /// Reserved. Open refuses it.
   ReservedPropertyRevision = 19,
   RestCompose = 20,
   LadderCompose = 21,
   SkinTopology = 22,
-  /// Reserved: a weight field before format 40, which runs as OpNode steps
-  /// since. Open refuses it.
+  /// Reserved. Open refuses it.
   ReservedWeightField = 23,
   SpaceExpression = 24,
   ChainInputs = 25,
   AvarInputs = 26,
   SpaceCheckpoint = 27,
   ProviderRefresh = 28,
-  /// Reserved: format 35's whole op graph as one step. Open refuses it.
+  /// Reserved. Open refuses it.
   ReservedOpGraph = 29,
   /// Format 36: File.op_graph's nodes as steps: one node that does not run
   /// in ranges, a range chain's head, and one (segment, vertex group) of

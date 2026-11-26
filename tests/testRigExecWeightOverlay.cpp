@@ -1703,11 +1703,10 @@ TestOverlayValueChangeDirtiesDisplayColor()
 // keyed by the volume slots the walk places; the walk keys the same map by
 // the volumes it taps. Both the key set and every matrix must match the walk,
 // bit for bit, at each frame of a start/mid/mid/end/start sequence. Every
-// generation must come from the program. On these fixtures the
-// VolumePlacements cluster is in cones.always, so every run re-places the
-// volumes; publication of a table a skipped step left behind is covered by
-// testRigExecVolumeWeights TestTheOracleReadsTheProgramsPlacements. Returns
-// the walk's last weightFrames.
+// generation must come from the program. Publication of a table a skipped
+// placement node left behind is covered by testRigExecVolumeWeights
+// TestTheOracleReadsTheProgramsPlacements. Returns the walk's last
+// weightFrames.
 static std::map<SdfPath, GfMatrix4d>
 CheckBakedWeightFramesMatchTheWalk(const UsdStageRefPtr &stage,
                                    const std::string &label)

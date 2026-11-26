@@ -546,9 +546,9 @@ RigExecBakedBuildWeightSteps(RigExecBakedProgramImpl *program)
     // placement from the slot's last pose version is what every reader
     // sees. Every volume slot gets a step, bound to a mover or not: an
     // unbound volume still publishes a weightFrames entry.
-    // Each runs as a VolumePlacement op node keeping the VolumePlacements
-    // identity: object the provider slot, part 1 the final placement and 2
-    // the base one.
+    // Each runs as a VolumePlacement op node identified as VolumePlacements:
+    // object the provider slot, part 1 the final placement and 2 the base
+    // one.
     for (size_t i = 0; i < B.noScaleAvars.size(); ++i) {
         if (B.noScaleAvars[i] == 0) {
             continue;

@@ -1017,7 +1017,7 @@ TestBlendDeltasUseBase()
 static size_t
 DerivedEvaluateCount(const RigExecRigEvaluator &evaluator)
 {
-    // Observe actual common operation execution, not a retired profiler label.
+    // Counted from the op trace of the last run.
     const auto trace = evaluator.GetLastOpTrace();
     return size_t(
         std::count_if(trace.begin(), trace.end(),
@@ -2598,11 +2598,6 @@ TestPureSolverToSolverCycleRejected(const std::string &examplesDir)
 
 // Aim constraints revise a joint's final frame, and the revision points the
 // authored aim axis at the target.
-// Nothing asserted this before: the mover-graph parity suite only covers point
-// chains, and an aim moves a transform provider's FRAME. So the whole
-// pose-domain revision path could have been a no-op and every test would still
-// have passed -- which matters now that it is applied in memory rather than
-// through a generated RigExecPointFrameMoverApplication.
 // 08_AimEyes: EyeL/EyeR sit at (-1,10,0)/(1,10,0), LookAt at (0,10,6), and
 // both aims declare rigExec:aimAxis = "z" at weight 1. So each eye's final
 // frame must (a) differ from its base and (b) have its Z axis pointing at the

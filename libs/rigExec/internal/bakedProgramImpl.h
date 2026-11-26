@@ -2050,14 +2050,14 @@ struct RigExecBakedProgramImpl {
     /// Discovery allocates identities on entry, including authored back-edges.
     /// The canonical graph diagnoses cycles after all producer reads exist.
     std::map<SdfPath, int> weightIndex;
-    /// Per provider slot, where the volume at that slot is placed: the
-    /// output of that slot's VolumePlacements step (WeightFrames[slot]), read
-    /// by the weight field and by pose.weightFrames. Every noScaleAvars slot has
-    /// a live and a frozen step; the weight field and every publication (live and
-    /// frozen) read only the placedVolumes slots. Non-volume slots stay
-    /// identity and are never read. Kept across runs like deltaValues, and
-    /// carried by a retained frozen workspace: an operation that
-    /// skipped a step keeps its last run's placement; its inputs are unchanged.
+    /// Per provider slot, where the volume at that slot is placed: what that
+    /// slot's VolumePlacement op node stores (WeightFrames[slot]), read by
+    /// the weight field and by pose.weightFrames. The weight field and every
+    /// publication (live and frozen) read only the placedVolumes slots.
+    /// Non-volume slots stay identity and are never read. Kept across runs
+    /// like deltaValues, and carried by a retained frozen workspace: a run
+    /// that skips a slot's node keeps its last placement; its inputs are
+    /// unchanged.
     std::vector<GfMatrix4d> volumePlacement;
     /// Per provider slot: 1 where the dynamic walk places this volume (a key
     /// of the evaluator's _volumeWeightMatrixTaps). A subset of
@@ -2078,10 +2078,9 @@ struct RigExecBakedProgramImpl {
     /// Compile and replayed unchanged -- and these are literally the bytes
     /// exec receives.
     std::map<SdfPath, std::vector<float>> falloffLuts;
-    /// This frame's packet per weight object -- the WeightPacket slot
-    /// domain's storage. Sized at Build and never resized in a run, like
-    /// every other slot: a consumer holds a pointer into it for the whole
-    /// region.
+    /// This frame's packet per weight object, as its weight packet op node
+    /// stores it. Sized at Build and never resized in a run, like every other
+    /// slot: a consumer holds a pointer into it for the whole region.
     std::vector<RigExecWeightPacket> weightPackets;
 
     // What the bake looked at, so a notice can be answered without rebuilding

@@ -1704,7 +1704,7 @@ _TestSyntheticBuilders()
     std::printf("synthetic: %zu/%zu packets match, %zu weight frame(s)\n", ok,
                 expected.size(), frames.size());
 
-    // The retired VolumePlacements step kind: Open refuses it by name.
+    // The reserved VolumePlacements step kind: Open refuses it by name.
     if (const std::unique_ptr<fb::RigExecWireFile> retired =
             RigExecTestUnpack(bytes)) {
         const auto placement = std::find_if(
@@ -2133,7 +2133,8 @@ _TestVolumePlacementSkip()
         file.geometry->weightObjects.push_back(std::move(object));
     }
     // Per-consumer envelope descriptors select independent placement tables.
-    // This white-box failure test complements the actual exported S9 rig below.
+    // This white-box failure test complements the exported volume envelope
+    // rig below.
     for (const auto phase : {fb::WeightFieldPlacementPhase::Base,
                              fb::WeightFieldPlacementPhase::Final}) {
         fb::RigExecWireWeightField field;
@@ -2592,8 +2593,8 @@ _TestPaintedEnvelopeSet()
                 name, values.c_str(), same ? "==" : "differs from");
 }
 
-// S9 NoEquivalent: the original walk refused volume envelopes. This case
-// checks the newly supported count-one graph without inventing a baseline.
+// A volume envelope has no scalar-reference baseline: this case checks the
+// count-one graph on its own.
 static void
 _TestS9VolumeEnvelope()
 {

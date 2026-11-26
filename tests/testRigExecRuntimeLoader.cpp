@@ -821,7 +821,7 @@ static int versionRefusals = 0;
 // Open in the step graph's or the step rules' words: a Snapshots read; a
 // step of the SnapshotFinals kind, named as retired even where it stands
 // in for a commit's first step or a volume placement's op step, whose own
-// rules would otherwise refuse the file first; a step of the retired
+// rules would otherwise refuse the file first; a step of the reserved
 // VolumePlacements kind and a placement node storing a slot that is no
 // volume; and the format version before the oldest readable one, refused
 // with its re-export message.
@@ -917,7 +917,7 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
     }
     ++versionRefusals;
 
-    // The first volume placement's op step, of the retired kind, and its
+    // The first volume placement's op step, of the reserved kind, and its
     // node storing a slot that is no volume.
     int64_t place = -1;
     for (size_t s = 0; s < file->steps.size() && place < 0; ++s) {

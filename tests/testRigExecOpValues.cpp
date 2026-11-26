@@ -495,7 +495,7 @@ TestPacketArrayVersions()
     std::string content;
     CHECK(RigExecBakedPacketContentKey(B, 0, &content));
     const auto key = Key(B, RigExecBakedSlotDomain::RevisionPacket);
-    // The value key no longer reads the arrays: only a version moves it.
+    // The value key reads no array: only a version moves it.
     revision.envelope[0] = 0.75f;
     CHECK(Key(B, RigExecBakedSlotDomain::RevisionPacket) == key);
     std::string moved;

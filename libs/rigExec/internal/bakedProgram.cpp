@@ -632,7 +632,7 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
         return false;
     }
     // Where every volume the walk places ended up: each slot's placement is
-    // as its own VolumePlacements step left it. A slot whose step the cone
+    // as its own VolumePlacement op node left it. A slot whose node the cone
     // skipped kept a placement whose final frame did not move, so it is
     // this generation's.
     {

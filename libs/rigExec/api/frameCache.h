@@ -322,8 +322,8 @@ struct RigExecEntryProvenance {
     /// Clusters whose computation produced the entry, sorted and unique.
     std::vector<int> clusters;
     /// Weight objects and packets the computation read, as object path
-    /// strings, sorted and unique. WeightPacket steps resolve through
-    /// step.object, outside the avar-only affected index, so this set is
+    /// strings, sorted and unique. Weight packet op nodes resolve through
+    /// their object, outside the avar-only affected index, so this set is
     /// what maps a weight-prim edit to its entries.
     std::vector<std::string> weightReads;
     /// Constant regions the computation read (region ids from

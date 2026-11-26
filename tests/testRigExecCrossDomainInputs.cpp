@@ -1,4 +1,6 @@
-// S9 new capabilities. Existing scalar-reference golden rigs are unchanged.
+// Cross-domain inputs: read versions, count recovery and cutoff, property
+// phase authority, forwarded scalars and overrides, whole-point availability
+// and explicit selection.
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/api/rigEvaluator.h"
