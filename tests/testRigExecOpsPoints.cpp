@@ -1870,6 +1870,33 @@ TestSurfaceProjector()
                          &actual));
             CHECK(SameBits(expected, actual));
         }
+    {
+        SurfaceProjectorPayload steady;
+        steady.rayOrigin = Vec3d(4.0, 4.0, 5.0);
+        steady.rayDirection = Vec3d(0.0, 0.0, -1.0);
+        steady.rayUp = Vec3d(0.0, 1.0, 0.0);
+        steady.shaderOffset = ToStd(offset);
+        steady.reproject = true;
+        Mat4d sourceMoving = sourceFinalArray;
+        std::string steadyError;
+        CHECK(
+            opAllocationCount::SteadyFrameAllocations(
+                SurfaceProjector(), &steady,
+                {&SurfaceProjectorBasePoints(), &SurfaceProjectorPoints(),
+                 &SurfaceProjectorCounts(), &SurfaceProjectorIndices(),
+                 &SurfaceProjectorSourceBase(), &SurfaceProjectorSourceFinal(),
+                 &SurfaceProjectorWorldToMesh()},
+                {&base, &posedArray, &counts, &indices, &sourceBaseArray,
+                 &sourceFinalArray, &worldToMeshArray},
+                SurfaceProjectorOut(), 5,
+                [&](int frame) {
+                    sourceMoving =
+                        ToStd(sourceFinal * GfMatrix4d().SetTranslate(GfVec3d(
+                                                0.05 * frame, 0.0, 0.0)));
+                    return &sourceMoving;
+                },
+                &steadyError) == 0);
+    }
     // Unfed source, spaces and worldToMesh are identity and unresolved.
     SurfaceProjectorPayload payload;
     payload.rayOrigin = Vec3d(3.0, 5.0, 4.0);

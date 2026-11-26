@@ -76,9 +76,26 @@ PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
     return p;
 }
 
+/// Op state: the surface arrays as the solve reads them, its notes, and
+/// the triangulation and normals it keeps between runs.
+struct ProjectorState {
+    std::vector<Vec3f> basePoints, points;
+    std::vector<int> counts, indices;
+    std::vector<rigExec::RigExecSurfaceProjectorNote> notes;
+    rigExec::RigExecSurfaceKernelCache<Vec3f, Vec3d> cache;
+};
+
+template <class T>
+const std::vector<T> &
+Hold(const RigExecArray<T> &from, std::vector<T> *to)
+{
+    to->assign(from.begin(), from.end());
+    return *to;
+}
+
 bool
 ProjectorOne(const RigExecOpIo &io, const SurfaceProjectorPayload &p,
-             std::string *error)
+             ProjectorState &s, std::string *error)
 {
     const Mat4d *sourceBase = In<Mat4d>(io, SurfaceProjectorSourceBase());
     const Mat4d *sourceFinal = In<Mat4d>(io, SurfaceProjectorSourceFinal());
@@ -112,14 +129,18 @@ ProjectorOne(const RigExecOpIo &io, const SurfaceProjectorPayload &p,
         return rigExec::RigExecComputeMeshVertexNormalsKernel(points, counts,
                                                               indices);
     };
-    std::vector<rigExec::RigExecSurfaceProjectorNote> notes;
+    std::vector<rigExec::RigExecSurfaceProjectorNote> &notes = s.notes;
+    notes.clear();
     Mat4d &out = Out<Mat4d>(io, SurfaceProjectorOut());
     if (rigExec::RigExecSolveSurfaceProjectorNotesT(
-            in, ToVector(*In<Points>(io, SurfaceProjectorBasePoints())),
-            ToVector(*In<Points>(io, SurfaceProjectorPoints())),
-            ToVector(*In<RigExecArray<int>>(io, SurfaceProjectorCounts())),
-            ToVector(*In<RigExecArray<int>>(io, SurfaceProjectorIndices())),
-            normals, &out, &notes) ||
+            in,
+            Hold(*In<Points>(io, SurfaceProjectorBasePoints()), &s.basePoints),
+            Hold(*In<Points>(io, SurfaceProjectorPoints()), &s.points),
+            Hold(*In<RigExecArray<int>>(io, SurfaceProjectorCounts()),
+                 &s.counts),
+            Hold(*In<RigExecArray<int>>(io, SurfaceProjectorIndices()),
+                 &s.indices),
+            normals, &out, &notes, &s.cache) ||
         rigExec::RigExecSurfaceProjectorMissed(notes))
         return true;
     std::string why;
@@ -153,7 +174,10 @@ RunSurfaceProjector(const rigExec::RigExecOpBatch &batch, size_t *failed,
 {
     return EachInstance(batch, failed, [&](size_t k) {
         return ProjectorOne(rigExec::RigExecBatchInstance(batch, k),
-                            PayloadAt(batch, k), error);
+                            PayloadAt(batch, k),
+                            *static_cast<ProjectorState *>(
+                                rigExec::RigExecBatchState(batch, k)),
+                            error);
     });
 }
 
@@ -259,6 +283,7 @@ const rigExec::RigExecOpDesc kProjectorDesc = [] {
     d.payloadVersion = 1;
     d.payloadValues = &ProjectorValues;
     d.validate = &CheckProjector;
+    d.state = StateOf<ProjectorState>();
     return d;
 }();
 
