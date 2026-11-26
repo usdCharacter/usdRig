@@ -67,7 +67,7 @@ starting its workflow, and keep this list current when adding or changing skills
 - `rigExecOpCore`: the op core, built from `libs/rigExec/internal/`
   `registry`, `compile`, `program` and `exec` behind the `api/` headers
   `registry.h`, `rigDesc.h`, `compile.h`, `evaluator.h`, `taps.h`,
-  `taskSystem.h`, `gpuDevice.h` and `opPorts.h`. A shared library, so a
+  `taskSystem.h`, `addressWait.h`, `gpuDevice.h` and `opPorts.h`. A shared library, so a
   process has one registry; it links `rigExecGraph` and no OpenUSD library. `rigExec`,
   `rigExecRuntime`, `rigExecBuiltins` and every type and op library link
   it. `bin/check_runtime_usd_free.sh` compiles it and the built-in type and

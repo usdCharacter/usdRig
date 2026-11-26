@@ -1,8 +1,9 @@
-#ifndef RIGEXEC_INTERNAL_EXEC_ADDRESS_WAIT_H
-#define RIGEXEC_INTERNAL_EXEC_ADDRESS_WAIT_H
+#ifndef RIGEXEC_API_ADDRESS_WAIT_H
+#define RIGEXEC_API_ADDRESS_WAIT_H
 
 /// Parks a thread on a 32-bit word until another thread changes it: Windows
-/// WaitOnAddress, Linux futex, macOS __ulock. No lock is taken.
+/// WaitOnAddress, Linux futex, macOS __ulock. No lock is taken. The
+/// primitive RigExecTaskSystem implementations park and wake workers with.
 
 #include <atomic>
 #include <cstdint>

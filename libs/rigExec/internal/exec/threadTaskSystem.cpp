@@ -1,5 +1,5 @@
 #include "rigExec/api/taskSystem.h"
-#include "rigExec/internal/exec/addressWait.h"
+#include "rigExec/api/addressWait.h"
 
 #include <atomic>
 #include <cstdint>

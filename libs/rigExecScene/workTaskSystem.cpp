@@ -1,6 +1,6 @@
 #include "rigExecScene/workTaskSystem.h"
 
-#include "rigExec/internal/exec/addressWait.h"
+#include "rigExec/api/addressWait.h"
 
 #include "pxr/base/work/dispatcher.h"
 #include "pxr/base/work/threadLimits.h"

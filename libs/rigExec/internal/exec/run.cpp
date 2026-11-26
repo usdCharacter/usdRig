@@ -1,5 +1,5 @@
 #include "rigExec/internal/exec/run.h"
-#include "rigExec/internal/exec/addressWait.h"
+#include "rigExec/api/addressWait.h"
 
 #include <algorithm>
 #include <cstring>
