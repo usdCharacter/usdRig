@@ -250,14 +250,37 @@ Five stages, every command relative to the repository root with
 
 ```sh
 export MOVED=${MOVED:-scratch/handoff/moved/character}
-mkdir -p "$(dirname "$MOVED")"
-cp -r "$CHAR" "$MOVED"
-rm "$MOVED/demo_rig.components.usda"
+if [ -e "$MOVED" ] || [ "$MOVED" = "$CHAR" ] || [ "${MOVED#"$CHAR"/}" != "$MOVED" ]; then
+    echo "preparation: refusing — $MOVED exists or sits inside $CHAR" >&2
+    false
+else
+    stage=$(mktemp -d "${TMPDIR:-/tmp}/usdrig-rebuild-stage.XXXXXX") || stage=""
+    if [ -z "$stage" ]; then
+        echo "preparation: no staging directory; $MOVED untouched" >&2
+        false
+    else
+        mkdir -p "$(dirname "$MOVED")"
+        rc=0
+        cp -r "$CHAR" "$stage/character" &&
+        rm "$stage/character/demo_rig.components.usda" &&
+        mv "$stage/character" "$MOVED" ||
+        { echo "preparation: copy failed; $MOVED not created" >&2; rc=1; }
+        rm -rf "$stage"
+        (exit "$rc")
+    fi
+fi
 ```
 
 Export `$MOVED` so the shell and the Python blocks below resolve the same
-destination override. The `rm` belongs to preparing a scratch copy: it is
-what makes that copy a build from an absent start. The recipe itself never
+destination override. The preparation writes nothing before its guards pass:
+it refuses an existing `$MOVED` or one inside `$CHAR` outright, stages the
+relocated copy in a private directory outside both, removes the generated
+layer only from the staged copy, and installs it only when the staged copy
+is complete — a failed staging, copy, or install leaves the source and the
+requested destination byte-unchanged, and an existing destination is never
+replaced. `rm` therefore runs inside the staged copy, never against a
+delivery or an existing directory: removing the generated layer is what
+makes that copy a build from an absent start. The recipe itself never
 deletes or overwrites a generated layer — stage 2 refuses one.
 
 **Stage 1 — fit. Stage 2 — composition.** The fit layer and the bindings
