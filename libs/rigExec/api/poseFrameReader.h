@@ -15,6 +15,36 @@
 namespace rigExec {
 
 class RigExecPoseFrameReader final : public RigExecFrameReader {
+private:
+    // Defined before its uses: its return type is deduced.
+    template <class F>
+    decltype(auto) _Visit(RigExecFrameDomain domain, F &&visit) const
+    {
+        switch (domain) {
+        case RigExecFrameDomain::JointFrameBase:
+            return visit(_pose.jointFramesBase);
+        case RigExecFrameDomain::JointFrameFinal:
+            return visit(_pose.jointFramesFinal);
+        case RigExecFrameDomain::JointMatrix:
+            return visit(_pose.jointMatricesFinal);
+        case RigExecFrameDomain::ControlFrame:
+            return visit(_pose.controlFrames);
+        case RigExecFrameDomain::ProviderTransform:
+            return visit(_pose.providerXforms);
+        case RigExecFrameDomain::ProviderBaseTransform:
+            return visit(_pose.providerBaseXforms);
+        case RigExecFrameDomain::SolverFrames:
+            return visit(_pose.solverFrames);
+        case RigExecFrameDomain::MovedProperty:
+            return visit(_pose.movedProperties);
+        case RigExecFrameDomain::WeightField:
+            return visit(_pose.weightFields);
+        case RigExecFrameDomain::WeightFrame:
+            break;
+        }
+        return visit(_pose.weightFrames);
+    }
+
 public:
     /// Borrows \p pose, which must outlive the reader.
     explicit RigExecPoseFrameReader(const RigExecRigPose &pose) : _pose(pose)
@@ -193,34 +223,6 @@ public:
     }
 
 private:
-    template <class F>
-    decltype(auto) _Visit(RigExecFrameDomain domain, F &&visit) const
-    {
-        switch (domain) {
-        case RigExecFrameDomain::JointFrameBase:
-            return visit(_pose.jointFramesBase);
-        case RigExecFrameDomain::JointFrameFinal:
-            return visit(_pose.jointFramesFinal);
-        case RigExecFrameDomain::JointMatrix:
-            return visit(_pose.jointMatricesFinal);
-        case RigExecFrameDomain::ControlFrame:
-            return visit(_pose.controlFrames);
-        case RigExecFrameDomain::ProviderTransform:
-            return visit(_pose.providerXforms);
-        case RigExecFrameDomain::ProviderBaseTransform:
-            return visit(_pose.providerBaseXforms);
-        case RigExecFrameDomain::SolverFrames:
-            return visit(_pose.solverFrames);
-        case RigExecFrameDomain::MovedProperty:
-            return visit(_pose.movedProperties);
-        case RigExecFrameDomain::WeightField:
-            return visit(_pose.weightFields);
-        case RigExecFrameDomain::WeightFrame:
-            break;
-        }
-        return visit(_pose.weightFrames);
-    }
-
     template <class Map>
     const typename Map::value_type &
     _Entry(const Map &, RigExecFrameDomain domain, size_t index) const
