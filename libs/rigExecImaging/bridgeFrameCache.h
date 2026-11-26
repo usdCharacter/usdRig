@@ -61,9 +61,12 @@ struct RigExecCacheCall {
 /// the pose through its snapshot path. \p served false means live evaluation.
 struct RigExecCacheServe {
     bool served = false;
-    /// The cached pose, owned by the outcome and re-stamped for the
-    /// requested time the way publication reads it.
-    RigExecRigPose pose;
+    /// The cached pose, shared with the cache entry. Its time is \p time:
+    /// an entry evaluated at another frame is served as a copy stamped
+    /// for \p time, because guide styling reads the pose's time.
+    std::shared_ptr<const RigExecRigPose> pose;
+    /// The requested time the pose is served for.
+    UsdTimeCode time = UsdTimeCode::Default();
     /// The key the entry was served under.
     RigExecFrameCacheKey key{0, 0};
     /// RIGEXEC_FRAME_CACHE_VERIFY=1: prove the pose against a live
@@ -181,7 +184,7 @@ public:
     /// The publishing lookup lane: serves \p serve from a proven entry,
     /// or from this time's retained base through the sparse planner, and
     /// answers false to fall through to live evaluation. A serve records
-    /// the provenance alias, re-stamps the pose, and asks for shadow
+    /// the provenance alias, stamps the served time, and asks for shadow
     /// verification when RIGEXEC_FRAME_CACHE_VERIFY stands; it never runs
     /// the evaluator and never publishes.
     bool TryServe(const RigExecCacheCall &call, RigExecCacheServe *serve);
@@ -189,13 +192,15 @@ public:
     /// The query lookup lane (SnapshotAtTimeWithoutPublishing): the pose
     /// and proof lanes with no profiler scope or lane count, and no
     /// sparse re-key lane -- a query counts a rewritten entry as a miss.
-    /// True with a valid \p pose on a hit.
-    bool QueryLookup(const RigExecCacheCall &call, RigExecRigPose *pose);
+    /// True with a valid \p pose, timed for the call, on a hit.
+    bool QueryLookup(const RigExecCacheCall &call,
+                     std::shared_ptr<const RigExecRigPose> *pose);
 
     /// Memoizes a just-evaluated pose into the frame cache and records its
     /// digest as its time's freshness proof. Sampled after the evaluation,
     /// so the proof names fresh inputs.
-    bool MemoizeLive(const RigExecCacheCall &call, const RigExecRigPose &pose);
+    bool MemoizeLive(const RigExecCacheCall &call,
+                     std::shared_ptr<const RigExecRigPose> pose);
 
     /// Lifetime counters of this rig's frame cache (zeros when empty).
     RigExecFrameCacheStats GetFrameCacheStats() const;
@@ -231,8 +236,8 @@ private:
     /// their existing order) and writes nothing to the stage. A miss
     /// fills \p miss with the sample the sparse lane plans on.
     bool _LookupCachedPose(const RigExecCacheCall &call, bool publishing,
-                           RigExecRigPose *pose, RigExecFrameCacheKey *key,
-                           _CacheMiss *miss);
+                           std::shared_ptr<const RigExecRigPose> *pose,
+                           RigExecFrameCacheKey *key, _CacheMiss *miss);
 
     /// Serves the call's time from its same-time retained base when the
     /// sparse planner proves the retained pose is still the answer: the
@@ -250,12 +255,12 @@ private:
                          RigExecCacheServe *serve);
 
     /// Completes a servable cached \p pose -- a store hit or a sparse
-    /// serve -- into the typed outcome: the alias record, the re-stamp,
+    /// serve -- into the typed outcome: the alias record, the served time,
     /// and the shadow-verify/repair request when RIGEXEC_FRAME_CACHE_-
     /// VERIFY stands. Shared by the hit lane and the sparse lane so the
     /// two cannot serve differently.
     void _CompleteServe(const RigExecCacheCall &call,
-                        const RigExecRigPose &pose,
+                        std::shared_ptr<const RigExecRigPose> pose,
                         const RigExecFrameCacheKey &key,
                         RigExecCacheServe *serve);
 

@@ -311,7 +311,7 @@ BenchPinnedAnatomy(BenchRig *rig, const std::vector<double> &frames,
         const double t = frames[rep % frames.size()];
         RigExecFrameInputs inputs;
         std::string error;
-        RigExecRigPose served;
+        std::shared_ptr<const RigExecRigPose> served;
         const double start = NowUs();
         const bool sampled = RigExecSampleFrameInputsWithTrustedChainBindings(
             evaluator, UsdTimeCode(t), noOverrides, bindings, &inputs, &error);
@@ -322,7 +322,7 @@ BenchPinnedAnatomy(BenchRig *rig, const std::vector<double> &frames,
         if (!sampled) {
             return fail("key hit", t, error);
         }
-        misses += hit && served.valid ? 0 : 1;
+        misses += hit && served->valid ? 0 : 1;
     }
     PrintDistribution("key hit (trusted)", keyHit, "us/frame");
 
@@ -399,11 +399,11 @@ BenchPinnedAnatomy(BenchRig *rig, const std::vector<double> &frames,
     std::vector<double> lookupOnly;
     for (size_t rep = 0; rep < reps; ++rep) {
         const size_t i = rep % frames.size();
-        RigExecRigPose served;
+        std::shared_ptr<const RigExecRigPose> served;
         const double start = NowUs();
         const bool hit = cache->Lookup(keys[i], &served);
         lookupOnly.push_back(NowUs() - start);
-        misses += hit && served.valid ? 0 : 1;
+        misses += hit && served->valid ? 0 : 1;
     }
     PrintDistribution("lookup only", lookupOnly, "us/frame");
 
@@ -555,14 +555,14 @@ BenchScrub(BenchRig *rig, const char *name, const std::vector<double> &frames)
             RigExecFrameCacheKey key;
             bool ok = RigExecSampleFrameInputs(*rig->evaluator, UsdTimeCode(t),
                                                noOverrides, &inputs, &error);
-            RigExecRigPose served;
+            std::shared_ptr<const RigExecRigPose> served;
             if (ok) {
                 key = KeyFor(rig->compiledRig, inputs, noOverrides);
                 ok = cache.Lookup(key, &served);
             }
             warm.push_back(NowUs() - start);
             misses += (!ok && error.empty()) ? 1 : 0;
-            invalid += (ok && !served.valid) ? 1 : 0;
+            invalid += (ok && !served->valid) ? 1 : 0;
             if (!ok && !error.empty()) {
                 std::printf("  warm sample failed at %g (%s)\n", t,
                             error.c_str());
@@ -592,11 +592,11 @@ BenchScrub(BenchRig *rig, const char *name, const std::vector<double> &frames)
                 return false;
             }
             const double digestStart = NowUs();
-            RigExecRigPose served;
+            std::shared_ptr<const RigExecRigPose> served;
             const bool hit = cache.Lookup(
                 KeyFor(rig->compiledRig, inputs, noOverrides), &served);
             digestLookup.push_back(NowUs() - digestStart);
-            if (!hit || !served.valid) {
+            if (!hit || !served->valid) {
                 std::printf("  warm anatomy lookup missed at %g\n", t);
                 return false;
             }
@@ -1142,7 +1142,7 @@ BenchTrace(BenchRig *rig, const std::vector<double> &frames)
         RIGEXEC_PROFILE_SCOPE_CAT(profiler, "benchWarm", "bench");
         for (size_t i = 4; i-- > 0 && i < frames.size();) {
             RigExecFrameInputs inputs;
-            RigExecRigPose served;
+            std::shared_ptr<const RigExecRigPose> served;
             const bool sampled = RigExecSampleFrameInputs(
                 *rig->evaluator, UsdTimeCode(frames[i]), noOverrides, &inputs,
                 nullptr);
@@ -1150,7 +1150,7 @@ BenchTrace(BenchRig *rig, const std::vector<double> &frames)
                 sampled &&
                 cache.Lookup(KeyFor(rig->compiledRig, inputs, noOverrides),
                              &served) &&
-                served.valid;
+                served->valid;
             profiler.RecordCacheLookup(hit, frames[i]);
             if (i == 0) {
                 break;

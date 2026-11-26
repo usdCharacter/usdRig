@@ -1246,20 +1246,7 @@ RigExecFrameCache::_ReportEvictions(
 
 bool
 RigExecFrameCache::Lookup(const RigExecFrameCacheKey &key,
-                          RigExecRigPose *pose) const
-{
-    return Lookup(key, pose, nullptr);
-}
-
-bool
-RigExecFrameCache::Lookup(const RigExecFrameCacheKey &key, RigExecRigPose *pose,
-                          std::shared_ptr<const void> *retainedOut) const
-{
-    return Lookup(key, pose, retainedOut, nullptr);
-}
-
-bool
-RigExecFrameCache::Lookup(const RigExecFrameCacheKey &key, RigExecRigPose *pose,
+                          std::shared_ptr<const RigExecRigPose> *pose,
                           std::shared_ptr<const void> *retainedOut,
                           size_t *bytesOut) const
 {
@@ -1267,7 +1254,6 @@ RigExecFrameCache::Lookup(const RigExecFrameCacheKey &key, RigExecRigPose *pose,
         _misses.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    // The handle crosses the lock; the pose crosses outside it.
     std::shared_ptr<_Entry> entry;
     bool corrupt = false;
     {
@@ -1303,7 +1289,7 @@ RigExecFrameCache::Lookup(const RigExecFrameCacheKey &key, RigExecRigPose *pose,
         _misses.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    *pose = *entry->pose;
+    *pose = entry->pose;
     if (retainedOut) {
         *retainedOut = entry->retained;
     }
@@ -1356,6 +1342,14 @@ RigExecFrameCache::NoteProvenanceAlias(const RigExecFrameCacheKey &key,
 
 bool
 RigExecFrameCache::Publish(const RigExecFrameCacheKey &key, UsdTimeCode time,
+                           std::shared_ptr<const RigExecRigPose> pose,
+                           const RigExecEntryProvenance *provenance)
+{
+    return Publish(key, time, std::move(pose), 0, nullptr, provenance);
+}
+
+bool
+RigExecFrameCache::Publish(const RigExecFrameCacheKey &key, UsdTimeCode time,
                            const RigExecRigPose &pose,
                            const RigExecEntryProvenance *provenance)
 {
@@ -1368,21 +1362,35 @@ RigExecFrameCache::Publish(const RigExecFrameCacheKey &key, UsdTimeCode time,
                            std::shared_ptr<const void> retained,
                            const RigExecEntryProvenance *provenance)
 {
-    // Everything that allocates, copies, or measures happens before the
-    // lock; under it the entry is only linked in.
     if (!pose.valid) {
+        return false;
+    }
+    return Publish(key, time, std::make_shared<RigExecRigPose>(pose),
+                   retainedBytes, std::move(retained), provenance);
+}
+
+bool
+RigExecFrameCache::Publish(const RigExecFrameCacheKey &key, UsdTimeCode time,
+                           std::shared_ptr<const RigExecRigPose> pose,
+                           size_t retainedBytes,
+                           std::shared_ptr<const void> retained,
+                           const RigExecEntryProvenance *provenance)
+{
+    // Everything that allocates or measures happens before the lock; under
+    // it the entry is only linked in.
+    if (!pose || !pose->valid) {
         return false;
     }
     if (retainedBytes > 0 && !retained) {
         return false;
     }
-    const size_t bytes = RigExecFrameCachePoseBytes(pose) + retainedBytes;
+    const size_t bytes = RigExecFrameCachePoseBytes(*pose) + retainedBytes;
     if (bytes == 0 || bytes > _byteCap.load(std::memory_order_relaxed)) {
         return false;
     }
     std::shared_ptr<_Entry> entry = std::make_shared<_Entry>();
     entry->time = time;
-    entry->pose = std::make_shared<RigExecRigPose>(pose);
+    entry->pose = std::move(pose);
     entry->bytes = bytes;
     entry->retained = std::move(retained);
     if (provenance) {

@@ -843,16 +843,16 @@ TestRetainedPublishAndCompiledRigEviction()
     CHECK(cache.Publish(key, UsdTimeCode(1.0), pose, retainedBytes, retained));
     CHECK(cache.Stats().bytes == poseBytes + retainedBytes);
 
-    RigExecRigPose served;
+    std::shared_ptr<const RigExecRigPose> served;
     std::shared_ptr<const void> handle;
     CHECK(cache.Lookup(key, &served, &handle));
-    CHECK(served.jointFramesFinal == pose.jointFramesFinal);
+    CHECK(served->jointFramesFinal == pose.jointFramesFinal);
     CHECK(handle == retained);
 
     // The plain Lookup still serves the pose alone.
-    RigExecRigPose plain;
+    std::shared_ptr<const RigExecRigPose> plain;
     CHECK(cache.Lookup(key, &plain));
-    CHECK(plain.jointFramesFinal == pose.jointFramesFinal);
+    CHECK(plain->jointFramesFinal == pose.jointFramesFinal);
 
     // A pose-only entry serves a null handle.
     const RigExecFrameCacheKey poseOnly{7, 12};
@@ -1110,7 +1110,7 @@ TestCaptureIndexCompiledRigInvalidation()
     CHECK(listener.notices > 0);
     CHECK(!listener.oracleHit);
     CHECK(!listener.routedHit);
-    RigExecRigPose served;
+    std::shared_ptr<const RigExecRigPose> served;
     CHECK(cache.Lookup({compiledRig, 1}, &served));
     CHECK(cache.Lookup({compiledRig, 2}, &served));
     CHECK(cache.Stats().entryCount == 3);

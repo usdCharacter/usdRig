@@ -17,9 +17,10 @@
 // background Publish without touching the registry mutex. Every lock is held
 // only for a pointer swap or a map edit, never across evaluation, payload
 // allocation, pose copying, or digest computation: Lookup copies a shared
-// handle under the shard lock and the pose outside it, and Publish builds
-// the entry (bytes, copy, digest) before taking the lock, so a below-normal
-// worker can never stall a UI-thread lookup.
+// handle under the shard lock, and Publish builds the entry (bytes,
+// digest) before taking the lock, so a below-normal worker can never stall
+// a UI-thread lookup. A stored pose is immutable and shared: Lookup hands
+// out the stored pose itself, and a re-key or carry stores the same pose.
 #ifndef RIGEXEC_FRAME_CACHE_H
 #define RIGEXEC_FRAME_CACHE_H
 
@@ -367,10 +368,15 @@ public:
 
     /// Answers the cached pose for \p key, or false having touched nothing
     /// but the miss counter. \p pose must be non-null; a null out-param
-    /// misses rather than faults. A hit copies the stored pose -- the pose
-    /// is bit-identical to the published one -- and refreshes the entry's
-    /// LRU position.
-    bool Lookup(const RigExecFrameCacheKey &key, RigExecRigPose *pose) const;
+    /// misses rather than faults. A hit shares the stored, immutable pose
+    /// (its time is the frame it was evaluated at) and refreshes the
+    /// entry's LRU position. With \p retainedOut, also the retained handle
+    /// Publish stored (null for a pose-only entry); with \p bytesOut, the
+    /// entry's accounted payload bytes, which a re-key publishes again.
+    bool Lookup(const RigExecFrameCacheKey &key,
+                std::shared_ptr<const RigExecRigPose> *pose,
+                std::shared_ptr<const void> *retainedOut = nullptr,
+                size_t *bytesOut = nullptr) const;
 
     /// Stores \p pose -- evaluated at \p time -- under \p key, evicting
     /// least-recently-used entries down to the byte cap as needed. Returns
@@ -380,6 +386,11 @@ public:
     /// position; counts one publish either way.
     /// \p provenance, when given, is recorded as the entry's dependency
     /// record; a null records an empty one.
+    /// The shared form stores \p pose itself (a null pose is declined);
+    /// the reference form stores a copy of a valid \p pose.
+    bool Publish(const RigExecFrameCacheKey &key, UsdTimeCode time,
+                 std::shared_ptr<const RigExecRigPose> pose,
+                 const RigExecEntryProvenance *provenance = nullptr);
     bool Publish(const RigExecFrameCacheKey &key, UsdTimeCode time,
                  const RigExecRigPose &pose,
                  const RigExecEntryProvenance *provenance = nullptr);
@@ -392,25 +403,13 @@ public:
     /// down to the cap, drop-when-oversized.
     /// \p provenance is recorded as in Publish.
     bool Publish(const RigExecFrameCacheKey &key, UsdTimeCode time,
+                 std::shared_ptr<const RigExecRigPose> pose,
+                 size_t retainedBytes, std::shared_ptr<const void> retained,
+                 const RigExecEntryProvenance *provenance = nullptr);
+    bool Publish(const RigExecFrameCacheKey &key, UsdTimeCode time,
                  const RigExecRigPose &pose, size_t retainedBytes,
                  std::shared_ptr<const void> retained,
                  const RigExecEntryProvenance *provenance = nullptr);
-
-    /// The sparse-reuse Lookup: answers the pose and, in \p retainedOut,
-    /// the retained handle Publish stored -- null for a pose-only entry.
-    /// \p retainedOut may be null to take the pose alone; \p pose follows
-    /// Lookup's null-misses rule.
-    bool Lookup(const RigExecFrameCacheKey &key, RigExecRigPose *pose,
-                std::shared_ptr<const void> *retainedOut) const;
-
-    /// The sparse-reuse Lookup with accounted bytes: as above, plus the
-    /// entry's accounted payload bytes (pose plus retained) in \p bytesOut.
-    /// The carry-over path re-publishes under a new key, which
-    /// needs the bytes the plain Lookup never returned. \p bytesOut may be
-    /// null to take the pose and handle alone.
-    bool Lookup(const RigExecFrameCacheKey &key, RigExecRigPose *pose,
-                std::shared_ptr<const void> *retainedOut,
-                size_t *bytesOut) const;
 
     /// Answers the provenance Publish recorded under \p key, or false when
     /// no entry (or no provenance) is held. A null out-param misses rather
@@ -450,8 +449,8 @@ public:
 
 private:
     // One stored generation behind a shared handle: Lookup copies the handle
-    // under the shard lock and the pose outside it, which is what keeps
-    // allocation and copying out of the critical section.
+    // under the shard lock, which keeps allocation out of the critical
+    // section. The pose is immutable once stored.
     struct _Entry {
         UsdTimeCode time = UsdTimeCode::Default();
         std::shared_ptr<const RigExecRigPose> pose;

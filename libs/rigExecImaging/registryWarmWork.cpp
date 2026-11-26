@@ -596,8 +596,9 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
         }
         laneContext.avarPatch = frozenPatch.get();
         workerPhase("Warm.WorkerLane");
-        const RigExecRigPose pose =
-            RigExecEvaluateFrozen(laneContext, *jobInputs, runner, cancel);
+        const std::shared_ptr<const RigExecRigPose> pose =
+            std::make_shared<RigExecRigPose>(
+                RigExecEvaluateFrozen(laneContext, *jobInputs, runner, cancel));
         workerPhase("Warm.WorkerEvaluate");
         // Stale at publish means an edit landed mid-run -- a generation
         // bump or a scoped purge that moved this time's fence token (the
@@ -611,7 +612,7 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
                                     rig, request.generation, request.time,
                                     request.fenceToken);
         };
-        if (!pose.valid) {
+        if (!pose->valid) {
             return stale() ? RigExecWarmOutcome::DeclinedGeneration
                            : RigExecWarmOutcome::DeclinedInvalid;
         }
@@ -628,7 +629,7 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
         // captured cell only marks its own request, never owner request maps.
         progressPublication.Publish(key, request.generation);
         if (publishObserver)
-            publishObserver(rig, request.time, key, request.generation, pose,
+            publishObserver(rig, request.time, key, request.generation, *pose,
                             cache);
         return RigExecWarmOutcome::Published;
     };

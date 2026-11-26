@@ -243,17 +243,17 @@ CheckShadowOnLiveRig(const char *what, RigExecRigEvaluator *evaluator,
         RigExecFrameCacheKey key;
         CHECK(ShadowKeyFor(*evaluator, time, noOverrides, &inputs, &key));
         CHECK(cache.Publish(key, time, settled));
-        RigExecRigPose hit;
+        std::shared_ptr<const RigExecRigPose> hit;
         CHECK(cache.Lookup(key, &hit));
         const RigExecShadowVerdict verdict = RigExecVerifyHitWithLive(
-            hit, [&] { return evaluator->Evaluate(time); });
+            *hit, [&] { return evaluator->Evaluate(time); });
         if (!verdict.match) {
             std::printf("shadow mismatch on %s at %f:\n%s", what, t,
                         verdict.report.c_str());
         }
         CHECK(verdict.match);
         CHECK(verdict.mismatches == 0);
-        lastHit = hit;
+        lastHit = *hit;
         lastTime = t;
     }
     // Sensitivity: the same hit with one float moved must fail the judge.
@@ -379,11 +379,11 @@ TestVerifySparseHit()
     const RigExecFrameCacheKey key{7, 11};
     CHECK(cache.Publish(key, UsdTimeCode(1.0), cached));
 
-    RigExecRigPose hit;
+    std::shared_ptr<const RigExecRigPose> hit;
     CHECK(cache.Lookup(key, &hit));
     size_t liveRuns = 0;
     const RigExecShadowVerdict verdict =
-        RigExecVerifyHitWithLive(hit, [&cached, &liveRuns]() {
+        RigExecVerifyHitWithLive(*hit, [&cached, &liveRuns]() {
             ++liveRuns;
             return cached;
         });

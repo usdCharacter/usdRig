@@ -1148,16 +1148,16 @@ TestBackgroundCompletionFence()
     RigExecWarmFrameIndex index;
     const RigExecFrameGeneration generation = scheduler.CurrentGeneration(rig);
 
-    RigExecRigPose pose;
-    pose.valid = true;
-    pose.diagnostics.push_back("completion");
+    auto pose = std::make_shared<RigExecRigPose>();
+    pose->valid = true;
+    pose->diagnostics.push_back("completion");
     const RigExecFrameCacheKey key{7, 11};
     CHECK(RigExecPublishBackgroundCompletion(
         cache, key, UsdTimeCode(3.0), pose, generation, &scheduler, rig,
         RigExecWarmFenceToken(0), nullptr, 0, nullptr, &index));
-    RigExecRigPose served;
+    std::shared_ptr<const RigExecRigPose> served;
     CHECK(cache->Lookup(key, &served));
-    CHECK(served.valid);
+    CHECK(served == pose);
     RigExecFrameCacheKey indexed;
     CHECK(index.FindCachedKey(rig, 3.0, generation, key.compiledRigSignature,
                               &indexed));
@@ -1184,8 +1184,8 @@ TestBackgroundCompletionFence()
     CHECK(indexed == stale);
 
     // Invalid poses and null caches never publish, with or without a fence.
-    RigExecRigPose invalid;
-    CHECK(!invalid.valid);
+    const auto invalid = std::make_shared<RigExecRigPose>();
+    CHECK(!invalid->valid);
     const RigExecFrameCacheKey bad{7, 13};
     CHECK(!RigExecPublishBackgroundCompletion(
         cache, bad, UsdTimeCode(5.0), invalid, fresh, &scheduler, rig,
@@ -3439,14 +3439,15 @@ TestStackFullRangeCursorWarmsEveryFrame(const std::string &examplesDir)
                 publicationFailure.store(true, std::memory_order_relaxed);
                 return;
             }
-            RigExecRigPose served, comparison;
+            std::shared_ptr<const RigExecRigPose> served;
+            RigExecRigPose comparison;
             const bool found = cache && cache->Lookup(key, &served);
             if (found)
-                RigExecComparePoses(result, served, &comparison);
+                RigExecComparePoses(result, *served, &comparison);
             const bool exact = publishedRig == rig && time.IsNumeric() &&
                                token == generation && result.valid && found &&
-                               served.valid && result.time == time &&
-                               served.time == time &&
+                               served->valid && result.time == time &&
+                               served->time == time &&
                                comparison.comparisonMismatches == 0 &&
                                std::binary_search(frames.begin(), frames.end(),
                                                   time.GetValue());
@@ -3867,11 +3868,11 @@ TestCarryOverRekeysCleanEntries()
         }
     }
     CHECK(foundKey);
-    RigExecRigPose pose;
+    std::shared_ptr<const RigExecRigPose> pose;
     std::shared_ptr<const void> retained;
     size_t bytes = 0;
     CHECK(cache->Lookup(oldKey, &pose, &retained, &bytes));
-    CHECK(pose.valid && retained);
+    CHECK(pose->valid && retained);
     RigExecEntryProvenance honest;
     CHECK(cache->LookupProvenance(oldKey, &honest));
     CHECK(!honest.clusters.empty());
@@ -3917,7 +3918,7 @@ TestCarryOverRekeysCleanEntries()
     CHECK(foundKey);
     CHECK(newKey.compiledRigSignature == oldKey.compiledRigSignature);
     CHECK(newKey.controlDigest != oldKey.controlDigest);
-    RigExecRigPose evicted;
+    std::shared_ptr<const RigExecRigPose> evicted;
     CHECK(!cache->Lookup(oldKey, &evicted));
     RigExecFreshProof proof;
     CHECK(bridge->GetFreshProof(UsdTimeCode(1.0), &proof));
