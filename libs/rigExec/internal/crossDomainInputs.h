@@ -86,8 +86,11 @@ struct RigExecBakedPointInputValue {
 };
 bool RigExecBakedBindWeightPointInputs(RigExecBakedProgramImpl *,
                                        std::string *);
+/// The point inputs of field \p field that \p objects (per weight object)
+/// read.
 void RigExecBakedDeclareWeightPointInputs(const RigExecBakedProgramImpl &,
                                           int field,
+                                          const std::vector<char> &objects,
                                           std::vector<RigExecBakedSlotRange> *);
 RigExecBakedPointInputValue
 RigExecBakedReadWeightPointInput(const RigExecBakedProgramImpl &, int field,

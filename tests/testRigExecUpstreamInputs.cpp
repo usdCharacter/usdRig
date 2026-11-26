@@ -1125,6 +1125,27 @@ TestComputedWeightFamilies()
     const SdfPath falloff("/Asset/Rig/Weights/Sphere.inputs:falloffMin");
     RunCase("packet input inputs:falloffMin", stagePath, rig, 5,
             {Up(falloff, VtValue(2.0f))}, {{falloff, VtValue(2.0f), {}}});
+    // A drag reruns the weight-field nodes whose subtree reads the value:
+    // Blend combines Quarter and Ramp, and Quarter reads neither value.
+    const auto ranNodes = [&](const RigExecValueOverride &input) {
+        const UsdStageRefPtr stage = UsdStage::Open(stagePath);
+        auto evaluator = Make(stage, rig);
+        CHECK(evaluator->Evaluate(UsdTimeCode(5)).valid);
+        evaluator->SetUpstreamInputs({input});
+        CHECK(evaluator->Evaluate(UsdTimeCode(5)).valid);
+        std::set<std::string> ran;
+        for (const RigExecOpTraceEntry &entry : evaluator->GetLastOpTrace())
+            if (entry.kind == "OpNode")
+                ran.insert(entry.label);
+        return ran;
+    };
+    const std::string weights = "/Asset/Rig/Weights/";
+    CHECK(ranNodes(Up(max, VtValue(0.5f))) ==
+          std::set<std::string>({"/Asset/Rig/Movers/Limit", weights + "Ramp",
+                                 weights + "Blend"}));
+    const SdfPath scale("/Asset/Rig/Weights/Ramp.inputs:scale");
+    CHECK(ranNodes(Up(scale, VtValue(0.25f))) ==
+          std::set<std::string>({weights + "Ramp", weights + "Blend"}));
 }
 
 // Keys admission drops, in both paths: the pose is the authored one and

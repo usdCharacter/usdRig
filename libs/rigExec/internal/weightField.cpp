@@ -453,11 +453,16 @@ RigExecBakedDeclareWeightField(Baked *program, RigExecBakedStep *step)
     if (index < 0)
         return;
     const auto &field = program->weightFields[size_t(index)];
-    if (size_t(program->opNodeOrigins[size_t(step->object)].part) + 1 ==
-        field.nodeObjects.size())
+    const int part = program->opNodeOrigins[size_t(step->object)].part;
+    if (size_t(part) + 1 == field.nodeObjects.size())
         step->writes.push_back(
             RigExecBakedOne(RigExecBakedSlotDomain::WeightField, index));
-    for (const auto &read : field.scalarReads) {
+    const std::vector<char> objects =
+        RigExecBakedWeightFieldNodeObjects(*program, index, part);
+    for (size_t r = 0; r < field.scalarReads.size(); ++r) {
+        if (!objects[size_t(field.scalarObjects[r])])
+            continue;
+        const auto &read = field.scalarReads[r];
         for (uint32_t version : read.versions)
             step->reads.push_back(RigExecBakedOne(
                 RigExecBakedSlotDomain::PropertyResult, int(version)));
@@ -478,8 +483,7 @@ RigExecBakedDeclareWeightField(Baked *program, RigExecBakedStep *step)
     for (size_t i = 0; i < program->pathLeafRefs.size(); ++i) {
         const auto &ref = program->pathLeafRefs[i];
         if (ref.owner != RigExecBakedPathLeafOwner::WeightField ||
-            std::find(field.scalarObjects.begin(), field.scalarObjects.end(),
-                      int(ref.a)) == field.scalarObjects.end())
+            ref.a >= objects.size() || !objects[ref.a])
             continue;
         const auto &leaves = program->weightObjects[ref.a].fieldLeaves;
         step->bindingLeaves.push_back(uint32_t(program->leafRefs.size() + i));
@@ -494,7 +498,8 @@ RigExecBakedDeclareWeightField(Baked *program, RigExecBakedStep *step)
         step->bindingLeaves.end());
     if (field.form == Field::Form::Revision) {
         const auto [c, k] = program->revisionIndex[size_t(field.consumer)];
-        if (k > 0) {
+        if (k > 0 &&
+            RigExecBakedWeightFieldNodeReadsChain(*program, index, objects)) {
             const int previous = field.consumer - 1;
             step->reads.push_back(RigExecBakedOne(
                 RigExecBakedSlotDomain::RevisionDone, previous));
@@ -512,13 +517,15 @@ RigExecBakedDeclareWeightField(Baked *program, RigExecBakedStep *step)
             step->reads.push_back(
                 RigExecBakedOne(RigExecBakedSlotDomain::ChainBase, int(c)));
     }
-    // Every field form consumes the selected analytic-volume placement.
-    for (int slot : field.volumes)
-        step->reads.push_back(
-            RigExecBakedOne(field.placementPhase == Field::PlacementPhase::Base
-                                ? RigExecBakedSlotDomain::WeightFramesBase
-                                : RigExecBakedSlotDomain::WeightFrames,
-                            slot));
+    for (int object : field.objects) {
+        const int slot = program->weightObjects[size_t(object)].providerSlot;
+        if (slot >= 0 && objects[size_t(object)])
+            step->reads.push_back(RigExecBakedOne(
+                field.placementPhase == Field::PlacementPhase::Base
+                    ? RigExecBakedSlotDomain::WeightFramesBase
+                    : RigExecBakedSlotDomain::WeightFrames,
+                slot));
+    }
     // Declaration is repeated after input numbering; keep producer ranges unique.
     std::sort(step->reads.begin(), step->reads.end());
     step->reads.erase(std::unique(step->reads.begin(), step->reads.end()),
@@ -533,6 +540,43 @@ RigExecBakedDeclareWeightField(Baked *program, RigExecBakedStep *step)
     step->overrideSlots.erase(
         std::unique(step->overrideSlots.begin(), step->overrideSlots.end()),
         step->overrideSlots.end());
+}
+std::vector<char>
+RigExecBakedWeightFieldNodeObjects(const Baked &B, int index, int part)
+{
+    const auto &field = B.weightFields[size_t(index)];
+    std::vector<char> objects(B.weightObjects.size(), 0);
+    if (size_t(part) + 1 == field.nodeObjects.size()) {
+        for (int object : field.objects)
+            objects[size_t(object)] = 1;
+        return objects;
+    }
+    const auto visit = [&](const auto &self, int object) -> void {
+        if (object < 0 || size_t(object) >= objects.size() ||
+            objects[size_t(object)])
+            return;
+        objects[size_t(object)] = 1;
+        const auto &weight = B.weightObjects[size_t(object)];
+        if (weight.fieldKind == eval::kWeightKindDynamic)
+            self(self, weight.base);
+        if (weight.fieldKind == eval::kWeightKindCombine)
+            for (int input : weight.inputs)
+                self(self, input);
+    };
+    visit(visit, field.nodeObjects[size_t(part)]);
+    return objects;
+}
+bool
+RigExecBakedWeightFieldNodeReadsChain(const Baked &B, int index,
+                                      const std::vector<char> &objects)
+{
+    if (B.weightFields[size_t(index)].form != Field::Form::Revision)
+        return false;
+    for (size_t object = 0; object < objects.size(); ++object)
+        if (objects[object] &&
+            B.weightObjects[object].fieldFacts.samplesInFlight)
+            return true;
+    return false;
 }
 void
 RigExecBakedWeightFieldCoveredVersions(const Baked &B, int index,

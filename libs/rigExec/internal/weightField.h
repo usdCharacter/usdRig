@@ -18,7 +18,20 @@ int RigExecBakedWeightFieldOf(const RigExecBakedProgramImpl &,
 /// objects it composes; \p head marks envelope fields' steps head steps.
 void RigExecBakedAddWeightFieldSteps(RigExecBakedProgramImpl *, int field,
                                      bool head);
-/// What a weight field op step reads, and the field's root node writes.
+/// Per weight object, whether node \p part of field \p field reads its
+/// inputs: the objects of the node's subtree, or every object of the field
+/// for its root.
+std::vector<char>
+RigExecBakedWeightFieldNodeObjects(const RigExecBakedProgramImpl &, int field,
+                                   int part);
+/// Whether a node reading \p objects of field \p field reads its
+/// revision's entering points, and so waits on the chain's earlier
+/// revisions.
+bool RigExecBakedWeightFieldNodeReadsChain(const RigExecBakedProgramImpl &,
+                                           int field,
+                                           const std::vector<char> &objects);
+/// What a weight field op step reads (its node's objects' inputs), and the
+/// field's root node writes.
 void RigExecBakedDeclareWeightField(RigExecBakedProgramImpl *,
                                     RigExecBakedStep *);
 void RigExecBakedWeightFieldCoveredVersions(const RigExecBakedProgramImpl &,

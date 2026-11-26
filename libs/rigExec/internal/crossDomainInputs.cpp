@@ -327,7 +327,11 @@ RigExecBakedFinalizeCrossDomainReads(RigExecBakedProgramImpl *program,
                 solver.path);
     for (auto &step : B.steps) {
         if (const int f = RigExecBakedWeightFieldOf(B, step); f >= 0)
-            RigExecBakedDeclareWeightPointInputs(B, f, &step.reads);
+            RigExecBakedDeclareWeightPointInputs(
+                B, f,
+                RigExecBakedWeightFieldNodeObjects(
+                    B, f, B.opNodeOrigins[size_t(step.object)].part),
+                &step.reads);
         size_t propertyChain = 0, propertyPart = 0;
         if (RigExecBakedPropertyPartOf(B, step, &propertyChain,
                                        &propertyPart)) {
@@ -608,12 +612,15 @@ RigExecBakedBindWeightPointInputs(RigExecBakedProgramImpl *program,
 void
 RigExecBakedDeclareWeightPointInputs(const RigExecBakedProgramImpl &B,
                                      int field,
+                                     const std::vector<char> &objects,
                                      std::vector<RigExecBakedSlotRange> *reads)
 {
     if (field < 0 || size_t(field) >= B.weightFields.size())
         return;
     for (const auto &input : B.weightFields[size_t(field)].pointReads)
-        RigExecBakedDeclarePointInput(B, input.binding, reads);
+        if (input.object >= 0 && size_t(input.object) < objects.size() &&
+            objects[size_t(input.object)])
+            RigExecBakedDeclarePointInput(B, input.binding, reads);
 }
 
 RigExecBakedPointInputValue

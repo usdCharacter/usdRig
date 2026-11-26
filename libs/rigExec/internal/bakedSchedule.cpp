@@ -3193,9 +3193,10 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
                     " has inconsistent scalar provenance");
             const auto own =
                 RigExecBakedOne(RigExecBakedSlotDomain::WeightField, f);
-            const bool root =
-                size_t(B.opNodeOrigins[size_t(step.object)].part) + 1 ==
-                field.nodeObjects.size();
+            const int node = B.opNodeOrigins[size_t(step.object)].part;
+            const bool root = size_t(node) + 1 == field.nodeObjects.size();
+            const std::vector<char> objects =
+                RigExecBakedWeightFieldNodeObjects(B, f, node);
             if (root != (std::find(step.writes.begin(), step.writes.end(),
                                    own) != step.writes.end()))
                 add("WeightField step " + step.label +
@@ -3250,7 +3251,10 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
                                 uint32_t(chain)))
                         add("WeightField step " + step.label +
                             " omits its entering base");
-                    for (int earlier = 0; earlier < part; ++earlier) {
+                    for (int earlier = 0;
+                         earlier < part &&
+                         RigExecBakedWeightFieldNodeReadsChain(B, f, objects);
+                         ++earlier) {
                         const int revision =
                             B.chainRevisionBegin[size_t(chain)] + earlier;
                         if (!covers(RigExecBakedSlotDomain::RevisionDone,
@@ -3265,8 +3269,10 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
             } else
                 add("WeightField step " + step.label +
                     " has an unknown consumer form");
-            for (const auto &read : field.scalarReads) {
-                for (uint32_t version : read.versions) {
+            for (size_t r = 0; r < field.scalarReads.size(); ++r) {
+                if (!objects[size_t(field.scalarObjects[r])])
+                    continue;
+                for (uint32_t version : field.scalarReads[r].versions) {
                     const auto declared = RigExecBakedOne(
                         RigExecBakedSlotDomain::PropertyResult, int(version));
                     if (std::find(step.reads.begin(), step.reads.end(),
@@ -3275,8 +3281,11 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
                             " omits an oracle property version");
                 }
             }
-            for (int slot : field.volumes) {
-                if (slot < 0 || size_t(slot) >= B.paths.size()) {
+            for (int object : field.objects) {
+                const int slot = B.weightObjects[size_t(object)].providerSlot;
+                if (slot < 0 || !objects[size_t(object)])
+                    continue;
+                if (size_t(slot) >= B.paths.size()) {
                     add("WeightField step " + step.label +
                         " names an invalid placement slot");
                     continue;
