@@ -9,6 +9,7 @@ Inputs:
   --schema PATH  schema.usda (a tolerant parser; pxr is not imported)
   --out PATH     also write the output here
   --diff         compare the ops' authoring metadata with the schema
+  --self-test    check the comparison against synthetic ops and exit
 Report output: per op the schema class it declares or most plausibly
 corresponds to, the properties each side lacks and the type disagreements,
 then a summary table and the classes and ops without a counterpart. The exit
@@ -16,7 +17,8 @@ status is 0 whenever a report was produced.
 Diff output: per op whose schema is Generated, every difference between the
 class the op describes and the class in the schema (presence, type, uniform,
 fallback, allowed tokens, documentation, base); per HandAuthored op, the
-same for the properties it declares. Internal and undeclared ops are
+same for the properties it declares. Ops that declare one class must
+describe it alike (see disagreements). Internal and undeclared ops are
 skipped. The exit status is 1 on any difference.
 """
 import argparse
@@ -441,6 +443,47 @@ def inherited_props(classes, name, seen=None):
     return out
 
 
+PROPERTY_KEYS = ("type", "uniform", "binding", "fallback", "tokens", "doc")
+
+
+def disagreements(ops):
+    """Where ops that declare one class describe it differently: the mode,
+    and for Generated ops the class doc, base and property set; every
+    property two ops both declare must match. The class is written once."""
+    by_class = {}
+    for op in sorted(ops, key=lambda o: o["op"]):
+        schema = op["schema"]
+        if schema and schema["mode"] != "internal":
+            by_class.setdefault(schema["className"], []).append(op)
+    out = []
+    for name, group in sorted(by_class.items()):
+        first = group[0]
+        mine = {p["name"]: p for p in first["properties"]}
+        for other in group[1:]:
+            where = "class %s: ops %s and %s" % (name, first["op"], other["op"])
+            a, b = first["schema"], other["schema"]
+            if a["mode"] != b["mode"]:
+                out.append("%s: mode %s, %s" % (where, a["mode"], b["mode"]))
+                continue
+            theirs = {p["name"]: p for p in other["properties"]}
+            if a["mode"] == "generated":
+                if not same_doc(a["doc"], b["doc"]):
+                    out.append("%s: class doc differs" % where)
+                if (a["base"] or None) != (b["base"] or None):
+                    out.append("%s: base %s, %s" % (where, a["base"],
+                                                    b["base"]))
+                for prop in sorted(set(mine) ^ set(theirs)):
+                    out.append("%s: only one declares %s" % (where, prop))
+            for prop in sorted(set(mine) & set(theirs)):
+                for k in PROPERTY_KEYS:
+                    x, y = mine[prop][k], theirs[prop][k]
+                    same = (same_doc(x, y) if k == "doc" else
+                            same_value(x, y) if k == "fallback" else x == y)
+                    if not same:
+                        out.append("%s: %s %s %r, %r" % (where, prop, k, x, y))
+    return out
+
+
 def diff(ops, classes):
     """(lines, difference count) for the Generated and HandAuthored ops."""
     lines, count = [], 0
@@ -481,6 +524,9 @@ def diff(ops, classes):
             "%d difference(s)" % len(found) if found else "no differences"))
         lines.extend("  " + f for f in found)
         count += len(found)
+    shared = disagreements(ops)
+    lines.extend(shared)
+    count += len(shared)
     lines.append("")
     lines.append("skipped internal ops: " + (", ".join(skipped["internal"])
                                              or "-"))
@@ -490,14 +536,77 @@ def diff(ops, classes):
     return "\n".join(lines) + "\n", count
 
 
+def self_test():
+    """Runs diff() over synthetic ops and classes; 0 when every case holds."""
+    schema = parse_schema_full('''
+class "Typed" { }
+class "Thing" (
+    doc = "A thing."
+    inherits = </Typed>
+)
+{
+    uniform token rigExec:mode = "a" (allowedTokens = ["a", "b"])
+    float inputs:x = 1
+}
+''')
+
+    def prop(name, type_, fallback, uniform=False, tokens=(), doc=None):
+        return {"name": name, "type": type_, "uniform": uniform,
+                "binding": "value", "fallback": fallback,
+                "tokens": list(tokens), "doc": doc, "sources": [],
+                "errors": []}
+
+    def op(name, props, mode="generated", doc="A thing.", base="Typed"):
+        return {"op": name, "version": 1, "properties": props,
+                "schema": {"className": "Thing", "doc": doc, "base": base,
+                           "mode": mode}}
+
+    mode = prop("rigExec:mode", "token", '"a"', True, ("a", "b"))
+    x = prop("inputs:x", "float", "1")
+    cases = [
+        ("agree", [op("A", [mode, x]), op("B", [mode, x])], None),
+        ("fallback", [op("A", [mode, x]),
+                      op("B", [mode, prop("inputs:x", "float", "2")])],
+         "ops A and B: inputs:x fallback"),
+        ("mode", [op("A", [mode, x]), op("B", [x], "handAuthored")],
+         "mode generated, handAuthored"),
+        ("set", [op("A", [mode, x]), op("B", [mode])],
+         "only one declares inputs:x"),
+        ("doc", [op("A", [mode, x]), op("B", [mode, x], doc="Other.")],
+         "ops A and B: class doc differs"),
+        ("binding", [op("A", [x], "handAuthored"),
+                     op("B", [dict(x, binding="connection")],
+                        "handAuthored")],
+         "ops A and B: inputs:x binding"),
+        ("subset", [op("A", [x], "handAuthored"),
+                    op("B", [mode], "handAuthored")], None),
+        ("missing", [op("A", [mode])], "inputs:x: in the schema"),
+    ]
+    failed = 0
+    for name, ops, expect in cases:
+        text, count = diff(ops, schema)
+        ok = (count == 0) if expect is None else (count > 0 and expect in text)
+        if not ok:
+            failed += 1
+            sys.stdout.write("self-test %s failed:\n%s" % (name, text))
+    sys.stdout.write("self-test: %d of %d cases failed\n"
+                     % (failed, len(cases)))
+    return 1 if failed else 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--tool")
     parser.add_argument("--ops")
-    parser.add_argument("--schema", required=True)
+    parser.add_argument("--schema")
     parser.add_argument("--out")
     parser.add_argument("--diff", action="store_true")
+    parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
+    if args.self_test:
+        return self_test()
+    if not args.schema:
+        parser.error("--schema is required")
     if args.diff:
         if not args.tool:
             parser.error("--diff needs --tool")

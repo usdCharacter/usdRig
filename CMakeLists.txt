@@ -1536,6 +1536,9 @@ rigexec_add_test(NAME testRigExecSchemaDiff COMMAND ${Python3_EXECUTABLE}
     --tool $<TARGET_FILE:rigExecGenSchema>
     --schema "${CMAKE_CURRENT_SOURCE_DIR}/libs/rigExecSchema/schema.usda")
 set_tests_properties(testRigExecSchemaDiff PROPERTIES LABELS "fast")
+rigexec_add_test(NAME testRigExecSchemaDiffSelfTest COMMAND ${Python3_EXECUTABLE}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/schema_report.py" --self-test)
+set_tests_properties(testRigExecSchemaDiffSelfTest PROPERTIES LABELS "fast")
 if (RIGEXEC_WITH_USD)
 add_executable(testRigExecOpsPoints tests/testRigExecOpsPoints.cpp)
 target_link_libraries(testRigExecOpsPoints PRIVATE rigExecOpCore)

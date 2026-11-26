@@ -684,18 +684,32 @@ RigExecRegistryBuilder::_CheckAuthoring(const std::string &op,
                            const RigExecTypeHandle *type, uint64_t limit) {
         if (!info)
             return;
-        if (internal)
+        if (!d.schema)
+            _Error(where + " is authored but its op declares no schema");
+        else if (internal)
             _Error(where + " is authored but its op is Internal");
         else
             _CheckProperty(where, *info, type, limit);
     };
-    for (size_t p = 0; p < d.portCount; ++p)
-        check("op " + op + ": port " + Text(d.ports[p].name),
-              d.ports[p].authoring, d.ports[p].type, UINT64_MAX);
+    const auto connectionList = [](const RigExecPropertyInfo *info) {
+        return info && info->binding == RigExecPropertyBinding::ConnectionList;
+    };
+    for (size_t p = 0; p < d.portCount; ++p) {
+        const RigExecPortDesc &port = d.ports[p];
+        const std::string where = "op " + op + ": port " + Text(port.name);
+        check(where, port.authoring, port.type, UINT64_MAX);
+        if (connectionList(port.authoring) && !(port.flags & kRigExecPortArray))
+            _Error(where + " is authored from a connection list but is no "
+                           "list input");
+    }
     for (size_t f = 0; d.payloadFields && f < d.payloadFieldCount; ++f) {
         const RigExecFieldDesc &field = d.payloadFields[f];
-        check("op " + op + ": payload field " + Text(field.name),
-              field.authoring, field.type, field.limit);
+        const std::string where =
+            "op " + op + ": payload field " + Text(field.name);
+        check(where, field.authoring, field.type, field.limit);
+        if (connectionList(field.authoring))
+            _Error(where + " is authored from a connection list but is no "
+                           "list input");
     }
     for (size_t f = 0; d.stateFields && f < d.stateFieldCount; ++f)
         if (d.stateFields[f].authoring)

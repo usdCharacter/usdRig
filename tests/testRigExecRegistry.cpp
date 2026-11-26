@@ -58,11 +58,17 @@ RegisterBad(RigExecOpRegistrar &registrar)
 }
 
 // Authoring metadata the registry refuses: an Internal op with an authored
-// port, a float port authored as a token, and a schema without a class.
+// port, a float port authored as a token, a schema without a class, an
+// authored port on an op without a schema, and a connection list feeding a
+// port that is no list.
 RIGEXEC_DEFINE_OP_HANDLE(InternalAuthoredOp)
 RIGEXEC_DEFINE_PORT_HANDLE(InternalAuthoredPort)
 RIGEXEC_DEFINE_OP_HANDLE(TokenFloatOp)
 RIGEXEC_DEFINE_PORT_HANDLE(TokenFloatPort)
+RIGEXEC_DEFINE_OP_HANDLE(SchemalessOp)
+RIGEXEC_DEFINE_PORT_HANDLE(SchemalessPort)
+RIGEXEC_DEFINE_OP_HANDLE(ListlessOp)
+RIGEXEC_DEFINE_PORT_HANDLE(ListlessPort)
 
 void
 RegisterBadAuthoring(RigExecOpRegistrar &registrar)
@@ -80,6 +86,14 @@ RegisterBadAuthoring(RigExecOpRegistrar &registrar)
         info.tokenCount = 2;
         return info;
     }();
+    static const RigExecPropertyInfo targets = [] {
+        RigExecPropertyInfo info;
+        info.schemaName = "rigExec:targets";
+        info.binding = RigExecPropertyBinding::ConnectionList;
+        return info;
+    }();
+    static const RigExecSchemaInfo handAuthored{
+        "Thing", nullptr, nullptr, RigExecSchemaMode::HandAuthored};
     static const RigExecSchemaInfo internal{
         "", "Built by the compiler.", nullptr, RigExecSchemaMode::Internal};
     static const RigExecSchemaInfo classless{"", nullptr, nullptr,
@@ -112,8 +126,37 @@ RegisterBadAuthoring(RigExecOpRegistrar &registrar)
         d.schema = &classless;
         return d;
     }();
+    static const RigExecPortDesc schemalessPorts[] = {
+        {&SchemalessPort(), &fakeTypes::Float(), kRigExecPortOutput, "out",
+         RigExecOutputBound::None, nullptr, nullptr, kRigExecInvalidIndex, 1,
+         &plain}};
+    static const RigExecPortDesc listlessPorts[] = {
+        {&ListlessPort(), &fakeTypes::Float(), kRigExecPortInput, "in",
+         RigExecOutputBound::None, nullptr, nullptr, kRigExecInvalidIndex, 1,
+         &targets}};
+    static const RigExecOpDesc schemalessDesc = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "Schemaless";
+        d.ports = schemalessPorts;
+        d.portCount = 1;
+        d.run = &NoRun;
+        return d;
+    }();
+    static const RigExecOpDesc listlessDesc = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "Listless";
+        d.ports = listlessPorts;
+        d.portCount = 1;
+        d.run = &NoRun;
+        d.schema = &handAuthored;
+        return d;
+    }();
     registrar.Add(InternalAuthoredOp(), internalDesc);
     registrar.Add(TokenFloatOp(), tokenDesc);
+    registrar.Add(SchemalessOp(), schemalessDesc);
+    registrar.Add(ListlessOp(), listlessDesc);
 }
 
 // An op whose output claims to be an array.
@@ -484,6 +527,10 @@ TestValidateErrors(const RigExecRegistryInit &good)
         CHECK(Mentions(errors, "port out is authored but its op is Internal"));
         CHECK(Mentions(errors, "authored as a token but is no one-value"));
         CHECK(Mentions(errors, "TokenFloat: its schema names no class"));
+        CHECK(Mentions(errors, "Schemaless: port out is authored but its op "
+                               "declares no schema"));
+        CHECK(Mentions(errors, "Listless: port in is authored from a "
+                               "connection list but is no list input"));
     }
     {
         RigExecTypeLibraryDesc old = *good.typeLibraries.front();

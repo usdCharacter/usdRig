@@ -559,7 +559,9 @@ base class and mode) and, per port and payload field, `authoring`
 fallback value, the tokens an integer is authored as, how it binds, its USD
 role, `uniform`, and the USD type when it is not the registered type's).
 Payload fields that name one property are its components. A port or field
-without `authoring` is fed by the compiler. The mode says where the class
+without `authoring` is fed by the compiler. The registry refuses `authoring`
+on an op without schema info or on an `Internal` op, and a `ConnectionList`
+binding on anything but a list input port. The mode says where the class
 comes from: `Generated` from this metadata, `HandAuthored` in
 [schema.usda](../../libs/rigExecSchema/schema.usda), or `Internal` for an op
 the compiler builds with no class of its own. The metadata never changes how a
@@ -594,8 +596,14 @@ With `--diff`, the script checks every `Generated` op against its class in
 schema.usda, property by property: presence on either side, type, `uniform`,
 fallback, allowed tokens and documentation, and the class's base and
 documentation. A `HandAuthored` op is checked only for the properties it
-declares; `Internal` ops and ops without schema info are skipped. It prints
-each difference and exits non-zero on any; `testRigExecSchemaDiff` runs it.
+declares; `Internal` ops and ops without schema info are skipped. Ops that
+declare one class must describe it alike, since the class is written once:
+the same mode, for `Generated` the same class documentation, base and
+properties, and for every property two of them declare the same type,
+binding, fallback, tokens and documentation. It prints each difference and
+exits non-zero on any; `testRigExecSchemaDiff` runs it, and
+`testRigExecSchemaDiffSelfTest` runs `--self-test`, the comparison over
+synthetic ops.
 
 ## Discovery and supported evaluation
 
