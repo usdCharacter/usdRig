@@ -699,10 +699,11 @@ RigExecExecuteOpGraph(const RigExecCompiledGraph &graph,
             ready.push_back(i);
         unresolved[i].value.store(dependencies, std::memory_order_relaxed);
     }
-    std::atomic<bool> succeeded{true};
+    result.firstFailed = UINT32_MAX;
+    std::atomic<uint32_t> firstFailed{UINT32_MAX};
     // A body touches only its own op's flags; counts are summed after join.
     const auto body = [&](uint32_t i) {
-        if (!succeeded.load(std::memory_order_acquire)) {
+        if (i > firstFailed.load(std::memory_order_acquire)) {
             callbacks.skip(i);
             return;
         }
@@ -717,8 +718,13 @@ RigExecExecuteOpGraph(const RigExecCompiledGraph &graph,
                     needed;
         if (needed) {
             result.ran[i] = 1;
-            if (!callbacks.run(i))
-                succeeded.store(false, std::memory_order_release);
+            if (!callbacks.run(i)) {
+                uint32_t seen = firstFailed.load(std::memory_order_relaxed);
+                while (i < seen && !firstFailed.compare_exchange_weak(
+                                       seen, i, std::memory_order_acq_rel,
+                                       std::memory_order_relaxed)) {
+                }
+            }
         } else
             callbacks.skip(i);
     };
@@ -788,7 +794,8 @@ RigExecExecuteOpGraph(const RigExecCompiledGraph &graph,
     result.executed = executed;
     result.skipped = count - result.executed;
     workspace.listsValid = true;
-    const bool valid = succeeded.load(std::memory_order_acquire);
+    result.firstFailed = firstFailed.load(std::memory_order_acquire);
+    const bool valid = result.firstFailed == UINT32_MAX;
     if (!valid && error)
         *error = "an operation failed";
     return valid;

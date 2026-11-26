@@ -1865,21 +1865,20 @@ RrExecuteOpGraph(RrProgram *p, bool force, std::string *error)
     // of cluster counts the distinct clusters. The version checks follow it
     // too, so a serial run reports the first mismatch it reported while
     // running. A failed body published nothing; the failure reported is the
-    // canonically first (a serial run stops at its one).
+    // lowest failed op (RigExecOpExecution::firstFailed).
     size_t closedClusters = 0;
     uint32_t lastCluster = UINT32_MAX;
-    int64_t failedOp = -1;
+    const int64_t failedOp = s.opExecution.firstFailed < s.opFailed.size()
+                                 ? int64_t(s.opExecution.firstFailed)
+                                 : -1;
     for (const int32_t entry : trace) {
         const uint32_t c = uint32_t(entry);
         if (p->opGraph.opClusters[c] != lastCluster) {
             lastCluster = p->opGraph.opClusters[c];
             ++closedClusters;
         }
-        if (s.opFailed[c]) {
-            if (failedOp < 0 || int64_t(c) < failedOp)
-                failedOp = int64_t(c);
+        if (s.opFailed[c])
             continue;
-        }
         for (auto id : p->opGraph.ops[c].descriptor.writes) {
             verifyChain(id);
             verifyPacket(id);

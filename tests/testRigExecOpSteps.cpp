@@ -688,8 +688,13 @@ TestFailingNode()
     if (compiled) {
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(1.0));
         CHECK(!pose.valid);
-        for (const std::string &line : pose.diagnostics)
+        size_t failed = 0;
+        for (const std::string &line : pose.diagnostics) {
             reported += line + "\n";
+            failed += line.find("MatrixDeform") != std::string::npos;
+        }
+        // One failure, the lowest failed op's, in every schedule.
+        CHECK(failed == 1);
     }
     std::printf("failing node: %s", reported.c_str());
     CHECK(compiled && reported.find("MatrixDeform") != std::string::npos &&

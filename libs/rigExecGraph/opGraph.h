@@ -129,6 +129,10 @@ struct RigExecOpExecution {
     /// clears `touchedValid` (the next reset then clears everything).
     std::vector<uint32_t> touched;
     bool touchedValid = false;
+    /// The lowest op whose body failed, or UINT32_MAX. A failure stops only
+    /// the ops above it, so every op below it ran as in a run without
+    /// failures: serial and parallel runs fail at the same op.
+    uint32_t firstFailed = UINT32_MAX;
 };
 
 struct RigExecOpPendingCount {

@@ -613,12 +613,12 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
     }
     if (bailed) {
         _lastBail = RigExecBakedBail::Step;
-        // Only a step this frame ran: an earlier frame's failure of a step
-        // the stop left unrun is no error of this frame.
-        for (size_t c = 0; c < B.opGraph.ops.size(); ++c) {
+        // The lowest failed op, the one every schedule and the runtime
+        // report (RigExecOpExecution::firstFailed).
+        const uint32_t c = B.opExecution.firstFailed;
+        if (c < B.opGraph.ops.size()) {
             const size_t index = B.opGraph.ops[c].originalIndex;
-            if (c < B.opExecution.ran.size() && B.opExecution.ran[c] &&
-                index < B.steps.size() && B.steps[index].failed)
+            if (index < B.steps.size() && B.steps[index].failed)
                 pose->diagnostics.insert(pose->diagnostics.end(),
                                          B.steps[index].diagnostics.begin(),
                                          B.steps[index].diagnostics.end());

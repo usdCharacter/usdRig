@@ -727,6 +727,59 @@ TestFatalCancellationJoinsActiveCallbacks()
 /// Multi-member clusters number their candidate members consecutively after
 /// the cluster's last body; counts come from ran. Serial numbering is the
 /// order the bodies ran, which binary playback's run trace relies on.
+/// Two independent ops fail. However the schedule orders them, the lower
+/// one runs and is the failure reported; only ops above it stop.
+void
+TestFailureStopsOnlyAboveTheLowestFailedOp()
+{
+    RigExecCompiledGraph graph;
+    CHECK(RigExecCompileOpGraph(
+        {Op("A", {0}, {1}), Op("B", {10}, {11}), Op("C", {1}, {2})}, {0, 10},
+        RigExecCyclePolicy::Reject, &graph));
+    uint32_t lower = 0, upper = 0, after = 0;
+    for (uint32_t i = 0; i < graph.ops.size(); ++i) {
+        const std::string &key = graph.ops[i].descriptor.key;
+        (key == "A" ? lower : key == "B" ? upper : after) = i;
+    }
+    if (upper < lower)
+        std::swap(lower, upper);
+    CHECK(lower < upper);
+    for (const bool reversed : {false, true}) {
+        std::vector<std::function<void()>> queued;
+        std::vector<uint32_t> failed;
+        RigExecOpCallbacks callbacks;
+        callbacks.run = [&](uint32_t i) {
+            if (i == after)
+                return true;
+            failed.push_back(i);
+            return false;
+        };
+        callbacks.skip = [](uint32_t) {};
+        callbacks.changed = [](RigExecValueId) { return true; };
+        if (reversed) {
+            // One thread, last submitted first: the upper op fails first.
+            callbacks.dispatch = [&](std::function<void()> task) {
+                queued.push_back(std::move(task));
+            };
+            callbacks.wait = [&] {
+                while (!queued.empty()) {
+                    auto task = std::move(queued.back());
+                    queued.pop_back();
+                    task();
+                }
+            };
+        }
+        RigExecOpExecution execution;
+        CHECK(
+            !RigExecExecuteOpGraph(graph, {}, {}, true, callbacks, &execution));
+        CHECK(execution.ran[lower] == 1);
+        CHECK(execution.firstFailed == lower);
+        CHECK(std::find(failed.begin(), failed.end(), lower) != failed.end());
+        if (graph.opClusters[lower] != graph.opClusters[upper])
+            CHECK(reversed == (execution.ran[upper] == 1));
+    }
+}
+
 void
 TestClusterCompletionAndCounts()
 {
@@ -1154,6 +1207,7 @@ main()
     TestSerialParallelReadiness();
     TestUnrelatedBranchFinishesBeforeGate();
     TestFatalCancellationJoinsActiveCallbacks();
+    TestFailureStopsOnlyAboveTheLowestFailedOp();
     TestClusterCompletionAndCounts();
     TestSkipEffectsAndVolatileSeeds();
     TestChangeFlagsClearedFromGatheredList();
