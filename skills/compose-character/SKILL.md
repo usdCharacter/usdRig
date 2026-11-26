@@ -181,8 +181,130 @@ poses. Preserve exact parity when the task is only a decomposition; intentional
 refitting to another character needs different geometric expectations.
 
 Open the final entry asset as well as the model to catch broken references or
-namespace remapping. Review representative viewport poses when available, and
-report separately if only numerical/composition checks were performed.
+namespace remapping.
+
+When the request is driven by motion or anatomy references, or names a
+deformation limit, run the reference-driven assessment below in addition to
+the checks above; a routine decomposition with no reference keeps the checks
+above alone. These records are what a later reviewer re-runs, so name the
+file, frame, control, and measurement for every claim.
+
+### Record the reference and the mesh axes
+
+Before posing anything, record which reference was used for anatomy, for
+walking, and for running separately, each with its citation, the view or time
+range used, and how the specimen's pose and proportions differ from this
+mesh. Declare the mesh's forward, up, and lateral directions, handedness,
+units, and origin, read from stage metadata and geometry rather than
+assumed. Record each reference landmark as one row:
+
+`(side, landmark, source view/location, fitted mesh xyz, proportional or pose difference)`
+
+Mark which entries are measured coordinates and which are estimates or
+occluded. Never transfer a specimen's angles into fit values without that
+difference recorded.
+
+### Match clean silhouettes to labeled solved chains
+
+For both sides, pair a clean full-body silhouette with a labeled solved
+chain drawn over the identical camera, frame, and evaluated mesh,
+at rest, stance, lift, and swing. Read the chain from the evaluated pose:
+`rig.compile()`, `pose = rig.evaluate(frame)`, `pose.valid`,
+`pose.joint_paths()` with `pose.joint_matrix(path)`, `pose.control_paths()`
+with `pose.control_frame(path)`, and
+`pose.moved_property("/<mesh>.points")` for the surface, all from the same
+evaluated frame. Label the proximal
+articulation, the intermediate bend or bends, the distal articulation, and
+the paw, and keep shoulder, elbow, and carpus distinct from hip, stifle, and
+hock. Authored control keys or a rest-stage render do not demonstrate
+deformation. Discover controls, joints, and movers by schema and wiring,
+never by scope or path naming, and read the ports each instance actually
+binds from its `component.json`: `leg` binds Hips, World and Rig; `head`
+binds Chest; `mouth` binds Head; `spine` binds COG; `torso` binds Rig; `arm`
+binds Chest, World and Rig; `eye` binds LookAt, Head, Eye, LidUpper,
+LidLower.
+
+### Separate fit, parenting, pole, reach and timing
+
+Compare in one order:
+fit, parenting, pole direction, reach, and animation timing. Assess fit
+against the recorded landmarks first. Then, with fit held fixed, compare
+parenting — whether the shoulder is attached to the scapula and driven by
+the thoracic limb while the pelvis is driven by the spine, and how much
+inherited motion each limb carries — pole direction in the declared mesh
+space, reach through the cycle, and finally animation timing. Report the
+findings for each limb on its own line, together with the alternatives that
+the evidence does not yet rule out. A solver reserve, a softness clamp, or
+four disputed limbs is not evidence of a shared-chain defect; do not name
+one cause until the earlier comparisons have been ruled out in that order.
+
+Keep the fix in the right layer. A correction that changes values or weights
+belongs in the fit layer; a correction that changes wiring belongs in the
+bindings and is followed by the documented compose rebuild. Neither changes
+a component port, adds a second evaluator, or reimplements IK outside the rig
+in order to draw an overlay. Per-character values stay in fit, wiring stays
+in bindings, and component definitions stay reusable.
+
+### Timing over cycles
+
+Walk the whole delivered cycle rather than sampled stills. Record for every
+paw one row:
+
+`(gait, paw, bearing interval, release frame, landing frame, reference phase, discrepancy)`
+
+State the time base, the loop boundary, the intended travel per cycle, and
+the ground convention the record uses. Determine bearing, release, and
+landing from the evaluated mesh: paw height, support, and motion of
+`pose.moved_property("/<mesh>.points")` at consecutive frames from one
+`rig.evaluate(frame)` each, never from offset parameters, authored key
+values, or a generator's intent. Compare the record against the reference
+phases attributed at intake; do not substitute a canonical sequence.
+Do not prescribe a universal footfall sequence. Check sliding by measuring
+planted-point drift after accounting for intended travel, and check
+inversion by watching bend direction against the reference's bend direction
+through the cycle. Report each paw's discrepancy on its own line, keeping
+the per-limb record from the fit/parenting/pole/reach comparison so a timing
+finding cannot be folded into a fit finding.
+
+### Deformation at requested limits
+
+For every named limit pose record one row:
+
+`(control, value, frame, rest comparison, point measurements, clean view, verdict)`
+
+The request asks that
+adjacent surface points stay continuous and the jaw actually opens; check
+that requested physical result, not the control's travel. Verify that a
+limit pose was actually reached — report the achieved value — before
+judging its result. For a requested continuous surface,
+follow rest-topology neighbours across the twist and neck boundaries and
+compare posed edge lengths, gaps, folding, and intersections with the same
+edges at rest, at mesh scale; intended lip or eyelid separation is not
+tearing, and a torn silhouette is not a crease. For a requested opening,
+measure opposing upper and lower mouth landmarks in head space at neutral
+and at the actual maximum the rig reaches, and confirm a visible aperture;
+displacement of a jaw control or of the nose does not establish opening,
+and a value reported at one angle does not describe the pose at another.
+Justify every expectation from anatomy, scale, and the request; publish no
+fixed numeric threshold, and record measured envelopes per character only as
+evidence, never as a port or a rig-wide limit.
+
+### Three-track reporting
+
+Report these three tracks separately, and never merge them into one
+"passed" line:
+
+- Arithmetic and composition validity — compile, finite points,
+  CPU-reference parity, `validate_component`, packaging.
+- Physical result — the landmark, adjacency, aperture, contact, sliding,
+  and inversion measurements above.
+- Visual judgment — clean uncropped views and labeled overlays assessed by
+  a named reviewer.
+
+A missing check, an unavailable reference, or an unviewed render is listed
+as not run and is never a pass. A passing checker does not override a
+directly observed silhouette defect, and a passing numerical parity does
+not certify plausible motion.
 
 Deliver links to the final entry point, fit, bindings, and composition, plus the
 rebuild command and checks actually run. Keep the component library reusable;
