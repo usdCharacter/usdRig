@@ -1,5 +1,6 @@
 #include "rigExecOps/weight/weightOps.h"
 
+#include "rigExecOps/authoring.h"
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
@@ -8,6 +9,7 @@
 #include "rigExecMath/weightFieldKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecMath/dualQuatMath.h"
+#include "rigExecSchema/schemaNames.h"
 
 #include <algorithm>
 #include <cmath>
@@ -756,6 +758,137 @@ using rigExec::kRigExecPortOutput;
 using rigExec::RigExecPortDesc;
 constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
 
+namespace names = rigExec::SchemaAttrText;
+namespace values = rigExec::SchemaValueText;
+namespace types = rigExec::SchemaTypeName;
+using authoring::Authored;
+
+const float kZero = 0.0f;
+const float kOne = 1.0f;
+const uint32_t kAxisY = uint32_t(WeightFieldAxis::Y);
+const uint32_t kUnbounded = 0;
+const uint32_t kMultiplyMode = uint32_t(WeightCombineMode::Multiply);
+const rigExecStd::RigExecArray<float> kNoFloats;
+const rigExecStd::RigExecArray<int32_t> kNoInts;
+
+const char *const kAxes[] = {values::x, values::y, values::z};
+const char *const kBounds[] = {values::unbounded, values::bounded};
+const char *const kCombineModes[] = {
+    values::multiply, values::add,     values::subtract, values::max,
+    values::min,      values::average, values::overlay};
+
+const rigExec::RigExecPropertyInfo kValues =
+    authoring::Uniform(names::rigExecValues, &kNoFloats);
+const rigExec::RigExecPropertyInfo kIndices =
+    authoring::Uniform(names::rigExecIndices, &kNoInts);
+const rigExec::RigExecPropertyInfo kDefaultWeight =
+    authoring::Uniform(names::rigExecDefaultWeight, &kZero);
+
+const rigExec::RigExecPropertyInfo kBaseWeight =
+    authoring::Relationship(names::rigExecBaseWeight);
+const rigExec::RigExecPropertyInfo kDriver =
+    authoring::Property(names::inputsDriver, &kOne);
+const rigExec::RigExecPropertyInfo kScale =
+    authoring::Property(names::inputsScale, &kOne);
+const rigExec::RigExecPropertyInfo kBias =
+    authoring::Property(names::inputsBias, &kZero);
+
+const rigExec::RigExecPropertyInfo kInputWeights = authoring::Relationship(
+    names::rigExecInputWeights,
+    R"(Ordered weight objects to fold. Every input must resolve to the same
+element count as this combine's own weightTarget; a mismatch fails the
+packet rather than folding a truncated field, because a short input
+would silently read as identity over its missing tail.)",
+    rigExec::RigExecPropertyBinding::ConnectionList);
+const rigExec::RigExecPropertyInfo kCombineMode = authoring::Tokens(
+    names::rigExecCombineMode, &kMultiplyMode, kCombineModes,
+    R"(multiply, add, max, min, and average are order independent. subtract and
+overlay are NOT: they seed from the first input and fold the rest in
+authored target order, which is where weight composition departs from
+the rule that target-list permutation cannot change a result. Authors
+who need a permutation-proof composition use a commutative mode.)");
+const rigExec::RigExecPropertyInfo kStrength =
+    authoring::Property(names::inputsStrength, &kOne);
+const rigExec::RigExecPropertyInfo kInvert = authoring::Property(
+    names::inputsInvert, &kZero,
+    R"(Reflects the folded field about 0.5; lerped, as elsewhere.)");
+
+const rigExec::RigExecPropertyInfo kPlaneAxisProperty = authoring::Tokens(
+    names::rigExecPlaneAxis, &kAxisY, kAxes,
+    R"(Local axis the signed distance is measured along. Y by default, matching
+the planar-shape convention the control guides already use (circle and
+box are drawn in the local XZ plane with normal +Y).)");
+const rigExec::RigExecPropertyInfo kPlaneBoundsProperty = authoring::Tokens(
+    names::rigExecPlaneBounds, &kUnbounded, kBounds,
+    R"(Whether the field extends forever across the plane, or stops at the
+inputs:extentU x inputs:extentV rectangle.
+
+`unbounded` is the default because it is the behaviour a half-space
+falloff wants. `bounded` zeroes the field outside the rectangle -- HARD,
+with no edge ramp, so the region is exactly the drawn one. Softening the
+border is composition's job: multiply the bounded plane by a sphere or a
+second plane and the edge gets whatever falloff that volume has.
+
+Structural rather than animatable: it selects which field function runs,
+so it is hashed into the compiled rig digest alongside
+rigExec:planeAxis. The extents themselves are ordinary per-frame floats.)");
+const rigExec::RigExecPropertyInfo kExtentU = authoring::Property(
+    names::inputsExtentU, &kOne,
+    R"(Half-extent of the bounded rectangle along the first IN-PLANE axis, U =
+(planeAxis + 1) % 3.
+
+Separate from the falloff band on purpose, and the separation is the
+whole point: falloffMin/falloffMax are distances ALONG the axis and say
+where the gradient starts and stops, while the extents are the size
+ACROSS it and say how far the sheet reaches. They are different
+directions and different quantities. Deriving one from the other --
+sizing the drawn square from the band -- makes scrubbing the falloff
+appear to resize the plane, and leaves no way at all to say "this
+influence ends at the edge of this patch".
+
+The extents size the drawn guide whether or not the field is bounded, so
+an unbounded plane still gets a square an artist can aim; only
+rigExec:planeBounds decides whether that square is a boundary or a
+label. A non-positive or non-finite extent is rejected when bounded
+(there is no such rectangle), exactly as inputs:scaleX/Y/Z is on the
+other shapes.)");
+const rigExec::RigExecPropertyInfo kExtentV = authoring::Property(
+    names::inputsExtentV, &kOne,
+    R"(Half-extent along the second in-plane axis, V = (planeAxis + 2) % 3. See
+inputs:extentU.
+
+The (axis+1, axis+2) convention is shared with the guide drawing code,
+so U and V mean the same pair of directions everywhere: for the default
+planeAxis = y they are Z and X.)");
+
+const rigExec::RigExecSchemaInfo kStaticSchema{
+    types::RigExecStaticWeight,
+    R"(Time-invariant constant, dense, or sparse authored weight field; every
+target element resolves to an explicit value or rigExec:defaultWeight.)",
+    types::RigExecWeightObject, rigExec::RigExecSchemaMode::Generated};
+const rigExec::RigExecSchemaInfo kDynamicSchema{
+    types::RigExecDynamicWeight, nullptr, types::RigExecWeightObject,
+    rigExec::RigExecSchemaMode::HandAuthored};
+const rigExec::RigExecSchemaInfo kCombineSchema{
+    types::RigExecCombineWeight, nullptr, types::RigExecWeightObject,
+    rigExec::RigExecSchemaMode::HandAuthored};
+const rigExec::RigExecSchemaInfo kPlaneSchema{
+    types::RigExecPlaneWeight,
+    R"(Gradient across a plane: d is the SIGNED local coordinate along
+rigExec:planeAxis.
+
+Signed rather than absolute so a falloffMin/falloffMax pair straddling
+zero authors a gradient ACROSS the plane -- the useful planar-falloff
+behaviour -- rather than a band mirrored on both sides of it. An author
+who wants the mirrored band places the plane at the band's centre with
+falloffMin = 0, or composes two planes with `min`.
+
+The plane is infinite by default. rigExec:planeBounds = `bounded` clips
+it to the rectangle inputs:extentU x inputs:extentV, which is the
+difference between "everything above this height" and "this patch of the
+surface".)",
+    types::RigExecVolumeWeight, rigExec::RigExecSchemaMode::Generated};
+
 #define RIGEXEC_FIELD_PORT_DESCS(Op)                                           \
     {&Op##Points(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "points"},   \
         {&Op##Placement(), &rigExecStd::Mat4dType(), kRigExecPortInput,        \
@@ -783,10 +916,17 @@ const RigExecPortDesc kSpherePorts[] = {
 };
 const RigExecPortDesc kPlanePorts[] = {
     RIGEXEC_FIELD_PORT_DESCS(PlaneWeight),
-    {&PlaneWeightExtentU(), &rigExecStd::FloatType(), kOptional, "extentU"},
-    {&PlaneWeightExtentV(), &rigExecStd::FloatType(), kOptional, "extentV"},
-    {&PlaneWeightAxis(), &rigExecStd::UIntType(), kOptional, "axis"},
-    {&PlaneWeightBounded(), &rigExecStd::UIntType(), kOptional, "bounded"},
+    Authored(
+        {&PlaneWeightExtentU(), &rigExecStd::FloatType(), kOptional, "extentU"},
+        kExtentU),
+    Authored(
+        {&PlaneWeightExtentV(), &rigExecStd::FloatType(), kOptional, "extentV"},
+        kExtentV),
+    Authored({&PlaneWeightAxis(), &rigExecStd::UIntType(), kOptional, "axis"},
+             kPlaneAxisProperty),
+    Authored(
+        {&PlaneWeightBounded(), &rigExecStd::UIntType(), kOptional, "bounded"},
+        kPlaneBoundsProperty),
 };
 const RigExecPortDesc kCurvePorts[] = {
     RIGEXEC_FIELD_PORT_DESCS(CurveWeight),
@@ -824,7 +964,7 @@ const rigExec::RigExecFieldDesc kFieldFields[] = {
 };
 
 const rigExec::RigExecFieldDesc kCombineFields[] = {
-    Enum("mode", WeightCombineMode::Overlay),
+    Authored(Enum("mode", WeightCombineMode::Overlay), kCombineMode),
     Enum("inputs", WeightCombineInputs::Fields),
     Flag("clamp"),
 };
@@ -852,8 +992,10 @@ FieldDesc(const char *name, const RigExecPortDesc *ports, size_t count,
 
 const rigExec::RigExecOpDesc kSphere = FieldDesc(
     "SphereWeight", kSpherePorts, std::size(kSpherePorts), &RunSphereWeight);
-const rigExec::RigExecOpDesc kPlane = FieldDesc(
-    "PlaneWeight", kPlanePorts, std::size(kPlanePorts), &RunPlaneWeight);
+const rigExec::RigExecOpDesc kPlane =
+    internalOps::WithSchema(FieldDesc("PlaneWeight", kPlanePorts,
+                                      std::size(kPlanePorts), &RunPlaneWeight),
+                            kPlaneSchema);
 const rigExec::RigExecOpDesc kCurve = [] {
     rigExec::RigExecOpDesc d =
         FieldDesc("CurveWeight", kCurvePorts, std::size(kCurvePorts),
@@ -863,13 +1005,17 @@ const rigExec::RigExecOpDesc kCurve = [] {
 }();
 
 const RigExecPortDesc kCombinePorts[] = {
-    {&CombineWeightsInputs(), &rigExecRig::PointWeightsType(),
-     kOptional | rigExec::kRigExecPortArray, "inputs"},
+    Authored({&CombineWeightsInputs(), &rigExecRig::PointWeightsType(),
+              kOptional | rigExec::kRigExecPortArray, "inputs"},
+             kInputWeights),
     {&CombineWeightsTargetCount(), &rigExecStd::UIntType(), kOptional,
      "targetCount"},
-    {&CombineWeightsStrength(), &rigExecStd::FloatType(), kOptional,
-     "strength"},
-    {&CombineWeightsInvert(), &rigExecStd::FloatType(), kOptional, "invert"},
+    Authored({&CombineWeightsStrength(), &rigExecStd::FloatType(), kOptional,
+              "strength"},
+             kStrength),
+    Authored({&CombineWeightsInvert(), &rigExecStd::FloatType(), kOptional,
+              "invert"},
+             kInvert),
     {&CombineWeightsOut(), &rigExecRig::PointWeightsType(), kRigExecPortOutput,
      "out", rigExec::RigExecOutputBound::InputValue,
      &CombineWeightsTargetCount(), &CombineWeightsInputs()},
@@ -879,6 +1025,7 @@ const rigExec::RigExecOpDesc kCombine = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "CombineWeights";
+    d.schema = &kCombineSchema;
     d.ports = kCombinePorts;
     d.portCount = std::size(kCombinePorts);
     d.runBatch = &RunCombineWeights;
@@ -920,20 +1067,32 @@ const rigExec::RigExecOpDesc kVolumePlacement = [] {
 }();
 
 const RigExecPortDesc kStaticPorts[] = {
-    {&StaticWeightsValues(), &rigExecStd::FloatArray(), kRigExecPortInput,
-     "values"},
-    {&StaticWeightsIndices(), &rigExecStd::IntArray(), kOptional, "indices"},
-    {&StaticWeightsDefaultWeight(), &rigExecStd::FloatType(), kOptional,
-     "defaultWeight"},
+    Authored({&StaticWeightsValues(), &rigExecStd::FloatArray(),
+              kRigExecPortInput, "values"},
+             kValues),
+    Authored({&StaticWeightsIndices(), &rigExecStd::IntArray(), kOptional,
+              "indices"},
+             kIndices),
+    Authored({&StaticWeightsDefaultWeight(), &rigExecStd::FloatType(),
+              kOptional, "defaultWeight"},
+             kDefaultWeight),
     {&StaticWeightsOut(), &rigExecRig::PointWeightsType(), kRigExecPortOutput,
      "out", rigExec::RigExecOutputBound::Input, &StaticWeightsValues()},
 };
 
 const RigExecPortDesc kDynamicPorts[] = {
-    {&DynamicWeightsBase(), &rigExecRig::PointWeightsType(), kOptional, "base"},
-    {&DynamicWeightsDriver(), &rigExecStd::FloatType(), kOptional, "driver"},
-    {&DynamicWeightsScale(), &rigExecStd::FloatType(), kOptional, "scale"},
-    {&DynamicWeightsBias(), &rigExecStd::FloatType(), kOptional, "bias"},
+    Authored({&DynamicWeightsBase(), &rigExecRig::PointWeightsType(), kOptional,
+              "base"},
+             kBaseWeight),
+    Authored({&DynamicWeightsDriver(), &rigExecStd::FloatType(), kOptional,
+              "driver"},
+             kDriver),
+    Authored(
+        {&DynamicWeightsScale(), &rigExecStd::FloatType(), kOptional, "scale"},
+        kScale),
+    Authored(
+        {&DynamicWeightsBias(), &rigExecStd::FloatType(), kOptional, "bias"},
+        kBias),
     {&DynamicWeightsOut(), &rigExecRig::PointWeightsType(), kRigExecPortOutput,
      "out", rigExec::RigExecOutputBound::Input, &DynamicWeightsBase()},
 };
@@ -1235,17 +1394,20 @@ CombineFieldsValues(const void *payload, RigExecFieldValues &out)
 }
 
 const rigExec::RigExecFieldDesc kCombineFieldsFields[] = {
-    Enum("mode", WeightCombineMode::Overlay),
+    Authored(Enum("mode", WeightCombineMode::Overlay), kCombineMode),
     Flag("clamp"),
 };
 
 const RigExecPortDesc kStaticFieldPorts[] = {
-    {&StaticWeightFieldValues(), &rigExecStd::FloatArray(), kRigExecPortInput,
-     "values"},
-    {&StaticWeightFieldIndices(), &rigExecStd::IntArray(), kOptional,
-     "indices"},
-    {&StaticWeightFieldDefaultWeight(), &rigExecStd::FloatType(), kOptional,
-     "defaultWeight"},
+    Authored({&StaticWeightFieldValues(), &rigExecStd::FloatArray(),
+              kRigExecPortInput, "values"},
+             kValues),
+    Authored({&StaticWeightFieldIndices(), &rigExecStd::IntArray(), kOptional,
+              "indices"},
+             kIndices),
+    Authored({&StaticWeightFieldDefaultWeight(), &rigExecStd::FloatType(),
+              kOptional, "defaultWeight"},
+             kDefaultWeight),
     {&StaticWeightFieldTargetCount(), &rigExecStd::UIntType(),
      kRigExecPortInput, "targetCount"},
     {&StaticWeightFieldOut(), &rigExecStd::FloatArray(), kRigExecPortOutput,
@@ -1254,11 +1416,18 @@ const RigExecPortDesc kStaticFieldPorts[] = {
 };
 
 const RigExecPortDesc kDynamicFieldPorts[] = {
-    {&DynamicWeightFieldBase(), &rigExecStd::FloatArray(), kOptional, "base"},
-    {&DynamicWeightFieldDriver(), &rigExecStd::FloatType(), kOptional,
-     "driver"},
-    {&DynamicWeightFieldScale(), &rigExecStd::FloatType(), kOptional, "scale"},
-    {&DynamicWeightFieldBias(), &rigExecStd::FloatType(), kOptional, "bias"},
+    Authored({&DynamicWeightFieldBase(), &rigExecStd::FloatArray(), kOptional,
+              "base"},
+             kBaseWeight),
+    Authored({&DynamicWeightFieldDriver(), &rigExecStd::FloatType(), kOptional,
+              "driver"},
+             kDriver),
+    Authored({&DynamicWeightFieldScale(), &rigExecStd::FloatType(), kOptional,
+              "scale"},
+             kScale),
+    Authored({&DynamicWeightFieldBias(), &rigExecStd::FloatType(), kOptional,
+              "bias"},
+             kBias),
     {&DynamicWeightFieldTargetCount(), &rigExecStd::UIntType(), kOptional,
      "targetCount"},
     {&DynamicWeightFieldOut(), &rigExecStd::FloatArray(), kRigExecPortOutput,
@@ -1271,42 +1440,56 @@ const RigExecPortDesc kDynamicFieldPorts[] = {
 };
 
 const RigExecPortDesc kCombineFieldPorts[] = {
-    {&CombineWeightFieldsInputs(), &rigExecStd::FloatArray(),
-     kOptional | rigExec::kRigExecPortArray, "inputs"},
+    Authored({&CombineWeightFieldsInputs(), &rigExecStd::FloatArray(),
+              kOptional | rigExec::kRigExecPortArray, "inputs"},
+             kInputWeights),
     {&CombineWeightFieldsTargetCount(), &rigExecStd::UIntType(),
      kRigExecPortInput, "targetCount"},
-    {&CombineWeightFieldsStrength(), &rigExecStd::FloatType(), kOptional,
-     "strength"},
-    {&CombineWeightFieldsInvert(), &rigExecStd::FloatType(), kOptional,
-     "invert"},
+    Authored({&CombineWeightFieldsStrength(), &rigExecStd::FloatType(),
+              kOptional, "strength"},
+             kStrength),
+    Authored({&CombineWeightFieldsInvert(), &rigExecStd::FloatType(), kOptional,
+              "invert"},
+             kInvert),
     {&CombineWeightFieldsOut(), &rigExecStd::FloatArray(), kRigExecPortOutput,
      "out", rigExec::RigExecOutputBound::InputValue,
      &CombineWeightFieldsTargetCount(), &CombineWeightFieldsInputs()},
 };
 
-const rigExec::RigExecOpDesc kStatic = PacketDesc<StaticState>(
-    "StaticWeights", kStaticPorts, std::size(kStaticPorts), &RunStaticWeights,
-    kPacketFields, std::size(kPacketFields), &PacketValues);
-const rigExec::RigExecOpDesc kDynamic =
+const rigExec::RigExecOpDesc kStatic = internalOps::WithSchema(
+    PacketDesc<StaticState>("StaticWeights", kStaticPorts,
+                            std::size(kStaticPorts), &RunStaticWeights,
+                            kPacketFields, std::size(kPacketFields),
+                            &PacketValues),
+    kStaticSchema);
+const rigExec::RigExecOpDesc kDynamic = internalOps::WithSchema(
     PacketDesc<rigExec::RigExecWeightPacketBuild>(
         "DynamicWeights", kDynamicPorts, std::size(kDynamicPorts),
         &RunDynamicWeights, kPacketFields, std::size(kPacketFields),
-        &PacketValues);
+        &PacketValues),
+    kDynamicSchema);
 const rigExec::RigExecOpDesc kVolume = PacketDesc<VolumeState>(
     "VolumeWeights", kVolumePorts, std::size(kVolumePorts), &RunVolumeWeights,
     kVolumeFields, std::size(kVolumeFields), &VolumeValues);
-const rigExec::RigExecOpDesc kStaticField = PacketDesc<StaticFieldState>(
-    "StaticWeightField", kStaticFieldPorts, std::size(kStaticFieldPorts),
-    &RunStaticWeightField, kPacketFields, std::size(kPacketFields),
-    &PacketValues);
-const rigExec::RigExecOpDesc kDynamicField = PacketDesc<DynamicFieldState>(
-    "DynamicWeightField", kDynamicFieldPorts, std::size(kDynamicFieldPorts),
-    &RunDynamicWeightField, kPacketFields, std::size(kPacketFields),
-    &PacketValues);
-const rigExec::RigExecOpDesc kCombineFieldsOp = PacketDesc<std::vector<float>>(
-    "CombineWeightFields", kCombineFieldPorts, std::size(kCombineFieldPorts),
-    &RunCombineWeightFields, kCombineFieldsFields,
-    std::size(kCombineFieldsFields), &CombineFieldsValues);
+const rigExec::RigExecOpDesc kStaticField = internalOps::WithSchema(
+    PacketDesc<StaticFieldState>("StaticWeightField", kStaticFieldPorts,
+                                 std::size(kStaticFieldPorts),
+                                 &RunStaticWeightField, kPacketFields,
+                                 std::size(kPacketFields), &PacketValues),
+    kStaticSchema);
+const rigExec::RigExecOpDesc kDynamicField = internalOps::WithSchema(
+    PacketDesc<DynamicFieldState>("DynamicWeightField", kDynamicFieldPorts,
+                                  std::size(kDynamicFieldPorts),
+                                  &RunDynamicWeightField, kPacketFields,
+                                  std::size(kPacketFields), &PacketValues),
+    kDynamicSchema);
+const rigExec::RigExecOpDesc kCombineFieldsOp = internalOps::WithSchema(
+    PacketDesc<std::vector<float>>(
+        "CombineWeightFields", kCombineFieldPorts,
+        std::size(kCombineFieldPorts), &RunCombineWeightFields,
+        kCombineFieldsFields, std::size(kCombineFieldsFields),
+        &CombineFieldsValues),
+    kCombineSchema);
 
 } // namespace
 

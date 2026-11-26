@@ -182,6 +182,7 @@ inline constexpr const char *const RigExecVec3fMathMover =
 inline constexpr const char *const RigExecVolumeCorrectMover =
     "RigExecVolumeCorrectMover";
 inline constexpr const char *const RigExecVolumeWeight = "RigExecVolumeWeight";
+inline constexpr const char *const RigExecWeightObject = "RigExecWeightObject";
 inline constexpr const char *const RigExecWrinkleMover = "RigExecWrinkleMover";
 inline constexpr const char *const RigExecXformable = "RigExecXformable";
 } // namespace SchemaTypeName
