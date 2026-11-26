@@ -11,6 +11,7 @@
 
 #include <iterator>
 #include <string>
+#include <vector>
 
 namespace rigExecOps {
 
@@ -306,10 +307,11 @@ ProviderRefreshOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         In<RigExecArray<Mat4d>>(io, ProviderRefreshBlockingParents());
     Mat4d identity;
     identity.SetIdentity();
-    RigExecArray<uint8_t> blocked(count);
+    auto &blocked = *static_cast<std::vector<uint8_t> *>(
+        rigExec::RigExecBatchState(batch, k));
+    blocked.assign(count, 0);
     size_t at = 0;
     for (size_t c = 0; c < count; ++c) {
-        blocked[c] = 0;
         for (uint32_t p = 0; p < counts.data[c]; ++p, ++at)
             if (!parents || at >= parents->Size() || (*parents)[at] != identity)
                 blocked[c] = 1;
@@ -326,7 +328,7 @@ ProviderRefreshOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         *In<PointFrame>(io, ProviderRefreshFinal()),
         In<PointFrame>(io, ProviderRefreshRaw()),
         In<PointFrame>(io, ProviderRefreshCurrent()), constrained,
-        carryBase.Data(), carryFinal.Data(), blocked.Data(), count,
+        carryBase.Data(), carryFinal.Data(), blocked.data(), count,
         &Out<PointFrame>(io, ProviderRefreshBaseOut()),
         &Out<PointFrame>(io, ProviderRefreshFinalOut()), carryBaseOut.Data(),
         carryFinalOut.Data(), &failedCarry);
@@ -491,6 +493,7 @@ const rigExec::RigExecOpDesc kProviderRefreshDesc = [] {
     d.portCount = std::size(kProviderRefreshPorts);
     d.runBatch = &RunProviderRefresh;
     d.validate = &CheckProviderRefresh;
+    d.state = StateOf<std::vector<uint8_t>>();
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kProviderRefreshFields;
     d.payloadFieldCount = std::size(kProviderRefreshFields);

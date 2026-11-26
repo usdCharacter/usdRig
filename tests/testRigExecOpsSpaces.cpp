@@ -12,6 +12,8 @@
 #include "rigExecOps/space/spaceOps.h"
 #include "rigExecRigTypes/rigTypes.h"
 
+#include "opAllocationCount.h"
+
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -250,6 +252,18 @@ TestProviderRefresh()
     CHECK(!h.Run({&before, &before, &raw, &degenerate, &none, &carry, &carry,
                   &blocking}));
     CHECK(h.error.find("ProviderRefresh") != std::string::npos);
+    PointFrame moving = current;
+    std::string steadyError;
+    CHECK(opAllocationCount::SteadyFrameAllocations(
+              ProviderRefresh(), &payload, ins,
+              {&before, &before, &raw, &current, &none, &carry, &carry,
+               &blocking},
+              ProviderRefreshFinalOut(), 3,
+              [&](int frame) {
+                  moving = Moved(2.0 + 0.25 * frame, 0, 0);
+                  return &moving;
+              },
+              &steadyError) == 0);
     payload.blockingCounts = {0, 0, 0};
     Harness mismatch(ProviderRefresh(), &payload, ins, outs);
     CHECK(mismatch.evaluator);
