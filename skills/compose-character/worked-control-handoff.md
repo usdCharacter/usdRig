@@ -112,7 +112,7 @@ an empty `property`: `/Demo/Rig/World/COG/Hips/HipRoot` is published but
 authored nothing, so its row records that it re-roots the leg IK chain and
 offers no channels.
 
-Derive the table and run the coverage gate:
+Derive the table and run the coverage and response gates:
 
 ```sh
 "$PY" - <<'PY'
@@ -124,6 +124,7 @@ folder = Path(os.environ.get('CHAR', 'scratch/handoff/character'))
 stage, rig = ex.open_rig(folder, ex.MODEL)
 Path(folder, ex.TABLE).write_text(json.dumps(ex.build_table(stage, rig), indent=2))
 ex.gate_coverage(folder, stage, rig)
+ex.gate_responses(folder, stage, rig)
 PY
 ```
 
@@ -131,19 +132,32 @@ It prints:
 
 ```text
 PASS coverage: 9 controls including /Demo/Rig/World/KneePole with avars:tx avars:ty avars:tz
+PASS responses: 45 isolated property poses moved exactly the points their rows claim at the suggested range
 ```
 
 The pole control is required, not optional: a leg Rig component publishes
 `/Demo/Rig/World/KneePole` with authored `avars:tx`, `avars:ty` and
 `avars:tz`, and the gate names it explicitly.
 
+`gate_responses` then proves the rows. It poses each channel alone, on the
+session layer, at the end of its suggested range, on a stage at rest, and
+requires the points that actually move to be exactly the set the row names;
+the points a row leaves at rest stay put to float noise. The claims hold for
+the measured fit and value only: in this fit the `FootIK` rotations and the
+pole's `avars:tx` and `avars:ty` move no stand-in point at all, and those
+rows say so and name the reason in `omitted_capability` rather than leaving
+it blank. A response claimed from a control's name instead of a measurement
+is the #96 finding 4 failure.
+
 ## 3. Suggested ranges versus enforced limits
 
 RigExec puts no numeric bound on a control avar. A value far outside any
-suggested range evaluates valid and finite and moves geometry — exactly as an
-in-range value does. The `suggested range` column is authoring guidance; the
-`enforced_limit` column is null unless the rig itself authors a limit. What
-the schema and kernels actually enforce:
+suggested range evaluates valid and finite, and it can move geometry — but it
+can also saturate: a downstream rig constraint caps the geometric response
+while still accepting the value, as the leg IK's `clampWithSoftness` reach
+limit does for a knee pole posed far past its range. The `suggested range`
+column is authoring guidance; the `enforced_limit` column is null unless the
+rig itself authors a limit. What the schema and kernels actually enforce:
 
 - `rigExec:unreachablePolicy = "clampWithSoftness"` on the two-bone IK
   solver: the only legal token value, and a soft limit on the goal's
@@ -235,41 +249,38 @@ Five stages, every command relative to the repository root with
 `bin/_env.sh` sourced. Run them from a relocated copy, not the original:
 
 ```sh
-MOVED=${MOVED:-scratch/handoff/moved/character}
+export MOVED=${MOVED:-scratch/handoff/moved/character}
 mkdir -p "$(dirname "$MOVED")"
 cp -r "$CHAR" "$MOVED"
 rm "$MOVED/demo_rig.components.usda"
 ```
 
-**Stage 1 — Fit.** The fit layer and the bindings JSON are the source of
-truth. Re-derive the bindings' `library` field for wherever the copy sits —
-a path relative to the bindings JSON, falling back to an absolute POSIX path
-on Windows when the library is on another drive:
+Export `$MOVED` so the shell and the Python blocks below resolve the same
+destination override. The `rm` belongs to preparing a scratch copy: it is
+what makes that copy a build from an absent start. The recipe itself never
+deletes or overwrites a generated layer — stage 2 refuses one.
+
+**Stage 1 — fit. Stage 2 — composition.** The fit layer and the bindings
+JSON are the source of truth and carry the relocated path. Run both stages
+through `rebuild`, the guarded sequence the example's gates exercise. It
+first refuses while `demo_rig.components.usda` exists — before rewriting the
+bindings or composing, so rerunning the recipe over an already-built copy
+leaves the bindings and the generated layer byte-identical. It then
+re-derives the bindings' `library` field for wherever the copy sits — a path
+relative to the bindings JSON, falling back to an absolute POSIX path on
+Windows when the library is on another drive — and regenerates the generated
+layer through the same `compose_assembly` the `compose.py` CLI runs. The
+generated layer is derived data, and the recipe is only proven when it
+creates that layer from an absent start:
 
 ```sh
 "$PY" - <<'PY'
-import json, os, sys
+import os, sys
 sys.path.insert(0, 'asset_lib/components')
-from compose import LIBRARY
+import example_control_handoff as ex
 from pathlib import Path
-dest = Path(os.environ.get('MOVED', 'scratch/handoff/moved/character'))
-path = dest / 'demo_rig.bindings.json'
-data = json.loads(path.read_text())
-try:
-    data['library'] = os.path.relpath(LIBRARY, dest).replace('\\', '/')
-except ValueError:  # Windows: library on another drive
-    data['library'] = Path(LIBRARY).resolve().as_posix()
-path.write_text(json.dumps(data, indent=2))
+ex.rebuild(Path(os.environ['MOVED']))
 PY
-```
-
-**Stage 2 — Composition.** Regenerate the generated layer; it is derived
-data, and the recipe is only proven if it creates the layer from an absent
-start:
-
-```sh
-"$PY" asset_lib/components/compose.py "$MOVED/demo_rig.bindings.json" \
-    "$MOVED/demo_rig.components.usda"
 ```
 
 **Stage 3 — Animation.** `demo_animation.usda` sublayers the model and keys
@@ -343,6 +354,17 @@ lacks:
 coverage gate: demo_rig.controls.json names a control the stage lacks: /Demo/Rig/World/KneePole
 ```
 
+Deleting the control runs the other way. Pruning the pole prim from the
+delivered fit layer is not the removal path: the composition's references
+recreate node prims from the bindings, so a rebuild brings the pole back and
+coverage still passes. Removing the control's entry from
+`demo_rig.bindings.json` is the removal path, and the composer then refuses
+the partial node set instead of building a rig without it:
+
+```text
+ValueError: Node roles must exactly match the leg manifest
+```
+
 **A recipe that only opens the prebuilt stage.** The rebuild gate requires
 the generated composition layer to be absent before the recipe and created
 by it. Running the recorded sequence over a copy that still has
@@ -352,8 +374,12 @@ by it. Running the recorded sequence over a copy that still has
 rebuild gate: demo_rig.components.usda must be absent before the recipe runs
 ```
 
-Opening a prebuilt stage is not a rebuild; it proves nothing about the fit,
-bindings, and composer being able to reproduce the rig. Run both gates:
+The guard is the recipe's own: the recorded recipe calls
+`example_control_handoff.rebuild`, which checks for the generated layer
+before it rewrites the bindings or composes, so the refusal leaves the
+bindings and the generated layer byte-identical. Opening a prebuilt stage is
+not a rebuild; it proves nothing about the fit, bindings, and composer being
+able to reproduce the rig. Run both gates:
 
 ```sh
 "$PY" - <<'PY'
@@ -372,8 +398,8 @@ PY
 They print:
 
 ```text
-PASS missing-pole-control: a dropped /Demo/Rig/World/KneePole row or scaffold prim fails with the control named
-PASS prebuilt-only-recipe: the recipe refuses a present demo_rig.components.usda
+PASS missing-pole-control: dropped /Demo/Rig/World/KneePole rows or scaffold prims fail with the control named; pruning only the fit prim returns it after a rebuild, and deleting its bindings entry fails with Node roles must exactly match the leg manifest
+PASS prebuilt-only-recipe: the recipe refuses a present demo_rig.components.usda and leaves the bindings and composition byte-identical
 ```
 
 ## 7. Omitted capabilities and checks that actually ran
@@ -396,7 +422,7 @@ face-varying normals that no Mover moves; fingers the component publishes
 but the character never modeled. A reader who is not told will assume the
 control they see does something, or that the thing they do not see exists.
 
-Report which checks actually ran and which did not. The six `PASS` lines
+Report which checks actually ran and which did not. The seven `PASS` lines
 below are the automated, numerical record of this walkthrough; a viewport
 look or a host render is a separate, host-side observation. If
 `bin/usdview.sh` never ran in this environment, say so in the delivery —
@@ -414,11 +440,12 @@ It prints, in gate order:
 
 ```text
 PASS coverage: 9 controls including /Demo/Rig/World/KneePole with avars:tx avars:ty avars:tz
+PASS responses: 45 isolated property poses moved exactly the points their rows claim at the suggested range
 PASS pose: session-layer /Demo/Rig/World/KneePole avars:tz=0.45 moved indices 3-4 by 0.268/0.094 and left index 6 bit-identical
 PASS no-write: 5 delivered .usda layers unchanged by the pose step
 PASS rebuild: relocated copy regenerated demo_rig.components.usda; rest and frame 25 are bit-identical, every keyed frame moves indices 0-4
-PASS missing-pole-control: a dropped /Demo/Rig/World/KneePole row or scaffold prim fails with the control named
-PASS prebuilt-only-recipe: the recipe refuses a present demo_rig.components.usda
+PASS missing-pole-control: dropped /Demo/Rig/World/KneePole rows or scaffold prims fail with the control named; pruning only the fit prim returns it after a rebuild, and deleting its bindings entry fails with Node roles must exactly match the leg manifest
+PASS prebuilt-only-recipe: the recipe refuses a present demo_rig.components.usda and leaves the bindings and composition byte-identical
 ```
 
 Exit is non-zero on the first gate that fails, and each gate's diagnostic

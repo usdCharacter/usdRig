@@ -4,8 +4,9 @@
 
 Composes a small /Demo stand-in character from the torso, spine and leg
 components inside a temporary directory, derives demo_rig.controls.json from
-the composed public controls, and asserts the six handoff gates: coverage,
-pose, no-write, rebuild, missing-pole-control and prebuilt-only-recipe.
+the composed public controls, and asserts the seven handoff gates: coverage,
+responses, pose, no-write, rebuild, missing-pole-control and
+prebuilt-only-recipe.
 Prints one PASS line per gate and exits non-zero on the first failure.
 Rendering stays host-side (bin/usdview.sh demo_model.usda); the automated
 gates here are numerical.
@@ -48,6 +49,7 @@ DIAG_TABLE_OMITS = 'coverage gate: demo_rig.controls.json omits /Demo/Rig/World/
 DIAG_TABLE_NAMES = ('coverage gate: demo_rig.controls.json names a control the '
                     'stage lacks: /Demo/Rig/World/KneePole')
 DIAG_PREBUILT = 'rebuild gate: demo_rig.components.usda must be absent before the recipe runs'
+DIAG_BINDING_REMOVAL = 'Node roles must exactly match the leg manifest'
 
 COLORS = {'torso': (.85, .45, .15), 'spine': (.25, .7, .3), 'leg': (.25, .45, .9)}
 SCALES = {'torso': .18, 'spine': .16, 'leg': .12}
@@ -102,23 +104,54 @@ ROW_UNITS = 'stage length unit (degrees for avars:r*, avars:rspin)'
 TRANS_RANGE = (-0.45, 0.45)
 POLE_RANGE = (-0.6, 0.6)
 ROT_RANGE = (-45.0, 45.0)
-RESPONSE = {
-    'World': 'rig-wide offset only; movers measure against World, so the stand-in '
-             'points are not moved directly',
-    'COG': 'offsets the hips and spine chains; indices 1-2 (torso weight) and '
-           '0-1 (spine weight)',
-    'Hips': 'indices 1-2 via the torso weight',
-    'HipRoot': 're-roots the leg IK chain; no authored channels on this control',
-    'Spine1': 'offsets the chest chain; indices 0-1 via the spine weight',
-    'Spine2': 'offsets the chest; indices 0-1 via the spine weight',
-    'Chest': 'indices 0-1 via the spine weight',
-    'FootIK': 'swings the foot goal; indices 3-4 via the leg weight',
-    'KneePole': 'knee direction; indices 3-4 via the leg weight',
+TRANSFORM_CHANNELS = ('avars:tx', 'avars:ty', 'avars:tz')
+ROTATION_CHANNELS = ('avars:rx', 'avars:ry', 'avars:rz')
+# The stand-in points each property moves when posed alone at its suggested
+# range end in this fit. gate_responses poses every row in isolation and
+# requires exactly these indices to move; never write a table claim this gate
+# has not measured.
+CLAIMS = {
+    'World': {c: () for c in TRANSFORM_CHANNELS + ROTATION_CHANNELS},
+    'COG': {'avars:tx': (0, 1, 2, 3, 4), 'avars:ty': (0, 1, 2, 3, 4),
+            'avars:tz': (0, 1, 2, 3, 4), 'avars:rx': (0, 1, 2, 3, 4),
+            'avars:ry': (1, 2), 'avars:rz': (0, 1, 2, 3, 4)},
+    'Hips': {'avars:tx': (1, 2, 3, 4), 'avars:ty': (1, 2, 3, 4),
+             'avars:tz': (1, 2, 3, 4), 'avars:rx': (1, 2), 'avars:ry': (1, 2),
+             'avars:rz': (1, 2)},
+    'HipRoot': {},
+    'Spine1': {'avars:tx': (0, 1), 'avars:ty': (0, 1), 'avars:tz': (0, 1),
+               'avars:rx': (0, 1), 'avars:ry': (1,), 'avars:rz': (0, 1)},
+    'Spine2': {'avars:tx': (0, 1), 'avars:ty': (0, 1), 'avars:tz': (0, 1),
+               'avars:rx': (0, 1), 'avars:ry': (1,), 'avars:rz': (0, 1)},
+    'Chest': {'avars:tx': (0, 1), 'avars:ty': (0, 1), 'avars:tz': (0, 1),
+              'avars:rx': (1,), 'avars:ry': (1,), 'avars:rz': (1,)},
+    'FootIK': {'avars:tx': (3, 4), 'avars:ty': (3, 4), 'avars:tz': (3, 4),
+               'avars:rx': (), 'avars:ry': (), 'avars:rz': ()},
+    'KneePole': {'avars:tx': (), 'avars:ty': (), 'avars:tz': (3, 4)},
 }
+NO_RESPONSE = 'no measured response on the stand-in points at the suggested range'
+ROLE = {'World': 'rig-wide offset',
+        'COG': 'offsets the hips and spine chains',
+        'Hips': 'drives the torso deform and ports the leg',
+        'HipRoot': 're-roots the leg IK chain; no authored channels on this control',
+        'Spine1': 'offsets the chest chain',
+        'Spine2': 'offsets the chest',
+        'Chest': 'drives the spine deform',
+        'FootIK': 'moves the foot goal',
+        'KneePole': 'steers the knee bend'}
+FOOTIK_OMISSION = "the foot goal's rotations reach no stand-in weight: no foot " \
+                  'or toe weights are authored'
+# Why a zero-response row moves nothing; the row's omitted_capability. The
+# foot rotation disclosure also stands in the top-level OMITTED list.
+OMIT_ROW = {
+    'World': 'movers measure against World, so a World offset carries the '
+             'whole rig and no evaluated point changes',
+    'FootIK': FOOTIK_OMISSION,
+    'KneePole': 'the pole reaches the stand-in through avars:tz: a tx or ty '
+                'pose at the suggested range leaves every point at rest'}
 OMITTED = ['no arm, hand or finger instances',
            'no eye, gaze or blink instance',
-           "the foot goal's rotations reach no stand-in weight: no foot or toe "
-           'weights are authored']
+           FOOTIK_OMISSION]
 
 
 def manifest(component):
@@ -340,6 +373,29 @@ def range_of(control, channel):
     return POLE_RANGE if control == 'KneePole' else TRANS_RANGE
 
 
+def index_text(indices):
+    if len(indices) == 1:
+        return 'point ' + str(indices[0])
+    if indices == tuple(range(indices[0], indices[-1] + 1)):
+        return 'points %d-%d' % (indices[0], indices[-1])
+    return 'points ' + ', '.join(str(i) for i in indices)
+
+
+def response_for(control, channel):
+    if not channel:
+        return ROLE[control]
+    moves = CLAIMS[control][channel]
+    if moves:
+        return ROLE[control] + '; moves ' + index_text(moves) + ' at the suggested range'
+    return ROLE[control] + '; ' + NO_RESPONSE
+
+
+def omitted_for(control, channel):
+    if channel and not CLAIMS[control][channel]:
+        return OMIT_ROW[control]
+    return ''
+
+
 def build_table(stage, rig):
     controls = stage_controls(stage, rig.evaluate(-1))
     rows = []
@@ -353,8 +409,8 @@ def build_table(stage, rig):
                          'units': ROW_UNITS,
                          'suggested_range': list(range_of(control, channel)),
                          'enforced_limit': None,
-                         'expected_mesh_response': RESPONSE[control],
-                         'omitted_capability': ''})
+                         'expected_mesh_response': response_for(control, channel),
+                         'omitted_capability': omitted_for(control, channel)})
     return {'version': 1,
             'stage': MODEL,
             'rig': RIG,
@@ -403,6 +459,50 @@ def gate_coverage(folder, stage, rig):
     assert pole == POLE_CHANNELS, 'coverage gate: ' + KNEE_POLE + ' channels are ' + str(pole)
     print('PASS coverage: %d controls including %s with %s'
           % (len(controls), KNEE_POLE, ' '.join(POLE_CHANNELS)))
+
+
+ROW_SHIFT = 1e-3  # every claimed mover measured >= 2.9e-3 at the range end
+ROW_REST = 1e-5   # a point left at rest measured <= 3.4e-8 (float noise) here
+
+
+def gate_responses(folder, stage, rig):
+    rows = json.loads((folder / TABLE).read_text())['controls']
+    base = points_of(rig.evaluate(-1))
+    session = stage.GetSessionLayer()
+    probes = 0
+    for row in rows:
+        path, channel = row['prim'], row['property']
+        if not channel:
+            continue
+        control = path.rsplit('/', 1)[1]
+        assert control in CLAIMS and channel in CLAIMS[control], \
+            'response gate: no measured claim for ' + path + ' ' + channel
+        claimed = CLAIMS[control][channel]
+        # Isolate the row: one channel on the session layer, evaluated at rest,
+        # then removed before the next row.
+        anon = Sdf.Layer.CreateAnonymous('.usda')
+        session.subLayerPaths = list(session.subLayerPaths) + [anon.identifier]
+        stage.SetEditTarget(Usd.EditTarget(anon))
+        stage.GetPrimAtPath(path).GetAttribute(channel).Set(row['suggested_range'][1])
+        posed = rig.evaluate(-1)
+        stage.SetEditTarget(Usd.EditTarget(session))
+        session.subLayerPaths = [s for s in session.subLayerPaths
+                                 if s != anon.identifier]
+        assert posed.valid and posed.reference_mismatches == 0, \
+            'response gate: posing ' + path + ' ' + channel + ' failed the rig'
+        moved = displacement(base, points_of(posed))
+        for index in claimed:
+            assert moved[index] > ROW_SHIFT, \
+                'response gate: ' + path + ' ' + channel + ' leaves claimed point ' \
+                + str(index) + ' at ' + str(moved[index])
+        for index, shift in enumerate(moved):
+            if index not in claimed:
+                assert shift < ROW_REST, \
+                    'response gate: ' + path + ' ' + channel + ' moves point ' \
+                    + str(index) + ' the table leaves at rest'
+        probes += 1
+    print('PASS responses: %d isolated property poses moved exactly the points '
+          'their rows claim at the suggested range' % probes)
 
 
 def gate_pose(stage, rig, keyed):
@@ -518,13 +618,44 @@ def gate_missing_pole(root, folder, stage, rig, nodes, attachments):
     else:
         raise AssertionError('missing-pole-control gate: a scaffold without '
                              + KNEE_POLE + ' was accepted')
-    print('PASS missing-pole-control: a dropped %s row or scaffold prim fails with '
-          'the control named' % KNEE_POLE)
+    # Pruning the pole prim from the delivered fit layer is not a control
+    # removal: the composition references recreate node prims, so a rebuild
+    # returns the control.
+    pruned_fit = root / 'pruned-fit'
+    shutil.copytree(str(folder), str(pruned_fit))
+    (pruned_fit / COMPOSITION).unlink()
+    fit_stage = Usd.Stage.Open(str(pruned_fit / FIT))
+    assert fit_stage.RemovePrim(KNEE_POLE), \
+        'missing-pole-control gate: no ' + KNEE_POLE + ' prim to prune in ' + FIT
+    fit_stage.GetRootLayer().Save()
+    pruned_stage, pruned_rig = rebuild(pruned_fit)
+    assert KNEE_POLE in stage_controls(pruned_stage, pruned_rig.evaluate(-1)), \
+        'missing-pole-control gate: the rebuild dropped the pruned-away control'
+    # The removal path is the bindings entry: the composer refuses a partial
+    # node set instead of building a rig without the control.
+    removed = root / 'removed-pole'
+    shutil.copytree(str(folder), str(removed))
+    (removed / COMPOSITION).unlink()
+    data = json.loads((removed / BINDINGS).read_text())
+    data['instances']['leg']['nodes'].pop('Control_KneePole')
+    (removed / BINDINGS).write_text(json.dumps(data, indent=2))
+    try:
+        rebuild(removed)
+    except ValueError as error:
+        assert str(error) == DIAG_BINDING_REMOVAL, str(error)
+    else:
+        raise AssertionError('missing-pole-control gate: a rebuild after deleting '
+                             + KNEE_POLE + "'s bindings entry produced a rig")
+    print('PASS missing-pole-control: dropped %s rows or scaffold prims fail with '
+          'the control named; pruning only the fit prim returns it after a '
+          'rebuild, and deleting its bindings entry fails with %s' %
+          (KNEE_POLE, DIAG_BINDING_REMOVAL))
 
 
 def gate_prebuilt(root, folder):
     dest = root / 'prebuilt-checkout'
     shutil.copytree(str(folder), str(dest))
+    before = {name: (dest / name).read_bytes() for name in (BINDINGS, COMPOSITION)}
     try:
         rebuild(dest)
     except AssertionError as error:
@@ -532,7 +663,11 @@ def gate_prebuilt(root, folder):
     else:
         raise AssertionError('prebuilt-only-recipe gate: opening the prebuilt stage '
                              'without regenerating the composition was accepted')
-    print('PASS prebuilt-only-recipe: the recipe refuses a present %s' % COMPOSITION)
+    for name in (BINDINGS, COMPOSITION):
+        assert (dest / name).read_bytes() == before[name], \
+            'prebuilt-only-recipe gate: the refusal changed ' + name
+    print('PASS prebuilt-only-recipe: the recipe refuses a present %s and leaves '
+          'the bindings and composition byte-identical' % COMPOSITION)
 
 
 def main():
@@ -551,6 +686,7 @@ def main():
         digests = layer_digests(folder)
         keyed = {(nodes[i][role], channel) for i, role, channel, _ in ANIM_KEYS}
         gate_coverage(folder, stage, rig)
+        gate_responses(folder, stage, rig)
         gate_pose(stage, rig, keyed)
         gate_no_write(digests, folder)
         gate_rebuild(root, folder)

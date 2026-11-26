@@ -209,10 +209,16 @@ minus the configuration set `avars:defaultSpace`, `avars:rotationOrder`,
 incomplete. Spell the columns: prim and property, space, units, suggested
 range, expected mesh response, omitted capability.
 
+Fill each property's expected mesh response from an isolated pose — set that
+channel alone to the end of its suggested range and record which points
+move — never from the control's name. Where a channel moves nothing, the row
+says so and names the reason in omitted capability.
+
 Suggested ranges are not limits: RigExec puts no numeric bound on a control
-avar, and an out-of-range value evaluates valid and moves geometry. Only
-authored rigging enforces — for example the two-bone IK's
-`rigExec:unreachablePolicy = "clampWithSoftness"`, a weight's
+avar, and an out-of-range value evaluates valid and finite; it can move
+geometry, or a downstream rig constraint can cap the geometric response while
+still accepting the value. Only authored rigging enforces — for example the
+two-bone IK's `rigExec:unreachablePolicy = "clampWithSoftness"`, a weight's
 `rigExec:rangePolicy` (`strict` or `clamp`), the signed 1e-4 floor on
 `avars:sx/sy/sz`, `allowedTokens` on token attributes, or a
 `RigExecFloatMathMover` with `rigExec:operation = "clamp"` the rig wires up.
@@ -229,15 +235,20 @@ delivered layer before and after the pose step.
 Record the rebuild as five checkout-relative stages run with `bin/_env.sh`
 sourced: fit (the fit layer and bindings JSON are the truth; re-derive the
 bindings' component-library path for wherever the character sits),
-composition (regenerate the generated layer from an absent start with
-`python asset_lib/components/compose.py <bindings> <composition>`),
+composition (run the guarded `rebuild()` helper —
+`example_control_handoff.rebuild(destination)` — against the actual
+destination copy: it refuses while the generated layer already exists,
+before rewriting the bindings, then regenerates it from an absent start),
 animation (segments such as walk and run are named frame sets of one
 timeline; the rebuild never rewrites them), rendering (`bin/usdview.sh
 <path>` is the host-side viewer; no automated step requires a window), and
 verification (from a relocated copy, rest and a keyed frame must compare
-bit-identical to the delivered build). A handoff fails its gates when
+bit-identical to the delivered build). A handoff fails its gates when an
+isolated channel pose does not move exactly the points its row claims, when
 removing a published control's rows, or its scaffold prim, does not fail the
-table check while naming that control, and when a "rebuild" merely reopens
+table check while naming that control, when pruning only the fit prim is
+mistaken for removal — the composition's references recreate the node, and
+the removal path is the bindings entry — or when a "rebuild" merely reopens
 the prebuilt generated layer instead of regenerating it.
 
 Disclose omitted capabilities in the table and the delivery: unbound eye,
