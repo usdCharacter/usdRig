@@ -27,6 +27,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(SplineIkPreserveVolume)
 RIGEXEC_DEFINE_PORT_HANDLE(SplineIkMidFollow)
 RIGEXEC_DEFINE_PORT_HANDLE(SplineIkRoll)
 RIGEXEC_DEFINE_PORT_HANDLE(SplineIkTwist)
+RIGEXEC_DEFINE_PORT_HANDLE(SplineIkMinLengthRatio)
 RIGEXEC_DEFINE_PORT_HANDLE(SplineIkOut)
 
 namespace {
@@ -43,11 +44,7 @@ using namespace opIo;
 using namespace fieldIo;
 
 /// SplineIk's declared fields, in saved order.
-enum SplineField : uint32_t {
-    kRestLengthChain,
-    kMinLengthRatio,
-    kAimRootTangent
-};
+enum SplineField : uint32_t { kRestLengthChain, kAimRootTangent };
 
 struct Rest {
     std::array<Vec3d, 4> cvs{};
@@ -101,7 +98,6 @@ SplineIkOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     SplineIkPayload p;
     p.restLengthChain = FlagAt(batch, kRestLengthChain, k);
-    p.minLengthRatio = ValueAt<double>(batch, kMinLengthRatio, k);
     p.aimRootTangent = FlagAt(batch, kAimRootTangent, k);
     const auto *restJoints =
         In<RigExecArray<PointFrame>>(io, SplineIkRestJoints());
@@ -126,7 +122,7 @@ SplineIkOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     params.midFollowWeight = InOr(io, SplineIkMidFollow(), 0.5);
     params.roll = InOr(io, SplineIkRoll(), 0.0);
     params.twist = InOr(io, SplineIkTwist(), 0.0);
-    params.minLengthRatio = p.minLengthRatio;
+    params.minLengthRatio = InOr(io, SplineIkMinLengthRatio(), 0.0);
     params.aimRootTangent = p.aimRootTangent;
     Result result;
     // A false solve still lays out every joint, flagged degenerate.
@@ -191,6 +187,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "midFollowWeight"},
     {&SplineIkRoll(), &rigExecStd::DoubleType(), kOptional, "roll"},
     {&SplineIkTwist(), &rigExecStd::DoubleType(), kOptional, "twist"},
+    {&SplineIkMinLengthRatio(), &rigExecStd::DoubleType(), kOptional,
+     "minLengthRatio"},
     {&SplineIkOut(), &rigExecRig::PointFrameArrayType(), kRigExecPortOutput,
      "out", rigExec::RigExecOutputBound::Input, &SplineIkRestJoints()},
 };
@@ -200,13 +198,11 @@ SplineValues(const void *payload, RigExecFieldValues &out)
 {
     const auto &p = *static_cast<const SplineIkPayload *>(payload);
     SetFlag(out, kRestLengthChain, p.restLengthChain);
-    out.Set(kMinLengthRatio, p.minLengthRatio);
     SetFlag(out, kAimRootTangent, p.aimRootTangent);
 }
 
 const rigExec::RigExecFieldDesc kFields[] = {
     Flag("restLengthChain"),
-    Value("minLengthRatio", rigExecStd::DoubleType()),
     Flag("aimRootTangent"),
 };
 
@@ -221,7 +217,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kFields;
     d.payloadFieldCount = std::size(kFields);
-    d.payloadVersion = 1;
+    d.payloadVersion = 2;
     d.payloadValues = &SplineValues;
     return d;
 }();

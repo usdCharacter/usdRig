@@ -2034,6 +2034,30 @@ SchemaResourceDir(const std::string &examplesDir)
 #endif
 }
 
+/// A ribbon's rigExec:sampleCount connected to an avar would change the
+/// solver's frame count from frame to frame: compile refuses the solver.
+void
+CheckConnectedSampleCountIsRefused()
+{
+    const UsdStageRefPtr stage = MakeRibbonRig();
+    const UsdPrim control =
+        Define(stage, "/Asset/Rig/Controls/Samples", "RigExecControl");
+    control.CreateAttribute(TfToken("avars:count"), SdfValueTypeNames->Int)
+        .Set(6);
+    stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/SpineRibbon"))
+        .GetAttribute(TfToken("rigExec:sampleCount"))
+        .SetConnections(
+            {control.GetPath().AppendProperty(TfToken("avars:count"))});
+    RigExecRigEvaluator rig(stage, kRigPath);
+    std::vector<std::string> errors;
+    rig.Compile(&errors);
+    bool named = false;
+    for (const std::string &e : errors)
+        named = named || e.find("rigExec:sampleCount must not be time-sampled "
+                                "or connected") != std::string::npos;
+    CHECK(named);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2175,6 +2199,8 @@ main(int argc, char **argv)
                   MakeGuideOnlyBlendRig, turnsDrag);
         }
     }
+
+    CheckConnectedSampleCountIsRefused();
 
     // The drags: one per per-frame input this group added to a solver.
     CheckDrag("a drag on inputs:twistTurns", MakeTwistRig,

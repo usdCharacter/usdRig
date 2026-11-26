@@ -222,11 +222,10 @@ IkPayload(const RigExecSolverRecord &s)
 }
 
 rigExecOps::SplineIkPayload
-SplinePayload(const RigExecSolverRecord &s, const RigExecSolverInputs &input)
+SplinePayload(const RigExecSolverRecord &s)
 {
     rigExecOps::SplineIkPayload p;
     p.restLengthChain = s.splineRestMode == RigExecSplineIkRestLength::Chain;
-    p.minLengthRatio = RigExecSolverSplineParams(s, input).minLengthRatio;
     p.aimRootTangent = s.splineParams.aimRootTangent;
     return p;
 }
@@ -569,9 +568,8 @@ RigExecAddSolverOp(const RigExecSolverRecord &s,
     }
     case RigExecSolverKind::SplineIk: {
         using namespace rigExecOps;
-        const SplineIkPayload payload = SplinePayload(s, input);
+        const SplineIkPayload payload = SplinePayload(s);
         r.restLengthChain = payload.restLengthChain;
-        r.minLengthRatio = payload.minLengthRatio;
         r.aimRootTangent = payload.aimRootTangent;
         const RigExecNodeId id = b.AddOp(SplineIk(), &payload);
         r.restJoints = b.BindInput(id, SplineIkRestJoints());
@@ -586,6 +584,7 @@ RigExecAddSolverOp(const RigExecSolverRecord &s,
         r.midFollow = b.BindInput(id, SplineIkMidFollow());
         r.roll = b.BindInput(id, SplineIkRoll());
         r.twist = b.BindInput(id, SplineIkTwist());
+        r.minLengthRatio = b.BindInput(id, SplineIkMinLengthRatio());
         r.out = b.BindOutput(id, SplineIkOut());
         break;
     }
@@ -762,11 +761,10 @@ RigExecWriteSolverOpInputs(const RigExecSolverRecord &s,
                WriteLive(s, node, scratch, e, error);
     }
     case RigExecSolverKind::SplineIk: {
-        const rigExecOps::SplineIkPayload payload = SplinePayload(s, input);
+        const rigExecOps::SplineIkPayload payload = SplinePayload(s);
         const RigExecSplineIkParams params =
             RigExecSolverSplineParams(s, input);
         if (payload.restLengthChain != node.restLengthChain ||
-            !Same(payload.minLengthRatio, node.minLengthRatio) ||
             payload.aimRootTangent != node.aimRootTangent)
             return Fail(error, "spline IK settings moved");
         // The rests carried by the space's rest-to-pose map.
@@ -793,7 +791,8 @@ RigExecWriteSolverOpInputs(const RigExecSolverRecord &s,
                Set(e, node.preserveVolume, params.preserveVolume, error) &&
                Set(e, node.midFollow, params.midFollowWeight, error) &&
                Set(e, node.roll, params.roll, error) &&
-               Set(e, node.twist, params.twist, error);
+               Set(e, node.twist, params.twist, error) &&
+               Set(e, node.minLengthRatio, params.minLengthRatio, error);
     }
     case RigExecSolverKind::Skeleton2d: {
         if (node.hasStart != s.hasStart || !SameSkeleton(s, node))

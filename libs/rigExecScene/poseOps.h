@@ -33,7 +33,7 @@ struct RigExecSolverOpNode {
     RigExecInputId start, end, startRest, endRest, weights, turns;
     RigExecInputId posed, restCurve, jointRests, jointRestLive;
     RigExecInputId restJoints, restRoot, restMid, restEnd, mid, volumeWeights,
-        preserveVolume, midFollow, roll;
+        preserveVolume, midFollow, roll, minLengthRatio;
     RigExecInputId startPose, externalRests, externalPoses, channels, selectors,
         groupSelectors;
     RigExecOutputId out;
@@ -47,7 +47,7 @@ struct RigExecSolverOpNode {
     /// a frame whose settings moved.
     std::vector<int> parents;
     bool scaleSegments = false, softDistancePolicy = false;
-    double scaleCalibration = 0.0, minLengthRatio = 0.0;
+    double scaleCalibration = 0.0;
     bool restLengthChain = false, aimRootTangent = false, logScale = false;
     std::vector<char> blendLive;
     int sampleCount = 0;

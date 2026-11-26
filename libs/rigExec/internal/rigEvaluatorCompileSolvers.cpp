@@ -153,13 +153,14 @@ RigExecRigEvaluator::_CompileBindSolverJoints(_CompileAttempt &attempt)
                 }
                 for (const TfToken &name : cardinalityAttrs) {
                     const UsdAttribute a = solver.GetAttribute(name);
-                    if (a && a.GetNumTimeSamples() > 0) {
+                    if (a && (a.GetNumTimeSamples() > 0 ||
+                              a.HasAuthoredConnections())) {
                         return attempt.Fail(
                             solver.GetTypeName().GetString() + " " +
                                 solver.GetPath().GetString() + ": " +
                                 name.GetString() +
-                                " must not be time-sampled (it defines frame "
-                                "cardinality)",
+                                " must not be time-sampled or connected (it "
+                                "defines frame cardinality)",
                             {solver.GetPath()});
                     }
                 }

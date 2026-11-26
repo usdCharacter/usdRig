@@ -2935,7 +2935,7 @@ TestSplineIk()
         for (const bool variant : {false, true}) {
             SplineIkPayload payload;
             payload.restLengthChain = variant;
-            payload.minLengthRatio = variant ? 0.6 : 0.0;
+            const double minLength = variant ? 0.6 : 0.0;
             payload.aimRootTangent = variant;
             const RigExecSplineIkRest rest = RigExecSplineIkMakeRest(
                 joints, restRoot, restMid, restEnd, volume,
@@ -2946,7 +2946,7 @@ TestSplineIk()
             params.midFollowWeight = follow;
             params.roll = roll;
             params.twist = twist;
-            params.minLengthRatio = payload.minLengthRatio;
+            params.minLengthRatio = minLength;
             params.aimRootTangent = payload.aimRootTangent;
             RigExecSplineIkResult expected;
             RigExecSolveSplineIk(rest, {root, mid, end}, params, &expected);
@@ -2955,11 +2955,12 @@ TestSplineIk()
                        &SplineIkRestMid(), &SplineIkRestEnd(), &SplineIkRoot(),
                        &SplineIkMid(), &SplineIkEnd(), &SplineIkVolumeWeights(),
                        &SplineIkPreserveVolume(), &SplineIkMidFollow(),
-                       &SplineIkRoll(), &SplineIkTwist()},
+                       &SplineIkRoll(), &SplineIkTwist(),
+                       &SplineIkMinLengthRatio()},
                       SplineIkOut(), &payload);
             CHECK(full.Run({&restJoints, &rigRestRoot, &rigRestMid, &rigRestEnd,
                             &rigRoot, &rigMid, &rigEnd, &volumeArray, &preserve,
-                            &follow, &roll, &twist},
+                            &follow, &roll, &twist, &minLength},
                            &actual));
             CHECK(actual.frames.Size() == 6 && actual.rests.Size() == 6);
             for (size_t i = 0; i < 6 && i < actual.frames.Size(); ++i) {
@@ -2967,13 +2968,13 @@ TestSplineIk()
                 CHECK(SameBits(joints[i].points, actual.rests[i]));
             }
 
-            // Defaults: no volume weights, follow 0.5, no roll or twist.
+            // Defaults: no volume weights, follow 0.5, no roll, twist or
+            // length floor.
             const RigExecSplineIkRest bareRest = RigExecSplineIkMakeRest(
                 joints, restRoot, restMid, restEnd, {},
                 variant ? RigExecSplineIkRestLength::Chain
                         : RigExecSplineIkRestLength::Curve);
             RigExecSplineIkParams bareParams;
-            bareParams.minLengthRatio = payload.minLengthRatio;
             bareParams.aimRootTangent = payload.aimRootTangent;
             RigExecSolveSplineIk(bareRest, {root, mid, end}, bareParams,
                                  &expected);

@@ -481,7 +481,6 @@ TestFilledPayloads()
         CheckRoundTrip(Op(SingleChainIk()), &s);
         SplineIkPayload sp;
         sp.restLengthChain = true;
-        sp.minLengthRatio = 0.75;
         CheckRoundTrip(Op(SplineIk()), &sp);
     }
     {
@@ -679,11 +678,10 @@ TestSavedBytes()
         s.preserveJointOrientation = true;
         CheckSaved(SingleChainIk(), &s, "010000000001");
         SplineIkPayload sp;
-        CheckSaved(SplineIk(), &sp, "0100000000000000000000000000");
+        CheckSaved(SplineIk(), &sp, "020000000000");
         sp.restLengthChain = true;
-        sp.minLengthRatio = 0.75;
         sp.aimRootTangent = true;
-        CheckSaved(SplineIk(), &sp, "0100000001000000000000e83f01");
+        CheckSaved(SplineIk(), &sp, "020000000101");
     }
     {
         ConstraintPayload p;
