@@ -856,8 +856,109 @@ ProbeHarmonics(const B &b, int walk)
                 true);
 }
 
-// Constraint: SingleChainIk keeps its kernel record and inputs, so they are
-// replayed directly; MatrixMover runs its own op. Every other frame kernel is
+// SingleChainIk with every input rebuilt from the program as the step
+// gathers it: the chain's frame versions, the effector and pole objects
+// through the host's resolvers, the rests (live or composed), the envelope;
+// then the rest-derived preparation and the op. Compared with the chain the
+// step solved and with every slot its commit published.
+void
+ProbeSingleChainIk(const B &b, int walk, RigExecPoseOpRunner &runner)
+{
+    const auto &c = b.constraints[size_t(b.walkSteps[size_t(walk)].index)];
+    const auto &commit = b.commits[size_t(walk)];
+    const std::string kind = TypeName(c.type);
+    if (c.kernelResult.chain.empty()) {
+        Unprobed("Constraint", kind, "the kernel did not run");
+        return;
+    }
+    const BakedPoseInputs in(&b);
+    eval::PoseIkChainFacts ik;
+    if (!in.ikChainFacts(size_t(walk), &ik) ||
+        commit.targetReads.size() != ik.targetSlots.size()) {
+        Unprobed("Constraint", kind, "a chain the step could not gather");
+        return;
+    }
+    const auto facts = in.constraintFacts(size_t(walk));
+    std::vector<RigExecPointFrame> chain;
+    for (const uint32_t read : commit.targetReads)
+        chain.push_back(b.fin[size_t(read)]);
+    RigExecPointFrame effector;
+    bool usable =
+        in.resolveIkEffector(size_t(walk), &effector.points, &effector.flags);
+    GfVec3d pole(0.0, 1.0, 0.0);
+    double twist = 0.0;
+    if (ik.ikMode == 0)
+        in.ikPoleVector(size_t(walk), &pole, &twist);
+    if (usable && ik.ikMode == 0 && ik.poleModeObject) {
+        usable = !ik.poleObjects.empty() && facts.arrays.poleOk;
+        GfVec3d sum(0.0);
+        double total = 0.0;
+        for (size_t k = 0; usable && k < ik.poleObjects.size(); ++k) {
+            RigExecPointFrame source;
+            usable = in.ikPoleBounds(size_t(walk), k) &&
+                     k < facts.arrays.poleWeightCount &&
+                     in.resolveIkPole(size_t(walk), k, &source.points,
+                                      &source.flags) &&
+                     std::isfinite(facts.arrays.poleWeights[k]) &&
+                     facts.arrays.poleWeights[k] >= 0;
+            if (usable) {
+                sum = sum + source.points[0] * facts.arrays.poleWeights[k];
+                total += facts.arrays.poleWeights[k];
+            }
+        }
+        usable = usable && total > 0;
+        if (usable)
+            pole = sum * (1.0 / total);
+    }
+    std::vector<RigExecPointFrame> prepared;
+    const std::vector<RigExecPointFrame> *solve = &chain;
+    if (usable && !ik.useAnimatedTs) {
+        std::vector<RigExecPointFrame> rests;
+        for (size_t k = 0; k < ik.targetSlots.size(); ++k)
+            rests.push_back(k < ik.ikRestLive.size() && ik.ikRestLive[k]
+                                ? chain[k]
+                                : b.restFrames[size_t(ik.targetSlots[k])]);
+        usable = RigExecPrepareRestDerivedIkChain(chain, rests, &prepared);
+        solve = &prepared;
+    }
+    const double weight = ConstraintEnvelope(b, c);
+    if (!usable || !RigExecBakedLeafRead(b, c.enabled) || !(weight > 0)) {
+        Unprobed("Constraint", kind, "a step that solved nothing");
+        return;
+    }
+    RigExecConstraintRecord record;
+    record.kind = RigExecConstraintKind::SingleChainIk;
+    record.singleChain.mode = c.ikMode;
+    record.singleChain.pole = pole;
+    record.singleChain.twistDegrees = twist;
+    record.singleChain.weight = weight;
+    record.singleChain.preserveJointOrientation = c.preserveJointOrientation;
+    record.singleChain.stretch = ik.stretch;
+    RigExecConstraintInputs inputs;
+    inputs.chain = *solve;
+    inputs.effector = effector;
+    RigExecConstraintResult result;
+    std::string error;
+    const bool ran =
+        RigExecRunConstraintOp(record, inputs, runner, &result, &error);
+    RigExecPointFrameArray bakedChain, opChain;
+    bakedChain.frames = c.kernelResult.chain;
+    if (ran)
+        opChain.frames = result.chain;
+    Compare("Constraint", kind, c.pathText, VtValue(bakedChain),
+            VtValue(opChain), false);
+    for (size_t k = 0;
+         ran && k < c.targetSlots.size() && k < result.chain.size(); ++k)
+        for (size_t pos = 0; pos < commit.slots.size(); ++pos)
+            if (commit.slots[pos] == c.targetSlots[k] && commit.present[pos])
+                Compare("Constraint", kind + " slots",
+                        c.pathText + " " + std::to_string(k),
+                        VtValue(commit.frames[pos]), VtValue(result.chain[k]),
+                        false);
+}
+
+// Constraint: SingleChainIk rebuilds its inputs (ProbeSingleChainIk);
+// MatrixMover runs its own op. Every other frame kernel is
 // rebuilt from the scene record and the frames the step read (a source or
 // world-up object read off the stage resolved as the host resolves it, the
 // rigExec:space carry composed as the step composes it), and compared on
@@ -887,29 +988,7 @@ ProbeConstraint(const B &b)
         RigExecPoseOpRunner runner;
         std::string error;
         if (c.singleChainIk) {
-            if (c.kernelResult.chain.empty()) {
-                Unprobed("Constraint", kind, "the kernel did not run");
-                continue;
-            }
-            RigExecConstraintResult result;
-            const bool ran = RigExecRunConstraintOp(
-                c.kernelRecord, c.kernelInputs, runner, &result, &error);
-            RigExecPointFrameArray bakedChain, opChain;
-            bakedChain.frames = c.kernelResult.chain;
-            if (ran)
-                opChain.frames = result.chain;
-            Compare("Constraint", kind, c.pathText, VtValue(bakedChain),
-                    VtValue(opChain), false);
-            for (size_t k = 0;
-                 ran && k < c.targetSlots.size() && k < result.chain.size();
-                 ++k)
-                for (size_t pos = 0; pos < commit.slots.size(); ++pos)
-                    if (commit.slots[pos] == c.targetSlots[k] &&
-                        commit.present[pos])
-                        Compare("Constraint", kind + " slots",
-                                c.pathText + " " + std::to_string(k),
-                                VtValue(commit.frames[pos]),
-                                VtValue(result.chain[k]), false);
+            ProbeSingleChainIk(b, walk, runner);
             continue;
         }
         if (c.type == SchemaTypeName::RigExecMatrixMover) {
