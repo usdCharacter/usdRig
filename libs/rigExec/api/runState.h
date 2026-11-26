@@ -107,7 +107,9 @@ public:
                                 std::string *error = nullptr) const;
     /// A new run state that continues from this one: the same committed
     /// inputs, op state, outputs and history. Call it while no edit of
-    /// this run state's inputs is open.
+    /// this run state's inputs is open. It only reads: after ReleaseOwner,
+    /// while no thread uses this run state otherwise, several threads may
+    /// clone it at once, and none becomes its owner.
     std::unique_ptr<RigExecRunState> Clone() const;
     /// Running a program compiled with RigExecCompileOptions::hostOrder in
     /// a schedule of the host's: every node that does not run in ranges by
@@ -174,6 +176,8 @@ private:
     friend class RigExecEvaluator;
     /// Debug builds check calls come from the owner thread.
     void _AssertOwner() const;
+    /// Debug builds check no other thread owns the run state; claims none.
+    void _AssertUnownedOrOwner() const;
 
     std::unique_ptr<RigExecRunStateData> _data;
     mutable std::thread::id _owner = std::this_thread::get_id();

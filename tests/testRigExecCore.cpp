@@ -982,6 +982,31 @@ TestRunStates()
     for (const RigExecOutputId out : rig.outs)
         CHECK(Same(*static_cast<const Vec3 *>(twin->GetOutput(out)),
                    *static_cast<const Vec3 *>(copy->GetOutput(out))));
+
+    // A released run state is a shared snapshot: threads clone it at once,
+    // and cloning leaves it unowned (debug builds check the owner).
+    copy->ReleaseOwner();
+    std::unique_ptr<RigExecRunState> clones[2];
+    {
+        std::thread a([&] {
+            clones[0] = copy->Clone();
+            clones[0]->ReleaseOwner();
+        });
+        std::thread b([&] {
+            clones[1] = copy->Clone();
+            clones[1]->ReleaseOwner();
+        });
+        a.join();
+        b.join();
+    }
+    CHECK(clones[0] && clones[1] && copy->Evaluate());
+    for (const auto &clone : clones) {
+        CHECK(clone && clone->Evaluate());
+        for (const RigExecOutputId out : rig.outs)
+            CHECK(clone &&
+                  Same(*static_cast<const Vec3 *>(clone->GetOutput(out)),
+                       *static_cast<const Vec3 *>(copy->GetOutput(out))));
+    }
 }
 
 // in -> Scale(2) -> Offset -> out, with a tap on the Scale output.

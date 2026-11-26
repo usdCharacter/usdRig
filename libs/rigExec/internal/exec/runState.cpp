@@ -39,6 +39,14 @@ RigExecRunState::_AssertOwner() const
 #endif
 }
 
+void
+RigExecRunState::_AssertUnownedOrOwner() const
+{
+#ifndef NDEBUG
+    assert(_owner == std::thread::id() || _owner == std::this_thread::get_id());
+#endif
+}
+
 std::unique_ptr<RigExecRunState>
 RigExecRunState::Create(std::shared_ptr<const RigExecProgram> program,
                         const RigExecEvaluatorOptions &options,
@@ -95,7 +103,7 @@ RigExecRunState::ViewOutput(RigExecOutputId output, std::string *error) const
 std::unique_ptr<RigExecRunState>
 RigExecRunState::Clone() const
 {
-    _AssertOwner();
+    _AssertUnownedOrOwner();
     return std::make_unique<RigExecRunState>(
         _CreateKey(0),
         RigExecRunStateData::CloneOf(_data->program, _data->options,

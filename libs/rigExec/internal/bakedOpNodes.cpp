@@ -773,7 +773,6 @@ RigExecBakedCloneOpState(const RigExecBakedProgramImpl &source,
         return true;
     auto state = std::make_shared<eval::OpStepState>();
     state->run = source.opState->run->Clone();
-    source.opState->run->ReleaseOwner();
     state->versions = source.opState->versions;
     state->groupVersions = source.opState->groupVersions;
     state->haloReads = source.opState->haloReads;
