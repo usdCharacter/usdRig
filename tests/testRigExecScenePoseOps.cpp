@@ -319,6 +319,7 @@ TestBlendFrames()
             RigExecSolverRecord s;
             s.kind = RigExecSolverKind::BlendPointFrames;
             s.scaleMode = mode;
+            s.frameCount = 3;
             for (int k = 0; k < 3; ++k) {
                 s.jointRests.push_back(RestAt(GfVec3d(2.0 * k, 0.4, 0), 11));
                 s.restIsLive.push_back(live && k != 1);
@@ -340,7 +341,8 @@ TestBlendFrames()
             one.blendB = nullptr;
             CompareSolver("blend pass-through a", s, one, runner);
             CompareSolver("blend none", s, RigExecSolverInputs(), runner);
-            // Mismatched sizes publish nothing; a longer pair rebuilds.
+            // Mismatched sizes publish nothing; so does a pair of another
+            // count than Build's, and a record of that count rebuilds.
             const RigExecPointFrameArray shorter = Aggregate(1.0, 2),
                                          longer = Aggregate(0.5, 5),
                                          longerB = Aggregate(0.25, 5);
@@ -353,7 +355,11 @@ TestBlendFrames()
                           "both inputs");
             mismatch.blendA = &longer;
             mismatch.blendB = &longerB;
-            CompareSolver("blend rebuilt", s, mismatch, runner);
+            CompareSolver("blend off count", s, mismatch, runner,
+                          "frame blend inputs differ from its Build count");
+            RigExecSolverRecord longerRecord = s;
+            longerRecord.frameCount = 5;
+            CompareSolver("blend rebuilt", longerRecord, mismatch, runner);
         }
 }
 

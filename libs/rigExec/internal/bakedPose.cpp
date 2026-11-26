@@ -50,6 +50,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <map>
 #include <set>
@@ -1530,6 +1531,33 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             solver.inA = source(_tokens->rigExecInputA);
             solver.inB = source(_tokens->rigExecInputB);
         }
+    {
+        // 0 not yet counted, 1 counting, 2 counted.
+        std::vector<char> counted(B.solvers.size(), 0);
+        const std::function<size_t(int)> frames = [&](int i) -> size_t {
+            RigExecBakedProgramImpl::Solver &s = B.solvers[size_t(i)];
+            if (counted[size_t(i)])
+                return s.frameCount;
+            counted[size_t(i)] = 1;
+            if (s.kind != RigExecSolverKind::BlendPointFrames) {
+                s.frameCount = RigExecSolverOwnFrameCount(s);
+            } else if (s.inA >= 0 && s.inB >= 0) {
+                const size_t a = frames(s.inA), b = frames(s.inB);
+                if (a != b)
+                    refuse("frame blend inputs publish " + std::to_string(a) +
+                               " and " + std::to_string(b) +
+                               " frames; a blend needs equal counts",
+                           s.path);
+                s.frameCount = a;
+            } else if (s.inA >= 0 || s.inB >= 0) {
+                s.frameCount = frames(s.inA >= 0 ? s.inA : s.inB);
+            }
+            counted[size_t(i)] = 2;
+            return s.frameCount;
+        };
+        for (size_t i = 0; i < B.solvers.size(); ++i)
+            frames(int(i));
+    }
     // Retain only supported solver-input relationships as semantic
     // prerequisites. Generic relationships and authored stack order are not
     // imported into this list. All solver identities exist before this census.

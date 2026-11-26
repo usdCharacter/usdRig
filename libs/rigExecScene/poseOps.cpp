@@ -448,6 +448,10 @@ RigExecAnswerSolverOp(const RigExecSolverRecord &s,
                     "inputs");
         return RigExecSolverOpAnswer::Failed;
     }
+    if (n != s.frameCount) {
+        Fail(error, "frame blend inputs differ from its Build count");
+        return RigExecSolverOpAnswer::Failed;
+    }
     return RigExecSolverOpAnswer::Run;
 }
 
@@ -521,7 +525,7 @@ RigExecAddSolverOp(const RigExecSolverRecord &s,
         if (!input.blendA)
             return Fail(error, "frame blend op needs its first input");
         r.logScale = s.scaleMode == RigExecScaleBlend::Log;
-        r.blendLive = BlendLive(s, input.blendA->GetSize());
+        r.blendLive = BlendLive(s, s.frameCount);
         rigExecOps::BlendFramesPayload payload;
         payload.logScale = r.logScale;
         for (const char live : r.blendLive) {
@@ -720,8 +724,11 @@ RigExecWriteSolverOpInputs(const RigExecSolverRecord &s,
             return Fail(error, "frame blend op needs both inputs");
         const size_t n = a->GetSize();
         if (node.logScale != (s.scaleMode == RigExecScaleBlend::Log) ||
-            node.blendLive != BlendLive(s, n))
+            node.blendLive != BlendLive(s, s.frameCount))
             return Fail(error, "frame blend settings moved");
+        if (n != node.blend.size())
+            return Fail(error,
+                        "frame blend inputs differ from its Build count");
         const double weight = std::min(std::max(input.blendWeight, 0.0), 1.0);
         for (size_t k = 0; k < n; ++k) {
             const RigExecSolverOpNode::Blend &x = node.blend[k];

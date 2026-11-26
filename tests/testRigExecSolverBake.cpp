@@ -31,6 +31,7 @@
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/stage.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -200,6 +201,39 @@ CheckDrag(const char *what, const MakeStage &make, const SdfPath &prim,
         std::printf("FAIL %s: %zu of 3 generation(s) came from the "
                     "program\n",
                     what, baked.GetBakedGenerationCount());
+    }
+}
+
+/// A rig whose solver Build refuses, so every evaluator does: it compiles,
+/// its program does not build, and an evaluation is invalid and names
+/// \p reason.
+void
+CheckRefusedAtBuild(const char *what, const MakeStage &make,
+                    const std::string &reason)
+{
+    RigExecRigEvaluator rig(make(), kRigPath);
+    std::vector<std::string> errors;
+    if (!rig.Compile(&errors)) {
+        ++failures;
+        std::printf("FAIL %s: the fixture does not compile\n", what);
+        return;
+    }
+    const auto names = [&](const std::vector<std::string> &lines) {
+        return std::any_of(lines.begin(), lines.end(),
+                           [&](const std::string &line) {
+                               return line.find(reason) != std::string::npos;
+                           });
+    };
+    std::vector<std::string> reasons;
+    const bool built = RigExecBakedProgram::Build(&rig, &reasons) != nullptr;
+    const RigExecRigPose pose = rig.Evaluate(UsdTimeCode(2.0));
+    if (built || !names(reasons) || pose.valid || !names(pose.diagnostics)) {
+        ++failures;
+        std::printf("FAIL %s: not refused with \"%s\"\n", what, reason.c_str());
+        for (const std::string &line : reasons)
+            std::printf("    %s\n", line.c_str());
+        for (const std::string &line : pose.diagnostics)
+            std::printf("    %s\n", line.c_str());
     }
 }
 
@@ -726,6 +760,20 @@ MakeFkChainWithANonProviderControl()
     stage->RemovePrim(SdfPath("/Asset/Rig/Solvers/LegIK"));
     SetTargets(stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/Blend")),
                "rigExec:inputB", {SdfPath("/Asset/Rig/Solvers/LegFK")});
+    const UsdPrim marker = Define(stage, "/Asset/Geom/Marker", "Xform");
+    SetTargets(stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/LegFK")),
+               "rigExec:controls",
+               {SdfPath("/Asset/Rig/Controls/FkHip"), marker.GetPath(),
+                SdfPath("/Asset/Rig/Controls/FkHip/FkKnee/FkAnkle")});
+    return stage;
+}
+
+/// The FK chain shortened as above while the IK keeps three frames: a blend
+/// of two counts is refused at Build rather than publishing nothing.
+UsdStageRefPtr
+MakeBlendRigWithUnequalInputs()
+{
+    const UsdStageRefPtr stage = MakeBlendRig();
     const UsdPrim marker = Define(stage, "/Asset/Geom/Marker", "Xform");
     SetTargets(stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/LegFK")),
                "rigExec:controls",
@@ -2193,6 +2241,11 @@ main(int argc, char **argv)
         "ik/fk blend with a linear rotation blend AND a non-solver "
         "input",
         MakeBlendRigWithLinearRotationAndANonSolverInput, frames, true);
+
+    CheckRefusedAtBuild("ik/fk blend of unequal counts",
+                        MakeBlendRigWithUnequalInputs,
+                        "frame blend inputs publish 2 and 3 frames; a blend "
+                        "needs equal counts: /Asset/Rig/Solvers/Blend");
 
     CheckEvaluatorConsistency("guide-only ribbon", MakeGuideOnlyRibbonRig,
                               frames, true);

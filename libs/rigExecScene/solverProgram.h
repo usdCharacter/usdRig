@@ -98,7 +98,33 @@ struct RigExecSolverRecord {
     /// Ribbon: rigExec:sampleCount, read once at Build. A value that differs
     /// from it at a run (a drag, an upstream input) rebuilds the program.
     int ribbonSamples = 0;
+    /// The frames the aggregate holds, fixed at Build. A frame blend's is
+    /// its inputs' count, which they must agree on.
+    size_t frameCount = 0;
 };
+/// The frames a solver publishes, from its record alone; 0 for a frame
+/// blend, whose count is its inputs'.
+inline size_t
+RigExecSolverOwnFrameCount(const RigExecSolverRecord &s)
+{
+    switch (s.kind) {
+    case RigExecSolverKind::FkChain:
+        return s.controlRests.size();
+    case RigExecSolverKind::TwoBoneIk:
+        return 3;
+    case RigExecSolverKind::TwistDistribution:
+        return s.twistWeights.size();
+    case RigExecSolverKind::Ribbon:
+        return s.ribbonSamples >= 2 ? size_t(s.ribbonSamples) : 0;
+    case RigExecSolverKind::SplineIk:
+        return s.splineCount;
+    case RigExecSolverKind::Skeleton2d:
+        return s.bone2dOrder.size();
+    case RigExecSolverKind::BlendPointFrames:
+        return 0;
+    }
+    return 0;
+}
 /// Current graph values, delivered after typed read-phase resolution. Null
 /// aggregate pointers preserve BlendPointFrames unwired-input pass-through.
 struct RigExecSolverInputs {
