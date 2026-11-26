@@ -39,6 +39,7 @@ void RegisterClothOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterSpaceOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterPoseCommitOps(rigExec::RigExecOpRegistrar &registrar);
 void RegisterPoseOps(rigExec::RigExecOpRegistrar &registrar);
+void RegisterMatrixMoverOps(rigExec::RigExecOpRegistrar &registrar);
 
 } // namespace rigExecOps
 

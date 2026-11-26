@@ -5,6 +5,7 @@
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
 #include "rigExec/api/rigDesc.h"
+#include "rigExecOps/constraint/matrixMoverOps.h"
 #include "rigExecOps/pose/poseOps.h"
 #include "rigExecEvalCore/pose.h"
 #include "rigExecRuntime/poseMath.h"
@@ -558,6 +559,89 @@ TestShiftedSlot()
     CHECK(SameBits(h.Out<Mat4d>(1), shiftedSpace));
 }
 
+/// The identity landmarks moved by (x, y, z), flagged valid.
+rigExecRig::PointFrame
+Landmarks(double x, double y, double z)
+{
+    rigExecRig::PointFrame f;
+    f.points = {rigExecStd::Vec3d(x, y, z), rigExecStd::Vec3d(x + 1, y, z),
+                rigExecStd::Vec3d(x, y + 1, z), rigExecStd::Vec3d(x, y, z + 1)};
+    f.flags = rigExecRig::kPointFrameValid;
+    return f;
+}
+
+void
+TestMatrixMover()
+{
+    MatrixMoverPayload linear;
+    const rigExecRig::PointFrame in = Landmarks(0, 0, 0);
+    const rigExecRig::PointFrame source = Landmarks(2, 4, 6);
+    const double half = 0.5;
+    {
+        Harness h(
+            MatrixMover(), &linear,
+            {&MatrixMoverIn(), &MatrixMoverTransform(), &MatrixMoverWeight()},
+            {&MatrixMoverOut()});
+        CHECK(h.Run({&in, &source, &half}));
+        CHECK(SameFrame(h.Out<rigExecRig::PointFrame>(0), Landmarks(1, 2, 3)));
+    }
+    {
+        // A rest that spans no frame maps the source to no matrix.
+        Harness h(MatrixMover(), &linear,
+                  {&MatrixMoverIn(), &MatrixMoverTransform(),
+                   &MatrixMoverTransformRest(), &MatrixMoverWeight()},
+                  {&MatrixMoverOut()});
+        rigExecRig::PointFrame collapsed = in;
+        collapsed.points = {in.points[0], in.points[0], in.points[0],
+                            in.points[0]};
+        CHECK(!h.Run({&in, &source, &collapsed, &half}));
+        CHECK(h.error.find("could not resolve rigExec:transform") !=
+              std::string::npos);
+    }
+    {
+        // The transform measured in a space source that moved as far is
+        // the identity; a rest not flagged valid reads as the identity.
+        rigExecRig::PointFrame unflagged = Landmarks(9, 9, 9);
+        unflagged.flags = 0;
+        Harness h(MatrixMover(), &linear,
+                  {&MatrixMoverIn(), &MatrixMoverTransform(),
+                   &MatrixMoverTransformRest(), &MatrixMoverSpace(),
+                   &MatrixMoverSpaceRest(), &MatrixMoverWeight()},
+                  {&MatrixMoverOut()});
+        const rigExecRig::PointFrame rest = Landmarks(1, 1, 1);
+        const rigExecRig::PointFrame moved = Landmarks(3, 5, 7);
+        CHECK(h.Run({&in, &moved, &rest, &source, &unflagged, &half}));
+        CHECK(SameFrame(h.Out<rigExecRig::PointFrame>(0), in));
+    }
+    {
+        Harness h(MatrixMover(), &linear,
+                  {&MatrixMoverIn(), &MatrixMoverTransform(),
+                   &MatrixMoverSpaceRest(), &MatrixMoverWeight()},
+                  {&MatrixMoverOut()});
+        CHECK(!h.evaluator);
+        CHECK(h.error.find("a space rest needs Space") != std::string::npos);
+    }
+}
+
+void
+TestConstraintDelta()
+{
+    Harness h(ConstraintDelta(), nullptr,
+              {&ConstraintDeltaSolved(), &ConstraintDeltaBase(),
+               &ConstraintDeltaBaseOk(), &ConstraintDeltaWeight()},
+              {&ConstraintDeltaDelta()});
+    const rigExecRig::PointFrame solved = Landmarks(4, 0, 0);
+    const Mat4d base = Translate(1, 0, 0);
+    const uint8_t ok = 1, unread = 0;
+    const double full = 1.0, none = 0.0;
+    CHECK(h.Run({&solved, &base, &ok, &full}));
+    CHECK(SameBits(h.Out<Mat4d>(0), Translate(3, 0, 0)));
+    CHECK(h.Run({&solved, &base, &unread, &none}));
+    CHECK(SameBits(h.Out<Mat4d>(0), Translate(0, 0, 0)));
+    CHECK(!h.Run({&solved, &base, &unread, &full}));
+    CHECK(h.error.find("could not measure its delta") != std::string::npos);
+}
+
 } // namespace
 
 int
@@ -575,6 +659,8 @@ main()
     TestSlotCompose();
     TestSwitchedSlot();
     TestShiftedSlot();
+    TestMatrixMover();
+    TestConstraintDelta();
     if (failures) {
         std::printf("%d failures\n", failures);
         return 1;

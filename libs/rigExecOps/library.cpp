@@ -37,6 +37,7 @@ Register(rigExec::RigExecOpRegistrar &registrar)
     RegisterSpaceOps(registrar);
     RegisterPoseCommitOps(registrar);
     RegisterPoseOps(registrar);
+    RegisterMatrixMoverOps(registrar);
 }
 
 const rigExec::RigExecOpLibraryDesc kLibrary = [] {

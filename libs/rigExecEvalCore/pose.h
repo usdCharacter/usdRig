@@ -4276,6 +4276,29 @@ ResolveConstraintInputs(Host &host, size_t object,
     return ResolveConstraintSources(host, object, prologue, proceed);
 }
 
+// A geometry-domain constraint's delta: the map from the target's authored
+// transform \p base to the frame the constraint solved at full weight. False
+// where the frame is unusable or the base is unusable or singular.
+template <class Math>
+bool
+MeasureConstraintDelta(const std::array<typename Math::Vec3, 4> &solved,
+                       unsigned solvedFlags, const typename Math::Mat4 &base,
+                       bool baseOk, typename Math::Mat4 *delta)
+{
+    typename Math::Mat4 solvedMatrix = Math::Identity4();
+    const double det = pose_ops::Determinant4<Math>(base);
+    if (!FrameUsable<Math>(solved, solvedFlags) || !baseOk ||
+        !std::isfinite(det) || det == 0.0 ||
+        !pose_ops::PointsToMatrix<Math>(pose_ops::IdentityLandmarks<Math>(),
+                                        solved, &solvedMatrix)) {
+        return false;
+    }
+    typename Math::Mat4 baseInv = Math::Identity4();
+    pose_ops::Invert4<Math>(base, 0.0, &baseInv, nullptr);
+    *delta = pose_ops::Multiply4<Math>(solvedMatrix, baseInv);
+    return true;
+}
+
 // The constraint epilogue every arm writes through: the candidate
 // observation, the delta measure, and the commit write.
 template <class Host>
@@ -4300,22 +4323,11 @@ WriteConstraintCandidate(
         }
         typename Host::Math::Mat4 baseMatrix = Host::Math::Identity4();
         host.inputs().deltaBaseMatrix(facts.deltaBase, &baseMatrix);
-        typename Host::Math::Mat4 solvedMatrix = Host::Math::Identity4();
-        const double det =
-            pose_ops::Determinant4<typename Host::Math>(baseMatrix);
-        if (FrameUsable<typename Host::Math>(candidatePoints, candidateFlags) &&
-            host.inputs().deltaBaseOk(facts.deltaBase) && std::isfinite(det) &&
-            det != 0.0 &&
-            pose_ops::PointsToMatrix<typename Host::Math>(
-                pose_ops::IdentityLandmarks<typename Host::Math>(),
-                candidatePoints, &solvedMatrix)) {
-            typename Host::Math::Mat4 baseInv = Host::Math::Identity4();
-            pose_ops::Invert4<typename Host::Math>(baseMatrix, 0.0, &baseInv,
-                                                   nullptr);
-            host.state().writeDeltaMeasured(
-                size_t(facts.deltaBase),
-                pose_ops::Multiply4<typename Host::Math>(solvedMatrix,
-                                                         baseInv));
+        typename Host::Math::Mat4 delta = Host::Math::Identity4();
+        if (MeasureConstraintDelta<typename Host::Math>(
+                candidatePoints, candidateFlags, baseMatrix,
+                host.inputs().deltaBaseOk(facts.deltaBase), &delta)) {
+            host.state().writeDeltaMeasured(size_t(facts.deltaBase), delta);
         } else {
             host.state().diagnose(facts.pathText +
                                   " could not measure its delta against " +
@@ -4624,9 +4636,59 @@ RunParentSolve(Host &host, size_t object, const PoseCommitFacts &commitFacts,
                                     candidatePoints, candidateFlags, true);
 }
 
-// The MatrixMover solve over gathered sources: each source measured
-// as its rest->posed map, the transform in its space, and the
-// envelope applied to the target's four landmarks.
+// The MatrixMover's arithmetic: the transform source's rest-to-posed map,
+// measured in the space source's when there is one, moves the target's
+// landmarks by \p weight (radial: a partial transform; else each landmark
+// blends linearly toward its moved place).
+enum class MatrixMoverFailure : uint8_t { None, Transform, Space };
+
+template <class Math>
+MatrixMoverFailure
+MatrixMoverCandidate(const std::array<typename Math::Vec3, 4> &input,
+                     const std::array<typename Math::Vec3, 4> &transformRest,
+                     const std::array<typename Math::Vec3, 4> &transformPosed,
+                     const std::array<typename Math::Vec3, 4> *spaceRest,
+                     const std::array<typename Math::Vec3, 4> *spacePosed,
+                     bool radialBlend, double weight,
+                     std::array<typename Math::Vec3, 4> *candidate)
+{
+    typename Math::Mat4 transform = Math::Identity4();
+    if (!pose_ops::PointsToMatrix<Math>(transformRest, transformPosed,
+                                        &transform)) {
+        return MatrixMoverFailure::Transform;
+    }
+    if (spacePosed) {
+        typename Math::Mat4 space = Math::Identity4();
+        if (!pose_ops::PointsToMatrix<Math>(*spaceRest, *spacePosed, &space)) {
+            return MatrixMoverFailure::Space;
+        }
+        transform = pose_ops::MeasureInSpace<Math>(transform, space);
+    }
+    *candidate = input;
+    if (radialBlend) {
+        const typename Math::Mat4 partial =
+            pose_ops::PartialTransform<Math>(transform, weight);
+        for (size_t q = 0; q < 4; ++q) {
+            (*candidate)[q] =
+                pose_ops::TransformAffine3<Math>(partial, (*candidate)[q]);
+        }
+    } else {
+        for (size_t q = 0; q < 4; ++q) {
+            (*candidate)[q] = pose_ops::Add3<Math>(
+                (*candidate)[q],
+                pose_ops::Scale3<Math>(
+                    pose_ops::Sub3<Math>(pose_ops::TransformAffine3<Math>(
+                                             transform, (*candidate)[q]),
+                                         (*candidate)[q]),
+                    weight));
+        }
+    }
+    return MatrixMoverFailure::None;
+}
+
+// The MatrixMover solve over gathered sources: each source's rest landmarks
+// (the identity landmarks where it has no valid rest), the shared
+// arithmetic above, and the shared epilogue.
 template <class Host>
 StepResult
 RunMatrixSolve(Host &host, size_t object, const PoseCommitFacts &commitFacts,
@@ -4644,58 +4706,49 @@ RunMatrixSolve(Host &host, size_t object, const PoseCommitFacts &commitFacts,
                                 &inputFlags)) {
         return {Outcome::Invalid, kPoseDetailNoVersion};
     }
-    const auto mapOf = [&](size_t k, typename Math::Mat4 *out) {
+    const auto restOf = [&](size_t k,
+                            std::array<typename Math::Vec3, 4> *landmarks) {
+        *landmarks = pose_ops::IdentityLandmarks<Math>();
         PoseSourceRef ref;
         if (!host.inputs().constraintSourceRef(object, k, &ref)) {
             return false;
         }
-        std::array<typename Math::Vec3, 4> landmarks =
-            pose_ops::IdentityLandmarks<Math>();
         unsigned restFlags = 0;
         if (ref.slot >= 0 &&
-            host.inputs().restFrame(size_t(ref.slot), &landmarks, &restFlags) &&
+            host.inputs().restFrame(size_t(ref.slot), landmarks, &restFlags) &&
             (restFlags & pose_ops::kPoseFrameValid) == 0) {
-            landmarks = pose_ops::IdentityLandmarks<Math>();
+            *landmarks = pose_ops::IdentityLandmarks<Math>();
         }
-        return pose_ops::PointsToMatrix<Math>(landmarks, sources[k].points,
-                                              out);
+        return true;
     };
-    typename Math::Mat4 transform = Math::Identity4();
-    if (sources.empty() || !mapOf(0, &transform)) {
+    std::array<typename Math::Vec3, 4> transformRest =
+        pose_ops::IdentityLandmarks<Math>();
+    std::array<typename Math::Vec3, 4> spaceRest = transformRest;
+    const bool spaced = sources.size() > 1;
+    MatrixMoverFailure failure = MatrixMoverFailure::Transform;
+    std::array<typename Math::Vec3, 4> candidatePoints = inputPoints;
+    if (sources.empty() || !restOf(0, &transformRest)) {
+        failure = MatrixMoverFailure::Transform;
+    } else if (spaced && !restOf(1, &spaceRest)) {
+        failure = MatrixMoverFailure::Space;
+    } else {
+        failure = MatrixMoverCandidate<Math>(
+            inputPoints, transformRest, sources[0].points,
+            spaced ? &spaceRest : nullptr,
+            spaced ? &sources[1].points : nullptr, facts.radialBlend, weight,
+            &candidatePoints);
+    }
+    if (failure == MatrixMoverFailure::Transform) {
         host.state().diagnose(
             facts.pathText +
             " could not resolve rigExec:transform; mover passed through");
         return {Outcome::Applied, kNoStepDetail};
     }
-    if (sources.size() > 1) {
-        typename Math::Mat4 space = Math::Identity4();
-        if (!mapOf(1, &space)) {
-            host.state().diagnose(
-                facts.pathText +
-                " could not resolve rigExec:transformSpace; mover passed "
-                "through");
-            return {Outcome::Applied, kNoStepDetail};
-        }
-        transform = pose_ops::MeasureInSpace<Math>(transform, space);
-    }
-    std::array<typename Math::Vec3, 4> candidatePoints = inputPoints;
-    if (facts.radialBlend) {
-        const typename Math::Mat4 partial =
-            pose_ops::PartialTransform<Math>(transform, weight);
-        for (size_t q = 0; q < 4; ++q) {
-            candidatePoints[q] =
-                pose_ops::TransformAffine3<Math>(partial, candidatePoints[q]);
-        }
-    } else {
-        for (size_t q = 0; q < 4; ++q) {
-            candidatePoints[q] = pose_ops::Add3<Math>(
-                candidatePoints[q],
-                pose_ops::Scale3<Math>(
-                    pose_ops::Sub3<Math>(pose_ops::TransformAffine3<Math>(
-                                             transform, candidatePoints[q]),
-                                         candidatePoints[q]),
-                    weight));
-        }
+    if (failure == MatrixMoverFailure::Space) {
+        host.state().diagnose(facts.pathText +
+                              " could not resolve rigExec:transformSpace; "
+                              "mover passed through");
+        return {Outcome::Applied, kNoStepDetail};
     }
     return WriteConstraintCandidate(host, object, commitFacts, facts, state,
                                     candidatePoints, inputFlags, true);
