@@ -1627,6 +1627,78 @@ _TestPaintedArrays(const UsdStageRefPtr &stage)
     }
 }
 
+// A frame that fails after a good one: native marks its pose invalid with
+// the frame's failure lines, and the reader publishes nothing but those
+// same lines until the next good frame, where both recover. The tip
+// tube's curve is sampled empty at frame 1026 only.
+static void
+_TestFailedFrameInvalidates(const std::string &examples)
+{
+    const std::string label = "failed frame invalidates";
+    const UsdStageRefPtr stage = _Open(examples + "/11_VolumeWeights.usda");
+    CHECK(stage);
+    if (!stage)
+        return;
+    const SdfPath rigPath = _FindRig(stage);
+    const UsdAttribute curve = stage->GetAttributeAtPath(
+        SdfPath("/VolumeAsset/Drivers/TipCurve.points"));
+    VtVec3fArray initial;
+    CHECK(curve.Get(&initial, UsdTimeCode(1024)));
+    VtVec3fArray changed = initial;
+    for (GfVec3f &point : changed)
+        point[0] += 0.125f;
+    {
+        UsdEditContext context(stage, stage->GetSessionLayer());
+        CHECK(curve.Set(initial, UsdTimeCode(1024)));
+        CHECK(curve.Set(changed, UsdTimeCode(1025)));
+        CHECK(curve.Set(VtVec3fArray(), UsdTimeCode(1026)));
+        CHECK(curve.Set(initial, UsdTimeCode(1027)));
+    }
+    std::vector<uint8_t> bytes;
+    if (!_BakeArrays(label, stage, rigPath, 1024.0, &bytes))
+        return;
+    std::unique_ptr<RigExecRuntimeReader> reader = _OpenRun(label, bytes);
+    CHECK(reader);
+    if (!reader)
+        return;
+    RigExecInputSampler sampler;
+    std::string error;
+    CHECK(sampler.Bind(stage, *reader, &error));
+    RigExecRigEvaluator evaluator(stage, rigPath);
+    for (const double frame : {1025.0, 1026.0, 1027.0}) {
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(frame));
+        error.clear();
+        const bool ran =
+            RigExecTestDrive(reader.get(), &sampler, frame, &error);
+        const bool fails = frame == 1026.0;
+        CHECK(pose.valid == !fails);
+        CHECK(ran == !fails);
+        CHECK(reader->IsValid() == !fails);
+        if (fails) {
+            CHECK(reader->GetPoints().empty());
+            CHECK(reader->GetJointMatrices().empty());
+            CHECK(reader->GetWeightFields().empty());
+            CHECK(reader->GetPropertyValues().empty());
+            // Native's evaluator closes with its own line on the failed
+            // generation; the frame's failure lines come before it.
+            std::vector<std::string> lines = pose.diagnostics;
+            if (!lines.empty() &&
+                lines.back() == "native program did not complete generation")
+                lines.pop_back();
+            CHECK(!reader->GetDiagnostics().empty());
+            CHECK(reader->GetDiagnostics() == lines);
+            CHECK(std::find(pose.diagnostics.begin(), pose.diagnostics.end(),
+                            error) != pose.diagnostics.end());
+        }
+        std::vector<std::string> diffs;
+        CHECK(RigExecCompareRuntimeRun(pose, *reader, &diffs, fails));
+        for (const std::string &line : diffs)
+            std::printf("%s frame %g: %s\n", label.c_str(), frame,
+                        line.c_str());
+    }
+    std::printf("%s: checked\n", label.c_str());
+}
+
 // Real numeric-time samples, not public setter simulations. A second reader
 // holds only this array at its bake value at the same frame, proving that the
 // array (rather than an unrelated animated scalar) changes the published pose.
@@ -2858,6 +2930,7 @@ main(int argc, char **argv)
                 overrideMatched, overrideRuns);
     CHECK(overrideMatched == overrideRuns && overrideRuns == 9);
     _TestUnansweredPhaseArray(examples);
+    _TestFailedFrameInvalidates(examples);
     _TestRetainedPointFinalAvailability(examples);
     _TestSparseSlotLeaves(examples);
     _TestSparseSourceMemos(examples);

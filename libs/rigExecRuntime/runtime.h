@@ -221,8 +221,8 @@ struct RigExecRuntimePropertyValue {
 
 // An op node output the file publishes by name (File.op_graph): its value
 // as the last Execute computed it, of registered type `type` (an index into
-// RigExecRegistry), or null before the first Execute. The pointer stays
-// valid until the next Execute.
+// RigExecRegistry), or null before the first Execute and after one that
+// failed. The pointer stays valid until the next Execute.
 struct RigExecRuntimeOpOutput {
     std::string name;
     uint32_t type = kRigExecInvalidIndex;
@@ -370,8 +370,14 @@ public:
     std::string GetTokenText(uint32_t token) const;
 
     // Replays the cluster DAG over the inputs. False naming the first
-    // failing step; outputs keep their previous values.
+    // failing step; until the next Execute that succeeds, every output
+    // getter answers nothing and GetDiagnostics holds this run's failure.
     bool Execute(std::string *error);
+    // False after an Execute that failed, until one succeeds.
+    bool IsValid() const
+    {
+        return !_failed;
+    }
 
     // Windowed operations (secondary motion, cloth) solve from the inputs
     // they captured at earlier ticks as well as the current one
@@ -633,6 +639,8 @@ private:
     std::shared_ptr<const std::vector<uint8_t>> _historyBytes;
     std::unique_ptr<RigExecRuntimeReader> _history;
     bool _RunHistoryTick(std::string *error);
+    bool _Execute(std::string *error);
+    void _Invalidate(const std::string &error);
     bool _RequireExternalKernels(std::string *error) const;
 
     // What the input getters answer past the count: a Double +0.0, every
@@ -654,6 +662,7 @@ private:
         _weightOrder, _providerOrder;
     std::vector<std::string> _diagnostics;
     RigExecRuntimeCounters _counters;
+    bool _failed = false;
 };
 
 // Serial and parallel skin on one synthetic mesh, including a NaN payload.

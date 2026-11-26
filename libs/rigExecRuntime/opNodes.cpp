@@ -504,7 +504,8 @@ RigExecRuntimeReader::GetOpOutput(size_t index,
     out->name = output.name;
     out->type = output.type;
     RigExecValueRef ref;
-    out->value = RigExecResolveOutput(*nodes.layout.program, output.id, &ref)
+    out->value = IsValid() && RigExecResolveOutput(*nodes.layout.program,
+                                                   output.id, &ref)
                      ? nodes.state->run->GetValue(ref)
                      : nullptr;
     return true;

@@ -1893,6 +1893,11 @@ RrExecuteOpGraph(RrProgram *p, bool force, std::string *error)
             if (error->empty())
                 *error = graphError;
         }
+        s.failureLines.clear();
+        if (failedOp >= 0 && !s.opErrors[size_t(failedOp)].empty())
+            s.failureLines.push_back(s.opErrors[size_t(failedOp)]);
+        else if (!graphError.empty())
+            s.failureLines.push_back(graphError);
         for (const int32_t entry : trace)
             if (s.opFailed[size_t(entry)]) {
                 s.opFailed[size_t(entry)] = 0;

@@ -535,6 +535,8 @@ struct RrStore {
     // on the owner thread after the join.
     std::vector<std::string> opErrors;
     std::vector<char> opFailed;
+    // The last failed run's failure: its lowest failed op's.
+    std::vector<std::string> failureLines;
     // Windowed operations (rigExecGraph/windowHistory.h), per windowed op:
     // the packet its body captured at the last run (written only by that
     // body), the earlier ticks' packets (oldest first, at most its frames),

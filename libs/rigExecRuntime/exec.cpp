@@ -732,6 +732,8 @@ std::vector<RigExecRuntimePropertyValue>
 RigExecRuntimeReader::GetPropertyValues() const
 {
     std::vector<RigExecRuntimePropertyValue> out;
+    if (_failed)
+        return out;
     out.reserve(_program->store.propertyResults.size());
     for (const auto &entry : _program->store.propertyResults) {
         out.push_back({_program->TextOrEmpty(entry.first), entry.second});
@@ -745,7 +747,7 @@ RigExecRuntimeReader::GetScalarPrimvars() const
 {
     std::vector<RigExecRuntimeScalarPrimvar> out;
     const RigExecWireFile *file = _program->inputState.file;
-    if (!file) {
+    if (!file || _failed) {
         return out;
     }
     out.reserve(file->scalarPrimvarChains.size());
@@ -777,7 +779,8 @@ RigExecRuntimeReader::GetIkFkMatches() const
     std::vector<RigExecRuntimeIkFkMatch> out;
     const auto &constraints = _program->poses->constraints;
     const RrStore &store = _program->store;
-    for (size_t i = 0; i < constraints.size() && i < store.matchValid.size();
+    for (size_t i = 0;
+         !_failed && i < constraints.size() && i < store.matchValid.size();
          ++i) {
         if (!constraints[i].ikFkMatch || !store.matchValid[i])
             continue;
@@ -797,7 +800,8 @@ RigExecRuntimeReader::GetSpaceMatches() const
     const auto &switches = _program->poses->spaceSwitches;
     const RrStore &store = _program->store;
     const RigExecWireSlotMeta &meta = *_program->slotMeta;
-    for (size_t i = 0; i < switches.size() && i < store.spaceMatchValid.size();
+    for (size_t i = 0;
+         !_failed && i < switches.size() && i < store.spaceMatchValid.size();
          ++i) {
         const int slot = switches[i].slot;
         if (!store.spaceMatchValid[i] || slot < 0 ||
@@ -977,6 +981,37 @@ RigExecRuntimeReader::_RequireExternalKernels(std::string *error) const
 bool
 RigExecRuntimeReader::Execute(std::string *error)
 {
+    std::string failure;
+    std::string *why = error ? error : &failure;
+    _program->store.failureLines.clear();
+    _failed = false;
+    const bool ran = _Execute(why);
+    if (!ran && !_failed)
+        _Invalidate(*why);
+    _failed = !ran;
+    return ran;
+}
+
+void
+RigExecRuntimeReader::_Invalidate(const std::string &error)
+{
+    RrStore &store = _program->store;
+    _jointMatrices.clear();
+    _points.clear();
+    _matrixPrimvars.clear();
+    _weightFrames.clear();
+    _weightFields.clear();
+    _providerXforms.clear();
+    _diagnostics.clear();
+    _diagnostics.swap(store.failureLines);
+    if (_diagnostics.empty() && !error.empty())
+        _diagnostics.push_back(error);
+    _counters = RigExecRuntimeCounters();
+}
+
+bool
+RigExecRuntimeReader::_Execute(std::string *error)
+{
     RrProgram &program = *_program;
     if (!_RequireExternalKernels(error))
         return false;
@@ -1030,6 +1065,7 @@ RigExecRuntimeReader::Execute(std::string *error)
         _diagnostics = std::move(poseDiagnostics);
         _counters = RigExecRuntimeCounters();
         _counters.executedOpCount = store.opExecution.executed;
+        _failed = true;
         if (error)
             *error = refusal;
         return false;
@@ -1068,8 +1104,7 @@ RigExecRuntimeReader::Execute(std::string *error)
     // The compile notices a fresh evaluator seeds its first generation
     // with (inert movers, purpose warnings): file order, ahead of
     // every program line, exactly once. Drained here, on the success
-    // path only, so a failed Execute keeps both the seed and the
-    // previous frame.
+    // path only, so the first good Execute publishes them.
     if (!program.compileDiagnostics.empty()) {
         poseDiagnostics.insert(poseDiagnostics.begin(),
                                program.compileDiagnostics.begin(),
@@ -1077,10 +1112,9 @@ RigExecRuntimeReader::Execute(std::string *error)
         program.compileDiagnostics.clear();
     }
 
-    // Assemble the outputs only here, at the one exit that published:
-    // a failure anywhere above keeps the previous frame. Every output stages
-    // its rows before any is committed, so a throw while staging publishes
-    // none of this frame.
+    // Assemble the outputs only here, at the one exit that published. Every
+    // output stages its rows before any is committed, so a throw while
+    // staging publishes none of this frame.
     const auto entries = [](const auto &map) {
         return [&map](auto visit) {
             for (const auto &entry : map)
