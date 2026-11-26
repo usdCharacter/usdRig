@@ -1,11 +1,14 @@
 cmake_minimum_required(VERSION 3.26)
 project(rigExec VERSION 0.2.0 LANGUAGES C CXX)
 include(cmake/TestLabels.cmake)
+option(RIGEXEC_WITH_USD
+       "Build the OpenUSD adapter, imaging, authoring, bake and USD tests" ON)
 
 # RigExec builds against an unchanged installed OpenUSD v26.08
 set(USD_INSTALL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../usd-install"
     CACHE PATH "OpenUSD installation prefix")
 
+if (RIGEXEC_WITH_USD)
 # garch's exported link interface names OpenGL::GL, so that imported
 # target must exist before pxrTargets is included. A cross toolchain
 # keeps today's behavior: its USD prefix names its own graphics API.
@@ -13,6 +16,7 @@ if (NOT CMAKE_CROSSCOMPILING)
     find_package(OpenGL REQUIRED)
 endif()
 find_package(pxr REQUIRED CONFIG PATHS "${USD_INSTALL_DIR}" NO_DEFAULT_PATH)
+endif()  # RIGEXEC_WITH_USD
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -96,6 +100,7 @@ target_include_directories(rigExecMath INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 
+if (RIGEXEC_WITH_USD)
 # rigExecMathGf: the point-frame and solver kernels written against Gf.
 add_library(rigExecMathGf STATIC
     libs/rigExecMath/affineFrameKernels.cpp
@@ -161,6 +166,7 @@ add_library(rigExec::rigExecScene ALIAS rigExecScene)
 target_sources(rigExecScene INTERFACE
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs/rigExecScene/sceneLinkAnchor.cpp>"
     "$<INSTALL_INTERFACE:${RIGEXEC_INSTALL_CMAKEDIR}/sceneLinkAnchor.cpp>")
+endif()  # RIGEXEC_WITH_USD
 
 # The op core: type and op registry, rig description, compile and
 # evaluator. It links no OpenUSD library. A shared library, so that rigExec,
@@ -191,6 +197,7 @@ target_link_libraries(rigExecOpCore PUBLIC rigExecGraph
 set_target_properties(rigExecOpCore PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(rigExec::rigExecOpCore ALIAS rigExecOpCore)
 
+if (RIGEXEC_WITH_USD)
 # The evaluator's layers, as object libraries: build boundaries, not
 # shipped libraries. Each file declares its own target, sources, include
 # directories and links, and they compose into librigExec below. None
@@ -264,6 +271,7 @@ target_sources(rigExec INTERFACE
     "$<BUILD_INTERFACE:$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:${CMAKE_CURRENT_SOURCE_DIR}/libs/rigExec/internal/observerHostExit.cpp>>")
 
 add_library(rigExec::rigExec ALIAS rigExec)
+endif()  # RIGEXEC_WITH_USD
 include(cmake/rigExecMoverPlugin.cmake)
 include(cmake/rigExecMover.cmake)
 include(cmake/rigExecRegistration.cmake)
@@ -326,6 +334,7 @@ target_include_directories(rigExecBuiltins PUBLIC
     "$<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>")
 target_link_libraries(rigExecBuiltins PUBLIC rigExecOpCore PRIVATE rigExecEvalCore)
 
+if (RIGEXEC_WITH_USD)
 add_library(rigExecAuthoring SHARED
     libs/rigExecAuthoring/generateSkinWeights.cpp
     libs/rigExecAuthoring/rigBuilder.cpp
@@ -352,8 +361,10 @@ target_include_directories(rigExecGpu PUBLIC
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rigExecGpu PUBLIC rigExec tf gf)
 target_link_libraries(rigExecGpu PRIVATE garch)
+endif()  # RIGEXEC_WITH_USD
 include(cmake/WindowsArchiveLinks.cmake)
 
+if (RIGEXEC_WITH_USD)
 # rigExecPlayback: the background scheduler that warms the frame cache on
 # its own worker threads. The engine does not link it: frozen evaluation
 # polls the cancellation token the scheduler hands out. Imaging links it
@@ -508,6 +519,7 @@ target_link_libraries(rigExecImaging PUBLIC
 )
 target_link_libraries(rigExecImaging PRIVATE rigExecRuntime rigExecSampler rigExecScene rigExecGpu)
 target_compile_definitions(rigExecImaging PRIVATE RIGEXEC_IMAGING_EXPORTS)
+endif()  # RIGEXEC_WITH_USD
 
 # The vendored FlatBuffers C++ runtime headers (Apache-2.0, unmodified; see
 # thirdparty/flatbuffers/README.md). The generated headers under
@@ -664,6 +676,7 @@ rigexec_add_test(NAME testRigExecSdkInstallSpaces
         "-DINSTALL_DATADIR=${RIGEXEC_INSTALL_DATADIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/checkSdkInstallSpaces.cmake")
 
+if (RIGEXEC_WITH_USD)
 # rigExecSampler: hands a .rigexec's Animated inputs the values a stage holds
 # at each new time (RigExecInputSampler), for every consumer that plays the
 # runtime over a stage. The runtime itself stays USD-free.
@@ -710,6 +723,7 @@ add_executable(rigExecPose tools/rigExecPose.cpp)
 target_link_libraries(rigExecPose PRIVATE rigExec rigExecRuntime rigExecSampler)
 target_compile_definitions(rigExecPose PRIVATE
     RIGEXEC_SCHEMA_RESOURCE_DIR="${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+endif()  # RIGEXEC_WITH_USD
 
 # Bundle launcher for release downloads (packaging/README.md). No USD or
 # RigExec dependency: it locates the bundled Python/usdview relative to
@@ -743,6 +757,7 @@ if (RIGEXEC_BUILD_TESTS)
 enable_testing()
 find_package(Threads REQUIRED)
 
+if (RIGEXEC_WITH_USD)
 set(_rigexec_schema_resource_define
     RIGEXEC_SCHEMA_RESOURCE_DIR="${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
 # The generated imaging plugInfo, for the test that drives the real
@@ -832,6 +847,7 @@ rigexec_add_test(NAME testRigExecRegisteredMover COMMAND testRigExecRegisteredMo
 set_tests_properties(testRigExecExternalMovers PROPERTIES ENVIRONMENT
     "PXR_PLUGINPATH_NAME=${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
 
+endif()  # RIGEXEC_WITH_USD
 # The mover schema generator must work without USD Python (CI's OpenUSD
 # has none): the text reader is golden-tested on its own, and checked
 # against the pxr/usdGenSchema path wherever pxr imports. The interpreter
@@ -895,6 +911,7 @@ rigexec_add_test(NAME testRigExecLicenseChecker
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_licenses.py" --self-test)
 set_tests_properties(testRigExecLicenseChecker PROPERTIES LABELS "fast")
 
+if (RIGEXEC_WITH_USD)
 add_executable(testRigExecMath tests/testRigExecMath.cpp)
 add_executable(testRigExecWrinkleMath tests/testRigExecWrinkleMath.cpp)
 target_link_libraries(testRigExecWrinkleMath PRIVATE rigExecMathGf)
@@ -910,6 +927,7 @@ target_link_libraries(testRigExecWrinkleRuntime PRIVATE rigExecRuntime)
 rigexec_add_test(NAME testRigExecWrinkleRuntime COMMAND testRigExecWrinkleRuntime
     "${CMAKE_CURRENT_BINARY_DIR}/wrinkle_test.rigexec")
 set_tests_properties(testRigExecWrinkleRuntime PROPERTIES FIXTURES_REQUIRED WrinkleBinary)
+endif()  # RIGEXEC_WITH_USD
 add_executable(testRigExecSkinSplit tests/testRigExecSkinSplit.cpp)
 target_link_libraries(testRigExecSkinSplit PRIVATE rigExecRuntime)
 rigexec_add_test(NAME testRigExecSkinSplit COMMAND testRigExecSkinSplit)
@@ -930,6 +948,7 @@ rigexec_add_test(NAME testRigExecManifest COMMAND testRigExecManifest
 add_executable(testRigExecSharedBuffers tests/testRigExecSharedBuffers.cpp)
 target_link_libraries(testRigExecSharedBuffers PRIVATE rigExecRuntime)
 rigexec_add_test(NAME testRigExecSharedBuffers COMMAND testRigExecSharedBuffers)
+if (RIGEXEC_WITH_USD)
 add_executable(testRigExecDeltaMush tests/testRigExecDeltaMush.cpp)
 target_link_libraries(testRigExecDeltaMush PRIVATE rigExec rigExecAuthoring rigExecBake rigExecRuntime rigExecSampler)
 rigexec_add_test(NAME testRigExecDeltaMush COMMAND testRigExecDeltaMush "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
@@ -983,6 +1002,7 @@ target_link_libraries(testRigExecRbf PRIVATE rigExecMathGf)
 target_compile_definitions(testRigExecRbf PRIVATE
     RIGEXEC_RBF_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/psd_parity.json")
 rigexec_add_test(NAME testRigExecRbf COMMAND testRigExecRbf)
+endif()  # RIGEXEC_WITH_USD
 
 # The RigLogic kernels are header-only and USD-free; rigExecGraph supplies
 # only the include root.
@@ -998,6 +1018,7 @@ add_executable(testRigExecClothKernel tests/testRigExecClothKernel.cpp)
 target_link_libraries(testRigExecClothKernel PRIVATE rigExecGraph)
 rigexec_add_test(NAME testRigExecClothKernel COMMAND testRigExecClothKernel)
 
+if (RIGEXEC_WITH_USD)
 # RigLogic's behaviours in a rig: live, frame cache and .rigexec parity.
 add_executable(testRigExecRigLogic tests/testRigExecRigLogic.cpp)
 target_link_libraries(testRigExecRigLogic PRIVATE rigExec rigExecAuthoring
@@ -1071,11 +1092,13 @@ function(rigexec_add_graph_test name)
     endforeach()
 endfunction()
 rigexec_add_graph_test(testRigExecConstraints CONE_VERIFY)
+endif()  # RIGEXEC_WITH_USD
 
 add_executable(testRigExecSkeleton2dKernel tests/testRigExecSkeleton2dKernel.cpp)
 target_link_libraries(testRigExecSkeleton2dKernel PRIVATE rigExecMath)
 rigexec_add_test(NAME testRigExecSkeleton2dKernel COMMAND testRigExecSkeleton2dKernel)
 
+if (RIGEXEC_WITH_USD)
 add_executable(testRigExecSkeleton2d tests/testRigExecSkeleton2d.cpp)
 target_link_libraries(testRigExecSkeleton2d PRIVATE rigExec rigExecScene
     rigExecBake rigExecRuntime rigExecSampler)
@@ -1404,6 +1427,7 @@ foreach(_schedule serial parallel)
         "RIGEXEC_BAKED_GRAIN_US=0")
 endforeach()
 
+endif()  # RIGEXEC_WITH_USD
 rigexec_add_type_library(rigExecTestFakeTypes
     SOURCES tests/registryFixture/fakeTypes.cpp)
 rigexec_add_op_library(rigExecTestFakeOps
@@ -1427,6 +1451,7 @@ target_link_libraries(testRigExecCore PRIVATE Threads::Threads)
 rigexec_link_registrations(testRigExecCore
     TYPE_LIBRARIES rigExecTestFakeTypes OP_LIBRARIES rigExecTestFakeOps)
 rigexec_add_test(NAME testRigExecCore COMMAND testRigExecCore)
+if (RIGEXEC_WITH_USD)
 # The same body on the task system over OpenUSD's work library.
 add_executable(testRigExecCoreWork tests/testRigExecCore.cpp)
 target_compile_definitions(testRigExecCoreWork PRIVATE
@@ -1438,6 +1463,7 @@ target_include_directories(testRigExecCoreWork PRIVATE
 rigexec_link_registrations(testRigExecCoreWork
     TYPE_LIBRARIES rigExecTestFakeTypes OP_LIBRARIES rigExecTestFakeOps)
 rigexec_add_test(NAME testRigExecCoreWork COMMAND testRigExecCoreWork)
+endif()  # RIGEXEC_WITH_USD
 
 add_executable(testRigExecStdTypes tests/testRigExecStdTypes.cpp)
 target_link_libraries(testRigExecStdTypes PRIVATE rigExecOpCore)
@@ -1457,6 +1483,7 @@ rigexec_link_registrations(testRigExecRigTypes
     TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes)
 rigexec_add_test(NAME testRigExecRigTypes COMMAND testRigExecRigTypes)
 
+if (RIGEXEC_WITH_USD)
 add_executable(testRigExecOpsMath tests/testRigExecOpsMath.cpp)
 target_link_libraries(testRigExecOpsMath PRIVATE rigExecOpCore)
 target_include_directories(testRigExecOpsMath PRIVATE
@@ -1466,6 +1493,7 @@ rigexec_link_registrations(testRigExecOpsMath
     TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 rigexec_add_test(NAME testRigExecOpsMath COMMAND testRigExecOpsMath)
 set_tests_properties(testRigExecOpsMath PROPERTIES LABELS "fast")
+endif()  # RIGEXEC_WITH_USD
 add_executable(testRigExecOpsSpaces tests/testRigExecOpsSpaces.cpp)
 target_link_libraries(testRigExecOpsSpaces PRIVATE rigExecOpCore)
 target_include_directories(testRigExecOpsSpaces PRIVATE
@@ -1501,6 +1529,7 @@ rigexec_add_test(NAME testRigExecSchemaReport COMMAND ${Python3_EXECUTABLE}
     --tool $<TARGET_FILE:rigExecGenSchema>
     --schema "${CMAKE_CURRENT_SOURCE_DIR}/libs/rigExecSchema/schema.usda")
 set_tests_properties(testRigExecSchemaReport PROPERTIES LABELS "fast")
+if (RIGEXEC_WITH_USD)
 add_executable(testRigExecOpsPoints tests/testRigExecOpsPoints.cpp)
 target_link_libraries(testRigExecOpsPoints PRIVATE rigExecOpCore)
 target_include_directories(testRigExecOpsPoints PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libs")
@@ -1508,6 +1537,7 @@ target_link_libraries(testRigExecOpsPoints PRIVATE rigExecMathGf Threads::Thread
 rigexec_link_registrations(testRigExecOpsPoints TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 rigexec_add_test(NAME testRigExecOpsPoints COMMAND testRigExecOpsPoints)
 set_tests_properties(testRigExecOpsPoints PROPERTIES LABELS "fast")
+endif()  # RIGEXEC_WITH_USD
 add_executable(testRigExecOpPayloads tests/testRigExecOpPayloads.cpp)
 target_include_directories(testRigExecOpPayloads PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/libs")
@@ -1517,6 +1547,7 @@ rigexec_link_registrations(testRigExecOpPayloads
 rigexec_add_test(NAME testRigExecOpPayloads COMMAND testRigExecOpPayloads)
 set_tests_properties(testRigExecOpPayloads PROPERTIES LABELS "fast")
 
+if (RIGEXEC_WITH_USD)
 # Host-side bridge from translated USD properties to op nodes; not installed.
 add_library(rigExecSceneOps STATIC libs/rigExecScene/propertyOps.cpp)
 target_link_libraries(rigExecSceneOps PUBLIC rigExec rigExecScene
@@ -1849,12 +1880,14 @@ target_compile_definitions(testRigExecPathOps PRIVATE
 rigexec_add_test(NAME testRigExecPathOps COMMAND testRigExecPathOps)
 rigexec_add_graph_test(testRigExecPathOps CONE_VERIFY)
 
+endif()  # RIGEXEC_WITH_USD
 # The single-FlatBuffer format on hand-built files: bit exactness, the
 # refusals before and in verification, determinism, validation rules.
 add_executable(testRigExecFormat tests/testRigExecFormat.cpp)
 target_link_libraries(testRigExecFormat PRIVATE rigExecBinary)
 rigexec_add_test(NAME testRigExecFormat COMMAND testRigExecFormat)
 
+if (RIGEXEC_WITH_USD)
 add_executable(testRigExecBinary tests/testRigExecBinary.cpp)
 target_link_libraries(testRigExecBinary PRIVATE rigExecBake rigExecAuthoring)
 target_include_directories(testRigExecBinary PRIVATE
@@ -2791,9 +2824,11 @@ foreach(_suite testRigExecArm testRigExecBakedMode testRigExecBakedSchedule
     rigexec_add_serial_test(${_suite}
         "${CMAKE_CURRENT_SOURCE_DIR}/examples")
 endforeach()
+endif()  # RIGEXEC_WITH_USD
 
 endif()  # RIGEXEC_BUILD_TESTS
 
+if (RIGEXEC_WITH_USD)
 if (CMAKE_CROSSCOMPILING)
     set(_rigexec_python_default OFF)
 else()
@@ -3289,6 +3324,7 @@ foreach(_mover_dir IN LISTS RIGEXEC_MOVER_PLUGIN_DIRS)
     string(SHA256 _mover_id "${_mover_dir}")
     add_subdirectory("${_mover_dir}" "${CMAKE_CURRENT_BINARY_DIR}/mover-plugins/${_mover_id}")
 endforeach()
+endif()  # RIGEXEC_WITH_USD
 
 rigexec_label_tests()
 
@@ -3340,6 +3376,7 @@ if (MSVC AND NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
         <cstring> <functional> <limits> <map> <memory> <optional> <set>
         <string> <tuple> <type_traits> <unordered_map> <unordered_set>
         <utility> <variant> <vector>)
+if (RIGEXEC_WITH_USD)
     set(_rigexec_pch_usd
         <pxr/pxr.h>
         <pxr/base/gf/matrix3d.h> <pxr/base/gf/matrix4d.h>
@@ -3368,8 +3405,10 @@ if (MSVC AND NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
     target_link_libraries(rigExecUsdPch PRIVATE usd)
     target_precompile_headers(rigExecUsdPch PRIVATE
         ${_rigexec_pch_std} ${_rigexec_pch_usd})
+endif()  # RIGEXEC_WITH_USD
     target_precompile_headers(rigExecRuntime PRIVATE ${_rigexec_pch_std})
 
+if (RIGEXEC_WITH_USD)
     # The libraries, and every test, bench or probe executable linking one
     # of the USD-facing libraries. The imaging object libraries carry the
     # same compile options and definitions as rigExecImaging, so they
@@ -3397,6 +3436,7 @@ if (MSVC AND NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
     foreach(_target IN LISTS _rigexec_pch_users)
         target_precompile_headers(${_target} REUSE_FROM rigExecUsdPch)
     endforeach()
+endif()  # RIGEXEC_WITH_USD
 endif()
 
 # Executables that compile a stage through rigExec alone name the scene
@@ -3472,6 +3512,15 @@ set(RIGEXEC_INSTALL_TARGETS
     rigExecOracle rigExecAuthoring rigExecImaging rigExecGpu
     rigExecFlatBuffers rigExecBinary rigExecBake rigExecRuntime rigExecSampler
     rigExecBuiltins rigExecOpCore rigExecPlayback)
+if (NOT RIGEXEC_WITH_USD)
+    set(_rigexec_declared_install_targets ${RIGEXEC_INSTALL_TARGETS})
+    set(RIGEXEC_INSTALL_TARGETS "")
+    foreach(_target IN LISTS _rigexec_declared_install_targets)
+        if (TARGET ${_target})
+            list(APPEND RIGEXEC_INSTALL_TARGETS ${_target})
+        endif()
+    endforeach()
+endif()
 install(TARGETS ${RIGEXEC_INSTALL_TARGETS}
     EXPORT rigExecTargets
     RUNTIME DESTINATION "${RIGEXEC_INSTALL_LIBDIR}"
@@ -3487,13 +3536,20 @@ foreach (_target ${RIGEXEC_INSTALL_TARGETS} _rigexec rigExecPose rigExecBakeTool
     endif ()
 endforeach ()
 
+if (RIGEXEC_WITH_USD)
 install(FILES libs/rigExecScene/sceneLinkAnchor.cpp libs/rigExecOracle/oracleLinkAnchor.cpp
     DESTINATION "${RIGEXEC_INSTALL_CMAKEDIR}")
 install(FILES libs/rigExecOracle/registerOracle.h
     DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/rigExecOracle")
+endif()  # RIGEXEC_WITH_USD
 
 # FILES_MATCHING still walks -- and recreates -- every subdirectory it passes
+set(_rigexec_usd_header_dirs rigExecScene rigExecAuthoring rigExecImaging
+    rigExecGpu rigExecBake rigExecSampler rigExecPlayback)
 foreach(_lib rigExecGraph rigExecEvalCore rigExecScene rigExecMath rigExec rigExecSchema rigExecAuthoring rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler rigExecStdTypes rigExecRigTypes rigExecBuiltins rigExecPlayback)
+    if (NOT RIGEXEC_WITH_USD AND _lib IN_LIST _rigexec_usd_header_dirs)
+        continue()
+    endif()
     install(DIRECTORY "libs/${_lib}/"
         DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/${_lib}"
         FILES_MATCHING
@@ -3522,6 +3578,7 @@ endforeach()
 install(DIRECTORY thirdparty/flatbuffers/include/flatbuffers
     DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}")
 
+if (RIGEXEC_WITH_USD)
 set(_rigexec_schema_resources
     "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
 set(_rigexec_schema_pluginfo "${_rigexec_schema_resources}/plugInfo.json")
@@ -3605,6 +3662,7 @@ file(GENERATE OUTPUT "${_rigexec_pluginfo}"
 
 install(FILES "${_rigexec_pluginfo}"
     DESTINATION "${RIGEXEC_INSTALL_PLUGINDIR}/rigExecImaging/resources")
+endif()  # RIGEXEC_WITH_USD
 
 # CMake package, so consumers can find_package(rigExec) and link
 install(EXPORT rigExecTargets
