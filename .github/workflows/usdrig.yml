@@ -965,8 +965,8 @@ jobs:
           do
             test -e "$f" || { echo "missing: $f"; exit 1; }
           done
-          test -e "$P/lib/librigExecMath.a" || test -e "$P/lib/librigExecMath.so" \
-            || { echo "missing: $P/lib/librigExecMath.{a,so}"; exit 1; }
+          test -e "$P/lib/librigExecMathGf.a" || test -e "$P/lib/librigExecMathGf.so" \
+            || { echo "missing: $P/lib/librigExecMathGf.{a,so}"; exit 1; }
 
       - name: Install into a DESTDIR staging tree
         run: |

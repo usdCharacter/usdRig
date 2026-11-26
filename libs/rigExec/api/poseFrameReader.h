@@ -16,7 +16,7 @@ namespace rigExec {
 
 class RigExecPoseFrameReader final : public RigExecFrameReader {
 private:
-    // Defined before its uses: its return type is deduced.
+    // Helper templates are defined before their uses: gcc and clang need it.
     template <class F>
     decltype(auto) _Visit(RigExecFrameDomain domain, F &&visit) const
     {
@@ -43,6 +43,30 @@ private:
             break;
         }
         return visit(_pose.weightFrames);
+    }
+
+    template <class Map>
+    const typename Map::value_type &
+    _Entry(const Map &, RigExecFrameDomain domain, size_t index) const
+    {
+        return *static_cast<const typename Map::value_type *>(
+            _entries[_begin[size_t(domain)] + index]);
+    }
+
+    const VtValue &_Moved(size_t index) const
+    {
+        return _Entry(_pose.movedProperties, RigExecFrameDomain::MovedProperty,
+                      index)
+            .second;
+    }
+
+    template <class T> bool _Held(size_t index, T *value) const
+    {
+        const VtValue &held = _Moved(index);
+        if (!held.IsHolding<T>())
+            return false;
+        *value = held.UncheckedGet<T>();
+        return true;
     }
 
 public:
@@ -223,30 +247,6 @@ public:
     }
 
 private:
-    template <class Map>
-    const typename Map::value_type &
-    _Entry(const Map &, RigExecFrameDomain domain, size_t index) const
-    {
-        return *static_cast<const typename Map::value_type *>(
-            _entries[_begin[size_t(domain)] + index]);
-    }
-
-    const VtValue &_Moved(size_t index) const
-    {
-        return _Entry(_pose.movedProperties, RigExecFrameDomain::MovedProperty,
-                      index)
-            .second;
-    }
-
-    template <class T> bool _Held(size_t index, T *value) const
-    {
-        const VtValue &held = _Moved(index);
-        if (!held.IsHolding<T>())
-            return false;
-        *value = held.UncheckedGet<T>();
-        return true;
-    }
-
     void _Index()
     {
         size_t total = 0;
