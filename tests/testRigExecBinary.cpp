@@ -4359,6 +4359,9 @@ main(int argc, char **argv)
                     argv[2], time, argv[4], failures);
         return failures ? 1 : 0;
     }
+    // The range chains below hold the baked Range arm's file records;
+    // full-strength matrices as op nodes are testRigExecOpSteps'.
+    rigExec::RigExecBakedProgramTesting::SetOpMatrices(false);
     // The tail rig's file, baked at its fixture time: the real bake the
     // codec and corruption cases edit.
     const std::string tail =

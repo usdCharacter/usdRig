@@ -959,6 +959,10 @@ ProbeRevisions(const B &b)
                 Unprobed("RevisionChunk", kind, "set aside by a cycle");
                 continue;
             }
+            if (revision.opMatrix) {
+                Unprobed("RevisionChunk", kind, "runs as op nodes");
+                continue;
+            }
             if (revision.op == RigExecRevisionOp::External) {
                 ProbeExternal(b, chain, r);
                 continue;
@@ -1101,6 +1105,7 @@ ProbeRangeChains(const B &b)
                                : std::string(OpName(revision.op)));
             usable =
                 usable && !revision.gpuOwned && !revision.rangeSetAside &&
+                !revision.opMatrix &&
                 (external ? RigExecExternalOpHandle(revision.binding) != nullptr
                           : revision.op == RigExecRevisionOp::BlendShape ||
                                 RigExecGeometryOpSupported(revision.op)) &&

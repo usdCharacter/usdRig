@@ -512,6 +512,40 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
                     program.chainBaseSteps[c].push_back(int32_t(i));
             }
         }
+        if (step.kind == RigExecWireStepKind::OpNode ||
+            step.kind == RigExecWireStepKind::OpChainHead ||
+            step.kind == RigExecWireStepKind::OpChainRange) {
+            // An op step standing in for a revision's static, fold or chunk
+            // writes its packet, its transforms or its groups.
+            const auto &geo = *file.geometry;
+            for (const auto &write : step.writes) {
+                const auto domain = write.domain();
+                for (uint32_t s = write.begin(); s < write.end(); ++s) {
+                    int64_t revision = -1;
+                    if (domain == RigExecWireSlotDomain::RevisionPacket ||
+                        domain == RigExecWireSlotDomain::RevisionTransforms) {
+                        revision = s;
+                    } else if (domain == RigExecWireSlotDomain::RevisionOut) {
+                        for (size_t r = 0; r < geo.revisionChunkBase.size();
+                             ++r)
+                            if (geo.revisionChunkBase[r] >= 0 &&
+                                s >= uint32_t(geo.revisionChunkBase[r]) &&
+                                s - uint32_t(geo.revisionChunkBase[r]) <
+                                    uint32_t(geo.revisionChunkCount[r]))
+                                revision = int64_t(r);
+                    }
+                    if (revision < 0 ||
+                        size_t(revision) >= program.revisionSteps.size())
+                        continue;
+                    if (domain == RigExecWireSlotDomain::RevisionPacket)
+                        program.revisionStaticStep[size_t(revision)] =
+                            int32_t(i);
+                    auto &steps = program.revisionSteps[size_t(revision)];
+                    if (steps.empty() || steps.back() != int32_t(i))
+                        steps.push_back(int32_t(i));
+                }
+            }
+        }
         switch (step.kind) {
         case RigExecWireStepKind::RevisionStatic:
             program.revisionStaticStep[size_t(step.object)] = int32_t(i);

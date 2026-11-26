@@ -94,6 +94,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((pointIndices, rigExec::BlendShapeText::pointIndices))
     ((blendShapeType, rigExec::BlendShapeText::typeName))
     ((rigExecWeightTarget, rigExec::SchemaAttrText::rigExecWeightTarget))
+    ((radial, "radial"))
 );
 
 namespace rigExec {
@@ -1789,6 +1790,52 @@ GateRevision(const RoleReads &reads,
     return true;
 }
 
+/// Whether a Range matrix \p revision runs as op nodes: it binds a
+/// transform provider, no weight object or field weighs it, its
+/// inputs:enabled and inputs:defaultWeight do not vary with time, and its
+/// rigExec:weightBlend is usable. Pins the blend, so a change rebuilds, and
+/// in Export adds its read to \p pinned.
+bool gOpMatrices = true;
+
+bool
+OpMatrixHolds(const RoleReads &reads,
+              RigExecBakedProgramImpl::GeomRevision *revision,
+              std::vector<SdfPath> *pinned)
+{
+    using Role = RigExecRevisionLeafRole;
+    if (!gOpMatrices || revision->op != RigExecRevisionOp::Matrix ||
+        revision->transformSlot < 0 || revision->weightObject >= 0 ||
+        revision->weightField >= 0 || revision->weightCurrentPhase ||
+        revision->weightOperationDomain) {
+        return false;
+    }
+    const RigExecBakedPathLeaves &leaves = revision->leaves;
+    const int enabled = leaves.decl.Role(Role::Enabled);
+    const int weight = leaves.decl.Role(Role::DefaultWeight);
+    const int blend = leaves.decl.Role(Role::WeightBlend);
+    for (const int k : {enabled, weight}) {
+        if (k >= 0 && !reads.Pinnable(leaves, k)) {
+            return false;
+        }
+    }
+    if (blend >= 0 && !reads.Usable(leaves, blend)) {
+        return false;
+    }
+    const TfToken token = blend >= 0 ? reads.Token(leaves, blend) : TfToken();
+    revision->opMatrixRadial = token == _tokens->radial;
+    if (blend >= 0) {
+        RolePin pin;
+        pin.kind = RolePin::Kind::LeafToken;
+        pin.leaf = blend;
+        pin.token = token;
+        revision->pins.push_back(pin);
+        if (reads.exportMode) {
+            pinned->push_back(leaves.decl.keys[size_t(blend)].path);
+        }
+    }
+    return true;
+}
+
 /// Gives every revision of \p chain its role, groups, gates, pins and
 /// chunks. A chain is range-pipelined when chunking would split
 /// it, it holds two or more groups and one of its revisions takes the Range
@@ -1815,6 +1862,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
         RigExecBakedProgramImpl::GeomRevision &revision = chain->revisions[r];
         revision.role = GeomRole::Legacy;
         revision.rangeRole = false;
+        revision.opMatrix = false;
         revision.blendChunked = false;
         revision.groupWritten.clear();
         revision.enteringWriter.clear();
@@ -1993,6 +2041,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
             if (GateRevision(reads, *chain, &revision, &written, &pinned[r])) {
                 revision.groupWritten = std::move(written);
             }
+            revision.opMatrix = OpMatrixHolds(reads, &revision, &pinned[r]);
             if (revision.op == RigExecRevisionOp::Smooth) {
                 BuildSmoothHalo(reads, *chain, &revision, points);
             } else if (revision.op == RigExecRevisionOp::DeltaMush) {
@@ -2135,6 +2184,14 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
             revision.rangeInputs = RigExecRevisionRangeInputs();
             revision.joinSeen.clear();
             revision.rangeRefusals = 0;
+            if (revision.opMatrix) {
+                revision.parameters = RigExecMoverParameters();
+                revision.parameters.enabled = true;
+                revision.parameters.valid = true;
+                revision.status = RigExecStatusForParameters(
+                    revision.parameters, std::string());
+                revision.acceptance = RigExecRevisionAcceptance::Applies;
+            }
             const GeomRole role = revision.role;
             // RevisionOut ids: a Range revision's G groups (an unwritten one
             // has no writer and no reader); a Whole one's chunks, then the G
@@ -2228,7 +2285,8 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
                 assemble.writes.push_back(RigExecBakedOne(
                     RigExecBakedSlotDomain::RevisionPacket, id));
             };
-            if (skin) {
+            if (revision.opMatrix) {
+            } else if (skin) {
                 addStatic();
                 addFold();
             } else {
@@ -2240,7 +2298,8 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
             // entering version alone; every other chunk reads the version.
             const bool perGroup = role == GeomRole::Range ||
                                   (role == GeomRole::Whole && revision.chunked);
-            for (size_t k = 0; k < revision.chunks.size(); ++k) {
+            for (size_t k = 0; !revision.opMatrix && k < revision.chunks.size();
+                 ++k) {
                 if (role == GeomRole::Range && !revision.groupWritten[k]) {
                     // A gated group: the entering group is this revision's.
                     continue;
@@ -5663,6 +5722,9 @@ RigExecBakedSelectGpuChains(RigExecBakedProgramImpl *program)
             // entering a revision.
             if (revision.snapshotAfter || revision.weightCurrentPhase)
                 eligible = false;
+            // Op nodes run on the CPU until a device runs them.
+            if (revision.opMatrix)
+                eligible = false;
         }
         // A shader chain's points never come back: a derived step that
         // reads them all (normals, a surface projector) keeps the chain on
@@ -6462,6 +6524,38 @@ RigExecBakedHasExternalInputRoute(const RigExecBakedProgramImpl &B,
     return false;
 }
 
+void
+RigExecBakedProgramTesting::SetOpMatrices(bool on)
+{
+    gOpMatrices = on;
+}
+
+bool
+RigExecBakedRevisionLeaf(const RigExecBakedProgramImpl &B, uint32_t id,
+                         bool *enabled, float *weight, std::string *error)
+{
+    if (id >= B.revisionIndex.size()) {
+        if (error)
+            *error = "op nodes: revision " + std::to_string(id) +
+                     " is not in the program";
+        return false;
+    }
+    const auto &[chain, r] = B.revisionIndex[id];
+    const RigExecBakedPathLeaves &leaves =
+        B.chains[size_t(chain)].revisions[size_t(r)].leaves;
+    using Role = RigExecRevisionLeafRole;
+    const int on = leaves.decl.Role(Role::Enabled);
+    const int w = leaves.decl.Role(Role::DefaultWeight);
+    const VtValue a = on >= 0
+                          ? RigExecBakedResolvePathLeaf(B, leaves, size_t(on))
+                          : VtValue();
+    const VtValue b =
+        w >= 0 ? RigExecBakedResolvePathLeaf(B, leaves, size_t(w)) : VtValue();
+    *enabled = a.IsHolding<bool>() ? a.UncheckedGet<bool>() : true;
+    *weight = b.IsHolding<float>() ? b.UncheckedGet<float>() : 1.0f;
+    return true;
+}
+
 VtValue
 RigExecBakedResolvePathLeaf(const RigExecBakedProgramImpl &B,
                             const RigExecBakedPathLeaves &leaves, size_t k)
@@ -7147,7 +7241,8 @@ RigExecBakedVerifyRangeChains(RigExecBakedProgramImpl *program)
                 chain.revisions[r];
             // A revision a cycle set aside passes the base through: no
             // range result to judge.
-            if (!revision.rangeRole || revision.rangeSetAside) {
+            if (!revision.rangeRole || revision.rangeSetAside ||
+                revision.opMatrix) {
                 continue;
             }
             const GfVec3f *entering = nullptr;

@@ -79,9 +79,11 @@ Supported(size_t i)
 /// Matrix mover. `Raise` moves points outside the mover's support in the
 /// groups it writes; `Lift` moves ten supported points of one group;
 /// `Moving` is the mover's transform. \p raise, \p lift and \p moving are
-/// the authored values.
+/// the authored values. \p rigid adds a last Matrix mover with no weight,
+/// moved by `Moving` too.
 UsdStageRefPtr
-MakeGatedStage(float raise, float lift, double moving, size_t count = kPoints)
+MakeGatedStage(float raise, float lift, double moving, size_t count = kPoints,
+               bool rigid = false)
 {
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
@@ -166,6 +168,13 @@ MakeGatedStage(float raise, float lift, double moving, size_t count = kPoints)
         return prim;
     };
     // Movers run last sibling first: the blend, then the gated mover.
+    if (rigid) {
+        const UsdPrim prim = mover("Rigid", "RigExecMatrixMover");
+        prim.CreateRelationship(TfToken("rigExec:transform"))
+            .SetTargets({control.GetPath()});
+        prim.CreateAttribute(TfToken("inputs:enabled"), SdfValueTypeNames->Bool)
+            .Set(true);
+    }
     const UsdPrim gated = mover("Gated", "RigExecMatrixMover");
     gated.CreateRelationship(TfToken("rigExec:transform"))
         .SetTargets({control.GetPath()});
@@ -788,6 +797,11 @@ struct GroupHost {
                    ? table[lookup.object].first.data()
                    : nullptr;
     }
+    bool RevisionLeaf(uint32_t, bool *, float *, std::string *error) const
+    {
+        *error = "no revisions";
+        return false;
+    }
     const void *ChainGroupPoints(uint32_t, uint32_t g) const
     {
         return groups[g].cdata();
@@ -1021,8 +1035,8 @@ TestHostLookupsAndGroupOutputs()
                         reason.c_str());
         CHECK(!laid && reason.find(expected) != std::string::npos);
     };
-    refused([](eval::OpStepLayout *bad) { bad->lookups[0].source = 10; },
-            "reads lookup source 10, which no host resolves");
+    refused([](eval::OpStepLayout *bad) { bad->lookups[0].source = 11; },
+            "reads lookup source 11, which no host resolves");
     refused(
         [&](eval::OpStepLayout *bad) {
             bad->hostInputs[1].source = eval::OpHostSource::Lookup;
@@ -1446,6 +1460,171 @@ TestInjectedGates()
     RigExecBakedProgramTesting::SetOpInjector(nullptr);
 }
 
+/// A Range matrix at full strength runs as op nodes: a MoverTransform and
+/// a MatrixDeform range chain storing its groups, in place of its fold,
+/// static and chunk steps. Native, frozen and runtime give the same bits, a
+/// drag reruns its groups, and disabling it rebuilds onto its kernel.
+void
+TestMatrixOps(const char *writeTo)
+{
+    const UsdTimeCode time(1.0);
+    const UsdStageRefPtr stage = MakeGatedStage(0.5f, 0.0f, 1.0, kPoints, true);
+    RigExecRigEvaluator evaluator(stage, SdfPath(kRig));
+    std::vector<std::string> errors;
+    const bool compiled = evaluator.Compile(&errors);
+    CHECK(compiled);
+    for (const std::string &line : errors)
+        std::printf("  %s\n", line.c_str());
+    if (!compiled || !evaluator.GetBakedProgram())
+        return;
+    const RigExecBakedProgramImpl &B =
+        RigExecBakedProgramAccess::StepGraph(*evaluator.GetBakedProgram());
+    const int chain = ChainOf(B, "/Asset/Shape.points");
+    const auto &revisions = B.chains[size_t(chain)].revisions;
+    const size_t last = revisions.size() - 1;
+    const int id = B.chainRevisionBegin[size_t(chain)] + int(last);
+    CHECK(revisions[last].opMatrix && !revisions[last - 1].opMatrix);
+    const int groups = int(B.chains[size_t(chain)].groupBounds.size()) - 1;
+    size_t ranges = 0, folds = 0, own = 0;
+    for (const RigExecBakedStep &step : B.steps) {
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(B, step);
+        if (identity.object != id)
+            continue;
+        own += step.kind == RigExecBakedStepKind::InfluenceFold ||
+               step.kind == RigExecBakedStepKind::RevisionStatic ||
+               step.kind == RigExecBakedStepKind::RevisionChunk;
+        ranges += step.kind == RigExecBakedStepKind::OpChainRange &&
+                  identity.kind == RigExecBakedStepKind::RevisionChunk;
+        folds += step.kind == RigExecBakedStepKind::OpNode &&
+                 identity.kind == RigExecBakedStepKind::InfluenceFold;
+    }
+    CHECK(own == 0 && folds == 1 && ranges == size_t(groups));
+
+    const int slot = SlotOf(B, kMoving);
+    const auto reference = [&](float weight = 1.0f) {
+        const RigExecBakedProgramImpl &now =
+            RigExecBakedProgramAccess::StepGraph(*evaluator.GetBakedProgram());
+        std::vector<GfVec3f> scratch;
+        const GfVec3f *points = nullptr;
+        size_t count = 0;
+        RigExecBakedVersionPoints(now.chains[size_t(chain)], last, &scratch,
+                                  &points, &count);
+        RigExecRigDescBuilder b;
+        rigExecOps::MatrixDeformPayload payload;
+        const RigExecNodeId node =
+            b.AddOp(rigExecOps::MatrixDeform(), &payload);
+        const RigExecInputId in =
+            b.BindInput(node, rigExecOps::MatrixDeformPoints());
+        const RigExecInputId transform =
+            b.BindInput(node, rigExecOps::MatrixDeformTransform());
+        const RigExecInputId fixed =
+            b.BindInput(node, rigExecOps::MatrixDeformDefaultWeight());
+        const RigExecOutputId out =
+            b.BindOutput(node, rigExecOps::MatrixDeformOut());
+        std::string why;
+        auto run = RigExecEvaluator::Create(RigExecCompile(*b.Build(&why)));
+        run->SetInput(fixed, &weight);
+        const rigExecStd::RigExecArray<rigExecStd::Vec3f> p(
+            reinterpret_cast<const rigExecStd::Vec3f *>(points), count);
+        rigExecStd::Mat4d matrix;
+        const GfMatrix4d &source = revisions[last].finalPhase
+                                       ? B.finalMatrix[size_t(slot)]
+                                       : B.baseMatrix[size_t(slot)];
+        std::memcpy(&matrix, source.data(), sizeof(matrix));
+        run->SetInput(in, &p);
+        run->SetInput(transform, &matrix);
+        std::string error;
+        if (!run->Evaluate(&error))
+            return VtVec3fArray();
+        const auto *moved =
+            static_cast<const rigExecStd::RigExecArray<rigExecStd::Vec3f> *>(
+                run->GetOutput(out));
+        return VtVec3fArray(reinterpret_cast<const GfVec3f *>(moved->Data()),
+                            reinterpret_cast<const GfVec3f *>(moved->Data()) +
+                                moved->Size());
+    };
+    const auto shape = [](const RigExecRigPose &pose) {
+        const auto found =
+            pose.movedProperties.find(SdfPath("/Asset/Shape.points"));
+        return found != pose.movedProperties.end() &&
+                       found->second.IsHolding<VtVec3fArray>()
+                   ? found->second.UncheckedGet<VtVec3fArray>()
+                   : VtVec3fArray();
+    };
+    const auto edit = [&](float lift, double moving) {
+        evaluator.SetInteractiveOverrides(
+            {Override(kLift, "inputs:weight", VtValue(lift)),
+             Override(kMoving, "avars:tx", VtValue(moving))});
+        return evaluator.Evaluate(time);
+    };
+    const RigExecRigPose first = edit(0.0f, 1.0);
+    CHECK(first.valid && SameBits(shape(first), reference()));
+    const RigExecRigPose moved = edit(0.0f, 2.0);
+    CHECK(moved.valid && SameBits(shape(moved), reference()) &&
+          !SameBits(shape(moved), shape(first)));
+    const RigExecRigPose lifted = edit(0.5f, 2.0);
+    CHECK(lifted.valid && SameBits(shape(lifted), reference()));
+    evaluator.SetInteractiveOverrides({});
+    const RigExecRigPose authored = evaluator.Evaluate(time);
+    const RigExecRigPose warmed = Frozen(evaluator, time);
+    CHECK(authored.valid && SameBits(shape(authored), reference()));
+    CHECK(warmed.valid && SameBits(shape(warmed), shape(authored)));
+    std::vector<uint8_t> bytes;
+    std::string error;
+    RigExecTestPlayer player;
+    const bool opened = RigExecTestBakeAt(evaluator, 1.0, &bytes, &error) &&
+                        player.Open(bytes, stage, &error);
+    if (!opened)
+        std::printf("bake or open: %s\n", error.c_str());
+    CHECK(opened);
+    if (opened) {
+        if (writeTo) {
+            std::ofstream out(writeTo, std::ios::binary);
+            out.write(reinterpret_cast<const char *>(bytes.data()),
+                      std::streamsize(bytes.size()));
+        }
+        for (const double moving : {1.0, 3.0}) {
+            evaluator.SetInteractiveOverrides(
+                {Override(kMoving, "avars:tx", VtValue(moving))});
+            const RigExecRigPose pose = evaluator.Evaluate(time);
+            CHECK(player.Hold(std::string(kMoving) + ".avars:tx", moving,
+                              &error));
+            CHECK(player.Play(1.0, &error));
+            std::vector<std::string> diffs;
+            CHECK(pose.valid &&
+                  RigExecCompareRuntimeOutputs(pose, player.Reader(), &diffs));
+            for (const std::string &line : diffs)
+                std::printf("  runtime: %s\n", line.c_str());
+        }
+        std::unique_ptr<fb::RigExecWireFile> file;
+        CHECK(RigExecFormatOpen(bytes.data(), bytes.size(), &file, &error) &&
+              file->opGraph && !file->opGraph->chains.empty() &&
+              file->opGraph->chains.back()->members.size() == 1);
+    }
+    CHECK(authored.valid);
+    // The mover's own inputs move it, still as op nodes.
+    evaluator.SetInteractiveOverrides({Override(
+        "/Asset/Rig/Movers/Rigid", "inputs:defaultWeight", VtValue(0.5f))});
+    const RigExecRigPose half = evaluator.Evaluate(time);
+    for (const std::string &line : half.diagnostics)
+        CHECK(half.valid && SameBits(shape(half), reference(0.5f)));
+    evaluator.SetInteractiveOverrides({Override(
+        "/Asset/Rig/Movers/Rigid", "inputs:enabled", VtValue(false))});
+    const RigExecRigPose disabled = evaluator.Evaluate(time);
+    std::vector<GfVec3f> scratch;
+    const GfVec3f *entering = nullptr;
+    size_t count = 0;
+    const RigExecBakedProgramImpl &now =
+        RigExecBakedProgramAccess::StepGraph(*evaluator.GetBakedProgram());
+    RigExecBakedVersionPoints(now.chains[size_t(chain)], last, &scratch,
+                              &entering, &count);
+    CHECK(now.chains[size_t(chain)].revisions[last].opMatrix);
+    CHECK(disabled.valid &&
+          SameBits(shape(disabled), VtVec3fArray(entering, entering + count)));
+    evaluator.SetInteractiveOverrides({});
+}
+
 /// The halo chain on a real rig: two smooths, the first reading the points
 /// entering the gated mover (version 1) group by group through its
 /// neighbourhood input. Lifting one group reruns that group's halo only;
@@ -1688,6 +1867,7 @@ main(int argc, char **argv)
     TestInjectedHalo();
     TestSelectedMatrix();
     TestInjectedGates();
+    TestMatrixOps(nullptr);
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

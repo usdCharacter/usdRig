@@ -870,6 +870,11 @@ struct RigExecBakedGeomRevision {
     /// publishes RevisionDone from the range versions without reading
     /// points.
     bool rangeRole = false;
+    /// A Range matrix at full strength (Build state): op nodes compute it, a
+    /// MoverTransform its transform and a MatrixDeform range chain its
+    /// groups, so it has no fold, static or chunk steps.
+    bool opMatrix = false;
+    bool opMatrixRadial = false;
     /// Filled by RevisionStatic (RigExecPrepareRevisionRanges), read by
     /// the range steps. A memo: never shadowed, restored or compared.
     RigExecRevisionRangeInputs rangeInputs;
@@ -1148,6 +1153,9 @@ struct RigExecBakedOpProgram {
     /// Per chain, member and vertex group: the groups the member's
     /// neighbourhood input reads there; empty for a member without one.
     std::vector<std::vector<std::vector<std::vector<uint32_t>>>> halo;
+    /// Per node and per range chain: the revision id whose fold, static and
+    /// chunk steps they stand in for, else -1.
+    std::vector<int> nodeRevision, chainRevision;
 };
 
 /// Op nodes a test adds for a rig (RigExecBakedProgramTesting::
@@ -4606,6 +4614,10 @@ struct RigExecBakedProgramTesting {
     SetOpInjector(std::function<bool(const RigExecBakedProgramImpl &,
                                      RigExecBakedOpInjection *)>
                       injector);
+    /// Whether builds after this one run full-strength Range matrices as op
+    /// nodes (the default) or on the baked Range arm, which weighted
+    /// matrices still run on. Set it on the thread that builds.
+    static void SetOpMatrices(bool on);
     static void SetOpObservers(const RigExecBakedProgram &program,
                                std::function<void(uint32_t)> before,
                                std::function<void(uint32_t)> after);
@@ -4656,6 +4668,10 @@ struct RigExecBakedProgramTesting {
 
 VtValue RigExecBakedResolvePathLeaf(const RigExecBakedProgramImpl &,
                                     const RigExecBakedPathLeaves &, size_t);
+/// Revision \p id's inputs:enabled and inputs:defaultWeight as its packet
+/// assembly reads them this run.
+bool RigExecBakedRevisionLeaf(const RigExecBakedProgramImpl &B, uint32_t id,
+                              bool *enabled, float *weight, std::string *error);
 bool
 RigExecBakedGeometryReadsLeaf(const RigExecBakedProgramImpl::GeomRevision &,
                               const RigExecBakedStep &, size_t);

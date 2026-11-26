@@ -8,6 +8,7 @@
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecEvalCore/propertyLookups.h"
+#include "rigExecOps/deform/matrixDeformOp.h"
 #include "rigExecStdTypes/array.h"
 #include "rigExecStdTypes/stdTypes.h"
 
@@ -65,6 +66,11 @@ struct BakedOpHost {
                        lookup.object < present.size() && present[lookup.object]
                    ? matrices[lookup.object].data()
                    : nullptr;
+    }
+    bool RevisionLeaf(uint32_t id, bool *enabled, float *weight,
+                      std::string *error) const
+    {
+        return RigExecBakedRevisionLeaf(B, id, enabled, weight, error);
     }
     const void *ChainGroupPoints(uint32_t chain, uint32_t g) const
     {
@@ -289,7 +295,7 @@ DeclarePortReads(const RigExecBakedProgramImpl &B,
         } else if (input.source == eval::OpHostSource::BaseMatrix) {
             reads->push_back(RigExecBakedOne(D::BaseMatrix, int(input.object)));
         } else if (layout.grouped[i]) {
-            if (reader.head || whole)
+            if (reader.head)
                 continue;
             const bool latest = input.source == eval::OpHostSource::ChainPoints;
             const uint32_t from =
@@ -297,6 +303,12 @@ DeclarePortReads(const RigExecBakedProgramImpl &B,
             const size_t version =
                 latest ? B.chains[from].revisions.size()
                        : size_t(layout.lookups[input.object].part);
+            if (whole) {
+                for (uint32_t h = 0; h < layout.chains[chain].Groups(); ++h)
+                    RigExecBakedDeclareGroupRead(B, int(from), version, h,
+                                                 reads);
+                continue;
+            }
             RigExecBakedDeclareGroupRead(B, int(from), version, group, reads);
             if (layout.grouped[i] == 2)
                 for (const uint32_t h :
@@ -389,6 +401,120 @@ DropRevisionChunks(RigExecBakedProgramImpl *B, std::vector<int> stored)
             step = moved[size_t(step)];
 }
 
+/// Per Range matrix at full strength (GeomRevision::opMatrix): a
+/// MoverTransform node fed the matrices FoldInfluences would fold, the
+/// transform the first present of a frame record, the constraint delta and
+/// the provider table, and a MatrixDeform range chain reading the points
+/// entering the revision and storing its groups. \p nodeRevision gets each
+/// node's revision id. False for a matrix with no transform.
+bool
+AddMatrixOps(const RigExecBakedProgramImpl &B, RigExecRigDescBuilder *builder,
+             eval::OpStepLayout *layout,
+             std::vector<std::pair<RigExecNodeId, int>> *nodeRevision,
+             std::string *error)
+{
+    using L = eval::OpLookupSource;
+    const auto bind = [&](RigExecNodeId node, const RigExecPortHandle &port,
+                          const std::vector<eval::OpLookup> &candidates) {
+        builder->BindInput(node, port);
+        layout->hostInputs.push_back({node, port.Index(),
+                                      eval::OpHostSource::Lookup,
+                                      uint32_t(layout->lookups.size())});
+        if (candidates.size() > 1)
+            layout->lookups.push_back({uint8_t(L::Selected),
+                                       uint32_t(layout->lookups.size() + 1),
+                                       int32_t(candidates.size()), 0});
+        layout->lookups.insert(layout->lookups.end(), candidates.begin(),
+                               candidates.end());
+    };
+    for (size_t c = 0; c < B.chains.size(); ++c) {
+        const RigExecBakedProgramImpl::GeomChain &chain = B.chains[c];
+        for (size_t r = 0; r < chain.revisions.size(); ++r) {
+            const RigExecBakedProgramImpl::GeomRevision &revision =
+                chain.revisions[r];
+            if (!revision.opMatrix)
+                continue;
+            const int id = B.chainRevisionBegin[c] + int(r);
+            const int32_t phase = revision.finalPhase ? 0 : 1;
+            const bool atPrim = revision.binding.transformPhase.kind ==
+                                RigExecReadPhaseKind::AtPrim;
+            const auto table = [&](int slot) {
+                return eval::OpLookup{uint8_t(L::Matrix), uint32_t(slot), phase,
+                                      0};
+            };
+            const auto phased = [&](const std::vector<int> *records,
+                                    eval::OpLookup last) {
+                std::vector<eval::OpLookup> candidates;
+                if (atPrim && records)
+                    for (const int record : *records)
+                        candidates.push_back(
+                            {uint8_t(L::FrameRecord), uint32_t(record), -1, 0});
+                candidates.push_back(last);
+                return candidates;
+            };
+            std::vector<eval::OpLookup> transform;
+            if (atPrim)
+                for (const int record : revision.transformRecords)
+                    transform.push_back(
+                        {uint8_t(L::FrameRecord), uint32_t(record), -1, 0});
+            if (revision.constraintDelta >= 0)
+                transform.push_back({uint8_t(L::ConstraintDelta),
+                                     uint32_t(revision.constraintDelta), -1,
+                                     0});
+            if (revision.transformSlot >= 0)
+                transform.push_back(table(revision.transformSlot));
+            if (transform.empty())
+                return Fail(error, revision.moverPathText +
+                                       ": a matrix mover with no transform");
+            rigExecOps::MoverTransformPayload fold;
+            fold.posedPoints = revision.posedPoints;
+            const RigExecNodeId mover =
+                builder->AddOp(rigExecOps::MoverTransform(), &fold);
+            bind(mover, rigExecOps::MoverTransformTransform(), transform);
+            const bool space = revision.transformSpaceSlot >= 0;
+            if (space)
+                bind(mover, rigExecOps::MoverTransformSpace(),
+                     {table(revision.transformSpaceSlot)});
+            const std::vector<int> &references = revision.influenceSlots;
+            const auto records = [&](size_t k) {
+                return k < revision.influenceRecords.size()
+                           ? &revision.influenceRecords[k]
+                           : nullptr;
+            };
+            if (!references.empty())
+                bind(mover, rigExecOps::MoverTransformReference(),
+                     phased(records(0), table(references[0])));
+            if (space && references.size() > 1)
+                bind(mover, rigExecOps::MoverTransformReferenceSpace(),
+                     phased(records(1), table(references[1])));
+            if (revision.carrySpaceSlot >= 0)
+                bind(mover, rigExecOps::MoverTransformCarry(),
+                     {table(revision.carrySpaceSlot)});
+            rigExecOps::MatrixDeformPayload payload;
+            payload.radial = revision.opMatrixRadial;
+            const RigExecNodeId deform =
+                builder->AddOp(rigExecOps::MatrixDeform(), &payload);
+            builder->Connect(mover, rigExecOps::MoverTransformOut(), deform,
+                             rigExecOps::MatrixDeformTransform());
+            bind(deform, rigExecOps::MatrixDeformPoints(),
+                 {{uint8_t(L::ChainVersion), uint32_t(c), int32_t(r), 0}});
+            bind(deform, rigExecOps::MatrixDeformEnabled(),
+                 {{uint8_t(L::RevisionLeaf), uint32_t(id), -1,
+                   uint8_t(eval::OpRevisionRead::Enabled)}});
+            bind(deform, rigExecOps::MatrixDeformDefaultWeight(),
+                 {{uint8_t(L::RevisionLeaf), uint32_t(id), -1,
+                   uint8_t(eval::OpRevisionRead::DefaultWeight)}});
+            builder->BindOutput(deform, rigExecOps::MatrixDeformOut());
+            layout->hostOutputs.push_back(
+                {deform, rigExecOps::MatrixDeformOut().Index(),
+                 uint8_t(eval::OpOutputTarget::ChainGroup), uint32_t(id)});
+            nodeRevision->push_back({mover, id});
+            nodeRevision->push_back({deform, id});
+        }
+    }
+    return true;
+}
+
 RigExecBakedStep &
 AddOpStep(RigExecBakedProgramImpl *B, K kind, int object, int part)
 {
@@ -431,6 +557,9 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
         outputs(n, [&](uint32_t v) {
             step.writes.push_back(RigExecBakedOne(D::OpValue, int(v)));
         });
+        if (n < op.nodeRevision.size() && op.nodeRevision[n] >= 0)
+            step.writes.push_back(
+                RigExecBakedOne(D::RevisionTransforms, op.nodeRevision[n]));
     }
     for (uint32_t c = 0; c < layout.chains.size(); ++c) {
         const RigExecChainDesc &desc = layout.chainDescs[c];
@@ -444,6 +573,9 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
                 DeclareNodeReads(*B, op, n, reader, &head.reads);
             head.writes.push_back(
                 RigExecBakedOne(D::OpValue, int(layout.PlanSlot(c))));
+            if (c < op.chainRevision.size() && op.chainRevision[c] >= 0)
+                head.writes.push_back(
+                    RigExecBakedOne(D::RevisionPacket, op.chainRevision[c]));
         }
         for (uint32_t s = 0; s < desc.members.size(); ++s) {
             if (desc.segments[s] != s)
@@ -517,6 +649,24 @@ RigExecBakedIdentityOf(const RigExecBakedProgramImpl &B,
     const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(B, step);
     if (origin && origin->kind != K::OpNode)
         return {origin->kind, origin->object, origin->part};
+    const RigExecBakedOpProgram *op = B.opProgram.get();
+    const bool chain =
+        step.kind == K::OpChainHead || step.kind == K::OpChainRange;
+    if (op && step.object >= 0 && (chain || step.kind == K::OpNode)) {
+        const std::vector<int> &revisions =
+            chain ? op->chainRevision : op->nodeRevision;
+        const int id = size_t(step.object) < revisions.size()
+                           ? revisions[size_t(step.object)]
+                           : -1;
+        if (id >= 0 && step.kind == K::OpNode)
+            return {K::InfluenceFold, id, -1};
+        if (id >= 0 && step.kind == K::OpChainHead)
+            return {K::RevisionStatic, id, -1};
+        if (id >= 0)
+            return {K::RevisionChunk, id,
+                    int(uint32_t(step.part) %
+                        op->layout.chains[size_t(step.object)].Groups())};
+    }
     return {step.kind, step.object, step.part};
 }
 
@@ -537,7 +687,13 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
     B.opState.reset();
     auto op = std::make_shared<RigExecBakedOpProgram>();
     eval::OpStepLayout &layout = op->layout;
-    if (!B.opNodeOrigins.empty() && !RigExecEnsureBuiltinRegistry(error))
+    bool matrices = false;
+    for (const RigExecBakedProgramImpl::GeomChain &chain : B.chains)
+        for (const RigExecBakedProgramImpl::GeomRevision &revision :
+             chain.revisions)
+            matrices = matrices || revision.opMatrix;
+    if ((!B.opNodeOrigins.empty() || matrices) &&
+        !RigExecEnsureBuiltinRegistry(error))
         return false;
     RigExecRigDescBuilder builder;
     if (!RigExecBakedAddPropertyOps(B, &builder, &layout, error) ||
@@ -545,13 +701,15 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
         !RigExecBakedAddSpaceOps(B, &builder, &layout, error))
         return false;
     RigExecBakedAddVolumePlacementOps(B, &builder, &layout);
+    std::vector<std::pair<RigExecNodeId, int>> nodeRevision;
     if (!RigExecBakedAddWeightPacketOps(B, &builder, &layout, error) ||
-        !RigExecBakedAddWeightFieldOps(B, &builder, &layout, true, error))
+        !RigExecBakedAddWeightFieldOps(B, &builder, &layout, true, error) ||
+        !AddMatrixOps(B, &builder, &layout, &nodeRevision, error))
         return false;
     RigExecBakedOpInjection injection;
     injection.builder = &builder;
     const bool injected = gOpInjector && gOpInjector(B, &injection);
-    if (B.opNodeOrigins.empty() && !injected)
+    if (B.opNodeOrigins.empty() && nodeRevision.empty() && !injected)
         return true;
     std::string why;
     const std::shared_ptr<const RigExecRigDesc> desc = builder.Build(&why);
@@ -580,6 +738,10 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
                               injection.hostOutputs.end());
     const size_t chains = RigExecProgramChainCount(*layout.program);
     layout.chains.assign(chains, eval::OpChainLayout());
+    op->nodeRevision.assign(RigExecProgramNodeCount(*layout.program), -1);
+    for (const auto &[node, id] : nodeRevision)
+        op->nodeRevision[node] = id;
+    op->chainRevision.assign(chains, -1);
     std::vector<uint32_t> chainOfNode(RigExecProgramNodeCount(*layout.program),
                                       kRigExecInvalidIndex);
     std::vector<uint32_t> memberOfNode(chainOfNode.size(),
@@ -589,6 +751,8 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
         RigExecChainDesc desc;
         RigExecProgramChainAt(*layout.program, c, &desc);
         members[c] = desc.members.size();
+        if (!desc.members.empty())
+            op->chainRevision[c] = op->nodeRevision[desc.members[0]];
         for (uint32_t m = 0; m < desc.members.size(); ++m) {
             chainOfNode[desc.members[m]] = uint32_t(c);
             memberOfNode[desc.members[m]] = m;
@@ -765,6 +929,15 @@ RigExecBakedRunOpStep(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
     else if (origin && origin->family == RigExecBakedOpFamily::WeightPacket)
         step->diagnostics.push_back(
             B.weightProgram[size_t(origin->object)].name + ": " + error);
+    else if (const RigExecBakedStepIdentity id =
+                 RigExecBakedIdentityOf(B, *step);
+             !origin && id.kind != step->kind &&
+             size_t(id.object) < B.revisionIndex.size())
+        step->diagnostics.push_back(
+            B.chains[size_t(B.revisionIndex[size_t(id.object)].first)]
+                .revisions[size_t(B.revisionIndex[size_t(id.object)].second)]
+                .moverPathText +
+            ": " + error);
     else if (origin && origin->family == RigExecBakedOpFamily::WeightField)
         step->diagnostics.push_back(
             B.weightProgram[size_t(B.weightFields[size_t(origin->object)]
@@ -792,6 +965,7 @@ RigExecBakedCloneOpState(const RigExecBakedProgramImpl &source,
     const BakedOpHost host{*clone};
     if (!eval::BindOpStepState(op.layout, host, state.get(), error))
         return false;
+    eval::CopyOpLookups(*source.opState, state.get());
     state->run->ReleaseOwner();
     clone->opState = std::move(state);
     return true;

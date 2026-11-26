@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <iterator>
 #include <string>
+#include <vector>
 
 namespace rigExecOps {
 
@@ -21,6 +22,8 @@ RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformEnvelope)
 RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformWeightIndices)
 RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformWeights)
 RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformOut)
+RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformEnabled)
+RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformDefaultWeight)
 
 RIGEXEC_DEFINE_OP_HANDLE(MoverTransform)
 
@@ -91,9 +94,12 @@ ViewOf(const rigExec::RigExecOpIo &io, bool check,
     return true;
 }
 
-/// Weights validate could not see, checked each frame.
+/// Weights validate could not see, checked each frame; this frame's pass
+/// through and default weight at every point, written by prepare.
 struct MatrixState {
     bool checkEachFrame = true;
+    bool pass = false;
+    std::vector<float> constant;
 };
 
 bool
@@ -106,6 +112,10 @@ Validate(const rigExec::RigExecOpCheck &check, std::string *error)
     if (sparse && Fed(check, MatrixDeformEnvelope()))
         return Fail(error, "MatrixDeform",
                     "an envelope or sparse weights, not both");
+    if (Fed(check, MatrixDeformDefaultWeight()) &&
+        (sparse || Fed(check, MatrixDeformEnvelope())))
+        return Fail(error, "MatrixDeform",
+                    "a default weight or an envelope, not both");
     const size_t points = CheckElements(check, MatrixDeformPoints());
     if (sparse && !SameCount(CheckElements(check, MatrixDeformWeightIndices()),
                              CheckElements(check, MatrixDeformWeights())))
@@ -156,13 +166,23 @@ bool
 Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
         std::string *error)
 {
-    const auto &state =
-        *static_cast<const MatrixState *>(rigExec::RigExecBatchState(batch, k));
+    auto &state =
+        *static_cast<MatrixState *>(rigExec::RigExecBatchState(batch, k));
     const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
-    if (!EnvelopeFits(*In<Points>(io, MatrixDeformPoints()),
-                      In<Envelope>(io, MatrixDeformEnvelope()), "MatrixDeform",
-                      error))
+    const Points &points = *In<Points>(io, MatrixDeformPoints());
+    if (!EnvelopeFits(points, In<Envelope>(io, MatrixDeformEnvelope()),
+                      "MatrixDeform", error))
         return false;
+    const uint8_t *enabled = In<uint8_t>(io, MatrixDeformEnabled());
+    const float *weight = In<float>(io, MatrixDeformDefaultWeight());
+    state.pass = enabled && !*enabled;
+    state.constant.clear();
+    if (weight && !state.pass && *weight != 1.0f) {
+        if (!std::isfinite(*weight) || *weight < 0.0f || *weight > 1.0f)
+            return Fail(error, "MatrixDeform",
+                        "a default weight is not finite or outside [0, 1]");
+        state.constant.assign(points.Size(), *weight);
+    }
     rigExec::eval::EnvelopePacketView view;
     return !state.checkEachFrame || ViewOf(io, true, &view, error);
 }
@@ -174,6 +194,8 @@ Deform(const rigExec::RigExecOpBatch &batch, size_t k,
        const rigExec::RigExecOpRange &range, std::string *)
 {
     const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const auto &state =
+        *static_cast<const MatrixState *>(rigExec::RigExecBatchState(batch, k));
     rigExec::eval::EnvelopePacketView view;
     ViewOf(io, false, &view, nullptr);
     const Vec3f *in = RangeIn<Vec3f>(io, range, MatrixDeformPoints());
@@ -183,6 +205,12 @@ Deform(const rigExec::RigExecOpBatch &batch, size_t k,
         rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kRadial)[k] != 0;
     Vec3f *out = RangeOut<Vec3f>(io, range, MatrixDeformOut());
     const size_t count = range.end - range.begin;
+    if (state.pass) {
+        std::copy(in, in + count, out);
+        return true;
+    }
+    if (!state.constant.empty())
+        envelope = state.constant.data() + range.begin;
     if (rigExec::eval::EnvelopeIsSparseWalk(view)) {
         std::copy(in, in + count, out);
         if (transform == Math::Identity())
@@ -199,8 +227,10 @@ Deform(const rigExec::RigExecOpBatch &batch, size_t k,
     }
     rigExec::eval::ApplyMatrixKernelRange<Math>(
         radial, transform,
-        rigExec::eval::EnvelopeIsFullStrength(view) ? nullptr : envelope, 0,
-        count, in, out, io.useSimd);
+        rigExec::eval::EnvelopeIsFullStrength(view) && state.constant.empty()
+            ? nullptr
+            : envelope,
+        0, count, in, out, io.useSimd);
     return true;
 }
 
@@ -289,6 +319,10 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&MatrixDeformOut(), &rigExecStd::Vec3fArray(),
      kRigExecPortOutput | kRigExecPortPointwise, "out",
      rigExec::RigExecOutputBound::Input, &MatrixDeformPoints()},
+    {&MatrixDeformEnabled(), &rigExecStd::BoolType(),
+     kRigExecPortInput | kRigExecPortOptional, "enabled"},
+    {&MatrixDeformDefaultWeight(), &rigExecStd::FloatType(),
+     kRigExecPortInput | kRigExecPortOptional, "defaultWeight"},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {

@@ -6514,6 +6514,91 @@ TestRegularLatticeWarmsBitIdentical()
     }
 }
 
+// A frozen job over a half-strength matrix run as op nodes, at a frame where
+// only the points entering it move (an animated matrix runs before it): its
+// own chain head does not rerun in the clone, so its range steps read the
+// looked-up enabled and default weight the clone copied, and the warmed pose
+// equals live.
+void
+TestOpMatrixCloneKeepsLookups()
+{
+    const auto stage = UsdStage::CreateInMemory();
+    CHECK(stage->GetRootLayer()->ImportFromString(R"USD(#usda 1.0
+ def RigExecRoot "Rig" {
+  def RigExecControl "Lift" {
+   double avars:tz.timeSamples = {1: 0.1, 2: 0.3, 3: 0.45}
+  }
+  def RigExecControl "Frame" {
+   double avars:tx = 0.25
+   double avars:rz = 30
+  }
+  def Points "Target" {}
+  def Scope "Movers" {
+   def RigExecMatrixMover "Move" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+    rel rigExec:moves = </Rig/Target.points>
+    rel rigExec:transform = </Rig/Frame>
+    float inputs:defaultWeight = 0.5
+   }
+   def RigExecMatrixMover "Raise" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+    rel rigExec:moves = </Rig/Target.points>
+    rel rigExec:transform = </Rig/Lift>
+   }
+  }
+ }
+)USD"));
+    const SdfPath root("/Rig"), target("/Rig/Target.points");
+    // Enough points for a range chain of several vertex groups.
+    VtVec3fArray points(8192);
+    for (size_t i = 0; i < points.size(); ++i)
+        points[i] = GfVec3f(0.01f * float(i % 97), 0.02f * float(i % 31),
+                            0.001f * float(i));
+    UsdGeomPoints(stage->GetPrimAtPath(target.GetPrimPath()))
+        .CreatePointsAttr()
+        .Set(points);
+    RigExecRigEvaluator evaluator(stage, root);
+    std::vector<std::string> errors;
+    CHECK(evaluator.Compile(&errors));
+    CHECK(errors.empty());
+    CHECK(evaluator.GetBakedProgram() != nullptr);
+    if (!evaluator.GetBakedProgram())
+        return;
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
+    CHECK(std::any_of(
+        B.steps.begin(), B.steps.end(), [](const RigExecBakedStep &step) {
+            return step.kind == RigExecBakedStepKind::OpChainRange;
+        }));
+    const auto rest = evaluator.Evaluate(UsdTimeCode(1));
+    CHECK(rest.valid);
+    RigExecCancellationSource cancellation;
+    for (double time : {2.0, 3.0}) {
+        std::shared_ptr<const RigExecFrozenProgram> frozen;
+        std::string error;
+        CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
+        if (!frozen) {
+            std::printf("op matrix freeze: %s\n", error.c_str());
+            return;
+        }
+        RigExecFrameInputs inputs;
+        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(time), {},
+                                       &inputs, &error));
+        bool ran = false;
+        const auto warmed = RunWarmingJob(&evaluator, root, frozen, inputs,
+                                          &cancellation, &ran);
+        CHECK(ran);
+        const auto live = evaluator.Evaluate(UsdTimeCode(time));
+        CHECK(live.valid);
+        CheckPosesBitIdentical("op matrix clone", live, warmed);
+        // Not vacuous: the points move from frame to frame.
+        const auto moved = live.movedProperties.find(target);
+        const auto still = rest.movedProperties.find(target);
+        CHECK(moved != live.movedProperties.end() &&
+              still != rest.movedProperties.end() &&
+              moved->second != still->second);
+    }
+}
+
 // The ribbon spine (examples/05_TwistRibbonSpine.usda) warms
 // bit-identically: a Ribbon revision and an EmitGuidePoints revision over
 // one solver's driver frames, plus a matrix fin.
@@ -9697,6 +9782,7 @@ main(int argc, char **argv)
     TestFrozenWholeRunSkippingVolumePlacementsPublishesLive();
     TestSurfaceSnapWarmsBitIdentical();
     TestRegularLatticeWarmsBitIdentical();
+    TestOpMatrixCloneKeepsLookups();
     Test9MeshWarmsBitIdenticalAtSweepDistance();
     TestProductionRunnerDeclinesWithoutProof();
     TestFrozenRunIsBitIdentical();

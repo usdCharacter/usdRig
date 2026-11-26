@@ -589,10 +589,12 @@ TestTheGraphDescribesTheProgram(const BuiltProgram &built, const char *name)
         // last writer published, which never moves, and so needs no
         // RevisionDone: those slots are exempt.
         std::vector<int> groupSlots;
-        if ((step.kind == RigExecBakedStepKind::RevisionChunk ||
-             step.kind == RigExecBakedStepKind::RevisionFuse) &&
-            step.object >= 0 && size_t(step.object) < revisions) {
-            const auto &[c, r] = B.revisionIndex[size_t(step.object)];
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(B, step);
+        if ((identity.kind == RigExecBakedStepKind::RevisionChunk ||
+             identity.kind == RigExecBakedStepKind::RevisionFuse) &&
+            identity.object >= 0 && size_t(identity.object) < revisions) {
+            const auto &[c, r] = B.revisionIndex[size_t(identity.object)];
             const auto &revision = B.chains[size_t(c)].revisions[size_t(r)];
             for (size_t g = 0; g < revision.enteringWriter.size(); ++g) {
                 const int writer = revision.enteringWriter[g];
@@ -10441,6 +10443,9 @@ int
 main(int argc, char **argv)
 {
     std::setvbuf(stdout, nullptr, _IONBF, 0); // DEBUG-UNBUFFERED
+    // The range chains here hold the baked Range arm to its declarations;
+    // full-strength matrices as op nodes are testRigExecOpSteps'.
+    RigExecBakedProgramTesting::SetOpMatrices(false);
     if (argc < 2) {
         std::printf("usage: testRigExecBakedSchedule <examplesDir>\n");
         return 2;

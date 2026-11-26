@@ -1743,7 +1743,37 @@ RigExecRun::CopyFrom(const RigExecRun &source)
                             from[h].Size());
         }
     }
+    // A host's range step of a chain whose head does not run again reads the
+    // plan, groups and range cells the source's head made.
+    plans = source.plans;
+    elementCounts = source.elementCounts;
+    instanceRanges = source.instanceRanges;
+    for (size_t at = 0; at < scratch.size() && at < source.scratch.size();
+         ++at) {
+        const RigExecOpDesc &d = OpOf(p.nodes[p.batchNodes[at]].op);
+        while (scratch[at].size() < source.scratch[at].size()) {
+            scratch[at].emplace_back();
+            scratch[at].back().Allocate(d.range.scratch.size);
+            d.range.scratch.create(scratch[at].back().Data());
+        }
+    }
     chainBounds = source.chainBounds;
+    if (p.hostOrder) {
+        chainStop = source.chainStop;
+        for (uint32_t c = 0; c < p.chains.size(); ++c) {
+            if (chainBounds[c].size() < 2)
+                continue;
+            const RigExecProgramChain &chain = p.chains[c];
+            for (uint32_t m = 0; m < chainStop[c]; ++m) {
+                const uint32_t at = p.chainMembers[chain.firstMember + m];
+                if (!source.active[at])
+                    continue;
+                active[at] = 1;
+                batchActive[p.positionBatch[at]] = 1;
+            }
+            _PrepareGroups(c);
+        }
+    }
     failure = source.failure;
     captures = source.captures;
     generation = source.generation;

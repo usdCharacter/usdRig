@@ -641,7 +641,14 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// versions through source 1; the matrices are stored through
 /// OpGraph.host_outputs targets 20 to 23. It retires the ProviderMatrix and
 /// FrameMatrix steps.
-inline constexpr uint32_t RigExecFormatVersion = 41;
+///
+/// Format 42 runs a Range matrix at full strength as op nodes: a
+/// MoverTransform OpNode and a MatrixDeform range chain storing the
+/// revision's groups through OpGraph.host_outputs target 4. OpChain gains
+/// its members and the groups each writes, which RigExecFormatGroupWriters
+/// reads. Such a revision has no InfluenceFold, RevisionStatic or
+/// RevisionChunk step.
+inline constexpr uint32_t RigExecFormatVersion = 42;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -649,7 +656,7 @@ inline constexpr uint32_t RigExecFormatVersion = 41;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 41;
+inline constexpr uint32_t RigExecFormatOldestReadable = 42;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

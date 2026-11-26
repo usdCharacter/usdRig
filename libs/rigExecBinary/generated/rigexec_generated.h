@@ -22307,6 +22307,8 @@ struct RigExecWireOpChain : public ::flatbuffers::NativeTable {
   typedef OpChain TableType;
   uint32_t pointChain = 0;
   std::vector<int32_t> bounds{};
+  std::vector<uint32_t> members{};
+  std::vector<uint8_t> writes{};
 };
 
 /// Format 36: one range chain of the op nodes, in the order the op core
@@ -22321,7 +22323,9 @@ struct OpChain FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_POINTCHAIN = 4,
-    VT_BOUNDS = 6
+    VT_BOUNDS = 6,
+    VT_MEMBERS = 8,
+    VT_WRITES = 10
   };
   uint32_t pointChain() const {
     return GetField<uint32_t>(VT_POINTCHAIN, 0);
@@ -22329,12 +22333,25 @@ struct OpChain FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<int32_t> *bounds() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_BOUNDS);
   }
+  /// Format 42: the member nodes in chain order, and per member and group
+  /// (member-major) whether the member writes that group; empty when every
+  /// member writes every group.
+  const ::flatbuffers::Vector<uint32_t> *members() const {
+    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_MEMBERS);
+  }
+  const ::flatbuffers::Vector<uint8_t> *writes() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_WRITES);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint32_t>(verifier, VT_POINTCHAIN, 4) &&
            VerifyOffset(verifier, VT_BOUNDS) &&
            verifier.VerifyVector(bounds()) &&
+           VerifyOffset(verifier, VT_MEMBERS) &&
+           verifier.VerifyVector(members()) &&
+           VerifyOffset(verifier, VT_WRITES) &&
+           verifier.VerifyVector(writes()) &&
            verifier.EndTable();
   }
   RigExecWireOpChain *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -22352,6 +22369,12 @@ struct OpChainBuilder {
   void add_bounds(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> bounds) {
     fbb_.AddOffset(OpChain::VT_BOUNDS, bounds);
   }
+  void add_members(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> members) {
+    fbb_.AddOffset(OpChain::VT_MEMBERS, members);
+  }
+  void add_writes(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> writes) {
+    fbb_.AddOffset(OpChain::VT_WRITES, writes);
+  }
   explicit OpChainBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -22366,8 +22389,12 @@ struct OpChainBuilder {
 inline ::flatbuffers::Offset<OpChain> CreateOpChain(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint32_t pointChain = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> bounds = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> bounds = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> members = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> writes = 0) {
   OpChainBuilder builder_(_fbb);
+  builder_.add_writes(writes);
+  builder_.add_members(members);
   builder_.add_bounds(bounds);
   builder_.add_pointChain(pointChain);
   return builder_.Finish();
@@ -22381,12 +22408,18 @@ struct OpChain::Traits {
 inline ::flatbuffers::Offset<OpChain> CreateOpChainDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint32_t pointChain = 0,
-    const std::vector<int32_t> *bounds = nullptr) {
+    const std::vector<int32_t> *bounds = nullptr,
+    const std::vector<uint32_t> *members = nullptr,
+    const std::vector<uint8_t> *writes = nullptr) {
   auto bounds__ = bounds ? _fbb.CreateVector<int32_t>(*bounds) : 0;
+  auto members__ = members ? _fbb.CreateVector<uint32_t>(*members) : 0;
+  auto writes__ = writes ? _fbb.CreateVector<uint8_t>(*writes) : 0;
   return rigExec::fb::CreateOpChain(
       _fbb,
       pointChain,
-      bounds__);
+      bounds__,
+      members__,
+      writes__);
 }
 
 ::flatbuffers::Offset<OpChain> CreateOpChain(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpChain *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -22440,6 +22473,14 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// 20 (format 41): the rest frame of slot `object`. 21 (format 41): the
   /// record gates of pose commit `object`: `read` 0 its present bytes, 1
   /// record-after, 2 record-every-target.
+  /// 5: an array of `part` elements, element i what lookup `object` + i
+  /// answers. 6: the final (`part` 0) or base (`part` 1) matrix of
+  /// provider slot `object`. 7: frame record `object`, present when valid
+  /// this frame. 8: the delta geometry-domain constraint `object`
+  /// measured, present when it measured one. 9: the first present of the
+  /// `part` lookups from `object`, each a 6, 7 or 8 (Mat4d). 10 (format
+  /// 42): input `read` of revision `object` (geometry.revision_index): 0
+  /// inputs:enabled (Bool), 1 inputs:defaultWeight (Float).
   uint8_t source() const {
     return GetField<uint8_t>(VT_SOURCE, 0);
   }
@@ -22549,6 +22590,9 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// field `object`; 20 and 21 (format 41): the final and the base matrix
   /// of slot `object`; 22 and 23 (format 41): the matrix and the valid byte
   /// of frame record `object`.
+  /// 4 (format 42): a range chain member's output, group by group, into
+  /// the vertex groups of revision `object` (geometry.revision_index), the
+  /// groups its OpChain.writes names.
   uint8_t target() const {
     return GetField<uint8_t>(VT_TARGET, 0);
   }
@@ -29461,6 +29505,8 @@ inline void OpChain::UnPackTo(RigExecWireOpChain *_o, const ::flatbuffers::resol
   (void)_resolver;
   { auto _e = pointChain(); _o->pointChain = _e; }
   { auto _e = bounds(); if (_e) { _o->bounds.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->bounds[_i] = _e->Get(_i); } } else { _o->bounds.resize(0); } }
+  { auto _e = members(); if (_e) { _o->members.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->members[_i] = _e->Get(_i); } } else { _o->members.resize(0); } }
+  { auto _e = writes(); if (_e) { _o->writes.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->writes.begin()); } }
 }
 
 inline ::flatbuffers::Offset<OpChain> CreateOpChain(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpChain *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -29473,10 +29519,14 @@ inline ::flatbuffers::Offset<OpChain> OpChain::Pack(::flatbuffers::FlatBufferBui
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireOpChain* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _pointChain = _o->pointChain;
   auto _bounds = _o->bounds.size() ? _fbb.CreateVector(_o->bounds) : 0;
+  auto _members = _o->members.size() ? _fbb.CreateVector(_o->members) : 0;
+  auto _writes = _o->writes.size() ? _fbb.CreateVector(_o->writes) : 0;
   return rigExec::fb::CreateOpChain(
       _fbb,
       _pointChain,
-      _bounds);
+      _bounds,
+      _members,
+      _writes);
 }
 
 inline RigExecWireOpLookup *OpLookup::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
@@ -32926,10 +32976,12 @@ inline const ::flatbuffers::TypeTable *OpGraphOutputTypeTable() {
 inline const ::flatbuffers::TypeTable *OpChainTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
     { ::flatbuffers::ET_UINT, 0, -1 },
-    { ::flatbuffers::ET_INT, 1, -1 }
+    { ::flatbuffers::ET_INT, 1, -1 },
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_UCHAR, 1, -1 }
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 2, type_codes, nullptr, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 4, type_codes, nullptr, nullptr, nullptr, nullptr
   };
   return &tt;
 }

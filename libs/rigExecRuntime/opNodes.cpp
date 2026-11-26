@@ -199,6 +199,11 @@ struct RrOpHost {
                    ? &matrices[lookup.object]
                    : nullptr;
     }
+    bool RevisionLeaf(uint32_t id, bool *enabled, float *weight,
+                      std::string *error) const
+    {
+        return RrGeoRevisionLeaf(&p, id, enabled, weight, error);
+    }
     const void *ChainGroupPoints(uint32_t chain, uint32_t g) const
     {
         return RrGeoFinalGroupPoints(&p, chain, g);
@@ -463,6 +468,7 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
         eval::OpChainLayout steps;
         steps.pointChain = chain->pointChain;
         steps.bounds = chain->bounds;
+        steps.writes = chain->writes;
         layout.chains.push_back(std::move(steps));
     }
     std::string why;
@@ -476,6 +482,14 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
         return Fail(error, why);
     if (!eval::LayOutOpSteps(&layout, error))
         return false;
+    for (size_t c = 0; c < graph.chains.size(); ++c)
+        if (graph.chains[c]->members != layout.chainDescs[c].members)
+            return Fail(error, "range chain " + std::to_string(c) +
+                                   " has other members than the file names");
+    for (const eval::OpHostOutput &output : layout.hostOutputs)
+        if (output.target == uint8_t(eval::OpOutputTarget::ChainGroup) &&
+            !RrGeoAdoptOpStored(p, output.object, error))
+            return false;
     std::vector<char> fieldNode(graph.nodes.size(), 0);
     for (const auto &entry : fieldObjects)
         fieldNode[entry.first] = 1;
@@ -516,6 +530,32 @@ RrRunOpStep(RrProgram *p, size_t i, std::string *error)
         if (p->geometry && object < p->geometry->weightObjects.size())
             *error = p->TextOrEmpty(p->geometry->weightObjects[object].path) +
                      ": " + *error;
+    } else if (error && p->geometry) {
+        // An op step standing in for a revision speaks as its mover.
+        const auto &geo = *p->geometry;
+        int64_t revision = -1;
+        for (const auto &write : step.writes) {
+            const auto domain = write.domain();
+            if (domain == RigExecWireSlotDomain::RevisionPacket ||
+                domain == RigExecWireSlotDomain::RevisionTransforms)
+                revision = write.begin();
+            else if (domain == RigExecWireSlotDomain::RevisionOut)
+                for (size_t r = 0; r < geo.revisionChunkBase.size(); ++r)
+                    if (geo.revisionChunkBase[r] >= 0 &&
+                        write.begin() >= uint32_t(geo.revisionChunkBase[r]) &&
+                        write.begin() - uint32_t(geo.revisionChunkBase[r]) <
+                            uint32_t(geo.revisionChunkCount[r]))
+                        revision = int64_t(r);
+            if (revision >= 0)
+                break;
+        }
+        if (revision >= 0 && size_t(revision) < geo.revisionIndex.size()) {
+            const auto &at = geo.revisionIndex[size_t(revision)];
+            *error = p->TextOrEmpty(geo.chains[size_t(at.first)]
+                                        .revisions[size_t(at.second)]
+                                        .moverPath) +
+                     ": " + *error;
+        }
     }
     return false;
 }

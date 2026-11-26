@@ -1300,6 +1300,9 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
     case RigExecWireStepKind::ChainInputs:
     case RigExecWireStepKind::SpaceCheckpoint:
     case RigExecWireStepKind::ProviderRefresh:
+    case RigExecWireStepKind::OpNode:
+    case RigExecWireStepKind::OpChainHead:
+    case RigExecWireStepKind::OpChainRange:
         return true;
     default:
         return false;

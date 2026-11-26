@@ -1610,13 +1610,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 41 &&
-                      RigExecFormatOldestReadable == 41,
-                  "format 41 runs provider and frame matrices as op nodes "
-                  "and is the "
-                  "only format Open reads");
-    // Every older format requires re-export: its provider and frame
-    // matrices ran as their own steps.
+    static_assert(RigExecFormatVersion == 42 &&
+                      RigExecFormatOldestReadable == 42,
+                  "format 42 runs full-strength matrices as op nodes and is "
+                  "the only format Open reads");
+    // Every older format requires re-export: its matrices ran as their own
+    // steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1627,14 +1626,14 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 41 through " +
+            " (this reader reads 42 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 41 ? "re-export: provider and frame matrices as op nodes"
+            (version < 42 ? "re-export: full-strength matrices as op nodes"
                           : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 41 ? reexports : rebakes);
+        ++(version < 42 ? reexports : rebakes);
     }
-    CHECK(reexports == 41 && rebakes == 1);
+    CHECK(reexports == 42 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;

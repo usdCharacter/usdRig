@@ -165,10 +165,13 @@ RigExecBakeOpGraph(const RigExecBakedProgramImpl &program,
         out->object = output.object;
         graph->hostOutputs.push_back(std::move(out));
     }
-    for (const eval::OpChainLayout &chain : layout.chains) {
+    for (size_t c = 0; c < layout.chains.size(); ++c) {
+        const eval::OpChainLayout &chain = layout.chains[c];
         auto out = std::make_unique<fb::RigExecWireOpChain>();
         out->pointChain = chain.pointChain;
         out->bounds = chain.bounds;
+        out->members = layout.chainDescs[c].members;
+        out->writes = chain.writes;
         graph->chains.push_back(std::move(out));
     }
     file->opGraph = std::move(graph);

@@ -60,12 +60,23 @@ enum class OpLookupSource : uint8_t {
     /// Mat4d: the first present of the `part` lookups from `object`, each
     /// a FrameRecord, ConstraintDelta or (always present) Matrix lookup.
     Selected = 9,
+    /// Revision `object`'s own input `read` (OpRevisionRead).
+    RevisionLeaf = 10,
     /// PointFrame: the rest frame of slot `object`.
     RestFrame = 20,
     /// The record gates of pose commit `object`: `read` 0 its per-output
     /// presence (BoolArray), 1 whether it records after itself and 2
     /// whether it records every target (Bool).
     CommitRecordGate = 21,
+};
+
+/// OpLookup::read of a RevisionLeaf lookup. The numbers are part of the
+/// file format.
+enum class OpRevisionRead : uint8_t {
+    /// Bool: inputs:enabled, true when the mover reads none.
+    Enabled = 0,
+    /// Float: inputs:defaultWeight, 1 when the mover reads none.
+    DefaultWeight = 1,
 };
 
 /// Whether a lookup of \p source is one the host answers through
@@ -194,6 +205,7 @@ OpLookupSourceRuns(uint8_t source)
            source == uint8_t(OpLookupSource::WeightFieldInputs) ||
            source == uint8_t(OpLookupSource::List) ||
            source == uint8_t(OpLookupSource::Selected) ||
+           source == uint8_t(OpLookupSource::RevisionLeaf) ||
            OpLookupSourceSelectable(source) || OpSpaceLookupSource(source);
 }
 
@@ -252,6 +264,10 @@ public:
         return _type;
     }
     void *Value()
+    {
+        return _storage.data();
+    }
+    const void *Value() const
     {
         return _storage.data();
     }
@@ -685,6 +701,12 @@ struct OpStepState {
     std::unique_ptr<RigExecRunState> run;
     /// Per hostInputs entry: the value a Lookup input reads, else null.
     std::vector<std::unique_ptr<OpPortValue>> lookedUp;
+    /// Per hostInputs entry: the bytes a trivially copyable looked-up input
+    /// held when its chain's head last ran.
+    std::vector<std::vector<uint8_t>> lookedUpBytes;
+    /// Per op value a node step writes: the bytes of a trivially copyable
+    /// value when its version last moved.
+    std::vector<std::vector<uint8_t>> valueBytes;
     std::vector<std::vector<const void *>> groupPoints;
     std::vector<RigExecOpGroups> groups;
     /// Per hostInputs entry read through a neighbourhood input, per group:
@@ -695,6 +717,26 @@ struct OpStepState {
     std::vector<std::vector<std::vector<uint32_t>>> haloReads;
     std::vector<uint64_t> versions, groupVersions;
 };
+
+/// Gives \p to, bound by BindOpStepState, \p from's looked-up input values:
+/// a range step can run before its chain's head resolves them again.
+inline void
+CopyOpLookups(const OpStepState &from, OpStepState *to)
+{
+    for (size_t i = 0; i < to->lookedUp.size() && i < from.lookedUp.size();
+         ++i) {
+        if (!to->lookedUp[i] || !from.lookedUp[i])
+            continue;
+        const RigExecTypeDesc &type = to->lookedUp[i]->Type();
+        if (type.triviallyCopyable)
+            std::memcpy(to->lookedUp[i]->Value(), from.lookedUp[i]->Value(),
+                        type.size);
+        else if (type.copy)
+            type.copy(to->lookedUp[i]->Value(), from.lookedUp[i]->Value());
+    }
+    to->lookedUpBytes = from.lookedUpBytes;
+    to->valueBytes = from.valueBytes;
+}
 
 /// Group \p g of the points host input \p input reads group by group: of
 /// its chain's final points, or of the chain version its lookup names.
@@ -726,6 +768,8 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
     state->haloReads.resize(layout.hostInputs.size());
     state->lookedUp.clear();
     state->lookedUp.resize(layout.hostInputs.size());
+    state->lookedUpBytes.assign(layout.hostInputs.size(), {});
+    state->valueBytes.resize(layout.OpValueCount());
     state->versions.resize(layout.OpValueCount(), 0);
     state->groupVersions.resize(layout.groupValueCount, 0);
     for (size_t i = 0; i < layout.constantIds.size(); ++i)
@@ -805,6 +849,27 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
         return host.LookUpChainVersion(index, lookup, type, value, error);
     case OpLookupSource::WeightFieldInputs:
         return host.LookUpWeightField(index, lookup, type, value, error);
+    case OpLookupSource::RevisionLeaf: {
+        bool enabled = true;
+        float weight = 1.0f;
+        if (!host.RevisionLeaf(lookup.object, &enabled, &weight, error))
+            return false;
+        if (lookup.read == uint8_t(OpRevisionRead::Enabled) &&
+            type.triviallyCopyable && type.size == 1) {
+            const uint8_t flag = enabled ? 1 : 0;
+            std::memcpy(value, &flag, 1);
+            return true;
+        }
+        if (lookup.read == uint8_t(OpRevisionRead::DefaultWeight) &&
+            type.triviallyCopyable && type.size == sizeof(float)) {
+            std::memcpy(value, &weight, sizeof(float));
+            return true;
+        }
+        return OpLayoutFail(error, "revision " + std::to_string(lookup.object) +
+                                       " has no input " +
+                                       std::to_string(lookup.read) +
+                                       " of that type");
+    }
     case OpLookupSource::Matrix: {
         const void *matrix = host.Matrix(
             lookup.part ? OpHostSource::BaseMatrix : OpHostSource::FinalMatrix,
@@ -969,10 +1034,28 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
             if (!OpStoreOutput(host, output, value, error))
                 return false;
         }
-        for (size_t p = 0; p < d.values.size(); ++p)
-            if ((d.op->ports[p].flags & kRigExecPortOutput) &&
-                d.values[p] != kRigExecInvalidIndex)
-                ++state->versions[d.values[p]];
+        // A value whose bytes did not move keeps its version, so its readers
+        // do not rerun.
+        for (size_t p = 0; p < d.values.size(); ++p) {
+            const uint32_t v = d.values[p];
+            if (!(d.op->ports[p].flags & kRigExecPortOutput) ||
+                v == kRigExecInvalidIndex)
+                continue;
+            const RigExecTypeDesc &type =
+                *RigExecRegistry::Get()
+                     .TypeAt(d.op->ports[p].type->Index())
+                     .desc;
+            RigExecValueRef ref;
+            ref.value = v;
+            const auto *bytes = static_cast<const uint8_t *>(run.GetValue(ref));
+            std::vector<uint8_t> &held = state->valueBytes[v];
+            if (type.triviallyCopyable && bytes && held.size() == type.size &&
+                std::memcmp(held.data(), bytes, type.size) == 0)
+                continue;
+            if (type.triviallyCopyable && bytes)
+                held.assign(bytes, bytes + type.size);
+            ++state->versions[v];
+        }
         return true;
     }
     if (index >= layout.chains.size())
@@ -981,9 +1064,27 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
     const uint32_t groups = chain.Groups();
     const RigExecChainDesc &desc = layout.chainDescs[index];
     if (kind == OpStepKind::ChainHead) {
-        for (const RigExecNodeId member : desc.members)
+        // The plan moves, and every range step reruns, only when a member's
+        // looked-up input does: range steps read everything else themselves.
+        bool moved = false;
+        for (const RigExecNodeId member : desc.members) {
             if (!ResolveOpLookups(layout, host, state, member, error))
                 return false;
+            for (const uint32_t i : layout.lookupsOf[member]) {
+                const OpPortValue &value = *state->lookedUp[i];
+                std::vector<uint8_t> &held = state->lookedUpBytes[i];
+                const auto *bytes = static_cast<const uint8_t *>(value.Value());
+                const size_t size = value.Type().size;
+                if (!value.Type().triviallyCopyable || held.size() != size ||
+                    std::memcmp(held.data(), bytes, size) != 0) {
+                    moved = true;
+                    if (value.Type().triviallyCopyable)
+                        held.assign(bytes, bytes + size);
+                }
+            }
+        }
+        if (state->versions[layout.PlanSlot(index)] == 0)
+            moved = true;
         if (!run.RunChainHead(index, chain.bounds.data(), groups, error))
             return false;
         for (size_t i = 0; i < layout.hostInputs.size(); ++i) {
@@ -1002,7 +1103,8 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
                         reads.push_back(h);
             }
         }
-        ++state->versions[layout.PlanSlot(index)];
+        if (moved)
+            ++state->versions[layout.PlanSlot(index)];
         return true;
     }
     if (part < 0 || !groups)
@@ -1015,7 +1117,10 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
             desc.segments[layout.memberOf[input.node]] != segment)
             continue;
         if (layout.grouped[i] == 1) {
-            state->groupPoints[i][g] = OpGroupPoints(layout, host, input, g);
+            const bool whole = desc.whole[layout.memberOf[input.node]] != 0;
+            for (uint32_t h = whole ? 0 : g; h < (whole ? groups : g + 1); ++h)
+                state->groupPoints[i][h] =
+                    OpGroupPoints(layout, host, input, h);
             continue;
         }
         std::vector<const void *> &table = state->haloPoints[i][g];

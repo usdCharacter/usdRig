@@ -1101,6 +1101,13 @@ bool RrStoreChainGroup(RrProgram *program, const eval::OpHostOutput &output,
 /// when its chain has no points this frame.
 bool RrRevisionWeightFieldCount(const RrProgram *program, size_t field,
                                 size_t *count);
+// Revision \p revision, whose groups an op range chain stores, as one that
+// always applies: its packet valid, its status ok, its acceptance Applies.
+bool RrGeoAdoptOpStored(RrProgram *program, uint32_t revision,
+                        std::string *error);
+// Revision \p revision's inputs:enabled and inputs:defaultWeight this run.
+bool RrGeoRevisionLeaf(const RrProgram *program, uint32_t revision,
+                       bool *enabled, float *weight, std::string *error);
 /// Resolves ChainVersion lookup \p lookup: the points entering revision
 /// \p lookup.part of point chain \p lookup.object, lent in place or from
 /// \p gather, the lookup's own buffer.

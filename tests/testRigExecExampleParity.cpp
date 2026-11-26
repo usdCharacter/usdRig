@@ -102,6 +102,9 @@ const InvalidDrag kInvalidOperatorDrags[] = {
      "StaticWeights: a weight is not finite or outside [0, 1]"},
     {"13_ReadPhases.usda",
      "StaticWeights: a weight is not finite or outside [0, 1]"},
+    // The full-strength matrix's own default weight: 1.25 is out of range.
+    {"20_MatrixSphere.usda",
+     "MatrixDeform: a default weight is not finite or outside [0, 1]"},
 };
 
 const char *

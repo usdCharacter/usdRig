@@ -130,19 +130,55 @@ _NativeRevisionSteps(const RigExecRigEvaluator &evaluator)
             continue;
         }
         const RigExecBakedStep &step = B.steps[B.opGraph.ops[c].originalIndex];
-        const bool fuse = step.kind == RigExecBakedStepKind::RevisionFuse;
-        if ((!fuse && step.kind != RigExecBakedStepKind::RevisionChunk) ||
-            step.object < 0 || size_t(step.object) >= B.revisionIndex.size()) {
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        const bool fuse = id.kind == RigExecBakedStepKind::RevisionFuse;
+        if ((!fuse && id.kind != RigExecBakedStepKind::RevisionChunk) ||
+            id.object < 0 || size_t(id.object) >= B.revisionIndex.size()) {
             continue;
         }
-        const auto &at = B.revisionIndex[size_t(step.object)];
+        const auto &at = B.revisionIndex[size_t(id.object)];
         steps.emplace(fuse,
                       B.chains[size_t(at.first)]
                           .revisions[size_t(at.second)]
                           .moverPath.GetString(),
-                      fuse ? 0 : int(step.part));
+                      fuse ? 0 : int(id.part));
     }
     return steps;
+}
+
+// A revision's group step: its RevisionChunk, or the op range step that
+// stores the group; false for any other step.
+static bool
+_GroupStep(const fb::RigExecWireFile &file, const fb::RigExecWireStep &step,
+           int32_t *revision, int *part)
+{
+    const fb::RigExecWireDomainGeometry &geometry = *file.geometry;
+    if (step.kind == fb::StepKind::RevisionChunk) {
+        if (step.object < 0 ||
+            size_t(step.object) >= geometry.revisionIndex.size())
+            return false;
+        *revision = step.object;
+        *part = step.part;
+        return true;
+    }
+    if (step.kind != fb::StepKind::OpChainRange)
+        return false;
+    for (const fb::SlotRange &write : step.writes) {
+        if (write.domain() != fb::SlotDomain::RevisionOut ||
+            write.end() != write.begin() + 1)
+            continue;
+        for (size_t r = 0; r < geometry.revisionChunkBase.size(); ++r) {
+            const int32_t base = geometry.revisionChunkBase[r];
+            if (base >= 0 && write.begin() >= uint32_t(base) &&
+                write.begin() - uint32_t(base) <
+                    uint32_t(geometry.revisionChunkCount[r])) {
+                *revision = int32_t(r);
+                *part = int(write.begin() - uint32_t(base));
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 // The revision steps the runtime's last Execute ran.
@@ -158,19 +194,20 @@ _RuntimeRevisionSteps(const fb::RigExecWireFile &file,
     for (size_t s = 0; s < file.steps.size(); ++s) {
         const fb::RigExecWireStep &step = file.steps[s];
         const bool fuse = step.kind == fb::StepKind::RevisionFuse;
-        if ((!fuse && step.kind != fb::StepKind::RevisionChunk) ||
-            step.object < 0 ||
-            size_t(step.object) >= geometry.revisionIndex.size() ||
+        int32_t revision = step.object;
+        int part = 0;
+        if ((!fuse && !_GroupStep(file, step, &revision, &part)) ||
+            revision < 0 || size_t(revision) >= geometry.revisionIndex.size() ||
             !reader.GetStepRanForTesting(s)) {
             continue;
         }
-        const auto &at = geometry.revisionIndex[size_t(step.object)];
+        const auto &at = geometry.revisionIndex[size_t(revision)];
         steps.emplace(
             fuse,
             RigExecFormatPathText(file, geometry.chains[size_t(at.first)]
                                             .revisions[size_t(at.second)]
                                             .moverPath),
-            fuse ? 0 : int(step.part));
+            part);
     }
     return steps;
 }
@@ -2009,15 +2046,16 @@ TestRangeChainRolesAndCutoff()
     std::map<std::string, std::set<int>> parts;
     for (size_t s = 0; s < file->steps.size(); ++s) {
         const fb::RigExecWireStep &step = file->steps[s];
-        if (step.kind != fb::StepKind::RevisionChunk || step.object < 0 ||
-            size_t(step.object) >= geometry.revisionIndex.size()) {
+        int32_t revision = 0;
+        int part = 0;
+        if (!_GroupStep(*file, step, &revision, &part)) {
             continue;
         }
-        const auto &at = geometry.revisionIndex[size_t(step.object)];
+        const auto &at = geometry.revisionIndex[size_t(revision)];
         parts[RigExecFormatPathText(*file, geometry.chains[size_t(at.first)]
                                                .revisions[size_t(at.second)]
                                                .moverPath)]
-            .insert(step.part);
+            .insert(part);
     }
     CHECK(parts["/Asset/Rig/Movers/M0"] == std::set<int>({0}));
     CHECK(parts["/Asset/Rig/Movers/WireSparse"] == std::set<int>({0, 1, 2, 3}));
@@ -2036,11 +2074,12 @@ TestRangeChainRolesAndCutoff()
     size_t checked = 0;
     for (size_t s = 0; s < file->steps.size(); ++s) {
         const fb::RigExecWireStep &step = file->steps[s];
-        if (step.kind != fb::StepKind::RevisionChunk || step.object < 0 ||
-            size_t(step.object) >= geometry.revisionIndex.size()) {
+        int32_t revision = 0;
+        int part = 0;
+        if (!_GroupStep(*file, step, &revision, &part)) {
             continue;
         }
-        const auto &at = geometry.revisionIndex[size_t(step.object)];
+        const auto &at = geometry.revisionIndex[size_t(revision)];
         const std::string mover =
             RigExecFormatPathText(*file, geometry.chains[size_t(at.first)]
                                              .revisions[size_t(at.second)]
@@ -2050,12 +2089,12 @@ TestRangeChainRolesAndCutoff()
             continue;
         }
         const bool want = found->second == first->second ||
-                          (found->second > first->second && step.part == 0);
+                          (found->second > first->second && part == 0);
         const bool ran = player->GetStepRanForTesting(s);
         CHECK(ran == want);
         if (ran != want) {
             std::printf("%s: %s range %d %s at frame 2\n", name, mover.c_str(),
-                        int(step.part), ran ? "ran" : "did not run");
+                        part, ran ? "ran" : "did not run");
         }
         ++checked;
     }
@@ -2491,15 +2530,16 @@ TestGroupChainRolesAndCutoff()
     // One step per written group: Gated has group 0's alone.
     std::map<std::string, std::set<int>> parts;
     for (const fb::RigExecWireStep &step : file->steps) {
-        if (step.kind != fb::StepKind::RevisionChunk || step.object < 0 ||
-            size_t(step.object) >= geometry.revisionIndex.size()) {
+        int32_t revision = 0;
+        int part = 0;
+        if (!_GroupStep(*file, step, &revision, &part)) {
             continue;
         }
-        const auto &at = geometry.revisionIndex[size_t(step.object)];
+        const auto &at = geometry.revisionIndex[size_t(revision)];
         parts[RigExecFormatPathText(*file, geometry.chains[size_t(at.first)]
                                                .revisions[size_t(at.second)]
                                                .moverPath)]
-            .insert(step.part);
+            .insert(part);
     }
     CHECK(parts[movers + "Gated"] == std::set<int>({0}));
     for (const char *every : {"Blend", "Linear", "Middle", "Dual"}) {
@@ -2555,13 +2595,14 @@ TestGroupChainRolesAndCutoff()
     size_t checked = 0;
     for (size_t s = 0; s < file->steps.size(); ++s) {
         const fb::RigExecWireStep &step = file->steps[s];
-        if ((step.kind != fb::StepKind::RevisionChunk &&
-             step.kind != fb::StepKind::RevisionFuse) ||
-            step.object < 0 ||
-            size_t(step.object) >= geometry.revisionIndex.size()) {
+        int32_t revision = step.object;
+        int part = 0;
+        const bool group = _GroupStep(*file, step, &revision, &part);
+        if ((!group && step.kind != fb::StepKind::RevisionFuse) ||
+            revision < 0 || size_t(revision) >= geometry.revisionIndex.size()) {
             continue;
         }
-        const auto &at = geometry.revisionIndex[size_t(step.object)];
+        const auto &at = geometry.revisionIndex[size_t(revision)];
         const std::string mover =
             RigExecFormatPathText(*file, geometry.chains[size_t(at.first)]
                                              .revisions[size_t(at.second)]
@@ -2571,8 +2612,8 @@ TestGroupChainRolesAndCutoff()
             continue;
         }
         bool want = false;
-        if (step.kind == fb::StepKind::RevisionChunk) {
-            want = found->second >= linearAt && step.part == 3;
+        if (group) {
+            want = found->second >= linearAt && part == 3;
         } else if (mover == movers + "Dual") {
             want = found->second > linearAt;
         } else {
@@ -2584,7 +2625,7 @@ TestGroupChainRolesAndCutoff()
             std::printf("%s: %s %s %d %s at frame 2\n", name, mover.c_str(),
                         step.kind == fb::StepKind::RevisionFuse ? "fuse"
                                                                 : "group",
-                        int(step.part), ran ? "ran" : "did not run");
+                        part, ran ? "ran" : "did not run");
         }
         ++checked;
     }

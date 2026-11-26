@@ -2090,16 +2090,19 @@ RigExecBakedBuildCones(RigExecBakedProgramImpl *program)
                 }
             }
         }
-        switch (step.kind) {
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(B, step);
+        const size_t revision = size_t(identity.object);
+        switch (identity.kind) {
         case RigExecBakedStepKind::RevisionStatic:
-            cones.revisionStaticCluster[size_t(step.object)] = step.cluster;
-            cones.revisionStaticStep[size_t(step.object)] = index;
+            cones.revisionStaticCluster[revision] = step.cluster;
+            cones.revisionStaticStep[revision] = index;
             [[fallthrough]];
         case RigExecBakedStepKind::InfluenceFold:
         case RigExecBakedStepKind::RevisionChunk:
         case RigExecBakedStepKind::RevisionFuse:
-            cones.revisionClusters[size_t(step.object)].push_back(step.cluster);
-            cones.revisionSteps[size_t(step.object)].push_back(index);
+            cones.revisionClusters[revision].push_back(step.cluster);
+            cones.revisionSteps[revision].push_back(index);
             break;
         default:
             break;

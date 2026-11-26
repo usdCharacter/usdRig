@@ -3827,6 +3827,27 @@ RrGeoGroupPointsAt(const RrProgram *program, size_t chain, size_t version,
 }
 
 bool
+RrGeoAdoptOpStored(RrProgram *program, uint32_t revision, std::string *error)
+{
+    auto *scratch = static_cast<RrGeometryScratch *>(program->geo.get());
+    if (!scratch || !program->geometry ||
+        revision >= program->geometry->revisionIndex.size()) {
+        if (error)
+            *error = "op nodes: revision " + std::to_string(revision) +
+                     " is not in the program";
+        return false;
+    }
+    const auto &index = program->geometry->revisionIndex[revision];
+    RrGeometryScratch::Revision &rev =
+        scratch->chains[size_t(index.first)].revisions[size_t(index.second)];
+    rev.parameters.enabled = true;
+    rev.parameters.valid = true;
+    rev.status = RrGeoStatusForParameters(rev.parameters, std::string());
+    rev.acceptance = RrGeoAcceptance::Applies;
+    return true;
+}
+
+bool
 RrStoreChainGroup(RrProgram *program, const eval::OpHostOutput &output,
                   uint32_t g, const void *elements, size_t count,
                   std::string *error)
@@ -8969,6 +8990,31 @@ RrGeoCompareSkinSplitForTesting(std::string *error, double *linearSerialUs,
                dualSerialUs, dualParallelUs)) {
         return false;
     }
+    return true;
+}
+
+bool
+RrGeoRevisionLeaf(const RrProgram *program, uint32_t revision, bool *enabled,
+                  float *weight, std::string *error)
+{
+    const auto *scratch =
+        static_cast<const RrGeometryScratch *>(program->geo.get());
+    if (!scratch || !program->geometry ||
+        revision >= program->geometry->revisionIndex.size()) {
+        if (error)
+            *error = "op nodes: revision " + std::to_string(revision) +
+                     " is not in the program";
+        return false;
+    }
+    const auto &[chain, r] = program->geometry->revisionIndex[revision];
+    const RrGeometryScratch::Revision &rev =
+        scratch->chains[size_t(chain)].revisions[size_t(r)];
+    *enabled =
+        program->geometry->chains[size_t(chain)]
+                .revisions[size_t(r)]
+                .moverPrim == 0 ||
+        RrGeoReadBool(scratch, RrGeoAttrRead(rev, RrGeoAttrEnabled), true);
+    *weight = RrReadDefaultWeight(program, size_t(chain), size_t(r));
     return true;
 }
 

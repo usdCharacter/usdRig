@@ -699,14 +699,14 @@ private:
                                 _N(r + 1) + ": runs as no op node");
         if (!_f.opGraph)
             return true;
-        std::vector<uint8_t> stored, packets, fields;
+        std::vector<uint8_t> stored, packets, fields, groupsStored;
         std::vector<uint8_t> spaceStored(
             4 * std::max<size_t>(_slots, _f.pose->frameRecords.size()), 0);
         for (const auto &output : _f.opGraph->hostOutputs) {
             if (!output)
                 return _Bad("op_graph.host_outputs: an entry is missing");
             if ((output->target > 5 && output->target < 20) ||
-                output->target > 23 || output->target == 4)
+                output->target > 23)
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
             if (output->node >= _f.opGraph->nodes.size())
@@ -733,6 +733,27 @@ private:
                     return _Bad("op_graph.host_outputs: target " +
                                 _N(output->target) + " of " +
                                 _N(output->object) + " is stored twice");
+                continue;
+            }
+            if (output->target == 4) {
+                bool member = false;
+                for (const auto &chain : _f.opGraph->chains)
+                    member =
+                        member ||
+                        (chain &&
+                         std::find(chain->members.begin(), chain->members.end(),
+                                   output->node) != chain->members.end());
+                if (!member || !_f.geometry ||
+                    output->object >= _f.geometry->revisionIndex.size())
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the groups of revision " +
+                                _N(output->object) + " outside a range chain");
+                if (groupsStored.size() <= output->object)
+                    groupsStored.resize(size_t(output->object) + 1, 0);
+                if (groupsStored[size_t(output->object)]++)
+                    return _Bad(
+                        "op_graph.host_outputs: the groups of revision " +
+                        _N(output->object) + " are stored twice");
                 continue;
             }
             if (output->target == 5) {
@@ -851,6 +872,42 @@ private:
                     lookup->part != -1 || lookup->read > 2)
                     return _Bad("op_graph.lookups: a record gate lookup "
                                 "reads no gate of a commit");
+                continue;
+            }
+            if (lookup && lookup->source == 10) {
+                if (!_f.geometry ||
+                    lookup->object >= _f.geometry->revisionIndex.size() ||
+                    lookup->read > 1)
+                    return _Bad("op_graph.lookups: a revision lookup reads no "
+                                "input of a revision");
+                continue;
+            }
+            if (lookup && lookup->source >= 5 && lookup->source <= 9) {
+                using D = fb::SlotDomain;
+                const auto &lookups = _f.opGraph->lookups;
+                const bool listed = lookup->source == 5 || lookup->source == 9;
+                bool holds =
+                    listed
+                        ? lookup->part > 0 && uint64_t(lookup->object) +
+                                                      uint64_t(lookup->part) <=
+                                                  lookups.size()
+                    : lookup->source == 6
+                        ? (lookup->part == 0 || lookup->part == 1) &&
+                              _GraphValueSlot(uint32_t(D::FinalMatrix),
+                                              lookup->object)
+                        : _GraphValueSlot(uint32_t(lookup->source == 7
+                                                       ? D::FrameMatrix
+                                                       : D::ConstraintDelta),
+                                          lookup->object);
+                for (int32_t e = 0;
+                     holds && lookup->source == 9 && e < lookup->part; ++e) {
+                    const auto &candidate = lookups[lookup->object + size_t(e)];
+                    holds = candidate && candidate->source >= 6 &&
+                            candidate->source <= 8;
+                }
+                if (!holds)
+                    return _Bad("op_graph.lookups: a matrix or list lookup "
+                                "reads nothing the file holds");
                 continue;
             }
             if (!lookup || lookup->source != 0 ||
@@ -1038,6 +1095,15 @@ private:
                 return _Bad(row + ": " + _N(cut.size() - 1) +
                             " vertex groups, past the " +
                             _N(kMaxOpChainGroups) + " a range chain runs in");
+            for (const uint32_t node : chain.members)
+                if (node >= graph->nodes.size())
+                    return _Bad(row + ": member " + _N(node) + " out of range");
+            if (!chain.writes.empty() &&
+                chain.writes.size() !=
+                    chain.members.size() * (chain.bounds.size() - 1))
+                return _Bad(row + ": writes holds " + _N(chain.writes.size()) +
+                            " flags for " + _N(chain.members.size()) +
+                            " members");
         }
         return _OpLookupOwners();
     }
@@ -1047,12 +1113,18 @@ private:
     /// a packet node its own weight object and its provider's base frame, a
     /// placement node one pose version, and a field node its own field and
     /// its consumer's entering points, a provider matrix node its own
-    /// slot's rest frame, and a frame record's node its record's rest frame,
-    /// pose version and commit gates. A ChainVersion lookup on any other
-    /// node is a range chain member's group read, which Open checks.
+    /// slot's rest frame, a frame record's node its record's rest frame,
+    /// pose version and commit gates, and a revision lookup the revision its
+    /// node stores. A ChainVersion lookup on any other node is a range chain
+    /// member's group read, which Open checks.
     bool _OpLookupOwners()
     {
         const fb::RigExecWireOpGraph &graph = *_f.opGraph;
+        std::vector<int64_t> stores(graph.nodes.size(), -1);
+        for (const auto &output : graph.hostOutputs)
+            if (output && output->target == 4 &&
+                output->node < graph.nodes.size())
+                stores[output->node] = int64_t(output->object);
         for (size_t n = 0; n < graph.nodes.size(); ++n) {
             size_t poses = 0;
             for (const auto &input : graph.nodes[n]->inputs) {
@@ -1137,6 +1209,9 @@ private:
                                    "its field's consumer");
                 } else if (lookup.source == 4 && _fieldNode[n] != object) {
                     return bad(" reads a field its node does not weigh");
+                } else if (lookup.source == 10 && stores[n] != object) {
+                    return bad(" reads the inputs of a revision its node does "
+                               "not store");
                 }
             }
             if (_placementSlot[n] >= 0 && poses != 1)
@@ -9712,6 +9787,36 @@ RigExecFormatGroupWriters(const fb::RigExecWireFile &file, size_t chain,
             }
             (*written)[size_t(r)][size_t(step.part)] = 1;
         }
+        // A range chain member stores the groups its writes name into the
+        // revision its ChainGroup host output names.
+        const fb::RigExecWireOpGraph *graph = file.opGraph.get();
+        for (size_t i = 0; graph && i < graph->hostOutputs.size(); ++i) {
+            const fb::RigExecWireOpHostOutput *output =
+                graph->hostOutputs[i].get();
+            const int64_t r = output ? int64_t(output->object) - first : -1;
+            if (!output || output->target != 4 || r < 0 ||
+                uint64_t(r) >= count ||
+                !RigExecFormatIsRangeRevision(revisions[size_t(r)])) {
+                continue;
+            }
+            for (const auto &chain : graph->chains) {
+                const auto &members = chain->members;
+                const auto member =
+                    std::find(members.begin(), members.end(), output->node);
+                if (member == members.end() ||
+                    chain->bounds.size() != groups + 1) {
+                    continue;
+                }
+                const size_t row = size_t(member - members.begin()) * groups;
+                for (size_t k = 0; k < groups; ++k) {
+                    if (chain->writes.empty() ||
+                        (row + k < chain->writes.size() &&
+                         chain->writes[row + k])) {
+                        (*written)[size_t(r)][k] = 1;
+                    }
+                }
+            }
+        }
     }
     for (size_t k = 0; k < groups; ++k) {
         int last = -1;
@@ -9795,13 +9900,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 41,
+    static_assert(RigExecFormatOldestReadable == 42,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: provider and frame matrices as op nodes"
+                ? "re-export: full-strength matrices as op nodes"
                 : "rebake");
 }
 

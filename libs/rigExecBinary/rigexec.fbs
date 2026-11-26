@@ -1909,6 +1909,11 @@ table OpGraphOutput {
 table OpChain {
   point_chain: uint;
   bounds: [int];
+  /// Format 42: the member nodes in chain order, and per member and group
+  /// (member-major) whether the member writes that group; empty when every
+  /// member writes every group.
+  members: [uint];
+  writes: [ubyte];
 }
 /// Format 37: a value of the rig an op input (OpNodeInput.host 4) reads
 /// each time its node runs, found by the runtime as the evaluator finds it.
@@ -1939,6 +1944,14 @@ table OpLookup {
   /// 20 (format 41): the rest frame of slot `object`. 21 (format 41): the
   /// record gates of pose commit `object`: `read` 0 its present bytes, 1
   /// record-after, 2 record-every-target.
+  /// 5: an array of `part` elements, element i what lookup `object` + i
+  /// answers. 6: the final (`part` 0) or base (`part` 1) matrix of
+  /// provider slot `object`. 7: frame record `object`, present when valid
+  /// this frame. 8: the delta geometry-domain constraint `object`
+  /// measured, present when it measured one. 9: the first present of the
+  /// `part` lookups from `object`, each a 6, 7 or 8 (Mat4d). 10 (format
+  /// 42): input `read` of revision `object` (geometry.revision_index): 0
+  /// inputs:enabled (Bool), 1 inputs:defaultWeight (Float).
   source: ubyte;
   object: uint;
   part: int = -1;
@@ -1955,6 +1968,9 @@ table OpHostOutput {
   /// field `object`; 20 and 21 (format 41): the final and the base matrix
   /// of slot `object`; 22 and 23 (format 41): the matrix and the valid byte
   /// of frame record `object`.
+  /// 4 (format 42): a range chain member's output, group by group, into
+  /// the vertex groups of revision `object` (geometry.revision_index), the
+  /// groups its OpChain.writes names.
   target: ubyte;
   object: uint;
 }

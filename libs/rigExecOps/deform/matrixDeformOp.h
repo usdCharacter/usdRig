@@ -29,13 +29,18 @@ const rigExec::RigExecOpHandle &MatrixDeform();
 // A sparse field with a zero default comes instead as WeightIndices
 // (IntArray, ascending point indices) and Weights (FloatArray, one weight
 // per index) and is walked entry by entry. An unusable envelope is an
-// error.
+// error. A mover's own inputs come as Enabled (Bool, optional; false
+// passes the points through) and DefaultWeight (Float, optional; every
+// point's weight, full strength at 1; finite and in [0, 1] or an error, and
+// not beside an envelope or sparse weights).
 const rigExec::RigExecPortHandle &MatrixDeformPoints();
 const rigExec::RigExecPortHandle &MatrixDeformTransform();
 const rigExec::RigExecPortHandle &MatrixDeformEnvelope();
 const rigExec::RigExecPortHandle &MatrixDeformWeightIndices();
 const rigExec::RigExecPortHandle &MatrixDeformWeights();
 const rigExec::RigExecPortHandle &MatrixDeformOut();
+const rigExec::RigExecPortHandle &MatrixDeformEnabled();
+const rigExec::RigExecPortHandle &MatrixDeformDefaultWeight();
 
 /// What a mover transform is configured with at compile.
 struct MoverTransformPayload {
