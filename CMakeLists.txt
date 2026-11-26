@@ -3656,3 +3656,32 @@ install(FILES tools/license_manifest.json
          tools/check_licenses.py
          docs/legal_members.py
     DESTINATION "share/rigExec/tools")
+
+# These call rigExecMath archive functions directly; the rigExec shared
+# library exports only the ones it references itself.
+foreach(_rigexec_math_user
+        benchFrameCache
+        benchFrameCacheWarm
+        testRigExecAffineFrames
+        testRigExecArm
+        testRigExecBakedSchedule
+        testRigExecBinary
+        testRigExecConstraints
+        testRigExecDeltaMush
+        testRigExecLattice
+        testRigExecMoverGraph
+        testRigExecParallelKernels
+        testRigExecPatchMover
+        testRigExecPropertyOps
+        testRigExecRuntimePose
+        testRigExecRuntimeWeights
+        testRigExecSceneGeometryOps
+        testRigExecScenePoseOps
+        testRigExecSurfaceSnap
+        testRigExecVolumeWeights
+        testRigExecWrinkle
+    )
+    if(TARGET ${_rigexec_math_user})
+        target_link_libraries(${_rigexec_math_user} PRIVATE rigExecMath)
+    endif()
+endforeach()
