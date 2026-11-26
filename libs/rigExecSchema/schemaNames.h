@@ -1006,6 +1006,14 @@ inline constexpr const char *const xyz = "XYZ";
 inline constexpr const char *const x = "x";
 inline constexpr const char *const y = "y";
 inline constexpr const char *const z = "z";
+inline constexpr const char *const blend = "blend";
+inline constexpr const char *const end = "end";
+inline constexpr const char *const heading = "heading";
+inline constexpr const char *const length = "length";
+inline constexpr const char *const path = "path";
+inline constexpr const char *const planar = "planar";
+inline constexpr const char *const quantize = "quantize";
+inline constexpr const char *const remap = "remap";
 } // namespace SchemaValueText
 
 } // namespace rigExec

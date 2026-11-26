@@ -2,6 +2,7 @@
 
 #include "rigExec/api/opFields.h"
 #include "rigExecOps/opIo.h"
+#include "rigExecSchema/schemaNames.h"
 
 #include <cmath>
 #include <cstdint>
@@ -423,32 +424,242 @@ MathValues(const void *payload, rigExec::RigExecFieldValues &out)
 
 rigExec::RigExecFieldDesc
 Field(const char *name, const rigExec::RigExecTypeHandle &type,
-      uint64_t limit = UINT64_MAX)
+      uint64_t limit = UINT64_MAX,
+      const rigExec::RigExecPropertyInfo *authoring = nullptr)
 {
     rigExec::RigExecFieldDesc f;
     f.name = name;
     f.type = &type;
     f.limit = limit;
+    f.authoring = authoring;
     return f;
 }
 
-const rigExec::RigExecFieldDesc kMathFields[] = {
-    Field("op", rigExecStd::UIntType(), uint64_t(RigExecPropertyOp::Path)),
-    Field("pathValid", rigExecStd::BoolType(), 1),
-    Field("pathBasis", rigExecStd::UIntType(),
-          uint64_t(rigExec::RigExecPathBasis::CatmullRom)),
-    Field("pathPinned", rigExecStd::BoolType(), 1),
-    Field("pathPlanar", rigExecStd::BoolType(), 1),
-    Field("pathComponent", rigExecStd::UIntType(),
-          uint64_t(rigExec::RigExecPathComponent::End)),
-    Field("pathOffsetX", rigExecStd::FloatType()),
-    Field("pathOffsetZ", rigExecStd::FloatType()),
-    Field("pathHeadingOffset", rigExecStd::FloatType()),
+namespace names = rigExec::SchemaAttrText;
+namespace values = rigExec::SchemaValueText;
+
+const char *const kTyped = "Typed";
+
+const char *const kFloatOperations[] = {
+    values::add,   values::multiply, values::clamp,    values::remap,
+    values::blend, values::curve,    values::quantize, values::path};
+const char *const kVec3fOperations[] = {
+    values::add, values::multiply, values::clamp, values::remap, values::blend};
+const char *const kMatrixOperations[] = {nullptr, values::multiply, nullptr,
+                                         nullptr, values::blend};
+const char *const kPathComponents[] = {values::x, values::y, values::z,
+                                       values::heading, values::end};
+const char *const kPathMeasures[] = {values::length, values::planar};
+
+const uint32_t kAddOp = uint32_t(RigExecPropertyOp::Add);
+const uint32_t kMultiplyOp = uint32_t(RigExecPropertyOp::Multiply);
+const uint32_t kClampOp = uint32_t(RigExecPropertyOp::Clamp);
+const uint32_t kComponentX = uint32_t(rigExec::RigExecPathComponent::X);
+const uint8_t kMeasureLength = 0;
+const float kZero = 0.0f;
+const float kOne = 1.0f;
+const Vec3f kZero3(0.0f, 0.0f, 0.0f);
+const Vec3f kOne3(1.0f, 1.0f, 1.0f);
+const Mat4d kIdentity(1.0);
+const Keys kNoKeys;
+
+rigExec::RigExecPropertyInfo
+Property(const char *schemaName, const void *fallback, const char *doc,
+         bool uniform = false)
+{
+    rigExec::RigExecPropertyInfo info;
+    info.schemaName = schemaName;
+    info.fallback = fallback;
+    info.doc = doc;
+    info.uniform = uniform;
+    return info;
+}
+
+template <size_t N>
+rigExec::RigExecPropertyInfo
+TokenProperty(const char *schemaName, const void *fallback,
+              const char *const (&tokens)[N], const char *doc)
+{
+    rigExec::RigExecPropertyInfo info =
+        Property(schemaName, fallback, doc, true);
+    info.tokens = tokens;
+    info.tokenCount = N;
+    return info;
+}
+
+const rigExec::RigExecPropertyInfo kFloatOperation = TokenProperty(
+    names::rigExecOperation, &kClampOp, kFloatOperations, nullptr);
+const rigExec::RigExecPropertyInfo kVec3fOperation =
+    TokenProperty(names::rigExecOperation, &kAddOp, kVec3fOperations, nullptr);
+const rigExec::RigExecPropertyInfo kMatrixOperation = TokenProperty(
+    names::rigExecOperation, &kMultiplyOp, kMatrixOperations, nullptr);
+
+const rigExec::RigExecPropertyInfo kComponentProperty = TokenProperty(
+    names::rigExecPathComponent, &kComponentX, kPathComponents,
+    R"(What the path operation returns. x, y and z are the sampled
+point plus rigExec:pathOffset carried by the heading. heading is the
+planar tangent's yaw about +Y in degrees (the rotation taking local
++Z to the tangent) plus rigExec:pathHeadingOffset, wrapped to
+(-180, 180]. end is inputs:value plus the curve's whole length.)");
+
+const rigExec::RigExecPropertyInfo kMeasureProperty =
+    TokenProperty(names::rigExecPathMeasure, &kMeasureLength, kPathMeasures,
+                  R"(How the path operation measures distance along the curve:
+its arc length, or (planar) the arc length of its projection on the
+XZ plane -- ground distance, with the points' y carried as a height,
+so a walk's stride does not change over terrain.)");
+
+const rigExec::RigExecPropertyInfo kOffsetProperty = [] {
+    rigExec::RigExecPropertyInfo info = Property(
+        names::rigExecPathOffset, &kZero,
+        R"(A local (x, z) offset from the sampled point, rotated by the
+heading, for x and z: where a frame that travels along the path
+carries a point (a foot's landing spot, say).)",
+        true);
+    info.authoredType = "float2";
+    return info;
+}();
+
+const rigExec::RigExecPropertyInfo kHeadingProperty =
+    Property(names::rigExecPathHeadingOffset, &kZero,
+             R"(Degrees added to the tangent's heading, for heading and for
+the rotation of rigExec:pathOffset.)",
+             true);
+
+const rigExec::RigExecPropertyInfo kPath = [] {
+    rigExec::RigExecPropertyInfo info =
+        Property(names::rigExecPath, nullptr,
+                 R"(The path operation's curve: exactly one UsdGeomBasisCurves
+prim holding one curve, linear or cubic (bezier, bspline or
+catmullRom), nonperiodic or pinned. Its points are read as authored,
+in the rig's space, and are an input a baked program can set.)");
+    info.binding = rigExec::RigExecPropertyBinding::Connection;
+    return info;
+}();
+
+const rigExec::RigExecPropertyInfo kFloatValue =
+    Property(names::inputsValue, &kZero, nullptr);
+const rigExec::RigExecPropertyInfo kFloatMin =
+    Property(names::inputsMin, &kZero, nullptr);
+const rigExec::RigExecPropertyInfo kFloatMax =
+    Property(names::inputsMax, &kOne, nullptr);
+const rigExec::RigExecPropertyInfo kKeys =
+    Property(names::inputsKeys, &kNoKeys,
+             R"((input, output) keys for the curve operation, strictly
+increasing in input. One key is a constant output.)");
+const rigExec::RigExecPropertyInfo kTangents =
+    Property(names::inputsTangents, &kNoKeys,
+             R"(Optional (in slope, out slope) per key for the curve
+operation. Empty is piecewise linear, extrapolated along the end
+segments; authored, the curve is a cubic Hermite through the keys,
+extrapolated along the first in slope and the last out slope.)");
+
+const rigExec::RigExecPropertyInfo kVec3fValue =
+    Property(names::inputsValue, &kZero3, nullptr);
+const rigExec::RigExecPropertyInfo kVec3fMin =
+    Property(names::inputsMin, &kZero3, nullptr);
+const rigExec::RigExecPropertyInfo kVec3fMax =
+    Property(names::inputsMax, &kOne3, nullptr);
+const rigExec::RigExecPropertyInfo kMatrixValue =
+    Property(names::inputsValue, &kIdentity, nullptr);
+
+const rigExec::RigExecSchemaInfo kFloatSchema{
+    rigExec::SchemaTypeName::RigExecFloatMathMover,
+    R"(Statically typed add, multiply, clamp, remap, blend, curve,
+quantize, or path over one exact float property target, or a double one
+such as a control's avar, which the mover computes in float.
+
+The revision is r = op(incoming), then the common MoverAPI envelope mixes
+it back over the incoming value. Zero is a pass-through and one applies
+the operation outright -- the same rule every mover follows.
+
+add and multiply apply inputs:value, clamp reads inputs:min and
+inputs:max, and blend returns inputs:value, so the envelope mixes toward
+it.
+
+remap normalizes from [inputs:min, inputs:max] to [0, 1] and does NOT
+clamp; compose a clamp mover after it to bound the result.
+
+curve maps the incoming value through inputs:keys, piecewise linear
+between keys (a cubic Hermite when inputs:tangents is authored) and
+extrapolated linearly past the first and last key.
+
+quantize rounds the incoming value down to inputs:min + k * inputs:value
+for the largest integer k that does not exceed it: a stair of step
+inputs:value through inputs:min. A step that is not positive passes the
+value through.
+
+path samples the curve rigExec:path names at arc length (incoming -
+inputs:value), clamped to the curve, and returns rigExec:pathComponent
+of it. inputs:value is the distance the curve's first point stands at,
+so a moving window of points keeps one distance clock.)",
+    kTyped, rigExec::RigExecSchemaMode::Generated};
+
+const rigExec::RigExecSchemaInfo kVec3fSchema{
+    rigExec::SchemaTypeName::RigExecVec3fMathMover,
+    R"(Statically typed add, multiply, clamp, remap, or blend over an
+exact float3, vector3f, point3f, normal3f or color3f property target.
+
+Every operation is component-wise, which is why the bounds are float3
+rather than float. Remap and common MoverAPI-envelope semantics match
+RigExecFloatMathMover.)",
+    kTyped, rigExec::RigExecSchemaMode::Generated};
+
+const rigExec::RigExecSchemaInfo kMatrixSchema{
+    rigExec::SchemaTypeName::RigExecMatrixMathMover,
+    R"(Statically typed multiply or blend over an exact matrix4d
+property target. Distinct from the point-moving
+RigExecMatrixMover.
+
+multiply post-multiplies (inputs:value applied AFTER the incoming
+matrix, in GfMatrix4d's row-vector convention); blend replaces. The common
+MoverAPI envelope mixes component-wise and is exact at both endpoints.)",
+    kTyped, rigExec::RigExecSchemaMode::Generated};
+
+/// One math op's fields, in saved order (MathField). Every op has the path
+/// fields; only the scalar ops author them.
+struct MathFieldList {
+    rigExec::RigExecFieldDesc fields[kPathHeadingOffset + 1];
 };
+
+MathFieldList
+MathFields(const rigExec::RigExecPropertyInfo &operation, bool path)
+{
+    const auto authored = [&](const rigExec::RigExecPropertyInfo &info) {
+        return path ? &info : nullptr;
+    };
+    MathFieldList list;
+    rigExec::RigExecFieldDesc *out = list.fields;
+    out[kOp] = Field("op", rigExecStd::UIntType(),
+                     uint64_t(RigExecPropertyOp::Path), &operation);
+    out[kPathValid] = Field("pathValid", rigExecStd::BoolType(), 1);
+    out[kPathBasis] = Field("pathBasis", rigExecStd::UIntType(),
+                            uint64_t(rigExec::RigExecPathBasis::CatmullRom));
+    out[kPathPinned] = Field("pathPinned", rigExecStd::BoolType(), 1);
+    out[kPathPlanar] = Field("pathPlanar", rigExecStd::BoolType(), 1,
+                             authored(kMeasureProperty));
+    out[kPathComponent] = Field("pathComponent", rigExecStd::UIntType(),
+                                uint64_t(rigExec::RigExecPathComponent::End),
+                                authored(kComponentProperty));
+    out[kPathOffsetX] = Field("pathOffsetX", rigExecStd::FloatType(),
+                              UINT64_MAX, authored(kOffsetProperty));
+    out[kPathOffsetZ] = Field("pathOffsetZ", rigExecStd::FloatType(),
+                              UINT64_MAX, authored(kOffsetProperty));
+    out[kPathHeadingOffset] =
+        Field("pathHeadingOffset", rigExecStd::FloatType(), UINT64_MAX,
+              authored(kHeadingProperty));
+    return list;
+}
+
+const MathFieldList kScalarFields = MathFields(kFloatOperation, true);
+const MathFieldList kVec3fFields = MathFields(kVec3fOperation, false);
+const MathFieldList kMatrixFields = MathFields(kMatrixOperation, false);
 
 rigExec::RigExecOpDesc
 MathDesc(const char *name, const rigExec::RigExecPortDesc *ports,
-         size_t portCount, rigExec::RigExecOpBatchFn runBatch,
+         size_t portCount, const rigExec::RigExecFieldDesc *fields,
+         const rigExec::RigExecSchemaInfo &schema,
+         rigExec::RigExecOpBatchFn runBatch,
          bool (*validate)(const rigExec::RigExecOpCheck &, std::string *))
 {
     rigExec::RigExecOpDesc d;
@@ -457,8 +668,9 @@ MathDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.ports = ports;
     d.portCount = portCount;
     d.runBatch = runBatch;
-    d.payloadFields = kMathFields;
-    d.payloadFieldCount = std::size(kMathFields);
+    d.payloadFields = fields;
+    d.payloadFieldCount = std::size(kScalarFields.fields);
+    d.schema = &schema;
     d.payloadVersion = 2;
     d.payloadValues = &MathValues;
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
@@ -475,37 +687,50 @@ using rigExec::kRigExecPortOptional;
 using rigExec::kRigExecPortOutput;
 constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
 
+rigExec::RigExecPortDesc
+Authored(const RigExecPortHandle &port, const rigExec::RigExecTypeHandle &type,
+         const char *name, const rigExec::RigExecPropertyInfo &authoring)
+{
+    rigExec::RigExecPortDesc d;
+    d.port = &port;
+    d.type = &type;
+    d.flags = kOptional;
+    d.name = name;
+    d.authoring = &authoring;
+    return d;
+}
+
 const rigExec::RigExecPortDesc kFloatPorts[] = {
     {&FloatIn(), &rigExecStd::FloatType(), kRigExecPortInput, "in"},
-    {&FloatValue(), &rigExecStd::FloatType(), kOptional, "value"},
-    {&FloatMin(), &rigExecStd::FloatType(), kOptional, "min"},
-    {&FloatMax(), &rigExecStd::FloatType(), kOptional, "max"},
+    Authored(FloatValue(), rigExecStd::FloatType(), "value", kFloatValue),
+    Authored(FloatMin(), rigExecStd::FloatType(), "min", kFloatMin),
+    Authored(FloatMax(), rigExecStd::FloatType(), "max", kFloatMax),
     {&FloatWeight(), &rigExecStd::FloatType(), kRigExecPortInput, "weight"},
-    {&FloatPathPoints(), &rigExecStd::Vec3fArray(), kOptional, "pathPoints"},
+    Authored(FloatPathPoints(), rigExecStd::Vec3fArray(), "pathPoints", kPath),
     {&FloatOut(), &rigExecStd::FloatType(), kRigExecPortOutput, "out"},
     {&FloatEnabled(), &rigExecStd::BoolType(), kOptional, "enabled"},
-    {&FloatKeys(), &rigExecStd::Vec2fArray(), kOptional, "keys"},
-    {&FloatTangents(), &rigExecStd::Vec2fArray(), kOptional, "tangents"},
+    Authored(FloatKeys(), rigExecStd::Vec2fArray(), "keys", kKeys),
+    Authored(FloatTangents(), rigExecStd::Vec2fArray(), "tangents", kTangents),
 };
 
 const rigExec::RigExecPortDesc kDoublePorts[] = {
     {&DoubleIn(), &rigExecStd::DoubleType(), kRigExecPortInput, "in"},
-    {&DoubleValue(), &rigExecStd::FloatType(), kOptional, "value"},
-    {&DoubleMin(), &rigExecStd::FloatType(), kOptional, "min"},
-    {&DoubleMax(), &rigExecStd::FloatType(), kOptional, "max"},
+    Authored(DoubleValue(), rigExecStd::FloatType(), "value", kFloatValue),
+    Authored(DoubleMin(), rigExecStd::FloatType(), "min", kFloatMin),
+    Authored(DoubleMax(), rigExecStd::FloatType(), "max", kFloatMax),
     {&DoubleWeight(), &rigExecStd::FloatType(), kRigExecPortInput, "weight"},
-    {&DoublePathPoints(), &rigExecStd::Vec3fArray(), kOptional, "pathPoints"},
+    Authored(DoublePathPoints(), rigExecStd::Vec3fArray(), "pathPoints", kPath),
     {&DoubleOut(), &rigExecStd::DoubleType(), kRigExecPortOutput, "out"},
     {&DoubleEnabled(), &rigExecStd::BoolType(), kOptional, "enabled"},
-    {&DoubleKeys(), &rigExecStd::Vec2fArray(), kOptional, "keys"},
-    {&DoubleTangents(), &rigExecStd::Vec2fArray(), kOptional, "tangents"},
+    Authored(DoubleKeys(), rigExecStd::Vec2fArray(), "keys", kKeys),
+    Authored(DoubleTangents(), rigExecStd::Vec2fArray(), "tangents", kTangents),
 };
 
 const rigExec::RigExecPortDesc kVec3fPorts[] = {
     {&Vec3fIn(), &rigExecStd::Vec3fType(), kRigExecPortInput, "in"},
-    {&Vec3fValue(), &rigExecStd::Vec3fType(), kOptional, "value"},
-    {&Vec3fMin(), &rigExecStd::Vec3fType(), kOptional, "min"},
-    {&Vec3fMax(), &rigExecStd::Vec3fType(), kOptional, "max"},
+    Authored(Vec3fValue(), rigExecStd::Vec3fType(), "value", kVec3fValue),
+    Authored(Vec3fMin(), rigExecStd::Vec3fType(), "min", kVec3fMin),
+    Authored(Vec3fMax(), rigExecStd::Vec3fType(), "max", kVec3fMax),
     {&Vec3fWeight(), &rigExecStd::FloatType(), kRigExecPortInput, "weight"},
     {&Vec3fOut(), &rigExecStd::Vec3fType(), kRigExecPortOutput, "out"},
     {&Vec3fEnabled(), &rigExecStd::BoolType(), kOptional, "enabled"},
@@ -513,27 +738,27 @@ const rigExec::RigExecPortDesc kVec3fPorts[] = {
 
 const rigExec::RigExecPortDesc kMatrixPorts[] = {
     {&MatrixIn(), &rigExecStd::Mat4dType(), kRigExecPortInput, "in"},
-    {&MatrixValue(), &rigExecStd::Mat4dType(), kOptional, "value"},
+    Authored(MatrixValue(), rigExecStd::Mat4dType(), "value", kMatrixValue),
     {&MatrixWeight(), &rigExecStd::FloatType(), kRigExecPortInput, "weight"},
     {&MatrixOut(), &rigExecStd::Mat4dType(), kRigExecPortOutput, "out"},
     {&MatrixEnabled(), &rigExecStd::BoolType(), kOptional, "enabled"},
 };
 
 const rigExec::RigExecOpDesc kFloatDesc =
-    MathDesc("FloatMath", kFloatPorts, std::size(kFloatPorts), &RunFloat,
-             &ValidateFloat);
+    MathDesc("FloatMath", kFloatPorts, std::size(kFloatPorts),
+             kScalarFields.fields, kFloatSchema, &RunFloat, &ValidateFloat);
 
 const rigExec::RigExecOpDesc kDoubleDesc =
-    MathDesc("DoubleMath", kDoublePorts, std::size(kDoublePorts), &RunDouble,
-             &ValidateDouble);
+    MathDesc("DoubleMath", kDoublePorts, std::size(kDoublePorts),
+             kScalarFields.fields, kFloatSchema, &RunDouble, &ValidateDouble);
 
 const rigExec::RigExecOpDesc kVec3fDesc =
-    MathDesc("Vec3fMath", kVec3fPorts, std::size(kVec3fPorts), &RunVec3f,
-             &ValidateVec3f);
+    MathDesc("Vec3fMath", kVec3fPorts, std::size(kVec3fPorts),
+             kVec3fFields.fields, kVec3fSchema, &RunVec3f, &ValidateVec3f);
 
 const rigExec::RigExecOpDesc kMatrixDesc =
-    MathDesc("MatrixMath", kMatrixPorts, std::size(kMatrixPorts), &RunMatrix,
-             &ValidateMatrix);
+    MathDesc("MatrixMath", kMatrixPorts, std::size(kMatrixPorts),
+             kMatrixFields.fields, kMatrixSchema, &RunMatrix, &ValidateMatrix);
 
 } // namespace
 

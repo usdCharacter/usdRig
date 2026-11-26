@@ -1,6 +1,7 @@
 #include "rigExecOps/solver/poseCommitOps.h"
 
 #include "rigExecOps/fieldIo.h"
+#include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecEvalCore/pose.h"
 #include "rigExecMath/poseCommitKernel.h"
@@ -267,6 +268,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "PoseCommit";
+    d.schema = &internalOps::kPoseCommit;
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.runBatch = &RunPoseCommit;

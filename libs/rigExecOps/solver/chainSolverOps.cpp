@@ -1,6 +1,7 @@
 #include "rigExecOps/solver/chainSolverOps.h"
 
 #include "rigExecOps/fieldIo.h"
+#include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecMath/chainSolverKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
@@ -419,6 +420,7 @@ const rigExec::RigExecOpDesc kGroups = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "FkJointGroups";
+    d.schema = &internalOps::kFkJointGroups;
     d.ports = kGroupPorts;
     d.portCount = std::size(kGroupPorts);
     d.runBatch = &RunFkJointGroups;

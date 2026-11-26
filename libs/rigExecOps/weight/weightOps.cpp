@@ -1,6 +1,7 @@
 #include "rigExecOps/weight/weightOps.h"
 
 #include "rigExecOps/fieldIo.h"
+#include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecEvalCore/weights.h"
 #include "rigExecMath/spatialAccel.h"
@@ -910,6 +911,7 @@ const rigExec::RigExecOpDesc kVolumePlacement = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "VolumePlacement";
+    d.schema = &internalOps::kVolumePlacement;
     d.ports = kVolumePlacementPorts;
     d.portCount = std::size(kVolumePlacementPorts);
     d.runBatch = &RunVolumePlacement;

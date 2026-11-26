@@ -2,6 +2,7 @@
 
 #include "rigExecMath/skinKernel.h"
 #include "rigExecOps/fieldIo.h"
+#include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecMath/dualQuatMath.h"
 
@@ -425,6 +426,7 @@ const rigExec::RigExecOpDesc kMatricesDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "SkinMatrices";
+    d.schema = &internalOps::kSkinMatrices;
     d.ports = kMatricesPorts;
     d.portCount = std::size(kMatricesPorts);
     d.validate = &ValidateMatrices;

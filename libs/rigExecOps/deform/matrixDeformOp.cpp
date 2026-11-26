@@ -3,6 +3,7 @@
 #include "rigExecEvalCore/envelope.h"
 #include "rigExecMath/moverTransformKernel.h"
 #include "rigExecOps/fieldIo.h"
+#include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 
 #include <algorithm>
@@ -363,6 +364,7 @@ const rigExec::RigExecOpDesc kMoverTransformDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "MoverTransform";
+    d.schema = &internalOps::kMoverTransform;
     d.ports = kMoverTransformPorts;
     d.portCount = std::size(kMoverTransformPorts);
     d.runBatch = &RunMoverTransform;

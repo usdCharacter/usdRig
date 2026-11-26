@@ -1,6 +1,7 @@
 #include "rigExecOps/deform/ribbonOp.h"
 
 #include "rigExecOps/fieldIo.h"
+#include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecMath/ribbonKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
@@ -176,9 +177,11 @@ const rigExec::RigExecOpDesc kRibbonDesc =
     FrameDesc("Ribbon", kPorts, std::size(kPorts), &RunRibbon, &CheckRibbon,
               rigExec::kRigExecOpSeparateBlend);
 
-const rigExec::RigExecOpDesc kGuideDesc = FrameDesc(
-    "GuidePoints", kGuidePorts, std::size(kGuidePorts), &RunGuidePoints,
-    &CheckGuidePoints, rigExec::kRigExecOpSeparateBlend);
+const rigExec::RigExecOpDesc kGuideDesc = internalOps::WithSchema(
+    FrameDesc("GuidePoints", kGuidePorts, std::size(kGuidePorts),
+              &RunGuidePoints, &CheckGuidePoints,
+              rigExec::kRigExecOpSeparateBlend),
+    internalOps::kGuidePoints);
 
 } // namespace
 

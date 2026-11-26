@@ -1,6 +1,7 @@
 #include "rigExecOps/deform/projectorOps.h"
 
 #include "rigExecOps/fieldIo.h"
+#include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecMath/normalsLayoutKernel.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
@@ -287,9 +288,10 @@ const rigExec::RigExecOpDesc kProjectorDesc = [] {
     return d;
 }();
 
-const rigExec::RigExecOpDesc kDialDesc =
+const rigExec::RigExecOpDesc kDialDesc = internalOps::WithSchema(
     ProjectorDesc("ShaderDials", kDialPorts, std::size(kDialPorts),
-                  &RunShaderDials, rigExec::kRigExecOpSeparateBlend);
+                  &RunShaderDials, rigExec::kRigExecOpSeparateBlend),
+    internalOps::kShaderDials);
 
 } // namespace
 

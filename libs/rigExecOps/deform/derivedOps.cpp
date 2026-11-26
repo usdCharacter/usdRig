@@ -1,6 +1,7 @@
 #include "rigExecOps/deform/derivedOps.h"
 
 #include "rigExecOps/fieldIo.h"
+#include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecMath/meshBoundsKernel.h"
 #include "rigExecMath/normalsLayoutKernel.h"
@@ -248,12 +249,14 @@ const rigExec::RigExecOpDesc kNormalsDesc = [] {
     d.payloadFieldCount = std::size(kNormalsFields);
     d.payloadVersion = 1;
     d.payloadValues = &NormalsValues;
+    d.schema = &internalOps::kRecomputeNormals;
     return d;
 }();
 
-const rigExec::RigExecOpDesc kExtentDesc =
+const rigExec::RigExecOpDesc kExtentDesc = internalOps::WithSchema(
     DerivedDesc("RecomputeExtent", kExtentPorts, std::size(kExtentPorts),
-                &RunExtent, &CheckExtent, 0);
+                &RunExtent, &CheckExtent, 0),
+    internalOps::kRecomputeExtent);
 
 } // namespace
 

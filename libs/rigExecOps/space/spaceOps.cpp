@@ -2,6 +2,7 @@
 #include "rigExecOps/space/providerOps.h"
 
 #include "rigExecOps/fieldIo.h"
+#include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecEvalCore/pose.h"
 #include "rigExecMath/providerMatrixKernel.h"
@@ -387,6 +388,7 @@ const rigExec::RigExecOpDesc kProviderMatrixDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "ProviderMatrix";
+    d.schema = &internalOps::kProviderMatrix;
     d.ports = kProviderMatrixPorts;
     d.portCount = std::size(kProviderMatrixPorts);
     d.runBatch = &RunProviderMatrix;
@@ -432,6 +434,7 @@ const rigExec::RigExecOpDesc kFrameMatrixDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "FrameMatrix";
+    d.schema = &internalOps::kFrameMatrix;
     d.ports = kFrameMatrixPorts;
     d.portCount = std::size(kFrameMatrixPorts);
     d.runBatch = &RunFrameMatrix;
@@ -489,6 +492,7 @@ const rigExec::RigExecOpDesc kProviderRefreshDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "ProviderRefresh";
+    d.schema = &internalOps::kProviderRefresh;
     d.ports = kProviderRefreshPorts;
     d.portCount = std::size(kProviderRefreshPorts);
     d.runBatch = &RunProviderRefresh;

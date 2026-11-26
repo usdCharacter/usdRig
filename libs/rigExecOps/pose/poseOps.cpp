@@ -2,6 +2,7 @@
 
 #include "rigExecOps/constraint/spaceSwitchFields.h"
 #include "rigExecOps/fieldIo.h"
+#include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecEvalCore/pose.h"
 #include "rigExecMath/avarScale.h"
@@ -1169,6 +1170,7 @@ const rigExec::RigExecOpDesc kAvarInputsDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "AvarInputs";
+    d.schema = &internalOps::kAvarInputs;
     d.ports = kAvarInputsPorts;
     d.portCount = std::size(kAvarInputsPorts);
     d.runBatch = &RunAvarInputs;
@@ -1222,6 +1224,7 @@ const rigExec::RigExecOpDesc kSpaceCheckpointDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "SpaceCheckpoint";
+    d.schema = &internalOps::kSpaceCheckpoint;
     d.ports = kSpaceCheckpointPorts;
     d.portCount = std::size(kSpaceCheckpointPorts);
     d.runBatch = &RunSpaceCheckpoint;
@@ -1466,10 +1469,11 @@ SlotOpDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     return d;
 }
 
-const rigExec::RigExecOpDesc kRestComposeDesc =
+const rigExec::RigExecOpDesc kRestComposeDesc = internalOps::WithSchema(
     SlotOpDesc("RestCompose", kRestComposePorts, std::size(kRestComposePorts),
                &RunRestCompose, &CheckRestCompose, kSlotActivityFields,
-               std::size(kSlotActivityFields), &SlotActivityValuesOf);
+               std::size(kSlotActivityFields), &SlotActivityValuesOf),
+    internalOps::kRestCompose);
 
 const rigExec::RigExecPortDesc kLadderComposePorts[] = {
     {&LadderComposeSpaces(), &rigExecStd::Mat4dArray(), kRigExecPortInput,
@@ -1508,10 +1512,12 @@ const rigExec::RigExecPortDesc kLadderComposePorts[] = {
      kRigExecPortOutput, "rotationSignMask"},
 };
 
-const rigExec::RigExecOpDesc kLadderComposeDesc = SlotOpDesc(
-    "LadderCompose", kLadderComposePorts, std::size(kLadderComposePorts),
-    &RunLadderCompose, &CheckLadderCompose, kSlotActivityFields,
-    std::size(kSlotActivityFields), &SlotActivityValuesOf);
+const rigExec::RigExecOpDesc kLadderComposeDesc = internalOps::WithSchema(
+    SlotOpDesc("LadderCompose", kLadderComposePorts,
+               std::size(kLadderComposePorts), &RunLadderCompose,
+               &CheckLadderCompose, kSlotActivityFields,
+               std::size(kSlotActivityFields), &SlotActivityValuesOf),
+    internalOps::kLadderCompose);
 
 const rigExec::RigExecPortDesc kComposeSlotPorts[] = {
     {&ComposeSlotAvars(), &rigExecStd::DoubleArray(), kRigExecPortInput,
@@ -1551,10 +1557,11 @@ ComposeSlotValuesOf(const void *payload, RigExecFieldValues &out)
 const rigExec::RigExecFieldDesc kComposeSlotFields[] = {Flag("active"),
                                                         Flag("noScale")};
 
-const rigExec::RigExecOpDesc kComposeSlotDesc =
+const rigExec::RigExecOpDesc kComposeSlotDesc = internalOps::WithSchema(
     SlotOpDesc("ComposeSlot", kComposeSlotPorts, std::size(kComposeSlotPorts),
                &RunComposeSlot, &CheckComposeSlot, kComposeSlotFields,
-               std::size(kComposeSlotFields), &ComposeSlotValuesOf);
+               std::size(kComposeSlotFields), &ComposeSlotValuesOf),
+    internalOps::kComposeSlot);
 
 const rigExec::RigExecPortDesc kSwitchedComposeSlotPorts[] = {
     {&SwitchedComposeSlotAvars(), &rigExecStd::DoubleArray(), kRigExecPortInput,
@@ -1614,11 +1621,13 @@ const rigExec::RigExecFieldDesc kSwitchedComposeSlotFields[] = {
     Flag("noScale"),
 };
 
-const rigExec::RigExecOpDesc kSwitchedComposeSlotDesc = SlotOpDesc(
-    "SwitchedComposeSlot", kSwitchedComposeSlotPorts,
-    std::size(kSwitchedComposeSlotPorts), &RunSwitchedComposeSlot,
-    &CheckSwitchedComposeSlot, kSwitchedComposeSlotFields,
-    std::size(kSwitchedComposeSlotFields), &SwitchedComposeSlotValuesOf);
+const rigExec::RigExecOpDesc kSwitchedComposeSlotDesc = internalOps::WithSchema(
+    SlotOpDesc("SwitchedComposeSlot", kSwitchedComposeSlotPorts,
+               std::size(kSwitchedComposeSlotPorts), &RunSwitchedComposeSlot,
+               &CheckSwitchedComposeSlot, kSwitchedComposeSlotFields,
+               std::size(kSwitchedComposeSlotFields),
+               &SwitchedComposeSlotValuesOf),
+    internalOps::kSwitchedComposeSlot);
 
 const rigExec::RigExecPortDesc kShiftedComposeSlotPorts[] = {
     {&ShiftedComposeSlotBase(), &rigExecRig::PointFrameType(),
@@ -1637,6 +1646,7 @@ const rigExec::RigExecOpDesc kShiftedComposeSlotDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "ShiftedComposeSlot";
+    d.schema = &internalOps::kShiftedComposeSlot;
     d.ports = kShiftedComposeSlotPorts;
     d.portCount = std::size(kShiftedComposeSlotPorts);
     d.runBatch = &RunShiftedComposeSlot;
