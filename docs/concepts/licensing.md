@@ -84,10 +84,11 @@ carve-outs below: the OpenUSD- and Epic-derived kernels, `plugin/usdNoodles/**`,
 the generated schema resources, and the Squarebit Eye shader in
 `examples/biped/shaders`.
 
-Five files carry their own MIT header rather than relying on the root
+Six files carry their own MIT header rather than relying on the root
 LICENSE: `plugin/rigExecUsdview/profilerModel.py`,
 `plugin/rigExecUsdview/profilerUI.py`, `plugin/rigExecUsdview/execStackUI.py`,
-`asset_lib/components/compose.py` and `asset_lib/components/test_components.py`.
+`asset_lib/components/compose.py`, `asset_lib/components/test_components.py`
+and `asset_lib/components/example_control_handoff.py`.
 They name the same holder.
 
 One caveat the manifest records explicitly: coverage is verified as
