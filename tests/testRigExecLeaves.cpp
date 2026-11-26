@@ -320,31 +320,61 @@ RunChecked(RigExecRigEvaluator *evaluator,
     return pose;
 }
 
-// A drag that makes the dragged weight object's packet invalid stops the
-// frame with that packet's error; any other drag runs as RunChecked.
+// The weight drags that put their packet out of its contract, each with
+// the error its packet stops the frame with. Every other drag must run.
+const std::map<std::string, std::string> invalidWeightDrags = {
+    {"/BlendArmAsset/Rig/Weights/WristW.rigExec:defaultWeight",
+     "StaticWeights: a dense packet's default weight is not 0"},
+    {"/PropMathAsset/Rig/Weights/CardW.rigExec:defaultWeight",
+     "StaticWeights: a weight is not finite or outside [0, 1]"},
+    {"/ReadPhaseAsset/Rig/Weights/CageW.rigExec:defaultWeight",
+     "StaticWeights: a weight is not finite or outside [0, 1]"},
+    {"/SpineAsset/Rig/Weights/FinW.rigExec:defaultWeight",
+     "StaticWeights: a weight is not finite or outside [0, 1]"},
+};
+
+std::map<std::string, size_t> invalidWeightDragsSeen;
+
+// Whether \p drag is listed in invalidWeightDrags; if so, checks that
+// \p pose stopped at the dragged weight's packet with exactly its error.
 bool
-FailsAtItsPacket(const RigExecRigPose &pose, const SdfPath &weight)
+CheckInvalidWeightDrag(const RigExecRigPose &pose,
+                       const std::vector<RigExecValueOverride> &drag)
 {
-    const std::string prefix = weight.GetPrimPath().GetString() + ": node ";
-    return !pose.valid &&
-           std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
-                       [&](const std::string &line) {
-                           return line.rfind(prefix, 0) == 0 &&
-                                  line.find("Weights) failed: ") !=
-                                      std::string::npos;
-                       });
+    if (drag.empty())
+        return false;
+    const SdfPath dragged =
+        drag.front().prim.AppendProperty(drag.front().attribute);
+    const auto found = invalidWeightDrags.find(dragged.GetString());
+    if (found == invalidWeightDrags.end())
+        return false;
+    ++invalidWeightDragsSeen[found->first];
+    const std::string prefix = dragged.GetPrimPath().GetString() + ": node ";
+    const std::string suffix = " (rig:StaticWeights) failed: " + found->second;
+    const bool failed =
+        !pose.valid && pose.diagnostics.size() == 2 &&
+        pose.diagnostics[0].rfind(prefix, 0) == 0 &&
+        pose.diagnostics[0].size() > suffix.size() &&
+        pose.diagnostics[0].compare(pose.diagnostics[0].size() - suffix.size(),
+                                    suffix.size(), suffix) == 0 &&
+        pose.diagnostics[1] == "native program did not complete generation";
+    if (!failed)
+        std::printf("FAIL %s: the drag did not stop at its packet with "
+                    "'%s'\n",
+                    dragged.GetText(), found->second.c_str());
+    CHECK(failed);
+    return true;
 }
 
 void
 RunCheckedOrFailsAtItsPacket(RigExecRigEvaluator *evaluator,
                              const std::vector<RigExecValueOverride> &drag,
-                             UsdTimeCode time, const std::string &what,
-                             const SdfPath &weight)
+                             UsdTimeCode time, const std::string &what)
 {
     evaluator->SetInteractiveOverrides(drag);
     const size_t generations = evaluator->GetBakedGenerationCount();
     const RigExecRigPose pose = evaluator->Evaluate(time);
-    if (FailsAtItsPacket(pose, weight))
+    if (CheckInvalidWeightDrag(pose, drag))
         return;
     CHECK(pose.valid);
     CHECK(pose.comparisonMismatches == 0);
@@ -869,7 +899,7 @@ CheckBodyLeavesEqualTheFunnel(const Fixture &f, const UsdStageRefPtr &stage,
                                      path.GetString() + " at " +
                                      Text(t.GetValue());
             if (std::string(kind) == "weight object")
-                RunCheckedOrFailsAtItsPacket(evaluator, drag, t, what, path);
+                RunCheckedOrFailsAtItsPacket(evaluator, drag, t, what);
             else
                 RunChecked(evaluator, drag, t, what);
         }
@@ -1374,6 +1404,11 @@ TestBindingFixtureInputs(const std::string &examples)
         CheckAHeldLeafIsNotResampled(f, evaluator.get(), t);
         CheckBodyLeavesEqualTheFunnel(f, stage, evaluator.get());
     }
+    // Each fixture drags its weight at three frames.
+    for (const char *weight :
+         {"/BlendArmAsset/Rig/Weights/WristW.rigExec:defaultWeight",
+          "/PropMathAsset/Rig/Weights/CardW.rigExec:defaultWeight"})
+        CHECK(invalidWeightDragsSeen[weight] == 3);
 }
 
 uint64_t
@@ -2910,8 +2945,8 @@ TestNoBodyReadsTheStage(const std::string &examples)
             evaluator->SetInteractiveOverrides(drag);
             const size_t generations = evaluator->GetBakedGenerationCount();
             const RigExecRigPose pose = evaluator->Evaluate(t);
-            CHECK(pose.valid ||
-                  (!drag.empty() && FailsAtItsPacket(pose, drag.front().prim)));
+            if (!CheckInvalidWeightDrag(pose, drag))
+                CHECK(pose.valid);
             ++fixtureRuns;
             if (evaluator->GetBakedGenerationCount() == generations + 1) {
                 ++fixtureBaked;
@@ -2992,6 +3027,10 @@ TestNoBodyReadsTheStage(const std::string &examples)
     }
     // The volatile scope is exercised: some fixture reaches the oracle.
     CHECK(!volatileRigs.empty());
+    for (const char *weight :
+         {"/ReadPhaseAsset/Rig/Weights/CageW.rigExec:defaultWeight",
+          "/SpineAsset/Rig/Weights/FinW.rigExec:defaultWeight"})
+        CHECK(invalidWeightDragsSeen[weight] > 0);
 }
 
 // A cubic wire over ten points whose envelope is sparse with a zero
