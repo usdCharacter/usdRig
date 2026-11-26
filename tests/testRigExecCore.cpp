@@ -13,6 +13,9 @@
 #include "rigExec/api/view.h"
 #include "rigExec/internal/program/program.h"
 #include "rigExecGraph/windowHistory.h"
+#ifdef RIGEXEC_TEST_WORK_TASK_SYSTEM
+#include "rigExecScene/workTaskSystem.h"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -31,6 +34,13 @@
 
 using namespace rigExec;
 using fakeTypes::Vec3;
+
+namespace {
+/// Every task system the tests make; the work build runs them all again on
+/// RigExecCreateWorkTaskSystem.
+std::unique_ptr<RigExecTaskSystem> (*gCreateTasks)(size_t) =
+    &RigExecCreateThreadTaskSystem;
+} // namespace
 
 namespace {
 std::atomic<bool> gCountAllocations{false};
@@ -802,7 +812,7 @@ TakeMarks()
 void
 TestDirtyPropagation()
 {
-    std::unique_ptr<RigExecTaskSystem> pool = RigExecCreateThreadTaskSystem(3);
+    std::unique_ptr<RigExecTaskSystem> pool = gCreateTasks(3);
     for (const size_t maxBatchNodes : {size_t(0), size_t(1)})
         for (RigExecTaskSystem *tasks :
              {static_cast<RigExecTaskSystem *>(nullptr), pool.get()}) {
@@ -911,7 +921,7 @@ TestRunStates()
                 expected[w].push_back(
                     *static_cast<const Vec3 *>(reference->GetOutput(out)));
         }
-    std::unique_ptr<RigExecTaskSystem> pool = RigExecCreateThreadTaskSystem(3);
+    std::unique_ptr<RigExecTaskSystem> pool = gCreateTasks(3);
     std::vector<std::vector<Vec3>> got(kWorkers);
     std::vector<std::thread> threads;
     for (int w = 0; w < kWorkers; ++w)
@@ -1302,7 +1312,7 @@ TestDeterminism()
         CHECK(reference.size() == chains * 5);
     }
     for (const size_t threads : ThreadCounts()) {
-        auto tasks = RigExecCreateThreadTaskSystem(threads);
+        auto tasks = gCreateTasks(threads);
         for (const size_t batch : kBatchSizes) {
             const Wide wide = BuildWide(chains, batch);
             CHECK(wide.program);
@@ -1324,7 +1334,7 @@ void
 TestFailureOrder()
 {
     for (const size_t threads : ThreadCounts()) {
-        auto tasks = RigExecCreateThreadTaskSystem(threads);
+        auto tasks = gCreateTasks(threads);
         for (const size_t batch : kBatchSizes) {
             const Wide wide = BuildWide(16, batch);
             RigExecEvaluatorOptions options;
@@ -1385,7 +1395,7 @@ TestListDeterminism()
         RunWide(BuildWideLists(lists, 0), nullptr, 4, &error);
     CHECK(reference.size() == lists * 4);
     for (const size_t threads : ThreadCounts()) {
-        auto tasks = RigExecCreateThreadTaskSystem(threads);
+        auto tasks = gCreateTasks(threads);
         for (const size_t batch : kBatchSizes) {
             const Wide wide = BuildWideLists(lists, batch);
             CHECK(wide.program);
@@ -1667,7 +1677,7 @@ TestWindowDeterminism()
     const std::vector<Vec3> reference = run(nullptr, 0);
     CHECK(reference.size() == chains * 4 * 8);
     for (const size_t threads : ThreadCounts()) {
-        auto tasks = RigExecCreateThreadTaskSystem(threads);
+        auto tasks = gCreateTasks(threads);
         for (const size_t batch : kBatchSizes) {
             const bool same = SameAll(run(tasks.get(), batch), reference);
             CHECK(same);
@@ -1691,7 +1701,7 @@ TestSharedTaskSystem()
     const std::vector<Vec3> windowRef = RunWindowRig(19, nullptr, 0);
     CHECK(wideRef.size() == 53 * 40 && listRef.size() == 37 * 40);
     for (const size_t threads : ThreadCounts()) {
-        auto tasks = RigExecCreateThreadTaskSystem(threads);
+        auto tasks = gCreateTasks(threads);
         for (int round = 0; round < 4; ++round) {
             std::vector<Vec3> wideGot, listGot, windowGot;
             std::string wideError, listError;
@@ -1725,8 +1735,8 @@ TestTaskSystemStress()
     const std::vector<Vec3> reference =
         RunWide(BuildWide(4, 1), nullptr, frames, &error);
     CHECK(reference.size() == 4 * size_t(frames));
-    auto tasks = RigExecCreateThreadTaskSystem(
-        std::max<size_t>(2, std::thread::hardware_concurrency()));
+    auto tasks =
+        gCreateTasks(std::max<size_t>(2, std::thread::hardware_concurrency()));
     const Wide wide = BuildWide(4, 1);
     CHECK(SameAll(RunWide(wide, tasks.get(), frames, &error), reference));
     std::vector<Vec3> first, second;
@@ -1749,7 +1759,7 @@ TestTaskSystemLifetimes()
     const Wide wide = BuildWide(6, 1);
     const std::vector<Vec3> reference = RunWide(wide, nullptr, 1, &error);
     for (size_t i = 0; i < 200; ++i) {
-        auto tasks = RigExecCreateThreadTaskSystem(1 + i % 6);
+        auto tasks = gCreateTasks(1 + i % 6);
         if (i % 2)
             CHECK(SameAll(RunWide(wide, tasks.get(), 1, &error), reference));
     }
@@ -1815,7 +1825,7 @@ void
 TestScheduleOrder()
 {
     for (const size_t threads : ThreadCounts()) {
-        auto tasks = RigExecCreateThreadTaskSystem(threads);
+        auto tasks = gCreateTasks(threads);
         for (int round = 0; round < 20; ++round) {
             ScheduleProbe probe;
             probe.owner = std::this_thread::get_id();
@@ -1839,7 +1849,7 @@ void
 TestBatchCalls()
 {
     for (const size_t threads : ThreadCounts()) {
-        auto tasks = RigExecCreateThreadTaskSystem(threads);
+        auto tasks = gCreateTasks(threads);
         for (const size_t limit : kBatchSizes) {
             RigExecRigDescBuilder builder;
             std::vector<RigExecInputId> inputs;
@@ -2311,7 +2321,7 @@ TestDeclaredFields()
                     models[i].Step(FieldsInput(models[i], f, i)));
     }
     for (const size_t threads : ThreadCounts()) {
-        auto tasks = RigExecCreateThreadTaskSystem(threads);
+        auto tasks = gCreateTasks(threads);
         for (const size_t limit : kBatchSizes) {
             RigExecRigDescBuilder builder;
             std::vector<FieldsModel> models;
@@ -2957,7 +2967,7 @@ TestRangePartitions()
     const float factors[] = {1.5f, 0.75f};
     std::vector<std::unique_ptr<RigExecTaskSystem>> pools;
     for (const size_t threads : {size_t(1), size_t(2), size_t(4), size_t(8)})
-        pools.push_back(RigExecCreateThreadTaskSystem(threads));
+        pools.push_back(gCreateTasks(threads));
     for (const size_t grain :
          {size_t(0), size_t(1), size_t(3), size_t(64), size_t(1000)}) {
         for (const size_t threshold : {size_t(0), size_t(100)}) {
@@ -3034,7 +3044,7 @@ TestRangeWholeAndDirty()
     CHECK(program);
     if (!program)
         return;
-    auto pool = RigExecCreateThreadTaskSystem(4);
+    auto pool = gCreateTasks(4);
     RigExecEvaluatorOptions options;
     options.tasks = pool.get();
     auto evaluator = RigExecEvaluator::Create(program, options);
@@ -3081,7 +3091,7 @@ TestRangeFailures()
 {
     const std::vector<size_t> sizes = {200, 200, 200};
     const RangeRig rig = BuildRangeRig(sizes);
-    auto pool = RigExecCreateThreadTaskSystem(4);
+    auto pool = gCreateTasks(4);
     const float nan = std::numeric_limits<float>::quiet_NaN();
     const float one = 1.0f;
     for (int scenario = 0; scenario < 2; ++scenario) {
@@ -3238,7 +3248,7 @@ TestRangeChains()
     }
     std::vector<std::unique_ptr<RigExecTaskSystem>> pools;
     for (const size_t threads : {size_t(1), size_t(2), size_t(4), size_t(8)})
-        pools.push_back(RigExecCreateThreadTaskSystem(threads));
+        pools.push_back(gCreateTasks(threads));
     for (const float wholeFactor : {1.5f, 3.0f}) {
         const RigExecRigDesc *desc = descs[wholeFactor == 3.0f].get();
         const std::vector<float> input = RangeInput(1000, 3, 1);
@@ -3497,7 +3507,7 @@ TestRangeNoAllocation()
     const std::vector<size_t> sizes = {1000, 50};
     const RangeRig rig = BuildRangeRig(sizes, false);
     auto program = CompileRanges(*rig.desc, 32, 0, 0);
-    auto pool = RigExecCreateThreadTaskSystem(4);
+    auto pool = gCreateTasks(4);
     for (RigExecTaskSystem *tasks :
          {static_cast<RigExecTaskSystem *>(nullptr), pool.get()}) {
         RigExecEvaluatorOptions options;
@@ -3730,25 +3740,53 @@ TestFrameView()
     CHECK(!first && first.OutputCount() == 0);
 }
 
-} // namespace
+// A task that runs a whole schedule on the same task system, from a worker
+// thread or from the caller.
+struct NestedProbe {
+    RigExecTaskSystem *tasks = nullptr;
+    std::atomic<uint32_t> failures{0};
 
-int
-main()
-{
-    RigExecRegistryInit init = RigExecLinkedRegistrations();
-    init.opLibraries.push_back(&kCheckLibrary);
-    init.typeLibraries.push_back(&kFieldTypes);
-    init.opLibraries.push_back(&kFieldsLibrary);
-    init.typeLibraries.push_back(&kRangeTypes);
-    init.opLibraries.push_back(&kRangeOps);
-    init.typeLibraries.push_back(&kFrameTypes);
-    init.opLibraries.push_back(&kFrameOps);
-    std::vector<std::string> errors;
-    if (!RigExecRegistry::Initialize(init, &errors)) {
-        for (const std::string &e : errors)
-            std::printf("%s\n", e.c_str());
-        return 1;
+    static bool Run(void *context, uint32_t)
+    {
+        auto *self = static_cast<NestedProbe *>(context);
+        ScheduleProbe inner;
+        inner.owner = std::this_thread::get_id();
+        if (!self->tasks->Run(inner.Schedule()) || inner.early.load() != 0 ||
+            inner.foreignCaller.load() != 0 ||
+            inner.ran.load() !=
+                ScheduleProbe::kLevels * (ScheduleProbe::kShared + 1))
+            self->failures.fetch_add(1);
+        return true;
     }
+};
+
+void
+TestNestedRun()
+{
+    for (const size_t threads : ThreadCounts()) {
+        auto tasks = gCreateTasks(threads);
+        NestedProbe probe;
+        probe.tasks = tasks.get();
+        const std::vector<uint32_t> sharedStart = {0, 6, 6};
+        const std::vector<uint32_t> shared = {0, 1, 2, 3, 4, 5};
+        const std::vector<uint32_t> callerStart = {0, 1, 2};
+        const std::vector<uint32_t> caller = {6, 7};
+        RigExecTaskSchedule s;
+        s.levelCount = 2;
+        s.sharedStart = sharedStart.data();
+        s.shared = shared.data();
+        s.callerStart = callerStart.data();
+        s.caller = caller.data();
+        s.run = &NestedProbe::Run;
+        s.context = &probe;
+        CHECK(tasks->Run(s));
+        CHECK(probe.failures.load() == 0);
+    }
+}
+
+void
+RunTests()
+{
     TestChain();
     TestBuildErrors();
     TestCompileErrors();
@@ -3787,6 +3825,51 @@ main()
     TestValidateFailureInvalidatesOutputs();
     TestHostSchedule();
     TestFrameView();
+    TestNestedRun();
+}
+
+#ifdef RIGEXEC_TEST_WORK_TASK_SYSTEM
+// Two rigs give the same bits on the work and the thread task systems.
+void
+TestWorkMatchesThread()
+{
+    std::string error;
+    for (const size_t threads : ThreadCounts()) {
+        auto work = RigExecCreateWorkTaskSystem(threads);
+        auto pool = RigExecCreateThreadTaskSystem(threads);
+        const Wide wide = BuildWide(61, 2);
+        CHECK(SameAll(RunWide(wide, work.get(), 9, &error),
+                      RunWide(wide, pool.get(), 9, &error)));
+        CHECK(SameAll(RunWindowRig(17, work.get(), 1),
+                      RunWindowRig(17, pool.get(), 1)));
+    }
+}
+#endif
+
+} // namespace
+
+int
+main()
+{
+    RigExecRegistryInit init = RigExecLinkedRegistrations();
+    init.opLibraries.push_back(&kCheckLibrary);
+    init.typeLibraries.push_back(&kFieldTypes);
+    init.opLibraries.push_back(&kFieldsLibrary);
+    init.typeLibraries.push_back(&kRangeTypes);
+    init.opLibraries.push_back(&kRangeOps);
+    init.typeLibraries.push_back(&kFrameTypes);
+    init.opLibraries.push_back(&kFrameOps);
+    std::vector<std::string> errors;
+    if (!RigExecRegistry::Initialize(init, &errors)) {
+        for (const std::string &e : errors)
+            std::printf("%s\n", e.c_str());
+        return 1;
+    }
+#ifdef RIGEXEC_TEST_WORK_TASK_SYSTEM
+    gCreateTasks = &RigExecCreateWorkTaskSystem;
+    TestWorkMatchesThread();
+#endif
+    RunTests();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

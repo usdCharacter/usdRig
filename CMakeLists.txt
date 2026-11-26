@@ -146,6 +146,7 @@ add_library(rigExecScene SHARED
     libs/rigExecScene/solverSceneTranslation.cpp
     libs/rigExecScene/usdSceneAccess.cpp
     libs/rigExecScene/weightSceneTranslation.cpp
+    libs/rigExecScene/workTaskSystem.cpp
 )
 target_compile_features(rigExecScene PUBLIC cxx_std_17)
 target_include_directories(rigExecScene PUBLIC
@@ -154,7 +155,7 @@ target_include_directories(rigExecScene PUBLIC
 target_link_libraries(rigExecScene PUBLIC
     tf gf vt sdf ts usd usdGeom)
 target_link_libraries(rigExecScene PRIVATE rigExecGraph rigExecMathGf
-    rigExecBuiltins plug js)
+    rigExecBuiltins plug js work)
 set_target_properties(rigExecScene PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(rigExec::rigExecScene ALIAS rigExecScene)
 target_sources(rigExecScene INTERFACE
@@ -1426,6 +1427,17 @@ target_link_libraries(testRigExecCore PRIVATE Threads::Threads)
 rigexec_link_registrations(testRigExecCore
     TYPE_LIBRARIES rigExecTestFakeTypes OP_LIBRARIES rigExecTestFakeOps)
 rigexec_add_test(NAME testRigExecCore COMMAND testRigExecCore)
+# The same body on the task system over OpenUSD's work library.
+add_executable(testRigExecCoreWork tests/testRigExecCore.cpp)
+target_compile_definitions(testRigExecCoreWork PRIVATE
+    RIGEXEC_TEST_WORK_TASK_SYSTEM)
+target_link_libraries(testRigExecCoreWork PRIVATE rigExecOpCore rigExecScene
+    Threads::Threads)
+target_include_directories(testRigExecCoreWork PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/libs" "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+rigexec_link_registrations(testRigExecCoreWork
+    TYPE_LIBRARIES rigExecTestFakeTypes OP_LIBRARIES rigExecTestFakeOps)
+rigexec_add_test(NAME testRigExecCoreWork COMMAND testRigExecCoreWork)
 
 add_executable(testRigExecStdTypes tests/testRigExecStdTypes.cpp)
 target_link_libraries(testRigExecStdTypes PRIVATE rigExecOpCore)
