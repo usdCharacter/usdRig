@@ -253,8 +253,114 @@ TypeName(const TfToken &type)
     return type.IsEmpty() ? std::string("untyped") : type.GetString();
 }
 
-// Solve: the record and the inputs the body handed RigExecRunSolver, against
-// the aggregate it published and the diagnostic it emitted.
+// The inputs a Solve step reads, rebuilt from the program: the frame
+// versions it reads, its leaves, the aggregates it blends and its driver
+// points as the step resolves them.
+RigExecSolverInputs
+SolveInputs(const B &b, const B::Solver &s)
+{
+    const auto rd = [&b](const auto &input) {
+        return RigExecBakedLeafRead(b, input);
+    };
+    const auto live = [&b](const auto &input) {
+        const auto flagged = [&input](const std::vector<char> &flags) {
+            return input.overrideIndex >= 0 &&
+                   size_t(input.overrideIndex) < flags.size() &&
+                   flags[size_t(input.overrideIndex)];
+        };
+        return input.varying || flagged(b.overridden) || flagged(b.upstreamOn);
+    };
+    const auto frame = [&b](int provider, uint32_t version) {
+        return provider >= 0 ? b.fin[size_t(version)] : RigExecPointFrame();
+    };
+    RigExecSolverInputs input;
+    input.hasSpace = s.spaceSlot >= 0;
+    if (input.hasSpace) {
+        input.spaceRest = s.spaceRest;
+        input.space = b.fin[size_t(s.spaceRead)];
+    }
+    input.root = frame(s.root, s.rootRead);
+    input.mid = frame(s.mid, s.midRead);
+    input.end = frame(s.end, s.endRead);
+    input.pole = frame(s.pole, s.poleRead);
+    input.start = frame(s.start, s.startRead);
+    for (size_t k = 0; k < s.controls.size(); ++k)
+        input.controls.push_back(b.fin[size_t(s.controlReads[k])]);
+    switch (s.kind) {
+    case RigExecSolverKind::FkChain:
+        break;
+    case RigExecSolverKind::TwoBoneIk:
+        input.ikSpace = rd(s.ikSpace);
+        input.refreshIkParams = true;
+        input.pin = rd(s.pin);
+        input.softDistance = rd(s.softDistance);
+        input.limbTwist = rd(s.limbTwist);
+        input.upperScale = rd(s.upperScale);
+        input.lowerScale = rd(s.lowerScale);
+        input.bend = rd(s.bend);
+        input.stretch = rd(s.stretch);
+        input.softness = rd(s.softness);
+        input.upperOffset = rd(s.upperOffset);
+        input.lowerOffset = rd(s.lowerOffset);
+        break;
+    case RigExecSolverKind::BlendPointFrames:
+        input.blendA = s.inA >= 0 ? &b.aggregates[size_t(s.inA)] : nullptr;
+        input.blendB = s.inB >= 0 ? &b.aggregates[size_t(s.inB)] : nullptr;
+        input.blendWeight = rd(s.blendWeight);
+        break;
+    case RigExecSolverKind::TwistDistribution:
+        input.twistTurns = rd(s.twistTurns);
+        break;
+    case RigExecSolverKind::Ribbon: {
+        const GfVec3f *points = nullptr;
+        size_t count = 0;
+        if (RigExecBakedResolvePoints(b, s.ribbonPointsBinding, &points,
+                                      &count))
+            input.ribbonPoints.assign(points, points + count);
+        else
+            input.ribbonPoints =
+                s.ribbonPointsVarying ? s.ribbonPoints : s.ribbonConstantPoints;
+        break;
+    }
+    case RigExecSolverKind::SplineIk:
+        input.refreshSplineParams = s.splineParamsVary ||
+                                    live(s.preserveVolume) ||
+                                    live(s.midFollowWeight) || live(s.roll) ||
+                                    live(s.twist) || live(s.minLengthRatio);
+        input.preserveVolume = rd(s.preserveVolume);
+        input.midFollowWeight = rd(s.midFollowWeight);
+        input.rollDegrees = rd(s.roll);
+        input.twistDegrees = rd(s.twist);
+        input.minLengthRatio = rd(s.minLengthRatio);
+        break;
+    case RigExecSolverKind::Skeleton2d: {
+        const size_t bones =
+            std::min(s.bone2dDoubles.size() / kRigExecBone2dDoubleChannels,
+                     s.bone2dBools.size() / kRigExecBone2dBoolChannels);
+        input.bone2dChannels.resize(bones);
+        for (size_t k = 0; k < bones; ++k) {
+            const auto *d = &s.bone2dDoubles[k * kRigExecBone2dDoubleChannels];
+            const auto *f = &s.bone2dBools[k * kRigExecBone2dBoolChannels];
+            for (size_t c = 0; c < kRigExecBone2dChannelCount; ++c) {
+                const size_t at = RigExecBone2dChannelStorage(c);
+                RigExecBone2dSetChannel(&input.bone2dChannels[k], c,
+                                        RigExecBone2dChannelIsBool(c)
+                                            ? (rd(f[at]) ? 1.0 : 0.0)
+                                            : rd(d[at]));
+            }
+        }
+        for (const auto &selector : s.bone2dSelectors)
+            input.bone2dSelectors.push_back(rd(selector));
+        break;
+    }
+    }
+    for (const auto &selector : s.jointGroupSelectors)
+        input.jointGroupSelectors.push_back(rd(selector));
+    return input;
+}
+
+// Solve: the record and the inputs rebuilt from the program, against the
+// aggregate the step published and the diagnostic it emitted.
 void
 ProbeSolve(const B &b)
 {
@@ -266,16 +372,14 @@ ProbeSolve(const B &b)
             TypeName(s.type) + (s.jointGroups.empty() ? "" : " groups");
         if (!RigExecSolverOpSupported(s)) {
             Unprobed("Solve", kind,
-                     "RigExecSolverOpSupported refuses the record "
-                     "(joint-group selectors, a degenerate record or a "
-                     "refused rotation blend)");
+                     "RigExecSolverOpSupported refuses the record");
             continue;
         }
         RigExecPoseOpRunner runner;
         RigExecPointFrameArray out;
         std::string error;
         const bool ran =
-            RigExecRunSolverOp(s, s.kernelInputs, runner, &out, &error);
+            RigExecRunSolverOp(s, SolveInputs(b, s), runner, &out, &error);
         const auto &baked = b.aggregates[size_t(step.object)];
         const std::string prefix = "diag " + s.pathText + ": ";
         std::string bakedError;
@@ -4619,6 +4723,9 @@ main(int argc, char **argv)
         return 1;
     }
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
+    // The probe reads points through bindings: one read past its binding's
+    // life reads NaN on every platform.
+    RigExecBakedProgramTesting::SetPoisonReleasedGathers(true);
     // Rigs after --dense are probed on up to 12 frames of their range; rigs
     // after --painted are probed as they are and again under each painted
     // partial envelope; rigs after --chunked are probed with every skin cut
@@ -4692,6 +4799,14 @@ main(int argc, char **argv)
     }
     for (const char *family :
          {"Solve/",
+          "Solve/RigExecFkChain",
+          "Solve/RigExecTwoBoneIk",
+          "Solve/RigExecBlendPointFrames",
+          "Solve/RigExecTwistDistribution",
+          "Solve/RigExecRibbon",
+          "Solve/RigExecSplineIk",
+          "Solve/RigExecSkeleton2d",
+          "Constraint/RigExecSingleChainIkConstraint",
           "RevisionChunk/Matrix",
           "RevisionChunk/Skin",
           "RevisionChunk/BlendShape",
