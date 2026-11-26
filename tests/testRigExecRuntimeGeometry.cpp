@@ -7,6 +7,7 @@
 #include "rigExecBake/bake.h"
 #include "rigExecBake/staticReport.h"
 #include "rigExec/api/bakedProgram.h"
+#include "rigExec/api/frozenContext.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/moverGraph.h"
 #include "rigExec/api/rigEvaluator.h"
@@ -2666,7 +2667,8 @@ TestEpilogueSharesPublications()
 
 // The combine's strength 2 lifts its packet past 1 under its strict range
 // policy: the packet is a declared input of the current-phase revision, so
-// every frame stops with the packet's error and the rig does not bake.
+// every frame stops with the packet's error and the rig does not bake. The
+// sphere's placement is a pose frame, so Build cannot fold the packet.
 static void
 TestCurrentPhaseFailure()
 {
@@ -2689,6 +2691,92 @@ TestCurrentPhaseFailure()
     std::vector<uint8_t> bytes;
     std::string error;
     CHECK(!RigExecTestBakeAt(evaluator, 1, &bytes, &error));
+    std::printf("%s: checked\n", name);
+}
+
+// The combine over the painted Full weight (1 everywhere) instead of the
+// sphere: every input is an authored constant, so strength 2 is refused at
+// Build in every evaluator. Keyed or dragged to 2 it fails at run time.
+static void
+TestConstantCombineFailure()
+{
+    const char *const name = "constant combine, strength 2";
+    const auto stageWith = [](float strength) {
+        const UsdStageRefPtr stage = _CurrentPhaseThroughCombineStage(strength);
+        stage->GetPrimAtPath(SdfPath("/Asset/Rig/Weights/Wrapped"))
+            .GetRelationship(TfToken("rigExec:inputWeights"))
+            .SetTargets({SdfPath("/Asset/Rig/Weights/Full")});
+        return stage;
+    };
+    const std::string refused = "/Asset/Rig/Weights/Wrapped: a weight is not "
+                                "finite or outside [0, 1] at every frame";
+    const auto names = [&](const std::vector<std::string> &lines) {
+        return std::any_of(lines.begin(), lines.end(),
+                           [&](const std::string &line) {
+                               return line.find(refused) != std::string::npos;
+                           });
+    };
+    const auto ranFailed = [](const RigExecRigPose &pose) {
+        return !pose.valid &&
+               std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                           [](const std::string &line) {
+                               return line.rfind("/Asset/Rig/Weights/Wrapped: "
+                                                 "node ",
+                                                 0) == 0;
+                           });
+    };
+    {
+        const UsdStageRefPtr stage = stageWith(2.0f);
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        for (const double frame : {1.0, 4.0}) {
+            const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(frame));
+            CHECK(!pose.valid && names(pose.diagnostics) && !ranFailed(pose));
+            if (!names(pose.diagnostics)) {
+                for (const std::string &line : pose.diagnostics)
+                    std::printf("%s: frame %g: %s\n", name, frame,
+                                line.c_str());
+            }
+        }
+        std::shared_ptr<const RigExecFrozenProgram> frozen;
+        std::string error;
+        CHECK(!RigExecFreezeProgram(evaluator, &frozen, &error));
+        std::vector<uint8_t> bytes;
+        CHECK(!RigExecTestBakeAt(evaluator, 1, &bytes, &error));
+    }
+    {
+        // Keyed: frame 1 runs, frame 4 fails when it runs.
+        const UsdStageRefPtr stage = stageWith(1.0f);
+        const UsdAttribute strength =
+            stage->GetPrimAtPath(SdfPath("/Asset/Rig/Weights/Wrapped"))
+                .CreateAttribute(TfToken("inputs:strength"),
+                                 SdfValueTypeNames->Float);
+        strength.Set(1.0f, UsdTimeCode(1.0));
+        strength.Set(2.0f, UsdTimeCode(4.0));
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
+        CHECK(ranFailed(evaluator.Evaluate(UsdTimeCode(4.0))));
+        CHECK(evaluator.IsBakeable(nullptr));
+    }
+    {
+        // Dragged from the authored 1 to 2: that frame fails when it runs.
+        const UsdStageRefPtr stage = stageWith(1.0f);
+        const UsdPrim wrapped =
+            stage->GetPrimAtPath(SdfPath("/Asset/Rig/Weights/Wrapped"));
+        wrapped
+            .CreateAttribute(TfToken("inputs:strength"),
+                             SdfValueTypeNames->Float)
+            .Set(1.0f);
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
+        RigExecValueOverride drag;
+        drag.prim = wrapped.GetPath();
+        drag.attribute = TfToken("inputs:strength");
+        drag.value = VtValue(2.0f);
+        evaluator.SetInteractiveOverrides({drag});
+        CHECK(ranFailed(evaluator.Evaluate(UsdTimeCode(1.0))));
+        evaluator.SetInteractiveOverrides({});
+        CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
+    }
     std::printf("%s: checked\n", name);
 }
 
@@ -5478,6 +5566,7 @@ main(int argc, char **argv)
     TestCurrentPhaseThroughCombine();
     TestCurrentPhaseFailure();
     TestCurrentPhaseFailureBoundary();
+    TestConstantCombineFailure();
     TestVolumeMixCurrentPhase();
     TestOraclePointsSet();
     TestOracleSlotIsCanonical();

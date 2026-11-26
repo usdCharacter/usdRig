@@ -782,6 +782,126 @@ PacketStructureError(const RigExecBakedProgramImpl &B,
     }
 }
 
+/// Whether \p input reads its authored value at every frame: nothing
+/// time-sampled, no chain or upstream source on its walk. A drag can still
+/// move it at run time.
+bool
+AuthoredConstant(const RigExecBakedInput<float> &input)
+{
+    return !input.varying && input.walk < 0 && !input.sourceBacked &&
+           !input.resolvedAttr;
+}
+
+RigExecWeightPacketView
+ViewOfBuilt(const RigExecWeightPacketBuild &built, int representation)
+{
+    RigExecWeightPacketView view;
+    view.valid = true;
+    view.representation = representation;
+    view.defaultWeight = built.defaultWeight;
+    view.values = built.values.data();
+    view.valueCount = built.values.size();
+    view.indices = built.indices.data();
+    view.indexCount = built.indices.size();
+    return view;
+}
+
+enum class ConstantFold { Moves, Built, Failed };
+
+ConstantFold ConstantCombine(const RigExecBakedProgramImpl &B,
+                             const RigExecBakedWeightObject &w, size_t depth,
+                             RigExecWeightPacketBuild *out, const char **why);
+
+/// The packet weight object \p object makes at every frame no drag reaches,
+/// from authored constants alone: Moves when an input it composes can vary
+/// or a volume composes it.
+ConstantFold
+ConstantPacket(const RigExecBakedProgramImpl &B, size_t object, size_t depth,
+               RigExecWeightPacketBuild *out, const char **why)
+{
+    if (object >= B.weightObjects.size() || depth > B.weightObjects.size())
+        return ConstantFold::Moves;
+    const RigExecBakedWeightObject &w = B.weightObjects[object];
+    bool clamp = false;
+    if (!PacketClamp(w, &clamp))
+        return ConstantFold::Moves;
+    *why = nullptr;
+    switch (w.fieldKind) {
+    case eval::kWeightKindStatic: {
+        if (!AuthoredConstant(w.defaultWeight))
+            return ConstantFold::Moves;
+        RigExecStaticWeightScratch scratch;
+        *why = RigExecStaticWeightPacketKernel(
+            w.fieldRepresentation, clamp, w.defaultWeight.constant,
+            w.values.data(), w.values.size(),
+            reinterpret_cast<const int32_t *>(w.indices.data()),
+            w.indices.size(), &scratch, out);
+        break;
+    }
+    case eval::kWeightKindDynamic: {
+        if (!AuthoredConstant(w.driver) || !AuthoredConstant(w.scale) ||
+            !AuthoredConstant(w.bias))
+            return ConstantFold::Moves;
+        RigExecWeightPacketBuild base;
+        RigExecWeightPacketView view;
+        if (w.base >= 0) {
+            if (ConstantPacket(B, size_t(w.base), depth + 1, &base, why) !=
+                ConstantFold::Built)
+                return ConstantFold::Moves;
+            view = ViewOfBuilt(
+                base, B.weightObjects[size_t(w.base)].fieldRepresentation);
+        }
+        *why = RigExecDynamicWeightPacketKernel(
+            w.fieldRepresentation, clamp, w.driver.constant, w.scale.constant,
+            w.bias.constant, w.base >= 0 ? &view : nullptr, out);
+        break;
+    }
+    case eval::kWeightKindCombine:
+        return ConstantCombine(B, w, depth, out, why);
+    default:
+        return ConstantFold::Moves;
+    }
+    return *why ? ConstantFold::Failed : ConstantFold::Built;
+}
+
+/// \p w's combined packet from constant inputs, as ConstantPacket. An input
+/// that fails is its own error, so it makes the combine Moves.
+ConstantFold
+ConstantCombine(const RigExecBakedProgramImpl &B,
+                const RigExecBakedWeightObject &w, size_t depth,
+                RigExecWeightPacketBuild *out, const char **why)
+{
+    bool clamp = false;
+    if (!PacketClamp(w, &clamp) ||
+        w.fieldRepresentation != eval::kWeightDense || w.fieldCombineMode < 0 ||
+        w.fieldCombineMode > eval::kWeightCombineOverlay ||
+        !AuthoredConstant(w.strength) || !AuthoredConstant(w.invert))
+        return ConstantFold::Moves;
+    std::vector<RigExecWeightPacketBuild> built(w.inputs.size());
+    std::vector<RigExecWeightPacketView> views(w.inputs.size());
+    bool dense = false;
+    for (size_t k = 0; k < w.inputs.size(); ++k) {
+        const int input = w.inputs[k];
+        if (input < 0 || ConstantPacket(B, size_t(input), depth + 1, &built[k],
+                                        why) != ConstantFold::Built)
+            return ConstantFold::Moves;
+        const int representation =
+            B.weightObjects[size_t(input)].fieldRepresentation;
+        views[k] = ViewOfBuilt(built[k], representation);
+        dense = dense || representation == eval::kWeightDense;
+    }
+    // Without a dense input the element count is the target's point count.
+    if (!dense)
+        return ConstantFold::Moves;
+    std::vector<float> scratch;
+    *why = RigExecCombineWeightPacketKernel(
+        RigExecWeightCombine(w.fieldCombineMode), clamp, w.strength.constant,
+        w.invert.constant, views.size(),
+        [&](size_t k) -> const RigExecWeightPacketView & { return views[k]; },
+        0, &scratch, out);
+    return *why ? ConstantFold::Failed : ConstantFold::Built;
+}
+
 } // namespace
 
 bool
@@ -806,6 +926,21 @@ RigExecBakedAddWeightPacketOps(const RigExecBakedProgramImpl &B,
         const std::string why = PacketStructureError(B, w);
         if (!why.empty())
             return WeightFail(error, w.path.GetString() + ": " + why);
+    }
+    // A combine whose every input is an authored constant fails at every
+    // frame or at none.
+    for (const RigExecBakedOpOrigin &origin : B.opNodeOrigins) {
+        if (origin.family != RigExecBakedOpFamily::WeightPacket)
+            continue;
+        const RigExecBakedWeightObject &w =
+            B.weightObjects[size_t(origin.object)];
+        if (w.fieldKind != eval::kWeightKindCombine)
+            continue;
+        RigExecWeightPacketBuild built;
+        const char *why = nullptr;
+        if (ConstantCombine(B, w, 0, &built, &why) == ConstantFold::Failed)
+            return WeightFail(error, w.path.GetString() + ": " + why +
+                                         " at every frame");
     }
     for (const RigExecBakedOpOrigin &origin : B.opNodeOrigins) {
         if (origin.family != RigExecBakedOpFamily::WeightPacket)
