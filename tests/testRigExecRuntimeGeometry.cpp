@@ -4087,8 +4087,12 @@ TestDynamicSupportFromSlots()
     CHECK(!reader->Execute(&failure));
     CHECK(failure.find("dynamic/base sparse support mismatch") !=
           std::string::npos);
+    // The failing field node is the dynamic weight's, as native names it,
+    // not its base's.
+    CHECK(failure.rfind(dynamic + ": ", 0) == 0);
     if (failure.find("dynamic/base sparse support mismatch") ==
-        std::string::npos)
+            std::string::npos ||
+        failure.rfind(dynamic + ": ", 0) != 0)
         std::printf("  %s, off the support: %s\n", name, failure.c_str());
     // The base's support in another order passes, as live passes it.
     CHECK(_ArraySetsMatch(name, "the base's support", stage, rigPath,

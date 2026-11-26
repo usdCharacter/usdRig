@@ -317,8 +317,11 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
     nodes->propertyChain.assign(graph.nodes.size(), kRigExecInvalidIndex);
     nodes->propertyPart.assign(graph.nodes.size(), kRigExecInvalidIndex);
     nodes->weightObject.assign(graph.nodes.size(), kRigExecInvalidIndex);
+    // A field node's first field lookup in port order reads its own object;
+    // a sparse dynamic weight's base indices read its base's, later.
     for (const auto &[node, object] : fieldObjects)
-        nodes->weightObject[node] = object;
+        if (nodes->weightObject[node] == kRigExecInvalidIndex)
+            nodes->weightObject[node] = object;
     for (const auto &output : graph.hostOutputs) {
         if (output->node >= graph.nodes.size())
             return Fail(error, "a stored value names no node");
