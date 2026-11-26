@@ -356,9 +356,31 @@ RigExecBakedFinalizeCrossDomainReads(RigExecBakedProgramImpl *program,
     return true;
 }
 
+namespace {
+
+/// The number of points version \p version of \p chain holds, read from its
+/// groups without gathering them.
+size_t
+VersionPointCount(const RigExecBakedProgramImpl::GeomChain &chain,
+                  size_t version)
+{
+    if (version == 0 || chain.groupBounds.size() < 2) {
+        const GfVec3f *points = nullptr;
+        size_t count = 0;
+        RigExecBakedVersionPoints(chain, version, nullptr, &points, &count);
+        return count;
+    }
+    size_t count = 0;
+    for (size_t g = 0; g + 1 < chain.groupBounds.size(); ++g)
+        count += RigExecBakedGroupAt(chain, version, g).count;
+    return count;
+}
+
+/// RigExecBakedReadCrossDomain; a null \p value only answers whether the
+/// read is available, without copying or allocating.
 bool
-RigExecBakedReadCrossDomain(const RigExecBakedProgramImpl &B, int index,
-                            VtValue *value, std::string *diagnostic)
+ReadCrossDomain(const RigExecBakedProgramImpl &B, int index, VtValue *value,
+                std::string *diagnostic)
 {
     if (index < 0 || size_t(index) >= B.crossDomainReads.size())
         return false;
@@ -367,14 +389,33 @@ RigExecBakedReadCrossDomain(const RigExecBakedProgramImpl &B, int index,
          read.kind == RigExecCrossDomainRead::Kind::Points)) {
         const GfVec3f *points = nullptr;
         size_t count = 0;
-        // Local, never the read's own: many steps read one cross-domain read,
-        // and a version cut into groups gathers into the binding's buffer.
-        // Every use of `points` below copies out before it goes.
-        RigExecBakedPointsBinding binding;
-        binding.finalRead = read.finalPoints;
-        for (const auto &candidate : read.points)
-            binding.candidates.push_back({candidate.chain, candidate.version});
-        bool available = RigExecBakedResolvePoints(B, binding, &points, &count);
+        bool available = false;
+        if (value) {
+            // Local, never the read's own: many steps read one cross-domain
+            // read, and a version cut into groups gathers into the binding's
+            // buffer. Every use of `points` below copies out before it goes.
+            RigExecBakedPointsBinding binding;
+            binding.finalRead = read.finalPoints;
+            for (const auto &candidate : read.points)
+                binding.candidates.push_back(
+                    {candidate.chain, candidate.version});
+            available = RigExecBakedResolvePoints(B, binding, &points, &count);
+        } else {
+            for (const auto &candidate : read.points) {
+                if (candidate.chain < 0 ||
+                    size_t(candidate.chain) >= B.chains.size())
+                    continue;
+                const auto &chain = B.chains[size_t(candidate.chain)];
+                if (!(read.finalPoints ? chain.haveResult : chain.haveBase))
+                    continue;
+                available = true;
+                if (read.finalPoints)
+                    count = chain.result.size();
+                else if (candidate.version >= 0)
+                    count = VersionPointCount(chain, size_t(candidate.version));
+                break;
+            }
+        }
         if (!available && read.points.empty() && read.rawLeaf >= 0 &&
             size_t(read.rawLeaf) < B.headLeaves.size()) {
             const auto &raw = B.headLeaves[size_t(read.rawLeaf)].value;
@@ -386,14 +427,17 @@ RigExecBakedReadCrossDomain(const RigExecBakedProgramImpl &B, int index,
             }
         }
         if (available && read.kind == RigExecCrossDomainRead::Kind::Points) {
-            VtVec3fArray array(count);
-            if (count)
-                std::copy(points, points + count, array.begin());
-            *value = VtValue(std::move(array));
+            if (value) {
+                VtVec3fArray array(count);
+                if (count)
+                    std::copy(points, points + count, array.begin());
+                *value = VtValue(std::move(array));
+            }
             return true;
         }
         if (available && read.element >= 0 && size_t(read.element) < count) {
-            *value = VtValue(points[size_t(read.element)]);
+            if (value)
+                *value = VtValue(points[size_t(read.element)]);
             return true;
         }
     } else if (read.kind == RigExecCrossDomainRead::Kind::PoseFrame) {
@@ -405,7 +449,8 @@ RigExecBakedReadCrossDomain(const RigExecBakedProgramImpl &B, int index,
             GfMatrix4d matrix(1);
             if (RigExecPointsToMatrix(RigExecIdentityLandmarks(),
                                       frames[version], &matrix)) {
-                *value = VtValue(matrix);
+                if (value)
+                    *value = VtValue(matrix);
                 return true;
             }
         }
@@ -414,6 +459,8 @@ RigExecBakedReadCrossDomain(const RigExecBakedProgramImpl &B, int index,
             size_t(read.propertyChain) < B.propertyChains.size() &&
             read.propertyVersion < B.propertyValues.size() &&
             B.propertyVersionValid[read.propertyVersion]) {
+            if (!value)
+                return true;
             const auto &result = B.propertyValues[read.propertyVersion];
             using Arm = RigExecBakedPropertyChain::Arm;
             switch (B.propertyChains[size_t(read.propertyChain)].arm) {
@@ -441,7 +488,8 @@ RigExecBakedReadCrossDomain(const RigExecBakedProgramImpl &B, int index,
                     if constexpr (std::is_same_v<T, std::monostate>)
                         return false;
                     else if constexpr (std::is_same_v<T, VtValue>) {
-                        *value = typed;
+                        if (value)
+                            *value = typed;
                         return !typed.IsEmpty();
                     } else if constexpr (std::is_same_v<T, RigExecPointFrame>) {
                         GfMatrix4d matrix(1);
@@ -449,10 +497,12 @@ RigExecBakedReadCrossDomain(const RigExecBakedProgramImpl &B, int index,
                             !RigExecPointsToMatrix(RigExecIdentityLandmarks(),
                                                    typed, &matrix))
                             return false;
-                        *value = VtValue(matrix);
+                        if (value)
+                            *value = VtValue(matrix);
                         return true;
                     } else {
-                        *value = VtValue(typed);
+                        if (value)
+                            *value = VtValue(typed);
                         return true;
                     }
                 },
@@ -464,6 +514,23 @@ RigExecBakedReadCrossDomain(const RigExecBakedProgramImpl &B, int index,
     if (diagnostic)
         *diagnostic = read.unavailable;
     return false;
+}
+
+} // namespace
+
+bool
+RigExecBakedReadCrossDomain(const RigExecBakedProgramImpl &B, int index,
+                            VtValue *value, std::string *diagnostic)
+{
+    VtValue unused;
+    return ReadCrossDomain(B, index, value ? value : &unused, diagnostic);
+}
+
+bool
+RigExecBakedCrossDomainAvailable(const RigExecBakedProgramImpl &B, int index,
+                                 std::string *diagnostic)
+{
+    return ReadCrossDomain(B, index, nullptr, diagnostic);
 }
 
 bool

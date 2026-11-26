@@ -2411,10 +2411,9 @@ RigExecBakedPropertyInputLines(const RigExecBakedProgramImpl &B, size_t chain,
         for (const auto *hops : {&walk.hops, &walk.doubleHops})
             for (const auto &hop : *hops)
                 if (hop.crossDomain >= 0) {
-                    VtValue value;
                     std::string diagnostic;
-                    if (!RigExecBakedReadCrossDomain(B, hop.crossDomain, &value,
-                                                     &diagnostic) &&
+                    if (!RigExecBakedCrossDomainAvailable(B, hop.crossDomain,
+                                                          &diagnostic) &&
                         !diagnostic.empty())
                         lines->push_back(std::move(diagnostic));
                 }

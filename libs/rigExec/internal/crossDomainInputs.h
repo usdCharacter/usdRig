@@ -72,6 +72,10 @@ bool RigExecBakedFinalizeCrossDomainReads(RigExecBakedProgramImpl *,
 bool RigExecBakedReadCrossDomain(const RigExecBakedProgramImpl &, int read,
                                  VtValue *value,
                                  std::string *diagnostic = nullptr);
+/// Whether RigExecBakedReadCrossDomain would answer \p read, with the same
+/// diagnostic when not, without copying the value.
+bool RigExecBakedCrossDomainAvailable(const RigExecBakedProgramImpl &, int read,
+                                      std::string *diagnostic = nullptr);
 void RigExecBakedDeclareCrossDomainRead(const RigExecBakedProgramImpl &,
                                         int read,
                                         std::vector<RigExecBakedSlotRange> *);

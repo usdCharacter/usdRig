@@ -426,6 +426,45 @@ ForwardScalarAndOverride()
     CHECK(releasedReference.diagnostics == releasedHeld.diagnostics);
 }
 
+/// RigExecBakedCrossDomainAvailable answers every read of \p B as
+/// RigExecBakedReadCrossDomain does, with the same diagnostic.
+size_t
+AvailabilityAgrees(const RigExecBakedProgramImpl &B)
+{
+    size_t available = 0;
+    for (size_t i = 0; i < B.crossDomainReads.size(); ++i) {
+        VtValue value;
+        std::string read, checked;
+        const bool answered =
+            RigExecBakedReadCrossDomain(B, int(i), &value, &read);
+        CHECK(RigExecBakedCrossDomainAvailable(B, int(i), &checked) ==
+              answered);
+        CHECK(read == checked);
+        CHECK(answered != value.IsEmpty());
+        available += answered;
+    }
+    return available;
+}
+
+void
+AvailabilityOfAnEvaluatedRig(const std::string &fixture)
+{
+    auto stage = UsdStage::Open(fixture);
+    CHECK(stage);
+    if (!stage)
+        return;
+    RigExecRigEvaluator evaluator(stage, rigPath);
+    const bool compiled = Compile(evaluator);
+    CHECK(compiled);
+    if (!compiled)
+        return;
+    CHECK(Ready(evaluator.Evaluate(UsdTimeCode(1))));
+    const RigExecBakedProgramImpl &B =
+        RigExecBakedProgramAccess::StepGraph(*evaluator.GetBakedProgram());
+    CHECK(!B.crossDomainReads.empty());
+    CHECK(AvailabilityAgrees(B) > 0);
+}
+
 void
 WholePointsAvailability()
 {
@@ -458,6 +497,7 @@ WholePointsAvailability()
     auto value = RigExecBakedSampleWalkedPathLeaf(B, key, 0);
     CHECK(value.IsHolding<VtVec3fArray>() &&
           value.UncheckedGet<VtVec3fArray>()[0] == GfVec3f(4, 5, 6));
+    CHECK(AvailabilityAgrees(B) == 1);
     chain.result.clear();
     value = RigExecBakedSampleWalkedPathLeaf(B, key, 0);
     CHECK(value.IsHolding<VtVec3fArray>() &&
@@ -469,6 +509,8 @@ WholePointsAvailability()
     B.headLeaves[1].value = VtValue();
     value = RigExecBakedSampleWalkedPathLeaf(B, key, 0);
     CHECK(value.IsEmpty());
+    B.crossDomainReads[0].unavailable = "no points";
+    CHECK(AvailabilityAgrees(B) == 0);
     chain.haveResult = true;
     chain.result = {GfVec3f(7, 8, 9)};
     value = RigExecBakedSampleWalkedPathLeaf(B, key, 0);
@@ -543,6 +585,7 @@ main(int argc, char **argv)
     CountRecoveryAndCutoff(fixture);
     ExplicitSelection(fixture);
     WholePointsAvailability();
+    AvailabilityOfAnEvaluatedRig(fixture);
     PropertyPhaseAuthority();
     ForwardScalarAndOverride();
     std::printf("testRigExecCrossDomainInputs: %d failure(s)\n", failures);
