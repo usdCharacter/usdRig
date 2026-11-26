@@ -2168,14 +2168,6 @@ BindFrameRecordVersions(RigExecBakedProgramImpl *program)
     }
 }
 
-/// A commit split into delta / staging / apply once its descendant list is
-/// this long. Below it the three phases run as one step: the split buys
-/// parallelism inside one propagation and costs two more steps, which is a
-/// bad trade for the two- and three-descendant commits a rig is full of.
-constexpr size_t kPropagateSplitThreshold = 64;
-/// Descendants staged per PropagateChunk of a split commit.
-constexpr size_t kPropagateChunkSize = 64;
-
 /// What a switched slot's compose reads besides its own avars and its
 /// namespace parent's anchor (which the group lists in parentSlots): the
 /// PosedM slots read at their last version, and the slots whose avars an
@@ -2425,11 +2417,6 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
                 RigExecBakedSlotDomain::FrameMatrix, int(nextRecord)));
         }
     };
-    // Where the next split commit's staging pairs start. The scratch behind
-    // them is per commit, but the SLOT IDS are handed out once for the whole
-    // program: two commits declaring the same [0, n) would be ordered against
-    // each other by the sweep for sharing a slot neither can reach.
-    int stagingSlots = 0;
     for (size_t w = 0; w < B.walkSteps.size(); ++w) {
         const RigExecBakedProgramImpl::WalkStep &walk = B.walkSteps[w];
         RigExecBakedCommit &commit = B.commits[w];
@@ -2489,11 +2476,6 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
         commit.closestPos.reserve(commit.propagate.size());
         for (const auto &[descendant, closest] : commit.propagate) {
             commit.closestPos.push_back(positionOf(closest));
-        }
-        commit.split = commit.propagate.size() > kPropagateSplitThreshold;
-        if (commit.split) {
-            commit.stagingBase = stagingSlots;
-            stagingSlots += int(commit.propagate.size());
         }
 
         if (walk.solverBatch) {
@@ -2571,14 +2553,22 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
             }
         }
 
-        // The commit itself: one step that merges (or computes) the
-        // candidates, plus -- for a propagation long enough to be worth it --
-        // the delta / staging / apply split. Both arrangements call the same
-        // three functions, so there is one definition of what a commit means.
-        const RigExecBakedStepKind head =
-            walk.solverBatch ? RigExecBakedStepKind::SolverCommit
-                             : RigExecBakedStepKind::Constraint;
-        RigExecBakedStep &commitStep = AddStep(&B, head, int(w));
+        // A constraint's step leaves its candidates in the commit table; a
+        // PoseCommit op node writes them back and carries them onto the
+        // descendants. A solver batch's node gathers its solvers' candidates
+        // itself and publishes which are present in the table.
+        RigExecBakedOpOrigin origin;
+        origin.family = RigExecBakedOpFamily::PoseCommit;
+        origin.kind = walk.solverBatch ? RigExecBakedStepKind::SolverCommit
+                                       : RigExecBakedStepKind::CommitApply;
+        origin.object = int32_t(w);
+        RigExecBakedStep &commitStep =
+            walk.solverBatch
+                ? AddStep(&B, RigExecBakedStepKind::OpNode,
+                          int(B.opNodeOrigins.size()))
+                : AddStep(&B, RigExecBakedStepKind::Constraint, int(w));
+        if (walk.solverBatch)
+            B.opNodeOrigins.push_back(origin);
         commitStep.maxDiagnostics = RigExecBakedMaxStepDiagnostics;
         if (walk.solverBatch) {
             for (const int si : walk.batchSolvers) {
@@ -2699,18 +2689,9 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
                 }
             }
         };
-        // What the write-back CARRIES is a read too, and of a different
-        // version than the delta's: the finish copies the version it found
-        // into the storage it owns wherever it declines to write, so a step
-        // that carries TOUCHES the version it carries. PoseFin's half is the
-        // candidate read the unsplit arrangement declares just below for the
-        // delta -- but the split arrangement performs the carry on its APPLY
-        // step, whose reads say nothing about it, and the PoseBase half of a
-        // solver commit is declared nowhere at all. Both are edges the
-        // write-after-write pass already raises against the same writers, so
-        // stating them adds no edge and changes no cone; what it buys is a
-        // graph that still describes what the step reads, which is what the
-        // next writer of one of these steps will reason from.
+        // What the write-back carries is a read too, of a different version
+        // than the delta's: wherever it declines to write, the commit copies
+        // the version it found.
         const auto declareCarryReads = [&commit](RigExecBakedStep *step) {
             for (const int slot : commit.slots) {
                 step->reads.push_back(
@@ -2728,72 +2709,28 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
                     RigExecBakedSlotDomain::PoseBase, pair.first));
             }
         };
-        if (!commit.split) {
-            // The delta this arrangement measures itself is against each
-            // candidate slot's value BEFORE the commit revises it:
-            // the finish reads B.fin[slot] and the write-back then
-            // overwrites it, so the read is real and is not implied by the
-            // write. The split arrangement declares exactly these on its
-            // CommitDelta step; declaring them here too is what keeps a cone
-            // from skipping a commit in a generation that moved one of them
-            // and leaving it measuring against its own last answer.
-            for (const int slot : commit.slots) {
-                commitStep.reads.push_back(
-                    RigExecBakedOne(RigExecBakedSlotDomain::PoseFin, slot));
+        RigExecBakedStep *finish = &commitStep;
+        if (!walk.solverBatch) {
+            if (commit.slots.empty() && commit.propagate.empty()) {
+                addFrameRecordSteps(w);
+                continue;
             }
-            declarePropagation(&commitStep, /* writes = */ true);
-            declareCarryReads(&commitStep);
-            addFrameRecordSteps(w);
-            continue;
-        }
-        {
-            RigExecBakedStep &delta =
-                AddStep(&B, RigExecBakedStepKind::CommitDelta, int(w));
-            delta.reads.push_back(
+            finish = &AddStep(&B, RigExecBakedStepKind::OpNode,
+                              int(B.opNodeOrigins.size()));
+            B.opNodeOrigins.push_back(origin);
+            finish->maxDiagnostics = RigExecBakedMaxStepDiagnostics;
+            finish->reads.push_back(
                 RigExecBakedOne(RigExecBakedSlotDomain::CommitTable, int(w)));
-            for (const int slot : commit.slots) {
-                delta.reads.push_back(
-                    RigExecBakedOne(RigExecBakedSlotDomain::PoseFin, slot));
-            }
-            delta.writes.push_back(
-                RigExecBakedOne(RigExecBakedSlotDomain::CommitDelta, int(w)));
         }
-        for (size_t begin = 0; begin < commit.propagate.size();
-             begin += kPropagateChunkSize) {
-            const size_t end =
-                std::min(begin + kPropagateChunkSize, commit.propagate.size());
-            RigExecBakedStep &chunk =
-                AddStep(&B, RigExecBakedStepKind::PropagateChunk, int(w),
-                        int(begin / kPropagateChunkSize));
-            chunk.reads.push_back(
-                RigExecBakedOne(RigExecBakedSlotDomain::CommitTable, int(w)));
-            chunk.reads.push_back(
-                RigExecBakedOne(RigExecBakedSlotDomain::CommitDelta, int(w)));
-            for (size_t k = begin; k < end; ++k) {
-                chunk.reads.push_back(
-                    RigExecBakedOne(RigExecBakedSlotDomain::PoseFin,
-                                    commit.propagate[k].first));
-                chunk.reads.push_back(
-                    RigExecBakedOne(RigExecBakedSlotDomain::PoseFin,
-                                    commit.propagate[k].second));
-            }
-            chunk.writes.push_back(
-                RigExecBakedRange(RigExecBakedSlotDomain::CommitStaging,
-                                  commit.stagingBase + int(begin),
-                                  commit.stagingBase + int(end)));
+        // The delta is measured against each candidate slot's value BEFORE
+        // the commit revises it, so that read is real and not implied by the
+        // write.
+        for (const int slot : commit.slots) {
+            finish->reads.push_back(
+                RigExecBakedOne(RigExecBakedSlotDomain::PoseFin, slot));
         }
-        {
-            RigExecBakedStep &apply =
-                AddStep(&B, RigExecBakedStepKind::CommitApply, int(w));
-            apply.maxDiagnostics = RigExecBakedMaxStepDiagnostics;
-            apply.reads.push_back(
-                RigExecBakedOne(RigExecBakedSlotDomain::CommitTable, int(w)));
-            apply.reads.push_back(RigExecBakedRange(
-                RigExecBakedSlotDomain::CommitStaging, commit.stagingBase,
-                commit.stagingBase + int(commit.propagate.size())));
-            declarePropagation(&apply, /* writes = */ true);
-            declareCarryReads(&apply);
-        }
+        declarePropagation(finish, /* writes = */ true);
+        declareCarryReads(finish);
         addFrameRecordSteps(w);
     }
     // Before the matrices, which read the LAST version of a slot: the table
@@ -3002,12 +2939,13 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
     using Kind = RigExecBakedStepKind;
     for (auto &step : B.steps) {
         const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(B, step);
+        const bool commitNode =
+            origin && origin->family == RigExecBakedOpFamily::PoseCommit;
         if (step.kind != Kind::Solve && id.kind != Kind::FrameMatrix &&
             id.kind != Kind::ProviderMatrix &&
             step.kind != Kind::PoseInterpolator &&
-            step.kind != Kind::Constraint && step.kind != Kind::SolverCommit &&
-            step.kind != Kind::CommitDelta &&
-            step.kind != Kind::PropagateChunk && step.kind != Kind::CommitApply)
+            step.kind != Kind::Constraint && !commitNode)
             continue;
         const auto poseRange = [](const RigExecBakedSlotRange &range) {
             return range.domain == Domain::PoseFin ||
@@ -3067,12 +3005,9 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
                     read(Domain::PoseFin,
                          B.finLast[size_t(interp.extraParentSlots[e])]);
             }
-        } else if (step.kind == Kind::Constraint ||
-                   step.kind == Kind::SolverCommit ||
-                   step.kind == Kind::CommitDelta ||
-                   step.kind == Kind::PropagateChunk ||
-                   step.kind == Kind::CommitApply) {
-            const auto &commit = B.commits[size_t(step.object)];
+        } else if (step.kind == Kind::Constraint || commitNode) {
+            const auto &commit =
+                B.commits[size_t(commitNode ? origin->object : step.object)];
             if (step.kind == Kind::Constraint) {
                 const auto &c = B.constraints[size_t(
                     B.walkSteps[size_t(step.object)].index)];
@@ -3106,27 +3041,12 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
                 if (c.ikFkMatch && c.sources.size() == 10)
                     read(Domain::PoseBase, B.baseLast[size_t(c.sources[6])]);
             }
-            const bool apply =
-                step.kind == Kind::CommitApply ||
-                (!commit.split && (step.kind == Kind::Constraint ||
-                                   step.kind == Kind::SolverCommit));
-            if (step.kind == Kind::CommitDelta || (apply && !commit.split))
+            if (commitNode) {
                 readAll(Domain::PoseFin, commit.slotReads);
-            if (step.kind == Kind::PropagateChunk || (apply && !commit.split)) {
-                const size_t begin =
-                    step.kind == Kind::PropagateChunk
-                        ? size_t(step.part) * kPropagateChunkSize
-                        : 0;
-                const size_t end = step.kind == Kind::PropagateChunk
-                                       ? std::min(begin + kPropagateChunkSize,
-                                                  commit.propagate.size())
-                                       : commit.propagate.size();
-                for (size_t k = begin; k < end; ++k) {
+                for (size_t k = 0; k < commit.propagate.size(); ++k) {
                     read(Domain::PoseFin, commit.descendantReads[k]);
                     read(Domain::PoseFin, commit.closestReads[k]);
                 }
-            }
-            if (apply) {
                 writeAll(Domain::PoseFin, commit.slotWrites);
                 writeAll(Domain::PoseFin, commit.descendantWrites);
                 writeAll(Domain::PoseBase, commit.slotBaseWrites);
@@ -5153,59 +5073,6 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         return;
     }
 
-    case RigExecBakedStepKind::SolverCommit: {
-        RigExecBakedCommit &commit = B.commits[size_t(step->object)];
-        std::fill(commit.present.begin(), commit.present.end(), 0);
-        for (const int si : B.walkSteps[size_t(step->object)].batchSolvers) {
-            const RigExecBakedProgramImpl::Solver &s = B.solvers[size_t(si)];
-            for (size_t k = 0; k < s.outputs.size(); ++k) {
-                if (!s.outPresent[k] || s.outPosition[k] < 0) {
-                    continue;
-                }
-                // Last writer wins on a duplicate slot, because the stores
-                // happen in batch order: `candidates[slot] = ...`.
-                commit.frames[size_t(s.outPosition[k])] = s.outFrames[k];
-                commit.present[size_t(s.outPosition[k])] = 1;
-            }
-        }
-        commit.abandoned =
-            std::find(commit.present.begin(), commit.present.end(), 1) ==
-            commit.present.end();
-        if (commit.split) {
-            return; // CommitApply finishes, and carries
-        }
-        // A batch that published NOTHING still reaches the finish, the
-        // same way a constraint that passes through does. It writes no
-        // frame, but it owns a version of every slot it could have written,
-        // and a write site that leaves its own storage untouched
-        // leaves every reader bound to it -- the matrices and the
-        // publication among them -- reading whatever the last run left
-        // there. Reachable only from a batch whose every solver published an
-        // empty aggregate, which until RigExecTwistDistribution baked no rig
-        // in the tree could produce.
-        {
-            BakedPoseHost host(&B, step);
-            const eval::StepResult result =
-                eval::RunFinishCommit(host, size_t(step->object));
-            if (result.outcome == eval::Outcome::Invalid) {
-                const char *what = "commit";
-                if (result.detail == eval::pose_detail::kPoseDetailNoChunk) {
-                    what = "chunk";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoSlot) {
-                    what = "slot";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoVersion) {
-                    what = "version";
-                }
-                step->diagnostics.push_back("commit " +
-                                            std::to_string(step->object) +
-                                            " names no " + what);
-            }
-        }
-        return;
-    }
-
     case RigExecBakedStepKind::Constraint: {
         RigExecBakedCommit &commit = B.commits[size_t(step->object)];
         commit.abandoned = true;
@@ -5221,29 +5088,6 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         // FrameMatrix steps, which run after its write-back, read them. A
         // constraint that passed through still leaves its target standing at
         // the point a phase names.
-        const auto finish = [&] {
-            if (commit.split) {
-                return; // CommitApply finishes
-            }
-            BakedPoseHost host(&B, step);
-            const eval::StepResult result =
-                eval::RunFinishCommit(host, size_t(step->object));
-            if (result.outcome == eval::Outcome::Invalid) {
-                const char *what = "commit";
-                if (result.detail == eval::pose_detail::kPoseDetailNoChunk) {
-                    what = "chunk";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoSlot) {
-                    what = "slot";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoVersion) {
-                    what = "version";
-                }
-                step->diagnostics.push_back("commit " +
-                                            std::to_string(step->object) +
-                                            " names no " + what);
-            }
-        };
         // The GEOMETRY domain writes no transform: it measures a delta against
         // the target's authored transform and hands it to the Matrix revision
         // the same mover contributes. Both halves of what makes it different
@@ -5306,42 +5150,12 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
                 } else if (result.detail ==
                            eval::pose_detail::kPoseDetailNoSlot) {
                     what = "slot";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoChunk) {
-                    what = "chunk";
                 }
                 step->diagnostics.push_back("constraint " +
                                             std::to_string(step->object) +
                                             " names no " + what);
                 return;
             }
-        }
-        finish();
-        return;
-    }
-
-    case RigExecBakedStepKind::CommitDelta:
-    case RigExecBakedStepKind::PropagateChunk:
-    case RigExecBakedStepKind::CommitApply: {
-        BakedPoseHost host(program, step);
-        eval::StepRef ref;
-        ref.kind = uint32_t(step->kind);
-        ref.object = step->object;
-        ref.part = step->part;
-        ref.slot = 0;
-        const eval::StepResult result = eval::RunValueStep(host, ref);
-        if (result.outcome == eval::Outcome::Invalid) {
-            const char *what = "commit";
-            if (result.detail == eval::pose_detail::kPoseDetailNoChunk) {
-                what = "chunk";
-            } else if (result.detail == eval::pose_detail::kPoseDetailNoSlot) {
-                what = "slot";
-            } else if (result.detail ==
-                       eval::pose_detail::kPoseDetailNoVersion) {
-                what = "version";
-            }
-            step->diagnostics.push_back(
-                "commit " + std::to_string(step->object) + " names no " + what);
         }
         return;
     }

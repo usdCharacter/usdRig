@@ -1175,11 +1175,13 @@ inline const char *EnumNameSlotDomain(SlotDomain e) {
 enum class StepKind : uint8_t {
   ComposeSubtree = 0,
   Solve = 1,
-  SolverCommit = 2,
+  /// Reserved. Open refuses it.
+  ReservedSolverCommit = 2,
   Constraint = 3,
-  CommitDelta = 4,
-  PropagateChunk = 5,
-  CommitApply = 6,
+  /// Reserved. Open refuses them.
+  ReservedCommitDelta = 4,
+  ReservedPropagateChunk = 5,
+  ReservedCommitApply = 6,
   /// Reserved. Open refuses it.
   ReservedProviderMatrix = 7,
   SnapshotFinals = 8,
@@ -1224,11 +1226,11 @@ inline const StepKind (&EnumValuesStepKind())[33] {
   static const StepKind values[] = {
     StepKind::ComposeSubtree,
     StepKind::Solve,
-    StepKind::SolverCommit,
+    StepKind::ReservedSolverCommit,
     StepKind::Constraint,
-    StepKind::CommitDelta,
-    StepKind::PropagateChunk,
-    StepKind::CommitApply,
+    StepKind::ReservedCommitDelta,
+    StepKind::ReservedPropagateChunk,
+    StepKind::ReservedCommitApply,
     StepKind::ReservedProviderMatrix,
     StepKind::SnapshotFinals,
     StepKind::PoseInterpolator,
@@ -1263,11 +1265,11 @@ inline const char * const *EnumNamesStepKind() {
   static const char * const names[34] = {
     "ComposeSubtree",
     "Solve",
-    "SolverCommit",
+    "ReservedSolverCommit",
     "Constraint",
-    "CommitDelta",
-    "PropagateChunk",
-    "CommitApply",
+    "ReservedCommitDelta",
+    "ReservedPropagateChunk",
+    "ReservedCommitApply",
     "ReservedProviderMatrix",
     "SnapshotFinals",
     "PoseInterpolator",
@@ -11240,8 +11242,6 @@ struct RigExecWireCommit : public ::flatbuffers::NativeTable {
   std::vector<int32_t> slots{};
   std::vector<::rigExec::RigExecWireIntPair> propagate{};
   std::vector<int32_t> closestPos{};
-  bool split = false;
-  int32_t stagingBase = 0;
   std::vector<::rigExec::RigExecWireConstraintSource> sources{};
   std::vector<uint32_t> slotReads{};
   std::vector<uint32_t> slotWrites{};
@@ -11283,32 +11283,30 @@ struct Commit FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_SLOTS = 8,
     VT_PROPAGATE = 10,
     VT_CLOSESTPOS = 12,
-    VT_SPLIT = 14,
-    VT_STAGINGBASE = 16,
-    VT_SOURCES = 18,
-    VT_SLOTREADS = 20,
-    VT_SLOTWRITES = 22,
-    VT_SLOTBASEWRITES = 24,
-    VT_DESCENDANTREADS = 26,
-    VT_CLOSESTREADS = 28,
-    VT_DESCENDANTWRITES = 30,
-    VT_DESCENDANTBASEWRITES = 32,
-    VT_SLOTCARRY = 34,
-    VT_SLOTBASECARRY = 36,
-    VT_DESCENDANTCARRY = 38,
-    VT_DESCENDANTBASECARRY = 40,
-    VT_SOURCEREADS = 42,
-    VT_WORLDUPREAD = 44,
-    VT_TARGETREAD = 46,
-    VT_TARGETREADS = 48,
-    VT_EFFECTORREAD = 50,
-    VT_EFFECTORANCESTORS = 52,
-    VT_POLEREADS = 54,
-    VT_POLEANCESTORS = 56,
-    VT_RECORDAFTER = 58,
-    VT_RECORDEVERYTARGET = 60,
-    VT_SOURCEANCESTORS = 62,
-    VT_WORLDUPANCESTORS = 64
+    VT_SOURCES = 14,
+    VT_SLOTREADS = 16,
+    VT_SLOTWRITES = 18,
+    VT_SLOTBASEWRITES = 20,
+    VT_DESCENDANTREADS = 22,
+    VT_CLOSESTREADS = 24,
+    VT_DESCENDANTWRITES = 26,
+    VT_DESCENDANTBASEWRITES = 28,
+    VT_SLOTCARRY = 30,
+    VT_SLOTBASECARRY = 32,
+    VT_DESCENDANTCARRY = 34,
+    VT_DESCENDANTBASECARRY = 36,
+    VT_SOURCEREADS = 38,
+    VT_WORLDUPREAD = 40,
+    VT_TARGETREAD = 42,
+    VT_TARGETREADS = 44,
+    VT_EFFECTORREAD = 46,
+    VT_EFFECTORANCESTORS = 48,
+    VT_POLEREADS = 50,
+    VT_POLEANCESTORS = 52,
+    VT_RECORDAFTER = 54,
+    VT_RECORDEVERYTARGET = 56,
+    VT_SOURCEANCESTORS = 58,
+    VT_WORLDUPANCESTORS = 60
   };
   uint32_t moverPath() const {
     return GetField<uint32_t>(VT_MOVERPATH, 0);
@@ -11324,12 +11322,6 @@ struct Commit FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   const ::flatbuffers::Vector<int32_t> *closestPos() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_CLOSESTPOS);
-  }
-  bool split() const {
-    return GetField<uint8_t>(VT_SPLIT, 0) != 0;
-  }
-  int32_t stagingBase() const {
-    return GetField<int32_t>(VT_STAGINGBASE, 0);
   }
   const ::flatbuffers::Vector<const rigExec::fb::ConstraintSource *> *sources() const {
     return GetPointer<const ::flatbuffers::Vector<const rigExec::fb::ConstraintSource *> *>(VT_SOURCES);
@@ -11419,8 +11411,6 @@ struct Commit FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVector(propagate()) &&
            VerifyOffset(verifier, VT_CLOSESTPOS) &&
            verifier.VerifyVector(closestPos()) &&
-           VerifyField<uint8_t>(verifier, VT_SPLIT, 1) &&
-           VerifyField<int32_t>(verifier, VT_STAGINGBASE, 4) &&
            VerifyOffset(verifier, VT_SOURCES) &&
            verifier.VerifyVector(sources()) &&
            VerifyOffset(verifier, VT_SLOTREADS) &&
@@ -11491,12 +11481,6 @@ struct CommitBuilder {
   }
   void add_closestPos(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> closestPos) {
     fbb_.AddOffset(Commit::VT_CLOSESTPOS, closestPos);
-  }
-  void add_split(bool split) {
-    fbb_.AddElement<uint8_t>(Commit::VT_SPLIT, static_cast<uint8_t>(split), 0);
-  }
-  void add_stagingBase(int32_t stagingBase) {
-    fbb_.AddElement<int32_t>(Commit::VT_STAGINGBASE, stagingBase, 0);
   }
   void add_sources(::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::ConstraintSource *>> sources) {
     fbb_.AddOffset(Commit::VT_SOURCES, sources);
@@ -11588,8 +11572,6 @@ inline ::flatbuffers::Offset<Commit> CreateCommit(
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> slots = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::IntPair *>> propagate = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> closestPos = 0,
-    bool split = false,
-    int32_t stagingBase = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::ConstraintSource *>> sources = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> slotReads = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> slotWrites = 0,
@@ -11637,14 +11619,12 @@ inline ::flatbuffers::Offset<Commit> CreateCommit(
   builder_.add_slotWrites(slotWrites);
   builder_.add_slotReads(slotReads);
   builder_.add_sources(sources);
-  builder_.add_stagingBase(stagingBase);
   builder_.add_closestPos(closestPos);
   builder_.add_propagate(propagate);
   builder_.add_slots(slots);
   builder_.add_moverPath(moverPath);
   builder_.add_recordEveryTarget(recordEveryTarget);
   builder_.add_recordAfter(recordAfter);
-  builder_.add_split(split);
   builder_.add_solverOutput(solverOutput);
   return builder_.Finish();
 }
@@ -11661,8 +11641,6 @@ inline ::flatbuffers::Offset<Commit> CreateCommitDirect(
     const std::vector<int32_t> *slots = nullptr,
     const std::vector<rigExec::fb::IntPair> *propagate = nullptr,
     const std::vector<int32_t> *closestPos = nullptr,
-    bool split = false,
-    int32_t stagingBase = 0,
     const std::vector<rigExec::fb::ConstraintSource> *sources = nullptr,
     const std::vector<uint32_t> *slotReads = nullptr,
     const std::vector<uint32_t> *slotWrites = nullptr,
@@ -11716,8 +11694,6 @@ inline ::flatbuffers::Offset<Commit> CreateCommitDirect(
       slots__,
       propagate__,
       closestPos__,
-      split,
-      stagingBase,
       sources__,
       slotReads__,
       slotWrites__,
@@ -22481,6 +22457,11 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// `part` lookups from `object`, each a 6, 7 or 8 (Mat4d). 10 (format
   /// 42): input `read` of revision `object` (geometry.revision_index): 0
   /// inputs:enabled (Bool), 1 inputs:defaultWeight (Float).
+  /// 30 (format 43): the frames of pose commit `object` at version list
+  /// `part`: 0 entering, 1 carry, 2 base carry, 3 current descendants, 4
+  /// closest, 5 descendant carry, 6 descendant base carry. 31 (format 43):
+  /// commit `object`'s candidates: `part` 0 their frames, 1 which are
+  /// present.
   uint8_t source() const {
     return GetField<uint8_t>(VT_SOURCE, 0);
   }
@@ -22589,7 +22570,10 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// packet of weight object `object`; 5 (format 40): the weights of weight
   /// field `object`; 20 and 21 (format 41): the final and the base matrix
   /// of slot `object`; 22 and 23 (format 41): the matrix and the valid byte
-  /// of frame record `object`.
+  /// of frame record `object`; 30 to 33 (format 43): the final candidate,
+  /// final descendant, base candidate and base descendant versions pose
+  /// commit `object` writes; 34 (format 43): which of its candidates are
+  /// present.
   /// 4 (format 42): a range chain member's output, group by group, into
   /// the vertex groups of revision `object` (geometry.revision_index), the
   /// groups its OpChain.writes names.
@@ -25937,8 +25921,6 @@ inline void Commit::UnPackTo(RigExecWireCommit *_o, const ::flatbuffers::resolve
   { auto _e = slots(); if (_e) { _o->slots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->slots[_i] = _e->Get(_i); } } else { _o->slots.resize(0); } }
   { auto _e = propagate(); if (_e) { _o->propagate.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->propagate[_i] = ::flatbuffers::UnPackIntPair(*_e->Get(_i)); } } else { _o->propagate.resize(0); } }
   { auto _e = closestPos(); if (_e) { _o->closestPos.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->closestPos[_i] = _e->Get(_i); } } else { _o->closestPos.resize(0); } }
-  { auto _e = split(); _o->split = _e; }
-  { auto _e = stagingBase(); _o->stagingBase = _e; }
   { auto _e = sources(); if (_e) { _o->sources.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->sources[_i] = ::flatbuffers::UnPackConstraintSource(*_e->Get(_i)); } } else { _o->sources.resize(0); } }
   { auto _e = slotReads(); if (_e) { _o->slotReads.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->slotReads[_i] = _e->Get(_i); } } else { _o->slotReads.resize(0); } }
   { auto _e = slotWrites(); if (_e) { _o->slotWrites.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->slotWrites[_i] = _e->Get(_i); } } else { _o->slotWrites.resize(0); } }
@@ -25978,8 +25960,6 @@ inline ::flatbuffers::Offset<Commit> Commit::Pack(::flatbuffers::FlatBufferBuild
   auto _slots = _o->slots.size() ? _fbb.CreateVector(_o->slots) : 0;
   auto _propagate = _o->propagate.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::IntPair, ::rigExec::RigExecWireIntPair>(_o->propagate, ::flatbuffers::PackIntPair) : 0;
   auto _closestPos = _o->closestPos.size() ? _fbb.CreateVector(_o->closestPos) : 0;
-  auto _split = _o->split;
-  auto _stagingBase = _o->stagingBase;
   auto _sources = _o->sources.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::ConstraintSource, ::rigExec::RigExecWireConstraintSource>(_o->sources, ::flatbuffers::PackConstraintSource) : 0;
   auto _slotReads = _o->slotReads.size() ? _fbb.CreateVector(_o->slotReads) : 0;
   auto _slotWrites = _o->slotWrites.size() ? _fbb.CreateVector(_o->slotWrites) : 0;
@@ -26011,8 +25991,6 @@ inline ::flatbuffers::Offset<Commit> Commit::Pack(::flatbuffers::FlatBufferBuild
       _slots,
       _propagate,
       _closestPos,
-      _split,
-      _stagingBase,
       _sources,
       _slotReads,
       _slotWrites,
@@ -31722,8 +31700,6 @@ inline const ::flatbuffers::TypeTable *CommitTypeTable() {
     { ::flatbuffers::ET_INT, 1, -1 },
     { ::flatbuffers::ET_SEQUENCE, 1, 0 },
     { ::flatbuffers::ET_INT, 1, -1 },
-    { ::flatbuffers::ET_BOOL, 0, -1 },
-    { ::flatbuffers::ET_INT, 0, -1 },
     { ::flatbuffers::ET_SEQUENCE, 1, 1 },
     { ::flatbuffers::ET_UINT, 1, -1 },
     { ::flatbuffers::ET_UINT, 1, -1 },
@@ -31756,7 +31732,7 @@ inline const ::flatbuffers::TypeTable *CommitTypeTable() {
     rigExec::fb::AncestorReadListTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 31, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 29, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }

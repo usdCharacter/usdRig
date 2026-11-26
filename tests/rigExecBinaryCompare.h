@@ -1944,8 +1944,6 @@ _BinaryCompareCommit(const rigExec::RigExecBakedCommit &live,
               int64_t(wire.propagate[i].second));
     }
     _BinaryCheckEqual(live.closestPos, wire.closestPos);
-    CHECK(live.split == wire.split);
-    CHECK(int64_t(live.stagingBase) == int64_t(wire.stagingBase));
     CHECK(live.sources.size() == wire.sources.size());
     for (size_t i = 0; i < wire.sources.size() && i < live.sources.size();
          ++i) {

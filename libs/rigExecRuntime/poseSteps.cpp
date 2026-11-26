@@ -38,11 +38,6 @@ enum _RrPropagateOutcome : uint8_t {
     _RrInvalidResult = 5,
 };
 
-// The split constants of the commit walk (bakedPose.cpp).
-enum : size_t {
-    _RrPropagateChunkSize = 64,
-};
-
 std::string
 _RrKindName(RigExecWireStepKind kind)
 {
@@ -51,16 +46,16 @@ _RrKindName(RigExecWireStepKind kind)
         return "ComposeSubtree";
     case RigExecWireStepKind::Solve:
         return "Solve";
-    case RigExecWireStepKind::SolverCommit:
-        return "SolverCommit";
+    case RigExecWireStepKind::ReservedSolverCommit:
+        return "ReservedSolverCommit";
     case RigExecWireStepKind::Constraint:
         return "Constraint";
-    case RigExecWireStepKind::CommitDelta:
-        return "CommitDelta";
-    case RigExecWireStepKind::PropagateChunk:
-        return "PropagateChunk";
-    case RigExecWireStepKind::CommitApply:
-        return "CommitApply";
+    case RigExecWireStepKind::ReservedCommitDelta:
+        return "ReservedCommitDelta";
+    case RigExecWireStepKind::ReservedPropagateChunk:
+        return "ReservedPropagateChunk";
+    case RigExecWireStepKind::ReservedCommitApply:
+        return "ReservedCommitApply";
     case RigExecWireStepKind::SnapshotFinals:
         return "SnapshotFinals";
     case RigExecWireStepKind::PoseInterpolator:
@@ -619,40 +614,8 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
         return runtimePoseDetail::_RrRunSolveStep(program, step, error);
     }
 
-    case RigExecWireStepKind::SolverCommit: {
-        return runtimePoseDetail::_RrRunSolverCommitStep(program, step, error);
-    }
-
     case RigExecWireStepKind::Constraint: {
         return runtimePoseDetail::_RrRunConstraintStep(program, step, error);
-    }
-
-    case RigExecWireStepKind::CommitDelta:
-    case RigExecWireStepKind::PropagateChunk:
-    case RigExecWireStepKind::CommitApply: {
-        RrPoseHost host(program, step);
-        eval::StepRef ref;
-        ref.kind = uint32_t(wire.kind);
-        ref.object = wire.object;
-        ref.part = wire.part;
-        ref.slot = step;
-        const eval::StepResult result = eval::RunValueStep(host, ref);
-        if (result.outcome == eval::Outcome::Applied) {
-            return true;
-        }
-        if (error) {
-            const char *what = " names no commit";
-            if (result.detail == eval::pose_detail::kPoseDetailNoChunk) {
-                what = " names no chunk";
-            } else if (result.detail == eval::pose_detail::kPoseDetailNoSlot) {
-                what = " names no slot";
-            } else if (result.detail ==
-                       eval::pose_detail::kPoseDetailNoVersion) {
-                what = " names no version";
-            }
-            *error = _RrStepHead(program, step) + what;
-        }
-        return false;
     }
 
     case RigExecWireStepKind::SpaceCheckpoint: {

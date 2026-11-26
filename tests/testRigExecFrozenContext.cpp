@@ -2540,6 +2540,81 @@ TestFrozenWeightPacketOpsMatchLive(const std::string &examplesDir)
     CHECK(RigExecFrozenFailedInTheWorker(pose, verdict, live));
 }
 
+// Each solver batch's write-back runs as a PoseCommit op node keeping the
+// SolverCommit identity; the frozen job runs those nodes and publishes
+// live's pose, on animated frames and under a drag of the IK target.
+void
+TestFrozenPoseCommitOpsMatchLive(const std::string &examplesDir)
+{
+    UsdStageRefPtr stage =
+        UsdStage::Open(examplesDir + "/03_IkFkBlendClamp.usda");
+    CHECK(stage);
+    if (!stage)
+        return;
+    const SdfPath rig("/BlendArmAsset/Rig");
+    RigExecRigEvaluator evaluator(stage, rig);
+    CHECK(evaluator.Compile());
+    CHECK(evaluator.Evaluate(UsdTimeCode(1001.0)).valid);
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
+    std::set<size_t> commitSteps;
+    for (size_t i = 0; i < B.steps.size(); ++i)
+        if (RigExecBakedIdentityOf(B, B.steps[i]).kind ==
+            RigExecBakedStepKind::SolverCommit) {
+            CHECK(B.steps[i].kind == RigExecBakedStepKind::OpNode);
+            commitSteps.insert(i);
+        }
+    CHECK(commitSteps.size() >= 2);
+    std::shared_ptr<const RigExecFrozenProgram> frozen;
+    std::string error;
+    CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
+    if (!frozen)
+        return;
+    RigExecValueOverride target;
+    target.prim = SdfPath("/BlendArmAsset/Rig/Controls/HandIK");
+    target.attribute = TfToken("avars:tx");
+    target.value = VtValue(0.75);
+    const auto run = [&](double frame, const char *what,
+                         const std::vector<RigExecValueOverride> &drags) {
+        evaluator.SetInteractiveOverrides(drags);
+        const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
+        RigExecFrameInputs inputs;
+        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame), drags,
+                                       &inputs, &error));
+        RigExecFrozenEvalContext context;
+        context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+        context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+        context.varyingInputCount = inputs.values.size();
+        if (evaluator.GetPublishWeightFields())
+            context.flags |= kRigExecFrozenPublishWeightFields;
+        if (evaluator.GetSolverGuidesEnabled())
+            context.flags |= kRigExecFrozenSolverGuidesEnabled;
+        context.frozen = frozen.get();
+        auto workspace = RigExecCreateFrozenWorkspace(frozen);
+        context.workspace = workspace.get();
+        RigExecFrozenRunReport report;
+        const RigExecRigPose pose = RigExecEvaluateFrozen(
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
+        evaluator.SetInteractiveOverrides({});
+        size_t ran = 0;
+        for (const auto &entry : report.region)
+            if (entry.kind == "SolverCommit") {
+                CHECK(commitSteps.count(entry.step) == 1);
+                ++ran;
+            }
+        if (ran == 0) {
+            std::printf("FAIL %s: the frozen job ran no pose commit\n", what);
+            ++failures;
+        }
+        CHECK(live.valid && pose.valid);
+        CheckPosesBitIdentical(what, live, pose);
+    };
+    run(1020.0, "frozen pose commits", {});
+    run(1028.0, "frozen pose commits", {});
+    run(1028.0, "frozen pose commits under a drag", {target});
+}
+
 // Frozen publishes exactly live's weightFrames on every path. On
 // 14_VolumeConstrainedSweep with a volume outside the rig that only a
 // constraint names, that volume has a slot and a placement step, which the
@@ -9765,6 +9840,7 @@ main(int argc, char **argv)
         TestFrozenWeightFramesMatchLive(argv[1]);
         TestFrozenWeightPacketOpsMatchLive(argv[1]);
         TestFrozenSpaceMatrixOpsMatchLive(argv[1]);
+        TestFrozenPoseCommitOpsMatchLive(argv[1]);
         TestUnavailableTargetSamplesLocalInvalidRoles(argv[1]);
         TestProjectorSpacesMatchDynamic(argv[1]);
         TestProjectorMissPublishesOffset(argv[1]);

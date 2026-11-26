@@ -53,22 +53,7 @@ RrPoseScratch *_RrScratch(RrProgram *program);
 
 std::string _RrStepHead(const RrProgram *program, size_t step);
 
-bool _RrComputeCommitDeltas(RrProgram *program, size_t step,
-                            const RigExecWireCommit &commit,
-                            RrCommitScratch *scratch, std::string *error);
-
-bool _RrStageCommitPairs(RrProgram *program, size_t step,
-                         const RigExecWireCommit &commit,
-                         RrCommitScratch *scratch, size_t begin, size_t end,
-                         std::string *error);
-
-bool _RrFinishCommit(RrProgram *program, size_t step, size_t commitIndex,
-                     std::string *error);
-
 bool _RrRunSolveStep(RrProgram *program, size_t step, std::string *error);
-
-bool _RrRunSolverCommitStep(RrProgram *program, size_t step,
-                            std::string *error);
 
 // RigExecTransformParams (pointFrame.h), field for field.
 struct _RrTransformParams {

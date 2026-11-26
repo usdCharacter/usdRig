@@ -161,7 +161,7 @@ _TestFileRefusals(const std::vector<uint8_t> &bytes)
     CHECK(got == "unsupported .rigexec format version 4 (this reader reads " +
                      std::to_string(RigExecFormatOldestReadable) + " through " +
                      std::to_string(RigExecFormatVersion) +
-                     "); re-export: full-strength matrices as op nodes");
+                     "); re-export: pose commits as op nodes");
     if (got.find("format version 4") == std::string::npos) {
         std::printf("version 4: open said '%s'\n", got.c_str());
     }
@@ -656,14 +656,19 @@ _DropRead(fb::RigExecWireFile *file, size_t step, fb::SlotDomain domain,
                 reads.end());
 }
 
-static bool
-_IsCommitStep(fb::StepKind kind)
+/// The commit a Constraint step or PoseCommit op step of \p file works on,
+/// or -1.
+static int64_t
+_CommitOf(const fb::RigExecWireFile &file, const fb::RigExecWireStep &step)
 {
-    return kind == fb::StepKind::SolverCommit ||
-           kind == fb::StepKind::Constraint ||
-           kind == fb::StepKind::CommitDelta ||
-           kind == fb::StepKind::PropagateChunk ||
-           kind == fb::StepKind::CommitApply;
+    if (step.kind == fb::StepKind::Constraint)
+        return step.object;
+    if (step.kind == fb::StepKind::OpNode && file.opGraph)
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->target == 30 &&
+                output->node == uint64_t(step.object))
+                return int64_t(output->object);
+    return -1;
 }
 
 // _ExpectRefusal, printing the expected refusal, so the log shows each
@@ -703,9 +708,9 @@ _TestFrameRecordRefusals(const std::string &name,
     std::vector<int64_t> commitLast(pose.commits.size(), -1);
     for (size_t s = 0; s < file->steps.size(); ++s) {
         const fb::RigExecWireStep &step = file->steps[s];
-        if (_IsCommitStep(step.kind) && step.object >= 0 &&
-            size_t(step.object) < commitLast.size()) {
-            commitLast[size_t(step.object)] = int64_t(s);
+        const int64_t w = _CommitOf(*file, step);
+        if (w >= 0 && size_t(w) < commitLast.size()) {
+            commitLast[size_t(w)] = int64_t(s);
         }
     }
     // A record bound to the version of its provider that a commit whose
@@ -892,7 +897,7 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
         int64_t at = -1;
         for (size_t s = 0; s < file->steps.size() && at < 0; ++s) {
             const fb::StepKind kind = file->steps[s].kind;
-            if (commit ? _IsCommitStep(kind)
+            if (commit ? _CommitOf(*file, file->steps[s]) >= 0
                        : _PlacementOutput(*file, file->steps[s]) >= 0) {
                 at = int64_t(s);
             }
@@ -922,7 +927,7 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
         "unsupported .rigexec format version " + std::to_string(previous) +
         " (this reader reads " + std::to_string(RigExecFormatOldestReadable) +
         " through " + std::to_string(RigExecFormatVersion) +
-        "); re-export: full-strength matrices as op nodes";
+        "); re-export: pose commits as op nodes";
     CHECK(got == want);
     if (got != want) {
         std::printf("%s, previous version: open said '%s', expected '%s'\n",

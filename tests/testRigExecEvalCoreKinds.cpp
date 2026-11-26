@@ -56,6 +56,14 @@ CheckOrdinals()
                   0);
             continue;
         }
+        if (kind == eval::StepKind::ReservedSolverCommit ||
+            kind == eval::StepKind::ReservedCommitDelta ||
+            kind == eval::StepKind::ReservedPropagateChunk ||
+            kind == eval::StepKind::ReservedCommitApply) {
+            CHECK(std::string(eval::StepKindName(kind)) ==
+                  std::string("Reserved") + RigExecBakedStepKindName(baked));
+            continue;
+        }
         if (kind == eval::StepKind::ReservedWeightField) {
             CHECK(std::strcmp(eval::StepKindName(kind),
                               "ReservedWeightField") == 0);
@@ -70,6 +78,8 @@ CheckOrdinals()
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedWeightPacket));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedWeightField));
     CHECK(eval::IsReservedStepKind(eval::StepKind::SnapshotFinals));
+    CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedSolverCommit));
+    CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedCommitApply));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedOpGraph));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedProviderMatrix));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedFrameMatrix));

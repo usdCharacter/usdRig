@@ -6210,8 +6210,8 @@ _RefusesSmall(const RrProgram &program, RigExecWireSlotDomain domain,
 
 // The runtime's fixed-size values publish in place with RrOpValue's bytes,
 // the same flags and revisions, over a hand-assembled store: signed zeros
-// and NaN payloads in every floating field kind, the staged frame of a
-// split commit, and every unboxed provider alternative. Avars, strings,
+// and NaN payloads in every floating field kind, and every unboxed provider
+// alternative. Avars, strings,
 // vectors, error text and slots past the tables go through the key.
 static void
 TestSmallValuePublication()
@@ -6226,12 +6226,8 @@ TestSmallValuePublication()
     std::memcpy(&floats[3], &fnan1, sizeof(float));
     std::memcpy(&floats[4], &fnan2, sizeof(float));
 
-    // Staging slot 4 is the second pair of commit 1, based at 3; commit 0
-    // propagates nothing and owns no slot.
     fb::RigExecWireDomainPose pose;
     pose.commits.resize(2);
-    pose.commits[1].split = true;
-    pose.commits[1].stagingBase = 3;
     pose.commits[1].propagate.resize(2);
     RrProgram program;
     program.poses = &pose;
@@ -6278,14 +6274,6 @@ TestSmallValuePublication()
             "WeightFramesBase");
     flagged(D::FrameMatrix, &s.frameMatrixValid, &s.frameMatrix, "FrameMatrix");
     s.commits.resize(2);
-    s.commits[0].staged.resize(8);
-    s.commits[0].outcome.assign(8, 0);
-    s.commits[1].staged.resize(2);
-    s.commits[1].outcome.assign(2, 0);
-    _CheckSmallValue(
-        program, D::CommitStaging, 4,
-        [&](int k) { s.commits[1].staged[1].points[3][2] = doubles[k]; },
-        [&] { s.commits[1].outcome[1] = 2; }, "CommitStaging");
 
     // A provider value per unboxed alternative, then its flags.
     s.providerValues.resize(2);
@@ -6360,9 +6348,6 @@ TestSmallValuePublication()
           _RefusesSmall(program, D::PosedM, 2) &&
           _RefusesSmall(program, D::PoseWeight, 2) &&
           _RefusesSmall(program, D::FrameMatrix, 2));
-    CHECK(_RefusesSmall(program, D::CommitStaging, 7) &&
-          _RefusesSmall(program, D::CommitStaging, 2));
-    s.commits[1].outcome.resize(1);
     CHECK(_RefusesSmall(program, D::CommitStaging, 4));
 }
 

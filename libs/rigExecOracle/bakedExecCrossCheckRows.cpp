@@ -1307,6 +1307,15 @@ RigExecBakedExecCheckRows::AfterStep(const B &b, size_t step)
             b.steps[step].kind == Kind::Solve &&
                 b.aggregates[size_t(b.steps[step].object)].frames.empty());
     }
+    // A constraint's row publishes what its commit wrote back, which the
+    // commit's own op step writes after the constraint step.
+    const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(b, b.steps[step]);
+    if (origin && origin->family == RigExecBakedOpFamily::PoseCommit) {
+        const auto found = _constraintRows.find(origin->object);
+        if (found != _constraintRows.end())
+            _inputs[found->second].expected =
+                _bindings[found->second].result(b);
+    }
 }
 std::vector<RigExecExecCheckInput>
 RigExecBakedExecCheckRows::_Verified(UsdTimeCode time) const

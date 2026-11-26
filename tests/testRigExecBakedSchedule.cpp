@@ -668,18 +668,14 @@ TestTheGraphDescribesTheProgram(const BuiltProgram &built, const char *name)
     };
     for (size_t index = 0; index < B.steps.size(); ++index) {
         const RigExecBakedStep &step = B.steps[index];
-        const bool head = step.kind == RigExecBakedStepKind::SolverCommit ||
-                          step.kind == RigExecBakedStepKind::Constraint;
-        if (!head && step.kind != RigExecBakedStepKind::CommitApply) {
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        const bool head = step.kind == RigExecBakedStepKind::OpNode &&
+                          (id.kind == RigExecBakedStepKind::SolverCommit ||
+                           id.kind == RigExecBakedStepKind::CommitApply);
+        if (!head || id.object < 0 || size_t(id.object) >= B.commits.size()) {
             continue;
         }
-        if (step.object < 0 || size_t(step.object) >= B.commits.size()) {
-            continue;
-        }
-        const RigExecBakedCommit &commit = B.commits[size_t(step.object)];
-        if (head == commit.split) {
-            continue; // the other arrangement's step of this commit
-        }
+        const RigExecBakedCommit &commit = B.commits[size_t(id.object)];
         const auto require = [&](RigExecBakedSlotDomain domain, int slot,
                                  const char *what) {
             if (declaresRead(step, domain, slot)) {
@@ -4170,10 +4166,11 @@ std::string
 CanonicalLabel(const RigExecBakedProgramImpl &B, RigExecBakedStepKind kind,
                int object)
 {
-    for (const auto &step : B.steps)
-        if (RigExecBakedIdentityOf(B, step).kind == kind &&
-            RigExecBakedIdentityOf(B, step).object == object)
+    for (const auto &step : B.steps) {
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        if (id.kind == kind && id.object == object)
             return "(" + step.label + ")";
+    }
     CHECK(false);
     return "(missing operation)";
 }
@@ -4307,9 +4304,11 @@ TestTheValidatorRejectsALaterPoseVersion()
         const auto original = first;
         const size_t finSize = B.fin.size(), baseSize = B.base.size();
         auto apply =
-            std::find_if(B.steps.begin(), B.steps.end(), [](const auto &step) {
-                return step.kind == RigExecBakedStepKind::SolverCommit &&
-                       step.object == 0;
+            std::find_if(B.steps.begin(), B.steps.end(), [&](const auto &step) {
+                const RigExecBakedStepIdentity id =
+                    RigExecBakedIdentityOf(B, step);
+                return id.kind == RigExecBakedStepKind::SolverCommit &&
+                       id.object == 0;
             });
         CHECK(apply != B.steps.end() && !first.split && first.solverOutput);
         if (apply != B.steps.end() && !first.split && first.solverOutput) {

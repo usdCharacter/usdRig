@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace rigExec {
 
@@ -79,6 +80,26 @@ RigExecFirstCommitFailure(const uint8_t *outcome, size_t count)
         if (O(outcome[k]) != O::Staged && O(outcome[k]) != O::Skipped)
             return k;
     return count;
+}
+
+/// A pose commit's failure \p error as its mover \p mover reports it, a
+/// trailing "descendant k" spelled \p pathOf(k).
+template <class PathOf>
+std::string
+RigExecCommitFailureText(const std::string &mover, std::string error,
+                         PathOf pathOf)
+{
+    const std::string descendant = "descendant ";
+    const size_t at = error.rfind(descendant);
+    if (at != std::string::npos) {
+        size_t end = at + descendant.size(), k = 0;
+        for (; end < error.size() && error[end] >= '0' && error[end] <= '9';
+             ++end)
+            k = k * 10 + size_t(error[end] - '0');
+        if (end == error.size() && end > at + descendant.size())
+            error = error.substr(0, at) + pathOf(k);
+    }
+    return mover.empty() ? error : mover + ": " + error;
 }
 
 } // namespace rigExec

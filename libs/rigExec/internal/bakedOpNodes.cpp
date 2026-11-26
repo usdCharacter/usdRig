@@ -158,6 +158,17 @@ struct BakedOpHost {
         return RigExecBakedStoreChainGroup(B, output, g, elements, count,
                                            error);
     }
+    bool LookUpCommit(uint32_t, const eval::OpLookup &lookup,
+                      const RigExecTypeDesc &type, void *value,
+                      std::string *error) const
+    {
+        return RigExecBakedLookUpCommit(B, lookup, type, value, error);
+    }
+    bool StoreCommit(const eval::OpHostOutput &output, const void *value,
+                     std::string *error) const
+    {
+        return RigExecBakedStoreCommit(B, output, value, error);
+    }
 };
 
 template <class T>
@@ -630,6 +641,25 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
     }
 }
 
+/// The op nodes the pose walk numbered, in origin order: the walk
+/// interleaves provider and frame-record matrices with pose commits.
+bool
+AddPoseWalkOps(const RigExecBakedProgramImpl &B, RigExecRigDescBuilder *builder,
+               eval::OpStepLayout *layout, std::string *error)
+{
+    using F = RigExecBakedOpFamily;
+    for (size_t o = 0; o < B.opNodeOrigins.size(); ++o) {
+        const F family = B.opNodeOrigins[o].family;
+        if ((family == F::ProviderMatrix || family == F::FrameMatrix) &&
+            !RigExecBakedAddSpaceOp(B, builder, layout, o, error))
+            return false;
+        if (family == F::PoseCommit &&
+            !RigExecBakedAddPoseCommitOp(B, builder, layout, o, error))
+            return false;
+    }
+    return true;
+}
+
 } // namespace
 
 const RigExecBakedOpOrigin *
@@ -698,7 +728,7 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
     RigExecRigDescBuilder builder;
     if (!RigExecBakedAddPropertyOps(B, &builder, &layout, error) ||
         !RigExecBakedAddWeightFieldOps(B, &builder, &layout, false, error) ||
-        !RigExecBakedAddSpaceOps(B, &builder, &layout, error))
+        !AddPoseWalkOps(B, &builder, &layout, error))
         return false;
     RigExecBakedAddVolumePlacementOps(B, &builder, &layout);
     std::vector<std::pair<RigExecNodeId, int>> nodeRevision;
@@ -929,6 +959,9 @@ RigExecBakedRunOpStep(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
     else if (origin && origin->family == RigExecBakedOpFamily::WeightPacket)
         step->diagnostics.push_back(
             B.weightProgram[size_t(origin->object)].name + ": " + error);
+    else if (origin && origin->family == RigExecBakedOpFamily::PoseCommit)
+        step->diagnostics.push_back(
+            RigExecBakedCommitFailure(B, origin->object, error));
     else if (const RigExecBakedStepIdentity id =
                  RigExecBakedIdentityOf(B, *step);
              !origin && id.kind != step->kind &&

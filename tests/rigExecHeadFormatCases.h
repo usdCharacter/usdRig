@@ -431,9 +431,6 @@ TestPoseBodyDeclarations()
     changed = valid;
     changed.steps[5].reads.erase(changed.steps[5].reads.begin());
     refuses(std::move(changed), "body SSA missing read PoseFin[1]");
-    changed = valid;
-    changed.steps[5].writes.erase(changed.steps[5].writes.begin());
-    refuses(std::move(changed), "body SSA missing write PoseFin[3]");
 }
 
 RigExecWireFile

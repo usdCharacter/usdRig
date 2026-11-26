@@ -438,18 +438,6 @@ RrResetExcludedValue(RrProgram *p, uint32_t domain, uint32_t slot)
         std::fill(s.commits[slot].deltaOk.begin(),
                   s.commits[slot].deltaOk.end(), char(0));
         break;
-    case D::CommitStaging:
-        for (size_t c = 0; c < p->poses->commits.size(); ++c) {
-            const auto base = p->poses->commits[c].stagingBase;
-            if (base < 0 || slot < uint32_t(base) ||
-                uint64_t(slot) - uint32_t(base) >= s.commits[c].staged.size())
-                continue;
-            const auto k = slot - uint32_t(base);
-            s.commits[c].staged[k] = invalid;
-            s.commits[c].outcome[k] = 2;
-            break;
-        }
-        break;
     case D::ConstraintDelta:
         s.deltaPresent[slot] = 0;
         s.deltaValues[slot] = identity;
@@ -595,18 +583,6 @@ RrOpValue(const RrProgram *p, uint32_t domain, uint32_t slot, std::string *key)
     case RigExecWireSlotDomain::CommitDelta:
         RrOpArray(key, s.commits[slot].deltas);
         RrOpArray(key, s.commits[slot].deltaOk);
-        break;
-    case RigExecWireSlotDomain::CommitStaging:
-        for (size_t c = 0; c < p->poses->commits.size(); ++c) {
-            const auto &wire = p->poses->commits[c];
-            if (slot < uint32_t(wire.stagingBase) ||
-                slot >= uint32_t(wire.stagingBase) + wire.propagate.size())
-                continue;
-            const auto k = slot - uint32_t(wire.stagingBase);
-            RrOpFrame(key, s.commits[c].staged[k]);
-            RigExecOpKeyAppend(key, s.commits[c].outcome[k]);
-            break;
-        }
         break;
     case RigExecWireSlotDomain::ConstraintDelta:
         RigExecOpKeyAppend(key, s.deltaPresent[slot]);
@@ -828,25 +804,6 @@ RrPublishSmallValue(const RrProgram *p, RigExecOpValueState *value)
         break;
     case D::FrameMatrix:
         keyed = flagged(s.frameMatrixValid, s.frameMatrix);
-        break;
-    case D::CommitStaging:
-        if (!p->poses)
-            break;
-        // The first commit owning the slot decides, as RrOpValue's walk does.
-        for (size_t c = 0; c < p->poses->commits.size(); ++c) {
-            const auto &wire = p->poses->commits[c];
-            if (slot < uint32_t(wire.stagingBase) ||
-                slot >= uint32_t(wire.stagingBase) + wire.propagate.size())
-                continue;
-            const auto k = slot - uint32_t(wire.stagingBase);
-            if (c < s.commits.size() && k < s.commits[c].staged.size() &&
-                k < s.commits[c].outcome.size()) {
-                frame(s.commits[c].staged[k]);
-                key.Append(s.commits[c].outcome[k]);
-                keyed = true;
-            }
-            break;
-        }
         break;
     case D::SpaceValue: {
         // Error text, strings and vectors key by length: they go through

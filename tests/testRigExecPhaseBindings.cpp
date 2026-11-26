@@ -1337,10 +1337,8 @@ CheckFrameRecordSteps(const std::string &where,
         switch (id.kind) {
         case RigExecBakedStepKind::SolverCommit:
         case RigExecBakedStepKind::Constraint:
-        case RigExecBakedStepKind::CommitDelta:
-        case RigExecBakedStepKind::PropagateChunk:
         case RigExecBakedStepKind::CommitApply:
-            commitLast[size_t(step.object)] = int(s);
+            commitLast[size_t(id.object)] = int(s);
             break;
         case RigExecBakedStepKind::FrameMatrix:
             CHECK_AT(where, size_t(id.object) < stepOf.size());
@@ -2101,14 +2099,16 @@ TestSolverCheckpointSteps(const std::string &examples)
     if (recordStep < 0) {
         return;
     }
-    const int commit =
-        B.frameRecords[size_t(B.steps[size_t(recordStep)].object)].commit;
+    const RigExecBakedStepIdentity record =
+        RigExecBakedIdentityOf(B, B.steps[size_t(recordStep)]);
+    const int commit = B.frameRecords[size_t(record.object)].commit;
     CHECK_AT(where, B.commits[size_t(commit)].solverOutput);
     for (size_t s = 0; s < B.steps.size(); ++s) {
         const RigExecBakedStep &step = B.steps[s];
-        if (step.object == commit &&
-            (step.kind == RigExecBakedStepKind::SolverCommit ||
-             step.kind == RigExecBakedStepKind::CommitApply)) {
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        if (id.object == commit &&
+            (id.kind == RigExecBakedStepKind::SolverCommit ||
+             id.kind == RigExecBakedStepKind::CommitApply)) {
             commitStep = int(s);
         }
     }

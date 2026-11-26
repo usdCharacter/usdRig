@@ -1043,6 +1043,18 @@ bool RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
 /// validity.
 bool RrStoreSpace(RrProgram *program, const eval::OpHostOutput &output,
                   const void *value, std::string *error);
+/// Resolves a CommitVersions or CommitCandidates lookup.
+bool RrLookUpCommit(const RrProgram *program, const eval::OpLookup &lookup,
+                    const RigExecTypeDesc &type, void *value,
+                    std::string *error);
+/// Stores a PoseCommit node's frames in the versions its commit writes, or
+/// which of its candidates are present.
+bool RrStoreCommit(RrProgram *program, const eval::OpHostOutput &output,
+                   const void *value, std::string *error);
+/// The failure \p error of commit \p commit's PoseCommit node, as its mover
+/// reports it.
+std::string RrCommitFailure(const RrProgram *program, uint32_t commit,
+                            const std::string &error);
 /// Resolves WeightArrays lookup \p lookup: input \p lookup.read of weight
 /// object \p lookup.object, an array lent in place.
 bool RrLookUpWeight(const RrProgram *program, const eval::OpLookup &lookup,

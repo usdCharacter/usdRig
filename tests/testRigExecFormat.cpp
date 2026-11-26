@@ -1610,12 +1610,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 42 &&
-                      RigExecFormatOldestReadable == 42,
-                  "format 42 runs full-strength matrices as op nodes and is "
-                  "the only format Open reads");
-    // Every older format requires re-export: its matrices ran as their own
-    // steps.
+    static_assert(RigExecFormatVersion == 43 &&
+                      RigExecFormatOldestReadable == 43,
+                  "format 43 runs pose commits as op nodes and is the only "
+                  "format Open reads");
+    // Every older format requires re-export: its pose commits ran as their
+    // own steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1626,14 +1626,13 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 42 through " +
+            " (this reader reads 43 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 42 ? "re-export: full-strength matrices as op nodes"
-                          : "rebake");
+            (version < 43 ? "re-export: pose commits as op nodes" : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 42 ? reexports : rebakes);
+        ++(version < 43 ? reexports : rebakes);
     }
-    CHECK(reexports == 42 && rebakes == 1);
+    CHECK(reexports == 43 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -2805,6 +2804,34 @@ _PacketStep(RigExecWireFile &f, uint32_t object)
     return step;
 }
 
+/// A PoseCommit op node writing commit \p commit back, its candidates stored
+/// through a CommitSlots host output, and the OpNode step that runs it.
+fb::RigExecWireStep
+_CommitStep(RigExecWireFile &f, uint32_t commit)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = "PoseCommit";
+    entry->version = 1;
+    f.manifest->coreOps.push_back(std::move(entry));
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = uint32_t(f.manifest->coreOps.size() - 1);
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+    output->node = node;
+    output->port = 9;
+    output->target = 30;
+    output->object = commit;
+    f.opGraph->hostOutputs.push_back(std::move(output));
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    return step;
+}
+
 /// A StaticWeightField op node weighing weight object \p object for weight
 /// field \p field, its values read through a WeightFieldInputs lookup and
 /// its weights stored as the field's, and the OpNode step that runs it
@@ -2952,6 +2979,12 @@ TestOpLookupOwners()
                _AppendStep(f, packetStep(f));
                look(f, place, 2, 0, -1);
            });
+    expect("commit versions on a placement node",
+           "reads a commit its node does not write back",
+           [&](F &f) { look(f, place, 30, 0, 0); });
+    expect("commit candidates on a placement node",
+           "reads a commit its node does not write back",
+           [&](F &f) { look(f, place, 31, 0, 0); });
     {
         // An unvalidated file may hold a null lookup: labelling its node's
         // step reads no lookup through it.
@@ -3120,6 +3153,38 @@ TestVolumePlacementSteps()
                matrix.object = 0;
                _AppendStep(f, std::move(matrix));
            });
+    expect("a retired solver commit step",
+           "step 3 (ReservedSolverCommit 0): the retired SolverCommit step",
+           [](F &f) {
+               fb::RigExecWireStep commit;
+               commit.kind = fb::StepKind::ReservedSolverCommit;
+               commit.object = 0;
+               _AppendStep(f, std::move(commit));
+           });
+    expect("a retired commit delta step",
+           "step 3 (ReservedCommitDelta 0): the retired CommitDelta step",
+           [](F &f) {
+               fb::RigExecWireStep commit;
+               commit.kind = fb::StepKind::ReservedCommitDelta;
+               commit.object = 0;
+               _AppendStep(f, std::move(commit));
+           });
+    expect("a retired propagate chunk step",
+           "step 3 (ReservedPropagateChunk 0): the retired PropagateChunk step",
+           [](F &f) {
+               fb::RigExecWireStep commit;
+               commit.kind = fb::StepKind::ReservedPropagateChunk;
+               commit.object = 0;
+               _AppendStep(f, std::move(commit));
+           });
+    expect("a retired commit apply step",
+           "step 3 (ReservedCommitApply 0): the retired CommitApply step",
+           [](F &f) {
+               fb::RigExecWireStep commit;
+               commit.kind = fb::StepKind::ReservedCommitApply;
+               commit.object = 0;
+               _AppendStep(f, std::move(commit));
+           });
 
     // A reader of a volume's placement: after its step it reads what the
     // step wrote; ahead of it, the producer check refuses it.
@@ -3208,10 +3273,6 @@ TestStepLabels()
     label("Constraint /Rig/Ctl", [](RigExecWireFile &f) {
         _RegionStep(f, 0).kind = StepKind::Constraint;
     });
-    label("CommitApply batch 0", [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::CommitApply;
-        f.pose->commits[0].moverPath = 0;
-    });
     label("OpNode /Rig/Ctl final", [](RigExecWireFile &f) {
         _RegionStep(f, 0) = _SpaceStep(f, "ProviderMatrix", 20, 0);
     });
@@ -3266,7 +3327,7 @@ TestStepLabels()
 /// of slot 0 after commit 0 reads version 2 in step 2, which declares
 /// PoseFin[0] and CommitTable[0] and writes FrameMatrix[0]. \p solver makes
 /// commit 0 a solver batch over both slots (versions 2 and 3), step 1 its
-/// SolverCommit, and the record a solver's at position 0.
+/// PoseCommit op node, and the record a solver's at position 0.
 RigExecWireFile
 _RecordFile(bool solver = false)
 {
@@ -3287,9 +3348,8 @@ _RecordFile(bool solver = false)
     commit.slotWrites =
         solver ? std::vector<uint32_t>{2, 3} : std::vector<uint32_t>{2};
     fb::RigExecWireStep writer;
-    writer.kind =
-        solver ? fb::StepKind::SolverCommit : fb::StepKind::Constraint;
-    writer.object = 0;
+    writer.kind = solver ? fb::StepKind::OpNode : fb::StepKind::Constraint;
+    writer.object = solver ? -1 : 0;
     writer.reads = {fb::SlotRange(fb::SlotDomain::PoseFin, 0, 1)};
     writer.writes = {fb::SlotRange(fb::SlotDomain::CommitTable, 0, 1),
                      fb::SlotRange(fb::SlotDomain::PoseFin, 2, solver ? 4 : 3)};
@@ -3304,6 +3364,9 @@ _RecordFile(bool solver = false)
         fb::FrameRecord(0, 0, solver ? -1 : 0, solver ? 0 : -1, 2, _pCtl)};
     _AddFixtureHeads(f);
     _RegionStep(f, 2).object = _SpaceStep(f, "FrameMatrix", 22, 0).object;
+    for (fb::RigExecWireStep &step : f.steps)
+        if (step.kind == fb::StepKind::OpNode && step.object < 0)
+            step.object = _CommitStep(f, 0).object;
     _DeclareFixtureStageFrames(f);
     return f;
 }
@@ -3638,6 +3701,14 @@ TestPhaseTables()
                [](F &f) {
                    f.pose->frameRecords[0] =
                        fb::FrameRecord(0, 0, 0, 0, 2, _pCtl);
+               },
+               true));
+    expect("solver commit without its write",
+           "step 1 (OpNode /Rig/Ctl): body SSA missing write PoseFin[2]",
+           record(
+               [](F &f) {
+                   _RegionStep(f, 1).writes = {
+                       fb::SlotRange(fb::SlotDomain::CommitTable, 0, 1)};
                },
                true));
     expect("constraint record with a position",

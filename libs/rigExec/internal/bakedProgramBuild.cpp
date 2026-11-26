@@ -264,17 +264,17 @@ RigExecBakedProgram::_BuildWithSceneCapture(
         std::set<SdfPath> newWriters;
         using K = RigExecBakedStepKind;
         for (const auto &step : B.excludedSteps) {
-            if (step.kind != K::SolverCommit && step.kind != K::Constraint &&
-                step.kind != K::CommitDelta && step.kind != K::PropagateChunk &&
-                step.kind != K::CommitApply)
+            const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+            if (id.kind != K::SolverCommit && id.kind != K::Constraint &&
+                id.kind != K::CommitApply)
                 continue;
-            if (step.object < 0 || size_t(step.object) >= B.commits.size() ||
-                size_t(step.object) >= B.walkSteps.size()) {
+            if (id.object < 0 || size_t(id.object) >= B.commits.size() ||
+                size_t(id.object) >= B.walkSteps.size()) {
                 if (reasons)
                     reasons->push_back("cycle writer has no authored binding");
                 return nullptr;
             }
-            const auto &walk = B.walkSteps[size_t(step.object)];
+            const auto &walk = B.walkSteps[size_t(id.object)];
             if (walk.solverBatch) {
                 if (walk.batchSolvers.empty()) {
                     if (reasons)
@@ -290,7 +290,7 @@ RigExecBakedProgram::_BuildWithSceneCapture(
                     newWriters.insert(B.solvers[size_t(index)].path);
                 }
             } else {
-                const SdfPath &owner = B.commits[size_t(step.object)].moverPath;
+                const SdfPath &owner = B.commits[size_t(id.object)].moverPath;
                 if (owner.IsEmpty())
                     return nullptr;
                 newWriters.insert(owner);
@@ -427,11 +427,11 @@ RigExecBakedProgram::_BuildWithSceneCapture(
         for (const auto &step : B.excludedSteps) {
             if (step.descriptorKey.empty())
                 return nullptr;
+            const K kind = RigExecBakedIdentityOf(B, step).kind;
             const bool withdrawn =
                 withdrawnCommitHelper(step) || withdrawnGeometryRole(step) ||
-                step.kind == K::SolverCommit || step.kind == K::Constraint ||
-                step.kind == K::CommitDelta || step.kind == K::PropagateChunk ||
-                step.kind == K::CommitApply;
+                kind == K::SolverCommit || kind == K::Constraint ||
+                kind == K::CommitApply;
             if (withdrawn) {
                 // A later discovered unavailable driver may explicitly
                 // withdraw an optional geometry role retained earlier.

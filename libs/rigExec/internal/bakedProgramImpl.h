@@ -1173,6 +1173,8 @@ enum class RigExecBakedOpFamily : uint8_t {
     ProviderMatrix,
     /// A frame record's matrix: object the frameRecords index.
     FrameMatrix,
+    /// The write-back of commit `object` (a walk step) through PoseCommit.
+    PoseCommit,
 };
 
 /// Where an op node's step comes from: its family, that family's object and
@@ -2898,11 +2900,11 @@ bool RigExecBakedStoreWeightPacket(RigExecBakedProgramImpl &B,
 void RigExecBakedAddVolumePlacementOps(const RigExecBakedProgramImpl &B,
                                        RigExecRigDescBuilder *builder,
                                        eval::OpStepLayout *layout);
-/// The ProviderMatrix and FrameMatrix op nodes of their origins, numbered
-/// as their origins are.
-bool RigExecBakedAddSpaceOps(const RigExecBakedProgramImpl &B,
-                             RigExecRigDescBuilder *builder,
-                             eval::OpStepLayout *layout, std::string *error);
+/// The ProviderMatrix or FrameMatrix op node of origin \p o, numbered \p o.
+bool RigExecBakedAddSpaceOp(const RigExecBakedProgramImpl &B,
+                            RigExecRigDescBuilder *builder,
+                            eval::OpStepLayout *layout, size_t o,
+                            std::string *error);
 /// Resolves a RestFrame or CommitRecordGate lookup.
 bool RigExecBakedLookUpSpace(const RigExecBakedProgramImpl &B,
                              const eval::OpLookup &lookup,
@@ -2923,6 +2925,25 @@ bool RigExecBakedLookUpPoseVersion(const RigExecBakedProgramImpl &B,
 bool RigExecBakedStoreVolumePlacement(RigExecBakedProgramImpl &B,
                                       const eval::OpHostOutput &output,
                                       const void *value, std::string *error);
+/// The PoseCommit op node of origin \p o, numbered \p o.
+bool RigExecBakedAddPoseCommitOp(const RigExecBakedProgramImpl &B,
+                                 RigExecRigDescBuilder *builder,
+                                 eval::OpStepLayout *layout, size_t o,
+                                 std::string *error);
+/// Resolves a CommitVersions or CommitCandidates lookup.
+bool RigExecBakedLookUpCommit(const RigExecBakedProgramImpl &B,
+                              const eval::OpLookup &lookup,
+                              const RigExecTypeDesc &type, void *value,
+                              std::string *error);
+/// Stores a PoseCommit node's frames in the versions its commit writes, or
+/// which of its candidates are present.
+bool RigExecBakedStoreCommit(RigExecBakedProgramImpl &B,
+                             const eval::OpHostOutput &output,
+                             const void *value, std::string *error);
+/// The failure \p error of commit \p commit's PoseCommit node, as its
+/// mover reports it.
+std::string RigExecBakedCommitFailure(const RigExecBakedProgramImpl &B,
+                                      int commit, const std::string &error);
 /// The cross-domain read diagnostics of revision \p part of \p chain.
 void RigExecBakedPropertyInputLines(const RigExecBakedProgramImpl &B,
                                     size_t chain, size_t part,

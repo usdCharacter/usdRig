@@ -68,6 +68,26 @@ enum class OpLookupSource : uint8_t {
     /// presence (BoolArray), 1 whether it records after itself and 2
     /// whether it records every target (Bool).
     CommitRecordGate = 21,
+    /// PointFrameList: the pose frames at the versions list `part`
+    /// (OpCommitList) of commit `object` names.
+    CommitVersions = 30,
+    /// Commit `object`'s candidates: `part` 0 their frames
+    /// (PointFrameList), 1 which are present (BoolArray). A constraint's
+    /// come from its commit table, a solver batch's from its solvers'
+    /// outputs, the last in batch order winning a position.
+    CommitCandidates = 31,
+};
+
+/// OpLookup::part of a CommitVersions lookup: the commit's version list.
+/// The numbers are part of the file format.
+enum class OpCommitList : uint8_t {
+    Entering = 0,
+    Carry = 1,
+    BaseCarry = 2,
+    Current = 3,
+    Closest = 4,
+    DescendantCarry = 5,
+    DescendantBaseCarry = 6,
 };
 
 /// OpLookup::read of a RevisionLeaf lookup. The numbers are part of the
@@ -183,6 +203,14 @@ enum class OpOutputTarget : uint8_t {
     /// (Bool).
     FrameMatrix = 22,
     FrameMatrixValid = 23,
+    /// PointFrameList element i into the version commit `object` writes
+    /// for its candidate or descendant i: final, then base.
+    CommitSlots = 30,
+    CommitDescendants = 31,
+    CommitBaseSlots = 32,
+    CommitBaseDescendants = 33,
+    /// BoolArray: which candidates of commit `object` are present.
+    CommitPresent = 34,
 };
 
 /// Whether an output of \p target is one the host stores through
@@ -206,6 +234,8 @@ OpLookupSourceRuns(uint8_t source)
            source == uint8_t(OpLookupSource::List) ||
            source == uint8_t(OpLookupSource::Selected) ||
            source == uint8_t(OpLookupSource::RevisionLeaf) ||
+           source == uint8_t(OpLookupSource::CommitVersions) ||
+           source == uint8_t(OpLookupSource::CommitCandidates) ||
            OpLookupSourceSelectable(source) || OpSpaceLookupSource(source);
 }
 
@@ -221,7 +251,9 @@ OpOutputTargetRuns(uint8_t target, bool chainMember)
                      target == uint8_t(OpOutputTarget::VolumePlacementBase) ||
                      target == uint8_t(OpOutputTarget::WeightPacket) ||
                      target == uint8_t(OpOutputTarget::WeightField) ||
-                     OpSpaceOutputTarget(target);
+                     OpSpaceOutputTarget(target) ||
+                     (target >= uint8_t(OpOutputTarget::CommitSlots) &&
+                      target <= uint8_t(OpOutputTarget::CommitPresent));
 }
 
 /// A per-frame read of the rig the host resolves for a Lookup input; what
@@ -829,8 +861,8 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
 
 /// Resolves lookup \p index through the \p host method of its source's
 /// family: LookUpProperty, LookUpPoseVersion, LookUpWeight,
-/// LookUpChainVersion or LookUpWeightField(index, lookup, type, value,
-/// error), a Matrix lookup through Matrix(source, slot), and a FrameRecord
+/// LookUpChainVersion, LookUpWeightField or LookUpCommit(index, lookup,
+/// type, value, error), a Matrix lookup through Matrix(source, slot), and a FrameRecord
 /// or ConstraintDelta lookup through PresentMatrix(lookup), null when
 /// absent. A List or Selected lookup resolves through OpLookUpAt.
 template <class Host>
@@ -870,6 +902,9 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
                                        std::to_string(lookup.read) +
                                        " of that type");
     }
+    case OpLookupSource::CommitVersions:
+    case OpLookupSource::CommitCandidates:
+        return host.LookUpCommit(index, lookup, type, value, error);
     case OpLookupSource::Matrix: {
         const void *matrix = host.Matrix(
             lookup.part ? OpHostSource::BaseMatrix : OpHostSource::FinalMatrix,
@@ -908,8 +943,8 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
 }
 
 /// Stores \p value through the \p host method of \p output's target
-/// family: StorePropertyVersion, StoreVolumePlacement, StoreWeightPacket
-/// or StoreWeightField(output, value, error).
+/// family: StorePropertyVersion, StoreVolumePlacement, StoreWeightPacket,
+/// StoreWeightField or StoreCommit(output, value, error).
 template <class Host>
 bool
 OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
@@ -925,6 +960,12 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
         return host.StoreWeightPacket(output, value, error);
     case OpOutputTarget::WeightField:
         return host.StoreWeightField(output, value, error);
+    case OpOutputTarget::CommitSlots:
+    case OpOutputTarget::CommitDescendants:
+    case OpOutputTarget::CommitBaseSlots:
+    case OpOutputTarget::CommitBaseDescendants:
+    case OpOutputTarget::CommitPresent:
+        return host.StoreCommit(output, value, error);
     case OpOutputTarget::ChainGroup:
         break;
     case OpOutputTarget::ProviderFinalMatrix:

@@ -41,6 +41,9 @@ struct RrOpNodes {
     /// Per lookup: the points a ChainVersion lookup gathers, owned by the
     /// one step that resolves it.
     std::vector<std::vector<RrVec3f>> chainVersionGather;
+    /// Per node: the commit whose PoseCommit it runs, or
+    /// kRigExecInvalidIndex.
+    std::vector<uint32_t> commit;
 };
 
 /// Builds \p program's op nodes from its file, when it holds any. False

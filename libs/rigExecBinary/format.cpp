@@ -594,6 +594,7 @@ public:
         _fieldStored.assign(nodes, -1);
         _frameRecordOf.assign(nodes, -1);
         _providerSlotOf.assign(nodes, -1);
+        _commitNode.assign(nodes, -1);
         if (!nodes)
             return;
         for (const auto &output : file.opGraph->hostOutputs)
@@ -605,6 +606,10 @@ public:
             if (output && output->node < nodes && output->target == 22 &&
                 _frameRecordOf[output->node] < 0)
                 _frameRecordOf[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 30 &&
+                _commitNode[output->node] < 0)
+                _commitNode[output->node] = int64_t(output->object);
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node < nodes && output->target == 5 &&
                 _fieldStored[output->node] < 0)
@@ -705,14 +710,24 @@ private:
         for (const auto &output : _f.opGraph->hostOutputs) {
             if (!output)
                 return _Bad("op_graph.host_outputs: an entry is missing");
+            const bool commit = output->target >= 30 && output->target <= 34;
             if ((output->target > 5 && output->target < 20) ||
-                output->target > 23)
+                (output->target > 23 && !commit))
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
             if (output->node >= _f.opGraph->nodes.size())
                 return _Bad("op_graph.host_outputs: no node " +
                             _N(output->node));
             const size_t node = size_t(output->node);
+            if (commit) {
+                if (!_f.pose ||
+                    !_Has(_f.pose->commits, int64_t(output->object)) ||
+                    _commitNode[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores into commit " + _N(output->object) +
+                                ", which it does not write back");
+                continue;
+            }
             if (output->target >= 20) {
                 const bool record = output->target >= 22;
                 if (record ? !_Has(_f.pose->frameRecords, output->object)
@@ -827,6 +842,17 @@ private:
                     return _Bad("op_graph.host_outputs: property version " +
                                 _N(v) + " is never stored");
         for (const auto &lookup : _f.opGraph->lookups) {
+            if (lookup && (lookup->source == 30 || lookup->source == 31)) {
+                if (!_f.pose ||
+                    !_Has(_f.pose->commits, int64_t(lookup->object)) ||
+                    lookup->part < 0 ||
+                    lookup->part > (lookup->source == 30 ? 6 : 1) ||
+                    lookup->read)
+                    return _Bad("op_graph.lookups: a commit lookup reads "
+                                "nothing commit " +
+                                _N(lookup->object) + " holds");
+                continue;
+            }
             if (lookup && lookup->source == 1) {
                 if ((lookup->part != 0 && lookup->part != 1) || lookup->read)
                     return _Bad("op_graph.lookups: a pose version lookup "
@@ -964,6 +990,14 @@ private:
                 return _Bad(_StepName(i) + ": the retired ProviderMatrix step");
             if (kind == fb::StepKind::ReservedFrameMatrix)
                 return _Bad(_StepName(i) + ": the retired FrameMatrix step");
+            if (kind == fb::StepKind::ReservedSolverCommit)
+                return _Bad(_StepName(i) + ": the retired SolverCommit step");
+            if (kind == fb::StepKind::ReservedCommitDelta)
+                return _Bad(_StepName(i) + ": the retired CommitDelta step");
+            if (kind == fb::StepKind::ReservedPropagateChunk)
+                return _Bad(_StepName(i) + ": the retired PropagateChunk step");
+            if (kind == fb::StepKind::ReservedCommitApply)
+                return _Bad(_StepName(i) + ": the retired CommitApply step");
             const bool op = kind == fb::StepKind::OpNode ||
                             kind == fb::StepKind::OpChainHead ||
                             kind == fb::StepKind::OpChainRange;
@@ -1114,8 +1148,9 @@ private:
     /// placement node one pose version, and a field node its own field and
     /// its consumer's entering points, a provider matrix node its own
     /// slot's rest frame, a frame record's node its record's rest frame,
-    /// pose version and commit gates, and a revision lookup the revision its
-    /// node stores. A ChainVersion lookup on any other node is a range chain
+    /// pose version and commit gates, a revision lookup the revision its
+    /// node stores, and a commit node its own commit's versions and
+    /// candidates. A ChainVersion lookup on any other node is a range chain
     /// member's group read, which Open checks.
     bool _OpLookupOwners()
     {
@@ -1212,6 +1247,10 @@ private:
                 } else if (lookup.source == 10 && stores[n] != object) {
                     return bad(" reads the inputs of a revision its node does "
                                "not store");
+                } else if ((lookup.source == 30 || lookup.source == 31) &&
+                           _commitNode[n] != object) {
+                    return bad(" reads a commit its node does not write "
+                               "back");
                 }
             }
             if (_placementSlot[n] >= 0 && poses != 1)
@@ -2501,6 +2540,14 @@ private:
                 return _Bad(_StepName(i) + ": the retired ProviderMatrix step");
             if (step.kind == fb::StepKind::ReservedFrameMatrix)
                 return _Bad(_StepName(i) + ": the retired FrameMatrix step");
+            if (step.kind == fb::StepKind::ReservedSolverCommit)
+                return _Bad(_StepName(i) + ": the retired SolverCommit step");
+            if (step.kind == fb::StepKind::ReservedCommitDelta)
+                return _Bad(_StepName(i) + ": the retired CommitDelta step");
+            if (step.kind == fb::StepKind::ReservedPropagateChunk)
+                return _Bad(_StepName(i) + ": the retired PropagateChunk step");
+            if (step.kind == fb::StepKind::ReservedCommitApply)
+                return _Bad(_StepName(i) + ": the retired CommitApply step");
             if (!_SpaceOp(i))
                 return false;
             if (const int64_t object = _PacketObjectOf(step); object >= 0) {
@@ -3434,12 +3481,6 @@ private:
             width = _f.pose->commits.size();
             break;
         case D::CommitStaging:
-            for (const auto &commit : _f.pose->commits)
-                if (commit.stagingBase >= 0 &&
-                    slot >= uint32_t(commit.stagingBase) &&
-                    uint64_t(slot) - uint32_t(commit.stagingBase) <
-                        commit.propagate.size())
-                    return true;
             return false;
         case D::ConstraintDelta:
             width = _f.geometry->deltaBasePaths.size();
@@ -4622,15 +4663,11 @@ private:
                         read(D::PoseFin,
                              finLast[size_t(interp.extraParentSlots[e])]);
                 }
-            } else if (step.kind == K::Constraint ||
-                       step.kind == K::SolverCommit ||
-                       step.kind == K::CommitDelta ||
-                       step.kind == K::PropagateChunk ||
-                       step.kind == K::CommitApply) {
-                if (!_Has(pose.commits, step.object))
+            } else if (_CommitOf(step) >= 0) {
+                if (!_Has(pose.commits, _CommitOf(step)))
                     return _Bad(_StepName(owner) +
                                 ": commit body object out of range");
-                const auto &commit = pose.commits[size_t(step.object)];
+                const auto &commit = pose.commits[size_t(_CommitOf(step))];
                 if (step.kind == K::Constraint) {
                     if (!_Has(pose.walkSteps, step.object) ||
                         pose.walkSteps[size_t(step.object)].solverBatch ||
@@ -4679,27 +4716,16 @@ private:
                         read(D::PoseBase, baseLast[size_t(c.sources[6])]);
                     }
                 }
-                const bool apply =
-                    step.kind == K::CommitApply ||
-                    (!commit.split && (step.kind == K::Constraint ||
-                                       step.kind == K::SolverCommit));
-                if (step.kind == K::CommitDelta || (apply && !commit.split))
+                const bool apply = step.kind != K::Constraint;
+                if (apply) {
                     readAll(D::PoseFin, commit.slotReads);
-                if (step.kind == K::PropagateChunk ||
-                    (apply && !commit.split)) {
-                    const size_t begin = step.kind == K::PropagateChunk
-                                             ? size_t(step.part) * 64
-                                             : 0;
-                    const size_t end =
-                        step.kind == K::PropagateChunk
-                            ? std::min(begin + 64, commit.propagate.size())
-                            : commit.propagate.size();
+                    const size_t end = commit.propagate.size();
                     if (commit.descendantReads.size() < end ||
                         commit.closestReads.size() < end)
                         return _Bad(
                             _StepName(owner) +
                             ": incomplete propagation body SSA bindings");
-                    for (size_t k = begin; k < end; ++k) {
+                    for (size_t k = 0; k < end; ++k) {
                         read(D::PoseFin, commit.descendantReads[k]);
                         read(D::PoseFin, commit.closestReads[k]);
                     }
@@ -8856,17 +8882,12 @@ private:
                     (*table)[size_t(object)] = int64_t(i);
                 }
             };
+            if (const int64_t w = _CommitOf(step);
+                w >= 0 && _Has(_commitLast, w)) {
+                first(&_commitFirst, int32_t(w));
+                _commitLast[size_t(w)] = int64_t(i);
+            }
             switch (step.kind) {
-            case fb::StepKind::SolverCommit:
-            case fb::StepKind::Constraint:
-            case fb::StepKind::CommitDelta:
-            case fb::StepKind::PropagateChunk:
-            case fb::StepKind::CommitApply:
-                if (_Has(_commitLast, step.object)) {
-                    first(&_commitFirst, step.object);
-                    _commitLast[size_t(step.object)] = int64_t(i);
-                }
-                break;
             case fb::StepKind::InfluenceFold:
                 first(&_foldStep, step.object);
                 break;
@@ -9688,6 +9709,19 @@ private:
     std::vector<int64_t> _fieldNode, _fieldStored;
     /// Per op node: the frame record whose matrix it stores, or -1.
     std::vector<int64_t> _frameRecordOf, _providerSlotOf;
+    /// Per op node: the commit whose PoseCommit it runs, or -1.
+    std::vector<int64_t> _commitNode;
+
+    /// The commit a Constraint step or PoseCommit op step works on, or -1.
+    int64_t _CommitOf(const fb::RigExecWireStep &step) const
+    {
+        if (step.kind == fb::StepKind::Constraint)
+            return step.object;
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _commitNode.size()
+                   ? _commitNode[size_t(step.object)]
+                   : -1;
+    }
     std::vector<uint8_t> _placementBase;
     std::string _error;
     size_t _slots = 0;
@@ -9900,13 +9934,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 42,
+    static_assert(RigExecFormatOldestReadable == 43,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: full-strength matrices as op nodes"
+                ? "re-export: pose commits as op nodes"
                 : "rebake");
 }
 
@@ -10115,16 +10149,16 @@ _StepKindName(fb::StepKind kind)
         return "ComposeSubtree";
     case fb::StepKind::Solve:
         return "Solve";
-    case fb::StepKind::SolverCommit:
-        return "SolverCommit";
+    case fb::StepKind::ReservedSolverCommit:
+        return "ReservedSolverCommit";
     case fb::StepKind::Constraint:
         return "Constraint";
-    case fb::StepKind::CommitDelta:
-        return "CommitDelta";
-    case fb::StepKind::PropagateChunk:
-        return "PropagateChunk";
-    case fb::StepKind::CommitApply:
-        return "CommitApply";
+    case fb::StepKind::ReservedCommitDelta:
+        return "ReservedCommitDelta";
+    case fb::StepKind::ReservedPropagateChunk:
+        return "ReservedPropagateChunk";
+    case fb::StepKind::ReservedCommitApply:
+        return "ReservedCommitApply";
     case fb::StepKind::ReservedProviderMatrix:
         return "ReservedProviderMatrix";
     case fb::StepKind::SnapshotFinals:
@@ -10206,11 +10240,12 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
         }
         *out = text(pose->solvers[size_t(object)].path);
         return true;
-    case fb::StepKind::SolverCommit:
-    case fb::StepKind::Constraint:
-    case fb::StepKind::CommitDelta:
-    case fb::StepKind::PropagateChunk:
-    case fb::StepKind::CommitApply: {
+    case fb::StepKind::ReservedSolverCommit:
+    case fb::StepKind::ReservedCommitDelta:
+    case fb::StepKind::ReservedPropagateChunk:
+    case fb::StepKind::ReservedCommitApply:
+        return false;
+    case fb::StepKind::Constraint: {
         if (!pose || !_Has(pose->commits, object)) {
             return false;
         }
@@ -10278,6 +10313,16 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
                 _Has(meta->paths, output->object)) {
                 *out = text(meta->paths[output->object]) +
                        (output->target == 2 ? " base" : "");
+                return true;
+            }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
+                output->target == 30 && pose &&
+                _Has(pose->commits, output->object)) {
+                const std::string mover =
+                    text(pose->commits[output->object].moverPath);
+                *out = mover.empty() ? "batch " + std::to_string(output->object)
+                                     : mover;
                 return true;
             }
         for (const auto &output : file.opGraph->hostOutputs)

@@ -28,11 +28,17 @@ namespace {
                   "wire step order drifted")
 _RIGEXEC_BAKE_PIN_STEP(ComposeSubtree);
 _RIGEXEC_BAKE_PIN_STEP(Solve);
-_RIGEXEC_BAKE_PIN_STEP(SolverCommit);
+static_assert(uint8_t(RigExecBakedStepKind::SolverCommit) ==
+                  uint8_t(RigExecWireStepKind::ReservedSolverCommit),
+              "wire step order drifted");
 _RIGEXEC_BAKE_PIN_STEP(Constraint);
-_RIGEXEC_BAKE_PIN_STEP(CommitDelta);
-_RIGEXEC_BAKE_PIN_STEP(PropagateChunk);
-_RIGEXEC_BAKE_PIN_STEP(CommitApply);
+static_assert(uint8_t(RigExecBakedStepKind::CommitDelta) ==
+                      uint8_t(RigExecWireStepKind::ReservedCommitDelta) &&
+                  uint8_t(RigExecBakedStepKind::PropagateChunk) ==
+                      uint8_t(RigExecWireStepKind::ReservedPropagateChunk) &&
+                  uint8_t(RigExecBakedStepKind::CommitApply) ==
+                      uint8_t(RigExecWireStepKind::ReservedCommitApply),
+              "wire step order drifted");
 static_assert(uint8_t(RigExecBakedStepKind::ProviderMatrix) ==
                   uint8_t(RigExecWireStepKind::ReservedProviderMatrix),
               "wire step order drifted");
@@ -1248,8 +1254,6 @@ _FileFill::_Pose(fb::RigExecWireDomainPose *pose)
                                        int32_t(pair.second));
         }
         out.closestPos = _ToI32s(commit.closestPos);
-        out.split = commit.split;
-        out.stagingBase = int32_t(commit.stagingBase);
         out.sources.reserve(commit.sources.size());
         for (const RigExecConstraintSource &source : commit.sources) {
             RigExecWireConstraintSource wire;

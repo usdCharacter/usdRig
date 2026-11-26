@@ -190,31 +190,6 @@ _RrRunConstraintStep(RrProgram *program, size_t step, std::string *error)
     commit.abandoned = true;
     std::fill(commit.present.begin(), commit.present.end(), 0);
 
-    const auto finish = [&]() {
-        if (wireCommit.split) {
-            return true;
-        }
-        RrPoseHost host(program, step);
-        const eval::StepResult result =
-            eval::RunFinishCommit(host, size_t(wire.object));
-        if (result.outcome == eval::Outcome::Applied) {
-            return true;
-        }
-        if (error) {
-            const char *what = " names no commit";
-            if (result.detail == eval::pose_detail::kPoseDetailNoChunk) {
-                what = " names no chunk";
-            } else if (result.detail == eval::pose_detail::kPoseDetailNoSlot) {
-                what = " names no slot";
-            } else if (result.detail ==
-                       eval::pose_detail::kPoseDetailNoVersion) {
-                what = " names no version";
-            }
-            *error = _RrStepHead(program, step) + what;
-        }
-        return false;
-    };
-
     const int deltaBase = c.deltaBase;
     if (size_t(wire.object) >= scratch->recordAfter.size() ||
         size_t(wire.object) >= scratch->recordEveryTarget.size()) {
@@ -283,14 +258,12 @@ _RrRunConstraintStep(RrProgram *program, size_t step, std::string *error)
                 what = " names no harmonics window";
             } else if (result.detail == eval::pose_detail::kPoseDetailNoSlot) {
                 what = " names no slot";
-            } else if (result.detail == eval::pose_detail::kPoseDetailNoChunk) {
-                what = " names no chunk";
             }
             *error = _RrStepHead(program, step) + what;
         }
         return false;
     }
-    return finish();
+    return true;
 }
 
 } // namespace runtimePoseDetail

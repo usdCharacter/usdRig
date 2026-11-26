@@ -24,8 +24,8 @@ bump here, and update the pinned sidecars.
 
 | Contract | Value | Defined in | Enforced by |
 |---|---|---|---|
-| `.rigexec` format (writer) | **42** | `RigExecFormatVersion` in `libs/rigExecBinary/format.h` | every bake stamps it |
-| `.rigexec` format (reader) | **42** | `RigExecFormatOldestReadable` in `libs/rigExecBinary/format.h` | `libs/rigExecBinary/format.cpp` refuses others at open with a re-export suggestion; a `static_assert` pins the oldest readable, and `tests/testRigExecFormat.cpp` and `tests/testRigExecRuntimeLoader.cpp` pin the accepted range |
+| `.rigexec` format (writer) | **43** | `RigExecFormatVersion` in `libs/rigExecBinary/format.h` | every bake stamps it |
+| `.rigexec` format (reader) | **43** | `RigExecFormatOldestReadable` in `libs/rigExecBinary/format.h` | `libs/rigExecBinary/format.cpp` refuses others at open with a re-export suggestion; a `static_assert` pins the oldest readable, and `tests/testRigExecFormat.cpp` and `tests/testRigExecRuntimeLoader.cpp` pin the accepted range |
 | Mover plugin API | **8** | `RigExecMoverPluginApiVersion` in `libs/rigExec/api/moverRegistry.h` | the loader (`moverRegistry.cpp`) rejects a plugin whose metadata `RigExecMoverPlugin` value differs; `cmake/rigExecMoverPlugin.cmake` stamps the same number into plugin metadata |
 | External-mover wire type IDs | plain API4 IDs, pinned | `RigExecExternalInputType` in `libs/rigExecBinary/external.h` | the format's `InputTag` numeric inventory; IDs never renumber |
 
@@ -85,9 +85,10 @@ in usdRig history.
 | 39 | 2026-11-25 | weight packets as op nodes reading weight arrays through lookups |
 | 40 | 2026-11-25 | weight fields as op nodes reading weight objects through lookups |
 | 41 | 2026-11-26 | provider and frame-record matrices as op nodes reading rest frames and commit record gates through lookups |
-| 42 | 2026-11-26 | full-strength Range matrices as MoverTransform and MatrixDeform op nodes; op chains carry their members and written groups; **oldest readable from here on** |
+| 42 | 2026-11-26 | full-strength Range matrices as MoverTransform and MatrixDeform op nodes; op chains carry their members and written groups |
+| 43 | 2026-11-26 | pose commits as op nodes reading commit candidates and version lists through lookups; **oldest readable from here on** |
 
-Versions 6 and 11–16 never appeared on `main`. Files written before version 42
+Versions 6 and 11–16 never appeared on `main`. Files written before version 43
 are outside every current reader: re-export them.
 
 ## Mover plugin API history
@@ -131,7 +132,7 @@ The known drifts as of this survey:
 - **usdRig_movers is one major API behind** (5 vs 8) and cannot load in a
   `v0.2.0` host until rebuilt — [usdRig_movers#3](https://github.com/usdCharacter/usdRig_movers/issues/3).
 - **usdRig_unreal's vendored runtime reads only up to format 24**, so `.rigexec`
-  files baked by current usdRig (writer 42) refuse to open there until the
+  files baked by current usdRig (writer 43) refuse to open there until the
   plugin re-vendors its libraries from a current usdRig commit.
 - Godot, Maya, iOS and Android follow their checkouts and have no drift while
   they build against the same usdRig they bake with.

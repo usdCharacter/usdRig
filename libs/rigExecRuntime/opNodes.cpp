@@ -290,6 +290,17 @@ struct RrOpHost {
     {
         return RrStoreChainGroup(&p, output, g, elements, count, error);
     }
+    bool LookUpCommit(uint32_t, const eval::OpLookup &lookup,
+                      const RigExecTypeDesc &type, void *value,
+                      std::string *error) const
+    {
+        return RrLookUpCommit(&p, lookup, type, value, error);
+    }
+    bool StoreCommit(const eval::OpHostOutput &output, const void *value,
+                     std::string *error) const
+    {
+        return RrStoreCommit(&p, output, value, error);
+    }
 };
 
 } // namespace
@@ -436,6 +447,7 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
     nodes->propertyChain.assign(graph.nodes.size(), kRigExecInvalidIndex);
     nodes->propertyPart.assign(graph.nodes.size(), kRigExecInvalidIndex);
     nodes->weightObject.assign(graph.nodes.size(), kRigExecInvalidIndex);
+    nodes->commit.assign(graph.nodes.size(), kRigExecInvalidIndex);
     // A field node's first field lookup in port order reads its own object;
     // a sparse dynamic weight's base indices read its base's, later.
     for (const auto &[node, object] : fieldObjects)
@@ -456,6 +468,8 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
         builder.BindOutput(output->node, *desc.ports[output->port].port);
         if (output->target == uint8_t(eval::OpOutputTarget::WeightPacket))
             nodes->weightObject[output->node] = output->object;
+        if (output->target == uint8_t(eval::OpOutputTarget::CommitSlots))
+            nodes->commit[output->node] = output->object;
         size_t chain = 0, part = 0;
         if (output->target == uint8_t(eval::OpOutputTarget::PropertyVersion) &&
             RrPropertyPartOfVersion(p, output->object, &chain, &part) &&
@@ -523,6 +537,10 @@ RrRunOpStep(RrProgram *p, size_t i, std::string *error)
     size_t chain = 0, part = 0;
     if (error && RrPropertyPartOf(p, step, &chain, &part))
         *error = RrPropertyRevisionLabel(p, chain, part) + ": " + *error;
+    else if (error && step.kind == RigExecWireStepKind::OpNode &&
+             step.object >= 0 && size_t(step.object) < nodes->commit.size() &&
+             nodes->commit[size_t(step.object)] != kRigExecInvalidIndex)
+        *error = RrCommitFailure(p, nodes->commit[size_t(step.object)], *error);
     else if (error && step.kind == RigExecWireStepKind::OpNode &&
              step.object >= 0 &&
              size_t(step.object) < nodes->weightObject.size()) {

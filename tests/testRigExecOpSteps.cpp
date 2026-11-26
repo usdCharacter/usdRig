@@ -878,6 +878,18 @@ struct GroupHost {
         *error = "no provider matrices";
         return false;
     }
+    bool LookUpCommit(uint32_t, const eval::OpLookup &, const RigExecTypeDesc &,
+                      void *, std::string *error) const
+    {
+        *error = "no commits";
+        return false;
+    }
+    bool StoreCommit(const eval::OpHostOutput &, const void *,
+                     std::string *error)
+    {
+        *error = "no commits";
+        return false;
+    }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t g,
                     const void *elements, size_t count, std::string *error)
     {

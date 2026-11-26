@@ -648,7 +648,15 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// its members and the groups each writes, which RigExecFormatGroupWriters
 /// reads. Such a revision has no InfluenceFold, RevisionStatic or
 /// RevisionChunk step.
-inline constexpr uint32_t RigExecFormatVersion = 42;
+///
+/// Format 43 writes each pose commit back by a PoseCommit op node (OpNode
+/// steps). Its inputs read the commit's candidates through OpGraph.lookups
+/// source 31 and its version lists through source 30; the frames are stored
+/// in the versions the commit writes, and a solver commit's presence in its
+/// commit table, through OpGraph.host_outputs targets 30 to 34. It retires
+/// the SolverCommit, CommitDelta, PropagateChunk and CommitApply steps, and
+/// Commit.split and staging_base with them.
+inline constexpr uint32_t RigExecFormatVersion = 43;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -656,7 +664,7 @@ inline constexpr uint32_t RigExecFormatVersion = 42;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 42;
+inline constexpr uint32_t RigExecFormatOldestReadable = 43;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

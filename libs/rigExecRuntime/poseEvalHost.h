@@ -329,7 +329,6 @@ public:
         facts.targetRead = commit.targetRead;
         facts.effectorRead = commit.effectorRead;
         facts.solverOutput = commit.solverOutput;
-        facts.split = commit.split;
         facts.moverPath = _program->TextOrEmpty(commit.moverPath);
         return facts;
     }

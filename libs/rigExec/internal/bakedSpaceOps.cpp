@@ -27,9 +27,9 @@ SpaceFail(std::string *error, std::string why)
 } // namespace
 
 bool
-RigExecBakedAddSpaceOps(const RigExecBakedProgramImpl &B,
-                        RigExecRigDescBuilder *builder,
-                        eval::OpStepLayout *layout, std::string *error)
+RigExecBakedAddSpaceOp(const RigExecBakedProgramImpl &B,
+                       RigExecRigDescBuilder *builder,
+                       eval::OpStepLayout *layout, size_t o, std::string *error)
 {
     using namespace rigExecOps;
     using S = eval::OpLookupSource;
@@ -54,66 +54,59 @@ RigExecBakedAddSpaceOps(const RigExecBakedProgramImpl &B,
                SpaceFail(error, "op node " + std::to_string(origin) +
                                     " was numbered " + std::to_string(node));
     };
-    for (size_t o = 0; o < B.opNodeOrigins.size(); ++o) {
-        const RigExecBakedOpOrigin &origin = B.opNodeOrigins[o];
-        if (origin.family == RigExecBakedOpFamily::ProviderMatrix) {
-            const uint32_t slot = uint32_t(origin.object);
-            ProviderMatrixPayload payload;
-            payload.posed = origin.part == 1;
-            payload.joint = std::find(B.jointSlots.begin(), B.jointSlots.end(),
-                                      int(slot)) != B.jointSlots.end();
-            const RigExecNodeId node =
-                builder->AddOp(ProviderMatrix(), &payload);
-            if (!numbered(node, o))
-                return false;
-            lookUp(node, ProviderMatrixRest(), S::RestFrame, slot, -1, 0);
-            if (payload.posed)
-                lookUp(node, ProviderMatrixFinal(), S::PoseVersion,
-                       uint32_t(B.finLast[slot]), 0, 0);
-            lookUp(node, ProviderMatrixBase(), S::PoseVersion,
-                   uint32_t(B.baseLast[slot]), 1, 0);
-            store(node, ProviderMatrixOut(),
-                  payload.posed ? T::ProviderFinalMatrix
-                                : T::ProviderBaseMatrix,
-                  slot);
-        } else if (origin.family == RigExecBakedOpFamily::FrameMatrix) {
-            const RigExecBakedFrameRecord &record =
-                B.frameRecords[size_t(origin.object)];
-            if (record.commit < 0 || size_t(record.commit) >= B.commits.size())
-                return SpaceFail(error, "frame record " +
-                                            std::to_string(origin.object) +
-                                            " names no commit");
-            if (record.slot < 0 || size_t(record.slot) >= B.restFrames.size())
-                return SpaceFail(error, "frame record " +
-                                            std::to_string(origin.object) +
-                                            " names no slot");
-            FrameMatrixPayload payload;
-            payload.solverOutput =
-                B.commits[size_t(record.commit)].solverOutput;
-            payload.position = record.position;
-            payload.target = record.target;
-            const RigExecNodeId node = builder->AddOp(FrameMatrix(), &payload);
-            if (!numbered(node, o))
-                return false;
-            const uint32_t commit = uint32_t(record.commit);
-            lookUp(node, FrameMatrixRest(), S::RestFrame, uint32_t(record.slot),
-                   -1, 0);
-            lookUp(node, FrameMatrixFrame(), S::PoseVersion, record.version, 0,
+    const RigExecBakedOpOrigin &origin = B.opNodeOrigins[o];
+    if (origin.family == RigExecBakedOpFamily::ProviderMatrix) {
+        const uint32_t slot = uint32_t(origin.object);
+        ProviderMatrixPayload payload;
+        payload.posed = origin.part == 1;
+        payload.joint = std::find(B.jointSlots.begin(), B.jointSlots.end(),
+                                  int(slot)) != B.jointSlots.end();
+        const RigExecNodeId node = builder->AddOp(ProviderMatrix(), &payload);
+        if (!numbered(node, o))
+            return false;
+        lookUp(node, ProviderMatrixRest(), S::RestFrame, slot, -1, 0);
+        if (payload.posed)
+            lookUp(node, ProviderMatrixFinal(), S::PoseVersion,
+                   uint32_t(B.finLast[slot]), 0, 0);
+        lookUp(node, ProviderMatrixBase(), S::PoseVersion,
+               uint32_t(B.baseLast[slot]), 1, 0);
+        store(node, ProviderMatrixOut(),
+              payload.posed ? T::ProviderFinalMatrix : T::ProviderBaseMatrix,
+              slot);
+    } else if (origin.family == RigExecBakedOpFamily::FrameMatrix) {
+        const RigExecBakedFrameRecord &record =
+            B.frameRecords[size_t(origin.object)];
+        if (record.commit < 0 || size_t(record.commit) >= B.commits.size())
+            return SpaceFail(error, "frame record " +
+                                        std::to_string(origin.object) +
+                                        " names no commit");
+        if (record.slot < 0 || size_t(record.slot) >= B.restFrames.size())
+            return SpaceFail(error, "frame record " +
+                                        std::to_string(origin.object) +
+                                        " names no slot");
+        FrameMatrixPayload payload;
+        payload.solverOutput = B.commits[size_t(record.commit)].solverOutput;
+        payload.position = record.position;
+        payload.target = record.target;
+        const RigExecNodeId node = builder->AddOp(FrameMatrix(), &payload);
+        if (!numbered(node, o))
+            return false;
+        const uint32_t commit = uint32_t(record.commit);
+        lookUp(node, FrameMatrixRest(), S::RestFrame, uint32_t(record.slot), -1,
+               0);
+        lookUp(node, FrameMatrixFrame(), S::PoseVersion, record.version, 0, 0);
+        if (payload.solverOutput) {
+            lookUp(node, FrameMatrixPresent(), S::CommitRecordGate, commit, -1,
                    0);
-            if (payload.solverOutput) {
-                lookUp(node, FrameMatrixPresent(), S::CommitRecordGate, commit,
-                       -1, 0);
-            } else {
-                lookUp(node, FrameMatrixRecordAfter(), S::CommitRecordGate,
-                       commit, -1, 1);
-                lookUp(node, FrameMatrixRecordEveryTarget(),
-                       S::CommitRecordGate, commit, -1, 2);
-            }
-            store(node, FrameMatrixOut(), T::FrameMatrix,
-                  uint32_t(origin.object));
-            store(node, FrameMatrixValid(), T::FrameMatrixValid,
-                  uint32_t(origin.object));
+        } else {
+            lookUp(node, FrameMatrixRecordAfter(), S::CommitRecordGate, commit,
+                   -1, 1);
+            lookUp(node, FrameMatrixRecordEveryTarget(), S::CommitRecordGate,
+                   commit, -1, 2);
         }
+        store(node, FrameMatrixOut(), T::FrameMatrix, uint32_t(origin.object));
+        store(node, FrameMatrixValid(), T::FrameMatrixValid,
+              uint32_t(origin.object));
     }
     return true;
 }

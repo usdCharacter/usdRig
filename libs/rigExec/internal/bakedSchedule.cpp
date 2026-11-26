@@ -638,19 +638,14 @@ SortedContains(const std::vector<int> &values, int value)
     return std::binary_search(values.begin(), values.end(), value);
 }
 
-bool
-IsCommitStep(RigExecBakedStepKind kind)
+/// The commit a Constraint step or PoseCommit op step works on, or -1.
+int
+CommitStepObject(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step)
 {
-    switch (kind) {
-    case RigExecBakedStepKind::SolverCommit:
-    case RigExecBakedStepKind::Constraint:
-    case RigExecBakedStepKind::CommitDelta:
-    case RigExecBakedStepKind::PropagateChunk:
-    case RigExecBakedStepKind::CommitApply:
-        return true;
-    default:
-        return false;
-    }
+    const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(B, step);
+    if (origin && origin->family == RigExecBakedOpFamily::PoseCommit)
+        return origin->object;
+    return step.kind == RigExecBakedStepKind::Constraint ? step.object : -1;
 }
 
 /// preds point backward and succs forward, each sorted, unique and the
@@ -994,11 +989,12 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                 record(kFin, uint32_t(slot), index, slot);
                 record(kBase, uint32_t(slot), index, slot);
             }
-        } else if (IsCommitStep(step.kind) && object < B.commits.size()) {
-            if (commitFirst[object] < 0) {
-                commitFirst[object] = index;
+        } else if (const int w = CommitStepObject(B, step);
+                   w >= 0 && size_t(w) < B.commits.size()) {
+            if (commitFirst[size_t(w)] < 0) {
+                commitFirst[size_t(w)] = index;
             }
-            commitLast[object] = index;
+            commitLast[size_t(w)] = index;
         }
     }
     for (size_t w = 0; w < B.commits.size(); ++w) {
@@ -1031,7 +1027,7 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
     for (int index = 0; index < int(B.steps.size()); ++index) {
         const auto &step = B.steps[size_t(index)];
         if (step.kind == RigExecBakedStepKind::ComposeSubtree ||
-            IsCommitStep(step.kind))
+            CommitStepObject(B, step) >= 0)
             continue;
         for (const auto &write : step.writes) {
             if (write.domain != kFin && write.domain != kBase)
@@ -1114,9 +1110,9 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
             for (size_t k = 0; k < solver.restReads.size(); ++k)
                 if (k < solver.restIsLive.size() && solver.restIsLive[k])
                     check(kFin, solver.restReads[k], reader, -1);
-        } else if (IsCommitStep(step.kind) && step.object >= 0 &&
-                   size_t(step.object) < B.commits.size()) {
-            const auto &commit = B.commits[size_t(step.object)];
+        } else if (const int w = CommitStepObject(B, step);
+                   w >= 0 && size_t(w) < B.commits.size()) {
+            const auto &commit = B.commits[size_t(w)];
             if (step.kind == RigExecBakedStepKind::Constraint &&
                 size_t(step.object) < B.walkSteps.size()) {
                 const int constraint = B.walkSteps[size_t(step.object)].index;
@@ -1154,25 +1150,10 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                     ancestors(commit.effectorAncestors);
                 }
             }
-            const bool apply =
-                step.kind == RigExecBakedStepKind::CommitApply ||
-                (!commit.split &&
-                 (step.kind == RigExecBakedStepKind::Constraint ||
-                  step.kind == RigExecBakedStepKind::SolverCommit));
-            if (step.kind == RigExecBakedStepKind::CommitDelta ||
-                (apply && !commit.split))
+            const bool apply = step.kind != RigExecBakedStepKind::Constraint;
+            if (apply) {
                 all(kFin, commit.slotReads);
-            if (step.kind == RigExecBakedStepKind::PropagateChunk ||
-                (apply && !commit.split)) {
-                const size_t begin =
-                    step.kind == RigExecBakedStepKind::PropagateChunk
-                        ? size_t(step.part) * 64
-                        : 0;
-                const size_t end =
-                    step.kind == RigExecBakedStepKind::PropagateChunk
-                        ? std::min(begin + 64, commit.propagate.size())
-                        : commit.propagate.size();
-                for (size_t k = begin; k < end; ++k) {
+                for (size_t k = 0; k < commit.propagate.size(); ++k) {
                     if (k < commit.descendantReads.size())
                         check(kFin, commit.descendantReads[k], reader, -1);
                     if (k < commit.closestReads.size())

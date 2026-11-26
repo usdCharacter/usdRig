@@ -8,6 +8,7 @@
 // (RrStore::propertyResults), keyed by the same attribute path ids as the
 // slot names.
 #include "rigExecRuntime/inputs.h"
+#include "rigExecRuntime/opNodes.h"
 #include "rigExecRuntime/store.h"
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecRuntime/spaces.h"
@@ -1280,6 +1281,11 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
     }
     if (!step.headInputSlots.empty() || !step.overrideInputs.empty())
         return false;
+    if (step.kind == RigExecWireStepKind::OpNode && program->opNodes &&
+        step.object >= 0 &&
+        size_t(step.object) < program->opNodes->commit.size() &&
+        program->opNodes->commit[size_t(step.object)] != kRigExecInvalidIndex)
+        return true;
     // These bodies consume only their declared typed values and immutable compiled rig facts.
     // The adapter independently compares every typed read revision.
     if (step.kind == RigExecWireStepKind::OpNode && program->file->opGraph)
@@ -1289,10 +1295,6 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
                 return true;
     switch (step.kind) {
     case RigExecWireStepKind::ComposeSubtree:
-    case RigExecWireStepKind::SolverCommit:
-    case RigExecWireStepKind::CommitDelta:
-    case RigExecWireStepKind::PropagateChunk:
-    case RigExecWireStepKind::CommitApply:
     case RigExecWireStepKind::InfluenceFold:
     case RigExecWireStepKind::RevisionChunk:
     case RigExecWireStepKind::RevisionFuse:

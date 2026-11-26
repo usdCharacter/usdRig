@@ -408,7 +408,6 @@ public:
         facts.targetRead = commit.targetRead;
         facts.effectorRead = commit.effectorRead;
         facts.solverOutput = commit.solverOutput;
-        facts.split = commit.split;
         facts.moverPath = commit.moverPathText;
         return facts;
     }

@@ -118,8 +118,11 @@ enum SlotDomain : ubyte { Avars = 0, PoseBase, PoseFin, PosedM, FinalMatrix,
 
 /// RigExecBakedStepKind, in the same order. SnapshotFinals (8) is reserved:
 /// never written, and Open refuses a file that holds one.
-enum StepKind : ubyte { ComposeSubtree = 0, Solve, SolverCommit, Constraint,
-  CommitDelta, PropagateChunk, CommitApply,
+enum StepKind : ubyte { ComposeSubtree = 0, Solve,
+  /// Reserved. Open refuses it.
+  ReservedSolverCommit, Constraint,
+  /// Reserved. Open refuses them.
+  ReservedCommitDelta, ReservedPropagateChunk, ReservedCommitApply,
   /// Reserved. Open refuses it.
   ReservedProviderMatrix, SnapshotFinals,
   PoseInterpolator,
@@ -949,8 +952,6 @@ table Commit {
   slots: [int];
   propagate: [IntPair];
   closest_pos: [int];
-  split: bool;
-  staging_base: int;
   sources: [ConstraintSource];
   slot_reads: [uint];
   slot_writes: [uint];
@@ -1952,6 +1953,11 @@ table OpLookup {
   /// `part` lookups from `object`, each a 6, 7 or 8 (Mat4d). 10 (format
   /// 42): input `read` of revision `object` (geometry.revision_index): 0
   /// inputs:enabled (Bool), 1 inputs:defaultWeight (Float).
+  /// 30 (format 43): the frames of pose commit `object` at version list
+  /// `part`: 0 entering, 1 carry, 2 base carry, 3 current descendants, 4
+  /// closest, 5 descendant carry, 6 descendant base carry. 31 (format 43):
+  /// commit `object`'s candidates: `part` 0 their frames, 1 which are
+  /// present.
   source: ubyte;
   object: uint;
   part: int = -1;
@@ -1967,7 +1973,10 @@ table OpHostOutput {
   /// packet of weight object `object`; 5 (format 40): the weights of weight
   /// field `object`; 20 and 21 (format 41): the final and the base matrix
   /// of slot `object`; 22 and 23 (format 41): the matrix and the valid byte
-  /// of frame record `object`.
+  /// of frame record `object`; 30 to 33 (format 43): the final candidate,
+  /// final descendant, base candidate and base descendant versions pose
+  /// commit `object` writes; 34 (format 43): which of its candidates are
+  /// present.
   /// 4 (format 42): a range chain member's output, group by group, into
   /// the vertex groups of revision `object` (geometry.revision_index), the
   /// groups its OpChain.writes names.

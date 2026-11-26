@@ -2248,6 +2248,171 @@ const RigExecOpLibraryDesc kFieldsLibrary = [] {
     return d;
 }();
 
+// Payload lists past the first two: an op declaring four counted float
+// lists reads every list of every node when validated at compile and when
+// run.
+RIGEXEC_DEFINE_OP_HANDLE(Lists)
+RIGEXEC_DEFINE_PORT_HANDLE(ListsIn)
+RIGEXEC_DEFINE_PORT_HANDLE(ListsOut)
+
+enum ListsPayload : uint32_t {
+    kListA,
+    kListAItems,
+    kListB,
+    kListBItems,
+    kListC,
+    kListCItems,
+    kListD,
+    kListDItems
+};
+
+/// Sum of every list's items of node \p k, and false when a list does not
+/// hold the count its count field names.
+bool
+ListsSum(const RigExecOpBatch &batch, size_t k, float *sum)
+{
+    *sum = 0.0f;
+    for (const uint32_t count : {kListA, kListB, kListC, kListD}) {
+        const uint32_t n = RigExecPayloadColumnOf<uint32_t>(batch, count)[k];
+        const auto items = RigExecPayloadField<float>(batch, count + 1, k);
+        if (items.Size() != n)
+            return false;
+        for (size_t i = 0; i < items.Size(); ++i)
+            *sum += items.data[i];
+    }
+    return true;
+}
+
+bool
+CheckLists(const RigExecOpCheck &check, std::string *error)
+{
+    float sum = 0.0f;
+    if (ListsSum(check.batch, check.k, &sum))
+        return true;
+    *error = "a list does not hold its count";
+    return false;
+}
+
+bool
+RunLists(const RigExecOpBatch &batch, size_t *failed, std::string *error)
+{
+    for (size_t k = 0; k < batch.count; ++k) {
+        if (!RigExecBatchActive(batch, k))
+            continue;
+        const RigExecOpIo io = RigExecBatchInstance(batch, k);
+        float sum = 0.0f;
+        if (!ListsSum(batch, k, &sum)) {
+            *failed = k;
+            *error = "a list does not hold its count";
+            return false;
+        }
+        const float in =
+            *static_cast<const float *>(io.inputs[ListsIn().Index()]);
+        *static_cast<float *>(io.outputs[ListsOut().Index()]) = in + sum;
+    }
+    return true;
+}
+
+RigExecFieldDesc
+ListItems(const char *name, uint32_t source)
+{
+    RigExecFieldDesc f =
+        FieldOf(name, fakeTypes::Float(), RigExecFieldExtent::FromField);
+    f.source = source;
+    return f;
+}
+
+const RigExecFieldDesc kListsPayload[] = {
+    FieldOf("a", U32Type()), ListItems("aItems", kListA),
+    FieldOf("b", U32Type()), ListItems("bItems", kListB),
+    FieldOf("c", U32Type()), ListItems("cItems", kListC),
+    FieldOf("d", U32Type()), ListItems("dItems", kListD),
+};
+
+void
+RegisterLists(RigExecOpRegistrar &registrar)
+{
+    static const RigExecPortDesc ports[] = {
+        {&ListsIn(), &fakeTypes::Float(), kRigExecPortInput, "in"},
+        {&ListsOut(), &fakeTypes::Float(), kRigExecPortOutput, "out"},
+    };
+    static const RigExecOpDesc desc = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "Lists";
+        d.ports = ports;
+        d.portCount = 2;
+        d.runBatch = &RunLists;
+        d.validate = &CheckLists;
+        d.payloadFields = kListsPayload;
+        d.payloadFieldCount = std::size(kListsPayload);
+        d.payloadVersion = 1;
+        return d;
+    }();
+    registrar.Add(Lists(), desc);
+}
+
+const RigExecOpLibraryDesc kListsLibrary = [] {
+    RigExecOpLibraryDesc d;
+    d.name = "testLists";
+    d.registerOps = &RegisterLists;
+    return d;
+}();
+
+/// Nodes of an op with four payload lists, some empty, compile, validate
+/// and run: every list of every node is read where it was stored.
+void
+TestFourPayloadLists()
+{
+    RigExecRigDescBuilder builder;
+    std::vector<RigExecInputId> inputs;
+    std::vector<RigExecOutputId> outputs;
+    std::vector<float> expected;
+    for (uint32_t node = 0; node < 3; ++node) {
+        RigExecFieldValues values(std::size(kListsPayload));
+        float sum = 0.0f;
+        for (uint32_t list = 0; list < 4; ++list) {
+            const uint32_t n = (node + list) % 3;
+            std::vector<float> items(n);
+            for (uint32_t i = 0; i < n; ++i)
+                items[i] = float(1 + node * 16 + list * 4 + i);
+            for (const float v : items)
+                sum += v;
+            values.Set(2 * list, n);
+            values.Set(2 * list + 1, items.data(), items.size());
+        }
+        const RigExecNodeId id = builder.AddOp(Lists(), values);
+        inputs.push_back(builder.BindInput(id, ListsIn()));
+        outputs.push_back(builder.BindOutput(id, ListsOut()));
+        expected.push_back(sum + 0.5f);
+    }
+    std::string error;
+    const auto desc = builder.Build(&error);
+    CHECK(desc != nullptr);
+    if (!desc)
+        return;
+    const auto program = RigExecCompile(*desc, RigExecCompileOptions(), &error);
+    CHECK(program != nullptr);
+    if (!program) {
+        std::printf("  four lists: %s\n", error.c_str());
+        return;
+    }
+    auto evaluator =
+        RigExecEvaluator::Create(program, RigExecEvaluatorOptions(), &error);
+    CHECK(evaluator != nullptr);
+    if (!evaluator)
+        return;
+    const float half = 0.5f;
+    for (const RigExecInputId &input : inputs)
+        CHECK(evaluator->SetInput(input, &half, &error));
+    CHECK(evaluator->Evaluate(&error));
+    for (size_t i = 0; i < outputs.size(); ++i) {
+        const auto *out =
+            static_cast<const float *>(evaluator->GetOutput(outputs[i]));
+        CHECK(out && *out == expected[i]);
+    }
+}
+
 // One Fields node's settings and the state the test keeps for it.
 struct FieldsModel {
     float scale = 0.0f;
@@ -3825,6 +3990,7 @@ RunTests()
     TestValidateFailureInvalidatesOutputs();
     TestHostSchedule();
     TestFrameView();
+    TestFourPayloadLists();
     TestNestedRun();
 }
 
@@ -3855,6 +4021,7 @@ main()
     init.opLibraries.push_back(&kCheckLibrary);
     init.typeLibraries.push_back(&kFieldTypes);
     init.opLibraries.push_back(&kFieldsLibrary);
+    init.opLibraries.push_back(&kListsLibrary);
     init.typeLibraries.push_back(&kRangeTypes);
     init.opLibraries.push_back(&kRangeOps);
     init.typeLibraries.push_back(&kFrameTypes);

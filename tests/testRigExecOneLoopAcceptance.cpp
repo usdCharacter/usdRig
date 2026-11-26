@@ -827,7 +827,8 @@ TestCycle(const std::string &fixturesDir)
                                      .revisions[size_t(index.second)]
                                      .moverPath == lift;
             }
-            if (found->kind == RigExecBakedStepKind::SolverCommit)
+            if (RigExecBakedIdentityOf(B, *found).kind ==
+                RigExecBakedStepKind::SolverCommit)
                 commitNamed |= found->label == ribbon.GetString();
         }
     }
