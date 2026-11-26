@@ -2174,19 +2174,22 @@ TestConstraints()
 
     // Position, partial mask, at a partial and at full weight.
     ConstraintPayload position;
-    position.offset = rigExecStd::Vec3d(0.25, 0.0, -0.5);
-    position.affect = {true, false, true};
+    const rigExecStd::Vec3d positionOffset(0.25, 0.0, -0.5);
+    const auto positionAffect = ToArray(std::vector<uint8_t>{1, 0, 1});
     RigExecPositionConstraintParams positionParams;
     positionParams.offset = GfVec3d(0.25, 0.0, -0.5);
     positionParams.affect = {true, false, true};
     Node positionNode(PositionConstraint(),
                       {&PositionConstraintIn(), &PositionConstraintSources(),
                        &PositionConstraintSourceWeights(),
-                       &PositionConstraintWeight()},
+                       &PositionConstraintWeight(), &PositionConstraintOffset(),
+                       &PositionConstraintAffect()},
                       PositionConstraintOut(), &position);
     for (const double *w : {&weight, &full}) {
         positionParams.weight = *w;
-        CHECK(positionNode.Run({&in, &sources, &weights, w}, &actual));
+        CHECK(positionNode.Run(
+            {&in, &sources, &weights, w, &positionOffset, &positionAffect},
+            &actual));
         CHECK(SameBits(
             RigExecApplyPositionConstraint(input, gfSources, positionParams),
             actual));
@@ -2194,8 +2197,8 @@ TestConstraints()
 
     // Rotation, ZXY with a partial mask, bare and carried by a space.
     ConstraintPayload rotation;
-    rotation.offset = rigExecStd::Vec3d(10.0, -5.0, 0.0);
-    rotation.affect = {true, true, false};
+    const rigExecStd::Vec3d rotationOffset(10.0, -5.0, 0.0);
+    const auto rotationAffect = ToArray(std::vector<uint8_t>{1, 1, 0});
     rotation.rotationOrder = ConstraintEulerOrder::ZXY;
     RigExecRotationConstraintParams rotationParams;
     rotationParams.offsetDegrees = GfVec3d(10.0, -5.0, 0.0);
@@ -2205,9 +2208,12 @@ TestConstraints()
     Node rotationNode(RotationConstraint(),
                       {&RotationConstraintIn(), &RotationConstraintSources(),
                        &RotationConstraintSourceWeights(),
-                       &RotationConstraintWeight()},
+                       &RotationConstraintWeight(), &RotationConstraintOffset(),
+                       &RotationConstraintAffect()},
                       RotationConstraintOut(), &rotation);
-    CHECK(rotationNode.Run({&in, &sources, &weights, &weight}, &actual));
+    CHECK(rotationNode.Run(
+        {&in, &sources, &weights, &weight, &rotationOffset, &rotationAffect},
+        &actual));
     CHECK(SameBits(
         RigExecApplyRotationConstraint(input, gfSources, rotationParams),
         actual));
@@ -2215,10 +2221,12 @@ TestConstraints()
         RotationConstraint(),
         {&RotationConstraintIn(), &RotationConstraintSources(),
          &RotationConstraintSourceWeights(), &RotationConstraintWeight(),
-         &RotationConstraintSpace()},
+         &RotationConstraintSpace(), &RotationConstraintOffset(),
+         &RotationConstraintAffect()},
         RotationConstraintOut(), &rotation);
     rotationParams.carry = &carry;
-    CHECK(rotationSpaceNode.Run({&in, &sources, &weights, &weight, &carryArray},
+    CHECK(rotationSpaceNode.Run({&in, &sources, &weights, &weight, &carryArray,
+                                 &rotationOffset, &rotationAffect},
                                 &actual));
     CHECK(SameBits(
         RigExecApplyRotationConstraint(input, gfSources, rotationParams),
@@ -2226,7 +2234,7 @@ TestConstraints()
 
     // Scale blending shear; unfed source weights weigh 1 each.
     ConstraintPayload scale;
-    scale.offset = rigExecStd::Vec3d(0.1, 0.0, -0.1);
+    const rigExecStd::Vec3d scaleOffset(0.1, 0.0, -0.1);
     scale.blendShear = true;
     RigExecScaleConstraintParams scaleParams;
     scaleParams.offset = GfVec3d(0.1, 0.0, -0.1);
@@ -2234,19 +2242,20 @@ TestConstraints()
     scaleParams.weight = weight;
     Node scaleNode(ScaleConstraint(),
                    {&ScaleConstraintIn(), &ScaleConstraintSources(),
-                    &ScaleConstraintWeight()},
+                    &ScaleConstraintWeight(), &ScaleConstraintOffset()},
                    ScaleConstraintOut(), &scale);
     std::vector<RigExecConstraintSource> unweighted = gfSources;
     for (auto &source : unweighted)
         source.normalizedWeight = 1.0;
-    CHECK(scaleNode.Run({&in, &sources, &weight}, &actual));
+    CHECK(scaleNode.Run({&in, &sources, &weight, &scaleOffset}, &actual));
     CHECK(SameBits(RigExecApplyScaleConstraint(input, unweighted, scaleParams),
                    actual));
 
     // Parent with per-source offsets, scale axes and a space.
     ConstraintPayload parent;
-    parent.scaleAxes = {true, true, true};
-    parent.rotationAxes = {false, true, true};
+    const auto scaleAxes = ToArray(std::vector<uint8_t>{1, 1, 1});
+    const auto rotationAxes = ToArray(std::vector<uint8_t>{0, 1, 1});
+    std::vector<rigExecStd::Vec3d> translationOffsets, rotationOffsets;
     parent.rotationOrder = ConstraintEulerOrder::YZX;
     parent.blendShear = true;
     RigExecParentConstraintParams parentParams;
@@ -2260,24 +2269,30 @@ TestConstraints()
         const GfVec3d t(0.5 * i, -0.25, 1.0), r(15.0 * i, 30.0, -10.0);
         gfSources[i].translationOffset = t;
         gfSources[i].rotationOffsetDegrees = r;
-        parent.translationOffsets.push_back(ToRig(t));
-        parent.rotationOffsetsDegrees.push_back(ToRig(r));
+        translationOffsets.push_back(ToRig(t));
+        rotationOffsets.push_back(ToRig(r));
     }
-    Node parentNode(ParentConstraint(),
-                    {&ParentConstraintIn(), &ParentConstraintSources(),
-                     &ParentConstraintSourceWeights(),
-                     &ParentConstraintWeight(), &ParentConstraintSpace()},
-                    ParentConstraintOut(), &parent);
-    CHECK(parentNode.Run({&in, &sources, &weights, &weight, &carryArray},
+    const auto translationOffsetArray = ToArray(translationOffsets);
+    const auto rotationOffsetArray = ToArray(rotationOffsets);
+    Node parentNode(
+        ParentConstraint(),
+        {&ParentConstraintIn(), &ParentConstraintSources(),
+         &ParentConstraintSourceWeights(), &ParentConstraintWeight(),
+         &ParentConstraintSpace(), &ParentConstraintRotationAxes(),
+         &ParentConstraintScaleAxes(), &ParentConstraintTranslationOffsets(),
+         &ParentConstraintRotationOffsets()},
+        ParentConstraintOut(), &parent);
+    CHECK(parentNode.Run({&in, &sources, &weights, &weight, &carryArray,
+                          &rotationAxes, &scaleAxes, &translationOffsetArray,
+                          &rotationOffsetArray},
                          &actual));
     CHECK(SameBits(RigExecApplyParentConstraint(input, gfSources, parentParams),
                    actual));
 
     // Aim with a world up, then without one taking the minimum swing.
     ConstraintPayload aim;
-    aim.localAimVector = rigExecStd::Vec3d(0.0, 0.0, 1.0);
-    aim.localUpVector = rigExecStd::Vec3d(1.0, 0.0, 0.0);
-    aim.offset = rigExecStd::Vec3d(0.0, 0.0, 12.0);
+    const rigExecStd::Vec3d aimVector(0.0, 0.0, 1.0), upVector(1.0, 0.0, 0.0),
+        aimOffset(0.0, 0.0, 12.0);
     RigExecAimConstraintParams aimParams;
     aimParams.localAimVector = GfVec3d(0.0, 0.0, 1.0);
     aimParams.localUpVector = GfVec3d(1.0, 0.0, 0.0);
@@ -2288,20 +2303,27 @@ TestConstraints()
     const rigExecStd::Vec3d worldUpValue = ToRig(worldUp);
     Node aimNode(AimConstraint(),
                  {&AimConstraintIn(), &AimConstraintTarget(),
-                  &AimConstraintWeight(), &AimConstraintWorldUp()},
+                  &AimConstraintWeight(), &AimConstraintWorldUp(),
+                  &AimConstraintAimVector(), &AimConstraintUpVector(),
+                  &AimConstraintOffset()},
                  AimConstraintOut(), &aim);
     aimParams.worldUpDirection = worldUp;
-    CHECK(aimNode.Run({&in, &targetValue, &weight, &worldUpValue}, &actual));
+    CHECK(aimNode.Run({&in, &targetValue, &weight, &worldUpValue, &aimVector,
+                       &upVector, &aimOffset},
+                      &actual));
     CHECK(
         SameBits(RigExecApplyAimConstraint(input, target, aimParams), actual));
     aim.preserveInputUp = false;
-    Node aimSwingNode(
-        AimConstraint(),
-        {&AimConstraintIn(), &AimConstraintTarget(), &AimConstraintWeight()},
-        AimConstraintOut(), &aim);
+    Node aimSwingNode(AimConstraint(),
+                      {&AimConstraintIn(), &AimConstraintTarget(),
+                       &AimConstraintWeight(), &AimConstraintAimVector(),
+                       &AimConstraintUpVector(), &AimConstraintOffset()},
+                      AimConstraintOut(), &aim);
     aimParams.worldUpDirection.reset();
     aimParams.preserveInputUp = false;
-    CHECK(aimSwingNode.Run({&in, &targetValue, &weight}, &actual));
+    CHECK(aimSwingNode.Run(
+        {&in, &targetValue, &weight, &aimVector, &upVector, &aimOffset},
+        &actual));
     CHECK(
         SameBits(RigExecApplyAimConstraint(input, target, aimParams), actual));
 
@@ -2311,7 +2333,9 @@ TestConstraints()
     std::vector<RigExecConstraintSource> brokenSources = gfSources;
     brokenSources[0].frame.flags |= RigExecPointFrameDegenerate;
     positionParams.weight = weight;
-    CHECK(positionNode.Run({&in, &broken, &weights, &weight}, &actual));
+    CHECK(positionNode.Run(
+        {&in, &broken, &weights, &weight, &positionOffset, &positionAffect},
+        &actual));
     CHECK(SameBits(
         RigExecApplyPositionConstraint(input, brokenSources, positionParams),
         actual));
@@ -2320,20 +2344,29 @@ TestConstraints()
     // them, before the node runs.
     const auto shortWeights = ToArray(std::vector<double>{1.0});
     std::string error;
-    CHECK(!positionNode.Run({&in, &sources, &shortWeights, &weight}, &actual,
-                            &error));
+    CHECK(!positionNode.Run({&in, &sources, &shortWeights, &weight,
+                             &positionOffset, &positionAffect},
+                            &actual, &error));
     CHECK(Contains(error, "(rig:PositionConstraint) is invalid: "
                           "PositionConstraint: needs one source weight per "
                           "source"));
-    parent.translationOffsets.pop_back();
+    translationOffsets.pop_back();
+    const auto shortOffsets = ToArray(translationOffsets);
     Node shortParent(ParentConstraint(),
                      {&ParentConstraintIn(), &ParentConstraintSources(),
-                      &ParentConstraintWeight()},
+                      &ParentConstraintWeight(),
+                      &ParentConstraintTranslationOffsets()},
                      ParentConstraintOut(), &parent);
-    CHECK(!shortParent.Run({&in, &sources, &weight}, &actual, &error));
+    CHECK(!shortParent.Run({&in, &sources, &weight, &shortOffsets}, &actual,
+                           &error));
     CHECK(Contains(error, "(rig:ParentConstraint) is invalid: "
                           "ParentConstraint: needs no offsets or one per "
                           "source"));
+    const auto twoFlags = ToArray(std::vector<uint8_t>{1, 1});
+    CHECK(!positionNode.Run(
+        {&in, &sources, &weights, &weight, &positionOffset, &twoFlags}, &actual,
+        &error));
+    CHECK(Contains(error, "PositionConstraint: needs three affect flags"));
 }
 
 /// The native field for \p points under \p placement, divided by \p scale,

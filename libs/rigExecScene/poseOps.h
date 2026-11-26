@@ -128,12 +128,13 @@ bool RigExecReadSolverOpOutput(const RigExecSolverRecord &record,
 struct RigExecConstraintOpNode {
     RigExecConstraintKind kind = RigExecConstraintKind::Position;
     RigExecInputId in, sources, sourceWeights, weight, space, target, worldUp;
+    RigExecInputId offset, affect, translationAxes, rotationAxes, scaleAxes,
+        translationOffsets, rotationOffsets, aimVector, upVector;
     RigExecInputId chain, effector, pole, twist, stretch;
     RigExecOutputId out;
-    /// The record and Parent offsets the payload was built from, and the
-    /// bound ports, to refuse a frame whose settings moved.
+    /// The record the payload was built from, and the bound ports, to
+    /// refuse a frame whose settings moved.
     RigExecConstraintRecord settings;
-    std::vector<GfVec3d> translationOffsets, rotationOffsets;
     bool hasSpace = false, hasWorldUp = false;
 };
 

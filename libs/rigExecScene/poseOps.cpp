@@ -303,43 +303,22 @@ SameSkeleton(const RigExecSolverRecord &s, const RigExecSolverOpNode &node)
 // Constraints.
 
 rigExecOps::ConstraintPayload
-ConstraintPayloadOf(const RigExecConstraintRecord &r,
-                    const std::vector<GfVec3d> &translationOffsets,
-                    const std::vector<GfVec3d> &rotationOffsets)
+ConstraintPayloadOf(const RigExecConstraintRecord &r)
 {
     rigExecOps::ConstraintPayload p;
     switch (r.kind) {
-    case RigExecConstraintKind::Position:
-        p.offset = ToStd(r.position.offset);
-        p.affect = Axes(r.position.affect);
-        break;
     case RigExecConstraintKind::Rotation:
-        p.offset = ToStd(r.rotation.offsetDegrees);
-        p.affect = Axes(r.rotation.affect);
         p.rotationOrder = Order(r.rotation.rotationOrder);
         break;
     case RigExecConstraintKind::Scale:
-        p.offset = ToStd(r.scale.offset);
-        p.affect = Axes(r.scale.affect);
         p.blendShear = r.scale.blendShear;
         break;
     case RigExecConstraintKind::Parent:
-        p.translationAxes = Axes(r.parent.translationAxes);
-        p.rotationAxes = Axes(r.parent.rotationAxes);
-        p.scaleAxes = Axes(r.parent.scaleAxes);
         p.rotationOrder = Order(r.parent.rotationOrder);
         p.blendShear = r.parent.blendShear;
-        for (const GfVec3d &offset : translationOffsets)
-            p.translationOffsets.push_back(ToStd(offset));
-        for (const GfVec3d &offset : rotationOffsets)
-            p.rotationOffsetsDegrees.push_back(ToStd(offset));
         break;
     case RigExecConstraintKind::Aim:
-        p.offset = ToStd(r.aim.rotationOffsetDegrees);
-        p.affect = Axes(r.aim.affectRotation);
         p.rotationOrder = Order(r.aim.rotationOrder);
-        p.localAimVector = ToStd(r.aim.localAimVector);
-        p.localUpVector = ToStd(r.aim.localUpVector);
         p.preserveInputUp = r.aim.preserveInputUp;
         break;
     default:
@@ -348,38 +327,39 @@ ConstraintPayloadOf(const RigExecConstraintRecord &r,
     return p;
 }
 
-bool
-SamePayload(const rigExecOps::ConstraintPayload &a,
-            const rigExecOps::ConstraintPayload &b)
+RigExecArray<uint8_t>
+Flags(const RigExecConstraintAxisMask &m)
 {
-    return Same(a.offset, b.offset) && SameAxes(a.affect, b.affect) &&
-           SameAxes(a.translationAxes, b.translationAxes) &&
-           SameAxes(a.rotationAxes, b.rotationAxes) &&
-           SameAxes(a.scaleAxes, b.scaleAxes) &&
-           SameVector(a.translationOffsets, b.translationOffsets) &&
-           SameVector(a.rotationOffsetsDegrees, b.rotationOffsetsDegrees) &&
-           a.rotationOrder == b.rotationOrder && a.blendShear == b.blendShear &&
-           Same(a.localAimVector, b.localAimVector) &&
-           Same(a.localUpVector, b.localUpVector) &&
-           a.preserveInputUp == b.preserveInputUp;
+    RigExecArray<uint8_t> out(3);
+    out[0] = uint8_t(m.x);
+    out[1] = uint8_t(m.y);
+    out[2] = uint8_t(m.z);
+    return out;
 }
 
-/// Whether \p input's Parent offsets are those \p node was built with.
-bool
-SameOffsets(const RigExecConstraintOpNode &node,
-            const RigExecConstraintInputs &input)
+/// The Offset and Affect a Position, Rotation, Scale or Aim record feeds.
+void
+OffsetAndAffect(const RigExecConstraintRecord &r, Vec3d *offset,
+                RigExecArray<uint8_t> *affect)
 {
-    if (node.kind != RigExecConstraintKind::Parent)
-        return true;
-    if (node.translationOffsets.size() != input.sources.size())
-        return false;
-    for (size_t k = 0; k < input.sources.size(); ++k)
-        if (!Same(node.translationOffsets[k],
-                  input.sources[k].translationOffset) ||
-            !Same(node.rotationOffsets[k],
-                  input.sources[k].rotationOffsetDegrees))
-            return false;
-    return true;
+    switch (r.kind) {
+    case RigExecConstraintKind::Position:
+        *offset = ToStd(r.position.offset);
+        *affect = Flags(r.position.affect);
+        return;
+    case RigExecConstraintKind::Rotation:
+        *offset = ToStd(r.rotation.offsetDegrees);
+        *affect = Flags(r.rotation.affect);
+        return;
+    case RigExecConstraintKind::Scale:
+        *offset = ToStd(r.scale.offset);
+        *affect = Flags(r.scale.affect);
+        return;
+    default:
+        *offset = ToStd(r.aim.rotationOffsetDegrees);
+        *affect = Flags(r.aim.affectRotation);
+        return;
+    }
 }
 
 /// Whether \p kind reads the carry.
@@ -949,20 +929,15 @@ RigExecAddConstraintOp(const RigExecConstraintRecord &r,
         return true;
     }
     n.settings = r;
-    if (r.kind == RigExecConstraintKind::Parent)
-        for (const RigExecConstraintSource &source : input.sources) {
-            n.translationOffsets.push_back(source.translationOffset);
-            n.rotationOffsets.push_back(source.rotationOffsetDegrees);
-        }
-    const rigExecOps::ConstraintPayload payload =
-        ConstraintPayloadOf(r, n.translationOffsets, n.rotationOffsets);
+    const rigExecOps::ConstraintPayload payload = ConstraintPayloadOf(r);
     n.hasSpace = TakesSpace(r.kind) && input.carry.has_value();
     n.hasWorldUp = r.kind == RigExecConstraintKind::Aim &&
                    r.aim.worldUpDirection.has_value();
     using namespace rigExecOps;
     const RigExecPortHandle *in = nullptr, *sources = nullptr,
                             *weights = nullptr, *weight = nullptr,
-                            *space = nullptr, *out = nullptr;
+                            *space = nullptr, *offset = nullptr,
+                            *affect = nullptr, *out = nullptr;
     const RigExecOpHandle *op = nullptr;
     switch (r.kind) {
     case RigExecConstraintKind::Position:
@@ -971,6 +946,8 @@ RigExecAddConstraintOp(const RigExecConstraintRecord &r,
         sources = &PositionConstraintSources();
         weights = &PositionConstraintSourceWeights();
         weight = &PositionConstraintWeight();
+        offset = &PositionConstraintOffset();
+        affect = &PositionConstraintAffect();
         out = &PositionConstraintOut();
         break;
     case RigExecConstraintKind::Rotation:
@@ -980,6 +957,8 @@ RigExecAddConstraintOp(const RigExecConstraintRecord &r,
         weights = &RotationConstraintSourceWeights();
         weight = &RotationConstraintWeight();
         space = &RotationConstraintSpace();
+        offset = &RotationConstraintOffset();
+        affect = &RotationConstraintAffect();
         out = &RotationConstraintOut();
         break;
     case RigExecConstraintKind::Scale:
@@ -988,6 +967,8 @@ RigExecAddConstraintOp(const RigExecConstraintRecord &r,
         sources = &ScaleConstraintSources();
         weights = &ScaleConstraintSourceWeights();
         weight = &ScaleConstraintWeight();
+        offset = &ScaleConstraintOffset();
+        affect = &ScaleConstraintAffect();
         out = &ScaleConstraintOut();
         break;
     case RigExecConstraintKind::Parent:
@@ -1003,6 +984,8 @@ RigExecAddConstraintOp(const RigExecConstraintRecord &r,
         op = &AimConstraint();
         in = &AimConstraintIn();
         weight = &AimConstraintWeight();
+        offset = &AimConstraintOffset();
+        affect = &AimConstraintAffect();
         out = &AimConstraintOut();
         break;
     default:
@@ -1017,7 +1000,21 @@ RigExecAddConstraintOp(const RigExecConstraintRecord &r,
     }
     if (n.hasSpace)
         n.space = b.BindInput(id, *space);
+    if (offset) {
+        n.offset = b.BindInput(id, *offset);
+        n.affect = b.BindInput(id, *affect);
+    }
+    if (r.kind == RigExecConstraintKind::Parent) {
+        n.translationAxes = b.BindInput(id, ParentConstraintTranslationAxes());
+        n.rotationAxes = b.BindInput(id, ParentConstraintRotationAxes());
+        n.scaleAxes = b.BindInput(id, ParentConstraintScaleAxes());
+        n.translationOffsets =
+            b.BindInput(id, ParentConstraintTranslationOffsets());
+        n.rotationOffsets = b.BindInput(id, ParentConstraintRotationOffsets());
+    }
     if (r.kind == RigExecConstraintKind::Aim) {
+        n.aimVector = b.BindInput(id, AimConstraintAimVector());
+        n.upVector = b.BindInput(id, AimConstraintUpVector());
         n.target = b.BindInput(id, AimConstraintTarget());
         if (n.hasWorldUp)
             n.worldUp = b.BindInput(id, AimConstraintWorldUp());
@@ -1055,9 +1052,7 @@ RigExecWriteConstraintOpInputs(const RigExecConstraintRecord &r,
                Set(e, node.weight, p.weight, error) &&
                Set(e, node.stretch, p.stretch, error);
     }
-    if (!SamePayload(ConstraintPayloadOf(node.settings, {}, {}),
-                     ConstraintPayloadOf(r, {}, {})) ||
-        !SameOffsets(node, input) ||
+    if (!(ConstraintPayloadOf(node.settings) == ConstraintPayloadOf(r)) ||
         node.hasSpace != (TakesSpace(r.kind) && input.carry.has_value()) ||
         node.hasWorldUp != (r.kind == RigExecConstraintKind::Aim &&
                             r.aim.worldUpDirection.has_value()))
@@ -1067,8 +1062,18 @@ RigExecWriteConstraintOpInputs(const RigExecConstraintRecord &r,
         return false;
     if (node.hasSpace && !Set(e, node.space, ToStd(*input.carry), error))
         return false;
+    if (r.kind != RigExecConstraintKind::Parent) {
+        Vec3d offset;
+        RigExecArray<uint8_t> affect;
+        OffsetAndAffect(r, &offset, &affect);
+        if (!Set(e, node.offset, offset, error) ||
+            !Set(e, node.affect, affect, error))
+            return false;
+    }
     if (r.kind == RigExecConstraintKind::Aim)
-        return Set(e, node.target, ToStd(input.aimTarget), error) &&
+        return Set(e, node.aimVector, ToStd(r.aim.localAimVector), error) &&
+               Set(e, node.upVector, ToStd(r.aim.localUpVector), error) &&
+               Set(e, node.target, ToStd(input.aimTarget), error) &&
                (!node.hasWorldUp ||
                 Set(e, node.worldUp, ToStd(*r.aim.worldUpDirection), error));
     PointFrameArray &sources = v.frames;
@@ -1079,8 +1084,23 @@ RigExecWriteConstraintOpInputs(const RigExecConstraintRecord &r,
         sources.frames[k] = ToStd(input.sources[k].frame);
         v.doubles[k] = input.sources[k].normalizedWeight;
     }
-    return Set(e, node.sources, sources, error) &&
-           Set(e, node.sourceWeights, v.doubles, error);
+    if (!Set(e, node.sources, sources, error) ||
+        !Set(e, node.sourceWeights, v.doubles, error))
+        return false;
+    if (r.kind != RigExecConstraintKind::Parent)
+        return true;
+    RigExecArray<Vec3d> translations(input.sources.size()),
+        rotations(input.sources.size());
+    for (size_t k = 0; k < input.sources.size(); ++k) {
+        translations[k] = ToStd(input.sources[k].translationOffset);
+        rotations[k] = ToStd(input.sources[k].rotationOffsetDegrees);
+    }
+    return Set(e, node.translationAxes, Flags(r.parent.translationAxes),
+               error) &&
+           Set(e, node.rotationAxes, Flags(r.parent.rotationAxes), error) &&
+           Set(e, node.scaleAxes, Flags(r.parent.scaleAxes), error) &&
+           Set(e, node.translationOffsets, translations, error) &&
+           Set(e, node.rotationOffsets, rotations, error);
 }
 
 bool

@@ -677,10 +677,12 @@ TestConstraints()
     r.position.offset = GfVec3d(std::numeric_limits<double>::quiet_NaN(), 0, 0);
     CompareConstraint("position nan offset", r, ConstraintInputs(false),
                       runner);
-    // A moved offset rebuilds the node.
+    // A moved offset is a new input value on the same node.
+    const RigExecEvaluator *built = runner.evaluator.get();
     r.position.offset = GfVec3d(1, 2, 3);
     CompareConstraint("position moved offset", r, ConstraintInputs(false),
                       runner);
+    CHECK(runner.evaluator.get() == built);
     CHECK(!RigExecConstraintOpSupported(RigExecConstraintKind::IkFkMatch));
     CHECK(!RigExecConstraintOpSupported(RigExecConstraintKind::Harmonics));
 }

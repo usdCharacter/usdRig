@@ -285,14 +285,8 @@ TestFilledPayloads()
     }
     {
         ConstraintPayload p;
-        p.offset = Vec3d(1.0, -2.0, 3.5);
-        p.affect = {true, false, true};
-        p.scaleAxes = {true, true, true};
-        p.translationOffsets = {Vec3d(1.0, 2.0, 3.0), Vec3d(-1.0, 0.0, 0.5)};
-        p.rotationOffsetsDegrees = {Vec3d(90.0, 0.0, -45.0)};
         p.rotationOrder = ConstraintEulerOrder::ZYX;
         p.blendShear = true;
-        p.localAimVector = Vec3d(0.0, 0.0, 1.0);
         p.preserveInputUp = false;
         CheckRoundTrip(Op(ParentConstraint()), &p);
         CheckRoundTrip(Op(AimConstraint()), &p);
@@ -693,32 +687,14 @@ TestSavedBytes()
     }
     {
         ConstraintPayload p;
-        CheckSaved(PositionConstraint(), &p,
-                   "01000000000000000000000000000000000000000000000000000000"
-                   "01010101010101010100000000000000000000000000000000000000"
-                   "0000000000000000000000f03f000000000000000000000000000000"
-                   "000000000000000000000000000000f03f000000000000000001");
-        p.offset = Vec3d(1.0, -2.0, 3.5);
-        p.affect = {true, false, true};
-        p.scaleAxes = {true, true, true};
-        p.translationOffsets = {Vec3d(1.0, 2.0, 3.0), Vec3d(-1.0, 0.0, 0.5)};
-        p.rotationOffsetsDegrees = {Vec3d(90.0, 0.0, -45.0)};
+        CheckSaved(PositionConstraint(), &p, "02000000000000000001");
         p.rotationOrder = ConstraintEulerOrder::ZYX;
         p.blendShear = true;
-        p.localAimVector = Vec3d(0.0, 0.0, 1.0);
         p.preserveInputUp = false;
         for (const RigExecOpHandle *op :
              {&PositionConstraint(), &RotationConstraint(), &ScaleConstraint(),
               &ParentConstraint(), &AimConstraint()})
-            CheckSaved(
-                *op, &p,
-                "01000000000000000000f03f00000000000000c00000000000000c40"
-                "0100010101010101010101010200000000000000000000000000f03f"
-                "00000000000000400000000000000840000000000000f0bf00000000"
-                "00000000000000000000e03f01000000000000000000000000805640"
-                "000000000000000000000000008046c0050000000100000000000000"
-                "000000000000000000000000000000f03f0000000000000000000000"
-                "000000f03f000000000000000000");
+            CheckSaved(*op, &p, "02000000050000000100");
     }
     {
         HarmonicsPayload p;

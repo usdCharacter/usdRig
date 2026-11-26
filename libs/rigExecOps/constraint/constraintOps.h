@@ -8,7 +8,6 @@
 #include "rigExecStdTypes/stdTypes.h"
 
 #include <cstdint>
-#include <vector>
 
 namespace rigExecOps {
 
@@ -27,42 +26,20 @@ struct ConstraintAxes {
 /// Euler orders, applied left to right in row-vector convention.
 enum class ConstraintEulerOrder : uint8_t { XYZ, XZY, YXZ, YZX, ZXY, ZYX };
 
-/// What every constraint op is configured with at compile. Each op reads
-/// the fields its kind uses.
+/// What every constraint op is configured with at compile: the choices the
+/// rig fixes. Each op reads the fields its kind uses; every value a frame can
+/// change is an input port.
 struct ConstraintPayload {
-    /// Position and Scale: added to the sources' mean. Rotation: degrees
-    /// added to the sources' mean Euler angles. Aim: degrees added to the
-    /// aimed Euler angles.
-    rigExecStd::Vec3d offset{0.0, 0.0, 0.0};
-    /// Position, Rotation, Scale: the governed axes. Aim: rotation axes.
-    ConstraintAxes affect;
-    /// Parent.
-    ConstraintAxes translationAxes;
-    ConstraintAxes rotationAxes;
-    ConstraintAxes scaleAxes{false, false, false};
-    /// Parent: per-source local offsets, empty or one per source.
-    std::vector<rigExecStd::Vec3d> translationOffsets;
-    std::vector<rigExecStd::Vec3d> rotationOffsetsDegrees;
     ConstraintEulerOrder rotationOrder = ConstraintEulerOrder::XYZ;
     /// Scale and Parent: with all three scale axes governed, blend shear.
     bool blendShear = false;
-    /// Aim.
-    rigExecStd::Vec3d localAimVector{1.0, 0.0, 0.0};
-    rigExecStd::Vec3d localUpVector{0.0, 1.0, 0.0};
     /// Aim without a fed WorldUp: keep the input's up (true) or take the
     /// minimum swing (false, FBX worldUpType None).
     bool preserveInputUp = true;
 
     bool operator==(const ConstraintPayload &o) const
     {
-        return offset == o.offset && affect == o.affect &&
-               translationAxes == o.translationAxes &&
-               rotationAxes == o.rotationAxes && scaleAxes == o.scaleAxes &&
-               translationOffsets == o.translationOffsets &&
-               rotationOffsetsDegrees == o.rotationOffsetsDegrees &&
-               rotationOrder == o.rotationOrder && blendShear == o.blendShear &&
-               localAimVector == o.localAimVector &&
-               localUpVector == o.localUpVector &&
+        return rotationOrder == o.rotationOrder && blendShear == o.blendShear &&
                preserveInputUp == o.preserveInputUp;
     }
 };
@@ -75,7 +52,7 @@ const rigExec::RigExecOpHandle &AimConstraint();
 
 // Every op: In (PointFrame), Weight (Double, clamped to [0, 1]), Out
 // (PointFrame). A frame the constraint cannot solve comes back as In flagged
-// degenerate.
+// degenerate. Axis masks are BoolArray inputs of three (x, y, z).
 //
 // Position, Rotation, Scale and Parent: Sources (PointFrameArray, rests
 // unread) and optional SourceWeights (DoubleArray, one per source; unfed,
@@ -83,11 +60,24 @@ const rigExec::RigExecOpHandle &AimConstraint();
 // rest-to-pose map of the provider carrying the rig, stripped before the
 // axis mask and restored after it.
 //
-// Aim: Target (Vec3d) and optional WorldUp (Vec3d), which pins roll.
+// Position, Rotation, Scale and Aim: optional Offset (Vec3d; unfed, zero):
+// Position and Scale add it to the sources' mean, Rotation adds it in
+// degrees to the mean Euler angles, Aim to the aimed Euler angles; and
+// optional Affect (the governed axes, Aim's rotation axes; unfed, all).
+//
+// Parent: optional TranslationAxes and RotationAxes (unfed, all) and
+// ScaleAxes (unfed, none); optional TranslationOffsets and RotationOffsets
+// (Vec3dArray, degrees for rotation; unfed, zero; fed, one per source).
+//
+// Aim: Target (Vec3d), optional WorldUp (Vec3d), which pins roll, and
+// optional AimVector (unfed, +X) and UpVector (unfed, +Y) in the target's
+// local frame.
 const rigExec::RigExecPortHandle &PositionConstraintIn();
 const rigExec::RigExecPortHandle &PositionConstraintSources();
 const rigExec::RigExecPortHandle &PositionConstraintSourceWeights();
 const rigExec::RigExecPortHandle &PositionConstraintWeight();
+const rigExec::RigExecPortHandle &PositionConstraintOffset();
+const rigExec::RigExecPortHandle &PositionConstraintAffect();
 const rigExec::RigExecPortHandle &PositionConstraintOut();
 
 const rigExec::RigExecPortHandle &RotationConstraintIn();
@@ -95,12 +85,16 @@ const rigExec::RigExecPortHandle &RotationConstraintSources();
 const rigExec::RigExecPortHandle &RotationConstraintSourceWeights();
 const rigExec::RigExecPortHandle &RotationConstraintWeight();
 const rigExec::RigExecPortHandle &RotationConstraintSpace();
+const rigExec::RigExecPortHandle &RotationConstraintOffset();
+const rigExec::RigExecPortHandle &RotationConstraintAffect();
 const rigExec::RigExecPortHandle &RotationConstraintOut();
 
 const rigExec::RigExecPortHandle &ScaleConstraintIn();
 const rigExec::RigExecPortHandle &ScaleConstraintSources();
 const rigExec::RigExecPortHandle &ScaleConstraintSourceWeights();
 const rigExec::RigExecPortHandle &ScaleConstraintWeight();
+const rigExec::RigExecPortHandle &ScaleConstraintOffset();
+const rigExec::RigExecPortHandle &ScaleConstraintAffect();
 const rigExec::RigExecPortHandle &ScaleConstraintOut();
 
 const rigExec::RigExecPortHandle &ParentConstraintIn();
@@ -108,12 +102,21 @@ const rigExec::RigExecPortHandle &ParentConstraintSources();
 const rigExec::RigExecPortHandle &ParentConstraintSourceWeights();
 const rigExec::RigExecPortHandle &ParentConstraintWeight();
 const rigExec::RigExecPortHandle &ParentConstraintSpace();
+const rigExec::RigExecPortHandle &ParentConstraintTranslationAxes();
+const rigExec::RigExecPortHandle &ParentConstraintRotationAxes();
+const rigExec::RigExecPortHandle &ParentConstraintScaleAxes();
+const rigExec::RigExecPortHandle &ParentConstraintTranslationOffsets();
+const rigExec::RigExecPortHandle &ParentConstraintRotationOffsets();
 const rigExec::RigExecPortHandle &ParentConstraintOut();
 
 const rigExec::RigExecPortHandle &AimConstraintIn();
 const rigExec::RigExecPortHandle &AimConstraintTarget();
 const rigExec::RigExecPortHandle &AimConstraintWorldUp();
 const rigExec::RigExecPortHandle &AimConstraintWeight();
+const rigExec::RigExecPortHandle &AimConstraintOffset();
+const rigExec::RigExecPortHandle &AimConstraintAffect();
+const rigExec::RigExecPortHandle &AimConstraintAimVector();
+const rigExec::RigExecPortHandle &AimConstraintUpVector();
 const rigExec::RigExecPortHandle &AimConstraintOut();
 
 } // namespace rigExecOps

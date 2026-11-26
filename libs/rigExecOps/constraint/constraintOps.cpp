@@ -22,6 +22,8 @@ RIGEXEC_DEFINE_PORT_HANDLE(PositionConstraintIn)
 RIGEXEC_DEFINE_PORT_HANDLE(PositionConstraintSources)
 RIGEXEC_DEFINE_PORT_HANDLE(PositionConstraintSourceWeights)
 RIGEXEC_DEFINE_PORT_HANDLE(PositionConstraintWeight)
+RIGEXEC_DEFINE_PORT_HANDLE(PositionConstraintOffset)
+RIGEXEC_DEFINE_PORT_HANDLE(PositionConstraintAffect)
 RIGEXEC_DEFINE_PORT_HANDLE(PositionConstraintOut)
 
 RIGEXEC_DEFINE_PORT_HANDLE(RotationConstraintIn)
@@ -29,12 +31,16 @@ RIGEXEC_DEFINE_PORT_HANDLE(RotationConstraintSources)
 RIGEXEC_DEFINE_PORT_HANDLE(RotationConstraintSourceWeights)
 RIGEXEC_DEFINE_PORT_HANDLE(RotationConstraintWeight)
 RIGEXEC_DEFINE_PORT_HANDLE(RotationConstraintSpace)
+RIGEXEC_DEFINE_PORT_HANDLE(RotationConstraintOffset)
+RIGEXEC_DEFINE_PORT_HANDLE(RotationConstraintAffect)
 RIGEXEC_DEFINE_PORT_HANDLE(RotationConstraintOut)
 
 RIGEXEC_DEFINE_PORT_HANDLE(ScaleConstraintIn)
 RIGEXEC_DEFINE_PORT_HANDLE(ScaleConstraintSources)
 RIGEXEC_DEFINE_PORT_HANDLE(ScaleConstraintSourceWeights)
 RIGEXEC_DEFINE_PORT_HANDLE(ScaleConstraintWeight)
+RIGEXEC_DEFINE_PORT_HANDLE(ScaleConstraintOffset)
+RIGEXEC_DEFINE_PORT_HANDLE(ScaleConstraintAffect)
 RIGEXEC_DEFINE_PORT_HANDLE(ScaleConstraintOut)
 
 RIGEXEC_DEFINE_PORT_HANDLE(ParentConstraintIn)
@@ -42,12 +48,21 @@ RIGEXEC_DEFINE_PORT_HANDLE(ParentConstraintSources)
 RIGEXEC_DEFINE_PORT_HANDLE(ParentConstraintSourceWeights)
 RIGEXEC_DEFINE_PORT_HANDLE(ParentConstraintWeight)
 RIGEXEC_DEFINE_PORT_HANDLE(ParentConstraintSpace)
+RIGEXEC_DEFINE_PORT_HANDLE(ParentConstraintTranslationAxes)
+RIGEXEC_DEFINE_PORT_HANDLE(ParentConstraintRotationAxes)
+RIGEXEC_DEFINE_PORT_HANDLE(ParentConstraintScaleAxes)
+RIGEXEC_DEFINE_PORT_HANDLE(ParentConstraintTranslationOffsets)
+RIGEXEC_DEFINE_PORT_HANDLE(ParentConstraintRotationOffsets)
 RIGEXEC_DEFINE_PORT_HANDLE(ParentConstraintOut)
 
 RIGEXEC_DEFINE_PORT_HANDLE(AimConstraintIn)
 RIGEXEC_DEFINE_PORT_HANDLE(AimConstraintTarget)
 RIGEXEC_DEFINE_PORT_HANDLE(AimConstraintWorldUp)
 RIGEXEC_DEFINE_PORT_HANDLE(AimConstraintWeight)
+RIGEXEC_DEFINE_PORT_HANDLE(AimConstraintOffset)
+RIGEXEC_DEFINE_PORT_HANDLE(AimConstraintAffect)
+RIGEXEC_DEFINE_PORT_HANDLE(AimConstraintAimVector)
+RIGEXEC_DEFINE_PORT_HANDLE(AimConstraintUpVector)
 RIGEXEC_DEFINE_PORT_HANDLE(AimConstraintOut)
 
 namespace {
@@ -66,58 +81,59 @@ using namespace fieldIo;
 
 /// The constraint payload's declared fields, in saved order.
 enum ConstraintField : uint32_t {
-    kOffset,
-    kAffect,
-    kTranslationAxes,
-    kRotationAxes,
-    kScaleAxes,
-    kTranslationOffsetCount,
-    kTranslationOffsets,
-    kRotationOffsetCount,
-    kRotationOffsets,
     kRotationOrder,
     kBlendShear,
-    kLocalAimVector,
-    kLocalUpVector,
     kPreserveInputUp,
 };
 
-/// One instance's ConstraintPayload, its offset lists read in place.
+/// One instance's ConstraintPayload.
 struct ConstraintSettings {
-    Vec3d offset;
-    ConstraintAxes affect, translationAxes, rotationAxes, scaleAxes;
-    rigExec::RigExecFieldView<const Vec3d> translationOffsets;
-    rigExec::RigExecFieldView<const Vec3d> rotationOffsetsDegrees;
     ConstraintEulerOrder rotationOrder = ConstraintEulerOrder::XYZ;
     bool blendShear = false;
-    Vec3d localAimVector, localUpVector;
     bool preserveInputUp = true;
 };
-
-ConstraintAxes
-AxesAt(const RigExecOpBatch &batch, uint32_t field, size_t k)
-{
-    const auto axes = rigExec::RigExecPayloadField<uint8_t>(batch, field, k);
-    return {axes[0] != 0, axes[1] != 0, axes[2] != 0};
-}
 
 ConstraintSettings
 SettingsAt(const RigExecOpBatch &batch, size_t k)
 {
     ConstraintSettings p;
-    p.offset = ValueAt<Vec3d>(batch, kOffset, k);
-    p.affect = AxesAt(batch, kAffect, k);
-    p.translationAxes = AxesAt(batch, kTranslationAxes, k);
-    p.rotationAxes = AxesAt(batch, kRotationAxes, k);
-    p.scaleAxes = AxesAt(batch, kScaleAxes, k);
-    p.translationOffsets = ListAt<Vec3d>(batch, kTranslationOffsets, k);
-    p.rotationOffsetsDegrees = ListAt<Vec3d>(batch, kRotationOffsets, k);
     p.rotationOrder = EnumAt<ConstraintEulerOrder>(batch, kRotationOrder, k);
     p.blendShear = FlagAt(batch, kBlendShear, k);
-    p.localAimVector = ValueAt<Vec3d>(batch, kLocalAimVector, k);
-    p.localUpVector = ValueAt<Vec3d>(batch, kLocalUpVector, k);
     p.preserveInputUp = FlagAt(batch, kPreserveInputUp, k);
     return p;
+}
+
+using Flags = RigExecArray<uint8_t>;
+using Vectors = RigExecArray<Vec3d>;
+
+/// The axis mask fed to \p port, or \p fallback unfed; false when the fed
+/// mask is not three flags.
+bool
+AxesOf(const RigExecOpIo &io, const RigExecPortHandle &port,
+       const ConstraintAxes &fallback, ConstraintAxes *axes)
+{
+    const Flags *flags = In<Flags>(io, port);
+    if (!flags) {
+        *axes = fallback;
+        return true;
+    }
+    if (flags->Size() != 3)
+        return false;
+    *axes = {(*flags)[0] != 0, (*flags)[1] != 0, (*flags)[2] != 0};
+    return true;
+}
+
+/// The mask and offset Position, Rotation, Scale and Aim read.
+bool
+MaskAndOffset(const char *op, const RigExecOpIo &io,
+              const RigExecPortHandle &affectPort,
+              const RigExecPortHandle &offsetPort, ConstraintAxes *affect,
+              Vec3d *offset, std::string *error)
+{
+    if (!AxesOf(io, affectPort, ConstraintAxes(), affect))
+        return Fail(error, op, "needs three affect flags");
+    *offset = InOr(io, offsetPort, Vec3d(0.0, 0.0, 0.0));
+    return true;
 }
 
 struct Source {
@@ -169,34 +185,52 @@ struct AimParams {
     double weight;
 };
 
+/// Parent's per-source offset ports; null for the other kinds.
+struct OffsetPorts {
+    const RigExecPortHandle *translations = nullptr;
+    const RigExecPortHandle *rotations = nullptr;
+};
+
 /// The sources with their weights and Parent offsets, or false with
 /// \p error set when a parallel array has the wrong length.
 bool
-GatherSources(const char *op, const ConstraintSettings &p,
-              const RigExecOpIo &io, const RigExecPortHandle &sourcesPort,
-              const RigExecPortHandle &weightsPort, bool withOffsets,
+GatherSources(const char *op, const RigExecOpIo &io,
+              const RigExecPortHandle &sourcesPort,
+              const RigExecPortHandle &weightsPort, const OffsetPorts &offsets,
               std::vector<Source> *sources, std::string *error)
 {
     const auto &frames = In<PointFrameArray>(io, sourcesPort)->frames;
     const auto *weights = In<RigExecArray<double>>(io, weightsPort);
+    const Vectors *translations =
+        offsets.translations ? In<Vectors>(io, *offsets.translations) : nullptr;
+    const Vectors *rotations =
+        offsets.rotations ? In<Vectors>(io, *offsets.rotations) : nullptr;
     const size_t n = frames.Size();
     if (weights && weights->Size() != n)
         return Fail(error, op, "needs one source weight per source");
-    if (withOffsets &&
-        ((!p.translationOffsets.Empty() && p.translationOffsets.Size() != n) ||
-         (!p.rotationOffsetsDegrees.Empty() &&
-          p.rotationOffsetsDegrees.Size() != n)))
+    if ((translations && translations->Size() != n) ||
+        (rotations && rotations->Size() != n))
         return Fail(error, op, "needs no offsets or one per source");
     sources->resize(n);
     for (size_t i = 0; i < n; ++i) {
         Source &s = (*sources)[i];
         s.frame = frames[i];
         s.normalizedWeight = weights ? (*weights)[i] : 1.0;
-        if (withOffsets && !p.translationOffsets.Empty())
-            s.translationOffset = p.translationOffsets[i];
-        if (withOffsets && !p.rotationOffsetsDegrees.Empty())
-            s.rotationOffsetDegrees = p.rotationOffsetsDegrees[i];
+        if (translations)
+            s.translationOffset = (*translations)[i];
+        if (rotations)
+            s.rotationOffsetDegrees = (*rotations)[i];
     }
+    return true;
+}
+
+/// A fed axis mask holds three flags where its count is known.
+bool
+CheckAxes(const rigExec::RigExecOpCheck &check, const char *op,
+          const RigExecPortHandle &port, std::string *error)
+{
+    if (Fed(check, port) && !SameCount(CheckElements(check, port), 3))
+        return Fail(error, op, "needs three affect flags");
     return true;
 }
 
@@ -205,53 +239,75 @@ GatherSources(const char *op, const ConstraintSettings &p,
 bool
 CheckSources(const rigExec::RigExecOpCheck &check, const char *op,
              const RigExecPortHandle &sourcesPort,
-             const RigExecPortHandle &weightsPort, bool withOffsets,
+             const RigExecPortHandle &weightsPort, const OffsetPorts &offsets,
              std::string *error)
 {
     const size_t n = CheckElements(check, sourcesPort);
     if (Fed(check, weightsPort) &&
         !SameCount(CheckElements(check, weightsPort), n))
         return Fail(error, op, "needs one source weight per source");
-    if (!withOffsets)
-        return true;
-    const ConstraintSettings p = SettingsAt(check.batch, check.k);
-    const size_t translations = p.translationOffsets.Size();
-    const size_t rotations = p.rotationOffsetsDegrees.Size();
-    if ((translations && !SameCount(translations, n)) ||
-        (rotations && !SameCount(rotations, n)) ||
-        (translations && rotations && translations != rotations))
-        return Fail(error, op, "needs no offsets or one per source");
+    for (const RigExecPortHandle *port :
+         {offsets.translations, offsets.rotations})
+        if (port && Fed(check, *port) &&
+            !SameCount(CheckElements(check, *port), n))
+            return Fail(error, op, "needs no offsets or one per source");
     return true;
 }
 
 bool
 CheckPosition(const rigExec::RigExecOpCheck &check, std::string *error)
 {
-    return CheckSources(check, "PositionConstraint",
+    return CheckAxes(check, "PositionConstraint", PositionConstraintAffect(),
+                     error) &&
+           CheckSources(check, "PositionConstraint",
                         PositionConstraintSources(),
-                        PositionConstraintSourceWeights(), false, error);
+                        PositionConstraintSourceWeights(), {}, error);
 }
 
 bool
 CheckRotation(const rigExec::RigExecOpCheck &check, std::string *error)
 {
-    return CheckSources(check, "RotationConstraint",
+    return CheckAxes(check, "RotationConstraint", RotationConstraintAffect(),
+                     error) &&
+           CheckSources(check, "RotationConstraint",
                         RotationConstraintSources(),
-                        RotationConstraintSourceWeights(), false, error);
+                        RotationConstraintSourceWeights(), {}, error);
 }
 
 bool
 CheckScale(const rigExec::RigExecOpCheck &check, std::string *error)
 {
-    return CheckSources(check, "ScaleConstraint", ScaleConstraintSources(),
-                        ScaleConstraintSourceWeights(), false, error);
+    return CheckAxes(check, "ScaleConstraint", ScaleConstraintAffect(),
+                     error) &&
+           CheckSources(check, "ScaleConstraint", ScaleConstraintSources(),
+                        ScaleConstraintSourceWeights(), {}, error);
+}
+
+OffsetPorts
+ParentOffsets()
+{
+    return {&ParentConstraintTranslationOffsets(),
+            &ParentConstraintRotationOffsets()};
 }
 
 bool
 CheckParent(const rigExec::RigExecOpCheck &check, std::string *error)
 {
-    return CheckSources(check, "ParentConstraint", ParentConstraintSources(),
-                        ParentConstraintSourceWeights(), true, error);
+    return CheckAxes(check, "ParentConstraint",
+                     ParentConstraintTranslationAxes(), error) &&
+           CheckAxes(check, "ParentConstraint", ParentConstraintRotationAxes(),
+                     error) &&
+           CheckAxes(check, "ParentConstraint", ParentConstraintScaleAxes(),
+                     error) &&
+           CheckSources(check, "ParentConstraint", ParentConstraintSources(),
+                        ParentConstraintSourceWeights(), ParentOffsets(),
+                        error);
+}
+
+bool
+CheckAim(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    return CheckAxes(check, "AimConstraint", AimConstraintAffect(), error);
 }
 
 /// The kernel's frame: a constraint that cannot solve gives the input flagged
@@ -266,15 +322,15 @@ bool
 PositionOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
-    const ConstraintSettings p = SettingsAt(batch, k);
     std::vector<Source> sources;
-    if (!GatherSources("PositionConstraint", p, io, PositionConstraintSources(),
-                       PositionConstraintSourceWeights(), false, &sources,
-                       error))
+    PositionParams params{{}, {}, *In<double>(io, PositionConstraintWeight())};
+    if (!MaskAndOffset("PositionConstraint", io, PositionConstraintAffect(),
+                       PositionConstraintOffset(), &params.affect,
+                       &params.offset, error) ||
+        !GatherSources("PositionConstraint", io, PositionConstraintSources(),
+                       PositionConstraintSourceWeights(), {}, &sources, error))
         return false;
     const PointFrame &in = *In<PointFrame>(io, PositionConstraintIn());
-    const PositionParams params{p.offset, p.affect,
-                                *In<double>(io, PositionConstraintWeight())};
     Commit(in,
            rigExec::RigExecApplyPositionConstraintKernel<Vec3f, Vec3d>(
                in, sources, params),
@@ -295,14 +351,18 @@ RotationOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const ConstraintSettings p = SettingsAt(batch, k);
     std::vector<Source> sources;
-    if (!GatherSources("RotationConstraint", p, io, RotationConstraintSources(),
-                       RotationConstraintSourceWeights(), false, &sources,
-                       error))
+    RotationParams params{{},
+                          {},
+                          p.rotationOrder,
+                          *In<double>(io, RotationConstraintWeight()),
+                          In<Mat4d>(io, RotationConstraintSpace())};
+    if (!MaskAndOffset("RotationConstraint", io, RotationConstraintAffect(),
+                       RotationConstraintOffset(), &params.affect,
+                       &params.offsetDegrees, error) ||
+        !GatherSources("RotationConstraint", io, RotationConstraintSources(),
+                       RotationConstraintSourceWeights(), {}, &sources, error))
         return false;
     const PointFrame &in = *In<PointFrame>(io, RotationConstraintIn());
-    const RotationParams params{p.offset, p.affect, p.rotationOrder,
-                                *In<double>(io, RotationConstraintWeight()),
-                                In<Mat4d>(io, RotationConstraintSpace())};
     Commit(in,
            rigExec::RigExecApplyRotationConstraintKernel<Vec3f, Vec3d>(
                in, sources, params),
@@ -323,13 +383,15 @@ ScaleOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const ConstraintSettings p = SettingsAt(batch, k);
     std::vector<Source> sources;
-    if (!GatherSources("ScaleConstraint", p, io, ScaleConstraintSources(),
-                       ScaleConstraintSourceWeights(), false, &sources, error))
+    ScaleParams params{
+        {}, {}, *In<double>(io, ScaleConstraintWeight()), p.blendShear};
+    if (!MaskAndOffset("ScaleConstraint", io, ScaleConstraintAffect(),
+                       ScaleConstraintOffset(), &params.affect, &params.offset,
+                       error) ||
+        !GatherSources("ScaleConstraint", io, ScaleConstraintSources(),
+                       ScaleConstraintSourceWeights(), {}, &sources, error))
         return false;
     const PointFrame &in = *In<PointFrame>(io, ScaleConstraintIn());
-    const ScaleParams params{p.offset, p.affect,
-                             *In<double>(io, ScaleConstraintWeight()),
-                             p.blendShear};
     Commit(in,
            rigExec::RigExecApplyScaleConstraintKernel<Vec3f, Vec3d>(in, sources,
                                                                     params),
@@ -350,17 +412,25 @@ ParentOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const ConstraintSettings p = SettingsAt(batch, k);
     std::vector<Source> sources;
-    if (!GatherSources("ParentConstraint", p, io, ParentConstraintSources(),
-                       ParentConstraintSourceWeights(), true, &sources, error))
+    ParentParams params{{},
+                        {},
+                        {false, false, false},
+                        p.rotationOrder,
+                        *In<double>(io, ParentConstraintWeight()),
+                        p.blendShear,
+                        In<Mat4d>(io, ParentConstraintSpace())};
+    if (!AxesOf(io, ParentConstraintTranslationAxes(), ConstraintAxes(),
+                &params.translationAxes) ||
+        !AxesOf(io, ParentConstraintRotationAxes(), ConstraintAxes(),
+                &params.rotationAxes) ||
+        !AxesOf(io, ParentConstraintScaleAxes(), {false, false, false},
+                &params.scaleAxes))
+        return Fail(error, "ParentConstraint", "needs three affect flags");
+    if (!GatherSources("ParentConstraint", io, ParentConstraintSources(),
+                       ParentConstraintSourceWeights(), ParentOffsets(),
+                       &sources, error))
         return false;
     const PointFrame &in = *In<PointFrame>(io, ParentConstraintIn());
-    const ParentParams params{p.translationAxes,
-                              p.rotationAxes,
-                              p.scaleAxes,
-                              p.rotationOrder,
-                              *In<double>(io, ParentConstraintWeight()),
-                              p.blendShear,
-                              In<Mat4d>(io, ParentConstraintSpace())};
     Commit(in,
            rigExec::RigExecApplyParentConstraintKernel<Vec3f, Vec3d>(
                in, sources, params),
@@ -381,14 +451,18 @@ AimOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const ConstraintSettings p = SettingsAt(batch, k);
     const PointFrame &in = *In<PointFrame>(io, AimConstraintIn());
-    const AimParams params{p.localAimVector,
-                           p.localUpVector,
-                           In<Vec3d>(io, AimConstraintWorldUp()),
-                           p.preserveInputUp,
-                           p.offset,
-                           p.affect,
-                           p.rotationOrder,
-                           *In<double>(io, AimConstraintWeight())};
+    AimParams params{InOr(io, AimConstraintAimVector(), Vec3d(1.0, 0.0, 0.0)),
+                     InOr(io, AimConstraintUpVector(), Vec3d(0.0, 1.0, 0.0)),
+                     In<Vec3d>(io, AimConstraintWorldUp()),
+                     p.preserveInputUp,
+                     {},
+                     {},
+                     p.rotationOrder,
+                     *In<double>(io, AimConstraintWeight())};
+    if (!MaskAndOffset("AimConstraint", io, AimConstraintAffect(),
+                       AimConstraintOffset(), &params.affectRotation,
+                       &params.rotationOffsetDegrees, error))
+        return false;
     Commit(in,
            rigExec::RigExecApplyAimConstraintKernel<Vec3f, Vec3d>(
                in, *In<Vec3d>(io, AimConstraintTarget()), params),
@@ -404,46 +478,17 @@ RunAim(const RigExecOpBatch &batch, size_t *failed, std::string *error)
 }
 
 void
-SetAxes(RigExecFieldValues &values, uint32_t field, const ConstraintAxes &a)
-{
-    const uint8_t axes[3] = {uint8_t(a.x), uint8_t(a.y), uint8_t(a.z)};
-    values.Set(field, axes, 3);
-}
-
-void
 ConstraintValues(const void *payload, RigExecFieldValues &out)
 {
     const auto &p = *static_cast<const ConstraintPayload *>(payload);
-    out.Set(kOffset, p.offset);
-    SetAxes(out, kAffect, p.affect);
-    SetAxes(out, kTranslationAxes, p.translationAxes);
-    SetAxes(out, kRotationAxes, p.rotationAxes);
-    SetAxes(out, kScaleAxes, p.scaleAxes);
-    SetList(out, kTranslationOffsetCount, p.translationOffsets);
-    SetList(out, kRotationOffsetCount, p.rotationOffsetsDegrees);
     SetEnum(out, kRotationOrder, p.rotationOrder);
     SetFlag(out, kBlendShear, p.blendShear);
-    out.Set(kLocalAimVector, p.localAimVector);
-    out.Set(kLocalUpVector, p.localUpVector);
     SetFlag(out, kPreserveInputUp, p.preserveInputUp);
 }
 
 const rigExec::RigExecFieldDesc kConstraintFields[] = {
-    Value("offset", rigExecStd::Vec3dType()),
-    Fixed(Flag("affect"), 3),
-    Fixed(Flag("translationAxes"), 3),
-    Fixed(Flag("rotationAxes"), 3),
-    Fixed(Flag("scaleAxes"), 3),
-    Count("translationOffsetCount"),
-    Items("translationOffsets", rigExecStd::Vec3dType(),
-          kTranslationOffsetCount),
-    Count("rotationOffsetCount"),
-    Items("rotationOffsetsDegrees", rigExecStd::Vec3dType(),
-          kRotationOffsetCount),
     Enum("rotationOrder", ConstraintEulerOrder::ZYX),
     Flag("blendShear"),
-    Value("localAimVector", rigExecStd::Vec3dType()),
-    Value("localUpVector", rigExecStd::Vec3dType()),
     Flag("preserveInputUp"),
 };
 
@@ -462,7 +507,7 @@ ConstraintDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kConstraintFields;
     d.payloadFieldCount = std::size(kConstraintFields);
-    d.payloadVersion = 1;
+    d.payloadVersion = 2;
     d.payloadValues = &ConstraintValues;
     return d;
 }
@@ -485,6 +530,10 @@ const rigExec::RigExecPortDesc kPositionPorts[] = {
      "sourceWeights"},
     {&PositionConstraintWeight(), &rigExecStd::DoubleType(), kRigExecPortInput,
      "weight"},
+    {&PositionConstraintOffset(), &rigExecStd::Vec3dType(), kOptional,
+     "offset"},
+    {&PositionConstraintAffect(), &rigExecStd::BoolArray(), kOptional,
+     "affect"},
     {&PositionConstraintOut(), &rigExecRig::PointFrameType(),
      kRigExecPortOutput, "out"},
 };
@@ -499,6 +548,10 @@ const rigExec::RigExecPortDesc kRotationPorts[] = {
     {&RotationConstraintWeight(), &rigExecStd::DoubleType(), kRigExecPortInput,
      "weight"},
     {&RotationConstraintSpace(), &rigExecStd::Mat4dType(), kOptional, "space"},
+    {&RotationConstraintOffset(), &rigExecStd::Vec3dType(), kOptional,
+     "offset"},
+    {&RotationConstraintAffect(), &rigExecStd::BoolArray(), kOptional,
+     "affect"},
     {&RotationConstraintOut(), &rigExecRig::PointFrameType(),
      kRigExecPortOutput, "out"},
 };
@@ -512,6 +565,8 @@ const rigExec::RigExecPortDesc kScalePorts[] = {
      "sourceWeights"},
     {&ScaleConstraintWeight(), &rigExecStd::DoubleType(), kRigExecPortInput,
      "weight"},
+    {&ScaleConstraintOffset(), &rigExecStd::Vec3dType(), kOptional, "offset"},
+    {&ScaleConstraintAffect(), &rigExecStd::BoolArray(), kOptional, "affect"},
     {&ScaleConstraintOut(), &rigExecRig::PointFrameType(), kRigExecPortOutput,
      "out"},
 };
@@ -526,6 +581,16 @@ const rigExec::RigExecPortDesc kParentPorts[] = {
     {&ParentConstraintWeight(), &rigExecStd::DoubleType(), kRigExecPortInput,
      "weight"},
     {&ParentConstraintSpace(), &rigExecStd::Mat4dType(), kOptional, "space"},
+    {&ParentConstraintTranslationAxes(), &rigExecStd::BoolArray(), kOptional,
+     "translationAxes"},
+    {&ParentConstraintRotationAxes(), &rigExecStd::BoolArray(), kOptional,
+     "rotationAxes"},
+    {&ParentConstraintScaleAxes(), &rigExecStd::BoolArray(), kOptional,
+     "scaleAxes"},
+    {&ParentConstraintTranslationOffsets(), &rigExecStd::Vec3dArray(),
+     kOptional, "translationOffsets"},
+    {&ParentConstraintRotationOffsets(), &rigExecStd::Vec3dArray(), kOptional,
+     "rotationOffsets"},
     {&ParentConstraintOut(), &rigExecRig::PointFrameType(), kRigExecPortOutput,
      "out"},
 };
@@ -538,6 +603,11 @@ const rigExec::RigExecPortDesc kAimPorts[] = {
     {&AimConstraintWorldUp(), &rigExecStd::Vec3dType(), kOptional, "worldUp"},
     {&AimConstraintWeight(), &rigExecStd::DoubleType(), kRigExecPortInput,
      "weight"},
+    {&AimConstraintOffset(), &rigExecStd::Vec3dType(), kOptional, "offset"},
+    {&AimConstraintAffect(), &rigExecStd::BoolArray(), kOptional, "affect"},
+    {&AimConstraintAimVector(), &rigExecStd::Vec3dType(), kOptional,
+     "aimVector"},
+    {&AimConstraintUpVector(), &rigExecStd::Vec3dType(), kOptional, "upVector"},
     {&AimConstraintOut(), &rigExecRig::PointFrameType(), kRigExecPortOutput,
      "out"},
 };
@@ -559,7 +629,7 @@ const rigExec::RigExecOpDesc kParentDesc =
                    &RunParent, &CheckParent);
 
 const rigExec::RigExecOpDesc kAimDesc = ConstraintDesc(
-    "AimConstraint", kAimPorts, std::size(kAimPorts), &RunAim, nullptr);
+    "AimConstraint", kAimPorts, std::size(kAimPorts), &RunAim, &CheckAim);
 
 } // namespace
 
