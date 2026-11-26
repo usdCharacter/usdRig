@@ -57,6 +57,65 @@ RegisterBad(RigExecOpRegistrar &registrar)
     registrar.Add(BadOp(), desc);
 }
 
+// Authoring metadata the registry refuses: an Internal op with an authored
+// port, a float port authored as a token, and a schema without a class.
+RIGEXEC_DEFINE_OP_HANDLE(InternalAuthoredOp)
+RIGEXEC_DEFINE_PORT_HANDLE(InternalAuthoredPort)
+RIGEXEC_DEFINE_OP_HANDLE(TokenFloatOp)
+RIGEXEC_DEFINE_PORT_HANDLE(TokenFloatPort)
+
+void
+RegisterBadAuthoring(RigExecOpRegistrar &registrar)
+{
+    static const char *const tokens[] = {"off", "on"};
+    static const RigExecPropertyInfo plain = [] {
+        RigExecPropertyInfo info;
+        info.schemaName = "inputs:x";
+        return info;
+    }();
+    static const RigExecPropertyInfo token = [] {
+        RigExecPropertyInfo info;
+        info.schemaName = "rigExec:mode";
+        info.tokens = tokens;
+        info.tokenCount = 2;
+        return info;
+    }();
+    static const RigExecSchemaInfo internal{
+        "", "Built by the compiler.", nullptr, RigExecSchemaMode::Internal};
+    static const RigExecSchemaInfo classless{"", nullptr, nullptr,
+                                             RigExecSchemaMode::Generated};
+    static const RigExecPortDesc internalPorts[] = {
+        {&InternalAuthoredPort(), &fakeTypes::Float(), kRigExecPortOutput,
+         "out", RigExecOutputBound::None, nullptr, nullptr,
+         kRigExecInvalidIndex, 1, &plain}};
+    static const RigExecPortDesc tokenPorts[] = {
+        {&TokenFloatPort(), &fakeTypes::Float(), kRigExecPortOutput, "out",
+         RigExecOutputBound::None, nullptr, nullptr, kRigExecInvalidIndex, 1,
+         &token}};
+    static const RigExecOpDesc internalDesc = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "InternalAuthored";
+        d.ports = internalPorts;
+        d.portCount = 1;
+        d.run = &NoRun;
+        d.schema = &internal;
+        return d;
+    }();
+    static const RigExecOpDesc tokenDesc = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "TokenFloat";
+        d.ports = tokenPorts;
+        d.portCount = 1;
+        d.run = &NoRun;
+        d.schema = &classless;
+        return d;
+    }();
+    registrar.Add(InternalAuthoredOp(), internalDesc);
+    registrar.Add(TokenFloatOp(), tokenDesc);
+}
+
 // An op whose output claims to be an array.
 RIGEXEC_DEFINE_OP_HANDLE(ArrayOutOp)
 RIGEXEC_DEFINE_PORT_HANDLE(ArrayOutPort)
@@ -415,6 +474,18 @@ TestValidateErrors(const RigExecRegistryInit &good)
         CHECK(Mentions(errors, "listed twice"));
     }
     {
+        RigExecOpLibraryDesc bad;
+        bad.name = "badAuthoring";
+        bad.registerOps = &RegisterBadAuthoring;
+        RigExecRegistryInit init = good;
+        init.opLibraries.push_back(&bad);
+        std::vector<std::string> errors;
+        CHECK(!RigExecRegistry::Validate(init, &errors));
+        CHECK(Mentions(errors, "port out is authored but its op is Internal"));
+        CHECK(Mentions(errors, "authored as a token but is no one-value"));
+        CHECK(Mentions(errors, "TokenFloat: its schema names no class"));
+    }
+    {
         RigExecTypeLibraryDesc old = *good.typeLibraries.front();
         old.abiVersion = kRigExecRegistryAbiVersion + 1;
         RigExecRegistryInit init;
@@ -435,8 +506,27 @@ TestValidateErrors(const RigExecRegistryInit &good)
     CHECK(!RigExecRegistry::IsInitialized());
 }
 
+// Authoring metadata never changes which programs a registry runs: libraries
+// that differ only in it give one fingerprint, and an op version does not.
+uint64_t
+TestFingerprint(const RigExecRegistryInit &init)
+{
+    uint64_t original = 0, redocumented = 0, version2 = 0;
+    CHECK(RigExecRegistry::Validate(init, nullptr, &original));
+    RigExecRegistryInit redoc = init;
+    redoc.opLibraries = {&fakeOps::RedocumentedLibrary()};
+    CHECK(RigExecRegistry::Validate(redoc, nullptr, &redocumented));
+    RigExecRegistryInit bumped = init;
+    bumped.opLibraries = {&fakeOps::Version2Library()};
+    CHECK(RigExecRegistry::Validate(bumped, nullptr, &version2));
+    CHECK(original != 0);
+    CHECK(original == redocumented);
+    CHECK(original != version2);
+    return original;
+}
+
 void
-TestInitialize(const RigExecRegistryInit &init)
+TestInitialize(const RigExecRegistryInit &init, uint64_t fingerprint)
 {
     std::vector<std::string> errors;
     CHECK(RigExecRegistry::Initialize(init, &errors));
@@ -458,7 +548,11 @@ TestInitialize(const RigExecRegistryInit &init)
     const RigExecRegisteredOp &offset = r.Op(fakeOps::Offset());
     CHECK(offset.portTypes.size() == 2 &&
           offset.portTypes[0] == fakeTypes::Vec3Type().Index());
-    CHECK(r.Fingerprint() != 0);
+    CHECK(r.Fingerprint() == fingerprint);
+    const RigExecSchemaInfo *schema = r.Op(fakeOps::Scale()).desc->schema;
+    CHECK(schema && schema->mode == RigExecSchemaMode::Generated);
+    CHECK(r.Op(fakeOps::Scale()).desc->ports[0].authoring != nullptr);
+    CHECK(r.Op(fakeOps::Offset()).desc->schema == nullptr);
 
     // Run the two ops through their registered descriptors.
     const RigExecRegisteredOp &scale = r.Op(fakeOps::Scale());
@@ -508,7 +602,7 @@ main()
     CHECK(init.opLibraries.size() == 1);
     TestValidateErrors(init);
     TestFieldValidation(init);
-    TestInitialize(init);
+    TestInitialize(init, TestFingerprint(init));
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

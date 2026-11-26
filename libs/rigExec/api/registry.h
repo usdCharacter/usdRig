@@ -29,7 +29,7 @@ inline constexpr uint32_t kRigExecInvalidIndex = 0xffffffffu;
 /// Version of the descriptor structs below. Each library records the version
 /// it was built with, and Initialize rejects one built with another. Raise
 /// it whenever a descriptor's layout changes.
-inline constexpr uint32_t kRigExecRegistryAbiVersion = 13;
+inline constexpr uint32_t kRigExecRegistryAbiVersion = 14;
 
 /// Refers to one registered data type. A type library defines one per type
 /// with RIGEXEC_DEFINE_TYPE_HANDLE, and Initialize gives it its index; read
@@ -246,6 +246,50 @@ enum class RigExecOutputBound : uint8_t {
     Host,
 };
 
+/// How an authored property feeds a port or payload field.
+enum class RigExecPropertyBinding : uint8_t {
+    /// An attribute: its value, or the value its connection brings.
+    Value,
+    /// A relationship to one target, whose data the scene translation
+    /// reads.
+    Connection,
+    /// A relationship whose targets, in order, feed a list input one value
+    /// each.
+    ConnectionList,
+    /// The members of a collection of the prim.
+    Collection,
+    /// Child prims of the prim.
+    Children,
+};
+
+/// The USD role of an authored float3 or double3 value.
+enum class RigExecPropertyRole : uint8_t { None, Point, Normal, Vector, Color };
+
+/// The schema property a port or payload field is authored with, for the
+/// schema generator. It never changes how a program runs, and the registry
+/// fingerprint does not include it.
+struct RigExecPropertyInfo {
+    /// With its namespace: rigExec:, inputs:, avars:, rest: or guide:.
+    /// Payload fields that name one property are its components, in field
+    /// order.
+    const char *schemaName = "";
+    const char *doc = nullptr;
+    /// A value of the port's or field's registered type; with tokens, the
+    /// value whose token is the fallback. Null authors none.
+    const void *fallback = nullptr;
+    /// For an integer or bool authored as a token: entry i is the token of
+    /// value i, null for a value the property does not allow.
+    const char *const *tokens = nullptr;
+    size_t tokenCount = 0;
+    RigExecPropertyBinding binding = RigExecPropertyBinding::Value;
+    RigExecPropertyRole role = RigExecPropertyRole::None;
+    bool uniform = false;
+    /// The USD type name the property is authored with when it is not the
+    /// registered type's, such as "float" for a double port. Null uses the
+    /// registered type's.
+    const char *authoredType = nullptr;
+};
+
 /// One input or output of an op.
 struct RigExecPortDesc {
     const RigExecPortHandle *port = nullptr;
@@ -259,6 +303,9 @@ struct RigExecPortDesc {
     const RigExecPortHandle *boundAltPort = nullptr;
     uint32_t boundField = kRigExecInvalidIndex;
     size_t boundCount = 1;
+    /// The property the port is authored with; null for a port the compiler
+    /// feeds.
+    const RigExecPropertyInfo *authoring = nullptr;
 };
 
 /// Where an op may run. Pure ops depend only on their inputs and may run on
@@ -441,6 +488,9 @@ struct RigExecFieldDesc {
     /// For a payload field of an unsigned integer type: the largest value
     /// it may hold, such as an enum's last value or 1 for a flag.
     uint64_t limit = UINT64_MAX;
+    /// Payload fields only: the property the field is authored with; null
+    /// for a field the compiler derives.
+    const RigExecPropertyInfo *authoring = nullptr;
 };
 
 /// A field whose count varies: one node's values and their count.
@@ -630,6 +680,28 @@ struct RigExecOpCheck {
     bool compiling = false;
 };
 
+/// Where the schema class of an op's authored properties comes from.
+enum class RigExecSchemaMode : uint8_t {
+    /// Generated from the op's authoring metadata.
+    Generated,
+    /// Written by hand; the properties the op declares are checked against
+    /// it.
+    HandAuthored,
+    /// None: the op has no class of its own; the compiler builds its nodes
+    /// from other nodes and compile facts.
+    Internal,
+};
+
+/// The schema class an op is authored with.
+struct RigExecSchemaInfo {
+    /// Empty for an Internal op.
+    const char *className = "";
+    const char *doc = nullptr;
+    /// The class it inherits, such as "Typed"; null for none.
+    const char *base = nullptr;
+    RigExecSchemaMode mode = RigExecSchemaMode::HandAuthored;
+};
+
 /// Describes one op: its name and version, its ports, how it runs, where
 /// it may run, what it costs, and how to handle its settings and working
 /// state. An op provides run, runBatch or both; the evaluator calls
@@ -680,6 +752,8 @@ struct RigExecOpDesc {
     /// computed in the frame can show is an error of run itself. Null
     /// accepts every node.
     bool (*validate)(const RigExecOpCheck &check, std::string *error) = nullptr;
+    /// The schema class the op is authored with; null when not declared.
+    const RigExecSchemaInfo *schema = nullptr;
 };
 
 /// Receives a type library's types during Initialize.
@@ -781,9 +855,11 @@ public:
     static bool Initialize(const RigExecRegistryInit &init,
                            std::vector<std::string> *errors = nullptr);
 
-    /// Reports the errors Initialize would, without registering anything.
+    /// Reports the errors Initialize would, without registering anything,
+    /// and the fingerprint the registry would have.
     static bool Validate(const RigExecRegistryInit &init,
-                         std::vector<std::string> *errors = nullptr);
+                         std::vector<std::string> *errors = nullptr,
+                         uint64_t *fingerprint = nullptr);
 
     static bool IsInitialized();
 
@@ -817,7 +893,8 @@ public:
 
     /// Identifies this exact set of types and ops, with their order and
     /// versions. A compiled program records it, and an evaluator refuses a
-    /// program compiled against a different registry.
+    /// program compiled against a different registry. Authoring metadata
+    /// (RigExecPropertyInfo, RigExecSchemaInfo) does not enter it.
     uint64_t Fingerprint() const
     {
         return _fingerprint;

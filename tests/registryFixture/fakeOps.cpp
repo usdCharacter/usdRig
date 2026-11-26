@@ -36,21 +36,61 @@ RunOffset(const void *, void *, const rigExec::RigExecOpIo &io, std::string *)
     return true;
 }
 
+rigExec::RigExecPropertyInfo
+ScaleInInfo(const char *doc)
+{
+    rigExec::RigExecPropertyInfo info;
+    info.schemaName = "inputs:in";
+    info.doc = doc;
+    return info;
+}
+
+const rigExec::RigExecPropertyInfo kScaleIn = ScaleInInfo("The value scaled.");
+const rigExec::RigExecPropertyInfo kScaleInRedoc =
+    ScaleInInfo("The value to scale.");
+
+const rigExec::RigExecSchemaInfo kScaleSchema{
+    "FakeScale", "Scales a value.", "Typed",
+    rigExec::RigExecSchemaMode::Generated};
+const rigExec::RigExecSchemaInfo kScaleSchemaRedoc{
+    "FakeScale", "Multiplies a value.", "Typed",
+    rigExec::RigExecSchemaMode::Generated};
+
 const rigExec::RigExecPortDesc kScalePorts[] = {
-    {&ScaleIn(), &fakeTypes::Vec3Type(), rigExec::kRigExecPortInput, "in"},
+    {&ScaleIn(), &fakeTypes::Vec3Type(), rigExec::kRigExecPortInput, "in",
+     rigExec::RigExecOutputBound::None, nullptr, nullptr,
+     rigExec::kRigExecInvalidIndex, 1, &kScaleIn},
     {&ScaleOut(), &fakeTypes::Vec3Type(), rigExec::kRigExecPortOutput, "out"},
 };
 
-const rigExec::RigExecOpDesc kScale = [] {
+const rigExec::RigExecPortDesc kScalePortsRedoc[] = {
+    {&ScaleIn(), &fakeTypes::Vec3Type(), rigExec::kRigExecPortInput, "in",
+     rigExec::RigExecOutputBound::None, nullptr, nullptr,
+     rigExec::kRigExecInvalidIndex, 1, &kScaleInRedoc},
+    {&ScaleOut(), &fakeTypes::Vec3Type(), rigExec::kRigExecPortOutput, "out"},
+};
+
+rigExec::RigExecOpDesc
+ScaleDesc(const rigExec::RigExecPortDesc *ports,
+          const rigExec::RigExecSchemaInfo &schema, uint32_t version)
+{
     rigExec::RigExecOpDesc d;
     d.nameSpace = "fake";
     d.name = "Scale";
-    d.ports = kScalePorts;
+    d.version = version;
+    d.ports = ports;
     d.portCount = 2;
     d.run = &RunScale;
     d.payload = rigExec::RigExecPayloadHandlingFor<ScalePayload>();
+    d.schema = &schema;
     return d;
-}();
+}
+
+const rigExec::RigExecOpDesc kScale = ScaleDesc(kScalePorts, kScaleSchema, 1);
+const rigExec::RigExecOpDesc kScaleRedoc =
+    ScaleDesc(kScalePortsRedoc, kScaleSchemaRedoc, 1);
+const rigExec::RigExecOpDesc kScaleVersion2 =
+    ScaleDesc(kScalePorts, kScaleSchema, 2);
 
 const rigExec::RigExecPortDesc kOffsetPorts[] = {
     {&OffsetIn(), &fakeTypes::Vec3Type(), rigExec::kRigExecPortInput, "in"},
@@ -74,14 +114,47 @@ Register(rigExec::RigExecOpRegistrar &registrar)
     registrar.Add(Offset(), kOffset);
 }
 
-const rigExec::RigExecOpLibraryDesc kLibrary = [] {
+void
+RegisterRedoc(rigExec::RigExecOpRegistrar &registrar)
+{
+    registrar.Add(Scale(), kScaleRedoc);
+    registrar.Add(Offset(), kOffset);
+}
+
+void
+RegisterVersion2(rigExec::RigExecOpRegistrar &registrar)
+{
+    registrar.Add(Scale(), kScaleVersion2);
+    registrar.Add(Offset(), kOffset);
+}
+
+rigExec::RigExecOpLibraryDesc
+Library(void (*registerOps)(rigExec::RigExecOpRegistrar &))
+{
     rigExec::RigExecOpLibraryDesc d;
     d.name = "fakeOps";
-    d.registerOps = &Register;
+    d.registerOps = registerOps;
     return d;
-}();
+}
+
+const rigExec::RigExecOpLibraryDesc kLibrary = Library(&Register);
+const rigExec::RigExecOpLibraryDesc kLibraryRedoc = Library(&RegisterRedoc);
+const rigExec::RigExecOpLibraryDesc kLibraryVersion2 =
+    Library(&RegisterVersion2);
 
 } // namespace
+
+const rigExec::RigExecOpLibraryDesc &
+RedocumentedLibrary()
+{
+    return kLibraryRedoc;
+}
+
+const rigExec::RigExecOpLibraryDesc &
+Version2Library()
+{
+    return kLibraryVersion2;
+}
 } // namespace fakeOps
 
 RIGEXEC_OP_LIBRARY_ENTRY(rigExecTestFakeOps)

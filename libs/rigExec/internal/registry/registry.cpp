@@ -121,6 +121,10 @@ public:
     bool Build(const RigExecRegistryInit &init,
                std::vector<std::string> *errors);
     void Publish();
+    uint64_t Fingerprint() const
+    {
+        return _registry ? _registry->Fingerprint() : 0;
+    }
 
 private:
     struct _TypeEntry {
@@ -159,6 +163,10 @@ private:
     void _CheckRanges(const std::string &op, const RigExecOpDesc &d);
     void _CheckFields(const std::string &op, const RigExecOpDesc &d,
                       bool payload);
+    void _CheckAuthoring(const std::string &op, const RigExecOpDesc &d);
+    void _CheckProperty(const std::string &where,
+                        const RigExecPropertyInfo &info,
+                        const RigExecTypeHandle *type, uint64_t limit);
     void _Error(std::string message)
     {
         _errors.push_back(std::move(message));
@@ -373,6 +381,7 @@ RigExecRegistryBuilder::_FreezeOps(const RigExecRegistryInit &init)
         }
         _CheckFields(name, d, true);
         _CheckFields(name, d, false);
+        _CheckAuthoring(name, d);
     }
     if (!_errors.empty()) {
         return false;
@@ -635,6 +644,65 @@ RigExecRegistryBuilder::_CheckFields(const std::string &op,
     }
 }
 
+void
+RigExecRegistryBuilder::_CheckProperty(const std::string &where,
+                                       const RigExecPropertyInfo &info,
+                                       const RigExecTypeHandle *type,
+                                       uint64_t limit)
+{
+    if (!info.schemaName || !*info.schemaName)
+        _Error(where + " is authored without a schema name");
+    if (info.tokenCount && !info.tokens)
+        _Error(where + " counts tokens it does not list");
+    if (!info.tokens)
+        return;
+    const auto found = _typeIndex.find(type);
+    const RigExecTypeDesc *t =
+        found == _typeIndex.end() ? nullptr : _typeEntries[found->second].desc;
+    const bool integer = t && !t->element && t->columnCount == 1 &&
+                         (t->columnKind == RigExecColumnKind::UInt8 ||
+                          t->columnKind == RigExecColumnKind::Int32 ||
+                          t->columnKind == RigExecColumnKind::UInt32 ||
+                          t->columnKind == RigExecColumnKind::UInt64);
+    if (!integer)
+        _Error(where + " is authored as a token but is no one-value integer");
+    if (limit != UINT64_MAX && info.tokenCount > limit + 1)
+        _Error(where + " lists more tokens than its limit allows");
+}
+
+void
+RigExecRegistryBuilder::_CheckAuthoring(const std::string &op,
+                                        const RigExecOpDesc &d)
+{
+    const bool internal =
+        d.schema && d.schema->mode == RigExecSchemaMode::Internal;
+    if (d.schema && !internal &&
+        (!d.schema->className || !*d.schema->className))
+        _Error("op " + op + ": its schema names no class");
+    const auto check = [&](const std::string &where,
+                           const RigExecPropertyInfo *info,
+                           const RigExecTypeHandle *type, uint64_t limit) {
+        if (!info)
+            return;
+        if (internal)
+            _Error(where + " is authored but its op is Internal");
+        else
+            _CheckProperty(where, *info, type, limit);
+    };
+    for (size_t p = 0; p < d.portCount; ++p)
+        check("op " + op + ": port " + Text(d.ports[p].name),
+              d.ports[p].authoring, d.ports[p].type, UINT64_MAX);
+    for (size_t f = 0; d.payloadFields && f < d.payloadFieldCount; ++f) {
+        const RigExecFieldDesc &field = d.payloadFields[f];
+        check("op " + op + ": payload field " + Text(field.name),
+              field.authoring, field.type, field.limit);
+    }
+    for (size_t f = 0; d.stateFields && f < d.stateFieldCount; ++f)
+        if (d.stateFields[f].authoring)
+            _Error("op " + op + ": state field " + Text(d.stateFields[f].name) +
+                   " is authored");
+}
+
 bool
 RigExecRegistryBuilder::Build(const RigExecRegistryInit &init,
                               std::vector<std::string> *errors)
@@ -683,10 +751,14 @@ RigExecRunEachInstance(const RigExecOpBatch &batch, size_t *failed,
 
 bool
 RigExecRegistry::Validate(const RigExecRegistryInit &init,
-                          std::vector<std::string> *errors)
+                          std::vector<std::string> *errors,
+                          uint64_t *fingerprint)
 {
     RigExecRegistryBuilder builder;
-    return builder.Build(init, errors);
+    const bool ok = builder.Build(init, errors);
+    if (fingerprint)
+        *fingerprint = ok ? builder.Fingerprint() : 0;
+    return ok;
 }
 
 bool

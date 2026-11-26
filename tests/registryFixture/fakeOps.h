@@ -19,6 +19,11 @@ struct ScalePayload {
     float scale = 1.0f;
 };
 
+/// The same ops with only Scale's authoring text changed.
+const rigExec::RigExecOpLibraryDesc &RedocumentedLibrary();
+/// The same ops with Scale at version 2.
+const rigExec::RigExecOpLibraryDesc &Version2Library();
+
 } // namespace fakeOps
 
 #endif
