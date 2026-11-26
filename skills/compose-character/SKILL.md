@@ -181,8 +181,69 @@ poses. Preserve exact parity when the task is only a decomposition; intentional
 refitting to another character needs different geometric expectations.
 
 Open the final entry asset as well as the model to catch broken references or
-namespace remapping. Review representative viewport poses when available, and
-report separately if only numerical/composition checks were performed.
+namespace remapping.
+
+When the request is driven by motion or anatomy references, or names a
+deformation limit, run the reference-driven assessment below in addition to
+the checks above; a routine decomposition with no reference keeps the checks
+above alone. These records are what a later reviewer re-runs, so name the
+file, frame, control, and measurement for every claim.
+
+### Record the reference and the mesh axes
+
+Before posing anything, record which reference was used for anatomy, for
+walking, and for running separately, each with its citation, the view or time
+range used, and how the specimen's pose and proportions differ from this
+mesh. Declare the mesh's forward, up, and lateral directions, handedness,
+units, and origin, read from stage metadata and geometry rather than
+assumed. Record each reference landmark as one row:
+
+`(side, landmark, source view/location, fitted mesh xyz, proportional or pose difference)`
+
+Mark which entries are measured coordinates and which are estimates or
+occluded. Never transfer a specimen's angles into fit values without that
+difference recorded.
+
+### Match clean silhouettes to labeled solved chains
+
+For both sides, pair a clean full-body silhouette with a labeled solved
+chain drawn over the identical camera, frame, and evaluated mesh,
+at rest, stance, lift, and swing. Read the chain from the evaluated pose:
+`rig.compile()`, `pose = rig.evaluate(frame)`, `pose.valid`,
+`pose.joint_paths()` with `pose.joint_matrix(path)`, `pose.control_paths()`
+with `pose.control_frame(path)`, and
+`pose.moved_property("/<mesh>.points")` for the surface, all from the same
+evaluated frame. Label the proximal
+articulation, the intermediate bend or bends, the distal articulation, and
+the paw, and keep shoulder, elbow, and carpus distinct from hip, stifle, and
+hock. Authored control keys or a rest-stage render do not demonstrate
+deformation. Discover controls, joints, and movers by schema and wiring,
+never by scope or path naming, and read the ports each instance actually
+binds from its `component.json`: `leg` binds Hips, World and Rig; `head`
+binds Chest; `mouth` binds Head; `spine` binds COG; `torso` binds Rig; `arm`
+binds Chest, World and Rig; `eye` binds LookAt, Head, Eye, LidUpper,
+LidLower.
+
+### Separate fit, parenting, pole, reach and timing
+
+Compare in one order:
+fit, parenting, pole direction, reach, and animation timing. Assess fit
+against the recorded landmarks first. Then, with fit held fixed, compare
+parenting — whether the shoulder is attached to the scapula and driven by
+the thoracic limb while the pelvis is driven by the spine, and how much
+inherited motion each limb carries — pole direction in the declared mesh
+space, reach through the cycle, and finally animation timing. Report the
+findings for each limb on its own line, together with the alternatives that
+the evidence does not yet rule out. A solver reserve, a softness clamp, or
+four disputed limbs is not evidence of a shared-chain defect; do not name
+one cause until the earlier comparisons have been ruled out in that order.
+
+Keep the fix in the right layer. A correction that changes values or weights
+belongs in the fit layer; a correction that changes wiring belongs in the
+bindings and is followed by the documented compose rebuild. Neither changes
+a component port, adds a second evaluator, or reimplements IK outside the rig
+in order to draw an overlay. Per-character values stay in fit, wiring stays
+in bindings, and component definitions stay reusable.
 
 Deliver links to the final entry point, fit, bindings, and composition, plus the
 rebuild command and checks actually run. Keep the component library reusable;
