@@ -953,12 +953,12 @@ RrLookUpWeightField(const RrProgram *program, const eval::OpLookup &lookup,
                            eval::kOpFieldScalarDefaults[first + 2])};
         ok = put(scales);
     } else if (lookup.read == uint8_t(R::SamplePoints)) {
-        const std::string who = in.weightName(object);
+        const auto who = [&] { return in.weightName(object); };
         auto points = in.fieldPoints(object, 1, true);
         if (!points.declared) {
             if (in.weightFacts(object).samplesInFlight)
-                return fail(who + ": rigExec:weightTarget reads `preceding` "
-                                  "but no in-flight points were supplied");
+                return fail(who() + ": rigExec:weightTarget reads `preceding` "
+                                    "but no in-flight points were supplied");
             points = in.fieldPoints(object, 0, true);
             if (!points.declared)
                 points = in.fieldPoints(object, 0, false);
@@ -966,12 +966,12 @@ RrLookUpWeightField(const RrProgram *program, const eval::OpLookup &lookup,
                 points = in.fieldPoints(object, 1, false);
         }
         if (!points.available)
-            return fail(who + ": could not read the points to sample");
+            return fail(who() + ": could not read the points to sample");
         size_t n = 0;
         if (!count(&n))
             return false;
         if (points.count != n)
-            return fail(who +
+            return fail(who() +
                         ": sampled point count does not match the target");
         ok = lend(points.data, points.count);
     } else if (lookup.read == uint8_t(R::CurvePoints)) {

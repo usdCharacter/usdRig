@@ -191,10 +191,13 @@ _RrLookUpBase(const RrProgram &program, const RrPropertyScratch &scratch,
               size_t c, const RigExecTypeDesc &type, void *out,
               std::string *error)
 {
-    const std::string label = "property chain " + scratch.chains[c].target;
+    const auto fail = [&](const char *why) {
+        return _RrFail(error,
+                       "property chain " + scratch.chains[c].target + why);
+    };
     RrWireValue base;
     if (!RrChainBase(&program, c, scratch.chains[c].baseTag, &base))
-        return _RrFail(error, label + ": target has no authored value");
+        return fail(": target has no authored value");
     T value;
     if constexpr (std::is_same_v<T, float>)
         value = RrWireValueFloat(base);
@@ -205,9 +208,9 @@ _RrLookUpBase(const RrProgram &program, const RrPropertyScratch &scratch,
     else
         value = _RrVec3f(base);
     if (!_RrBaseFinite(value))
-        return _RrFail(error, label + ": authored base is not finite");
+        return fail(": authored base is not finite");
     return _RrPutPort(value, type, out) ||
-           _RrFail(error, label + ": the base does not fit its op input");
+           fail(": the base does not fit its op input");
 }
 
 bool
