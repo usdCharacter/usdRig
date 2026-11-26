@@ -2600,14 +2600,27 @@ TestWeightFieldTokenProducer()
             auto workspace = RigExecCreateFrozenWorkspace(snapshot);
             context.workspace = workspace.get();
             RigExecFrozenRunReport report;
+            RigExecFrozenRunnerVerdict verdict;
             const auto frozen = RigExecEvaluateFrozen(
-                context, inputs, RigExecMakeProductionStepRunner(),
+                context, inputs, RigExecRecordingStepRunner(&verdict),
                 RigExecCancellationToken(), &report);
-            CHECK(report.ran == got.valid);
-            CHECK(!frozen.valid || got.valid);
-            if (report.ran) {
+            CHECK(verdict.called);
+            if (frame == 3) {
+                CHECK(!report.ran);
+                CHECK(RigExecFrozenFailedInTheWorker(frozen, verdict));
+            } else {
+                CHECK(report.ran && frozen.valid);
                 CHECK(frozen.diagnostics == got.diagnostics);
                 CHECK(frozen.movedProperties == got.movedProperties);
+                size_t fieldNodes = 0;
+                for (const auto &entry : report.region)
+                    fieldNodes +=
+                        entry.kind == "OpNode" && entry.domain == "weight";
+                if (fieldNodes)
+                    std::printf("FAIL frame %d: the job frozen at its own "
+                                "frame reran %zu weight node(s)\n",
+                                frame, fieldNodes);
+                CHECK(fieldNodes == 0);
             }
         }
         const auto *program = baked.GetBakedProgram();
@@ -2624,12 +2637,12 @@ TestWeightFieldTokenProducer()
         CHECK(field.placementPhase ==
               RigExecBakedProgramImpl::WeightField::PlacementPhase::Base);
         if (frame == 3)
-            CHECK(std::any_of(got.diagnostics.begin(), got.diagnostics.end(),
-                              [](const std::string &line) {
-                                  return line.find("unknown rigExec:planeAxis "
-                                                   "invalidAxis") !=
-                                         std::string::npos;
-                              }));
+            CHECK(got.diagnostics ==
+                  std::vector<std::string>(
+                      {"/Asset/Rig/Weights/FieldPlane: "
+                       "/Asset/Rig/Weights/FieldPlane: unknown "
+                       "rigExec:planeAxis invalidAxis",
+                       "native program did not complete generation"}));
         else
             CHECK(field.ok);
         size_t producers = 0;

@@ -36,6 +36,7 @@
 #include "rigExecBake/bake.h"
 #include "rigExecRuntime/runtime.h"
 #include "rigExecSampler/inputSampler.h"
+#include "rigExecFrozenParity.h"
 
 #include "pxr/base/tf/errorMark.h"
 #include "pxr/base/tf/getenv.h"
@@ -603,7 +604,8 @@ static RigExecRigPose
 RunWarmingJob(RigExecRigEvaluator *evaluator, const SdfPath &rig,
               const std::shared_ptr<const RigExecFrozenProgram> &frozen,
               const RigExecFrameInputs &inputs,
-              RigExecCancellationSource *cancellation, bool *ran)
+              RigExecCancellationSource *cancellation, bool *ran,
+              RigExecFrozenRunnerVerdict *verdict = nullptr)
 {
     RigExecFrozenEvalContext context;
     context.compiledRigSignature = evaluator->GetCompiledRigSignature();
@@ -622,9 +624,11 @@ RunWarmingJob(RigExecRigEvaluator *evaluator, const SdfPath &rig,
         context.flags |= kRigExecFrozenSolverGuidesEnabled;
     }
     context.frozen = frozen.get();
-    RigExecRigPose pose = RigExecEvaluateFrozen(
-        context, inputs, RigExecMakeProductionStepRunner(),
-        cancellation->Token(context.generation));
+    RigExecRigPose pose =
+        RigExecEvaluateFrozen(context, inputs,
+                              verdict ? RigExecRecordingStepRunner(verdict)
+                                      : RigExecMakeProductionStepRunner(),
+                              cancellation->Token(context.generation));
     if (ran) {
         *ran = pose.valid;
     }
@@ -1457,6 +1461,7 @@ TestBlinkDragEdgesWarmBitIdentical()
         RigExecRigPose live;
         RigExecRigPose warmed;
         RigExecFrameInputs inputs;
+        RigExecFrozenRunnerVerdict verdict;
     };
     const auto warm = [&](const char *what, const _BlinkRigOptions &options,
                           const VtValue &value, bool valid = true) {
@@ -1479,11 +1484,11 @@ TestBlinkDragEdgesWarmBitIdentical()
                                        &out.inputs, &error));
         CHECK(!out.inputs.HasChainResolvedInputs());
         out.warmed = RunWarmingJob(&evaluator, rig, frozen, out.inputs,
-                                   &cancellation, nullptr);
+                                   &cancellation, nullptr, &out.verdict);
         out.live = evaluator.Evaluate(UsdTimeCode(3.0));
         if (!valid) {
             CHECK(!out.live.valid);
-            CHECK(!out.warmed.valid);
+            CHECK(RigExecFrozenFailedInTheWorker(out.warmed, out.verdict));
             return out;
         }
         CHECK(out.live.valid);
@@ -1512,13 +1517,11 @@ TestBlinkDragEdgesWarmBitIdentical()
     noLid.lid = false;
     const Warmed failed =
         warm("blink NaN drag", noLid, VtValue(std::nanf("")), false);
-    CHECK(std::count_if(
-              failed.live.diagnostics.begin(), failed.live.diagnostics.end(),
-              [&](const std::string &line) {
-                  return line.find("property chain " + blink.GetString() +
-                                   ": authored base is not "
-                                   "finite") != std::string::npos;
-              }) == 1);
+    CHECK(failed.live.diagnostics ==
+          std::vector<std::string>(
+              {"diag /Asset/Rig/Movers/ClampBlink: property chain " +
+                   blink.GetString() + ": authored base is not finite",
+               "native program did not complete generation"}));
 
     _BlinkRigOptions gained;
     gained.gain = true;
@@ -2401,6 +2404,7 @@ TestFrozenWeightPacketOpsMatchLive(const std::string &examplesDir)
     RigExecValueOverride strength;
     strength.prim = SdfPath("/VolumeAsset/Rig/Weights/MidCombined");
     strength.attribute = TfToken("inputs:strength");
+    RigExecFrozenRunnerVerdict verdict;
     const auto run = [&](double frame, const char *what,
                          const std::vector<RigExecValueOverride> &drags,
                          bool runs = true) {
@@ -2419,8 +2423,9 @@ TestFrozenWeightPacketOpsMatchLive(const std::string &examplesDir)
         auto workspace = RigExecCreateFrozenWorkspace(frozen);
         context.workspace = workspace.get();
         RigExecFrozenRunReport report;
+        verdict = RigExecFrozenRunnerVerdict();
         const RigExecRigPose pose = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(),
+            context, inputs, RigExecRecordingStepRunner(&verdict),
             RigExecCancellationToken(), &report);
         evaluator.SetInteractiveOverrides({});
         size_t ran = 0;
@@ -2448,26 +2453,19 @@ TestFrozenWeightPacketOpsMatchLive(const std::string &examplesDir)
                                pose);
     }
     strength.value = VtValue(std::numeric_limits<float>::quiet_NaN());
-    // The frozen job refuses a non-finite input before it runs, or fails
-    // with live's error.
+    // The frozen job runs the frame and its combine fails as live's does.
     const auto [live, pose] =
         run(1012.0, "non-finite strength", {strength}, false);
-    CHECK(!live.valid && !pose.valid);
-    const auto failure = std::find_if(
-        live.diagnostics.begin(), live.diagnostics.end(),
-        [](const std::string &line) {
-            return line.find("MidCombined") != std::string::npos &&
-                   line.find("CombineWeights") != std::string::npos;
-        });
-    CHECK(failure != live.diagnostics.end());
-    if (failure != live.diagnostics.end() && !pose.diagnostics.empty() &&
-        std::find(pose.diagnostics.begin(), pose.diagnostics.end(), *failure) ==
-            pose.diagnostics.end()) {
-        std::printf("FAIL frozen weight packets: live fails with '%s', "
-                    "frozen does not\n",
-                    failure->c_str());
-        ++failures;
-    }
+    CHECK(!live.valid);
+    CHECK(live.diagnostics.size() == 2 &&
+          live.diagnostics[0].rfind("/VolumeAsset/Rig/Weights/MidCombined: "
+                                    "node ",
+                                    0) == 0 &&
+          live.diagnostics[0].find(" (rig:CombineWeights) failed: "
+                                   "CombineWeights: a weight is not "
+                                   "finite") != std::string::npos &&
+          live.diagnostics[1] == "native program did not complete generation");
+    CHECK(RigExecFrozenFailedInTheWorker(pose, verdict));
 }
 
 // Frozen publishes exactly live's weightFrames on every path. On
@@ -8919,12 +8917,36 @@ TestFrozenEnvelopeVolumesRecovery(const std::string &examples)
                                        &inputs, &error));
         context.varyingInputCount = inputs.values.size();
         RigExecFrozenRunReport report;
+        RigExecFrozenRunnerVerdict verdict;
         const auto pose = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(),
+            context, inputs, RigExecRecordingStepRunner(&verdict),
             RigExecCancellationToken(), &report);
         const auto live = evaluator.Evaluate(UsdTimeCode(frame));
         if (frame == 2 || frame == 4 || frame == 5) {
-            CHECK(!pose.valid && !live.valid && !live.diagnostics.empty());
+            const auto line = [](const char *weight, const char *why) {
+                return std::string("/EnvelopeAsset/Rig/Weights/") + weight +
+                       ": /EnvelopeAsset/Rig/Weights/" + weight + ": " + why;
+            };
+            const char *const why =
+                frame == 5 ? "could not read the points to sample"
+                           : "sampled point count does not match the target";
+            std::set<std::string> failing = {line("PoseBase", why),
+                                             line("SphereFinal", why)};
+            if (frame == 2)
+                failing.insert(line("PoseFinal", why));
+            // The frame reports its lowest failed op alone.
+            const auto &lines = live.diagnostics;
+            const bool listed =
+                lines.size() == 2 && failing.count(lines[0]) == 1 &&
+                lines[1] == "native program did not complete generation";
+            if (!listed) {
+                std::printf("FAIL envelope frame %d lines:\n", frame);
+                for (const std::string &got : lines)
+                    std::printf("    %s\n", got.c_str());
+            }
+            CHECK(!live.valid && listed);
+            CHECK(!report.ran);
+            CHECK(RigExecFrozenFailedInTheWorker(pose, verdict));
             continue;
         }
         CHECK(report.ran && pose.valid && live.valid);

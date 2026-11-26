@@ -12,6 +12,43 @@
 #include <memory>
 #include <string>
 
+/// What the production runner answered inside RigExecEvaluateFrozen, which
+/// hands back an empty invalid pose whenever the runner declines.
+struct RigExecFrozenRunnerVerdict {
+    bool called = false;
+    bool ran = false;
+    rigExec::RigExecRigPose pose;
+};
+
+/// The production step runner, recording its answer in \p verdict.
+inline rigExec::RigExecFrozenStepRunner
+RigExecRecordingStepRunner(RigExecFrozenRunnerVerdict *verdict)
+{
+    using namespace rigExec;
+    return [verdict, inner = RigExecMakeProductionStepRunner()](
+               const RigExecFrozenEvalContext &context,
+               const RigExecFrameInputs &inputs, RigExecFrozenArena &arena,
+               RigExecRigPose *pose) {
+        verdict->called = true;
+        verdict->ran = inner(context, inputs, arena, pose);
+        if (pose)
+            verdict->pose = *pose;
+        return verdict->ran;
+    };
+}
+
+/// Whether a frozen job at a frame live fails stopped as live did: admitted,
+/// the runner ran the frame, its graph failed, and nothing was published.
+/// The worker's pose carries no line of the error (review finding R35: the
+/// frozen job does not report live's error).
+inline bool
+RigExecFrozenFailedInTheWorker(const rigExec::RigExecRigPose &frozen,
+                               const RigExecFrozenRunnerVerdict &verdict)
+{
+    return !frozen.valid && verdict.called && !verdict.ran &&
+           !verdict.pose.valid && verdict.pose.diagnostics.empty();
+}
+
 /// Freezes \p evaluator's program, samples \p time's inputs, runs one
 /// warming job and compares its pose with a live evaluation at \p time.
 /// False with the reason: a refused freeze or sample, a declined job, or
