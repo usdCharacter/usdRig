@@ -296,6 +296,12 @@ RunPlaneWeight(const RigExecOpBatch &batch, size_t *failed, std::string *error)
     });
 }
 
+/// Op state: the curve carried into local space and its segment BVH.
+struct CurveState {
+    std::vector<Vec3f> local;
+    rigExec::RigExecSegmentBvhCache<Vec3f> bvh;
+};
+
 bool
 CurveWeightOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
@@ -310,17 +316,19 @@ CurveWeightOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     const Points &curve = *In<Points>(io, CurveWeightCurve());
     if (curve.Size() == 0)
         return Fail(error, "CurveWeight", "needs a curve");
-    std::vector<Vec3f> local(curve.Size());
+    auto &s = *static_cast<CurveState *>(rigExec::RigExecBatchState(batch, k));
+    std::vector<Vec3f> &local = s.local;
+    local.resize(curve.Size());
     for (size_t k = 0; k < curve.Size(); ++k)
         local[k] = rigExec::RigExecWeightToLocal<Vec3f, Vec3d>(f.worldToLocal,
                                                                curve[k]);
     float *const out = Out<Weights>(io, ports.out).Data();
     const size_t count = f.points->Size();
     // The same nearest segment as the scan, found faster on long curves.
-    rigExec::RigExecSegmentBvh<Vec3f> bvh;
     if (local.size() - 1 >= rigExec::kRigExecBvhMinSegments &&
         count >= rigExec::kRigExecBvhMinQueries &&
-        bvh.Build(local.data(), local.size())) {
+        s.bvh.Update(local.data(), local.size())) {
+        const rigExec::RigExecSegmentBvh<Vec3f> &bvh = s.bvh.bvh;
         rigExec::RigExecCurveWeightFieldKernel<Vec3f, Vec3d>(
             f.points->Data(), 0, count, f.worldToLocal, f.falloff,
             [&](const Vec3f &q) {
@@ -634,6 +642,7 @@ enum VolumeField : uint32_t {
 struct VolumeState {
     std::vector<float> weights;
     std::vector<Vec3f> localCurve;
+    rigExec::RigExecSegmentBvhCache<Vec3f> curveBvh;
 };
 
 bool
@@ -712,7 +721,7 @@ VolumeWeightsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         detail::CurveWeightField<VolumeMath>(
             points, View{curve->Data(), curve->Size()},
             detail::ApplyAxisScales<VolumeMath>(worldToLocal, scale), params,
-            &s.weights, &s.localCurve, nullptr);
+            &s.weights, &s.localCurve, nullptr, &s.curveBvh);
     }
     for (float &weight : s.weights)
         if (!rigExec::RigExecApplyWeightRangeKernel(clamp, &weight))
@@ -844,9 +853,13 @@ const rigExec::RigExecOpDesc kSphere = FieldDesc(
     "SphereWeight", kSpherePorts, std::size(kSpherePorts), &RunSphereWeight);
 const rigExec::RigExecOpDesc kPlane = FieldDesc(
     "PlaneWeight", kPlanePorts, std::size(kPlanePorts), &RunPlaneWeight);
-const rigExec::RigExecOpDesc kCurve =
-    FieldDesc("CurveWeight", kCurvePorts, std::size(kCurvePorts),
-              &RunCurveWeight, &CheckCurveWeight);
+const rigExec::RigExecOpDesc kCurve = [] {
+    rigExec::RigExecOpDesc d =
+        FieldDesc("CurveWeight", kCurvePorts, std::size(kCurvePorts),
+                  &RunCurveWeight, &CheckCurveWeight);
+    d.state = opIo::StateOf<CurveState>();
+    return d;
+}();
 
 const RigExecPortDesc kCombinePorts[] = {
     {&CombineWeightsInputs(), &rigExecRig::PointWeightsType(),
@@ -1090,6 +1103,44 @@ RunStaticWeightField(const RigExecOpBatch &batch, size_t *failed,
     });
 }
 
+/// Op state: the sparse supports last compared, as fed and as sorted sets,
+/// and whether they matched.
+struct DynamicFieldState {
+    std::vector<int32_t> own, base, ownSet, baseSet;
+    bool checked = false, same = false;
+};
+
+/// Whether \p own and \p base index the same points, compared again only
+/// when either array's bits change.
+bool
+SameSupport(DynamicFieldState &s, const rigExecStd::RigExecArray<int32_t> *own,
+            const rigExecStd::RigExecArray<int32_t> *base)
+{
+    const auto kept = [](const std::vector<int32_t> &held,
+                         const rigExecStd::RigExecArray<int32_t> *now) {
+        const size_t n = now ? now->Size() : 0;
+        return held.size() == n &&
+               (n == 0 || std::memcmp(held.data(), now->Data(),
+                                      n * sizeof(int32_t)) == 0);
+    };
+    if (s.checked && kept(s.own, own) && kept(s.base, base))
+        return s.same;
+    const auto hold = [](std::vector<int32_t> &held, std::vector<int32_t> &set,
+                         const rigExecStd::RigExecArray<int32_t> *now) {
+        held.clear();
+        if (now)
+            held.assign(now->Data(), now->Data() + now->Size());
+        set.assign(held.begin(), held.end());
+        std::sort(set.begin(), set.end());
+        set.erase(std::unique(set.begin(), set.end()), set.end());
+    };
+    hold(s.own, s.ownSet, own);
+    hold(s.base, s.baseSet, base);
+    s.checked = true;
+    s.same = s.ownSet == s.baseSet;
+    return s.same;
+}
+
 bool
 DynamicWeightFieldOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
@@ -1105,19 +1156,11 @@ DynamicWeightFieldOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     using Indices = rigExecStd::RigExecArray<int32_t>;
     const auto *own = In<Indices>(io, DynamicWeightFieldIndices());
     const auto *baseOwn = In<Indices>(io, DynamicWeightFieldBaseIndices());
-    if (own && own->Size()) {
-        const auto normalized = [](const Indices *indices) {
-            std::vector<int32_t> set;
-            if (indices)
-                set.assign(indices->Data(), indices->Data() + indices->Size());
-            std::sort(set.begin(), set.end());
-            set.erase(std::unique(set.begin(), set.end()), set.end());
-            return set;
-        };
-        if (normalized(own) != normalized(baseOwn))
-            return Fail(error, "DynamicWeightField",
-                        "dynamic/base sparse support mismatch");
-    }
+    auto &s =
+        *static_cast<DynamicFieldState *>(rigExec::RigExecBatchState(batch, k));
+    if (own && own->Size() && !SameSupport(s, own, baseOwn))
+        return Fail(error, "DynamicWeightField",
+                    "dynamic/base sparse support mismatch");
     Weights &out = Out<Weights>(io, DynamicWeightFieldOut());
     out.Resize(count);
     for (size_t i = 0; i < count; ++i) {
@@ -1254,10 +1297,10 @@ const rigExec::RigExecOpDesc kStaticField = PacketDesc<StaticFieldState>(
     "StaticWeightField", kStaticFieldPorts, std::size(kStaticFieldPorts),
     &RunStaticWeightField, kPacketFields, std::size(kPacketFields),
     &PacketValues);
-const rigExec::RigExecOpDesc kDynamicField =
-    PacketDesc<char>("DynamicWeightField", kDynamicFieldPorts,
-                     std::size(kDynamicFieldPorts), &RunDynamicWeightField,
-                     kPacketFields, std::size(kPacketFields), &PacketValues);
+const rigExec::RigExecOpDesc kDynamicField = PacketDesc<DynamicFieldState>(
+    "DynamicWeightField", kDynamicFieldPorts, std::size(kDynamicFieldPorts),
+    &RunDynamicWeightField, kPacketFields, std::size(kPacketFields),
+    &PacketValues);
 const rigExec::RigExecOpDesc kCombineFieldsOp = PacketDesc<std::vector<float>>(
     "CombineWeightFields", kCombineFieldPorts, std::size(kCombineFieldPorts),
     &RunCombineWeightFields, kCombineFieldsFields,

@@ -28,7 +28,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
+#include <type_traits>
 #include <vector>
 
 namespace rigExec {
@@ -65,7 +67,8 @@ struct BvhNode {
 // Squared distance from p to the node box in double precision. Exact
 // to double rounding; prune sites subtract the sound float-error pad.
 template <class Vec3>
-double BoxLowerSq(const BvhNode &node, const Vec3 &p)
+double
+BoxLowerSq(const BvhNode &node, const Vec3 &p)
 {
     double lower = 0.0;
     for (int k = 0; k < 3; ++k) {
@@ -93,7 +96,8 @@ constexpr double kRigExecBvhKernelFlops = 256.0;
 
 // Largest input magnitude behind a prune decision: the node's bounds and
 // the query point, which together bound every leaf-kernel input.
-inline double BvhCoordMag(const BvhNode &node, double queryMag)
+inline double
+BvhCoordMag(const BvhNode &node, double queryMag)
 {
     double m = queryMag;
     for (int k = 0; k < 3; ++k) {
@@ -108,7 +112,8 @@ inline double BvhCoordMag(const BvhNode &node, double queryMag)
 // times the kernel envelope times coordinate magnitude (absolute slack
 // for kernel error at zero distance, with margin for the circularity
 // that the error itself scales with the distance).
-inline double BvhDistStar(double bestDist, double coordMag)
+inline double
+BvhDistStar(double bestDist, double coordMag)
 {
     const double u = kRigExecBvhUnitRoundoff;
     return bestDist * (1.0 + 16.0 * u) +
@@ -123,13 +128,14 @@ inline double BvhDistStar(double bestDist, double coordMag)
 // magnitude, plus the point subtraction) scaled by twice the distance;
 // its square; the length-squared chain; double rounding of the bound;
 // subnormal/underflow slack.
-inline double BvhPrunePad(double coordMag, double distStar, double lower)
+inline double
+BvhPrunePad(double coordMag, double distStar, double lower)
 {
     const double u = kRigExecBvhUnitRoundoff;
-    const double e1 = kRigExecBvhKernelFlops * u * coordMag +
-                      2.0 * u * distStar;
-    return 2.0 * distStar * e1 + e1 * e1 +
-           6.0 * u * distStar * distStar + 1e-15 * lower + 1e-37;
+    const double e1 =
+        kRigExecBvhKernelFlops * u * coordMag + 2.0 * u * distStar;
+    return 2.0 * distStar * e1 + e1 * e1 + 6.0 * u * distStar * distStar +
+           1e-15 * lower + 1e-37;
 }
 
 // Median-split build over n items with 6-float bounds. Splits halve the
@@ -137,8 +143,9 @@ inline double BvhPrunePad(double coordMag, double distStar, double lower)
 // depth stays under 33 for any item count and the explicit stack below
 // never recurses. Split quality affects speed only: with strict pruning
 // and ordinal ties the result equals brute force under any split.
-inline void BuildBvh(size_t n, const float *bounds, std::vector<BvhNode> *nodes,
-                     std::vector<uint32_t> *order)
+inline void
+BuildBvh(size_t n, const float *bounds, std::vector<BvhNode> *nodes,
+         std::vector<uint32_t> *order)
 {
     nodes->clear();
     order->resize(n);
@@ -176,8 +183,8 @@ inline void BuildBvh(size_t n, const float *bounds, std::vector<BvhNode> *nodes,
             for (int k = 0; k < 3; ++k) {
                 lo[k] = std::min(lo[k], bounds[6 * t + k]);
                 hi[k] = std::max(hi[k], bounds[6 * t + 3 + k]);
-                const float c = 0.5f * (bounds[6 * t + k] +
-                                        bounds[6 * t + 3 + k]);
+                const float c =
+                    0.5f * (bounds[6 * t + k] + bounds[6 * t + 3 + k]);
                 clo[k] = std::min(clo[k], c);
                 chi[k] = std::max(chi[k], c);
             }
@@ -199,12 +206,10 @@ inline void BuildBvh(size_t n, const float *bounds, std::vector<BvhNode> *nodes,
         std::nth_element(order->begin() + first, order->begin() + mid,
                          order->begin() + first + count,
                          [bounds, axis](uint32_t x, uint32_t y) {
-                             const float cx =
-                                 0.5f * (bounds[6 * x + axis] +
-                                         bounds[6 * x + 3 + axis]);
-                             const float cy =
-                                 0.5f * (bounds[6 * y + axis] +
-                                         bounds[6 * y + 3 + axis]);
+                             const float cx = 0.5f * (bounds[6 * x + axis] +
+                                                      bounds[6 * x + 3 + axis]);
+                             const float cy = 0.5f * (bounds[6 * y + axis] +
+                                                      bounds[6 * y + 3 + axis]);
                              return cx < cy;
                          });
         const uint32_t left = uint32_t(nodes->size());
@@ -222,7 +227,7 @@ inline void BuildBvh(size_t n, const float *bounds, std::vector<BvhNode> *nodes,
     }
 }
 
-}  // namespace spatialAccelDetail
+} // namespace spatialAccelDetail
 
 // Skip/truncate validation flavor: out-of-range index triples are skipped
 // (the linear scan's `continue`), and running past the index array truncates
@@ -240,10 +245,10 @@ struct RigExecFanTrisH7 {
 // A null range with a nonzero size truncates, as an overrun does; a null
 // range with size zero is the empty range. Bit-identical to the vector
 // form, which delegates to it.
-inline RigExecFanTrisH7 RigExecBuildFanTrisH7(
-    const int *faceVertexCounts, size_t faceVertexCountsSize,
-    const int *faceVertexIndices, size_t faceVertexIndicesSize,
-    size_t pointCount)
+inline RigExecFanTrisH7
+RigExecBuildFanTrisH7(const int *faceVertexCounts, size_t faceVertexCountsSize,
+                      const int *faceVertexIndices,
+                      size_t faceVertexIndicesSize, size_t pointCount)
 {
     RigExecFanTrisH7 out;
     if ((faceVertexCountsSize > 0 && !faceVertexCounts) ||
@@ -274,9 +279,8 @@ inline RigExecFanTrisH7 RigExecBuildFanTrisH7(
             const int ia = faceVertexIndices[size_t(offset)];
             const int ib = faceVertexIndices[size_t(offset + int64_t(c))];
             const int ic = faceVertexIndices[size_t(i2)];
-            if (ia < 0 || ib < 0 || ic < 0 ||
-                size_t(ia) >= pointCount || size_t(ib) >= pointCount ||
-                size_t(ic) >= pointCount) {
+            if (ia < 0 || ib < 0 || ic < 0 || size_t(ia) >= pointCount ||
+                size_t(ib) >= pointCount || size_t(ic) >= pointCount) {
                 continue;
             }
             out.tris.push_back(RigExecFanTri{ia, ib, ic});
@@ -291,9 +295,10 @@ inline RigExecFanTrisH7 RigExecBuildFanTrisH7(
     return out;
 }
 
-inline RigExecFanTrisH7 RigExecBuildFanTrisH7(
-    const std::vector<int> &faceVertexCounts,
-    const std::vector<int> &faceVertexIndices, size_t pointCount)
+inline RigExecFanTrisH7
+RigExecBuildFanTrisH7(const std::vector<int> &faceVertexCounts,
+                      const std::vector<int> &faceVertexIndices,
+                      size_t pointCount)
 {
     return RigExecBuildFanTrisH7(
         faceVertexCounts.data(), faceVertexCounts.size(),
@@ -307,9 +312,10 @@ struct RigExecFanTrisStrict {
     bool valid = false;
 };
 
-inline RigExecFanTrisStrict RigExecBuildFanTrisStrict(
-    const std::vector<int> &faceVertexCounts,
-    const std::vector<int> &faceVertexIndices, size_t pointCount)
+inline RigExecFanTrisStrict
+RigExecBuildFanTrisStrict(const std::vector<int> &faceVertexCounts,
+                          const std::vector<int> &faceVertexIndices,
+                          size_t pointCount)
 {
     RigExecFanTrisStrict out;
     size_t reserve = 0;
@@ -353,30 +359,34 @@ inline RigExecFanTrisStrict RigExecBuildFanTrisStrict(
 // its geometric AABB. All triangles therefore remain non-prunable until a
 // callback supplies a certified computed-value bound. Keep the existing API
 // so owner-retained fans and call sites can share one exact fallback.
-template <class Vec3>
-struct RigExecTriangleBvh {
+template <class Vec3> struct RigExecTriangleBvh {
     // Reserved for a future certified traversal; no triangle nodes are built.
     std::vector<spatialAccelDetail::BvhNode> nodes;
     std::vector<uint32_t> order;
 
     // Non-finite referenced points and invalid indices refuse this index,
     // leaving the caller to its original validation/fallback loop.
-    bool Build(const Vec3 *points, size_t pointCount,
-               const RigExecFanTri *tris, size_t triCount)
+    bool Build(const Vec3 *points, size_t pointCount, const RigExecFanTri *tris,
+               size_t triCount)
     {
-        nodes.clear(); order.clear();
+        nodes.clear();
+        order.clear();
         if (!points || !tris || triCount == 0 || pointCount == 0 ||
-            triCount > std::numeric_limits<uint32_t>::max()) return false;
+            triCount > std::numeric_limits<uint32_t>::max())
+            return false;
         for (size_t t = 0; t < triCount; ++t) {
             const int corners[3] = {tris[t].a, tris[t].b, tris[t].c};
             for (int index : corners) {
-                if (index < 0 || size_t(index) >= pointCount) return false;
+                if (index < 0 || size_t(index) >= pointCount)
+                    return false;
                 for (int k = 0; k < 3; ++k)
-                    if (!std::isfinite(points[size_t(index)][k])) return false;
+                    if (!std::isfinite(points[size_t(index)][k]))
+                        return false;
             }
         }
         order.resize(triCount);
-        for (size_t t = 0; t < triCount; ++t) order[t] = uint32_t(t);
+        for (size_t t = 0; t < triCount; ++t)
+            order[t] = uint32_t(t);
         return true;
     }
 
@@ -390,11 +400,14 @@ struct RigExecTriangleBvh {
         float best = std::numeric_limits<float>::max();
         Vec3 bestPoint = p;
         for (uint32_t t : order) {
-            const Vec3 q = closest(p, points[size_t(tris[t].a)],
-                                  points[size_t(tris[t].b)],
-                                  points[size_t(tris[t].c)]);
+            const Vec3 q =
+                closest(p, points[size_t(tris[t].a)], points[size_t(tris[t].b)],
+                        points[size_t(tris[t].c)]);
             const float distance = (q - p).GetLengthSq();
-            if (distance < best) { best = distance; bestPoint = q; }
+            if (distance < best) {
+                best = distance;
+                bestPoint = q;
+            }
         }
         return bestPoint;
     }
@@ -407,8 +420,7 @@ struct RigExecTriangleBvh {
 // distance: clamp its projection to [0,1], reconstruct a + (b-a)*t in float,
 // then measure float Euclidean distance. An arbitrary/unbounded callback
 // cannot use geometric pruning safely.
-template <class Vec3>
-struct RigExecSegmentBvh {
+template <class Vec3> struct RigExecSegmentBvh {
     std::vector<spatialAccelDetail::BvhNode> nodes;
     std::vector<uint32_t> order;
 
@@ -436,16 +448,14 @@ struct RigExecSegmentBvh {
                 bounds[6 * s + 3 + k] = std::max(v0, v1);
             }
         }
-        spatialAccelDetail::BuildBvh(segments, bounds.data(), &nodes,
-                                     &order);
+        spatialAccelDetail::BuildBvh(segments, bounds.data(), &nodes, &order);
         return true;
     }
 
     // Smallest segment distance to p; +infinity when nothing wins.
     // Requires the same array Build accepted.
     template <class DistFn>
-    float QueryNearest(const Vec3 &p, const Vec3 *points,
-                       DistFn segDist) const
+    float QueryNearest(const Vec3 &p, const Vec3 *points, DistFn segDist) const
     {
         if (nodes.empty()) {
             return std::numeric_limits<float>::infinity();
@@ -467,23 +477,19 @@ struct RigExecSegmentBvh {
                 spatialAccelDetail::BvhCoordMag(node, queryMag);
             const double distStar =
                 spatialAccelDetail::BvhDistStar(best, coordMag);
-            const double lower =
-                spatialAccelDetail::BoxLowerSq(node, p);
-            if (haveBest &&
-                lower - spatialAccelDetail::BvhPrunePad(coordMag, distStar,
-                                                       lower) >
-                    best * best) {
+            const double lower = spatialAccelDetail::BoxLowerSq(node, p);
+            if (haveBest && lower - spatialAccelDetail::BvhPrunePad(
+                                        coordMag, distStar, lower) >
+                                best * best) {
                 continue;
             }
             if (node.count > 0) {
-                for (uint32_t i = node.child;
-                     i < node.child + node.count; ++i) {
+                for (uint32_t i = node.child; i < node.child + node.count;
+                     ++i) {
                     const uint32_t s = order[i];
-                    const float d =
-                        segDist(p, points[s], points[s + 1]);
+                    const float d = segDist(p, points[s], points[s + 1]);
                     if (double(d) < best ||
-                        (haveBest && double(d) == best &&
-                         s < bestOrd)) {
+                        (haveBest && double(d) == best && s < bestOrd)) {
                         best = double(d);
                         bestOrd = s;
                         haveBest = true;
@@ -492,12 +498,9 @@ struct RigExecSegmentBvh {
                 continue;
             }
             const spatialAccelDetail::BvhNode &left = nodes[node.child];
-            const spatialAccelDetail::BvhNode &right =
-                nodes[node.child + 1];
-            const double lowerLeft =
-                spatialAccelDetail::BoxLowerSq(left, p);
-            const double lowerRight =
-                spatialAccelDetail::BoxLowerSq(right, p);
+            const spatialAccelDetail::BvhNode &right = nodes[node.child + 1];
+            const double lowerLeft = spatialAccelDetail::BoxLowerSq(left, p);
+            const double lowerRight = spatialAccelDetail::BoxLowerSq(right, p);
             // The stack pops the LAST push, so the nearer child goes on
             // last and is visited first. Visiting it first finds a tight
             // best early and lets the farther subtree be pruned; the
@@ -513,11 +516,34 @@ struct RigExecSegmentBvh {
                 stack[top++] = node.child + 1;
             }
         }
-        return haveBest ? float(best)
-                        : std::numeric_limits<float>::infinity();
+        return haveBest ? float(best) : std::numeric_limits<float>::infinity();
     }
 };
 
-}  // namespace rigExec
+// A RigExecSegmentBvh kept from one run to the next: built again only when
+// the polyline's bits change, so a steady curve builds it once.
+template <class Vec3> struct RigExecSegmentBvhCache {
+    static_assert(std::is_trivially_copyable<Vec3>::value &&
+                      sizeof(Vec3) == 3 * sizeof(float),
+                  "a polyline compares as three floats per point");
+    RigExecSegmentBvh<Vec3> bvh;
+    std::vector<Vec3> points;
+    bool built = false;
 
-#endif  // RIGEXEC_MATH_SPATIAL_ACCEL_H
+    // What RigExecSegmentBvh::Build answers for these points; bvh then
+    // serves them.
+    bool Update(const Vec3 *p, size_t count)
+    {
+        if (!points.empty() && points.size() == count &&
+            std::memcmp(points.data(), p, count * sizeof(Vec3)) == 0) {
+            return built;
+        }
+        points.assign(p, p + count);
+        built = bvh.Build(points.data(), count);
+        return built;
+    }
+};
+
+} // namespace rigExec
+
+#endif // RIGEXEC_MATH_SPATIAL_ACCEL_H

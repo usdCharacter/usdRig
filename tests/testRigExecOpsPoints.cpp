@@ -45,6 +45,8 @@
 
 #include "pxr/base/gf/rotation.h"
 
+#include "opAllocationCount.h"
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -2492,6 +2494,50 @@ TestWeightFields()
                         &actual));
         CHECK(SameBits(expected, actual));
     }
+    // Above the BVH thresholds, a steady curve allocates nothing.
+    std::vector<GfVec3f> longCurve;
+    for (size_t k = 0; k < 48; ++k)
+        longCurve.emplace_back(-4.0f + float(k) / 6.0f, 0.25f * float(k % 3),
+                               0.0f);
+    const Points longCurvePoints = ToStd(longCurve);
+    float steadyStrength = strength;
+    CHECK(opAllocationCount::SteadyFrameAllocations(
+              CurveWeight(), &clamped,
+              {&CurveWeightPoints(), &CurveWeightPlacement(),
+               &CurveWeightStrength(), &CurveWeightInvert(),
+               &CurveWeightFalloffMin(), &CurveWeightFalloffMax(),
+               &CurveWeightScale(), &CurveWeightCurve()},
+              {&points, &placementStd, &strength, &invert, &fMin, &fMax,
+               &scaleStd, &longCurvePoints},
+              CurveWeightOut(), 2,
+              [&](int frame) {
+                  steadyStrength = 0.5f + 0.05f * float(frame);
+                  return &steadyStrength;
+              },
+              &error) == 0);
+
+    // A sparse dynamic field over its base's support allocates nothing on
+    // a steady frame.
+    const WeightPacketPayload dense{rigExecRig::WeightRepresentation::Dense,
+                                    false};
+    const auto dynamicBase = ToArray(std::vector<float>{0.5f, 0.0f, 0.25f});
+    const auto own = ToArray(std::vector<int32_t>{0, 2});
+    const auto baseOwn = ToArray(std::vector<int32_t>{2, 0});
+    const float scaleOne = 1.0f, biasZero = 0.0f;
+    float driver = 1.0f;
+    CHECK(opAllocationCount::SteadyFrameAllocations(
+              DynamicWeightField(), &dense,
+              {&DynamicWeightFieldBase(), &DynamicWeightFieldDriver(),
+               &DynamicWeightFieldScale(), &DynamicWeightFieldBias(),
+               &DynamicWeightFieldIndices(), &DynamicWeightFieldBaseIndices()},
+              {&dynamicBase, &driver, &scaleOne, &biasZero, &own, &baseOwn},
+              DynamicWeightFieldOut(), 1,
+              [&](int frame) {
+                  driver = 0.5f + 0.1f * float(frame);
+                  return &driver;
+              },
+              &error) == 0);
+
     const Points noCurve;
     CHECK(!curve.Run({&points, &placementStd, &strength, &invert, &fMin, &fMax,
                       &scaleStd, &noCurve},

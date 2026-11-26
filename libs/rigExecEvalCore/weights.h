@@ -273,12 +273,13 @@ PlaneWeightField(WeightPointViewT<Math> points,
 
 template <class Math>
 void
-CurveWeightField(WeightPointViewT<Math> points,
-                 WeightPointViewT<Math> curvePoints,
-                 const typename Math::Mat4 &worldToLocal,
-                 const WeightFalloffFacts &params, std::vector<float> *weights,
-                 std::vector<typename Math::Vec3f> *localCurveScratch,
-                 const RigExecRangeRunner *ranges)
+CurveWeightField(
+    WeightPointViewT<Math> points, WeightPointViewT<Math> curvePoints,
+    const typename Math::Mat4 &worldToLocal, const WeightFalloffFacts &params,
+    std::vector<float> *weights,
+    std::vector<typename Math::Vec3f> *localCurveScratch,
+    const RigExecRangeRunner *ranges,
+    RigExecSegmentBvhCache<typename Math::Vec3f> *bvhCache = nullptr)
 {
     using Vec = typename Math::Vec3f;
     weights->resize(points.count);
@@ -295,8 +296,13 @@ CurveWeightField(WeightPointViewT<Math> points,
     }
     if (localCurve.size() - 1 >= kRigExecBvhMinSegments &&
         points.count >= kRigExecBvhMinQueries) {
-        RigExecSegmentBvh<Vec> bvh;
-        if (bvh.Build(localCurve.data(), localCurve.size())) {
+        RigExecSegmentBvh<Vec> built;
+        const bool accelerated =
+            bvhCache ? bvhCache->Update(localCurve.data(), localCurve.size())
+                     : built.Build(localCurve.data(), localCurve.size());
+        if (accelerated) {
+            const RigExecSegmentBvh<Vec> &bvh =
+                bvhCache ? bvhCache->bvh : built;
             float *const out = weights->data();
             RigExecRunRanges(
                 ranges, points.count, kFieldGrain,
