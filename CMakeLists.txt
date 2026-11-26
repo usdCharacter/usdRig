@@ -171,6 +171,7 @@ add_library(rigExecOpCore SHARED
     libs/rigExec/internal/compile/rigDesc.cpp
     libs/rigExec/internal/compile/compile.cpp
     libs/rigExec/internal/exec/addressWait.cpp
+    libs/rigExec/internal/exec/cpuReferenceGpuDevice.cpp
     libs/rigExec/internal/exec/evaluator.cpp
     libs/rigExec/internal/exec/inputChannel.cpp
     libs/rigExec/internal/exec/run.cpp
@@ -1470,6 +1471,10 @@ rigexec_link_registrations(testRigExecOpsPose
     TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 rigexec_add_test(NAME testRigExecOpsPose COMMAND testRigExecOpsPose)
 set_tests_properties(testRigExecOpsPose PROPERTIES LABELS "fast")
+add_executable(testRigExecGpuDevice tests/testRigExecGpuDevice.cpp)
+target_link_libraries(testRigExecGpuDevice PRIVATE rigExecOpCore
+    rigExecEvalCore Threads::Threads)
+rigexec_add_test(NAME testRigExecGpuDevice COMMAND testRigExecGpuDevice)
 add_executable(rigExecGenSchema tools/rigExecGenSchema.cpp)
 target_link_libraries(rigExecGenSchema PRIVATE rigExecOpCore)
 target_include_directories(rigExecGenSchema PRIVATE

@@ -154,6 +154,7 @@ nav:
       - Cross-domain inputs: specs/cross-domain-inputs.md
       - Source input replay: specs/input-replay.md
       - Execute publication buffers: specs/runtime-execute-buffers.md
+      - GPU device: specs/gpu-device.md
       - Bake and inverse APIs: specs/python-bake-inverse.md
       - Composition arcs: specs/composition-arcs.md
       - Editor extensions: specs/editor-extensions.md
