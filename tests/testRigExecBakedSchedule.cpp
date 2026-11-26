@@ -9941,6 +9941,67 @@ def Scope "Asset"
 }
 )USDA";
 
+/// Names each published property the two poses disagree on, with the bits
+/// of the first differing float.
+void
+ReportMovedPropertyDifferences(double frame, const RigExecRigPose &ranged,
+                               const RigExecRigPose &whole)
+{
+    const auto floatsOf = [](const VtValue &value) {
+        std::vector<float> floats;
+        if (value.IsHolding<VtArray<GfVec3f>>()) {
+            for (const GfVec3f &v : value.UncheckedGet<VtArray<GfVec3f>>()) {
+                floats.insert(floats.end(), {v[0], v[1], v[2]});
+            }
+        } else if (value.IsHolding<GfVec3f>()) {
+            const GfVec3f &v = value.UncheckedGet<GfVec3f>();
+            floats.assign({v[0], v[1], v[2]});
+        } else if (value.IsHolding<VtArray<float>>()) {
+            const VtArray<float> &a = value.UncheckedGet<VtArray<float>>();
+            floats.assign(a.cbegin(), a.cend());
+        } else if (value.IsHolding<float>()) {
+            floats.assign({value.UncheckedGet<float>()});
+        }
+        return floats;
+    };
+    for (const auto &entry : ranged.movedProperties) {
+        const auto found = whole.movedProperties.find(entry.first);
+        if (found == whole.movedProperties.end()) {
+            std::printf("FAIL   frame %g: %s is published by the ranged "
+                        "build only\n",
+                        frame, entry.first.GetText());
+            continue;
+        }
+        if (entry.second == found->second) {
+            continue;
+        }
+        const std::vector<float> a = floatsOf(entry.second);
+        const std::vector<float> b = floatsOf(found->second);
+        std::printf("FAIL   frame %g: %s differs (%s, %zu and %zu floats)\n",
+                    frame, entry.first.GetText(),
+                    entry.second.GetTypeName().c_str(), a.size(), b.size());
+        for (size_t i = 0; i < a.size() && i < b.size(); ++i) {
+            uint32_t x = 0, y = 0;
+            std::memcpy(&x, &a[i], sizeof(x));
+            std::memcpy(&y, &b[i], sizeof(y));
+            if (x != y) {
+                std::printf("FAIL     float %zu: ranged %.9g (%08x) whole "
+                            "%.9g (%08x)\n",
+                            i, double(a[i]), unsigned(x), double(b[i]),
+                            unsigned(y));
+                break;
+            }
+        }
+    }
+    for (const auto &entry : whole.movedProperties) {
+        if (!ranged.movedProperties.count(entry.first)) {
+            std::printf("FAIL   frame %g: %s is published by the whole "
+                        "build only\n",
+                        frame, entry.first.GetText());
+        }
+    }
+}
+
 /// Whole readers after Range revisions: a current-phase weight field
 /// gathers the version entering its mover into the field's own scratch, a
 /// phased dense blend sample into its binding's, and a cross-domain points
@@ -9998,6 +10059,9 @@ TestWholeReadersGatherAfterRangeRevisions()
         CHECK(EveryVersionAgrees(R, W));
         CHECK(rangedPose.movedProperties.count(picked) == 1);
         CHECK(rangedPose.movedProperties == wholePose.movedProperties);
+        if (rangedPose.movedProperties != wholePose.movedProperties) {
+            ReportMovedPropertyDifferences(frame, rangedPose, wholePose);
+        }
         CHECK(rangedPose.diagnostics == wholePose.diagnostics);
     }
     CHECK(R.chainVersionMismatches == 0);
