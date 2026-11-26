@@ -2704,20 +2704,26 @@ TestRunTimeChainFailuresRoundTrip()
     unset.CreateRelationship(TfToken("rigExec:moves"))
         .SetTargets({SdfPath("/Asset/Rig/Channels/Missing.rigExec:absent")});
     _SetInput(unset, "inputs:value", SdfValueTypeNames->Float, 1.0f);
+    const std::string missing =
+        "Mover /Asset/Rig/Movers/Unset/Absent targets missing property "
+        "/Asset/Rig/Channels/Missing.rigExec:absent";
     RigExecRigEvaluator evaluator(stage, _FindRig(stage));
     std::vector<std::string> notices;
-    const bool compiled = evaluator.Compile(&notices);
-    std::vector<uint8_t> bytes;
+    CHECK(!evaluator.Compile(&notices));
+    CHECK(notices == std::vector<std::string>{missing});
+    CHECK(evaluator.GetSkippedOperations().empty());
+    std::vector<std::string> reasons;
+    CHECK(!evaluator.IsBakeable(&reasons));
+    CHECK(reasons == std::vector<std::string>{"the rig is not compiled"});
+    const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(1.0));
+    CHECK(!pose.valid && pose.movedProperties.empty());
+    CHECK(std::find(pose.diagnostics.begin(), pose.diagnostics.end(),
+                    missing) != pose.diagnostics.end());
+    std::shared_ptr<const RigExecFrozenProgram> frozen;
     std::string error;
-    const bool baked = RigExecTestBakeAt(evaluator, 1, &bytes, &error);
-    // Review finding R36: the mover is skipped with a warning instead, and
-    // the rest of the rig compiles and bakes. Expected to flip with the fix.
-    CHECK(compiled && baked);
-    CHECK(notices ==
-          std::vector<std::string>(
-              {"warning: Skipped operation /Asset/Rig/Movers/Unset/Absent -- "
-               "Mover /Asset/Rig/Movers/Unset/Absent targets missing "
-               "property /Asset/Rig/Channels/Missing.rigExec:absent"}));
+    CHECK(!RigExecFreezeProgram(evaluator, &frozen, &error) && !frozen);
+    std::vector<uint8_t> bytes;
+    CHECK(!RigExecTestBakeAt(evaluator, 1, &bytes, &error));
 }
 
 static void

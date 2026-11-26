@@ -5566,7 +5566,8 @@ TestAuthoredPosedSpaceBakesAndAnimatedOneFollows()
 }
 
 // A diagnostic can name another operation without making it responsible.
-// In particular, "cycle" in a prim name must not select cycle recovery.
+// In particular, "cycle" in a prim name must not select cycle recovery. The
+// broken constraint moves a structural property of the healthy one.
 static void
 TestCompileRecoveryIgnoresOperationSpelling()
 {
@@ -5583,7 +5584,7 @@ TestCompileRecoveryIgnoresOperationSpelling()
             .SetTargets({SdfPath("/Asset/Source")});
         const UsdPrim broken = MakeConstraint(
             stage, name, "RigExecPositionConstraint",
-            {healthy.GetPath().AppendProperty(TfToken("missing"))});
+            {healthy.GetPath().AppendProperty(TfToken("faceVertexCounts"))});
 
         RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
         std::vector<std::string> errors;

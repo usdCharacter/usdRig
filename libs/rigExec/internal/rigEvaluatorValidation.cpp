@@ -616,6 +616,8 @@ RigExecRigEvaluator::_DiscoverMovers(
                 const SdfPath canonical = t;
                 const SdfPath primPath = canonical.GetPrimPath();
                 // Reject dangling targets.
+                // A layer opened without its geometry sets the mover aside;
+                // a missing property of a prim that exists fails the rig.
                 if (!_stage->GetPrimAtPath(primPath)) {
                     return fail("Mover " + prim.GetPath().GetString() +
                                     " targets missing prim " +
@@ -653,9 +655,8 @@ RigExecRigEvaluator::_DiscoverMovers(
                     }
                     if (!_stage->GetAttributeAtPath(canonical)) {
                         return fail("Mover " + prim.GetPath().GetString() +
-                                        " targets missing property " +
-                                        canonical.GetString(),
-                                    {prim.GetPath()});
+                                    " targets missing property " +
+                                    canonical.GetString());
                     }
                 }
                 // Duplicate targets after canonicalization are rejected.
