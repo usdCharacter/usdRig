@@ -229,6 +229,13 @@ RigExecEvaluator::ViewOutput(RigExecOutputId output, std::string *error) const
     return RigExecViewAccess::Output(_state->main, output, error);
 }
 
+RigExecFrameView
+RigExecEvaluator::ViewFrame(std::string *error) const
+{
+    _AssertOwnerThread();
+    return RigExecViewAccess::Frame(_state->main, error);
+}
+
 std::unique_ptr<RigExecRunState>
 RigExecEvaluator::CreateRunState()
 {

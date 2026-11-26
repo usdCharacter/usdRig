@@ -5,6 +5,7 @@
 /// its inputs, calls Evaluate once per frame and reads its outputs.
 
 #include "rigExec/api/compile.h"
+#include "rigExec/api/frameView.h"
 #include "rigExec/api/inputWriter.h"
 #include "rigExec/api/taps.h"
 #include "rigExec/api/taskSystem.h"
@@ -90,6 +91,10 @@ public:
     /// released. Empty where GetOutput is null.
     RigExecValueView ViewOutput(RigExecOutputId output,
                                 std::string *error = nullptr) const;
+    /// Every bound output of the last Evaluate, held together (see
+    /// frameView.h); invalid, with the failure in \p error, after a
+    /// failed Evaluate.
+    RigExecFrameView ViewFrame(std::string *error = nullptr) const;
     /// A run state that continues from this evaluator: its inputs (with
     /// any SetInput values committed first), op state, outputs and history
     /// of earlier frames. Evaluating it leaves this evaluator untouched;

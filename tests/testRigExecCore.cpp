@@ -5,6 +5,7 @@
 #include "registryFixture/fakeTypes.h"
 #include "rigExec/api/compile.h"
 #include "rigExec/api/evaluator.h"
+#include "rigExec/api/frameView.h"
 #include "rigExec/api/opFields.h"
 #include "rigExec/api/registry.h"
 #include "rigExec/api/rigDesc.h"
@@ -3525,6 +3526,210 @@ TestRangeNoAllocation()
     blurCuts = 0;
 }
 
+// An op writing a scalar, an array and a fixed list from one input, for
+// the frame view; a negative input fails it.
+struct FloatList {
+    std::vector<float> v;
+};
+
+RIGEXEC_DEFINE_TYPE_HANDLE(FloatListType)
+
+const RigExecTypeDesc kFloatListDesc = [] {
+    RigExecTypeDesc d;
+    d.nameSpace = "test";
+    d.name = "FloatList";
+    d.size = sizeof(FloatList);
+    d.align = alignof(FloatList);
+    d.element = &fakeTypes::Float();
+    d.construct = [](void *dst) {
+        std::uninitialized_value_construct_n(static_cast<FloatList *>(dst), 1);
+    };
+    d.copy = [](void *dst, const void *src) {
+        *static_cast<FloatList *>(dst) = *static_cast<const FloatList *>(src);
+    };
+    d.move = [](void *dst, void *src) {
+        *static_cast<FloatList *>(dst) =
+            std::move(*static_cast<FloatList *>(src));
+    };
+    d.destroy = [](void *dst) { static_cast<FloatList *>(dst)->~FloatList(); };
+    d.count = [](const void *value) {
+        return static_cast<const FloatList *>(value)->v.size();
+    };
+    d.reserve = [](void *value, size_t count) {
+        static_cast<FloatList *>(value)->v.reserve(count);
+    };
+    d.elements = [](const void *value) {
+        return static_cast<const FloatList *>(value)->v.size();
+    };
+    d.data = [](void *value) -> void * {
+        return static_cast<FloatList *>(value)->v.data();
+    };
+    return d;
+}();
+
+void
+RegisterFrameTypes(RigExecTypeRegistrar &registrar)
+{
+    registrar.Add(FloatListType(), kFloatListDesc);
+}
+
+const RigExecTypeLibraryDesc kFrameTypes = [] {
+    RigExecTypeLibraryDesc d;
+    d.name = "testFrameTypes";
+    d.registerTypes = &RegisterFrameTypes;
+    return d;
+}();
+
+RIGEXEC_DEFINE_OP_HANDLE(Spread)
+RIGEXEC_DEFINE_PORT_HANDLE(SpreadIn)
+RIGEXEC_DEFINE_PORT_HANDLE(SpreadScalar)
+RIGEXEC_DEFINE_PORT_HANDLE(SpreadArray)
+RIGEXEC_DEFINE_PORT_HANDLE(SpreadList)
+
+bool
+RunSpread(const void *, void *, const RigExecOpIo &io, std::string *error)
+{
+    const float x = *static_cast<const float *>(io.inputs[SpreadIn().Index()]);
+    if (x < 0.0f) {
+        *error = "negative spread";
+        return false;
+    }
+    *static_cast<float *>(io.outputs[SpreadScalar().Index()]) = x;
+    std::vector<float> &array =
+        static_cast<FloatList *>(io.outputs[SpreadArray().Index()])->v;
+    array.assign({x, x + 1.0f, x + 2.0f});
+    Floats8 &list = *static_cast<Floats8 *>(io.outputs[SpreadList().Index()]);
+    list.n = 2;
+    list.v[0] = x;
+    list.v[1] = 2.0f * x;
+    return true;
+}
+
+void
+RegisterFrameOps(RigExecOpRegistrar &registrar)
+{
+    static const RigExecPortDesc ports[] = {
+        {&SpreadIn(), &fakeTypes::Float(), kRigExecPortInput, "in"},
+        {&SpreadScalar(), &fakeTypes::Float(), kRigExecPortOutput, "scalar"},
+        {&SpreadArray(), &FloatListType(), kRigExecPortOutput, "array",
+         RigExecOutputBound::Fixed, nullptr, nullptr, kRigExecInvalidIndex, 3},
+        {&SpreadList(), &Floats8Type(), kRigExecPortOutput, "list"},
+    };
+    static const RigExecOpDesc desc = [] {
+        RigExecOpDesc d;
+        d.nameSpace = "test";
+        d.name = "Spread";
+        d.ports = ports;
+        d.portCount = 4;
+        d.run = &RunSpread;
+        return d;
+    }();
+    registrar.Add(Spread(), desc);
+}
+
+const RigExecOpLibraryDesc kFrameOps = [] {
+    RigExecOpLibraryDesc d;
+    d.name = "testFrameOps";
+    d.registerOps = &RegisterFrameOps;
+    return d;
+}();
+
+// A frame view holds every bound output of one evaluation: an output that
+// did not rerun keeps its identity, one that did gets another, values read
+// as their evaluation left them, a failed evaluation gives an invalid frame
+// view, and a frame view outlives its evaluator and lets go on any thread.
+void
+TestFrameView()
+{
+    RigExecRigDescBuilder builder;
+    const RigExecNodeId a = builder.AddOp(Spread());
+    const RigExecNodeId b = builder.AddOp(Spread());
+    const RigExecInputId inA = builder.BindInput(a, SpreadIn());
+    const RigExecInputId inB = builder.BindInput(b, SpreadIn());
+    const RigExecOutputId aScalar = builder.BindOutput(a, SpreadScalar());
+    const RigExecOutputId aArray = builder.BindOutput(a, SpreadArray());
+    const RigExecOutputId aList = builder.BindOutput(a, SpreadList());
+    const RigExecOutputId bScalar = builder.BindOutput(b, SpreadScalar());
+    std::shared_ptr<const RigExecProgram> program = Compile(builder);
+    CHECK(program);
+    if (!program)
+        return;
+    auto evaluator = RigExecEvaluator::Create(program);
+    const auto frame = [&](float x) {
+        CHECK(evaluator->SetInput(inA, &x));
+        return evaluator->Evaluate();
+    };
+    const auto scalar = [](const RigExecFrameView &view,
+                           RigExecOutputId output) {
+        const RigExecValueView value = view.View(output);
+        const float *x = value.As<float>(fakeTypes::Float());
+        return x ? *x : -1.0f;
+    };
+    const float five = 5.0f;
+    CHECK(evaluator->SetInput(inB, &five));
+    CHECK(frame(1.0f));
+    RigExecFrameView first = evaluator->ViewFrame();
+    CHECK(first && first.Error().empty() && first.Generation() == 1 &&
+          first.OutputCount() == 4);
+
+    const RigExecValueView one = first.View(aScalar);
+    CHECK(RigExecValueBytes(one) == sizeof(float) &&
+          RigExecValueCount(one) == 1 && !RigExecValueElements(one));
+    const RigExecValueView array = first.View(aArray);
+    CHECK(RigExecValueCount(array) == 3 &&
+          RigExecValueBytes(array) == sizeof(FloatList) + 3 * sizeof(float));
+    const auto *elements =
+        static_cast<const float *>(RigExecValueElements(array));
+    CHECK(elements && elements[0] == 1.0f && elements[2] == 3.0f);
+    const RigExecValueView list = first.View(aList);
+    CHECK(RigExecValueCount(list) == 2 &&
+          RigExecValueBytes(list) == sizeof(Floats8) &&
+          !RigExecValueElements(list));
+    CHECK(RigExecValueBytes(RigExecValueView()) == 0 &&
+          RigExecValueCount(RigExecValueView()) == 0);
+    CHECK(!first.View(RigExecOutputId{9}) &&
+          first.Identity(RigExecOutputId{9}) == RigExecValueIdentity());
+
+    CHECK(frame(2.0f));
+    RigExecFrameView second = evaluator->ViewFrame();
+    CHECK(second.Generation() == 2);
+    CHECK(second.Identity(bScalar) == first.Identity(bScalar));
+    CHECK(second.Identity(aScalar) != first.Identity(aScalar));
+    CHECK(second.Identity(aArray).arena != first.Identity(aArray).arena);
+    CHECK(second.Identity(aArray).generation == 2);
+    CHECK(scalar(first, aScalar) == 1.0f && scalar(second, aScalar) == 2.0f);
+    CHECK(elements[0] == 1.0f && scalar(second, bScalar) == 5.0f);
+
+    auto state = evaluator->CreateRunState();
+    const RigExecFrameView fromState = state->ViewFrame();
+    CHECK(fromState && scalar(fromState, aScalar) == 2.0f &&
+          scalar(fromState, bScalar) == 5.0f);
+
+    CHECK(!frame(-1.0f));
+    std::string error;
+    RigExecFrameView failed = evaluator->ViewFrame(&error);
+    CHECK(!failed && failed.OutputCount() == 0 && !failed.View(bScalar) &&
+          Contains(failed.Error(), "no valid value") &&
+          Contains(failed.Error(), "negative spread") &&
+          error == failed.Error());
+    CHECK(scalar(first, aScalar) == 1.0f && scalar(second, aScalar) == 2.0f);
+
+    CHECK(frame(3.0f));
+    RigExecFrameView third = evaluator->ViewFrame();
+    RigExecFrameView copy = third;
+    evaluator.reset();
+    std::thread([held = std::move(third), &scalar, aScalar]() mutable {
+        CHECK(scalar(held, aScalar) == 3.0f);
+        held.Reset();
+        CHECK(!held && held.OutputCount() == 0);
+    }).join();
+    CHECK(scalar(copy, aScalar) == 3.0f && scalar(first, aScalar) == 1.0f);
+    first.Reset();
+    second.Reset();
+    copy.Reset();
+    CHECK(!first && first.OutputCount() == 0);
+}
+
 } // namespace
 
 int
@@ -3536,6 +3741,8 @@ main()
     init.opLibraries.push_back(&kFieldsLibrary);
     init.typeLibraries.push_back(&kRangeTypes);
     init.opLibraries.push_back(&kRangeOps);
+    init.typeLibraries.push_back(&kFrameTypes);
+    init.opLibraries.push_back(&kFrameOps);
     std::vector<std::string> errors;
     if (!RigExecRegistry::Initialize(init, &errors)) {
         for (const std::string &e : errors)
@@ -3579,6 +3786,7 @@ main()
     TestValidateAndErrors();
     TestValidateFailureInvalidatesOutputs();
     TestHostSchedule();
+    TestFrameView();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

@@ -100,6 +100,13 @@ RigExecRunState::ViewOutput(RigExecOutputId output, std::string *error) const
     return RigExecViewAccess::Output(_data->run, output, error);
 }
 
+RigExecFrameView
+RigExecRunState::ViewFrame(std::string *error) const
+{
+    _AssertOwner();
+    return RigExecViewAccess::Frame(_data->run, error);
+}
+
 std::unique_ptr<RigExecRunState>
 RigExecRunState::Clone() const
 {

@@ -173,6 +173,7 @@ add_library(rigExecOpCore SHARED
     libs/rigExec/internal/exec/addressWait.cpp
     libs/rigExec/internal/exec/cpuReferenceGpuDevice.cpp
     libs/rigExec/internal/exec/evaluator.cpp
+    libs/rigExec/internal/exec/frameView.cpp
     libs/rigExec/internal/exec/inputChannel.cpp
     libs/rigExec/internal/exec/run.cpp
     libs/rigExec/internal/exec/runState.cpp
