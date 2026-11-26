@@ -1,6 +1,8 @@
 #include "rigExecOps/deform/pointOps.h"
 
+#include "rigExecOps/authoring.h"
 #include "rigExecOps/opIo.h"
+#include "rigExecSchema/schemaNames.h"
 #include "rigExecMath/meshConnectivity.h"
 #include "rigExecMath/smoothKernel.h"
 #include "rigExecMath/meshBoundsKernel.h"
@@ -201,6 +203,24 @@ using rigExec::kRigExecPortOptional;
 using rigExec::kRigExecPortOutput;
 constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
 
+const rigExec::RigExecSchemaInfo kSmoothSchema{
+    rigExec::SchemaTypeName::RigExecSmoothMover,
+    R"(Moves exactly one exact native UsdGeomPointBased points property through
+one iteration of uniform-weight Laplacian smoothing with fixed edge
+adjacency taken from the destination's standard topology. The common
+MoverAPI envelope blends the full Laplacian step over the incoming
+points; an authored inputs:strength is a compile error.)",
+    authoring::kTyped, rigExec::RigExecSchemaMode::Generated};
+
+const rigExec::RigExecSchemaInfo kVolumeSchema{
+    rigExec::SchemaTypeName::RigExecVolumeCorrectMover,
+    R"(Moves exactly one exact native UsdGeomPointBased points property by
+uniform centroid scaling toward the axis-aligned bound volume of the
+target's authored base points. The common MoverAPI envelope blends full
+bound-volume restoration over the incoming points; an authored
+inputs:strength is a compile error.)",
+    authoring::kTyped, rigExec::RigExecSchemaMode::Generated};
+
 const rigExec::RigExecPortDesc kSmoothPorts[] = {
     {&SmoothPoints(), &rigExecStd::Vec3fArray(),
      kRigExecPortInput | rigExec::kRigExecPortNeighbourhood, "points"},
@@ -234,6 +254,7 @@ const rigExec::RigExecOpDesc kSmoothDesc = [] {
                   rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged |
                       rigExec::kRigExecOpGate);
     d.validate = &SmoothValidate;
+    d.schema = &kSmoothSchema;
     d.range.prepare = &SmoothPrepare;
     d.range.run = &SmoothRange;
     d.range.reads = &SmoothReads;
@@ -246,6 +267,7 @@ const rigExec::RigExecOpDesc kVolumeDesc = [] {
         PointDesc("VolumeCorrect", kVolumePorts, std::size(kVolumePorts),
                   &RunVolumeCorrect, rigExec::kRigExecOpSeparateBlend);
     d.validate = &CheckVolumeCorrect;
+    d.schema = &kVolumeSchema;
     return d;
 }();
 

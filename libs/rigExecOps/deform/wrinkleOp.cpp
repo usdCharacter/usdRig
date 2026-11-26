@@ -1,8 +1,10 @@
 #include "rigExecOps/deform/wrinkleOp.h"
 
 #include "rigExecMath/wrinkleKernel.h"
+#include "rigExecOps/authoring.h"
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
+#include "rigExecSchema/schemaNames.h"
 
 #include <cstdint>
 #include <iterator>
@@ -162,22 +164,132 @@ Values(const void *payload, rigExec::RigExecFieldValues &out)
     SetList(out, kPinPointCount, s.pinPoints);
 }
 
+namespace names = rigExec::SchemaAttrText;
+namespace values = rigExec::SchemaValueText;
+namespace types = rigExec::SchemaTypeName;
+using authoring::Authored;
+
+const rigExecStd::RigExecArray<rigExecStd::Vec3f> kNoPoints;
+const rigExecStd::RigExecArray<int32_t> kNoInts;
+const int32_t kDefaultIterations = 80;
+const uint32_t kClothTopology =
+    uint32_t(rigExec::RigExecWrinkleTopology::Cloth);
+const int32_t kDefaultNeighborDistance = 2;
+const float kOne = 1.0f;
+const float kZero = 0.0f;
+const float kDefaultBendStiffness = 0.1f;
+const float kDefaultMaxDisplacement = 0.2f;
+const bool kTrue = true;
+const int32_t kNoIterations = 0;
+const char *const kTopologies[] = {values::cloth, values::surfaceStruts};
+
+const rigExec::RigExecPropertyInfo kRestPoints = authoring::WithRole(
+    authoring::Uniform(
+        names::inputsRestPoints, &kNoPoints,
+        R"(Static, unconnected reference points in target mesh local space, with
+the same ordering and count as the target. Empty uses the target's
+authored base points at the evaluation time, before its mover chain.)"),
+    rigExec::RigExecPropertyRole::Point);
+const rigExec::RigExecPropertyInfo kIterationsProperty = authoring::Property(
+    names::inputsIterations, &kDefaultIterations,
+    R"(Constraint solver iteration count in [0,1000]. Zero passes through.)");
+const rigExec::RigExecPropertyInfo kTopologyProperty = authoring::Tokens(
+    names::inputsTopology, &kClothTopology, kTopologies,
+    R"(Static, unconnected constraint topology. Both modes use triangulated
+surface edges. Cloth adds weak across-triangle bend links; surfaceStruts
+replaces these with weak links at exactly neighborDistance hops through
+triangulated edge adjacency.)");
+const rigExec::RigExecPropertyInfo kNeighborDistanceProperty =
+    authoring::Property(
+        names::inputsNeighborDistance, &kDefaultNeighborDistance,
+        R"(Exact triangulated-edge graph distance for surfaceStruts, in [1,8].)");
+const rigExec::RigExecPropertyInfo kRestLengthScaleProperty =
+    authoring::Property(
+        names::inputsRestLengthScale, &kOne,
+        R"(Finite positive scale on reference constraint lengths.)");
+const rigExec::RigExecPropertyInfo kStretchStiffnessProperty =
+    authoring::Property(
+        names::inputsStretchStiffness, &kOne,
+        R"(Correction strength for structural links stretched in the incoming pose,
+finite and in [0,1].)");
+const rigExec::RigExecPropertyInfo kCompressionStiffnessProperty =
+    authoring::Property(
+        names::inputsCompressionStiffness, &kOne,
+        R"(Correction strength for structural links compressed in the incoming
+pose, finite and in [0,1].)");
+const rigExec::RigExecPropertyInfo kBendStiffnessProperty = authoring::Property(
+    names::inputsBendStiffness, &kDefaultBendStiffness,
+    R"(Bend-link and surface-strut correction strength, finite and in [0,1].)");
+const rigExec::RigExecPropertyInfo kMaxDisplacementProperty = authoring::Property(
+    names::inputsMaxDisplacement, &kDefaultMaxDisplacement,
+    R"(Finite nonnegative attachment radius around each incoming point in mesh
+local units. The final displacement remains inside this radius,
+including after wrinkleScale and displacement smoothing.)");
+const rigExec::RigExecPropertyInfo kPinBordersProperty = authoring::Property(
+    names::inputsPinBorders, &kTrue,
+    R"(Keep vertices incident to a boundary edge at their incoming position.)");
+const rigExec::RigExecPropertyInfo kPinPointsProperty = authoring::Uniform(
+    names::inputsPinPoints, &kNoInts,
+    R"(Static, unconnected, unique nonnegative indices of additional pinned
+vertices.)");
+const rigExec::RigExecPropertyInfo kTangentPlaneCollisionsProperty =
+    authoring::Property(
+        names::inputsTangentPlaneCollisions, &kTrue,
+        R"(Prevent inward movement through each incoming vertex's local tangent
+plane, offset inward by tangentPlaneInset. This is a local surface
+approximation; there is no external or self-collision solve.)");
+const rigExec::RigExecPropertyInfo kTangentPlaneInsetProperty =
+    authoring::Property(
+        names::inputsTangentPlaneInset, &kZero,
+        R"(Finite nonnegative inward tangent-plane offset in mesh local units.)");
+const rigExec::RigExecPropertyInfo kWrinkleScaleProperty = authoring::Property(
+    names::inputsWrinkleScale, &kOne,
+    R"(Finite nonnegative scale on solved displacement, still bounded by
+maxDisplacement.)");
+const rigExec::RigExecPropertyInfo kSmoothingIterationsProperty =
+    authoring::Property(
+        names::inputsSmoothingIterations, &kNoIterations,
+        R"(Displacement-field averaging passes in [0,100]; not rest-detail
+transport.)");
+
+const rigExec::RigExecSchemaInfo kWrinkleSchema{
+    types::RigExecWrinkleMover,
+    R"(Adds automatic quasistatic wrinkles to one native mesh points property.
+Reference lengths and a deterministic fold guide define target edge
+vectors. Iterative projection adjusts the incoming shape in three
+dimensions, subject to attachment bounds, pins, and optional local
+tangent-plane collisions. The guide follows smooth compression without
+previous-frame state, so playback and seeking agree. The common mover
+envelope blends the result once.)",
+    authoring::kTyped, rigExec::RigExecSchemaMode::Generated};
+
 const rigExec::RigExecFieldDesc kFields[] = {
-    Value("iterations", rigExecStd::IntType()),
-    Enum("topology", rigExec::RigExecWrinkleTopology::SurfaceStruts),
-    Value("neighborDistance", rigExecStd::IntType()),
-    Value("restLengthScale", rigExecStd::FloatType()),
-    Value("stretchStiffness", rigExecStd::FloatType()),
-    Value("compressionStiffness", rigExecStd::FloatType()),
-    Value("bendStiffness", rigExecStd::FloatType()),
-    Value("maxDisplacement", rigExecStd::FloatType()),
-    Flag("pinBorders"),
-    Flag("tangentPlaneCollisions"),
-    Value("tangentPlaneInset", rigExecStd::FloatType()),
-    Value("wrinkleScale", rigExecStd::FloatType()),
-    Value("smoothingIterations", rigExecStd::IntType()),
+    Authored(Value("iterations", rigExecStd::IntType()), kIterationsProperty),
+    Authored(Enum("topology", rigExec::RigExecWrinkleTopology::SurfaceStruts),
+             kTopologyProperty),
+    Authored(Value("neighborDistance", rigExecStd::IntType()),
+             kNeighborDistanceProperty),
+    Authored(Value("restLengthScale", rigExecStd::FloatType()),
+             kRestLengthScaleProperty),
+    Authored(Value("stretchStiffness", rigExecStd::FloatType()),
+             kStretchStiffnessProperty),
+    Authored(Value("compressionStiffness", rigExecStd::FloatType()),
+             kCompressionStiffnessProperty),
+    Authored(Value("bendStiffness", rigExecStd::FloatType()),
+             kBendStiffnessProperty),
+    Authored(Value("maxDisplacement", rigExecStd::FloatType()),
+             kMaxDisplacementProperty),
+    Authored(Flag("pinBorders"), kPinBordersProperty),
+    Authored(Flag("tangentPlaneCollisions"), kTangentPlaneCollisionsProperty),
+    Authored(Value("tangentPlaneInset", rigExecStd::FloatType()),
+             kTangentPlaneInsetProperty),
+    Authored(Value("wrinkleScale", rigExecStd::FloatType()),
+             kWrinkleScaleProperty),
+    Authored(Value("smoothingIterations", rigExecStd::IntType()),
+             kSmoothingIterationsProperty),
     Count("pinPointCount"),
-    Items("pinPoints", rigExecStd::IntType(), kPinPointCount),
+    Authored(Items("pinPoints", rigExecStd::IntType(), kPinPointCount),
+             kPinPointsProperty),
 };
 
 } // namespace
@@ -190,8 +302,9 @@ using rigExec::kRigExecPortOutput;
 
 const rigExec::RigExecPortDesc kPorts[] = {
     {&WrinklePoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "points"},
-    {&WrinkleRest(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
-     "restPoints"},
+    Authored({&WrinkleRest(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+              "restPoints"},
+             kRestPoints),
     {&WrinkleCounts(), &rigExecStd::IntArray(), kRigExecPortInput,
      "faceVertexCounts"},
     {&WrinkleIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
@@ -206,6 +319,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "Wrinkle";
+    d.schema = &kWrinkleSchema;
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.runBatch = &Run;

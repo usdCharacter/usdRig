@@ -1015,6 +1015,18 @@ inline constexpr const char *const path = "path";
 inline constexpr const char *const planar = "planar";
 inline constexpr const char *const quantize = "quantize";
 inline constexpr const char *const remap = "remap";
+inline constexpr const char *const cloth = "cloth";
+inline constexpr const char *const corner = "corner";
+inline constexpr const char *const dualQuaternion = "dualQuaternion";
+inline constexpr const char *const geometric = "geometric";
+inline constexpr const char *const lengthWeighted = "lengthWeighted";
+inline constexpr const char *const limit = "limit";
+inline constexpr const char *const polygon = "polygon";
+inline constexpr const char *const rest = "rest";
+inline constexpr const char *const simple = "simple";
+inline constexpr const char *const smooth = "smooth";
+inline constexpr const char *const surfaceStruts = "surfaceStruts";
+inline constexpr const char *const vertex = "vertex";
 } // namespace SchemaValueText
 
 } // namespace rigExec

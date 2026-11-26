@@ -1,8 +1,10 @@
 #include "rigExecOps/deform/deltaMushOp.h"
 
+#include "rigExecOps/authoring.h"
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecMath/deltaMushKernel.h"
+#include "rigExecSchema/schemaNames.h"
 
 #include <algorithm>
 #include <array>
@@ -227,19 +229,101 @@ Values(const void *payload, rigExec::RigExecFieldValues &out)
     SetFlag(out, kOnlySmooth, p.settings.onlySmooth);
 }
 
+namespace names = rigExec::SchemaAttrText;
+namespace values = rigExec::SchemaValueText;
+namespace types = rigExec::SchemaTypeName;
+using authoring::Authored;
+
+const int32_t kDefaultIterations = 10;
+const double kHalf = 0.5;
+const double kZero = 0.0;
+const double kOne = 1.0;
+const bool kTrue = true;
+const bool kFalse = false;
+const uint32_t kRestSmoothing =
+    uint32_t(rigExec::RigExecDeltaMushSmoothing::Rest);
+const uint32_t kVertexTransport =
+    uint32_t(rigExec::RigExecDeltaMushFrameTransport::Vertex);
+const rigExecStd::RigExecArray<float> kNoFloats;
+const rigExecStd::RigExecArray<int32_t> kNoInts;
+const rigExecStd::Mat4d kIdentity(1.0);
+const char *const kSmoothings[] = {values::rest, values::simple,
+                                   values::lengthWeighted};
+const char *const kTransports[] = {values::vertex, values::corner};
+
+const rigExec::RigExecPropertyInfo kRestPoints =
+    authoring::WithRole(authoring::Property(names::inputsRestPoints, nullptr),
+                        rigExec::RigExecPropertyRole::Point);
+const rigExec::RigExecPropertyInfo kIterationsProperty =
+    authoring::Property(names::inputsIterations, &kDefaultIterations);
+const rigExec::RigExecPropertyInfo kStepProperty = authoring::WithType(
+    authoring::Property(names::inputsStep, &kHalf), "float");
+const rigExec::RigExecPropertyInfo kPinBordersProperty =
+    authoring::Property(names::inputsPinBorders, &kTrue);
+const rigExec::RigExecPropertyInfo kDistanceWeightProperty =
+    authoring::WithType(
+        authoring::Property(names::inputsDistanceWeight, &kZero), "float");
+const rigExec::RigExecPropertyInfo kDisplacementProperty = authoring::WithType(
+    authoring::Property(names::inputsDisplacement, &kOne), "float");
+const rigExec::RigExecPropertyInfo kSmoothingProperty = authoring::Tokens(
+    names::inputsSmoothing, &kRestSmoothing, kSmoothings,
+    R"(Rest uses fixed reference edge weights, each edge's reference length to
+the power -distanceWeight (uniform at the default 0), and needs step and
+displacement in [0,1]. Simple averages incident edge displacements.
+LengthWeighted recomputes current edge lengths per iteration and divides
+by length sum times edge valence, using twice the step. The latter modes
+permit any finite step and detail scale.)");
+const rigExec::RigExecPropertyInfo kFrameTransportProperty = authoring::Tokens(
+    names::inputsFrameTransport, &kVertexTransport, kTransports,
+    R"(Vertex uses an averaged surface normal and reference edge. Corner
+transports detail in each directed face-corner frame and combines posed
+corner-angle weights. Degenerate corners contribute zero weight.)");
+const rigExec::RigExecPropertyInfo kSmoothWeightsProperty = authoring::Property(
+    names::inputsSmoothWeights, &kNoFloats,
+    R"(Empty means one at every vertex; otherwise one finite value in [0,1] per
+vertex, multiplying the smoothing step in both reference and incoming
+iterations. Distinct from the common final envelope.)");
+const rigExec::RigExecPropertyInfo kEdgesProperty = authoring::Uniform(
+    names::inputsEdges, &kNoInts,
+    R"(Optional flattened unique undirected edge pairs, including all polygon
+edges and any loose edges. Empty derives polygon edges. Border pinning
+uses polygon incidence.)");
+const rigExec::RigExecPropertyInfo kOnlySmoothProperty = authoring::Property(
+    names::inputsOnlySmooth, &kFalse,
+    R"(Return the smoothed incoming shape without restoring detail.)");
+const rigExec::RigExecPropertyInfo kComputationToTarget = authoring::Property(
+    names::inputsComputationToTarget, &kIdentity,
+    R"(Nonsingular affine row-vector map from the reference/smoothing
+coordinate space into the target points space. Reference points remain
+in computation space; incoming points transform back before smoothing.
+Explicit restPoints are required for a nonidentity map or frame
+provider, except in onlySmooth mode.)");
+
+const rigExec::RigExecSchemaInfo kMushSchema{
+    types::RigExecDeltaMushMover, nullptr, authoring::kTyped,
+    rigExec::RigExecSchemaMode::HandAuthored};
+
 const rigExec::RigExecFieldDesc kFields[] = {
-    Value("iterations", rigExecStd::IntType()),
-    Value("step", rigExecStd::DoubleType()),
-    Flag("pinBorders"),
-    Value("distanceWeight", rigExecStd::DoubleType()),
-    Value("displacement", rigExecStd::DoubleType()),
-    Enum("smoothing", rigExec::RigExecDeltaMushSmoothing::LengthWeighted),
-    Enum("frameTransport", rigExec::RigExecDeltaMushFrameTransport::Corner),
+    Authored(Value("iterations", rigExecStd::IntType()), kIterationsProperty),
+    Authored(Value("step", rigExecStd::DoubleType()), kStepProperty),
+    Authored(Flag("pinBorders"), kPinBordersProperty),
+    Authored(Value("distanceWeight", rigExecStd::DoubleType()),
+             kDistanceWeightProperty),
+    Authored(Value("displacement", rigExecStd::DoubleType()),
+             kDisplacementProperty),
+    Authored(
+        Enum("smoothing", rigExec::RigExecDeltaMushSmoothing::LengthWeighted),
+        kSmoothingProperty),
+    Authored(
+        Enum("frameTransport", rigExec::RigExecDeltaMushFrameTransport::Corner),
+        kFrameTransportProperty),
     Count("smoothWeightCount"),
-    Items("smoothWeights", rigExecStd::FloatType(), kSmoothWeightCount),
+    Authored(
+        Items("smoothWeights", rigExecStd::FloatType(), kSmoothWeightCount),
+        kSmoothWeightsProperty),
     Count("edgeCount"),
-    Items("edges", rigExecStd::IntType(), kEdgeCount),
-    Flag("onlySmooth"),
+    Authored(Items("edges", rigExecStd::IntType(), kEdgeCount), kEdgesProperty),
+    Authored(Flag("onlySmooth"), kOnlySmoothProperty),
 };
 
 } // namespace
@@ -254,14 +338,16 @@ constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
 const rigExec::RigExecPortDesc kPorts[] = {
     {&DeltaMushPoints(), &rigExecStd::Vec3fArray(),
      kRigExecPortInput | rigExec::kRigExecPortNeighbourhood, "points"},
-    {&DeltaMushRest(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
-     "restPoints"},
+    Authored({&DeltaMushRest(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+              "restPoints"},
+             kRestPoints),
     {&DeltaMushCounts(), &rigExecStd::IntArray(), kRigExecPortInput,
      "faceVertexCounts"},
     {&DeltaMushIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
      "faceVertexIndices"},
-    {&DeltaMushComputationToTarget(), &rigExecStd::Mat4dType(), kOptional,
-     "computationToTarget"},
+    Authored({&DeltaMushComputationToTarget(), &rigExecStd::Mat4dType(),
+              kOptional, "computationToTarget"},
+             kComputationToTarget),
     {&DeltaMushEnvelope(), &rigExecStd::FloatArray(),
      kOptional | rigExec::kRigExecPortPointwise, "envelope"},
     {&DeltaMushOut(), &rigExecStd::Vec3fArray(),
@@ -273,6 +359,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "DeltaMush";
+    d.schema = &kMushSchema;
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.validate = &Validate;

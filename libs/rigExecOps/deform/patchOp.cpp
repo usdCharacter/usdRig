@@ -1,8 +1,10 @@
 #include "rigExecOps/deform/patchOp.h"
 
 #include "rigExecMath/patchKernel.h"
+#include "rigExecOps/authoring.h"
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
+#include "rigExecSchema/schemaNames.h"
 
 #include <cmath>
 #include <cstdint>
@@ -213,22 +215,93 @@ using rigExec::kRigExecPortOptional;
 using rigExec::kRigExecPortOutput;
 constexpr uint32_t kChecked = kRigExecPortInput | rigExec::kRigExecPortChecked;
 
+namespace names = rigExec::SchemaAttrText;
+namespace values = rigExec::SchemaValueText;
+namespace types = rigExec::SchemaTypeName;
+using authoring::Authored;
+
+const rigExecStd::RigExecArray<double> kNoWeights;
+const rigExecStd::RigExecArray<int32_t> kNoPairs;
+
+const rigExec::RigExecPropertyInfo kPatchProperty = authoring::Relationship(
+    names::rigExecPatch,
+    R"(Native UsdGeomNurbsPatch prim supplying the NURBS surface.)");
+const rigExec::RigExecPropertyInfo kUvPoints = authoring::Relationship(
+    names::rigExecUvPoints,
+    R"(Native UsdGeomPointBased prim or points property whose XY coordinates
+supply normalized (u, v) parameters on the patch: the neutral the UV
+shapes are measured from. It holds one point per target point, or a
+single point every target point shares. A parameter is clamped to [0, 1]
+on an open patch axis and wrapped on a closed or periodic one.)");
+const rigExec::RigExecPropertyInfo kUvShapes = authoring::Relationship(
+    names::rigExecUvShapes,
+    R"(Ordered UV shapes: native UsdGeomPointBased prims or points properties,
+each with as many points as rigExec:uvPoints. Shapes add to the neutral,
+uv = neutral + sum_k w_k (shape_k - neutral), with w_k the k-th entry of
+inputs:uvWeights.)",
+    rigExec::RigExecPropertyBinding::ConnectionList);
+const rigExec::RigExecPropertyInfo kUvWeights = authoring::WithType(
+    authoring::Property(
+        names::inputsUvWeights, &kNoWeights,
+        R"(One weight per rigExec:uvShapes target, by index. Connect it to one
+float or double source per shape, in shape order -- a control's avars,
+typically -- and connection k is the weight of shape k. With no
+connection the authored array is the weights; an empty array leaves
+every shape at zero.)"),
+    "float[]");
+const rigExec::RigExecPropertyInfo kContactLower = authoring::Uniform(
+    names::rigExecUvContactLower, &kNoPairs,
+    R"(UV point indices that never stand above their partners in
+rigExec:uvContactUpper, by index, after the UV shapes mix. A pair that
+would cross meets at the midpoint of its two v values; u is left alone.
+Pair one column of a lower curve with the same column of an upper curve,
+sharing u in the neutral and in every shape, and the two curves touch
+but never cross. Each point belongs to at most one pair.)");
+const rigExec::RigExecPropertyInfo kContactUpper = authoring::Uniform(
+    names::rigExecUvContactUpper, &kNoPairs,
+    R"(The partner of each rigExec:uvContactLower index: the UV point that
+point never rises above. As long as rigExec:uvContactLower.)");
+
+const rigExec::RigExecSchemaInfo kPatchSchema{
+    types::RigExecPatchMover,
+    R"(Evaluates a UsdGeomNurbsPatch at normalized UV parameters read from a
+point-based UV input prim and writes an exact native UsdGeomPointBased
+points property. rigExec:patch, rigExec:uvPoints and rigExec:uvShapes
+honor rigExecReadPhase metadata, so controllers can deform the patch or
+drive the UV input points through earlier movers. Weighted UV shapes mix
+into the UV points before the patch is evaluated, so avars such as
+smile, frown or mouthOpen can slide the attachment across the surface
+together. Contact pairs then keep paired points from crossing in v, so
+two curves on one patch -- upper and lower lips, upper and lower lids --
+press together rather than pass through each other under any mix of
+shapes.)",
+    authoring::kTyped, rigExec::RigExecSchemaMode::Generated};
+
 const rigExec::RigExecPortDesc kPorts[] = {
     {&PatchPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "points"},
-    {&PatchControlPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
-     "controlPoints"},
+    Authored({&PatchControlPoints(), &rigExecStd::Vec3fArray(),
+              kRigExecPortInput, "controlPoints"},
+             kPatchProperty),
     {&PatchPointWeights(), &rigExecStd::DoubleArray(), kChecked,
      "pointWeights"},
     {&PatchUKnots(), &rigExecStd::DoubleArray(), kChecked, "uKnots"},
     {&PatchVKnots(), &rigExecStd::DoubleArray(), kChecked, "vKnots"},
-    {&PatchUvPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
-     "uvPoints"},
-    {&PatchUvShapes(), &rigExecStd::Vec3fArray(),
-     kRigExecPortInput | kRigExecPortArray | kRigExecPortOptional, "uvShapes"},
-    {&PatchUvWeights(), &rigExecStd::DoubleArray(), kRigExecPortInput,
-     "uvWeights"},
-    {&PatchContactLower(), &rigExecStd::IntArray(), kChecked, "uvContactLower"},
-    {&PatchContactUpper(), &rigExecStd::IntArray(), kChecked, "uvContactUpper"},
+    Authored({&PatchUvPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+              "uvPoints"},
+             kUvPoints),
+    Authored({&PatchUvShapes(), &rigExecStd::Vec3fArray(),
+              kRigExecPortInput | kRigExecPortArray | kRigExecPortOptional,
+              "uvShapes"},
+             kUvShapes),
+    Authored({&PatchUvWeights(), &rigExecStd::DoubleArray(), kRigExecPortInput,
+              "uvWeights"},
+             kUvWeights),
+    Authored({&PatchContactLower(), &rigExecStd::IntArray(), kChecked,
+              "uvContactLower"},
+             kContactLower),
+    Authored({&PatchContactUpper(), &rigExecStd::IntArray(), kChecked,
+              "uvContactUpper"},
+             kContactUpper),
     {&PatchEnvelope(), &rigExecStd::FloatArray(),
      kRigExecPortInput | kRigExecPortOptional, "envelope"},
     {&PatchOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
@@ -239,6 +312,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "Patch";
+    d.schema = &kPatchSchema;
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.runBatch = &Run;

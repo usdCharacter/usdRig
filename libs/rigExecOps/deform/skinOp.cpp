@@ -1,10 +1,12 @@
 #include "rigExecOps/deform/skinOp.h"
 
 #include "rigExecMath/skinKernel.h"
+#include "rigExecOps/authoring.h"
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecMath/dualQuatMath.h"
+#include "rigExecSchema/schemaNames.h"
 
 #include <cmath>
 #include <cstdint>
@@ -260,9 +262,65 @@ Values(const void *payload, rigExec::RigExecFieldValues &out)
     out.Set(kElementSize, int32_t(p.elementSize));
 }
 
+namespace names = rigExec::SchemaAttrText;
+namespace values = rigExec::SchemaValueText;
+namespace types = rigExec::SchemaTypeName;
+using authoring::Authored;
+
+const uint32_t kClassicLinear = uint32_t(SkinMethod::ClassicLinear);
+const int32_t kOneInfluence = 1;
+const rigExecStd::RigExecArray<int32_t> kNoInts;
+const rigExecStd::RigExecArray<float> kNoFloats;
+const char *const kMethods[] = {values::classicLinear, values::dualQuaternion};
+
+const rigExec::RigExecPropertyInfo kInfluences = authoring::Relationship(
+    names::rigExecInfluences,
+    R"(Ordered GfMatrix4d providers (computeMatrix), one per influence.
+rigExec:jointIndices index this list. Named influences, not joints:
+rigExec:joints is a solver's output claim, and this mover only reads.)");
+const rigExec::RigExecPropertyInfo kJointIndices = authoring::Property(
+    names::rigExecJointIndices, &kNoInts,
+    R"(Per-point influence indices into rigExec:influences, rigExec:elementSize
+entries per point in point order (UsdSkel's primvars:skel:jointIndices
+layout).)");
+const rigExec::RigExecPropertyInfo kJointWeights = authoring::Property(
+    names::rigExecJointWeights, &kNoFloats,
+    R"(Per-point influence weights parallel to rigExec:jointIndices. Finite and
+non-negative; not renormalized.)");
+const rigExec::RigExecPropertyInfo kElementSizeProperty = authoring::Uniform(
+    names::rigExecElementSize, &kOneInfluence, R"(Influences per point.)");
+const rigExec::RigExecPropertyInfo kSkinningMethod =
+    authoring::Tokens(names::rigExecSkinningMethod, &kClassicLinear, kMethods);
+
+const rigExec::RigExecSchemaInfo kSkinSchema{
+    types::RigExecSkinMover,
+    R"(Multi-influence skinning of an exact native point3f[] points property in
+ONE pass: every influence's matrix is gathered per point and blended by
+that point's authored weights, then the result is mixed with the common
+MoverAPI envelope.
+
+RigExecMatrixMover applies one influence per mover, sequentially, each
+from the PRECEDING revision. That is exact for a point with a single
+influence and diverges from a skinCluster everywhere weights blend, so a
+skinned character needs this mover: the same jointIndices / jointWeights
+layout UsdSkel uses, with the influence list in rigExec:influences
+standing in for UsdSkel's joint order.
+
+classicLinear: p' = p + sum_i w_i (T_i p - p) = (1 - sum_i w_i) p +
+sum_i w_i T_i p. With weights that sum to one this is exactly linear
+blend skinning; a shortfall keeps the rest point in proportion, so a
+partially weighted point stays put rather than collapsing toward the
+origin. dualQuaternion blends the influences' rigid motions as dual
+quaternions (shortest arc, one normalisation, so a twisted joint keeps
+its volume instead of candy-wrapping) and their scale and shear linearly
+in each joint's pre-rotation frame, so squash-and-stretch survives; the
+same weight shortfall enters that blend as an identity influence, so a
+partially weighted point is likewise held toward rest.)",
+    authoring::kTyped, rigExec::RigExecSchemaMode::Generated};
+
 const rigExec::RigExecFieldDesc kFields[] = {
-    Enum("method", SkinMethod::DualQuaternion),
-    Value("elementSize", rigExecStd::IntType()),
+    Authored(Enum("method", SkinMethod::DualQuaternion), kSkinningMethod),
+    Authored(Value("elementSize", rigExecStd::IntType()), kElementSizeProperty),
 };
 
 } // namespace
@@ -277,12 +335,15 @@ using rigExec::kRigExecPortPointwise;
 const rigExec::RigExecPortDesc kPorts[] = {
     {&SkinPoints(), &rigExecStd::Vec3fArray(),
      kRigExecPortInput | kRigExecPortPointwise, "points"},
-    {&SkinTransforms(), &rigExecStd::Mat4dArray(), kRigExecPortInput,
-     "transforms"},
-    {&SkinIndices(), &rigExecStd::IntArray(),
-     kRigExecPortInput | rigExec::kRigExecPortChecked, "indices"},
-    {&SkinWeights(), &rigExecStd::FloatArray(),
-     kRigExecPortInput | rigExec::kRigExecPortChecked, "weights"},
+    Authored({&SkinTransforms(), &rigExecStd::Mat4dArray(), kRigExecPortInput,
+              "transforms"},
+             kInfluences),
+    Authored({&SkinIndices(), &rigExecStd::IntArray(),
+              kRigExecPortInput | rigExec::kRigExecPortChecked, "indices"},
+             kJointIndices),
+    Authored({&SkinWeights(), &rigExecStd::FloatArray(),
+              kRigExecPortInput | rigExec::kRigExecPortChecked, "weights"},
+             kJointWeights),
     {&SkinEnvelope(), &rigExecStd::FloatArray(),
      kRigExecPortInput | kRigExecPortOptional | kRigExecPortPointwise,
      "envelope"},
@@ -305,6 +366,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "Skin";
+    d.schema = &kSkinSchema;
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.validate = &Validate;

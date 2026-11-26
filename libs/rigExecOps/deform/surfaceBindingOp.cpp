@@ -1,8 +1,10 @@
 #include "rigExecOps/deform/surfaceBindingOp.h"
 
 #include "rigExecMath/surfaceBindingKernel.h"
+#include "rigExecOps/authoring.h"
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
+#include "rigExecSchema/schemaNames.h"
 
 #include <cstdint>
 #include <iterator>
@@ -155,9 +157,91 @@ Values(const void *payload, rigExec::RigExecFieldValues &out)
     SetFlag(out, kFramed, p.framed);
 }
 
+namespace names = rigExec::SchemaAttrText;
+namespace values = rigExec::SchemaValueText;
+namespace types = rigExec::SchemaTypeName;
+using authoring::Authored;
+
+const rigExecStd::RigExecArray<int32_t> kNoInts;
+const rigExecStd::RigExecArray<int32_t> kFirstOffset(1);
+const rigExecStd::RigExecArray<float> kNoFloats;
+const rigExecStd::RigExecArray<rigExecStd::Vec3f> kNoOffsets;
+const float kOne = 1.0f;
+const rigExecStd::Mat4d kIdentity(1.0);
+const bool kFalse = false;
+const char *const kSurfaceModes[] = {values::polygon, values::limit};
+const char *const kNormalModes[] = {values::geometric, values::smooth};
+
+const rigExec::RigExecPropertyInfo kVertices =
+    authoring::Property(names::rigExecVertices, &kNoInts);
+const rigExec::RigExecPropertyInfo kVertexOffsets =
+    authoring::Property(names::rigExecVertexOffsets, &kFirstOffset);
+const rigExec::RigExecPropertyInfo kPolygonOffsets =
+    authoring::Property(names::rigExecPolygonOffsets, &kFirstOffset);
+const rigExec::RigExecPropertyInfo kPointIndices =
+    authoring::Property(names::rigExecPointIndices, &kNoInts);
+const rigExec::RigExecPropertyInfo kLimitOffsets =
+    authoring::Property(names::rigExecLimitOffsets, &kFirstOffset);
+const rigExec::RigExecPropertyInfo kLimitIndices =
+    authoring::Property(names::rigExecLimitIndices, &kNoInts);
+const rigExec::RigExecPropertyInfo kBarycentricWeights =
+    authoring::Property(names::rigExecBarycentricWeights, &kNoFloats);
+const rigExec::RigExecPropertyInfo kBindingWeights =
+    authoring::Property(names::rigExecBindingWeights, &kNoFloats);
+const rigExec::RigExecPropertyInfo kMask =
+    authoring::Property(names::rigExecMask, &kNoFloats);
+const rigExec::RigExecPropertyInfo kDeltaMultipliers = authoring::Property(
+    names::rigExecDeltaMultipliers, &kNoFloats,
+    R"(Optional finite signed offset multipliers indexed by target vertex;
+empty supplies one at every vertex.)");
+const rigExec::RigExecPropertyInfo kLimitWeights =
+    authoring::Property(names::rigExecLimitWeights, &kNoFloats);
+const rigExec::RigExecPropertyInfo kLimitDuWeights =
+    authoring::Property(names::rigExecLimitDuWeights, &kNoFloats);
+const rigExec::RigExecPropertyInfo kLimitDvWeights =
+    authoring::Property(names::rigExecLimitDvWeights, &kNoFloats);
+const rigExec::RigExecPropertyInfo kOffsets =
+    authoring::WithRole(authoring::Property(names::rigExecOffsets, &kNoOffsets),
+                        rigExec::RigExecPropertyRole::Vector);
+const rigExec::RigExecPropertyInfo kStrength =
+    authoring::Property(names::rigExecStrength, &kOne);
+const rigExec::RigExecPropertyInfo kDeltaMultiplier = authoring::Property(
+    names::rigExecDeltaMultiplier, &kOne,
+    R"(Finite signed scale applied only to transported binding offsets; zero
+attaches to the surface and one preserves the offsets.)");
+const rigExec::RigExecPropertyInfo kSurfaceRestMatrix =
+    authoring::Property(names::rigExecSurfaceRestMatrix, &kIdentity);
+const rigExec::RigExecPropertyInfo kTargetRestMatrix =
+    authoring::Property(names::rigExecTargetRestMatrix, &kIdentity);
+const rigExec::RigExecPropertyInfo kSurfaceToBinding =
+    authoring::Property(names::rigExecSurfaceToBinding, &kIdentity);
+const rigExec::RigExecPropertyInfo kFrames = authoring::Relationship(
+    names::rigExecFrames,
+    R"(Optional surface and target rest-to-pose providers: none, or exactly
+these two in that order, composed after rigExec:surfaceRestMatrix and
+rigExec:targetRestMatrix.)");
+const rigExec::RigExecPropertyInfo kSurfaceMode =
+    authoring::Tokens(names::rigExecSurfaceMode, &kFalse, kSurfaceModes);
+const rigExec::RigExecPropertyInfo kNormalMode =
+    authoring::Tokens(names::rigExecNormalMode, &kFalse, kNormalModes);
+
+const rigExec::RigExecSchemaInfo kBindingSchema{
+    types::RigExecSurfaceBindingMover,
+    R"(Persistent generalized barycentric attachments. Each affected vertex
+blends one or more bindings. Offsets are vectors in the current
+surface's tangent, bitangent, normal frame. Polygon bindings and
+optional limit position/derivative stencils are immutable authored
+attributes; evaluation rebinds nothing and reads the driver points at
+the rigExec:surface read phase. Of the inherited RigExecSurfaceMover
+settings it reads rigExec:surface, rigExec:mask and rigExec:frames;
+rigExec:mode, rigExec:snapMode, rigExec:offset, rigExec:triangles,
+rigExec:pointSpace, rigExec:surfaceMatrix and rigExec:targetMatrix are
+not read.)",
+    types::RigExecSurfaceMover, rigExec::RigExecSchemaMode::Generated};
+
 const rigExec::RigExecFieldDesc kFields[] = {
-    Flag("limit"),
-    Flag("smooth"),
+    Authored(Flag("limit"), kSurfaceMode),
+    Authored(Flag("smooth"), kNormalMode),
     Flag("framed"),
 };
 
@@ -172,46 +256,66 @@ using rigExec::kRigExecPortOutput;
 const rigExec::RigExecPortDesc kPorts[] = {
     {&SurfaceBindingPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
      "points"},
-    {&SurfaceBindingVertices(), &rigExecStd::IntArray(), kRigExecPortInput,
-     "vertices"},
-    {&SurfaceBindingVertexOffsets(), &rigExecStd::IntArray(), kRigExecPortInput,
-     "vertexOffsets"},
-    {&SurfaceBindingPolygonOffsets(), &rigExecStd::IntArray(),
-     kRigExecPortInput, "polygonOffsets"},
-    {&SurfaceBindingPointIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
-     "pointIndices"},
-    {&SurfaceBindingLimitOffsets(), &rigExecStd::IntArray(), kRigExecPortInput,
-     "limitOffsets"},
-    {&SurfaceBindingLimitIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
-     "limitIndices"},
-    {&SurfaceBindingBarycentricWeights(), &rigExecStd::FloatArray(),
-     kRigExecPortInput, "barycentricWeights"},
-    {&SurfaceBindingBindingWeights(), &rigExecStd::FloatArray(),
-     kRigExecPortInput, "bindingWeights"},
-    {&SurfaceBindingMask(), &rigExecStd::FloatArray(), kRigExecPortInput,
-     "mask"},
-    {&SurfaceBindingDeltaMultipliers(), &rigExecStd::FloatArray(),
-     kRigExecPortInput, "deltaMultipliers"},
-    {&SurfaceBindingLimitWeights(), &rigExecStd::FloatArray(),
-     kRigExecPortInput, "limitWeights"},
-    {&SurfaceBindingLimitDuWeights(), &rigExecStd::FloatArray(),
-     kRigExecPortInput, "limitDuWeights"},
-    {&SurfaceBindingLimitDvWeights(), &rigExecStd::FloatArray(),
-     kRigExecPortInput, "limitDvWeights"},
-    {&SurfaceBindingOffsets(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
-     "offsets"},
-    {&SurfaceBindingStrength(), &rigExecStd::FloatType(), kRigExecPortInput,
-     "strength"},
-    {&SurfaceBindingDeltaMultiplier(), &rigExecStd::FloatType(),
-     kRigExecPortInput, "deltaMultiplier"},
-    {&SurfaceBindingSurfaceRest(), &rigExecStd::Mat4dType(), kRigExecPortInput,
-     "surfaceRestMatrix"},
-    {&SurfaceBindingTargetRest(), &rigExecStd::Mat4dType(), kRigExecPortInput,
-     "targetRestMatrix"},
-    {&SurfaceBindingSurfaceToBinding(), &rigExecStd::Mat4dType(),
-     kRigExecPortInput, "surfaceToBinding"},
-    {&SurfaceBindingFrames(), &rigExecStd::Mat4dArray(),
-     kRigExecPortInput | kRigExecPortOptional, "frames"},
+    Authored({&SurfaceBindingVertices(), &rigExecStd::IntArray(),
+              kRigExecPortInput, "vertices"},
+             kVertices),
+    Authored({&SurfaceBindingVertexOffsets(), &rigExecStd::IntArray(),
+              kRigExecPortInput, "vertexOffsets"},
+             kVertexOffsets),
+    Authored({&SurfaceBindingPolygonOffsets(), &rigExecStd::IntArray(),
+              kRigExecPortInput, "polygonOffsets"},
+             kPolygonOffsets),
+    Authored({&SurfaceBindingPointIndices(), &rigExecStd::IntArray(),
+              kRigExecPortInput, "pointIndices"},
+             kPointIndices),
+    Authored({&SurfaceBindingLimitOffsets(), &rigExecStd::IntArray(),
+              kRigExecPortInput, "limitOffsets"},
+             kLimitOffsets),
+    Authored({&SurfaceBindingLimitIndices(), &rigExecStd::IntArray(),
+              kRigExecPortInput, "limitIndices"},
+             kLimitIndices),
+    Authored({&SurfaceBindingBarycentricWeights(), &rigExecStd::FloatArray(),
+              kRigExecPortInput, "barycentricWeights"},
+             kBarycentricWeights),
+    Authored({&SurfaceBindingBindingWeights(), &rigExecStd::FloatArray(),
+              kRigExecPortInput, "bindingWeights"},
+             kBindingWeights),
+    Authored({&SurfaceBindingMask(), &rigExecStd::FloatArray(),
+              kRigExecPortInput, "mask"},
+             kMask),
+    Authored({&SurfaceBindingDeltaMultipliers(), &rigExecStd::FloatArray(),
+              kRigExecPortInput, "deltaMultipliers"},
+             kDeltaMultipliers),
+    Authored({&SurfaceBindingLimitWeights(), &rigExecStd::FloatArray(),
+              kRigExecPortInput, "limitWeights"},
+             kLimitWeights),
+    Authored({&SurfaceBindingLimitDuWeights(), &rigExecStd::FloatArray(),
+              kRigExecPortInput, "limitDuWeights"},
+             kLimitDuWeights),
+    Authored({&SurfaceBindingLimitDvWeights(), &rigExecStd::FloatArray(),
+              kRigExecPortInput, "limitDvWeights"},
+             kLimitDvWeights),
+    Authored({&SurfaceBindingOffsets(), &rigExecStd::Vec3fArray(),
+              kRigExecPortInput, "offsets"},
+             kOffsets),
+    Authored({&SurfaceBindingStrength(), &rigExecStd::FloatType(),
+              kRigExecPortInput, "strength"},
+             kStrength),
+    Authored({&SurfaceBindingDeltaMultiplier(), &rigExecStd::FloatType(),
+              kRigExecPortInput, "deltaMultiplier"},
+             kDeltaMultiplier),
+    Authored({&SurfaceBindingSurfaceRest(), &rigExecStd::Mat4dType(),
+              kRigExecPortInput, "surfaceRestMatrix"},
+             kSurfaceRestMatrix),
+    Authored({&SurfaceBindingTargetRest(), &rigExecStd::Mat4dType(),
+              kRigExecPortInput, "targetRestMatrix"},
+             kTargetRestMatrix),
+    Authored({&SurfaceBindingSurfaceToBinding(), &rigExecStd::Mat4dType(),
+              kRigExecPortInput, "surfaceToBinding"},
+             kSurfaceToBinding),
+    Authored({&SurfaceBindingFrames(), &rigExecStd::Mat4dArray(),
+              kRigExecPortInput | kRigExecPortOptional, "frames"},
+             kFrames),
     {&SurfaceBindingSurface(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
      "surfacePoints"},
     {&SurfaceBindingCounts(), &rigExecStd::IntArray(), kRigExecPortInput,
@@ -228,6 +332,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "SurfaceBinding";
+    d.schema = &kBindingSchema;
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.runBatch = &Run;

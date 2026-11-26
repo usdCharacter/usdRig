@@ -10,6 +10,9 @@
 
 namespace rigExecOps::authoring {
 
+/// The base of a schema class that inherits no RigExec class.
+inline constexpr const char *kTyped = "Typed";
+
 inline rigExec::RigExecPropertyInfo
 Property(const char *schemaName, const void *fallback,
          const char *doc = nullptr, bool uniform = false)
