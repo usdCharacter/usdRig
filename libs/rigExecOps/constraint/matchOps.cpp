@@ -349,9 +349,10 @@ IkFkMatchOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         shown[k] = FromRows(frame);
         shownMask |= 1u << k;
     };
+    const double weight = *In<double>(io, IkFkMatchWeight());
     switch (rigExec::RigExecIkFkMatchShownSide(
         *In<double>(io, IkFkMatchSwitch()), p.ikValue,
-        *In<double>(io, IkFkMatchWeight()))) {
+        std::isfinite(weight) ? weight : 0.0)) {
     case rigExec::RigExecIkFkMatchShown::IkSide:
         if (ik.ok && poleOk) {
             show(0, ik.ikFrame);

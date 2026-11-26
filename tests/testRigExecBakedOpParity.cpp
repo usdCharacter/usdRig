@@ -24,6 +24,9 @@
 #include "rigExec/api/taskSystem.h"
 #include "rigExecMath/poseCommitKernel.h"
 #include "rigExecOps/solver/poseCommitOps.h"
+#include "rigExecOps/constraint/matrixMoverOps.h"
+#include "rigExecOps/constraint/matchOps.h"
+#include "rigExecMath/harmonicsKernel.h"
 #include "rigExecOps/deform/skinOp.h"
 #include "rigExecMath/skinKernel.h"
 #include "rigExecOps/pose/poseOps.h"
@@ -307,7 +310,7 @@ ConstraintParameter(const B &b, const B::Constraint &c,
     if (is(SchemaAttrText::inputsEnabled))
         return leaf(c.enabled);
     if (is(SchemaAttrText::inputsDefaultWeight)) {
-        if (!c.weightObject.IsEmpty())
+        if (!c.weightObject.IsEmpty() && c.pointsTarget.IsEmpty())
             return VtValue(b.weightFields[size_t(c.weightField)].values[0]);
         return leaf(c.defaultWeight);
     }
@@ -378,149 +381,6 @@ ConstraintParameter(const B &b, const B::Constraint &c,
         is(SchemaAttrText::inputsScaleOffset))
         return leaf(c.offset);
     return VtValue();
-}
-
-// Constraint: SingleChainIk keeps its kernel record and inputs, so they are
-// replayed directly. Every other frame kernel is rebuilt from the scene
-// record and the fin versions the commit read, and compared on what the
-// commit published: the candidate when present, the entering frame when
-// the constraint passed through or refused.
-void
-ProbeConstraint(const B &b)
-{
-    for (const auto &step : b.steps) {
-        if (step.kind != RigExecBakedStepKind::Constraint)
-            continue;
-        const int walk = step.object;
-        const auto &c = b.constraints[size_t(b.walkSteps[size_t(walk)].index)];
-        const auto &commit = b.commits[size_t(walk)];
-        const std::string kind = TypeName(c.type);
-        if (c.ikFkMatch) {
-            Unprobed("Constraint", kind,
-                     "the match body assembles its sources inside the step "
-                     "and keeps no RigExecIkFkMatchOpInputs");
-            continue;
-        }
-        if (c.harmonics) {
-            Unprobed("Constraint", kind,
-                     "the windowed history lives in the program's window ring; "
-                     "a replay needs the ring before this tick");
-            continue;
-        }
-        RigExecPoseOpRunner runner;
-        std::string error;
-        if (c.singleChainIk) {
-            if (c.kernelResult.chain.empty()) {
-                Unprobed("Constraint", kind, "the kernel did not run");
-                continue;
-            }
-            RigExecConstraintResult result;
-            const bool ran = RigExecRunConstraintOp(
-                c.kernelRecord, c.kernelInputs, runner, &result, &error);
-            RigExecPointFrameArray bakedChain, opChain;
-            bakedChain.frames = c.kernelResult.chain;
-            if (ran)
-                opChain.frames = result.chain;
-            Compare("Constraint", kind, c.pathText, VtValue(bakedChain),
-                    VtValue(opChain), false);
-            continue;
-        }
-        if (c.deltaBase >= 0) {
-            Unprobed("Constraint", kind,
-                     "geometry domain: the body measures a delta against the "
-                     "target's authored transform");
-            continue;
-        }
-        if (!c.weightObject.IsEmpty() &&
-            (c.weightField < 0 || !b.weightFields[size_t(c.weightField)].ok ||
-             b.weightFields[size_t(c.weightField)].values.size() != 1)) {
-            Unprobed("Constraint", kind,
-                     "rigExec:weightObject whose weight field did not resolve");
-            continue;
-        }
-        if (c.spaceSlot >= 0) {
-            Unprobed("Constraint", kind,
-                     "rigExec:space carry: composed by the body from posedM "
-                     "and the default round trip");
-            continue;
-        }
-        if (commit.split || commit.slotWrites.size() != 1 || c.target < 0) {
-            Unprobed("Constraint", kind, "split or multi-slot commit");
-            continue;
-        }
-        bool native = false;
-        for (const int source : c.sources)
-            native = native || source < 0;
-        if (c.worldUpObjectNamed && c.worldUpObject < 0)
-            native = true;
-        if (native) {
-            Unprobed("Constraint", kind,
-                     "a source or world-up object read off the stage "
-                     "(nativeSources), not a fin version");
-            continue;
-        }
-        if (!b.sceneDescriptors) {
-            Unprobed("Constraint", kind, "no scene descriptors");
-            continue;
-        }
-        RigExecSceneConstraintDescriptor descriptor;
-        if (!RigExecTranslateSceneConstraint(*b.sceneDescriptors, c.path,
-                                             {b.paths[size_t(c.target)]},
-                                             &descriptor, &error)) {
-            Unprobed("Constraint", kind, "scene translation refused");
-            continue;
-        }
-        RigExecConstraintInputs input;
-        input.incoming = b.fin[size_t(commit.targetRead)];
-        input.sources.resize(c.sources.size());
-        for (size_t k = 0; k < c.sources.size(); ++k)
-            input.sources[k].frame = b.fin[size_t(commit.sourceReads[k])];
-        if (c.worldUpObjectNamed)
-            input.worldUp = b.fin[size_t(commit.worldUpRead)];
-        const RigExecBakedConstraintArray *arrays =
-            c.arrays >= 0 ? &b.constraintArrays[size_t(c.arrays)] : nullptr;
-        if (arrays && !arrays->ok) {
-            Unprobed("Constraint", kind,
-                     "source weight or offset array cardinality refused");
-            continue;
-        }
-        descriptor.order = c.order;
-        descriptor.blendShear = c.blendShear;
-        descriptor.preserveInputUp = c.preserveInputUp;
-        descriptor.aimVectorAuthored = true;
-        descriptor.worldUpType = c.worldUpType;
-        descriptor.sceneUp = c.sceneUp;
-        descriptor.worldUpRotationOnly = c.worldUpRotationOnly;
-        const auto read = [&](const char *name, VtValue *value) {
-            *value = ConstraintParameter(b, c, arrays, name);
-            return true;
-        };
-        bool enabled = true;
-        float weight = 1.0f;
-        if (!RigExecRefreshConstraintParameters(&descriptor, read, &input,
-                                                &enabled, &weight, &error)) {
-            Unprobed("Constraint", kind, "parameter refresh refused: " + error);
-            continue;
-        }
-        const bool present = !commit.present.empty() && commit.present[0];
-        const RigExecPointFrame &baked =
-            present ? b.fin[size_t(commit.slotWrites[0])] : input.incoming;
-        RigExecPointFrame published = input.incoming;
-        bool applied = false;
-        if (enabled && weight > 0) {
-            RigExecConstraintResult result;
-            if (RigExecRunConstraintOp(descriptor.record, input, runner,
-                                       &result, &error) &&
-                RigExecConstraintFrameUsable(result.frame)) {
-                published = result.frame;
-                applied = true;
-            }
-        }
-        Compare("Constraint", kind, c.pathText, VtValue(baked),
-                VtValue(published), !present);
-        CompareFlag("Constraint", kind, c.pathText, "published", present,
-                    applied);
-    }
 }
 
 std::string
@@ -611,6 +471,560 @@ FromOp(const void *value)
     return out;
 }
 
+/// The baked pose host's reads, for a probe replaying what a step read.
+struct ProbeHost {
+    using Math = BakedPoseMath;
+    BakedPoseInputs reads;
+    const BakedPoseInputs &inputs() const
+    {
+        return reads;
+    }
+};
+
+/// One op node built on demand: bind its inputs and outputs, then Run.
+struct OneOp {
+    RigExecRigDescBuilder builder;
+    RigExecNodeId id;
+    std::vector<std::pair<RigExecInputId, const void *>> values;
+    std::unique_ptr<RigExecEvaluator> evaluator;
+    std::string error;
+
+    OneOp(const RigExecOpHandle &op, const void *payload)
+        : id(builder.AddOp(op, payload))
+    {
+    }
+    void In(const RigExecPortHandle &port, const void *value)
+    {
+        values.emplace_back(builder.BindInput(id, port), value);
+    }
+    RigExecOutputId Out(const RigExecPortHandle &port)
+    {
+        return builder.BindOutput(id, port);
+    }
+    bool Run()
+    {
+        const auto desc = builder.Build(&error);
+        const auto program =
+            desc ? RigExecCompile(*desc, RigExecCompileOptions(), &error)
+                 : nullptr;
+        evaluator = program ? RigExecEvaluator::Create(
+                                  program, RigExecEvaluatorOptions(), &error)
+                            : nullptr;
+        if (!evaluator)
+            return false;
+        for (const auto &[input, value] : values)
+            if (!evaluator->SetInput(input, value, &error))
+                return false;
+        return evaluator->Evaluate(&error);
+    }
+    template <class T> const T &Get(const RigExecOutputId &output) const
+    {
+        return *static_cast<const T *>(evaluator->GetOutput(output));
+    }
+};
+
+/// Constraint source \p k as the step resolved it: a provider's fin
+/// version, or a source read off the stage moved by its revised ancestors.
+bool
+ConstraintSourceFrame(const B &b, int walk, size_t k, RigExecPointFrame *frame)
+{
+    const auto &c = b.constraints[size_t(b.walkSteps[size_t(walk)].index)];
+    const auto &commit = b.commits[size_t(walk)];
+    if (c.sources[k] >= 0) {
+        *frame = b.fin[size_t(commit.sourceReads[k])];
+        return (frame->flags & RigExecPointFrameValid) != 0;
+    }
+    return BakedPoseInputs(&b).resolveNativeSource(
+        size_t(walk), k, &frame->points, &frame->flags);
+}
+
+/// The envelope a constraint's head resolved: the weight field's one value
+/// or the leaf, and 1 where a points target takes a per-point field.
+double
+ConstraintEnvelope(const B &b, const B::Constraint &c)
+{
+    if (!c.weightObject.IsEmpty())
+        return c.pointsTarget.IsEmpty()
+                   ? double(b.weightFields[size_t(c.weightField)].values[0])
+                   : 1.0;
+    return double(RigExecBakedLeafRead(b, c.defaultWeight));
+}
+
+PXR_NS::GfMatrix4d
+FromOp(const rigExecStd::Mat4d &m)
+{
+    PXR_NS::GfMatrix4d out;
+    for (int r = 0; r < 4; ++r)
+        for (int k = 0; k < 4; ++k)
+            out[r][k] = m._mtx[r][k];
+    return out;
+}
+
+rigExecStd::Mat4d
+ToOp(const PXR_NS::GfMatrix4d &m)
+{
+    rigExecStd::Mat4d out;
+    for (int r = 0; r < 4; ++r)
+        for (int k = 0; k < 4; ++k)
+            out._mtx[r][k] = m[r][k];
+    return out;
+}
+
+// MatrixMover: the target's entering frame moved through MatrixMover by the
+// transform source and, with two sources, the space source, each with its
+// rest. Compared on what the commit published.
+void
+ProbeMatrixMover(const B &b, int walk)
+{
+    using namespace rigExecOps;
+    const auto &c = b.constraints[size_t(b.walkSteps[size_t(walk)].index)];
+    const auto &commit = b.commits[size_t(walk)];
+    const std::string kind = TypeName(c.type);
+    const bool present = !commit.present.empty() && commit.present[0];
+    const RigExecPointFrame &incoming = b.fin[size_t(commit.targetRead)];
+    const RigExecPointFrame &baked =
+        present ? b.fin[size_t(commit.slotWrites[0])] : incoming;
+    const double weight = ConstraintEnvelope(b, c);
+    if (!RigExecBakedLeafRead(b, c.enabled) || weight <= 0.0) {
+        Compare("Constraint", kind, c.pathText, VtValue(baked),
+                VtValue(incoming), !present);
+        return;
+    }
+    std::vector<rigExecRig::PointFrame> frames, rests;
+    std::vector<bool> rested;
+    for (size_t k = 0; k < c.sources.size() && k < 2; ++k) {
+        RigExecPointFrame frame;
+        if (!ConstraintSourceFrame(b, walk, k, &frame)) {
+            CompareFlag("Constraint", kind, c.pathText, "published", present,
+                        false);
+            Unprobed("Constraint", kind, "a source the step could not read");
+            return;
+        }
+        frames.push_back(ToOp(frame));
+        const int slot = c.sources[k];
+        rested.push_back(slot >= 0);
+        rests.push_back(slot >= 0 ? ToOp(b.restFrames[size_t(slot)])
+                                  : rigExecRig::PointFrame());
+    }
+    if (frames.empty()) {
+        Unprobed("Constraint", kind, "no rigExec:transform source");
+        return;
+    }
+    MatrixMoverPayload payload;
+    payload.radialBlend = c.radialBlend;
+    OneOp op(MatrixMover(), &payload);
+    const rigExecRig::PointFrame in = ToOp(incoming);
+    op.In(MatrixMoverIn(), &in);
+    op.In(MatrixMoverTransform(), &frames[0]);
+    if (rested[0])
+        op.In(MatrixMoverTransformRest(), &rests[0]);
+    if (frames.size() > 1) {
+        op.In(MatrixMoverSpace(), &frames[1]);
+        if (rested[1])
+            op.In(MatrixMoverSpaceRest(), &rests[1]);
+    }
+    op.In(MatrixMoverWeight(), &weight);
+    const RigExecOutputId out = op.Out(MatrixMoverOut());
+    if (!op.Run()) {
+        OpFailed("Constraint", kind, c.pathText, !present, op.error);
+        return;
+    }
+    const RigExecPointFrame moved = FromOp(op.Get<rigExecRig::PointFrame>(out));
+    const bool applied = RigExecConstraintFrameUsable(moved);
+    Compare("Constraint", kind, c.pathText, VtValue(baked),
+            VtValue(applied ? moved : incoming), !present);
+    CompareFlag("Constraint", kind, c.pathText, "published", present, applied);
+}
+
+// The geometry domain: the constraint solved at full weight through its op,
+// then ConstraintDelta against the target's authored transform, compared
+// with the delta the step measured for the Matrix revision.
+void
+ProbeConstraintDelta(const B &b, const B::Constraint &c,
+                     RigExecConstraintRecord record,
+                     const RigExecConstraintInputs &input, bool enabled,
+                     double weight, RigExecPoseOpRunner &runner)
+{
+    using namespace rigExecOps;
+    const std::string kind = TypeName(c.type) + " geometry";
+    const size_t d = size_t(c.deltaBase);
+    const bool present = b.deltaPresent[d] != 0;
+    if (!enabled) {
+        CompareFlag("Constraint", kind, c.pathText, "delta present", present,
+                    false);
+        return;
+    }
+    for (double *w :
+         {&record.position.weight, &record.rotation.weight,
+          &record.scale.weight, &record.parent.weight, &record.aim.weight})
+        *w = 1.0;
+    rigExecRig::PointFrame solved = ToOp(input.incoming);
+    std::string error;
+    if (weight > 0.0) {
+        RigExecConstraintResult result;
+        if (!RigExecRunConstraintOp(record, input, runner, &result, &error)) {
+            OpFailed("Constraint", kind, c.pathText, !present, error);
+            return;
+        }
+        solved = ToOp(result.frame);
+    }
+    OneOp op(ConstraintDelta(), nullptr);
+    const rigExecStd::Mat4d base = ToOp(b.deltaBaseMatrix[d]);
+    const uint8_t baseOk = b.deltaBaseOk[d] ? 1 : 0;
+    op.In(ConstraintDeltaSolved(), &solved);
+    op.In(ConstraintDeltaBase(), &base);
+    op.In(ConstraintDeltaBaseOk(), &baseOk);
+    op.In(ConstraintDeltaWeight(), &weight);
+    const RigExecOutputId out = op.Out(ConstraintDeltaDelta());
+    if (!op.Run()) {
+        OpFailed("Constraint", kind, c.pathText, !present, op.error);
+        return;
+    }
+    if (!present) {
+        Report("Constraint/" + kind, c.pathText,
+               "the step measured no delta where the op did");
+        return;
+    }
+    Compare("Constraint", kind, c.pathText, VtValue(b.deltaValues[d]),
+            VtValue(FromOp(op.Get<rigExecStd::Mat4d>(out))), false);
+}
+
+/// A frame as the match reads it: its matrix, or false when the frame is
+/// not valid or maps to no matrix.
+bool
+MatchMatrix(const RigExecPointFrame &frame, GfMatrix4d *matrix)
+{
+    return (frame.flags & RigExecPointFrameValid) != 0 &&
+           eval::pose_ops::PointsToMatrix<BakedPoseMath>(
+               eval::pose_ops::IdentityLandmarks<BakedPoseMath>(), frame.points,
+               matrix);
+}
+
+// IK/FK match: IkFkMatch on the matrices of the limb's frames and rests the
+// step read, the five controls' channels, the solve's space and the pole's
+// parent mode; compared on the values and the presented frames.
+void
+ProbeIkFkMatch(const B &b, int walk)
+{
+    const auto &c = b.constraints[size_t(b.walkSteps[size_t(walk)].index)];
+    const auto &commit = b.commits[size_t(walk)];
+    const std::string kind = TypeName(c.type);
+    const BakedPoseInputs reads(&b);
+    eval::PoseIkFkFacts facts;
+    reads.ikFkFacts(size_t(walk), &facts);
+    RigExecIkFkMatchOpConstants constants;
+    constants.ikValue = facts.ikValue;
+    constants.scaleCalibration = facts.scaleCalibration;
+    constants.upperLengthOffset = facts.upperOffset;
+    constants.lowerLengthOffset = facts.lowerOffset;
+    constants.stretchLimb = facts.stretchLimb;
+    RigExecIkFkMatchOpInputs in;
+    in.weight = facts.envelope;
+    std::copy(facts.scalars, facts.scalars + 7, in.scalars.begin());
+    bool usable = c.sources.size() == 10;
+    for (size_t i = 0; usable && i < 10; ++i)
+        usable =
+            c.sources[i] >= 0 &&
+            MatchMatrix(b.fin[size_t(commit.sourceReads[i])], &in.sources[i]);
+    for (size_t i = 0; usable && i < 8; ++i) {
+        const int slot = c.sources[i < 3 ? i : i + 2];
+        usable = MatchMatrix(b.restFrames[size_t(slot)], &in.rests[i]);
+    }
+    if (!usable) {
+        CompareFlag("Constraint", kind, c.pathText, "values",
+                    c.matchValuesValid, false);
+        CompareFlag("Constraint", kind, c.pathText, "shown",
+                    c.matchShownMask != 0, false);
+        Unprobed("Constraint", kind, "a limb frame the step could not read");
+        return;
+    }
+    for (size_t i = 0; i < 5; ++i)
+        reads.matchChannels(size_t(c.sources[5 + i]), &in.channels[i]);
+    if (c.spaceSlot >= 0) {
+        const size_t s = size_t(c.spaceSlot);
+        in.hasSpace = MatchMatrix(b.restFrames[s], &in.spaceRest) &&
+                      std::isfinite(b.posedM[s][3][0]);
+        in.spacePosed = b.posedM[s];
+    }
+    const int poleSlot = c.sources[6];
+    if (c.matchPoleSwitch >= 0 && poleSlot >= 0 &&
+        !b.posedAuthored[size_t(poleSlot)]) {
+        const auto &sw = b.spaceSwitches[size_t(c.matchPoleSwitch)];
+        in.poleMode = uint32_t(rigExecOps::IkFkPoleMode::Switch);
+        in.poleSwitch = sw.kernelInputs;
+        constants.poleRecord = sw.kernelRecord;
+        constants.poleHasCarry = sw.kernelInputs.hasCarry;
+        for (const auto &source : sw.kernelInputs.sources)
+            constants.poleWorld.push_back(source.world ? 1 : 0);
+        constants.poleSourceRides = c.matchPoleSourceRides;
+    } else if (c.matchPoleParentRides) {
+        in.poleMode = uint32_t(rigExecOps::IkFkPoleMode::Ride);
+    }
+    RigExecPoseOpRunner runner;
+    RigExecIkFkMatchOpOutputs out;
+    std::string error;
+    if (!RigExecRunIkFkMatchOp(constants, in, runner, &out, &error)) {
+        OpFailed("Constraint", kind, c.pathText, !c.matchValuesValid, error);
+        return;
+    }
+    if (!c.matchValuesValid) {
+        Report("Constraint/" + kind, c.pathText,
+               "the step matched no values where the op did");
+        return;
+    }
+    Compare(
+        "Constraint", kind, c.pathText,
+        VtValue(VtDoubleArray(c.matchIkValues.begin(), c.matchIkValues.end())),
+        VtValue(VtDoubleArray(out.ikValues.begin(), out.ikValues.end())), false,
+        "IK values");
+    Compare(
+        "Constraint", kind, c.pathText + " FK",
+        VtValue(VtDoubleArray(c.matchFkValues.begin(), c.matchFkValues.end())),
+        VtValue(VtDoubleArray(out.fkValues.begin(), out.fkValues.end())), false,
+        "FK values");
+    CompareFlag("Constraint", kind, c.pathText, "shown mask",
+                c.matchShownMask == out.shownMask, true);
+    for (size_t k = 0; k < 5; ++k) {
+        if (!(out.shownMask & (1u << k)))
+            continue;
+        RigExecPointFrame shown;
+        eval::pose_ops::FrameFromMatrix<BakedPoseMath>(
+            out.shown[k], &shown.points, &shown.flags);
+        Compare("Constraint", kind, c.pathText + " shown " + std::to_string(k),
+                VtValue(c.matchShown[k]), VtValue(shown), false);
+    }
+}
+
+// Harmonics: the constraint's frame and this tick's capture through the
+// Harmonics op over the window ring the step read (the earlier ticks), with
+// the host's gate closed where the step passed through before solving.
+void
+ProbeHarmonics(const B &b, int walk)
+{
+    const auto &c = b.constraints[size_t(b.walkSteps[size_t(walk)].index)];
+    const auto &commit = b.commits[size_t(walk)];
+    const std::string kind = TypeName(c.type);
+    const BakedPoseInputs reads(&b);
+    const auto facts = reads.harmonicsFacts(size_t(walk));
+    if (facts.window < 0) {
+        Unprobed("Constraint", kind, "no window");
+        return;
+    }
+    RigExecHarmonicsOpConstants constants;
+    constants.settings = facts.settings;
+    constants.matchVelocity = facts.matchVelocity;
+    constants.frames = uint32_t(RigExecHarmonicsWindowFrames(facts.settings));
+    RigExecHarmonicsOpInputs in;
+    in.incoming = b.fin[size_t(commit.targetRead)];
+    if (facts.spaceSlot >= 0) {
+        GfMatrix4d space(0.0);
+        reads.posedMatrix(size_t(facts.spaceSlot), &space);
+        in.space = space;
+    }
+    double weight = facts.defaultWeight;
+    bool gate = facts.enabled;
+    if (facts.hasWeightObject) {
+        gate = gate && facts.fieldOk && facts.fieldCount == 1;
+        weight = facts.fieldValue;
+    } else {
+        gate = gate && std::isfinite(weight) && weight >= 0.0 && weight <= 1.0;
+    }
+    in.enabled = gate;
+    in.weight = weight;
+    in.amplitude = facts.scalars[0];
+    in.decay = facts.scalars[1];
+    in.termination = facts.scalars[2];
+    in.axisAmplitude = facts.axis;
+    const RigExecWindowRing &ring = b.windowRings[size_t(facts.window)];
+    RigExecPoseOpRunner runner;
+    RigExecWindowPacketPtr capture;
+    RigExecPointFrame frame;
+    std::string error;
+    const bool present = !commit.present.empty() && commit.present[0];
+    const RigExecPointFrame &baked =
+        present ? b.fin[size_t(commit.slotWrites[0])] : in.incoming;
+    if (!RigExecRunHarmonicsOp(constants, in, &ring, false, runner, &capture,
+                               &frame, &error)) {
+        OpFailed("Constraint", kind, c.pathText, !present, error);
+        return;
+    }
+    Compare("Constraint", kind, c.pathText, VtValue(baked), VtValue(frame),
+            !present, "window of " + std::to_string(ring.size()));
+    CompareFlag("Constraint", kind, c.pathText, "capture",
+                RigExecWindowPacketsEqual(
+                    b.windowCaptures[size_t(facts.window)], capture),
+                true);
+}
+
+// Constraint: SingleChainIk keeps its kernel record and inputs, so they are
+// replayed directly; MatrixMover runs its own op. Every other frame kernel is
+// rebuilt from the scene record and the frames the step read (a source or
+// world-up object read off the stage resolved as the host resolves it, the
+// rigExec:space carry composed as the step composes it), and compared on
+// what the commit published: the candidate when present, the entering frame
+// when the constraint passed through or refused. A geometry-domain
+// constraint is compared on the delta it measured.
+void
+ProbeConstraint(const B &b)
+{
+    for (const auto &step : b.steps) {
+        if (step.kind != RigExecBakedStepKind::Constraint)
+            continue;
+        const int walk = step.object;
+        const auto &c = b.constraints[size_t(b.walkSteps[size_t(walk)].index)];
+        const auto &commit = b.commits[size_t(walk)];
+        const std::string kind = TypeName(c.type);
+        if (c.ikFkMatch) {
+            ProbeIkFkMatch(b, walk);
+            continue;
+        }
+        if (c.target < 0)
+            continue;
+        if (c.harmonics) {
+            ProbeHarmonics(b, walk);
+            continue;
+        }
+        RigExecPoseOpRunner runner;
+        std::string error;
+        if (c.singleChainIk) {
+            if (c.kernelResult.chain.empty()) {
+                Unprobed("Constraint", kind, "the kernel did not run");
+                continue;
+            }
+            RigExecConstraintResult result;
+            const bool ran = RigExecRunConstraintOp(
+                c.kernelRecord, c.kernelInputs, runner, &result, &error);
+            RigExecPointFrameArray bakedChain, opChain;
+            bakedChain.frames = c.kernelResult.chain;
+            if (ran)
+                opChain.frames = result.chain;
+            Compare("Constraint", kind, c.pathText, VtValue(bakedChain),
+                    VtValue(opChain), false);
+            for (size_t k = 0;
+                 ran && k < c.targetSlots.size() && k < result.chain.size();
+                 ++k)
+                for (size_t pos = 0; pos < commit.slots.size(); ++pos)
+                    if (commit.slots[pos] == c.targetSlots[k] &&
+                        commit.present[pos])
+                        Compare("Constraint", kind + " slots",
+                                c.pathText + " " + std::to_string(k),
+                                VtValue(commit.frames[pos]),
+                                VtValue(result.chain[k]), false);
+            continue;
+        }
+        if (c.type == SchemaTypeName::RigExecMatrixMover) {
+            ProbeMatrixMover(b, walk);
+            continue;
+        }
+        if (c.pointsTarget.IsEmpty() && !c.weightObject.IsEmpty() &&
+            (c.weightField < 0 || !b.weightFields[size_t(c.weightField)].ok ||
+             b.weightFields[size_t(c.weightField)].values.size() != 1)) {
+            Unprobed("Constraint", kind,
+                     "rigExec:weightObject whose weight field did not resolve");
+            continue;
+        }
+        if (c.deltaBase < 0 &&
+            (commit.split || commit.slotWrites.size() != 1)) {
+            Unprobed("Constraint", kind,
+                     "a commit of " + std::to_string(commit.slotWrites.size()) +
+                         " slots" + (commit.split ? ", split" : "") + " at " +
+                         c.pathText);
+            continue;
+        }
+        if (!b.sceneDescriptors) {
+            Unprobed("Constraint", kind, "no scene descriptors");
+            continue;
+        }
+        RigExecSceneConstraintDescriptor descriptor;
+        if (!RigExecTranslateSceneConstraint(*b.sceneDescriptors, c.path,
+                                             {b.paths[size_t(c.target)]},
+                                             &descriptor, &error)) {
+            Unprobed("Constraint", kind, "scene translation refused");
+            continue;
+        }
+        RigExecConstraintInputs input;
+        input.incoming = b.fin[size_t(commit.targetRead)];
+        input.sources.resize(c.sources.size());
+        bool sourced = true;
+        for (size_t k = 0; k < c.sources.size(); ++k)
+            sourced = sourced && ConstraintSourceFrame(b, walk, k,
+                                                       &input.sources[k].frame);
+        if (c.worldUpObjectNamed) {
+            RigExecPointFrame up;
+            sourced = sourced && BakedPoseInputs(&b).resolveWorldUp(
+                                     size_t(walk), &up.points, &up.flags);
+            input.worldUp = up;
+        }
+        if (!sourced) {
+            Unprobed("Constraint", kind, "a source the step could not read");
+            continue;
+        }
+        bool stageRead = c.worldUpObjectNamed && c.worldUpObject < 0;
+        for (const int source : c.sources)
+            stageRead = stageRead || source < 0;
+        const std::string shape =
+            std::string(c.spaceSlot >= 0 ? " space" : "") +
+            (stageRead ? " stage source" : "");
+        if (c.spaceSlot >= 0) {
+            ProbeHost host{BakedPoseInputs(&b)};
+            GfMatrix4d carry(1.0);
+            if (!eval::ComputeSpaceCarry(host, c.spaceSlot, &carry)) {
+                Unprobed("Constraint", kind, "rigExec:space names no slot");
+                continue;
+            }
+            input.carry = carry;
+        }
+        const RigExecBakedConstraintArray *arrays =
+            c.arrays >= 0 ? &b.constraintArrays[size_t(c.arrays)] : nullptr;
+        if (arrays && !arrays->ok) {
+            Unprobed("Constraint", kind,
+                     "source weight or offset array cardinality refused");
+            continue;
+        }
+        descriptor.order = c.order;
+        descriptor.blendShear = c.blendShear;
+        descriptor.preserveInputUp = c.preserveInputUp;
+        descriptor.aimVectorAuthored = true;
+        descriptor.worldUpType = c.worldUpType;
+        descriptor.sceneUp = c.sceneUp;
+        descriptor.worldUpRotationOnly = c.worldUpRotationOnly;
+        const auto read = [&](const char *name, VtValue *value) {
+            *value = ConstraintParameter(b, c, arrays, name);
+            return true;
+        };
+        bool enabled = true;
+        float weight = 1.0f;
+        if (!RigExecRefreshConstraintParameters(&descriptor, read, &input,
+                                                &enabled, &weight, &error)) {
+            Unprobed("Constraint", kind, "parameter refresh refused: " + error);
+            continue;
+        }
+        if (c.deltaBase >= 0) {
+            ProbeConstraintDelta(b, c, descriptor.record, input, enabled,
+                                 ConstraintEnvelope(b, c), runner);
+            continue;
+        }
+        const bool present = !commit.present.empty() && commit.present[0];
+        const RigExecPointFrame &baked =
+            present ? b.fin[size_t(commit.slotWrites[0])] : input.incoming;
+        RigExecPointFrame published = input.incoming;
+        bool applied = false;
+        if (enabled && weight > 0) {
+            RigExecConstraintResult result;
+            if (RigExecRunConstraintOp(descriptor.record, input, runner,
+                                       &result, &error) &&
+                RigExecConstraintFrameUsable(result.frame)) {
+                published = result.frame;
+                applied = true;
+            }
+        }
+        Compare("Constraint", kind + shape, c.pathText, VtValue(baked),
+                VtValue(published), !present);
+        CompareFlag("Constraint", kind + shape, c.pathText, "published",
+                    present, applied);
+    }
+}
+
 void
 ProbeCommits(const B &b)
 {
@@ -625,7 +1039,8 @@ ProbeCommits(const B &b)
             continue;
         const std::string kind =
             std::string(commit.solverOutput ? "solver" : "constraint") +
-            (commit.split ? " split" : "");
+            (commit.split ? " split" : "") +
+            (commit.slots.size() > 1 ? " multi-slot" : "");
         const size_t slots = commit.slots.size();
         const size_t pairs = commit.propagate.size();
         PoseCommitPayload p;
@@ -3825,6 +4240,219 @@ def Xform "Asset"
 // a static one, or an animated one (translation, rotation, non-uniform scale).
 enum class Ancestor { None, Static, Animated };
 
+/// A switchable limb with an IK/FK match (a copy of testRigExecConstraints'
+/// BuildIkFkMatchArm): FK on frames 1-4, IK on 5-8, between on 9-10.
+UsdStageRefPtr
+IkFkMatchRig()
+{
+    UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    if (!stage->GetRootLayer()->ImportFromString(R"USD(#usda 1.0
+(
+    startTimeCode = 1
+    endTimeCode = 10
+)
+def Xform "Asset"
+{
+    def RigExecRoot "Rig"
+    {
+        reorder nameChildren = ["Controls", "Joints", "Movers", "Solvers"]
+        def Scope "Controls"
+        {
+            def RigExecControl "Shoulder"
+            {
+                double rest:tx = 0
+                double rest:tz = 0
+                def RigExecControl "Up"
+                {
+                    double rest:tx = 0
+                    double rest:tz = 0
+                    double avars:rz.timeSamples = {1: 3.0, 2: 6.0, 3: 9.0, 4: 12.0, 5: 15.0, 6: 18.0, 7: 21.0, 8: 24.0, 9: 27.0, 10: 30.0}
+                    def RigExecControl "Lo"
+                    {
+                        double rest:tx = 3
+                        double rest:tz = 0
+                        double avars:rz.timeSamples = {1: -6.0, 2: -12.0, 3: -18.0, 4: -24.0, 5: -30.0, 6: -36.0, 7: -42.0, 8: -48.0, 9: -54.0, 10: -60.0}
+                        def RigExecControl "Hand"
+                        {
+                            double rest:tx = 4
+                            double rest:tz = 0
+                            double avars:rx.timeSamples = {1: 5.0, 2: 10.0, 3: 15.0, 4: 20.0, 5: 25.0, 6: 30.0, 7: 35.0, 8: 40.0, 9: 45.0, 10: 50.0}
+                        }
+                    }
+                }
+            }
+            def RigExecControl "Ik"
+            {
+                double rest:tx = 7
+                double rest:tz = 0
+                double avars:tx.timeSamples = {1: -0.4, 2: -0.8, 3: -1.2, 4: -1.6, 5: -2.0, 6: -2.4, 7: -2.8, 8: -3.2, 9: -3.6, 10: -4.0}
+                double avars:tz.timeSamples = {1: 0.3, 2: 0.6, 3: 0.9, 4: 0.0, 5: 0.3, 6: 0.6, 7: 0.9, 8: 0.0, 9: 0.3, 10: 0.6}
+                double avars:ry.timeSamples = {1: 4.0, 2: 8.0, 3: 12.0, 4: 16.0, 5: 20.0, 6: 24.0, 7: 28.0, 8: 32.0, 9: 36.0, 10: 40.0}
+                def RigExecControl "Orient"
+                {
+                    double rest:tx = 0
+                    double rest:tz = 0
+                }
+            }
+            def RigExecControl "Pole" (
+                prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+            )
+            {
+                double rest:tx = 3.5
+                double rest:tz = 2
+            }
+            def RigExecControl "Settings"
+            {
+                double rest:tx = 0
+                double rest:tz = -3
+                float avars:ikfk.timeSamples = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 1.0, 6: 1.0, 7: 1.0, 8: 1.0, 9: 0.5, 10: 0.5}
+            }
+        }
+        def Scope "Joints"
+        {
+            def RigExecJoint "Shoulder"
+            {
+                double rest:tx = 0
+                def RigExecJoint "Elbow"
+                {
+                    double rest:tx = 3
+                    def RigExecJoint "Wrist"
+                    {
+                        double rest:tx = 4
+                    }
+                }
+            }
+        }
+        def Scope "Movers"
+        {
+            def RigExecIkFkMatchConstraint "Match" (
+                prepend apiSchemas = ["RigExecMoverAPI"]
+            )
+            {
+                rel rigExec:moves = [</Asset/Rig/Controls/Ik>, </Asset/Rig/Controls/Pole>, </Asset/Rig/Controls/Shoulder/Up>, </Asset/Rig/Controls/Shoulder/Up/Lo>, </Asset/Rig/Controls/Shoulder/Up/Lo/Hand>]
+                rel rigExec:ikControl = </Asset/Rig/Controls/Ik>
+                rel rigExec:poleControl = </Asset/Rig/Controls/Pole>
+                rel rigExec:fkControls = [</Asset/Rig/Controls/Shoulder/Up>, </Asset/Rig/Controls/Shoulder/Up/Lo>, </Asset/Rig/Controls/Shoulder/Up/Lo/Hand>]
+                rel rigExec:limbJoints = [</Asset/Rig/Joints/Shoulder>, </Asset/Rig/Joints/Shoulder/Elbow>, </Asset/Rig/Joints/Shoulder/Elbow/Wrist>]
+                rel rigExec:rootControl = </Asset/Rig/Controls/Shoulder>
+                rel rigExec:effector = </Asset/Rig/Controls/Ik/Orient>
+                double inputs:switch.connect = </Asset/Rig/Controls/Settings.avars:ikfk>
+                double inputs:twist = 10
+            }
+        }
+        def Scope "Solvers"
+        {
+            def RigExecFkChain "FK"
+            {
+                rel rigExec:controls = [</Asset/Rig/Controls/Shoulder/Up>, </Asset/Rig/Controls/Shoulder/Up/Lo>, </Asset/Rig/Controls/Shoulder/Up/Lo/Hand>]
+            }
+            def RigExecTwoBoneIk "IK"
+            {
+                rel rigExec:rootControl = </Asset/Rig/Controls/Shoulder>
+                rel rigExec:effectorControl = </Asset/Rig/Controls/Ik/Orient>
+                rel rigExec:poleControl = </Asset/Rig/Controls/Pole>
+                rel rigExec:joints = [</Asset/Rig/Joints/Shoulder>, </Asset/Rig/Joints/Shoulder/Elbow>, </Asset/Rig/Joints/Shoulder/Elbow/Wrist>]
+            }
+            def RigExecBlendPointFrames "Blend"
+            {
+                rel rigExec:inputA = </Asset/Rig/Solvers/FK>
+                rel rigExec:inputB = </Asset/Rig/Solvers/IK>
+                float inputs:weight.connect = </Asset/Rig/Controls/Settings.avars:ikfk>
+                rel rigExec:joints = [</Asset/Rig/Joints/Shoulder>, </Asset/Rig/Joints/Shoulder/Elbow>, </Asset/Rig/Joints/Shoulder/Elbow/Wrist>]
+            }
+        }
+    }
+}
+)USD"))
+        return nullptr;
+    return stage;
+}
+
+/// Parent and Rotation constraints carried by a rigExec:space and an Aim
+/// aiming its world up at an object, all reading sources that live outside
+/// the rig, so the step reads them off the stage.
+UsdStageRefPtr
+StageSourceRig()
+{
+    UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    if (!stage->GetRootLayer()->ImportFromString(R"USD(#usda 1.0
+(
+    startTimeCode = 1
+    endTimeCode = 4
+)
+def Xform "Asset"
+{
+    def Xform "Source"
+    {
+        double3 xformOp:translate.timeSamples = {1: (3, 1, -2), 4: (4, 0.5, -1)}
+        double3 xformOp:rotateXYZ.timeSamples = {1: (10, 20, 30), 4: (-15, 40, 5)}
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+    def Xform "Up"
+    {
+        double3 xformOp:translate.timeSamples = {1: (0, 5, 0), 4: (1, 5, 2)}
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def RigExecRoot "Rig"
+    {
+        def Scope "Controls"
+        {
+            def RigExecControl "Space"
+            {
+                double rest:tx = 1
+                double avars:tx.timeSamples = {1: 0, 4: 2}
+                double avars:rz.timeSamples = {1: 0, 4: 30}
+                def RigExecControl "Parented"
+                {
+                    double rest:tx = 2
+                    double avars:ry.timeSamples = {1: 0, 4: 15}
+                }
+                def RigExecControl "Turned"
+                {
+                    double rest:ty = 2
+                }
+                def RigExecControl "Aimed"
+                {
+                    double rest:tz = 1
+                }
+            }
+        }
+        def Scope "Movers"
+        {
+            def RigExecParentConstraint "Parent" (
+                prepend apiSchemas = ["RigExecMoverAPI"]
+            )
+            {
+                rel rigExec:moves = </Asset/Rig/Controls/Space/Parented>
+                rel rigExec:sources = </Asset/Source>
+                rel rigExec:space = </Asset/Rig/Controls/Space>
+                float inputs:defaultWeight = 0.75
+            }
+            def RigExecRotationConstraint "Rotation" (
+                prepend apiSchemas = ["RigExecMoverAPI"]
+            )
+            {
+                rel rigExec:moves = </Asset/Rig/Controls/Space/Turned>
+                rel rigExec:sources = </Asset/Source>
+                rel rigExec:space = </Asset/Rig/Controls/Space>
+            }
+            def RigExecAimConstraint "Aim" (
+                prepend apiSchemas = ["RigExecMoverAPI"]
+            )
+            {
+                rel rigExec:moves = </Asset/Rig/Controls/Space/Aimed>
+                rel rigExec:sources = </Asset/Source>
+                uniform token rigExec:worldUpType = "objectUp"
+                rel rigExec:worldUpObject = </Asset/Up>
+            }
+        }
+    }
+}
+)USD"))
+        return nullptr;
+    return stage;
+}
+
 UsdStageRefPtr
 ProjectorRig(Ancestor ancestor)
 {
@@ -3949,6 +4577,8 @@ main(int argc, char **argv)
     ProbeStage(JointGroupRig(), "joint group rig", Paint::None);
     ProbeStage(AutoClavicleRig(), "auto clavicle rig", Paint::None, true);
     ProbeStage(TranslationPoseRig(), "translation pose rig", Paint::None, true);
+    ProbeStage(IkFkMatchRig(), "IK/FK match rig", Paint::None, true);
+    ProbeStage(StageSourceRig(), "stage source rig", Paint::None, true);
     ProbeStage(ProjectorRig(Ancestor::None), "projector rig", Paint::None);
     ProbeStage(ProjectorRig(Ancestor::Static), "projector rig, static ancestor",
                Paint::None);
@@ -4012,6 +4642,15 @@ main(int argc, char **argv)
           "SkinMatrices/dualQuaternion",
           "WeightPacket/",
           "Constraint/",
+          "Constraint/RigExecMatrixMover",
+          "Constraint/RigExecAimConstraint geometry",
+          "Constraint/RigExecIkFkMatchConstraint",
+          "Constraint/RigExecHarmonicsConstraint",
+          "Constraint/RigExecParentConstraint space stage source",
+          "Constraint/RigExecRotationConstraint space stage source",
+          "Constraint/RigExecAimConstraint stage source",
+          "Constraint/RigExecSingleChainIkConstraint slots",
+          "Commit/constraint multi-slot",
           "Spaces/ProviderMatrix/",
           "Spaces/FrameMatrix/",
           "Spaces/ProviderRefresh",
