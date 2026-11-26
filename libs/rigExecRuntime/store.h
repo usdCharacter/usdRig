@@ -1088,12 +1088,16 @@ const void *RrGeoGroupPointsAt(const RrProgram *program, size_t chain,
 bool RrStoreChainGroup(RrProgram *program, const eval::OpHostOutput &output,
                        uint32_t g, const void *elements, size_t count,
                        std::string *error);
-bool RrRevisionWeightFieldInput(const RrProgram *, size_t, const RrVec3f **,
-                                size_t *);
+/// The point count of weight field \p field's revision-form target; false
+/// when its chain has no points this frame.
+bool RrRevisionWeightFieldCount(const RrProgram *program, size_t field,
+                                size_t *count);
 /// Resolves ChainVersion lookup \p lookup: the points entering revision
-/// \p lookup.part of point chain \p lookup.object, lent in place.
+/// \p lookup.part of point chain \p lookup.object, lent in place or from
+/// \p gather, the lookup's own buffer.
 bool RrLookUpChainVersion(const RrProgram *program,
                           const eval::OpLookup &lookup,
+                          std::vector<RrVec3f> *gather,
                           const RigExecTypeDesc &type, void *out,
                           std::string *error);
 /// Resolves WeightFieldInputs lookup \p lookup: input \p lookup.read of

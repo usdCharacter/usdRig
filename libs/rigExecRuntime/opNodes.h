@@ -9,6 +9,7 @@
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
 #include "rigExecEvalCore/opSteps.h"
+#include "rigExecRuntime/values.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -37,6 +38,9 @@ struct RrOpNodes {
     /// Per node: the weight object whose packet it stores, or
     /// kRigExecInvalidIndex.
     std::vector<uint32_t> weightObject;
+    /// Per lookup: the points a ChainVersion lookup gathers, owned by the
+    /// one step that resolves it.
+    std::vector<std::vector<RrVec3f>> chainVersionGather;
 };
 
 /// Builds \p program's op nodes from its file, when it holds any. False

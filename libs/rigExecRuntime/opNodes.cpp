@@ -148,11 +148,19 @@ struct RrOpHost {
     {
         return RrStoreWeightPacket(&p, output, value, error);
     }
-    bool LookUpChainVersion(uint32_t, const eval::OpLookup &lookup,
+    bool LookUpChainVersion(uint32_t index, const eval::OpLookup &lookup,
                             const RigExecTypeDesc &type, void *value,
                             std::string *error) const
     {
-        return RrLookUpChainVersion(&p, lookup, type, value, error);
+        std::vector<std::vector<RrVec3f>> &gather =
+            p.opNodes->chainVersionGather;
+        if (index >= gather.size()) {
+            if (error)
+                *error = "no lookup " + std::to_string(index);
+            return false;
+        }
+        return RrLookUpChainVersion(&p, lookup, &gather[index], type, value,
+                                    error);
     }
     bool LookUpWeightField(uint32_t, const eval::OpLookup &lookup,
                            const RigExecTypeDesc &type, void *value,
@@ -362,6 +370,7 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
         return Fail(error, why);
     if (!eval::LayOutOpSteps(&layout, error))
         return false;
+    nodes->chainVersionGather.resize(layout.lookups.size());
     nodes->state = std::make_unique<eval::OpStepState>();
     nodes->state->run = RigExecRunState::Create(layout.program, {}, &why);
     if (!nodes->state->run)

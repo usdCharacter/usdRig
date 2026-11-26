@@ -6474,8 +6474,8 @@ RrGeoFuseWeightDiagnostics(const RrProgram *program,
 } // namespace
 
 bool
-RrRevisionWeightFieldInput(const RrProgram *program, size_t fieldIndex,
-                           const RrVec3f **points, size_t *count)
+RrRevisionWeightFieldCount(const RrProgram *program, size_t fieldIndex,
+                           size_t *count)
 {
     const auto &field = program->geometry->weightFields[fieldIndex];
     const auto &entry =
@@ -6483,17 +6483,14 @@ RrRevisionWeightFieldInput(const RrProgram *program, size_t fieldIndex,
     const auto *scratch =
         static_cast<const RrGeometryScratch *>(program->geo.get());
     const auto &chain = scratch->chains[size_t(entry.first)];
-    *points = nullptr;
-    *count = 0;
-    if (!chain.haveBase)
-        return false;
-    RrGeoPointsBefore(chain, size_t(entry.second), points, count);
-    return true;
+    *count = chain.haveBase ? chain.lastBase.size() : 0;
+    return chain.haveBase;
 }
 
 bool
 RrLookUpChainVersion(const RrProgram *program, const eval::OpLookup &lookup,
-                     const RigExecTypeDesc &type, void *out, std::string *error)
+                     std::vector<RrVec3f> *gather, const RigExecTypeDesc &type,
+                     void *out, std::string *error)
 {
     const auto *scratch =
         static_cast<const RrGeometryScratch *>(program->geo.get());
@@ -6514,7 +6511,24 @@ RrLookUpChainVersion(const RrProgram *program, const eval::OpLookup &lookup,
         return fail(" is looked up as no point array");
     const RrVec3f *points = nullptr;
     size_t count = 0;
-    RrGeoPointsBefore(chain, size_t(lookup.part), &points, &count);
+    const size_t version = size_t(lookup.part);
+    if (version == 0 || chain.groupBounds.size() < 2) {
+        RrGeoPointsBefore(chain, version, &points, &count);
+    } else {
+        bool base = true;
+        gather->clear();
+        for (size_t g = 0; g + 1 < chain.groupBounds.size(); ++g) {
+            RigExecGroupSource id;
+            const RigExecPointsRef<RrVec3f> &ref =
+                RrGeoGroupAt(chain, version, g, &id);
+            base = base && id.slot < 0;
+            if (ref.count > 0 && ref.data)
+                gather->insert(gather->end(), ref.data, ref.data + ref.count);
+        }
+        const std::vector<RrVec3f> &whole = base ? chain.lastBase : *gather;
+        points = whole.empty() ? nullptr : whole.data();
+        count = whole.size();
+    }
     type.borrow(out, points, count);
     return true;
 }

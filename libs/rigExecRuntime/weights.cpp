@@ -927,8 +927,7 @@ RrLookUpWeightField(const RrProgram *program, const eval::OpLookup &lookup,
         *n = 1;
         if (field.form != fb::WeightFieldForm::Revision)
             return true;
-        const RrVec3f *points = nullptr;
-        if (!RrRevisionWeightFieldInput(program, lookup.object, &points, n))
+        if (!RrRevisionWeightFieldCount(program, lookup.object, n))
             return fail("weight field " + std::to_string(lookup.object) +
                         ": its point chain has no points this frame");
         return true;
