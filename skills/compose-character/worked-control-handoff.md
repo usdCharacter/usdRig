@@ -250,38 +250,61 @@ Five stages, every command relative to the repository root with
 
 ```sh
 export MOVED=${MOVED:-scratch/handoff/moved/character}
-if [ -e "$MOVED" ] || [ "$MOVED" = "$CHAR" ] || [ "${MOVED#"$CHAR"/}" != "$MOVED" ]; then
-    echo "preparation: refusing — $MOVED exists or sits inside $CHAR" >&2
+dst=$("$PY" - <<'PY'
+import os, sys
+char = os.path.realpath(os.path.abspath(os.environ['CHAR']))
+moved = os.path.realpath(os.path.abspath(os.environ['MOVED']))
+problem = None
+if not os.path.isdir(char):
+    problem = 'source %s is not a directory' % os.environ['CHAR']
+elif os.path.lexists(moved) or os.path.lexists(os.environ['MOVED']):
+    problem = 'destination %s already exists' % moved
+elif moved == char or moved.startswith(char + os.sep):
+    problem = 'destination %s resolves inside source %s' % (moved, char)
+if problem:
+    print('preparation: refusing — ' + problem, file=sys.stderr)
+    sys.exit(1)
+print(moved)
+PY
+)
+if [ -z "$dst" ]; then
     false
 else
-    stage=$(mktemp -d "${TMPDIR:-/tmp}/usdrig-rebuild-stage.XXXXXX") || stage=""
-    if [ -z "$stage" ]; then
-        echo "preparation: no staging directory; $MOVED untouched" >&2
-        false
+    mkdir -p "$(dirname "$dst")"
+    if mkdir "$dst"; then
+        if cp -RL "$CHAR/." "$dst/" && rm "$dst/demo_rig.components.usda"; then
+            :
+        else
+            echo "preparation: copy failed; removed the partial copy — $MOVED absent, $CHAR unchanged" >&2
+            rm -r "$dst"
+            false
+        fi
     else
-        mkdir -p "$(dirname "$MOVED")"
-        rc=0
-        cp -r "$CHAR" "$stage/character" &&
-        rm "$stage/character/demo_rig.components.usda" &&
-        mv "$stage/character" "$MOVED" ||
-        { echo "preparation: copy failed; $MOVED not created" >&2; rc=1; }
-        rm -rf "$stage"
-        (exit "$rc")
+        echo "preparation: refusing — $dst appeared after the check and could not be created; $CHAR unchanged" >&2
+        false
     fi
 fi
 ```
 
 Export `$MOVED` so the shell and the Python blocks below resolve the same
-destination override. The preparation writes nothing before its guards pass:
-it refuses an existing `$MOVED` or one inside `$CHAR` outright, stages the
-relocated copy in a private directory outside both, removes the generated
-layer only from the staged copy, and installs it only when the staged copy
-is complete — a failed staging, copy, or install leaves the source and the
-requested destination byte-unchanged, and an existing destination is never
-replaced. `rm` therefore runs inside the staged copy, never against a
-delivery or an existing directory: removing the generated layer is what
-makes that copy a build from an absent start. The recipe itself never
-deletes or overwrites a generated layer — stage 2 refuses one.
+destination override. Scratch creation and the copy are one fail-closed
+operation. The guard compares resolved locations, not spelling, so a `./`
+prefix or a symlinked parent cannot smuggle `$MOVED` back inside `$CHAR`,
+and an existing entry of any kind — a directory, a file, or a dangling
+symlink — refuses outright. The guard writes nothing; the shell touches the
+tree only once it holds the resolved destination. It creates that directory
+exclusively — a plain `mkdir`, so an entry that appears between the check
+and the install makes the install fail rather than letting the copy nest
+inside it — copies with symlinks resolved (`cp -RL`), so no staged path can
+point back into the source, and only then removes the generated layer
+inside the copy it just created itself. If the copy fails, the partial copy
+is removed and the recipe stops before the rebuild: the source and any
+pre-existing destination stay byte-unchanged, and an existing destination
+is never replaced. `rm` therefore runs only inside the copy the recipe just
+made, never against a delivery or an existing directory: removing the
+generated layer is what makes that copy a build from an absent start. The
+recipe itself never deletes or overwrites a generated layer — stage 2
+refuses one.
 
 **Stage 1 — fit. Stage 2 — composition.** The fit layer and the bindings
 JSON are the source of truth and carry the relocated path. Run both stages
