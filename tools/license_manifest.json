@@ -117,7 +117,8 @@
         "plugin/rigExecUsdview/profilerUI.py",
         "plugin/rigExecUsdview/execStackUI.py",
         "asset_lib/components/compose.py",
-        "asset_lib/components/test_components.py"
+        "asset_lib/components/test_components.py",
+        "asset_lib/components/example_control_handoff.py"
       ],
       "carve_outs": [],
       "spdx": "MIT",
@@ -133,7 +134,7 @@
       ],
       "generator": null,
       "exception_scope": "Header-stated ownership outranks directory-level classification.",
-      "matched_files": 5
+      "matched_files": 6
     },
     {
       "id": "openusd-derived-runtime-math",
@@ -864,6 +865,10 @@
           "handled_by": "stated-mit-headers"
         },
         {
+          "glob": "asset_lib/components/example_control_handoff.py",
+          "handled_by": "stated-mit-headers"
+        },
+        {
           "glob": "asset_lib/components/README.md",
           "handled_by": "original-documentation"
         }
@@ -882,7 +887,7 @@
         }
       ],
       "generator": null,
-      "exception_scope": "Component stages and JSON under the root MIT. compose.py, test_components.py and README.md keep their own family and header.",
+      "exception_scope": "Component stages and JSON under the root MIT. compose.py, test_components.py, example_control_handoff.py and README.md keep their own family and header.",
       "matched_files": 14
     },
     {
@@ -1001,7 +1006,7 @@
     }
   ],
   "totals": {
-    "assigned_files": 1816,
+    "assigned_files": 1817,
     "unassigned_files": 0,
     "double_assigned_files": 0,
     "by_category": {
