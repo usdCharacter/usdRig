@@ -265,6 +265,13 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                           const std::vector<char> &snapshotJoints,
                           const SdfPathVector &liveRestJoints) {
         RigExecBakedProgramImpl::Solver s;
+        // The first reason the solver cannot solve; Build refuses with it.
+        std::string degenerateWhy;
+        const auto degenerate = [&s, &degenerateWhy](const char *why) {
+            if (!s.degenerate)
+                degenerateWhy = why;
+            s.degenerate = true;
+        };
         // Every slot whose REST this description measures from. Recorded at
         // the point the rest is actually read, so the list is exactly what
         // RigExecBakedRefreshSolverRests has to rebuild from and cannot
@@ -322,11 +329,9 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 s.type == SchemaTypeName::RigExecTwoBoneIk ||
                 s.type == SchemaTypeName::RigExecSplineIk;
             const bool remapped = consumesElements && !elements.empty();
-            if (remapped && elements.size() != restSlots.size()) {
-                // "joint/rest element cardinality mismatch": the computation
-                // warns and returns an empty result.
-                s.degenerate = true;
-            }
+            if (remapped && elements.size() != restSlots.size())
+                degenerate("rigExec:jointElements does not give one element "
+                           "per bound joint");
             const bool useRemap = remapped && !s.degenerate;
             for (size_t k = 0; k < restSlots.size(); ++k) {
                 restRefs.emplace_back(restSlots[k],
@@ -437,12 +442,9 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             s.root = r.empty() ? -1 : providerSlot(r[0]);
             s.end = e.empty() ? -1 : providerSlot(e[0]);
             s.pole = p.empty() ? -1 : providerSlot(p[0]);
-            if (s.root < 0 || s.end < 0 || s.pole < 0) {
-                // All three frames are REQUIRED inputs: an unwired or
-                // non-publishing control is a null pointer and an empty
-                // aggregate, not a rig the program cannot express.
-                s.degenerate = true;
-            }
+            if (s.root < 0 || s.end < 0 || s.pole < 0)
+                degenerate("two-bone IK needs root, effector and pole "
+                           "controls that are pose providers");
             // Bone lengths are MEASURED from the rests of the joints this
             // solver binds, so all three chain slots have to be bound by
             // one. The computation returns empty on the first element out
@@ -451,15 +453,15 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             std::array<bool, 3> seen{false, false, false};
             for (const auto &[slot, element] : restRefs) {
                 if (element < 0 || element >= 3) {
-                    s.degenerate = true;
+                    degenerate("two-bone IK joint element is outside [0, 3)");
                     continue;
                 }
                 s.ikRests[size_t(element)] = B.restPts[foldRest(slot)];
                 seen[size_t(element)] = true;
             }
-            if (!(seen[0] && seen[1] && seen[2])) {
-                s.degenerate = true;
-            }
+            if (!(seen[0] && seen[1] && seen[2]))
+                degenerate("two-bone IK joints do not bind all three chain "
+                           "slots");
             // The bone lengths exec measures every evaluation, measured once.
             s.upperLengthBase = (s.ikRests[1][0] - s.ikRests[0][0]).GetLength();
             s.lowerLengthBase = (s.ikRests[2][0] - s.ikRests[1][0]).GetLength();
@@ -516,12 +518,9 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                               ? RigExecScaleBlend::Linear
                               : RigExecScaleBlend::Log;
             // The fallback is the only mode there is, so an unauthored
-            // token is never rejected; anything else warns and publishes an
-            // empty array -- but only once the computation has TWO inputs in
-            // hand. A null input returns the other before the token is ever
-            // read, so this cannot be `degenerate`, which would answer the
-            // half-wired blend with an empty aggregate the computation never
-            // publishes.
+            // token is never rejected; anything else is refused at Build
+            // once both inputs bind solvers. A blend with one input unbound
+            // passes the other through and never reads the token.
             if (readToken(prim, _tokens->rigExecRotationBlend,
                           _tokens->shortestArc) !=
                 SchemaValueText::shortestArc) {
@@ -534,21 +533,12 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             s.root = r.empty() ? -1 : providerSlot(r[0]);
             s.mid = m.empty() ? -1 : providerSlot(m[0]);
             s.end = e.empty() ? -1 : providerSlot(e[0]);
-            if (s.root < 0 || s.mid < 0 || s.end < 0) {
-                // Both halves of the computation's answer at once: the three
-                // posed frames are REQUIRED inputs, and it refuses again
-                // when one of the three rest frames is missing. Either way
-                // it publishes an empty aggregate.
-                s.degenerate = true;
-            }
+            if (s.root < 0 || s.mid < 0 || s.end < 0)
+                degenerate("spline IK needs root, mid and end controls that "
+                           "are pose providers");
             const size_t count = restRefs.size();
-            if (count == 0) {
-                // "rigExec:joints binds no joints; there is no chain to
-                // measure rest CVs from". The empty rest description would
-                // have solved to an empty aggregate anyway; saying so is
-                // what keeps the two paths' reasons the same shape.
-                s.degenerate = true;
-            }
+            if (count == 0)
+                degenerate("spline IK rigExec:joints binds no joints");
             s.splineCount = count;
             std::vector<RigExecPointFrame> restJoints(count);
             s.splineJointRests.resize(count);
@@ -558,12 +548,10 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             // twice") rather than solving against a hole.
             std::vector<bool> filled(count, false);
             for (const auto &[slot, element] : restRefs) {
-                if (element < 0 || size_t(element) >= count) {
-                    s.degenerate = true;
-                    continue;
-                }
-                if (filled[size_t(element)]) {
-                    s.degenerate = true;
+                if (element < 0 || size_t(element) >= count ||
+                    filled[size_t(element)]) {
+                    degenerate("spline IK rigExec:jointElements is not a "
+                               "permutation of its chain");
                     continue;
                 }
                 filled[size_t(element)] = true;
@@ -578,15 +566,15 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             s.execSplineWeights = authoredWeights;
             for (float w : authoredWeights)
                 weights.push_back(w);
-            if (!weights.empty() && weights.size() != count) {
-                s.degenerate = true;
-            }
+            if (!weights.empty() && weights.size() != count)
+                degenerate("spline IK rigExec:volumeWeights length differs "
+                           "from its joints");
             const TfToken restTok =
                 readToken(prim, _tokens->rigExecRestLength, TfToken());
             if (!restTok.IsEmpty() && restTok != SchemaValueText::curve &&
-                restTok != SchemaValueText::chain) {
-                s.degenerate = true;
-            }
+                restTok != SchemaValueText::chain)
+                degenerate("spline IK rigExec:restLength is neither curve nor "
+                           "chain");
             // Exec rebuilds this description every evaluation. It is a pure
             // function of the rests plus these two, so the two are kept and
             // the rebuild happens again only on a run that recomposed them.
@@ -640,7 +628,8 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 s.splineParams.aimRootTangent = true;
             } else if (!tangent.IsEmpty() &&
                        tangent != SchemaValueText::rigid) {
-                s.degenerate = true;
+                degenerate("spline IK rigExec:rootTangent is neither aim nor "
+                           "rigid");
             }
         } else if (s.type == SchemaTypeName::RigExecTwistDistribution) {
             // The two endpoint frames arrive on the batch request as FINAL
@@ -649,16 +638,16 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             // A target that is no provider slot, or one the exec network
             // seeds from the stage rather than computing (an xform-derived
             // slot declares neither computePointFrame nor computeRestFrame),
-            // leaves the computation's REQUIRED start or end input unbound:
-            // it publishes an empty aggregate and every joint it names falls
-            // back. That is `degenerate`, not a refusal.
+            // leaves the computation's REQUIRED start or end input unbound,
+            // and Build refuses the solver.
             const auto endpoint = [&](const SdfPathVector &v) {
                 return v.empty() ? -1 : providerSlot(v[0]);
             };
             s.root = endpoint(targets(prim, _tokens->rigExecStart));
             s.end = endpoint(targets(prim, _tokens->rigExecEnd));
             if (s.root < 0 || s.end < 0) {
-                s.degenerate = true;
+                degenerate("twist distribution needs start and end frames "
+                           "that are pose providers");
             } else {
                 // The rests are OPTIONAL inputs of the computation, but
                 // every seeded provider publishes computeRestFrame, so a
@@ -866,6 +855,11 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 record.startRest = s.startRest;
             }
             static_cast<RigExecSolverRecord &>(s) = std::move(record);
+            if (s.degenerate)
+                refuse(degenerateWhy.empty()
+                           ? std::string("solver inputs do not bind")
+                           : degenerateWhy,
+                       solverPath);
             if (s.type == SchemaTypeName::RigExecRibbon)
                 s.ribbonSamples = ribbonSamples;
             for (const auto &read : descriptor.jointGroupSelectorReads) {
@@ -1542,6 +1536,10 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             if (s.kind != RigExecSolverKind::BlendPointFrames) {
                 s.frameCount = RigExecSolverOwnFrameCount(s);
             } else if (s.inA >= 0 && s.inB >= 0) {
+                if (s.blendRotationRejected)
+                    refuse("frame blend rigExec:rotationBlend is not "
+                           "shortestArc",
+                           s.path);
                 const size_t a = frames(s.inA), b = frames(s.inB);
                 if (a != b)
                     refuse("frame blend inputs publish " + std::to_string(a) +
@@ -5090,18 +5088,12 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
             size_t count = 0;
             const bool available = RigExecBakedResolvePoints(
                 B, s.ribbonPointsBinding, &points, &count);
-            if (available && count)
+            // The driver points default to the sampled driver curve while
+            // no chain version answers for them.
+            if (available)
                 input.ribbonPoints.assign(points, points + count);
-            else if (available)
-                input.ribbonPoints.clear();
-            else {
+            else
                 input.ribbonPoints = sampled;
-                if (!s.ribbonPointsBinding.candidates.empty())
-                    step->diagnostics.push_back(
-                        "diag " + s.pathText +
-                        ": ribbon driver points are unavailable; using sampled "
-                        "base");
-            }
         } else if (s.type == SchemaTypeName::RigExecSplineIk) {
             s.kind = RigExecSolverKind::SplineIk;
             input.refreshSplineParams =

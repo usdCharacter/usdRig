@@ -367,10 +367,8 @@ MakeTwistRigWithOneSample()
     return stage;
 }
 
-/// rigExec:end wired to nothing. The computation's end frame is a REQUIRED
-/// input, so it publishes an empty aggregate and the joint falls back to its
-/// rest chain with the diagnostic that carries -- which the program has to
-/// reproduce rather than solve half a distribution.
+/// rigExec:end wired to nothing. The end frame is a REQUIRED input, so Build
+/// refuses the solver rather than publish half a distribution.
 UsdStageRefPtr
 MakeTwistRigWithNoEnd()
 {
@@ -593,7 +591,7 @@ MakeTwoBoneIkRig()
 }
 
 /// rigExec:joints reduced to two, so the solver binds two of the three chain
-/// slots and cannot measure its lower bone.
+/// slots and cannot measure its lower bone: Build refuses it.
 UsdStageRefPtr
 MakeTwoBoneIkRigWithTwoJoints()
 {
@@ -606,8 +604,8 @@ MakeTwoBoneIkRigWithTwoJoints()
 }
 
 /// rigExec:poleControl aimed at a plain Xform. It publishes no
-/// computePointFrame, so the pole input is unbound and the computation
-/// publishes nothing.
+/// computePointFrame, so the required pole input is unbound and Build
+/// refuses the solver.
 UsdStageRefPtr
 MakeTwoBoneIkRigWithANonProviderPole()
 {
@@ -663,7 +661,8 @@ MakeSplineIkRig()
     return stage;
 }
 
-/// A token no kernel implements, on each of the two the computation parses.
+/// A token no kernel implements, on each of the two the computation parses:
+/// Build refuses either.
 UsdStageRefPtr
 MakeSplineIkRigWithUnsupportedRestLength()
 {
@@ -671,6 +670,19 @@ MakeSplineIkRigWithUnsupportedRestLength()
     stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/SpineIk"))
         .GetAttribute(TfToken("rigExec:restLength"))
         .Set(TfToken("spring"));
+    return stage;
+}
+
+/// A spline IK whose rigExec:joints binds nothing: there is no chain to
+/// measure its rest curve from.
+UsdStageRefPtr
+MakeSplineIkRigWithNoJoints()
+{
+    const UsdStageRefPtr stage = MakeSplineIkRig();
+    const UsdPrim spline =
+        stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/SpineIk"));
+    SetTargets(spline, "rigExec:joints", {});
+    spline.GetAttribute(TfToken("rigExec:volumeWeights")).Clear();
     return stage;
 }
 
@@ -697,11 +709,9 @@ MakeSplineIkRigWithUnsupportedRootTangent()
 //     "rigExec:jointElements length 2 must equal rigExec:joints length 3"
 // (the last one authored as a CUSTOM array, since RigExecTwoBoneIk does not
 // declare jointElements -- its positions are its elements).
-// The bake's `degenerate` for all four is therefore defensive rather than
-// reachable. It stays, because the computations check them at runtime and
-// the two paths should answer the same hypothetical the same way; this
-// comment is so the next reader does not spend an afternoon trying to
-// author one.
+// Build refuses each of the four as well (a degenerate solver), but compile
+// answers first; this comment is so the next reader does not spend an
+// afternoon trying to author one.
 
 /// An IK/FK blend over the two-bone leg: example 03's shape, with an FK
 /// chain over the same three joints and a blend in front of both.
@@ -783,7 +793,8 @@ MakeBlendRigWithUnequalInputs()
 }
 
 /// rigExec:rotationBlend authored to the one thing the schema does not
-/// allow: the computation rejects the token rather than substituting for it.
+/// allow: with both inputs bound, Build refuses the token rather than
+/// substituting for it.
 UsdStageRefPtr
 MakeBlendRigWithLinearRotation()
 {
@@ -817,13 +828,9 @@ MakeBlendRigWithANonSolverInput()
 /// Both at once: an unsupported rigExec:rotationBlend AND an input that
 /// publishes no aggregate.
 ///
-/// The ORDER of the computation's two checks is the whole fixture. It
-/// returns the surviving input before it ever looks at the token, so the
-/// blend passes the FK chain through and poses the three joints -- while a
-/// bake that treated the token as a whole-solver degeneracy publishes
-/// nothing and drops all three to their rest chains. Each half alone is
-/// above, and each half alone agrees; only the conjunction tells the two
-/// orderings apart.
+/// With one input unbound the blend is a pass-through of the other and never
+/// reads the token: it poses the three joints with the FK chain, where the
+/// linear-rotation blend with both inputs is refused at Build.
 UsdStageRefPtr
 MakeBlendRigWithLinearRotationAndANonSolverInput()
 {
@@ -2202,8 +2209,9 @@ main(int argc, char **argv)
                               MakeTwistRigWithUnauthoredWeights, frames, true);
     CheckEvaluatorConsistency("twist distribution with one sample",
                               MakeTwistRigWithOneSample, frames, true);
-    CheckEvaluatorConsistency("twist distribution with no end",
-                              MakeTwistRigWithNoEnd, frames, true);
+    CheckRefusedAtBuild("twist distribution with no end", MakeTwistRigWithNoEnd,
+                        "twist distribution needs start and end frames that "
+                        "are pose providers: /Asset/Rig/Solvers/SpineTwist");
 
     CheckEvaluatorConsistency("ribbon on a keyed driver curve",
                               MakeAnimatedRibbonRig, frames, true);
@@ -2215,26 +2223,36 @@ main(int argc, char **argv)
                               MakeRibbonRigWithNoDriver, frames, true);
 
     CheckEvaluatorConsistency("two-bone ik", MakeTwoBoneIkRig, frames, true);
-    CheckEvaluatorConsistency("two-bone ik binding two joints",
-                              MakeTwoBoneIkRigWithTwoJoints, frames, true);
+    CheckRefusedAtBuild("two-bone ik binding two joints",
+                        MakeTwoBoneIkRigWithTwoJoints,
+                        "two-bone IK joints do not bind all three chain "
+                        "slots: /Asset/Rig/Solvers/LegIK");
 
-    CheckEvaluatorConsistency("two-bone ik with a non-provider pole",
-                              MakeTwoBoneIkRigWithANonProviderPole, frames,
-                              true);
+    CheckRefusedAtBuild("two-bone ik with a non-provider pole",
+                        MakeTwoBoneIkRigWithANonProviderPole,
+                        "two-bone IK needs root, effector and pole controls "
+                        "that are pose providers: /Asset/Rig/Solvers/LegIK");
     CheckEvaluatorConsistency("fk chain with a non-provider control",
                               MakeFkChainWithANonProviderControl, frames, true);
 
     CheckEvaluatorConsistency("spline ik", MakeSplineIkRig, frames, true);
-    CheckEvaluatorConsistency("spline ik with an unsupported restLength",
-                              MakeSplineIkRigWithUnsupportedRestLength, frames,
-                              true);
-    CheckEvaluatorConsistency("spline ik with an unsupported rootTangent",
-                              MakeSplineIkRigWithUnsupportedRootTangent, frames,
-                              true);
+    CheckRefusedAtBuild("spline ik with an unsupported restLength",
+                        MakeSplineIkRigWithUnsupportedRestLength,
+                        "spline IK rigExec:restLength is neither curve nor "
+                        "chain: /Asset/Rig/Solvers/SpineIk");
+    CheckRefusedAtBuild("spline ik with an unsupported rootTangent",
+                        MakeSplineIkRigWithUnsupportedRootTangent,
+                        "spline IK rigExec:rootTangent is neither aim nor "
+                        "rigid: /Asset/Rig/Solvers/SpineIk");
+    CheckRefusedAtBuild("spline ik with no joints", MakeSplineIkRigWithNoJoints,
+                        "spline IK rigExec:joints binds no joints: "
+                        "/Asset/Rig/Solvers/SpineIk");
 
     CheckEvaluatorConsistency("ik/fk blend", MakeBlendRig, frames, true);
-    CheckEvaluatorConsistency("ik/fk blend with a linear rotation blend",
-                              MakeBlendRigWithLinearRotation, frames, true);
+    CheckRefusedAtBuild("ik/fk blend with a linear rotation blend",
+                        MakeBlendRigWithLinearRotation,
+                        "frame blend rigExec:rotationBlend is not "
+                        "shortestArc: /Asset/Rig/Solvers/Blend");
     CheckEvaluatorConsistency("ik/fk blend with a non-solver input",
                               MakeBlendRigWithANonSolverInput, frames, true);
     CheckEvaluatorConsistency(
@@ -2283,10 +2301,6 @@ main(int argc, char **argv)
             };
             check("ik/fk blend after another frame", MakeBlendRig, frame5);
             check("ik/fk blend after a drag on its ik", MakeBlendRig, footDrag);
-            check("linear-rotation blend after another frame",
-                  MakeBlendRigWithLinearRotation, frame5);
-            check("linear-rotation blend after a drag on its ik",
-                  MakeBlendRigWithLinearRotation, footDrag);
             check("guide-only blend after another frame", MakeGuideOnlyBlendRig,
                   frame5);
             check("guide-only blend after a drag on an input",

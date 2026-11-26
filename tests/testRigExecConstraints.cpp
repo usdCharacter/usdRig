@@ -2374,14 +2374,11 @@ TestSolverBindsJointsUnderAnyScope()
 }
 
 static void
-TestIncompleteSolverLeavesJointsVisible()
+TestIncompleteSolverIsRefused()
 {
-    // Removing a solver's control relationships must not make its joints
-    // disappear: with no aggregate element to extract, each bound joint
-    // keeps its natural rest-chain frame (and stays drawable) while a
-    // diagnostic names the gap. A present-but-degenerate solve is the
-    // opposite case and still propagates; this test covers only the
-    // incomplete solver, whose kernel returns an empty aggregate.
+    // A solver with its control relationships removed cannot solve: Build
+    // refuses it, so the rig compiles and every evaluation is invalid and
+    // names the unbound inputs.
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     MakeXform(stage, SdfPath("/Asset"), Matrix());
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
@@ -2424,28 +2421,13 @@ TestIncompleteSolverLeavesJointsVisible()
     CHECK(errors.empty());
 
     const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
-    CHECK(pose.valid);
-    // Every bound joint stays on its rest chain. rest:tx/ty/tz is the
-    // offset from the parent frame provider, so each joint sits at the
-    // accumulated chain -- three 1-unit steps reaching x = 1, 2, 3.
-    const GfVec3d expected[3] = {GfVec3d(1, 0, 0), GfVec3d(2, 0, 0),
-                                 GfVec3d(3, 0, 0)};
-    for (int i = 0; i < 3; ++i) {
-        const auto frame = pose.jointFramesFinal.find(joints[i]);
-        CHECK(frame != pose.jointFramesFinal.end());
-        if (frame == pose.jointFramesFinal.end()) {
-            continue;
-        }
-        CHECK(frame->second.IsValid());
-        CHECK(!frame->second.IsDegenerate());
-        CHECK(Near(frame->second.Origin(), expected[i]));
-        // The matrix is what imaging draws: omitted means invisible.
-        CHECK(pose.jointMatricesFinal.count(joints[i]) == 1);
-    }
+    CHECK(!pose.valid);
     CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
                       [](const std::string &diagnostic) {
                           return diagnostic.find(
-                                     "fell back to its rest chain") !=
+                                     "two-bone IK needs root, effector and "
+                                     "pole controls that are pose providers: "
+                                     "/Asset/Rig/Solvers/LegIK") !=
                                  std::string::npos;
                       }));
 }
@@ -6062,7 +6044,7 @@ main()
     TestLegacyWeightSpellingIsRejected();
     TestInvalidContractsFailClosed();
     TestSolverBindsJointsUnderAnyScope();
-    TestIncompleteSolverLeavesJointsVisible();
+    TestIncompleteSolverIsRefused();
     TestTwoBoneIkImpliedLengths(false);
     TestTwoBoneIkImpliedLengths(true);
     TestTwoBoneIkRestFrameInputs();

@@ -89,9 +89,7 @@ struct RigSpec {
     bool ik = true;
     bool fk = true;
     /// Author the IK's root/effector/pole controls. False leaves it bound to
-    /// the joints and wired to nothing, so it publishes an empty aggregate
-    /// and every joint it names falls back -- the shape the per-joint verdict
-    /// below is about.
+    /// the joints and wired to nothing, which Build refuses.
     bool ikWired = true;
     /// A SECOND FK chain over the same three joints, so the stack is three
     /// deep rather than two.
@@ -1331,19 +1329,21 @@ TestDataFlowOutranksTheNamespace()
 
 /// The per-joint verdict when a writer publishes nothing, on BOTH paths.
 ///
-/// An unwired TwoBoneIk publishes an empty aggregate, so every joint it names
-/// "published no element". The joint is not left at rest -- the other writer
-/// already wrote it -- so the message has to say which frame it kept, and the
-/// dynamic and baked paths have to say it in the same words or the parity
-/// comparator, which compares diagnostics verbatim, is comparing nothing.
+/// An FK chain one of whose controls is no pose provider shortens, so the
+/// ankle it binds "published no element". The joint is not left at rest --
+/// the IK writes it too -- so the message has to say which frame it kept,
+/// and the dynamic and baked paths have to say it in the same words or the
+/// parity comparator, which compares diagnostics verbatim, is comparing
+/// nothing. An unwired IK no longer publishes nothing: Build refuses it.
 void
-TestFallbackVerdictUnderStack(bool ikLast)
+TestFallbackVerdictUnderStack(bool fkLast)
 {
-    const char *what = ikLast ? "unwired ik last" : "unwired ik first";
+    const char *what = fkLast ? "short fk last" : "short fk first";
     RigSpec spec = Stacked();
-    spec.ikWired = false;
-    if (!ikLast) {
-        // Composed order FK, IK -> reversed -> the IK writes FIRST.
+    spec.fkControls = "</Asset/Rig/Controls/FkHip>, </Asset/Rig/Joints>, "
+                      "</Asset/Rig/Controls/FkHip/FkKnee/FkAnkle>";
+    if (fkLast) {
+        // Composed order FK, IK -> reversed -> the FK writes LAST.
         spec.solverOrder = {"LegFK", "LegIK"};
     }
 
@@ -1381,9 +1381,9 @@ TestFallbackVerdictUnderStack(bool ikLast)
         // the joint kept -- never "fell back to its rest chain", which is
         // what it would say if the other writer had not run.
         CHECK(Mentions(a.diagnostics,
-                       "solver /Asset/Rig/Solvers/LegIK published no element"));
+                       "solver /Asset/Rig/Solvers/LegFK published no element"));
         CHECK(Mentions(a.diagnostics,
-                       "the joint keeps the frame /Asset/Rig/Solvers/LegFK "
+                       "the joint keeps the frame /Asset/Rig/Solvers/LegIK "
                        "left"));
         CHECK(!Mentions(a.diagnostics, "fell back to its rest chain"));
         // Identical on both canonical evaluators, line for line.
@@ -1401,6 +1401,23 @@ TestFallbackVerdictUnderStack(bool ikLast)
         rigExecTest::ComparePose(
             &failures, std::string(what) + " t=" + std::to_string(time), a, b);
     }
+}
+
+/// An IK wired to no controls is refused at Build: its required root,
+/// effector and pole are unbound.
+void
+TestUnwiredIkIsRefused()
+{
+    RigSpec spec = Stacked();
+    spec.ikWired = false;
+    RigExecRigEvaluator rig(MakeStage(spec), kRigPath);
+    std::vector<std::string> errors;
+    CHECK(rig.Compile(&errors));
+    const RigExecRigPose pose = rig.Evaluate(UsdTimeCode(1.0));
+    CHECK(!pose.valid &&
+          Mentions(pose.diagnostics,
+                   "two-bone IK needs root, effector and pole controls that "
+                   "are pose providers: /Asset/Rig/Solvers/LegIK"));
 }
 
 /// A pose constraint on a stacked joint observes the TOP of the stack.
@@ -3273,6 +3290,7 @@ main(int argc, char **argv)
     TestDuplicateJointOnOneSolverIsUnauthorable();
     TestFallbackVerdictUnderStack(false);
     TestFallbackVerdictUnderStack(true);
+    TestUnwiredIkIsRefused();
     TestConstraintObservesTopOfStack();
     TestPartialSubsetsAgreeOnOneOrder();
     TestConstraintMediatedOrderIsRespected();

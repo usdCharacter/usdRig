@@ -41,7 +41,7 @@ def _RegisterSchema():
 
 
 def _Origins(stage):
-    """World joint origins, with the IK solver unbound."""
+    """World joint origins, with the IK solver deactivated."""
     import _rigexec
     rig = _rigexec.Rig(stage, "/RigRoot")
     rig.compile()
@@ -51,11 +51,10 @@ def _Origins(stage):
 
 
 def _OpenDisconnected():
-    """The spider leg with the solver unbound, so rests drive directly."""
+    """The spider leg with the solver deactivated, so rests drive directly."""
     stage = Usd.Stage.Open(_EXAMPLE)
     stage.SetEditTarget(Usd.EditTarget(stage.GetSessionLayer()))
-    stage.GetPrimAtPath(_SOLVER).GetRelationship(
-        "rigExec:joints").SetTargets([])
+    stage.GetPrimAtPath(_SOLVER).SetActive(False)
     return stage
 
 
