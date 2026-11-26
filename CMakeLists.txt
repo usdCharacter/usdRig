@@ -838,7 +838,8 @@ rigexec_add_test(NAME testRigExecExternalMovers COMMAND testRigExecExternalMover
     "$<TARGET_GENEX_EVAL:testExternalMover,$<TARGET_PROPERTY:testExternalMover,RIGEXEC_PLUGIN_RESOURCE_DIR>>"
     "${CMAKE_CURRENT_BINARY_DIR}/registeredMover.rigexec")
 add_executable(testRigExecRegisteredMover tests/testRigExecRegisteredMover.cpp)
-target_link_libraries(testRigExecRegisteredMover PRIVATE rigExecRuntime testExternalMoverKernel)
+target_link_libraries(testRigExecRegisteredMover PRIVATE rigExecRuntime rigExecBuiltins
+    testExternalMoverKernel)
 rigexec_add_test(NAME testRigExecRegisteredMover COMMAND testRigExecRegisteredMover
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/registeredMover.rigexec")
 # TestRegistration asserts on the global loader, so an ambient plugin path
@@ -923,7 +924,7 @@ rigexec_add_test(NAME testRigExecWrinkle COMMAND testRigExecWrinkle
     "${CMAKE_CURRENT_BINARY_DIR}/wrinkle_test.rigexec")
 set_tests_properties(testRigExecWrinkle PROPERTIES FIXTURES_SETUP WrinkleBinary)
 add_executable(testRigExecWrinkleRuntime tests/testRigExecWrinkleRuntime.cpp)
-target_link_libraries(testRigExecWrinkleRuntime PRIVATE rigExecRuntime)
+target_link_libraries(testRigExecWrinkleRuntime PRIVATE rigExecRuntime rigExecBuiltins)
 rigexec_add_test(NAME testRigExecWrinkleRuntime COMMAND testRigExecWrinkleRuntime
     "${CMAKE_CURRENT_BINARY_DIR}/wrinkle_test.rigexec")
 set_tests_properties(testRigExecWrinkleRuntime PROPERTIES FIXTURES_REQUIRED WrinkleBinary)

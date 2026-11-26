@@ -134,6 +134,17 @@ struct BakedOpHost {
     {
         return RigExecBakedStoreWeightField(B, output, value, error);
     }
+    bool LookUpSpace(uint32_t, const eval::OpLookup &lookup,
+                     const RigExecTypeDesc &type, void *value,
+                     std::string *error) const
+    {
+        return RigExecBakedLookUpSpace(B, lookup, type, value, error);
+    }
+    bool StoreSpace(const eval::OpHostOutput &output, const void *value,
+                    std::string *error) const
+    {
+        return RigExecBakedStoreSpace(B, output, value, error);
+    }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t g,
                     const void *elements, size_t count,
                     std::string *error) const
@@ -530,7 +541,8 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
         return false;
     RigExecRigDescBuilder builder;
     if (!RigExecBakedAddPropertyOps(B, &builder, &layout, error) ||
-        !RigExecBakedAddWeightFieldOps(B, &builder, &layout, false, error))
+        !RigExecBakedAddWeightFieldOps(B, &builder, &layout, false, error) ||
+        !RigExecBakedAddSpaceOps(B, &builder, &layout, error))
         return false;
     RigExecBakedAddVolumePlacementOps(B, &builder, &layout);
     if (!RigExecBakedAddWeightPacketOps(B, &builder, &layout, error) ||

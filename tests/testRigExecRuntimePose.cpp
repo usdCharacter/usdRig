@@ -13,6 +13,10 @@
 #include "rigExecRuntime/runtime.h"
 #include "rigExecRuntime/opGraph.h"
 #include "rigExecRuntime/poseInternal.h"
+#include "rigExecRuntime/poseMath.h"
+#include "rigExecEvalCore/opSteps.h"
+#include "rigExecEvalCore/pose.h"
+#include "rigExecRigTypes/rigTypes.h"
 #include "rigExecExampleFixtures.h"
 
 #include "pxr/base/gf/rotation.h"
@@ -5240,10 +5244,6 @@ TestFrameMatrixGates()
         record.position = row[2];
         record.version = uint32_t(row[3]);
         baked.push_back(record);
-        fb::RigExecWireStep step;
-        step.kind = fb::StepKind::FrameMatrix;
-        step.object = int32_t(r);
-        file.steps.push_back(std::move(step));
     }
 
     RrProgram program;
@@ -5297,10 +5297,74 @@ TestFrameMatrixGates()
     };
     setRest(rest);
 
+    // A record runs as its FrameMatrix op node does: its inputs through the
+    // runtime's lookups, the record kernel, its outputs through its stores.
+    const auto runRecord = [&](size_t r, std::string *why) {
+        const fb::FrameRecord &record = file.pose->frameRecords[r];
+        const bool solver = file.pose->commits[record.commit()].solverOutput;
+        RigExecTypeDesc frameType;
+        frameType.size = sizeof(rigExecRig::PointFrame);
+        RigExecTypeDesc gateType;
+        gateType.size = sizeof(uint8_t);
+        RigExecTypeDesc presentType;
+        presentType.borrow = [](void *value, const void *data, size_t count) {
+            *static_cast<std::pair<const char *, size_t> *>(value) = {
+                static_cast<const char *>(data), count};
+        };
+        using S = eval::OpLookupSource;
+        rigExecRig::PointFrame restValue, frameValue;
+        std::pair<const char *, size_t> present(nullptr, 0);
+        uint8_t after = 0, every = 0;
+        if (!RrLookUpSpace(&program,
+                           {uint8_t(S::RestFrame), record.slot(), -1, 0},
+                           frameType, &restValue, why) ||
+            !RrLookUpPoseVersion(
+                &program, {uint8_t(S::PoseVersion), record.version(), 0, 0},
+                frameType, &frameValue, why))
+            return false;
+        const auto runtimeValue = [](const rigExecRig::PointFrame &value) {
+            RrPointFrame out;
+            for (size_t i = 0; i < out.points.size(); ++i)
+                out.points[i] = RrVec3d(value.points[i][0], value.points[i][1],
+                                        value.points[i][2]);
+            out.flags = value.flags;
+            return out;
+        };
+        const RrPointFrame restFrame = runtimeValue(restValue);
+        const RrPointFrame frame = runtimeValue(frameValue);
+        const eval::OpLookup gate{uint8_t(S::CommitRecordGate), record.commit(),
+                                  -1, 0};
+        if (solver ? !RrLookUpSpace(&program, gate, presentType, &present, why)
+                   : !RrLookUpSpace(&program, {gate.source, gate.object, -1, 1},
+                                    gateType, &after, why) ||
+                         !RrLookUpSpace(&program,
+                                        {gate.source, gate.object, -1, 2},
+                                        gateType, &every, why))
+            return false;
+        RrMat4d matrix(1.0);
+        bool valid = false;
+        if (eval::FrameRecordRecorded(solver, record.position(),
+                                      record.target(), present.first,
+                                      present.second, after != 0, every != 0))
+            valid = eval::FrameRecordMatrix<RrPoseMathT<RrPointFrame>>(
+                restFrame.points, restFrame.flags, frame.points, frame.flags,
+                &matrix);
+        const uint8_t validByte = valid ? 1 : 0;
+        return RrStoreSpace(&program,
+                            {0, 0, uint8_t(eval::OpOutputTarget::FrameMatrix),
+                             uint32_t(r)},
+                            &matrix, why) &&
+               RrStoreSpace(&program,
+                            {0, 0,
+                             uint8_t(eval::OpOutputTarget::FrameMatrixValid),
+                             uint32_t(r)},
+                            &validByte, why);
+    };
+
     int cases = 0;
     int recorded = 0;
-    // Runs record \p r's step over a poisoned entry and compares it with
-    // the program's evaluation of the same record.
+    // Runs record \p r over a poisoned entry and compares it with the
+    // program's evaluation of the same record.
     const auto agree = [&](size_t r, const char *what) {
         ++cases;
         RrMat4d poison(1.0);
@@ -5308,7 +5372,7 @@ TestFrameMatrixGates()
         store.frameMatrix[r] = poison;
         store.frameMatrixValid[r] = 2;
         error.clear();
-        const bool ran = RrRunPoseStep(&program, r, &error);
+        const bool ran = runRecord(r, &error);
         CHECK(ran);
         GfMatrix4d expected(0.0);
         const bool valid = RigExecBakedEvalFrameRecord(B, baked[r], &expected);

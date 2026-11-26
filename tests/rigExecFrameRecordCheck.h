@@ -118,8 +118,11 @@ CheckFrameRecords(int *failures, const std::string &where,
                    "record names a typed final-frame version");
             size_t producers = 0;
             for (const auto &step : B.steps) {
-                if (step.kind != rigExec::RigExecBakedStepKind::FrameMatrix ||
-                    step.object != id)
+                const rigExec::RigExecBakedStepIdentity identity =
+                    rigExec::RigExecBakedIdentityOf(B, step);
+                if (identity.kind !=
+                        rigExec::RigExecBakedStepKind::FrameMatrix ||
+                    identity.object != id)
                     continue;
                 ++producers;
                 bool readsVersion = false;

@@ -633,7 +633,15 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// revision's entering points through source 3, and the field's weights are
 /// stored through OpGraph.host_outputs target 5. It retires the WeightField
 /// step.
-inline constexpr uint32_t RigExecFormatVersion = 40;
+///
+/// Format 41 runs each provider's final and base matrix as a ProviderMatrix
+/// op node and each frame record's matrix as a FrameMatrix op node (OpNode
+/// steps). Their inputs read a slot's rest frame through OpGraph.lookups
+/// source 20, a pose commit's record gates through source 21 and pose
+/// versions through source 1; the matrices are stored through
+/// OpGraph.host_outputs targets 20 to 23. It retires the ProviderMatrix and
+/// FrameMatrix steps.
+inline constexpr uint32_t RigExecFormatVersion = 41;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -641,7 +649,7 @@ inline constexpr uint32_t RigExecFormatVersion = 40;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 40;
+inline constexpr uint32_t RigExecFormatOldestReadable = 41;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

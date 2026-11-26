@@ -2370,6 +2370,77 @@ CheckFrozenWeightFramesMatchLive(RigExecRigEvaluator *evaluator,
     }
     return frozen;
 }
+// Provider and frame-record matrices run as op nodes in the frozen job: a
+// cold workspace runs every ProviderMatrix and FrameMatrix node and
+// publishes live's pose bit for bit at animated frames.
+void
+TestFrozenSpaceMatrixOpsMatchLive(const std::string &examplesDir)
+{
+    UsdStageRefPtr stage = UsdStage::Open(
+        examplesDir + "/../tests/fixtures/solver_checkpoint.usda");
+    CHECK(stage);
+    if (!stage)
+        return;
+    RigExecRigEvaluator evaluator(stage, SdfPath("/CheckpointAsset/Rig"));
+    CHECK(evaluator.Compile());
+    CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
+    std::set<size_t> matrixSteps, recordSteps;
+    for (size_t i = 0; i < B.steps.size(); ++i) {
+        const RigExecBakedStepKind kind =
+            RigExecBakedIdentityOf(B, B.steps[i]).kind;
+        if (kind == RigExecBakedStepKind::ProviderMatrix ||
+            kind == RigExecBakedStepKind::FrameMatrix) {
+            CHECK(B.steps[i].kind == RigExecBakedStepKind::OpNode);
+            (kind == RigExecBakedStepKind::ProviderMatrix ? matrixSteps
+                                                          : recordSteps)
+                .insert(i);
+        }
+    }
+    CHECK(!matrixSteps.empty() && !recordSteps.empty());
+    std::shared_ptr<const RigExecFrozenProgram> frozen;
+    std::string error;
+    CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
+    if (!frozen)
+        return;
+    for (const double frame : {3.0, 6.0}) {
+        const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
+        RigExecFrameInputs inputs;
+        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame), {},
+                                       &inputs, &error));
+        RigExecFrozenEvalContext context;
+        context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+        context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+        context.varyingInputCount = inputs.values.size();
+        if (evaluator.GetPublishWeightFields())
+            context.flags |= kRigExecFrozenPublishWeightFields;
+        if (evaluator.GetSolverGuidesEnabled())
+            context.flags |= kRigExecFrozenSolverGuidesEnabled;
+        context.frozen = frozen.get();
+        auto workspace = RigExecCreateFrozenWorkspace(frozen);
+        context.workspace = workspace.get();
+        RigExecFrozenRunReport report;
+        const RigExecRigPose pose = RigExecEvaluateFrozen(
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
+        size_t matrices = 0, records = 0;
+        for (const auto &entry : report.region) {
+            if (entry.kind == "ProviderMatrix") {
+                CHECK(matrixSteps.count(entry.step) == 1);
+                ++matrices;
+            } else if (entry.kind == "FrameMatrix") {
+                CHECK(recordSteps.count(entry.step) == 1);
+                ++records;
+            }
+        }
+        CHECK(matrices == matrixSteps.size() && records == recordSteps.size());
+        CHECK(live.valid && pose.valid);
+        CheckPosesBitIdentical("frozen provider and frame-record matrices",
+                               live, pose);
+    }
+}
+
 // Weight packets run as op nodes in the frozen job: a cold workspace runs
 // every packet node and publishes live's pose bit for bit, at animated
 // frames and under a drag of a combine's strength; a non-finite strength
@@ -9607,6 +9678,7 @@ main(int argc, char **argv)
         TestVolumeWeightsBurstMatchesPlain(argv[1]);
         TestFrozenWeightFramesMatchLive(argv[1]);
         TestFrozenWeightPacketOpsMatchLive(argv[1]);
+        TestFrozenSpaceMatrixOpsMatchLive(argv[1]);
         TestUnavailableTargetSamplesLocalInvalidRoles(argv[1]);
         TestProjectorSpacesMatchDynamic(argv[1]);
         TestProjectorMissPublishesOffset(argv[1]);

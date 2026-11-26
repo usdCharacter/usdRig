@@ -677,23 +677,6 @@ public:
         return true;
     }
 
-    bool frameRecordFacts(size_t object,
-                          eval::PoseFrameRecordFacts *facts) const
-    {
-        if (object >= _program->frameRecords.size() ||
-            object >= _program->frameMatrix.size() ||
-            object >= _program->frameMatrixValid.size()) {
-            return false;
-        }
-        const RigExecBakedFrameRecord &record = _program->frameRecords[object];
-        facts->commit = record.commit;
-        facts->position = record.position;
-        facts->target = record.target;
-        facts->version = record.version;
-        facts->slot = record.slot;
-        return true;
-    }
-
     bool baseFrameAt(uint32_t version, std::array<GfVec3d, 4> *points,
                      unsigned *flags) const
     {
@@ -1313,17 +1296,6 @@ public:
         }
         _program->fin[size_t(version)] =
             BakedPoseMath::MakeFrame(points, flags);
-        return true;
-    }
-
-    bool writeFrameMatrix(size_t object, const GfMatrix4d &matrix, bool valid)
-    {
-        if (object >= _program->frameMatrix.size() ||
-            object >= _program->frameMatrixValid.size()) {
-            return false;
-        }
-        _program->frameMatrix[object] = matrix;
-        _program->frameMatrixValid[object] = valid ? 1 : 0;
         return true;
     }
 

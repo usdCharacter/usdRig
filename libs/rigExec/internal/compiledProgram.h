@@ -943,7 +943,10 @@ enum class RigExecBakedStepKind {
     CommitDelta,    ///< a split commit's per-candidate hierarchy deltas
     PropagateChunk, ///< a split commit's staged descendant frames
     CommitApply,    ///< a split commit's decision and write-back
-    ProviderMatrix, ///< one provider's rest -> final or rest -> base matrix
+    /// Never a step's kind: a ProviderMatrix op node keeps it as its
+    /// identity, its object a provider slot, part 1 the rest -> final and 0
+    /// the rest -> base matrix.
+    ProviderMatrix,
     /// Reserved; never emitted.
     SnapshotFinals,
     PoseInterpolator, ///< one pose interpolator's weights, from the final pose
@@ -960,8 +963,8 @@ enum class RigExecBakedStepKind {
     RevisionFuse,   ///< one revision's applied decision and chain dirty bit
     ChainStatus,    ///< one chain's status sweep and published points
     Derived,        ///< one derived target maintained from a chain
-    /// One RigExecBakedFrameRecord. A pose step; appended after Derived so
-    /// every earlier enumerator keeps its exported value.
+    /// Never a step's kind: a FrameMatrix op node keeps it as its identity,
+    /// its object an index into frameRecords.
     FrameMatrix,
     /// Reserved; never emitted. Property revisions run as OpNode steps.
     ReservedPropertyRevision = 19,

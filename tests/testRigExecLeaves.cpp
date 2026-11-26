@@ -16,10 +16,12 @@
 #include "rigExecBinary/format.h"
 #include "rigExecBinary/generated/rigexec_generated.h"
 #include "rigExecMath/latticeKernel.h"
+#include "rigExecMath/providerMatrixKernel.h"
 #include "rigExecAuthoring/rigBuilder.h"
 #include "rigExecExampleFixtures.h"
 
 #include "pxr/base/arch/env.h"
+#include "pxr/base/gf/matrix3d.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3d.h"
@@ -722,28 +724,15 @@ ReaderWalkMismatches(const RigExecRigEvaluator &evaluator,
 void
 TestProviderMatrixFallbackAdmission()
 {
-    RigExecBakedProgramImpl program;
     const RigExecPointFrame identity;
-    const auto landmarks = identity.points;
-    program.restFrames = {identity};
-    program.restPts = {landmarks};
-    program.base = {identity};
-    program.fin = {identity};
-    program.baseLast = {0};
-    program.finLast = {0};
-    program.baseMatrix = {GfMatrix4d(1.0)};
-    program.finalMatrix = {GfMatrix4d(1.0)};
-    program.jointSlots = {0};
-    RigExecBakedStep step;
-    step.kind = RigExecBakedStepKind::ProviderMatrix;
-    step.object = 0;
-    step.part = 1;
+    RigExecPointFrame rest = identity;
+    using Frame = RigExecProviderFrameT<GfVec3d>;
+    const auto view = [](const RigExecPointFrame &frame) {
+        return Frame{frame.points, frame.IsValid(), frame.IsDegenerate()};
+    };
     const auto run = [&](const RigExecPointFrame &final) {
-        program.fin[0] = final;
-        // Poison the previous output to check publication, including recovery.
-        program.finalMatrix[0] = GfMatrix4d(7.0);
-        RigExecBakedRunPoseStep(&program, &step, UsdTimeCode(1.0));
-        return program.finalMatrix[0];
+        return RigExecProviderFinalMatrixT<GfMatrix3d, GfVec3d, GfMatrix4d>(
+            view(rest), view(final), view(identity), true);
     };
     RigExecPointFrame translated = identity;
     for (auto &point : translated.points)
@@ -764,9 +753,9 @@ TestProviderMatrixFallbackAdmission()
     }
     // A degenerate rest does not reject a still-usable final fallback. Keep
     // the captured reference basis and Base, as the seeded-provider path does.
-    program.restFrames[0].flags |= RigExecPointFrameDegenerate;
+    rest.flags |= RigExecPointFrameDegenerate;
     CHECK(run(translated) == expected);
-    program.restFrames[0] = identity;
+    rest = identity;
     CHECK(run(translated) == expected);
 }
 

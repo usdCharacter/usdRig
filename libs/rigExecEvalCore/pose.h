@@ -3742,19 +3742,9 @@ RunFinishCommit(Host &host, size_t object)
 
 // ---- Frame matrix ----
 //
-// One frame record's bound inputs: the record's own fields. The
-// commit gate inputs travel through the commit's state and facts.
-struct PoseFrameRecordFacts {
-    int commit = -1;
-    int position = -1;
-    int target = -1;
-    uint32_t version = 0;
-    int slot = -1;
-};
-
-// The record gate both frame-record bodies sit behind: a solver
-// commit records a position its solver published this run; a
-// constraint commit records the exits its step left the gates on.
+// The record gate of a frame record: a solver commit records a
+// position its solver published this run; a constraint commit records
+// the exits its step left the gates on.
 inline bool
 FrameRecordRecorded(bool solverOutput, int position, int target,
                     const char *present, size_t presentCount, bool recordAfter,
@@ -3786,63 +3776,6 @@ FrameRecordMatrix(const std::array<typename Math::Vec3, 4> &restPoints,
             ? restPoints
             : pose_ops::IdentityLandmarks<Math>();
     return pose_ops::PointsToMatrix<Math>(landmarks, framePoints, matrix);
-}
-
-// One frame record, both fields every run, so a reader never sees a
-// valid byte from another run beside this run's matrix.
-template <class Host>
-StepResult
-RunFrameMatrixStep(Host &host, const StepRef &step)
-{
-    static_assert(IsBoundHost<Host>::value, "pose Host is not bound");
-    using Math = typename Host::Math;
-    using pose_detail::kPoseDetailNoCommit;
-    using pose_detail::kPoseDetailNoRecord;
-    using pose_detail::kPoseDetailNoSlot;
-    using pose_detail::kPoseDetailNoVersion;
-    if (step.object < 0) {
-        return {Outcome::Invalid, kPoseDetailNoRecord};
-    }
-    const size_t object = size_t(step.object);
-    PoseFrameRecordFacts facts;
-    if (!host.inputs().frameRecordFacts(object, &facts)) {
-        return {Outcome::Invalid, kPoseDetailNoRecord};
-    }
-    if (facts.commit < 0 ||
-        size_t(facts.commit) >= host.inputs().commitObjectCount()) {
-        return {Outcome::Invalid, kPoseDetailNoCommit};
-    }
-    const size_t commitIndex = size_t(facts.commit);
-    const PoseCommitFacts commitFacts = host.inputs().commitFacts(commitIndex);
-    auto state = host.state().commitState(commitIndex);
-    if (!state.recordGatesValid) {
-        return {Outcome::Invalid, kPoseDetailNoCommit};
-    }
-    std::array<typename Math::Vec3, 4> framePoints = {
-        Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0),
-        Math::Vec3Of(0, 0, 0)};
-    unsigned frameFlags = 0;
-    if (!host.inputs().finFrame(facts.version, &framePoints, &frameFlags)) {
-        return {Outcome::Invalid, kPoseDetailNoVersion};
-    }
-    std::array<typename Math::Vec3, 4> restPoints = framePoints;
-    unsigned restFlags = 0;
-    if (facts.slot < 0 ||
-        !host.inputs().restFrame(size_t(facts.slot), &restPoints, &restFlags)) {
-        return {Outcome::Invalid, kPoseDetailNoSlot};
-    }
-    typename Math::Mat4 matrix = Math::Identity4();
-    bool valid = false;
-    if (FrameRecordRecorded(commitFacts.solverOutput, facts.position,
-                            facts.target, state.present, state.presentCount,
-                            state.recordAfter, state.recordEveryTarget)) {
-        valid = FrameRecordMatrix<Math>(restPoints, restFlags, framePoints,
-                                        frameFlags, &matrix);
-    }
-    if (!host.state().writeFrameMatrix(object, matrix, valid)) {
-        return {Outcome::Invalid, kPoseDetailNoRecord};
-    }
-    return {Outcome::Applied, kNoStepDetail};
 }
 
 // ---- Harmonics arm ----
@@ -5362,8 +5295,6 @@ RunValueStep(Host &host, const StepRef &step)
         return RunPropagateChunkStep(host, step);
     case StepKind::CommitApply:
         return RunCommitApplyStep(host, step);
-    case StepKind::FrameMatrix:
-        return RunFrameMatrixStep(host, step);
     case StepKind::Constraint:
         return RunConstraintStep(host, step);
     default:

@@ -33,7 +33,9 @@ _RIGEXEC_BAKE_PIN_STEP(Constraint);
 _RIGEXEC_BAKE_PIN_STEP(CommitDelta);
 _RIGEXEC_BAKE_PIN_STEP(PropagateChunk);
 _RIGEXEC_BAKE_PIN_STEP(CommitApply);
-_RIGEXEC_BAKE_PIN_STEP(ProviderMatrix);
+static_assert(uint8_t(RigExecBakedStepKind::ProviderMatrix) ==
+                  uint8_t(RigExecWireStepKind::ReservedProviderMatrix),
+              "wire step order drifted");
 _RIGEXEC_BAKE_PIN_STEP(SnapshotFinals);
 _RIGEXEC_BAKE_PIN_STEP(PoseInterpolator);
 static_assert(uint8_t(RigExecBakedStepKind::VolumePlacements) ==
@@ -48,7 +50,9 @@ _RIGEXEC_BAKE_PIN_STEP(RevisionChunk);
 _RIGEXEC_BAKE_PIN_STEP(RevisionFuse);
 _RIGEXEC_BAKE_PIN_STEP(ChainStatus);
 _RIGEXEC_BAKE_PIN_STEP(Derived);
-_RIGEXEC_BAKE_PIN_STEP(FrameMatrix);
+static_assert(uint8_t(RigExecBakedStepKind::FrameMatrix) ==
+                  uint8_t(RigExecWireStepKind::ReservedFrameMatrix),
+              "wire step order drifted");
 _RIGEXEC_BAKE_PIN_STEP(ReservedPropertyRevision);
 _RIGEXEC_BAKE_PIN_STEP(RestCompose);
 _RIGEXEC_BAKE_PIN_STEP(LadderCompose);

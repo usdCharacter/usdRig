@@ -440,12 +440,13 @@ TestEveryRestReaderDeclaresIt(const std::string &examples)
             }
         };
         for (const RigExecBakedStep &step : B.steps) {
-            switch (step.kind) {
+            const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+            switch (id.kind) {
             case RigExecBakedStepKind::ProviderMatrix:
-                rest(step, step.object, "ProviderMatrix");
+                rest(step, id.object, "ProviderMatrix");
                 break;
             case RigExecBakedStepKind::FrameMatrix:
-                rest(step, B.frameRecords[size_t(step.object)].slot,
+                rest(step, B.frameRecords[size_t(id.object)].slot,
                      "FrameMatrix");
                 break;
             case RigExecBakedStepKind::PoseInterpolator: {
@@ -768,8 +769,9 @@ TestARestOnlyMoveSkipsTheCompose()
             if (group.begin <= leaf && leaf < group.end) {
                 composes.push_back(s);
             }
-        } else if (step.kind == RigExecBakedStepKind::ProviderMatrix &&
-                   step.object == leaf) {
+        } else if (RigExecBakedIdentityOf(B, step).kind ==
+                       RigExecBakedStepKind::ProviderMatrix &&
+                   RigExecBakedIdentityOf(B, step).object == leaf) {
             matrices.push_back(s);
         }
     }
@@ -1095,8 +1097,9 @@ TestARestEditIsSeedable()
     }
     size_t childMatrices = 0, closureOnly = 0;
     for (const RigExecBakedStep &step : B.steps) {
-        if (step.kind == RigExecBakedStepKind::ProviderMatrix &&
-            step.object == childSlot) {
+        if (RigExecBakedIdentityOf(B, step).kind ==
+                RigExecBakedStepKind::ProviderMatrix &&
+            RigExecBakedIdentityOf(B, step).object == childSlot) {
             ++childMatrices;
             CHECK(std::binary_search(seeds.begin(), seeds.end(), step.cluster));
             closureOnly += direct.count(step.cluster) ? 0 : 1;

@@ -1077,8 +1077,7 @@ _AddFixtureHeads(RigExecWireFile &f)
             if (step.kind == fb::StepKind::ComposeSubtree)
                 step.reads.push_back(fb::SlotRange(fb::SlotDomain::Ladder,
                                                    group.begin, group.end));
-            if (step.kind == fb::StepKind::Constraint ||
-                step.kind == fb::StepKind::FrameMatrix)
+            if (step.kind == fb::StepKind::Constraint)
                 step.reads.push_back(fb::SlotRange(fb::SlotDomain::Rest, 0, 1));
         }
     }
@@ -1611,12 +1610,13 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 40 &&
-                      RigExecFormatOldestReadable == 40,
-                  "format 40 runs weight fields as op nodes and is the "
+    static_assert(RigExecFormatVersion == 41 &&
+                      RigExecFormatOldestReadable == 41,
+                  "format 41 runs provider and frame matrices as op nodes "
+                  "and is the "
                   "only format Open reads");
-    // Every older format requires re-export: its weight fields ran as
-    // their own steps.
+    // Every older format requires re-export: its provider and frame
+    // matrices ran as their own steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1627,13 +1627,14 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 40 through " +
+            " (this reader reads 41 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 40 ? "re-export: weight fields as op nodes" : "rebake");
+            (version < 41 ? "re-export: provider and frame matrices as op nodes"
+                          : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 40 ? reexports : rebakes);
+        ++(version < 41 ? reexports : rebakes);
     }
-    CHECK(reexports == 40 && rebakes == 1);
+    CHECK(reexports == 41 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -2724,6 +2725,57 @@ _VolumeFile()
     return f;
 }
 
+/// An op node of \p name storing host output target \p target (port
+/// \p port) of \p object, and, for a frame record's matrix, its valid byte
+/// too; the OpNode step that runs it, writing nothing yet.
+fb::RigExecWireStep
+_SpaceStep(RigExecWireFile &f, const char *name, uint8_t target,
+           uint32_t object)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = name;
+    entry->version = 1;
+    f.manifest->coreOps.push_back(std::move(entry));
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = uint32_t(f.manifest->coreOps.size() - 1);
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    const bool record = target == 22;
+    for (uint8_t t = target; t <= (record ? target + 1 : target); ++t) {
+        auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+        output->node = node;
+        output->port = record ? 5u + uint32_t(t - target) : 3u;
+        output->target = t;
+        output->object = object;
+        f.opGraph->hostOutputs.push_back(std::move(output));
+    }
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    return step;
+}
+
+/// Feeds port \p port of op step \p step's node from a new lookup.
+void
+_LookUp(RigExecWireFile &f, const fb::RigExecWireStep &step, uint32_t port,
+        uint8_t source, uint32_t object, int32_t part, uint8_t read = 0)
+{
+    auto input = std::make_unique<fb::RigExecWireOpNodeInput>();
+    input->port = port;
+    input->host = 4;
+    input->object = uint32_t(f.opGraph->lookups.size());
+    f.opGraph->nodes[size_t(step.object)]->inputs.push_back(std::move(input));
+    auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+    lookup->source = source;
+    lookup->object = object;
+    lookup->part = part;
+    lookup->read = read;
+    f.opGraph->lookups.push_back(std::move(lookup));
+}
+
 /// A StaticWeights op node storing the packet of weight object \p object,
 /// and the OpNode step that runs it writing that packet alone.
 fb::RigExecWireStep
@@ -2872,6 +2924,30 @@ TestOpLookupOwners()
     expect("a second pose version on a placement node",
            "places a volume from 2 pose version lookups",
            [&](F &f) { look(f, place, 1, 0, 0); });
+    expect("a rest frame on a placement node",
+           "reads a rest frame of a slot its node does not store", [&](F &f) {
+               look(f, place, 20, 0, -1);
+               for (fb::RigExecWireStep &step : f.steps)
+                   if (step.kind == fb::StepKind::OpNode &&
+                       step.object == int32_t(place))
+                       step.reads.push_back(
+                           fb::SlotRange(fb::SlotDomain::Rest, 0, 1));
+           });
+    expect("a commit gate on a placement node",
+           "reads the gates of a commit its node's record does not name",
+           [&](F &f) { look(f, place, 21, 0, -1); });
+    expect(
+        "another slot's rest frame on a provider matrix node",
+        "reads a rest frame of a slot its node does not store", [&](F &f) {
+            fb::RigExecWireStep matrix = _SpaceStep(f, "ProviderMatrix", 20, 1);
+            matrix.writes = {fb::SlotRange(fb::SlotDomain::FinalMatrix, 1, 2)};
+            matrix.reads = {
+                fb::SlotRange(fb::SlotDomain::Rest, 0, 1),
+                fb::SlotRange(fb::SlotDomain::RequiredStageFramesAdmission, 0,
+                              1)};
+            look(f, uint32_t(matrix.object), 20, 0, -1);
+            _AppendStep(f, std::move(matrix));
+        });
     expect("a weight lookup on a placement node",
            "reads a weight its node does not build", [&](F &f) {
                _AppendStep(f, packetStep(f));
@@ -3029,6 +3105,22 @@ TestVolumePlacementSteps()
                    fb::SlotRange(fb::SlotDomain::WeightPacket, 0, 1)};
                _AppendStep(f, std::move(packet));
            });
+    expect("a retired provider matrix step",
+           "step 3 (ReservedProviderMatrix 0): the retired ProviderMatrix step",
+           [](F &f) {
+               fb::RigExecWireStep matrix;
+               matrix.kind = fb::StepKind::ReservedProviderMatrix;
+               matrix.object = 0;
+               _AppendStep(f, std::move(matrix));
+           });
+    expect("a retired frame matrix step",
+           "step 3 (ReservedFrameMatrix 0): the retired FrameMatrix step",
+           [](F &f) {
+               fb::RigExecWireStep matrix;
+               matrix.kind = fb::StepKind::ReservedFrameMatrix;
+               matrix.object = 0;
+               _AppendStep(f, std::move(matrix));
+           });
 
     // A reader of a volume's placement: after its step it reads what the
     // step wrote; ahead of it, the producer check refuses it.
@@ -3121,13 +3213,15 @@ TestStepLabels()
         _RegionStep(f, 0).kind = StepKind::CommitApply;
         f.pose->commits[0].moverPath = 0;
     });
-    label("ProviderMatrix /Rig/Ctl final", [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::ProviderMatrix;
-        _RegionStep(f, 0).part = 1;
+    label("OpNode /Rig/Ctl final", [](RigExecWireFile &f) {
+        _RegionStep(f, 0) = _SpaceStep(f, "ProviderMatrix", 20, 0);
     });
-    label("ProviderMatrix /Rig/Ctl base", [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::ProviderMatrix;
-        _RegionStep(f, 0).part = 0;
+    label("OpNode /Rig/Ctl base", [](RigExecWireFile &f) {
+        _RegionStep(f, 0) = _SpaceStep(f, "ProviderMatrix", 21, 0);
+    });
+    label("ReservedProviderMatrix 0", [](RigExecWireFile &f) {
+        _RegionStep(f, 0).kind = StepKind::ReservedProviderMatrix;
+        _RegionStep(f, 0).object = 0;
     });
     label("SnapshotFinals every provider", [](RigExecWireFile &f) {
         _RegionStep(f, 0).kind = StepKind::SnapshotFinals;
@@ -3152,20 +3246,16 @@ TestStepLabels()
     // an object past the records and a provider past the slots keep their
     // numbers.
     const auto record = [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::FrameMatrix;
+        _RegionStep(f, 0) = _SpaceStep(f, "FrameMatrix", 22, 0);
         f.pose->frameRecords = {fb::FrameRecord(0, 0, 0, -1, 1, _pMover)};
     };
-    label("FrameMatrix /Rig/Ctl after /Rig/Mover", record);
-    label("FrameMatrix record 1", [&record](RigExecWireFile &f) {
-        record(f);
+    label("OpNode /Rig/Ctl after /Rig/Mover", record);
+    label("ReservedFrameMatrix 1", [](RigExecWireFile &f) {
+        _RegionStep(f, 0).kind = StepKind::ReservedFrameMatrix;
         _RegionStep(f, 0).object = 1;
     });
-    label("FrameMatrix record -1", [&record](RigExecWireFile &f) {
-        record(f);
-        _RegionStep(f, 0).object = -1;
-    });
-    label("FrameMatrix slot 4 after /Rig/Mover", [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::FrameMatrix;
+    label("OpNode slot 4 after /Rig/Mover", [](RigExecWireFile &f) {
+        _RegionStep(f, 0) = _SpaceStep(f, "FrameMatrix", 22, 0);
         f.pose->frameRecords = {fb::FrameRecord(4, 0, -1, 0, 1, _pMover)};
     });
     std::printf("step labels: %zu checked\n", checked);
@@ -3206,8 +3296,7 @@ _RecordFile(bool solver = false)
                      fb::SlotRange(fb::SlotDomain::PoseFin, 2, solver ? 4 : 3)};
     _AppendStep(f, std::move(writer));
     fb::RigExecWireStep frame;
-    frame.kind = fb::StepKind::FrameMatrix;
-    frame.object = 0;
+    frame.kind = fb::StepKind::OpNode;
     frame.reads = {fb::SlotRange(fb::SlotDomain::PoseFin, 2, 3),
                    fb::SlotRange(fb::SlotDomain::CommitTable, 0, 1)};
     frame.writes = {fb::SlotRange(fb::SlotDomain::FrameMatrix, 0, 1)};
@@ -3215,6 +3304,7 @@ _RecordFile(bool solver = false)
     f.pose->frameRecords = {
         fb::FrameRecord(0, 0, solver ? -1 : 0, solver ? 0 : -1, 2, _pCtl)};
     _AddFixtureHeads(f);
+    _RegionStep(f, 2).object = _SpaceStep(f, "FrameMatrix", 22, 0).object;
     _DeclareFixtureStageFrames(f);
     return f;
 }
@@ -3501,7 +3591,7 @@ TestPhaseTables()
             return f;
         };
     };
-    const std::string frame = "step 2 (FrameMatrix /Rig/Ctl after /Rig/Ctl)";
+    const std::string frame = "step 2 (OpNode /Rig/Ctl after /Rig/Ctl)";
     const std::string fold = "step 3 (InfluenceFold /Rig/Mover)";
     const std::string reader = "step 5 (RevisionStatic /Rig/Mover)";
 
@@ -3562,17 +3652,23 @@ TestPhaseTables()
            "frame record 0 of /Rig/Ctl after /Rig/Ctl has no FrameMatrix step",
            record([](F &f) { _DropStep(f, 2); }));
     expect("two steps for one record",
-           "step 3 (FrameMatrix /Rig/Ctl after /Rig/Ctl) evaluates the same "
+           "step 3 (OpNode /Rig/Ctl after /Rig/Ctl) evaluates the same "
            "frame record as " +
                frame,
            record([](F &f) { _AppendStep(f, _RegionStep(f, 2)); }));
     expect("object past the records",
-           "step 2 (FrameMatrix record 1) names frame record 1 of 1",
-           record([](F &f) { _RegionStep(f, 2).object = 1; }));
+           "op_graph.host_outputs: node " +
+               std::to_string(_RecordFile(false).opGraph->nodes.size() - 1) +
+               " stores a matrix of no frame record 1",
+           record([](F &f) {
+               for (auto &output : f.opGraph->hostOutputs)
+                   if (output->target == 22 || output->target == 23)
+                       output->object = 1;
+           }));
     // A record's own fields out of range: named by its FrameMatrix step,
     // and by the record's row only when no step evaluates it.
     expect("record past the slots",
-           "step 2 (FrameMatrix slot 2 after /Rig/Ctl) names slot 2 of 2",
+           "step 2 (OpNode slot 2 after /Rig/Ctl) names slot 2 of 2",
            record([](F &f) {
                f.pose->frameRecords[0] = fb::FrameRecord(2, 0, 0, -1, 2, _pCtl);
            }));
@@ -3590,7 +3686,7 @@ TestPhaseTables()
                    fb::SlotRange(fb::SlotDomain::PoseFin, 4, 5);
            }));
     expect("record mover label past the paths",
-           "step 2 (FrameMatrix /Rig/Ctl after ) names mover label path id "
+           "step 2 (OpNode /Rig/Ctl after ) names mover label path id "
            "999 of " +
                std::to_string(_RecordFile(false).paths.size()),
            record([](F &f) {
@@ -3616,7 +3712,7 @@ TestPhaseTables()
     // writes it. Either way the producer check would name an unproduced
     // CommitTable read instead.
     expect("ahead of its commit",
-           "step 1 (FrameMatrix /Rig/Ctl after /Rig/Ctl) reads the exit of "
+           "step 1 (OpNode /Rig/Ctl after /Rig/Ctl) reads the exit of "
            "commit 0, which step 2 (Constraint /Rig/Ctl) writes at or after "
            "it",
            record([&](F &f) {
@@ -3624,7 +3720,7 @@ TestPhaseTables()
                std::swap(_RegionStep(f, 1), _RegionStep(f, 2));
            }));
     expect("commit with no step",
-           "step 1 (FrameMatrix /Rig/Ctl after /Rig/Ctl) reads the exit of "
+           "step 1 (OpNode /Rig/Ctl after /Rig/Ctl) reads the exit of "
            "commit 0, which no step writes",
            record([&](F &f) {
                composeVersion(f);
@@ -3644,7 +3740,8 @@ TestPhaseTables()
                    fb::SlotRange(fb::SlotDomain::FrameMatrix, 0, 1));
            }));
     expect("FrameMatrix writing more than its record",
-           frame + " writes other than FrameMatrix[0]", record([](F &f) {
+           frame + " writes other than the matrices it stores",
+           record([](F &f) {
                _RegionStep(f, 2).writes = {
                    fb::SlotRange(fb::SlotDomain::FrameMatrix, 0, 2)};
            }));

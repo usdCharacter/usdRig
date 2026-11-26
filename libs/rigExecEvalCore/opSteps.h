@@ -60,7 +60,22 @@ enum class OpLookupSource : uint8_t {
     /// Mat4d: the first present of the `part` lookups from `object`, each
     /// a FrameRecord, ConstraintDelta or (always present) Matrix lookup.
     Selected = 9,
+    /// PointFrame: the rest frame of slot `object`.
+    RestFrame = 20,
+    /// The record gates of pose commit `object`: `read` 0 its per-output
+    /// presence (BoolArray), 1 whether it records after itself and 2
+    /// whether it records every target (Bool).
+    CommitRecordGate = 21,
 };
+
+/// Whether a lookup of \p source is one the host answers through
+/// LookUpSpace.
+constexpr bool
+OpSpaceLookupSource(uint8_t source)
+{
+    return source == uint8_t(OpLookupSource::RestFrame) ||
+           source == uint8_t(OpLookupSource::CommitRecordGate);
+}
 
 /// Whether a lookup of \p source answers a Mat4d that may be absent or,
 /// for Matrix, always is present: a candidate of a Selected lookup.
@@ -150,7 +165,23 @@ enum class OpOutputTarget : uint8_t {
     ChainGroup = 4,
     /// The weight field `object`'s weights.
     WeightField = 5,
+    /// Mat4d: the final and the base matrix of slot `object`.
+    ProviderFinalMatrix = 20,
+    ProviderBaseMatrix = 21,
+    /// Frame record `object`'s matrix (Mat4d) and whether it is valid
+    /// (Bool).
+    FrameMatrix = 22,
+    FrameMatrixValid = 23,
 };
+
+/// Whether an output of \p target is one the host stores through
+/// StoreSpace.
+constexpr bool
+OpSpaceOutputTarget(uint8_t target)
+{
+    return target >= uint8_t(OpOutputTarget::ProviderFinalMatrix) &&
+           target <= uint8_t(OpOutputTarget::FrameMatrixValid);
+}
 
 /// Whether OpLookUp resolves lookups of \p source.
 constexpr bool
@@ -163,7 +194,7 @@ OpLookupSourceRuns(uint8_t source)
            source == uint8_t(OpLookupSource::WeightFieldInputs) ||
            source == uint8_t(OpLookupSource::List) ||
            source == uint8_t(OpLookupSource::Selected) ||
-           OpLookupSourceSelectable(source);
+           OpLookupSourceSelectable(source) || OpSpaceLookupSource(source);
 }
 
 /// Whether OpStoreOutput stores outputs of \p target, or, for a range chain
@@ -177,7 +208,8 @@ OpOutputTargetRuns(uint8_t target, bool chainMember)
                      target == uint8_t(OpOutputTarget::VolumePlacement) ||
                      target == uint8_t(OpOutputTarget::VolumePlacementBase) ||
                      target == uint8_t(OpOutputTarget::WeightPacket) ||
-                     target == uint8_t(OpOutputTarget::WeightField);
+                     target == uint8_t(OpOutputTarget::WeightField) ||
+                     OpSpaceOutputTarget(target);
 }
 
 /// A per-frame read of the rig the host resolves for a Lookup input; what
@@ -802,6 +834,9 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
     case OpLookupSource::List:
     case OpLookupSource::Selected:
         break;
+    case OpLookupSource::RestFrame:
+    case OpLookupSource::CommitRecordGate:
+        return host.LookUpSpace(index, lookup, type, value, error);
     }
     return OpLayoutFail(error, "no host resolves lookup source " +
                                    std::to_string(lookup.source));
@@ -827,6 +862,11 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
         return host.StoreWeightField(output, value, error);
     case OpOutputTarget::ChainGroup:
         break;
+    case OpOutputTarget::ProviderFinalMatrix:
+    case OpOutputTarget::ProviderBaseMatrix:
+    case OpOutputTarget::FrameMatrix:
+    case OpOutputTarget::FrameMatrixValid:
+        return host.StoreSpace(output, value, error);
     }
     return OpLayoutFail(error, "no host stores output target " +
                                    std::to_string(output.target));

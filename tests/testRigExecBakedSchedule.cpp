@@ -4169,7 +4169,8 @@ CanonicalLabel(const RigExecBakedProgramImpl &B, RigExecBakedStepKind kind,
                int object)
 {
     for (const auto &step : B.steps)
-        if (step.kind == kind && step.object == object)
+        if (RigExecBakedIdentityOf(B, step).kind == kind &&
+            RigExecBakedIdentityOf(B, step).object == object)
             return "(" + step.label + ")";
     CHECK(false);
     return "(missing operation)";
@@ -4346,14 +4347,16 @@ TestTheValidatorRejectsALaterPoseVersion()
         int matrix = -1;
         uint32_t slot = 0;
         for (size_t index = 0; index < B.steps.size() && matrix < 0; ++index) {
-            if (B.steps[index].kind != RigExecBakedStepKind::ProviderMatrix) {
+            const RigExecBakedStepIdentity id =
+                RigExecBakedIdentityOf(B, B.steps[index]);
+            if (id.kind != RigExecBakedStepKind::ProviderMatrix) {
                 continue;
             }
             for (const RigExecBakedSlotRange &read : B.steps[index].reads) {
                 if (read.domain == RigExecBakedSlotDomain::PoseFin &&
                     !read.IsEmpty()) {
                     matrix = int(index);
-                    slot = uint32_t(B.steps[index].object);
+                    slot = uint32_t(id.object);
                     break;
                 }
             }
@@ -4487,18 +4490,21 @@ TestTheValidatorRejectsABadFrameRecord(const std::string &fixtures)
         // A FrameMatrix step naming a negative record.
         RigExecBakedStep *first = nullptr;
         for (RigExecBakedStep &step : B.steps) {
-            if (step.kind == RigExecBakedStepKind::FrameMatrix &&
-                step.object == 0) {
+            const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+            if (id.kind == RigExecBakedStepKind::FrameMatrix &&
+                id.object == 0) {
                 first = &step;
             }
         }
         CHECK(first != nullptr);
         if (first) {
-            first->object = -1;
+            RigExecBakedOpOrigin &origin =
+                B.opNodeOrigins[size_t(first->object)];
+            origin.object = -1;
             ExpectRejected(
                 B, "a FrameMatrix step naming record -1",
                 {"(" + first->label + ") names frame record -1 of 3"});
-            first->object = 0;
+            origin.object = 0;
             passes("a FrameMatrix step naming record -1");
         }
     }

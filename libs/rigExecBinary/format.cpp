@@ -592,8 +592,19 @@ public:
         _packetObject.assign(nodes, -1);
         _fieldNode.assign(nodes, -1);
         _fieldStored.assign(nodes, -1);
+        _frameRecordOf.assign(nodes, -1);
+        _providerSlotOf.assign(nodes, -1);
         if (!nodes)
             return;
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes &&
+                (output->target == 20 || output->target == 21) &&
+                _providerSlotOf[output->node] < 0)
+                _providerSlotOf[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 22 &&
+                _frameRecordOf[output->node] < 0)
+                _frameRecordOf[output->node] = int64_t(output->object);
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node < nodes && output->target == 5 &&
                 _fieldStored[output->node] < 0)
@@ -689,16 +700,41 @@ private:
         if (!_f.opGraph)
             return true;
         std::vector<uint8_t> stored, packets, fields;
+        std::vector<uint8_t> spaceStored(
+            4 * std::max<size_t>(_slots, _f.pose->frameRecords.size()), 0);
         for (const auto &output : _f.opGraph->hostOutputs) {
             if (!output)
                 return _Bad("op_graph.host_outputs: an entry is missing");
-            if (output->target > 5 || output->target == 4)
+            if ((output->target > 5 && output->target < 20) ||
+                output->target > 23 || output->target == 4)
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
             if (output->node >= _f.opGraph->nodes.size())
                 return _Bad("op_graph.host_outputs: no node " +
                             _N(output->node));
             const size_t node = size_t(output->node);
+            if (output->target >= 20) {
+                const bool record = output->target >= 22;
+                if (record ? !_Has(_f.pose->frameRecords, output->object)
+                           : output->object >= _slots)
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores a matrix of no " +
+                                (record ? "frame record " : "slot ") +
+                                _N(output->object));
+                if (_propertyChainOf[node] != kNoProperty ||
+                    _placementSlot[node] >= 0 || _packetObject[node] >= 0 ||
+                    _fieldStored[node] >= 0 ||
+                    (record && _frameRecordOf[node] != int64_t(output->object)))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores a matrix beside another value");
+                uint8_t &seen = spaceStored[4 * size_t(output->object) +
+                                            size_t(output->target - 20)];
+                if (seen++)
+                    return _Bad("op_graph.host_outputs: target " +
+                                _N(output->target) + " of " +
+                                _N(output->object) + " is stored twice");
+                continue;
+            }
             if (output->target == 5) {
                 if (!_f.geometry ||
                     !_Has(_f.geometry->weightFields, int64_t(output->object)) ||
@@ -803,6 +839,20 @@ private:
                                 "reads no input of a field's weight object");
                 continue;
             }
+            if (lookup && lookup->source == 20) {
+                if (lookup->object >= _slots || lookup->part != -1 ||
+                    lookup->read)
+                    return _Bad("op_graph.lookups: a rest frame lookup reads "
+                                "no slot");
+                continue;
+            }
+            if (lookup && lookup->source == 21) {
+                if (!_Has(_f.pose->commits, lookup->object) ||
+                    lookup->part != -1 || lookup->read > 2)
+                    return _Bad("op_graph.lookups: a record gate lookup "
+                                "reads no gate of a commit");
+                continue;
+            }
             if (!lookup || lookup->source != 0 ||
                 !_Has(_f.propertyChains, lookup->object) || lookup->read > 8 ||
                 (lookup->read != 0 &&
@@ -853,6 +903,10 @@ private:
                 return _Bad(_StepName(i) + ": the retired WeightPacket step");
             if (kind == fb::StepKind::ReservedWeightField)
                 return _Bad(_StepName(i) + ": the retired WeightField step");
+            if (kind == fb::StepKind::ReservedProviderMatrix)
+                return _Bad(_StepName(i) + ": the retired ProviderMatrix step");
+            if (kind == fb::StepKind::ReservedFrameMatrix)
+                return _Bad(_StepName(i) + ": the retired FrameMatrix step");
             const bool op = kind == fb::StepKind::OpNode ||
                             kind == fb::StepKind::OpChainHead ||
                             kind == fb::StepKind::OpChainRange;
@@ -992,7 +1046,9 @@ private:
     /// step's declared reads cover: a property node its own chain revision,
     /// a packet node its own weight object and its provider's base frame, a
     /// placement node one pose version, and a field node its own field and
-    /// its consumer's entering points. A ChainVersion lookup on any other
+    /// its consumer's entering points, a provider matrix node its own
+    /// slot's rest frame, and a frame record's node its record's rest frame,
+    /// pose version and commit gates. A ChainVersion lookup on any other
     /// node is a range chain member's group read, which Open checks.
     bool _OpLookupOwners()
     {
@@ -1009,6 +1065,35 @@ private:
                                 _N(input->object) + why);
                 };
                 const int64_t object = int64_t(lookup.object);
+                const int64_t record = _frameRecordOf[n];
+                const fb::FrameRecord *frame =
+                    record >= 0 && _f.pose &&
+                            _Has(_f.pose->frameRecords, record)
+                        ? &_f.pose->frameRecords[size_t(record)]
+                        : nullptr;
+                if (lookup.source == 20) {
+                    if (_providerSlotOf[n] >= 0
+                            ? object != _providerSlotOf[n]
+                            : !frame || lookup.object != frame->slot())
+                        return bad(" reads a rest frame of a slot its node "
+                                   "does not store");
+                    continue;
+                }
+                if (lookup.source == 21) {
+                    if (!frame || lookup.object != frame->commit())
+                        return bad(" reads the gates of a commit its node's "
+                                   "record does not name");
+                    continue;
+                }
+                if (lookup.source == 1 && _providerSlotOf[n] >= 0)
+                    continue;
+                if (lookup.source == 1 && record >= 0) {
+                    if (!frame || lookup.part != 0 ||
+                        lookup.object != frame->version())
+                        return bad(" reads a pose frame other than its "
+                                   "record's version");
+                    continue;
+                }
                 if (lookup.source == 0) {
                     const size_t c = _propertyChainOf[n];
                     if (c == kNoProperty || lookup.object != c ||
@@ -2185,6 +2270,16 @@ private:
                    : -1;
     }
 
+    /// The frame record whose matrix the op step \p step stores, or -1 for
+    /// any other step.
+    int64_t _FrameRecordOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _frameRecordOf.size()
+                   ? _frameRecordOf[size_t(step.object)]
+                   : -1;
+    }
+
     int64_t _PacketObjectOf(const fb::RigExecWireStep &step) const
     {
         return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
@@ -2240,6 +2335,55 @@ private:
         return true;
     }
 
+    /// An op step storing a provider's or a frame record's matrix writes
+    /// exactly the slots it stores, and declares the pose versions and
+    /// commit tables its lookups read.
+    bool _SpaceOp(size_t i)
+    {
+        const fb::RigExecWireStep &step = _f.steps[i];
+        if (step.kind != fb::StepKind::OpNode || !_f.opGraph ||
+            !_Has(_f.opGraph->nodes, step.object) ||
+            !_f.opGraph->nodes[size_t(step.object)])
+            return true;
+        const uint64_t node = uint64_t(step.object);
+        std::set<std::pair<fb::SlotDomain, uint32_t>> stores;
+        for (const auto &output : _f.opGraph->hostOutputs)
+            if (output && output->node == node && output->target >= 20 &&
+                output->target <= 23)
+                stores.emplace(
+                    output->target == 20   ? fb::SlotDomain::FinalMatrix
+                    : output->target == 21 ? fb::SlotDomain::BaseMatrix
+                                           : fb::SlotDomain::FrameMatrix,
+                    output->object);
+        if (stores.empty())
+            return true;
+        std::set<std::pair<fb::SlotDomain, uint32_t>> writes;
+        for (const fb::SlotRange &range : step.writes)
+            for (uint32_t slot = range.begin(); slot < range.end(); ++slot)
+                writes.emplace(range.domain(), slot);
+        if (writes != stores)
+            return _Bad(_StepName(i) + " writes other than the matrices it "
+                                       "stores");
+        for (const auto &input : _f.opGraph->nodes[size_t(node)]->inputs) {
+            if (!input || input->host != 4 ||
+                !_Has(_f.opGraph->lookups, input->object) ||
+                !_f.opGraph->lookups[size_t(input->object)])
+                continue;
+            const fb::RigExecWireOpLookup &lookup =
+                *_f.opGraph->lookups[size_t(input->object)];
+            const auto domain = lookup.source == 21
+                                    ? fb::SlotDomain::CommitTable
+                                : lookup.part ? fb::SlotDomain::PoseBase
+                                              : fb::SlotDomain::PoseFin;
+            if ((lookup.source == 1 || lookup.source == 21) &&
+                !_Declares(i, domain, lookup.object))
+                return _Bad(_StepName(i) + " looks up " +
+                            fb::EnumNameSlotDomain(domain) + "[" +
+                            _N(lookup.object) + "], which it does not read");
+        }
+        return true;
+    }
+
     bool _Steps()
     {
         // The VolumePlacements step of each volume slot. With one step per
@@ -2278,6 +2422,12 @@ private:
             const fb::RigExecWireStep &step = _f.steps[i];
             if (step.kind == fb::StepKind::ReservedWeightPacket)
                 return _Bad(_StepName(i) + ": the retired WeightPacket step");
+            if (step.kind == fb::StepKind::ReservedProviderMatrix)
+                return _Bad(_StepName(i) + ": the retired ProviderMatrix step");
+            if (step.kind == fb::StepKind::ReservedFrameMatrix)
+                return _Bad(_StepName(i) + ": the retired FrameMatrix step");
+            if (!_SpaceOp(i))
+                return false;
             if (const int64_t object = _PacketObjectOf(step); object >= 0) {
                 if (step.writes.size() != 1 ||
                     step.writes[0].domain() != fb::SlotDomain::WeightPacket ||
@@ -4378,20 +4528,6 @@ private:
                 for (size_t k = 0; k < solver.restReads.size(); ++k)
                     if (k < solver.restIsLive.size() && solver.restIsLive[k])
                         read(D::PoseFin, solver.restReads[k]);
-            } else if (step.kind == K::FrameMatrix) {
-                if (!_Has(pose.frameRecords, step.object))
-                    return _Bad(_StepName(owner) +
-                                ": frame body object out of range");
-                read(D::PoseFin,
-                     pose.frameRecords[size_t(step.object)].version());
-            } else if (step.kind == K::ProviderMatrix) {
-                if (step.object < 0 || size_t(step.object) >= _slots)
-                    return _Bad(_StepName(owner) +
-                                ": provider body object out of range");
-                const size_t slot = size_t(step.object);
-                if (step.part)
-                    read(D::PoseFin, finLast[slot]);
-                read(D::PoseBase, baseLast[slot]);
             } else if (step.kind == K::PoseInterpolator) {
                 if (!_Has(pose.poseInterpolators, step.object))
                     return _Bad(_StepName(owner) +
@@ -5569,15 +5705,20 @@ private:
                 !_Declares(i, fb::SlotDomain::SkinTopology, uint32_t(layoutId)))
                 return _Bad(_StepName(i) + ": missing SkinTopology[" +
                             _N(layoutId) + "] read");
-            if (step.kind == fb::StepKind::ProviderMatrix &&
-                !require(fb::SlotDomain::Rest, step.object))
-                return false;
-            if (step.kind == fb::StepKind::FrameMatrix &&
-                _Has(_f.pose->frameRecords, step.object) &&
-                !require(
-                    fb::SlotDomain::Rest,
-                    int(_f.pose->frameRecords[size_t(step.object)].slot())))
-                return false;
+            if (step.kind == fb::StepKind::OpNode && _f.opGraph &&
+                _Has(_f.opGraph->nodes, step.object) &&
+                _f.opGraph->nodes[size_t(step.object)])
+                for (const auto &input :
+                     _f.opGraph->nodes[size_t(step.object)]->inputs)
+                    if (input && input->host == 4 &&
+                        _Has(_f.opGraph->lookups, input->object) &&
+                        _f.opGraph->lookups[size_t(input->object)] &&
+                        _f.opGraph->lookups[size_t(input->object)]->source ==
+                            20 &&
+                        !require(fb::SlotDomain::Rest,
+                                 int(_f.opGraph->lookups[size_t(input->object)]
+                                         ->object)))
+                        return false;
             if (step.kind == fb::StepKind::Solve &&
                 _Has(_f.pose->solvers, step.object))
                 for (const auto slot :
@@ -8604,15 +8745,12 @@ private:
         _derivedStep.assign(_derived, -1);
         for (const size_t i : _played) {
             const fb::RigExecWireStep &step = _f.steps[i];
-            if (step.kind == fb::StepKind::FrameMatrix) {
-                // A FrameMatrix step has no "no record" object: a negative
-                // one is out of range like a too-large one.
-                if (!_Has(p.frameRecords, step.object)) {
+            if (const int64_t record = _FrameRecordOf(step); record >= 0) {
+                if (!_Has(p.frameRecords, record)) {
                     return _Bad(_StepName(i) + " names frame record " +
-                                std::to_string(step.object) + " of " +
-                                _N(records));
+                                std::to_string(record) + " of " + _N(records));
                 }
-                const size_t o = size_t(step.object);
+                const size_t o = size_t(record);
                 if (_recordStep[o] >= 0) {
                     return _Bad(_StepName(i) +
                                 " evaluates the same frame record as " +
@@ -9473,6 +9611,8 @@ private:
     /// Per op node: the weight field it weighs part of, and the field whose
     /// weights it stores; -1 for none.
     std::vector<int64_t> _fieldNode, _fieldStored;
+    /// Per op node: the frame record whose matrix it stores, or -1.
+    std::vector<int64_t> _frameRecordOf, _providerSlotOf;
     std::vector<uint8_t> _placementBase;
     std::string _error;
     size_t _slots = 0;
@@ -9655,13 +9795,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 40,
+    static_assert(RigExecFormatOldestReadable == 41,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: weight fields as op nodes"
+                ? "re-export: provider and frame matrices as op nodes"
                 : "rebake");
 }
 
@@ -9880,8 +10020,8 @@ _StepKindName(fb::StepKind kind)
         return "PropagateChunk";
     case fb::StepKind::CommitApply:
         return "CommitApply";
-    case fb::StepKind::ProviderMatrix:
-        return "ProviderMatrix";
+    case fb::StepKind::ReservedProviderMatrix:
+        return "ReservedProviderMatrix";
     case fb::StepKind::SnapshotFinals:
         return "SnapshotFinals";
     case fb::StepKind::PoseInterpolator:
@@ -9902,8 +10042,8 @@ _StepKindName(fb::StepKind kind)
         return "ChainStatus";
     case fb::StepKind::Derived:
         return "Derived";
-    case fb::StepKind::FrameMatrix:
-        return "FrameMatrix";
+    case fb::StepKind::ReservedFrameMatrix:
+        return "ReservedFrameMatrix";
     case fb::StepKind::ReservedPropertyRevision:
         return "ReservedPropertyRevision";
     case fb::StepKind::RestCompose:
@@ -9974,13 +10114,8 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
         *out = mover.empty() ? "batch " + std::to_string(object) : mover;
         return true;
     }
-    case fb::StepKind::ProviderMatrix:
-        if (!meta || !_Has(meta->paths, object)) {
-            return false;
-        }
-        *out = text(meta->paths[size_t(object)]) +
-               (step.part ? " final" : " base");
-        return true;
+    case fb::StepKind::ReservedProviderMatrix:
+        return false;
     case fb::StepKind::SnapshotFinals:
         *out = "every provider";
         return true;
@@ -10012,6 +10147,26 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
     case fb::StepKind::OpNode: {
         if (!file.opGraph || !_Has(file.opGraph->nodes, object))
             return false;
+        for (const auto &output : file.opGraph->hostOutputs) {
+            if (!output || output->node != uint64_t(object))
+                continue;
+            if ((output->target == 20 || output->target == 21) && meta &&
+                _Has(meta->paths, output->object)) {
+                *out = text(meta->paths[output->object]) +
+                       (output->target == 20 ? " final" : " base");
+                return true;
+            }
+            if (output->target == 22 && pose &&
+                _Has(pose->frameRecords, output->object)) {
+                const fb::FrameRecord &record =
+                    pose->frameRecords[size_t(output->object)];
+                *out = (meta && _Has(meta->paths, int64_t(record.slot()))
+                            ? text(meta->paths[size_t(record.slot())])
+                            : "slot " + std::to_string(record.slot())) +
+                       " after " + text(record.moverLabel());
+                return true;
+            }
+        }
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node == uint64_t(object) &&
                 (output->target == 1 || output->target == 2) && meta &&
@@ -10085,18 +10240,8 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
         }
         return true;
     }
-    case fb::StepKind::FrameMatrix: {
-        if (!pose || !_Has(pose->frameRecords, object)) {
-            *out = "record " + std::to_string(object);
-            return true;
-        }
-        const fb::FrameRecord &record = pose->frameRecords[size_t(object)];
-        *out = (meta && _Has(meta->paths, int64_t(record.slot()))
-                    ? text(meta->paths[size_t(record.slot())])
-                    : "slot " + std::to_string(record.slot())) +
-               " after " + text(record.moverLabel());
-        return true;
-    }
+    case fb::StepKind::ReservedFrameMatrix:
+        return false;
     case fb::StepKind::PoseInterpolator:
         if (!pose || !_Has(pose->poseInterpolators, object)) {
             return false;

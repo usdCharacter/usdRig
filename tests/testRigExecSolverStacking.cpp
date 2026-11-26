@@ -2026,10 +2026,12 @@ TestSolverCheckpointsBake(const std::string &examplesDir)
         const auto ranRecords = [&B]() {
             std::vector<SdfPath> ran;
             for (size_t id = 0; id < B.steps.size(); ++id) {
-                const auto &step = B.steps[id];
-                if (step.kind == RigExecBakedStepKind::FrameMatrix &&
+                const RigExecBakedStepIdentity identity =
+                    RigExecBakedIdentityOf(B, B.steps[id]);
+                if (identity.kind == RigExecBakedStepKind::FrameMatrix &&
                     id < B.opExecution.ran.size() && B.opExecution.ran[id]) {
-                    ran.push_back(B.frameRecords[size_t(step.object)].mover);
+                    ran.push_back(
+                        B.frameRecords[size_t(identity.object)].mover);
                 }
             }
             std::sort(ran.begin(), ran.end());

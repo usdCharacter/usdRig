@@ -6,7 +6,8 @@
 #include "rigExecRuntime/spaceSwitchMath.h"
 #include "rigExecMath/avarScale.h"
 #include "rigExecMath/poseArithmeticKernel.h"
-#include "rigExecMath/providerMatrixKernel.h"
+#include "rigExecEvalCore/opSteps.h"
+#include "rigExecRigTypes/rigTypes.h"
 #include <algorithm>
 #include <limits>
 #include <utility>
@@ -60,14 +61,10 @@ _RrKindName(RigExecWireStepKind kind)
         return "PropagateChunk";
     case RigExecWireStepKind::CommitApply:
         return "CommitApply";
-    case RigExecWireStepKind::ProviderMatrix:
-        return "ProviderMatrix";
     case RigExecWireStepKind::SnapshotFinals:
         return "SnapshotFinals";
     case RigExecWireStepKind::PoseInterpolator:
         return "PoseInterpolator";
-    case RigExecWireStepKind::FrameMatrix:
-        return "FrameMatrix";
     default:
         return "Unknown";
     }
@@ -658,87 +655,6 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
         return false;
     }
 
-    case RigExecWireStepKind::ProviderMatrix: {
-        if (wire.object < 0 ||
-            size_t(wire.object) >= store.finalMatrix.size() ||
-            size_t(wire.object) >= store.baseMatrix.size() ||
-            size_t(wire.object) >= store.finLast.size() ||
-            size_t(wire.object) >= store.baseLast.size() ||
-            size_t(wire.object) >= scratch->restFrames.size()) {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no slot";
-            }
-            return false;
-        }
-        const size_t slot = size_t(wire.object);
-        using Frame = RigExecProviderFrameT<RrVec3d>;
-        const auto view = [](const RrPointFrame &frame) {
-            return Frame{frame.points, frame.IsValid(), frame.IsDegenerate()};
-        };
-        const RrPointFrame &restFrame = scratch->restFrames[slot];
-        if (wire.part) {
-            if (size_t(store.finLast[slot]) >= store.fin.size() ||
-                size_t(store.baseLast[slot]) >= store.base.size() ||
-                slot >= scratch->restPts.size()) {
-                if (error) {
-                    *error =
-                        _RrStepHead(program, step) + " names no fin version";
-                }
-                return false;
-            }
-            const auto &jointSlots = program->slotMeta->jointSlots;
-            const bool joint = std::find(jointSlots.begin(), jointSlots.end(),
-                                         int32_t(slot)) != jointSlots.end();
-            store.finalMatrix[slot] =
-                RigExecProviderFinalMatrixT<RrMat3d, RrVec3d, RrMat4d>(
-                    Frame{scratch->restPts[slot], restFrame.IsValid(),
-                          restFrame.IsDegenerate()},
-                    view(store.fin[size_t(store.finLast[slot])]),
-                    view(store.base[size_t(store.baseLast[slot])]), joint);
-        } else {
-            if (size_t(store.baseLast[slot]) >= store.base.size() ||
-                slot >= scratch->restPts.size()) {
-                if (error) {
-                    *error =
-                        _RrStepHead(program, step) + " names no base version";
-                }
-                return false;
-            }
-            store.baseMatrix[slot] =
-                RigExecProviderBaseMatrixT<RrMat3d, RrVec3d, RrMat4d>(
-                    Frame{scratch->restPts[slot], restFrame.IsValid(),
-                          restFrame.IsDegenerate()},
-                    view(store.base[size_t(store.baseLast[slot])]));
-        }
-        return true;
-    }
-
-    case RigExecWireStepKind::FrameMatrix: {
-        RrPoseHost host(program, step);
-        eval::StepRef ref;
-        ref.kind = uint32_t(wire.kind);
-        ref.object = wire.object;
-        ref.part = wire.part;
-        ref.slot = step;
-        const eval::StepResult result = eval::RunValueStep(host, ref);
-        if (result.outcome == eval::Outcome::Applied) {
-            return true;
-        }
-        if (error) {
-            const char *what = " names no frame record";
-            if (result.detail == eval::pose_detail::kPoseDetailNoCommit) {
-                what = " names no commit";
-            } else if (result.detail == eval::pose_detail::kPoseDetailNoSlot) {
-                what = " names no slot";
-            } else if (result.detail ==
-                       eval::pose_detail::kPoseDetailNoVersion) {
-                what = " names no fin version";
-            }
-            *error = _RrStepHead(program, step) + what;
-        }
-        return false;
-    }
-
     case RigExecWireStepKind::SpaceCheckpoint: {
         RrPoseHost host(program);
         eval::StepRef ref;
@@ -954,6 +870,84 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
         *error = _RrStepHead(program, step) + " not implemented yet";
     }
     return false;
+}
+
+bool
+RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
+              const RigExecTypeDesc &type, void *out, std::string *error)
+{
+    const auto fail = [error](std::string why) {
+        if (error)
+            *error = std::move(why);
+        return false;
+    };
+    const auto *scratch =
+        static_cast<const RrPoseScratch *>(program->pose.get());
+    if (lookup.source == uint8_t(eval::OpLookupSource::RestFrame)) {
+        if (!scratch || type.size != sizeof(rigExecRig::PointFrame) ||
+            lookup.object >= scratch->restFrames.size())
+            return fail("slot " + std::to_string(lookup.object) +
+                        " has no rest frame");
+        const RrPointFrame &frame = scratch->restFrames[lookup.object];
+        auto &value = *static_cast<rigExecRig::PointFrame *>(out);
+        for (size_t i = 0; i < frame.points.size(); ++i)
+            value.points[i] = rigExecStd::Vec3d(
+                frame.points[i][0], frame.points[i][1], frame.points[i][2]);
+        value.flags = frame.flags;
+        return true;
+    }
+    const RrStore &store = program->store;
+    if (!scratch ||
+        lookup.source != uint8_t(eval::OpLookupSource::CommitRecordGate) ||
+        lookup.object >= store.commits.size() ||
+        lookup.object >= scratch->recordAfter.size() ||
+        lookup.object >= scratch->recordEveryTarget.size() || lookup.read > 2)
+        return fail("commit " + std::to_string(lookup.object) +
+                    " holds no such record gate");
+    if (lookup.read == 0) {
+        if (!type.borrow)
+            return fail("a commit's presence is an array");
+        const std::vector<char> &present = store.commits[lookup.object].present;
+        type.borrow(out, present.data(), present.size());
+        return true;
+    }
+    if (type.size != sizeof(uint8_t))
+        return fail("a commit's record gate is a Bool");
+    const std::vector<char> &gates =
+        lookup.read == 1 ? scratch->recordAfter : scratch->recordEveryTarget;
+    *static_cast<uint8_t *>(out) = gates[lookup.object] != 0 ? 1 : 0;
+    return true;
+}
+
+bool
+RrStoreSpace(RrProgram *program, const eval::OpHostOutput &output,
+             const void *value, std::string *error)
+{
+    using T = eval::OpOutputTarget;
+    RrStore &store = program->store;
+    const T target = T(output.target);
+    if (target == T::FrameMatrixValid) {
+        if (output.object >= store.frameMatrixValid.size()) {
+            if (error)
+                *error = "frame record " + std::to_string(output.object) +
+                         " has no slot";
+            return false;
+        }
+        store.frameMatrixValid[output.object] =
+            *static_cast<const uint8_t *>(value) != 0;
+        return true;
+    }
+    std::vector<RrMat4d> &matrices =
+        target == T::ProviderFinalMatrix  ? store.finalMatrix
+        : target == T::ProviderBaseMatrix ? store.baseMatrix
+                                          : store.frameMatrix;
+    if (output.object >= matrices.size()) {
+        if (error)
+            *error = "no matrix " + std::to_string(output.object) + " to store";
+        return false;
+    }
+    matrices[output.object] = *static_cast<const RrMat4d *>(value);
+    return true;
 }
 
 } // namespace rigExec

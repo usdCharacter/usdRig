@@ -268,6 +268,17 @@ struct RrOpHost {
     {
         return RrStoreWeightField(&p, output, value, error);
     }
+    bool LookUpSpace(uint32_t, const eval::OpLookup &lookup,
+                     const RigExecTypeDesc &type, void *value,
+                     std::string *error) const
+    {
+        return RrLookUpSpace(&p, lookup, type, value, error);
+    }
+    bool StoreSpace(const eval::OpHostOutput &output, const void *value,
+                    std::string *error) const
+    {
+        return RrStoreSpace(&p, output, value, error);
+    }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t g,
                     const void *elements, size_t count,
                     std::string *error) const

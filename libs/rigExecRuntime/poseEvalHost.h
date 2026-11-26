@@ -571,24 +571,6 @@ public:
         return true;
     }
 
-    bool frameRecordFacts(size_t object,
-                          eval::PoseFrameRecordFacts *facts) const
-    {
-        if (object >= _program->poses->frameRecords.size() ||
-            object >= _program->store.frameMatrix.size() ||
-            object >= _program->store.frameMatrixValid.size()) {
-            return false;
-        }
-        const RigExecWireFrameRecord &record =
-            _program->poses->frameRecords[object];
-        facts->commit = record.commit();
-        facts->position = record.position();
-        facts->target = record.target();
-        facts->version = record.version();
-        facts->slot = record.slot();
-        return true;
-    }
-
     eval::PoseHarmonicsFacts<RrPoseMath> harmonicsFacts(size_t object) const
     {
         const size_t ci = size_t(_program->poses->walkSteps[object].index);
@@ -1228,17 +1210,6 @@ public:
         }
         _program->store.fin[size_t(version)] =
             RrPoseMath::MakeFrame(points, flags);
-        return true;
-    }
-
-    bool writeFrameMatrix(size_t object, const RrMat4d &matrix, bool valid)
-    {
-        if (object >= _program->store.frameMatrix.size() ||
-            object >= _program->store.frameMatrixValid.size()) {
-            return false;
-        }
-        _program->store.frameMatrix[object] = matrix;
-        _program->store.frameMatrixValid[object] = valid ? 1 : 0;
         return true;
     }
 

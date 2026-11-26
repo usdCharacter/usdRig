@@ -1036,6 +1036,13 @@ bool RrLookUpPoseVersion(const RrProgram *program, const eval::OpLookup &lookup,
 bool RrStoreVolumePlacement(RrProgram *program,
                             const eval::OpHostOutput &output, const void *value,
                             std::string *error);
+/// Resolves a RestFrame or CommitRecordGate lookup.
+bool RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
+                   const RigExecTypeDesc &type, void *out, std::string *error);
+/// Stores a provider's final or base matrix, or a frame record's matrix or
+/// validity.
+bool RrStoreSpace(RrProgram *program, const eval::OpHostOutput &output,
+                  const void *value, std::string *error);
 /// Resolves WeightArrays lookup \p lookup: input \p lookup.read of weight
 /// object \p lookup.object, an array lent in place.
 bool RrLookUpWeight(const RrProgram *program, const eval::OpLookup &lookup,

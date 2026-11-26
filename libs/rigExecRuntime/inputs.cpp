@@ -9,6 +9,7 @@
 // slot names.
 #include "rigExecRuntime/inputs.h"
 #include "rigExecRuntime/store.h"
+#include "rigExecEvalCore/opSteps.h"
 #include "rigExecRuntime/spaces.h"
 
 #include <algorithm>
@@ -1281,10 +1282,13 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
         return false;
     // These bodies consume only their declared typed values and immutable compiled rig facts.
     // The adapter independently compares every typed read revision.
+    if (step.kind == RigExecWireStepKind::OpNode && program->file->opGraph)
+        for (const auto &output : program->file->opGraph->hostOutputs)
+            if (output && output->node == uint64_t(step.object) &&
+                eval::OpSpaceOutputTarget(output->target))
+                return true;
     switch (step.kind) {
     case RigExecWireStepKind::ComposeSubtree:
-    case RigExecWireStepKind::FrameMatrix:
-    case RigExecWireStepKind::ProviderMatrix:
     case RigExecWireStepKind::SolverCommit:
     case RigExecWireStepKind::CommitDelta:
     case RigExecWireStepKind::PropagateChunk:

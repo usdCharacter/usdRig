@@ -1180,7 +1180,8 @@ enum class StepKind : uint8_t {
   CommitDelta = 4,
   PropagateChunk = 5,
   CommitApply = 6,
-  ProviderMatrix = 7,
+  /// Reserved. Open refuses it.
+  ReservedProviderMatrix = 7,
   SnapshotFinals = 8,
   PoseInterpolator = 9,
   /// Reserved. Open refuses it.
@@ -1193,7 +1194,8 @@ enum class StepKind : uint8_t {
   RevisionFuse = 15,
   ChainStatus = 16,
   Derived = 17,
-  FrameMatrix = 18,
+  /// Reserved. Open refuses it.
+  ReservedFrameMatrix = 18,
   /// Reserved. Open refuses it.
   ReservedPropertyRevision = 19,
   RestCompose = 20,
@@ -1227,7 +1229,7 @@ inline const StepKind (&EnumValuesStepKind())[33] {
     StepKind::CommitDelta,
     StepKind::PropagateChunk,
     StepKind::CommitApply,
-    StepKind::ProviderMatrix,
+    StepKind::ReservedProviderMatrix,
     StepKind::SnapshotFinals,
     StepKind::PoseInterpolator,
     StepKind::ReservedVolumePlacements,
@@ -1238,7 +1240,7 @@ inline const StepKind (&EnumValuesStepKind())[33] {
     StepKind::RevisionFuse,
     StepKind::ChainStatus,
     StepKind::Derived,
-    StepKind::FrameMatrix,
+    StepKind::ReservedFrameMatrix,
     StepKind::ReservedPropertyRevision,
     StepKind::RestCompose,
     StepKind::LadderCompose,
@@ -1266,7 +1268,7 @@ inline const char * const *EnumNamesStepKind() {
     "CommitDelta",
     "PropagateChunk",
     "CommitApply",
-    "ProviderMatrix",
+    "ReservedProviderMatrix",
     "SnapshotFinals",
     "PoseInterpolator",
     "ReservedVolumePlacements",
@@ -1277,7 +1279,7 @@ inline const char * const *EnumNamesStepKind() {
     "RevisionFuse",
     "ChainStatus",
     "Derived",
-    "FrameMatrix",
+    "ReservedFrameMatrix",
     "ReservedPropertyRevision",
     "RestCompose",
     "LadderCompose",
@@ -3181,8 +3183,7 @@ struct SlotRange::Traits {
 
 /// One provider frame as one writer of its stack (a constraint or a solver
 /// commit) left it, for an AtPrim read phase on rigExec:transform. Its
-/// FrameMatrix step (object = this record's index) writes the matrix and a
-/// valid byte on every run.
+/// FrameMatrix op step writes the matrix and a valid byte on every run.
 FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) FrameRecord FLATBUFFERS_FINAL_CLASS {
  private:
   uint32_t slot_;
@@ -5587,15 +5588,13 @@ struct Step FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return static_cast<rigExec::fb::StepKind>(GetField<uint8_t>(VT_KIND, 0));
   }
   /// What the step works on, by kind: a compose group, a solver, a commit,
-  /// a provider slot (ProviderMatrix),
-  /// a pose interpolator, a revision id, a chain, a
-  /// derived id, or a pose.frame_records index (FrameMatrix).
+  /// a pose interpolator, a revision id, a chain, or a
+  /// derived id.
   int32_t object() const {
     return GetField<int32_t>(VT_OBJECT, -1);
   }
   /// The part of it: a RevisionChunk's vertex chunk, a PropagateChunk's
-  /// pair chunk, a ProviderMatrix's phase (1 final, 0 base); -1 where
-  /// unused.
+  /// pair chunk; -1 where unused.
   int32_t part() const {
     return GetField<int32_t>(VT_PART, -1);
   }
@@ -22438,6 +22437,9 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// points, 23 the curve points, 24 the falloff samples, 25 the placement,
   /// 26 the field's point count, 27 values, 28 indices, 29 the plane axis
   /// and 30 whether the plane is bounded (uint).
+  /// 20 (format 41): the rest frame of slot `object`. 21 (format 41): the
+  /// record gates of pose commit `object`: `read` 0 its present bytes, 1
+  /// record-after, 2 record-every-target.
   uint8_t source() const {
     return GetField<uint8_t>(VT_SOURCE, 0);
   }
@@ -22544,7 +22546,9 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// 0: property version `object`; 1 and 2 (format 38): the final and
   /// the base placement of volume slot `object`; 3 (format 39): the
   /// packet of weight object `object`; 5 (format 40): the weights of weight
-  /// field `object`.
+  /// field `object`; 20 and 21 (format 41): the final and the base matrix
+  /// of slot `object`; 22 and 23 (format 41): the matrix and the valid byte
+  /// of frame record `object`.
   uint8_t target() const {
     return GetField<uint8_t>(VT_TARGET, 0);
   }

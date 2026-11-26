@@ -2110,10 +2110,14 @@ void
 ProbeSpaces(const B &b)
 {
     for (const auto &step : b.steps) {
-        if (step.kind == RigExecBakedStepKind::ProviderMatrix)
-            ProbeProviderMatrix(b, step);
-        else if (step.kind == RigExecBakedStepKind::FrameMatrix)
-            ProbeFrameMatrix(b, step);
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(b, step);
+        RigExecBakedStep identity;
+        identity.object = id.object;
+        identity.part = id.part;
+        if (id.kind == RigExecBakedStepKind::ProviderMatrix)
+            ProbeProviderMatrix(b, identity);
+        else if (id.kind == RigExecBakedStepKind::FrameMatrix)
+            ProbeFrameMatrix(b, identity);
         else if (step.kind == RigExecBakedStepKind::ProviderRefresh)
             ProbeProviderRefresh(b, step);
         else if (step.kind == RigExecBakedStepKind::SpaceExpression)

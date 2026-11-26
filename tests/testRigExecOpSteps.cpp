@@ -852,6 +852,18 @@ struct GroupHost {
         *error = "no weight fields";
         return false;
     }
+    bool LookUpSpace(uint32_t, const eval::OpLookup &, const RigExecTypeDesc &,
+                     void *, std::string *error)
+    {
+        *error = "no rest frames";
+        return false;
+    }
+    bool StoreSpace(const eval::OpHostOutput &, const void *,
+                    std::string *error)
+    {
+        *error = "no provider matrices";
+        return false;
+    }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t g,
                     const void *elements, size_t count, std::string *error)
     {

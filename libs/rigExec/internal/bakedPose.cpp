@@ -30,7 +30,6 @@
 
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecMath/pointFrame.h"
-#include "rigExecMath/providerMatrixKernel.h"
 #include "rigExecMath/solvers.h"
 #include "rigExecMath/splineIk.h"
 
@@ -1563,6 +1562,23 @@ AddStep(RigExecBakedProgramImpl *program, RigExecBakedStepKind kind, int object,
     return program->steps.back();
 }
 
+/// An op node step of \p family keeping the identity of \p kind.
+RigExecBakedStep &
+AddOriginStep(RigExecBakedProgramImpl *program, RigExecBakedOpFamily family,
+              RigExecBakedStepKind kind, int object, int part)
+{
+    RigExecBakedOpOrigin origin;
+    origin.family = family;
+    origin.kind = kind;
+    origin.object = int32_t(object);
+    origin.part = int32_t(part);
+    RigExecBakedStep &step = AddStep(program, RigExecBakedStepKind::OpNode,
+                                     int(program->opNodeOrigins.size()));
+    step.maxDiagnostics = 1;
+    program->opNodeOrigins.push_back(origin);
+    return step;
+}
+
 /// Binds every pose read and write of the walk to a VERSION of its slot.
 ///
 /// One sweep in program order over the same writes the edge sweep sees,
@@ -2335,8 +2351,9 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
                size_t(B.frameRecords[nextRecord].commit) == w;
              ++nextRecord) {
             const RigExecBakedFrameRecord &record = B.frameRecords[nextRecord];
-            RigExecBakedStep &step =
-                AddStep(&B, RigExecBakedStepKind::FrameMatrix, int(nextRecord));
+            RigExecBakedStep &step = AddOriginStep(
+                &B, RigExecBakedOpFamily::FrameMatrix,
+                RigExecBakedStepKind::FrameMatrix, int(nextRecord), -1);
             step.reads.push_back(
                 RigExecBakedOne(RigExecBakedSlotDomain::PoseFin, record.slot));
             step.reads.push_back(RigExecBakedOne(
@@ -2858,7 +2875,8 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
     for (int slot = 0; slot < N; ++slot) {
         if (B.needFinal[size_t(slot)]) {
             RigExecBakedStep &step =
-                AddStep(&B, RigExecBakedStepKind::ProviderMatrix, slot, 1);
+                AddOriginStep(&B, RigExecBakedOpFamily::ProviderMatrix,
+                              RigExecBakedStepKind::ProviderMatrix, slot, 1);
             step.reads.push_back(
                 RigExecBakedOne(RigExecBakedSlotDomain::PoseFin, slot));
             step.reads.push_back(
@@ -2868,7 +2886,8 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
         }
         if (B.needBase[size_t(slot)]) {
             RigExecBakedStep &step =
-                AddStep(&B, RigExecBakedStepKind::ProviderMatrix, slot, 0);
+                AddOriginStep(&B, RigExecBakedOpFamily::ProviderMatrix,
+                              RigExecBakedStepKind::ProviderMatrix, slot, 0);
             step.reads.push_back(
                 RigExecBakedOne(RigExecBakedSlotDomain::PoseBase, slot));
             step.writes.push_back(
@@ -2919,8 +2938,9 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
     using Domain = RigExecBakedSlotDomain;
     using Kind = RigExecBakedStepKind;
     for (auto &step : B.steps) {
-        if (step.kind != Kind::Solve && step.kind != Kind::FrameMatrix &&
-            step.kind != Kind::ProviderMatrix &&
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        if (step.kind != Kind::Solve && id.kind != Kind::FrameMatrix &&
+            id.kind != Kind::ProviderMatrix &&
             step.kind != Kind::PoseInterpolator &&
             step.kind != Kind::Constraint && step.kind != Kind::SolverCommit &&
             step.kind != Kind::CommitDelta &&
@@ -2964,11 +2984,11 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
             for (size_t k = 0; k < solver.restReads.size(); ++k)
                 if (k < solver.restIsLive.size() && solver.restIsLive[k])
                     read(Domain::PoseFin, solver.restReads[k]);
-        } else if (step.kind == Kind::FrameMatrix) {
-            read(Domain::PoseFin, B.frameRecords[size_t(step.object)].version);
-        } else if (step.kind == Kind::ProviderMatrix) {
-            const size_t slot = size_t(step.object);
-            if (step.part)
+        } else if (id.kind == Kind::FrameMatrix) {
+            read(Domain::PoseFin, B.frameRecords[size_t(id.object)].version);
+        } else if (id.kind == Kind::ProviderMatrix) {
+            const size_t slot = size_t(id.object);
+            if (id.part)
                 read(Domain::PoseFin, B.finLast[slot]);
             read(Domain::PoseBase, B.baseLast[slot]);
         } else if (step.kind == Kind::PoseInterpolator) {
@@ -4235,6 +4255,10 @@ RigExecBakedRequiredRestReads(const RigExecBakedProgramImpl &B,
 {
     RigExecBakedStep step = source;
     step.reads.clear();
+    const RigExecBakedStepIdentity identity = RigExecBakedIdentityOf(B, source);
+    step.kind = identity.kind;
+    step.object = identity.object;
+    step.part = identity.part;
     const int N = int(B.paths.size());
     {
         std::set<uint32_t> rests, ladders;
@@ -5253,60 +5277,6 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
             }
             step->diagnostics.push_back(
                 "commit " + std::to_string(step->object) + " names no " + what);
-        }
-        return;
-    }
-
-    case RigExecBakedStepKind::ProviderMatrix: {
-        const size_t slot = size_t(step->object);
-        // Never a bail: the one failure this phase can report -- a published
-        // joint whose rest or final frame is not usable -- is the epilogue's.
-        using Frame = RigExecProviderFrameT<GfVec3d>;
-        const auto view = [](const RigExecPointFrame &frame) {
-            return Frame{frame.points, frame.IsValid(), frame.IsDegenerate()};
-        };
-        const Frame rest{B.restPts[slot], B.restFrames[slot].IsValid(),
-                         B.restFrames[slot].IsDegenerate()};
-        // The LAST version of the slot: these steps run after the whole
-        // walk, so what they describe is where the provider ended up.
-        const RigExecPointFrame &base = B.base[size_t(B.baseLast[slot])];
-        if (step->part) {
-            const bool joint =
-                std::find(B.jointSlots.begin(), B.jointSlots.end(),
-                          int(slot)) != B.jointSlots.end();
-            B.finalMatrix[slot] =
-                RigExecProviderFinalMatrixT<GfMatrix3d, GfVec3d, GfMatrix4d>(
-                    rest, view(B.fin[size_t(B.finLast[slot])]), view(base),
-                    joint);
-        } else {
-            B.baseMatrix[slot] =
-                RigExecProviderBaseMatrixT<GfMatrix3d, GfVec3d, GfMatrix4d>(
-                    rest, view(base));
-        }
-        return;
-    }
-
-    case RigExecBakedStepKind::FrameMatrix: {
-        BakedPoseHost host(program, step);
-        eval::StepRef ref;
-        ref.kind = uint32_t(step->kind);
-        ref.object = step->object;
-        ref.part = step->part;
-        ref.slot = 0;
-        const eval::StepResult result = eval::RunValueStep(host, ref);
-        if (result.outcome == eval::Outcome::Invalid) {
-            const char *what = "frame record";
-            if (result.detail == eval::pose_detail::kPoseDetailNoCommit) {
-                what = "commit";
-            } else if (result.detail == eval::pose_detail::kPoseDetailNoSlot) {
-                what = "slot";
-            } else if (result.detail ==
-                       eval::pose_detail::kPoseDetailNoVersion) {
-                what = "fin version";
-            }
-            step->diagnostics.push_back("frame record " +
-                                        std::to_string(step->object) +
-                                        " names no " + what);
         }
         return;
     }

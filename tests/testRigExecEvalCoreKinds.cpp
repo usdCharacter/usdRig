@@ -44,6 +44,18 @@ CheckOrdinals()
                               "WeightPacket") == 0);
             continue;
         }
+        if (kind == eval::StepKind::ReservedProviderMatrix ||
+            kind == eval::StepKind::ReservedFrameMatrix) {
+            const bool provider =
+                kind == eval::StepKind::ReservedProviderMatrix;
+            CHECK(std::strcmp(eval::StepKindName(kind),
+                              provider ? "ReservedProviderMatrix"
+                                       : "ReservedFrameMatrix") == 0);
+            CHECK(std::strcmp(RigExecBakedStepKindName(baked),
+                              provider ? "ProviderMatrix" : "FrameMatrix") ==
+                  0);
+            continue;
+        }
         if (kind == eval::StepKind::ReservedWeightField) {
             CHECK(std::strcmp(eval::StepKindName(kind),
                               "ReservedWeightField") == 0);
@@ -59,6 +71,8 @@ CheckOrdinals()
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedWeightField));
     CHECK(eval::IsReservedStepKind(eval::StepKind::SnapshotFinals));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedOpGraph));
+    CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedProviderMatrix));
+    CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedFrameMatrix));
     CHECK(!eval::IsReservedStepKind(eval::StepKind::ComposeSubtree));
     CHECK(eval::StepKindName(
               static_cast<eval::StepKind>(eval::StepKindCount))[0] == '\0');

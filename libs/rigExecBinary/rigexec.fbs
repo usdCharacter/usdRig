@@ -119,14 +119,17 @@ enum SlotDomain : ubyte { Avars = 0, PoseBase, PoseFin, PosedM, FinalMatrix,
 /// RigExecBakedStepKind, in the same order. SnapshotFinals (8) is reserved:
 /// never written, and Open refuses a file that holds one.
 enum StepKind : ubyte { ComposeSubtree = 0, Solve, SolverCommit, Constraint,
-  CommitDelta, PropagateChunk, CommitApply, ProviderMatrix, SnapshotFinals,
+  CommitDelta, PropagateChunk, CommitApply,
+  /// Reserved. Open refuses it.
+  ReservedProviderMatrix, SnapshotFinals,
   PoseInterpolator,
   /// Reserved. Open refuses it.
   ReservedVolumePlacements,
   /// Reserved. Open refuses it.
   ReservedWeightPacket, InfluenceFold,
   RevisionStatic, RevisionChunk, RevisionFuse, ChainStatus, Derived,
-  FrameMatrix,
+  /// Reserved. Open refuses it.
+  ReservedFrameMatrix,
   /// Reserved. Open refuses it.
   ReservedPropertyRevision, RestCompose, LadderCompose, SkinTopology,
   /// Reserved. Open refuses it.
@@ -261,8 +264,7 @@ struct PropertyInputCandidate (native_type: "::rigExec::RigExecWirePropertyInput
 struct SlotRange { domain: SlotDomain; begin: uint; end: uint; }
 /// One provider frame as one writer of its stack (a constraint or a solver
 /// commit) left it, for an AtPrim read phase on rigExec:transform. Its
-/// FrameMatrix step (object = this record's index) writes the matrix and a
-/// valid byte on every run.
+/// FrameMatrix op step writes the matrix and a valid byte on every run.
 struct FrameRecord {
   /// The provider slot.
   slot: uint;
@@ -450,13 +452,11 @@ table Constants {
 table Step {
   kind: StepKind;
   /// What the step works on, by kind: a compose group, a solver, a commit,
-  /// a provider slot (ProviderMatrix),
-  /// a pose interpolator, a revision id, a chain, a
-  /// derived id, or a pose.frame_records index (FrameMatrix).
+  /// a pose interpolator, a revision id, a chain, or a
+  /// derived id.
   object: int = -1;
   /// The part of it: a RevisionChunk's vertex chunk, a PropagateChunk's
-  /// pair chunk, a ProviderMatrix's phase (1 final, 0 base); -1 where
-  /// unused.
+  /// pair chunk; -1 where unused.
   part: int = -1;
   reads: [SlotRange];
   writes: [SlotRange];
@@ -1936,6 +1936,9 @@ table OpLookup {
   /// points, 23 the curve points, 24 the falloff samples, 25 the placement,
   /// 26 the field's point count, 27 values, 28 indices, 29 the plane axis
   /// and 30 whether the plane is bounded (uint).
+  /// 20 (format 41): the rest frame of slot `object`. 21 (format 41): the
+  /// record gates of pose commit `object`: `read` 0 its present bytes, 1
+  /// record-after, 2 record-every-target.
   source: ubyte;
   object: uint;
   part: int = -1;
@@ -1949,7 +1952,9 @@ table OpHostOutput {
   /// 0: property version `object`; 1 and 2 (format 38): the final and
   /// the base placement of volume slot `object`; 3 (format 39): the
   /// packet of weight object `object`; 5 (format 40): the weights of weight
-  /// field `object`.
+  /// field `object`; 20 and 21 (format 41): the final and the base matrix
+  /// of slot `object`; 22 and 23 (format 41): the matrix and the valid byte
+  /// of frame record `object`.
   target: ubyte;
   object: uint;
 }

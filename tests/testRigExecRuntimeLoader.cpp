@@ -161,7 +161,7 @@ _TestFileRefusals(const std::vector<uint8_t> &bytes)
     CHECK(got == "unsupported .rigexec format version 4 (this reader reads " +
                      std::to_string(RigExecFormatOldestReadable) + " through " +
                      std::to_string(RigExecFormatVersion) +
-                     "); re-export: weight fields as op nodes");
+                     "); re-export: provider and frame matrices as op nodes");
     if (got.find("format version 4") == std::string::npos) {
         std::printf("version 4: open said '%s'\n", got.c_str());
     }
@@ -628,6 +628,18 @@ _FindStep(const fb::RigExecWireFile &file, fb::StepKind kind, int64_t object)
     return -1;
 }
 
+// The OpNode step whose node stores frame record \p record's matrix, or -1.
+static int64_t
+_FindRecordStep(const fb::RigExecWireFile &file, int64_t record)
+{
+    if (!file.opGraph)
+        return -1;
+    for (const auto &output : file.opGraph->hostOutputs)
+        if (output && output->target == 22 && int64_t(output->object) == record)
+            return _FindStep(file, fb::StepKind::OpNode, int64_t(output->node));
+    return -1;
+}
+
 // Removes from step \p step's reads every range of \p domain covering
 // \p slot.
 static void
@@ -701,8 +713,7 @@ _TestFrameRecordRefusals(const std::string &name,
     bool rebound = false;
     for (size_t r = 0; r < pose.frameRecords.size() && !rebound; ++r) {
         const fb::FrameRecord &record = pose.frameRecords[r];
-        const int64_t step =
-            _FindStep(*file, fb::StepKind::FrameMatrix, int64_t(r));
+        const int64_t step = _FindRecordStep(*file, int64_t(r));
         for (size_t w = 0; w < pose.commits.size() && step >= 0; ++w) {
             const fb::RigExecWireCommit &commit = pose.commits[w];
             if (commitLast[w] <= step) {
@@ -738,8 +749,7 @@ _TestFrameRecordRefusals(const std::string &name,
     for (size_t r = 0; r < pose.frameRecords.size(); ++r) {
         const fb::FrameRecord &record = pose.frameRecords[r];
         const fb::RigExecWireCommit &commit = pose.commits[record.commit()];
-        const int64_t step =
-            _FindStep(*file, fb::StepKind::FrameMatrix, int64_t(r));
+        const int64_t step = _FindRecordStep(*file, int64_t(r));
         if (!commit.solverOutput || step < 0) {
             continue;
         }
@@ -765,17 +775,20 @@ _TestFrameRecordRefusals(const std::string &name,
         ++recordRefusals;
         break;
     }
-    // A FrameMatrix step naming a record past the table.
-    const int64_t first = _FindStep(*file, fb::StepKind::FrameMatrix, 0);
+    // A FrameMatrix op node storing a record past the table.
+    const int64_t first = _FindRecordStep(*file, 0);
     if (first >= 0) {
+        const uint32_t node = uint32_t(file->steps[size_t(first)].object);
         const auto edit = [&](fb::RigExecWireFile *edited) {
-            edited->steps[size_t(first)].object =
-                int32_t(edited->pose->frameRecords.size());
+            for (auto &output : edited->opGraph->hostOutputs)
+                if (output->node == node)
+                    output->object =
+                        uint32_t(edited->pose->frameRecords.size());
         };
-        _ExpectShownRefusal(name, "FrameMatrix past the records", bytes, edit,
-                            _EditedStepName(bytes, edit, size_t(first)) +
-                                " names frame record " + records + " of " +
-                                records);
+        _ExpectShownRefusal(
+            name, "FrameMatrix past the records", bytes, edit,
+            "op_graph.host_outputs: node " + std::to_string(node) +
+                " stores a matrix of no frame record " + records);
         ++recordRefusals;
     }
     // The first revision with a transform list: an entry past the table,
@@ -909,7 +922,7 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
         "unsupported .rigexec format version " + std::to_string(previous) +
         " (this reader reads " + std::to_string(RigExecFormatOldestReadable) +
         " through " + std::to_string(RigExecFormatVersion) +
-        "); re-export: weight fields as op nodes";
+        "); re-export: provider and frame matrices as op nodes";
     CHECK(got == want);
     if (got != want) {
         std::printf("%s, previous version: open said '%s', expected '%s'\n",

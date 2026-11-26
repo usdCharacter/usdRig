@@ -246,9 +246,10 @@ _HeadComposeFile()
     compose.writes = {fb::SlotRange(fb::SlotDomain::PoseFin, 1, 2),
                       fb::SlotRange(fb::SlotDomain::PoseBase, 1, 2)};
     auto &provider = f.steps[5];
-    provider.kind = fb::StepKind::ProviderMatrix;
-    provider.object = 1;
-    provider.part = 1;
+    provider = _SpaceStep(f, "ProviderMatrix", 20, 1);
+    _LookUp(f, provider, 0, 20, 1, -1);
+    _LookUp(f, provider, 1, 1, 1, 0);
+    _LookUp(f, provider, 2, 1, 1, 1);
     provider.preds = {2, 4};
     provider.reads = {fb::SlotRange(fb::SlotDomain::Rest, 1, 2),
                       fb::SlotRange(fb::SlotDomain::PoseFin, 1, 2),
@@ -387,6 +388,9 @@ _PoseBodyFile()
     provider.reads = {fb::SlotRange(fb::SlotDomain::Rest, 1, 2),
                       fb::SlotRange(fb::SlotDomain::PoseBase, 1, 2),
                       fb::SlotRange(fb::SlotDomain::PoseFin, 3, 4)};
+    for (const auto &input : f.opGraph->nodes[size_t(provider.object)]->inputs)
+        if (input->port == 1)
+            f.opGraph->lookups[input->object]->object = 3;
     f.steps[2].succs.push_back(6);
     f.steps[4].succs = {5, 6};
     f.steps.push_back(std::move(provider));
@@ -852,10 +856,9 @@ _HeadChunkFile()
     f.geometry->revisionChunkCount = {2};
     f.geometry->chainChunkEnd = {2};
     f.slotMeta->needBase[0] = 1;
-    fb::RigExecWireStep provider;
-    provider.kind = fb::StepKind::ProviderMatrix;
-    provider.object = 0;
-    provider.part = 0;
+    fb::RigExecWireStep provider = _SpaceStep(f, "ProviderMatrix", 21, 0);
+    _LookUp(f, provider, 0, 20, 0, -1);
+    _LookUp(f, provider, 2, 1, 0, 1);
     provider.reads = {fb::SlotRange(fb::SlotDomain::Rest, 0, 1),
                       fb::SlotRange(fb::SlotDomain::PoseBase, 0, 1)};
     provider.writes = {fb::SlotRange(fb::SlotDomain::BaseMatrix, 0, 1)};

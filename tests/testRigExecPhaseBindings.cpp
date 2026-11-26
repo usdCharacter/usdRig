@@ -1333,7 +1333,8 @@ CheckFrameRecordSteps(const std::string &where,
     std::vector<int> commitLast(B.commits.size(), -1);
     for (size_t s = 0; s < B.steps.size(); ++s) {
         const RigExecBakedStep &step = B.steps[s];
-        switch (step.kind) {
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        switch (id.kind) {
         case RigExecBakedStepKind::SolverCommit:
         case RigExecBakedStepKind::Constraint:
         case RigExecBakedStepKind::CommitDelta:
@@ -1342,10 +1343,10 @@ CheckFrameRecordSteps(const std::string &where,
             commitLast[size_t(step.object)] = int(s);
             break;
         case RigExecBakedStepKind::FrameMatrix:
-            CHECK_AT(where, size_t(step.object) < stepOf.size());
-            if (size_t(step.object) < stepOf.size()) {
-                CHECK_AT(where, stepOf[size_t(step.object)] < 0);
-                stepOf[size_t(step.object)] = int(s);
+            CHECK_AT(where, size_t(id.object) < stepOf.size());
+            if (size_t(id.object) < stepOf.size()) {
+                CHECK_AT(where, stepOf[size_t(id.object)] < 0);
+                stepOf[size_t(id.object)] = int(s);
             }
             break;
         default:
@@ -1439,9 +1440,12 @@ CheckRecordStepsRan(const std::string &where,
     size_t frameSteps = 0;
     bool foldRan = false;
     for (const RigExecBakedStep &step : B.steps) {
-        if (step.kind == RigExecBakedStepKind::FrameMatrix) {
+        if (RigExecBakedIdentityOf(B, step).kind ==
+            RigExecBakedStepKind::FrameMatrix) {
             ++frameSteps;
-            const SdfPath &mover = B.frameRecords[size_t(step.object)].mover;
+            const SdfPath &mover =
+                B.frameRecords[size_t(RigExecBakedIdentityOf(B, step).object)]
+                    .mover;
             const bool expected =
                 std::find(movers.begin(), movers.end(), mover) != movers.end();
             CHECK_AT(
@@ -1699,8 +1703,9 @@ TestTheFoldReadsItsRecords(const std::string &examples)
     CHECK_AT(where, error.find("without declaring it") != std::string::npos);
     int reboundStep = -1;
     for (size_t s = 0; s < B.steps.size(); ++s)
-        if (B.steps[s].kind == RigExecBakedStepKind::FrameMatrix &&
-            B.steps[s].object == 2)
+        if (RigExecBakedIdentityOf(B, B.steps[s]).kind ==
+                RigExecBakedStepKind::FrameMatrix &&
+            RigExecBakedIdentityOf(B, B.steps[s]).object == 2)
             reboundStep = int(s);
     CHECK_AT(where, reboundStep >= 0);
     if (reboundStep < 0) {
@@ -1720,6 +1725,20 @@ TestTheFoldReadsItsRecords(const std::string &examples)
             ++replaced;
         }
     CHECK_AT(where, replaced == 1);
+    // The record's op node reads its version through a lookup.
+    eval::OpLookup *frameLookup = nullptr;
+    if (B.opProgram) {
+        auto &layout = const_cast<eval::OpStepLayout &>(B.opProgram->layout);
+        for (const auto &input : layout.hostInputs)
+            if (input.node == uint32_t(declared.object) &&
+                input.source == eval::OpHostSource::Lookup &&
+                layout.lookups[input.object].source ==
+                    uint8_t(eval::OpLookupSource::PoseVersion))
+                frameLookup = &layout.lookups[input.object];
+    }
+    CHECK_AT(where, frameLookup && frameLookup->object == bound);
+    if (frameLookup)
+        frameLookup->object = reboundVersion;
     size_t producers = 0;
     std::vector<std::pair<int, std::vector<int>>> originalSuccessors;
     struct SavedClusterEdges {
@@ -1804,6 +1823,8 @@ TestTheFoldReadsItsRecords(const std::string &examples)
     }
 
     B.frameRecords[2].version = bound;
+    if (frameLookup)
+        frameLookup->object = bound;
     declared.reads = originalReads;
     declared.preds = originalPreds;
     for (const auto &saved : originalClusterEdges) {
@@ -1944,8 +1965,9 @@ TestAPhasedRigSkipsOnRepeat(const std::string &examples)
             SdfPath("/ReadPhaseAsset/Rig/Joints").AppendChild(TfToken(joint));
         for (size_t s = 0; s < B.steps.size(); ++s) {
             const RigExecBakedStep &step = B.steps[s];
-            if (step.kind == RigExecBakedStepKind::ProviderMatrix &&
-                B.paths[size_t(step.object)] == path) {
+            const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+            if (id.kind == RigExecBakedStepKind::ProviderMatrix &&
+                B.paths[size_t(id.object)] == path) {
                 out.push_back(int(s));
             }
         }
@@ -2049,11 +2071,12 @@ TestSolverCheckpointSteps(const std::string &examples)
     int recordStep = -1;
     int commitStep = -1;
     for (size_t s = 0; s < B.steps.size(); ++s) {
-        const RigExecBakedStep &step = B.steps[s];
-        if (step.kind == RigExecBakedStepKind::FrameMatrix &&
-            B.frameRecords[size_t(step.object)].mover == legFk) {
+        const RigExecBakedStepIdentity id =
+            RigExecBakedIdentityOf(B, B.steps[s]);
+        if (id.kind == RigExecBakedStepKind::FrameMatrix &&
+            B.frameRecords[size_t(id.object)].mover == legFk) {
             recordStep = int(s);
-            const auto &record = B.frameRecords[size_t(step.object)];
+            const auto &record = B.frameRecords[size_t(id.object)];
             CHECK_AT(where,
                      B.paths[size_t(record.slot)] ==
                          SdfPath("/CheckpointAsset/Rig/Joints/Hip/Knee"));

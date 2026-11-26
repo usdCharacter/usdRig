@@ -1161,6 +1161,10 @@ enum class RigExecBakedOpFamily : uint8_t {
     /// One weight object of a weight field: object the field, part the
     /// node's place in the field's nodeObjects.
     WeightField,
+    /// A provider's final (part 1) or base (part 0) matrix: object the slot.
+    ProviderMatrix,
+    /// A frame record's matrix: object the frameRecords index.
+    FrameMatrix,
 };
 
 /// Where an op node's step comes from: its family, that family's object and
@@ -2886,6 +2890,21 @@ bool RigExecBakedStoreWeightPacket(RigExecBakedProgramImpl &B,
 void RigExecBakedAddVolumePlacementOps(const RigExecBakedProgramImpl &B,
                                        RigExecRigDescBuilder *builder,
                                        eval::OpStepLayout *layout);
+/// The ProviderMatrix and FrameMatrix op nodes of their origins, numbered
+/// as their origins are.
+bool RigExecBakedAddSpaceOps(const RigExecBakedProgramImpl &B,
+                             RigExecRigDescBuilder *builder,
+                             eval::OpStepLayout *layout, std::string *error);
+/// Resolves a RestFrame or CommitRecordGate lookup.
+bool RigExecBakedLookUpSpace(const RigExecBakedProgramImpl &B,
+                             const eval::OpLookup &lookup,
+                             const RigExecTypeDesc &type, void *out,
+                             std::string *error);
+/// Stores a provider's final or base matrix, or a frame record's matrix or
+/// validity.
+bool RigExecBakedStoreSpace(RigExecBakedProgramImpl &B,
+                            const eval::OpHostOutput &output, const void *value,
+                            std::string *error);
 /// Resolves a pose version lookup: the frame at fin (part 0) or base
 /// (part 1) version \p lookup.object, as a rig PointFrame.
 bool RigExecBakedLookUpPoseVersion(const RigExecBakedProgramImpl &B,

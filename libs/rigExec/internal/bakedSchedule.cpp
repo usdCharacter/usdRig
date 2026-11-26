@@ -968,18 +968,18 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
         const RigExecBakedStep &step = B.steps[size_t(index)];
         // A FrameMatrix step indexes the record table with no "no object"
         // value, so a negative object is out of range like a too-large one.
-        if (step.kind == RigExecBakedStepKind::FrameMatrix) {
-            if (step.object < 0 ||
-                size_t(step.object) >= B.frameRecords.size()) {
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        if (id.kind == RigExecBakedStepKind::FrameMatrix) {
+            if (id.object < 0 || size_t(id.object) >= B.frameRecords.size()) {
                 out->Add(NameStep(B, index) + " names frame record " +
-                         std::to_string(step.object) + " of " +
+                         std::to_string(id.object) + " of " +
                          std::to_string(B.frameRecords.size()));
-            } else if (frameRecordStep[size_t(step.object)] >= 0) {
+            } else if (frameRecordStep[size_t(id.object)] >= 0) {
                 out->Add(NameStep(B, index) +
                          " evaluates the same frame record as " +
-                         NameStep(B, frameRecordStep[size_t(step.object)]));
+                         NameStep(B, frameRecordStep[size_t(id.object)]));
             } else {
-                frameRecordStep[size_t(step.object)] = index;
+                frameRecordStep[size_t(id.object)] = index;
             }
             continue;
         }
@@ -1229,10 +1229,12 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                     out->Add(NameStep(B, reader) + " inspects commit " +
                              std::to_string(prior.first) +
                              " without declaring it");
-        } else if (step.kind == RigExecBakedStepKind::ProviderMatrix &&
-                   step.object >= 0 && size_t(step.object) < n) {
-            const size_t slot = size_t(step.object);
-            if (step.part)
+        } else if (const RigExecBakedStepIdentity id =
+                       RigExecBakedIdentityOf(B, step);
+                   id.kind == RigExecBakedStepKind::ProviderMatrix &&
+                   id.object >= 0 && size_t(id.object) < n) {
+            const size_t slot = size_t(id.object);
+            if (id.part)
                 check(kFin, B.finLast[slot], reader, -1);
             check(kBase, B.baseLast[slot], reader, -1);
         } else if (step.kind == RigExecBakedStepKind::PoseInterpolator &&

@@ -8,6 +8,10 @@ static_assert(static_cast<uint8_t>(fb::StepKind::ComposeSubtree) == 0,
               "ComposeSubtree is ordinal 0");
 static_assert(static_cast<uint8_t>(fb::StepKind::SnapshotFinals) == 8,
               "the reserved ordinal is 8");
+static_assert(static_cast<uint8_t>(fb::StepKind::ReservedProviderMatrix) == 7,
+              "the retired provider matrix ordinal is 7");
+static_assert(static_cast<uint8_t>(fb::StepKind::ReservedFrameMatrix) == 18,
+              "the retired frame matrix ordinal is 18");
 static_assert(static_cast<uint8_t>(fb::StepKind::ReservedVolumePlacements) ==
                   10,
               "the retired volume placement ordinal is 10");
@@ -45,7 +49,9 @@ IsReservedStepKind(StepKind kind)
            kind == fb::StepKind::ReservedWeightPacket ||
            kind == fb::StepKind::ReservedWeightField ||
            kind == fb::StepKind::ReservedPropertyRevision ||
-           kind == fb::StepKind::ReservedOpGraph;
+           kind == fb::StepKind::ReservedOpGraph ||
+           kind == fb::StepKind::ReservedProviderMatrix ||
+           kind == fb::StepKind::ReservedFrameMatrix;
 }
 
 } // namespace eval

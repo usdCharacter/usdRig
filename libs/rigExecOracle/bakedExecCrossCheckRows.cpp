@@ -1296,12 +1296,14 @@ RigExecBakedExecCheckRows::BeforeSlot(const B &b, Kind kind, int groupBegin,
 void
 RigExecBakedExecCheckRows::AfterStep(const B &b, size_t step)
 {
+    const RigExecBakedStepIdentity id =
+        RigExecBakedIdentityOf(b, b.steps[step]);
     for (const size_t row : _byStep.at(step)) {
         _inputs[row].expected = _bindings[row].result(b);
         RigExecExecCheckApplyAfterStep(
             _inputs[row],
-            b.steps[step].kind == Kind::FrameMatrix &&
-                !b.frameMatrixValid[size_t(b.steps[step].object)],
+            id.kind == Kind::FrameMatrix &&
+                !b.frameMatrixValid[size_t(id.object)],
             b.steps[step].kind == Kind::Solve &&
                 b.aggregates[size_t(b.steps[step].object)].frames.empty());
     }

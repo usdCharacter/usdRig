@@ -10,6 +10,7 @@ add_library(rigExecEval OBJECT
     libs/rigExec/internal/bakedPose.cpp
     libs/rigExec/internal/bakedProperties.cpp
     libs/rigExec/internal/bakedSpaces.cpp
+    libs/rigExec/internal/bakedSpaceOps.cpp
     libs/rigExec/internal/bakedWeights.cpp
     libs/rigExec/internal/bakedUpstream.cpp
     libs/rigExec/internal/bakedSchedule.cpp
