@@ -309,8 +309,7 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
     }
     if (!completed) {
         pose.valid = false;
-        pose.diagnostics.push_back(
-            "native program did not complete generation");
+        pose.diagnostics.push_back(kRigExecIncompleteGenerationLine);
         return pose;
     }
     _bakedProgram->AdoptBlendSampleLayouts(&_blendSampleShapes);

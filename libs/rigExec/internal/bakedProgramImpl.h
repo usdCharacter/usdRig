@@ -4011,6 +4011,10 @@ enum class RigExecBakedStepLines { Property, Walk, Interpolator, Geometry };
 void RigExecBakedAppendStepLines(RigExecBakedProgramImpl *program,
                                  RigExecBakedStepLines block,
                                  std::vector<std::string> *out);
+/// Appends the lines of the last run's lowest failed op
+/// (RigExecOpExecution::firstFailed), the failure every evaluator reports.
+void RigExecBakedAppendFailedOpLines(const RigExecBakedProgramImpl &program,
+                                     std::vector<std::string> *out);
 
 /// Construct the token tables the step bodies of each translation unit use,
 /// on the calling thread. Build calls them, with RigExecRevisionKernelTouchTokens

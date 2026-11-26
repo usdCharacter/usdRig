@@ -619,10 +619,10 @@ struct RigExecFrozenRunReport {
 
 /// The serial step runner a frozen job executes: the baked program's serial
 /// executor over the private arena, reading nothing but \p context and \p
-/// inputs. Returns false to hand the generation back, exactly as
-/// RigExecBakedProgram::Run does; a runner that runs must set
-/// \p pose->valid, and the entry point treats a valid flag left down as a
-/// refusal.
+/// inputs. Returns false to hand the generation back (declined); a runner
+/// that runs must set \p pose->valid. A runner that ran a frame that failed
+/// returns true with \p pose invalid and carrying the frame's error lines;
+/// a valid flag left down with no lines is a refusal.
 ///
 /// The parameter list IS the worker's input surface, which is the point of
 /// the audit below: a runner that needs anything else -- a stage, a query,
@@ -645,7 +645,9 @@ using RigExecFrozenStepRunner = std::function<bool(
 /// preset to the inputs' time; \p cancel must STILL not be canceled (publish
 /// check). Any failure -- including a null runner, a runner that returns
 /// false, or one that leaves valid down -- answers invalid at the requested
-/// time.
+/// time with no diagnostics (declined). A frame that ran and failed answers
+/// invalid with exactly the diagnostics a live evaluation of it reports; it
+/// is an error, not a result to cache.
 ///
 /// \p report, when given, is cleared and then filled by a production runner
 /// that ran the job (RigExecFrozenRunReport).

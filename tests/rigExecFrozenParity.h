@@ -37,16 +37,20 @@ RigExecRecordingStepRunner(RigExecFrozenRunnerVerdict *verdict)
     };
 }
 
-/// Whether a frozen job at a frame live fails stopped as live did: admitted,
-/// the runner ran the frame, its graph failed, and nothing was published.
-/// The worker's pose carries no line of the error (review finding R35: the
-/// frozen job does not report live's error).
+/// Whether a frozen job at a frame \p live fails stopped as live did:
+/// admitted, the runner ran the frame, its graph failed, and the job answers
+/// an invalid pose with exactly live's lines and nothing published.
 inline bool
 RigExecFrozenFailedInTheWorker(const rigExec::RigExecRigPose &frozen,
-                               const RigExecFrozenRunnerVerdict &verdict)
+                               const RigExecFrozenRunnerVerdict &verdict,
+                               const rigExec::RigExecRigPose &live)
 {
-    return !frozen.valid && verdict.called && !verdict.ran &&
-           !verdict.pose.valid && verdict.pose.diagnostics.empty();
+    return !live.valid && !live.diagnostics.empty() && !frozen.valid &&
+           verdict.called && verdict.ran && !verdict.pose.valid &&
+           frozen.diagnostics == live.diagnostics &&
+           verdict.pose.diagnostics == live.diagnostics &&
+           frozen.movedProperties.empty() && frozen.jointFramesFinal.empty() &&
+           frozen.weightFields.empty();
 }
 
 /// Freezes \p evaluator's program, samples \p time's inputs at its

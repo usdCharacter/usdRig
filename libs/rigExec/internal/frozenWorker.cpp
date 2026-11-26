@@ -768,9 +768,22 @@ _RunFrozenHistoryTick(const RigExecFrozenEvalContext &context,
 
 namespace {
 
+void
+_FillRunReport(const RigExecBakedProgramImpl &B)
+{
+    if (RigExecFrozenRunReport *report = _frozenRunReport) {
+        report->region = RigExecBakedLastRunTrace(B);
+        report->ran = true;
+        report->sourceKeysBuilt = B.sourceKeysBuilt;
+        report->sourceKeyMismatches = B.sourceKeyMismatches;
+        report->avarConstantSerial = B.avarConstantSerial;
+    }
+}
+
 // Runs one frozen frame: acquire, sample placement, common graph, publication.
-// False denotes incompatible transport or fatal execution; a declined run
-// leaves the pose invalid and publishes nothing. A history tick runs the
+// False declines: incompatible transport, or a run whose result live would
+// not give; the pose publishes nothing. A frame that failed returns true with
+// an invalid pose holding live's lines for it. A history tick runs the
 // windowed ops' closure and returns their captures instead of publishing.
 bool
 _RunFrozenWith(const RigExecFrozenEvalContext &context,
@@ -925,7 +938,17 @@ _RunFrozenWith(const RigExecFrozenEvalContext &context,
         return false;
     }
     if (!_FrozenExecuteGraph(&worker, time)) {
-        return false;
+        if (history || !B.requiredStageFramesAdmission.admitted)
+            return false;
+        // The frame's error, as live reports it; nothing else is published.
+        RigExecRigPose failed;
+        failed.diagnostics = std::move(working.diagnostics);
+        RigExecBakedAppendFailedOpLines(B, &failed.diagnostics);
+        failed.diagnostics.push_back(kRigExecIncompleteGenerationLine);
+        failed.time = time;
+        *pose = std::move(failed);
+        _FillRunReport(B);
+        return true;
     }
     if (history) {
         // Nothing is published at a history tick; an unadmitted frame
@@ -970,13 +993,7 @@ _RunFrozenWith(const RigExecFrozenEvalContext &context,
     working.valid = scalarReferenceValid;
     working.time = time;
     *pose = std::move(working);
-    if (RigExecFrozenRunReport *report = _frozenRunReport) {
-        report->region = RigExecBakedLastRunTrace(B);
-        report->ran = true;
-        report->sourceKeysBuilt = B.sourceKeysBuilt;
-        report->sourceKeyMismatches = B.sourceKeyMismatches;
-        report->avarConstantSerial = B.avarConstantSerial;
-    }
+    _FillRunReport(B);
     release.complete = true;
     return true;
 }

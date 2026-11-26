@@ -250,7 +250,8 @@ RigExecEvaluateFrozen(const RigExecFrozenEvalContext &context,
         } reportScope(report);
         ran = runner(context, inputs, arena, &pose);
     }
-    if (!ran || !pose.valid) {
+    const bool failed = ran && !pose.valid && !pose.diagnostics.empty();
+    if (!ran || (!pose.valid && !failed)) {
         if (report) {
             report->Clear();
         }

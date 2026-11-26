@@ -2035,6 +2035,19 @@ RigExecBakedVerifyEpilogueIndex(RigExecBakedProgramImpl *program)
 }
 
 void
+RigExecBakedAppendFailedOpLines(const RigExecBakedProgramImpl &B,
+                                std::vector<std::string> *out)
+{
+    const uint32_t c = B.opExecution.firstFailed;
+    if (c >= B.opGraph.ops.size())
+        return;
+    const size_t index = B.opGraph.ops[c].originalIndex;
+    if (index < B.steps.size() && B.steps[index].failed)
+        out->insert(out->end(), B.steps[index].diagnostics.begin(),
+                    B.steps[index].diagnostics.end());
+}
+
+void
 RigExecBakedAppendStepLines(RigExecBakedProgramImpl *program,
                             RigExecBakedStepLines block,
                             std::vector<std::string> *out)

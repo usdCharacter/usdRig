@@ -208,6 +208,11 @@ struct RigExecStageFrameSeeds {
 
 enum class RigExecBakedBail { None, StageFrames, Step, Publish, RoleFlip };
 
+/// The last line of a frame that ran and did not complete, in the native
+/// evaluator and the frozen job alike.
+inline constexpr char kRigExecIncompleteGenerationLine[] =
+    "native program did not complete generation";
+
 /// Which roles Build gives a range-pipelined chain's revisions. Both modes
 /// cut the same groups (RIGEXEC_BAKED_GROUP_VERTS / _CAP). Live (the
 /// evaluator and its frozen clones): a Range role or a group gate may rest on

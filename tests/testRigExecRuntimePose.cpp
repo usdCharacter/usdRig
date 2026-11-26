@@ -2685,7 +2685,7 @@ TestRunTimeChainFailuresRoundTrip()
                           std::vector<std::string>(
                               {errors[i], "native program did not complete "
                                           "generation"}));
-                CHECK(RigExecFrozenFailedInTheWorker(pose, verdict));
+                CHECK(RigExecFrozenFailedInTheWorker(pose, verdict, live));
             } else {
                 CHECK(live.valid && pose.valid && verdict.ran);
                 CHECK(pose.movedProperties == live.movedProperties);

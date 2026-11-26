@@ -613,16 +613,7 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
     }
     if (bailed) {
         _lastBail = RigExecBakedBail::Step;
-        // The lowest failed op, the one every schedule and the runtime
-        // report (RigExecOpExecution::firstFailed).
-        const uint32_t c = B.opExecution.firstFailed;
-        if (c < B.opGraph.ops.size()) {
-            const size_t index = B.opGraph.ops[c].originalIndex;
-            if (index < B.steps.size() && B.steps[index].failed)
-                pose->diagnostics.insert(pose->diagnostics.end(),
-                                         B.steps[index].diagnostics.begin(),
-                                         B.steps[index].diagnostics.end());
-        }
+        RigExecBakedAppendFailedOpLines(B, &pose->diagnostics);
         pose->valid = false;
         return false;
     }

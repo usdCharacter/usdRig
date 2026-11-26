@@ -1488,7 +1488,8 @@ TestBlinkDragEdgesWarmBitIdentical()
         out.live = evaluator.Evaluate(UsdTimeCode(3.0));
         if (!valid) {
             CHECK(!out.live.valid);
-            CHECK(RigExecFrozenFailedInTheWorker(out.warmed, out.verdict));
+            CHECK(RigExecFrozenFailedInTheWorker(out.warmed, out.verdict,
+                                                 out.live));
             return out;
         }
         CHECK(out.live.valid);
@@ -2536,7 +2537,7 @@ TestFrozenWeightPacketOpsMatchLive(const std::string &examplesDir)
                                    "CombineWeights: a weight is not "
                                    "finite") != std::string::npos &&
           live.diagnostics[1] == "native program did not complete generation");
-    CHECK(RigExecFrozenFailedInTheWorker(pose, verdict));
+    CHECK(RigExecFrozenFailedInTheWorker(pose, verdict, live));
 }
 
 // Frozen publishes exactly live's weightFrames on every path. On
@@ -9090,8 +9091,8 @@ TestFrozenEnvelopeVolumesRecovery(const std::string &examples)
                     std::printf("    %s\n", got.c_str());
             }
             CHECK(!live.valid && listed);
-            CHECK(!report.ran);
-            CHECK(RigExecFrozenFailedInTheWorker(pose, verdict));
+            CHECK(report.ran);
+            CHECK(RigExecFrozenFailedInTheWorker(pose, verdict, live));
             continue;
         }
         CHECK(report.ran && pose.valid && live.valid);

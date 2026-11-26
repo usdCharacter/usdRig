@@ -2668,8 +2668,8 @@ TestWeightFieldTokenProducer()
                 RigExecCancellationToken(), &report);
             CHECK(verdict.called);
             if (frame == 3) {
-                CHECK(!report.ran);
-                CHECK(RigExecFrozenFailedInTheWorker(frozen, verdict));
+                CHECK(report.ran);
+                CHECK(RigExecFrozenFailedInTheWorker(frozen, verdict, got));
             } else {
                 CHECK(report.ran && frozen.valid);
                 CHECK(frozen.diagnostics == got.diagnostics);
