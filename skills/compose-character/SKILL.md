@@ -245,6 +245,67 @@ a component port, adds a second evaluator, or reimplements IK outside the rig
 in order to draw an overlay. Per-character values stay in fit, wiring stays
 in bindings, and component definitions stay reusable.
 
+### Timing over cycles
+
+Walk the whole delivered cycle rather than sampled stills. Record for every
+paw one row:
+
+`(gait, paw, bearing interval, release frame, landing frame, reference phase, discrepancy)`
+
+State the time base, the loop boundary, the intended travel per cycle, and
+the ground convention the record uses. Determine bearing, release, and
+landing from the evaluated mesh: paw height, support, and motion of
+`pose.moved_property("/<mesh>.points")` at consecutive frames from one
+`rig.evaluate(frame)` each, never from offset parameters, authored key
+values, or a generator's intent. Compare the record against the reference
+phases attributed at intake; do not substitute a canonical sequence.
+Do not prescribe a universal footfall sequence. Check sliding by measuring
+planted-point drift after accounting for intended travel, and check
+inversion by watching bend direction against the reference's bend direction
+through the cycle. Report each paw's discrepancy on its own line, keeping
+the per-limb record from the fit/parenting/pole/reach comparison so a timing
+finding cannot be folded into a fit finding.
+
+### Deformation at requested limits
+
+For every named limit pose record one row:
+
+`(control, value, frame, rest comparison, point measurements, clean view, verdict)`
+
+The request asks that
+adjacent surface points stay continuous and the jaw actually opens; check
+that requested physical result, not the control's travel. Verify that a
+limit pose was actually reached — report the achieved value — before
+judging its result. For a requested continuous surface,
+follow rest-topology neighbours across the twist and neck boundaries and
+compare posed edge lengths, gaps, folding, and intersections with the same
+edges at rest, at mesh scale; intended lip or eyelid separation is not
+tearing, and a torn silhouette is not a crease. For a requested opening,
+measure opposing upper and lower mouth landmarks in head space at neutral
+and at the actual maximum the rig reaches, and confirm a visible aperture;
+displacement of a jaw control or of the nose does not establish opening,
+and a value reported at one angle does not describe the pose at another.
+Justify every expectation from anatomy, scale, and the request; publish no
+fixed numeric threshold, and record measured envelopes per character only as
+evidence, never as a port or a rig-wide limit.
+
+### Three-track reporting
+
+Report these three tracks separately, and never merge them into one
+"passed" line:
+
+- Arithmetic and composition validity — compile, finite points,
+  CPU-reference parity, `validate_component`, packaging.
+- Physical result — the landmark, adjacency, aperture, contact, sliding,
+  and inversion measurements above.
+- Visual judgment — clean uncropped views and labeled overlays assessed by
+  a named reviewer.
+
+A missing check, an unavailable reference, or an unviewed render is listed
+as not run and is never a pass. A passing checker does not override a
+directly observed silhouette defect, and a passing numerical parity does
+not certify plausible motion.
+
 Deliver links to the final entry point, fit, bindings, and composition, plus the
 rebuild command and checks actually run. Keep the component library reusable;
 an existing character's legacy monolithic generator is not the new assembly's
