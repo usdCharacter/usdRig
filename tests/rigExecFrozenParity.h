@@ -49,7 +49,8 @@ RigExecFrozenFailedInTheWorker(const rigExec::RigExecRigPose &frozen,
            !verdict.pose.valid && verdict.pose.diagnostics.empty();
 }
 
-/// Freezes \p evaluator's program, samples \p time's inputs, runs one
+/// Freezes \p evaluator's program, samples \p time's inputs at its
+/// interactive overrides, runs one
 /// warming job and compares its pose with a live evaluation at \p time.
 /// False with the reason: a refused freeze or sample, a declined job, or
 /// the first parity mismatches.
@@ -70,7 +71,9 @@ RigExecFrozenMatchesLive(rigExec::RigExecRigEvaluator *evaluator,
         return false;
     }
     RigExecFrameInputs inputs;
-    if (!RigExecSampleFrameInputs(*evaluator, time, {}, &inputs, &error)) {
+    if (!RigExecSampleFrameInputs(*evaluator, time,
+                                  evaluator->GetInteractiveOverrides(), &inputs,
+                                  &error)) {
         *why = "sampling refused: " + error;
         return false;
     }

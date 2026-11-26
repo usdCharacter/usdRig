@@ -6145,7 +6145,7 @@ TestFrozenAssemblesFromLeaves(const std::string &examplesDir)
         }
         {
             // The keys the worker reads instead of building them: the
-            // sampler's own, one per revision and four per weight object.
+            // sampler's own, one per revision and one per weight point leaf.
             const RigExecBakedProgramImpl &B =
                 rigExec::RigExecBakedProgramAccess::StepGraph(
                     *evaluator.GetBakedProgram());
@@ -6162,20 +6162,9 @@ TestFrozenAssemblesFromLeaves(const std::string &examplesDir)
                           .moverPath.AppendProperty(
                               TfToken("inputs:defaultWeight")));
             }
-            CHECK(frozen->bindings->weightArrayKeys.size() ==
-                  4 * B.weightObjects.size());
-            for (size_t w = 0;
-                 w < B.weightObjects.size() &&
-                 4 * w + 3 < frozen->bindings->weightArrayKeys.size();
-                 ++w) {
-                const SdfPath &object = B.weightObjects[w].path;
-                CHECK(frozen->bindings->weightArrayKeys[4 * w] ==
-                      object.AppendProperty(
-                          TfToken("frozenWeight:targetPoints")));
-                CHECK(frozen->bindings->weightArrayKeys[4 * w + 3] ==
-                      object.AppendProperty(
-                          TfToken("frozenWeight:combineTargetCount")));
-            }
+            for (const auto &object : B.weightObjects)
+                CHECK(object.pointFrozenKeys.size() ==
+                      object.pointLeaves.decl.keys.size());
         }
         RigExecCancellationSource cancellation;
         for (const double frame : {start, start + 4.0}) {

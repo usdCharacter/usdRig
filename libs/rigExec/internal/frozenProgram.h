@@ -73,10 +73,6 @@ struct RigExecFrozenBindings {
     /// mover's inputs:defaultWeight, built here so the worker builds no
     /// path.
     std::vector<SdfPath> moverDefaultWeightKeys;
-    /// Per weight object, four synthetic sample keys in
-    /// frozenDetail::_FrozenWeightArrayRole order, built here with the
-    /// sampler's own key function.
-    std::vector<SdfPath> weightArrayKeys;
 };
 
 /// Immutable frozen history plus an optional captured avar revision.

@@ -1123,6 +1123,8 @@ struct RigExecBakedWeightObject {
     /// `combineTargetPoints` in that order, each list starting at its
     /// index below.
     RigExecBakedPathLeaves pointLeaves;
+    /// Per pointLeaves key, the frozen sampler's synthetic sample key.
+    std::vector<SdfPath> pointFrozenKeys;
     size_t targetLeaves = 0, sampleLeaves = 0, curveLeaves = 0,
            combineLeaves = 0;
 };

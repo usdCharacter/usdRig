@@ -43,6 +43,11 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((planeWeight, rigExec::SchemaTypeName::RigExecPlaneWeight))
     ((curveWeight, rigExec::SchemaTypeName::RigExecCurveWeight))
     ((falloffSamples, rigExec::SchemaAttrText::inputsFalloffSamples))
+    ((frozenTarget, "frozenWeight:targetPoints"))
+    ((frozenSample, "frozenWeight:samplePoints"))
+    ((frozenCurve, "frozenWeight:curvePoints"))
+    ((frozenCombine, "frozenWeight:combineTargetPoints"))
+    ((frozenFalloffSamples, "frozenWeight:falloffSamples"))
     ((rigExecValues, rigExec::SchemaAttrText::rigExecValues))
     ((rigExecIndices, rigExec::SchemaAttrText::rigExecIndices))
     ((rigExecFalloffProfile, rigExec::SchemaAttrText::rigExecFalloffProfile))
@@ -274,7 +279,11 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx, const SdfPath &path)
     // The point gathers' reads as path leaves, one per attribute in gather
     // order, sampled in the prologue through the generation's resolved
     // inputs: the packet step reads them instead of the stage.
-    const auto declare = [&object](const std::vector<UsdAttribute> &points) {
+    // A frozen job samples each key under a synthetic key: another reader
+    // may sample the same attribute at another time, and lookup is
+    // first-wins.
+    const auto declare = [&object](const std::vector<UsdAttribute> &points,
+                                   const TfToken &role) {
         const size_t begin = object.pointLeaves.decl.keys.size();
         for (const UsdAttribute &a : points) {
             object.pointLeaves.decl.Add(
@@ -282,13 +291,16 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx, const SdfPath &path)
                  RigExecRevisionLeafTime::AtTime,
                  RigExecRevisionLeafFlavour::ResolvedOnly,
                  VtValue(VtVec3fArray())});
+            object.pointFrozenKeys.push_back(
+                object.path.AppendProperty(role).AppendTarget(a.GetPath()));
         }
         return begin;
     };
-    object.targetLeaves = declare(object.targetPoints);
-    object.sampleLeaves = declare(object.samplePoints);
-    object.curveLeaves = declare(object.curvePoints);
-    object.combineLeaves = declare(object.combineTargetPoints);
+    object.targetLeaves = declare(object.targetPoints, _tokens->frozenTarget);
+    object.sampleLeaves = declare(object.samplePoints, _tokens->frozenSample);
+    object.curveLeaves = declare(object.curvePoints, _tokens->frozenCurve);
+    object.combineLeaves =
+        declare(object.combineTargetPoints, _tokens->frozenCombine);
     if (volumetric) {
         const SdfPath samples = path.AppendProperty(_tokens->falloffSamples);
         object.falloffSamplesLeaf = int(object.pointLeaves.decl.keys.size());
@@ -297,6 +309,8 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx, const SdfPath &path)
                                      RigExecRevisionLeafTime::AtTime,
                                      RigExecRevisionLeafFlavour::ResolvedOnly,
                                      VtValue(VtFloatArray())});
+        object.pointFrozenKeys.push_back(
+            path.AppendProperty(_tokens->frozenFalloffSamples));
         B.named.insert(samples);
         B.resolvedRoutedPrims.insert(path);
     }

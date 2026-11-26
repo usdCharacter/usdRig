@@ -332,6 +332,16 @@ _FrozenPrologue(_FrozenWorker *worker, const RigExecFrozenProgram &snapshot,
             leaves.changed[k] = RigExecBakedSetPathLeaf(
                 &leaves, k, std::move(value), B.pathLeafRun);
         }
+        auto &points = object.pointLeaves;
+        for (size_t k = 0; k < points.decl.keys.size(); ++k) {
+            const auto found = index.find(object.pointFrozenKeys[k]);
+            VtValue value =
+                found != index.end() && inputs.values[found->second].hasValue
+                    ? inputs.values[found->second].value
+                    : VtValue();
+            points.changed[k] = RigExecBakedSetPathLeaf(
+                &points, k, std::move(value), B.pathLeafRun);
+        }
     }
     if (B.hasPropertyChains || !B.weightFields.empty() ||
         !B.headLeaves.empty()) {

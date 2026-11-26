@@ -810,18 +810,6 @@ RigExecFreezeProgram(const RigExecRigEvaluator &evaluator,
         bindings->moverDefaultWeightKeys.push_back(
             revision.moverPath.AppendProperty(T.inputsDefaultWeight));
     }
-    // The sampler's synthetic weight-array keys, by the same function.
-    for (const RigExecBakedProgramImpl::WeightObject &object :
-         B.weightObjects) {
-        for (const TfToken &role :
-             {_frozenWeightTokens->targetPointsKey,
-              _frozenWeightTokens->samplePointsKey,
-              _frozenWeightTokens->curvePointsKey,
-              _frozenWeightTokens->combineTargetCountKey}) {
-            bindings->weightArrayKeys.push_back(
-                _FrozenWeightArrayKey(object.path, role));
-        }
-    }
     *frozen = std::move(snapshot);
     return true;
 }

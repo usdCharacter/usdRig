@@ -257,26 +257,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((sphereWeight, SchemaTypeName::RigExecSphereWeight))
     ((planeWeight, SchemaTypeName::RigExecPlaneWeight))
     ((curveWeight, SchemaTypeName::RigExecCurveWeight))
-    ((targetPointsKey, "frozenWeight:targetPoints"))
-    ((samplePointsKey, "frozenWeight:samplePoints"))
-    ((curvePointsKey, "frozenWeight:curvePoints"))
-    ((combineTargetCountKey, "frozenWeight:combineTargetCount"))
 );
-
-/// \p name is one of the frozenWeight: keys of _frozenWeightTokens. The
-/// sampler and the freeze call it; the worker reads the freeze's keys
-/// (RigExecFrozenBindings::weightArrayKeys) and builds none.
-SdfPath _FrozenWeightArrayKey(const SdfPath &objectPath, const TfToken &name);
-
-/// The position of each frozenWeight: key in a weight object's four
-/// RigExecFrozenBindings::weightArrayKeys.
-enum _FrozenWeightArrayRole : size_t {
-    _FrozenWeightTargetPoints = 0,
-    _FrozenWeightSamplePoints,
-    _FrozenWeightCurvePoints,
-    _FrozenWeightCombineTargetCount,
-    _FrozenWeightArrayRoleCount
-};
 
 TF_DEFINE_PRIVATE_TOKENS(
     _frozenInputKeyTokens,

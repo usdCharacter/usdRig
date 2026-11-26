@@ -2061,6 +2061,68 @@ CheckPlacementReads(const UsdStageRefPtr &stage, const std::string &label,
     }
 }
 
+// A frozen job reads a weight object's point arrays at its own time: the
+// tube's curve is animated, the snapshot is frozen at frame 1 and the job
+// runs frame 10.
+static void
+TestFrozenCurvePointsFollowTheJobTime(const std::string &examplesDir)
+{
+    const UsdStageRefPtr stage =
+        UsdStage::Open(examplesDir + "/11_VolumeWeights.usda");
+    CHECK(stage);
+    if (!stage)
+        return;
+    stage->SetEditTarget(stage->GetSessionLayer());
+    const UsdAttribute curve = stage->GetAttributeAtPath(
+        SdfPath("/VolumeAsset/Drivers/TipCurve.points"));
+    VtVec3fArray points;
+    CHECK(curve && curve.Get(&points));
+    VtVec3fArray moved = points;
+    for (GfVec3f &p : moved)
+        p += GfVec3f(0, -3, 0);
+    CHECK(curve.Set(points, UsdTimeCode(1)));
+    CHECK(curve.Set(moved, UsdTimeCode(10)));
+    const SdfPath rig("/VolumeAsset/Rig");
+    RigExecRigEvaluator evaluator(stage, rig);
+    std::vector<std::string> errors;
+    CHECK(evaluator.Compile(&errors));
+    CHECK(evaluator.Evaluate(UsdTimeCode(1)).valid);
+    std::shared_ptr<const RigExecFrozenProgram> snapshot;
+    std::string error;
+    CHECK(RigExecFreezeProgram(evaluator, &snapshot, &error));
+    RigExecFrameInputs inputs;
+    CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(10), {}, &inputs,
+                                   &error));
+    if (!snapshot)
+        return;
+    RigExecCancellationSource cancellation;
+    RigExecFrozenEvalContext context;
+    context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+    context.generation = cancellation.Serial();
+    context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+    context.varyingInputCount = inputs.values.size();
+    if (evaluator.GetPublishWeightFields())
+        context.flags |= kRigExecFrozenPublishWeightFields;
+    context.frozen = snapshot.get();
+    const RigExecRigPose warmed = RigExecEvaluateFrozen(
+        context, inputs, RigExecMakeProductionStepRunner(),
+        cancellation.Token(context.generation));
+    CHECK(warmed.valid);
+    const RigExecRigPose first = evaluator.Evaluate(UsdTimeCode(1));
+    const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(10));
+    RigExecRigPose unmoved;
+    RigExecComparePoses(first, live, &unmoved);
+    CHECK(unmoved.comparisonMismatches != 0);
+    RigExecRigPose diff;
+    RigExecComparePoses(live, warmed, &diff);
+    if (diff.comparisonMismatches != 0) {
+        int mismatches = 0;
+        rigExecTest::ComparePose(&mismatches, "frozen curve points", live,
+                                 warmed);
+    }
+    CHECK(diff.comparisonMismatches == 0);
+}
+
 // tests/fixtures/volume_placements.usda: two volumes with one placement step
 // each. SphereB rides B, which BAim revises after BFK, so its final
 // placement (pose.weightFrames, the oracle) differs from its base placement
@@ -2896,6 +2958,7 @@ main(int argc, char **argv)
     TestReleasedOverridePublishesTheProgramsPlacements();
     if (argc > 1) {
         TestVolumePlacementsAreIndependent(argv[1]);
+        TestFrozenCurvePointsFollowTheJobTime(argv[1]);
     }
 
     if (failures) {

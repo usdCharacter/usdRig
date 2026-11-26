@@ -882,33 +882,9 @@ _SampleWeightBindings(const RigExecBakedProgramImpl::WeightObject &object,
     });
 }
 
-// Reads one array attribute through the resolved inputs first, then the
-// stage -- the route RigExecBakedWeightPacket's gather arms take
-// (resolved->GetAttribute, which itself reads composed opinions on a miss,
-// plus the stage fallback _SampleMoverScalar applies).
-template <class T>
-bool
-_FrozenReadWeightArray(const RigExecResolvedInputs *refreshed,
-                       const UsdAttribute &attribute, UsdTimeCode time,
-                       VtArray<T> *out,
-                       const std::map<SdfPath, VtValue> *layer = nullptr)
-{
-    if (attribute.IsValid() && refreshed &&
-        refreshed->GetAttributeOverStageLayer(attribute, time, layer, out)) {
-        return true;
-    }
-    if (attribute.IsValid() && attribute.Get(out, time)) {
-        return true;
-    }
-    return false;
-}
-
-// Gathers one weight object's point arrays exactly as the packet build's
-// gather arms do (bakedWeights.cpp), under the synthetic keys the frozen
-// packet build reads. Roles with no attributes sample nothing; the worker
-// answers those as empty, which is what the live gather yields. Failed
-// reads contribute nothing to a concatenation, matching the live arms.
-// The field leaves of weight object \p objectIndex that \p memo holds
+// Samples one weight object's field and point leaves as the live prologue
+// does (RigExecBakedSamplePathLeaves), under the synthetic keys the worker
+// places them by. The field leaves of weight object \p objectIndex that \p memo holds
 // time-invariant are served from it while no \p touched path stands on
 // their reads.
 void
@@ -919,23 +895,6 @@ _SampleWeightArrays(const RigExecBakedProgramImpl::WeightObject &object,
                     const RigExecFrozenSamplerMemo &memo, size_t objectIndex,
                     const std::vector<SdfPath> &touched, bool verify)
 {
-    const auto gatherPoints = [&](const std::vector<UsdAttribute> &attributes,
-                                  const TfToken &role) {
-        if (attributes.empty()) {
-            return;
-        }
-        VtVec3fArray gathered;
-        for (const UsdAttribute &a : attributes) {
-            VtVec3fArray value;
-            if (_FrozenReadWeightArray(refreshed, a, time, &value, layer)) {
-                for (const GfVec3f &p : value) {
-                    gathered.push_back(p);
-                }
-            }
-        }
-        out->Add(_FrozenWeightArrayKey(object.path, role), VtValue(gathered),
-                 /*hasValue=*/true);
-    };
     for (size_t k = 0; k < object.fieldLeaves.decl.keys.size(); ++k) {
         const auto &key = object.fieldLeaves.decl.keys[k];
         if (key.path.IsEmpty())
@@ -964,30 +923,11 @@ _SampleWeightArrays(const RigExecBakedProgramImpl::WeightObject &object,
         fresh.hasValue = !value.IsEmpty();
         _VerifyServedSample(out->values.back(), fresh);
     }
-    if (object.falloffSamplesLeaf >= 0) {
-        const size_t k = size_t(object.falloffSamplesLeaf);
-        const auto &key = object.pointLeaves.decl.keys[k];
+    const auto &points = object.pointLeaves;
+    for (size_t k = 0; k < points.decl.keys.size(); ++k) {
         const VtValue value = RigExecSampleRevisionLeaf(
-            key, object.pointLeaves.attributes[k], refreshed, time, layer);
-        out->Add(key.path, value, !value.IsEmpty());
-    }
-    gatherPoints(object.targetPoints, _frozenWeightTokens->targetPointsKey);
-    gatherPoints(object.samplePoints, _frozenWeightTokens->samplePointsKey);
-    gatherPoints(object.curvePoints, _frozenWeightTokens->curvePointsKey);
-    if (!object.combineTargetPoints.empty()) {
-        size_t count = 0;
-        for (const UsdAttribute &a : object.combineTargetPoints) {
-            VtVec3fArray value;
-            if (_FrozenReadWeightArray(refreshed, a, time, &value, layer)) {
-                count += value.size();
-            }
-        }
-        // The worker casts back to size_t; mesh point counts never approach
-        // int range, and int folds exactly in every digest (uint64_t would
-        // not -- _HashVtValue has no uint64 arm).
-        out->Add(_FrozenWeightArrayKey(
-                     object.path, _frozenWeightTokens->combineTargetCountKey),
-                 VtValue(static_cast<int>(count)), /*hasValue=*/true);
+            points.decl.keys[k], points.attributes[k], refreshed, time, layer);
+        out->Add(object.pointFrozenKeys[k], value, !value.IsEmpty());
     }
 }
 
@@ -2393,19 +2333,13 @@ _SampleLatticeDivisionsCached(const SdfPath &key, const UsdAttribute &attribute,
 
 namespace frozenDetail {
 
-// Sample keys for the point arrays the packet build gathers. These are
-// SYNTHETIC properties under the weight object or mover path -- never the
-// attributes' own paths. The same mesh points may be sampled @time by one
-// reader and @Default by another (wire rest vs posed curves), and sample
-// lookup is first-wins, so sharing the attribute path would serve one
-// reader's value to the other. The digest folds these keys like any other
-// sample, which is what keeps distinct array states on distinct keys.
-SdfPath
-_FrozenWeightArrayKey(const SdfPath &objectPath, const TfToken &name)
-{
-    return objectPath.AppendProperty(name);
-}
-
+// Sample keys for the arrays a wire mover reads. These are SYNTHETIC
+// properties under the mover path -- never the attributes' own paths. The
+// same mesh points may be sampled @time by one reader and @Default by
+// another (wire rest vs posed curves), and sample lookup is first-wins, so
+// sharing the attribute path would serve one reader's value to the other.
+// The digest folds these keys like any other sample, which is what keeps
+// distinct array states on distinct keys.
 SdfPath
 _FrozenWireInputKey(const SdfPath &moverPath, const TfToken &key)
 {
