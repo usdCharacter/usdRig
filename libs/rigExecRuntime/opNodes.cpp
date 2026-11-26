@@ -22,6 +22,101 @@ Fail(std::string *error, std::string why)
     return false;
 }
 
+// What the validator cannot see without the op registry: every op value a
+// step or the common graph names is one the laid-out program has; a range
+// chain member reads its own point chain's groups; a whole ChainVersion
+// lookup belongs to a field node; and each range chain runs as one head and
+// one range step per (segment, group) a member writes, as native emits.
+bool
+CheckOpSteps(const RrProgram &p, const eval::OpStepLayout &layout,
+             const std::vector<char> &fieldNode, std::string *error)
+{
+    const auto width = [&](fb::SlotDomain domain) -> uint64_t {
+        return domain == fb::SlotDomain::OpValue        ? layout.OpValueCount()
+               : domain == fb::SlotDomain::OpGroupValue ? layout.groupValueCount
+                                                        : UINT64_MAX;
+    };
+    for (size_t i = 0; i < p.steps->size(); ++i)
+        for (const auto *ranges : {&(*p.steps)[i].reads, &(*p.steps)[i].writes})
+            for (const fb::SlotRange &range : *ranges)
+                if (range.end() > width(range.domain()))
+                    return Fail(error, "step " + std::to_string(i) +
+                                           " names an op value past the "
+                                           "program's");
+    if (p.file->commonGraph)
+        for (const auto &spec : p.file->commonGraph->valueSpecs)
+            if (spec.slot >= width(fb::SlotDomain(spec.domain)))
+                return Fail(error, "the common graph names an op value past "
+                                   "the program's");
+    for (size_t i = 0; i < layout.hostInputs.size(); ++i) {
+        const eval::OpHostInput &input = layout.hostInputs[i];
+        const bool version = input.source == eval::OpHostSource::Lookup &&
+                             layout.lookups[input.object].source ==
+                                 uint8_t(eval::OpLookupSource::ChainVersion);
+        if (version && !layout.grouped[i] && !fieldNode[input.node])
+            return Fail(error, "node " + std::to_string(input.node) +
+                                   " looks up a whole chain version outside "
+                                   "a weight field");
+        if (!layout.grouped[i])
+            continue;
+        const uint32_t chain = input.source == eval::OpHostSource::ChainPoints
+                                   ? input.object
+                                   : layout.lookups[input.object].object;
+        if (chain != layout.chains[layout.chainOf[input.node]].pointChain)
+            return Fail(error, "node " + std::to_string(input.node) +
+                                   " reads the groups of point chain " +
+                                   std::to_string(chain) +
+                                   ", not its range chain's");
+    }
+    std::vector<uint32_t> heads(layout.chains.size(), 0);
+    std::vector<std::vector<char>> ranges(layout.chains.size());
+    for (size_t c = 0; c < layout.chains.size(); ++c)
+        ranges[c].assign(
+            layout.chainDescs[c].members.size() * layout.chains[c].Groups(), 0);
+    for (const auto &step : *p.steps) {
+        if (step.kind != RigExecWireStepKind::OpChainHead &&
+            step.kind != RigExecWireStepKind::OpChainRange)
+            continue;
+        const std::string at = "op chain " + std::to_string(step.object);
+        if (step.object < 0 || size_t(step.object) >= layout.chains.size())
+            return Fail(error, at + " is no range chain");
+        const size_t c = size_t(step.object);
+        if (step.kind == RigExecWireStepKind::OpChainHead) {
+            if (heads[c]++)
+                return Fail(error, at + " has two heads");
+            continue;
+        }
+        const RigExecChainDesc &desc = layout.chainDescs[c];
+        const uint32_t groups = layout.chains[c].Groups();
+        const uint32_t s = step.part < 0 ? 0 : uint32_t(step.part) / groups;
+        const uint32_t g = step.part < 0 ? 0 : uint32_t(step.part) % groups;
+        if (step.part < 0 || s >= desc.members.size() ||
+            desc.segments[s] != s || (desc.whole[s] && g) ||
+            !eval::OpSegmentWrites(layout.chains[c], desc, s, g) ||
+            ranges[c][size_t(step.part)]++)
+            return Fail(error, at + " runs part " + std::to_string(step.part) +
+                                   ", which is no group a segment writes or "
+                                   "one run twice");
+    }
+    for (size_t c = 0; c < layout.chains.size(); ++c) {
+        const RigExecChainDesc &desc = layout.chainDescs[c];
+        const uint32_t groups = layout.chains[c].Groups();
+        if (heads[c] != 1)
+            return Fail(error,
+                        "op chain " + std::to_string(c) + " has no head");
+        for (uint32_t s = 0; s < desc.members.size(); ++s)
+            for (uint32_t g = 0;
+                 desc.segments[s] == s && g < (desc.whole[s] ? 1 : groups); ++g)
+                if (eval::OpSegmentWrites(layout.chains[c], desc, s, g) &&
+                    !ranges[c][size_t(s) * groups + g])
+                    return Fail(error, "op chain " + std::to_string(c) +
+                                           " runs group " + std::to_string(g) +
+                                           " of segment " + std::to_string(s) +
+                                           " in no step");
+    }
+    return true;
+}
+
 std::string
 Text(const fb::RigExecWireManifestEntry &entry)
 {
@@ -369,6 +464,11 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
     if (!layout.program)
         return Fail(error, why);
     if (!eval::LayOutOpSteps(&layout, error))
+        return false;
+    std::vector<char> fieldNode(graph.nodes.size(), 0);
+    for (const auto &entry : fieldObjects)
+        fieldNode[entry.first] = 1;
+    if (!CheckOpSteps(*p, layout, fieldNode, error))
         return false;
     nodes->chainVersionGather.resize(layout.lookups.size());
     nodes->state = std::make_unique<eval::OpStepState>();

@@ -663,7 +663,38 @@ TestRuntime(const char *writeTo)
         "is not of its type");
     damaged(
         [](fb::RigExecWireFile &f) { f.opGraph->chains[0]->bounds[1] = -5; },
-        "its bounds are no cut into groups");
+        "its bounds are not the vertex groups of point chain");
+    // A small file naming many empty groups: refused before Open binds a
+    // table of every group per group.
+    damaged(
+        [](fb::RigExecWireFile &f) {
+            f.opGraph->chains[0]->bounds.assign(200000, 0);
+        },
+        "its bounds are not the vertex groups of point chain");
+    const auto rangeStep = [](fb::RigExecWireFile &f) -> fb::RigExecWireStep & {
+        for (auto &step : f.steps)
+            if (step.kind == fb::StepKind::OpChainRange)
+                return step;
+        return f.steps.front();
+    };
+    damaged([&](fb::RigExecWireFile &f) { rangeStep(f).object = -1; },
+            "an op step names no object");
+    damaged([&](fb::RigExecWireFile &f) { rangeStep(f).part = -1; },
+            "runs part -1, which is no group a segment writes");
+    damaged(
+        [&](fb::RigExecWireFile &f) {
+            int32_t first = -1;
+            for (auto &step : f.steps)
+                if (step.kind == fb::StepKind::OpChainRange) {
+                    if (first < 0)
+                        first = step.part;
+                    else
+                        step.part = first;
+                }
+        },
+        "or one run twice");
+    damaged([&](fb::RigExecWireFile &f) { rangeStep(f).part = 100000; },
+            "runs part 100000, which is no group a segment writes");
     damaged([](fb::RigExecWireFile &f) { f.formatVersion = 35; },
             "unsupported .rigexec format version 35");
     RigExecBakedProgramTesting::SetOpInjector(nullptr);

@@ -2809,6 +2809,97 @@ _AppendStep(RigExecWireFile &f, fb::RigExecWireStep step)
     f.steps.push_back(std::move(step));
 }
 
+/// Each op node's lookups read only what the node runs for: a pose
+/// version lookup past the pools on a node that places nothing, a second
+/// pose version lookup on a placement node and a weight lookup on a node
+/// that builds no packet are refused at validation.
+void
+TestOpLookupOwners()
+{
+    using F = RigExecWireFile;
+    std::string why;
+    int cases = 0;
+    const auto expect = [&](const char *name, const std::string &text,
+                            const std::function<void(F &)> &mutate) {
+        _context = std::string("op lookup owners: ") + name;
+        ++cases;
+        F file = _VolumeFile();
+        mutate(file);
+        why.clear();
+        const bool ok = RigExecFormatValidate(file, &why);
+        CHECK(!ok && why.find(text) != std::string::npos);
+        if (ok || why.find(text) == std::string::npos)
+            std::printf("  got '%s', expected '%s'\n",
+                        ok ? "(accepted)" : why.c_str(), text.c_str());
+    };
+    const auto look = [](F &f, uint32_t node, uint8_t source, uint32_t object,
+                         int32_t part) {
+        auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+        lookup->source = source;
+        lookup->object = object;
+        lookup->part = part;
+        auto input = std::make_unique<fb::RigExecWireOpNodeInput>();
+        input->port = 1;
+        input->host = 4;
+        input->object = uint32_t(f.opGraph->lookups.size());
+        f.opGraph->lookups.push_back(std::move(lookup));
+        f.opGraph->nodes[node]->inputs.push_back(std::move(input));
+    };
+    {
+        _context = "op lookup owners: the volume file";
+        const F valid = _VolumeFile();
+        CHECK(RigExecFormatValidate(valid, &why));
+    }
+    const uint32_t place = uint32_t(_VolumeFile().opGraph->nodes.size() - 2);
+    const auto packetStep = [](F &f) {
+        fb::RigExecWireStep step = _PacketStep(f, 0);
+        step.reads = {
+            fb::SlotRange(fb::SlotDomain::RequiredStageFramesAdmission, 0, 1)};
+        return step;
+    };
+    expect("a pose version past the pools on a packet node",
+           "reads no pose frame of the program", [&](F &f) {
+               fb::RigExecWireStep packet = packetStep(f);
+               look(f, uint32_t(packet.object), 1, 1000000, 0);
+               _AppendStep(f, std::move(packet));
+           });
+    expect("an undeclared pose frame on a packet node",
+           "reads a pose frame its node's step does not read", [&](F &f) {
+               fb::RigExecWireStep packet = packetStep(f);
+               look(f, uint32_t(packet.object), 1, 0, 0);
+               _AppendStep(f, std::move(packet));
+           });
+    expect("a second pose version on a placement node",
+           "places a volume from 2 pose version lookups",
+           [&](F &f) { look(f, place, 1, 0, 0); });
+    expect("a weight lookup on a placement node",
+           "reads a weight its node does not build", [&](F &f) {
+               _AppendStep(f, packetStep(f));
+               look(f, place, 2, 0, -1);
+           });
+    {
+        // An unvalidated file may hold a null lookup: labelling its node's
+        // step reads no lookup through it.
+        _context = "op lookup owners: a null lookup labelled";
+        F f = _VolumeFile();
+        auto op = std::make_unique<fb::RigExecWireOpNode>();
+        auto input = std::make_unique<fb::RigExecWireOpNodeInput>();
+        input->host = 4;
+        input->object = uint32_t(f.opGraph->lookups.size());
+        op->inputs.push_back(std::move(input));
+        f.opGraph->lookups.push_back(nullptr);
+        fb::RigExecWireStep step;
+        step.kind = fb::StepKind::OpNode;
+        step.object = int32_t(f.opGraph->nodes.size());
+        f.opGraph->nodes.push_back(std::move(op));
+        _AppendStep(f, std::move(step));
+        CHECK(f.geometry != nullptr);
+        CHECK(RigExecFormatStepLabel(f, f.steps.size() - 1) ==
+              "OpNode op node " + std::to_string(f.opGraph->nodes.size() - 1));
+    }
+    std::printf("op lookup owners: %d foreign lookup(s) refused\n", cases);
+}
+
 /// One VolumePlacement op step per volume slot and phase, each placing its
 /// own slot alone: the form is accepted and round-trips; the retired step
 /// kind, a node of a slot that is no volume, a pose lookup of no frame or of
@@ -7209,6 +7300,7 @@ main()
     TestExternalMovers();
     TestSwitchOrder();
     TestVolumePlacementSteps();
+    TestOpLookupOwners();
     TestStepLabels();
     TestPhaseTables();
     TestSparseTopology();

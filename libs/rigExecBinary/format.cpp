@@ -621,7 +621,10 @@ public:
         for (size_t n = 0; n < nodes; ++n)
             if (file.opGraph->nodes[n])
                 for (const auto &input : file.opGraph->nodes[n]->inputs)
-                    if (input && input->host == 4)
+                    if (input && input->host == 4 &&
+                        input->object < file.opGraph->lookups.size() &&
+                        file.opGraph->lookups[input->object] &&
+                        file.opGraph->lookups[input->object]->source == 1)
                         _placementLookup[n] = int64_t(input->object);
     }
 
@@ -635,6 +638,9 @@ public:
 
 private:
     static constexpr size_t kNoProperty = SIZE_MAX;
+    /// The most vertex groups a range chain runs in: a neighbourhood input
+    /// binds one table of every group per group.
+    static constexpr size_t kMaxOpChainGroups = 1024;
 
     /// The property chain and part (1 to its revision count) op step
     /// \p step runs; false for any other step.
@@ -852,8 +858,10 @@ private:
                             kind == fb::StepKind::OpChainRange;
             if (op && !graph)
                 return _Bad(_StepName(i) + ": an op step without op_graph");
-            if (!op || _f.steps[i].object < 0)
+            if (!op)
                 continue;
+            if (_f.steps[i].object < 0)
+                return _Bad(_StepName(i) + ": an op step names no object");
             const size_t object = size_t(_f.steps[i].object);
             if (kind == fb::StepKind::OpNode ? object >= graph->nodes.size()
                                              : object >= graph->chains.size())
@@ -958,11 +966,99 @@ private:
             if (chain.pointChain >= _chains)
                 return _Bad(row + ": point chain " + _N(chain.pointChain) +
                             " out of range");
-            bool cut = chain.bounds.size() >= 2 && chain.bounds.front() == 0;
-            for (size_t g = 1; cut && g < chain.bounds.size(); ++g)
-                cut = chain.bounds[g - 1] <= chain.bounds[g];
-            if (!cut)
-                return _Bad(row + ": its bounds are no cut into groups");
+            std::vector<int> cut;
+            for (const auto &revision :
+                 _f.geometry->chains[chain.pointChain].revisions)
+                if (RigExecFormatIsRangeRevision(revision)) {
+                    for (const auto &chunk : revision.chunks)
+                        cut.push_back(chunk.begin);
+                    cut.push_back(revision.chunks.back().end);
+                    break;
+                }
+            if (chain.bounds != cut)
+                return _Bad(row +
+                            ": its bounds are not the vertex groups of "
+                            "point chain " +
+                            _N(chain.pointChain));
+            if (cut.size() - 1 > kMaxOpChainGroups)
+                return _Bad(row + ": " + _N(cut.size() - 1) +
+                            " vertex groups, past the " +
+                            _N(kMaxOpChainGroups) + " a range chain runs in");
+        }
+        return _OpLookupOwners();
+    }
+
+    /// Each node's lookups read only what the node runs for, which its
+    /// step's declared reads cover: a property node its own chain revision,
+    /// a packet node its own weight object and its provider's base frame, a
+    /// placement node one pose version, and a field node its own field and
+    /// its consumer's entering points. A ChainVersion lookup on any other
+    /// node is a range chain member's group read, which Open checks.
+    bool _OpLookupOwners()
+    {
+        const fb::RigExecWireOpGraph &graph = *_f.opGraph;
+        for (size_t n = 0; n < graph.nodes.size(); ++n) {
+            size_t poses = 0;
+            for (const auto &input : graph.nodes[n]->inputs) {
+                if (input->host != 4)
+                    continue;
+                const fb::RigExecWireOpLookup &lookup =
+                    *graph.lookups[input->object];
+                const auto bad = [&](const char *why) {
+                    return _Bad("op_graph.nodes[" + _N(n) + "]: lookup " +
+                                _N(input->object) + why);
+                };
+                const int64_t object = int64_t(lookup.object);
+                if (lookup.source == 0) {
+                    const size_t c = _propertyChainOf[n];
+                    if (c == kNoProperty || lookup.object != c ||
+                        (lookup.read == 0
+                             ? _propertyPartOf[n] != 1
+                             : lookup.part != int32_t(_propertyPartOf[n]) - 1))
+                        return bad(" reads a property revision its node does "
+                                   "not run");
+                } else if (lookup.source == 1) {
+                    ++poses;
+                    if (lookup.object >= (lookup.part ? _basePool : _finPool))
+                        return bad(" reads no pose frame of the program");
+                    if (_placementSlot[n] >= 0)
+                        continue;
+                    const int64_t w = _packetObject[n];
+                    const int32_t slot =
+                        w >= 0 && _f.geometry &&
+                                _Has(_f.geometry->weightObjects, w)
+                            ? _f.geometry->weightObjects[size_t(w)].providerSlot
+                            : -1;
+                    if (slot < 0 || size_t(slot) >= _bodyBaseLast.size() ||
+                        lookup.part != 1 ||
+                        lookup.object != _bodyBaseLast[size_t(slot)])
+                        return bad(" reads a pose frame its node's step does "
+                                   "not read");
+                } else if (lookup.source == 2) {
+                    if (_packetObject[n] != object)
+                        return bad(" reads a weight its node does not build");
+                } else if (lookup.source == 3) {
+                    if (_fieldNode[n] < 0)
+                        continue;
+                    const auto &field =
+                        _f.geometry->weightFields[size_t(_fieldNode[n])];
+                    if (field.form != fb::WeightFieldForm::Revision ||
+                        !_Has(_f.geometry->revisionIndex, field.consumer) ||
+                        _f.geometry->revisionIndex[size_t(field.consumer)]
+                                .first != int32_t(lookup.object) ||
+                        _f.geometry->revisionIndex[size_t(field.consumer)]
+                                .second != lookup.part)
+                        return bad(" reads points other than those entering "
+                                   "its field's consumer");
+                } else if (lookup.source == 4 && _fieldNode[n] != object) {
+                    return bad(" reads a field its node does not weigh");
+                }
+            }
+            if (_placementSlot[n] >= 0 && poses != 1)
+                return _Bad("op_graph.nodes[" + _N(n) +
+                            "]: places a volume "
+                            "from " +
+                            _N(poses) + " pose version lookups");
         }
         return true;
     }
@@ -9935,6 +10031,7 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
             for (const auto &input : file.opGraph->nodes[object]->inputs)
                 if (input && input->host == 4 && geometry &&
                     _Has(file.opGraph->lookups, input->object) &&
+                    file.opGraph->lookups[input->object] &&
                     file.opGraph->lookups[input->object]->source == 4 &&
                     _Has(geometry->weightObjects,
                          file.opGraph->lookups[input->object]->part)) {
