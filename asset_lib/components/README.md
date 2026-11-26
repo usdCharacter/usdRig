@@ -90,3 +90,28 @@ python asset_lib/components/test_components.py
 
 This builds independently fitted legs at two sizes in a fresh namespace,
 evaluates their IK-driven geometry, and checks invalid fits are rejected.
+
+```text
+python asset_lib/components/example_control_handoff.py
+```
+
+This is the worked control handoff. It binds the `torso`, `spine` and one `leg`
+instance into a fresh `/Demo` namespace with the fit/composition split above,
+derives the public control table from the composed stage into
+`demo_rig.controls.json`, and checks that the table names every published
+control and every authored channel. It poses an unkeyed control
+(`/Demo/Rig/World/KneePole`, `avars:tz`) through a session layer and measures
+the weighted point indices the table claims move, indices 3 and 4, while the
+unweighted index 6 stays exactly put; it then shows that none of the five
+delivered `.usda` layers changed on disk. Rebuilding regenerates
+`demo_rig.components.usda` in a relocated copy of the character directory with
+the bindings' `library` path recomputed, and compares rest and keyed frame 25,
+both opened through `demo_animation.usda`, against the delivered build. The
+gates are `coverage`, `pose`, `no-write`, `rebuild`, `missing-pole-control` and
+`prebuilt-only-recipe`; the last two are negative, so a table that drops the
+knee pole, or a recipe that only re-opens the prebuilt composition layer, fails.
+The body is a `UsdGeom.Points` stand-in and the fit values are arbitrary test
+numbers, so this proves wiring, coverage and rebuild reproducibility rather than
+proportions or weight quality, and one `leg` instance is not a bilateral
+character. [worked-control-handoff.md](../../skills/compose-character/worked-control-handoff.md)
+walks through the table columns, the pose and the rebuild sequence.
