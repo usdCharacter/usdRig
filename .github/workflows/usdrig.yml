@@ -164,6 +164,50 @@ jobs:
   # invocation changes so two prefixes from the same commit with different
   # options never alias.
   # --------------------------------------------------------------------------
+  engine-no-usd:
+    name: engine builds without OpenUSD
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout usdRig
+        uses: actions/checkout@v4
+
+      - name: Install a compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends g++ ninja-build
+
+      # No OpenUSD prefix and no OpenGL: configure must succeed without them.
+      - name: Configure with RIGEXEC_WITH_USD=OFF
+        run: |
+          cmake -S . -B build-engine -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DRIGEXEC_WITH_USD=OFF -DUSD_INSTALL_DIR="${RUNNER_TEMP}/no-usd"
+
+      - name: Build
+        run: cmake --build build-engine
+
+      - name: Every registered C++ test is usd-free
+        run: |
+          ctest --test-dir build-engine -N -L usd-free | tail -1 > usd-free.txt
+          ctest --test-dir build-engine -N -L 'rigExec' | tail -1 > labelled.txt
+          cat usd-free.txt labelled.txt
+          cmp usd-free.txt labelled.txt
+
+      - name: Run the usd-free tests
+        run: ctest --test-dir build-engine -L usd-free --output-on-failure -j 4
+
+      - name: Install and consume the engine-only package
+        run: |
+          cmake --install build-engine --prefix "${RUNNER_TEMP}/engine-install"
+          if grep -l 'pxr' "${RUNNER_TEMP}/engine-install/lib/cmake/rigExec/rigExecTargets"*.cmake; then
+            echo "the engine-only export names an OpenUSD target"; exit 1
+          fi
+          cmake -S tests/installedEngine -B build-consumer -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${RUNNER_TEMP}/engine-install"
+          cmake --build build-consumer
+          ctest --test-dir build-consumer --output-on-failure
+
   openusd:
     name: OpenUSD v26.08
     runs-on: ubuntu-24.04

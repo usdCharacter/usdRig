@@ -141,8 +141,10 @@ consumers. Python bindings and interactive viewer tests remain local checks.
 See [fixture checks](tests/fixtures/README.md) for floating-point reference
 configuration and cross-platform backend parity.
 
-CMake options: `RIGEXEC_BUILD_TESTS`, `RIGEXEC_BUILD_PYTHON` (on when pybind11
-is found), `RIGEXEC_BUILD_USDNOODLES`, `RIGEXEC_MOVER_PLUGIN_DIRS` (see
+CMake options: `RIGEXEC_WITH_USD` (on; off builds and installs only the
+USD-free engine and needs no OpenUSD), `RIGEXEC_BUILD_TESTS`,
+`RIGEXEC_BUILD_PYTHON` (on when pybind11 is found), `RIGEXEC_BUILD_USDNOODLES`,
+`RIGEXEC_MOVER_PLUGIN_DIRS` (see
 [external movers](docs/concepts/external-movers.md)), `RIGEXEC_GOLDEN_SUITE_DIR`
 and `RIGEXEC_TEST_USD_DIR`.
 

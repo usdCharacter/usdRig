@@ -477,6 +477,13 @@ scripts; their defaults look for a sibling dependency install.
    ccache when it is on `PATH`. `.clangd` reads that database.
    `bin/check_runtime_usd_free.sh` compiles the runtime with no `pxr`
    include path; it calls `gcc` and `g++`, so it does not run under MSVC.
+   `-DRIGEXEC_WITH_USD=OFF` (default `ON`) configures with no OpenUSD or
+   OpenGL and builds only the engine targets, the tests outside the
+   `if (RIGEXEC_WITH_USD)` blocks of `CMakeLists.txt` and an engine-only
+   package; keep a new test outside those blocks when its links are USD-free.
+   Check it with `cmake -S . -B build-engine -G Ninja -DRIGEXEC_WITH_USD=OFF`,
+   `cmake --build build-engine` and `ctest --test-dir build-engine -L usd-free`
+   (CI's `engine-no-usd` job).
 6. Use `bin/test/run_python_tests.sh` or `.bat` only for Qt-free interaction
    changes, and the relevant `bin/test/run_testusdview*` helper only for
    viewport changes. The `execstack` and `ikfk_opacity` helpers need ignored
