@@ -1704,13 +1704,16 @@ _TestFailedFrameInvalidates(const std::string &examples)
 // array (rather than an unrelated animated scalar) changes the published pose.
 // For \p topology, whose count is fixed for the reader, the \p invalid
 // sample of another count is refused with its reason instead, and the
-// reader keeps the elements it held.
+// reader keeps the elements it held. Every other sampled frame runs, except
+// the \p invalid one when \p invalidFailsWith is given: that frame fails in
+// both evaluators with an error ending in it.
 static void
 _CheckStageArraySamples(const std::string &label, const UsdStageRefPtr &stage,
                         const SdfPath &rigPath, const std::string &name,
                         double time, const VtValue &initial,
                         const VtValue &changed, const VtValue &invalid,
-                        const VtValue &extra = VtValue(), bool topology = false)
+                        const VtValue &extra = VtValue(), bool topology = false,
+                        const std::string &invalidFailsWith = std::string())
 {
     const UsdAttribute attribute = stage->GetAttributeAtPath(SdfPath(name));
     CHECK(attribute);
@@ -1794,6 +1797,7 @@ _CheckStageArraySamples(const std::string &label, const UsdStageRefPtr &stage,
     CHECK(sampler.Bind(stage, *reader, &error));
     CHECK(heldSampler.Bind(stage, *held, &error));
     CHECK(sampler.GetWarnings().empty());
+    size_t failedFrames = 0;
     for (int step = 1; step <= (extra.IsEmpty() ? 3 : 5); ++step) {
         const double frame = time + step;
         if (topology && step == 2) {
@@ -1816,8 +1820,16 @@ _CheckStageArraySamples(const std::string &label, const UsdStageRefPtr &stage,
             continue;
         }
         if (!RigExecTestDrive(reader.get(), &sampler, frame, &error)) {
-            // An invalid sampled value stops the frame in both evaluators
-            // with the same error.
+            const bool listed =
+                step == 2 && !invalidFailsWith.empty() &&
+                error.size() >= invalidFailsWith.size() &&
+                error.compare(error.size() - invalidFailsWith.size(),
+                              invalidFailsWith.size(), invalidFailsWith) == 0;
+            if (!listed)
+                std::printf("FAIL %s frame %g failed: %s\n", label.c_str(),
+                            frame, error.c_str());
+            CHECK(listed);
+            ++failedFrames;
             RigExecRigPose pose;
             std::string why;
             CHECK(!RigExecTestArrayReference(stage, rigPath, {}, frame, &pose,
@@ -1829,6 +1841,7 @@ _CheckStageArraySamples(const std::string &label, const UsdStageRefPtr &stage,
                         error.c_str());
             continue;
         }
+        CHECK(step != 2 || invalidFailsWith.empty());
         {
             RigExecRigPose pose;
             CHECK(RigExecTestArrayReference(stage, rigPath, {}, frame, &pose,
@@ -1852,6 +1865,7 @@ _CheckStageArraySamples(const std::string &label, const UsdStageRefPtr &stage,
             sampler.Apply(UsdTimeCode(frame), reader.get(), &error, &sampled));
         CHECK(!sampled);
     }
+    CHECK(failedFrames == (invalidFailsWith.empty() ? 0u : 1u));
     // Sampling arbitrary counts never relaxes the authored count contract.
     CHECK(!reader->SetInputArray(name, RigExecTestArrayView(invalid), &error));
 }
@@ -1873,6 +1887,8 @@ _TestExampleArrays(const std::string &examples)
         fb::InputTag tag;
         // The authored value, from the stage's own.
         std::function<VtValue(const VtValue &)> edit;
+        // How the frame sampling the invalid value fails, when it does.
+        const char *invalidFailsWith = "";
     };
     const std::vector<_Case> cases = {
         {"01_FkChainTail.usda", 1024.0,
@@ -1911,7 +1927,8 @@ _TestExampleArrays(const std::string &examples)
                  p[0] += 0.3f;
              }
              return VtValue(points);
-         }},
+         },
+         " (rig:VolumeWeights) failed: VolumeWeights: needs a curve"},
     };
     for (const _Case &c : cases) {
         const UsdStageRefPtr stage = _Open(examples + "/" + c.stage);
@@ -1984,9 +2001,9 @@ _TestExampleArrays(const std::string &examples)
         const bool topology =
             std::string(c.attribute).find(".faceVertexIndices") !=
             std::string::npos;
-        _CheckStageArraySamples(label + " stage samples", stage, rigPath,
-                                c.attribute, c.time, held, c.edit(held),
-                                invalid, VtValue(), topology);
+        _CheckStageArraySamples(
+            label + " stage samples", stage, rigPath, c.attribute, c.time, held,
+            c.edit(held), invalid, VtValue(), topology, c.invalidFailsWith);
     }
 }
 
