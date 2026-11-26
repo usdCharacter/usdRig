@@ -858,14 +858,20 @@ RrLookUpPoseVersion(const RrProgram *program, const eval::OpLookup &lookup,
     const RrStore &store = program->store;
     const std::vector<RrPointFrame> &frames =
         lookup.part ? store.base : store.fin;
-    if (type.size != sizeof(RrPointFrame) || lookup.object >= frames.size()) {
+    if (type.size != sizeof(rigExecRig::PointFrame) ||
+        lookup.object >= frames.size()) {
         if (error) {
             *error = "pose version " + std::to_string(lookup.object) +
                      " is no pose frame of the program";
         }
         return false;
     }
-    *static_cast<RrPointFrame *>(out) = frames[lookup.object];
+    const RrPointFrame &frame = frames[lookup.object];
+    auto &value = *static_cast<rigExecRig::PointFrame *>(out);
+    for (size_t i = 0; i < frame.points.size(); ++i)
+        value.points[i] = rigExecStd::Vec3d(
+            frame.points[i][0], frame.points[i][1], frame.points[i][2]);
+    value.flags = frame.flags;
     return true;
 }
 
