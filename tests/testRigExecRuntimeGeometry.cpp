@@ -2651,6 +2651,67 @@ TestCurrentPhaseFailure()
     std::printf("%s: checked\n", name);
 }
 
+// The same combine with inputs:strength keyed 1 through frame 3 and 2 at
+// frame 4: frames 1 to 3 run and match the .rigexec bit for bit, frame 4
+// alone stops with the packet's error in both, and frame 3 recovers.
+static void
+TestCurrentPhaseFailureBoundary()
+{
+    const char *const name = "current phase, keyed strength";
+    const UsdStageRefPtr stage = _CurrentPhaseThroughCombineStage();
+    const UsdAttribute strength =
+        stage->GetPrimAtPath(SdfPath("/Asset/Rig/Weights/Wrapped"))
+            .CreateAttribute(TfToken("inputs:strength"),
+                             SdfValueTypeNames->Float);
+    strength.Set(1.0f, UsdTimeCode(1.0));
+    strength.Set(1.0f, UsdTimeCode(3.0));
+    strength.Set(2.0f, UsdTimeCode(4.0));
+    _TestStage(name, stage, {1.0, 2.0, 3.0});
+    RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+    std::vector<uint8_t> bytes;
+    std::string error;
+    CHECK(RigExecTestBakeAt(evaluator, 1, &bytes, &error));
+    RigExecTestPlayer player;
+    CHECK(player.Open(bytes, stage, &error));
+    size_t failed = 0;
+    for (const double frame : {1.0, 2.0, 3.0, 4.0, 3.0}) {
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(frame));
+        std::string played;
+        const bool ran = player.Play(frame, &played);
+        if (frame == 4.0) {
+            ++failed;
+            CHECK(!pose.valid && !ran);
+            CHECK(pose.diagnostics.size() == 2 &&
+                  pose.diagnostics[0] == played &&
+                  pose.diagnostics[1] ==
+                      "native program did not complete generation");
+            CHECK(played.rfind("/Asset/Rig/Weights/Wrapped: node ", 0) == 0 &&
+                  played.find(" (rig:CombineWeights) failed: CombineWeights: "
+                              "a weight is not finite or outside [0, 1]") !=
+                      std::string::npos);
+            continue;
+        }
+        CHECK(pose.valid && ran && pose.diagnostics.empty());
+        const auto want =
+            pose.movedProperties.find(SdfPath("/Asset/Geom/M.points"));
+        const auto &moved = player.Reader().GetPoints();
+        const auto got = std::find_if(
+            moved.begin(), moved.end(), [](const RigExecRuntimePoints &p) {
+                return p.path == "/Asset/Geom/M.points";
+            });
+        CHECK(want != pose.movedProperties.end() && got != moved.end());
+        if (want == pose.movedProperties.end() || got == moved.end())
+            continue;
+        const VtVec3fArray &points = want->second.Get<VtVec3fArray>();
+        const std::vector<RrVec3f> &read = got->points.Vector();
+        CHECK(read.size() == points.size() &&
+              std::memcmp(read.data(), points.cdata(),
+                          points.size() * sizeof(GfVec3f)) == 0);
+    }
+    CHECK(failed == 1);
+    std::printf("%s: frame 4 fails alone, in both\n", name);
+}
+
 // A current-phase combine over the three volume kinds, each read where the
 // oracle reads it: a `preceding` sphere with per-axis and signed scales
 // (in-flight samples), a plane that samples the authored mesh (the static
@@ -5375,6 +5436,7 @@ main(int argc, char **argv)
     TestGeometryDomainArm();
     TestCurrentPhaseThroughCombine();
     TestCurrentPhaseFailure();
+    TestCurrentPhaseFailureBoundary();
     TestVolumeMixCurrentPhase();
     TestOraclePointsSet();
     TestOracleSlotIsCanonical();
