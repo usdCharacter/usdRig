@@ -5,6 +5,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "bridgeGuideGeometry.h"
 
+#include "rigExec/api/frameReader.h"
 #include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/gf/vec3f.h"
@@ -402,16 +403,16 @@ _ReadGuidePurpose(const UsdPrim &prim)
 // connection read at its phase (RigExecPhasedConnection), the base of a
 // computed dial unless the attribute declares another.
 bool
-_ReadConnectedValue(const UsdAttribute &attr, const RigExecRigPose &pose,
+_ReadConnectedValue(const UsdAttribute &attr, const RigExecFrameReader &frame,
                     VtValue *held)
 {
     SdfPathVector connections;
     if (!attr.GetConnections(&connections) || connections.empty()) {
         return false;
     }
-    const auto phased = pose.movedProperties.find(attr.GetPath());
-    if (phased != pose.movedProperties.end() && !phased->second.IsEmpty()) {
-        *held = phased->second;
+    VtValue phased;
+    if (frame.FindMovedValue(attr.GetPath(), &phased) && !phased.IsEmpty()) {
+        *held = std::move(phased);
         return true;
     }
     const SdfPath &sourcePath = connections.front();
@@ -422,12 +423,12 @@ _ReadConnectedValue(const UsdAttribute &attr, const RigExecRigPose &pose,
     if (!source) {
         return false;
     }
-    const auto moved = pose.movedProperties.find(sourcePath);
-    if (moved != pose.movedProperties.end() && !moved->second.IsEmpty()) {
-        *held = moved->second;
+    VtValue moved;
+    if (frame.FindMovedValue(sourcePath, &moved) && !moved.IsEmpty()) {
+        *held = std::move(moved);
         return true;
     }
-    return source.Get(held, pose.time);
+    return source.Get(held, frame.GetTime());
 }
 
 // The scalar a float OR double VtValue holds -- avars are double, the
@@ -447,17 +448,17 @@ _HeldScalar(const VtValue &held, double *value)
 }
 
 void
-_ReadGuideStyle(const UsdPrim &prim, const RigExecRigPose &pose,
+_ReadGuideStyle(const UsdPrim &prim, const RigExecFrameReader &frame,
                 RigExecPublishedPrim *published)
 {
     if (!prim) {
         return;
     }
-    const UsdTimeCode time = pose.time;
+    const UsdTimeCode time = frame.GetTime();
     published->guidePurpose = _ReadGuidePurpose(prim);
     if (UsdAttribute a = prim.GetAttribute(_tGuideDisplayColor)) {
         VtValue held;
-        if (_ReadConnectedValue(a, pose, &held) && held.IsHolding<GfVec3f>()) {
+        if (_ReadConnectedValue(a, frame, &held) && held.IsHolding<GfVec3f>()) {
             published->guideColor = held.UncheckedGet<GfVec3f>();
         } else {
             a.Get(&published->guideColor, time);
@@ -466,7 +467,8 @@ _ReadGuideStyle(const UsdPrim &prim, const RigExecRigPose &pose,
     if (UsdAttribute a = prim.GetAttribute(_tGuideDisplayOpacity)) {
         VtValue held;
         double driven = 0.0;
-        if (_ReadConnectedValue(a, pose, &held) && _HeldScalar(held, &driven)) {
+        if (_ReadConnectedValue(a, frame, &held) &&
+            _HeldScalar(held, &driven)) {
             // A driven opacity is a dial's value, and a dial parks at its
             // end stops: without the complement one switch could not fade
             // two control sets in opposite directions, and without the

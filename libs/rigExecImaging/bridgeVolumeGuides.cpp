@@ -4,6 +4,7 @@
 #include "bridgeGuides.h"
 
 #include "bridgeGuideGeometry.h"
+#include "rigExec/api/frameReader.h"
 #include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/gf/matrix4d.h"
@@ -22,7 +23,7 @@ namespace rigExec {
 
 // Every placed influence volume draws its falloffMin and falloffMax
 // iso-surfaces.
-// Driven by pose.weightFrames rather than by a second stage traversal: the
+// Driven by the generation's weight frames rather than by a second stage traversal: the
 // evaluator discovers every placed volume beneath the rig and resolves its
 // frame whether or not a mover consumes the field. That makes the schema's
 // selectable/framable guide contract useful during authoring, before the
@@ -30,7 +31,7 @@ namespace rigExec {
 // field uses once it is consumed.
 void
 RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
-                                       const RigExecRigPose &pose,
+                                       const RigExecFrameReader &reader,
                                        RigExecImagingSnapshot *snapshot)
 {
     // Set here too: a rig may publish these and no joint or control
@@ -38,7 +39,12 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
     // anchor gets recorded (see _FillGuides).
     snapshot->assetRoot = _rigPath.GetParentPath();
 
-    for (const auto &[weightPath, placement] : pose.weightFrames) {
+    const size_t volumeCount = reader.GetCount(RigExecFrameDomain::WeightFrame);
+    for (size_t volume = 0; volume < volumeCount; ++volume) {
+        const SdfPath &weightPath =
+            reader.GetPath(RigExecFrameDomain::WeightFrame, volume);
+        const GfMatrix4d placement =
+            reader.GetMatrix(RigExecFrameDomain::WeightFrame, volume);
         const UsdPrim prim = call.stage->GetPrimAtPath(weightPath);
         if (!prim) {
             continue;
@@ -48,7 +54,7 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
         // silently stop drawing rather than draw the documented default.
         TfToken drawMode(_tFalloff);
         if (UsdAttribute a = prim.GetAttribute(_tGuideDrawMode)) {
-            a.Get(&drawMode, pose.time);
+            a.Get(&drawMode, reader.GetTime());
         }
         const bool clean = drawMode == _tCage || drawMode == _tBrackets ||
                            drawMode == _tShell || drawMode == _tFalloff;
@@ -67,17 +73,16 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
             continue;
         }
 
-        auto readFloat = [this, &prim, &pose, &call,
+        auto readFloat = [this, &prim, &reader, &call,
                           &weightPath](const TfToken &name, float fallback) {
             float value = fallback;
             if (UsdAttribute a = prim.GetAttribute(name)) {
                 // Property movers can drive volume dimensions. The field
                 // consumes these evaluated values, so its iso-surfaces must
                 // use the same values instead of the authored source.
-                const auto moved = pose.movedProperties.find(a.GetPath());
-                if (moved != pose.movedProperties.end() &&
-                    moved->second.IsHolding<float>()) {
-                    return moved->second.UncheckedGet<float>();
+                float moved = 0.0f;
+                if (reader.FindMovedValue(a.GetPath(), &moved)) {
+                    return moved;
                 }
                 for (const auto &override : call.displayOverrides) {
                     if (override.prim == weightPath &&
@@ -89,7 +94,7 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
                     }
                 }
                 VtValue authored;
-                if (a.Get(&authored, pose.time)) {
+                if (a.Get(&authored, reader.GetTime())) {
                     if (authored.IsHolding<float>())
                         value = authored.UncheckedGet<float>();
                     else if (authored.IsHolding<double>())
@@ -132,7 +137,7 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
         if (typeName == SchemaTypeName::RigExecPlaneWeight) {
             TfToken axisToken(SchemaValueText::y);
             if (UsdAttribute a = prim.GetAttribute(_tRigExecPlaneAxis)) {
-                a.Get(&axisToken, pose.time);
+                a.Get(&axisToken, reader.GetTime());
             }
             const int axis =
                 axisToken == SchemaValueText::x
@@ -150,7 +155,7 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
             const double extentV = readFloat(_volumeInputsExtentV, 1.0f);
             TfToken boundsToken(SchemaValueText::unbounded);
             if (UsdAttribute a = prim.GetAttribute(_tRigExecPlaneBounds)) {
-                a.Get(&boundsToken, pose.time);
+                a.Get(&boundsToken, reader.GetTime());
             }
             if (boundsToken != SchemaValueText::unbounded &&
                 boundsToken != SchemaValueText::bounded) {
@@ -237,7 +242,8 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
                 }
             } else if (typeName == SchemaTypeName::RigExecCurveWeight) {
                 VtVec3fArray curvePoints;
-                if (!_ReadCurveGuidePoints(prim, pose.time, &curvePoints)) {
+                if (!_ReadCurveGuidePoints(prim, reader.GetTime(),
+                                           &curvePoints)) {
                     continue;
                 }
                 // Into the DIVIDED local space the kernel measures in:
@@ -282,13 +288,13 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
         published.hasVolumeGuideFrame = true;
         published.volumeGuideFrame = rigid;
         published.volumeGuides = std::move(elements);
-        _ReadGuideStyle(prim, pose, &published);
+        _ReadGuideStyle(prim, reader, &published);
     }
 }
 
 // Paints ONE selected weight object's resolved field onto the geometry it
 // weights.
-// The field is taken from pose.weightFields -- the packet a mover actually
+// The field is taken from the generation's weight fields -- the packet a mover actually
 // consumed -- rather than recomputed, so what a rigger sees is exactly what
 // deformed the geometry. A re-derivation could drift, and it would drift
 // silently: a plausible-looking gradient over the wrong region is
@@ -296,32 +302,37 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
 // the visualisation exists.
 void
 RigExecBridgeGuides::_FillWeightOverlay(const RigExecGuideCall &call,
-                                        const RigExecRigPose &pose,
+                                        const RigExecFrameReader &reader,
                                         RigExecImagingSnapshot *snapshot)
 {
     const SdfPath &weightOverlay = call.weightOverlay;
     if (weightOverlay.IsEmpty()) {
         return; // off: an ordinary render is untouched
     }
-    const auto it = pose.weightFields.find(weightOverlay);
-    if (it == pose.weightFields.end() || it->second.weights.empty()) {
+    size_t field = 0;
+    if (!reader.FindIndex(RigExecFrameDomain::WeightField, weightOverlay,
+                          &field)) {
+        return;
+    }
+    VtFloatArray weights = reader.GetWeightFieldWeights(field);
+    if (weights.empty()) {
         return;
     }
     // The field carries its own geometry target: the selection names a
     // WEIGHT OBJECT, and which prim that paints is the evaluator's answer,
     // not the caller's.
-    const SdfPath geomPath = it->second.target.GetPrimPath();
+    const SdfPath geomPath = reader.GetWeightFieldTarget(field).GetPrimPath();
     if (geomPath.IsEmpty() || geomPath.IsAbsoluteRootPath()) {
         return;
     }
     RigExecPublishedPrim &published = snapshot->prims[geomPath];
     published.hasWeightOverlay = true;
-    published.weightOverlay = it->second.weights;
+    published.weightOverlay = std::move(weights);
     TfToken display;
     const UsdPrim weight = call.stage->GetPrimAtPath(weightOverlay);
     if (weight) {
         if (const UsdAttribute attr = weight.GetAttribute(_tWeightDisplay))
-            attr.Get(&display, pose.time);
+            attr.Get(&display, reader.GetTime());
     }
     published.weightDisplay = display == _tHeatmap
                                   ? RigExecWeightDisplay::Heatmap

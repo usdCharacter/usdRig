@@ -23,7 +23,7 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExec {
 
-struct RigExecRigPose;
+class RigExecFrameReader;
 
 /// The bridge-owned state a snapshot build reads, built at the call site
 /// and borrowed for the call only; the component keeps no copy, so a
@@ -81,15 +81,15 @@ public:
     /// and authored reset boundaries. A non-geometry property result never
     /// indexes snapshot->prims: it records into movedFloats/movedArrays
     /// instead of minting an empty published prim.
-    void _Build(const RigExecSnapshotCall &call, const RigExecRigPose &pose,
-                RigExecSnapshotBuildMode mode,
+    void _Build(const RigExecSnapshotCall &call,
+                const RigExecFrameReader &frame, RigExecSnapshotBuildMode mode,
                 RigExecImagingSnapshot *snapshot);
 
     /// Publishes constraint-driven transforms onto the prims themselves
     /// (base and revision travel together); the render-motion path calls
     /// this directly at the base offset.
     void _FillProviderXforms(const RigExecProviderXformCall &call,
-                             const RigExecRigPose &pose,
+                             const RigExecFrameReader &frame,
                              RigExecImagingSnapshot *snapshot);
 
 private:

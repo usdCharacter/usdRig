@@ -1,5 +1,6 @@
 #include "rigExecSchema/schemaNames.h"
 #include "profilerApi.h"
+#include "rigExec/api/poseFrameReader.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/parallel.h"
 #include "pxr/base/js/json.h"
@@ -59,12 +60,17 @@ PrivateStage(const UsdStageRefPtr &source)
     return stage;
 }
 void
+Check(const RigExecFrameReader &frame)
+{
+    if (!frame.IsValid())
+        throw std::runtime_error(frame.GetDiagnosticCount() == 0
+                                     ? "invalid evaluated pose"
+                                     : frame.GetDiagnostic(0));
+}
+void
 Check(const RigExecRigPose &pose)
 {
-    if (!pose.valid)
-        throw std::runtime_error(pose.diagnostics.empty()
-                                     ? "invalid evaluated pose"
-                                     : pose.diagnostics.front());
+    Check(RigExecPoseFrameReader(pose));
 }
 JsObject
 Percentiles(std::vector<double> times)
@@ -295,12 +301,20 @@ Report(const UsdStageRefPtr &source, const char *rootPath, int samples,
     evaluator.SetProfilingEnabled(false);
     evaluator.ClearInteractiveOverrides();
     bool geometryChanged = false;
-    for (const auto &[path, value] : last.movedProperties)
+    const RigExecPoseFrameReader lastFrame(last);
+    const RigExecPoseFrameReader firstFrame(first);
+    for (size_t moved = 0;
+         moved < lastFrame.GetCount(RigExecFrameDomain::MovedProperty);
+         ++moved) {
+        const SdfPath &path =
+            lastFrame.GetPath(RigExecFrameDomain::MovedProperty, moved);
         if (path.GetNameToken() == TfToken("points")) {
-            const auto found = first.movedProperties.find(path);
-            if (found != first.movedProperties.end() && value != found->second)
+            VtValue found;
+            if (firstFrame.FindMovedValue(path, &found) &&
+                lastFrame.GetMovedValue(moved) != found)
                 geometryChanged = true;
         }
+    }
     result["geometry_changed"] = JsValue(geometryChanged);
     result["cost"] = JsValue(costs);
     return result;

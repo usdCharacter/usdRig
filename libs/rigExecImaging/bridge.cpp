@@ -8,6 +8,7 @@
 #include "bridgeSnapshot.h"
 
 #include "rigExecMath/pointFrame.h"
+#include "rigExec/api/poseFrameReader.h"
 #include "rigExecPlayback/backgroundScheduler.h"
 #include "rigExec/internal/frameCacheSparsity.h"
 #include "rigExec/internal/parallel.h"
@@ -262,9 +263,10 @@ RigExecImagingBridge::AppendAuthoredGuides(UsdTimeCode time,
                                 _evaluator->GetCompiledRigSignature(),
                                 _evaluator->GetMoverOrder(),
                                 _interactiveOverrides, _weightOverlay);
-    _guides->_FillGuides(call, authored, snapshot);
-    _guides->_FillControlGuides(call, authored, snapshot);
-    _guides->_FillVolumeGuides(call, authored, snapshot);
+    const RigExecPoseFrameReader reader(authored);
+    _guides->_FillGuides(call, reader, snapshot);
+    _guides->_FillControlGuides(call, reader, snapshot);
+    _guides->_FillVolumeGuides(call, reader, snapshot);
     // Manipulators must not mistake authored placements for evaluated frames.
     for (auto &[path, prim] : snapshot->prims) {
         prim.hasControlFrame = false;
@@ -354,7 +356,8 @@ RigExecImagingBridge::_PublishPoseSnapshot(UsdTimeCode time,
     _StampGeneration(time, snapshot.get());
     const RigExecSnapshotCall snapCall =
         _MakeSnapshotCall(_stage, *_evaluator, time);
-    _snapshot->_Build(snapCall, pose, RigExecSnapshotBuildMode::Displayed,
+    const RigExecPoseFrameReader reader(pose);
+    _snapshot->_Build(snapCall, reader, RigExecSnapshotBuildMode::Displayed,
                       snapshot.get());
     // Joints and aggregate solvers publish guide payloads (drawn by the
     // results scene index like OpenExec's IrJointScope guides).
@@ -365,11 +368,11 @@ RigExecImagingBridge::_PublishPoseSnapshot(UsdTimeCode time,
                                     _evaluator->GetCompiledRigSignature(),
                                     _evaluator->GetMoverOrder(),
                                     _interactiveOverrides, _weightOverlay);
-        _guides->_FillGuides(call, pose, snapshot.get());
-        _guides->_FillControlGuides(call, pose, snapshot.get());
-        _guides->_FillVolumeGuides(call, pose, snapshot.get());
-        _guides->_FillClothConstraintGuides(call, pose, snapshot.get());
-        _guides->_FillWeightOverlay(call, pose, snapshot.get());
+        _guides->_FillGuides(call, reader, snapshot.get());
+        _guides->_FillControlGuides(call, reader, snapshot.get());
+        _guides->_FillVolumeGuides(call, reader, snapshot.get());
+        _guides->_FillClothConstraintGuides(call, reader, snapshot.get());
+        _guides->_FillWeightOverlay(call, reader, snapshot.get());
     }
     snapshot->generation = ++_generation;
 
@@ -496,8 +499,8 @@ RigExecImagingBridge::SnapshotAtTimeWithoutPublishing(
     auto querySnapshot = std::make_shared<RigExecImagingSnapshot>();
     const RigExecSnapshotCall snapCall =
         _MakeSnapshotCall(_stage, *_evaluator, time);
-    _snapshot->_Build(snapCall, pose, RigExecSnapshotBuildMode::Query,
-                      querySnapshot.get());
+    _snapshot->_Build(snapCall, RigExecPoseFrameReader(pose),
+                      RigExecSnapshotBuildMode::Query, querySnapshot.get());
     *snapshot = std::move(querySnapshot);
     return true;
 }

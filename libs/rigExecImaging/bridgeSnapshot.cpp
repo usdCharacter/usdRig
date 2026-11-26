@@ -1,6 +1,7 @@
 // Snapshot payload construction owned by the imaging bridge.
 #include "bridgeSnapshot.h"
 
+#include "rigExec/api/frameReader.h"
 #include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/gf/vec3d.h"
@@ -43,7 +44,7 @@ RigExecBridgeSnapshotBuilder::_PrimvarName(const SdfPath &propertyPath)
 
 void
 RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
-                                     const RigExecRigPose &pose,
+                                     const RigExecFrameReader &frame,
                                      RigExecSnapshotBuildMode mode,
                                      RigExecImagingSnapshot *snapshot)
 {
@@ -67,14 +68,12 @@ RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
     // property mover's float result never mints a published prim.
     const std::vector<SdfPath> &mapPrimvars = call.animatedMapPrimvars;
     for (const SdfPath &propertyPath : mapPrimvars) {
-        const auto found = pose.movedProperties.find(propertyPath);
-        if (found == pose.movedProperties.end() ||
-            !found->second.IsHolding<float>()) {
+        float value = 0.0f;
+        if (!frame.FindMovedValue(propertyPath, &value)) {
             continue;
         }
         auto &published = snapshot->prims[propertyPath.GetPrimPath()];
-        published.shaderFloats[_PrimvarName(propertyPath)] =
-            found->second.UncheckedGet<float>();
+        published.shaderFloats[_PrimvarName(propertyPath)] = value;
     }
     // Property chains' scalar primvars, from the compiled list only; a
     // double publishes as the float the chain computed.
@@ -82,38 +81,46 @@ RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
     const std::vector<TfToken> &scalarNames = call.scalarPrimvarNames;
     for (size_t scalar = 0; scalar < scalarTargets.size(); ++scalar) {
         const SdfPath &propertyPath = scalarTargets[scalar];
-        const auto found = pose.movedProperties.find(propertyPath);
-        if (found == pose.movedProperties.end()) {
+        size_t index = 0;
+        if (!frame.FindIndex(RigExecFrameDomain::MovedProperty, propertyPath,
+                             &index)) {
             continue;
         }
         float value = 0.0f;
-        if (found->second.IsHolding<float>()) {
-            value = found->second.UncheckedGet<float>();
-        } else if (found->second.IsHolding<double>()) {
-            value = float(found->second.UncheckedGet<double>());
+        double held = 0.0;
+        if (frame.GetMovedValue(index, &value)) {
+        } else if (frame.GetMovedValue(index, &held)) {
+            value = float(held);
         } else {
             continue;
         }
         auto &published = snapshot->prims[propertyPath.GetPrimPath()];
         published.shaderFloats[scalarNames[scalar]] = value;
     }
-    for (const auto &[propertyPath, value] : pose.movedProperties) {
-        if (!value.IsHolding<GfMatrix4d>()) {
+    const size_t movedCount = frame.GetCount(RigExecFrameDomain::MovedProperty);
+    for (size_t moved = 0; moved < movedCount; ++moved) {
+        GfMatrix4d matrix;
+        if (!frame.GetMovedValue(moved, &matrix)) {
             continue;
         }
+        const SdfPath &propertyPath =
+            frame.GetPath(RigExecFrameDomain::MovedProperty, moved);
         const std::string &name = propertyPath.GetName();
         if (name.compare(0, primvarsPrefix.size(), primvarsPrefix) != 0) {
             continue;
         }
         auto &published = snapshot->prims[propertyPath.GetPrimPath()];
         const TfToken &primvar = _PrimvarName(propertyPath);
-        published.shaderMatrices[primvar] = value.UncheckedGet<GfMatrix4d>();
+        published.shaderMatrices[primvar] = matrix;
         if (std::binary_search(projectorTargets.begin(), projectorTargets.end(),
                                propertyPath)) {
             published.targetLocalShaderMatrices.insert(primvar);
         }
     }
-    for (const auto &[propertyPath, value] : pose.movedProperties) {
+    for (size_t moved = 0; moved < movedCount; ++moved) {
+        const SdfPath &propertyPath =
+            frame.GetPath(RigExecFrameDomain::MovedProperty, moved);
+        const RigExecMovedValueKind kind = frame.GetMovedKind(moved);
         const SdfPath primPath = propertyPath.GetPrimPath();
         const TfToken property = propertyPath.GetNameToken();
         // Only geometry crosses into imaging. movedProperties also carries
@@ -125,7 +132,11 @@ RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
         // nothing for. Look the entry up only once there is something to
         // put in it.
         if (property == UsdGeomTokens->points &&
-            value.IsHolding<RigExecGpuDeformPublication>()) {
+            kind == RigExecMovedValueKind::Other) {
+            const VtValue value = frame.GetMovedValue(moved);
+            if (!value.IsHolding<RigExecGpuDeformPublication>()) {
+                continue;
+            }
             const auto &publication =
                 value.UncheckedGet<RigExecGpuDeformPublication>();
             if (displayed) {
@@ -138,7 +149,7 @@ RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
             }
             continue;
         }
-        const bool isGeometry = value.IsHolding<VtVec3fArray>() &&
+        const bool isGeometry = kind == RigExecMovedValueKind::Vec3fArray &&
                                 (property == UsdGeomTokens->points ||
                                  property == UsdGeomTokens->normals ||
                                  property == _snapshotTokens->primvarsNormals ||
@@ -150,28 +161,30 @@ RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
             // second evaluation of the rig. Recorded beside the
             // generation that produced it; see
             // RigExecImagingSnapshot::movedFloats.
-            if (value.IsHolding<float>()) {
-                snapshot->movedFloats[propertyPath] =
-                    value.UncheckedGet<float>();
-            } else if (value.IsHolding<double>()) {
-                snapshot->movedFloats[propertyPath] =
-                    static_cast<float>(value.UncheckedGet<double>());
-            } else if (value.IsHolding<VtDoubleArray>()) {
-                snapshot->movedArrays[propertyPath] =
-                    value.UncheckedGet<VtDoubleArray>();
+            if (kind == RigExecMovedValueKind::Float) {
+                frame.GetMovedValue(moved,
+                                    &snapshot->movedFloats[propertyPath]);
+            } else if (kind == RigExecMovedValueKind::Double) {
+                double value = 0.0;
+                frame.GetMovedValue(moved, &value);
+                snapshot->movedFloats[propertyPath] = static_cast<float>(value);
+            } else if (kind == RigExecMovedValueKind::DoubleArray) {
+                frame.GetMovedValue(moved,
+                                    &snapshot->movedArrays[propertyPath]);
             }
             continue;
         }
         RigExecPublishedPrim &published = snapshot->prims[primPath];
         if (property == UsdGeomTokens->points) {
             published.hasPoints = true;
-            published.points = value.UncheckedGet<VtVec3fArray>();
+            frame.GetMovedValue(moved, &published.points);
         } else if (property == UsdGeomTokens->normals ||
                    property == _snapshotTokens->primvarsNormals) {
             published.hasNormals = true;
-            published.normals = value.UncheckedGet<VtVec3fArray>();
+            frame.GetMovedValue(moved, &published.normals);
         } else {
-            const auto extent = value.UncheckedGet<VtVec3fArray>();
+            VtVec3fArray extent;
+            frame.GetMovedValue(moved, &extent);
             if (extent.size() == 2) {
                 published.hasExtent = true;
                 published.extentMin = GfVec3d(extent[0]);
@@ -181,7 +194,7 @@ RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
     }
     _FillProviderXforms(
         RigExecProviderXformCall{call.stage, call.time, call.stageEditSerial},
-        pose, snapshot);
+        frame, snapshot);
 }
 
 // Constraint-driven transforms, published onto the prim itself so parented
@@ -190,20 +203,26 @@ RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
 // delta (see RigExecPublishedPrim::xformBase).
 void
 RigExecBridgeSnapshotBuilder::_FillProviderXforms(
-    const RigExecProviderXformCall &call, const RigExecRigPose &pose,
+    const RigExecProviderXformCall &call, const RigExecFrameReader &frame,
     RigExecImagingSnapshot *snapshot)
 {
-    for (const auto &[providerPath, matrix] : pose.providerXforms) {
-        const auto baseIt = pose.providerBaseXforms.find(providerPath);
-        if (baseIt == pose.providerBaseXforms.end()) {
+    const size_t providerCount =
+        frame.GetCount(RigExecFrameDomain::ProviderTransform);
+    for (size_t provider = 0; provider < providerCount; ++provider) {
+        const SdfPath &providerPath =
+            frame.GetPath(RigExecFrameDomain::ProviderTransform, provider);
+        GfMatrix4d base;
+        if (!frame.FindMatrix(RigExecFrameDomain::ProviderBaseTransform,
+                              providerPath, &base)) {
             // The evaluator writes both or neither; a revision without its
             // base cannot be turned into a delta, so publishing it would move
             // the prim by an arbitrary amount.
             continue;
         }
         RigExecPublishedPrim &published = snapshot->prims[providerPath];
-        published.xform = matrix;
-        published.xformBase = baseIt->second;
+        published.xform =
+            frame.GetMatrix(RigExecFrameDomain::ProviderTransform, provider);
+        published.xformBase = base;
         published.hasXform = true;
         snapshot->hasDrivenXforms = true;
     }
@@ -213,9 +232,10 @@ RigExecBridgeSnapshotBuilder::_FillProviderXforms(
     // The walk runs when the driven set or the stage changes, not every
     // frame: any authored edit advances the evaluator's stage edit serial.
     std::vector<SdfPath> providerRoots;
-    providerRoots.reserve(pose.providerXforms.size());
-    for (const auto &[providerPath, matrix] : pose.providerXforms) {
-        providerRoots.push_back(providerPath);
+    providerRoots.reserve(providerCount);
+    for (size_t provider = 0; provider < providerCount; ++provider) {
+        providerRoots.push_back(
+            frame.GetPath(RigExecFrameDomain::ProviderTransform, provider));
     }
     if (!_xformResetsValid || _xformResetSerial != call.stageEditSerial ||
         providerRoots != _xformResetRoots) {
