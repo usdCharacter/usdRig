@@ -1,19 +1,28 @@
 #!/usr/bin/env python3
 """Reports how far the schema generated from op registration is from
-libs/rigExecSchema/schema.usda. Report mode only: nothing is written to the
-repository and the exit status is 0 whenever a report was produced.
+libs/rigExecSchema/schema.usda, or with --diff checks the ops whose schema
+is Generated against it. Nothing is written to the repository.
 
 Inputs:
   --tool PATH    the rigExecGenSchema executable to run, or
-  --ops PATH     the text it wrote (--tool wins)
-  --schema PATH  schema.usda (a tolerant line parser; pxr is not imported)
-  --out PATH     also write the report here
-Output: per op the schema class it most plausibly corresponds to, the
-properties each side lacks and the type disagreements, then a summary table
-and the classes and ops without a counterpart.
+  --ops PATH     the text it wrote (--tool wins; report mode only)
+  --schema PATH  schema.usda (a tolerant parser; pxr is not imported)
+  --out PATH     also write the output here
+  --diff         compare the ops' authoring metadata with the schema
+Report output: per op the schema class it declares or most plausibly
+corresponds to, the properties each side lacks and the type disagreements,
+then a summary table and the classes and ops without a counterpart. The exit
+status is 0 whenever a report was produced.
+Diff output: per op whose schema is Generated, every difference between the
+class the op describes and the class in the schema (presence, type, uniform,
+fallback, allowed tokens, documentation, base); per HandAuthored op, the
+same for the properties it declares. Internal and undeclared ops are
+skipped. The exit status is 1 on any difference.
 """
 import argparse
 import difflib
+import json
+import os
 import re
 import subprocess
 import sys
@@ -30,9 +39,9 @@ PROP = re.compile(
 )
 CLASS = re.compile(r'^class\s+(?:\w+\s+)?"([^"]+)"')
 INHERITS = re.compile(r"inherits\s*=\s*</?([A-Za-z0-9_]+)>?")
-OP_CLASS = re.compile(r'^class "([^"]+)" \(  # op (\S+) v(\d+)')
+OP_CLASS = re.compile(r'^class "([^"]+)" \(  # op (\S+) v(\d+)(?: (\w+))?')
 OP_PROP = re.compile(
-    r"^    (uniform )?(\S+) ((?:inputs|outputs|payload):\S+?)(?:  # (.*))?$"
+    r"^    (uniform )?(\S+) ([A-Za-z_]\w*:[\w:]+)(?: = .*?)?(?:  # (.*))?$"
 )
 
 
@@ -71,7 +80,8 @@ def parse_ops(text):
     for line in text.splitlines():
         m = OP_CLASS.match(line)
         if m:
-            cur = {"class": m.group(1), "op": m.group(2), "ports": {}}
+            cur = {"class": m.group(1), "op": m.group(2), "ports": {},
+                   "mode": m.group(4) or ""}
             ops[m.group(2)] = cur
             continue
         m = OP_PROP.match(line)
@@ -100,7 +110,11 @@ def norm(name):
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
-def find_class(op_class, classes):
+def find_class(op_class, classes, mode=""):
+    if mode == "internal":
+        return None, "internal"
+    if mode and op_class in classes:
+        return op_class, "declared"
     base = op_class
     candidates = []
     for prefix in ("RigExec",):
@@ -158,12 +172,13 @@ def report(ops, classes):
     used = {}
     for opname in sorted(ops):
         op = ops[opname]
-        cls, how = find_class(op["class"], classes)
+        cls, how = find_class(op["class"], classes, op.get("mode", ""))
         row = {"op": opname, "cls": cls, "how": how, "schemaOnly": 0,
                "opOnly": 0, "binding": 0, "precision": 0, "shape": 0,
                "other": 0, "enum": 0, "role": 0, "matched": 0}
         lines.append("op %s -> %s" % (
-            opname, "%s (%s)" % (cls, how) if cls else "no schema class"))
+            opname, "%s (%s)" % (cls, how) if cls else
+            "internal" if how == "internal" else "no schema class"))
         if cls:
             used.setdefault(cls, []).append(opname)
             props = merged_props(classes, cls)
@@ -213,15 +228,17 @@ def report(ops, classes):
             r["binding"], r["precision"], r["enum"], r["role"], r["shape"],
             r["other"]))
     mapped = [r for r in rows if r["cls"]]
-    named = [r for r in mapped if r["how"] == "name"]
+    named = [r for r in mapped if r["how"] in ("name", "declared")]
     clean = [r for r in named if r["shape"] == 0 and r["other"] == 0]
     ports = sum(len(o["ports"]) for o in ops.values())
     matched = sum(r["matched"] for r in rows)
     lines.append("")
     lines.append("ops: %d" % len(rows))
-    lines.append("ops with a class by name: %d, by fuzzy name: %d, none: %d"
-                 % (len(named), len(mapped) - len(named),
-                    len(rows) - len(mapped)))
+    internal = [r for r in rows if r["how"] == "internal"]
+    lines.append("ops with a class by name or declared: %d, by fuzzy name: "
+                 "%d, internal: %d, none: %d"
+                 % (len(named), len(mapped) - len(named), len(internal),
+                    len(rows) - len(mapped) - len(internal)))
     lines.append("name-matched ops with no shape or other type disagreement "
                  "(precision and binding differences allowed): %d"
                  % len(clean))
@@ -240,8 +257,237 @@ def report(ops, classes):
         len([c for c in classes if c not in used]), len(classes)))
     lines.append("  " + ", ".join(sorted(c for c in classes if c not in used)))
     lines.append("ops no class corresponds to: " + (", ".join(
-        r["op"] for r in rows if not r["cls"]) or "-"))
+        r["op"] for r in rows if not r["cls"] and r["how"] != "internal")
+        or "-"))
+    lines.append("internal ops: " + (", ".join(
+        r["op"] for r in rows if r["how"] == "internal") or "-"))
     return "\n".join(lines) + "\n"
+
+
+def _closing(text, i):
+    """Index just past the group opened at text[i], honouring strings."""
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    stack = []
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if text.startswith('"""', i):
+            i = text.index('"""', i + 3) + 3
+            continue
+        if c == "#":
+            i = text.find("\n", i)
+            i = n if i < 0 else i
+            continue
+        if c in "\"'":
+            j = i + 1
+            while text[j] != c:
+                j += 2 if text[j] == "\\" else 1
+            i = j + 1
+            continue
+        if c in pairs:
+            stack.append(pairs[c])
+        elif stack and c == stack[-1]:
+            stack.pop()
+            if not stack:
+                return i + 1
+        i += 1
+    raise ValueError("unbalanced group")
+
+
+def _string(text):
+    text = text.strip()
+    if text.startswith('"""'):
+        return text[3:-3]
+    if text[:1] in "\"'":
+        return text[1:-1]
+    return text
+
+
+def _metadata(text):
+    """doc and allowedTokens from a metadata group's text (without parens)."""
+    out = {}
+    m = re.search(r'\bdoc\s*=\s*("""(?:.|\n)*?"""|"(?:[^"\\]|\\.)*")', text)
+    if m:
+        out["doc"] = _string(m.group(1))
+    m = re.search(r"\ballowedTokens\s*=\s*\[", text)
+    if m:
+        start = m.end() - 1
+        body = text[start + 1:_closing(text, start) - 1]
+        out["tokens"] = re.findall(r'"([^"]*)"', body)
+    m = re.search(r"\binherits\s*=\s*</?([A-Za-z0-9_]+)>", text)
+    if m:
+        out["base"] = m.group(1)
+    return out
+
+
+PROP_HEAD = re.compile(
+    r"\s*((?:(?:custom|uniform)\s+)*)(" + USD_TYPE + r")\s+"
+    r"([A-Za-z_][\w:.]*)\s*")
+CLASS_HEAD = re.compile(r'^class\s+(?:\w+\s+)?"([^"]+)"[ \t]*', re.M)
+
+
+def parse_schema_full(text):
+    """Class name to {base, doc, props}; a prop is {type, uniform, fallback,
+    tokens, doc}. Only a class's own properties are listed."""
+    classes = {}
+    for m in CLASS_HEAD.finditer(text):
+        i = m.end()
+        meta = {}
+        if text[i] == "(":
+            end = _closing(text, i)
+            meta = _metadata(text[i + 1:end - 1])
+            i = end
+        start = text.index("{", i)
+        end = _closing(text, start)
+        body = text[start + 1:end - 1]
+        props = {}
+        j = 0
+        while True:
+            pm = PROP_HEAD.match(body, j)
+            if not pm:
+                nl = body.find("\n", j + 1)
+                if nl < 0:
+                    break
+                j = nl
+                continue
+            prop = {"type": pm.group(2),
+                    "uniform": "uniform" in pm.group(1).split(),
+                    "fallback": None, "tokens": [], "doc": None}
+            j = pm.end()
+            if body.startswith("=", j):
+                j += 1
+                while body[j] in " \t":
+                    j += 1
+                if body[j] in "([":
+                    k = _closing(body, j)
+                elif body[j] == '"':
+                    k = body.index('"', j + 1) + 1
+                else:
+                    k = j
+                    while k < len(body) and body[k] not in " \t\n(":
+                        k += 1
+                prop["fallback"] = body[j:k]
+                j = k
+            while j < len(body) and body[j] in " \t":
+                j += 1
+            if body.startswith("(", j):
+                k = _closing(body, j)
+                md = _metadata(body[j + 1:k - 1])
+                prop["tokens"] = md.get("tokens", [])
+                prop["doc"] = md.get("doc")
+                j = k
+            props[pm.group(3)] = prop
+        classes[m.group(1)] = {"base": meta.get("base"),
+                               "doc": meta.get("doc"), "props": props}
+    return classes
+
+
+VALUE_TOKEN = re.compile(r'"[^"]*"|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?'
+                         r"|[A-Za-z_]\w*|[\[\]()]")
+
+
+def same_value(a, b):
+    if a is None or b is None:
+        return a is b
+    ta, tb = VALUE_TOKEN.findall(a), VALUE_TOKEN.findall(b)
+    if len(ta) != len(tb):
+        return False
+    for x, y in zip(ta, tb):
+        if x == y:
+            continue
+        try:
+            if float(x) != float(y):
+                return False
+        except ValueError:
+            return False
+    return True
+
+
+def same_doc(a, b):
+    if a is None or b is None:
+        return a is b
+    return " ".join(a.split()) == " ".join(b.split())
+
+
+def diff_property(where, mine, theirs):
+    out = []
+    if mine["type"] != theirs["type"]:
+        out.append("%s: type %s, schema %s" % (where, mine["type"],
+                                              theirs["type"]))
+    if mine["uniform"] != theirs["uniform"]:
+        out.append("%s: %suniform, schema %suniform" % (
+            where, "" if mine["uniform"] else "not ",
+            "" if theirs["uniform"] else "not "))
+    if not same_value(mine["fallback"], theirs["fallback"]):
+        out.append("%s: fallback %s, schema %s" % (
+            where, mine["fallback"], theirs["fallback"]))
+    if mine["tokens"] != theirs["tokens"]:
+        out.append("%s: tokens %s, schema %s" % (
+            where, mine["tokens"], theirs["tokens"]))
+    if not same_doc(mine["doc"], theirs["doc"]):
+        out.append("%s: doc %s, schema %s" % (
+            where, "absent" if mine["doc"] is None else repr(mine["doc"]),
+            "absent" if theirs["doc"] is None else repr(theirs["doc"])))
+    return out
+
+
+def inherited_props(classes, name, seen=None):
+    seen = seen or set()
+    if name in seen or name not in classes:
+        return {}
+    seen.add(name)
+    out = inherited_props(classes, classes[name]["base"], seen)
+    out.update(classes[name]["props"])
+    return out
+
+
+def diff(ops, classes):
+    """(lines, difference count) for the Generated and HandAuthored ops."""
+    lines, count = [], 0
+    skipped = {"internal": [], "undeclared": []}
+    for op in sorted(ops, key=lambda o: o["op"]):
+        schema = op["schema"]
+        if not schema or schema["mode"] == "internal":
+            skipped["internal" if schema else "undeclared"].append(op["op"])
+            continue
+        mode, name = schema["mode"], schema["className"]
+        found = []
+        for prop in op["properties"]:
+            found.extend("%s: %s" % (prop["name"], e) for e in prop["errors"])
+        cls = classes.get(name)
+        if cls is None:
+            found.append("class %s is not in the schema" % name)
+        else:
+            mine = {p["name"]: p for p in op["properties"]
+                    if p["binding"] not in ("collection", "children")}
+            if mode == "generated":
+                theirs = cls["props"]
+                if (schema["base"] or None) != cls["base"]:
+                    found.append("base %s, schema %s" % (schema["base"],
+                                                        cls["base"]))
+                if not same_doc(schema["doc"], cls["doc"]):
+                    found.append("class doc differs")
+                for prop in sorted(set(theirs) - set(mine)):
+                    found.append("%s: in the schema, not declared" % prop)
+            else:
+                theirs = inherited_props(classes, name)
+            for prop in sorted(mine):
+                if prop not in theirs:
+                    found.append("%s: declared, not in the schema" % prop)
+                    continue
+                found.extend(diff_property(prop, mine[prop], theirs[prop]))
+        lines.append("op %s -> %s (%s): %s" % (
+            op["op"], name, mode,
+            "%d difference(s)" % len(found) if found else "no differences"))
+        lines.extend("  " + f for f in found)
+        count += len(found)
+    lines.append("")
+    lines.append("skipped internal ops: " + (", ".join(skipped["internal"])
+                                             or "-"))
+    lines.append("skipped ops without schema info: %d"
+                 % len(skipped["undeclared"]))
+    lines.append("differences: %d" % count)
+    return "\n".join(lines) + "\n", count
 
 
 def main():
@@ -250,9 +496,27 @@ def main():
     parser.add_argument("--ops")
     parser.add_argument("--schema", required=True)
     parser.add_argument("--out")
+    parser.add_argument("--diff", action="store_true")
     args = parser.parse_args()
+    if args.diff:
+        if not args.tool:
+            parser.error("--diff needs --tool")
+        proc = subprocess.run([os.path.abspath(args.tool), "--json"],
+                              capture_output=True, text=True)
+        if proc.returncode != 0:
+            sys.stderr.write(proc.stderr)
+            return 1
+        with open(args.schema, encoding="utf-8") as f:
+            classes = parse_schema_full(f.read())
+        text, count = diff(json.loads(proc.stdout)["ops"], classes)
+        sys.stdout.write(text)
+        if args.out:
+            with open(args.out, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+        return 1 if count else 0
     if args.tool:
-        proc = subprocess.run([args.tool], capture_output=True, text=True)
+        proc = subprocess.run([os.path.abspath(args.tool)],
+                              capture_output=True, text=True)
         if proc.returncode != 0:
             sys.stderr.write(proc.stderr)
             return 1

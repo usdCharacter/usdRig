@@ -552,19 +552,35 @@ A host without OpenUSD passes its op libraries to
 
 ## Report the schema an op registration implies
 
+An op may describe the schema class it is authored with:
+`RigExecOpDesc::schema` (`RigExecSchemaInfo`: class name, documentation,
+base class and mode) and, per port and payload field, `authoring`
+(`RigExecPropertyInfo`: the property name with its namespace, documentation,
+fallback value, the tokens an integer is authored as, how it binds, its USD
+role, `uniform`, and the USD type when it is not the registered type's).
+Payload fields that name one property are its components. A port or field
+without `authoring` is fed by the compiler. The mode says where the class
+comes from: `Generated` from this metadata, `HandAuthored` in
+[schema.usda](../../libs/rigExecSchema/schema.usda), or `Internal` for an op
+the compiler builds with no class of its own. The metadata never changes how a
+program runs, and the registry fingerprint ignores it: a `.rigexec` baked with
+libraries that differ only in it still opens.
+
 `rigExecGenSchema` (`tools/rigExecGenSchema.cpp`) links the op core and the
 built-in type and op libraries only, so it uses no OpenUSD library. It reads
 the registry, takes an optional output path and writes one usda-like block per
-op, sorted by namespace and name: an attribute line per input and output port
-with the USD type its value type maps to, flags (`optional`, `list`,
-`pointwise`, `neighbourhood`, `checked`, output bounds) as a trailing
-comment, and each payload field as a `uniform` attribute.
+op, sorted by namespace and name, named by the op's schema class when it
+declares one: a line per authored property with its type, fallback and the
+ports or fields it comes from, then an attribute line per other input and
+output port with the USD type its value type maps to, flags (`optional`,
+`list`, `pointwise`, `neighbourhood`, `checked`, output bounds) as a
+trailing comment, and each other payload field as a `uniform` attribute.
+`--json` writes the schema info and authored properties of every op instead.
 
 `tools/schema_report.py` (standard library only) compares that text with
-[schema.usda](../../libs/rigExecSchema/schema.usda) and prints, per op, the
-class it most plausibly corresponds to, the properties each side lacks and the
-type disagreements, then a summary table and the classes and ops without a
-counterpart:
+schema.usda and prints, per op, the class it declares or most plausibly
+corresponds to, the properties each side lacks and the type disagreements, then
+a summary table and the classes and ops without a counterpart:
 
 ```bash
 python tools/schema_report.py --tool build/rigExecGenSchema \
@@ -573,6 +589,13 @@ python tools/schema_report.py --tool build/rigExecGenSchema \
 
 The report changes nothing that ships. `testRigExecSchemaReport` passes
 whenever both programs run and a report is produced, whatever it shows.
+
+With `--diff`, the script checks every `Generated` op against its class in
+schema.usda, property by property: presence on either side, type, `uniform`,
+fallback, allowed tokens and documentation, and the class's base and
+documentation. A `HandAuthored` op is checked only for the properties it
+declares; `Internal` ops and ops without schema info are skipped. It prints
+each difference and exits non-zero on any; `testRigExecSchemaDiff` runs it.
 
 ## Discovery and supported evaluation
 
