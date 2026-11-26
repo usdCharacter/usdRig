@@ -168,6 +168,37 @@ TF_DEFINE_PRIVATE_TOKENS(
     (none)
 );
 
+namespace {
+
+/// The int \p path holds as Build reads it: a standing interactive override,
+/// else an admitted upstream value, else \p authored.
+int
+_StandingInt(const RigExecBakedProgramImpl &B, const SdfPath &path,
+             int authored)
+{
+    if (B.interactiveOverrides)
+        for (const RigExecValueOverride &o : *B.interactiveOverrides)
+            if (o.prim == path.GetPrimPath() &&
+                o.attribute == path.GetNameToken() && o.value.IsHolding<int>())
+                return o.value.UncheckedGet<int>();
+    const auto upstream = B.upstream.find(path);
+    if (upstream != B.upstream.end() && upstream->second.IsHolding<int>())
+        return upstream->second.UncheckedGet<int>();
+    return authored;
+}
+
+} // namespace
+
+bool
+RigExecBakedSolverCountsStand(const RigExecBakedProgramImpl &B)
+{
+    for (const RigExecBakedProgramImpl::Solver &s : B.solvers)
+        if (s.kind == RigExecSolverKind::Ribbon &&
+            RigExecBakedLeafRead(B, s.ribbonSampleCount) != s.ribbonSamples)
+            return false;
+    return true;
+}
+
 // Bake.
 
 void
@@ -333,6 +364,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
         RigExecSceneSolverDescriptor descriptor;
         std::string translationError;
         int translated = -1; // -1 not yet, 0 refused, 1 translated
+        int ribbonSamples = 0;
         for (size_t k = 0; k < jointOutputs.size(); ++k) {
             const auto &[joint, element] = jointOutputs[k];
             const int slot = slotOf(joint);
@@ -697,10 +729,13 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 B.named.insert(s.ribbonPointsPath);
                 B.prims.insert(s.ribbonPointsPath.GetPrimPath());
             }
-            // bind(), not fold(): a sampleCount edit is a value edit exec
-            // answers per frame, and the compiled rig signature already forces a
-            // recompile when the count changes the frame cardinality.
+            // The count fixes the frame cardinality, so it is a Build fact.
+            // It stays bound so a drag on it places; the run whose sample
+            // differs from Build's rebuilds (RigExecBakedSolverCountsStand).
             s.ribbonSampleCount = bind(prim, _tokens->rigExecSampleCount, 5);
+            ribbonSamples = _StandingInt(
+                B, solverPath.AppendProperty(_tokens->rigExecSampleCount),
+                s.ribbonSampleCount.constant);
             // rigExec:parameterization, frameTransport, startFrame,
             // endFrame and twistFrames are not read: they affect batching and
             // the signature only.
@@ -830,6 +865,8 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 record.startRest = s.startRest;
             }
             static_cast<RigExecSolverRecord &>(s) = std::move(record);
+            if (s.type == SchemaTypeName::RigExecRibbon)
+                s.ribbonSamples = ribbonSamples;
             for (const auto &read : descriptor.jointGroupSelectorReads) {
                 const UsdPrim owner =
                     B.stage->GetPrimAtPath(read.consumer.GetPrimPath());
@@ -5037,7 +5074,6 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
                         ": ribbon driver points are unavailable; using sampled "
                         "base");
             }
-            input.ribbonSampleCount = rd(s.ribbonSampleCount);
         } else if (s.type == SchemaTypeName::RigExecSplineIk) {
             s.kind = RigExecSolverKind::SplineIk;
             input.refreshSplineParams =

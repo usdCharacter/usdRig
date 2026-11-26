@@ -403,20 +403,21 @@ TestRibbon()
             s.restIsLive.push_back(live && k != 2);
         }
         RigExecPoseOpRunner runner;
-        // Five samples, a moved count (rebuilt), one sample and no curve:
-        // the last two fail compile and the evaluation that binds them.
+        // Five samples, a record with another count (rebuilt), one sample
+        // and no curve: the last two fail compile and the evaluation that
+        // binds them.
         constexpr char kTooFew[] = "SampleRibbonFrames: needs two samples and "
                                    "two distinct points per curve";
         for (const int count : {5, 3, 1}) {
+            s.ribbonSamples = count;
             RigExecSolverInputs in;
             in.ribbonPoints = posed;
-            in.ribbonSampleCount = count;
             CompareSolver("ribbon " + std::to_string(count), s, in, runner,
                           count < 2 ? kTooFew : nullptr);
         }
-        RigExecSolverInputs none;
-        none.ribbonSampleCount = 5;
-        CompareSolver("ribbon no curve", s, none, runner, kTooFew);
+        s.ribbonSamples = 5;
+        CompareSolver("ribbon no curve", s, RigExecSolverInputs(), runner,
+                      kTooFew);
     }
 }
 

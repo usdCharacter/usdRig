@@ -822,12 +822,53 @@ CheckRibbonPointsOverrideIsRefused()
     // Two reasons refuse it and either is enough -- the path is folded, and
     // it is in no binding table -- which is the point: no future rewiring
     // of one of them can make this drag placeable quietly.
-    // The control: rigExec:sampleCount is a per-frame input of the same
-    // solver and IS placeable, so a program that refused everything would
-    // pass the line above while saying nothing.
+    // The control: rigExec:sampleCount, an input of the same solver, IS
+    // placeable, so a program that refused everything would pass the line
+    // above while saying nothing. It fixes the frame count, so the run it
+    // stands on rebuilds (CheckSampleCountDragRecompiles).
     CHECK(program->SetOverrides({RigExecValueOverride{
         SdfPath("/Asset/Rig/Solvers/SpineRibbon"), TfToken(),
         TfToken("rigExec:sampleCount"), VtValue(int(4))}}));
+}
+
+/// rigExec:sampleCount fixes the ribbon's frame count, which Build reads once:
+/// a drag on it rebuilds the program with the dragged count, and the release
+/// rebuilds it with the authored one. No run solves at a count Build did not
+/// read.
+void
+CheckSampleCountDragRecompiles()
+{
+    const char *const what = "a drag on rigExec:sampleCount";
+    RigExecRigEvaluator rig(MakeAnimatedRibbonRig(), kRigPath);
+    std::vector<std::string> errors;
+    if (!rig.Compile(&errors)) {
+        ++failures;
+        std::printf("FAIL %s: the fixture does not compile\n", what);
+        return;
+    }
+    const SdfPath ribbon("/Asset/Rig/Solvers/SpineRibbon");
+    const auto frames = [&](const RigExecRigPose &pose) {
+        const auto found = pose.solverFrames.find(ribbon);
+        return found == pose.solverFrames.end() ? size_t(0)
+                                                : found->second.size();
+    };
+    const RigExecRigPose settled = rig.Evaluate(UsdTimeCode(2.0));
+    const size_t builds = rig.GetBakedProgramBuildCount();
+    CHECK(settled.valid && frames(settled) == 5);
+    rig.SetInteractiveOverrides({RigExecValueOverride{
+        ribbon, TfToken(), TfToken("rigExec:sampleCount"), VtValue(int(4))}});
+    const RigExecRigPose held = rig.Evaluate(UsdTimeCode(2.0));
+    CHECK(held.valid && frames(held) == 4);
+    CHECK(rig.GetBakedProgramBuildCount() == builds + 1);
+    const RigExecRigPose heldLater = rig.Evaluate(UsdTimeCode(3.0));
+    CHECK(heldLater.valid && frames(heldLater) == 4);
+    CHECK(rig.GetBakedProgramBuildCount() == builds + 1);
+    rig.ClearInteractiveOverrides();
+    const RigExecRigPose freed = rig.Evaluate(UsdTimeCode(2.0));
+    CHECK(freed.valid && frames(freed) == 5);
+    CHECK(rig.GetBakedProgramBuildCount() == builds + 2);
+    rigExecTest::ComparePose(&failures, std::string(what) + " released",
+                             settled, freed);
 }
 
 /// A ribbon whose rigExec:driverCurve names a prim that has no `points` at
@@ -2209,6 +2250,7 @@ main(int argc, char **argv)
     CheckDrag("a drag on rigExec:sampleCount", MakeAnimatedRibbonRig,
               SdfPath("/Asset/Rig/Solvers/SpineRibbon"), "rigExec:sampleCount",
               VtValue(int(4)));
+    CheckSampleCountDragRecompiles();
     CheckDrag("a drag on a guide-only solver's turns", MakeGuideOnlyBlendRig,
               SdfPath("/Asset/Rig/Solvers/SecondTwist"), "inputs:twistTurns",
               VtValue(0.2));

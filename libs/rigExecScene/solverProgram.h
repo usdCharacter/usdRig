@@ -95,6 +95,9 @@ struct RigExecSolverRecord {
     /// joint, its nearest namespace ancestor among its joints (-1: none).
     std::vector<RigExecJointGroup> jointGroups;
     std::vector<int32_t> jointGroupMembers, jointGroupParents;
+    /// Ribbon: rigExec:sampleCount, read once at Build. A value that differs
+    /// from it at a run (a drag, an upstream input) rebuilds the program.
+    int ribbonSamples = 0;
 };
 /// Current graph values, delivered after typed read-phase resolution. Null
 /// aggregate pointers preserve BlendPointFrames unwired-input pass-through.
@@ -104,7 +107,6 @@ struct RigExecSolverInputs {
     const RigExecPointFrameArray *blendA = nullptr, *blendB = nullptr;
     double blendWeight = 0, twistTurns = 0;
     std::vector<GfVec3f> ribbonPoints;
-    int ribbonSampleCount = 0;
     bool refreshIkParams = false;
     double bend = 0, upperOffset = 0, lowerOffset = 0;
     float stretch = 1, softness = 0, pin = 0, softDistance = 0, limbTwist = 0;

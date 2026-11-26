@@ -2698,7 +2698,7 @@ RigExecBakedRolesStand(const RigExecBakedProgramImpl &B)
             }
         }
     }
-    return true;
+    return RigExecBakedSolverCountsStand(B);
 }
 
 // One frame, geometry half. A revision runs when its inputs changed and not

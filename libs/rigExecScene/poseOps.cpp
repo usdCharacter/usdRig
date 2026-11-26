@@ -555,7 +555,7 @@ RigExecAddSolverOp(const RigExecSolverRecord &s,
     }
     case RigExecSolverKind::Ribbon: {
         using namespace rigExecOps;
-        r.sampleCount = input.ribbonSampleCount;
+        r.sampleCount = s.ribbonSamples;
         SampleRibbonFramesPayload payload;
         payload.sampleCount = r.sampleCount;
         const RigExecNodeId id = b.AddOp(SampleRibbonFrames(), &payload);
@@ -746,7 +746,7 @@ RigExecWriteSolverOpInputs(const RigExecSolverRecord &s,
                WriteLive(s, node, scratch, e, error);
     }
     case RigExecSolverKind::Ribbon: {
-        if (input.ribbonSampleCount != node.sampleCount)
+        if (s.ribbonSamples != node.sampleCount)
             return Fail(error, "ribbon sample count moved");
         const auto points = [](const std::vector<GfVec3f> &v,
                                RigExecArray<Vec3f> *out) {

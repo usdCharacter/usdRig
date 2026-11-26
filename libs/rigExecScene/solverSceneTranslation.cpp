@@ -322,6 +322,7 @@ RigExecTranslateSceneSolver(const RigExecSceneDescriptors &scene,
         }
         if (!bind(_tokens->rigExecSampleCount, 5))
             return false;
+        s.ribbonSamples = initial(SchemaAttrText::rigExecSampleCount, 5);
     } else if (s.kind == RigExecSolverKind::SplineIk) {
         result.root = first(_tokens->rigExecRootControl, true);
         result.mid = first(_tokens->rigExecMidControl, true);

@@ -4083,6 +4083,9 @@ bool RigExecBakedStoreChainGroup(RigExecBakedProgramImpl &B,
 /// hops; never reads overrideReached; no TfToken from text, no SdfPath text,
 /// no TF_ diagnostics.
 bool RigExecBakedRolesStand(const RigExecBakedProgramImpl &program);
+/// Whether every solver count Build fixed (a ribbon's rigExec:sampleCount)
+/// equals this run's sampled value; RigExecBakedRolesStand asks it.
+bool RigExecBakedSolverCountsStand(const RigExecBakedProgramImpl &program);
 /// The points of version \p version as one contiguous array: in place for the
 /// base, a Legacy buffer or one-buffer slices, else gathered into the
 /// reader's \p scratch. Valid until the calling step returns.

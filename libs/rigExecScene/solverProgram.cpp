@@ -138,7 +138,7 @@ RigExecRunSolver(const RigExecSolverRecord &s, const RigExecSolverInputs &input,
         return true;
     case RigExecSolverKind::Ribbon:
         aggregate = RigExecSampleRibbonFrames(
-            input.ribbonPoints, s.ribbonRestPoints, input.ribbonSampleCount,
+            input.ribbonPoints, s.ribbonRestPoints, s.ribbonSamples,
             s.jointRests, s.restIsLive);
         return true;
     case RigExecSolverKind::SplineIk: {
