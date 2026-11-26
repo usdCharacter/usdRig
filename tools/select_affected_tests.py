@@ -542,7 +542,7 @@ def usd_free_exes(model: dict, index: dict) -> list[str]:
     for exe, reached in index["exe_closure"].items():
         pxr = [lib for lib in reached if lib in PXR_LIBS or lib.startswith("usd")]
         project = [lib for lib in reached if lib in model["libraries"]]
-        # rigExecMath's link line carries gf/vt/tf/arch. Catch that via closure.
+        # rigExecMathGf's link line carries gf/vt/tf/arch. Catch that via closure.
         if pxr:
             continue
         if any(lib not in USD_FREE_SEEDS and lib in model["libraries"] for lib in project):
@@ -736,6 +736,7 @@ PROJECT_LIBS = {
     "rigExec", "rigExecOpCore", "rigExecCompile", "rigExecEval",
     "rigExecSchedule", "rigExecVerify",
     "rigExecScene", "rigExecOracle", "rigExecRuntime", "rigExecMath",
+    "rigExecMathGf",
     "rigExecGraph", "rigExecBinary", "rigExecBake", "rigExecImaging",
     "rigExecAuthoring", "rigExecSampler", "rigExecLzma",
     "rigExecPlayback",

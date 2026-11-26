@@ -16,6 +16,6 @@ target_compile_features(rigExecSchedule PRIVATE cxx_std_17)
 target_include_directories(rigExecSchedule PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/libs")
 target_link_libraries(rigExecSchedule PRIVATE
-    rigExecGraph rigExecMath
+    rigExecGraph rigExecMathGf
     tf gf vt sdf ts usd usdGeom plug work)
 set_target_properties(rigExecSchedule PROPERTIES POSITION_INDEPENDENT_CODE ON)

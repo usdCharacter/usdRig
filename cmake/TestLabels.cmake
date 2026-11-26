@@ -3,7 +3,8 @@
 # no readable COMMAND property for a test. Call it after the last registration.
 # usd-free: link closure has no OpenUSD library, and the test does not
 # require a fixture another test produces.
-# fast: usd-free, or a test whose direct project library is only rigExecMath.
+# fast: usd-free, or a test whose direct project libraries are only the math
+# libraries.
 # Each directly linked project library is also a label.
 # variant: the same suite rerun under another schedule, environment or driver
 # (Serial, FineClusters, Graph_*, _serial/_parallel, DigestGate, ScopedClears,
@@ -54,10 +55,10 @@ set(_rigexec_pxr_libs
 # They are listed so a consumer that names one directly is still labeled.
 set(_rigexec_project_libs
     rigExec rigExecOpCore rigExecCompile rigExecEval rigExecSchedule
-    rigExecVerify rigExecScene rigExecOracle rigExecRuntime rigExecMath rigExecGraph
+    rigExecVerify rigExecScene rigExecOracle rigExecRuntime rigExecMath rigExecMathGf rigExecGraph
     rigExecEvalCore rigExecBinary rigExecBake rigExecImaging rigExecAuthoring
     rigExecSampler rigExecLzma rigExecPlayback)
-set(_rigexec_fast_direct rigExecMath)
+set(_rigexec_fast_direct rigExecMath rigExecMathGf)
 
 function(_rigexec_normalize_link raw out)
     set(name "${raw}")

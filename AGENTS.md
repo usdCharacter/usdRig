@@ -32,11 +32,13 @@ starting its workflow, and keep this list current when adding or changing skills
 ## Code map
 
 - `libs/rigExecMath`: numerical kernels. Keep math independent of stage access.
-  The archive links `arch`, `tf`, `gf`, and `vt`; it does not read a stage.
-  `rigExec`, the scene library, authoring, and the oracle library link it
-  privately. The header-only `*Kernel.h` files here (pose, provider, and
-  blend-layout arithmetic among them) also compile into the USD-free
-  runtime; keep them free of `pxr/` and `rigExecGraph` includes.
+  The `rigExecMath` target is header-only and links no OpenUSD library. The
+  kernels still written against Gf (the `.cpp` files and the headers that
+  include `pxr/`) build the `rigExecMathGf` archive, which links `arch`,
+  `tf`, `gf` and `vt`; `rigExec`, the scene library, authoring, and the
+  oracle library link it privately. The header-only `*Kernel.h` files here
+  (pose, provider, and blend-layout arithmetic among them) also compile into
+  the USD-free runtime; keep them free of `pxr/` and `rigExecGraph` includes.
   `runtimeMath.h`, `dualQuatMath.h` and `affineMath.h` are the engine's own
   vector, matrix and quaternion types (a `pxr`-free mirror of Gf, checked bit
   for bit by `testRigExecRuntimeMath`); the runtime and the ops include them.

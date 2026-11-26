@@ -77,10 +77,9 @@ add_library(rigExec::rigExecGraph ALIAS rigExecGraph)
 
 # EvalCore: the step contract the baked program and playback share. The step
 # bodies are templates each front end instantiates, so only the non-templated
-# ordinal table lands in this archive. It links nothing but the scheduler:
-# the rigExecMath archive carries OpenUSD publicly, and EvalCore uses only its
-# USD-free headers. The wire enum it reuses is generated against the vendored
-# FlatBuffers headers.
+# ordinal table lands in this archive. It links nothing but the scheduler and
+# uses only rigExecMath's USD-free headers. The wire enum it reuses is
+# generated against the vendored FlatBuffers headers.
 add_library(rigExecEvalCore STATIC libs/rigExecEvalCore/kinds.cpp)
 target_compile_features(rigExecEvalCore PUBLIC cxx_std_17)
 target_include_directories(rigExecEvalCore PUBLIC
@@ -91,8 +90,14 @@ target_link_libraries(rigExecEvalCore PUBLIC rigExecGraph)
 set_target_properties(rigExecEvalCore PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(rigExec::rigExecEvalCore ALIAS rigExecEvalCore)
 
-# rigExecMath: pure point-frame and solver kernels (spec §5).
-add_library(rigExecMath STATIC
+# rigExecMath: the USD-free kernel headers.
+add_library(rigExecMath INTERFACE)
+target_include_directories(rigExecMath INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
+    $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
+
+# rigExecMathGf: the point-frame and solver kernels written against Gf.
+add_library(rigExecMathGf STATIC
     libs/rigExecMath/affineFrameKernels.cpp
     libs/rigExecMath/pointFrame.cpp
     libs/rigExecMath/solvers.cpp
@@ -105,11 +110,8 @@ add_library(rigExecMath STATIC
     libs/rigExecMath/splineIk.cpp
     libs/rigExecMath/rbf.cpp
 )
-target_include_directories(rigExecMath PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
-    $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
-target_link_libraries(rigExecMath PUBLIC arch tf gf vt)
-set_target_properties(rigExecMath PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(rigExecMathGf PUBLIC rigExecMath arch tf gf vt)
+set_target_properties(rigExecMathGf PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Keep value-codec template instantiations private to its archive. Only the
 # two declared codec functions become Windows DLL exports.
@@ -151,7 +153,7 @@ target_include_directories(rigExecScene PUBLIC
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rigExecScene PUBLIC
     tf gf vt sdf ts usd usdGeom)
-target_link_libraries(rigExecScene PRIVATE rigExecGraph rigExecMath
+target_link_libraries(rigExecScene PRIVATE rigExecGraph rigExecMathGf
     rigExecBuiltins plug js)
 set_target_properties(rigExecScene PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(rigExec::rigExecScene ALIAS rigExecScene)
@@ -219,8 +221,8 @@ target_link_libraries(rigExec PUBLIC
 )
 
 target_link_libraries(rigExec PRIVATE
-    rigExecGraph rigExecMath rigExecEvalCore rigExecInputValues rigExecBuiltins
-    ts)
+    rigExecGraph rigExecMathGf rigExecEvalCore rigExecInputValues
+    rigExecBuiltins ts)
 # On Windows the consumers of rigExec need those two archives as well.
 
 # Scene translation calls back into the evaluator. The evaluator does not
@@ -248,7 +250,7 @@ target_compile_features(rigExecOracle PUBLIC cxx_std_17)
 target_include_directories(rigExecOracle PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
-target_link_libraries(rigExecOracle PRIVATE rigExecMath)
+target_link_libraries(rigExecOracle PRIVATE rigExecMathGf)
 target_link_libraries(rigExecOracle PUBLIC
     rigExec tf gf vt sdf ts usd usdGeom)
 set_target_properties(rigExecOracle PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -334,7 +336,7 @@ target_link_libraries(rigExecAuthoring PUBLIC
     sdf tf gf vt usd)
 # The skin-weight generator composes rests and measures volume weights
 # through rigExecScene, which brings rigExec.
-target_link_libraries(rigExecAuthoring PRIVATE rigExecMath rigExecScene)
+target_link_libraries(rigExecAuthoring PRIVATE rigExecMathGf rigExecScene)
 
 # rigExecGpu: the per-vertex deform program on the GPU as an OpenGL 4.5
 # compute shader, on a worker thread that owns its own hidden context, and
@@ -894,7 +896,7 @@ set_tests_properties(testRigExecLicenseChecker PROPERTIES LABELS "fast")
 
 add_executable(testRigExecMath tests/testRigExecMath.cpp)
 add_executable(testRigExecWrinkleMath tests/testRigExecWrinkleMath.cpp)
-target_link_libraries(testRigExecWrinkleMath PRIVATE rigExecMath)
+target_link_libraries(testRigExecWrinkleMath PRIVATE rigExecMathGf)
 rigexec_add_test(NAME testRigExecWrinkleMath COMMAND testRigExecWrinkleMath)
 add_executable(testRigExecWrinkle tests/testRigExecWrinkle.cpp)
 target_link_libraries(testRigExecWrinkle PRIVATE rigExec rigExecAuthoring rigExecBake rigExecRuntime rigExecSampler)
@@ -940,11 +942,11 @@ set_tests_properties(testRigExecDeltaMushBakeFile PROPERTIES FIXTURES_SETUP Delt
 rigexec_add_test(NAME testRigExecDeltaMushRuntime COMMAND testRigExecDeltaMushRuntime
     "${CMAKE_CURRENT_BINARY_DIR}/delta_mush_test.rigexec")
 set_tests_properties(testRigExecDeltaMushRuntime PROPERTIES FIXTURES_REQUIRED DeltaMushBinary)
-target_link_libraries(testRigExecMath PRIVATE rigExecMath)
+target_link_libraries(testRigExecMath PRIVATE rigExecMathGf)
 rigexec_add_test(NAME testRigExecMath COMMAND testRigExecMath)
 
 add_executable(testRigExecSingleChainIk tests/testRigExecSingleChainIk.cpp)
-target_link_libraries(testRigExecSingleChainIk PRIVATE rigExecMath)
+target_link_libraries(testRigExecSingleChainIk PRIVATE rigExecMathGf)
 rigexec_add_test(NAME testRigExecSingleChainIk COMMAND testRigExecSingleChainIk)
 
 add_executable(testRigExecGpuDeform tests/testRigExecGpuDeform.cpp)
@@ -962,21 +964,21 @@ target_compile_definitions(testRigExecGpuCloth PRIVATE
     ${_rigexec_schema_resource_define})
 rigexec_add_test(NAME testRigExecGpuCloth COMMAND testRigExecGpuCloth)
 add_executable(testRigExecDualQuat tests/testRigExecDualQuat.cpp)
-target_link_libraries(testRigExecDualQuat PRIVATE rigExecMath)
+target_link_libraries(testRigExecDualQuat PRIVATE rigExecMathGf)
 rigexec_add_test(NAME testRigExecDualQuat COMMAND testRigExecDualQuat)
 
 # The shared kernel's contract over both host traits; no stage, no plugin.
 add_executable(testRigExecDualQuatKernel tests/testRigExecDualQuatKernel.cpp)
-target_link_libraries(testRigExecDualQuatKernel PRIVATE rigExecMath rigExecRuntime)
+target_link_libraries(testRigExecDualQuatKernel PRIVATE rigExecMathGf rigExecRuntime)
 rigexec_add_test(NAME testRigExecDualQuatKernel COMMAND testRigExecDualQuatKernel)
 set_tests_properties(testRigExecDualQuatKernel PROPERTIES LABELS "fast")
 
 add_executable(testRigExecSplineIk tests/testRigExecSplineIk.cpp)
-target_link_libraries(testRigExecSplineIk PRIVATE rigExecMath)
+target_link_libraries(testRigExecSplineIk PRIVATE rigExecMathGf)
 rigexec_add_test(NAME testRigExecSplineIk COMMAND testRigExecSplineIk)
 
 add_executable(testRigExecRbf tests/testRigExecRbf.cpp)
-target_link_libraries(testRigExecRbf PRIVATE rigExecMath)
+target_link_libraries(testRigExecRbf PRIVATE rigExecMathGf)
 target_compile_definitions(testRigExecRbf PRIVATE
     RIGEXEC_RBF_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/psd_parity.json")
 rigexec_add_test(NAME testRigExecRbf COMMAND testRigExecRbf)
@@ -1069,9 +1071,8 @@ function(rigexec_add_graph_test name)
 endfunction()
 rigexec_add_graph_test(testRigExecConstraints CONE_VERIFY)
 
-# The labeller sees tf/gf/vt through rigExecMath; the kernel is USD-free.
 add_executable(testRigExecSkeleton2dKernel tests/testRigExecSkeleton2dKernel.cpp)
-target_link_libraries(testRigExecSkeleton2dKernel PRIVATE rigExecGraph)
+target_link_libraries(testRigExecSkeleton2dKernel PRIVATE rigExecMath)
 rigexec_add_test(NAME testRigExecSkeleton2dKernel COMMAND testRigExecSkeleton2dKernel)
 
 add_executable(testRigExecSkeleton2d tests/testRigExecSkeleton2d.cpp)
@@ -1448,7 +1449,7 @@ add_executable(testRigExecOpsMath tests/testRigExecOpsMath.cpp)
 target_link_libraries(testRigExecOpsMath PRIVATE rigExecOpCore)
 target_include_directories(testRigExecOpsMath PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/libs")
-target_link_libraries(testRigExecOpsMath PRIVATE rigExecMath Threads::Threads)
+target_link_libraries(testRigExecOpsMath PRIVATE rigExecMathGf Threads::Threads)
 rigexec_link_registrations(testRigExecOpsMath
     TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 rigexec_add_test(NAME testRigExecOpsMath COMMAND testRigExecOpsMath)
@@ -1491,7 +1492,7 @@ set_tests_properties(testRigExecSchemaReport PROPERTIES LABELS "fast")
 add_executable(testRigExecOpsPoints tests/testRigExecOpsPoints.cpp)
 target_link_libraries(testRigExecOpsPoints PRIVATE rigExecOpCore)
 target_include_directories(testRigExecOpsPoints PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libs")
-target_link_libraries(testRigExecOpsPoints PRIVATE rigExecMath Threads::Threads)
+target_link_libraries(testRigExecOpsPoints PRIVATE rigExecMathGf Threads::Threads)
 rigexec_link_registrations(testRigExecOpsPoints TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 rigexec_add_test(NAME testRigExecOpsPoints COMMAND testRigExecOpsPoints)
 set_tests_properties(testRigExecOpsPoints PROPERTIES LABELS "fast")
@@ -1670,7 +1671,7 @@ rigexec_add_test(NAME testRigExecEvalCoreProperties COMMAND testRigExecEvalCoreP
     "${CMAKE_CURRENT_SOURCE_DIR}/examples")
 
 add_executable(testRigExecSurfaceKernelCache tests/testRigExecSurfaceKernelCache.cpp)
-target_link_libraries(testRigExecSurfaceKernelCache PRIVATE rigExecMath)
+target_link_libraries(testRigExecSurfaceKernelCache PRIVATE rigExecMathGf)
 rigexec_add_test(NAME testRigExecSurfaceKernelCache COMMAND testRigExecSurfaceKernelCache)
 
 add_executable(testRigExecExecGoldens tests/testRigExecExecGoldens.cpp)
@@ -1747,7 +1748,7 @@ target_link_libraries(testRigExecOracleInputs PRIVATE rigExec)
 rigexec_add_test(NAME testRigExecOracleInputs COMMAND testRigExecOracleInputs)
 
 add_executable(testRigExecRuntimeMath tests/testRigExecRuntimeMath.cpp)
-target_link_libraries(testRigExecRuntimeMath PRIVATE rigExecRuntime rigExecMath gf)
+target_link_libraries(testRigExecRuntimeMath PRIVATE rigExecRuntime rigExecMathGf gf)
 rigexec_add_test(NAME testRigExecRuntimeMath COMMAND testRigExecRuntimeMath)
 
 add_executable(testRigExecRuntimeLoader tests/testRigExecRuntimeLoader.cpp)
@@ -2125,7 +2126,7 @@ rigexec_add_verify_binary_test(NAME docs_joint_group
     DRAGS "/JointGroupAsset/Rig/Groups/Fingers.rigExec:activeMember,/JointGroupAsset/Rig/Controls/Arm.avars:tx")
 
 add_executable(testRigExecWeightFields tests/testRigExecWeightFields.cpp)
-target_link_libraries(testRigExecWeightFields PRIVATE rigExecMath)
+target_link_libraries(testRigExecWeightFields PRIVATE rigExecMathGf)
 rigexec_add_test(NAME testRigExecWeightFields COMMAND testRigExecWeightFields)
 
 add_executable(testRigExecBakedMode tests/testRigExecBakedMode.cpp)
@@ -2430,7 +2431,7 @@ rigexec_add_test(NAME testRigExecStaticInputCache COMMAND testRigExecStaticInput
 
 add_executable(testRigExecPoseInterpolator
     tests/testRigExecPoseInterpolator.cpp)
-target_link_libraries(testRigExecPoseInterpolator PRIVATE rigExec rigExecMath)
+target_link_libraries(testRigExecPoseInterpolator PRIVATE rigExec rigExecMathGf)
 target_compile_definitions(testRigExecPoseInterpolator PRIVATE
     ${_rigexec_schema_resource_define})
 rigexec_add_test(NAME testRigExecPoseInterpolator COMMAND testRigExecPoseInterpolator)
@@ -3454,7 +3455,8 @@ rigexec_apply_exact_fp_flags_to_directory_targets()
 include(CMakePackageConfigHelpers)
 
 set(RIGEXEC_INSTALL_TARGETS
-    rigExecLzma rigExecGraph rigExecEvalCore rigExecMath rigExec rigExecScene
+    rigExecLzma rigExecGraph rigExecEvalCore rigExecMath rigExecMathGf rigExec
+    rigExecScene
     rigExecOracle rigExecAuthoring rigExecImaging rigExecGpu
     rigExecFlatBuffers rigExecBinary rigExecBake rigExecRuntime rigExecSampler
     rigExecBuiltins rigExecOpCore rigExecPlayback)
@@ -3666,7 +3668,7 @@ install(FILES tools/license_manifest.json
          docs/legal_members.py
     DESTINATION "share/rigExec/tools")
 
-# These call rigExecMath archive functions directly; the rigExec shared
+# These call rigExecMathGf archive functions directly; the rigExec shared
 # library exports only the ones it references itself.
 foreach(_rigexec_math_user
         benchFrameCache
@@ -3691,6 +3693,6 @@ foreach(_rigexec_math_user
         testRigExecWrinkle
     )
     if(TARGET ${_rigexec_math_user})
-        target_link_libraries(${_rigexec_math_user} PRIVATE rigExecMath)
+        target_link_libraries(${_rigexec_math_user} PRIVATE rigExecMathGf)
     endif()
 endforeach()
