@@ -56,6 +56,7 @@ static bool checkedRefreshRecords = false, checkedRefreshCarries = false,
 
 #include "rigExecFileEdit.h"
 #include "rigExecRuntimeDrive.h"
+#include "rigExecFrozenParity.h"
 
 static SdfPath
 _FindRig(const UsdStageRefPtr &stage)
@@ -2591,6 +2592,128 @@ TestEnvelopeRevisions()
                           return line.find("weight must be finite and in "
                                            "[0, 1]") != std::string::npos;
                       }));
+}
+
+// The cases computed_chains no longer holds, each on its own rig: a target
+// whose authored value is blocked from frame 3, and an inputs:defaultWeight
+// keyed past 1 at frame 3. Both run at frame 1, fail frame 3 in the native
+// evaluator, the frozen job and the .rigexec (native and the .rigexec with
+// the same line) and recover at frame 2.
+static UsdStageRefPtr
+_BlockedBaseStage()
+{
+    const UsdStageRefPtr stage = _ChainBaseStage();
+    const UsdAttribute none =
+        _Channel(stage, "Missing", "rigExec:none", SdfValueTypeNames->Float);
+    none.Set(2.0f, UsdTimeCode(1.0));
+    none.Set(2.5f, UsdTimeCode(2.0));
+    none.Set(SdfValueBlock(), UsdTimeCode(3.0));
+    const UsdPrim unset =
+        _MathMover(stage, "Unset", "RigExecFloatMathMover", "add", none);
+    _SetInput(unset, "inputs:value", SdfValueTypeNames->Float, 1.0f);
+    return stage;
+}
+
+static UsdStageRefPtr
+_KeyedOverWeightStage()
+{
+    const UsdStageRefPtr stage = _ChainBaseStage();
+    const UsdAttribute amount =
+        _Channel(stage, "Dial", "rigExec:amount", SdfValueTypeNames->Float);
+    amount.Set(0.1f, UsdTimeCode(1.0));
+    amount.Set(0.4f, UsdTimeCode(3.0));
+    const UsdPrim over =
+        _MathMover(stage, "Over", "RigExecFloatMathMover", "add", amount);
+    _SetInput(over, "inputs:value", SdfValueTypeNames->Float, 100.0f);
+    const UsdAttribute weight = over.CreateAttribute(
+        TfToken("inputs:defaultWeight"), SdfValueTypeNames->Float);
+    weight.Set(0.25f, UsdTimeCode(1.0));
+    weight.Set(0.5f, UsdTimeCode(2.0));
+    weight.Set(1.5f, UsdTimeCode(3.0));
+    return stage;
+}
+
+static void
+TestRunTimeChainFailuresRoundTrip()
+{
+    const std::vector<double> frames = {1, 3, 2};
+    const std::pair<const char *, UsdStageRefPtr (*)()> stages[] = {
+        {"blocked base", &_BlockedBaseStage},
+        {"keyed defaultWeight past 1", &_KeyedOverWeightStage}};
+    const std::string errors[] = {
+        "diag /Asset/Rig/Movers/Unset: property chain "
+        "/Asset/Rig/Channels/Missing.rigExec:none: target has no authored "
+        "value",
+        "diag /Asset/Rig/Movers/Over: node 0 (rig:FloatMath) failed: "
+        "FloatMath: weight must be finite and in [0, 1]"};
+    for (size_t i = 0; i < 2; ++i) {
+        const auto &[name, build] = stages[i];
+        std::vector<_ChainFrame> rows;
+        CHECK(_RunChainCase(name, build, frames, 2, &rows));
+        CHECK(rows.size() == 3);
+        if (rows.size() == 3) {
+            CHECK(rows[0].values.size() == 1 && rows[2].values.size() == 1);
+            CHECK(rows[1].values.empty() &&
+                  rows[1].lines == std::vector<std::string>{errors[i]});
+        }
+        const UsdStageRefPtr stage = build();
+        RigExecRigEvaluator evaluator(stage, _FindRig(stage));
+        CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
+        std::shared_ptr<const RigExecFrozenProgram> frozen;
+        std::string error;
+        CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
+        for (const double frame : {3.0, 2.0}) {
+            RigExecFrameInputs inputs;
+            CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame), {},
+                                           &inputs, &error));
+            RigExecFrozenEvalContext context;
+            context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+            context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+            context.varyingInputCount = inputs.values.size();
+            context.frozen = frozen.get();
+            RigExecFrozenRunnerVerdict verdict;
+            const RigExecRigPose pose = RigExecEvaluateFrozen(
+                context, inputs, RigExecRecordingStepRunner(&verdict));
+            const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
+            if (frame == 3.0) {
+                CHECK(!live.valid &&
+                      live.diagnostics ==
+                          std::vector<std::string>(
+                              {errors[i], "native program did not complete "
+                                          "generation"}));
+                CHECK(RigExecFrozenFailedInTheWorker(pose, verdict));
+            } else {
+                CHECK(live.valid && pose.valid && verdict.ran);
+                CHECK(pose.movedProperties == live.movedProperties);
+            }
+        }
+    }
+    // A target that does not exist: decision 45 makes it a compile error.
+    const UsdStageRefPtr stage = _BlockedBaseStage();
+    const UsdPrim unset =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Unset/Absent"),
+                          TfToken("RigExecFloatMathMover"));
+    CHECK(unset.ApplyAPI(TfToken("RigExecMoverAPI")));
+    unset
+        .CreateAttribute(TfToken("rigExec:operation"), SdfValueTypeNames->Token)
+        .Set(TfToken("add"));
+    unset.CreateRelationship(TfToken("rigExec:moves"))
+        .SetTargets({SdfPath("/Asset/Rig/Channels/Missing.rigExec:absent")});
+    _SetInput(unset, "inputs:value", SdfValueTypeNames->Float, 1.0f);
+    RigExecRigEvaluator evaluator(stage, _FindRig(stage));
+    std::vector<std::string> notices;
+    const bool compiled = evaluator.Compile(&notices);
+    std::vector<uint8_t> bytes;
+    std::string error;
+    const bool baked = RigExecTestBakeAt(evaluator, 1, &bytes, &error);
+    // Review finding R36: the mover is skipped with a warning instead, and
+    // the rest of the rig compiles and bakes. Expected to flip with the fix.
+    CHECK(compiled && baked);
+    CHECK(notices ==
+          std::vector<std::string>(
+              {"warning: Skipped operation /Asset/Rig/Movers/Unset/Absent -- "
+               "Mover /Asset/Rig/Movers/Unset/Absent targets missing "
+               "property /Asset/Rig/Channels/Missing.rigExec:absent"}));
 }
 
 static void
@@ -6518,6 +6641,7 @@ main(int argc, char **argv)
     TestVec3fChain();
     TestDisabledRevision();
     TestEnvelopeRevisions();
+    TestRunTimeChainFailuresRoundTrip();
     TestPhasedConsumers();
     TestOraclePublicationGeneration();
     TestScalarRawKindPreservesRecords();
