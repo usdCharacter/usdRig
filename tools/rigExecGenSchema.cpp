@@ -18,7 +18,7 @@
 // ClassName is the op's RigExecSchemaInfo class, or the op name with its
 // first letter upper-cased. A port or field with authoring metadata is
 // written as the property it is authored with; payload fields that name one
-// property are written once. Any other port's USD type is its registered
+// property are written once, and a list payload field as an array. Any other port's USD type is its registered
 // value type mapped by name (see UsdTypeOf); an array-flagged input, or an
 // array value type, is "T[]". A value type without a USD counterpart is
 // written as "<registryType>" in angle brackets.
@@ -352,6 +352,19 @@ Describe(const RigExecRegistry &registry, uint32_t typeIndex, bool listPort,
     p.fallback = text;
 }
 
+/// The registered array type of element type \p elementIndex, or
+/// kRigExecInvalidIndex.
+uint32_t
+ListTypeOf(const RigExecRegistry &registry, uint32_t elementIndex)
+{
+    for (uint32_t t = 0; t < registry.TypeCount(); ++t) {
+        const RigExecTypeHandle *element = registry.TypeAt(t).desc->element;
+        if (element && element->Index() == elementIndex)
+            return t;
+    }
+    return kRigExecInvalidIndex;
+}
+
 std::vector<Property>
 AuthoredProperties(const RigExecRegistry &registry,
                    const RigExecRegisteredOp &op)
@@ -380,12 +393,17 @@ AuthoredProperties(const RigExecRegistry &registry,
                          [&](const Property &p) { return p.name == name; });
         Property one;
         one.name = name;
-        Describe(registry, op.payloadFieldTypes[i], false, *field.authoring,
-                 one);
+        uint32_t type = op.payloadFieldTypes[i];
+        if (field.extent != RigExecFieldExtent::Scalar)
+            type = ListTypeOf(registry, type);
+        if (type == kRigExecInvalidIndex) {
+            one.errors.push_back(name + ": no array type lists the field");
+            type = op.payloadFieldTypes[i];
+        }
+        Describe(registry, type, false, *field.authoring, one);
         const std::string source = std::string("field ") + field.name;
         if (same == out.end()) {
-            one.type = AuthoredType(registry, op.payloadFieldTypes[i], false,
-                                    *field.authoring);
+            one.type = AuthoredType(registry, type, false, *field.authoring);
             one.sources.push_back(source);
             out.push_back(std::move(one));
             continue;

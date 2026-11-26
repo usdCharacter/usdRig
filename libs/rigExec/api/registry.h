@@ -274,8 +274,9 @@ struct RigExecPropertyInfo {
     /// order.
     const char *schemaName = "";
     const char *doc = nullptr;
-    /// A value of the port's or field's registered type; with tokens, the
-    /// value whose token is the fallback. Null authors none.
+    /// A value of the port's or field's registered type, or for a list
+    /// payload field of the registered array type of its element; with
+    /// tokens, the value whose token is the fallback. Null authors none.
     const void *fallback = nullptr;
     /// For an integer or bool authored as a token: entry i is the token of
     /// value i, null for a value the property does not allow.

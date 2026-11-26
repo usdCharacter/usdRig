@@ -561,7 +561,9 @@ role, `uniform`, and the USD type when it is not the registered type's).
 Payload fields that name one property are its components. A port or field
 without `authoring` is fed by the compiler. The registry refuses `authoring`
 on an op without schema info or on an `Internal` op, and a `ConnectionList`
-binding on anything but a list input port. The mode says where the class
+binding on anything but a list input port. A list payload field is authored as
+an array, and its fallback is a value of the registered array type of its
+element. The mode says where the class
 comes from: `Generated` from this metadata, `HandAuthored` in
 [schema.usda](../../libs/rigExecSchema/schema.usda), or `Internal` for an op
 the compiler builds with no class of its own. The metadata never changes how a
