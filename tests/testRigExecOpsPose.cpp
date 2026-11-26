@@ -12,6 +12,8 @@
 #include "rigExecRuntime/spaceSwitchMath.h"
 #include "rigExecRigTypes/rigTypes.h"
 
+#include "opAllocationCount.h"
+
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -204,6 +206,15 @@ TestSpaceCheckpoint()
         eval::SpaceCheckpointMatrix<Math>(inputs.data(), 2, anchor);
     CHECK(SameBits(h.Out<Mat4d>(0), expected));
     CHECK(std::abs(expected._mtx[3][1] - 9.0) < 1e-9);
+    Mat4d moving = anchor;
+    std::string steadyError;
+    CHECK(opAllocationCount::SteadyFrameAllocations(
+              SpaceCheckpoint(), &p, ins, values, SpaceCheckpointOut(), 9,
+              [&](int frame) {
+                  moving = Translate(0, 2 + 0.5 * frame, 0);
+                  return &moving;
+              },
+              &steadyError) == 0);
 
     Mat4d collapsed = Math::Identity4();
     collapsed._mtx[0][0] = std::nan("");

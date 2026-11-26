@@ -272,6 +272,10 @@ CheckSpaceCheckpoint(const rigExec::RigExecOpCheck &check, std::string *error)
     return true;
 }
 
+/// Op state: one checkpoint input per slot.
+using CheckpointInputs =
+    std::vector<rigExec::RigExecSpaceCheckpointInputT<Mat4d>>;
+
 bool
 SpaceCheckpointOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
@@ -303,7 +307,9 @@ SpaceCheckpointOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         return Fail(error, "SpaceCheckpoint",
                     "needs 11 avars and one of each order, sign, matrix and "
                     "flag per slot");
-    std::vector<rigExec::RigExecSpaceCheckpointInputT<Mat4d>> inputs(slots);
+    auto &inputs =
+        *static_cast<CheckpointInputs *>(rigExec::RigExecBatchState(batch, k));
+    inputs.resize(slots);
     for (size_t s = 0; s < slots; ++s) {
         rigExec::eval::PoseSlotComposeT<CheckpointMath> view;
         view.avars11 = &avars[s * 11];
@@ -1220,6 +1226,7 @@ const rigExec::RigExecOpDesc kSpaceCheckpointDesc = [] {
     d.portCount = std::size(kSpaceCheckpointPorts);
     d.runBatch = &RunSpaceCheckpoint;
     d.validate = &CheckSpaceCheckpoint;
+    d.state = opIo::StateOf<CheckpointInputs>();
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kSpaceCheckpointFields;
     d.payloadFieldCount = std::size(kSpaceCheckpointFields);
