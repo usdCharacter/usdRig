@@ -9,6 +9,7 @@
 #include "rigExec/api/registry.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/program/program.h"
 #include "rigExecBinary/format.h"
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecEvalCore/opSteps.h"
@@ -572,6 +573,13 @@ TestRuntime(const char *writeTo)
     CHECK(opened);
     if (!opened)
         return;
+    // Native, frozen and the runtime pick the same kernel paths:
+    // RIGEXEC_ENABLE_SIMD decides for all three.
+    const RigExecBakedProgramImpl &B =
+        RigExecBakedProgramAccess::StepGraph(*evaluator.GetBakedProgram());
+    CHECK(B.opProgram && B.opProgram->layout.program &&
+          B.opProgram->layout.program->useSimd == B.useSimd);
+    CHECK(player.Reader().GetSimdEnabledForTesting() == B.useSimd);
     if (writeTo) {
         std::ofstream out(writeTo, std::ios::binary);
         out.write(reinterpret_cast<const char *>(bytes.data()),

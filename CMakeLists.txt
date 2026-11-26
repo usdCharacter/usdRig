@@ -2240,6 +2240,9 @@ foreach(_schedule serial parallel)
 endforeach()
 set_tests_properties(testRigExecOpSteps_serial PROPERTIES
     FIXTURES_SETUP rigExecOpStepsFile)
+rigexec_add_test(NAME testRigExecOpStepsScalar COMMAND testRigExecOpSteps)
+set_tests_properties(testRigExecOpStepsScalar PROPERTIES
+    ENVIRONMENT "RIGEXEC_BAKED_SCHEDULE=parallel;RIGEXEC_ENABLE_SIMD=0")
 rigexec_add_test(NAME testRigExecOpSteps_unregistered
     COMMAND testRigExecOpSteps --unregistered
         "${CMAKE_CURRENT_BINARY_DIR}/opSteps_serial.rigexec")

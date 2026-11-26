@@ -547,6 +547,7 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
         return Fail(error, why);
     RigExecCompileOptions options;
     options.hostOrder = true;
+    options.useSimd = B.useSimd;
     layout.program = RigExecCompile(*desc, options, &why);
     if (!layout.program)
         return Fail(error, why);
