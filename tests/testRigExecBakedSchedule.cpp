@@ -10009,7 +10009,8 @@ ReportMovedPropertyDifferences(double frame, const RigExecRigPose &ranged,
 /// phased dense blend sample into its binding's, and a cross-domain points
 /// read into a local binding's. Over {1,2,3,2,1,3} the chain's points,
 /// every version, the published values (the picked point among them) and
-/// the lines agree with the chain built whole.
+/// the lines agree with the chain built whole. Bindings poison their gather
+/// as they go, so a read that outlives its binding fails on every platform.
 void
 TestWholeReadersGatherAfterRangeRevisions()
 {
@@ -10043,6 +10044,7 @@ TestWholeReadersGatherAfterRangeRevisions()
     }
     const RigExecBakedProgramImpl::GeomChain &chain = R.chains[0];
     const SdfPath picked("/Asset/Rig/Channels.picked");
+    RigExecBakedProgramTesting::SetPoisonReleasedGathers(true);
     for (const double frame : {1.0, 2.0, 3.0, 2.0, 1.0, 3.0}) {
         RigExecRigPose rangedPose, wholePose;
         CHECK(ranged.program->Run(UsdTimeCode(frame), &rangedPose));
@@ -10066,6 +10068,7 @@ TestWholeReadersGatherAfterRangeRevisions()
         }
         CHECK(rangedPose.diagnostics == wholePose.diagnostics);
     }
+    RigExecBakedProgramTesting::SetPoisonReleasedGathers(false);
     CHECK(R.chainVersionMismatches == 0);
     std::printf("  whole readers gather after Range revisions\n");
 }

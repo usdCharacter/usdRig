@@ -864,8 +864,20 @@ struct RigExecBakedPointsBinding {
     /// Dense over every binding of the program, for the test capture.
     int id = -1;
     /// The binding's own gather buffer for a version that is not one buffer
-    /// (RigExecBakedResolvePoints); one reading step per binding.
+    /// (RigExecBakedResolvePoints); one reading step per binding. Points
+    /// resolved into it are valid only while the binding lives.
     mutable std::vector<GfVec3f> gather;
+
+    RigExecBakedPointsBinding() = default;
+    RigExecBakedPointsBinding(const RigExecBakedPointsBinding &) = default;
+    RigExecBakedPointsBinding(RigExecBakedPointsBinding &&) = default;
+    RigExecBakedPointsBinding &
+    operator=(const RigExecBakedPointsBinding &) = default;
+    RigExecBakedPointsBinding &
+    operator=(RigExecBakedPointsBinding &&) = default;
+    /// Fills `gather` with NaN first under
+    /// RigExecBakedProgramTesting::SetPoisonReleasedGathers.
+    ~RigExecBakedPointsBinding();
 };
 
 /// One provider frame as one writer of its stack -- a constraint or a

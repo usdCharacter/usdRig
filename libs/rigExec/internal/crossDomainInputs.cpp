@@ -394,11 +394,12 @@ ReadCrossDomain(const RigExecBakedProgramImpl &B, int index, VtValue *value,
         const GfVec3f *points = nullptr;
         size_t count = 0;
         bool available = false;
+        // Local, never the read's own: many steps read one cross-domain read,
+        // and a version cut into groups gathers into the binding's buffer.
+        // `points` can lie in that buffer, so the binding outlives every use
+        // of it below.
+        RigExecBakedPointsBinding binding;
         if (value) {
-            // Local, never the read's own: many steps read one cross-domain
-            // read, and a version cut into groups gathers into the binding's
-            // buffer. Every use of `points` below copies out before it goes.
-            RigExecBakedPointsBinding binding;
             binding.finalRead = read.finalPoints;
             for (const auto &candidate : read.points)
                 binding.candidates.push_back(

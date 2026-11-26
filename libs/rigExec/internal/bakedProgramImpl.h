@@ -4622,6 +4622,10 @@ struct RigExecBakedProgramTesting {
     /// nodes (the default) or on the baked Range arm, which weighted
     /// matrices still run on. Set it on the thread that builds.
     static void SetOpMatrices(bool on);
+    /// Whether a point binding fills its gather buffer with NaN as it is
+    /// destroyed, so a reader that outlives the binding reads NaN on every
+    /// platform. Set it on the thread that runs, while none runs.
+    static void SetPoisonReleasedGathers(bool on);
     static void SetOpObservers(const RigExecBakedProgram &program,
                                std::function<void(uint32_t)> before,
                                std::function<void(uint32_t)> after);

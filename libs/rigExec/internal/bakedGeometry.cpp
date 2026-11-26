@@ -6530,6 +6530,23 @@ RigExecBakedProgramTesting::SetOpMatrices(bool on)
     gOpMatrices = on;
 }
 
+namespace {
+bool gPoisonReleasedGathers = false;
+} // namespace
+
+void
+RigExecBakedProgramTesting::SetPoisonReleasedGathers(bool on)
+{
+    gPoisonReleasedGathers = on;
+}
+
+RigExecBakedPointsBinding::~RigExecBakedPointsBinding()
+{
+    if (gPoisonReleasedGathers)
+        std::fill(gather.begin(), gather.end(),
+                  GfVec3f(std::numeric_limits<float>::quiet_NaN()));
+}
+
 bool
 RigExecBakedRevisionLeaf(const RigExecBakedProgramImpl &B, uint32_t id,
                          bool *enabled, float *weight, std::string *error)
