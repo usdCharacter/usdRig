@@ -8,7 +8,10 @@
 #include "rigExecMath/poseArithmeticKernel.h"
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecRigTypes/rigTypes.h"
+#include "rigExecStdTypes/array.h"
 #include <algorithm>
+#include <cstring>
+#include <variant>
 #include <limits>
 #include <utility>
 
@@ -637,9 +640,6 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
         return eval::RunValueStep(host, ref).outcome == eval::Outcome::Applied;
     }
 
-    case RigExecWireStepKind::ProviderRefresh:
-        return RrRunProviderRefresh(program, wire, error);
-
     case RigExecWireStepKind::SpaceExpression:
         return RrRunSpaceExpression(program, wire, error);
 
@@ -860,13 +860,55 @@ RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
         return true;
     }
     const RrStore &store = program->store;
+    if (lookup.source == uint8_t(eval::OpLookupSource::ProviderFrame)) {
+        const auto &refreshes = program->poses->providerRefreshes;
+        const uint64_t id =
+            lookup.object >= refreshes.size() ? UINT64_MAX
+            : lookup.read ? uint64_t(refreshes[lookup.object].currentValue)
+                          : uint64_t(refreshes[lookup.object].baseValue);
+        const auto *value = id < store.providerValues.size() &&
+                                    store.providerValues[id].initialized &&
+                                    !store.providerValues[id].blocked
+                                ? std::get_if<RigExecProviderPlainFrame>(
+                                      &store.providerValues[id].value)
+                                : nullptr;
+        if (!value || type.size != sizeof(RrPointFrame))
+            return fail(lookup.read ? "connected final pose input incomplete"
+                                    : "connected base pose input incomplete");
+        auto &frame = *static_cast<RrPointFrame *>(out);
+        for (size_t p = 0; p < 4; ++p)
+            for (size_t a = 0; a < 3; ++a)
+                frame.points[p][a] = value->points[p][a];
+        frame.flags = value->flags;
+        return true;
+    }
+    if (lookup.source == uint8_t(eval::OpLookupSource::ProviderParentRaw)) {
+        if (type.size != sizeof(RrMat4d) ||
+            lookup.object >= program->ladderRead.size())
+            return fail("slot " + std::to_string(lookup.object) +
+                        " has no parent space");
+        const RrWireValue raw =
+            RrReadProviderRefreshBlocker(program, int(lookup.object));
+        std::memcpy(out, raw.matrix.data(), sizeof(RrMat4d));
+        return true;
+    }
     if (!scratch ||
         lookup.source != uint8_t(eval::OpLookupSource::CommitRecordGate) ||
         lookup.object >= store.commits.size() ||
         lookup.object >= scratch->recordAfter.size() ||
-        lookup.object >= scratch->recordEveryTarget.size() || lookup.read > 2)
+        lookup.object >= scratch->recordEveryTarget.size() || lookup.read > 3)
         return fail("commit " + std::to_string(lookup.object) +
                     " holds no such record gate");
+    if (lookup.read == 3) {
+        const auto &commit = store.commits[lookup.object];
+        if (type.size != sizeof(uint8_t) || lookup.part < 0 ||
+            size_t(lookup.part) >= commit.present.size())
+            return fail("commit " + std::to_string(lookup.object) +
+                        " has no output " + std::to_string(lookup.part));
+        *static_cast<uint8_t *>(out) =
+            !commit.abandoned && commit.present[size_t(lookup.part)] ? 1 : 0;
+        return true;
+    }
     if (lookup.read == 0) {
         if (!type.borrow)
             return fail("a commit's presence is an array");
@@ -882,6 +924,18 @@ RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
     return true;
 }
 
+int64_t
+RrRefreshOf(const RrProgram *program, const RigExecWireStep &step)
+{
+    if (step.kind != RigExecWireStepKind::OpNode || !program->file->opGraph)
+        return -1;
+    for (const auto &output : program->file->opGraph->hostOutputs)
+        if (output && output->node == uint64_t(step.object) &&
+            output->target == uint8_t(eval::OpOutputTarget::RefreshBase))
+            return int64_t(output->object);
+    return -1;
+}
+
 bool
 RrStoreSpace(RrProgram *program, const eval::OpHostOutput &output,
              const void *value, std::string *error)
@@ -889,6 +943,39 @@ RrStoreSpace(RrProgram *program, const eval::OpHostOutput &output,
     using T = eval::OpOutputTarget;
     RrStore &store = program->store;
     const T target = T(output.target);
+    if (target >= T::RefreshBase) {
+        if (output.object >= program->poses->providerRefreshes.size()) {
+            if (error)
+                *error = "no provider refresh " + std::to_string(output.object);
+            return false;
+        }
+        const auto &refresh = program->poses->providerRefreshes[output.object];
+        if (target == T::RefreshBase || target == T::RefreshFinal) {
+            (target == T::RefreshBase ? store.base[refresh.baseWrite]
+                                      : store.fin[refresh.finWrite]) =
+                *static_cast<const RrPointFrame *>(value);
+            return true;
+        }
+        const auto &frames = *static_cast<
+            const rigExecStd::RigExecArray<rigExecRig::PointFrame> *>(value);
+        if (frames.Size() != refresh.carries.size()) {
+            if (error)
+                *error = "provider refresh " + std::to_string(output.object) +
+                         " carries " + std::to_string(refresh.carries.size()) +
+                         " descendants";
+            return false;
+        }
+        static_assert(sizeof(rigExecRig::PointFrame) == sizeof(RrPointFrame),
+                      "a rig frame is a runtime frame");
+        for (size_t k = 0; k < frames.Size(); ++k) {
+            const auto &carry = refresh.carries[k];
+            std::memcpy(target == T::RefreshCarryBase
+                            ? &store.base[carry.baseWrite]
+                            : &store.fin[carry.finWrite],
+                        &frames[k], sizeof(RrPointFrame));
+        }
+        return true;
+    }
     if (target == T::FrameMatrixValid) {
         if (output.object >= store.frameMatrixValid.size()) {
             if (error)

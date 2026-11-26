@@ -6,13 +6,12 @@
 #include "rigExecEvalCore/spaces.h"
 #include <algorithm>
 #include "rigExecGraph/providerArithmetic.h"
-#include "rigExecMath/providerRefreshKernel.h"
 #include <cstring>
 #include <optional>
 #include <type_traits>
 namespace rigExec {
 namespace {
-// SpaceExpression part 0 and ProviderRefresh run through EvalCore's single
+// SpaceExpression part 0 runs through EvalCore's single
 // space body; the bridge parts below stay here as input binding.
 struct SpaceMath {
     using Matrix = RrMat4d;
@@ -299,81 +298,10 @@ struct Store {
         out.count = 0;
         out.error = message;
     }
-    bool CommitAbandoned(uint32_t index) const
-    {
-        return (*commits)[index].abandoned;
-    }
-    bool CommitPresent(uint32_t index, uint32_t pos) const
-    {
-        const auto &commit = (*commits)[index];
-        return pos < commit.present.size() && commit.present[pos];
-    }
-    const RrPointFrame &BaseFrame(uint32_t version) const
-    {
-        return (*base)[version];
-    }
-    const RrPointFrame &FinFrame(uint32_t version) const
-    {
-        return (*fin)[version];
-    }
-    RrPointFrame *MutableBaseFrame(uint32_t version)
-    {
-        return &(*base)[version];
-    }
-    RrPointFrame *MutableFinFrame(uint32_t version)
-    {
-        return &(*fin)[version];
-    }
-    RrPointFrame *RefreshBaseInputs(size_t index)
-    {
-        return (*refreshScratch)[index].baseInputs.data();
-    }
-    RrPointFrame *RefreshFinInputs(size_t index)
-    {
-        return (*refreshScratch)[index].finInputs.data();
-    }
-    RrPointFrame *RefreshBaseOutputs(size_t index)
-    {
-        return (*refreshScratch)[index].baseOutputs.data();
-    }
-    RrPointFrame *RefreshFinOutputs(size_t index)
-    {
-        return (*refreshScratch)[index].finOutputs.data();
-    }
-    uint8_t *RefreshBlocked(size_t index)
-    {
-        return (*refreshScratch)[index].blocked.data();
-    }
-    RrMat4d ParentRawMatrix(int slot) const
-    {
-        return RrValueFromWire(RrReadProviderRefreshBlocker(program, slot))
-            .matrix;
-    }
-    const RrPointFrame *ReadRefreshFrame(uint64_t id, RrPointFrame *scratch)
-    {
-        if (id >= values.size())
-            return nullptr;
-        const auto &state = values[size_t(id)];
-        if (!state.initialized || state.blocked)
-            return nullptr;
-        const auto *value =
-            std::get_if<RigExecProviderPlainFrame>(&state.value);
-        if (!value)
-            return nullptr;
-        for (size_t p = 0; p < 4; ++p)
-            for (size_t a = 0; a < 3; ++a)
-                scratch->points[p][a] = value->points[p][a];
-        scratch->flags = value->flags;
-        return scratch;
-    }
     void PushDiagnostic(const std::string &text)
     {
         diagnostics->push_back(text);
     }
-    const RrProgram *program = nullptr;
-    const std::vector<RrCommitScratch> *commits = nullptr;
-    std::vector<RrPointFrame> *base = nullptr, *fin = nullptr;
-    std::vector<RrProviderRefreshScratch> *refreshScratch = nullptr;
     std::vector<std::string> *diagnostics = nullptr;
 };
 struct SpaceInputs {
@@ -389,26 +317,6 @@ struct SpaceInputs {
     size_t valueCount() const
     {
         return program->store.providerValues.size();
-    }
-    size_t refreshCount() const
-    {
-        return program->poses->providerRefreshes.size();
-    }
-    const RigExecWireProviderRefresh &refresh(size_t index) const
-    {
-        return program->poses->providerRefreshes[index];
-    }
-    std::string refreshPath(size_t index) const
-    {
-        const auto &record = program->poses->providerRefreshes[index];
-        return program->TextOrEmpty(
-            program->slotMeta->paths[size_t(record.slot)]);
-    }
-    std::string refreshCarryPath(size_t index, size_t carry) const
-    {
-        const auto &record = program->poses->providerRefreshes[index];
-        return program->TextOrEmpty(
-            program->slotMeta->paths[size_t(record.carries[carry].slot)]);
     }
 };
 struct SpaceHost {
@@ -723,17 +631,6 @@ RrOpenProviderProgram(RrProgram *program, std::string *error)
         converted[i].matrices.resize(count);
         converted[i].frames.resize(count);
         converted[i].vectors.resize(count);
-    }
-    auto &refresh = program->store.providerRefreshScratch;
-    refresh.resize(program->poses->providerRefreshes.size());
-    for (size_t i = 0; i < refresh.size(); ++i) {
-        const size_t count =
-            program->poses->providerRefreshes[i].carries.size();
-        refresh[i].baseInputs.resize(count);
-        refresh[i].finInputs.resize(count);
-        refresh[i].baseOutputs.resize(count);
-        refresh[i].finOutputs.resize(count);
-        refresh[i].blocked.resize(count);
     }
     return true;
 }
@@ -1224,34 +1121,4 @@ RrRunSpaceExpression(RrProgram *program, const RigExecWireStep &step,
             static_cast<eval::spaces::SpaceDetail>(result.detail));
     return false;
 }
-bool
-RrRunProviderRefresh(RrProgram *program, const RigExecWireStep &step,
-                     std::string *error)
-{
-    if (step.object < 0 ||
-        size_t(step.object) >= program->poses->providerRefreshes.size()) {
-        if (error)
-            *error = "ProviderRefresh names no compiled context";
-        return false;
-    }
-    const size_t physical = size_t(&step - program->steps->data());
-    const SpaceInputs inputs{program};
-    Store state(program->store.providerValues);
-    state.program = program;
-    state.commits = &program->store.commits;
-    state.base = &program->store.base;
-    state.fin = &program->store.fin;
-    state.refreshScratch = &program->store.providerRefreshScratch;
-    state.diagnostics = &program->store.stepOutputs[physical].diagnostics;
-    SpaceHost host(inputs, state);
-    const eval::StepResult result =
-        eval::RunValueStep(host, eval::StepRef{uint32_t(step.kind), step.object,
-                                               step.part, size_t(step.object)});
-    if (result.outcome == eval::Outcome::Applied)
-        return true;
-    if (error)
-        *error = "ProviderRefresh names no compiled context";
-    return false;
-}
-
 } // namespace rigExec

@@ -26,8 +26,6 @@ static_assert(static_cast<uint8_t>(fb::StepKind::ChainInputs) == 25,
               "ChainInputs keeps its ordinal");
 static_assert(static_cast<uint8_t>(fb::StepKind::AvarInputs) == 26,
               "AvarInputs keeps its ordinal");
-static_assert(static_cast<uint8_t>(fb::StepKind::ProviderRefresh) == 28,
-              "ProviderRefresh keeps its ordinal");
 static_assert(static_cast<uint8_t>(fb::StepKind::ReservedSolverCommit) == 2 &&
                   static_cast<uint8_t>(fb::StepKind::ReservedCommitDelta) ==
                       4 &&
@@ -35,6 +33,8 @@ static_assert(static_cast<uint8_t>(fb::StepKind::ReservedSolverCommit) == 2 &&
                       5 &&
                   static_cast<uint8_t>(fb::StepKind::ReservedCommitApply) == 6,
               "the retired commit ordinals are 2, 4, 5 and 6");
+static_assert(static_cast<uint8_t>(fb::StepKind::ReservedProviderRefresh) == 28,
+              "the retired provider refresh ordinal is 28");
 static_assert(static_cast<uint8_t>(fb::StepKind::ReservedOpGraph) == 29,
               "the retired op graph ordinal is 29");
 static_assert(static_cast<uint8_t>(fb::StepKind::OpNode) == 30 &&
@@ -62,7 +62,8 @@ IsReservedStepKind(StepKind kind)
            kind == fb::StepKind::ReservedSolverCommit ||
            kind == fb::StepKind::ReservedCommitDelta ||
            kind == fb::StepKind::ReservedPropagateChunk ||
-           kind == fb::StepKind::ReservedCommitApply;
+           kind == fb::StepKind::ReservedCommitApply ||
+           kind == fb::StepKind::ReservedProviderRefresh;
 }
 
 } // namespace eval

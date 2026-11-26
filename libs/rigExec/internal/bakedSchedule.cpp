@@ -1187,10 +1187,9 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                 descendantCarries(kBase, commit.descendantBaseCarry,
                                   commit.slotBaseWrites);
             }
-        } else if (step.kind == RigExecBakedStepKind::ProviderRefresh &&
-                   step.object >= 0 &&
-                   size_t(step.object) < B.providerRefreshes.size()) {
-            const auto &refresh = B.providerRefreshes[size_t(step.object)];
+        } else if (const int index = RigExecBakedProviderRefreshOf(B, step);
+                   index >= 0) {
+            const auto &refresh = B.providerRefreshes[size_t(index)];
             check(kBase, refresh.baseRead, reader, -1);
             check(kFin, refresh.finRead, reader, -1);
             for (const auto &carry : refresh.carries) {
@@ -2306,8 +2305,6 @@ RouteBakedStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
         RigExecBakedRunSpaceOp(B, step);
     } else if (step->kind == RigExecBakedStepKind::SpaceCheckpoint) {
         RigExecBakedRunSpaceCheckpoint(B, step);
-    } else if (step->kind == RigExecBakedStepKind::ProviderRefresh) {
-        RigExecBakedRunProviderRefresh(B, step);
     } else if (step->kind == RigExecBakedStepKind::AvarInputs) {
         RigExecBakedRunAvarOp(B, step);
     } else if (RigExecBakedIsOpStep(step->kind)) {

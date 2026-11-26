@@ -1692,7 +1692,7 @@ RrExecuteOpGraph(RrProgram *p, bool force, std::string *error)
         std::sort(coveredTyped.begin(), coveredTyped.end());
         for (auto id : p->opGraph.ops[c].descriptor.reads) {
             const auto &value = state.values[size_t(id)];
-            if (exact && step.kind == RigExecWireStepKind::ProviderRefresh &&
+            if (exact && RrRefreshOf(p, step) >= 0 &&
                 value.domain == uint32_t(RigExecWireSlotDomain::SpaceLeaf))
                 continue;
             const bool incoming =

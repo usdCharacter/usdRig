@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <cstddef>
 
 using namespace rigExec;
@@ -45,15 +46,10 @@ CheckOrdinals()
             continue;
         }
         if (kind == eval::StepKind::ReservedProviderMatrix ||
-            kind == eval::StepKind::ReservedFrameMatrix) {
-            const bool provider =
-                kind == eval::StepKind::ReservedProviderMatrix;
-            CHECK(std::strcmp(eval::StepKindName(kind),
-                              provider ? "ReservedProviderMatrix"
-                                       : "ReservedFrameMatrix") == 0);
-            CHECK(std::strcmp(RigExecBakedStepKindName(baked),
-                              provider ? "ProviderMatrix" : "FrameMatrix") ==
-                  0);
+            kind == eval::StepKind::ReservedFrameMatrix ||
+            kind == eval::StepKind::ReservedProviderRefresh) {
+            CHECK(std::string(eval::StepKindName(kind)) ==
+                  std::string("Reserved") + RigExecBakedStepKindName(baked));
             continue;
         }
         if (kind == eval::StepKind::ReservedSolverCommit ||
@@ -83,12 +79,13 @@ CheckOrdinals()
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedOpGraph));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedProviderMatrix));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedFrameMatrix));
+    CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedProviderRefresh));
     CHECK(!eval::IsReservedStepKind(eval::StepKind::ComposeSubtree));
     CHECK(eval::StepKindName(
               static_cast<eval::StepKind>(eval::StepKindCount))[0] == '\0');
     CHECK(static_cast<uint8_t>(eval::StepKind::ChainInputs) == 25);
     CHECK(static_cast<uint8_t>(eval::StepKind::AvarInputs) == 26);
-    CHECK(static_cast<uint8_t>(eval::StepKind::ProviderRefresh) == 28);
+    CHECK(static_cast<uint8_t>(eval::StepKind::ReservedProviderRefresh) == 28);
     CHECK(static_cast<uint8_t>(eval::StepKind::ReservedOpGraph) == 29);
     CHECK(static_cast<uint8_t>(eval::StepKind::OpNode) == 30);
     CHECK(static_cast<uint8_t>(eval::StepKind::OpChainRange) == 32);

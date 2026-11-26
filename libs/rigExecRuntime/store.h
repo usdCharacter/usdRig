@@ -383,11 +383,6 @@ struct RrProviderConversionScratch {
     std::vector<RrVec3d> vectors;
 };
 
-struct RrProviderRefreshScratch {
-    std::vector<RrPointFrame> baseInputs, finInputs, baseOutputs, finOutputs;
-    std::vector<uint8_t> blocked;
-};
-
 struct RrStore {
     RigExecOpWorkspace opWorkspace;
     RigExecOpExecution opExecution;
@@ -434,7 +429,6 @@ struct RrStore {
     std::vector<std::string> packetContentKeys;
     std::vector<RigExecProviderPlainState> providerValues;
     std::vector<RrProviderConversionScratch> providerConversionScratch;
-    std::vector<RrProviderRefreshScratch> providerRefreshScratch;
     std::vector<char> propertyPublished;
     std::vector<char> chainHaveBase, chainBaseDirty, lastHaveBase;
     std::vector<char> derivedHaveBase;
@@ -1036,7 +1030,10 @@ bool RrLookUpPoseVersion(const RrProgram *program, const eval::OpLookup &lookup,
 bool RrStoreVolumePlacement(RrProgram *program,
                             const eval::OpHostOutput &output, const void *value,
                             std::string *error);
-/// Resolves a RestFrame or CommitRecordGate lookup.
+/// The provider refresh op step \p step runs, or -1 for any other step.
+int64_t RrRefreshOf(const RrProgram *program, const RigExecWireStep &step);
+/// Resolves a RestFrame, CommitRecordGate, ProviderFrame or
+/// ProviderParentRaw lookup.
 bool RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
                    const RigExecTypeDesc &type, void *out, std::string *error);
 /// Stores a provider's final or base matrix, or a frame record's matrix or

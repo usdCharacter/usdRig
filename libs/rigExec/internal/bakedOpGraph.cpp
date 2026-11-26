@@ -88,7 +88,7 @@ RigExecBakedEffectiveMemo(const RigExecBakedProgramImpl &B, uint32_t c,
     }
     for (auto id : *reads) {
         const auto &value = B.opAdapter.values[size_t(id)];
-        if (exact && step.kind == RigExecBakedStepKind::ProviderRefresh &&
+        if (exact && RigExecBakedProviderRefreshOf(B, step) >= 0 &&
             value.domain == uint32_t(RigExecBakedSlotDomain::SpaceLeaf))
             continue;
         const bool incoming =

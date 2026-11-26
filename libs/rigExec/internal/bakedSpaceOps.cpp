@@ -4,6 +4,7 @@
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecOps/space/spaceOps.h"
 #include "rigExecRigTypes/rigTypes.h"
+#include "rigExecStdTypes/array.h"
 
 #include "pxr/base/gf/matrix4d.h"
 
@@ -22,6 +23,26 @@ SpaceFail(std::string *error, std::string why)
     if (error)
         *error = std::move(why);
     return false;
+}
+
+void
+PutFrame(const RigExecPointFrame &frame, rigExecRig::PointFrame *out)
+{
+    for (size_t i = 0; i < 4; ++i)
+        out->points[i] = rigExecStd::Vec3d(
+            frame.points[i][0], frame.points[i][1], frame.points[i][2]);
+    out->flags = frame.flags;
+}
+
+RigExecPointFrame
+TakeFrame(const rigExecRig::PointFrame &frame)
+{
+    RigExecPointFrame out;
+    for (size_t i = 0; i < 4; ++i)
+        out.points[i] =
+            GfVec3d(frame.points[i][0], frame.points[i][1], frame.points[i][2]);
+    out.flags = frame.flags;
+    return out;
 }
 
 } // namespace
@@ -48,6 +69,19 @@ RigExecBakedAddSpaceOp(const RigExecBakedProgramImpl &B,
         builder->BindOutput(node, port);
         layout->hostOutputs.push_back(
             {node, port.Index(), uint8_t(target), object});
+    };
+    const auto lookUpList = [&](RigExecNodeId node,
+                                const RigExecPortHandle &port,
+                                const std::vector<eval::OpLookup> &elements) {
+        builder->BindInput(node, port);
+        layout->hostInputs.push_back({node, port.Index(),
+                                      eval::OpHostSource::Lookup,
+                                      uint32_t(layout->lookups.size())});
+        layout->lookups.push_back({uint8_t(S::List),
+                                   uint32_t(layout->lookups.size()) + 1,
+                                   int32_t(elements.size()), 0});
+        layout->lookups.insert(layout->lookups.end(), elements.begin(),
+                               elements.end());
     };
     const auto numbered = [&](RigExecNodeId node, size_t origin) {
         return node == origin ||
@@ -107,8 +141,59 @@ RigExecBakedAddSpaceOp(const RigExecBakedProgramImpl &B,
         store(node, FrameMatrixOut(), T::FrameMatrix, uint32_t(origin.object));
         store(node, FrameMatrixValid(), T::FrameMatrixValid,
               uint32_t(origin.object));
+    } else if (origin.family == RigExecBakedOpFamily::ProviderRefresh) {
+        const uint32_t index = uint32_t(origin.object);
+        const auto &refresh = B.providerRefreshes[index];
+        ProviderRefreshPayload payload;
+        std::vector<eval::OpLookup> carryBase, carryFinal, parents;
+        for (const auto &carry : refresh.carries) {
+            payload.blockingCounts.push_back(
+                uint32_t(carry.blockingSlots.size()));
+            carryBase.push_back(
+                {uint8_t(S::PoseVersion), carry.baseRead, 1, 0});
+            carryFinal.push_back(
+                {uint8_t(S::PoseVersion), carry.finRead, 0, 0});
+            for (const int slot : carry.blockingSlots)
+                parents.push_back(
+                    {uint8_t(S::ProviderParentRaw), uint32_t(slot), -1, 0});
+        }
+        const RigExecNodeId node = builder->AddOp(ProviderRefresh(), &payload);
+        if (!numbered(node, o))
+            return false;
+        lookUp(node, ProviderRefreshBase(), S::PoseVersion, refresh.baseRead, 1,
+               0);
+        lookUp(node, ProviderRefreshFinal(), S::PoseVersion, refresh.finRead, 0,
+               0);
+        lookUp(node, ProviderRefreshRaw(), S::ProviderFrame, index, -1, 0);
+        lookUp(node, ProviderRefreshCurrent(), S::ProviderFrame, index, -1, 1);
+        if (!refresh.priorConstraints.empty()) {
+            std::vector<eval::OpLookup> committed;
+            for (const auto &[commit, pos] : refresh.priorConstraints)
+                committed.push_back(
+                    {uint8_t(S::CommitRecordGate), commit, int32_t(pos), 3});
+            lookUpList(node, ProviderRefreshConstrained(), committed);
+        }
+        lookUpList(node, ProviderRefreshCarryBase(), carryBase);
+        lookUpList(node, ProviderRefreshCarryFinal(), carryFinal);
+        if (!parents.empty())
+            lookUpList(node, ProviderRefreshBlockingParents(), parents);
+        store(node, ProviderRefreshBaseOut(), T::RefreshBase, index);
+        store(node, ProviderRefreshFinalOut(), T::RefreshFinal, index);
+        store(node, ProviderRefreshCarryBaseOut(), T::RefreshCarryBase, index);
+        store(node, ProviderRefreshCarryFinalOut(), T::RefreshCarryFinal,
+              index);
     }
     return true;
+}
+
+int
+RigExecBakedProviderRefreshOf(const RigExecBakedProgramImpl &B,
+                              const RigExecBakedStep &step)
+{
+    const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(B, step);
+    return origin && origin->family == RigExecBakedOpFamily::ProviderRefresh
+               ? int(origin->object)
+               : -1;
 }
 
 bool
@@ -122,19 +207,52 @@ RigExecBakedLookUpSpace(const RigExecBakedProgramImpl &B,
             lookup.object >= B.restFrames.size())
             return SpaceFail(error, "slot " + std::to_string(lookup.object) +
                                         " has no rest frame");
-        const RigExecPointFrame &frame = B.restFrames[lookup.object];
-        auto &value = *static_cast<rigExecRig::PointFrame *>(out);
-        for (size_t i = 0; i < 4; ++i)
-            value.points[i] = rigExecStd::Vec3d(
-                frame.points[i][0], frame.points[i][1], frame.points[i][2]);
-        value.flags = frame.flags;
+        PutFrame(B.restFrames[lookup.object],
+                 static_cast<rigExecRig::PointFrame *>(out));
+        return true;
+    }
+    if (lookup.source == uint8_t(eval::OpLookupSource::ProviderFrame)) {
+        const RigExecPointFrame *frame =
+            type.size == sizeof(rigExecRig::PointFrame) &&
+                    lookup.object < B.providerRefreshes.size()
+                ? B.providerValues.Read<RigExecPointFrame>(
+                      lookup.read
+                          ? B.providerRefreshes[lookup.object].currentValue
+                          : B.providerRefreshes[lookup.object].baseValue)
+                : nullptr;
+        if (!frame)
+            return SpaceFail(error, lookup.read ? "connected final pose input "
+                                                  "incomplete"
+                                                : "connected base pose input "
+                                                  "incomplete");
+        PutFrame(*frame, static_cast<rigExecRig::PointFrame *>(out));
+        return true;
+    }
+    if (lookup.source == uint8_t(eval::OpLookupSource::ProviderParentRaw)) {
+        if (type.size != sizeof(GfMatrix4d) ||
+            lookup.object >= B.providerParentRawLeaves.size())
+            return SpaceFail(error, "slot " + std::to_string(lookup.object) +
+                                        " has no parent space");
+        const GfMatrix4d raw =
+            RigExecBakedProviderParentRaw(B, int(lookup.object));
+        std::memcpy(out, raw.data(), sizeof(GfMatrix4d));
         return true;
     }
     if (lookup.source != uint8_t(eval::OpLookupSource::CommitRecordGate) ||
-        lookup.object >= B.commits.size() || lookup.read > 2)
+        lookup.object >= B.commits.size() || lookup.read > 3)
         return SpaceFail(error, "commit " + std::to_string(lookup.object) +
                                     " holds no such record gate");
     const RigExecBakedCommit &commit = B.commits[lookup.object];
+    if (lookup.read == 3) {
+        if (type.size != sizeof(uint8_t) || lookup.part < 0 ||
+            size_t(lookup.part) >= commit.present.size())
+            return SpaceFail(error, "commit " + std::to_string(lookup.object) +
+                                        " has no output " +
+                                        std::to_string(lookup.part));
+        *static_cast<uint8_t *>(out) =
+            !commit.abandoned && commit.present[size_t(lookup.part)] ? 1 : 0;
+        return true;
+    }
     if (lookup.read == 0) {
         if (!type.borrow)
             return SpaceFail(error, "a commit's presence is an array");
@@ -156,6 +274,35 @@ RigExecBakedStoreSpace(RigExecBakedProgramImpl &B,
 {
     using T = eval::OpOutputTarget;
     const T target = T(output.target);
+    if (target >= T::RefreshBase) {
+        if (output.object >= B.providerRefreshes.size())
+            return SpaceFail(error, "no provider refresh " +
+                                        std::to_string(output.object));
+        const auto &refresh = B.providerRefreshes[output.object];
+        if (target == T::RefreshBase || target == T::RefreshFinal) {
+            const auto &frame =
+                *static_cast<const rigExecRig::PointFrame *>(value);
+            (target == T::RefreshBase ? B.base[refresh.baseWrite]
+                                      : B.fin[refresh.finWrite]) =
+                TakeFrame(frame);
+            return true;
+        }
+        const auto &frames = *static_cast<
+            const rigExecStd::RigExecArray<rigExecRig::PointFrame> *>(value);
+        if (frames.Size() != refresh.carries.size())
+            return SpaceFail(error, "provider refresh " +
+                                        std::to_string(output.object) +
+                                        " carries " +
+                                        std::to_string(refresh.carries.size()) +
+                                        " descendants");
+        for (size_t k = 0; k < frames.Size(); ++k) {
+            const auto &carry = refresh.carries[k];
+            (target == T::RefreshCarryBase ? B.base[carry.baseWrite]
+                                           : B.fin[carry.finWrite]) =
+                TakeFrame(frames[k]);
+        }
+        return true;
+    }
     if (target == T::FrameMatrixValid) {
         if (output.object >= B.frameMatrixValid.size())
             return SpaceFail(error, "frame record " +

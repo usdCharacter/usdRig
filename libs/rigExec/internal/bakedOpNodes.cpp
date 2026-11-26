@@ -724,7 +724,8 @@ AddPoseWalkOps(const RigExecBakedProgramImpl &B, RigExecRigDescBuilder *builder,
     using F = RigExecBakedOpFamily;
     for (size_t o = 0; o < B.opNodeOrigins.size(); ++o) {
         const F family = B.opNodeOrigins[o].family;
-        if ((family == F::ProviderMatrix || family == F::FrameMatrix) &&
+        if ((family == F::ProviderMatrix || family == F::FrameMatrix ||
+             family == F::ProviderRefresh) &&
             !RigExecBakedAddSpaceOp(B, builder, layout, o, error))
             return false;
         if (family == F::PoseCommit &&

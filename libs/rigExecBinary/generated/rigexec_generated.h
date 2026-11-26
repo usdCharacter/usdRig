@@ -1209,7 +1209,8 @@ enum class StepKind : uint8_t {
   ChainInputs = 25,
   AvarInputs = 26,
   SpaceCheckpoint = 27,
-  ProviderRefresh = 28,
+  /// Reserved. Open refuses it.
+  ReservedProviderRefresh = 28,
   /// Reserved. Open refuses it.
   ReservedOpGraph = 29,
   /// Format 36: File.op_graph's nodes as steps: one node that does not run
@@ -1252,7 +1253,7 @@ inline const StepKind (&EnumValuesStepKind())[33] {
     StepKind::ChainInputs,
     StepKind::AvarInputs,
     StepKind::SpaceCheckpoint,
-    StepKind::ProviderRefresh,
+    StepKind::ReservedProviderRefresh,
     StepKind::ReservedOpGraph,
     StepKind::OpNode,
     StepKind::OpChainHead,
@@ -1291,7 +1292,7 @@ inline const char * const *EnumNamesStepKind() {
     "ChainInputs",
     "AvarInputs",
     "SpaceCheckpoint",
-    "ProviderRefresh",
+    "ReservedProviderRefresh",
     "ReservedOpGraph",
     "OpNode",
     "OpChainHead",
@@ -22448,7 +22449,8 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// and 30 whether the plane is bounded (uint).
   /// 20 (format 41): the rest frame of slot `object`. 21 (format 41): the
   /// record gates of pose commit `object`: `read` 0 its present bytes, 1
-  /// record-after, 2 record-every-target.
+  /// record-after, 2 record-every-target, 3 whether it committed output
+  /// `part`.
   /// 5: an array of `part` elements, element i what lookup `object` + i
   /// answers. 6: the final (`part` 0) or base (`part` 1) matrix of
   /// provider slot `object`. 7: frame record `object`, present when valid
@@ -22458,6 +22460,8 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// 42): input `read` of revision `object` (geometry.revision_index): 0
   /// inputs:enabled (Bool), 1 inputs:defaultWeight (Float), 2 (format 44)
   /// whether rigExec:weightBlend is radial (Bool).
+  /// 22: provider refresh `object`'s re-evaluated base (`read` 0) or
+  /// current (1) frame. 23: the raw parent space of slot `object`.
   /// 30 (format 43): the frames of pose commit `object` at version list
   /// `part`: 0 entering, 1 carry, 2 base carry, 3 current descendants, 4
   /// closest, 5 descendant carry, 6 descendant base carry. 31 (format 43):
@@ -22571,7 +22575,9 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// packet of weight object `object`; 5 (format 40): the weights of weight
   /// field `object`; 20 and 21 (format 41): the final and the base matrix
   /// of slot `object`; 22 and 23 (format 41): the matrix and the valid byte
-  /// of frame record `object`; 30 to 33 (format 43): the final candidate,
+  /// of frame record `object`; 24 to 27: provider refresh `object`'s base
+  /// and final frames and its carried descendants' base and final frames;
+  /// 30 to 33 (format 43): the final candidate,
   /// final descendant, base candidate and base descendant versions pose
   /// commit `object` writes; 34 (format 43): which of its candidates are
   /// present.

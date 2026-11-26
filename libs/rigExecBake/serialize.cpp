@@ -63,7 +63,9 @@ _RIGEXEC_BAKE_PIN_STEP(ReservedPropertyRevision);
 _RIGEXEC_BAKE_PIN_STEP(RestCompose);
 _RIGEXEC_BAKE_PIN_STEP(LadderCompose);
 _RIGEXEC_BAKE_PIN_STEP(SkinTopology);
-_RIGEXEC_BAKE_PIN_STEP(ProviderRefresh);
+static_assert(uint8_t(RigExecBakedStepKind::ProviderRefresh) ==
+                  uint8_t(RigExecWireStepKind::ReservedProviderRefresh),
+              "wire step order drifted");
 _RIGEXEC_BAKE_PIN_STEP(ReservedOpGraph);
 _RIGEXEC_BAKE_PIN_STEP(OpNode);
 _RIGEXEC_BAKE_PIN_STEP(OpChainHead);

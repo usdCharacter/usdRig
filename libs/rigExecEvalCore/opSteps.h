@@ -66,8 +66,15 @@ enum class OpLookupSource : uint8_t {
     RestFrame = 20,
     /// The record gates of pose commit `object`: `read` 0 its per-output
     /// presence (BoolArray), 1 whether it records after itself and 2
-    /// whether it records every target (Bool).
+    /// whether it records every target (Bool); 3 whether it committed output
+    /// `part` this run (Bool).
     CommitRecordGate = 21,
+    /// PointFrame: provider refresh `object`'s re-evaluated base (`read` 0)
+    /// or current (1) frame; a value missing this frame fails the lookup.
+    ProviderFrame = 22,
+    /// Mat4d: the raw parent space of slot `object`, the identity where
+    /// its leaf is blocked.
+    ProviderParentRaw = 23,
     /// PointFrameList: the pose frames at the versions list `part`
     /// (OpCommitList) of commit `object` names.
     CommitVersions = 30,
@@ -106,8 +113,8 @@ enum class OpRevisionRead : uint8_t {
 constexpr bool
 OpSpaceLookupSource(uint8_t source)
 {
-    return source == uint8_t(OpLookupSource::RestFrame) ||
-           source == uint8_t(OpLookupSource::CommitRecordGate);
+    return source >= uint8_t(OpLookupSource::RestFrame) &&
+           source <= uint8_t(OpLookupSource::ProviderParentRaw);
 }
 
 /// Whether a lookup of \p source answers a Mat4d that may be absent or,
@@ -208,6 +215,12 @@ enum class OpOutputTarget : uint8_t {
     /// (Bool).
     FrameMatrix = 22,
     FrameMatrixValid = 23,
+    /// Provider refresh `object`'s refreshed base and final frames
+    /// (PointFrame) and its carried descendants' (PointFrameList).
+    RefreshBase = 24,
+    RefreshFinal = 25,
+    RefreshCarryBase = 26,
+    RefreshCarryFinal = 27,
     /// PointFrameList element i into the version commit `object` writes
     /// for its candidate or descendant i: final, then base.
     CommitSlots = 30,
@@ -224,7 +237,7 @@ constexpr bool
 OpSpaceOutputTarget(uint8_t target)
 {
     return target >= uint8_t(OpOutputTarget::ProviderFinalMatrix) &&
-           target <= uint8_t(OpOutputTarget::FrameMatrixValid);
+           target <= uint8_t(OpOutputTarget::RefreshCarryFinal);
 }
 
 /// Whether OpLookUp resolves lookups of \p source.
@@ -951,6 +964,8 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
         break;
     case OpLookupSource::RestFrame:
     case OpLookupSource::CommitRecordGate:
+    case OpLookupSource::ProviderFrame:
+    case OpLookupSource::ProviderParentRaw:
         return host.LookUpSpace(index, lookup, type, value, error);
     }
     return OpLayoutFail(error, "no host resolves lookup source " +
@@ -990,6 +1005,10 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
     case OpOutputTarget::ProviderBaseMatrix:
     case OpOutputTarget::FrameMatrix:
     case OpOutputTarget::FrameMatrixValid:
+    case OpOutputTarget::RefreshBase:
+    case OpOutputTarget::RefreshFinal:
+    case OpOutputTarget::RefreshCarryBase:
+    case OpOutputTarget::RefreshCarryFinal:
         return host.StoreSpace(output, value, error);
     }
     return OpLayoutFail(error, "no host stores output target " +

@@ -354,6 +354,20 @@ _TestSolverSemanticRefusals(const std::vector<uint8_t> &bytes)
            "imported predecessor is not a typed or semantic requirement");
     checkedSolverSemanticRequirements = true;
 }
+// Whether step \p s runs provider refresh \p refresh as an op node.
+static bool
+_RunsRefresh(const fb::RigExecWireFile &f, const fb::RigExecWireStep &s,
+             int64_t refresh)
+{
+    if (s.kind != fb::StepKind::OpNode || !f.opGraph)
+        return false;
+    for (const auto &output : f.opGraph->hostOutputs)
+        if (output && output->node == uint64_t(s.object) &&
+            output->target == 24 && int64_t(output->object) == refresh)
+            return true;
+    return false;
+}
+
 static void
 _TestProviderRefreshRefusals(const std::vector<uint8_t> &bytes)
 {
@@ -415,8 +429,7 @@ _TestProviderRefreshRefusals(const std::vector<uint8_t> &bytes)
             [](auto &f) {
                 const auto value = f.pose->providerRefreshes[0].baseRead;
                 for (auto &s : f.steps)
-                    if (s.kind == fb::StepKind::ProviderRefresh &&
-                        s.object == 0)
+                    if (_RunsRefresh(f, s, 0))
                         s.reads.erase(
                             std::remove_if(
                                 s.reads.begin(), s.reads.end(),
@@ -428,13 +441,12 @@ _TestProviderRefreshRefusals(const std::vector<uint8_t> &bytes)
                                 }),
                             s.reads.end());
             },
-            "body SSA missing read PoseBase");
+            "which it does not read");
         expect(
             "body write",
             [](auto &f) {
                 for (auto &s : f.steps)
-                    if (s.kind == fb::StepKind::ProviderRefresh &&
-                        s.object == 0)
+                    if (_RunsRefresh(f, s, 0))
                         s.writes.clear();
             },
             "refresh write ownership differs");
@@ -484,8 +496,7 @@ _TestProviderRefreshRefusals(const std::vector<uint8_t> &bytes)
                         "blocker raw declaration",
                         [i, rawRow](auto &f) {
                             for (auto &s : f.steps)
-                                if (s.kind == fb::StepKind::ProviderRefresh &&
-                                    s.object == int(i))
+                                if (_RunsRefresh(f, s, int64_t(i)))
                                     s.reads.erase(
                                         std::remove_if(
                                             s.reads.begin(), s.reads.end(),

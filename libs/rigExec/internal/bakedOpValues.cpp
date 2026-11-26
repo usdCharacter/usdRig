@@ -1852,13 +1852,9 @@ InputKey(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
         for (int index : step.readerWalks)
             if (index >= 0 && size_t(index) < B.readerWalks.size())
                 coverWalk(B.readerWalks[size_t(index)].walk);
-    if (effective && step.kind == RigExecBakedStepKind::ProviderRefresh) {
-        if (step.object < 0 ||
-            size_t(step.object) >= B.providerRefreshes.size()) {
-            invalid();
-            return false;
-        }
-        const auto &refresh = B.providerRefreshes[size_t(step.object)];
+    if (const int index = RigExecBakedProviderRefreshOf(B, step);
+        effective && index >= 0) {
+        const auto &refresh = B.providerRefreshes[size_t(index)];
         for (const auto &carry : refresh.carries)
             for (int slot : carry.blockingSlots) {
                 if (slot < 0 || size_t(slot) >= B.ladders.size()) {

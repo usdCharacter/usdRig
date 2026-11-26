@@ -2721,9 +2721,11 @@ ProbeSpaces(const B &b)
             ProbeProviderMatrix(b, identity);
         else if (id.kind == RigExecBakedStepKind::FrameMatrix)
             ProbeFrameMatrix(b, identity);
-        else if (step.kind == RigExecBakedStepKind::ProviderRefresh)
-            ProbeProviderRefresh(b, step);
-        else if (step.kind == RigExecBakedStepKind::SpaceExpression)
+        else if (id.kind == RigExecBakedStepKind::ProviderRefresh) {
+            RigExecBakedStep probe = step;
+            probe.object = id.object;
+            ProbeProviderRefresh(b, probe);
+        } else if (step.kind == RigExecBakedStepKind::SpaceExpression)
             ProbeSpaceExpression(b, step);
     }
 }

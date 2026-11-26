@@ -1039,12 +1039,6 @@ RigExecBakedPlanProviderRefreshes(RigExecBakedProgramImpl *program)
                 if (!blocked)
                     refresh.carries.push_back(std::move(carry));
             }
-            const size_t count = refresh.carries.size();
-            refresh.baseInputs.resize(count);
-            refresh.finInputs.resize(count);
-            refresh.baseOutputs.resize(count);
-            refresh.finOutputs.resize(count);
-            refresh.blocked.resize(count);
             B.providerRefreshBefore[checkpoint].push_back(
                 uint32_t(B.providerRefreshes.size()));
             B.providerRefreshes.push_back(std::move(refresh));
@@ -1127,8 +1121,7 @@ RigExecBakedBindProviderRefresh(
     return true;
 }
 namespace {
-// SpaceExpression part 0 and ProviderRefresh run through EvalCore's single
-// space body; the bridge parts below stay here as input binding, and the
+// SpaceExpression part 0 runs through EvalCore's single space body; the bridge parts below stay here as input binding, and the
 // xform-composing op kinds keep RigExecRunProviderOp.
 struct BakedSpaceMath {
     using Matrix = GfMatrix4d;
@@ -1163,9 +1156,6 @@ struct BakedSpaceMath {
 };
 struct BakedSpaceInputs {
     const RigExecProviderProgram *program = nullptr;
-    const std::vector<RigExecBakedProgramImpl::ProviderRefresh> *refreshes =
-        nullptr;
-    const std::vector<std::string> *pathTexts = nullptr;
     size_t opCount() const
     {
         return program->ops.size();
@@ -1178,39 +1168,13 @@ struct BakedSpaceInputs {
     {
         return program->valueKeys.size();
     }
-    size_t refreshCount() const
-    {
-        return refreshes->size();
-    }
-    const RigExecBakedProgramImpl::ProviderRefresh &refresh(size_t index) const
-    {
-        return (*refreshes)[index];
-    }
-    std::string_view refreshPath(size_t index) const
-    {
-        return (*pathTexts)[size_t((*refreshes)[index].slot)];
-    }
-    std::string_view refreshCarryPath(size_t index, size_t carry) const
-    {
-        return (*pathTexts)[size_t((*refreshes)[index].carries[carry].slot)];
-    }
 };
 struct BakedSpaceState : GfProviderStore {
-    BakedSpaceState(
-        RigExecTypedValueStore &values, const RigExecBakedProgramImpl *program,
-        const std::vector<RigExecBakedCommit> *commits,
-        std::vector<RigExecPointFrame> *base,
-        std::vector<RigExecPointFrame> *fin,
-        std::vector<RigExecBakedProgramImpl::ProviderRefresh> *refreshes,
-        std::vector<std::string> *diagnostics)
-        : GfProviderStore{values}, program(program), commits(commits),
-          base(base), fin(fin), refreshes(refreshes), diagnostics(diagnostics)
+    BakedSpaceState(RigExecTypedValueStore &values,
+                    std::vector<std::string> *diagnostics)
+        : GfProviderStore{values}, diagnostics(diagnostics)
     {
     }
-    const RigExecBakedProgramImpl *program = nullptr;
-    const std::vector<RigExecBakedCommit> *commits = nullptr;
-    std::vector<RigExecPointFrame> *base = nullptr, *fin = nullptr;
-    std::vector<RigExecBakedProgramImpl::ProviderRefresh> *refreshes = nullptr;
     std::vector<std::string> *diagnostics = nullptr;
     const VtValue *Boxed(uint64_t id) const
     {
@@ -1305,59 +1269,6 @@ struct BakedSpaceState : GfProviderStore {
         store.Publish(RigExecValueId(id), std::monostate(), false, false, 0,
                       message);
     }
-    bool CommitAbandoned(uint32_t index) const
-    {
-        return (*commits)[index].abandoned;
-    }
-    bool CommitPresent(uint32_t index, uint32_t pos) const
-    {
-        return (*commits)[index].present[pos];
-    }
-    const RigExecPointFrame &BaseFrame(uint32_t version) const
-    {
-        return (*base)[version];
-    }
-    const RigExecPointFrame &FinFrame(uint32_t version) const
-    {
-        return (*fin)[version];
-    }
-    RigExecPointFrame *MutableBaseFrame(uint32_t version)
-    {
-        return &(*base)[version];
-    }
-    RigExecPointFrame *MutableFinFrame(uint32_t version)
-    {
-        return &(*fin)[version];
-    }
-    RigExecPointFrame *RefreshBaseInputs(size_t index)
-    {
-        return (*refreshes)[index].baseInputs.data();
-    }
-    RigExecPointFrame *RefreshFinInputs(size_t index)
-    {
-        return (*refreshes)[index].finInputs.data();
-    }
-    RigExecPointFrame *RefreshBaseOutputs(size_t index)
-    {
-        return (*refreshes)[index].baseOutputs.data();
-    }
-    RigExecPointFrame *RefreshFinOutputs(size_t index)
-    {
-        return (*refreshes)[index].finOutputs.data();
-    }
-    uint8_t *RefreshBlocked(size_t index)
-    {
-        return (*refreshes)[index].blocked.data();
-    }
-    GfMatrix4d ParentRawMatrix(int slot) const
-    {
-        return RigExecBakedProviderParentRaw(*program, slot);
-    }
-    const RigExecPointFrame *
-    ReadRefreshFrame(uint64_t id, RigExecPointFrame * /*scratch*/) const
-    {
-        return store.Read<RigExecPointFrame>(RigExecValueId(id));
-    }
     void PushDiagnostic(const std::string &text)
     {
         diagnostics->push_back(text);
@@ -1406,29 +1317,6 @@ SpaceFailureMessage(eval::spaces::SpaceDetail detail)
     return "invalid provider kernel/store binding";
 }
 } // namespace
-void
-RigExecBakedRunProviderRefresh(RigExecBakedProgramImpl *program,
-                               RigExecBakedStep *step)
-{
-    auto &B = *program;
-    if (step->object < 0 ||
-        size_t(step->object) >= B.providerRefreshes.size()) {
-        step->diagnostics.push_back(
-            "ProviderRefresh names no compiled context");
-        return;
-    }
-    const BakedSpaceInputs inputs{&B.GetProviderProgram(), &B.providerRefreshes,
-                                  B.pathTexts.get()};
-    BakedSpaceState state(B.providerValues, &B, &B.commits, &B.base, &B.fin,
-                          &B.providerRefreshes, &step->diagnostics);
-    BakedSpaceHost host(inputs, state);
-    const eval::StepResult result = eval::RunValueStep(
-        host, eval::StepRef{uint32_t(step->kind), step->object, step->part,
-                            size_t(step->object)});
-    if (result.outcome != eval::Outcome::Applied)
-        step->diagnostics.push_back(
-            "ProviderRefresh names no compiled context");
-}
 // A ladder reads its own property revision before following connections,
 // while other consumers keep
 // the shared expression and their independently selected connection phase.
@@ -1828,10 +1716,8 @@ RigExecBakedRunSpaceOp(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
         }
         return;
     }
-    const BakedSpaceInputs inputs{&B.GetProviderProgram(), &B.providerRefreshes,
-                                  B.pathTexts.get()};
-    BakedSpaceState state(B.providerValues, &B, &B.commits, &B.base, &B.fin,
-                          &B.providerRefreshes, &step->diagnostics);
+    const BakedSpaceInputs inputs{&B.GetProviderProgram()};
+    BakedSpaceState state(B.providerValues, &step->diagnostics);
     BakedSpaceHost host(inputs, state);
     const eval::StepResult result = eval::RunValueStep(
         host, eval::StepRef{uint32_t(step->kind), step->object, step->part,

@@ -1097,9 +1097,8 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
     }
     if (step.kind == RigExecWireStepKind::SpaceExpression)
         return RrProviderEffectiveInputMemo(program, step, key, covered);
-    if (step.kind == RigExecWireStepKind::ProviderRefresh) {
-        const auto &refresh =
-            program->poses->providerRefreshes[size_t(step.object)];
+    if (const int64_t index = RrRefreshOf(program, step); index >= 0) {
+        const auto &refresh = program->poses->providerRefreshes[size_t(index)];
         for (const auto &carry : refresh.carries)
             for (int slot : carry.blockingSlots) {
                 const auto &input = program->RegisteredInput(
@@ -1301,7 +1300,6 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
     case RigExecWireStepKind::ChainStatus:
     case RigExecWireStepKind::ChainInputs:
     case RigExecWireStepKind::SpaceCheckpoint:
-    case RigExecWireStepKind::ProviderRefresh:
     case RigExecWireStepKind::OpNode:
     case RigExecWireStepKind::OpChainHead:
     case RigExecWireStepKind::OpChainRange:

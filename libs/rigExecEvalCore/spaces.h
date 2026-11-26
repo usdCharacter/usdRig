@@ -1,18 +1,16 @@
 // One space step of a compiled rig, shared by the baked program and .rigexec
-// playback: the SpaceExpression provider-op runner (part 0) and the
-// ProviderRefresh contextual re-evaluation. Both front ends bind their own
-// inputs and publish through their own typed stores; what lives here is the
-// kind dispatch, the affine expression sequencing, the missing-input mapping
-// and the refresh orchestration, so both make the same decision for the same
-// facts. Internal to the evaluator and playback, never an exported API.
+// playback: the SpaceExpression provider-op runner (part 0). Both front ends
+// bind their own inputs and publish through their own typed stores; what
+// lives here is the kind dispatch, the affine expression sequencing and the
+// missing-input mapping, so both make the same decision for the same facts.
+// Internal to the evaluator and playback, never an exported API.
 //
 // A spaces host binds storage and math as host.h requires (nested Math,
 // Inputs, State with inputs(), state() and ranges()) and answers the access
-// below. Inputs are immutable borrowed views of the compiled op and refresh
-// tables; views must not outlive the program. State addresses the existing
-// value store, frame versions, commit presence and diagnostics sink by the
-// compiled index the adapter already uses. Space steps run serially; ranges()
-// is unused and may be null.
+// below. Inputs are immutable borrowed views of the compiled op tables;
+// views must not outlive the program. State addresses the existing value
+// store and diagnostics sink by the compiled index the adapter already uses.
+// Space steps run serially; ranges() is unused and may be null.
 //
 // LocalXform and InterveningXform ops evaluate only on the baked side (they
 // compose captured UsdGeom xform orders); here they answer Rejected and the
@@ -33,7 +31,6 @@
 #include "rigExecEvalCore/step.h"
 #include "rigExecGraph/providerArithmetic.h"
 #include "rigExecMath/affineFrameKernel.h"
-#include "rigExecMath/providerRefreshKernel.h"
 
 namespace rigExec {
 namespace eval {
@@ -198,99 +195,11 @@ RunSpaceOp(Host &host, const StepRef &step)
                       static_cast<int32_t>(SpaceDetail::None)};
 }
 
-// ProviderRefresh: the constrained check, the carry capture with its parent
-// blocks, the shared frame kernel, the write-back and the outcome's single
-// diagnostic, in the order both adapters run them today.
-template <class Host>
-StepResult
-RunSpaceRefresh(Host &host, const StepRef &step)
-{
-    const auto &inputs = host.inputs();
-    auto &state = host.state();
-    if (step.object < 0 || size_t(step.object) >= inputs.refreshCount())
-        return StepResult{Outcome::Invalid,
-                          static_cast<int32_t>(SpaceDetail::NoRefresh)};
-    const size_t index = size_t(step.object);
-    const auto &refresh = inputs.refresh(index);
-    bool constrained = false;
-    for (const auto &prior : refresh.priorConstraints)
-        constrained =
-            constrained || (!state.CommitAbandoned(prior.first) &&
-                            state.CommitPresent(prior.first, prior.second));
-    using Math = typename Host::Math;
-    using Frame = typename Math::Frame;
-    using Matrix = typename Math::Matrix;
-    const Matrix identity(1);
-    for (size_t k = 0; k < refresh.carries.size(); ++k) {
-        const auto &carry = refresh.carries[k];
-        state.RefreshBaseInputs(index)[k] = state.BaseFrame(carry.baseRead);
-        state.RefreshFinInputs(index)[k] = state.FinFrame(carry.finRead);
-        state.RefreshBlocked(index)[k] = 0;
-        for (const auto slot : carry.blockingSlots)
-            if (state.ParentRawMatrix(slot) != identity)
-                state.RefreshBlocked(index)[k] = 1;
-    }
-    Frame rawStorage, currentStorage;
-    size_t failed = 0;
-    const auto outcome = RigExecRefreshProviderFrames<Math>(
-        state.BaseFrame(refresh.baseRead), state.FinFrame(refresh.finRead),
-        state.ReadRefreshFrame(uint64_t(refresh.baseValue), &rawStorage),
-        state.ReadRefreshFrame(uint64_t(refresh.currentValue), &currentStorage),
-        constrained, state.RefreshBaseInputs(index),
-        state.RefreshFinInputs(index), state.RefreshBlocked(index),
-        refresh.carries.size(), state.MutableBaseFrame(refresh.baseWrite),
-        state.MutableFinFrame(refresh.finWrite),
-        state.RefreshBaseOutputs(index), state.RefreshFinOutputs(index),
-        &failed);
-    for (size_t k = 0; k < refresh.carries.size(); ++k) {
-        const auto &carry = refresh.carries[k];
-        *state.MutableBaseFrame(carry.baseWrite) =
-            state.RefreshBaseOutputs(index)[k];
-        *state.MutableFinFrame(carry.finWrite) =
-            state.RefreshFinOutputs(index)[k];
-    }
-    const auto path = inputs.refreshPath(index);
-    if (outcome == RigExecProviderRefreshOutcome::MissingBase)
-        state.PushDiagnostic(
-            std::string("connected base pose input incomplete: ") +
-            std::string(path));
-    else if (outcome == RigExecProviderRefreshOutcome::MissingCurrent)
-        state.PushDiagnostic(
-            std::string("connected final pose input incomplete: ") +
-            std::string(path));
-    else if (outcome == RigExecProviderRefreshOutcome::InvalidBase)
-        state.PushDiagnostic(std::string(path) +
-                             " produced an invalid or degenerate base frame; "
-                             "constraint passed through");
-    else if (outcome == RigExecProviderRefreshOutcome::InvalidCurrent)
-        state.PushDiagnostic(std::string(path) +
-                             " produced an invalid or degenerate frame for " +
-                             std::string(path) + "; constraint passed through");
-    else if (outcome == RigExecProviderRefreshOutcome::SingularCurrent)
-        state.PushDiagnostic(
-            std::string(path) +
-            " produced a singular hierarchy delta; constraint passed through");
-    else if (outcome == RigExecProviderRefreshOutcome::InvalidDescendant)
-        state.PushDiagnostic(
-            std::string(path) +
-            " could not propagate its pose revision through " +
-            std::string(inputs.refreshCarryPath(index, failed)) +
-            "; constraint passed through");
-    else if (outcome ==
-             RigExecProviderRefreshOutcome::InvalidTransformedDescendant)
-        state.PushDiagnostic(
-            std::string(path) + " produced an invalid descendant frame for " +
-            std::string(inputs.refreshCarryPath(index, failed)) +
-            "; constraint passed through");
-    return StepResult{Outcome::Applied,
-                      static_cast<int32_t>(SpaceDetail::None)};
-}
-
 } // namespace spaces
 
 // The space kinds behind one entry: SpaceExpression part 0 runs the portable
 // provider op the step names (bridge parts stay adapter-local input
-// binding), ProviderRefresh re-evaluates the named context. Adapters route
+// binding). Adapters route
 // the step here and map the outcome to their existing stores and messages.
 template <class Host>
 StepResult
@@ -301,8 +210,6 @@ RunValueStep(Host &host, const StepRef &step)
                   "state() and ranges()");
     if (step.kind == uint32_t(StepKind::SpaceExpression))
         return spaces::RunSpaceOp(host, step);
-    if (step.kind == uint32_t(StepKind::ProviderRefresh))
-        return spaces::RunSpaceRefresh(host, step);
     return StepResult{Outcome::Invalid,
                       static_cast<int32_t>(spaces::SpaceDetail::None)};
 }

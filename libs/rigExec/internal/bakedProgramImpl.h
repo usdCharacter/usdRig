@@ -1177,6 +1177,8 @@ enum class RigExecBakedOpFamily : uint8_t {
     FrameMatrix,
     /// The write-back of commit `object` (a walk step) through PoseCommit.
     PoseCommit,
+    /// A connected provider's refresh: object the providerRefreshes index.
+    ProviderRefresh,
 };
 
 /// Where an op node's step comes from: its family, that family's object and
@@ -1410,9 +1412,6 @@ struct RigExecBakedProgramImpl {
         uint32_t baseRead = 0, finRead = 0, baseWrite = 0, finWrite = 0;
         std::vector<Carry> carries;
         std::vector<std::pair<uint32_t, uint32_t>> priorConstraints;
-        std::vector<RigExecPointFrame> baseInputs, finInputs, baseOutputs,
-            finOutputs;
-        std::vector<uint8_t> blocked;
     };
     std::vector<ProviderRefresh> providerRefreshes;
     std::vector<std::vector<uint32_t>> providerRefreshBefore;
@@ -2645,8 +2644,10 @@ bool RigExecBakedBindProviderRefresh(
     const std::function<uint32_t(bool, int)> &allocate,
     RigExecProviderContextIndex *contextIndex,
     const std::vector<std::vector<size_t>> &externalInputsBySlot);
-void RigExecBakedRunProviderRefresh(RigExecBakedProgramImpl *program,
-                                    RigExecBakedStep *step);
+/// The providerRefreshes index op step \p step refreshes, or -1 for any
+/// other step.
+int RigExecBakedProviderRefreshOf(const RigExecBakedProgramImpl &program,
+                                  const RigExecBakedStep &step);
 
 void RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program);
 
@@ -2913,7 +2914,8 @@ bool RigExecBakedStoreWeightPacket(RigExecBakedProgramImpl &B,
 void RigExecBakedAddVolumePlacementOps(const RigExecBakedProgramImpl &B,
                                        RigExecRigDescBuilder *builder,
                                        eval::OpStepLayout *layout);
-/// The ProviderMatrix or FrameMatrix op node of origin \p o, numbered \p o.
+/// The ProviderMatrix, FrameMatrix or ProviderRefresh op node of origin
+/// \p o, numbered \p o.
 bool RigExecBakedAddSpaceOp(const RigExecBakedProgramImpl &B,
                             RigExecRigDescBuilder *builder,
                             eval::OpStepLayout *layout, size_t o,

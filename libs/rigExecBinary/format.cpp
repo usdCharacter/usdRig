@@ -595,8 +595,13 @@ public:
         _frameRecordOf.assign(nodes, -1);
         _providerSlotOf.assign(nodes, -1);
         _commitNode.assign(nodes, -1);
+        _refreshOf.assign(nodes, -1);
         if (!nodes)
             return;
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 24 &&
+                _refreshOf[output->node] < 0)
+                _refreshOf[output->node] = int64_t(output->object);
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node < nodes &&
                 (output->target == 20 || output->target == 21) &&
@@ -713,7 +718,7 @@ private:
                 return _Bad("op_graph.host_outputs: an entry is missing");
             const bool commit = output->target >= 30 && output->target <= 34;
             if ((output->target > 6 && output->target < 20) ||
-                (output->target > 23 && !commit))
+                (output->target > 27 && !commit))
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
             if (output->node >= _f.opGraph->nodes.size())
@@ -727,6 +732,15 @@ private:
                     return _Bad("op_graph.host_outputs: node " + _N(node) +
                                 " stores into commit " + _N(output->object) +
                                 ", which it does not write back");
+                continue;
+            }
+            if (output->target >= 24) {
+                if (!_f.pose ||
+                    !_Has(_f.pose->providerRefreshes, output->object) ||
+                    _refreshOf[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores frames of no provider refresh it "
+                                "runs");
                 continue;
             }
             if (output->target >= 20) {
@@ -915,9 +929,26 @@ private:
             }
             if (lookup && lookup->source == 21) {
                 if (!_Has(_f.pose->commits, lookup->object) ||
-                    lookup->part != -1 || lookup->read > 2)
+                    (lookup->read == 3
+                         ? !_Has(_f.pose->commits[lookup->object].slots,
+                                 lookup->part)
+                         : lookup->part != -1 || lookup->read > 2))
                     return _Bad("op_graph.lookups: a record gate lookup "
                                 "reads no gate of a commit");
+                continue;
+            }
+            if (lookup && lookup->source == 22) {
+                if (!_Has(_f.pose->providerRefreshes, lookup->object) ||
+                    lookup->part != -1 || lookup->read > 1)
+                    return _Bad("op_graph.lookups: a provider frame lookup "
+                                "reads no provider refresh");
+                continue;
+            }
+            if (lookup && lookup->source == 23) {
+                if (lookup->object >= _slots || lookup->part != -1 ||
+                    lookup->read)
+                    return _Bad("op_graph.lookups: a parent space lookup "
+                                "reads no slot");
                 continue;
             }
             if (lookup && lookup->source == 10) {
@@ -933,10 +964,10 @@ private:
                 const auto &lookups = _f.opGraph->lookups;
                 const bool listed = lookup->source == 5 || lookup->source == 9;
                 bool holds =
-                    listed
-                        ? lookup->part > 0 && uint64_t(lookup->object) +
-                                                      uint64_t(lookup->part) <=
-                                                  lookups.size()
+                    listed ? lookup->part >= (lookup->source == 5 ? 0 : 1) &&
+                                 uint64_t(lookup->object) +
+                                         uint64_t(lookup->part) <=
+                                     lookups.size()
                     : lookup->source == 6
                         ? (lookup->part == 0 || lookup->part == 1) &&
                               _GraphValueSlot(uint32_t(D::FinalMatrix),
@@ -1018,6 +1049,9 @@ private:
                 return _Bad(_StepName(i) + ": the retired PropagateChunk step");
             if (kind == fb::StepKind::ReservedCommitApply)
                 return _Bad(_StepName(i) + ": the retired CommitApply step");
+            if (kind == fb::StepKind::ReservedProviderRefresh)
+                return _Bad(_StepName(i) +
+                            ": the retired ProviderRefresh step");
             const bool op = kind == fb::StepKind::OpNode ||
                             kind == fb::StepKind::OpChainHead ||
                             kind == fb::StepKind::OpChainRange;
@@ -1168,10 +1202,12 @@ private:
     /// placement node one pose version, and a field node its own field and
     /// its consumer's entering points, a provider matrix node its own
     /// slot's rest frame, a frame record's node its record's rest frame,
-    /// pose version and commit gates, a revision lookup the revision its
-    /// node stores, and a commit node its own commit's versions and
-    /// candidates. A ChainVersion lookup on any other node is a range chain
-    /// member's group read, which Open checks.
+    /// pose version and commit gates, a provider refresh node its own
+    /// refresh's frames, prior constraint gates and blocking parents, a
+    /// revision lookup the revision its node stores, and a commit node its
+    /// own commit's versions and candidates. A List lookup's elements are
+    /// its node's lookups. A ChainVersion lookup on any other node is a
+    /// range chain member's group read, which Open checks.
     bool _OpLookupOwners()
     {
         const fb::RigExecWireOpGraph &graph = *_f.opGraph;
@@ -1182,15 +1218,61 @@ private:
                 stores[output->node] = int64_t(output->object);
         for (size_t n = 0; n < graph.nodes.size(); ++n) {
             size_t poses = 0;
+            std::vector<uint32_t> owned;
             for (const auto &input : graph.nodes[n]->inputs) {
                 if (input->host != 4)
                     continue;
-                const fb::RigExecWireOpLookup &lookup =
+                const fb::RigExecWireOpLookup &entry =
                     *graph.lookups[input->object];
+                if (entry.source != 5) {
+                    owned.push_back(input->object);
+                    continue;
+                }
+                for (int32_t e = 0; e < entry.part; ++e)
+                    owned.push_back(entry.object + uint32_t(e));
+            }
+            for (const uint32_t at : owned) {
+                const fb::RigExecWireOpLookup &lookup = *graph.lookups[at];
                 const auto bad = [&](const char *why) {
                     return _Bad("op_graph.nodes[" + _N(n) + "]: lookup " +
-                                _N(input->object) + why);
+                                _N(at) + why);
                 };
+                const int64_t refresh = _refreshOf[n];
+                if (refresh >= 0 && _f.pose &&
+                    _Has(_f.pose->providerRefreshes, refresh)) {
+                    const auto &r = _f.pose->providerRefreshes[size_t(refresh)];
+                    bool owns = false;
+                    if (lookup.source == 1) {
+                        owns = lookup.object ==
+                               (lookup.part ? r.baseRead : r.finRead);
+                        for (const auto &carry : r.carries)
+                            owns = owns || lookup.object ==
+                                               (lookup.part ? carry.baseRead
+                                                            : carry.finRead);
+                    } else if (lookup.source == 21) {
+                        for (const auto &prior : r.priorConstraints)
+                            owns =
+                                owns || (lookup.read == 3 &&
+                                         lookup.object == prior.first &&
+                                         lookup.part == int32_t(prior.second));
+                    } else if (lookup.source == 22) {
+                        owns = int64_t(lookup.object) == refresh;
+                    } else if (lookup.source == 23) {
+                        for (const auto &carry : r.carries)
+                            owns =
+                                owns || std::find(carry.blockingSlots.begin(),
+                                                  carry.blockingSlots.end(),
+                                                  int32_t(lookup.object)) !=
+                                            carry.blockingSlots.end();
+                    }
+                    if (!owns)
+                        return bad(" reads what its node's provider refresh "
+                                   "does not");
+                    continue;
+                }
+                if (lookup.source == 22 || lookup.source == 23)
+                    return bad(" reads a refresh input on a node that "
+                               "refreshes no provider");
                 const int64_t object = int64_t(lookup.object);
                 const int64_t record = _frameRecordOf[n];
                 const fb::FrameRecord *frame =
@@ -2414,6 +2496,16 @@ private:
                    : -1;
     }
 
+    /// The provider refresh the op step \p step runs, or -1 for any other
+    /// step.
+    int64_t _RefreshOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _refreshOf.size()
+                   ? _refreshOf[size_t(step.object)]
+                   : -1;
+    }
+
     int64_t _PacketObjectOf(const fb::RigExecWireStep &step) const
     {
         return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
@@ -2480,6 +2572,7 @@ private:
             !_f.opGraph->nodes[size_t(step.object)])
             return true;
         const uint64_t node = uint64_t(step.object);
+        const bool refresh = _RefreshOf(step) >= 0;
         std::set<std::pair<fb::SlotDomain, uint32_t>> stores;
         for (const auto &output : _f.opGraph->hostOutputs)
             if (output && output->node == node && output->target >= 20 &&
@@ -2489,15 +2582,35 @@ private:
                     : output->target == 21 ? fb::SlotDomain::BaseMatrix
                                            : fb::SlotDomain::FrameMatrix,
                     output->object);
-        if (stores.empty())
+        if (stores.empty() && !refresh)
             return true;
         std::set<std::pair<fb::SlotDomain, uint32_t>> writes;
         for (const fb::SlotRange &range : step.writes)
             for (uint32_t slot = range.begin(); slot < range.end(); ++slot)
                 writes.emplace(range.domain(), slot);
-        if (writes != stores)
+        if (!refresh && writes != stores)
             return _Bad(_StepName(i) + " writes other than the matrices it "
                                        "stores");
+        const auto declared = [&](const fb::RigExecWireOpLookup &lookup) {
+            uint64_t object = lookup.object;
+            if (lookup.source == 22) {
+                if (!_Has(_f.pose->providerRefreshes, lookup.object))
+                    return true;
+                const auto &refresh = _f.pose->providerRefreshes[lookup.object];
+                object = lookup.read ? refresh.currentValue : refresh.baseValue;
+            }
+            const auto domain =
+                lookup.source == 21   ? fb::SlotDomain::CommitTable
+                : lookup.source == 22 ? fb::SlotDomain::SpaceValue
+                : lookup.part         ? fb::SlotDomain::PoseBase
+                                      : fb::SlotDomain::PoseFin;
+            return !(lookup.source == 1 || lookup.source == 21 ||
+                     lookup.source == 22) ||
+                   _Declares(i, domain, object) ||
+                   _Bad(_StepName(i) + " looks up " +
+                        fb::EnumNameSlotDomain(domain) + "[" + _N(object) +
+                        "], which it does not read");
+        };
         for (const auto &input : _f.opGraph->nodes[size_t(node)]->inputs) {
             if (!input || input->host != 4 ||
                 !_Has(_f.opGraph->lookups, input->object) ||
@@ -2505,15 +2618,18 @@ private:
                 continue;
             const fb::RigExecWireOpLookup &lookup =
                 *_f.opGraph->lookups[size_t(input->object)];
-            const auto domain = lookup.source == 21
-                                    ? fb::SlotDomain::CommitTable
-                                : lookup.part ? fb::SlotDomain::PoseBase
-                                              : fb::SlotDomain::PoseFin;
-            if ((lookup.source == 1 || lookup.source == 21) &&
-                !_Declares(i, domain, lookup.object))
-                return _Bad(_StepName(i) + " looks up " +
-                            fb::EnumNameSlotDomain(domain) + "[" +
-                            _N(lookup.object) + "], which it does not read");
+            if (lookup.source != 5) {
+                if (!declared(lookup))
+                    return false;
+                continue;
+            }
+            for (int32_t e = 0; e < lookup.part; ++e) {
+                const uint64_t at = uint64_t(lookup.object) + uint64_t(e);
+                if (at < _f.opGraph->lookups.size() &&
+                    _f.opGraph->lookups[size_t(at)] &&
+                    !declared(*_f.opGraph->lookups[size_t(at)]))
+                    return false;
+            }
         }
         return true;
     }
@@ -2568,6 +2684,9 @@ private:
                 return _Bad(_StepName(i) + ": the retired PropagateChunk step");
             if (step.kind == fb::StepKind::ReservedCommitApply)
                 return _Bad(_StepName(i) + ": the retired CommitApply step");
+            if (step.kind == fb::StepKind::ReservedProviderRefresh)
+                return _Bad(_StepName(i) +
+                            ": the retired ProviderRefresh step");
             if (!_SpaceOp(i))
                 return false;
             if (const int64_t object = _PacketObjectOf(step); object >= 0) {
@@ -4391,10 +4510,11 @@ private:
             if (step.kind == K::SpaceCheckpoint &&
                 size_t(step.object) < checkpointProducers.size())
                 ++checkpointProducers[size_t(step.object)];
-            else if (step.kind == K::ProviderRefresh &&
-                     size_t(step.object) < refreshProducers.size())
-                ++refreshProducers[size_t(step.object)];
         }
+        for (const auto &step : _f.steps)
+            if (const int64_t refresh = _RefreshOf(step);
+                refresh >= 0 && size_t(refresh) < refreshProducers.size())
+                ++refreshProducers[size_t(refresh)];
         std::vector<uint32_t> finLast(_slots), baseLast(_slots);
         for (size_t slot = 0; slot < _slots; ++slot)
             finLast[slot] = baseLast[slot] = uint32_t(slot);
@@ -4510,13 +4630,11 @@ private:
                     read(D::Ladder, uint32_t(slot));
                 }
                 writes.emplace(D::SwitchFrame, uint32_t(step.object));
-            } else if (step.kind == K::ProviderRefresh) {
-                if (step.part != 0 || step.object < 0 ||
-                    size_t(step.object) >= pose.providerRefreshes.size())
+            } else if (const int64_t index = _RefreshOf(step); index >= 0) {
+                if (size_t(index) >= pose.providerRefreshes.size())
                     return _Bad(_StepName(owner) +
                                 ": invalid provider refresh body");
-                const auto &refresh =
-                    pose.providerRefreshes[size_t(step.object)];
+                const auto &refresh = pose.providerRefreshes[size_t(index)];
                 if (!_f.providerProgram ||
                     refresh.baseValue >= _f.providerProgram->valueKeys.size() ||
                     refresh.currentValue >=
@@ -9750,6 +9868,8 @@ private:
                    ? _commitNode[size_t(step.object)]
                    : -1;
     }
+    /// Per op node: the provider refresh it runs, or -1.
+    std::vector<int64_t> _refreshOf;
     std::vector<uint8_t> _placementBase;
     std::string _error;
     size_t _slots = 0;
@@ -10223,8 +10343,8 @@ _StepKindName(fb::StepKind kind)
         return "ReservedWeightField";
     case fb::StepKind::SpaceCheckpoint:
         return "SpaceCheckpoint";
-    case fb::StepKind::ProviderRefresh:
-        return "ProviderRefresh";
+    case fb::StepKind::ReservedProviderRefresh:
+        return "ReservedProviderRefresh";
     case fb::StepKind::ReservedOpGraph:
         return "ReservedOpGraph";
     case fb::StepKind::OpNode:
@@ -10305,11 +10425,8 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
         *out = pose->spaceCheckpoints[size_t(object)].key;
         return true;
     }
-    case fb::StepKind::ProviderRefresh:
-        if (!pose || !_Has(pose->providerRefreshes, object))
-            return false;
-        *out = pose->providerRefreshes[size_t(object)].key;
-        return true;
+    case fb::StepKind::ReservedProviderRefresh:
+        return false;
     case fb::StepKind::ReservedOpGraph:
         return false;
     case fb::StepKind::OpNode: {
@@ -10322,6 +10439,11 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
                 _Has(meta->paths, output->object)) {
                 *out = text(meta->paths[output->object]) +
                        (output->target == 20 ? " final" : " base");
+                return true;
+            }
+            if (output->target == 24 && pose &&
+                _Has(pose->providerRefreshes, output->object)) {
+                *out = pose->providerRefreshes[size_t(output->object)].key;
                 return true;
             }
             if (output->target == 22 && pose &&

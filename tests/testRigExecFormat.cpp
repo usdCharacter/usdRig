@@ -2974,6 +2974,16 @@ TestOpLookupOwners()
             look(f, uint32_t(matrix.object), 20, 0, -1);
             _AppendStep(f, std::move(matrix));
         });
+    expect("a listed rest frame on a placement node",
+           "reads a rest frame of a slot its node does not store", [&](F &f) {
+               auto element = std::make_unique<fb::RigExecWireOpLookup>();
+               element->source = 20;
+               element->object = 0;
+               element->part = -1;
+               const uint32_t at = uint32_t(f.opGraph->lookups.size());
+               f.opGraph->lookups.push_back(std::move(element));
+               look(f, place, 5, at, 1);
+           });
     expect("a weight lookup on a placement node",
            "reads a weight its node does not build", [&](F &f) {
                _AppendStep(f, packetStep(f));

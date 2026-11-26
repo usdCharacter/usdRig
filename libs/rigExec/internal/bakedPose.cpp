@@ -2759,9 +2759,8 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
     for (size_t index = 0; index < B.providerRefreshes.size(); ++index) {
         const auto &refresh = B.providerRefreshes[index];
         auto &step =
-            AddStep(&B, RigExecBakedStepKind::ProviderRefresh, int(index));
-        step.part = 0;
-        step.maxDiagnostics = 1;
+            AddOriginStep(&B, RigExecBakedOpFamily::ProviderRefresh,
+                          RigExecBakedStepKind::ProviderRefresh, int(index), 0);
         step.reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::SpaceValue,
                                              refresh.baseValue));
         step.reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::SpaceValue,
@@ -3218,6 +3217,13 @@ NoteStepInputs(const RigExecBakedProgramImpl &B,
                 B.weightObjects[size_t(identity.object)], sink);
         return;
     }
+    if (const int refresh = RigExecBakedProviderRefreshOf(B, step);
+        refresh >= 0) {
+        for (const auto &carry : B.providerRefreshes[size_t(refresh)].carries)
+            for (int slot : carry.blockingSlots)
+                NoteInput(B.ladders[size_t(slot)].parentSpace, sink);
+        return;
+    }
     switch (step.kind) {
     case RigExecBakedStepKind::Solve:
         if (step.object < 0 || size_t(step.object) >= B.solvers.size())
@@ -3253,12 +3259,6 @@ NoteStepInputs(const RigExecBakedProgramImpl &B,
         note(B.avarConstantBindings, B.avarConstantBindingBegin);
         break;
     }
-    case RigExecBakedStepKind::ProviderRefresh:
-        for (const auto &carry :
-             B.providerRefreshes[size_t(step.object)].carries)
-            for (int slot : carry.blockingSlots)
-                NoteInput(B.ladders[size_t(slot)].parentSpace, sink);
-        break;
     case RigExecBakedStepKind::ComposeSubtree: {
         if (step.object < 0 || size_t(step.object) >= B.composeGroups.size())
             break;
@@ -3599,15 +3599,16 @@ RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
                 frozenDetail::_VisitInterpolatorInputs(
                     B.poseInterpolators[size_t(step.object)], fn);
             });
-        } else if (step.kind == RigExecBakedStepKind::ProviderRefresh) {
+        } else if (const int refresh = RigExecBakedProviderRefreshOf(B, step);
+                   refresh >= 0) {
             directBindings(&step, [&](const auto &fn) {
                 for (const auto &carry :
-                     B.providerRefreshes[size_t(step.object)].carries)
+                     B.providerRefreshes[size_t(refresh)].carries)
                     for (int slot : carry.blockingSlots)
                         fn(B.ladders[size_t(slot)].parentSpace);
             });
             for (const auto &carry :
-                 B.providerRefreshes[size_t(step.object)].carries)
+                 B.providerRefreshes[size_t(refresh)].carries)
                 for (int slot : carry.blockingSlots) {
                     const int raw = B.providerParentRawLeaves[size_t(slot)];
                     if (raw < 0)
