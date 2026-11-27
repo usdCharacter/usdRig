@@ -522,6 +522,14 @@ Linking rules:
   `tools/check_pxr_libraries.py` runs in CI and fails on a link to either,
   an include under `pxr/usd/usdSkel` or `pxr/exec`, or an import of their
   Python modules.
+- A target that includes a header reaching the vendored FlatBuffers headers
+  (anything under `libs/rigExecEvalCore`, `rigExecRuntime` or
+  `rigExecBinary`) links a library that carries that include path; one
+  that includes a `rigExecMathGf` kernel header links `rigExecMathGf`.
+  Windows gets both from `cmake/WindowsArchiveLinks.cmake`, so a miss builds
+  there and fails on Linux and macOS. `tools/check_test_links.py` runs in CI
+  and fails on it; add the target to the matching `foreach()` at the end of
+  the root `CMakeLists.txt`.
 - A new test, bench, or probe that compiles a stage through `rigExec` alone
   joins the `rigExecScene` list near the end of `CMakeLists.txt`. Without
   it, compile returns false with a missing-scene diagnostic. Core-only tests

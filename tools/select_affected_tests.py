@@ -149,10 +149,15 @@ def split_args(body: str) -> list[str]:
     cur = []
     depth = 0
     in_str = False
+    escaped = False
     for c in body:
         if in_str:
             cur.append(c)
-            if c == '"':
+            if escaped:
+                escaped = False
+            elif c == "\\":
+                escaped = True
+            elif c == '"':
                 in_str = False
             continue
         if c == '"':
@@ -201,7 +206,9 @@ def iter_commands(text: str):
         while k < n:
             c = text[k]
             if in_str:
-                if c == '"':
+                if c == "\\":
+                    k += 1
+                elif c == '"':
                     in_str = False
             elif c == '"':
                 in_str = True
@@ -879,6 +886,11 @@ IMAGING_TESTS = [
     "testRigExecStepMapsChannels_serial",
     "testRigExecTouchPose",
     "testRigExecUpstreamInputs",
+    "testRigExecUpstreamInputsCones_grain0_parallel",
+    "testRigExecUpstreamInputsCones_grain0_serial",
+    "testRigExecUpstreamInputsCones_parallel",
+    "testRigExecUpstreamInputsCones_serial",
+    "testRigExecUpstreamInputsGraph_serial",
     "testRigExecWeightOverlay",
 ]
 

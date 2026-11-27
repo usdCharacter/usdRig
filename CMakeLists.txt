@@ -894,6 +894,20 @@ rigexec_add_test(NAME testRigExecPxrLibraryChecker
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/testRigExecPxrLibraryChecker.py")
 set_tests_properties(testRigExecPxrLibraryChecker PROPERTIES LABELS "fast")
 
+# A target that includes eval-core, runtime or binary headers links a library
+# that carries the FlatBuffers include path, and one that includes an
+# rigExecMathGf kernel header links the archive: Windows has both through
+# cmake/WindowsArchiveLinks.cmake, the other platforms only from this file
+# (tools/check_test_links.py).
+rigexec_add_test(NAME testRigExecTestLinkChecker
+    COMMAND ${Python3_EXECUTABLE}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_test_links.py" --self-test)
+set_tests_properties(testRigExecTestLinkChecker PROPERTIES LABELS "fast")
+rigexec_add_test(NAME testRigExecTestLinks
+    COMMAND ${Python3_EXECUTABLE}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_test_links.py")
+set_tests_properties(testRigExecTestLinks PROPERTIES LABELS "fast")
+
 # The legal packaging layer is stdlib-only. The manifest must partition the
 # tree exactly once, name every shipped legal text by its canonical file name,
 # and agree with the install prefix and the shipped archives member by member.
@@ -3755,6 +3769,7 @@ install(FILES tools/license_manifest.json
 foreach(_rigexec_math_user
         benchFrameCache
         benchFrameCacheWarm
+        rigExecPose
         testRigExecAffineFrames
         testRigExecArm
         testRigExecBakedSchedule

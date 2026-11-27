@@ -38,6 +38,19 @@ jobs:
       - name: Scan includes of rigExec/internal
         run: python3 tools/check_internal_includes.py
 
+  test-links:
+    name: tests link what they include
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout usdRig
+        uses: actions/checkout@v4
+
+      - name: Check FlatBuffers include paths and rigExecMathGf links
+        run: |
+          python3 tools/check_test_links.py --self-test
+          python3 tools/check_test_links.py
+
   allocations:
     name: no new bare new
     runs-on: ubuntu-24.04
