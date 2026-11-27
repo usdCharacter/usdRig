@@ -50,7 +50,9 @@ RigExecReferenceSolve(const RigExecSolverRecord &s,
     const bool ik = s.kind == RigExecSolverKind::TwoBoneIk;
     const bool twist = s.kind == RigExecSolverKind::TwistDistribution;
     const bool ribbon = s.kind == RigExecSolverKind::Ribbon;
-    if ((s.kind != RigExecSolverKind::FkChain && !ik && !twist && !ribbon) ||
+    const bool spline = s.kind == RigExecSolverKind::SplineIk;
+    if ((s.kind != RigExecSolverKind::FkChain && !ik && !twist && !ribbon &&
+         !spline) ||
         s.degenerate)
         return RigExecRunSolver(s, input, workspace, output, error);
     output->frames.clear();
@@ -65,6 +67,39 @@ RigExecReferenceSolve(const RigExecSolverRecord &s,
         *output = RigExecSampleRibbonFrames(input.ribbonPoints,
                                             s.ribbonRestPoints, s.ribbonSamples,
                                             s.jointRests, s.restIsLive);
+        return true;
+    }
+    if (spline) {
+        auto params = RigExecSolverSplineParams(s, input);
+        const auto *rest = &s.splineRest;
+        if (input.hasSpace) {
+            GfMatrix4d delta(1.0);
+            if (RigExecPointsToMatrix(input.spaceRest, input.space, &delta) &&
+                delta != GfMatrix4d(1.0)) {
+                auto &spaced = workspace->spacedFrames;
+                spaced.clear();
+                spaced.reserve(s.splineRestFrames.size());
+                for (const auto &frame : s.splineRestFrames)
+                    spaced.push_back(RigExecTransformFrame(frame, delta));
+                workspace->spacedRest = RigExecSplineIkMakeRest(
+                    spaced, RigExecTransformFrame(s.splineRootRest, delta),
+                    RigExecTransformFrame(s.splineMidRest, delta),
+                    RigExecTransformFrame(s.splineEndRest, delta),
+                    s.splineRestWeights, s.splineRestMode);
+                rest = &workspace->spacedRest;
+            }
+        }
+        RigExecSplineIkControls controls;
+        controls.root = input.root;
+        controls.mid = input.mid;
+        controls.end = input.end;
+        RigExecSolveSplineIk(*rest, controls, params, &workspace->splineResult);
+        if (workspace->splineResult.joints.size() == s.splineCount) {
+            output->frames.reserve(s.splineCount);
+            for (const auto &joint : workspace->splineResult.joints)
+                output->frames.push_back(joint.frame);
+            output->rests = s.splineJointRests;
+        }
         return true;
     }
     if (ik) {

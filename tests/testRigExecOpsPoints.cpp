@@ -3918,6 +3918,47 @@ TestSplineIk()
                 CHECK(SameBits(expected.joints[i].frame, actual.frames[i]));
                 CHECK(SameBits(joints[i].points, actual.rests[i]));
             }
+            std::vector<const rigExec::RigExecPortHandle *> ports = {
+                &SplineIkRestJoints(),
+                &SplineIkRestRoot(),
+                &SplineIkRestMid(),
+                &SplineIkRestEnd(),
+                &SplineIkRoot(),
+                &SplineIkMid(),
+                &SplineIkEnd(),
+                &SplineIkVolumeWeights(),
+                &SplineIkPreserveVolume(),
+                &SplineIkMidFollow(),
+                &SplineIkRoll(),
+                &SplineIkTwist(),
+                &SplineIkMinLengthRatio(),
+                &SplineIkOutRests()};
+            RigExecArray<rigExecRig::PointLandmarks> outRests(6);
+            for (size_t i = 0; i < 6; ++i)
+                outRests[i] = ToRigLandmarks(
+                    MakeFrame(GfVec3d(0.0, double(i), 1.0), GfVec3d(0, 0, 1),
+                              5.0 * double(i), GfVec3d(1.0))
+                        .points);
+            std::vector<const void *> values = {
+                &restJoints, &rigRestRoot, &rigRestMid,  &rigRestEnd, &rigRoot,
+                &rigMid,     &rigEnd,      &volumeArray, &preserve,   &follow,
+                &roll,       &twist,       &minLength,   &outRests};
+            Node rebased(SplineIk(), ports, SplineIkOut(), &payload);
+            CHECK(rebased.Run(values, &actual));
+            for (size_t i = 0; i < 6 && i < actual.frames.Size(); ++i) {
+                CHECK(SameBits(expected.joints[i].frame, actual.frames[i]));
+                CHECK(std::memcmp(&actual.rests[i], &outRests[i],
+                                  sizeof(rigExecRig::PointLandmarks)) == 0);
+            }
+            rigExecRig::PointFrame moving = rigEnd;
+            std::string steadyError;
+            CHECK(opAllocationCount::SteadyFrameAllocations(
+                      SplineIk(), &payload, ports, values, SplineIkOut(), 6,
+                      [&](int frame) {
+                          moving.points[0][0] += 0.05 * double(frame);
+                          return &moving;
+                      },
+                      &steadyError) == 0);
 
             // Defaults: no volume weights, follow 0.5, no roll, twist or
             // length floor.

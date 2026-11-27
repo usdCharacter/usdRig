@@ -33,22 +33,6 @@ _RrSolveFkChain(const std::vector<RrPoseFkElement> &elements)
     return RigExecSolveFkChainKernel<RrVec3f, RrVec3d, RrPointFrame>(elements);
 }
 
-// RigExecSplineIkMakeRest (rigExecMath/splineIkKernel.h).
-RrPoseSplineIkRest
-_RrSplineIkMakeRest(const std::vector<RrPointFrame> &joints,
-                    const RrPointFrame &rootControl,
-                    const RrPointFrame &midControl,
-                    const RrPointFrame &endControl,
-                    const std::vector<double> &volumeWeights,
-                    uint8_t restLengthChain)
-{
-    RrPoseSplineIkRest rest;
-    RigExecSplineIkMakeRestKernel<RrVec3d>(joints, rootControl, midControl,
-                                           endControl, volumeWeights,
-                                           restLengthChain != 0, &rest);
-    return rest;
-}
-
 // Rebuilds one solver's rest description from the ladder this run
 // composed (RefreshSolverRests, bakedPose.cpp).
 bool
@@ -115,96 +99,8 @@ _RrRefreshSolverRests(RrProgram *program, size_t step, size_t solver,
             }
             s.startRest = scratch->restPts[size_t(wire.start)];
         }
-    } else if (type == SchemaTypeName::RigExecSplineIk) {
-        std::vector<RrPointFrame> restJoints(size_t(wire.splineCount));
-        for (size_t k = 0; k < wire.restRefs.size(); ++k) {
-            const int slot = wire.restRefs[k].first;
-            const int element = wire.restRefs[k].second;
-            if (element >= 0 && size_t(element) < size_t(wire.splineCount)) {
-                if (liveRest(k)) {
-                    restJoints[size_t(element)] =
-                        store.fin[size_t(wire.restReads[k])];
-                    if (size_t(element) < s.splineJointRests.size()) {
-                        s.splineJointRests[size_t(element)] =
-                            store.fin[size_t(wire.restReads[k])].points;
-                    }
-                } else if (slot >= 0 &&
-                           size_t(slot) < scratch->restPts.size() &&
-                           size_t(slot) < scratch->restFrames.size()) {
-                    restJoints[size_t(element)] =
-                        scratch->restFrames[size_t(slot)];
-                    if (size_t(element) < s.splineJointRests.size()) {
-                        s.splineJointRests[size_t(element)] =
-                            scratch->restPts[size_t(slot)];
-                    }
-                } else {
-                    if (error) {
-                        *error =
-                            _RrStepHead(program, step) + " names no rest slot";
-                    }
-                    return false;
-                }
-            }
-        }
-        const RrPointFrame noFrame;
-        s.splineRest = _RrSplineIkMakeRest(
-            restJoints,
-            wire.root >= 0 ? scratch->restFrames[size_t(wire.root)] : noFrame,
-            wire.mid >= 0 ? scratch->restFrames[size_t(wire.mid)] : noFrame,
-            wire.end >= 0 ? scratch->restFrames[size_t(wire.end)] : noFrame,
-            wire.splineRestWeights, wire.splineRestMode);
-        if (!refreshSpaceRest()) {
-            return false;
-        }
     }
     return true;
-}
-
-struct _RrSplineIkControls {
-    RrPointFrame root;
-    RrPointFrame mid;
-    RrPointFrame end;
-};
-
-struct _RrSplineIkParams {
-    double preserveVolume = 1.0;
-    double midFollowWeight = 0.5;
-    double roll = 0.0;
-    double twist = 0.0;
-    double minLengthRatio = 0.0;
-    bool aimRootTangent = false;
-};
-
-struct _RrSplineIkJoint {
-    RrPointFrame frame;
-    RrVec3d scale{1.0, 1.0, 1.0};
-    double arcDistance = 0.0;
-    double arcParam = 0.0;
-    double twist = 0.0;
-};
-
-struct _RrSplineIkResult {
-    std::array<RrVec3d, 4> cvs{};
-    double arcLength = 0.0;
-    double ratio = 1.0;
-    double roll = 0.0;
-    double twist = 0.0;
-    std::vector<_RrSplineIkJoint> joints;
-};
-
-bool _RrSolveSplineIk(const RrPoseSplineIkRest &rest,
-                      const _RrSplineIkControls &controls,
-                      const _RrSplineIkParams &params,
-                      _RrSplineIkResult *result);
-
-// RigExecSolveSplineIk (rigExecMath/splineIkKernel.h).
-bool
-_RrSolveSplineIk(const RrPoseSplineIkRest &rest,
-                 const _RrSplineIkControls &controls,
-                 const _RrSplineIkParams &params, _RrSplineIkResult *result)
-{
-    return RigExecSolveSplineIkKernel<RrVec3f, RrVec3d, RrPointFrame>(
-        rest, controls, params, result);
 }
 
 } // namespace
@@ -404,86 +300,6 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
             return false;
         }
         aggregate.rests = s.jointRests;
-    } else if (type == SchemaTypeName::RigExecSplineIk) {
-        _RrSplineIkParams params;
-        params.preserveVolume = ws.splineParams.preserveVolume;
-        params.midFollowWeight = ws.splineParams.midFollowWeight;
-        params.roll = ws.splineParams.roll;
-        params.twist = ws.splineParams.twist;
-        params.minLengthRatio = ws.splineParams.minLengthRatio;
-        params.aimRootTangent = ws.splineParams.aimRootTangent;
-        if (ws.splineParamsVary ||
-            _RrLiveSolver(program, size_t(wire.object),
-                          RrSolverPreserveVolume) ||
-            _RrLiveSolver(program, size_t(wire.object),
-                          RrSolverMidFollowWeight) ||
-            _RrLiveSolver(program, size_t(wire.object), RrSolverRoll) ||
-            _RrLiveSolver(program, size_t(wire.object), RrSolverTwist) ||
-            _RrLiveSolver(program, size_t(wire.object),
-                          RrSolverMinLengthRatio)) {
-            params.preserveVolume =
-                program->ReadSolver(size_t(wire.object), RrSolverPreserveVolume)
-                    .f64;
-            params.midFollowWeight =
-                program
-                    ->ReadSolver(size_t(wire.object), RrSolverMidFollowWeight)
-                    .f64;
-            params.roll = RrDegreesToRadians(
-                program->ReadSolver(size_t(wire.object), RrSolverRoll).f64);
-            params.twist = RrDegreesToRadians(
-                program->ReadSolver(size_t(wire.object), RrSolverTwist).f64);
-            params.minLengthRatio =
-                program->ReadSolver(size_t(wire.object), RrSolverMinLengthRatio)
-                    .f64;
-        }
-        // The rest rebuilt in rigExec:space once the space has moved
-        // (bakedPose.cpp): the bind-time rest is measured at identity and
-        // the placement ratio is arcLength / restArcLength, so a scaled
-        // space would otherwise read as stretch. s.splineRest holds the
-        // rest frames and the root, mid and end rests it was made from.
-        const RrPoseSplineIkRest *restForSolve = &s.splineRest;
-        RrPoseSplineIkRest spacedRest;
-        if (ws.spaceSlot >= 0) {
-            const RrPointFrame *spaceFrame = nullptr;
-            if (!finAt(ws.spaceRead, &spaceFrame)) {
-                return false;
-            }
-            RrMat4d delta(1.0);
-            if (RrPointsToMatrix(s.spaceRest, *spaceFrame, &delta) &&
-                delta != RrMat4d(1.0)) {
-                std::vector<RrPointFrame> spaced;
-                spaced.reserve(s.splineRest.joints.size());
-                for (const RrPointFrame &f : s.splineRest.joints) {
-                    spaced.push_back(_RrTransformFrame(f, delta));
-                }
-                spacedRest = _RrSplineIkMakeRest(
-                    spaced, _RrTransformFrame(s.splineRest.rootControl, delta),
-                    _RrTransformFrame(s.splineRest.midControl, delta),
-                    _RrTransformFrame(s.splineRest.endControl, delta),
-                    ws.splineRestWeights, ws.splineRestMode);
-                restForSolve = &spacedRest;
-            }
-        }
-        const RrPointFrame *root = nullptr;
-        const RrPointFrame *mid = nullptr;
-        const RrPointFrame *end = nullptr;
-        if (!finAt(ws.rootRead, &root) || !finAt(ws.midRead, &mid) ||
-            !finAt(ws.endRead, &end)) {
-            return false;
-        }
-        _RrSplineIkControls controls;
-        controls.root = *root;
-        controls.mid = *mid;
-        controls.end = *end;
-        _RrSplineIkResult solved;
-        _RrSolveSplineIk(*restForSolve, controls, params, &solved);
-        if (solved.joints.size() == size_t(ws.splineCount)) {
-            aggregate.frames.reserve(size_t(ws.splineCount));
-            for (const auto &joint : solved.joints) {
-                aggregate.frames.push_back(joint.frame);
-            }
-            aggregate.rests = s.splineJointRests;
-        }
     }
     if (size_t(wire.object) >= store.solverOutFrames.size() ||
         size_t(wire.object) >= store.solverOutPresent.size()) {
@@ -568,6 +384,21 @@ _RrSolverFrame(const RrPointFrame &frame)
     out.points = _RrSolverLandmarks(frame.points);
     out.flags = frame.flags;
     return out;
+}
+
+/// \p s's rigExec:space map from its rest frame, when the space names a
+/// slot and moved it; false otherwise.
+bool
+_RrSplineSpace(const RrProgram &p, const RigExecWireSolver &s, RrMat4d *delta)
+{
+    const auto &restPts =
+        static_cast<const RrPoseScratch *>(p.pose.get())->restPts;
+    *delta = RrMat4d(1.0);
+    return s.spaceSlot >= 0 && size_t(s.spaceSlot) < restPts.size() &&
+           size_t(s.spaceRead) < p.store.fin.size() &&
+           RrPointsToMatrix(restPts[size_t(s.spaceSlot)],
+                            p.store.fin[size_t(s.spaceRead)], delta) &&
+           *delta != RrMat4d(1.0);
 }
 
 std::array<RrVec3d, 4>
@@ -817,6 +648,120 @@ RrLookUpSolver(const RrProgram *program, const eval::OpLookup &lookup,
             out[i] =
                 rigExecStd::Vec3f(points[i][0], points[i][1], points[i][2]);
         return true;
+    }
+    case Read::SplineRestJoints: {
+        if (!_RrSolverType<rigExecRig::PointFrame>(type, true))
+            break;
+        RrMat4d delta(1.0);
+        const bool spaced = _RrSplineSpace(p, s, &delta);
+        const size_t count = size_t(s.splineCount);
+        auto &out =
+            *static_cast<rigExecStd::RigExecArray<rigExecRig::PointFrame> *>(
+                value);
+        out.Resize(count);
+        for (size_t e = 0; e < count; ++e)
+            out[e] =
+                _RrSolverFrame(spaced ? _RrTransformFrame(RrPointFrame(), delta)
+                                      : RrPointFrame());
+        for (size_t k = 0; k < s.restRefs.size(); ++k) {
+            const int slot = s.restRefs[k].first;
+            const int element = s.restRefs[k].second;
+            if (element < 0 || size_t(element) >= count)
+                continue;
+            const bool live = k < s.restIsLive.size() && s.restIsLive[k] &&
+                              k < s.restReads.size() &&
+                              s.restReads[k] < fin.size();
+            if (!live &&
+                (slot < 0 || size_t(slot) >= scratch.restFrames.size()))
+                return _RrSolverFail(
+                    error, "solver " + std::to_string(lookup.object) +
+                               " names no rest slot " + std::to_string(slot));
+            const RrPointFrame &frame =
+                live ? fin[s.restReads[k]] : scratch.restFrames[size_t(slot)];
+            out[size_t(element)] = _RrSolverFrame(
+                spaced ? _RrTransformFrame(frame, delta) : frame);
+        }
+        return true;
+    }
+    case Read::SplineRestRoot:
+    case Read::SplineRestMid:
+    case Read::SplineRestEnd: {
+        if (!_RrSolverType<rigExecRig::PointFrame>(type, false))
+            break;
+        const int slot = Read(lookup.part) == Read::SplineRestRoot  ? s.root
+                         : Read(lookup.part) == Read::SplineRestMid ? s.mid
+                                                                    : s.end;
+        if (slot >= 0 && size_t(slot) >= scratch.restFrames.size())
+            return _RrSolverFail(
+                error, "solver " + std::to_string(lookup.object) +
+                           " names no rest slot " + std::to_string(slot));
+        const RrPointFrame frame =
+            slot >= 0 ? scratch.restFrames[size_t(slot)] : RrPointFrame();
+        RrMat4d delta(1.0);
+        *static_cast<rigExecRig::PointFrame *>(value) = _RrSolverFrame(
+            _RrSplineSpace(p, s, &delta) ? _RrTransformFrame(frame, delta)
+                                         : frame);
+        return true;
+    }
+    case Read::SplineJointRests: {
+        if (!_RrSolverType<rigExecRig::PointLandmarks>(type, true) ||
+            lookup.object >= scratch.solvers.size())
+            break;
+        const RrPoseSolverState &state = scratch.solvers[lookup.object];
+        auto &out = *static_cast<
+            rigExecStd::RigExecArray<rigExecRig::PointLandmarks> *>(value);
+        out.Resize(state.splineJointRests.size());
+        for (size_t e = 0; e < state.splineJointRests.size(); ++e)
+            out[e] = _RrSolverLandmarks(state.splineJointRests[e]);
+        for (size_t k = 0; k < s.restRefs.size(); ++k) {
+            const int slot = s.restRefs[k].first;
+            const int element = s.restRefs[k].second;
+            if (element < 0 || size_t(element) >= out.Size())
+                continue;
+            if (k < s.restIsLive.size() && s.restIsLive[k] &&
+                k < s.restReads.size() && s.restReads[k] < fin.size())
+                out[size_t(element)] =
+                    _RrSolverLandmarks(fin[s.restReads[k]].points);
+            else if (!rest(slot, &out[size_t(element)]))
+                return false;
+        }
+        return true;
+    }
+    case Read::PreserveVolume:
+    case Read::MidFollow:
+    case Read::Roll:
+    case Read::SplineTwist:
+    case Read::MinLengthRatio: {
+        const size_t object = lookup.object;
+        const bool live = s.splineParamsVary ||
+                          _RrLiveSolver(&p, object, RrSolverPreserveVolume) ||
+                          _RrLiveSolver(&p, object, RrSolverMidFollowWeight) ||
+                          _RrLiveSolver(&p, object, RrSolverRoll) ||
+                          _RrLiveSolver(&p, object, RrSolverTwist) ||
+                          _RrLiveSolver(&p, object, RrSolverMinLengthRatio);
+        const auto &folded = s.splineParams;
+        const auto leaf = [&](int field) {
+            return p.ReadSolver(object, field).f64;
+        };
+        double v = 0.0;
+        switch (Read(lookup.part)) {
+        case Read::PreserveVolume:
+            v = live ? leaf(RrSolverPreserveVolume) : folded.preserveVolume;
+            break;
+        case Read::MidFollow:
+            v = live ? leaf(RrSolverMidFollowWeight) : folded.midFollowWeight;
+            break;
+        case Read::Roll:
+            v = live ? RrDegreesToRadians(leaf(RrSolverRoll)) : folded.roll;
+            break;
+        case Read::SplineTwist:
+            v = live ? RrDegreesToRadians(leaf(RrSolverTwist)) : folded.twist;
+            break;
+        default:
+            v = live ? leaf(RrSolverMinLengthRatio) : folded.minLengthRatio;
+            break;
+        }
+        return _RrSolverScalar(type, v, value, error);
     }
     case Read::GroupSelectors: {
         if (!_RrSolverType<double>(type, true) ||

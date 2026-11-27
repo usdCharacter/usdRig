@@ -404,6 +404,34 @@ ProbeSolve(const B &b)
             }
             if (s.spaceSlot >= 0)
                 composed.spaceRest = b.restPts[size_t(s.spaceSlot)];
+            if (s.type == SchemaTypeName::RigExecSplineIk) {
+                std::vector<RigExecPointFrame> restJoints(s.splineCount);
+                for (size_t k = 0; k < s.restRefs.size(); ++k) {
+                    const auto [slot, element] = s.restRefs[k];
+                    if (element < 0 || size_t(element) >= s.splineCount)
+                        continue;
+                    const bool live =
+                        k < s.restIsLive.size() && s.restIsLive[k];
+                    restJoints[size_t(element)] =
+                        live ? b.fin[s.restReads[k]]
+                             : b.restFrames[size_t(slot)];
+                    composed.splineJointRests[size_t(element)] =
+                        live ? b.fin[s.restReads[k]].points
+                             : b.restPts[size_t(slot)];
+                }
+                const auto restFrame = [&](int slot) {
+                    return slot >= 0 ? b.restFrames[size_t(slot)]
+                                     : RigExecPointFrame();
+                };
+                composed.splineRestFrames = restJoints;
+                composed.splineRootRest = restFrame(s.root);
+                composed.splineMidRest = restFrame(s.mid);
+                composed.splineEndRest = restFrame(s.end);
+                composed.splineRest = RigExecSplineIkMakeRest(
+                    restJoints, composed.splineRootRest, composed.splineMidRest,
+                    composed.splineEndRest, s.splineRestWeights,
+                    s.splineRestMode);
+            }
             if (s.type == SchemaTypeName::RigExecTwistDistribution) {
                 composed.twistStartRest = b.restPts[size_t(s.root)];
                 composed.twistEndRest = b.restPts[size_t(s.end)];

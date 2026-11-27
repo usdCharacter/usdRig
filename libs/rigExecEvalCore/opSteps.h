@@ -213,6 +213,23 @@ enum class OpSolverRead : uint8_t {
     /// Vec3fArray: a ribbon's driver points, from the chain version its
     /// binding answers, else the sampled driver curve.
     DriverPoints = 21,
+    /// PointFrameList: a spline IK's joint rests by element, carried by
+    /// rigExec:space's rest-to-pose map where it moved.
+    SplineRestJoints = 22,
+    /// PointFrame: a spline IK's root, mid and end control rests, carried
+    /// likewise.
+    SplineRestRoot = 23,
+    SplineRestMid = 24,
+    SplineRestEnd = 25,
+    /// PointLandmarksList: a spline IK's joint rests by element, uncarried.
+    SplineJointRests = 26,
+    /// Double: a spline IK's settings, roll and twist in radians; the folded
+    /// ones unless one of them is live.
+    PreserveVolume = 27,
+    MidFollow = 28,
+    Roll = 29,
+    SplineTwist = 30,
+    MinLengthRatio = 31,
 };
 
 /// OpLookup::read of a constraint lookup. The numbers are part of the file

@@ -14,6 +14,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace rigExec {
@@ -161,9 +162,7 @@ public:
         : _cvs(cvs)
     {
         using namespace splineIkDetail;
-        const int cells = kSpans * kSubdivisionsPerSpan;
-        _u.resize(size_t(cells) + 1);
-        _cumulative.resize(size_t(cells) + 1);
+        const int cells = kCells;
         _u[0] = 0.0;
         _cumulative[0] = 0.0;
         for (int i = 0; i < cells; ++i) {
@@ -331,9 +330,13 @@ private:
         return sum * half;
     }
 
+    static constexpr int kCells =
+        splineIkDetail::kSpans * splineIkDetail::kSubdivisionsPerSpan;
+
     std::array<Double, 4> _cvs;
-    std::vector<double> _u;          ///< table parameters (cell edges)
-    std::vector<double> _cumulative; ///< arc length at each table parameter
+    std::array<double, kCells + 1> _u{}; ///< table parameters (cell edges)
+    std::array<double, kCells + 1>
+        _cumulative{}; ///< arc length at each table parameter
     double _length = 0.0;
 };
 
@@ -477,16 +480,24 @@ RigExecSplineIkTwistAboutAxisKernel(const F &restFrame, const F &posedFrame,
 /// next joint, its rest up transported by minimal rotation, twisted
 /// linearly from root to end about the rest chain axis and scaled for
 /// volume. True when every joint was determined; see RigExecSolveSplineIk
-/// for the degenerate results.
+/// for the degenerate results. \p positions and \p tangents are scratch;
+/// \p result keeps its joints' storage.
 template <class Point, class Double, class F, class Rest, class Controls,
           class Params, class Result>
 bool
 RigExecSolveSplineIkKernel(const Rest &rest, const Controls &controls,
-                           const Params &params, Result *result)
+                           const Params &params, Result *result,
+                           std::vector<Double> *positions,
+                           std::vector<Double> *tangents)
 {
     using Math = RigExecDualQuatMath<Point, Double>;
     using namespace splineIkDetail;
-    *result = Result();
+    {
+        auto joints = std::move(result->joints);
+        *result = Result();
+        result->joints = std::move(joints);
+        result->joints.clear();
+    }
     result->cvs = rest.cvs;
 
     const size_t n = rest.joints.size();
@@ -538,7 +549,8 @@ RigExecSolveSplineIkKernel(const Rest &rest, const Controls &controls,
 
     // 3. Joints along the curve by arc length.
     result->joints.resize(n);
-    std::vector<Double> positions(n, Double(0.0)), tangents(n, Double(0.0));
+    positions->assign(n, Double(0.0));
+    tangents->assign(n, Double(0.0));
     double cumulative = 0.0;
     for (size_t i = 0; i < n; ++i) {
         if (i > 0)
@@ -548,9 +560,9 @@ RigExecSolveSplineIkKernel(const Rest &rest, const Controls &controls,
         result->joints[i].arcParam = curveOk ? d / result->arcLength : 0.0;
         result->joints[i].twist =
             result->roll + result->twist * result->joints[i].arcParam;
-        if (!curve.PointAtArcLength(d, &positions[i], &tangents[i])) {
-            positions[i] = result->cvs[0];
-            tangents[i] = Double(0.0);
+        if (!curve.PointAtArcLength(d, &(*positions)[i], &(*tangents)[i])) {
+            (*positions)[i] = result->cvs[0];
+            (*tangents)[i] = Double(0.0);
         }
     }
 
@@ -568,10 +580,10 @@ RigExecSolveSplineIkKernel(const Rest &rest, const Controls &controls,
 
         // Aim at the next joint, the last along the tangent; then the
         // tangent, then the rest aim.
-        Double aim =
-            (i + 1 < n) ? positions[i + 1] - positions[i] : tangents[i];
+        Double aim = (i + 1 < n) ? (*positions)[i + 1] - (*positions)[i]
+                                 : (*tangents)[i];
         if (aim.GetLength() <= kRigExecSplineIkEpsilon)
-            aim = tangents[i];
+            aim = (*tangents)[i];
         bool oriented = true;
         if (aim.GetLength() <= kRigExecSplineIkEpsilon) {
             aim = restBasis.x;
@@ -602,10 +614,11 @@ RigExecSolveSplineIkKernel(const Rest &rest, const Controls &controls,
         joint.scale = Double(1.0, s, s);
 
         auto &frame = joint.frame;
-        frame.points[0] = positions[i];
-        frame.points[1] = positions[i] + x * restBasis.lx;
-        frame.points[2] = positions[i] + yTwisted * (restBasis.ly * s);
-        frame.points[3] = positions[i] + z * (restBasis.lz * s);
+        const Double &position = (*positions)[i];
+        frame.points[0] = position;
+        frame.points[1] = position + x * restBasis.lx;
+        frame.points[2] = position + yTwisted * (restBasis.ly * s);
+        frame.points[3] = position + z * (restBasis.lz * s);
         frame.flags = chainSolverDetail::kFrameValid;
         if (s != 1.0)
             frame.flags |= kFrameAffine;
@@ -617,6 +630,17 @@ RigExecSolveSplineIkKernel(const Rest &rest, const Controls &controls,
         }
     }
     return allOk;
+}
+
+template <class Point, class Double, class F, class Rest, class Controls,
+          class Params, class Result>
+bool
+RigExecSolveSplineIkKernel(const Rest &rest, const Controls &controls,
+                           const Params &params, Result *result)
+{
+    std::vector<Double> positions, tangents;
+    return RigExecSolveSplineIkKernel<Point, Double, F>(
+        rest, controls, params, result, &positions, &tangents);
 }
 
 } // namespace rigExec

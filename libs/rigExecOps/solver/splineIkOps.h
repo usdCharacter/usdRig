@@ -29,8 +29,9 @@ const rigExec::RigExecOpHandle &SplineIk();
 // (DoubleArray, one per joint or empty), PreserveVolume (Double, 1),
 // MidFollow (Double, 0.5), Roll and Twist (Double, radians), optional
 // MinLengthRatio (Double: the length floor as a fraction of the rest
-// root-to-end chord; unfed or 0, off). Out (PointFrameArray, the joints on
-// their rests).
+// root-to-end chord; unfed or 0, off), optional OutRests (PointLandmarksList,
+// one per joint: the rests Out publishes; unfed, RestJoints'). Out
+// (PointFrameArray, the joints on their rests).
 const rigExec::RigExecPortHandle &SplineIkRestJoints();
 const rigExec::RigExecPortHandle &SplineIkRestRoot();
 const rigExec::RigExecPortHandle &SplineIkRestMid();
@@ -45,6 +46,7 @@ const rigExec::RigExecPortHandle &SplineIkRoll();
 const rigExec::RigExecPortHandle &SplineIkTwist();
 const rigExec::RigExecPortHandle &SplineIkMinLengthRatio();
 const rigExec::RigExecPortHandle &SplineIkOut();
+const rigExec::RigExecPortHandle &SplineIkOutRests();
 
 } // namespace rigExecOps
 

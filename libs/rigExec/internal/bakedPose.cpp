@@ -4654,30 +4654,6 @@ RefreshSolverRests(const RigExecBakedProgramImpl &B,
         if (s.spaceSlot >= 0) {
             s.spaceRest = B.restPts[size_t(s.spaceSlot)];
         }
-    } else if (s.type == SchemaTypeName::RigExecSplineIk) {
-        std::vector<RigExecPointFrame> restJoints(s.splineCount);
-        for (size_t k = 0; k < s.restRefs.size(); ++k) {
-            const int slot = s.restRefs[k].first;
-            const int element = s.restRefs[k].second;
-            if (element >= 0 && size_t(element) < s.splineCount) {
-                restJoints[size_t(element)] = restFrameOf(k, slot);
-                s.splineJointRests[size_t(element)] = restPtsOf(k, slot);
-            }
-        }
-        s.splineRestFrames = restJoints;
-        s.splineRootRest =
-            s.root >= 0 ? B.restFrames[size_t(s.root)] : RigExecPointFrame();
-        s.splineMidRest =
-            s.mid >= 0 ? B.restFrames[size_t(s.mid)] : RigExecPointFrame();
-        s.splineEndRest =
-            s.end >= 0 ? B.restFrames[size_t(s.end)] : RigExecPointFrame();
-        s.splineRest = RigExecSplineIkMakeRest(
-            restJoints, s.splineRootRest, s.splineMidRest, s.splineEndRest,
-            s.splineRestWeights, s.splineRestMode);
-        // As for the TwoBoneIk above.
-        if (s.spaceSlot >= 0) {
-            s.spaceRest = B.restPts[size_t(s.spaceSlot)];
-        }
     }
 }
 
@@ -4789,24 +4765,12 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
                         RigExecBakedStep *step, UsdTimeCode time)
 {
     RigExecBakedProgramImpl &B = *program;
-    // Every per-frame read goes through these two: `rd` reads one input's
-    // leaf, sampled in the prologue the way this generation must read it
-    // (through the resolved inputs while an override stands on it, through
-    // the pinned query otherwise), and `live` answers whether a set of baked
-    // parameters has to be re-read at all.
+    // Every per-frame read goes through `rd`: one input's leaf, sampled in
+    // the prologue the way this generation must read it (through the
+    // resolved inputs while an override stands on it, through the pinned
+    // query otherwise).
     const auto rd = [&B](const auto &input) {
         return RigExecBakedLeafRead(B, input);
-    };
-    // Whether a solver input is read from its leaf rather than the
-    // parameters Build folded: it varies, or a drag or an upstream value
-    // stands on it.
-    const auto live = [&](const auto &input) {
-        const auto flagged = [&input](const std::vector<char> &flags) {
-            return input.overrideIndex >= 0 &&
-                   size_t(input.overrideIndex) < flags.size() &&
-                   flags[size_t(input.overrideIndex)];
-        };
-        return input.varying || flagged(B.overridden) || flagged(B.upstreamOn);
     };
 
     switch (step->kind) {
@@ -4993,17 +4957,6 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
             input.blendA = s.inA >= 0 ? &B.aggregates[size_t(s.inA)] : nullptr;
             input.blendB = s.inB >= 0 ? &B.aggregates[size_t(s.inB)] : nullptr;
             input.blendWeight = rd(s.blendWeight);
-        } else if (s.type == SchemaTypeName::RigExecSplineIk) {
-            s.kind = RigExecSolverKind::SplineIk;
-            input.refreshSplineParams =
-                s.splineParamsVary || live(s.preserveVolume) ||
-                live(s.midFollowWeight) || live(s.roll) || live(s.twist) ||
-                live(s.minLengthRatio);
-            input.preserveVolume = rd(s.preserveVolume);
-            input.midFollowWeight = rd(s.midFollowWeight);
-            input.rollDegrees = rd(s.roll);
-            input.twistDegrees = rd(s.twist);
-            input.minLengthRatio = rd(s.minLengthRatio);
         } else if (s.type == SchemaTypeName::RigExecSkeleton2d) {
             s.kind = RigExecSolverKind::Skeleton2d;
             input.controls.resize(s.controls.size());

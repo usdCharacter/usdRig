@@ -3,8 +3,12 @@
 #include "rigExecOps/solver/chainSolverOps.h"
 #include "rigExecOps/solver/frameBlendOps.h"
 #include "rigExecOps/solver/ribbonFramesOps.h"
+#include "rigExecOps/solver/splineIkOps.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecStdTypes/stdTypes.h"
+#include "rigExecMath/pointFrame.h"
+
+#include "pxr/base/gf/math.h"
 
 #include <cstring>
 #include <string>
@@ -79,6 +83,39 @@ Scalar(const RigExecTypeDesc &type, T v, void *value)
     return true;
 }
 
+/// \p s's rigExec:space map from its rest frame, when the space names a
+/// slot and moved it; false otherwise.
+bool
+SplineSpace(const RigExecBakedProgramImpl &B, const Solver &s,
+            GfMatrix4d *delta)
+{
+    *delta = GfMatrix4d(1.0);
+    return s.spaceSlot >= 0 && size_t(s.spaceSlot) < B.restPts.size() &&
+           size_t(s.spaceRead) < B.fin.size() &&
+           RigExecPointsToMatrix(B.restPts[size_t(s.spaceSlot)],
+                                 B.fin[size_t(s.spaceRead)], delta) &&
+           *delta != GfMatrix4d(1.0);
+}
+
+/// Whether \p s reads its spline settings from their leaves this run
+/// rather than the ones Build folded.
+bool
+SplineParamsLive(const RigExecBakedProgramImpl &B, const Solver &s)
+{
+    const auto flagged = [](const auto &input, const std::vector<char> &on) {
+        return input.overrideIndex >= 0 &&
+               size_t(input.overrideIndex) < on.size() &&
+               on[size_t(input.overrideIndex)];
+    };
+    const auto live = [&](const auto &input) {
+        return input.varying || flagged(input, B.overridden) ||
+               flagged(input, B.upstreamOn);
+    };
+    return s.splineParamsVary || live(s.preserveVolume) ||
+           live(s.midFollowWeight) || live(s.roll) || live(s.twist) ||
+           live(s.minLengthRatio);
+}
+
 /// The frames \p s's op output leads with that are no joint of its
 /// aggregate: an FK chain's start frame.
 size_t
@@ -106,7 +143,8 @@ RigExecBakedSolverNodeCount(const RigExecBakedProgramImpl::Solver &s)
 {
     if (s.type == SchemaTypeName::RigExecTwoBoneIk ||
         s.type == SchemaTypeName::RigExecTwistDistribution ||
-        s.type == SchemaTypeName::RigExecRibbon)
+        s.type == SchemaTypeName::RigExecRibbon ||
+        s.type == SchemaTypeName::RigExecSplineIk)
         return 1;
     if (s.type != SchemaTypeName::RigExecFkChain)
         return 0;
@@ -193,6 +231,33 @@ RigExecBakedAddSolverOp(const RigExecBakedProgramImpl &B,
         read(node, SampleRibbonFramesJointRests(), Read::JointRests);
         read(node, SampleRibbonFramesJointRestLive(), Read::JointRestLive);
         publish(node, SampleRibbonFramesOut());
+        return true;
+    }
+    if (s.type == SchemaTypeName::RigExecSplineIk) {
+        SplineIkPayload p;
+        p.restLengthChain =
+            s.splineRestMode == RigExecSplineIkRestLength::Chain;
+        p.aimRootTangent = s.splineParams.aimRootTangent;
+        const RigExecNodeId node = builder->AddOp(SplineIk(), &p);
+        if (!placed(node))
+            return false;
+        read(node, SplineIkRestJoints(), Read::SplineRestJoints);
+        read(node, SplineIkRestRoot(), Read::SplineRestRoot);
+        read(node, SplineIkRestMid(), Read::SplineRestMid);
+        read(node, SplineIkRestEnd(), Read::SplineRestEnd);
+        version(node, SplineIkRoot(), s.rootRead);
+        version(node, SplineIkMid(), s.midRead);
+        version(node, SplineIkEnd(), s.endRead);
+        if (!s.splineRestWeights.empty())
+            constant(node, SplineIkVolumeWeights(), s.splineRestWeights.data(),
+                     s.splineRestWeights.size() * sizeof(double));
+        read(node, SplineIkPreserveVolume(), Read::PreserveVolume);
+        read(node, SplineIkMidFollow(), Read::MidFollow);
+        read(node, SplineIkRoll(), Read::Roll);
+        read(node, SplineIkTwist(), Read::SplineTwist);
+        read(node, SplineIkMinLengthRatio(), Read::MinLengthRatio);
+        read(node, SplineIkOutRests(), Read::SplineJointRests);
+        publish(node, SplineIkOut());
         return true;
     }
     if (s.type == SchemaTypeName::RigExecTwoBoneIk) {
@@ -450,6 +515,109 @@ RigExecBakedLookUpSolver(const RigExecBakedProgramImpl &B,
                 rigExecStd::Vec3f(points[i][0], points[i][1], points[i][2]);
         return true;
     }
+    case Read::SplineRestJoints: {
+        if (!Is(type, rigExecRig::PointFrameList()))
+            break;
+        GfMatrix4d delta;
+        const bool spaced = SplineSpace(B, s, &delta);
+        auto &out =
+            *static_cast<rigExecStd::RigExecArray<rigExecRig::PointFrame> *>(
+                value);
+        out.Resize(s.splineCount);
+        for (size_t e = 0; e < s.splineCount; ++e)
+            out[e] =
+                ToOp(spaced ? RigExecTransformFrame(RigExecPointFrame(), delta)
+                            : RigExecPointFrame());
+        for (size_t k = 0; k < s.restRefs.size(); ++k) {
+            const auto [slot, element] = s.restRefs[k];
+            if (element < 0 || size_t(element) >= s.splineCount)
+                continue;
+            const bool live = k < s.restIsLive.size() && s.restIsLive[k] &&
+                              k < s.restReads.size() &&
+                              s.restReads[k] < B.fin.size();
+            if (!live && (slot < 0 || size_t(slot) >= B.restFrames.size()))
+                return Fail(error, s.pathText + " names no rest slot " +
+                                       std::to_string(slot));
+            const RigExecPointFrame &frame =
+                live ? B.fin[s.restReads[k]] : B.restFrames[size_t(slot)];
+            out[size_t(element)] =
+                ToOp(spaced ? RigExecTransformFrame(frame, delta) : frame);
+        }
+        return true;
+    }
+    case Read::SplineRestRoot:
+    case Read::SplineRestMid:
+    case Read::SplineRestEnd: {
+        if (!Is(type, rigExecRig::PointFrameType()))
+            break;
+        const int slot = Read(lookup.part) == Read::SplineRestRoot  ? s.root
+                         : Read(lookup.part) == Read::SplineRestMid ? s.mid
+                                                                    : s.end;
+        if (slot >= 0 && size_t(slot) >= B.restFrames.size())
+            return Fail(error, s.pathText + " names no rest slot " +
+                                   std::to_string(slot));
+        const RigExecPointFrame frame =
+            slot >= 0 ? B.restFrames[size_t(slot)] : RigExecPointFrame();
+        GfMatrix4d delta;
+        *static_cast<rigExecRig::PointFrame *>(value) =
+            ToOp(SplineSpace(B, s, &delta) ? RigExecTransformFrame(frame, delta)
+                                           : frame);
+        return true;
+    }
+    case Read::SplineJointRests: {
+        if (!Is(type, rigExecRig::PointLandmarksList()))
+            break;
+        auto &out = *static_cast<Landmarks *>(value);
+        out.Resize(s.splineJointRests.size());
+        for (size_t e = 0; e < s.splineJointRests.size(); ++e)
+            out[e] = ToOp(s.splineJointRests[e]);
+        for (size_t k = 0; k < s.restRefs.size(); ++k) {
+            const auto [slot, element] = s.restRefs[k];
+            if (element < 0 || size_t(element) >= out.Size())
+                continue;
+            if (k < s.restIsLive.size() && s.restIsLive[k] &&
+                k < s.restReads.size() && s.restReads[k] < B.fin.size())
+                out[size_t(element)] = ToOp(B.fin[s.restReads[k]].points);
+            else if (!rest(slot, &out[size_t(element)]))
+                return false;
+        }
+        return true;
+    }
+    case Read::PreserveVolume:
+        return Scalar(type,
+                      SplineParamsLive(B, s)
+                          ? RigExecBakedLeafRead(B, s.preserveVolume)
+                          : s.splineParams.preserveVolume,
+                      value) ||
+               Fail(error, s.pathText + " has no preserveVolume of that type");
+    case Read::MidFollow:
+        return Scalar(type,
+                      SplineParamsLive(B, s)
+                          ? RigExecBakedLeafRead(B, s.midFollowWeight)
+                          : s.splineParams.midFollowWeight,
+                      value) ||
+               Fail(error, s.pathText + " has no midFollowWeight of that type");
+    case Read::Roll:
+        return Scalar(type,
+                      SplineParamsLive(B, s)
+                          ? GfDegreesToRadians(RigExecBakedLeafRead(B, s.roll))
+                          : s.splineParams.roll,
+                      value) ||
+               Fail(error, s.pathText + " has no roll of that type");
+    case Read::SplineTwist:
+        return Scalar(type,
+                      SplineParamsLive(B, s)
+                          ? GfDegreesToRadians(RigExecBakedLeafRead(B, s.twist))
+                          : s.splineParams.twist,
+                      value) ||
+               Fail(error, s.pathText + " has no twist of that type");
+    case Read::MinLengthRatio:
+        return Scalar(type,
+                      SplineParamsLive(B, s)
+                          ? RigExecBakedLeafRead(B, s.minLengthRatio)
+                          : s.splineParams.minLengthRatio,
+                      value) ||
+               Fail(error, s.pathText + " has no minLengthRatio of that type");
     case Read::GroupSelectors: {
         if (!Is(type, rigExecStd::DoubleArray()))
             break;

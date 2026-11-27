@@ -66,39 +66,10 @@ RigExecRunSolver(const RigExecSolverRecord &s, const RigExecSolverInputs &input,
         if (error)
             *error = "a ribbon runs as an op node";
         return false;
-    case RigExecSolverKind::SplineIk: {
-        auto params = RigExecSolverSplineParams(s, input);
-        const auto *rest = &s.splineRest;
-        if (input.hasSpace) {
-            GfMatrix4d delta(1.0);
-            if (RigExecPointsToMatrix(input.spaceRest, input.space, &delta) &&
-                delta != GfMatrix4d(1.0)) {
-                auto &spaced = scratch->spacedFrames;
-                spaced.clear();
-                spaced.reserve(s.splineRestFrames.size());
-                for (const auto &frame : s.splineRestFrames)
-                    spaced.push_back(RigExecTransformFrame(frame, delta));
-                scratch->spacedRest = RigExecSplineIkMakeRest(
-                    spaced, RigExecTransformFrame(s.splineRootRest, delta),
-                    RigExecTransformFrame(s.splineMidRest, delta),
-                    RigExecTransformFrame(s.splineEndRest, delta),
-                    s.splineRestWeights, s.splineRestMode);
-                rest = &scratch->spacedRest;
-            }
-        }
-        RigExecSplineIkControls controls;
-        controls.root = input.root;
-        controls.mid = input.mid;
-        controls.end = input.end;
-        RigExecSolveSplineIk(*rest, controls, params, &scratch->splineResult);
-        if (scratch->splineResult.joints.size() == s.splineCount) {
-            aggregate.frames.reserve(s.splineCount);
-            for (const auto &joint : scratch->splineResult.joints)
-                aggregate.frames.push_back(joint.frame);
-            aggregate.rests = s.splineJointRests;
-        }
-        return true;
-    }
+    case RigExecSolverKind::SplineIk:
+        if (error)
+            *error = "a spline IK runs as an op node";
+        return false;
     case RigExecSolverKind::Skeleton2d: {
         // Rests and outputs in rigExec:joints order; the kernel runs in solve
         // order, in the start frame's plane. A failed solve publishes every

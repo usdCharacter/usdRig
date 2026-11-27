@@ -51,6 +51,8 @@ inline constexpr rigExec::RigExecSchemaInfo kDistributeTwist =
     Internal("A twist distribution's frames between its start and end frames.");
 inline constexpr rigExec::RigExecSchemaInfo kSampleRibbonFrames = Internal(
     "A ribbon's frames sampled along its driver curve and its rest curve.");
+inline constexpr rigExec::RigExecSchemaInfo kSplineIk =
+    Internal("A spline IK's joints laid along its posed control curve.");
 inline constexpr rigExec::RigExecSchemaInfo kFkJointGroups =
     Internal("An FK chain's joint groups applied to its frames.");
 inline constexpr rigExec::RigExecSchemaInfo kMoverTransform =

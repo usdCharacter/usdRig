@@ -1,6 +1,7 @@
 #include "rigExecOps/solver/splineIkOps.h"
 
 #include "rigExecOps/fieldIo.h"
+#include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecMath/splineIkKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
@@ -29,6 +30,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(SplineIkRoll)
 RIGEXEC_DEFINE_PORT_HANDLE(SplineIkTwist)
 RIGEXEC_DEFINE_PORT_HANDLE(SplineIkMinLengthRatio)
 RIGEXEC_DEFINE_PORT_HANDLE(SplineIkOut)
+RIGEXEC_DEFINE_PORT_HANDLE(SplineIkOutRests)
 
 namespace {
 
@@ -85,12 +87,14 @@ struct Result {
     std::vector<Joint> joints;
 };
 
-template <class T>
-std::vector<T>
-ToVector(const RigExecArray<T> *a)
-{
-    return a ? std::vector<T>(a->begin(), a->end()) : std::vector<T>();
-}
+/// SplineIk's op state: the rest description, the solve and their inputs.
+struct SplineScratch {
+    std::vector<PointFrame> joints;
+    std::vector<double> volume;
+    Rest rest;
+    Result result;
+    std::vector<Vec3d> positions, tangents;
+};
 
 bool
 SplineIkOne(const RigExecOpBatch &batch, size_t k, std::string *error)
@@ -101,16 +105,28 @@ SplineIkOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     p.aimRootTangent = FlagAt(batch, kAimRootTangent, k);
     const auto *restJoints =
         In<RigExecArray<PointFrame>>(io, SplineIkRestJoints());
-    const std::vector<double> volume =
-        ToVector(In<RigExecArray<double>>(io, SplineIkVolumeWeights()));
+    const auto *volumeIn =
+        In<RigExecArray<double>>(io, SplineIkVolumeWeights());
+    const auto *outRests =
+        In<RigExecArray<PointLandmarks>>(io, SplineIkOutRests());
+    auto &scratch =
+        *static_cast<SplineScratch *>(rigExec::RigExecBatchState(batch, k));
+    scratch.joints.assign(restJoints->begin(), restJoints->end());
+    if (volumeIn)
+        scratch.volume.assign(volumeIn->begin(), volumeIn->end());
+    else
+        scratch.volume.clear();
+    const std::vector<double> &volume = scratch.volume;
     const size_t n = restJoints->Size();
     if (n == 0)
         return Fail(error, "SplineIk", "needs at least one joint");
     if (!volume.empty() && volume.size() != n)
         return Fail(error, "SplineIk", "needs one volume weight per joint");
-    Rest rest;
+    if (outRests && outRests->Size() != n)
+        return Fail(error, "SplineIk", "needs one output rest per joint");
+    Rest &rest = scratch.rest;
     rigExec::RigExecSplineIkMakeRestKernel<Vec3d>(
-        ToVector(restJoints), *In<PointFrame>(io, SplineIkRestRoot()),
+        scratch.joints, *In<PointFrame>(io, SplineIkRestRoot()),
         *In<PointFrame>(io, SplineIkRestMid()),
         *In<PointFrame>(io, SplineIkRestEnd()), volume, p.restLengthChain,
         &rest);
@@ -124,16 +140,16 @@ SplineIkOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     params.twist = InOr(io, SplineIkTwist(), 0.0);
     params.minLengthRatio = InOr(io, SplineIkMinLengthRatio(), 0.0);
     params.aimRootTangent = p.aimRootTangent;
-    Result result;
+    Result &result = scratch.result;
     // A false solve still lays out every joint, flagged degenerate.
     rigExec::RigExecSolveSplineIkKernel<Vec3f, Vec3d, PointFrame>(
-        rest, controls, params, &result);
+        rest, controls, params, &result, &scratch.positions, &scratch.tangents);
     PointFrameArray &out = Out<PointFrameArray>(io, SplineIkOut());
-    out.frames.Assign(n);
-    out.rests.Assign(n);
+    out.frames.Resize(n);
+    out.rests.Resize(n);
     for (size_t i = 0; i < n; ++i) {
         out.frames[i] = result.joints[i].frame;
-        out.rests[i] = (*restJoints)[i].points;
+        out.rests[i] = outRests ? (*outRests)[i] : (*restJoints)[i].points;
     }
     return true;
 }
@@ -148,6 +164,9 @@ CheckSplineIk(const rigExec::RigExecOpCheck &check, std::string *error)
     if (Fed(check, SplineIkVolumeWeights()) && volume != 0 &&
         !SameCount(volume, joints))
         return Fail(error, "SplineIk", "needs one volume weight per joint");
+    if (Fed(check, SplineIkOutRests()) &&
+        !SameCount(CheckElements(check, SplineIkOutRests()), joints))
+        return Fail(error, "SplineIk", "needs one output rest per joint");
     return true;
 }
 
@@ -191,6 +210,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "minLengthRatio"},
     {&SplineIkOut(), &rigExecRig::PointFrameArrayType(), kRigExecPortOutput,
      "out", rigExec::RigExecOutputBound::Input, &SplineIkRestJoints()},
+    {&SplineIkOutRests(), &rigExecRig::PointLandmarksList(), kOptional,
+     "outRests"},
 };
 
 void
@@ -210,10 +231,12 @@ const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "SplineIk";
+    d.schema = &internalOps::kSplineIk;
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.runBatch = &RunSplineIk;
     d.validate = &CheckSplineIk;
+    d.state = StateOf<SplineScratch>();
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kFields;
     d.payloadFieldCount = std::size(kFields);
