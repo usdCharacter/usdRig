@@ -993,17 +993,6 @@ public:
         (void)i;
     }
 
-    void writeRest(size_t slot, const RrMat4d &restM,
-                   const std::array<RrVec3d, 4> &points, unsigned flags,
-                   const RrMat4d &roundTrip)
-    {
-        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
-        scratch->restM[slot] = restM;
-        scratch->restFrames[slot] = RrPoseMath::MakeFrame(points, flags);
-        scratch->restPts[slot] = points;
-        scratch->restRoundTrip[slot] = roundTrip;
-    }
-
     void writeLadder(size_t slot, const RrMat4d &selfD,
                      const RrMat4d &parentDinv, const RrMat4d &defaultRoundTrip,
                      const RrMat4d &posedD, const RrMat4d &parentSpaceM,
@@ -1073,12 +1062,6 @@ public:
     {
         RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
         scratch->lastRotOrder[slot] = scratch->rotOrder[slot];
-    }
-
-    void markRestChanged(size_t slot)
-    {
-        _program->store.restChanged[slot] = 1;
-        _movedAny = true;
     }
 
     void markLadderChanged(size_t slot)

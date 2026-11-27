@@ -948,7 +948,8 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error,
                 } else if (step.kind == Kind::RestCompose) {
                     if (!add(
                             b.paths[size_t(s)],
-                            SchemaComputationText::computeRestFrame, s, true,
+                            SchemaComputationText::computeRestFrame, s,
+                            bakedStep.kind != Kind::OpNode,
                             [s](const B &p) { return RestInputs(p, s); },
                             [s](const B &p) {
                                 return VtValue(p.restFrames[size_t(s)]);

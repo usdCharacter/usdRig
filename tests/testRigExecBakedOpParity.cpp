@@ -3187,11 +3187,10 @@ OpArray(const std::vector<T> &values)
 }
 
 void
-ProbeRestCompose(const B &b, const RigExecBakedStep &step)
+ProbeRestCompose(const B &b, size_t g)
 {
     using namespace rigExecOps;
-    const RigExecBakedComposeGroup &group =
-        b.composeGroups[size_t(step.object)];
+    const RigExecBakedComposeGroup &group = b.composeGroups[g];
     const BakedPoseInputs in(&b);
     for (int i = group.begin; i < group.end; ++i) {
         const size_t slot = size_t(i);
@@ -3628,11 +3627,12 @@ ProbePose(const B &b)
                  id.object >= 0 &&
                  size_t(id.object) < b.poseInterpolators.size())
             ProbePoseInterpolator(b, size_t(id.object), step);
+        else if (id.kind == RigExecBakedStepKind::RestCompose &&
+                 id.object >= 0 && size_t(id.object) < b.composeGroups.size())
+            ProbeRestCompose(b, size_t(id.object));
         else if (step.object >= 0 &&
                  size_t(step.object) < b.composeGroups.size()) {
-            if (step.kind == RigExecBakedStepKind::RestCompose)
-                ProbeRestCompose(b, step);
-            else if (step.kind == RigExecBakedStepKind::LadderCompose)
+            if (step.kind == RigExecBakedStepKind::LadderCompose)
                 ProbeLadderCompose(b, step);
             else if (step.kind == RigExecBakedStepKind::ComposeSubtree)
                 ProbeComposeSlot(b, step);

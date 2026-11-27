@@ -1977,66 +1977,6 @@ LadderComposeSlot(const PoseLadderInputT<Math> &in)
     return out;
 }
 
-template <class Host>
-StepResult
-RunRestComposeRange(Host &host, int begin, int end, bool trackMoves)
-{
-    static_assert(IsBoundHost<Host>::value, "pose Host is not bound");
-    using Math = typename Host::Math;
-    const typename Math::Mat4 identity = Math::Identity4();
-    for (int i = begin; i < end; ++i) {
-        const size_t slot = size_t(i);
-        if (!host.inputs().isPoseSlot(slot)) {
-            continue;
-        }
-        host.state().beforeSlot(StepKind::RestCompose, begin, i);
-        if (!host.inputs().providerActive(slot)) {
-            host.state().writeRest(slot, UnavailableSpace<Math>(),
-                                   pose_ops::IdentityLandmarks<Math>(), 0,
-                                   UnavailableSpace<Math>());
-            continue;
-        }
-        double restAvars[6];
-        for (size_t k = 0; k < 6; ++k) {
-            restAvars[k] = host.inputs().restAvar(slot, k);
-        }
-        const int parent = host.inputs().parent(slot);
-        typename Math::Mat4 parentRest = identity;
-        if (parent >= 0 &&
-            !host.inputs().restRoundTrip(size_t(parent), &parentRest)) {
-            return {Outcome::Invalid, pose_detail::kPoseDetailNoSlot};
-        }
-        const PoseRestComposeT<Math> composed = RestComposeSlot<Math>(
-            restAvars, host.inputs().ladderSpace(slot, kPoseLadderRestSpace),
-            host.inputs().interveningSpace(slot), parentRest);
-        const typename Math::Mat4 &restM = composed.restM;
-        host.state().writeRest(slot, restM, composed.points, composed.flags,
-                               composed.roundTrip);
-        if (trackMoves) {
-            auto lasts = host.state().ladderLasts(slot);
-            if (!BitEqualMat4<Math>(restM, *lasts.restM)) {
-                *lasts.restM = restM;
-                host.state().markRestChanged(slot);
-            }
-        }
-    }
-    return {Outcome::Applied, kNoStepDetail};
-}
-
-template <class Host>
-StepResult
-RunRestComposeStep(Host &host, const StepRef &step, bool trackMoves)
-{
-    if (step.object < 0 ||
-        size_t(step.object) >= host.inputs().composeGroupCount()) {
-        return {Outcome::Invalid, kNoStepDetail};
-    }
-    int begin = 0;
-    int end = 0;
-    host.inputs().composeGroupRange(size_t(step.object), &begin, &end);
-    return RunRestComposeRange(host, begin, end, trackMoves);
-}
-
 // One slot's default-space ladder: the posed/default/parent matrices
 // and the rotation order and sign the compose reads.
 template <class Host>
@@ -2676,8 +2616,6 @@ StepResult
 RunValueStep(Host &host, const StepRef &step)
 {
     switch (StepKind(step.kind)) {
-    case StepKind::RestCompose:
-        return RunRestComposeStep(host, step, true);
     case StepKind::LadderCompose:
         return RunLadderComposeStep(host, step, true);
     default:

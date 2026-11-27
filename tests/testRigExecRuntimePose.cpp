@@ -4301,6 +4301,19 @@ TestRegisteredReadRefusals()
     std::printf("%s: checked\n", name);
 }
 
+// Whether \p step runs a RestCompose op node.
+static bool
+_RunsRestOp(const fb::RigExecWireFile &file, const fb::RigExecWireStep &step)
+{
+    if (step.kind != fb::StepKind::OpNode || !file.opGraph)
+        return false;
+    for (const auto &output : file.opGraph->hostOutputs)
+        if (output && output->node == uint64_t(step.object) &&
+            output->target == 43)
+            return true;
+    return false;
+}
+
 // tests/fixtures/<file>.
 static std::string
 _FixturePath(const char *file)
@@ -5858,8 +5871,8 @@ TestRepeatedSetRunsNothing()
          "/IkSpaceAsset/Rig/Solvers/ArmIK.inputs:softness", 0.35, false,
          fb::StepKind::OpNode, "/IkSpaceAsset/Rig/Solvers/ArmIK", false},
         {"upstream_inputs.usda", "/LimbsAsset/Rig",
-         "/LimbsAsset/Upstream.inputs:space", 0.0, false,
-         fb::StepKind::RestCompose, "/LimbsAsset/Rig/Controls/BRoot", true},
+         "/LimbsAsset/Upstream.inputs:space", 0.0, false, fb::StepKind::OpNode,
+         "/LimbsAsset/Rig/Controls/BRoot", true},
     };
     const double frame = 1.0;
     for (const Row &row : rows) {
@@ -5926,6 +5939,8 @@ TestRepeatedSetRunsNothing()
             for (const int32_t step : player->GetLastRunTraceForTesting()) {
                 if (step >= 0 && size_t(step) < file->steps.size() &&
                     file->steps[size_t(step)].kind == row.readerKind &&
+                    (!row.matrix ||
+                     _RunsRestOp(*file, file->steps[size_t(step)])) &&
                     player->GetStepLabelForTesting(size_t(step)) ==
                         row.reader) {
                     return true;
@@ -6496,12 +6511,12 @@ def Xform "Asset"
     // The step of \p kind that \p owner's compose group or solver owns.
     const auto stepOf = [&](RigExecBakedStepKind kind, const SdfPath &owner) {
         for (size_t i = 0; i < B->steps.size(); ++i) {
-            const RigExecBakedStepIdentity step =
+            const RigExecBakedStepIdentity id =
                 RigExecBakedIdentityOf(*B, B->steps[i]);
-            if (step.kind != kind || step.object < 0) {
+            if (id.kind != kind || id.object < 0) {
                 continue;
             }
-            const size_t object = size_t(step.object);
+            const size_t object = size_t(id.object);
             const bool owns =
                 kind == RigExecBakedStepKind::Solve
                     ? object < B->solvers.size() &&
@@ -6615,12 +6630,13 @@ def Xform "Asset"
         return std::find(paths.begin(), paths.end(), path.GetString()) !=
                paths.end();
     };
-    const auto headRan = [&](fb::StepKind kind, const SdfPath &owner) {
+    const auto headRan = [&](fb::StepKind kind, const std::string &owner) {
         for (const int32_t step : player->GetLastRunTraceForTesting()) {
             if (step >= 0 && size_t(step) < file->steps.size() &&
                 file->steps[size_t(step)].kind == kind &&
-                player->GetStepLabelForTesting(size_t(step)) ==
-                    owner.GetString()) {
+                (kind != fb::StepKind::OpNode ||
+                 _RunsRestOp(*file, file->steps[size_t(step)])) &&
+                player->GetStepLabelForTesting(size_t(step)) == owner) {
                 return true;
             }
         }
@@ -6632,8 +6648,8 @@ def Xform "Asset"
     CHECK(moves(true, heldDefault));
     CHECK(moves(false, freeJoint));
     play(3.0);
-    CHECK(headRan(fb::StepKind::RestCompose, held));
-    CHECK(headRan(fb::StepKind::LadderCompose, heldDefault));
+    CHECK(headRan(fb::StepKind::OpNode, held.GetString()));
+    CHECK(headRan(fb::StepKind::LadderCompose, heldDefault.GetString()));
     CHECK(!moves(false, held));
     CHECK(!moves(true, heldDefault));
     CHECK(moves(false, freeJoint));

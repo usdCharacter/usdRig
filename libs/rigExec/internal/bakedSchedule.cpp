@@ -2295,11 +2295,6 @@ RouteBakedStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
         case RigExecBakedStepKind::OpNode:
             RigExecBakedRunOpStep(B, step);
             break;
-        case RigExecBakedStepKind::RestCompose: {
-            const auto &g = B->composeGroups[size_t(step->object)];
-            RigExecBakedComposeRestRange(B, g.begin, g.end, true);
-            break;
-        }
         case RigExecBakedStepKind::LadderCompose: {
             const auto &g = B->composeGroups[size_t(step->object)];
             RigExecBakedComposeLadderRange(B, g.begin, g.end, true);
@@ -2379,8 +2374,9 @@ OriginalPreparationStep(const RigExecBakedProgramImpl &B,
                         const RigExecBakedStep &step)
 {
     using K = RigExecBakedStepKind;
+    const K kind = RigExecBakedIdentityOf(B, step).kind;
     return RigExecBakedPropertyPartOf(B, step, nullptr, nullptr) ||
-           step.kind == K::RestCompose || step.kind == K::LadderCompose ||
+           kind == K::RestCompose || kind == K::LadderCompose ||
            step.kind == K::SkinTopology;
 }
 } // namespace
@@ -3307,10 +3303,12 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
                         " omits its placement read");
             }
         }
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(B, step);
         const bool headKind =
             RigExecBakedPropertyPartOf(B, step, nullptr, nullptr) ||
-            step.kind == RigExecBakedStepKind::RestCompose ||
-            step.kind == RigExecBakedStepKind::LadderCompose ||
+            identity.kind == RigExecBakedStepKind::RestCompose ||
+            identity.kind == RigExecBakedStepKind::LadderCompose ||
             step.kind == RigExecBakedStepKind::SkinTopology ||
             (RigExecBakedWeightFieldOf(B, step) >= 0 &&
              B.weightFields[size_t(RigExecBakedWeightFieldOf(B, step))].form !=
@@ -3347,13 +3345,18 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
                 });
         };
         size_t propertyChain = 0, propertyPart = 0;
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        const bool composeHead = id.kind == RigExecBakedStepKind::RestCompose ||
+                                 id.kind == RigExecBakedStepKind::LadderCompose;
         if (step.isHead && step.kind == RigExecBakedStepKind::OpNode &&
+            !composeHead &&
             !RigExecBakedPropertyPartOf(B, step, &propertyChain,
                                         &propertyPart)) {
             add("head step " + step.label + " runs no property revision");
             continue;
         }
-        if (step.kind == RigExecBakedStepKind::OpNode && step.isHead) {
+        if (step.kind == RigExecBakedStepKind::OpNode && step.isHead &&
+            !composeHead) {
             const auto &chain = B.propertyChains[propertyChain];
             const uint32_t own = chain.versionBase + uint32_t(propertyPart);
             std::set<uint32_t> expected{own};
@@ -3390,19 +3393,17 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
                           own - 1))
                 add("head step " + step.label +
                     " omits its predecessor property version");
-        } else if (step.kind == RigExecBakedStepKind::RestCompose ||
-                   step.kind == RigExecBakedStepKind::LadderCompose) {
-            if (step.object < 0 ||
-                size_t(step.object) >= B.composeGroups.size()) {
+        } else if (composeHead) {
+            if (id.object < 0 || size_t(id.object) >= B.composeGroups.size()) {
                 add("head step " + step.label +
                     " has an invalid compose group");
                 continue;
             }
-            const auto &group = B.composeGroups[size_t(step.object)];
-            const auto domain = step.kind == RigExecBakedStepKind::RestCompose
+            const auto &group = B.composeGroups[size_t(id.object)];
+            const auto domain = id.kind == RigExecBakedStepKind::RestCompose
                                     ? RigExecBakedSlotDomain::Rest
                                     : RigExecBakedSlotDomain::Ladder;
-            if (step.part != (domain == RigExecBakedSlotDomain::Rest ? 0 : 1) ||
+            if (id.part != (domain == RigExecBakedSlotDomain::Rest ? 0 : 1) ||
                 step.writes.size() != 1 || step.writes[0].domain != domain ||
                 step.writes[0].begin != uint32_t(group.begin) ||
                 step.writes[0].end != uint32_t(group.end))

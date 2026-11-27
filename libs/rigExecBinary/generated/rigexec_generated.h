@@ -1203,7 +1203,7 @@ enum class StepKind : uint8_t {
   ReservedFrameMatrix = 18,
   /// Reserved. Open refuses it.
   ReservedPropertyRevision = 19,
-  RestCompose = 20,
+  ReservedRestCompose = 20,
   LadderCompose = 21,
   SkinTopology = 22,
   /// Reserved. Open refuses it.
@@ -1251,7 +1251,7 @@ inline const StepKind (&EnumValuesStepKind())[33] {
     StepKind::Derived,
     StepKind::ReservedFrameMatrix,
     StepKind::ReservedPropertyRevision,
-    StepKind::RestCompose,
+    StepKind::ReservedRestCompose,
     StepKind::LadderCompose,
     StepKind::SkinTopology,
     StepKind::ReservedWeightField,
@@ -1290,7 +1290,7 @@ inline const char * const *EnumNamesStepKind() {
     "Derived",
     "ReservedFrameMatrix",
     "ReservedPropertyRevision",
-    "RestCompose",
+    "ReservedRestCompose",
     "LadderCompose",
     "SkinTopology",
     "ReservedWeightField",
@@ -22333,6 +22333,9 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// inputs:enabled, 1 its numeric driver values, 2 inputs:mask, 3 and 4
   /// its driver's last fin and rest frames, 5 and 6 its parent's, 7 to 10
   /// its extra drivers' and their parents' (lists).
+  /// 43 (format 56): input `read` (OpRestRead) of compose group
+  /// `object`'s RestCompose node: 0 its slot's rest avars, 1 rest space, 2
+  /// intervening space, 3 its parent's rest round trip.
   /// 60 (format 55): input `part` (OpSolverRead, rigExecEvalCore/opSteps.h)
   /// of solver `object` (pose.solvers index), read by one of its op nodes.
   uint8_t source() const {
@@ -22466,6 +22469,9 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// space checkpoint `object`'s switch frame;
   /// 42 (format 52): pose interpolator `object`'s weights, one per pose in
   /// its solve's order; the rest of its weight range publishes zero.
+  /// 43 (format 56): RestCompose output `port` (OpRestOutput: 4 the rest
+  /// matrix, 5 the rest frame, 6 the rest round trip) into compose group
+  /// `object`'s slot.
   /// 60 (format 55): solver `object`'s frames, from its last op node, as
   /// its aggregate and its commit's outputs; 61 (format 55): whether 2D
   /// skeleton solver `object` solved in its plane.

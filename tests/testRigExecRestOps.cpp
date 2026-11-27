@@ -602,10 +602,11 @@ int
 HeadOpOf(const RigExecBakedProgramImpl &B, RigExecBakedStepKind kind, int slot)
 {
     for (const uint32_t i : RigExecBakedHeadIndices(B)) {
-        const RigExecBakedStep &step = B.steps[i];
-        if (step.kind == kind) {
+        const RigExecBakedStepIdentity id =
+            RigExecBakedIdentityOf(B, B.steps[i]);
+        if (id.kind == kind) {
             const RigExecBakedComposeGroup &group =
-                B.composeGroups[size_t(step.object)];
+                B.composeGroups[size_t(id.object)];
             if (group.begin <= slot && slot < group.end) {
                 return int(i);
             }
@@ -874,12 +875,12 @@ TestTheValidatorRequiresComposeInputs(const std::string &examples)
              ladderOwnRest = false, ladderParent = false;
         for (uint32_t index : RigExecBakedHeadIndices(B)) {
             auto &step = B.steps[index];
-            const bool rest = step.kind == RigExecBakedStepKind::RestCompose;
-            const bool ladder =
-                step.kind == RigExecBakedStepKind::LadderCompose;
+            const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+            const bool rest = id.kind == RigExecBakedStepKind::RestCompose;
+            const bool ladder = id.kind == RigExecBakedStepKind::LadderCompose;
             if (!rest && !ladder)
                 continue;
-            const auto &group = B.composeGroups[size_t(step.object)];
+            const auto &group = B.composeGroups[size_t(id.object)];
             if (ladder && !ladderOwnRest) {
                 omit(step, RigExecBakedSlotDomain::Rest, uint32_t(group.begin));
                 ladderOwnRest = true;
@@ -995,7 +996,8 @@ TestTheValidatorAcceptsDomainEnumerationOrder(const std::string &examples)
         property =
             property || RigExecBakedPropertyPartOf(B, step, nullptr, nullptr);
         if (from == RigExecBakedHeadIndices(B).size() &&
-            step.kind == RigExecBakedStepKind::RestCompose) {
+            RigExecBakedIdentityOf(B, step).kind ==
+                RigExecBakedStepKind::RestCompose) {
             from = p;
         }
     }

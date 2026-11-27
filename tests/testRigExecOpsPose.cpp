@@ -392,6 +392,16 @@ TestSlotCompose()
         CHECK(off.Run({&restAvars, &identity}));
         CHECK(std::isnan(off.Out<Mat4d>(0)._mtx[3][0]));
         CHECK(off.Out<rigExecRig::PointFrame>(1).flags == 0);
+        auto moving = ArrayOf<double>({1, 2, 3, 0, 0, 0});
+        std::string steadyError;
+        CHECK(opAllocationCount::SteadyFrameAllocations(
+                  RestCompose(), &active, restIns, {&moving, &identity},
+                  RestComposeRest(), 0,
+                  [&](int frame) {
+                      moving[0] = 0.5 * frame;
+                      return &moving;
+                  },
+                  &steadyError) == 0);
     }
 
     const std::vector<const RigExecPortHandle *> ladderIns = {

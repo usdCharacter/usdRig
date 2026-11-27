@@ -464,6 +464,72 @@ _CheckpointStep(RigExecWireFile &f, uint32_t checkpoint)
     return step;
 }
 
+// A RestCompose op node of compose group \p group (lookups 43, its three
+// outputs into target 43), and the OpNode step that runs it.
+fb::RigExecWireStep
+_RestStep(RigExecWireFile &f, uint32_t group)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    uint32_t entry = 0;
+    while (entry < f.manifest->coreOps.size() &&
+           f.manifest->coreOps[entry]->name != "RestCompose")
+        ++entry;
+    if (entry == f.manifest->coreOps.size()) {
+        auto added = std::make_unique<fb::RigExecWireManifestEntry>();
+        added->nameSpace = "rig";
+        added->name = "RestCompose";
+        added->version = 1;
+        f.manifest->coreOps.push_back(std::move(added));
+    }
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = entry;
+    const int32_t slot = f.pose->composeGroups[group].begin;
+    const uint32_t reads = f.slotMeta->parent[size_t(slot)] >= 0 ? 4 : 3;
+    for (uint32_t read = 0; read < reads; ++read) {
+        auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+        in->port = read;
+        in->host = 4;
+        in->object = uint32_t(f.opGraph->lookups.size());
+        op->inputs.push_back(std::move(in));
+        auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+        lookup->source = 43;
+        lookup->object = group;
+        lookup->part = -1;
+        lookup->read = uint8_t(read);
+        f.opGraph->lookups.push_back(std::move(lookup));
+    }
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    for (uint32_t port = 4; port <= 6; ++port) {
+        auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+        output->node = node;
+        output->port = port;
+        output->target = 43;
+        output->object = group;
+        f.opGraph->hostOutputs.push_back(std::move(output));
+    }
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    step.part = -1;
+    step.isHead = true;
+    return step;
+}
+
+// Whether \p step runs a RestCompose op node.
+bool
+_IsRestStep(const RigExecWireFile &f, const fb::RigExecWireStep &step)
+{
+    if (step.kind != fb::StepKind::OpNode || !f.opGraph)
+        return false;
+    for (const auto &output : f.opGraph->hostOutputs)
+        if (output && output->node == uint64_t(step.object) &&
+            output->target == 43)
+            return true;
+    return false;
+}
+
 // Whether \p step runs an AvarInputs op node.
 bool
 _IsAvarStep(const RigExecWireFile &f, const fb::RigExecWireStep &step)
@@ -485,7 +551,7 @@ _DeclareFixtureStageFrames(RigExecWireFile &f)
     using K = fb::StepKind;
     const auto prep = [&f](const RigExecWireStep &step) {
         return RigExecFormatPropertyPart(f, step, nullptr, nullptr) ||
-               step.kind == K::RestCompose || step.kind == K::LadderCompose ||
+               _IsRestStep(f, step) || step.kind == K::LadderCompose ||
                step.kind == K::SkinTopology;
     };
     std::map<std::pair<D, uint32_t>, std::vector<size_t>> producers;
@@ -1116,15 +1182,12 @@ _AddFixtureHeads(RigExecWireFile &f)
     heads.push_back(revision);
     if (!f.pose->composeGroups.empty()) {
         const auto &group = f.pose->composeGroups[0];
-        fb::RigExecWireStep rest;
-        rest.isHead = true;
-        rest.kind = fb::StepKind::RestCompose;
-        rest.object = 0;
-        rest.part = 0;
+        fb::RigExecWireStep rest = _RestStep(f, 0);
         rest.writes = {
             fb::SlotRange(fb::SlotDomain::Rest, group.begin, group.end)};
         fb::RigExecWireStep ladder = rest;
         ladder.kind = fb::StepKind::LadderCompose;
+        ladder.object = 0;
         ladder.part = 1;
         ladder.reads = rest.writes;
         ladder.writes = {
@@ -1669,12 +1732,11 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 55 &&
-                      RigExecFormatOldestReadable == 55,
-                  "format 55 runs solvers as op nodes and is the only format "
-                  "Open reads");
-    // Every older format requires re-export: its solvers ran as Solve
-    // steps.
+    static_assert(RigExecFormatVersion == 56 &&
+                      RigExecFormatOldestReadable == 56,
+                  "format 56 retires the RestCompose step and is the only "
+                  "format Open reads");
+    // Every older format requires re-export: it may hold RestCompose steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1685,13 +1747,14 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 55 through " +
+            " (this reader reads 56 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 55 ? "re-export: solvers as op nodes" : "rebake");
+            (version < 56 ? "re-export: rests as RestCompose op nodes"
+                          : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 55 ? reexports : rebakes);
+        ++(version < 56 ? reexports : rebakes);
     }
-    CHECK(reexports == 55 && rebakes == 1);
+    CHECK(reexports == 56 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -3031,6 +3094,8 @@ TestOpLookupOwners()
     expect("pose interpolator inputs on a placement node",
            "reads the inputs of a pose interpolator its node does not store",
            [&](F &f) { look(f, place, 42, 0, -1); });
+    expect("rest inputs on a placement node", "rest input",
+           [&](F &f) { look(f, place, 43, 0, -1); });
     expect(
         "another slot's rest frame on a provider matrix node",
         "reads a rest frame of a slot its node does not store", [&](F &f) {

@@ -133,9 +133,21 @@ enum class OpLookupSource : uint8_t {
     /// Pose interpolator `object`'s input `read` (OpInterpolatorRead):
     /// its leaves, or its drivers' last fin versions and rest frames.
     InterpolatorInputs = 42,
+    /// Compose group `object`'s slot's RestCompose input `read`
+    /// (OpRestRead): its rest avars, rest space and intervening space as
+    /// sampled, or its parent's rest round trip.
+    RestInputs = 43,
     /// Solver `object`'s input `part` (OpSolverRead), from the pose
     /// versions it reads and the rests composed this run.
     SolverInput = 60,
+};
+
+/// OpLookup::read of a RestInputs lookup: the RestCompose input it answers.
+enum class OpRestRead : uint8_t {
+    RestAvars,
+    RestSpace,
+    Intervening,
+    ParentRest,
 };
 
 /// OpLookup::read of a CheckpointInputs lookup: the SpaceCheckpoint input
@@ -441,7 +453,8 @@ OpComposeLookupSource(uint8_t source)
 {
     return source == uint8_t(OpLookupSource::AvarBindings) ||
            source == uint8_t(OpLookupSource::CheckpointInputs) ||
-           source == uint8_t(OpLookupSource::InterpolatorInputs);
+           source == uint8_t(OpLookupSource::InterpolatorInputs) ||
+           source == uint8_t(OpLookupSource::RestInputs);
 }
 
 /// Whether a lookup of \p source answers a Mat4d that may be absent or,
@@ -596,6 +609,9 @@ enum class OpOutputTarget : uint8_t {
     /// FloatArray: pose interpolator `object`'s weights in its solve's
     /// pose order; its other weight slots publish zero.
     PoseWeights = 42,
+    /// A RestCompose node's output `port` (OpRestOutput) into compose group
+    /// `object`'s slot: its rest matrix, rest frame or rest round trip.
+    Rest = 43,
     /// Provider operation `object`'s authority and unavailable input,
     /// stored before its ProviderValueMatrix or ProviderValueFrame.
     ProviderValueAuthority = 50,
@@ -641,8 +657,17 @@ OpComposeOutputTarget(uint8_t target)
 {
     return target == uint8_t(OpOutputTarget::Avars) ||
            target == uint8_t(OpOutputTarget::SwitchFrame) ||
-           target == uint8_t(OpOutputTarget::PoseWeights);
+           target == uint8_t(OpOutputTarget::PoseWeights) ||
+           target == uint8_t(OpOutputTarget::Rest);
 }
+
+/// The RestCompose output port a Rest host output stores. The numbers are
+/// the op's port indices and part of the file format.
+enum class OpRestOutput : uint32_t {
+    RestMatrix = 4,
+    Rest = 5,
+    RoundTrip = 6,
+};
 
 /// Whether OpLookUp resolves lookups of \p source.
 constexpr bool
@@ -1496,6 +1521,7 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
     case OpLookupSource::AvarBindings:
     case OpLookupSource::CheckpointInputs:
     case OpLookupSource::InterpolatorInputs:
+    case OpLookupSource::RestInputs:
         return host.LookUpCompose(index, lookup, type, value, error);
     }
     return OpLayoutFail(error, "no host resolves lookup source " +
@@ -1562,6 +1588,7 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
     case OpOutputTarget::Avars:
     case OpOutputTarget::SwitchFrame:
     case OpOutputTarget::PoseWeights:
+    case OpOutputTarget::Rest:
         return host.StoreCompose(output, value, error);
     }
     return OpLayoutFail(error, "no host stores output target " +

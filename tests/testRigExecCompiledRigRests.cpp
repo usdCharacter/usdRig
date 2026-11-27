@@ -491,7 +491,8 @@ TestARestSpaceConnectedToAComputedSpaceHasAProducer(
     };
     bool produced = false;
     for (size_t rest = 0; rest < B.steps.size(); ++rest)
-        if (B.steps[rest].kind == RigExecBakedStepKind::RestCompose &&
+        if (RigExecBakedIdentityOf(B, B.steps[rest]).kind ==
+                RigExecBakedStepKind::RestCompose &&
             contains(B.steps[rest].writes, RigExecBakedSlotDomain::Rest,
                      uint32_t(slot->second)))
             for (size_t sourceOp = 0; sourceOp < B.steps.size(); ++sourceOp)

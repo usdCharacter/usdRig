@@ -2,7 +2,7 @@
 // Included after the USD-free format fixture helpers.
 
 static_assert(uint8_t(fb::StepKind::ReservedPropertyRevision) == 19 &&
-                  uint8_t(fb::StepKind::RestCompose) == 20 &&
+                  uint8_t(fb::StepKind::ReservedRestCompose) == 20 &&
                   uint8_t(fb::StepKind::LadderCompose) == 21 &&
                   uint8_t(fb::StepKind::SkinTopology) == 22 &&
                   uint8_t(fb::SlotDomain::Rest) == 27 &&
@@ -199,10 +199,7 @@ _HeadComposeFile()
     for (size_t slot = 0; slot < 2; ++slot) {
         const auto &body = f.pose->ladders[slot];
         auto &rest = f.steps[slot * 2];
-        rest.kind = fb::StepKind::RestCompose;
-        rest.object = int32_t(slot);
-        rest.part = 0;
-        rest.isHead = true;
+        rest = _RestStep(f, uint32_t(slot));
         rest.writes = {fb::SlotRange(fb::SlotDomain::Rest, uint32_t(slot),
                                      uint32_t(slot + 1))};
         rest.headInputReads = body.restAvars;

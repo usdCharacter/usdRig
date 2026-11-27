@@ -1118,16 +1118,6 @@ public:
         }
     }
 
-    void writeRest(size_t slot, const GfMatrix4d &restM,
-                   const std::array<GfVec3d, 4> &points, unsigned flags,
-                   const GfMatrix4d &roundTrip)
-    {
-        _program->restM[slot] = restM;
-        _program->restFrames[slot] = BakedPoseMath::MakeFrame(points, flags);
-        _program->restPts[slot] = points;
-        _program->restRoundTrip[slot] = roundTrip;
-    }
-
     void writeLadder(size_t slot, const GfMatrix4d &selfD,
                      const GfMatrix4d &parentDinv,
                      const GfMatrix4d &defaultRoundTrip,
@@ -1193,13 +1183,6 @@ public:
     void commitRotOrder(size_t slot)
     {
         _program->lastRotOrder[slot] = _program->rotOrder[slot];
-    }
-
-    void markRestChanged(size_t slot)
-    {
-        if (!_program->restChanged[slot]) {
-            _program->restChanged[slot] = 1;
-        }
     }
 
     void markLadderChanged(size_t slot)

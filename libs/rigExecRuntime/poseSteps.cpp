@@ -805,6 +805,78 @@ _RrLookUpInterpolator(const RrProgram *program, uint32_t object,
     return false;
 }
 
+bool
+_RrPutMatrix(const RigExecTypeDesc &type, void *value, const RrMat4d &matrix)
+{
+    if (type.size != 16 * sizeof(double))
+        return false;
+    std::memcpy(value, matrix._mtx, 16 * sizeof(double));
+    return true;
+}
+
+// Input \p read of compose group \p object's RestCompose node
+// (RigExecBakedLookUpCompose's twin).
+bool
+_RrLookUpRest(const RrProgram *program, uint32_t object, eval::OpRestRead read,
+              const RigExecTypeDesc &type, void *value)
+{
+    using R = eval::OpRestRead;
+    const RrPoseInputs inputs(program);
+    const size_t slot = size_t(program->poses->composeGroups[object].begin);
+    switch (read) {
+    case R::RestAvars:
+        return _RrFillList<double>(
+            type, value, 6, [&](size_t k) { return inputs.restAvar(slot, k); });
+    case R::RestSpace:
+        return _RrPutMatrix(
+            type, value, inputs.ladderSpace(slot, eval::kPoseLadderRestSpace));
+    case R::Intervening:
+        return _RrPutMatrix(type, value, inputs.interveningSpace(slot));
+    case R::ParentRest: {
+        const int parent = inputs.parent(slot);
+        RrMat4d rest;
+        return parent >= 0 && inputs.restRoundTrip(size_t(parent), &rest) &&
+               _RrPutMatrix(type, value, rest);
+    }
+    }
+    return false;
+}
+
+// Output \p port of compose group \p object's RestCompose node into its
+// slot's rest tables (RigExecBakedStoreCompose's twin).
+bool
+_RrStoreRest(RrProgram *program, uint32_t object, uint32_t port,
+             const void *value)
+{
+    using P = eval::OpRestOutput;
+    RrPoseScratch &scratch = *_RrScratch(program);
+    const size_t slot = size_t(program->poses->composeGroups[object].begin);
+    switch (P(port)) {
+    case P::RestMatrix: {
+        RrMat4d &restM = scratch.restM[slot];
+        std::memcpy(restM._mtx, value, 16 * sizeof(double));
+        if (std::memcmp(restM._mtx, scratch.lastRestM[slot]._mtx,
+                        16 * sizeof(double)) != 0) {
+            scratch.lastRestM[slot] = restM;
+            program->store.restChanged[slot] = 1;
+        }
+        return true;
+    }
+    case P::Rest: {
+        const auto &frame = *static_cast<const rigExecRig::PointFrame *>(value);
+        scratch.restPts[slot] = frame.points;
+        scratch.restFrames[slot] =
+            RrPoseMath::MakeFrame(frame.points, frame.flags);
+        return true;
+    }
+    case P::RoundTrip:
+        std::memcpy(scratch.restRoundTrip[slot]._mtx, value,
+                    16 * sizeof(double));
+        return true;
+    }
+    return false;
+}
+
 } // namespace
 
 bool
@@ -812,6 +884,17 @@ RrLookUpCompose(const RrProgram *program, const eval::OpLookup &lookup,
                 const RigExecTypeDesc &type, void *value, std::string *error)
 {
     const RrInputState &state = program->inputState;
+    if (lookup.source == uint8_t(eval::OpLookupSource::RestInputs)) {
+        if (lookup.object < program->poses->composeGroups.size() &&
+            _RrLookUpRest(program, lookup.object, eval::OpRestRead(lookup.read),
+                          type, value))
+            return true;
+        if (error)
+            *error = "op nodes: compose group " +
+                     std::to_string(lookup.object) + " has no rest input " +
+                     std::to_string(lookup.read);
+        return false;
+    }
     if (lookup.source == uint8_t(eval::OpLookupSource::InterpolatorInputs)) {
         if (lookup.object < program->poses->poseInterpolators.size() &&
             _RrLookUpInterpolator(program, lookup.object,
@@ -856,6 +939,16 @@ bool
 RrStoreCompose(RrProgram *program, const eval::OpHostOutput &output,
                const void *value, std::string *error)
 {
+    if (output.target == uint8_t(eval::OpOutputTarget::Rest)) {
+        if (output.object < program->poses->composeGroups.size() &&
+            _RrStoreRest(program, output.object, output.port, value))
+            return true;
+        if (error)
+            *error = "op nodes: compose group " +
+                     std::to_string(output.object) + " stores no rest port " +
+                     std::to_string(output.port);
+        return false;
+    }
     if (output.target == uint8_t(eval::OpOutputTarget::PoseWeights)) {
         const auto &weights =
             *static_cast<const rigExecStd::RigExecArray<float> *>(value);

@@ -4114,11 +4114,40 @@ RigExecBakedSampleLeaves(RigExecBakedProgramImpl *program, UsdTimeCode time,
 }
 
 void
-RigExecBakedComposeRestRange(RigExecBakedProgramImpl *program, int begin,
-                             int end, bool trackMoves)
+RigExecBakedComposeRests(RigExecBakedProgramImpl *program)
 {
-    BakedPoseHost host(program, nullptr);
-    eval::RunRestComposeRange(host, begin, end, trackMoves);
+    RigExecBakedProgramImpl &B = *program;
+    const BakedPoseInputs inputs(program);
+    const GfMatrix4d identity(1.0);
+    for (size_t slot = 0; slot < B.paths.size(); ++slot) {
+        if (!inputs.isPoseSlot(slot))
+            continue;
+        if (!inputs.providerActive(slot)) {
+            const GfMatrix4d unavailable =
+                eval::UnavailableSpace<BakedPoseMath>();
+            B.restM[slot] = unavailable;
+            B.restPts[slot] =
+                eval::pose_ops::IdentityLandmarks<BakedPoseMath>();
+            B.restFrames[slot] = BakedPoseMath::MakeFrame(B.restPts[slot], 0);
+            B.restRoundTrip[slot] = unavailable;
+            continue;
+        }
+        double restAvars[6];
+        for (size_t k = 0; k < 6; ++k)
+            restAvars[k] = inputs.restAvar(slot, k);
+        const int parent = inputs.parent(slot);
+        GfMatrix4d parentRest = identity;
+        if (parent >= 0)
+            inputs.restRoundTrip(size_t(parent), &parentRest);
+        const auto composed = eval::RestComposeSlot<BakedPoseMath>(
+            restAvars, inputs.ladderSpace(slot, eval::kPoseLadderRestSpace),
+            inputs.interveningSpace(slot), parentRest);
+        B.restM[slot] = composed.restM;
+        B.restPts[slot] = composed.points;
+        B.restFrames[slot] =
+            BakedPoseMath::MakeFrame(composed.points, composed.flags);
+        B.restRoundTrip[slot] = composed.roundTrip;
+    }
 }
 
 void
@@ -4184,10 +4213,19 @@ RigExecBakedBuildRestSteps(RigExecBakedProgramImpl *program)
         for (const bool rest : {true, false}) {
             RigExecBakedStep step;
             step.isHead = true;
-            step.kind = rest ? RigExecBakedStepKind::RestCompose
+            step.kind = rest ? RigExecBakedStepKind::OpNode
                              : RigExecBakedStepKind::LadderCompose;
-            step.object = int(g);
-            step.part = rest ? 0 : 1;
+            step.object = rest ? int(B.opNodeOrigins.size()) : int(g);
+            step.part = rest ? -1 : 1;
+            if (rest) {
+                RigExecBakedOpOrigin origin;
+                origin.family = RigExecBakedOpFamily::RestCompose;
+                origin.kind = RigExecBakedStepKind::RestCompose;
+                origin.object = int32_t(g);
+                origin.part = 0;
+                B.opNodeOrigins.push_back(origin);
+                step.maxDiagnostics = 1;
+            }
             step.label = std::string(rest ? "RestCompose " : "LadderCompose ") +
                          pathText(first);
             std::set<uint32_t> versions, rests, ladders, spaces;
@@ -4251,15 +4289,16 @@ RigExecBakedNoteRestLeaves(RigExecBakedProgramImpl *program)
 {
     RigExecBakedProgramImpl &B = *program;
     for (RigExecBakedStep &step : B.steps) {
-        if (step.kind != RigExecBakedStepKind::RestCompose &&
-            step.kind != RigExecBakedStepKind::LadderCompose) {
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        if (id.kind != RigExecBakedStepKind::RestCompose &&
+            id.kind != RigExecBakedStepKind::LadderCompose) {
             continue;
         }
         step.bindingLeaves.clear();
         step.varyingLeaves = false;
         const RigExecBakedComposeGroup &group =
-            B.composeGroups[size_t(step.object)];
-        const bool rest = step.kind == RigExecBakedStepKind::RestCompose;
+            B.composeGroups[size_t(id.object)];
+        const bool rest = id.kind == RigExecBakedStepKind::RestCompose;
         for (int i = group.begin; i < group.end; ++i) {
             const size_t slot = size_t(i);
             if (B.slotKind[slot] != RigExecBakedSlotKind::FirstFramePose) {

@@ -695,10 +695,8 @@ RrRunOpBody(RrProgram *p, size_t i, std::string *error)
                 });
         },
         [&] {
-            if (step.kind == RigExecWireStepKind::RestCompose ||
-                step.kind == RigExecWireStepKind::LadderCompose) {
-                RrRunRestHead(p, size_t(step.object),
-                              step.kind == RigExecWireStepKind::LadderCompose);
+            if (step.kind == RigExecWireStepKind::LadderCompose) {
+                RrRunLadderHead(p, size_t(step.object));
                 return true;
             }
             if (step.kind == RigExecWireStepKind::SkinTopology) {

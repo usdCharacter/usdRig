@@ -1,4 +1,5 @@
 #include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/poseEvalHost.h"
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecMath/avarScale.h"
 #include "rigExecOps/pose/poseOps.h"
@@ -429,6 +430,130 @@ AddInterpolatorOp(const RigExecBakedProgramImpl &B,
     return true;
 }
 
+/// The slot compose group \p object composes.
+size_t
+GroupSlot(const RigExecBakedProgramImpl &B, uint32_t object)
+{
+    return size_t(B.composeGroups[object].begin);
+}
+
+bool
+PutMatrix(const RigExecTypeDesc &type, void *value, const GfMatrix4d &matrix)
+{
+    if (type.size != 16 * sizeof(double))
+        return false;
+    std::memcpy(value, matrix.data(), 16 * sizeof(double));
+    return true;
+}
+
+/// Answers input \p read of compose group \p object's RestCompose node.
+bool
+LookUpRest(const RigExecBakedProgramImpl &B, uint32_t object,
+           eval::OpRestRead read, const RigExecTypeDesc &type, void *value)
+{
+    using R = eval::OpRestRead;
+    const BakedPoseInputs inputs(&B);
+    const size_t slot = GroupSlot(B, object);
+    switch (read) {
+    case R::RestAvars:
+        return FillList<double>(
+            type, value, 6, [&](size_t k) { return inputs.restAvar(slot, k); });
+    case R::RestSpace:
+        return PutMatrix(type, value,
+                         inputs.ladderSpace(slot, eval::kPoseLadderRestSpace));
+    case R::Intervening:
+        return PutMatrix(type, value, inputs.interveningSpace(slot));
+    case R::ParentRest: {
+        const int parent = inputs.parent(slot);
+        GfMatrix4d rest;
+        return parent >= 0 && inputs.restRoundTrip(size_t(parent), &rest) &&
+               PutMatrix(type, value, rest);
+    }
+    }
+    return false;
+}
+
+/// The RestCompose node of compose group \p object: its slot's rest
+/// channels and its parent's rest in, the slot's rest tables out.
+bool
+AddRestOp(const RigExecBakedProgramImpl &B, RigExecRigDescBuilder *builder,
+          eval::OpStepLayout *layout, size_t o, uint32_t object,
+          std::string *error)
+{
+    using namespace rigExecOps;
+    using R = eval::OpRestRead;
+    using P = eval::OpRestOutput;
+    if (RestComposeRestMatrix().Index() != uint32_t(P::RestMatrix) ||
+        RestComposeRest().Index() != uint32_t(P::Rest) ||
+        RestComposeRoundTrip().Index() != uint32_t(P::RoundTrip))
+        return Fail(error, "RestCompose's outputs are not ports 4 to 6");
+    const size_t slot = GroupSlot(B, object);
+    SlotActivityPayload payload;
+    payload.active = BakedPoseInputs(&B).providerActive(slot);
+    const RigExecNodeId node = builder->AddOp(RestCompose(), &payload);
+    if (node != o)
+        return Fail(error, "compose group " + std::to_string(object) +
+                               " was added as node " + std::to_string(node));
+    const auto feed = [&](const RigExecPortHandle &port, R read) {
+        builder->BindInput(node, port);
+        layout->hostInputs.push_back({node, port.Index(),
+                                      eval::OpHostSource::Lookup,
+                                      uint32_t(layout->lookups.size())});
+        layout->lookups.push_back({uint8_t(eval::OpLookupSource::RestInputs),
+                                   object, -1, uint8_t(read)});
+    };
+    feed(RestComposeRestAvars(), R::RestAvars);
+    feed(RestComposeRestSpace(), R::RestSpace);
+    feed(RestComposeIntervening(), R::Intervening);
+    if (B.parent[slot] >= 0)
+        feed(RestComposeParentRest(), R::ParentRest);
+    for (const RigExecPortHandle *port :
+         {&RestComposeRestMatrix(), &RestComposeRest(),
+          &RestComposeRoundTrip()}) {
+        builder->BindOutput(node, *port);
+        layout->hostOutputs.push_back(
+            {node, port->Index(), uint8_t(eval::OpOutputTarget::Rest), object});
+    }
+    return true;
+}
+
+/// Stores output \p port of compose group \p object's RestCompose node
+/// into its slot's rest tables; a rest matrix that moved marks the slot's
+/// rest changed.
+bool
+StoreRest(RigExecBakedProgramImpl &B, uint32_t object, uint32_t port,
+          const void *value)
+{
+    using P = eval::OpRestOutput;
+    const size_t slot = GroupSlot(B, object);
+    switch (P(port)) {
+    case P::RestMatrix: {
+        GfMatrix4d &restM = B.restM[slot];
+        std::memcpy(restM.data(), value, 16 * sizeof(double));
+        if (std::memcmp(restM.data(), B.lastRestM[slot].data(),
+                        16 * sizeof(double)) != 0) {
+            B.lastRestM[slot] = restM;
+            B.restChanged[slot] = 1;
+        }
+        return true;
+    }
+    case P::Rest: {
+        const auto &frame = *static_cast<const rigExecRig::PointFrame *>(value);
+        std::array<GfVec3d, 4> points;
+        for (size_t i = 0; i < 4; ++i)
+            points[i] = GfVec3d(frame.points[i][0], frame.points[i][1],
+                                frame.points[i][2]);
+        B.restPts[slot] = points;
+        B.restFrames[slot] = BakedPoseMath::MakeFrame(points, frame.flags);
+        return true;
+    }
+    case P::RoundTrip:
+        std::memcpy(B.restRoundTrip[slot].data(), value, 16 * sizeof(double));
+        return true;
+    }
+    return false;
+}
+
 } // namespace
 
 bool
@@ -448,6 +573,9 @@ RigExecBakedAddComposeOp(const RigExecBakedProgramImpl &B,
         size_t(origin.object) < B.poseInterpolators.size())
         return AddInterpolatorOp(B, builder, layout, o, uint32_t(origin.object),
                                  error);
+    if (origin.family == RigExecBakedOpFamily::RestCompose &&
+        origin.object >= 0 && size_t(origin.object) < B.composeGroups.size())
+        return AddRestOp(B, builder, layout, o, uint32_t(origin.object), error);
     return Fail(error, "node " + std::to_string(o) + " has no compose origin");
 }
 
@@ -518,6 +646,15 @@ RigExecBakedLookUpCompose(const RigExecBakedProgramImpl &B,
                                std::to_string(lookup.object) +
                                " has no input " + std::to_string(lookup.read));
     }
+    if (lookup.source == uint8_t(eval::OpLookupSource::RestInputs)) {
+        if (lookup.object < B.composeGroups.size() &&
+            LookUpRest(B, lookup.object, eval::OpRestRead(lookup.read), type,
+                       value))
+            return true;
+        return Fail(error, "compose group " + std::to_string(lookup.object) +
+                               " has no rest input " +
+                               std::to_string(lookup.read));
+    }
     if (lookup.source == uint8_t(eval::OpLookupSource::CheckpointInputs)) {
         if (lookup.object < B.switchFrameContexts.size() &&
             LookUpCheckpoint(B, lookup.object,
@@ -563,6 +700,14 @@ RigExecBakedStoreCompose(RigExecBakedProgramImpl &B,
                 B.poseWeights[size_t(
                     interp.poseSlots[size_t(interp.primvarSources[j])])];
         return true;
+    }
+    if (output.target == uint8_t(eval::OpOutputTarget::Rest)) {
+        if (output.object < B.composeGroups.size() &&
+            StoreRest(B, output.object, output.port, value))
+            return true;
+        return Fail(error, "compose group " + std::to_string(output.object) +
+                               " stores no rest port " +
+                               std::to_string(output.port));
     }
     if (output.target == uint8_t(eval::OpOutputTarget::SwitchFrame)) {
         if (output.object >= B.switchFrames.size())

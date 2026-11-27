@@ -2994,6 +2994,88 @@ TestFrozenSolverOpsMatchLive(const std::string &examplesDir)
         }
 }
 
+// Frozen jobs of pose_interpolator.usda match live bit for bit with released
+// gathers poisoned: at rest, under a drag of the interpolator's driver, and
+// under a drag of the driver's rest, which reruns its RestCompose node.
+void
+TestFrozenComposeOpsMatchLive(const std::string &examplesDir)
+{
+    const std::string name =
+        examplesDir + "/../docs/examples/pose_interpolator.usda";
+    UsdStageRefPtr stage = UsdStage::Open(name);
+    CHECK(stage);
+    if (!stage)
+        return;
+    const SdfPath rig("/PsdAsset/Rig");
+    const SdfPath elbow("/PsdAsset/Rig/Controls/Elbow");
+    RigExecRigEvaluator evaluator(stage, rig);
+    CHECK(evaluator.Compile());
+    const double end =
+        std::max(stage->GetEndTimeCode(), stage->GetStartTimeCode());
+    CHECK(evaluator.Evaluate(UsdTimeCode(end)).valid);
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
+    size_t interpolators = 0, rests = 0;
+    for (const RigExecBakedStep &step : B.steps) {
+        const RigExecBakedStepKind kind = RigExecBakedIdentityOf(B, step).kind;
+        interpolators += kind == RigExecBakedStepKind::PoseInterpolator &&
+                         step.kind == RigExecBakedStepKind::OpNode;
+        rests += kind == RigExecBakedStepKind::RestCompose &&
+                 step.kind == RigExecBakedStepKind::OpNode;
+    }
+    CHECK(interpolators > 0 && rests > 0);
+    std::shared_ptr<const RigExecFrozenProgram> frozen;
+    std::string error;
+    CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
+    if (!frozen)
+        return;
+    rigExec::RigExecBakedProgramTesting::SetPoisonReleasedGathers(true);
+    const auto run = [&](const char *what,
+                         const std::vector<RigExecValueOverride> &drags) {
+        evaluator.SetInteractiveOverrides(drags);
+        const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(end));
+        RigExecFrameInputs inputs;
+        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(end), drags,
+                                       &inputs, &error));
+        RigExecFrozenEvalContext context;
+        context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+        context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+        context.varyingInputCount = inputs.values.size();
+        if (evaluator.GetPublishWeightFields())
+            context.flags |= kRigExecFrozenPublishWeightFields;
+        if (evaluator.GetSolverGuidesEnabled())
+            context.flags |= kRigExecFrozenSolverGuidesEnabled;
+        context.frozen = frozen.get();
+        auto workspace = RigExecCreateFrozenWorkspace(frozen);
+        context.workspace = workspace.get();
+        RigExecFrozenRunReport report;
+        const RigExecRigPose pose = RigExecEvaluateFrozen(
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
+        evaluator.SetInteractiveOverrides({});
+        CHECK(live.valid && pose.valid);
+        CheckPosesBitIdentical(what, live, pose);
+        return live;
+    };
+    RigExecValueOverride driver;
+    driver.prim = elbow;
+    driver.attribute = TfToken("avars:rz");
+    driver.value = VtValue(35.0);
+    RigExecValueOverride rest;
+    rest.prim = elbow;
+    rest.attribute = TfToken("rest:tx");
+    rest.value = VtValue(0.75);
+    const RigExecRigPose still = run("frozen compose ops at rest", {});
+    run("frozen compose ops under a driver drag", {driver});
+    const RigExecRigPose moved =
+        run("frozen compose ops under a rest drag", {rest});
+    run("frozen compose ops under both drags", {driver, rest});
+    RigExecRigPose diff;
+    RigExecComparePoses(still, moved, &diff);
+    CHECK(diff.comparisonMismatches != 0);
+    rigExec::RigExecBakedProgramTesting::SetPoisonReleasedGathers(false);
+}
+
 // Frozen publishes exactly live's weightFrames on every path. On
 // 14_VolumeConstrainedSweep with a volume outside the rig that only a
 // constraint names, that volume has a slot and a placement step, which the
@@ -9611,7 +9693,7 @@ CheckRecomposingLadderFreezes(const _RecomposingLadderCase &c)
                               RigExecBakedSlotDomain domain) {
         size_t found = B.steps.size();
         for (size_t i = 0; i < B.steps.size(); ++i) {
-            if (B.steps[i].kind != kind ||
+            if (RigExecBakedIdentityOf(B, B.steps[i]).kind != kind ||
                 !contains(B.steps[i].writes, domain, slot))
                 continue;
             CHECK(found == B.steps.size());
@@ -10867,6 +10949,7 @@ main(int argc, char **argv)
         TestFrozenSolverOpsMatchLive(argv[1]);
         TestFrozenProviderOpsMatchLive(argv[1]);
         TestFrozenConstraintOpsMatchLive(argv[1]);
+        TestFrozenComposeOpsMatchLive(argv[1]);
         TestFrozenProviderAnswersMatchLive(argv[1]);
         TestUnavailableTargetSamplesLocalInvalidRoles(argv[1]);
         TestProjectorSpacesMatchDynamic(argv[1]);

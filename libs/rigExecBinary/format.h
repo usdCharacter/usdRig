@@ -731,7 +731,11 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// flag through 61. It retires the Solve step: StepKind 1 is reserved and
 /// refused. The Solver rest copies and parameters only that step read are
 /// deprecated.
-inline constexpr uint32_t RigExecFormatVersion = 55;
+///
+/// Format 56 composes rests as RestCompose op nodes reading RestInputs
+/// lookups (OpGraph.lookups source 43) and storing host_outputs target 43:
+/// StepKind 20 is reserved and refused.
+inline constexpr uint32_t RigExecFormatVersion = 56;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -739,7 +743,7 @@ inline constexpr uint32_t RigExecFormatVersion = 55;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 55;
+inline constexpr uint32_t RigExecFormatOldestReadable = 56;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

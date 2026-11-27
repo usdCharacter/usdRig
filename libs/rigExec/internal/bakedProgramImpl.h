@@ -1215,6 +1215,8 @@ enum class RigExecBakedOpFamily : uint8_t {
     /// One op node of solver `object`, `part` its place among the
     /// solver's nodes; the last one stores the solver's frames.
     Solver,
+    /// A compose group's rest through RestCompose: object the group.
+    RestCompose,
 };
 
 /// Where an op node's step comes from: its family, that family's object and
@@ -4013,22 +4015,13 @@ void RigExecBakedNoteWeightInputs(
 void RigExecBakedSkipGeometryStep(RigExecBakedProgramImpl *program,
                                   RigExecBakedStep *step);
 
-/// Resolves the rest chain of slots [\p begin, \p end) from the bound
-/// channels of RigExecBakedProgramImpl::ladders, in slot order, as their
-/// leaves were last sampled: `restM`, `restFrames`, `restPts` and
-/// `restRoundTrip`. A parent outside the range must be composed already.
-///
-/// ONE definition, called from Build (once, over every slot, at the capture
-/// time) and by the RestCompose head op. computations.cpp resolves the same
-/// computations per provider per evaluation; the frame round trips exec
-/// performs between them are reproduced, not simplified away, because a
-/// deep chain drifts without them.
-///
-/// \p trackMoves compares each slot's `restM` with `lastRestM` and, where it
-/// moved, sets `restChanged`, appends to `restMoved` and updates
-/// `lastRestM`. Build passes false and seeds the comparison buffers itself.
-void RigExecBakedComposeRestRange(RigExecBakedProgramImpl *program, int begin,
-                                  int end, bool trackMoves);
+/// Resolves every slot's rest from the bound channels of
+/// RigExecBakedProgramImpl::ladders, in slot order, as their leaves were
+/// sampled at Build: `restM`, `restFrames`, `restPts` and
+/// `restRoundTrip`, through the kernel the RestCompose op runs per frame.
+/// The frame round trips exec performs between slots are reproduced, not
+/// simplified away, because a deep chain drifts without them.
+void RigExecBakedComposeRests(RigExecBakedProgramImpl *program);
 
 /// The default-space ladder of slots [\p begin, \p end), as above:
 /// `posedAuthored`, `posedAuthoredM`, `selfD`, `defaultRoundTrip`,
