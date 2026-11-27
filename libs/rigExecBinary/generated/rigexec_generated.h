@@ -8822,38 +8822,29 @@ struct RigExecWireSolver : public ::flatbuffers::NativeTable {
   std::vector<::rigExec::RigExecWireLandmarks> jointRests{};
   bool restsVary = false;
   std::vector<int32_t> restOverrides{};
-  std::vector<double> splineRestWeights{};
-  uint8_t splineRestMode = 0;
   bool degenerate = false;
   std::vector<int32_t> controls{};
   bool parentRelative = false;
-  std::vector<::rigExec::RigExecWireLandmarks> controlRests{};
   int32_t start = -1;
-  ::rigExec::RigExecWireLandmarks startRest{};
   uint32_t startRead = 0;
   int32_t root = -1;
   int32_t mid = -1;
   int32_t end = -1;
   int32_t pole = -1;
   std::vector<::rigExec::RigExecWireLandmarks> ikRests{};
-  ::rigExec::RigExecWireTwoBoneIkParams ikParams{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> bend{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> upperOffset{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> lowerOffset{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> stretch{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> softness{};
-  double upperLengthBase{};
-  double lowerLengthBase{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> ikSpace{};
   int32_t spaceSlot = -1;
-  ::rigExec::RigExecWireLandmarks spaceRest{};
   uint32_t spaceRead = 0;
   int32_t inA = -1;
   int32_t inB = -1;
   std::unique_ptr<rigExec::fb::RigExecWireInput> blendWeight{};
   uint8_t scaleMode = 0;
   bool blendRotationRejected = false;
-  std::unique_ptr<rigExec::fb::RigExecWireSplineIkRest> splineRest{};
   ::rigExec::RigExecWireSplineIkParams splineParams{};
   std::vector<::rigExec::RigExecWireLandmarks> splineJointRests{};
   uint64_t splineCount = 0;
@@ -8863,12 +8854,8 @@ struct RigExecWireSolver : public ::flatbuffers::NativeTable {
   std::unique_ptr<rigExec::fb::RigExecWireInput> twist{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> minLengthRatio{};
   bool splineParamsVary = false;
-  ::rigExec::RigExecWireLandmarks twistStartRest{};
-  ::rigExec::RigExecWireLandmarks twistEndRest{};
-  std::vector<double> twistWeights{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> twistTurns{};
   uint32_t ribbonPointsPath = 0;
-  std::vector<::rigExec::RigExecWireVec3f> ribbonRestPoints{};
   std::vector<::rigExec::RigExecWireVec3f> ribbonConstantPoints{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> ribbonSampleCount{};
   std::vector<::rigExec::RigExecWireIntPair> outputs{};
@@ -8900,7 +8887,10 @@ struct RigExecWireSolver : public ::flatbuffers::NativeTable {
   RigExecWireSolver &operator=(RigExecWireSolver o) FLATBUFFERS_NOEXCEPT;
 };
 
-/// One solver's epoch description. *_read fields are fin versions.
+/// One solver's epoch description. *_read fields are fin versions. The
+/// deprecated fields (format 55) were the rest copies and parameters the
+/// retired Solve step read; its op nodes read their rests through lookups
+/// and keep their parameters in their payloads.
 struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef RigExecWireSolver NativeTableType;
   typedef SolverBuilder Builder;
@@ -8919,38 +8909,29 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_JOINTRESTS = 18,
     VT_RESTSVARY = 20,
     VT_RESTOVERRIDES = 22,
-    VT_SPLINERESTWEIGHTS = 24,
-    VT_SPLINERESTMODE = 26,
     VT_DEGENERATE = 28,
     VT_CONTROLS = 30,
     VT_PARENTRELATIVE = 32,
-    VT_CONTROLRESTS = 34,
     VT_START = 36,
-    VT_STARTREST = 38,
     VT_STARTREAD = 40,
     VT_ROOT = 42,
     VT_MID = 44,
     VT_END = 46,
     VT_POLE = 48,
     VT_IKRESTS = 50,
-    VT_IKPARAMS = 52,
     VT_BEND = 54,
     VT_UPPEROFFSET = 56,
     VT_LOWEROFFSET = 58,
     VT_STRETCH = 60,
     VT_SOFTNESS = 62,
-    VT_UPPERLENGTHBASE = 64,
-    VT_LOWERLENGTHBASE = 66,
     VT_IKSPACE = 68,
     VT_SPACESLOT = 70,
-    VT_SPACEREST = 72,
     VT_SPACEREAD = 74,
     VT_INA = 76,
     VT_INB = 78,
     VT_BLENDWEIGHT = 80,
     VT_SCALEMODE = 82,
     VT_BLENDROTATIONREJECTED = 84,
-    VT_SPLINEREST = 86,
     VT_SPLINEPARAMS = 88,
     VT_SPLINEJOINTRESTS = 90,
     VT_SPLINECOUNT = 92,
@@ -8960,12 +8941,8 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_TWIST = 100,
     VT_MINLENGTHRATIO = 102,
     VT_SPLINEPARAMSVARY = 104,
-    VT_TWISTSTARTREST = 106,
-    VT_TWISTENDREST = 108,
-    VT_TWISTWEIGHTS = 110,
     VT_TWISTTURNS = 112,
     VT_RIBBONPOINTSPATH = 114,
-    VT_RIBBONRESTPOINTS = 116,
     VT_RIBBONCONSTANTPOINTS = 118,
     VT_RIBBONSAMPLECOUNT = 120,
     VT_OUTPUTS = 122,
@@ -9025,13 +9002,6 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<int32_t> *restOverrides() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_RESTOVERRIDES);
   }
-  const ::flatbuffers::Vector<double> *splineRestWeights() const {
-    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_SPLINERESTWEIGHTS);
-  }
-  /// SplineIkRestLength.
-  uint8_t splineRestMode() const {
-    return GetField<uint8_t>(VT_SPLINERESTMODE, 0);
-  }
   bool degenerate() const {
     return GetField<uint8_t>(VT_DEGENERATE, 0) != 0;
   }
@@ -9041,16 +9011,10 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   bool parentRelative() const {
     return GetField<uint8_t>(VT_PARENTRELATIVE, 0) != 0;
   }
-  const ::flatbuffers::Vector<const rigExec::fb::Landmarks *> *controlRests() const {
-    return GetPointer<const ::flatbuffers::Vector<const rigExec::fb::Landmarks *> *>(VT_CONTROLRESTS);
-  }
   /// rigExec:startFrame provider slot (-1: absolute), its rest landmarks
   /// and the bound fin version (FkChain, Skeleton2d).
   int32_t start() const {
     return GetField<int32_t>(VT_START, -1);
-  }
-  const rigExec::fb::Landmarks *startRest() const {
-    return GetStruct<const rigExec::fb::Landmarks *>(VT_STARTREST);
   }
   uint32_t startRead() const {
     return GetField<uint32_t>(VT_STARTREAD, 0);
@@ -9071,9 +9035,6 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<const rigExec::fb::Landmarks *> *ikRests() const {
     return GetPointer<const ::flatbuffers::Vector<const rigExec::fb::Landmarks *> *>(VT_IKRESTS);
   }
-  const rigExec::fb::TwoBoneIkParams *ikParams() const {
-    return GetStruct<const rigExec::fb::TwoBoneIkParams *>(VT_IKPARAMS);
-  }
   const rigExec::fb::Input *bend() const {
     return GetPointer<const rigExec::fb::Input *>(VT_BEND);
   }
@@ -9089,12 +9050,6 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const rigExec::fb::Input *softness() const {
     return GetPointer<const rigExec::fb::Input *>(VT_SOFTNESS);
   }
-  const rigExec::fb::F64 *upperLengthBase() const {
-    return GetStruct<const rigExec::fb::F64 *>(VT_UPPERLENGTHBASE);
-  }
-  const rigExec::fb::F64 *lowerLengthBase() const {
-    return GetStruct<const rigExec::fb::F64 *>(VT_LOWERLENGTHBASE);
-  }
   /// rigExec:spaceMatrix: the explicit factor of the space a TwoBoneIk
   /// measures its chain in.
   const rigExec::fb::Input *ikSpace() const {
@@ -9105,9 +9060,6 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// version.
   int32_t spaceSlot() const {
     return GetField<int32_t>(VT_SPACESLOT, -1);
-  }
-  const rigExec::fb::Landmarks *spaceRest() const {
-    return GetStruct<const rigExec::fb::Landmarks *>(VT_SPACEREST);
   }
   uint32_t spaceRead() const {
     return GetField<uint32_t>(VT_SPACEREAD, 0);
@@ -9127,9 +9079,6 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   bool blendRotationRejected() const {
     return GetField<uint8_t>(VT_BLENDROTATIONREJECTED, 0) != 0;
-  }
-  const rigExec::fb::SplineIkRest *splineRest() const {
-    return GetPointer<const rigExec::fb::SplineIkRest *>(VT_SPLINEREST);
   }
   const rigExec::fb::SplineIkParams *splineParams() const {
     return GetStruct<const rigExec::fb::SplineIkParams *>(VT_SPLINEPARAMS);
@@ -9158,23 +9107,11 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   bool splineParamsVary() const {
     return GetField<uint8_t>(VT_SPLINEPARAMSVARY, 0) != 0;
   }
-  const rigExec::fb::Landmarks *twistStartRest() const {
-    return GetStruct<const rigExec::fb::Landmarks *>(VT_TWISTSTARTREST);
-  }
-  const rigExec::fb::Landmarks *twistEndRest() const {
-    return GetStruct<const rigExec::fb::Landmarks *>(VT_TWISTENDREST);
-  }
-  const ::flatbuffers::Vector<double> *twistWeights() const {
-    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_TWISTWEIGHTS);
-  }
   const rigExec::fb::Input *twistTurns() const {
     return GetPointer<const rigExec::fb::Input *>(VT_TWISTTURNS);
   }
   uint32_t ribbonPointsPath() const {
     return GetField<uint32_t>(VT_RIBBONPOINTSPATH, 0);
-  }
-  const ::flatbuffers::Vector<const rigExec::fb::Vec3f *> *ribbonRestPoints() const {
-    return GetPointer<const ::flatbuffers::Vector<const rigExec::fb::Vec3f *> *>(VT_RIBBONRESTPOINTS);
   }
   /// The driver points at bake_time.
   const ::flatbuffers::Vector<const rigExec::fb::Vec3f *> *ribbonConstantPoints() const {
@@ -9280,17 +9217,11 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint8_t>(verifier, VT_RESTSVARY, 1) &&
            VerifyOffset(verifier, VT_RESTOVERRIDES) &&
            verifier.VerifyVector(restOverrides()) &&
-           VerifyOffset(verifier, VT_SPLINERESTWEIGHTS) &&
-           verifier.VerifyVector(splineRestWeights()) &&
-           VerifyField<uint8_t>(verifier, VT_SPLINERESTMODE, 1) &&
            VerifyField<uint8_t>(verifier, VT_DEGENERATE, 1) &&
            VerifyOffset(verifier, VT_CONTROLS) &&
            verifier.VerifyVector(controls()) &&
            VerifyField<uint8_t>(verifier, VT_PARENTRELATIVE, 1) &&
-           VerifyOffset(verifier, VT_CONTROLRESTS) &&
-           verifier.VerifyVector(controlRests()) &&
            VerifyField<int32_t>(verifier, VT_START, 4) &&
-           VerifyField<rigExec::fb::Landmarks>(verifier, VT_STARTREST, 8) &&
            VerifyField<uint32_t>(verifier, VT_STARTREAD, 4) &&
            VerifyField<int32_t>(verifier, VT_ROOT, 4) &&
            VerifyField<int32_t>(verifier, VT_MID, 4) &&
@@ -9298,7 +9229,6 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<int32_t>(verifier, VT_POLE, 4) &&
            VerifyOffset(verifier, VT_IKRESTS) &&
            verifier.VerifyVector(ikRests()) &&
-           VerifyField<rigExec::fb::TwoBoneIkParams>(verifier, VT_IKPARAMS, 8) &&
            VerifyOffsetRequired(verifier, VT_BEND) &&
            verifier.VerifyTable(bend()) &&
            VerifyOffsetRequired(verifier, VT_UPPEROFFSET) &&
@@ -9309,12 +9239,9 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyTable(stretch()) &&
            VerifyOffsetRequired(verifier, VT_SOFTNESS) &&
            verifier.VerifyTable(softness()) &&
-           VerifyField<rigExec::fb::F64>(verifier, VT_UPPERLENGTHBASE, 8) &&
-           VerifyField<rigExec::fb::F64>(verifier, VT_LOWERLENGTHBASE, 8) &&
            VerifyOffsetRequired(verifier, VT_IKSPACE) &&
            verifier.VerifyTable(ikSpace()) &&
            VerifyField<int32_t>(verifier, VT_SPACESLOT, 4) &&
-           VerifyField<rigExec::fb::Landmarks>(verifier, VT_SPACEREST, 8) &&
            VerifyField<uint32_t>(verifier, VT_SPACEREAD, 4) &&
            VerifyField<int32_t>(verifier, VT_INA, 4) &&
            VerifyField<int32_t>(verifier, VT_INB, 4) &&
@@ -9322,8 +9249,6 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyTable(blendWeight()) &&
            VerifyField<uint8_t>(verifier, VT_SCALEMODE, 1) &&
            VerifyField<uint8_t>(verifier, VT_BLENDROTATIONREJECTED, 1) &&
-           VerifyOffsetRequired(verifier, VT_SPLINEREST) &&
-           verifier.VerifyTable(splineRest()) &&
            VerifyField<rigExec::fb::SplineIkParams>(verifier, VT_SPLINEPARAMS, 8) &&
            VerifyOffset(verifier, VT_SPLINEJOINTRESTS) &&
            verifier.VerifyVector(splineJointRests()) &&
@@ -9339,15 +9264,9 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffsetRequired(verifier, VT_MINLENGTHRATIO) &&
            verifier.VerifyTable(minLengthRatio()) &&
            VerifyField<uint8_t>(verifier, VT_SPLINEPARAMSVARY, 1) &&
-           VerifyField<rigExec::fb::Landmarks>(verifier, VT_TWISTSTARTREST, 8) &&
-           VerifyField<rigExec::fb::Landmarks>(verifier, VT_TWISTENDREST, 8) &&
-           VerifyOffset(verifier, VT_TWISTWEIGHTS) &&
-           verifier.VerifyVector(twistWeights()) &&
            VerifyOffsetRequired(verifier, VT_TWISTTURNS) &&
            verifier.VerifyTable(twistTurns()) &&
            VerifyField<uint32_t>(verifier, VT_RIBBONPOINTSPATH, 4) &&
-           VerifyOffset(verifier, VT_RIBBONRESTPOINTS) &&
-           verifier.VerifyVector(ribbonRestPoints()) &&
            VerifyOffset(verifier, VT_RIBBONCONSTANTPOINTS) &&
            verifier.VerifyVector(ribbonConstantPoints()) &&
            VerifyOffsetRequired(verifier, VT_RIBBONSAMPLECOUNT) &&
@@ -9434,12 +9353,6 @@ struct SolverBuilder {
   void add_restOverrides(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> restOverrides) {
     fbb_.AddOffset(Solver::VT_RESTOVERRIDES, restOverrides);
   }
-  void add_splineRestWeights(::flatbuffers::Offset<::flatbuffers::Vector<double>> splineRestWeights) {
-    fbb_.AddOffset(Solver::VT_SPLINERESTWEIGHTS, splineRestWeights);
-  }
-  void add_splineRestMode(uint8_t splineRestMode) {
-    fbb_.AddElement<uint8_t>(Solver::VT_SPLINERESTMODE, splineRestMode, 0);
-  }
   void add_degenerate(bool degenerate) {
     fbb_.AddElement<uint8_t>(Solver::VT_DEGENERATE, static_cast<uint8_t>(degenerate), 0);
   }
@@ -9449,14 +9362,8 @@ struct SolverBuilder {
   void add_parentRelative(bool parentRelative) {
     fbb_.AddElement<uint8_t>(Solver::VT_PARENTRELATIVE, static_cast<uint8_t>(parentRelative), 0);
   }
-  void add_controlRests(::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Landmarks *>> controlRests) {
-    fbb_.AddOffset(Solver::VT_CONTROLRESTS, controlRests);
-  }
   void add_start(int32_t start) {
     fbb_.AddElement<int32_t>(Solver::VT_START, start, -1);
-  }
-  void add_startRest(const rigExec::fb::Landmarks *startRest) {
-    fbb_.AddStruct(Solver::VT_STARTREST, startRest);
   }
   void add_startRead(uint32_t startRead) {
     fbb_.AddElement<uint32_t>(Solver::VT_STARTREAD, startRead, 0);
@@ -9476,9 +9383,6 @@ struct SolverBuilder {
   void add_ikRests(::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Landmarks *>> ikRests) {
     fbb_.AddOffset(Solver::VT_IKRESTS, ikRests);
   }
-  void add_ikParams(const rigExec::fb::TwoBoneIkParams *ikParams) {
-    fbb_.AddStruct(Solver::VT_IKPARAMS, ikParams);
-  }
   void add_bend(::flatbuffers::Offset<rigExec::fb::Input> bend) {
     fbb_.AddOffset(Solver::VT_BEND, bend);
   }
@@ -9494,20 +9398,11 @@ struct SolverBuilder {
   void add_softness(::flatbuffers::Offset<rigExec::fb::Input> softness) {
     fbb_.AddOffset(Solver::VT_SOFTNESS, softness);
   }
-  void add_upperLengthBase(const rigExec::fb::F64 *upperLengthBase) {
-    fbb_.AddStruct(Solver::VT_UPPERLENGTHBASE, upperLengthBase);
-  }
-  void add_lowerLengthBase(const rigExec::fb::F64 *lowerLengthBase) {
-    fbb_.AddStruct(Solver::VT_LOWERLENGTHBASE, lowerLengthBase);
-  }
   void add_ikSpace(::flatbuffers::Offset<rigExec::fb::Input> ikSpace) {
     fbb_.AddOffset(Solver::VT_IKSPACE, ikSpace);
   }
   void add_spaceSlot(int32_t spaceSlot) {
     fbb_.AddElement<int32_t>(Solver::VT_SPACESLOT, spaceSlot, -1);
-  }
-  void add_spaceRest(const rigExec::fb::Landmarks *spaceRest) {
-    fbb_.AddStruct(Solver::VT_SPACEREST, spaceRest);
   }
   void add_spaceRead(uint32_t spaceRead) {
     fbb_.AddElement<uint32_t>(Solver::VT_SPACEREAD, spaceRead, 0);
@@ -9526,9 +9421,6 @@ struct SolverBuilder {
   }
   void add_blendRotationRejected(bool blendRotationRejected) {
     fbb_.AddElement<uint8_t>(Solver::VT_BLENDROTATIONREJECTED, static_cast<uint8_t>(blendRotationRejected), 0);
-  }
-  void add_splineRest(::flatbuffers::Offset<rigExec::fb::SplineIkRest> splineRest) {
-    fbb_.AddOffset(Solver::VT_SPLINEREST, splineRest);
   }
   void add_splineParams(const rigExec::fb::SplineIkParams *splineParams) {
     fbb_.AddStruct(Solver::VT_SPLINEPARAMS, splineParams);
@@ -9557,23 +9449,11 @@ struct SolverBuilder {
   void add_splineParamsVary(bool splineParamsVary) {
     fbb_.AddElement<uint8_t>(Solver::VT_SPLINEPARAMSVARY, static_cast<uint8_t>(splineParamsVary), 0);
   }
-  void add_twistStartRest(const rigExec::fb::Landmarks *twistStartRest) {
-    fbb_.AddStruct(Solver::VT_TWISTSTARTREST, twistStartRest);
-  }
-  void add_twistEndRest(const rigExec::fb::Landmarks *twistEndRest) {
-    fbb_.AddStruct(Solver::VT_TWISTENDREST, twistEndRest);
-  }
-  void add_twistWeights(::flatbuffers::Offset<::flatbuffers::Vector<double>> twistWeights) {
-    fbb_.AddOffset(Solver::VT_TWISTWEIGHTS, twistWeights);
-  }
   void add_twistTurns(::flatbuffers::Offset<rigExec::fb::Input> twistTurns) {
     fbb_.AddOffset(Solver::VT_TWISTTURNS, twistTurns);
   }
   void add_ribbonPointsPath(uint32_t ribbonPointsPath) {
     fbb_.AddElement<uint32_t>(Solver::VT_RIBBONPOINTSPATH, ribbonPointsPath, 0);
-  }
-  void add_ribbonRestPoints(::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Vec3f *>> ribbonRestPoints) {
-    fbb_.AddOffset(Solver::VT_RIBBONRESTPOINTS, ribbonRestPoints);
   }
   void add_ribbonConstantPoints(::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Vec3f *>> ribbonConstantPoints) {
     fbb_.AddOffset(Solver::VT_RIBBONCONSTANTPOINTS, ribbonConstantPoints);
@@ -9664,7 +9544,6 @@ struct SolverBuilder {
     fbb_.Required(o, Solver::VT_SOFTNESS);
     fbb_.Required(o, Solver::VT_IKSPACE);
     fbb_.Required(o, Solver::VT_BLENDWEIGHT);
-    fbb_.Required(o, Solver::VT_SPLINEREST);
     fbb_.Required(o, Solver::VT_PRESERVEVOLUME);
     fbb_.Required(o, Solver::VT_MIDFOLLOWWEIGHT);
     fbb_.Required(o, Solver::VT_ROLL);
@@ -9688,38 +9567,29 @@ inline ::flatbuffers::Offset<Solver> CreateSolver(
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Landmarks *>> jointRests = 0,
     bool restsVary = false,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> restOverrides = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<double>> splineRestWeights = 0,
-    uint8_t splineRestMode = 0,
     bool degenerate = false,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> controls = 0,
     bool parentRelative = false,
-    ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Landmarks *>> controlRests = 0,
     int32_t start = -1,
-    const rigExec::fb::Landmarks *startRest = nullptr,
     uint32_t startRead = 0,
     int32_t root = -1,
     int32_t mid = -1,
     int32_t end = -1,
     int32_t pole = -1,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Landmarks *>> ikRests = 0,
-    const rigExec::fb::TwoBoneIkParams *ikParams = nullptr,
     ::flatbuffers::Offset<rigExec::fb::Input> bend = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> upperOffset = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> lowerOffset = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> stretch = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> softness = 0,
-    const rigExec::fb::F64 *upperLengthBase = nullptr,
-    const rigExec::fb::F64 *lowerLengthBase = nullptr,
     ::flatbuffers::Offset<rigExec::fb::Input> ikSpace = 0,
     int32_t spaceSlot = -1,
-    const rigExec::fb::Landmarks *spaceRest = nullptr,
     uint32_t spaceRead = 0,
     int32_t inA = -1,
     int32_t inB = -1,
     ::flatbuffers::Offset<rigExec::fb::Input> blendWeight = 0,
     uint8_t scaleMode = 0,
     bool blendRotationRejected = false,
-    ::flatbuffers::Offset<rigExec::fb::SplineIkRest> splineRest = 0,
     const rigExec::fb::SplineIkParams *splineParams = nullptr,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Landmarks *>> splineJointRests = 0,
     uint64_t splineCount = 0,
@@ -9729,12 +9599,8 @@ inline ::flatbuffers::Offset<Solver> CreateSolver(
     ::flatbuffers::Offset<rigExec::fb::Input> twist = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> minLengthRatio = 0,
     bool splineParamsVary = false,
-    const rigExec::fb::Landmarks *twistStartRest = nullptr,
-    const rigExec::fb::Landmarks *twistEndRest = nullptr,
-    ::flatbuffers::Offset<::flatbuffers::Vector<double>> twistWeights = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> twistTurns = 0,
     uint32_t ribbonPointsPath = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Vec3f *>> ribbonRestPoints = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Vec3f *>> ribbonConstantPoints = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> ribbonSampleCount = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::IntPair *>> outputs = 0,
@@ -9784,12 +9650,8 @@ inline ::flatbuffers::Offset<Solver> CreateSolver(
   builder_.add_outputs(outputs);
   builder_.add_ribbonSampleCount(ribbonSampleCount);
   builder_.add_ribbonConstantPoints(ribbonConstantPoints);
-  builder_.add_ribbonRestPoints(ribbonRestPoints);
   builder_.add_ribbonPointsPath(ribbonPointsPath);
   builder_.add_twistTurns(twistTurns);
-  builder_.add_twistWeights(twistWeights);
-  builder_.add_twistEndRest(twistEndRest);
-  builder_.add_twistStartRest(twistStartRest);
   builder_.add_minLengthRatio(minLengthRatio);
   builder_.add_twist(twist);
   builder_.add_roll(roll);
@@ -9797,33 +9659,25 @@ inline ::flatbuffers::Offset<Solver> CreateSolver(
   builder_.add_preserveVolume(preserveVolume);
   builder_.add_splineJointRests(splineJointRests);
   builder_.add_splineParams(splineParams);
-  builder_.add_splineRest(splineRest);
   builder_.add_blendWeight(blendWeight);
   builder_.add_inB(inB);
   builder_.add_inA(inA);
   builder_.add_spaceRead(spaceRead);
-  builder_.add_spaceRest(spaceRest);
   builder_.add_spaceSlot(spaceSlot);
   builder_.add_ikSpace(ikSpace);
-  builder_.add_lowerLengthBase(lowerLengthBase);
-  builder_.add_upperLengthBase(upperLengthBase);
   builder_.add_softness(softness);
   builder_.add_stretch(stretch);
   builder_.add_lowerOffset(lowerOffset);
   builder_.add_upperOffset(upperOffset);
   builder_.add_bend(bend);
-  builder_.add_ikParams(ikParams);
   builder_.add_ikRests(ikRests);
   builder_.add_pole(pole);
   builder_.add_end(end);
   builder_.add_mid(mid);
   builder_.add_root(root);
   builder_.add_startRead(startRead);
-  builder_.add_startRest(startRest);
   builder_.add_start(start);
-  builder_.add_controlRests(controlRests);
   builder_.add_controls(controls);
-  builder_.add_splineRestWeights(splineRestWeights);
   builder_.add_restOverrides(restOverrides);
   builder_.add_jointRests(jointRests);
   builder_.add_restReads(restReads);
@@ -9840,7 +9694,6 @@ inline ::flatbuffers::Offset<Solver> CreateSolver(
   builder_.add_scaleMode(scaleMode);
   builder_.add_parentRelative(parentRelative);
   builder_.add_degenerate(degenerate);
-  builder_.add_splineRestMode(splineRestMode);
   builder_.add_restsVary(restsVary);
   builder_.add_hasLiveRest(hasLiveRest);
   return builder_.Finish();
@@ -9863,38 +9716,29 @@ inline ::flatbuffers::Offset<Solver> CreateSolverDirect(
     const std::vector<rigExec::fb::Landmarks> *jointRests = nullptr,
     bool restsVary = false,
     const std::vector<int32_t> *restOverrides = nullptr,
-    const std::vector<double> *splineRestWeights = nullptr,
-    uint8_t splineRestMode = 0,
     bool degenerate = false,
     const std::vector<int32_t> *controls = nullptr,
     bool parentRelative = false,
-    const std::vector<rigExec::fb::Landmarks> *controlRests = nullptr,
     int32_t start = -1,
-    const rigExec::fb::Landmarks *startRest = nullptr,
     uint32_t startRead = 0,
     int32_t root = -1,
     int32_t mid = -1,
     int32_t end = -1,
     int32_t pole = -1,
     const std::vector<rigExec::fb::Landmarks> *ikRests = nullptr,
-    const rigExec::fb::TwoBoneIkParams *ikParams = nullptr,
     ::flatbuffers::Offset<rigExec::fb::Input> bend = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> upperOffset = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> lowerOffset = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> stretch = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> softness = 0,
-    const rigExec::fb::F64 *upperLengthBase = nullptr,
-    const rigExec::fb::F64 *lowerLengthBase = nullptr,
     ::flatbuffers::Offset<rigExec::fb::Input> ikSpace = 0,
     int32_t spaceSlot = -1,
-    const rigExec::fb::Landmarks *spaceRest = nullptr,
     uint32_t spaceRead = 0,
     int32_t inA = -1,
     int32_t inB = -1,
     ::flatbuffers::Offset<rigExec::fb::Input> blendWeight = 0,
     uint8_t scaleMode = 0,
     bool blendRotationRejected = false,
-    ::flatbuffers::Offset<rigExec::fb::SplineIkRest> splineRest = 0,
     const rigExec::fb::SplineIkParams *splineParams = nullptr,
     const std::vector<rigExec::fb::Landmarks> *splineJointRests = nullptr,
     uint64_t splineCount = 0,
@@ -9904,12 +9748,8 @@ inline ::flatbuffers::Offset<Solver> CreateSolverDirect(
     ::flatbuffers::Offset<rigExec::fb::Input> twist = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> minLengthRatio = 0,
     bool splineParamsVary = false,
-    const rigExec::fb::Landmarks *twistStartRest = nullptr,
-    const rigExec::fb::Landmarks *twistEndRest = nullptr,
-    const std::vector<double> *twistWeights = nullptr,
     ::flatbuffers::Offset<rigExec::fb::Input> twistTurns = 0,
     uint32_t ribbonPointsPath = 0,
-    const std::vector<rigExec::fb::Vec3f> *ribbonRestPoints = nullptr,
     const std::vector<rigExec::fb::Vec3f> *ribbonConstantPoints = nullptr,
     ::flatbuffers::Offset<rigExec::fb::Input> ribbonSampleCount = 0,
     const std::vector<rigExec::fb::IntPair> *outputs = nullptr,
@@ -9941,13 +9781,9 @@ inline ::flatbuffers::Offset<Solver> CreateSolverDirect(
   auto restReads__ = restReads ? _fbb.CreateVector<uint32_t>(*restReads) : 0;
   auto jointRests__ = jointRests ? _fbb.CreateVectorOfStructs<rigExec::fb::Landmarks>(*jointRests) : 0;
   auto restOverrides__ = restOverrides ? _fbb.CreateVector<int32_t>(*restOverrides) : 0;
-  auto splineRestWeights__ = splineRestWeights ? _fbb.CreateVector<double>(*splineRestWeights) : 0;
   auto controls__ = controls ? _fbb.CreateVector<int32_t>(*controls) : 0;
-  auto controlRests__ = controlRests ? _fbb.CreateVectorOfStructs<rigExec::fb::Landmarks>(*controlRests) : 0;
   auto ikRests__ = ikRests ? _fbb.CreateVectorOfStructs<rigExec::fb::Landmarks>(*ikRests) : 0;
   auto splineJointRests__ = splineJointRests ? _fbb.CreateVectorOfStructs<rigExec::fb::Landmarks>(*splineJointRests) : 0;
-  auto twistWeights__ = twistWeights ? _fbb.CreateVector<double>(*twistWeights) : 0;
-  auto ribbonRestPoints__ = ribbonRestPoints ? _fbb.CreateVectorOfStructs<rigExec::fb::Vec3f>(*ribbonRestPoints) : 0;
   auto ribbonConstantPoints__ = ribbonConstantPoints ? _fbb.CreateVectorOfStructs<rigExec::fb::Vec3f>(*ribbonConstantPoints) : 0;
   auto outputs__ = outputs ? _fbb.CreateVectorOfStructs<rigExec::fb::IntPair>(*outputs) : 0;
   auto outPosition__ = outPosition ? _fbb.CreateVector<int32_t>(*outPosition) : 0;
@@ -9970,38 +9806,29 @@ inline ::flatbuffers::Offset<Solver> CreateSolverDirect(
       jointRests__,
       restsVary,
       restOverrides__,
-      splineRestWeights__,
-      splineRestMode,
       degenerate,
       controls__,
       parentRelative,
-      controlRests__,
       start,
-      startRest,
       startRead,
       root,
       mid,
       end,
       pole,
       ikRests__,
-      ikParams,
       bend,
       upperOffset,
       lowerOffset,
       stretch,
       softness,
-      upperLengthBase,
-      lowerLengthBase,
       ikSpace,
       spaceSlot,
-      spaceRest,
       spaceRead,
       inA,
       inB,
       blendWeight,
       scaleMode,
       blendRotationRejected,
-      splineRest,
       splineParams,
       splineJointRests__,
       splineCount,
@@ -10011,12 +9838,8 @@ inline ::flatbuffers::Offset<Solver> CreateSolverDirect(
       twist,
       minLengthRatio,
       splineParamsVary,
-      twistStartRest,
-      twistEndRest,
-      twistWeights__,
       twistTurns,
       ribbonPointsPath,
-      ribbonRestPoints__,
       ribbonConstantPoints__,
       ribbonSampleCount,
       outputs__,
@@ -22510,6 +22333,8 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// inputs:enabled, 1 its numeric driver values, 2 inputs:mask, 3 and 4
   /// its driver's last fin and rest frames, 5 and 6 its parent's, 7 to 10
   /// its extra drivers' and their parents' (lists).
+  /// 60 (format 55): input `part` (OpSolverRead, rigExecEvalCore/opSteps.h)
+  /// of solver `object` (pose.solvers index), read by one of its op nodes.
   uint8_t source() const {
     return GetField<uint8_t>(VT_SOURCE, 0);
   }
@@ -22641,6 +22466,9 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// space checkpoint `object`'s switch frame;
   /// 42 (format 52): pose interpolator `object`'s weights, one per pose in
   /// its solve's order; the rest of its weight range publishes zero.
+  /// 60 (format 55): solver `object`'s frames, from its last op node, as
+  /// its aggregate and its commit's outputs; 61 (format 55): whether 2D
+  /// skeleton solver `object` solved in its plane.
   /// 4 (format 42): a range chain member's output, group by group, into
   /// the vertex groups of revision `object` (geometry.revision_index), the
   /// groups its OpChain.writes names. 6 (format 44): the looked-up
@@ -25122,38 +24950,29 @@ inline RigExecWireSolver::RigExecWireSolver(const RigExecWireSolver &o)
         jointRests(o.jointRests),
         restsVary(o.restsVary),
         restOverrides(o.restOverrides),
-        splineRestWeights(o.splineRestWeights),
-        splineRestMode(o.splineRestMode),
         degenerate(o.degenerate),
         controls(o.controls),
         parentRelative(o.parentRelative),
-        controlRests(o.controlRests),
         start(o.start),
-        startRest(o.startRest),
         startRead(o.startRead),
         root(o.root),
         mid(o.mid),
         end(o.end),
         pole(o.pole),
         ikRests(o.ikRests),
-        ikParams(o.ikParams),
         bend((o.bend) ? new rigExec::fb::RigExecWireInput(*o.bend) : nullptr),
         upperOffset((o.upperOffset) ? new rigExec::fb::RigExecWireInput(*o.upperOffset) : nullptr),
         lowerOffset((o.lowerOffset) ? new rigExec::fb::RigExecWireInput(*o.lowerOffset) : nullptr),
         stretch((o.stretch) ? new rigExec::fb::RigExecWireInput(*o.stretch) : nullptr),
         softness((o.softness) ? new rigExec::fb::RigExecWireInput(*o.softness) : nullptr),
-        upperLengthBase(o.upperLengthBase),
-        lowerLengthBase(o.lowerLengthBase),
         ikSpace((o.ikSpace) ? new rigExec::fb::RigExecWireInput(*o.ikSpace) : nullptr),
         spaceSlot(o.spaceSlot),
-        spaceRest(o.spaceRest),
         spaceRead(o.spaceRead),
         inA(o.inA),
         inB(o.inB),
         blendWeight((o.blendWeight) ? new rigExec::fb::RigExecWireInput(*o.blendWeight) : nullptr),
         scaleMode(o.scaleMode),
         blendRotationRejected(o.blendRotationRejected),
-        splineRest((o.splineRest) ? new rigExec::fb::RigExecWireSplineIkRest(*o.splineRest) : nullptr),
         splineParams(o.splineParams),
         splineJointRests(o.splineJointRests),
         splineCount(o.splineCount),
@@ -25163,12 +24982,8 @@ inline RigExecWireSolver::RigExecWireSolver(const RigExecWireSolver &o)
         twist((o.twist) ? new rigExec::fb::RigExecWireInput(*o.twist) : nullptr),
         minLengthRatio((o.minLengthRatio) ? new rigExec::fb::RigExecWireInput(*o.minLengthRatio) : nullptr),
         splineParamsVary(o.splineParamsVary),
-        twistStartRest(o.twistStartRest),
-        twistEndRest(o.twistEndRest),
-        twistWeights(o.twistWeights),
         twistTurns((o.twistTurns) ? new rigExec::fb::RigExecWireInput(*o.twistTurns) : nullptr),
         ribbonPointsPath(o.ribbonPointsPath),
-        ribbonRestPoints(o.ribbonRestPoints),
         ribbonConstantPoints(o.ribbonConstantPoints),
         ribbonSampleCount((o.ribbonSampleCount) ? new rigExec::fb::RigExecWireInput(*o.ribbonSampleCount) : nullptr),
         outputs(o.outputs),
@@ -25207,38 +25022,29 @@ inline RigExecWireSolver &RigExecWireSolver::operator=(RigExecWireSolver o) FLAT
   std::swap(jointRests, o.jointRests);
   std::swap(restsVary, o.restsVary);
   std::swap(restOverrides, o.restOverrides);
-  std::swap(splineRestWeights, o.splineRestWeights);
-  std::swap(splineRestMode, o.splineRestMode);
   std::swap(degenerate, o.degenerate);
   std::swap(controls, o.controls);
   std::swap(parentRelative, o.parentRelative);
-  std::swap(controlRests, o.controlRests);
   std::swap(start, o.start);
-  std::swap(startRest, o.startRest);
   std::swap(startRead, o.startRead);
   std::swap(root, o.root);
   std::swap(mid, o.mid);
   std::swap(end, o.end);
   std::swap(pole, o.pole);
   std::swap(ikRests, o.ikRests);
-  std::swap(ikParams, o.ikParams);
   std::swap(bend, o.bend);
   std::swap(upperOffset, o.upperOffset);
   std::swap(lowerOffset, o.lowerOffset);
   std::swap(stretch, o.stretch);
   std::swap(softness, o.softness);
-  std::swap(upperLengthBase, o.upperLengthBase);
-  std::swap(lowerLengthBase, o.lowerLengthBase);
   std::swap(ikSpace, o.ikSpace);
   std::swap(spaceSlot, o.spaceSlot);
-  std::swap(spaceRest, o.spaceRest);
   std::swap(spaceRead, o.spaceRead);
   std::swap(inA, o.inA);
   std::swap(inB, o.inB);
   std::swap(blendWeight, o.blendWeight);
   std::swap(scaleMode, o.scaleMode);
   std::swap(blendRotationRejected, o.blendRotationRejected);
-  std::swap(splineRest, o.splineRest);
   std::swap(splineParams, o.splineParams);
   std::swap(splineJointRests, o.splineJointRests);
   std::swap(splineCount, o.splineCount);
@@ -25248,12 +25054,8 @@ inline RigExecWireSolver &RigExecWireSolver::operator=(RigExecWireSolver o) FLAT
   std::swap(twist, o.twist);
   std::swap(minLengthRatio, o.minLengthRatio);
   std::swap(splineParamsVary, o.splineParamsVary);
-  std::swap(twistStartRest, o.twistStartRest);
-  std::swap(twistEndRest, o.twistEndRest);
-  std::swap(twistWeights, o.twistWeights);
   std::swap(twistTurns, o.twistTurns);
   std::swap(ribbonPointsPath, o.ribbonPointsPath);
-  std::swap(ribbonRestPoints, o.ribbonRestPoints);
   std::swap(ribbonConstantPoints, o.ribbonConstantPoints);
   std::swap(ribbonSampleCount, o.ribbonSampleCount);
   std::swap(outputs, o.outputs);
@@ -25301,38 +25103,29 @@ inline void Solver::UnPackTo(RigExecWireSolver *_o, const ::flatbuffers::resolve
   { auto _e = jointRests(); if (_e) { _o->jointRests.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->jointRests[_i] = ::flatbuffers::UnPackLandmarks(*_e->Get(_i)); } } else { _o->jointRests.resize(0); } }
   { auto _e = restsVary(); _o->restsVary = _e; }
   { auto _e = restOverrides(); if (_e) { _o->restOverrides.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->restOverrides[_i] = _e->Get(_i); } } else { _o->restOverrides.resize(0); } }
-  { auto _e = splineRestWeights(); if (_e) { _o->splineRestWeights.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->splineRestWeights[_i] = _e->Get(_i); } } else { _o->splineRestWeights.resize(0); } }
-  { auto _e = splineRestMode(); _o->splineRestMode = _e; }
   { auto _e = degenerate(); _o->degenerate = _e; }
   { auto _e = controls(); if (_e) { _o->controls.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->controls[_i] = _e->Get(_i); } } else { _o->controls.resize(0); } }
   { auto _e = parentRelative(); _o->parentRelative = _e; }
-  { auto _e = controlRests(); if (_e) { _o->controlRests.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->controlRests[_i] = ::flatbuffers::UnPackLandmarks(*_e->Get(_i)); } } else { _o->controlRests.resize(0); } }
   { auto _e = start(); _o->start = _e; }
-  { auto _e = startRest(); if (_e) _o->startRest = ::flatbuffers::UnPackLandmarks(*_e); }
   { auto _e = startRead(); _o->startRead = _e; }
   { auto _e = root(); _o->root = _e; }
   { auto _e = mid(); _o->mid = _e; }
   { auto _e = end(); _o->end = _e; }
   { auto _e = pole(); _o->pole = _e; }
   { auto _e = ikRests(); if (_e) { _o->ikRests.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->ikRests[_i] = ::flatbuffers::UnPackLandmarks(*_e->Get(_i)); } } else { _o->ikRests.resize(0); } }
-  { auto _e = ikParams(); if (_e) _o->ikParams = ::flatbuffers::UnPackTwoBoneIkParams(*_e); }
   { auto _e = bend(); if (_e) { if(_o->bend) { _e->UnPackTo(_o->bend.get(), _resolver); } else { _o->bend = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->bend) { _o->bend.reset(); } }
   { auto _e = upperOffset(); if (_e) { if(_o->upperOffset) { _e->UnPackTo(_o->upperOffset.get(), _resolver); } else { _o->upperOffset = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->upperOffset) { _o->upperOffset.reset(); } }
   { auto _e = lowerOffset(); if (_e) { if(_o->lowerOffset) { _e->UnPackTo(_o->lowerOffset.get(), _resolver); } else { _o->lowerOffset = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->lowerOffset) { _o->lowerOffset.reset(); } }
   { auto _e = stretch(); if (_e) { if(_o->stretch) { _e->UnPackTo(_o->stretch.get(), _resolver); } else { _o->stretch = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->stretch) { _o->stretch.reset(); } }
   { auto _e = softness(); if (_e) { if(_o->softness) { _e->UnPackTo(_o->softness.get(), _resolver); } else { _o->softness = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->softness) { _o->softness.reset(); } }
-  { auto _e = upperLengthBase(); if (_e) _o->upperLengthBase = ::flatbuffers::UnPackF64(*_e); }
-  { auto _e = lowerLengthBase(); if (_e) _o->lowerLengthBase = ::flatbuffers::UnPackF64(*_e); }
   { auto _e = ikSpace(); if (_e) { if(_o->ikSpace) { _e->UnPackTo(_o->ikSpace.get(), _resolver); } else { _o->ikSpace = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->ikSpace) { _o->ikSpace.reset(); } }
   { auto _e = spaceSlot(); _o->spaceSlot = _e; }
-  { auto _e = spaceRest(); if (_e) _o->spaceRest = ::flatbuffers::UnPackLandmarks(*_e); }
   { auto _e = spaceRead(); _o->spaceRead = _e; }
   { auto _e = inA(); _o->inA = _e; }
   { auto _e = inB(); _o->inB = _e; }
   { auto _e = blendWeight(); if (_e) { if(_o->blendWeight) { _e->UnPackTo(_o->blendWeight.get(), _resolver); } else { _o->blendWeight = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->blendWeight) { _o->blendWeight.reset(); } }
   { auto _e = scaleMode(); _o->scaleMode = _e; }
   { auto _e = blendRotationRejected(); _o->blendRotationRejected = _e; }
-  { auto _e = splineRest(); if (_e) { if(_o->splineRest) { _e->UnPackTo(_o->splineRest.get(), _resolver); } else { _o->splineRest = std::unique_ptr<rigExec::fb::RigExecWireSplineIkRest>(_e->UnPack(_resolver)); } } else if (_o->splineRest) { _o->splineRest.reset(); } }
   { auto _e = splineParams(); if (_e) _o->splineParams = ::flatbuffers::UnPackSplineIkParams(*_e); }
   { auto _e = splineJointRests(); if (_e) { _o->splineJointRests.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->splineJointRests[_i] = ::flatbuffers::UnPackLandmarks(*_e->Get(_i)); } } else { _o->splineJointRests.resize(0); } }
   { auto _e = splineCount(); _o->splineCount = _e; }
@@ -25342,12 +25135,8 @@ inline void Solver::UnPackTo(RigExecWireSolver *_o, const ::flatbuffers::resolve
   { auto _e = twist(); if (_e) { if(_o->twist) { _e->UnPackTo(_o->twist.get(), _resolver); } else { _o->twist = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->twist) { _o->twist.reset(); } }
   { auto _e = minLengthRatio(); if (_e) { if(_o->minLengthRatio) { _e->UnPackTo(_o->minLengthRatio.get(), _resolver); } else { _o->minLengthRatio = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->minLengthRatio) { _o->minLengthRatio.reset(); } }
   { auto _e = splineParamsVary(); _o->splineParamsVary = _e; }
-  { auto _e = twistStartRest(); if (_e) _o->twistStartRest = ::flatbuffers::UnPackLandmarks(*_e); }
-  { auto _e = twistEndRest(); if (_e) _o->twistEndRest = ::flatbuffers::UnPackLandmarks(*_e); }
-  { auto _e = twistWeights(); if (_e) { _o->twistWeights.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->twistWeights[_i] = _e->Get(_i); } } else { _o->twistWeights.resize(0); } }
   { auto _e = twistTurns(); if (_e) { if(_o->twistTurns) { _e->UnPackTo(_o->twistTurns.get(), _resolver); } else { _o->twistTurns = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->twistTurns) { _o->twistTurns.reset(); } }
   { auto _e = ribbonPointsPath(); _o->ribbonPointsPath = _e; }
-  { auto _e = ribbonRestPoints(); if (_e) { _o->ribbonRestPoints.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->ribbonRestPoints[_i] = ::flatbuffers::UnPackVec3f(*_e->Get(_i)); } } else { _o->ribbonRestPoints.resize(0); } }
   { auto _e = ribbonConstantPoints(); if (_e) { _o->ribbonConstantPoints.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->ribbonConstantPoints[_i] = ::flatbuffers::UnPackVec3f(*_e->Get(_i)); } } else { _o->ribbonConstantPoints.resize(0); } }
   { auto _e = ribbonSampleCount(); if (_e) { if(_o->ribbonSampleCount) { _e->UnPackTo(_o->ribbonSampleCount.get(), _resolver); } else { _o->ribbonSampleCount = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->ribbonSampleCount) { _o->ribbonSampleCount.reset(); } }
   { auto _e = outputs(); if (_e) { _o->outputs.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->outputs[_i] = ::flatbuffers::UnPackIntPair(*_e->Get(_i)); } } else { _o->outputs.resize(0); } }
@@ -25393,38 +25182,29 @@ inline ::flatbuffers::Offset<Solver> Solver::Pack(::flatbuffers::FlatBufferBuild
   auto _jointRests = _o->jointRests.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::Landmarks, ::rigExec::RigExecWireLandmarks>(_o->jointRests, ::flatbuffers::PackLandmarks) : 0;
   auto _restsVary = _o->restsVary;
   auto _restOverrides = _o->restOverrides.size() ? _fbb.CreateVector(_o->restOverrides) : 0;
-  auto _splineRestWeights = _o->splineRestWeights.size() ? _fbb.CreateVector(_o->splineRestWeights) : 0;
-  auto _splineRestMode = _o->splineRestMode;
   auto _degenerate = _o->degenerate;
   auto _controls = _o->controls.size() ? _fbb.CreateVector(_o->controls) : 0;
   auto _parentRelative = _o->parentRelative;
-  auto _controlRests = _o->controlRests.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::Landmarks, ::rigExec::RigExecWireLandmarks>(_o->controlRests, ::flatbuffers::PackLandmarks) : 0;
   auto _start = _o->start;
-  auto _startRest = ::flatbuffers::PackLandmarks(_o->startRest);
   auto _startRead = _o->startRead;
   auto _root = _o->root;
   auto _mid = _o->mid;
   auto _end = _o->end;
   auto _pole = _o->pole;
   auto _ikRests = _o->ikRests.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::Landmarks, ::rigExec::RigExecWireLandmarks>(_o->ikRests, ::flatbuffers::PackLandmarks) : 0;
-  auto _ikParams = ::flatbuffers::PackTwoBoneIkParams(_o->ikParams);
   auto _bend = _o->bend ? CreateInput(_fbb, _o->bend.get(), _rehasher) : 0;
   auto _upperOffset = _o->upperOffset ? CreateInput(_fbb, _o->upperOffset.get(), _rehasher) : 0;
   auto _lowerOffset = _o->lowerOffset ? CreateInput(_fbb, _o->lowerOffset.get(), _rehasher) : 0;
   auto _stretch = _o->stretch ? CreateInput(_fbb, _o->stretch.get(), _rehasher) : 0;
   auto _softness = _o->softness ? CreateInput(_fbb, _o->softness.get(), _rehasher) : 0;
-  auto _upperLengthBase = ::flatbuffers::PackF64(_o->upperLengthBase);
-  auto _lowerLengthBase = ::flatbuffers::PackF64(_o->lowerLengthBase);
   auto _ikSpace = _o->ikSpace ? CreateInput(_fbb, _o->ikSpace.get(), _rehasher) : 0;
   auto _spaceSlot = _o->spaceSlot;
-  auto _spaceRest = ::flatbuffers::PackLandmarks(_o->spaceRest);
   auto _spaceRead = _o->spaceRead;
   auto _inA = _o->inA;
   auto _inB = _o->inB;
   auto _blendWeight = _o->blendWeight ? CreateInput(_fbb, _o->blendWeight.get(), _rehasher) : 0;
   auto _scaleMode = _o->scaleMode;
   auto _blendRotationRejected = _o->blendRotationRejected;
-  auto _splineRest = _o->splineRest ? CreateSplineIkRest(_fbb, _o->splineRest.get(), _rehasher) : 0;
   auto _splineParams = ::flatbuffers::PackSplineIkParams(_o->splineParams);
   auto _splineJointRests = _o->splineJointRests.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::Landmarks, ::rigExec::RigExecWireLandmarks>(_o->splineJointRests, ::flatbuffers::PackLandmarks) : 0;
   auto _splineCount = _o->splineCount;
@@ -25434,12 +25214,8 @@ inline ::flatbuffers::Offset<Solver> Solver::Pack(::flatbuffers::FlatBufferBuild
   auto _twist = _o->twist ? CreateInput(_fbb, _o->twist.get(), _rehasher) : 0;
   auto _minLengthRatio = _o->minLengthRatio ? CreateInput(_fbb, _o->minLengthRatio.get(), _rehasher) : 0;
   auto _splineParamsVary = _o->splineParamsVary;
-  auto _twistStartRest = ::flatbuffers::PackLandmarks(_o->twistStartRest);
-  auto _twistEndRest = ::flatbuffers::PackLandmarks(_o->twistEndRest);
-  auto _twistWeights = _o->twistWeights.size() ? _fbb.CreateVector(_o->twistWeights) : 0;
   auto _twistTurns = _o->twistTurns ? CreateInput(_fbb, _o->twistTurns.get(), _rehasher) : 0;
   auto _ribbonPointsPath = _o->ribbonPointsPath;
-  auto _ribbonRestPoints = _o->ribbonRestPoints.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::Vec3f, ::rigExec::RigExecWireVec3f>(_o->ribbonRestPoints, ::flatbuffers::PackVec3f) : 0;
   auto _ribbonConstantPoints = _o->ribbonConstantPoints.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::Vec3f, ::rigExec::RigExecWireVec3f>(_o->ribbonConstantPoints, ::flatbuffers::PackVec3f) : 0;
   auto _ribbonSampleCount = _o->ribbonSampleCount ? CreateInput(_fbb, _o->ribbonSampleCount.get(), _rehasher) : 0;
   auto _outputs = _o->outputs.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::IntPair, ::rigExec::RigExecWireIntPair>(_o->outputs, ::flatbuffers::PackIntPair) : 0;
@@ -25477,38 +25253,29 @@ inline ::flatbuffers::Offset<Solver> Solver::Pack(::flatbuffers::FlatBufferBuild
       _jointRests,
       _restsVary,
       _restOverrides,
-      _splineRestWeights,
-      _splineRestMode,
       _degenerate,
       _controls,
       _parentRelative,
-      _controlRests,
       _start,
-      &_startRest,
       _startRead,
       _root,
       _mid,
       _end,
       _pole,
       _ikRests,
-      &_ikParams,
       _bend,
       _upperOffset,
       _lowerOffset,
       _stretch,
       _softness,
-      &_upperLengthBase,
-      &_lowerLengthBase,
       _ikSpace,
       _spaceSlot,
-      &_spaceRest,
       _spaceRead,
       _inA,
       _inB,
       _blendWeight,
       _scaleMode,
       _blendRotationRejected,
-      _splineRest,
       &_splineParams,
       _splineJointRests,
       _splineCount,
@@ -25518,12 +25285,8 @@ inline ::flatbuffers::Offset<Solver> Solver::Pack(::flatbuffers::FlatBufferBuild
       _twist,
       _minLengthRatio,
       _splineParamsVary,
-      &_twistStartRest,
-      &_twistEndRest,
-      _twistWeights,
       _twistTurns,
       _ribbonPointsPath,
-      _ribbonRestPoints,
       _ribbonConstantPoints,
       _ribbonSampleCount,
       _outputs,

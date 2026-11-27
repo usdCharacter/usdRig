@@ -724,7 +724,14 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// read through a RevisionLeaf lookup (OpRevisionRead 16) listed per channel;
 /// a range step reruns only for the groups its chunk keys give a moved
 /// channel.
-inline constexpr uint32_t RigExecFormatVersion = 54;
+///
+/// Format 55 runs every solver kind as op nodes keeping the Solve identity:
+/// they read their inputs through OpGraph.lookups source 60, store their
+/// frames through OpGraph.host_outputs target 60 and a 2D skeleton's planar
+/// flag through 61. It retires the Solve step: StepKind 1 is reserved and
+/// refused. The Solver rest copies and parameters only that step read are
+/// deprecated.
+inline constexpr uint32_t RigExecFormatVersion = 55;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -732,7 +739,7 @@ inline constexpr uint32_t RigExecFormatVersion = 54;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 54;
+inline constexpr uint32_t RigExecFormatOldestReadable = 55;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

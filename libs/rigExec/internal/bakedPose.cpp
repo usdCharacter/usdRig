@@ -460,9 +460,6 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             if (!(seen[0] && seen[1] && seen[2]))
                 degenerate("two-bone IK joints do not bind all three chain "
                            "slots");
-            // The bone lengths exec measures every evaluation, measured once.
-            s.upperLengthBase = (s.ikRests[1][0] - s.ikRests[0][0]).GetLength();
-            s.lowerLengthBase = (s.ikRests[2][0] - s.ikRests[1][0]).GetLength();
             s.ikSpace =
                 bind(prim, _tokens->rigExecSpaceMatrix, GfMatrix4d(1.0));
             const auto sp = targets(prim, _tokens->rigExecSpace);

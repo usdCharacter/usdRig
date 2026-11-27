@@ -7141,9 +7141,7 @@ private:
                   k.squashFactor.size() == n && k.maxStretch.size() == n &&
                   k.tipBone.size() == n && k.tip.size() == 2 * n &&
                   k.channels.size() == n * perBone &&
-                  s.jointRests.size() == n &&
-                  s.controlRests.size() == outside &&
-                  s.controlReads.size() == outside;
+                  s.jointRests.size() == n && s.controlReads.size() == outside;
         ok = ok && k.spaceBegin.size() == n && k.spaceCount.size() == n &&
              k.spaceSelector.size() == n && k.targetBegin.size() == n &&
              k.targetCount.size() == n && k.angleController.size() == n &&
@@ -7283,19 +7281,14 @@ private:
             !_PathId(s.ribbonPointsPath, _AnyPath, row, "ribbon_points_path")) {
             return false;
         }
-        if (s.splineRestMode > uint8_t(fb::SplineIkRestLength::MAX) ||
-            s.scaleMode > uint8_t(fb::ScaleBlend::MAX)) {
-            return _Bad(row + ": spline_rest_mode or scale_mode out of "
-                              "range");
+        if (s.scaleMode > uint8_t(fb::ScaleBlend::MAX)) {
+            return _Bad(row + ": scale_mode out of range");
         }
         for (size_t k = 0; k < s.outputs.size(); ++k) {
             if (!_Index(s.outputs[k].first, _slots, false, row, "outputs",
                         long(k))) {
                 return false;
             }
-        }
-        if (!s.splineRest) {
-            return _Bad(row + ".spline_rest: missing");
         }
         if (s.skeleton2d && !_Skeleton2d(s, row)) {
             return false;
@@ -10706,13 +10699,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 54,
+    static_assert(RigExecFormatOldestReadable == 55,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: Range blend shapes as op nodes"
+                ? "re-export: solvers as op nodes"
                 : "rebake");
 }
 

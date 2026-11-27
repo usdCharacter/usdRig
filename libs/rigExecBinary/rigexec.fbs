@@ -738,7 +738,10 @@ table JointGroup {
   member_count: uint;
   enabled: bool = true;
 }
-/// One solver's epoch description. *_read fields are fin versions.
+/// One solver's epoch description. *_read fields are fin versions. The
+/// deprecated fields (format 55) were the rest copies and parameters the
+/// retired Solve step read; its op nodes read their rests through lookups
+/// and keep their parameters in their payloads.
 table Solver {
   path: uint;
   /// Token.
@@ -753,18 +756,18 @@ table Solver {
   rests_vary: bool;
   /// Override numbers.
   rest_overrides: [int];
-  spline_rest_weights: [double];
+  spline_rest_weights: [double] (deprecated);
   /// SplineIkRestLength.
-  spline_rest_mode: ubyte;
+  spline_rest_mode: ubyte (deprecated);
   degenerate: bool;
   // FkChain controls; a Skeleton2d's outside parent spaces
   controls: [int];
   parent_relative: bool;
-  control_rests: [Landmarks];
+  control_rests: [Landmarks] (deprecated);
   /// rigExec:startFrame provider slot (-1: absolute), its rest landmarks
   /// and the bound fin version (FkChain, Skeleton2d).
   start: int = -1;
-  start_rest: Landmarks (native_inline);
+  start_rest: Landmarks (deprecated);
   start_read: uint;
   // IK and spline controls
   root: int = -1;
@@ -773,14 +776,14 @@ table Solver {
   pole: int = -1;
   /// Exactly 3.
   ik_rests: [Landmarks];
-  ik_params: TwoBoneIkParams (native_inline);
+  ik_params: TwoBoneIkParams (deprecated);
   bend: Input (required);
   upper_offset: Input (required);
   lower_offset: Input (required);
   stretch: Input (required);
   softness: Input (required);
-  upper_length_base: F64 (native_inline);
-  lower_length_base: F64 (native_inline);
+  upper_length_base: F64 (deprecated);
+  lower_length_base: F64 (deprecated);
   /// rigExec:spaceMatrix: the explicit factor of the space a TwoBoneIk
   /// measures its chain in.
   ik_space: Input (required);
@@ -788,7 +791,7 @@ table Solver {
   /// ahead of the space (-1: none), its rest landmarks and the bound fin
   /// version.
   space_slot: int = -1;
-  space_rest: Landmarks (native_inline);
+  space_rest: Landmarks (deprecated);
   space_read: uint;
   // BlendPointFrames
   in_a: int = -1;
@@ -798,7 +801,7 @@ table Solver {
   scale_mode: ubyte;
   blend_rotation_rejected: bool;
   // SplineIk
-  spline_rest: SplineIkRest (required);
+  spline_rest: SplineIkRest (deprecated);
   spline_params: SplineIkParams (native_inline);
   spline_joint_rests: [Landmarks];
   spline_count: ulong;
@@ -809,13 +812,13 @@ table Solver {
   min_length_ratio: Input (required);
   spline_params_vary: bool;
   // TwistDistribution
-  twist_start_rest: Landmarks (native_inline);
-  twist_end_rest: Landmarks (native_inline);
-  twist_weights: [double];
+  twist_start_rest: Landmarks (deprecated);
+  twist_end_rest: Landmarks (deprecated);
+  twist_weights: [double] (deprecated);
   twist_turns: Input (required);
   // Ribbon
   ribbon_points_path: uint;
-  ribbon_rest_points: [Vec3f];
+  ribbon_rest_points: [Vec3f] (deprecated);
   /// The driver points at bake_time.
   ribbon_constant_points: [Vec3f];
   ribbon_sample_count: Input (required);
@@ -2011,6 +2014,8 @@ table OpLookup {
   /// inputs:enabled, 1 its numeric driver values, 2 inputs:mask, 3 and 4
   /// its driver's last fin and rest frames, 5 and 6 its parent's, 7 to 10
   /// its extra drivers' and their parents' (lists).
+  /// 60 (format 55): input `part` (OpSolverRead, rigExecEvalCore/opSteps.h)
+  /// of solver `object` (pose.solvers index), read by one of its op nodes.
   source: ubyte;
   object: uint;
   part: int = -1;
@@ -2049,6 +2054,9 @@ table OpHostOutput {
   /// space checkpoint `object`'s switch frame;
   /// 42 (format 52): pose interpolator `object`'s weights, one per pose in
   /// its solve's order; the rest of its weight range publishes zero.
+  /// 60 (format 55): solver `object`'s frames, from its last op node, as
+  /// its aggregate and its commit's outputs; 61 (format 55): whether 2D
+  /// skeleton solver `object` solved in its plane.
   /// 4 (format 42): a range chain member's output, group by group, into
   /// the vertex groups of revision `object` (geometry.revision_index), the
   /// groups its OpChain.writes names. 6 (format 44): the looked-up

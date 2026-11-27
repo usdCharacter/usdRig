@@ -710,17 +710,10 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
     }
     out->restsVary = solver.restsVary;
     out->restOverrides = _ToI32s(solver.restOverrides);
-    out->splineRestWeights = solver.splineRestWeights;
-    out->splineRestMode = uint8_t(solver.splineRestMode);
     out->degenerate = solver.degenerate;
     out->controls = _ToI32s(solver.controls);
     out->parentRelative = solver.parentRelative;
-    out->controlRests.reserve(solver.controlRests.size());
-    for (const std::array<GfVec3d, 4> &set : solver.controlRests) {
-        out->controlRests.push_back(_ToLandmarks(set));
-    }
     out->start = int32_t(solver.start);
-    out->startRest = _ToLandmarks(solver.startRest);
     out->startRead = solver.startRead;
     out->root = int32_t(solver.root);
     out->mid = int32_t(solver.mid);
@@ -730,11 +723,6 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
     for (size_t k = 0; k < 3; ++k) {
         out->ikRests.push_back(_ToLandmarks(solver.ikRests[k]));
     }
-    out->ikParams.upperLength = solver.ikParams.upperLength;
-    out->ikParams.lowerLength = solver.ikParams.lowerLength;
-    out->ikParams.stretch = solver.ikParams.stretch;
-    out->ikParams.softness = solver.ikParams.softness;
-    out->ikParams.preferredBendRadians = solver.ikParams.preferredBendRadians;
     // The registered fields, numbered as the collection numbers them.
     out->bend = read(0);
     out->upperOffset = read(1);
@@ -759,10 +747,7 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
     out->softDistancePolicy = solver.ikParams.softDistancePolicy;
     out->ikScaleSegments = solver.ikParams.scaleSegments;
     out->scaleCalibration = solver.ikParams.limb.scaleCalibration;
-    out->upperLengthBase = solver.upperLengthBase;
-    out->lowerLengthBase = solver.lowerLengthBase;
     out->spaceSlot = int32_t(solver.spaceSlot);
-    out->spaceRest = _ToLandmarks(solver.spaceRest);
     out->spaceRead = uint32_t(std::max(solver.spaceRead, 0));
     out->inA = int32_t(solver.inA);
     out->inB = int32_t(solver.inB);
@@ -777,21 +762,6 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
     }
     out->scaleMode = uint8_t(solver.scaleMode);
     out->blendRotationRejected = solver.blendRotationRejected;
-    auto rest = std::make_unique<fb::RigExecWireSplineIkRest>();
-    for (size_t i = 0; i < 4; ++i) {
-        rest->cvs[i] = _ToVec3d(solver.splineRest.cvs[i]);
-    }
-    rest->rootControl = _ToFrame(solver.splineRest.rootControl);
-    rest->midControl = _ToFrame(solver.splineRest.midControl);
-    rest->endControl = _ToFrame(solver.splineRest.endControl);
-    rest->joints.reserve(solver.splineRest.joints.size());
-    for (const RigExecPointFrame &joint : solver.splineRest.joints) {
-        rest->joints.push_back(_ToFrame(joint));
-    }
-    rest->segmentLengths = solver.splineRest.segmentLengths;
-    rest->restArcLength = solver.splineRest.restArcLength;
-    rest->volumeWeights = solver.splineRest.volumeWeights;
-    out->splineRest = std::move(rest);
     out->splineParams.preserveVolume = solver.splineParams.preserveVolume;
     out->splineParams.midFollowWeight = solver.splineParams.midFollowWeight;
     out->splineParams.roll = solver.splineParams.roll;
@@ -804,14 +774,7 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
     }
     out->splineCount = uint64_t(solver.splineCount);
     out->splineParamsVary = solver.splineParamsVary;
-    out->twistStartRest = _ToLandmarks(solver.twistStartRest);
-    out->twistEndRest = _ToLandmarks(solver.twistEndRest);
-    out->twistWeights = solver.twistWeights;
     out->ribbonPointsPath = _Path(solver.ribbonPointsPath);
-    out->ribbonRestPoints.reserve(solver.ribbonRestPoints.size());
-    for (const GfVec3f &p : solver.ribbonRestPoints) {
-        out->ribbonRestPoints.push_back(_ToVec3f(p));
-    }
     // The constant; the static capture puts a varying driver's run points
     // here instead.
     out->ribbonConstantPoints.reserve(solver.ribbonConstantPoints.size());

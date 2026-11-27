@@ -1646,18 +1646,10 @@ _BinaryCompareSolver(const rigExec::RigExecBakedProgramImpl::Solver &live,
     }
     CHECK(live.restsVary == wire.restsVary);
     _BinaryCheckEqual(live.restOverrides, wire.restOverrides);
-    _BinaryCheckEqual(live.splineRestWeights, wire.splineRestWeights);
-    CHECK(uint8_t(live.splineRestMode) == wire.splineRestMode);
     CHECK(live.degenerate == wire.degenerate);
     _BinaryCheckEqual(live.controls, wire.controls);
     CHECK(live.parentRelative == wire.parentRelative);
-    CHECK(live.controlRests.size() == wire.controlRests.size());
-    for (size_t i = 0;
-         i < wire.controlRests.size() && i < live.controlRests.size(); ++i) {
-        _BinaryCompareLandmarkSet(live.controlRests[i], wire.controlRests[i]);
-    }
     CHECK(int64_t(live.start) == int64_t(wire.start));
-    _BinaryCompareLandmarkSet(live.startRest, wire.startRest);
     CHECK(live.startRead == wire.startRead);
     CHECK(int64_t(live.root) == int64_t(wire.root));
     CHECK(int64_t(live.mid) == int64_t(wire.mid));
@@ -1667,22 +1659,13 @@ _BinaryCompareSolver(const rigExec::RigExecBakedProgramImpl::Solver &live,
     for (size_t k = 0; k < 3 && k < wire.ikRests.size(); ++k) {
         _BinaryCompareLandmarkSet(live.ikRests[k], wire.ikRests[k]);
     }
-    CHECK(_BinaryEq(live.ikParams.upperLength, wire.ikParams.upperLength));
-    CHECK(_BinaryEq(live.ikParams.lowerLength, wire.ikParams.lowerLength));
-    CHECK(_BinaryEq(live.ikParams.stretch, wire.ikParams.stretch));
-    CHECK(_BinaryEq(live.ikParams.softness, wire.ikParams.softness));
-    CHECK(_BinaryEq(live.ikParams.preferredBendRadians,
-                    wire.ikParams.preferredBendRadians));
     _BinaryCompareInput(live.bend, wire.bend, file);
     _BinaryCompareInput(live.upperOffset, wire.upperOffset, file);
     _BinaryCompareInput(live.lowerOffset, wire.lowerOffset, file);
     _BinaryCompareInput(live.stretch, wire.stretch, file);
     _BinaryCompareInput(live.softness, wire.softness, file);
-    CHECK(_BinaryEq(live.upperLengthBase, wire.upperLengthBase));
-    CHECK(_BinaryEq(live.lowerLengthBase, wire.lowerLengthBase));
     _BinaryCompareInput(live.ikSpace, wire.ikSpace, file);
     CHECK(int64_t(live.spaceSlot) == int64_t(wire.spaceSlot));
-    _BinaryCompareLandmarkSet(live.spaceRest, wire.spaceRest);
     CHECK(wire.spaceRead == uint32_t(std::max(live.spaceRead, 0)));
     CHECK(int64_t(live.inA) == int64_t(wire.inA));
     CHECK(int64_t(live.inB) == int64_t(wire.inB));
@@ -1700,22 +1683,6 @@ _BinaryCompareSolver(const rigExec::RigExecBakedProgramImpl::Solver &live,
     _BinaryCompareInput(live.blendWeight, wire.blendWeight, file);
     CHECK(uint8_t(live.scaleMode) == wire.scaleMode);
     CHECK(live.blendRotationRejected == wire.blendRotationRejected);
-    CHECK(wire.splineRest);
-    if (wire.splineRest) {
-        const rigExec::fb::RigExecWireSplineIkRest &rest = *wire.splineRest;
-        _BinaryCompareLandmarkSet(live.splineRest.cvs, rest.cvs);
-        _BinaryCheckFrame(live.splineRest.rootControl, rest.rootControl);
-        _BinaryCheckFrame(live.splineRest.midControl, rest.midControl);
-        _BinaryCheckFrame(live.splineRest.endControl, rest.endControl);
-        CHECK(live.splineRest.joints.size() == rest.joints.size());
-        for (size_t i = 0;
-             i < rest.joints.size() && i < live.splineRest.joints.size(); ++i) {
-            _BinaryCheckFrame(live.splineRest.joints[i], rest.joints[i]);
-        }
-        _BinaryCheckEqual(live.splineRest.segmentLengths, rest.segmentLengths);
-        CHECK(_BinaryEq(live.splineRest.restArcLength, rest.restArcLength));
-        _BinaryCheckEqual(live.splineRest.volumeWeights, rest.volumeWeights);
-    }
     CHECK(_BinaryEq(live.splineParams.preserveVolume,
                     wire.splineParams.preserveVolume));
     CHECK(_BinaryEq(live.splineParams.midFollowWeight,
@@ -1739,13 +1706,9 @@ _BinaryCompareSolver(const rigExec::RigExecBakedProgramImpl::Solver &live,
     _BinaryCompareInput(live.twist, wire.twist, file);
     _BinaryCompareInput(live.minLengthRatio, wire.minLengthRatio, file);
     CHECK(live.splineParamsVary == wire.splineParamsVary);
-    _BinaryCompareLandmarkSet(live.twistStartRest, wire.twistStartRest);
-    _BinaryCompareLandmarkSet(live.twistEndRest, wire.twistEndRest);
-    _BinaryCheckEqual(live.twistWeights, wire.twistWeights);
     _BinaryCompareInput(live.twistTurns, wire.twistTurns, file);
     CHECK(live.ribbonPointsPath.GetString() ==
           _BinaryText(file, wire.ribbonPointsPath));
-    CHECK(_BinarySamePoints(live.ribbonRestPoints, wire.ribbonRestPoints));
     // Static at the bake time: a varying driver's points as the run read
     // them, else the compiled rig constant.
     CHECK(_BinarySamePoints(live.ribbonPointsVarying

@@ -1712,11 +1712,10 @@ struct RigExecBakedSolver : RigExecSolverRecord {
     uint32_t startRead = 0;
     // IK / spline controls
     int root = -1, mid = -1, end = -1, pole = -1;
-    // TwoBoneIk: rests and the measured bone lengths, both compiled rig constant
+    // TwoBoneIk
     RigExecBakedInput<double> bend, upperOffset, lowerOffset;
     RigExecBakedInput<float> stretch, softness, pin, softDistance, limbTwist;
     RigExecBakedInput<double> upperScale, lowerScale;
-    double upperLengthBase = 0, lowerLengthBase = 0;
     /// rigExec:spaceMatrix: an explicit factor, composed after the
     /// space prim below.
     RigExecBakedInput<GfMatrix4d> ikSpace;

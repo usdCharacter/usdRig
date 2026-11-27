@@ -773,31 +773,15 @@ _RichFileBody()
     solver.path = _pCtl;
     solver.type = _pTokenXyz;
     solver.jointRests = {_L(0)};
-    solver.splineRestWeights = _Ds(3);
-    solver.controlRests = {_L(1)};
-    solver.startRest = _L(2);
     solver.ikRests = {_L(3), _L(4), _L(5)};
-    solver.ikParams = {_SD(0), _SD(1), _SD(2), _SD(3), _SD(4)};
     solver.bend = _In(InputTag::Double);
     solver.upperOffset = _In(InputTag::Double);
     solver.lowerOffset = _In(InputTag::Double);
     solver.stretch = _In(InputTag::Float);
     solver.softness = _In(InputTag::Float);
-    solver.upperLengthBase = _SD(1);
-    solver.lowerLengthBase = _SD(2);
     solver.ikSpace = _In(InputTag::Matrix4d);
     solver.spaceSlot = 0;
-    solver.spaceRest = _L(0);
     solver.blendWeight = _In(InputTag::Float);
-    solver.splineRest = std::make_unique<fb::RigExecWireSplineIkRest>();
-    solver.splineRest->cvs = _L(1);
-    solver.splineRest->rootControl = _Frame(0);
-    solver.splineRest->midControl = _Frame(1);
-    solver.splineRest->endControl = _Frame(2);
-    solver.splineRest->joints = {_Frame(3)};
-    solver.splineRest->segmentLengths = _Ds(2, 4);
-    solver.splineRest->restArcLength = _SD(3);
-    solver.splineRest->volumeWeights = _Ds(2, 5);
     solver.splineParams.preserveVolume = _SD(0);
     solver.splineParams.midFollowWeight = _SD(1);
     solver.splineParams.roll = _SD(2);
@@ -810,11 +794,7 @@ _RichFileBody()
     solver.roll = _In(InputTag::Double);
     solver.twist = _In(InputTag::Double);
     solver.minLengthRatio = _In(InputTag::Double);
-    solver.twistStartRest = _L(3);
-    solver.twistEndRest = _L(4);
-    solver.twistWeights = _Ds(2, 1);
     solver.twistTurns = _In(InputTag::Double);
-    solver.ribbonRestPoints = {_V3f(0)};
     solver.ribbonConstantPoints = {_V3f(1), _V3f(2)};
     solver.ribbonSampleCount = _In(InputTag::Int);
     solver.outputs = {{0, 1}};
@@ -1491,9 +1471,6 @@ TestBitExactness()
           _Same(rbf.weights[1].v, rbf0.weights[1].v));
     const fb::RigExecWireSolver &s = o->pose->solvers[0];
     const fb::RigExecWireSolver &s0 = file.pose->solvers[0];
-    CHECK(_Same(s.upperLengthBase, s0.upperLengthBase));
-    CHECK(_Same(s.lowerLengthBase, s0.lowerLengthBase));
-    CHECK(_Same(s.splineRest->restArcLength, s0.splineRest->restArcLength));
     const auto &samples =
         o->geometry->chains[0].revisions[0].blendChannels[0].samples;
     const auto &samples0 =
@@ -1510,12 +1487,6 @@ TestBitExactness()
 
     // Structs.
     CHECK(_Same(s.ikRests, s0.ikRests));
-    CHECK(_Same(s.ikParams.upperLength, s0.ikParams.upperLength) &&
-          _Same(s.ikParams.lowerLength, s0.ikParams.lowerLength) &&
-          _Same(s.ikParams.stretch, s0.ikParams.stretch) &&
-          _Same(s.ikParams.softness, s0.ikParams.softness) &&
-          _Same(s.ikParams.preferredBendRadians,
-                s0.ikParams.preferredBendRadians));
     CHECK(
         _Same(s.splineParams.preserveVolume, s0.splineParams.preserveVolume) &&
         _Same(s.splineParams.midFollowWeight,
@@ -1524,17 +1495,7 @@ TestBitExactness()
         _Same(s.splineParams.twist, s0.splineParams.twist) &&
         _Same(s.splineParams.minLengthRatio, s0.splineParams.minLengthRatio) &&
         s.splineParams.aimRootTangent);
-    CHECK(_Same(s.splineRest->cvs, s0.splineRest->cvs));
-    CHECK(_Same(s.splineRest->rootControl, s0.splineRest->rootControl));
-    CHECK(_Same(s.splineRest->joints, s0.splineRest->joints));
-    CHECK(_Same(s.splineRest->segmentLengths, s0.splineRest->segmentLengths));
-    CHECK(_Same(s.splineRest->volumeWeights, s0.splineRest->volumeWeights));
-    CHECK(_Same(s.startRest, s0.startRest));
-    CHECK(_Same(s.spaceRest, s0.spaceRest));
     CHECK(s.spaceSlot == 0);
-    CHECK(_Same(s.twistStartRest, s0.twistStartRest));
-    CHECK(_Same(s.twistWeights, s0.twistWeights));
-    CHECK(_Same(s.splineRestWeights, s0.splineRestWeights));
     CHECK(_Same(s.ribbonConstantPoints, s0.ribbonConstantPoints));
     CHECK(_Same(s.jointRests, s0.jointRests));
     CHECK(s.outputs == s0.outputs);
@@ -1708,12 +1669,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 54 &&
-                      RigExecFormatOldestReadable == 54,
-                  "format 54 runs Range blend shapes as op nodes and is "
-                  "the only format Open reads");
-    // Every older format requires re-export: its blend shapes ran as their
-    // own steps.
+    static_assert(RigExecFormatVersion == 55 &&
+                      RigExecFormatOldestReadable == 55,
+                  "format 55 runs solvers as op nodes and is the only format "
+                  "Open reads");
+    // Every older format requires re-export: its solvers ran as Solve
+    // steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1724,14 +1685,13 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 54 through " +
+            " (this reader reads 55 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 54 ? "re-export: Range blend shapes as op nodes"
-                          : "rebake");
+            (version < 55 ? "re-export: solvers as op nodes" : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 54 ? reexports : rebakes);
+        ++(version < 55 ? reexports : rebakes);
     }
-    CHECK(reexports == 54 && rebakes == 1);
+    CHECK(reexports == 55 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -7039,7 +6999,6 @@ _AttachSkeleton2d(fb::RigExecWireSolver *solver)
 {
     solver->jointRests.resize(2);
     solver->controls = {0};
-    solver->controlRests = {_L(1)};
     solver->controlReads = {0};
     auto table = std::make_unique<fb::RigExecWireSkeleton2d>();
     table->solveOrder = {0, 1};
