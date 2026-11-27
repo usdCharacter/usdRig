@@ -1118,7 +1118,7 @@ private:
             if (lookup && lookup->source == 60) {
                 if (!_f.pose ||
                     !_Has(_f.pose->solvers, int64_t(lookup->object)) ||
-                    lookup->part < 0 || lookup->part > 20 || lookup->read)
+                    lookup->part < 0 || lookup->part > 21 || lookup->read)
                     return _Bad("op_graph.lookups: a solver lookup reads "
                                 "nothing solver " +
                                 _N(lookup->object) + " holds");

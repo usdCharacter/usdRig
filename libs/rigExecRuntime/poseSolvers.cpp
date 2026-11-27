@@ -160,12 +160,6 @@ _RrRefreshSolverRests(RrProgram *program, size_t step, size_t solver,
     return true;
 }
 
-RrPointFrameArray
-_RrSampleRibbonFrames(const std::vector<RrVec3f> &posed,
-                      const std::vector<RrVec3f> &rest, int sampleCount,
-                      const std::vector<std::array<RrVec3d, 4>> &jointRests,
-                      const std::vector<char> &jointRestLive);
-
 struct _RrSplineIkControls {
     RrPointFrame root;
     RrPointFrame mid;
@@ -202,37 +196,6 @@ bool _RrSolveSplineIk(const RrPoseSplineIkRest &rest,
                       const _RrSplineIkControls &controls,
                       const _RrSplineIkParams &params,
                       _RrSplineIkResult *result);
-
-// The joint rest a pose step below the solver wrote for element k
-// (solverKernels.cpp); null keeps the solver's own rest.
-auto
-_RrLiveJointRest(const std::vector<std::array<RrVec3d, 4>> &jointRests,
-                 const std::vector<char> &jointRestLive)
-{
-    return [rests = &jointRests,
-            live = &jointRestLive](size_t k) -> const std::array<RrVec3d, 4> * {
-        return k < rests->size() && k < live->size() && (*live)[k]
-                   ? &(*rests)[k]
-                   : nullptr;
-    };
-}
-
-// RigExecSampleRibbonFrames (rigExecMath/ribbonFramesKernel.h).
-RrPointFrameArray
-_RrSampleRibbonFrames(const std::vector<RrVec3f> &posed,
-                      const std::vector<RrVec3f> &rest, int sampleCount,
-                      const std::vector<std::array<RrVec3d, 4>> &jointRests,
-                      const std::vector<char> &jointRestLive)
-{
-    RrPointFrameArray result;
-    RigExecSampleRibbonFramesKernel<RrVec3f, RrVec3d>(
-        posed.data(), posed.size(), rest.data(), rest.size(), sampleCount,
-        &result.frames, &result.rests);
-    RigExecRebaseFramesKernel<RrVec3f, RrVec3d>(
-        _RrLiveJointRest(jointRests, jointRestLive), &result.frames,
-        &result.rests);
-    return result;
-}
 
 // RigExecSolveSplineIk (rigExecMath/splineIkKernel.h).
 bool
@@ -360,18 +323,6 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
                 }
             }
         }
-    } else if (type == SchemaTypeName::RigExecRibbon) {
-        if (size_t(wire.object) >= store.ribbonConstant.size()) {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no solver";
-            }
-            return false;
-        }
-        aggregate = _RrSampleRibbonFrames(
-            store.ribbonConstant[size_t(wire.object)], s.ribbonRestPoints,
-            program->ReadSolver(size_t(wire.object), RrSolverRibbonSampleCount)
-                .i32,
-            liveRests, liveFlags);
     } else if (type == SchemaTypeName::RigExecSkeleton2d) {
         // The native body (RigExecRunSolver's Skeleton2d arm): rests and
         // outputs in rigExec:joints order, the kernel in solve order in the
@@ -853,6 +804,20 @@ RrLookUpSolver(const RrProgram *program, const eval::OpLookup &lookup,
         return _RrSolverScalar(
             type, p.ReadSolver(lookup.object, RrSolverTwistTurns).f64, value,
             error);
+    case Read::DriverPoints: {
+        if (!_RrSolverType<rigExecStd::Vec3f>(type, true) ||
+            lookup.object >= p.store.ribbonConstant.size())
+            break;
+        const std::vector<RrVec3f> &points =
+            p.store.ribbonConstant[lookup.object];
+        auto &out =
+            *static_cast<rigExecStd::RigExecArray<rigExecStd::Vec3f> *>(value);
+        out.Resize(points.size());
+        for (size_t i = 0; i < points.size(); ++i)
+            out[i] =
+                rigExecStd::Vec3f(points[i][0], points[i][1], points[i][2]);
+        return true;
+    }
     case Read::GroupSelectors: {
         if (!_RrSolverType<double>(type, true) ||
             lookup.object >= p.solverJointGroupRead.size())

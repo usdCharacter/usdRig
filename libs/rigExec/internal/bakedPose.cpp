@@ -4993,20 +4993,6 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
             input.blendA = s.inA >= 0 ? &B.aggregates[size_t(s.inA)] : nullptr;
             input.blendB = s.inB >= 0 ? &B.aggregates[size_t(s.inB)] : nullptr;
             input.blendWeight = rd(s.blendWeight);
-        } else if (s.type == SchemaTypeName::RigExecRibbon) {
-            s.kind = RigExecSolverKind::Ribbon;
-            const auto &sampled =
-                s.ribbonPointsVarying ? s.ribbonPoints : s.ribbonConstantPoints;
-            const GfVec3f *points = nullptr;
-            size_t count = 0;
-            const bool available = RigExecBakedResolvePoints(
-                B, s.ribbonPointsBinding, &points, &count);
-            // The driver points default to the sampled driver curve while
-            // no chain version answers for them.
-            if (available)
-                input.ribbonPoints.assign(points, points + count);
-            else
-                input.ribbonPoints = sampled;
         } else if (s.type == SchemaTypeName::RigExecSplineIk) {
             s.kind = RigExecSolverKind::SplineIk;
             input.refreshSplineParams =

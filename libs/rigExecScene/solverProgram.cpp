@@ -63,10 +63,9 @@ RigExecRunSolver(const RigExecSolverRecord &s, const RigExecSolverInputs &input,
             *error = "a twist distribution runs as an op node";
         return false;
     case RigExecSolverKind::Ribbon:
-        aggregate = RigExecSampleRibbonFrames(
-            input.ribbonPoints, s.ribbonRestPoints, s.ribbonSamples,
-            s.jointRests, s.restIsLive);
-        return true;
+        if (error)
+            *error = "a ribbon runs as an op node";
+        return false;
     case RigExecSolverKind::SplineIk: {
         auto params = RigExecSolverSplineParams(s, input);
         const auto *rest = &s.splineRest;

@@ -819,8 +819,10 @@ TestCycle(const std::string &fixturesDir)
             }
             if (found == B.excludedSteps.end())
                 continue;
-            if (found->kind == RigExecBakedStepKind::Solve)
-                solveNamed |= B.solvers[size_t(found->object)].path == ribbon;
+            if (const int solver = RigExecBakedSolverOf(B, *found);
+                solver >= 0 && RigExecBakedIdentityOf(B, *found).kind ==
+                                   RigExecBakedStepKind::Solve)
+                solveNamed |= B.solvers[size_t(solver)].path == ribbon;
             if (found->kind == RigExecBakedStepKind::RevisionFuse) {
                 const auto index = B.revisionIndex[size_t(found->object)];
                 geometryNamed |= B.chains[size_t(index.first)]

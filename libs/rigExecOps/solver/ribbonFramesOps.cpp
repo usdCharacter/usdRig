@@ -1,6 +1,7 @@
 #include "rigExecOps/solver/ribbonFramesOps.h"
 
 #include "rigExecOps/fieldIo.h"
+#include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecOps/solver/liveRests.h"
 #include "rigExecMath/ribbonFramesKernel.h"
@@ -37,6 +38,11 @@ using namespace fieldIo;
 /// SampleRibbonFrames' declared field.
 enum RibbonField : uint32_t { kSampleCount };
 
+/// SampleRibbonFrames' op state: both curves' sampling storage.
+struct RibbonScratch {
+    rigExec::RigExecCurveFrameScratchT<Vec3f> posed, rest;
+};
+
 bool
 SampleRibbonFramesOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
@@ -45,19 +51,24 @@ SampleRibbonFramesOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     p.sampleCount = ValueAt<int32_t>(batch, kSampleCount, k);
     const Points &posed = *In<Points>(io, SampleRibbonFramesPosed());
     const Points &rest = *In<Points>(io, SampleRibbonFramesRest());
-    std::vector<PointFrame> frames;
-    std::vector<PointLandmarks> rests;
-    rigExec::RigExecSampleRibbonFramesKernel<Vec3f, Vec3d>(
-        posed.Data(), posed.Size(), rest.Data(), rest.Size(), p.sampleCount,
-        &frames, &rests);
-    if (p.sampleCount < 2 || frames.size() != size_t(p.sampleCount))
-        return Fail(error, "SampleRibbonFrames",
-                    "needs two samples and two distinct points per curve");
-    RebaseLive(io, SampleRibbonFramesJointRests(),
-               SampleRibbonFramesJointRestLive(), &frames, &rests);
+    if (p.sampleCount < 2)
+        return Fail(error, "SampleRibbonFrames", "needs two samples");
+    auto &scratch =
+        *static_cast<RibbonScratch *>(rigExec::RigExecBatchState(batch, k));
     PointFrameArray &out = Out<PointFrameArray>(io, SampleRibbonFramesOut());
-    out.frames.Assign(frames.data(), frames.size());
-    out.rests.Assign(rests.data(), rests.size());
+    const size_t n = size_t(p.sampleCount);
+    out.frames.Resize(n);
+    out.rests.Resize(n);
+    if (!rigExec::RigExecSampleRibbonFramesKernel<Vec3f, Vec3d>(
+            posed.Data(), posed.Size(), rest.Data(), rest.Size(), p.sampleCount,
+            &scratch.posed, &scratch.rest, out.frames.Data(),
+            out.rests.Data())) {
+        out.frames.Resize(0);
+        out.rests.Resize(0);
+        return true;
+    }
+    RebaseLive(io, SampleRibbonFramesJointRests(),
+               SampleRibbonFramesJointRestLive(), &out);
     return true;
 }
 
@@ -65,13 +76,8 @@ bool
 CheckSampleRibbonFrames(const rigExec::RigExecOpCheck &check,
                         std::string *error)
 {
-    const size_t posed = CheckElements(check, SampleRibbonFramesPosed());
-    const size_t rest = CheckElements(check, SampleRibbonFramesRest());
-    if (ValueAt<int32_t>(check.batch, kSampleCount, check.k) < 2 ||
-        (posed < rigExec::kRigExecPortUnfed && posed < 2) ||
-        (rest < rigExec::kRigExecPortUnfed && rest < 2))
-        return Fail(error, "SampleRibbonFrames",
-                    "needs two samples and two distinct points per curve");
+    if (ValueAt<int32_t>(check.batch, kSampleCount, check.k) < 2)
+        return Fail(error, "SampleRibbonFrames", "needs two samples");
     if (Fed(check, SampleRibbonFramesJointRests()) !=
         Fed(check, SampleRibbonFramesJointRestLive()))
         return Fail(error, "SampleRibbonFrames",
@@ -126,10 +132,12 @@ const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "SampleRibbonFrames";
+    d.schema = &internalOps::kSampleRibbonFrames;
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.runBatch = &RunSampleRibbonFrames;
     d.validate = &CheckSampleRibbonFrames;
+    d.state = StateOf<RibbonScratch>();
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kFields;
     d.payloadFieldCount = std::size(kFields);

@@ -49,7 +49,9 @@ RigExecReferenceSolve(const RigExecSolverRecord &s,
 {
     const bool ik = s.kind == RigExecSolverKind::TwoBoneIk;
     const bool twist = s.kind == RigExecSolverKind::TwistDistribution;
-    if ((s.kind != RigExecSolverKind::FkChain && !ik && !twist) || s.degenerate)
+    const bool ribbon = s.kind == RigExecSolverKind::Ribbon;
+    if ((s.kind != RigExecSolverKind::FkChain && !ik && !twist && !ribbon) ||
+        s.degenerate)
         return RigExecRunSolver(s, input, workspace, output, error);
     output->frames.clear();
     output->rests.clear();
@@ -57,6 +59,12 @@ RigExecReferenceSolve(const RigExecSolverRecord &s,
         *output = RigExecSolveTwistDistribution(
             input.root, input.end, s.twistStartRest, s.twistEndRest,
             s.twistWeights, input.twistTurns, s.jointRests, s.restIsLive);
+        return true;
+    }
+    if (ribbon) {
+        *output = RigExecSampleRibbonFrames(input.ribbonPoints,
+                                            s.ribbonRestPoints, s.ribbonSamples,
+                                            s.jointRests, s.restIsLive);
         return true;
     }
     if (ik) {

@@ -2,6 +2,7 @@
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecOps/solver/chainSolverOps.h"
 #include "rigExecOps/solver/frameBlendOps.h"
+#include "rigExecOps/solver/ribbonFramesOps.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecStdTypes/stdTypes.h"
 
@@ -104,7 +105,8 @@ size_t
 RigExecBakedSolverNodeCount(const RigExecBakedProgramImpl::Solver &s)
 {
     if (s.type == SchemaTypeName::RigExecTwoBoneIk ||
-        s.type == SchemaTypeName::RigExecTwistDistribution)
+        s.type == SchemaTypeName::RigExecTwistDistribution ||
+        s.type == SchemaTypeName::RigExecRibbon)
         return 1;
     if (s.type != SchemaTypeName::RigExecFkChain)
         return 0;
@@ -177,6 +179,20 @@ RigExecBakedAddSolverOp(const RigExecBakedProgramImpl &B,
         read(node, DistributeTwistJointRests(), Read::JointRests);
         read(node, DistributeTwistJointRestLive(), Read::JointRestLive);
         publish(node, DistributeTwistOut());
+        return true;
+    }
+    if (s.type == SchemaTypeName::RigExecRibbon) {
+        SampleRibbonFramesPayload p;
+        p.sampleCount = s.ribbonSamples;
+        const RigExecNodeId node = builder->AddOp(SampleRibbonFrames(), &p);
+        if (!placed(node))
+            return false;
+        read(node, SampleRibbonFramesPosed(), Read::DriverPoints);
+        constant(node, SampleRibbonFramesRest(), s.ribbonRestPoints.data(),
+                 s.ribbonRestPoints.size() * sizeof(GfVec3f));
+        read(node, SampleRibbonFramesJointRests(), Read::JointRests);
+        read(node, SampleRibbonFramesJointRestLive(), Read::JointRestLive);
+        publish(node, SampleRibbonFramesOut());
         return true;
     }
     if (s.type == SchemaTypeName::RigExecTwoBoneIk) {
@@ -414,6 +430,26 @@ RigExecBakedLookUpSolver(const RigExecBakedProgramImpl &B,
     case Read::TwistTurns:
         return Scalar(type, RigExecBakedLeafRead(B, s.twistTurns), value) ||
                Fail(error, s.pathText + " has no twist turns of that type");
+    case Read::DriverPoints: {
+        if (!Is(type, rigExecStd::Vec3fArray()))
+            break;
+        const GfVec3f *points = nullptr;
+        size_t count = 0;
+        if (!RigExecBakedResolvePoints(B, s.ribbonPointsBinding, &points,
+                                       &count)) {
+            const std::vector<GfVec3f> &sampled =
+                s.ribbonPointsVarying ? s.ribbonPoints : s.ribbonConstantPoints;
+            points = sampled.data();
+            count = sampled.size();
+        }
+        auto &out =
+            *static_cast<rigExecStd::RigExecArray<rigExecStd::Vec3f> *>(value);
+        out.Resize(count);
+        for (size_t i = 0; i < count; ++i)
+            out[i] =
+                rigExecStd::Vec3f(points[i][0], points[i][1], points[i][2]);
+        return true;
+    }
     case Read::GroupSelectors: {
         if (!Is(type, rigExecStd::DoubleArray()))
             break;

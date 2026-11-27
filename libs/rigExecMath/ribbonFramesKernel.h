@@ -14,6 +14,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <utility>
 #include <vector>
 
 namespace rigExec {
@@ -50,21 +51,36 @@ BsplinePoint(const V &p0, const V &p1, const V &p2, const V &p3, float t)
 
 } // namespace ribbonFramesDetail
 
+/// RigExecSampleCurveRMFKernel's storage, reused across calls.
+template <class V> struct RigExecCurveFrameScratchT {
+    RigExecCurveFrameSamplesT<V> samples;
+    std::vector<V> densePoints;
+    std::vector<float> arcLength;
+};
+
 /// \p sampleCount equal-arc-length samples of the nonperiodic cubic uniform
 /// B-spline over \p cvs, rotation-minimizing by double reflection (Wang et
 /// al. 2008). Under four points the control polygon interpolates linearly.
 /// Empty for fewer than two points or samples, or a zero-length curve.
+/// The samples land in \p scratch's.
 template <class V>
-RigExecCurveFrameSamplesT<V>
-RigExecSampleCurveRMFKernel(const V *cvs, size_t count, int sampleCount)
+void
+RigExecSampleCurveRMFKernel(const V *cvs, size_t count, int sampleCount,
+                            RigExecCurveFrameScratchT<V> *scratch)
 {
-    RigExecCurveFrameSamplesT<V> samples;
+    RigExecCurveFrameSamplesT<V> &samples = scratch->samples;
+    samples.positions.clear();
+    samples.tangents.clear();
+    samples.normals.clear();
+    samples.binormals.clear();
+    samples.parameters.clear();
     if (sampleCount < 2 || count < 2 || !cvs)
-        return samples;
+        return;
 
     // Dense presampling for the arc-length parameterization.
     const int dense = std::max(sampleCount * 16, 64);
-    std::vector<V> densePoints;
+    std::vector<V> &densePoints = scratch->densePoints;
+    densePoints.clear();
     densePoints.reserve(size_t(dense) + 1);
     const int spans = int(count) - 3;
     for (int i = 0; i <= dense; ++i) {
@@ -82,13 +98,14 @@ RigExecSampleCurveRMFKernel(const V *cvs, size_t count, int sampleCount)
                                   (cvs[seg + 1] - cvs[seg]) * (s - seg));
         }
     }
-    std::vector<float> arcLength(densePoints.size(), 0.0f);
+    std::vector<float> &arcLength = scratch->arcLength;
+    arcLength.assign(densePoints.size(), 0.0f);
     for (size_t i = 1; i < densePoints.size(); ++i)
         arcLength[i] = arcLength[i - 1] +
                        (densePoints[i] - densePoints[i - 1]).GetLength();
     const float total = arcLength.back();
     if (total <= 1e-12f)
-        return samples;
+        return;
 
     const size_t n = size_t(sampleCount);
     samples.positions.reserve(n);
@@ -154,7 +171,15 @@ RigExecSampleCurveRMFKernel(const V *cvs, size_t count, int sampleCount)
         nrm[k + 1] = len > 1e-12f ? m / len : nrm[k];
         bin[k + 1] = tan[k + 1] ^ nrm[k + 1];
     }
-    return samples;
+}
+
+template <class V>
+RigExecCurveFrameSamplesT<V>
+RigExecSampleCurveRMFKernel(const V *cvs, size_t count, int sampleCount)
+{
+    RigExecCurveFrameScratchT<V> scratch;
+    RigExecSampleCurveRMFKernel(cvs, count, sampleCount, &scratch);
+    return std::move(scratch.samples);
 }
 
 /// Re-bases \p frame onto \p jointRest: its map from \p ownRest is applied
@@ -197,25 +222,28 @@ RigExecRebaseFramesKernel(JointRest &&jointRest, std::vector<F> *frames,
                                              rests->data(), frames->size());
 }
 
-/// The ribbon solver's aggregate: one frame per sample of the \p posed
-/// curve, each paired with the \p rest curve's sample frame. Both empty
-/// unless both curves sample to \p sampleCount.
+/// The ribbon solver's aggregate into \p frames and \p rests, \p sampleCount
+/// of each: one frame per sample of the \p posed curve, each paired with the
+/// \p rest curve's sample frame. False, writing nothing, unless both curves
+/// sample to \p sampleCount.
 template <class Point, class Double, class F>
-void
+bool
 RigExecSampleRibbonFramesKernel(const Point *posed, size_t posedCount,
                                 const Point *rest, size_t restCount,
-                                int sampleCount, std::vector<F> *frames,
-                                std::vector<std::array<Double, 4>> *rests)
+                                int sampleCount,
+                                RigExecCurveFrameScratchT<Point> *posedScratch,
+                                RigExecCurveFrameScratchT<Point> *restScratch,
+                                F *frames, std::array<Double, 4> *rests)
 {
-    frames->clear();
-    rests->clear();
     if (posedCount == 0 || restCount == 0 || sampleCount < 2)
-        return;
-    const auto p = RigExecSampleCurveRMFKernel(posed, posedCount, sampleCount);
-    const auto r = RigExecSampleCurveRMFKernel(rest, restCount, sampleCount);
+        return false;
+    RigExecSampleCurveRMFKernel(posed, posedCount, sampleCount, posedScratch);
+    RigExecSampleCurveRMFKernel(rest, restCount, sampleCount, restScratch);
+    const RigExecCurveFrameSamplesT<Point> &p = posedScratch->samples;
+    const RigExecCurveFrameSamplesT<Point> &r = restScratch->samples;
     const size_t n = size_t(sampleCount);
     if (p.GetSize() != n || r.GetSize() != n)
-        return;
+        return false;
     const auto landmarks = [](const RigExecCurveFrameSamplesT<Point> &s,
                               size_t k) {
         const Point &o = s.positions[k];
@@ -225,14 +253,32 @@ RigExecSampleRibbonFramesKernel(const Point *posed, size_t posedCount,
             matrixDetail::Wide<Double>(o + s.normals[k]),
             matrixDetail::Wide<Double>(o + s.binormals[k])};
     };
-    frames->reserve(n);
-    rests->reserve(n);
     for (size_t k = 0; k < n; ++k) {
         F frame;
         frame.points = landmarks(p, k);
         frame.flags = chainSolverDetail::kFrameValid;
-        frames->push_back(frame);
-        rests->push_back(landmarks(r, k));
+        frames[k] = frame;
+        rests[k] = landmarks(r, k);
+    }
+    return true;
+}
+
+template <class Point, class Double, class F>
+void
+RigExecSampleRibbonFramesKernel(const Point *posed, size_t posedCount,
+                                const Point *rest, size_t restCount,
+                                int sampleCount, std::vector<F> *frames,
+                                std::vector<std::array<Double, 4>> *rests)
+{
+    RigExecCurveFrameScratchT<Point> posedScratch, restScratch;
+    const size_t n = sampleCount > 0 ? size_t(sampleCount) : 0;
+    frames->resize(n);
+    rests->resize(n);
+    if (!RigExecSampleRibbonFramesKernel<Point, Double>(
+            posed, posedCount, rest, restCount, sampleCount, &posedScratch,
+            &restScratch, frames->data(), rests->data())) {
+        frames->clear();
+        rests->clear();
     }
 }
 

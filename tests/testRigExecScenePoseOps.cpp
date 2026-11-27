@@ -409,11 +409,9 @@ TestRibbon()
             s.restIsLive.push_back(live && k != 2);
         }
         RigExecPoseOpRunner runner;
-        // Five samples, a record with another count (rebuilt), one sample
-        // and no curve: the last two fail compile and the evaluation that
-        // binds them.
-        constexpr char kTooFew[] = "SampleRibbonFrames: needs two samples and "
-                                   "two distinct points per curve";
+        // Five samples, a record with another count (rebuilt), one sample,
+        // which fails compile, and no curve, which publishes no frame.
+        constexpr char kTooFew[] = "SampleRibbonFrames: needs two samples";
         for (const int count : {5, 3, 1}) {
             s.ribbonSamples = count;
             RigExecSolverInputs in;
@@ -422,8 +420,7 @@ TestRibbon()
                           count < 2 ? kTooFew : nullptr);
         }
         s.ribbonSamples = 5;
-        CompareSolver("ribbon no curve", s, RigExecSolverInputs(), runner,
-                      kTooFew);
+        CompareSolver("ribbon no curve", s, RigExecSolverInputs(), runner);
     }
 }
 

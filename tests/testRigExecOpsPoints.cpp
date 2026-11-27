@@ -4081,7 +4081,8 @@ TestRibbonFrames()
         }
     }
 
-    // One point, one sample and a zero-length curve refuse.
+    // A curve of one point or of zero length publishes no frame; one
+    // sample refuses.
     SampleRibbonFramesPayload payload;
     payload.sampleCount = 5;
     Node node(SampleRibbonFrames(),
@@ -4095,8 +4096,22 @@ TestRibbonFrames()
     rigExecRig::PointFrameArray actual;
     std::string error;
     CHECK(node.Run({&curve, &curve}, &actual));
-    CHECK(!node.Run({&one, &curve}, &actual, &error));
-    CHECK(!node.Run({&curve, &flat}, &actual, &error));
+    CHECK(actual.frames.Size() == 5);
+    Points moving = curve;
+    CHECK(opAllocationCount::SteadyFrameAllocations(
+              SampleRibbonFrames(), &payload,
+              {&SampleRibbonFramesPosed(), &SampleRibbonFramesRest()},
+              {&curve, &curve}, SampleRibbonFramesOut(), 0,
+              [&](int frame) {
+                  moving[3] =
+                      rigExecStd::Vec3f(3.0f, 1.0f + 0.1f * frame, 1.0f);
+                  return &moving;
+              },
+              &error) == 0);
+    CHECK(node.Run({&one, &curve}, &actual));
+    CHECK(actual.frames.Size() == 0 && actual.rests.Size() == 0);
+    CHECK(node.Run({&curve, &flat}, &actual));
+    CHECK(actual.frames.Size() == 0 && actual.rests.Size() == 0);
     payload.sampleCount = 1;
     Node single(SampleRibbonFrames(),
                 {&SampleRibbonFramesPosed(), &SampleRibbonFramesRest()},

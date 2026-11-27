@@ -24,8 +24,7 @@ const rigExec::RigExecOpHandle &SampleRibbonFrames();
 // optional JointRests (PointLandmarksList) and JointRestLive (BoolArray):
 // each sample k live in both is re-based onto JointRests[k]. Out
 // (PointFrameArray, one posed frame per sample on the rest sample's
-// landmarks or its live joint rest). A curve that does not sample is an
-// error.
+// landmarks or its live joint rest; none when a curve does not sample).
 const rigExec::RigExecPortHandle &SampleRibbonFramesPosed();
 const rigExec::RigExecPortHandle &SampleRibbonFramesRest();
 const rigExec::RigExecPortHandle &SampleRibbonFramesJointRests();

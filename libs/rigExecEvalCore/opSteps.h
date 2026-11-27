@@ -210,6 +210,9 @@ enum class OpSolverRead : uint8_t {
     TwistEndRest = 19,
     /// Double: a twist distribution's inputs:twistTurns.
     TwistTurns = 20,
+    /// Vec3fArray: a ribbon's driver points, from the chain version its
+    /// binding answers, else the sampled driver curve.
+    DriverPoints = 21,
 };
 
 /// OpLookup::read of a constraint lookup. The numbers are part of the file
