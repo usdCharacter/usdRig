@@ -29,6 +29,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 #include <unordered_map>
@@ -902,6 +903,20 @@ struct RrProgram {
         return TextOrEmpty(id) == literal;
     }
 
+    // Whether text \p id spells \p text, without copying it.
+    bool TextEquals(uint32_t id, std::string_view text) const
+    {
+        if (id < nodeText.size()) {
+            return nodeText[id] == text;
+        }
+        if (id < inputState.extraTokenBase) {
+            return false;
+        }
+        const size_t k = size_t(id - inputState.extraTokenBase);
+        return k < inputState.extraTokens.size() &&
+               inputState.extraTokens[k] == text;
+    }
+
     // Registered read \p read, bound in place.
     const RigExecWireInput &RegisteredInput(int32_t read) const
     {
@@ -1065,6 +1080,25 @@ bool RrStoreCommit(RrProgram *program, const eval::OpHostOutput &output,
 /// reports it.
 std::string RrCommitFailure(const RrProgram *program, uint32_t commit,
                             const std::string &error);
+namespace eval {
+struct ConstraintStepCache;
+}
+/// Resolves a constraint lookup (eval::OpConstraintLookupSource) through
+/// the calling step's \p cache.
+bool RrLookUpConstraint(RrProgram *program, eval::ConstraintStepCache &cache,
+                        const eval::OpLookup &lookup,
+                        const RigExecTypeDesc &type, void *value,
+                        std::string *error);
+/// Stores a constraint node's solved frame or measured delta from step
+/// \p step, which takes its diagnostic lines.
+bool RrStoreConstraint(RrProgram *program, size_t step,
+                       eval::ConstraintStepCache &cache,
+                       const eval::OpHostOutput &output, const void *value,
+                       std::string *error);
+/// The failure \p error of a node of constraint commit \p commit, as its
+/// mover reports it.
+std::string RrConstraintFailure(const RrProgram *program, uint32_t commit,
+                                const std::string &error);
 /// Resolves WeightArrays lookup \p lookup: input \p lookup.read of weight
 /// object \p lookup.object, an array lent in place.
 bool RrLookUpWeight(const RrProgram *program, const eval::OpLookup &lookup,

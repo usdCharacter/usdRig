@@ -910,6 +910,19 @@ struct GroupHost {
         *error = "no commits";
         return false;
     }
+    bool LookUpConstraint(uint32_t, const eval::OpLookup &,
+                          const RigExecTypeDesc &, void *,
+                          std::string *error) const
+    {
+        *error = "no constraints";
+        return false;
+    }
+    bool StoreConstraint(const eval::OpHostOutput &, const void *,
+                         std::string *error)
+    {
+        *error = "no constraints";
+        return false;
+    }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t g,
                     const void *elements, size_t count, std::string *error)
     {

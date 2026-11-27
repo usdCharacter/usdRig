@@ -1946,12 +1946,13 @@ int
 ConstraintStep(const RigExecBakedProgramImpl &B, const SdfPath &path)
 {
     for (size_t i = 0; i < B.steps.size(); ++i) {
-        const RigExecBakedStep &step = B.steps[i];
-        if (step.kind != RigExecBakedStepKind::Constraint) {
+        const RigExecBakedStepIdentity id =
+            RigExecBakedIdentityOf(B, B.steps[i]);
+        if (id.kind != RigExecBakedStepKind::Constraint || id.part >= 0) {
             continue;
         }
         const RigExecBakedProgramImpl::WalkStep &walk =
-            B.walkSteps[size_t(step.object)];
+            B.walkSteps[size_t(id.object)];
         if (!walk.solverBatch && walk.index >= 0 &&
             B.constraints[size_t(walk.index)].path == path) {
             return int(i);
@@ -2392,7 +2393,8 @@ TestReaderWalksDeclareTheirVersions(const std::string &examples)
                 }
             }
             if (first < 0 && (step.kind == RigExecBakedStepKind::Solve ||
-                              step.kind == RigExecBakedStepKind::Constraint)) {
+                              RigExecBakedIdentityOf(B, step).kind ==
+                                  RigExecBakedStepKind::Constraint)) {
                 first = int(i);
             }
         }

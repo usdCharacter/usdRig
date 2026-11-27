@@ -645,6 +645,8 @@ CommitStepObject(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step)
     const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(B, step);
     if (origin && origin->family == RigExecBakedOpFamily::PoseCommit)
         return origin->object;
+    if (origin && origin->family == RigExecBakedOpFamily::Constraint)
+        return origin->part < 0 ? origin->object : -1;
     return step.kind == RigExecBakedStepKind::Constraint ? step.object : -1;
 }
 
@@ -1113,9 +1115,10 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
         } else if (const int w = CommitStepObject(B, step);
                    w >= 0 && size_t(w) < B.commits.size()) {
             const auto &commit = B.commits[size_t(w)];
-            if (step.kind == RigExecBakedStepKind::Constraint &&
-                size_t(step.object) < B.walkSteps.size()) {
-                const int constraint = B.walkSteps[size_t(step.object)].index;
+            const bool solve = RigExecBakedIdentityOf(B, step).kind ==
+                               RigExecBakedStepKind::Constraint;
+            if (solve && size_t(w) < B.walkSteps.size()) {
+                const int constraint = B.walkSteps[size_t(w)].index;
                 if (constraint >= 0 &&
                     size_t(constraint) < B.constraints.size()) {
                     const auto &c = B.constraints[size_t(constraint)];
@@ -1150,7 +1153,7 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                     ancestors(commit.effectorAncestors);
                 }
             }
-            const bool apply = step.kind != RigExecBakedStepKind::Constraint;
+            const bool apply = !solve;
             if (apply) {
                 all(kFin, commit.slotReads);
                 for (size_t k = 0; k < commit.propagate.size(); ++k) {
@@ -2151,12 +2154,13 @@ RigExecBakedBuildCones(RigExecBakedProgramImpl *program)
     cones.deltaBaseSteps.assign(B.deltaBasePaths.size(), {});
     cones.constraintArraySteps.assign(B.constraintArrays.size(), {});
     for (const RigExecBakedStep &step : B.steps) {
-        if (step.kind != RigExecBakedStepKind::Constraint) {
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        if (id.kind != RigExecBakedStepKind::Constraint) {
             continue;
         }
         const int index = int(&step - B.steps.data());
         const RigExecBakedProgramImpl::WalkStep &walk =
-            B.walkSteps[size_t(step.object)];
+            B.walkSteps[size_t(id.object)];
         if (walk.solverBatch || walk.index < 0) {
             continue;
         }

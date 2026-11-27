@@ -465,7 +465,7 @@ TestEveryRestReaderDeclaresIt(const std::string &examples)
                 }
                 break;
             case RigExecBakedStepKind::Constraint: {
-                const auto &walk = B.walkSteps[size_t(step.object)];
+                const auto &walk = B.walkSteps[size_t(id.object)];
                 if (walk.solverBatch || walk.index < 0) {
                     break;
                 }

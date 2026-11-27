@@ -218,8 +218,27 @@ RigExecBakedAddPoseCommitOp(const RigExecBakedProgramImpl &B,
     const auto store = [&](const RigExecPortHandle &port, T target) {
         layout->hostOutputs.push_back({node, port.Index(), uint8_t(target), w});
     };
-    look(PoseCommitCandidates(), eval::OpLookupSource::CommitCandidates, 0);
-    look(PoseCommitPresent(), eval::OpLookupSource::CommitCandidates, 1);
+    if (RigExecBakedConstraintRunsAsOps(B, w)) {
+        if (slots != 1 || o == 0 ||
+            B.opNodeOrigins[o - 1].family != RigExecBakedOpFamily::Constraint ||
+            B.opNodeOrigins[o - 1].object != int32_t(w) ||
+            B.opNodeOrigins[o - 1].part != -1)
+            return Fail(error, commit.moverPathText +
+                                   ": a constraint commit without its "
+                                   "constraint node");
+        builder->Connect(RigExecNodeId(o - 1), RigExecBakedConstraintOut(B, w),
+                         node, PoseCommitCandidate());
+        builder->BindInput(node, PoseCommitPresent());
+        layout->hostInputs.push_back({node, PoseCommitPresent().Index(),
+                                      eval::OpHostSource::Lookup,
+                                      uint32_t(layout->lookups.size())});
+        layout->lookups.push_back(
+            {uint8_t(eval::OpLookupSource::ConstraintEnvelope), w, -1,
+             uint8_t(eval::OpConstraintRead::Present)});
+    } else {
+        look(PoseCommitCandidates(), eval::OpLookupSource::CommitCandidates, 0);
+        look(PoseCommitPresent(), eval::OpLookupSource::CommitCandidates, 1);
+    }
     versions(PoseCommitEntering(), L::Entering);
     versions(PoseCommitCarry(), L::Carry);
     if (commit.solverOutput)

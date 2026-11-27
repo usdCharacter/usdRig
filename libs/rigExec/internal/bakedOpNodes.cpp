@@ -6,6 +6,7 @@
 #include "rigExec/internal/compile/rigDescData.h"
 #include "rigExec/api/registry.h"
 #include "rigExecBuiltins/builtins.h"
+#include "rigExecEvalCore/constraintLookups.h"
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecEvalCore/propertyLookups.h"
 #include "rigExecOps/deform/matrixDeformOp.h"
@@ -47,6 +48,8 @@ Fail(std::string *error, const std::string &why)
 /// What the op steps read from the baked program and store in it.
 struct BakedOpHost {
     RigExecBakedProgramImpl &B;
+    RigExecBakedStep *step = nullptr;
+    mutable eval::ConstraintStepCache constraintCache;
 
     const void *Matrix(eval::OpHostSource source, uint32_t slot) const
     {
@@ -175,6 +178,19 @@ struct BakedOpHost {
                      std::string *error) const
     {
         return RigExecBakedStoreCommit(B, output, value, error);
+    }
+    bool LookUpConstraint(uint32_t, const eval::OpLookup &lookup,
+                          const RigExecTypeDesc &type, void *value,
+                          std::string *error) const
+    {
+        return RigExecBakedLookUpConstraint(B, constraintCache, lookup, type,
+                                            value, error);
+    }
+    bool StoreConstraint(const eval::OpHostOutput &output, const void *value,
+                         std::string *error) const
+    {
+        return RigExecBakedStoreConstraint(B, step, constraintCache, output,
+                                           value, error);
     }
 };
 
@@ -710,11 +726,17 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
     };
     for (RigExecBakedStep &step : B->steps) {
         const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(*B, step);
+        const bool constraint =
+            origin &&
+            (origin->family == RigExecBakedOpFamily::Constraint ||
+             (origin->family == RigExecBakedOpFamily::PoseCommit &&
+              RigExecBakedConstraintRunsAsOps(*B, size_t(origin->object))));
         if (!origin || (origin->family != RigExecBakedOpFamily::WeightField &&
-                        origin->family != RigExecBakedOpFamily::WeightPacket))
+                        origin->family != RigExecBakedOpFamily::WeightPacket &&
+                        !constraint))
             continue;
         const uint32_t n = uint32_t(step.object);
-        if (origin->family == RigExecBakedOpFamily::WeightField)
+        if (origin->family == RigExecBakedOpFamily::WeightField || constraint)
             DeclareNodeReads(*B, op, n, OpReader(), &step.reads);
         outputs(n, [&](uint32_t v) {
             step.writes.push_back(RigExecBakedOne(D::OpValue, int(v)));
@@ -826,6 +848,9 @@ AddPoseWalkOps(const RigExecBakedProgramImpl &B, RigExecRigDescBuilder *builder,
             return false;
         if (family == F::PoseCommit &&
             !RigExecBakedAddPoseCommitOp(B, builder, layout, o, error))
+            return false;
+        if (family == F::Constraint &&
+            !RigExecBakedAddConstraintOp(B, builder, layout, o, error))
             return false;
     }
     return true;
@@ -1180,7 +1205,7 @@ RigExecBakedRunOpStep(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
         step->diagnostics.push_back("op nodes: the program holds none");
         return;
     }
-    const BakedOpHost host{B};
+    const BakedOpHost host{B, step};
     eval::OpStepState &state = *B.opState;
     std::string error;
     size_t chain = 0, part = 0;
@@ -1205,6 +1230,9 @@ RigExecBakedRunOpStep(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
     else if (origin && origin->family == RigExecBakedOpFamily::PoseCommit)
         step->diagnostics.push_back(
             RigExecBakedCommitFailure(B, origin->object, error));
+    else if (origin && origin->family == RigExecBakedOpFamily::Constraint)
+        step->diagnostics.push_back(
+            RigExecBakedConstraintFailure(B, origin->object, error));
     else if (const RigExecBakedStepIdentity id =
                  RigExecBakedIdentityOf(B, *step);
              !origin && id.kind != step->kind &&

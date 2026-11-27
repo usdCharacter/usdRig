@@ -3270,18 +3270,17 @@ TestConstraintArrayDiagnostics(const std::string &examplesDir)
         pos.CreateAttribute(TfToken("inputs:sourceWeights"),
                             SdfValueTypeNames->FloatArray)
             .Set(VtFloatArray{1, 2});
-        std::vector<_PlayedFrame> played;
-        _TestStage("constraint source weights cardinality", stage, {1.0, 2.0},
-                   &played);
-        const bool said = _EveryFrameSays(
-            played,
-            "/Asset/Rig/Movers/Pos inputs:sourceWeights has 2 entries for "
-            "1 sources");
-        CHECK(said);
-        if (!said) {
-            std::printf("constraint source weights cardinality: the line "
-                        "is not played\n");
-        }
+        // The constraint's op node stops the frame, so no frame bakes.
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1.0));
+        CHECK(!native.valid);
+        CHECK(!native.diagnostics.empty() &&
+              native.diagnostics.front() ==
+                  "/Asset/Rig/Movers/Pos: inputs:sourceWeights has 2 entries "
+                  "for 1 sources");
+        std::vector<uint8_t> bytes;
+        std::string error;
+        CHECK(!RigExecTestBakeAt(evaluator, 1.0, &bytes, &error));
     }
     {
         const UsdStageRefPtr stage = UsdStage::Open(

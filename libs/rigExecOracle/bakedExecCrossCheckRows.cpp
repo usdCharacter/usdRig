@@ -1044,7 +1044,7 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error,
                                            volumeWeightsPath);
                     }))
                 return {};
-        } else if (step.kind == Kind::Constraint) {
+        } else if (step.kind == Kind::Constraint && step.part < 0) {
             const int walk = step.object;
             const auto &c =
                 b.constraints[size_t(b.walkSteps[size_t(walk)].index)];
@@ -1307,10 +1307,14 @@ RigExecBakedExecCheckRows::AfterStep(const B &b, size_t step)
             b.steps[step].kind == Kind::Solve &&
                 b.aggregates[size_t(b.steps[step].object)].frames.empty());
     }
-    // A constraint's row publishes what its commit wrote back, which the
-    // commit's own op step writes after the constraint step.
+    // A constraint's row publishes what its commit wrote back and the delta
+    // its geometry target's node measured, both after the constraint step.
     const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(b, b.steps[step]);
-    if (origin && origin->family == RigExecBakedOpFamily::PoseCommit) {
+    const bool delta = origin &&
+                       origin->family == RigExecBakedOpFamily::Constraint &&
+                       origin->part >= 0;
+    if (origin &&
+        (origin->family == RigExecBakedOpFamily::PoseCommit || delta)) {
         const auto found = _constraintRows.find(origin->object);
         if (found != _constraintRows.end())
             _inputs[found->second].expected =

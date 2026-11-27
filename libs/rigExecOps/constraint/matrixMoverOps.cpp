@@ -6,6 +6,7 @@
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecRuntime/poseMath.h"
 
+#include <cmath>
 #include <iterator>
 #include <string>
 
@@ -27,6 +28,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(ConstraintDeltaBase)
 RIGEXEC_DEFINE_PORT_HANDLE(ConstraintDeltaBaseOk)
 RIGEXEC_DEFINE_PORT_HANDLE(ConstraintDeltaWeight)
 RIGEXEC_DEFINE_PORT_HANDLE(ConstraintDeltaDelta)
+RIGEXEC_DEFINE_PORT_HANDLE(ConstraintDeltaMeasured)
 
 namespace {
 
@@ -61,31 +63,53 @@ CheckMatrixMover(const rigExec::RigExecOpCheck &check, std::string *error)
 }
 
 bool
+Finite(const PointFrame &frame)
+{
+    for (const auto &point : frame.points)
+        for (size_t a = 0; a < 3; ++a)
+            if (!std::isfinite(point[a]))
+                return false;
+    return true;
+}
+
+bool
+Finite(const Mat4d &m)
+{
+    for (size_t r = 0; r < 4; ++r)
+        for (size_t c = 0; c < 4; ++c)
+            if (!std::isfinite(m[r][c]))
+                return false;
+    return true;
+}
+
+bool
 MatrixMoverOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const PointFrame &in = *In<PointFrame>(io, MatrixMoverIn());
+    const PointFrame &transform = *In<PointFrame>(io, MatrixMoverTransform());
     const PointFrame *space = In<PointFrame>(io, MatrixMoverSpace());
+    const double weight = *In<double>(io, MatrixMoverWeight());
+    if (!Finite(in) || !Finite(transform) || (space && !Finite(*space)) ||
+        !std::isfinite(weight))
+        return Fail(error, "MatrixMover", "has a non-finite input");
     const PointLandmarks transformRest = RestOf(io, MatrixMoverTransformRest());
     const PointLandmarks spaceRest = RestOf(io, MatrixMoverSpaceRest());
     PointFrame &out = Out<PointFrame>(io, MatrixMoverOut());
     out.flags = in.flags;
-    switch (eval::MatrixMoverCandidate<Math>(
-        in.points, transformRest,
-        In<PointFrame>(io, MatrixMoverTransform())->points,
-        space ? &spaceRest : nullptr, space ? &space->points : nullptr,
-        FlagAt(batch, kRadialBlend, k), *In<double>(io, MatrixMoverWeight()),
-        &out.points)) {
-    case eval::MatrixMoverFailure::None:
+    const auto valid = [](const PointFrame &frame) {
+        return (frame.flags & eval::pose_ops::kPoseFrameValid) != 0;
+    };
+    if (valid(transform) && (!space || valid(*space)) &&
+        eval::MatrixMoverCandidate<Math>(
+            in.points, transformRest, transform.points,
+            space ? &spaceRest : nullptr, space ? &space->points : nullptr,
+            FlagAt(batch, kRadialBlend, k), weight,
+            &out.points) == eval::MatrixMoverFailure::None)
         return true;
-    case eval::MatrixMoverFailure::Transform:
-        return Fail(error, "MatrixMover",
-                    "could not resolve rigExec:transform");
-    case eval::MatrixMoverFailure::Space:
-        break;
-    }
-    return Fail(error, "MatrixMover",
-                "could not resolve rigExec:transformSpace");
+    out = in;
+    out.flags |= eval::pose_ops::kPoseFrameDegenerate;
+    return true;
 }
 
 bool
@@ -101,17 +125,21 @@ ConstraintDeltaOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     Mat4d &delta = Out<Mat4d>(io, ConstraintDeltaDelta());
-    if (*In<double>(io, ConstraintDeltaWeight()) <= 0.0) {
-        delta = Math::Identity4();
+    uint8_t &measured = Out<uint8_t>(io, ConstraintDeltaMeasured());
+    delta = Math::Identity4();
+    measured = 1;
+    if (*In<double>(io, ConstraintDeltaWeight()) <= 0.0)
         return true;
-    }
     const PointFrame &solved = *In<PointFrame>(io, ConstraintDeltaSolved());
-    if (!eval::MeasureConstraintDelta<Math>(
-            solved.points, solved.flags, *In<Mat4d>(io, ConstraintDeltaBase()),
-            *In<uint8_t>(io, ConstraintDeltaBaseOk()) != 0, &delta))
-        return Fail(error, "ConstraintDelta",
-                    "could not measure its delta against the target's "
-                    "authored transform");
+    const Mat4d &base = *In<Mat4d>(io, ConstraintDeltaBase());
+    const bool baseOk = *In<uint8_t>(io, ConstraintDeltaBaseOk()) != 0;
+    if (!Finite(solved) || (baseOk && !Finite(base)))
+        return Fail(error, "ConstraintDelta", "has a non-finite input");
+    if (!eval::MeasureConstraintDelta<Math>(solved.points, solved.flags, base,
+                                            baseOk, &delta)) {
+        delta = Math::Identity4();
+        measured = 0;
+    }
     return true;
 }
 
@@ -166,6 +194,8 @@ const rigExec::RigExecPortDesc kConstraintDeltaPorts[] = {
      "weight"},
     {&ConstraintDeltaDelta(), &rigExecStd::Mat4dType(), kRigExecPortOutput,
      "delta"},
+    {&ConstraintDeltaMeasured(), &rigExecStd::BoolType(), kRigExecPortOutput,
+     "measured"},
 };
 
 const rigExec::RigExecOpDesc kMatrixMoverDesc = [] {

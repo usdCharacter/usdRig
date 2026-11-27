@@ -44,6 +44,9 @@ struct RrOpNodes {
     /// Per node: the commit whose PoseCommit it runs, or
     /// kRigExecInvalidIndex.
     std::vector<uint32_t> commit;
+    /// Per node: the constraint commit whose mover it solves or whose delta
+    /// it measures, or kRigExecInvalidIndex.
+    std::vector<uint32_t> constraint;
 };
 
 /// Builds \p program's op nodes from its file, when it holds any. False

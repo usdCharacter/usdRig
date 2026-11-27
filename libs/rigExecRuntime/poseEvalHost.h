@@ -698,36 +698,10 @@ public:
         facts.harmonics = c.harmonics;
         facts.radialBlend = (c.flags & RigExecWireConstraintRadialBlend) != 0;
         facts.singleChainIk = c.singleChainIk;
+        facts.arrays = constraintArrays(object);
         if (c.arrays < 0 || size_t(c.arrays) >= _program->store.arrays.size()) {
-            facts.arrays.ok = false;
             return facts;
         }
-        const RrConstraintArraysLive &arrays =
-            _program->store.arrays[size_t(c.arrays)];
-        facts.arrays.ok = arrays.ok;
-        facts.arrays.weights =
-            arrays.weights.empty() ? nullptr : arrays.weights.data();
-        facts.arrays.weightCount = arrays.weights.size();
-        facts.arrays.translationOffsets =
-            arrays.translationOffsets.empty()
-                ? nullptr
-                : arrays.translationOffsets.data();
-        facts.arrays.rotationOffsets = arrays.rotationOffsets.empty()
-                                           ? nullptr
-                                           : arrays.rotationOffsets.data();
-        facts.arrays.offsetCount = std::min(arrays.translationOffsets.size(),
-                                            arrays.rotationOffsets.size());
-        facts.arrays.diagnostics =
-            arrays.diagnostics.empty() ? nullptr : arrays.diagnostics.data();
-        facts.arrays.diagnosticCount = arrays.diagnostics.size();
-        facts.arrays.poleOk = arrays.poleOk;
-        facts.arrays.poleWeights =
-            arrays.poleWeights.empty() ? nullptr : arrays.poleWeights.data();
-        facts.arrays.poleWeightCount = arrays.poleWeights.size();
-        facts.arrays.poleDiagnostics = arrays.poleDiagnostics.empty()
-                                           ? nullptr
-                                           : arrays.poleDiagnostics.data();
-        facts.arrays.poleDiagnosticCount = arrays.poleDiagnostics.size();
         facts.affectX =
             _program->ReadConstraint(ci, RrConstraintAffectX).boolean;
         facts.affectY =
@@ -841,43 +815,144 @@ public:
             wireCommit.worldUpAncestors, points, flags);
     }
 
-    eval::PoseAimFactsT<RrPoseMath> aimFacts(size_t object) const
+    bool constraintGate(size_t object,
+                        eval::PoseConstraintGateFacts *facts) const
+    {
+        const auto &poses = *_program->poses;
+        if (object >= poses.walkSteps.size() ||
+            object >= poses.commits.size() ||
+            poses.walkSteps[object].solverBatch ||
+            poses.walkSteps[object].index < 0 ||
+            size_t(poses.walkSteps[object].index) >= poses.constraints.size()) {
+            return false;
+        }
+        const size_t ci = size_t(poses.walkSteps[object].index);
+        const RigExecWireConstraint &c = poses.constraints[ci];
+        facts->target = c.target;
+        facts->deltaBase = c.deltaBase;
+        facts->spaceSlot = c.spaceSlot;
+        facts->targetRead = poses.commits[object].targetRead;
+        facts->matrixMover =
+            _program->TextEquals(c.type, SchemaTypeName::RigExecMatrixMover);
+        facts->enabled =
+            _program->ReadConstraint(ci, RrConstraintEnabled).boolean;
+        facts->hasWeightObject = c.weightObject != 0;
+        facts->pointsTarget = c.pointsTarget != 0;
+        facts->fieldOk = false;
+        facts->fieldCount = 0;
+        facts->fieldValue = 0.0;
+        if (facts->hasWeightObject && c.weightField >= 0 &&
+            size_t(c.weightField) < _program->store.weightFieldResults.size()) {
+            const RrWeightFieldResult &field =
+                _program->store.weightFieldResults[size_t(c.weightField)];
+            facts->fieldOk = field.ok;
+            facts->fieldCount = field.values.size();
+            facts->fieldValue =
+                field.values.empty() ? 0.0 : double(field.values[0]);
+        }
+        facts->defaultWeight =
+            double(_program->ReadConstraint(ci, RrConstraintDefaultWeight).f32);
+        return true;
+    }
+
+    eval::PoseArraysViewT<RrPoseMath> constraintArrays(size_t object) const
     {
         const size_t ci = size_t(_program->poses->walkSteps[object].index);
         const RigExecWireConstraint &c = _program->poses->constraints[ci];
-        eval::PoseAimFactsT<RrPoseMath> aim;
-        // Files written before Build bound the aimAxis fallback into
-        // aimVector choose it here.
-        aim.aimVector =
-            c.aimVectorAuthored
-                ? _program->ReadConstraint(ci, RrConstraintAimVector).vec
-                : RrVec3d(c.aimAxisFallback[0], c.aimAxisFallback[1],
-                          c.aimAxisFallback[2]);
-        aim.upVector = _program->ReadConstraint(ci, RrConstraintUpVector).vec;
-        aim.rotationOffset =
-            _program->ReadConstraint(ci, RrConstraintRotationOffset).vec;
-        aim.preserveInputUp = c.preserveInputUp;
-        const std::string worldUpType = _program->TextOrEmpty(c.worldUpType);
-        if (worldUpType == "sceneUp") {
-            aim.worldUpCode = eval::kPoseWorldUpScene;
-        } else if (worldUpType == "vector") {
-            aim.worldUpCode = eval::kPoseWorldUpVector;
-        } else if (worldUpType == "objectUp") {
-            aim.worldUpCode = eval::kPoseWorldUpObject;
-        } else if (worldUpType == "objectRotationUp") {
-            aim.worldUpCode = eval::kPoseWorldUpObjectRotation;
-        } else {
-            aim.worldUpCode = eval::kPoseWorldUpNone;
+        eval::PoseArraysViewT<RrPoseMath> view;
+        if (c.arrays < 0 || size_t(c.arrays) >= _program->store.arrays.size()) {
+            view.ok = false;
+            return view;
         }
-        aim.sceneUp = RrVec3d(c.sceneUp[0], c.sceneUp[1], c.sceneUp[2]);
-        aim.authoredWorldUp =
-            _program->ReadConstraint(ci, RrConstraintWorldUpVector).vec;
-        aim.worldUpObjectNamed = c.worldUpObjectNamed;
-        aim.worldUpObject = c.worldUpObject;
-        aim.worldUpNative = c.worldUpNative;
-        aim.worldUpRotationOnly =
-            (c.flags & RigExecWireConstraintWorldUpRotationOnly) != 0;
-        return aim;
+        const RrConstraintArraysLive &arrays =
+            _program->store.arrays[size_t(c.arrays)];
+        view.ok = arrays.ok;
+        view.weights = arrays.weights.empty() ? nullptr : arrays.weights.data();
+        view.weightCount = arrays.weights.size();
+        view.translationOffsets = arrays.translationOffsets.empty()
+                                      ? nullptr
+                                      : arrays.translationOffsets.data();
+        view.rotationOffsets = arrays.rotationOffsets.empty()
+                                   ? nullptr
+                                   : arrays.rotationOffsets.data();
+        view.offsetCount = std::min(arrays.translationOffsets.size(),
+                                    arrays.rotationOffsets.size());
+        view.diagnostics =
+            arrays.diagnostics.empty() ? nullptr : arrays.diagnostics.data();
+        view.diagnosticCount = arrays.diagnostics.size();
+        view.poleOk = arrays.poleOk;
+        view.poleWeights =
+            arrays.poleWeights.empty() ? nullptr : arrays.poleWeights.data();
+        view.poleWeightCount = arrays.poleWeights.size();
+        view.poleDiagnostics = arrays.poleDiagnostics.empty()
+                                   ? nullptr
+                                   : arrays.poleDiagnostics.data();
+        view.poleDiagnosticCount = arrays.poleDiagnostics.size();
+        return view;
+    }
+
+    // Flag \p i of constraint commit \p object's mover: affect x, y, z,
+    // then the translation, rotation and scale axes.
+    bool constraintFlag(size_t object, size_t i) const
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        return i < 12 &&
+               _program->ReadConstraint(ci, RrConstraintAffectX + int(i))
+                   .boolean;
+    }
+
+    RrVec3d constraintVector(size_t object, eval::PoseConstraintVector v) const
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        const RigExecWireConstraint &c = _program->poses->constraints[ci];
+        using V = eval::PoseConstraintVector;
+        switch (v) {
+        case V::Offset:
+            return _program->ReadConstraint(ci, RrConstraintOffset).vec;
+        case V::AimVector:
+            // Files written before Build bound the aimAxis fallback into
+            // aimVector choose it here.
+            return c.aimVectorAuthored
+                       ? _program->ReadConstraint(ci, RrConstraintAimVector).vec
+                       : RrVec3d(c.aimAxisFallback[0], c.aimAxisFallback[1],
+                                 c.aimAxisFallback[2]);
+        case V::UpVector:
+            return _program->ReadConstraint(ci, RrConstraintUpVector).vec;
+        case V::RotationOffset:
+            return _program->ReadConstraint(ci, RrConstraintRotationOffset).vec;
+        case V::WorldUpVector:
+            return _program->ReadConstraint(ci, RrConstraintWorldUpVector).vec;
+        case V::SceneUp:
+            break;
+        }
+        return RrVec3d(c.sceneUp[0], c.sceneUp[1], c.sceneUp[2]);
+    }
+
+    bool constraintSourceRead(size_t object, size_t k, int *slot,
+                              uint32_t *finRead) const
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        const RigExecWireConstraint &c = _program->poses->constraints[ci];
+        const RigExecWireCommit &commit = _program->poses->commits[object];
+        if (k >= c.sources.size() || k >= commit.sourceReads.size()) {
+            return false;
+        }
+        *slot = c.sources[k];
+        *finRead = commit.sourceReads[k];
+        return true;
+    }
+
+    bool worldUpObjectNamed(size_t object) const
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        return _program->poses->constraints[ci].worldUpObjectNamed;
+    }
+
+    bool worldUpRotationOnly(size_t object) const
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        return (_program->poses->constraints[ci].flags &
+                RigExecWireConstraintWorldUpRotationOnly) != 0;
     }
 
     bool deltaBaseValid(int deltaBase) const
@@ -1449,6 +1524,12 @@ public:
         _program->store.deltaValues[deltaBase] = delta;
         scratch->deltaPresent[deltaBase] = 1;
         _program->store.deltaPresent[deltaBase] = 1;
+    }
+
+    void writeDeltaAbsent(size_t deltaBase)
+    {
+        runtimePoseDetail::_RrScratch(_program)->deltaPresent[deltaBase] = 0;
+        _program->store.deltaPresent[deltaBase] = 0;
     }
 
     void observeCandidate(size_t object, const std::array<RrVec3d, 4> &points,

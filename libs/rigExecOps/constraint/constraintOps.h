@@ -52,7 +52,8 @@ const rigExec::RigExecOpHandle &AimConstraint();
 
 // Every op: In (PointFrame), Weight (Double, clamped to [0, 1]), Out
 // (PointFrame). A frame the constraint cannot solve comes back as In flagged
-// degenerate. Axis masks are BoolArray inputs of three (x, y, z).
+// degenerate; a non-finite input, a negative or non-finite source weight,
+// is an error. Axis masks are BoolArray inputs of three (x, y, z).
 //
 // Position, Rotation, Scale and Parent: Sources (PointFrameArray, rests
 // unread) and optional SourceWeights (DoubleArray, one per source; unfed,
@@ -69,9 +70,11 @@ const rigExec::RigExecOpHandle &AimConstraint();
 // ScaleAxes (unfed, none); optional TranslationOffsets and RotationOffsets
 // (Vec3dArray, degrees for rotation; unfed, zero; fed, one per source).
 //
-// Aim: Target (Vec3d), optional WorldUp (Vec3d), which pins roll, and
-// optional AimVector (unfed, +X) and UpVector (unfed, +Y) in the target's
-// local frame.
+// Aim: Target (Vec3d), or Sources (PointFrameArray) with optional
+// SourceWeights, whose weighted mean origin it aims at (no weight: In; a
+// weighed source not valid: In flagged degenerate). Optional WorldUp (Vec3d), which pins
+// roll, and optional AimVector (unfed, +X) and UpVector (unfed, +Y) in the
+// target's local frame.
 const rigExec::RigExecPortHandle &PositionConstraintIn();
 const rigExec::RigExecPortHandle &PositionConstraintSources();
 const rigExec::RigExecPortHandle &PositionConstraintSourceWeights();
@@ -118,6 +121,8 @@ const rigExec::RigExecPortHandle &AimConstraintAffect();
 const rigExec::RigExecPortHandle &AimConstraintAimVector();
 const rigExec::RigExecPortHandle &AimConstraintUpVector();
 const rigExec::RigExecPortHandle &AimConstraintOut();
+const rigExec::RigExecPortHandle &AimConstraintSources();
+const rigExec::RigExecPortHandle &AimConstraintSourceWeights();
 
 } // namespace rigExecOps
 

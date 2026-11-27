@@ -1191,6 +1191,9 @@ enum class RigExecBakedOpFamily : uint8_t {
     /// A provider program's arithmetic or affine operation: object its
     /// index in the provider program's ops.
     ProviderOp,
+    /// The mover of constraint commit `object`: part -1 its solve, 0 the
+    /// delta it measures against its geometry target's transform.
+    Constraint,
 };
 
 /// Where an op node's step comes from: its family, that family's object and
@@ -2995,6 +2998,38 @@ bool RigExecBakedStoreCommit(RigExecBakedProgramImpl &B,
 /// mover reports it.
 std::string RigExecBakedCommitFailure(const RigExecBakedProgramImpl &B,
                                       int commit, const std::string &error);
+/// The output of the op node that solves constraint walk step \p w.
+const RigExecPortHandle &
+RigExecBakedConstraintOut(const RigExecBakedProgramImpl &B, size_t w);
+/// Whether the constraint walk step \p w commits solves as op nodes.
+bool RigExecBakedConstraintRunsAsOps(const RigExecBakedProgramImpl &B,
+                                     size_t w);
+/// The Constraint op node of origin \p o, numbered \p o.
+bool RigExecBakedAddConstraintOp(const RigExecBakedProgramImpl &B,
+                                 RigExecRigDescBuilder *builder,
+                                 eval::OpStepLayout *layout, size_t o,
+                                 std::string *error);
+namespace eval {
+struct ConstraintStepCache;
+}
+/// Resolves a constraint lookup (eval::OpConstraintLookupSource) through
+/// the calling step's \p cache.
+bool RigExecBakedLookUpConstraint(RigExecBakedProgramImpl &B,
+                                  eval::ConstraintStepCache &cache,
+                                  const eval::OpLookup &lookup,
+                                  const RigExecTypeDesc &type, void *value,
+                                  std::string *error);
+/// Stores a constraint node's solved frame or measured delta from \p step,
+/// which takes its diagnostic lines.
+bool RigExecBakedStoreConstraint(RigExecBakedProgramImpl &B,
+                                 RigExecBakedStep *step,
+                                 eval::ConstraintStepCache &cache,
+                                 const eval::OpHostOutput &output,
+                                 const void *value, std::string *error);
+/// The failure \p error of a node of constraint commit \p w, as its mover
+/// reports it.
+std::string RigExecBakedConstraintFailure(const RigExecBakedProgramImpl &B,
+                                          int w, const std::string &error);
 /// The cross-domain read diagnostics of revision \p part of \p chain.
 void RigExecBakedPropertyInputLines(const RigExecBakedProgramImpl &B,
                                     size_t chain, size_t part,

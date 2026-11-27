@@ -501,39 +501,16 @@ TestEvaluatorSemantics()
                    GfVec3d(1, 1, 5)));
     }
 
-    // A LIVE constraint with a malformed table says so and passes through,
-    // in declared operation order: the cardinality line the raw read
-    // owns, then the mover's "unusable constraint inputs". Both arrays are
-    // read per frame on the canonical graph, so this is also what proves the program
-    // reproduces the diagnostic from THIS run's numbers rather than from
-    // something captured at bake.
+    // A LIVE constraint with a malformed table stops the frame with the
+    // cardinality line of THIS run's numbers: both arrays are read per frame
+    // on the canonical graph, so nothing captured at bake can answer it.
     position.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
     const RigExecRigPose malformed = evaluator.Evaluate(UsdTimeCode::Default());
-    CHECK(malformed.valid);
-    const auto cardinality = std::find_if(
-        malformed.diagnostics.begin(), malformed.diagnostics.end(),
-        [](const std::string &diagnostic) {
-            return diagnostic.find(
-                       "inputs:sourceWeights has 3 entries for 2 sources") !=
-                   std::string::npos;
-        });
-    CHECK(cardinality != malformed.diagnostics.end());
-    if (cardinality != malformed.diagnostics.end()) {
-        const auto unusable = std::find_if(
-            cardinality, malformed.diagnostics.end(),
-            [](const std::string &diagnostic) {
-                return diagnostic.find("has unusable constraint inputs") !=
-                       std::string::npos;
-            });
-        CHECK(unusable != malformed.diagnostics.end());
-    }
-    const auto malformedPosition =
-        malformed.providerXforms.find(SdfPath("/Asset/Targets/Position"));
-    CHECK(malformedPosition != malformed.providerXforms.end());
-    if (malformedPosition != malformed.providerXforms.end()) {
-        CHECK(Near(malformedPosition->second.ExtractTranslation(),
-                   GfVec3d(1, 1, 5)));
-    }
+    CHECK(!malformed.valid);
+    CHECK(std::find(malformed.diagnostics.begin(), malformed.diagnostics.end(),
+                    position.GetPath().GetString() +
+                        ": inputs:sourceWeights has 3 entries for 2 "
+                        "sources") != malformed.diagnostics.end());
 
     // An ANIMATED blend between two parents. The table is re-read per
     // frame, so the two frames below have to differ -- and differ from each
@@ -1017,6 +994,58 @@ TestModeAndFailureContracts()
         CHECK(!HasDiagnostic(pose, "world-up object"));
     }
 
+    // An aim that weighs nothing (its only source weighted zero, its weight
+    // zero, or disabled) never reads its world-up object, whatever that
+    // object holds. An aim whose source sits on its target has no aim
+    // direction. Either way every evaluator leaves the target as it entered,
+    // without an error; only the aim without a solution says so.
+    GfMatrix4d entering(0.0);
+    for (const int mode : {2, 0, 1, 3}) {
+        const UsdStageRefPtr stage = BuildConstraintStage(nullptr);
+        MakeXform(stage, SdfPath("/Asset/Flat"),
+                  Matrix(GfVec3d(0, 5, 0), GfRotation(GfVec3d(0, 0, 1), 0.0),
+                         GfVec3d(0.0)));
+        const UsdPrim aim =
+            stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/Aim"));
+        aim.GetAttribute(TfToken("rigExec:worldUpType"))
+            .Set(TfToken("objectRotationUp"));
+        aim.CreateRelationship(TfToken("rigExec:worldUpObject"))
+            .SetTargets({SdfPath("/Asset/Flat")});
+        if (mode == 0)
+            aim.CreateAttribute(TfToken("inputs:sourceWeights"),
+                                SdfValueTypeNames->FloatArray)
+                .Set(VtFloatArray{0.0f});
+        else if (mode == 1)
+            aim.GetAttribute(TfToken("inputs:defaultWeight")).Set(0.0f);
+        else if (mode == 2)
+            aim.GetAttribute(TfToken("inputs:enabled")).Set(false);
+        else
+            stage
+                ->GetAttributeAtPath(
+                    SdfPath("/Asset/Sources/Aim.xformOp:transform"))
+                .Set(Matrix());
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        std::vector<std::string> errors;
+        CHECK(evaluator.Compile(&errors));
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
+        CHECK(pose.valid);
+        CHECK(HasDiagnostic(pose, "degenerate frame") == (mode == 3));
+        const auto aimed =
+            pose.providerXforms.find(SdfPath("/Asset/Targets/Aim"));
+        CHECK(aimed != pose.providerXforms.end());
+        if (aimed == pose.providerXforms.end())
+            continue;
+        if (mode == 2)
+            entering = aimed->second;
+        CHECK(aimed->second == entering);
+        std::string why;
+        CHECK(RigExecFrozenMatchesLive(&evaluator, SdfPath("/Asset/Rig"),
+                                       UsdTimeCode::Default(), &why));
+        std::vector<uint8_t> bytes;
+        std::string error;
+        CHECK(RigExecTestBakeAt(evaluator, 1, &bytes, &error));
+    }
+
     // SingleChain mode ignores dormant pole wiring, malformed pole weights,
     // non-finite pole values, and twist end-to-end.
     {
@@ -1185,8 +1214,8 @@ TestModeAndFailureContracts()
         }
     }
 
-    // Parallel source arrays fail closed at evaluation and leave the target
-    // untouched rather than accepting a partially specified Parent offset.
+    // Parallel source arrays that disagree with the sources stop the frame
+    // rather than accept a partially specified Parent offset.
     {
         const UsdStageRefPtr stage = BuildConstraintStage(nullptr);
         const UsdPrim parent =
@@ -1199,14 +1228,12 @@ TestModeAndFailureContracts()
         std::vector<std::string> errors;
         CHECK(evaluator.Compile(&errors));
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
-        CHECK(HasDiagnostic(pose, "rotationOffsets has 2 entries"));
-        const auto parentXform =
-            pose.providerXforms.find(SdfPath("/Asset/Targets/Parent"));
-        CHECK(parentXform != pose.providerXforms.end());
-        if (parentXform != pose.providerXforms.end()) {
-            CHECK(Near(parentXform->second.ExtractTranslation(),
-                       GfVec3d(1, 0, 0)));
-        }
+        CHECK(!pose.valid);
+        const std::vector<std::string> expected{
+            parent.GetPath().GetString() +
+                ": inputs:rotationOffsets has 2 entries for 1 sources",
+            "native program did not complete generation"};
+        CHECK(pose.diagnostics == expected);
     }
 
     // Structural tokens cannot be animated or assigned an unknown value.
@@ -5008,14 +5035,26 @@ TestConstraintTableNormalizationAcrossHosts()
             std::vector<std::string> errors;
             CHECK(evaluator.Compile(&errors));
             const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1));
-            CHECK(native.valid);
             const bool mismatch = entries == 1 || entries == 3;
+            // A table its constraint's op node reads stops the frame; the
+            // single-chain IK's pole table still passes through.
+            const bool refused = mismatch && channel < 2;
+            CHECK(native.valid == !refused);
             CHECK(HasDiagnostic(native, "sourceWeights has") ==
                   (mismatch && channel == 0));
             CHECK(HasDiagnostic(native, "translationOffsets has") ==
                   (mismatch && channel == 1));
             CHECK(HasDiagnostic(native, "poleVectorWeights has") ==
                   (mismatch && channel == 2));
+            if (refused) {
+                std::string why;
+                CHECK(
+                    RigExecFrozenFailsAsLive(&evaluator, UsdTimeCode(1), &why));
+                std::vector<uint8_t> bytes;
+                std::string error;
+                CHECK(!RigExecTestBakeAt(evaluator, 1, &bytes, &error));
+                continue;
+            }
             std::string why;
             CHECK(RigExecFrozenMatchesLive(&evaluator, SdfPath("/Asset/Rig"),
                                            UsdTimeCode(1), &why));
@@ -5053,36 +5092,19 @@ TestConstraintTableNormalizationAcrossHosts()
         }
         const std::string path = parent.GetPath().GetString();
         const std::vector<std::string> expected{
-            path + " " +
+            path + ": " +
                 (phase == 0 ? SchemaAttrText::inputsSourceWeights
                             : SchemaAttrText::inputsTranslationOffsets) +
                 " has 1 entries for 2 sources",
-            path +
-                " has unusable constraint inputs; constraint passed through"};
+            "native program did not complete generation"};
         RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
         std::vector<std::string> errors;
         CHECK(evaluator.Compile(&errors));
         const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1));
-        CHECK(native.valid);
+        CHECK(!native.valid);
         CHECK(native.diagnostics == expected);
-        ConstraintsSourcePlayback playback;
-        if (!playback.Open(evaluator, stage)) {
-            continue;
-        }
-        RigExecFrameInputs inputs;
-        std::string error;
-        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(1), {}, &inputs,
-                                       &error));
-        playback.context.varyingInputCount = inputs.values.size();
-        const RigExecRigPose frozen = RigExecEvaluateFrozen(
-            playback.context, inputs, RigExecMakeProductionStepRunner());
-        CHECK(frozen.valid);
-        CHECK(frozen.diagnostics == expected);
-        CHECK(playback.player.Play(1, &error));
-        RigExecRigPose runtime;
-        CHECK(RigExecProjectRuntimePose(
-            playback.player.Reader(), UsdTimeCode(1), true, &runtime, &error));
-        CHECK(runtime.diagnostics == expected);
+        std::string why;
+        CHECK(RigExecFrozenFailsAsLive(&evaluator, UsdTimeCode(1), &why));
     }
 }
 

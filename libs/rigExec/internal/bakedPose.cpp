@@ -2562,10 +2562,14 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
         origin.kind = walk.solverBatch ? RigExecBakedStepKind::SolverCommit
                                        : RigExecBakedStepKind::CommitApply;
         origin.object = int32_t(w);
+        const bool constraintOps =
+            !walk.solverBatch && RigExecBakedConstraintRunsAsOps(B, w);
         RigExecBakedStep &commitStep =
-            walk.solverBatch
-                ? AddStep(&B, RigExecBakedStepKind::OpNode,
-                          int(B.opNodeOrigins.size()))
+            walk.solverBatch ? AddStep(&B, RigExecBakedStepKind::OpNode,
+                                       int(B.opNodeOrigins.size()))
+            : constraintOps
+                ? AddOriginStep(&B, RigExecBakedOpFamily::Constraint,
+                                RigExecBakedStepKind::Constraint, int(w), -1)
                 : AddStep(&B, RigExecBakedStepKind::Constraint, int(w));
         if (walk.solverBatch)
             B.opNodeOrigins.push_back(origin);
@@ -2590,7 +2594,7 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
             }
             // A geometry-domain constraint's one write: the delta the Matrix
             // revision of the same mover rides.
-            if (constraint.deltaBase >= 0) {
+            if (constraint.deltaBase >= 0 && !constraintOps) {
                 commitStep.writes.push_back(
                     RigExecBakedOne(RigExecBakedSlotDomain::ConstraintDelta,
                                     constraint.deltaBase));
@@ -2711,6 +2715,16 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
         };
         RigExecBakedStep *finish = &commitStep;
         if (!walk.solverBatch) {
+            const int deltaBase = B.constraints[size_t(walk.index)].deltaBase;
+            if (constraintOps && deltaBase >= 0) {
+                RigExecBakedStep &delta =
+                    AddOriginStep(&B, RigExecBakedOpFamily::Constraint,
+                                  RigExecBakedStepKind::Constraint, int(w), 0);
+                delta.reads.push_back(RigExecBakedOne(
+                    RigExecBakedSlotDomain::CommitTable, int(w)));
+                delta.writes.push_back(RigExecBakedOne(
+                    RigExecBakedSlotDomain::ConstraintDelta, deltaBase));
+            }
             if (commit.slots.empty() && commit.propagate.empty()) {
                 addFrameRecordSteps(w);
                 continue;
@@ -2941,10 +2955,11 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
         const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(B, step);
         const bool commitNode =
             origin && origin->family == RigExecBakedOpFamily::PoseCommit;
+        const bool constraintStep = id.kind == Kind::Constraint && id.part < 0;
         if (step.kind != Kind::Solve && id.kind != Kind::FrameMatrix &&
             id.kind != Kind::ProviderMatrix &&
-            step.kind != Kind::PoseInterpolator &&
-            step.kind != Kind::Constraint && !commitNode)
+            step.kind != Kind::PoseInterpolator && !constraintStep &&
+            !commitNode)
             continue;
         const auto poseRange = [](const RigExecBakedSlotRange &range) {
             return range.domain == Domain::PoseFin ||
@@ -3004,12 +3019,12 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
                     read(Domain::PoseFin,
                          B.finLast[size_t(interp.extraParentSlots[e])]);
             }
-        } else if (step.kind == Kind::Constraint || commitNode) {
+        } else if (constraintStep || commitNode) {
             const auto &commit =
-                B.commits[size_t(commitNode ? origin->object : step.object)];
-            if (step.kind == Kind::Constraint) {
-                const auto &c = B.constraints[size_t(
-                    B.walkSteps[size_t(step.object)].index)];
+                B.commits[size_t(commitNode ? origin->object : id.object)];
+            if (constraintStep) {
+                const auto &c =
+                    B.constraints[size_t(B.walkSteps[size_t(id.object)].index)];
                 for (size_t k = 0; k < c.sources.size(); ++k)
                     if (c.sources[k] >= 0)
                         read(Domain::PoseFin, commit.sourceReads[k]);
@@ -3224,19 +3239,14 @@ NoteStepInputs(const RigExecBakedProgramImpl &B,
                 NoteInput(B.ladders[size_t(slot)].parentSpace, sink);
         return;
     }
-    switch (step.kind) {
-    case RigExecBakedStepKind::Solve:
-        if (step.object < 0 || size_t(step.object) >= B.solvers.size())
-            break;
-        NoteSolverInputs(B.solvers[size_t(step.object)], sink);
-        break;
-    case RigExecBakedStepKind::Constraint: {
-        if (step.object < 0 || size_t(step.object) >= B.walkSteps.size())
-            break;
+    if (identity.kind == RigExecBakedStepKind::Constraint) {
+        if (identity.object < 0 ||
+            size_t(identity.object) >= B.walkSteps.size())
+            return;
         // A commit step and its walk entry are the same index, and a
         // constraint entry names the constraint it commits.
         const RigExecBakedProgramImpl::WalkStep &walk =
-            B.walkSteps[size_t(step.object)];
+            B.walkSteps[size_t(identity.object)];
         if (!walk.solverBatch && walk.index >= 0 &&
             size_t(walk.index) < B.constraints.size()) {
             const auto &constraint = B.constraints[size_t(walk.index)];
@@ -3246,8 +3256,14 @@ NoteStepInputs(const RigExecBakedProgramImpl &B,
                     RigExecBakedOne(RigExecBakedSlotDomain::ConstraintInputs,
                                     uint32_t(constraint.arrays)));
         }
-        break;
+        return;
     }
+    switch (step.kind) {
+    case RigExecBakedStepKind::Solve:
+        if (step.object < 0 || size_t(step.object) >= B.solvers.size())
+            break;
+        NoteSolverInputs(B.solvers[size_t(step.object)], sink);
+        break;
     case RigExecBakedStepKind::AvarInputs: {
         const auto note = [&](const auto &bindings,
                               const std::vector<uint32_t> &begin) {
@@ -3365,8 +3381,9 @@ RigExecBakedDeclareInputDependencies(RigExecBakedProgramImpl *program)
                     step.varyingInputs =
                         step.varyingInputs || B.headLeaves[leaf].varying;
         }
-        if (step.kind == RigExecBakedStepKind::Constraint) {
-            const auto &walk = B.walkSteps[size_t(step.object)];
+        if (const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+            id.kind == RigExecBakedStepKind::Constraint) {
+            const auto &walk = B.walkSteps[size_t(id.object)];
             if (!walk.solverBatch && walk.index >= 0) {
                 const auto &constraint = B.constraints[size_t(walk.index)];
                 if (constraint.weightField >= 0)
@@ -3579,8 +3596,10 @@ RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
                 frozenDetail::_VisitSolverInputs(B.solvers[size_t(step.object)],
                                                  fn);
             });
-        } else if (step.kind == RigExecBakedStepKind::Constraint) {
-            const auto &walk = B.walkSteps[size_t(step.object)];
+        } else if (RigExecBakedIdentityOf(B, step).kind ==
+                   RigExecBakedStepKind::Constraint) {
+            const auto &walk =
+                B.walkSteps[size_t(RigExecBakedIdentityOf(B, step).object)];
             if (!walk.solverBatch && walk.index >= 0)
                 directBindings(&step, [&](const auto &fn) {
                     frozenDetail::_VisitConstraintInputs(

@@ -28,7 +28,8 @@ const rigExec::RigExecOpHandle &ConstraintDelta();
 // rest; unfed or not valid, the identity landmarks), optional Space and
 // SpaceRest (PointFrame, the rigExec:transformSpace source and its rest,
 // fed together), Weight (Double) and Out (PointFrame, flagged as In). A
-// source frame that maps to no matrix is an error.
+// source frame that is not valid or maps to no matrix gives In flagged
+// degenerate; a non-finite input is an error.
 const rigExec::RigExecPortHandle &MatrixMoverIn();
 const rigExec::RigExecPortHandle &MatrixMoverTransform();
 const rigExec::RigExecPortHandle &MatrixMoverTransformRest();
@@ -40,13 +41,15 @@ const rigExec::RigExecPortHandle &MatrixMoverOut();
 // ConstraintDelta: Solved (PointFrame, the constraint's frame at full
 // weight), Base (Mat4d, the target's authored transform), BaseOk (Bool,
 // whether that transform was read), Weight (Double) and Delta (Mat4d, Base
-// to Solved). A weight of zero or less is the identity; an unusable frame,
-// an unread or singular base is an error.
+// to Solved) and Measured (Bool). A weight of zero or less is the identity.
+// A degenerate frame, an unread or singular base measures nothing: the
+// identity, not Measured. A non-finite frame or base is an error.
 const rigExec::RigExecPortHandle &ConstraintDeltaSolved();
 const rigExec::RigExecPortHandle &ConstraintDeltaBase();
 const rigExec::RigExecPortHandle &ConstraintDeltaBaseOk();
 const rigExec::RigExecPortHandle &ConstraintDeltaWeight();
 const rigExec::RigExecPortHandle &ConstraintDeltaDelta();
+const rigExec::RigExecPortHandle &ConstraintDeltaMeasured();
 
 } // namespace rigExecOps
 

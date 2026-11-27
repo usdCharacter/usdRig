@@ -682,8 +682,15 @@ TestConstraints()
     CompareConstraint("rotation broken source", r, broken, runner);
     r.kind = RigExecConstraintKind::Position;
     r.position.offset = GfVec3d(std::numeric_limits<double>::quiet_NaN(), 0, 0);
-    CompareConstraint("position nan offset", r, ConstraintInputs(false),
-                      runner);
+    {
+        // A non-finite offset is invalid input: the op stops where the
+        // scene kernel hands back the input flagged degenerate.
+        RigExecConstraintResult got;
+        std::string gotError;
+        CHECK(!RigExecRunConstraintOp(r, ConstraintInputs(false), runner, &got,
+                                      &gotError));
+        CHECK(gotError.find("non-finite offset") != std::string::npos);
+    }
     // A moved offset is a new input value on the same node.
     const RigExecEvaluator *built = runner.evaluator.get();
     r.position.offset = GfVec3d(1, 2, 3);

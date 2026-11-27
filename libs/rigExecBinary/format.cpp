@@ -597,6 +597,8 @@ public:
         _commitNode.assign(nodes, -1);
         _refreshOf.assign(nodes, -1);
         _providerOpOf.assign(nodes, -1);
+        _constraintNode.assign(nodes, -1);
+        _constraintSolve.assign(nodes, -1);
         if (!nodes)
             return;
         for (const auto &output : file.opGraph->hostOutputs)
@@ -621,6 +623,13 @@ public:
             if (output && output->node < nodes && output->target == 30 &&
                 _commitNode[output->node] < 0)
                 _commitNode[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target >= 35 &&
+                output->target <= 37 && _constraintNode[output->node] < 0) {
+                _constraintNode[output->node] = int64_t(output->object);
+                if (output->target == 35)
+                    _constraintSolve[output->node] = int64_t(output->object);
+            }
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node < nodes && output->target == 5 &&
                 _fieldStored[output->node] < 0)
@@ -724,8 +733,10 @@ private:
             if (!output)
                 return _Bad("op_graph.host_outputs: an entry is missing");
             const bool commit = output->target >= 30 && output->target <= 34;
+            const bool constraint =
+                output->target >= 35 && output->target <= 37;
             if ((output->target > 6 && output->target < 20) ||
-                (output->target > 34 && output->target != 50 &&
+                (output->target > 34 && !constraint && output->target != 50 &&
                  output->target != 51))
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
@@ -733,6 +744,21 @@ private:
                 return _Bad("op_graph.host_outputs: no node " +
                             _N(output->node));
             const size_t node = size_t(output->node);
+            if (constraint) {
+                if (!_ConstraintCommit(int64_t(output->object)) ||
+                    _constraintNode[node] != int64_t(output->object) ||
+                    (output->target >= 36 &&
+                     _f.pose
+                             ->constraints[size_t(
+                                 _f.pose->walkSteps[size_t(output->object)]
+                                     .index)]
+                             .deltaBase < 0))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores into constraint " +
+                                _N(output->object) +
+                                ", which it does not solve");
+                continue;
+            }
             if (commit) {
                 if (!_f.pose ||
                     !_Has(_f.pose->commits, int64_t(output->object)) ||
@@ -905,6 +931,25 @@ private:
                     return _Bad("op_graph.host_outputs: property version " +
                                 _N(v) + " is never stored");
         for (const auto &lookup : _f.opGraph->lookups) {
+            if (lookup && ((lookup->source >= 32 && lookup->source <= 37) ||
+                           lookup->source == 39)) {
+                const uint8_t s = lookup->source;
+                const int32_t part = lookup->part;
+                const uint8_t read = lookup->read;
+                const bool shaped =
+                    s == 32   ? (part < 0 ? read == 0 : read <= 1)
+                    : s == 33 ? part == -1 && read >= 20 && read <= 22
+                    : s == 34 ? part == -1 && read <= 16
+                    : s == 35 ? part == -1 && read >= 30 && read <= 32
+                    : s == 36 ? part == -1 && read == 0
+                    : s == 37 ? part >= 1 && part <= 4 && read == 0
+                              : part == -1 && read <= 1;
+                if (!_ConstraintCommit(int64_t(lookup->object)) || !shaped)
+                    return _Bad("op_graph.lookups: a constraint lookup reads "
+                                "nothing constraint " +
+                                _N(lookup->object) + " holds");
+                continue;
+            }
             if (lookup && (lookup->source == 30 || lookup->source == 31)) {
                 if (!_f.pose ||
                     !_Has(_f.pose->commits, int64_t(lookup->object)) ||
@@ -1340,6 +1385,25 @@ private:
                 }
                 if (lookup.source == 1 && _providerSlotOf[n] >= 0)
                     continue;
+                if (lookup.source == 1 && _constraintSolve[n] >= 0) {
+                    if (lookup.part != 0 ||
+                        lookup.object !=
+                            _f.pose->commits[size_t(_constraintSolve[n])]
+                                .targetRead)
+                        return bad(" reads a pose frame other than its "
+                                   "constraint's target");
+                    continue;
+                }
+                if ((lookup.source >= 32 && lookup.source <= 37) ||
+                    lookup.source == 39) {
+                    const bool present = lookup.source == 35 &&
+                                         lookup.read == 32 &&
+                                         _commitNode[n] == object;
+                    if (_constraintNode[n] != object && !present)
+                        return bad(" reads a constraint its node does not "
+                                   "solve");
+                    continue;
+                }
                 if (lookup.source == 1 && record >= 0) {
                     if (!frame || lookup.part != 0 ||
                         lookup.object != frame->version())
@@ -1643,9 +1707,11 @@ private:
                         eligible = at != found->second.signs.end() &&
                                    *at < size_t(group.end);
                     }
-                } else if (step.kind == fb::StepKind::Constraint &&
-                           size_t(step.object) < _f.pose->walkSteps.size()) {
-                    const auto &walk = _f.pose->walkSteps[size_t(step.object)];
+                } else if (_ConstraintOf(step, true) >= 0 &&
+                           size_t(_ConstraintOf(step, true)) <
+                               _f.pose->walkSteps.size()) {
+                    const auto &walk =
+                        _f.pose->walkSteps[size_t(_ConstraintOf(step, true))];
                     eligible =
                         !walk.solverBatch && walk.index >= 0 &&
                         size_t(walk.index) < _f.pose->constraints.size() &&
@@ -2763,6 +2829,10 @@ private:
             if (step.kind == fb::StepKind::ReservedProviderRefresh)
                 return _Bad(_StepName(i) +
                             ": the retired ProviderRefresh step");
+            if (step.kind == fb::StepKind::Constraint &&
+                _SolvesAsOpNodes(step.object))
+                return _Bad(_StepName(i) + ": constraint " + _N(step.object) +
+                            " solves as op nodes");
             if (!_SpaceOp(i))
                 return false;
             if (const int64_t object = _PacketObjectOf(step); object >= 0) {
@@ -4904,15 +4974,15 @@ private:
                     return _Bad(_StepName(owner) +
                                 ": commit body object out of range");
                 const auto &commit = pose.commits[size_t(_CommitOf(step))];
-                if (step.kind == K::Constraint) {
-                    if (!_Has(pose.walkSteps, step.object) ||
-                        pose.walkSteps[size_t(step.object)].solverBatch ||
+                if (const int64_t cw = _ConstraintOf(step); cw >= 0) {
+                    if (!_Has(pose.walkSteps, cw) ||
+                        pose.walkSteps[size_t(cw)].solverBatch ||
                         !_Has(pose.constraints,
-                              pose.walkSteps[size_t(step.object)].index))
+                              pose.walkSteps[size_t(cw)].index))
                         return _Bad(_StepName(owner) +
                                     ": constraint body object out of range");
                     const auto &c = pose.constraints[size_t(
-                        pose.walkSteps[size_t(step.object)].index)];
+                        pose.walkSteps[size_t(cw)].index)];
                     if (commit.sourceReads.size() < c.sources.size() ||
                         commit.poleReads.size() < c.poleObjects.size())
                         return _Bad(
@@ -4952,7 +5022,7 @@ private:
                         read(D::PoseBase, baseLast[size_t(c.sources[6])]);
                     }
                 }
-                const bool apply = step.kind != K::Constraint;
+                const bool apply = _ConstraintOf(step) < 0;
                 if (apply) {
                     readAll(D::PoseFin, commit.slotReads);
                     const size_t end = commit.propagate.size();
@@ -5077,9 +5147,9 @@ private:
                 }
                 continue;
             }
-            if (step.kind == K::Constraint &&
-                _Has(_f.pose->walkSteps, step.object)) {
-                const auto &walk = _f.pose->walkSteps[size_t(step.object)];
+            if (const int64_t cw = _ConstraintOf(step, true);
+                cw >= 0 && _Has(_f.pose->walkSteps, cw)) {
+                const auto &walk = _f.pose->walkSteps[size_t(cw)];
                 if (!walk.solverBatch &&
                     _Has(_f.pose->constraints, walk.index)) {
                     const auto &constraint =
@@ -6114,9 +6184,9 @@ private:
                         return false;
                 }
             }
-            if (step.kind == fb::StepKind::Constraint &&
-                _Has(_f.pose->walkSteps, step.object)) {
-                const auto &walk = _f.pose->walkSteps[size_t(step.object)];
+            if (const int64_t cw = _ConstraintOf(step, true);
+                cw >= 0 && _Has(_f.pose->walkSteps, cw)) {
+                const auto &walk = _f.pose->walkSteps[size_t(cw)];
                 if (walk.solverBatch || !_Has(_f.pose->constraints, walk.index))
                     continue;
                 const auto &constraint =
@@ -9951,12 +10021,50 @@ private:
     std::vector<int64_t> _frameRecordOf, _providerSlotOf;
     /// Per op node: the commit whose PoseCommit it runs, or -1.
     std::vector<int64_t> _commitNode;
+    /// Per op node: the constraint commit whose mover it solves or whose
+    /// delta it measures, or -1; and the commit whose mover it solves.
+    std::vector<int64_t> _constraintNode, _constraintSolve;
+
+    /// Whether \p w is a walk step committing a constraint.
+    bool _ConstraintCommit(int64_t w) const
+    {
+        return _f.pose && _Has(_f.pose->commits, w) &&
+               _Has(_f.pose->walkSteps, w) &&
+               !_f.pose->walkSteps[size_t(w)].solverBatch &&
+               _Has(_f.pose->constraints, _f.pose->walkSteps[size_t(w)].index);
+    }
+
+    /// Whether walk step \p w commits a constraint of a kind that solves as
+    /// op nodes, which no Constraint step runs.
+    bool _SolvesAsOpNodes(int64_t w) const
+    {
+        if (!_ConstraintCommit(w))
+            return false;
+        const auto &c =
+            _f.pose->constraints[size_t(_f.pose->walkSteps[size_t(w)].index)];
+        return !c.ikFkMatch && c.target >= 0 && !c.harmonics &&
+               !c.singleChainIk;
+    }
+
+    /// The constraint commit a Constraint step or a constraint op step
+    /// solves, or -1; with \p delta, also the step measuring its delta.
+    int64_t _ConstraintOf(const fb::RigExecWireStep &step,
+                          bool delta = false) const
+    {
+        if (step.kind == fb::StepKind::Constraint)
+            return step.object;
+        if (step.kind != fb::StepKind::OpNode || step.object < 0 ||
+            size_t(step.object) >= _constraintNode.size())
+            return -1;
+        return delta ? _constraintNode[size_t(step.object)]
+                     : _constraintSolve[size_t(step.object)];
+    }
 
     /// The commit a Constraint step or PoseCommit op step works on, or -1.
     int64_t _CommitOf(const fb::RigExecWireStep &step) const
     {
-        if (step.kind == fb::StepKind::Constraint)
-            return step.object;
+        if (_ConstraintOf(step) >= 0)
+            return _ConstraintOf(step);
         return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
                        size_t(step.object) < _commitNode.size()
                    ? _commitNode[size_t(step.object)]
@@ -10179,13 +10287,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 46,
+    static_assert(RigExecFormatOldestReadable == 47,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: Range smooths as op nodes"
+                ? "re-export: transform and geometry constraints as op nodes"
                 : "rebake");
 }
 

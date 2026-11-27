@@ -161,7 +161,8 @@ _TestFileRefusals(const std::vector<uint8_t> &bytes)
     CHECK(got == "unsupported .rigexec format version 4 (this reader reads " +
                      std::to_string(RigExecFormatOldestReadable) + " through " +
                      std::to_string(RigExecFormatVersion) +
-                     "); re-export: Range smooths as op nodes");
+                     "); re-export: transform and geometry constraints as op "
+                     "nodes");
     if (got.find("format version 4") == std::string::npos) {
         std::printf("version 4: open said '%s'\n", got.c_str());
     }
@@ -916,6 +917,33 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
             "step " + std::to_string(at) + " is a retired SnapshotFinals step");
         ++reservedRefusals;
     }
+    // A constraint's op arm relabelled as the Constraint step it solved on
+    // before format 47.
+    int64_t arm = -1;
+    uint32_t solved = 0;
+    for (size_t s = 0; file->opGraph && s < file->steps.size() && arm < 0;
+         ++s) {
+        if (file->steps[s].kind != fb::StepKind::OpNode)
+            continue;
+        for (const auto &output : file->opGraph->hostOutputs)
+            if (output && output->target == 35 &&
+                output->node == uint64_t(file->steps[s].object)) {
+                arm = int64_t(s);
+                solved = output->object;
+                break;
+            }
+    }
+    if (arm >= 0) {
+        const auto relabel = [&](fb::RigExecWireFile *edited) {
+            edited->steps[size_t(arm)].kind = fb::StepKind::Constraint;
+            edited->steps[size_t(arm)].object = int32_t(solved);
+        };
+        _ExpectShownRefusal(
+            name, "a constraint's op arm as a Constraint step", bytes, relabel,
+            _EditedStepName(bytes, relabel, size_t(arm)) + ": constraint " +
+                std::to_string(solved) + " solves as op nodes");
+        ++reservedRefusals;
+    }
 
     // The format version before the oldest readable one.
     const uint32_t previous = RigExecFormatOldestReadable - 1;
@@ -927,7 +955,7 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
         "unsupported .rigexec format version " + std::to_string(previous) +
         " (this reader reads " + std::to_string(RigExecFormatOldestReadable) +
         " through " + std::to_string(RigExecFormatVersion) +
-        "); re-export: Range smooths as op nodes";
+        "); re-export: transform and geometry constraints as op nodes";
     CHECK(got == want);
     if (got != want) {
         std::printf("%s, previous version: open said '%s', expected '%s'\n",
@@ -2191,9 +2219,42 @@ _TestInputApi(const RigExecExampleFixture &fixture, const UsdStageRefPtr &stage,
             return;
         }
         CHECK(input->SetInput(dragName, value, &why));
-        CHECK(input->Execute(&error));
-        const std::string moved = _CompareRuns(*input, *fresh, false);
-        if (!moved.empty()) {
+        const bool executed = input->Execute(&error);
+        // A constraint weight dragged past 1 stops its mover's node.
+        const std::string weightSuffix = ".inputs:defaultWeight";
+        const bool weightDrag =
+            value > 1.0 && dragName.size() > weightSuffix.size() &&
+            dragName.compare(dragName.size() - weightSuffix.size(),
+                             weightSuffix.size(), weightSuffix) == 0;
+        const std::string typeName =
+            weightDrag ? stage
+                             ->GetPrimAtPath(SdfPath(dragName.substr(
+                                 0, dragName.size() - weightSuffix.size())))
+                             .GetTypeName()
+                             .GetString()
+                       : std::string();
+        const bool outsideWeight =
+            weightDrag &&
+            (typeName == "RigExecMatrixMover" ||
+             (typeName.size() > 10 &&
+              typeName.compare(typeName.size() - 10, 10, "Constraint") == 0));
+        if (outsideWeight) {
+            CHECK(!executed);
+            CHECK(error ==
+                  dragName.substr(0, dragName.size() - weightSuffix.size()) +
+                      ": inputs:defaultWeight is outside finite "
+                      "[0, 1]");
+        } else {
+            CHECK(executed);
+            if (!executed)
+                std::printf("%s: drag of %s: %s\n", fixture.stage,
+                            dragName.c_str(), error.c_str());
+        }
+        const std::string moved =
+            outsideWeight ? std::string() : _CompareRuns(*input, *fresh, false);
+        if (outsideWeight) {
+            moveNote = "refused";
+        } else if (!moved.empty()) {
             ++inputApiMoved;
             moveNote = "moves " + moved;
         } else {

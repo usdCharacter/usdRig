@@ -488,11 +488,13 @@ TestGeometryConstraintsCompose()
     check(15);
     last.GetAttribute(TfToken("inputs:translationOffset"))
         .Set(GfVec3d(std::numeric_limits<double>::quiet_NaN(), 0, 0));
-    pose = check(11);
+    pose = evaluator.Evaluate(UsdTimeCode::Default());
+    CHECK(!pose.valid);
     CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
                       [](const std::string &d) {
-                          return d.find("MoverFailed /Asset/Rig/Movers/Last") !=
-                                 std::string::npos;
+                          return d.find("/Asset/Rig/Movers/Last: ") == 0 &&
+                                 d.find("non-finite offset") !=
+                                     std::string::npos;
                       }));
     last.GetAttribute(TfToken("inputs:translationOffset")).Set(GfVec3d(0));
     check(15);

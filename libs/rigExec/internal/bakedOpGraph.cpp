@@ -648,7 +648,8 @@ BuildSourceLeafIndex(RigExecBakedProgramImpl *program)
             (c < state.constantSource.size() && state.constantSource[c]))
             continue;
         const auto &step = B.steps[B.opGraph.ops[c].originalIndex];
-        if (step.kind == RigExecBakedStepKind::Constraint &&
+        if (RigExecBakedIdentityOf(B, step).kind ==
+                RigExecBakedStepKind::Constraint &&
             !RigExecBakedConstraintSourceTracked(B, step)) {
             index->untracked[c] = 1;
             continue;

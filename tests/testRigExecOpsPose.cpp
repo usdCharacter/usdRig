@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -594,9 +595,10 @@ TestMatrixMover()
         rigExecRig::PointFrame collapsed = in;
         collapsed.points = {in.points[0], in.points[0], in.points[0],
                             in.points[0]};
-        CHECK(!h.Run({&in, &source, &collapsed, &half}));
-        CHECK(h.error.find("could not resolve rigExec:transform") !=
-              std::string::npos);
+        CHECK(h.Run({&in, &source, &collapsed, &half}));
+        rigExecRig::PointFrame passed = in;
+        passed.flags |= rigExec::eval::pose_ops::kPoseFrameDegenerate;
+        CHECK(SameFrame(h.Out<rigExecRig::PointFrame>(0), passed));
     }
     {
         // The transform measured in a space source that moved as far is
@@ -629,17 +631,30 @@ TestConstraintDelta()
     Harness h(ConstraintDelta(), nullptr,
               {&ConstraintDeltaSolved(), &ConstraintDeltaBase(),
                &ConstraintDeltaBaseOk(), &ConstraintDeltaWeight()},
-              {&ConstraintDeltaDelta()});
+              {&ConstraintDeltaDelta(), &ConstraintDeltaMeasured()});
     const rigExecRig::PointFrame solved = Landmarks(4, 0, 0);
     const Mat4d base = Translate(1, 0, 0);
     const uint8_t ok = 1, unread = 0;
     const double full = 1.0, none = 0.0;
     CHECK(h.Run({&solved, &base, &ok, &full}));
     CHECK(SameBits(h.Out<Mat4d>(0), Translate(3, 0, 0)));
+    CHECK(h.Out<uint8_t>(1) == 1);
     CHECK(h.Run({&solved, &base, &unread, &none}));
     CHECK(SameBits(h.Out<Mat4d>(0), Translate(0, 0, 0)));
-    CHECK(!h.Run({&solved, &base, &unread, &full}));
-    CHECK(h.error.find("could not measure its delta") != std::string::npos);
+    CHECK(h.Out<uint8_t>(1) == 1);
+    // An unread base, or a solved frame the constraint could not find,
+    // measures nothing; a non-finite one is an error.
+    CHECK(h.Run({&solved, &base, &unread, &full}));
+    CHECK(SameBits(h.Out<Mat4d>(0), Translate(0, 0, 0)));
+    CHECK(h.Out<uint8_t>(1) == 0);
+    rigExecRig::PointFrame degenerate = solved;
+    degenerate.flags |= rigExec::eval::pose_ops::kPoseFrameDegenerate;
+    CHECK(h.Run({&degenerate, &base, &ok, &full}));
+    CHECK(h.Out<uint8_t>(1) == 0);
+    rigExecRig::PointFrame nonFinite = solved;
+    nonFinite.points[0][0] = std::numeric_limits<double>::quiet_NaN();
+    CHECK(!h.Run({&nonFinite, &base, &ok, &full}));
+    CHECK(h.error.find("non-finite") != std::string::npos);
 }
 
 } // namespace

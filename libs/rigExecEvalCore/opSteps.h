@@ -87,7 +87,89 @@ enum class OpLookupSource : uint8_t {
     /// come from its commit table, a solver batch's from its solvers'
     /// outputs, the last in batch order winning a position.
     CommitCandidates = 31,
+    /// The sources of the constraint commit `object` commits: `part` -1
+    /// all of them (PointFrameArray), else source `part`'s frame (`read`
+    /// 0) or rest frame (`read` 1). A source that maps to no transform
+    /// comes flagged degenerate; one that does not resolve is an error
+    /// while the constraint is on and the source weighs anything.
+    ConstraintSources = 32,
+    /// The per-source tables of constraint commit `object` (OpConstraintRead
+    /// SourceWeights, TranslationOffsets or RotationOffsets).
+    ConstraintArrays = 33,
+    /// An input of constraint commit `object`'s mover (OpConstraintRead).
+    ConstraintLeaf = 34,
+    /// Constraint commit `object`'s envelope (OpConstraintRead
+    /// SolveWeight, DeltaWeight or Present), decided from its enabled flag
+    /// and weight alone.
+    ConstraintEnvelope = 35,
+    /// Mat4d: the rigExec:space carry of constraint commit `object`.
+    ConstraintSpace = 36,
+    /// Vec3d: the world-up direction constraint commit `object`'s aim
+    /// reads; zero where the aim does not read it or its object maps to no
+    /// transform.
+    ConstraintWorldUp = 37,
+    /// The authored transform of constraint commit `object`'s geometry
+    /// target: `read` 0 the Mat4d, 1 whether it was read (Bool).
+    ConstraintDeltaBase = 39,
 };
+
+/// OpLookup::read of a constraint lookup. The numbers are part of the file
+/// format.
+enum class OpConstraintRead : uint8_t {
+    /// Vec3d inputs.
+    Offset = 0,
+    AimVector = 1,
+    UpVector = 2,
+    RotationOffset = 3,
+    WorldUpVector = 4,
+    /// Bool inputs: the affect group, then Parent's nine axes.
+    AffectX = 5,
+    AffectY = 6,
+    AffectZ = 7,
+    TranslateX = 8,
+    TranslateY = 9,
+    TranslateZ = 10,
+    RotateX = 11,
+    RotateY = 12,
+    RotateZ = 13,
+    ScaleX = 14,
+    ScaleY = 15,
+    ScaleZ = 16,
+    /// DoubleArray / Vec3dArray: one entry per source.
+    SourceWeights = 20,
+    TranslationOffsets = 21,
+    RotationOffsets = 22,
+    /// Double: the weight the kernel solves at, 0 while the constraint is
+    /// off; a geometry target's delta weight; BoolArray: which commit
+    /// candidates are present.
+    SolveWeight = 30,
+    DeltaWeight = 31,
+    Present = 32,
+};
+
+/// OpLookup::part of a ConstraintWorldUp lookup: where the aim's world-up
+/// comes from. The numbers are part of the file format.
+enum class OpConstraintWorldUp : uint8_t {
+    None = 0,
+    /// The scene's up axis.
+    Scene = 1,
+    /// inputs:worldUpVector.
+    Vector = 2,
+    /// Toward the world-up object's origin from the target's.
+    Object = 3,
+    /// inputs:worldUpVector turned by the world-up object's rotation.
+    ObjectRotation = 4,
+};
+
+/// Whether a lookup of \p source is one the host answers through
+/// LookUpConstraint.
+constexpr bool
+OpConstraintLookupSource(uint8_t source)
+{
+    return (source >= uint8_t(OpLookupSource::ConstraintSources) &&
+            source <= uint8_t(OpLookupSource::ConstraintWorldUp)) ||
+           source == uint8_t(OpLookupSource::ConstraintDeltaBase);
+}
 
 /// OpLookup::part of a CommitVersions lookup: the commit's version list.
 /// The numbers are part of the file format.
@@ -239,6 +321,13 @@ enum class OpOutputTarget : uint8_t {
     CommitBaseDescendants = 33,
     /// BoolArray: which candidates of commit `object` are present.
     CommitPresent = 34,
+    /// PointFrame: the frame constraint commit `object`'s mover solved.
+    ConstraintCandidate = 35,
+    /// Mat4d: the delta constraint commit `object` measured against its
+    /// geometry target's authored transform.
+    ConstraintDelta = 36,
+    /// Bool: whether that delta could be measured; stored after it.
+    ConstraintDeltaMeasured = 37,
     /// Provider operation `object`'s authority and unavailable input,
     /// stored before its ProviderValueMatrix or ProviderValueFrame.
     ProviderValueAuthority = 50,
@@ -270,6 +359,7 @@ OpLookupSourceRuns(uint8_t source)
            source == uint8_t(OpLookupSource::RevisionLeaf) ||
            source == uint8_t(OpLookupSource::CommitVersions) ||
            source == uint8_t(OpLookupSource::CommitCandidates) ||
+           OpConstraintLookupSource(source) ||
            OpLookupSourceSelectable(source) || OpSpaceLookupSource(source);
 }
 
@@ -288,7 +378,8 @@ OpOutputTargetRuns(uint8_t target, bool chainMember)
                      target == uint8_t(OpOutputTarget::WeightField) ||
                      OpSpaceOutputTarget(target) ||
                      (target >= uint8_t(OpOutputTarget::CommitSlots) &&
-                      target <= uint8_t(OpOutputTarget::CommitPresent));
+                      target <=
+                          uint8_t(OpOutputTarget::ConstraintDeltaMeasured));
 }
 
 /// A per-frame read of the rig the host resolves for a Lookup input; what
@@ -899,8 +990,9 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
 
 /// Resolves lookup \p index through the \p host method of its source's
 /// family: LookUpProperty, LookUpPoseVersion, LookUpWeight,
-/// LookUpChainVersion, LookUpWeightField or LookUpCommit(index, lookup,
-/// type, value, error), a Matrix lookup through Matrix(source, slot), and a FrameRecord
+/// LookUpChainVersion, LookUpWeightField, LookUpCommit or
+/// LookUpConstraint(index, lookup, type, value, error), a Matrix lookup
+/// through Matrix(source, slot), and a FrameRecord
 /// or ConstraintDelta lookup through PresentMatrix(lookup), null when
 /// absent. A List or Selected lookup resolves through OpLookUpAt.
 template <class Host>
@@ -949,6 +1041,14 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
     case OpLookupSource::CommitVersions:
     case OpLookupSource::CommitCandidates:
         return host.LookUpCommit(index, lookup, type, value, error);
+    case OpLookupSource::ConstraintSources:
+    case OpLookupSource::ConstraintArrays:
+    case OpLookupSource::ConstraintLeaf:
+    case OpLookupSource::ConstraintEnvelope:
+    case OpLookupSource::ConstraintSpace:
+    case OpLookupSource::ConstraintWorldUp:
+    case OpLookupSource::ConstraintDeltaBase:
+        return host.LookUpConstraint(index, lookup, type, value, error);
     case OpLookupSource::Matrix: {
         const void *matrix = host.Matrix(
             lookup.part ? OpHostSource::BaseMatrix : OpHostSource::FinalMatrix,
@@ -991,8 +1091,8 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
 
 /// Stores \p value through the \p host method of \p output's target
 /// family: StorePropertyVersion, StoreVolumePlacement, StoreWeightPacket,
-/// StoreWeightField, StoreCommit or StoreRevisionEnabled(output, value,
-/// error).
+/// StoreWeightField, StoreCommit, StoreRevisionEnabled or
+/// StoreConstraint(output, value, error).
 template <class Host>
 bool
 OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
@@ -1016,6 +1116,10 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
         return host.StoreCommit(output, value, error);
     case OpOutputTarget::RevisionEnabled:
         return host.StoreRevisionEnabled(output, value, error);
+    case OpOutputTarget::ConstraintCandidate:
+    case OpOutputTarget::ConstraintDelta:
+    case OpOutputTarget::ConstraintDeltaMeasured:
+        return host.StoreConstraint(output, value, error);
     case OpOutputTarget::ChainGroup:
         break;
     case OpOutputTarget::ProviderFinalMatrix:

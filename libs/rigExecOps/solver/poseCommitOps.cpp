@@ -29,6 +29,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(PoseCommitSlots)
 RIGEXEC_DEFINE_PORT_HANDLE(PoseCommitDescendants)
 RIGEXEC_DEFINE_PORT_HANDLE(PoseCommitBaseSlots)
 RIGEXEC_DEFINE_PORT_HANDLE(PoseCommitBaseDescendants)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseCommitCandidate)
 
 namespace {
 
@@ -77,7 +78,11 @@ CheckPoseCommit(const rigExec::RigExecOpCheck &check, std::string *error)
     for (size_t k = 0; k < pairs; ++k)
         if (closest[k] < -1 || closest[k] >= int64_t(slots))
             return Fail(error, kOp, "names a closest candidate it lacks");
-    if (!FedWith(check, PoseCommitCandidates(), slots) ||
+    const bool listed = Fed(check, PoseCommitCandidates());
+    const size_t each = CheckElements(check, PoseCommitCandidate());
+    if ((listed ? each != 0 && each < rigExec::kRigExecPortUnfed
+                : !SameCount(each, slots)) ||
+        !SameCount(CheckElements(check, PoseCommitCandidates()), slots) ||
         !FedWith(check, PoseCommitEntering(), slots) ||
         !FedWith(check, PoseCommitCarry(), slots) ||
         !SameCount(CheckElements(check, PoseCommitPresent()), slots))
@@ -117,7 +122,12 @@ PoseCommitOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     const auto blocked = ListAt<uint8_t>(batch, kBlocked, k);
     const size_t pairs = closest.Size();
     const bool solver = FlagAt(batch, kSolverOutput, k);
-    const Frames &candidates = *In<Frames>(io, PoseCommitCandidates());
+    const Frames *listed = In<Frames>(io, PoseCommitCandidates());
+    const InList<PointFrame> each(io, PoseCommitCandidate());
+    const size_t candidateCount = listed ? listed->Size() : each.Size();
+    const auto candidates = [&](size_t pos) -> const PointFrame & {
+        return listed ? (*listed)[pos] : each[pos];
+    };
     const Frames &entering = *In<Frames>(io, PoseCommitEntering());
     const Frames &carry = *In<Frames>(io, PoseCommitCarry());
     const Frames *baseCarry = In<Frames>(io, PoseCommitBaseCarry());
@@ -130,7 +140,7 @@ PoseCommitOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     const auto fits = [](const Frames *frames, size_t count) {
         return frames && frames->Size() == count;
     };
-    if (candidates.Size() != slots || entering.Size() != slots ||
+    if (candidateCount != slots || entering.Size() != slots ||
         carry.Size() != slots || (presentIn && presentIn->Size() != slots) ||
         (solver && !fits(baseCarry, slots)) ||
         (pairs && (!fits(current, pairs) || !fits(closestIn, pairs) ||
@@ -140,6 +150,10 @@ PoseCommitOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     std::vector<char> present(slots, 1);
     for (size_t pos = 0; presentIn && pos < slots; ++pos)
         present[pos] = (*presentIn)[pos] ? 1 : 0;
+    for (size_t pos = 0; !listed && pos < slots; ++pos)
+        if (candidates(pos).flags &
+            rigExec::eval::pose_ops::kPoseFrameDegenerate)
+            present[pos] = 0;
     bool any = false;
     for (const char p : present)
         any = any || p;
@@ -151,7 +165,7 @@ PoseCommitOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         for (size_t pos = 0; pos < slots; ++pos)
             if (present[pos])
                 deltaOk[pos] = char(rigExec::RigExecMeasureCommitDelta<Math>(
-                    entering[pos].points, candidates[pos].points,
+                    entering[pos].points, candidates(pos).points,
                     &deltas[pos]));
         for (size_t d = 0; d < pairs; ++d) {
             const int pos = closest[d];
@@ -159,7 +173,7 @@ PoseCommitOne(const RigExecOpBatch &batch, size_t k, std::string *error)
                                                   present.data(), slots))
                 continue;
             outcome[d] = uint8_t(rigExec::RigExecStageCommitPair<Math>(
-                (*current)[d], (*closestIn)[d], candidates[size_t(pos)],
+                (*current)[d], (*closestIn)[d], candidates(size_t(pos)),
                 deltas[size_t(pos)], deltaOk[size_t(pos)] == 1, solver,
                 &staged[d]));
         }
@@ -191,9 +205,9 @@ PoseCommitOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     baseSlots.Resize(solver ? slots : 0);
     baseDescendants.Resize(solver ? pairs : 0);
     for (size_t pos = 0; pos < slots; ++pos) {
-        outSlots[pos] = present[pos] ? candidates[pos] : carry[pos];
+        outSlots[pos] = present[pos] ? candidates(pos) : carry[pos];
         if (solver)
-            baseSlots[pos] = present[pos] ? candidates[pos] : (*baseCarry)[pos];
+            baseSlots[pos] = present[pos] ? candidates(pos) : (*baseCarry)[pos];
     }
     for (size_t d = 0; d < pairs; ++d) {
         const bool moved = Outcome(outcome[d]) == Outcome::Staged;
@@ -212,6 +226,7 @@ RunPoseCommit(const RigExecOpBatch &batch, size_t *failed, std::string *error)
     });
 }
 
+using rigExec::kRigExecPortArray;
 using rigExec::kRigExecPortInput;
 using rigExec::kRigExecPortOptional;
 using rigExec::kRigExecPortOutput;
@@ -219,7 +234,7 @@ constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
 constexpr auto kField = rigExec::RigExecOutputBound::Field;
 
 const rigExec::RigExecPortDesc kPorts[] = {
-    {&PoseCommitCandidates(), &rigExecRig::PointFrameList(), kRigExecPortInput,
+    {&PoseCommitCandidates(), &rigExecRig::PointFrameList(), kOptional,
      "candidates"},
     {&PoseCommitPresent(), &rigExecStd::BoolArray(), kOptional, "present"},
     {&PoseCommitEntering(), &rigExecRig::PointFrameList(), kRigExecPortInput,
@@ -243,6 +258,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&PoseCommitBaseDescendants(), &rigExecRig::PointFrameList(),
      kRigExecPortOutput, "baseDescendants", kField, nullptr, nullptr,
      kPairCount},
+    {&PoseCommitCandidate(), &rigExecRig::PointFrameType(),
+     kOptional | kRigExecPortArray, "candidate"},
 };
 
 void

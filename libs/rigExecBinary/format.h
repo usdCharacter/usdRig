@@ -676,7 +676,15 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// Format 46 runs every Range smooth as a Smooth op node over its compiled
 /// topology, and an op revision reads the output of the op revision before
 /// it in its point chain node to node where the two share a range chain.
-inline constexpr uint32_t RigExecFormatVersion = 46;
+///
+/// Format 47 solves Position, Rotation, Scale, Parent and Aim constraints
+/// and the MatrixMover as op nodes with the identity of their Constraint
+/// step, and a geometry target's delta as a ConstraintDelta node. They read
+/// their inputs through OpGraph.lookups sources 32 to 37 and 39 and store
+/// their frame, delta and whether it was measured through
+/// OpGraph.host_outputs targets 35 to 37. A Constraint step remains for
+/// IK/FK match, harmonics, single-chain IK and a constraint with no target.
+inline constexpr uint32_t RigExecFormatVersion = 47;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -684,7 +692,7 @@ inline constexpr uint32_t RigExecFormatVersion = 46;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 46;
+inline constexpr uint32_t RigExecFormatOldestReadable = 47;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

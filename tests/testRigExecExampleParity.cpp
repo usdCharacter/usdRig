@@ -87,12 +87,16 @@ BumpedValue(const UsdAttribute &attribute, double delta, VtValue *out)
 
 // Operator drags the table's +0.25 takes to a value the operator refuses:
 // each such generation is invalid and reports the operator's own error,
-// "<operatorPrim>: node N (<op>) failed: <why>". Every drag not listed
-// here must stay valid.
+// "<operatorPrim>: node N (<op>) failed: <why>", or for an input its node
+// looks up, "<operatorPrim>: <why>". Every drag not listed here must stay
+// valid.
 struct InvalidDrag {
     const char *stage;
     const char *why;
+    bool lookedUp = false;
 };
+constexpr const char *kConstraintWeight =
+    "inputs:defaultWeight is outside finite [0, 1]";
 const InvalidDrag kInvalidOperatorDrags[] = {
     // Seg2W paints every point: a default weight other than 0 is refused.
     {"01_FkChainTail.usda",
@@ -105,14 +109,29 @@ const InvalidDrag kInvalidOperatorDrags[] = {
     // The full-strength matrix's own default weight: 1.25 is out of range.
     {"20_MatrixSphere.usda",
      "MatrixDeform: a default weight is not finite or outside [0, 1]"},
+    // A constraint's default weight at 1: 1.25 is out of range.
+    {"08_AimEyes.usda", kConstraintWeight, true},
+    {"10_AimXformTurret.usda", kConstraintWeight, true},
+    {"aim_par_combo_flattened.usd", kConstraintWeight, true},
+    {"aimtest.usda", kConstraintWeight, true},
+    {"aimtest_points.usda", kConstraintWeight, true},
+    {"biped/Biped.usda", kConstraintWeight, true},
+    {"biped/Biped_anim.usda", kConstraintWeight, true},
+    {"biped/Biped_body.usda", kConstraintWeight, true},
+    {"biped/Biped_stack.usda", kConstraintWeight, true},
+    {"par_rot_aim.usd", kConstraintWeight, true},
+    {"par_rot_aim_redorder.usd", kConstraintWeight, true},
+    {"rigexec_flat.usda", kConstraintWeight, true},
+    {"rot_par_combo.usd", kConstraintWeight, true},
+    {"rotateConstraint.usda", kConstraintWeight, true},
 };
 
-const char *
+const InvalidDrag *
 ExpectedDragError(const std::string &stage)
 {
     for (const InvalidDrag &drag : kInvalidOperatorDrags) {
         if (stage == drag.stage) {
-            return drag.why;
+            return &drag;
         }
     }
     return nullptr;
@@ -120,11 +139,17 @@ ExpectedDragError(const std::string &stage)
 
 bool
 ReportsOperatorError(const RigExecRigPose &pose, const std::string &prim,
-                     const std::string &why)
+                     const InvalidDrag &expected)
 {
+    const std::string why = expected.why;
     const std::string head = prim + ": node ";
     const std::string tail = " failed: " + why;
     for (const std::string &line : pose.diagnostics) {
+        if (expected.lookedUp) {
+            if (line == prim + ": " + why)
+                return true;
+            continue;
+        }
         if (line.compare(0, head.size(), head) == 0 &&
             line.size() >= tail.size() &&
             line.compare(line.size() - tail.size(), tail.size(), tail) == 0) {
@@ -146,7 +171,7 @@ void
 DragOne(const std::string &where, RigExecRigEvaluator *rig,
         const std::vector<RigExecValueOverride> &overrides,
         const std::vector<UsdTimeCode> &frames, size_t *generations,
-        const char *expectedError = nullptr,
+        const InvalidDrag *expected = nullptr,
         const std::string &failingPrim = std::string())
 {
     // A drag is placed on the standing program: valid or not, it never
@@ -156,7 +181,8 @@ DragOne(const std::string &where, RigExecRigEvaluator *rig,
     for (const UsdTimeCode frame : frames) {
         for (int pass = 0; pass < 2; ++pass) {
             const RigExecRigPose pose = rig->Evaluate(frame);
-            if (expectedError) {
+            if (expected) {
+                const char *expectedError = expected->why;
                 // A failed generation is not one the program answered.
                 if (pose.valid) {
                     ++failures;
@@ -164,7 +190,7 @@ DragOne(const std::string &where, RigExecRigEvaluator *rig,
                                 where.c_str(), frame.GetValue(), expectedError);
                     ++*generations;
                 } else if (!ReportsOperatorError(pose, failingPrim,
-                                                 expectedError)) {
+                                                 *expected)) {
                     ++failures;
                     std::printf("FAIL %s: invalid at %g without \"%s\"\n",
                                 where.c_str(), frame.GetValue(), expectedError);

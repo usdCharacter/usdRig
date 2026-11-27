@@ -780,13 +780,14 @@ ProbeConstraintDelta(const B &b, const B::Constraint &c,
     op.In(ConstraintDeltaBaseOk(), &baseOk);
     op.In(ConstraintDeltaWeight(), &weight);
     const RigExecOutputId out = op.Out(ConstraintDeltaDelta());
+    const RigExecOutputId measured = op.Out(ConstraintDeltaMeasured());
     if (!op.Run()) {
         OpFailed("Constraint", kind, c.pathText, !present, op.error);
         return;
     }
+    CompareFlag("Constraint", kind, c.pathText, "delta present", present,
+                op.Get<uint8_t>(measured) != 0);
     if (!present) {
-        Report("Constraint/" + kind, c.pathText,
-               "the step measured no delta where the op did");
         return;
     }
     Compare("Constraint", kind, c.pathText, VtValue(b.deltaValues[d]),
@@ -1073,9 +1074,10 @@ void
 ProbeConstraint(const B &b)
 {
     for (const auto &step : b.steps) {
-        if (step.kind != RigExecBakedStepKind::Constraint)
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(b, step);
+        if (id.kind != RigExecBakedStepKind::Constraint || id.part >= 0)
             continue;
-        const int walk = step.object;
+        const int walk = id.object;
         const auto &c = b.constraints[size_t(b.walkSteps[size_t(walk)].index)];
         const auto &commit = b.commits[size_t(walk)];
         const std::string kind = TypeName(c.type);

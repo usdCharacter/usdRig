@@ -5,6 +5,7 @@
 #include "rigExec/api/compile.h"
 #include "rigExecRuntime/runtime.h"
 #include "rigExecRuntime/store.h"
+#include "rigExecEvalCore/constraintLookups.h"
 #include "rigExecEvalCore/propertyLookups.h"
 
 #include <cstring>
@@ -178,6 +179,8 @@ private:
 /// What the runtime's op steps read from the program and store in it.
 struct RrOpHost {
     RrProgram &p;
+    size_t step = size_t(-1);
+    mutable eval::ConstraintStepCache constraintCache;
 
     const void *Matrix(eval::OpHostSource source, uint32_t slot) const
     {
@@ -307,6 +310,19 @@ struct RrOpHost {
                      std::string *error) const
     {
         return RrStoreCommit(&p, output, value, error);
+    }
+    bool LookUpConstraint(uint32_t, const eval::OpLookup &lookup,
+                          const RigExecTypeDesc &type, void *value,
+                          std::string *error) const
+    {
+        return RrLookUpConstraint(&p, constraintCache, lookup, type, value,
+                                  error);
+    }
+    bool StoreConstraint(const eval::OpHostOutput &output, const void *value,
+                         std::string *error) const
+    {
+        return RrStoreConstraint(&p, step, constraintCache, output, value,
+                                 error);
     }
 };
 
@@ -455,6 +471,7 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
     nodes->propertyPart.assign(graph.nodes.size(), kRigExecInvalidIndex);
     nodes->weightObject.assign(graph.nodes.size(), kRigExecInvalidIndex);
     nodes->commit.assign(graph.nodes.size(), kRigExecInvalidIndex);
+    nodes->constraint.assign(graph.nodes.size(), kRigExecInvalidIndex);
     // A field node's first field lookup in port order reads its own object;
     // a sparse dynamic weight's base indices read its base's, later.
     for (const auto &[node, object] : fieldObjects)
@@ -477,6 +494,11 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
             nodes->weightObject[output->node] = output->object;
         if (output->target == uint8_t(eval::OpOutputTarget::CommitSlots))
             nodes->commit[output->node] = output->object;
+        if (output->target >=
+                uint8_t(eval::OpOutputTarget::ConstraintCandidate) &&
+            output->target <=
+                uint8_t(eval::OpOutputTarget::ConstraintDeltaMeasured))
+            nodes->constraint[output->node] = output->object;
         size_t chain = 0, part = 0;
         if (output->target == uint8_t(eval::OpOutputTarget::PropertyVersion) &&
             RrPropertyPartOfVersion(p, output->object, &chain, &part) &&
@@ -536,7 +558,7 @@ RrRunOpStep(RrProgram *p, size_t i, std::string *error)
     if (!nodes)
         return Fail(error, "an op step without op nodes");
     const fb::RigExecWireStep &step = (*p->steps)[i];
-    const RrOpHost host{*p};
+    const RrOpHost host{*p, i};
     if (eval::RunOpStep(nodes->layout, host, nodes->state.get(),
                         eval::OpStepKind(uint8_t(step.kind)), step.object,
                         step.part, error))
@@ -548,6 +570,12 @@ RrRunOpStep(RrProgram *p, size_t i, std::string *error)
              step.object >= 0 && size_t(step.object) < nodes->commit.size() &&
              nodes->commit[size_t(step.object)] != kRigExecInvalidIndex)
         *error = RrCommitFailure(p, nodes->commit[size_t(step.object)], *error);
+    else if (error && step.kind == RigExecWireStepKind::OpNode &&
+             step.object >= 0 &&
+             size_t(step.object) < nodes->constraint.size() &&
+             nodes->constraint[size_t(step.object)] != kRigExecInvalidIndex)
+        *error = RrConstraintFailure(p, nodes->constraint[size_t(step.object)],
+                                     *error);
     else if (error && step.kind == RigExecWireStepKind::OpNode &&
              step.object >= 0 &&
              size_t(step.object) < nodes->weightObject.size()) {

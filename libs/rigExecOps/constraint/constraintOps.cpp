@@ -6,6 +6,7 @@
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecMath/dualQuatMath.h"
 
+#include <cmath>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -64,6 +65,8 @@ RIGEXEC_DEFINE_PORT_HANDLE(AimConstraintAffect)
 RIGEXEC_DEFINE_PORT_HANDLE(AimConstraintAimVector)
 RIGEXEC_DEFINE_PORT_HANDLE(AimConstraintUpVector)
 RIGEXEC_DEFINE_PORT_HANDLE(AimConstraintOut)
+RIGEXEC_DEFINE_PORT_HANDLE(AimConstraintSources)
+RIGEXEC_DEFINE_PORT_HANDLE(AimConstraintSourceWeights)
 
 namespace {
 
@@ -123,6 +126,43 @@ AxesOf(const RigExecOpIo &io, const RigExecPortHandle &port,
     return true;
 }
 
+bool
+Finite(const Vec3d &v)
+{
+    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
+}
+
+bool
+Finite(const PointFrame &frame)
+{
+    for (const Vec3d &point : frame.points)
+        if (!Finite(point))
+            return false;
+    return true;
+}
+
+bool
+Finite(const Mat4d &m)
+{
+    for (size_t r = 0; r < 4; ++r)
+        for (size_t c = 0; c < 4; ++c)
+            if (!std::isfinite(m[r][c]))
+                return false;
+    return true;
+}
+
+/// The input frame, weight and optional space every kind reads are finite.
+/// Past this and the sources, a frame the kernel cannot solve is a
+/// geometric degeneracy, not bad input.
+bool
+CheckInputs(const char *op, const PointFrame &in, double weight,
+            const Mat4d *space, std::string *error)
+{
+    if (!Finite(in) || !std::isfinite(weight) || (space && !Finite(*space)))
+        return Fail(error, op, "has a non-finite input");
+    return true;
+}
+
 /// The mask and offset Position, Rotation, Scale and Aim read.
 bool
 MaskAndOffset(const char *op, const RigExecOpIo &io,
@@ -133,6 +173,8 @@ MaskAndOffset(const char *op, const RigExecOpIo &io,
     if (!AxesOf(io, affectPort, ConstraintAxes(), affect))
         return Fail(error, op, "needs three affect flags");
     *offset = InOr(io, offsetPort, Vec3d(0.0, 0.0, 0.0));
+    if (!Finite(*offset))
+        return Fail(error, op, "has a non-finite offset");
     return true;
 }
 
@@ -192,7 +234,8 @@ struct OffsetPorts {
 };
 
 /// The sources with their weights and Parent offsets, or false with
-/// \p error set when a parallel array has the wrong length.
+/// \p error set when a parallel array has the wrong length, a weight is
+/// negative or not finite, or a weighed source or an offset is not finite.
 bool
 GatherSources(const char *op, const RigExecOpIo &io,
               const RigExecPortHandle &sourcesPort,
@@ -220,6 +263,11 @@ GatherSources(const char *op, const RigExecOpIo &io,
             s.translationOffset = (*translations)[i];
         if (rotations)
             s.rotationOffsetDegrees = (*rotations)[i];
+        if (!std::isfinite(s.normalizedWeight) || s.normalizedWeight < 0.0)
+            return Fail(error, op, "has an invalid source weight");
+        if ((s.normalizedWeight != 0.0 && !Finite(s.frame)) ||
+            !Finite(s.translationOffset) || !Finite(s.rotationOffsetDegrees))
+            return Fail(error, op, "has a non-finite source");
     }
     return true;
 }
@@ -307,7 +355,12 @@ CheckParent(const rigExec::RigExecOpCheck &check, std::string *error)
 bool
 CheckAim(const rigExec::RigExecOpCheck &check, std::string *error)
 {
-    return CheckAxes(check, "AimConstraint", AimConstraintAffect(), error);
+    if (Fed(check, AimConstraintTarget()) == Fed(check, AimConstraintSources()))
+        return Fail(error, "AimConstraint",
+                    "needs a target or sources, not both");
+    return CheckAxes(check, "AimConstraint", AimConstraintAffect(), error) &&
+           CheckSources(check, "AimConstraint", AimConstraintSources(),
+                        AimConstraintSourceWeights(), {}, error);
 }
 
 /// The kernel's frame: a constraint that cannot solve gives the input flagged
@@ -331,6 +384,8 @@ PositionOne(const RigExecOpBatch &batch, size_t k, std::string *error)
                        PositionConstraintSourceWeights(), {}, &sources, error))
         return false;
     const PointFrame &in = *In<PointFrame>(io, PositionConstraintIn());
+    if (!CheckInputs("PositionConstraint", in, params.weight, nullptr, error))
+        return false;
     Commit(in,
            rigExec::RigExecApplyPositionConstraintKernel<Vec3f, Vec3d>(
                in, sources, params),
@@ -363,6 +418,9 @@ RotationOne(const RigExecOpBatch &batch, size_t k, std::string *error)
                        RotationConstraintSourceWeights(), {}, &sources, error))
         return false;
     const PointFrame &in = *In<PointFrame>(io, RotationConstraintIn());
+    if (!CheckInputs("RotationConstraint", in, params.weight, params.carry,
+                     error))
+        return false;
     Commit(in,
            rigExec::RigExecApplyRotationConstraintKernel<Vec3f, Vec3d>(
                in, sources, params),
@@ -392,6 +450,8 @@ ScaleOne(const RigExecOpBatch &batch, size_t k, std::string *error)
                        ScaleConstraintSourceWeights(), {}, &sources, error))
         return false;
     const PointFrame &in = *In<PointFrame>(io, ScaleConstraintIn());
+    if (!CheckInputs("ScaleConstraint", in, params.weight, nullptr, error))
+        return false;
     Commit(in,
            rigExec::RigExecApplyScaleConstraintKernel<Vec3f, Vec3d>(in, sources,
                                                                     params),
@@ -431,6 +491,9 @@ ParentOne(const RigExecOpBatch &batch, size_t k, std::string *error)
                        &sources, error))
         return false;
     const PointFrame &in = *In<PointFrame>(io, ParentConstraintIn());
+    if (!CheckInputs("ParentConstraint", in, params.weight, params.carry,
+                     error))
+        return false;
     Commit(in,
            rigExec::RigExecApplyParentConstraintKernel<Vec3f, Vec3d>(
                in, sources, params),
@@ -461,11 +524,50 @@ AimOne(const RigExecOpBatch &batch, size_t k, std::string *error)
                      *In<double>(io, AimConstraintWeight())};
     if (!MaskAndOffset("AimConstraint", io, AimConstraintAffect(),
                        AimConstraintOffset(), &params.affectRotation,
-                       &params.rotationOffsetDegrees, error))
+                       &params.rotationOffsetDegrees, error) ||
+        !CheckInputs("AimConstraint", in, params.weight, nullptr, error))
         return false;
+    if (!Finite(params.localAimVector) || !Finite(params.localUpVector) ||
+        (params.worldUpDirection && !Finite(*params.worldUpDirection)))
+        return Fail(error, "AimConstraint", "has a non-finite input");
+    const Vec3d *fed = In<Vec3d>(io, AimConstraintTarget());
+    Vec3d target = fed ? *fed : Vec3d(0.0, 0.0, 0.0);
+    if (fed && !Finite(target))
+        return Fail(error, "AimConstraint", "has a non-finite target");
+    if (!fed) {
+        std::vector<Source> sources;
+        if (!GatherSources("AimConstraint", io, AimConstraintSources(),
+                           AimConstraintSourceWeights(), {}, &sources, error))
+            return false;
+        double total = 0.0;
+        bool usable = true;
+        for (const Source &source : sources) {
+            const double w = source.normalizedWeight;
+            if (w == 0.0)
+                continue;
+            usable = usable && (source.frame.flags &
+                                rigExec::constraintDetail::kFrameValid);
+            for (size_t a = 0; a < 3; ++a)
+                target[a] = target[a] + source.frame.points[0][a] * w;
+            total += w;
+        }
+        if (!(total > 0)) {
+            Out<PointFrame>(io, AimConstraintOut()) = in;
+            return true;
+        }
+        if (!usable) {
+            PointFrame &out = Out<PointFrame>(io, AimConstraintOut());
+            out = in;
+            out.flags |= rigExec::constraintDetail::kFrameDegenerate;
+            return true;
+        }
+        const double scale = 1.0 / total;
+        for (size_t a = 0; a < 3; ++a)
+            target[a] = target[a] * scale;
+    }
     Commit(in,
-           rigExec::RigExecApplyAimConstraintKernel<Vec3f, Vec3d>(
-               in, *In<Vec3d>(io, AimConstraintTarget()), params),
+           rigExec::RigExecApplyAimConstraintKernel<Vec3f, Vec3d>(in, target,
+                                                                  params),
            &Out<PointFrame>(io, AimConstraintOut()));
     return true;
 }
@@ -598,8 +700,7 @@ const rigExec::RigExecPortDesc kParentPorts[] = {
 const rigExec::RigExecPortDesc kAimPorts[] = {
     {&AimConstraintIn(), &rigExecRig::PointFrameType(), kRigExecPortInput,
      "in"},
-    {&AimConstraintTarget(), &rigExecStd::Vec3dType(), kRigExecPortInput,
-     "target"},
+    {&AimConstraintTarget(), &rigExecStd::Vec3dType(), kOptional, "target"},
     {&AimConstraintWorldUp(), &rigExecStd::Vec3dType(), kOptional, "worldUp"},
     {&AimConstraintWeight(), &rigExecStd::DoubleType(), kRigExecPortInput,
      "weight"},
@@ -610,6 +711,10 @@ const rigExec::RigExecPortDesc kAimPorts[] = {
     {&AimConstraintUpVector(), &rigExecStd::Vec3dType(), kOptional, "upVector"},
     {&AimConstraintOut(), &rigExecRig::PointFrameType(), kRigExecPortOutput,
      "out"},
+    {&AimConstraintSources(), &rigExecRig::PointFrameArrayType(), kOptional,
+     "sources"},
+    {&AimConstraintSourceWeights(), &rigExecStd::DoubleArray(), kOptional,
+     "sourceWeights"},
 };
 
 const rigExec::RigExecOpDesc kPositionDesc =

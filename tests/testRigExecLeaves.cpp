@@ -347,6 +347,27 @@ CheckInvalidWeightDrag(const RigExecRigPose &pose,
         return false;
     const SdfPath dragged =
         drag.front().prim.AppendProperty(drag.front().attribute);
+    // A constraint's weight dragged outside [0, 1] stops its mover's node.
+    const VtValue &value = drag.front().value;
+    const double weight =
+        value.IsHolding<float>()    ? double(value.UncheckedGet<float>())
+        : value.IsHolding<double>() ? value.UncheckedGet<double>()
+                                    : 0.5;
+    if (drag.front().attribute == TfToken("inputs:defaultWeight") &&
+        !(weight >= 0.0 && weight <= 1.0) && !pose.valid) {
+        ++invalidWeightDragsSeen[dragged.GetString()];
+        const bool failed =
+            pose.diagnostics.size() == 2 &&
+            pose.diagnostics[0] ==
+                dragged.GetPrimPath().GetString() +
+                    ": inputs:defaultWeight is outside finite [0, 1]" &&
+            pose.diagnostics[1] == "native program did not complete generation";
+        if (!failed)
+            std::printf("FAIL %s: the drag did not stop at its constraint\n",
+                        dragged.GetText());
+        CHECK(failed);
+        return true;
+    }
     const auto found = invalidWeightDrags.find(dragged.GetString());
     if (found == invalidWeightDrags.end())
         return false;
@@ -572,8 +593,8 @@ def Xform "Asset"
             )
             {
                 double avars:rz.timeSamples = {
-                    1: 0.2,
-                    10: 0.4,
+                    1: 0.1,
+                    10: 0.2,
                 }
                 matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
             }
@@ -836,6 +857,8 @@ TestWalkResolverEqualsGetAttribute(const std::string &examples)
                     ++nanFailures;
                     continue;
                 }
+                if (CheckInvalidWeightDrag(pose, cases[c]))
+                    continue;
                 CHECK(pose.valid);
                 const std::string what = "walk resolver " + name + " at " +
                                          Text(t.GetValue()) + " case " +
@@ -4733,7 +4756,8 @@ TestATrackedConstraintKeepsItsKey(const std::string &examples)
             }
             const RigExecBakedStep &s =
                 B->steps[B->opGraph.ops[c].originalIndex];
-            if (s.kind != RigExecBakedStepKind::Constraint) {
+            if (RigExecBakedIdentityOf(*B, s).kind !=
+                RigExecBakedStepKind::Constraint) {
                 continue;
             }
             const bool keeps = RigExecBakedConstraintSourceTracked(*B, s);
@@ -4834,12 +4858,13 @@ TestATrackedConstraintKeepsItsKey(const std::string &examples)
     const auto opOf = [&](const RigExecBakedProgramImpl &P) {
         for (uint32_t c = 0; c < P.opGraph.ops.size(); ++c) {
             const RigExecBakedStep &s = P.steps[P.opGraph.ops[c].originalIndex];
-            if (s.kind != RigExecBakedStepKind::Constraint || s.object < 0 ||
-                size_t(s.object) >= P.walkSteps.size() ||
-                P.walkSteps[size_t(s.object)].solverBatch) {
+            const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(P, s);
+            if (id.kind != RigExecBakedStepKind::Constraint || id.part >= 0 ||
+                id.object < 0 || size_t(id.object) >= P.walkSteps.size() ||
+                P.walkSteps[size_t(id.object)].solverBatch) {
                 continue;
             }
-            const int k = P.walkSteps[size_t(s.object)].index;
+            const int k = P.walkSteps[size_t(id.object)].index;
             if (k >= 0 && size_t(k) < P.constraints.size() &&
                 P.constraints[size_t(k)].path == follow.GetPath()) {
                 return c;

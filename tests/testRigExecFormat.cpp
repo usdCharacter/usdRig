@@ -737,7 +737,9 @@ _RichFileBody()
     constraint.worldUpVector = _In(InputTag::Vec3d);
     constraint.aimAxisFallback = _V3d(1);
     constraint.sceneUp = _V3d(4);
-    // Every flag a non-IK constraint may carry.
+    // A single-chain IK, a kind a Constraint step still solves, with every
+    // flag but preserve joint orientation.
+    constraint.singleChainIk = true;
     constraint.flags = uint8_t(fb::ConstraintFlags::ANY) &
                        ~RigExecWireConstraintPreserveJointOrientation;
     constraint.arrays = 0;
@@ -1610,12 +1612,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 46 &&
-                      RigExecFormatOldestReadable == 46,
-                  "format 46 runs Range smooths as op nodes and is "
-                  "the only format Open reads");
-    // Every older format requires re-export: its smooths ran as their own
-    // steps.
+    static_assert(RigExecFormatVersion == 47 &&
+                      RigExecFormatOldestReadable == 47,
+                  "format 47 solves transform and geometry constraints as op "
+                  "nodes and is the only format Open reads");
+    // Every older format requires re-export: its constraints solved on their
+    // Constraint steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1626,13 +1628,15 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 46 through " +
+            " (this reader reads 47 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 46 ? "re-export: Range smooths as op nodes" : "rebake");
+            (version < 47
+                 ? "re-export: transform and geometry constraints as op nodes"
+                 : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 46 ? reexports : rebakes);
+        ++(version < 47 ? reexports : rebakes);
     }
-    CHECK(reexports == 46 && rebakes == 1);
+    CHECK(reexports == 47 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -1947,6 +1951,7 @@ TestValidationSmoke()
            [](F &f) { f.pose->constraints[0].weightObjectIndex = 0; });
     expect("preserve orientation off SingleChainIK",
            "preserve joint orientation", [](F &f) {
+               f.pose->constraints[0].singleChainIk = false;
                f.pose->constraints[0].flags |=
                    RigExecWireConstraintPreserveJointOrientation;
            });
@@ -2989,6 +2994,44 @@ TestOpLookupOwners()
                _AppendStep(f, packetStep(f));
                look(f, place, 2, 0, -1);
            });
+    expect("a constraint lookup of a commit no constraint makes",
+           "a constraint lookup reads nothing constraint 0 holds",
+           [&](F &f) { look(f, place, 32, 0, -1); });
+    const auto constraintWalk = [](F &f) {
+        CHECK(f.pose);
+        if (f.pose->commits.empty())
+            f.pose->commits.emplace_back();
+        if (f.pose->walkSteps.empty())
+            f.pose->walkSteps.emplace_back();
+        CHECK(!f.pose->constraints.empty());
+        f.pose->walkSteps[0].solverBatch = false;
+        f.pose->walkSteps[0].index = 0;
+    };
+    for (const uint8_t source : {32, 33, 34, 35, 36, 37, 39})
+        expect("a constraint lookup on a placement node",
+               "reads a constraint its node does not solve", [&](F &f) {
+                   constraintWalk(f);
+                   look(f, place, source, 0,
+                        source == 37 ? 1 : (source == 32 ? 0 : -1));
+                   f.opGraph->lookups.back()->read = source == 33   ? 20
+                                                     : source == 35 ? 30
+                                                                    : 0;
+               });
+    for (const uint8_t target : {35, 36, 37})
+        expect("a constraint output on a placement node",
+               "node " + std::to_string(place) +
+                   " stores into constraint 0, which it does not solve",
+               [&](F &f) {
+                   if (target != 35)
+                       constraintWalk(f);
+                   auto output =
+                       std::make_unique<fb::RigExecWireOpHostOutput>();
+                   output->node = place;
+                   output->port = 1;
+                   output->target = target;
+                   output->object = 0;
+                   f.opGraph->hostOutputs.push_back(std::move(output));
+               });
     expect("commit versions on a placement node",
            "reads a commit its node does not write back",
            [&](F &f) { look(f, place, 30, 0, 0); });
@@ -3587,6 +3630,22 @@ TestPhaseTables()
         F file = _RecordFile();
         laterCommit(file);
         accepted("record before a later commit", file);
+    }
+    // A Constraint step solves IK/FK match, harmonics, single-chain IK and a
+    // constraint with no target; every other kind solves as op nodes.
+    {
+        _context = "phase tables: a Constraint step of a constraint with a "
+                   "target";
+        F file = _RecordFile();
+        file.pose->constraints[0].singleChainIk = false;
+        why.clear();
+        const bool ok = RigExecFormatValidate(file, &why);
+        const std::string want =
+            "(Constraint /Rig/Ctl): constraint 0 solves as op nodes";
+        CHECK(!ok && why.find(want) != std::string::npos);
+        if (ok || why.find(want) == std::string::npos)
+            std::printf("  got '%s', expected '%s'\n",
+                        ok ? "(accepted)" : why.c_str(), want.c_str());
     }
     // A non-final version: the binding reads what revision 0's fuse, step
     // 6, left (version 1), through RevisionDone[0] and ChainDirty[0].

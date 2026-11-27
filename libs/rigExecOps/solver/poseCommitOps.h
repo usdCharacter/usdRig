@@ -34,7 +34,9 @@ struct PoseCommitPayload {
 
 const rigExec::RigExecOpHandle &PoseCommit();
 
-// Per candidate (PointFrameList, slotCount each): Candidates, Entering (the
+// Per candidate (PointFrameList, slotCount each): Candidates, or one
+// Candidate (PointFrame, an input that takes slotCount values; one flagged
+// degenerate is absent, its solver having found no frame), Entering (the
 // joint's frame the delta is measured from) and Carry (what an absent
 // candidate's joint keeps); optional Present (BoolArray; unfed, all
 // present). Per descendant (PointFrameList, one per closest entry, fed when
@@ -59,6 +61,7 @@ const rigExec::RigExecPortHandle &PoseCommitSlots();
 const rigExec::RigExecPortHandle &PoseCommitDescendants();
 const rigExec::RigExecPortHandle &PoseCommitBaseSlots();
 const rigExec::RigExecPortHandle &PoseCommitBaseDescendants();
+const rigExec::RigExecPortHandle &PoseCommitCandidate();
 
 } // namespace rigExecOps
 

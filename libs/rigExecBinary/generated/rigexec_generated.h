@@ -22471,6 +22471,15 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// closest, 5 descendant carry, 6 descendant base carry. 31 (format 43):
   /// commit `object`'s candidates: `part` 0 their frames, 1 which are
   /// present.
+  /// 32 to 37 and 39 (format 47) read constraint commit `object`
+  /// (OpConstraintRead, rigExecEvalCore/opSteps.h, in `read`): 32 its
+  /// sources, `part` -1 all of them, else source `part`'s frame (`read`
+  /// 0) or rest frame (1); 33 a per-source table; 34 an input of its mover;
+  /// 35 its envelope: the weight it solves at, its delta weight or which
+  /// of its commit's candidates are present; 36 its rigExec:space carry;
+  /// 37 the world-up direction its aim reads, `part` the world-up mode
+  /// (OpConstraintWorldUp); 39 its geometry target's authored transform
+  /// (`read` 0) or whether it was read (1).
   uint8_t source() const {
     return GetField<uint8_t>(VT_SOURCE, 0);
   }
@@ -22587,7 +22596,9 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// 30 to 33 (format 43): the final candidate,
   /// final descendant, base candidate and base descendant versions pose
   /// commit `object` writes; 34 (format 43): which of its candidates are
-  /// present.
+  /// present; 35 (format 47): the frame constraint commit `object`'s mover
+  /// solved; 36 and 37 (format 47): the delta it measured against its
+  /// geometry target's authored transform and whether it measured one.
   /// 4 (format 42): a range chain member's output, group by group, into
   /// the vertex groups of revision `object` (geometry.revision_index), the
   /// groups its OpChain.writes names. 6 (format 44): the looked-up

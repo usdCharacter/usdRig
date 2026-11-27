@@ -2174,13 +2174,14 @@ InputKey(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
     }
     // Reads state only through a native id >= 0 or a delta base;
     // RigExecBakedConstraintSourceTracked tests the same gates.
-    if (step.kind == RigExecBakedStepKind::Constraint) {
+    if (const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        id.kind == RigExecBakedStepKind::Constraint) {
         Put(out, uint8_t(36));
-        Put(out, step.object);
-        const int index = step.object >= 0 &&
-                                  size_t(step.object) < B.walkSteps.size() &&
-                                  !B.walkSteps[size_t(step.object)].solverBatch
-                              ? B.walkSteps[size_t(step.object)].index
+        Put(out, id.object);
+        const int index = id.object >= 0 &&
+                                  size_t(id.object) < B.walkSteps.size() &&
+                                  !B.walkSteps[size_t(id.object)].solverBatch
+                              ? B.walkSteps[size_t(id.object)].index
                               : -1;
         if (index < 0 || size_t(index) >= B.constraints.size())
             invalid();
@@ -2480,7 +2481,8 @@ RigExecBakedOpInputKeyIsConstant(const RigExecBakedProgramImpl &B,
                                  const RigExecBakedStep &step)
 {
     return step.kind != RigExecBakedStepKind::AvarInputs &&
-           step.kind != RigExecBakedStepKind::Constraint &&
+           RigExecBakedIdentityOf(B, step).kind !=
+               RigExecBakedStepKind::Constraint &&
            step.bindingLeaves.empty() && step.leaves.empty() &&
            step.overrideSlots.empty() && step.readerWalks.empty() &&
            !KeysWeightOverlay(B, step);
@@ -2493,11 +2495,12 @@ bool
 RigExecBakedConstraintSourceTracked(const RigExecBakedProgramImpl &B,
                                     const RigExecBakedStep &step)
 {
-    if (step.kind != RigExecBakedStepKind::Constraint || step.object < 0 ||
-        size_t(step.object) >= B.walkSteps.size() ||
-        B.walkSteps[size_t(step.object)].solverBatch)
+    const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+    if (id.kind != RigExecBakedStepKind::Constraint || id.object < 0 ||
+        size_t(id.object) >= B.walkSteps.size() ||
+        B.walkSteps[size_t(id.object)].solverBatch)
         return false;
-    const int index = B.walkSteps[size_t(step.object)].index;
+    const int index = B.walkSteps[size_t(id.object)].index;
     if (index < 0 || size_t(index) >= B.constraints.size())
         return false;
     const auto &constraint = B.constraints[size_t(index)];

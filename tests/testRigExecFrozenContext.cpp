@@ -2681,6 +2681,105 @@ TestFrozenPoseCommitOpsMatchLive(const std::string &examplesDir)
     run(1028.0, "frozen pose commits under a drag", {target});
 }
 
+// Every transform and geometry constraint solves as op nodes keeping the
+// Constraint identity; the frozen job runs those nodes and publishes live's
+// pose, on animated frames and under a drag of a control.
+void
+TestFrozenConstraintOpsMatchLive(const std::string &examplesDir)
+{
+    for (const char *name :
+         {"08_AimEyes.usda", "10_AimXformTurret.usda",
+          "15_TransformMatrixMover.usda", "aimtest.usda", "aimtest_points.usda",
+          "14_VolumeConstrainedSweep.usda"}) {
+        UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/" + name);
+        CHECK(stage);
+        if (!stage)
+            continue;
+        SdfPath rig;
+        RigExecValueOverride drag;
+        for (const UsdPrim &prim : stage->Traverse()) {
+            if (rig.IsEmpty() && prim.GetTypeName() == "RigExecRoot")
+                rig = prim.GetPath();
+            const UsdAttribute tx = prim.GetAttribute(TfToken("avars:tx"));
+            double value = 0.0;
+            if (drag.prim.IsEmpty() && prim.GetTypeName() == "RigExecControl" &&
+                tx && tx.Get(&value)) {
+                drag.prim = prim.GetPath();
+                drag.attribute = TfToken("avars:tx");
+                drag.value = VtValue(value + 0.5);
+            }
+        }
+        CHECK(!rig.IsEmpty());
+        if (rig.IsEmpty())
+            continue;
+        RigExecRigEvaluator evaluator(stage, rig);
+        CHECK(evaluator.Compile());
+        const double start = stage->GetStartTimeCode();
+        const double end = std::max(stage->GetEndTimeCode(), start);
+        CHECK(evaluator.Evaluate(UsdTimeCode(start)).valid);
+        const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
+        std::set<size_t> constraintSteps;
+        for (size_t i = 0; i < B.steps.size(); ++i)
+            if (RigExecBakedIdentityOf(B, B.steps[i]).kind ==
+                RigExecBakedStepKind::Constraint) {
+                CHECK(B.steps[i].kind == RigExecBakedStepKind::OpNode);
+                constraintSteps.insert(i);
+            }
+        CHECK(!constraintSteps.empty());
+        std::shared_ptr<const RigExecFrozenProgram> frozen;
+        std::string error;
+        CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
+        if (!frozen)
+            continue;
+        size_t ran = 0;
+        const auto run = [&](double frame, const std::string &what,
+                             const std::vector<RigExecValueOverride> &drags) {
+            evaluator.SetInteractiveOverrides(drags);
+            const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
+            RigExecFrameInputs inputs;
+            CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame), drags,
+                                           &inputs, &error));
+            RigExecFrozenEvalContext context;
+            context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+            context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+            context.varyingInputCount = inputs.values.size();
+            if (evaluator.GetPublishWeightFields())
+                context.flags |= kRigExecFrozenPublishWeightFields;
+            if (evaluator.GetSolverGuidesEnabled())
+                context.flags |= kRigExecFrozenSolverGuidesEnabled;
+            context.frozen = frozen.get();
+            auto workspace = RigExecCreateFrozenWorkspace(frozen);
+            context.workspace = workspace.get();
+            RigExecFrozenRunReport report;
+            const RigExecRigPose pose = RigExecEvaluateFrozen(
+                context, inputs, RigExecMakeProductionStepRunner(),
+                RigExecCancellationToken(), &report);
+            evaluator.SetInteractiveOverrides({});
+            for (const auto &entry : report.region)
+                if (entry.kind == "Constraint") {
+                    CHECK(constraintSteps.count(entry.step) == 1);
+                    ++ran;
+                }
+            CHECK(live.valid && pose.valid);
+            CheckPosesBitIdentical(what.c_str(), live, pose);
+        };
+        const std::string what = std::string("frozen constraints ") + name;
+        // At frame 0 the aimtest targets sit on their aim points: the aims
+        // have no solution there and leave their targets as they entered.
+        run(0.0, what + " at frame 0", {});
+        run(0.5 * (start + end), what, {});
+        run(end, what, {});
+        if (!drag.prim.IsEmpty())
+            run(end, what + " under a drag", {drag});
+        if (ran == 0) {
+            std::printf("FAIL %s: the frozen jobs ran no constraint\n",
+                        what.c_str());
+            ++failures;
+        }
+    }
+}
+
 // Frozen publishes exactly live's weightFrames on every path. On
 // 14_VolumeConstrainedSweep with a volume outside the rig that only a
 // constraint names, that volume has a slot and a placement step, which the
@@ -7757,12 +7856,13 @@ TestUnboundConstraintArrayKeysIgnoreEmptyRows()
     context.compiledRigSignature = evaluator.GetCompiledRigSignature();
     context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
     context.varyingInputCount = inputs.values.size();
-    const auto run = [&](const char *label, bool expectConstraint) {
+    const auto run = [&](const char *label, bool expectConstraint,
+                         bool valid = true) {
         RigExecFrozenRunReport report;
         const auto pose = RigExecEvaluateFrozen(
             context, inputs, RigExecMakeProductionStepRunner(),
             RigExecCancellationToken(), &report);
-        CHECK(report.ran && pose.valid);
+        CHECK(report.ran && pose.valid == valid);
         const bool executed = std::any_of(
             report.region.begin(), report.region.end(),
             [&](const auto &entry) { return entry.kind == "Constraint"; });
@@ -7783,7 +7883,7 @@ TestUnboundConstraintArrayKeysIgnoreEmptyRows()
         return;
     named->hasValue = true;
     named->value = VtValue(VtFloatArray{1.0f, 1.0f});
-    const auto malformed = run("declared malformed weights", true);
+    const auto malformed = run("declared malformed weights", true, false);
     CHECK(std::any_of(
         malformed.diagnostics.begin(), malformed.diagnostics.end(),
         [](const auto &line) {
@@ -10222,6 +10322,7 @@ main(int argc, char **argv)
         TestFrozenSpaceMatrixOpsMatchLive(argv[1]);
         TestFrozenPoseCommitOpsMatchLive(argv[1]);
         TestFrozenProviderOpsMatchLive(argv[1]);
+        TestFrozenConstraintOpsMatchLive(argv[1]);
         TestUnavailableTargetSamplesLocalInvalidRoles(argv[1]);
         TestProjectorSpacesMatchDynamic(argv[1]);
         TestProjectorMissPublishesOffset(argv[1]);
