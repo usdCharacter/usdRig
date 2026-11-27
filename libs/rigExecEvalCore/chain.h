@@ -60,7 +60,6 @@ inline constexpr int kChainOpSkin = int(fb::RevisionOp::Skin);
 inline constexpr int kChainOpBlendShape = int(fb::RevisionOp::BlendShape);
 inline constexpr int kChainOpLattice = int(fb::RevisionOp::Lattice);
 inline constexpr int kChainOpWire = int(fb::RevisionOp::Wire);
-inline constexpr int kChainOpDeltaMush = int(fb::RevisionOp::DeltaMush);
 
 /// Acceptance ordinals both front ends already spell
 /// (RigExecRevisionAcceptance and its playback twin).
@@ -618,12 +617,6 @@ RunGroupStepBody(Host &host, size_t chain, size_t revision, size_t g)
         host.state().runBlendGroup(chain, revision, g, begin, end, entering,
                                    &state);
         state.ok = true;
-        return {Outcome::Applied, kNoStepDetail};
-    }
-    if (!host.state().prepareGroupHalo(chain, revision, g, entering)) {
-        state.ok = false;
-        RigExecPublishPassedGroup(&state, entering, from);
-        host.state().noteGateViolation(chain, revision);
         return {Outcome::Applied, kNoStepDetail};
     }
     const int k = RigExecGroupScratch(&state, end - begin);

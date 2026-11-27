@@ -9,6 +9,7 @@
 #include "rigExecEvalCore/constraintLookups.h"
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecEvalCore/propertyLookups.h"
+#include "rigExecOps/deform/deltaMushOp.h"
 #include "rigExecOps/deform/matrixDeformOp.h"
 #include "rigExecOps/deform/pointOps.h"
 #include "rigExecStdTypes/array.h"
@@ -75,6 +76,12 @@ struct BakedOpHost {
                       std::string *error) const
     {
         return RigExecBakedRevisionLeaf(B, id, enabled, weight, radial, error);
+    }
+    bool LookUpRevision(uint32_t index, const eval::OpLookup &lookup,
+                        const RigExecTypeDesc &type, void *value,
+                        std::string *error) const
+    {
+        return RigExecBakedLookUpRevision(B, index, lookup, type, value, error);
     }
     bool StoreRevisionEnabled(const eval::OpHostOutput &output,
                               const void *value, std::string *error) const
@@ -354,6 +361,11 @@ DeclarePortReads(const RigExecBakedProgramImpl &B,
                    (reader.head || chain == kRigExecInvalidIndex)) {
             const eval::OpLookup &lookup = layout.lookups[input.object];
             matrices(lookup);
+            if (lookup.source == uint8_t(eval::OpLookupSource::RevisionLeaf) &&
+                lookup.read == uint8_t(eval::OpRevisionRead::ChainBase) &&
+                lookup.object < B.revisionIndex.size())
+                reads->push_back(RigExecBakedOne(
+                    D::ChainBase, B.revisionIndex[lookup.object].first));
             if (lookup.source == uint8_t(eval::OpLookupSource::List))
                 for (int32_t e = 0; e < lookup.part; ++e)
                     matrices(layout.lookups[lookup.object + uint32_t(e)]);
@@ -447,14 +459,18 @@ struct PointJoin {
 /// MoverTransform node fed the matrices FoldInfluences would fold, the
 /// transform the first present of a frame record, the constraint delta and
 /// the provider table, and a MatrixDeform range chain member; per Range
-/// smooth (opSmooth) a Smooth member over the compiled topology. Each member
+/// smooth (opSmooth) a Smooth member over the compiled topology; per Range
+/// delta mush (opMush) a DeltaMush member over the compiled topology, edges
+/// and iteration count, its other inputs looked up per frame and its frame
+/// provider selected as a matrix mover's reference. Each member
 /// stores its groups and reads the points entering its revision: the
 /// output of the op revision before it in its point chain, so the two share
 /// one range chain, when that one writes every group or this one reads
 /// point by point, and this one's weights do not read the entering points;
 /// else the stored version. A revision \p apart names always reads the
 /// stored version. \p nodeRevision gets each node's revision id, \p joins
-/// each node-to-node feed. False for a matrix with no transform.
+/// each node-to-node feed. False for a matrix with no transform or a delta
+/// mush framed by more than one provider.
 bool
 AddPointChainOps(const RigExecBakedProgramImpl &B,
                  RigExecRigDescBuilder *builder, eval::OpStepLayout *layout,
@@ -533,52 +549,6 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                 previousOut = &out;
                 previousWritesAll = writesAll;
             };
-            if (revision.opSmooth) {
-                const RigExecNodeId smooth =
-                    builder->AddOp(rigExecOps::Smooth());
-                points(smooth, rigExecOps::SmoothPoints(), true);
-                for (const auto &[ints, port] :
-                     {std::make_pair(&revision.opSmoothCounts,
-                                     &rigExecOps::SmoothCounts()),
-                      std::make_pair(&revision.opSmoothIndices,
-                                     &rigExecOps::SmoothIndices())}) {
-                    builder->BindInput(smooth, *port);
-                    eval::OpConstant constant;
-                    constant.node = smooth;
-                    constant.port = port->Index();
-                    constant.bytes.resize(ints->size() * sizeof(int32_t));
-                    if (!ints->empty())
-                        std::memcpy(constant.bytes.data(), ints->cdata(),
-                                    constant.bytes.size());
-                    layout->constants.push_back(std::move(constant));
-                }
-                enabled(smooth, rigExecOps::SmoothEnabled());
-                if (revision.weightCurrentPhase) {
-                    const RigExecBakedOpFeed *field =
-                        feed(fields, revision.weightField);
-                    if (!field)
-                        return Fail(error, revision.moverPathText +
-                                               ": its weight field makes no "
-                                               "weights");
-                    builder->Connect(field->node, *field->port, smooth,
-                                     rigExecOps::SmoothEnvelope());
-                } else if (revision.weightObject >= 0) {
-                    const RigExecBakedOpFeed *packet =
-                        feed(packets, revision.weightObject);
-                    if (!packet)
-                        return Fail(error, revision.moverPathText +
-                                               ": its weight object makes no "
-                                               "packet");
-                    builder->Connect(packet->node, *packet->port, smooth,
-                                     rigExecOps::SmoothPacket());
-                } else {
-                    bind(smooth, rigExecOps::SmoothDefaultWeight(),
-                         {{uint8_t(L::RevisionLeaf), uint32_t(id), -1,
-                           uint8_t(eval::OpRevisionRead::DefaultWeight)}});
-                }
-                stores(smooth, rigExecOps::SmoothOut());
-                continue;
-            }
             const int32_t phase = revision.finalPhase ? 0 : 1;
             const bool atPrim = revision.binding.transformPhase.kind ==
                                 RigExecReadPhaseKind::AtPrim;
@@ -596,6 +566,147 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                 candidates.push_back(last);
                 return candidates;
             };
+            const auto records = [&](size_t k) {
+                return k < revision.influenceRecords.size()
+                           ? &revision.influenceRecords[k]
+                           : nullptr;
+            };
+            const auto constant = [&](RigExecNodeId node,
+                                      const RigExecPortHandle &port,
+                                      const int32_t *ints, size_t count) {
+                builder->BindInput(node, port);
+                eval::OpConstant bytes;
+                bytes.node = node;
+                bytes.port = port.Index();
+                bytes.bytes.resize(count * sizeof(int32_t));
+                if (count)
+                    std::memcpy(bytes.bytes.data(), ints, bytes.bytes.size());
+                layout->constants.push_back(std::move(bytes));
+            };
+            // The points the revision writes, as ascending [begin, end) pairs.
+            const auto written = [&](RigExecNodeId node,
+                                     const RigExecPortHandle &port) {
+                std::vector<int32_t> ranges;
+                for (size_t g = 0; g < revision.groupWritten.size() &&
+                                   g + 1 < chain.groupBounds.size();
+                     ++g) {
+                    if (!revision.groupWritten[g])
+                        continue;
+                    if (!ranges.empty() &&
+                        ranges.back() == chain.groupBounds[g])
+                        ranges.back() = chain.groupBounds[g + 1];
+                    else
+                        ranges.insert(ranges.end(), {chain.groupBounds[g],
+                                                     chain.groupBounds[g + 1]});
+                }
+                constant(node, port, ranges.data(), ranges.size());
+            };
+            const auto weighs = [&](RigExecNodeId node,
+                                    const RigExecPortHandle &envelope,
+                                    const RigExecPortHandle &packetPort,
+                                    const RigExecPortHandle &defaultWeight) {
+                if (revision.weightCurrentPhase) {
+                    const RigExecBakedOpFeed *field =
+                        feed(fields, revision.weightField);
+                    if (!field)
+                        return Fail(error, revision.moverPathText +
+                                               ": its weight field makes no "
+                                               "weights");
+                    builder->Connect(field->node, *field->port, node, envelope);
+                } else if (revision.weightObject >= 0) {
+                    const RigExecBakedOpFeed *packet =
+                        feed(packets, revision.weightObject);
+                    if (!packet)
+                        return Fail(error, revision.moverPathText +
+                                               ": its weight object makes no "
+                                               "packet");
+                    builder->Connect(packet->node, *packet->port, node,
+                                     packetPort);
+                } else {
+                    bind(node, defaultWeight,
+                         {{uint8_t(L::RevisionLeaf), uint32_t(id), -1,
+                           uint8_t(eval::OpRevisionRead::DefaultWeight)}});
+                }
+                return true;
+            };
+            if (revision.opMush) {
+                using Read = eval::OpRevisionRead;
+                rigExecOps::DeltaMushPayload payload;
+                payload.iterations = revision.opMushIterations;
+                payload.settings.edges.assign(revision.opMushEdges.cbegin(),
+                                              revision.opMushEdges.cend());
+                const RigExecNodeId mush =
+                    builder->AddOp(rigExecOps::DeltaMush(), &payload);
+                points(mush, rigExecOps::DeltaMushPoints(), true);
+                constant(mush, rigExecOps::DeltaMushCounts(),
+                         revision.opMushCounts.cdata(),
+                         revision.opMushCounts.size());
+                constant(mush, rigExecOps::DeltaMushIndices(),
+                         revision.opMushIndices.cdata(),
+                         revision.opMushIndices.size());
+                enabled(mush, rigExecOps::DeltaMushEnabled());
+                for (const auto &[port, read] :
+                     {std::make_pair(&rigExecOps::DeltaMushRest(),
+                                     Read::RestPoints),
+                      std::make_pair(&rigExecOps::DeltaMushBase(),
+                                     Read::ChainBase),
+                      std::make_pair(&rigExecOps::DeltaMushStep(),
+                                     Read::MushStep),
+                      std::make_pair(&rigExecOps::DeltaMushPinBorders(),
+                                     Read::MushPinBorders),
+                      std::make_pair(&rigExecOps::DeltaMushDistanceWeight(),
+                                     Read::MushDistanceWeight),
+                      std::make_pair(&rigExecOps::DeltaMushDisplacement(),
+                                     Read::MushDisplacement),
+                      std::make_pair(&rigExecOps::DeltaMushSmoothing(),
+                                     Read::MushSmoothing),
+                      std::make_pair(&rigExecOps::DeltaMushFrameTransport(),
+                                     Read::MushFrameTransport),
+                      std::make_pair(&rigExecOps::DeltaMushSmoothWeights(),
+                                     Read::MushSmoothWeights),
+                      std::make_pair(&rigExecOps::DeltaMushOnlySmooth(),
+                                     Read::MushOnlySmooth),
+                      std::make_pair(
+                          &rigExecOps::DeltaMushComputationToTarget(),
+                          Read::MushComputationToTarget)})
+                    bind(mush, *port,
+                         {{uint8_t(L::RevisionLeaf), uint32_t(id), -1,
+                           uint8_t(read)}});
+                if (revision.influenceSlots.size() > 1)
+                    return Fail(error, revision.moverPathText +
+                                           ": a delta mush is framed by one "
+                                           "provider");
+                if (!revision.influenceSlots.empty())
+                    bind(mush, rigExecOps::DeltaMushFrame(),
+                         phased(records(0), table(revision.influenceSlots[0])));
+                if (!weighs(mush, rigExecOps::DeltaMushEnvelope(),
+                            rigExecOps::DeltaMushPacket(),
+                            rigExecOps::DeltaMushDefaultWeight()))
+                    return false;
+                if (!writesAll && !revision.weightCurrentPhase &&
+                    revision.weightObject >= 0)
+                    written(mush, rigExecOps::DeltaMushWritten());
+                stores(mush, rigExecOps::DeltaMushOut());
+                continue;
+            }
+            if (revision.opSmooth) {
+                const RigExecNodeId smooth =
+                    builder->AddOp(rigExecOps::Smooth());
+                points(smooth, rigExecOps::SmoothPoints(), true);
+                constant(smooth, rigExecOps::SmoothCounts(),
+                         revision.opSmoothCounts.cdata(),
+                         revision.opSmoothCounts.size());
+                constant(smooth, rigExecOps::SmoothIndices(),
+                         revision.opSmoothIndices.cdata(),
+                         revision.opSmoothIndices.size());
+                enabled(smooth, rigExecOps::SmoothEnabled());
+                if (!weighs(smooth, rigExecOps::SmoothEnvelope(),
+                            rigExecOps::SmoothPacket(),
+                            rigExecOps::SmoothDefaultWeight()))
+                    return false;
+                stores(smooth, rigExecOps::SmoothOut());
+                continue;
+            }
             std::vector<eval::OpLookup> transform;
             if (atPrim)
                 for (const int record : revision.transformRecords)
@@ -620,11 +731,6 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                 bind(mover, rigExecOps::MoverTransformSpace(),
                      {table(revision.transformSpaceSlot)});
             const std::vector<int> &references = revision.influenceSlots;
-            const auto records = [&](size_t k) {
-                return k < revision.influenceRecords.size()
-                           ? &revision.influenceRecords[k]
-                           : nullptr;
-            };
             if (!references.empty())
                 bind(mover, rigExecOps::MoverTransformReference(),
                      phased(records(0), table(references[0])));
@@ -646,54 +752,12 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                 bind(deform, rigExecOps::MatrixDeformRadial(),
                      {{uint8_t(L::RevisionLeaf), uint32_t(id), -1,
                        uint8_t(eval::OpRevisionRead::Radial)}});
-            if (!writesAll) {
-                std::vector<int32_t> written;
-                for (size_t g = 0; g < revision.groupWritten.size() &&
-                                   g + 1 < chain.groupBounds.size();
-                     ++g) {
-                    if (!revision.groupWritten[g])
-                        continue;
-                    if (!written.empty() &&
-                        written.back() == chain.groupBounds[g])
-                        written.back() = chain.groupBounds[g + 1];
-                    else
-                        written.insert(
-                            written.end(),
-                            {chain.groupBounds[g], chain.groupBounds[g + 1]});
-                }
-                builder->BindInput(deform, rigExecOps::MatrixDeformWritten());
-                eval::OpConstant constant;
-                constant.node = deform;
-                constant.port = rigExecOps::MatrixDeformWritten().Index();
-                constant.bytes.resize(written.size() * sizeof(int32_t));
-                if (!written.empty())
-                    std::memcpy(constant.bytes.data(), written.data(),
-                                constant.bytes.size());
-                layout->constants.push_back(std::move(constant));
-            }
-            if (revision.weightCurrentPhase) {
-                const RigExecBakedOpFeed *field =
-                    feed(fields, revision.weightField);
-                if (!field)
-                    return Fail(error, revision.moverPathText +
-                                           ": its weight field makes no "
-                                           "weights");
-                builder->Connect(field->node, *field->port, deform,
-                                 rigExecOps::MatrixDeformEnvelope());
-            } else if (revision.weightObject >= 0) {
-                const RigExecBakedOpFeed *packet =
-                    feed(packets, revision.weightObject);
-                if (!packet)
-                    return Fail(error, revision.moverPathText +
-                                           ": its weight object makes no "
-                                           "packet");
-                builder->Connect(packet->node, *packet->port, deform,
-                                 rigExecOps::MatrixDeformPacket());
-            } else {
-                bind(deform, rigExecOps::MatrixDeformDefaultWeight(),
-                     {{uint8_t(L::RevisionLeaf), uint32_t(id), -1,
-                       uint8_t(eval::OpRevisionRead::DefaultWeight)}});
-            }
+            if (!writesAll)
+                written(deform, rigExecOps::MatrixDeformWritten());
+            if (!weighs(deform, rigExecOps::MatrixDeformEnvelope(),
+                        rigExecOps::MatrixDeformPacket(),
+                        rigExecOps::MatrixDeformDefaultWeight()))
+                return false;
             nodeRevision->push_back({mover, id});
             stores(deform, rigExecOps::MatrixDeformOut());
         }
@@ -1152,6 +1216,7 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
         return false;
     B.propertyKeyHold.assign(layout.lookups.size(), VtArray<GfVec2f>());
     B.propertyPointHold.assign(layout.lookups.size(), VtVec3fArray());
+    B.revisionLeafHold.assign(layout.lookups.size(), VtValue());
     B.chainVersionGather.assign(layout.lookups.size(), {});
     op->outputs = injection.outputs;
     for (const RigExecDescNode &node : desc->Data().nodes) {
@@ -1215,11 +1280,15 @@ RigExecBakedRunOpStep(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
         RigExecBakedPropertyInputLines(B, chain, part, &step->lines);
     }
     const eval::OpStepKind kind = eval::OpStepKind(uint8_t(step->kind));
+    RigExecNodeId failed = kRigExecInvalidIndex;
     if (eval::RunOpStep(B.opProgram->layout, host, &state, kind, step->object,
-                        step->part, &error))
+                        step->part, &error, &failed))
         return;
     step->failed = true;
     const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(B, *step);
+    const std::vector<int> &nodeRevision = B.opProgram->nodeRevision;
+    const int failedRevision =
+        failed < nodeRevision.size() ? nodeRevision[failed] : -1;
     if (property)
         step->diagnostics.push_back(
             B.propertyChains[chain].revisions[part - 1].linePrefix + ": " +
@@ -1233,6 +1302,14 @@ RigExecBakedRunOpStep(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
     else if (origin && origin->family == RigExecBakedOpFamily::Constraint)
         step->diagnostics.push_back(
             RigExecBakedConstraintFailure(B, origin->object, error));
+    else if (!origin && failedRevision >= 0 &&
+             size_t(failedRevision) < B.revisionIndex.size())
+        step->diagnostics.push_back(
+            B.chains[size_t(B.revisionIndex[size_t(failedRevision)].first)]
+                .revisions[size_t(
+                    B.revisionIndex[size_t(failedRevision)].second)]
+                .moverPathText +
+            ": " + error);
     else if (const RigExecBakedStepIdentity id =
                  RigExecBakedIdentityOf(B, *step);
              !origin && id.kind != step->kind &&

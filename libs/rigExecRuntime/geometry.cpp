@@ -2282,8 +2282,6 @@ struct RrGeoRevisionRangeInputs {
     // BlendShape: the envelope resolved at the full count, the weight its
     // kernel blends each point by; empty at full strength.
     std::vector<float> blendWeights;
-    // DeltaMush: the rest data the whole kernel deforms with.
-    std::shared_ptr<const RigExecDeltaMushRestData<RrVec3f, RrVec3d>> mushRest;
 };
 
 // RrGeoRevisionKernelAcceptance(op, p, count, envelopeResolves), exactly
@@ -2305,46 +2303,6 @@ RrGeoPrepareRevisionRanges(
     prepared->latticeBind.reset();
     prepared->latticeBasis = nullptr;
     prepared->blendWeights.clear();
-    prepared->mushRest.reset();
-    if (op == RrGeoOpDeltaMush) {
-        // RigExecPrepareRevisionRanges's DeltaMush answer: what fails the
-        // whole kernel (the packet, the "apply once" envelope, the rest data,
-        // the displacement, the computation map); every other failure is a
-        // point's own.
-        if (!RrGeoPacketMatches(op, p) ||
-            (!RrGeoEnvelopeIsFullStrength(p.weights) &&
-             !p.weights.ResolvesAll(count))) {
-            return RrGeoAcceptance::Refuses;
-        }
-        std::shared_ptr<const RigExecDeltaMushRestData<RrVec3f, RrVec3d>> rest;
-        if (surfaceCache) {
-            if (surfaceCache->MushRest(p.restPoints, p.topologyCounts,
-                                       p.topologyIndices, p.mushIterations,
-                                       p.mushStep, p.mushPinBorders,
-                                       p.mushDistanceWeight, p.mushSettings)) {
-                rest = surfaceCache->RetainedMushRest();
-            }
-        } else {
-            auto built =
-                std::make_shared<RigExecDeltaMushRestData<RrVec3f, RrVec3d>>();
-            if (RigExecBuildDeltaMushRestData<RrVec3f, RrVec3d>(
-                    p.restPoints, p.topologyCounts, p.topologyIndices,
-                    p.mushIterations, p.mushStep, p.mushPinBorders,
-                    p.mushDistanceWeight, p.mushSettings, built.get())) {
-                rest = std::move(built);
-            }
-        }
-        const double d = p.mushDisplacement;
-        if (!rest || !rest->validated || rest->rest.size() != count ||
-            !std::isfinite(d) ||
-            (rest->settings.smoothing == RigExecDeltaMushSmoothing::Rest &&
-             (d < 0 || d > 1)) ||
-            !deltaMushDetail::ComputationMapValid(p.mushComputationToTarget)) {
-            return RrGeoAcceptance::Refuses;
-        }
-        prepared->mushRest = std::move(rest);
-        return RrGeoAcceptance::Applies;
-    }
     const RrGeoAcceptance acceptance =
         RrGeoRevisionKernelAcceptance(op, p, count, envelopeResolves);
     if (acceptance != RrGeoAcceptance::Applies) {
@@ -2406,17 +2364,12 @@ RrGeoPrepareRevisionRanges(
 // blends one below full strength, else null. \p untouched, when given,
 // receives whether the result is \p in itself, and then \p out is not
 // written. Reads only \p prepared and the packet, so groups are independent.
-// \p halo, required for DeltaMush, holds the entering points of
-// this group and of every group a point it reads lies in; \p mush, required
-// for DeltaMush, is the group's own plan and scratch.
 bool
-RrGeoRunRevisionGroup(
-    int op, const RrGeoMoverParameters &p,
-    const RrGeoRevisionRangeInputs &prepared, const RrVec3f *in, RrVec3f *out,
-    size_t count, size_t begin, size_t end, const float *separateEnvelope,
-    bool useSimd, bool *untouched = nullptr,
-    const RigExecGroupPoints<RrVec3f> *halo = nullptr,
-    RigExecDeltaMushGroupState<RrVec3f, RrVec3d> *mush = nullptr)
+RrGeoRunRevisionGroup(int op, const RrGeoMoverParameters &p,
+                      const RrGeoRevisionRangeInputs &prepared,
+                      const RrVec3f *in, RrVec3f *out, size_t count,
+                      size_t begin, size_t end, const float *separateEnvelope,
+                      bool useSimd, bool *untouched = nullptr)
 {
     if (untouched) {
         *untouched = false;
@@ -2513,15 +2466,6 @@ RrGeoRunRevisionGroup(
         }
         return true;
     }
-    case RrGeoOpDeltaMush:
-        if (n > 0 &&
-            (!prepared.mushRest || !halo || !mush || halo->At(begin) != in ||
-             !RigExecApplyDeltaMushGroup<RrVec3f, RrVec3d, RrMat4d>(
-                 prepared.mushRest, p.mushDisplacement,
-                 p.mushComputationToTarget, *halo, begin, end, out, mush))) {
-            return false;
-        }
-        break;
     default:
         return false;
     }
@@ -2637,15 +2581,9 @@ struct RrGeometryScratch {
         // The RevisionOut slot of group 0 as this revision publishes it:
         // chunk_base for Range, chunk_base + chunks for Whole.
         int64_t groupSlotBase = 0;
-        // Range Smooth or DeltaMush (Open state): per group g, per group
-        // h, whether g's step reads group h of its entering version (its
-        // own, a declared halo slot, or a group entering from the base,
-        // which every group step reads); and g's step's table of those
-        // groups' points.
-        std::vector<std::vector<char>> haloReads;
-        std::vector<std::vector<const RrVec3f *>> haloPoints;
-        // Range DeltaMush: per group, its step's plan and scratch.
-        std::vector<RigExecDeltaMushGroupState<RrVec3f, RrVec3d>> mushGroups;
+        // The rest points and smoothing weights its op's lookups last lent.
+        std::vector<RrVec3f> lookedUpRest;
+        std::vector<float> lookedUpSmoothWeights;
         // Per chain group (pointBlocks.h): its publication and, for a Whole
         // keyed skin, chunk g's speculative result. Only written groups are
         // ever published; each owns two buffers sized at Open.
@@ -4079,46 +4017,6 @@ RrGeometrySizeScratch(RrProgram *program, std::string *error)
                                          : int64_t(wire.chunks.size()));
                 rev.groups.resize(groups);
                 rev.groupIds.assign(groups, RigExecGroupSource());
-                if (rev.role == RrGeoRole::Range &&
-                    (wire.op == uint8_t(RrGeoOpSmooth) ||
-                     wire.op == uint8_t(RrGeoOpDeltaMush))) {
-                    rev.haloReads.assign(groups, std::vector<char>(groups, 0));
-                    rev.haloPoints.assign(
-                        groups, std::vector<const RrVec3f *>(groups, nullptr));
-                    if (wire.op == uint8_t(RrGeoOpDeltaMush)) {
-                        rev.mushGroups.assign(
-                            groups,
-                            RigExecDeltaMushGroupState<RrVec3f, RrVec3d>());
-                    }
-                    for (const RigExecWireStep &step : file.steps) {
-                        if (step.kind != RigExecWireStepKind::RevisionChunk ||
-                            step.object < 0 || size_t(step.object) != id ||
-                            step.part < 0 || size_t(step.part) >= groups) {
-                            continue;
-                        }
-                        std::vector<char> &reads =
-                            rev.haloReads[size_t(step.part)];
-                        reads[size_t(step.part)] = 1;
-                        for (size_t h = 0; h < groups; ++h) {
-                            const int w = rev.enteringWriter[h];
-                            if (w < 0) {
-                                reads[h] = 1;
-                                continue;
-                            }
-                            const int64_t slot =
-                                out.revisions[size_t(w)].groupSlotBase +
-                                int64_t(h);
-                            for (const auto &read : step.reads) {
-                                if (read.domain() ==
-                                        RigExecWireSlotDomain::RevisionOut &&
-                                    int64_t(read.begin()) <= slot &&
-                                    slot < int64_t(read.end())) {
-                                    reads[h] = 1;
-                                }
-                            }
-                        }
-                    }
-                }
                 for (size_t g = 0; g < groups; ++g) {
                     if (!rev.groupWritten[g]) {
                         continue;
@@ -7005,50 +6903,15 @@ struct RrChainState {
                    ? rev.envelope.data()
                    : nullptr;
     }
-    bool prepareGroupHalo(size_t chain, size_t revision, size_t g,
-                          const RigExecPointsRef<RrVec3f> &entering)
-    {
-        Chain &c = chainAt(chain);
-        Revision &rev = revisionAt(chain, revision);
-        const bool mush = rev.op == RrGeoOpDeltaMush;
-        if (rev.op != RrGeoOpSmooth && !mush) {
-            return true;
-        }
-        const size_t groups = c.groupBounds.size() - 1;
-        bool haloOk = g < rev.haloReads.size() && g < rev.haloPoints.size() &&
-                      rev.haloPoints[g].size() == groups &&
-                      (!mush || g < rev.mushGroups.size());
-        for (size_t h = 0; haloOk && h < groups; ++h) {
-            rev.haloPoints[g][h] = nullptr;
-            if (!rev.haloReads[g][h]) {
-                continue;
-            }
-            const RigExecPointsRef<RrVec3f> &group =
-                h == g ? entering : RrGeoGroupAt(c, revision, h, nullptr);
-            haloOk =
-                group.count == size_t(c.groupBounds[h + 1] - c.groupBounds[h]);
-            rev.haloPoints[g][h] = group.data;
-        }
-        return haloOk;
-    }
-    bool runRevisionGroup(size_t chain, size_t revision, size_t g,
+    bool runRevisionGroup(size_t chain, size_t revision, size_t,
                           const RrVec3f *in, RrVec3f *out, size_t count,
                           size_t begin, size_t end, const float *envelope,
                           bool *untouched)
     {
-        Chain &c = chainAt(chain);
         Revision &rev = revisionAt(chain, revision);
-        const bool mush = rev.op == RrGeoOpDeltaMush;
-        RigExecGroupPoints<RrVec3f> halo;
-        if (mush) {
-            halo.bounds = c.groupBounds.data();
-            halo.groups = c.groupBounds.size() - 1;
-            halo.points = rev.haloPoints[g].data();
-        }
-        return RrGeoRunRevisionGroup(
-            rev.op, rev.parameters, rev.rangeInputs, in, out, count, begin, end,
-            envelope, program->geoSettings.useSimd, untouched,
-            mush ? &halo : nullptr, mush ? &rev.mushGroups[g] : nullptr);
+        return RrGeoRunRevisionGroup(rev.op, rev.parameters, rev.rangeInputs,
+                                     in, out, count, begin, end, envelope,
+                                     program->geoSettings.useSimd, untouched);
     }
     bool runWholeSkinChunk(size_t chain, size_t revision, size_t g)
     {
@@ -8852,6 +8715,100 @@ RrGeoRevisionLeaf(const RrProgram *program, uint32_t revision, bool *enabled,
                              RrGeoAttrRead(rev, RrGeoAttrWeightBlend),
                              "linear") == "radial";
     return true;
+}
+
+bool
+RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
+                    const RigExecTypeDesc &type, void *value,
+                    std::string *error)
+{
+    using Read = eval::OpRevisionRead;
+    auto *scratch = static_cast<RrGeometryScratch *>(program->geo.get());
+    const auto fail = [&]() {
+        if (error)
+            *error = "op nodes: revision " + std::to_string(lookup.object) +
+                     " has no input " + std::to_string(lookup.read) +
+                     " of the looked-up type";
+        return false;
+    };
+    if (!scratch || !program->geometry ||
+        lookup.object >= program->geometry->revisionIndex.size())
+        return fail();
+    const auto &[chain, r] = program->geometry->revisionIndex[lookup.object];
+    RrGeometryScratch::Chain &c = scratch->chains[size_t(chain)];
+    RrGeometryScratch::Revision &rev = c.revisions[size_t(r)];
+    const auto put = [&](const auto &v) {
+        if (!type.triviallyCopyable || type.size != sizeof(v))
+            return fail();
+        std::memcpy(value, &v, sizeof(v));
+        return true;
+    };
+    const auto lend = [&](const void *data, size_t count) {
+        if (!type.borrow)
+            return fail();
+        type.borrow(value, data, count);
+        return true;
+    };
+    const auto attr = [&](RrGeoAttr name, bool rest = false) {
+        return RrGeoAttrRead(rev, name, rest);
+    };
+    switch (Read(lookup.read)) {
+    case Read::RestPoints:
+        RrGeoReadVec3fArray(program, scratch, attr(RrGeoAttrRestPoints, true),
+                            nullptr, &rev.lookedUpRest);
+        return lend(rev.lookedUpRest.data(), rev.lookedUpRest.size());
+    case Read::MushSmoothWeights:
+        RrGeoReadFloatArray(program, scratch, attr(RrGeoAttrSmoothWeights),
+                            &rev.lookedUpSmoothWeights);
+        return lend(rev.lookedUpSmoothWeights.data(),
+                    rev.lookedUpSmoothWeights.size());
+    case Read::ChainBase:
+        return lend(c.lastBase.data(), c.lastBase.size());
+    case Read::MushStep:
+        return put(RrGeoReadFloat(program, scratch, attr(RrGeoAttrStep), 0.5f));
+    case Read::MushPinBorders:
+        return put(uint8_t(
+            RrGeoReadBool(scratch, attr(RrGeoAttrPinBorders), true) ? 1 : 0));
+    case Read::MushDistanceWeight:
+        return put(RrGeoReadFloat(program, scratch,
+                                  attr(RrGeoAttrDistanceWeight), 0.0f));
+    case Read::MushDisplacement:
+        return put(RrGeoReadFloat(program, scratch, attr(RrGeoAttrDisplacement),
+                                  1.0f));
+    case Read::MushSmoothing: {
+        RigExecDeltaMushSmoothing smoothing;
+        return put(
+            int32_t(RigExecParseDeltaMushSmoothing(
+                        RrGeoReadToken(program, scratch,
+                                       attr(RrGeoAttrSmoothing, true), "rest"),
+                        &smoothing)
+                        ? int32_t(smoothing)
+                        : -1));
+    }
+    case Read::MushFrameTransport: {
+        RigExecDeltaMushFrameTransport transport;
+        return put(int32_t(
+            RigExecParseDeltaMushFrameTransport(
+                RrGeoReadToken(program, scratch,
+                               attr(RrGeoAttrFrameTransport, true), "vertex"),
+                &transport)
+                ? int32_t(transport)
+                : -1));
+    }
+    case Read::MushOnlySmooth:
+        return put(uint8_t(
+            RrGeoReadBool(scratch, attr(RrGeoAttrOnlySmooth), false) ? 1 : 0));
+    case Read::MushComputationToTarget: {
+        const RrMat4d m =
+            RrGeoReadMatrix(scratch, attr(RrGeoAttrComputationToTarget));
+        if (!type.triviallyCopyable || type.size != sizeof(m))
+            return fail();
+        std::memcpy(value, &m, sizeof(m));
+        return true;
+    }
+    default:
+        return fail();
+    }
 }
 
 bool

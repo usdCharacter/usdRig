@@ -17,6 +17,7 @@
 #include "rigExecRuntime/stageArrayInputs.h"
 #include "rigExecSampler/inputSampler.h"
 #include "rigExecExampleFixtures.h"
+#include "rigExecFrozenParity.h"
 
 #include "pxr/base/gf/math.h"
 #include "pxr/base/gf/quatf.h"
@@ -2371,9 +2372,10 @@ TestGroupChainPlays()
 // A 12 x 12 grid of quads under Gated (a matrix mover on Moving, tx 1, 2, 3
 // at frames 1-3, weighted to row 0 alone), a Smooth mover, a second Smooth
 // or, with \p mush, a delta mush of three iterations, and After (a matrix
-// mover on Still), in that order.
+// mover on Still), in that order. With \p afterFails, After's default
+// weight is 2 at frame 2.
 static UsdStageRefPtr
-_SmoothChainStage(bool mush = false)
+_SmoothChainStage(bool mush = false, bool afterFails = false)
 {
     constexpr int kFrames = 3, kSide = 12;
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
@@ -2448,6 +2450,12 @@ _SmoothChainStage(bool mush = false)
     after.GetRelationship(TfToken("rigExec:transform"))
         .SetTargets({still.GetPath()});
     after.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
+    if (afterFails) {
+        for (int frame = 1; frame <= kFrames; ++frame) {
+            after.GetAttribute(TfToken("inputs:defaultWeight"))
+                .Set(frame == 2 ? 2.0f : 1.0f, UsdTimeCode(frame));
+        }
+    }
     if (mush) {
         mover("Mush", "RigExecDeltaMushMover")
             .CreateAttribute(TfToken("inputs:iterations"),
@@ -2481,6 +2489,41 @@ TestSmoothChainPlays()
     _TestStage("delta mush chain reads its region", _SmoothChainStage(true),
                {1, 2, 3, 2, 1, 3}, nullptr, /*staticClass=*/false,
                /*exportRoles=*/true);
+}
+
+// After shares the range chain segment of the Smooth or the delta mush
+// before it, which it reads point by point: its op error at frame 2 names
+// After, not the segment's first mover, in native, frozen and runtime
+// evaluation alike, and the next frame recovers.
+static void
+TestSharedSegmentErrorNamesItsMover()
+{
+    const _ScopedEnv chunks("RIGEXEC_BAKED_CHUNK_VERTS", "16");
+    const _ScopedEnv groups("RIGEXEC_BAKED_GROUP_VERTS", "8");
+    for (const bool mush : {false, true}) {
+        const UsdStageRefPtr stage = _SmoothChainStage(mush, true);
+        const std::string name =
+            mush ? "delta mush segment error" : "smooth segment error";
+        _TestStage(name, stage, {1, 2, 3}, nullptr, /*staticClass=*/false,
+                   /*exportRoles=*/true, {2.0});
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        evaluator.SetBakedRoleMode(RigExecBakedRoleMode::Export);
+        CHECK(evaluator.Evaluate(UsdTimeCode(1)).valid);
+        const RigExecRigPose failed = evaluator.Evaluate(UsdTimeCode(2));
+        const std::string first =
+            failed.diagnostics.empty() ? "" : failed.diagnostics.front();
+        const bool named = !failed.valid &&
+                           first.rfind("/Asset/Rig/Movers/After: ", 0) == 0 &&
+                           first.find("default weight") != std::string::npos;
+        if (!named)
+            std::printf("%s: native said '%s'\n", name.c_str(), first.c_str());
+        CHECK(named);
+        std::string why;
+        CHECK(RigExecFrozenFailsAsLive(&evaluator, UsdTimeCode(2), &why));
+        if (!why.empty())
+            std::printf("%s: frozen %s\n", name.c_str(), why.c_str());
+        CHECK(evaluator.Evaluate(UsdTimeCode(3)).valid);
+    }
 }
 
 // The file's format-20 roles as Open reads them, and the per-group cutoff.
@@ -5597,6 +5640,7 @@ main(int argc, char **argv)
     TestRangeChainRolesAndCutoff();
     TestGroupChainPlays();
     TestSmoothChainPlays();
+    TestSharedSegmentErrorNamesItsMover();
     TestGroupChainRolesAndCutoff();
     TestEpilogueSharesPublications();
     TestPacketArrayVersions();

@@ -1504,7 +1504,11 @@ ClassifyRevision(const RoleReads &reads,
     case RigExecRevisionOp::DeltaMush: {
         // Its group steps read the region its smoothing reaches, cut from
         // the topology, the explicit edges and the iteration count Build
-        // reads; any of them that can move runs it whole.
+        // reads; any of them that can move, or rest points read through a
+        // phase, runs it whole.
+        if (!revision->binding.phases.empty()) {
+            return GeomRole::Whole;
+        }
         const std::array<int, 4> keys = {
             leaves.decl.Role(Role::TopologyCounts),
             leaves.decl.Role(Role::TopologyIndices),
@@ -1612,10 +1616,6 @@ BuildMushHalo(const RoleReads &reads,
             }
         }
     }
-    revision->haloPoints.assign(groups,
-                                std::vector<const GfVec3f *>(groups, nullptr));
-    revision->mushGroups.assign(groups,
-                                RigExecDeltaMushGroupState<GfVec3f, GfVec3d>());
 }
 
 /// The halo of the Range Smooth \p revision: per group of \p chain, the
@@ -1628,8 +1628,6 @@ BuildSmoothHalo(const RoleReads &reads,
 {
     using Role = RigExecRevisionLeafRole;
     const RigExecBakedPathLeaves &leaves = revision->leaves;
-    const size_t groups =
-        chain.groupBounds.empty() ? 0 : chain.groupBounds.size() - 1;
     const VtIntArray counts =
         reads.Ints(leaves, leaves.decl.Role(Role::TopologyCounts));
     const VtIntArray indices =
@@ -1639,8 +1637,6 @@ BuildSmoothHalo(const RoleReads &reads,
                               indices.cdata(), indices.size(), &adjacency);
     RigExecSmoothHaloGroups(adjacency, chain.groupBounds,
                             &revision->haloGroups);
-    revision->haloPoints.assign(groups,
-                                std::vector<const GfVec3f *>(groups, nullptr));
 }
 
 /// Static sparse weight object \p object's resolved unlisted value -- its
@@ -1855,14 +1851,16 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
         revision.opSmooth = false;
         revision.opSmoothCounts = VtIntArray();
         revision.opSmoothIndices = VtIntArray();
+        revision.opMush = false;
+        revision.opMushCounts = VtIntArray();
+        revision.opMushIndices = VtIntArray();
+        revision.opMushEdges = VtIntArray();
         revision.blendChunked = false;
         revision.groupWritten.clear();
         revision.enteringWriter.clear();
         revision.groups.clear();
         revision.groupIds.clear();
         revision.haloGroups.clear();
-        revision.haloPoints.clear();
-        revision.mushGroups.clear();
         revision.pins.clear();
         revision.surfaceCache.PinTopology(false);
         PartitionAtBuild(B, &revision);
@@ -2043,6 +2041,19 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
                 revision.opSmoothIndices = reads.Ints(
                     revision.leaves,
                     revision.leaves.decl.Role(Role::TopologyIndices));
+            }
+            revision.opMush = revision.op == RigExecRevisionOp::DeltaMush;
+            if (revision.opMush) {
+                using Role = RigExecRevisionLeafRole;
+                const RigExecBakedPathLeaves &leaves = revision.leaves;
+                revision.opMushCounts =
+                    reads.Ints(leaves, leaves.decl.Role(Role::TopologyCounts));
+                revision.opMushIndices =
+                    reads.Ints(leaves, leaves.decl.Role(Role::TopologyIndices));
+                revision.opMushEdges =
+                    reads.Ints(leaves, leaves.decl.Role(Role::MushEdges));
+                revision.opMushIterations =
+                    reads.Int(leaves, leaves.decl.scalarBegin, 10);
             }
             if (revision.op == RigExecRevisionOp::Smooth) {
                 BuildSmoothHalo(reads, *chain, &revision, points);
@@ -2372,8 +2383,8 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
                 fuse.maxDiagnostics = 1;
                 fuse.reads.push_back(RigExecBakedOne(
                     RigExecBakedSlotDomain::RevisionPacket, id));
-                // A smooth op revision folds no transform.
-                if (!revision.opSmooth)
+                // A smooth or delta mush op revision folds no transform.
+                if (revision.opMatrix || !revision.OpNodes())
                     fuse.reads.push_back(RigExecBakedOne(
                         RigExecBakedSlotDomain::RevisionTransforms, id));
                 fuse.reads.push_back(
@@ -3914,42 +3925,6 @@ PassBaseGroups(const RigExecBakedProgramImpl::GeomChain &chain,
     }
 }
 
-/// The halo table of group \p g of the Range \p revision: a smooth or
-/// a delta mush reads its halo groups of the entering version beside
-/// its own, which its step declares (the scheduler ran their writers
-/// first). Fills `haloPoints[g]`; false refuses the group.
-bool
-BakedChainGroupHalo(RigExecBakedProgramImpl &B,
-                    const RigExecBakedProgramImpl::GeomChain &chain,
-                    RigExecBakedProgramImpl::GeomRevision *revision,
-                    size_t revisionIndex, size_t g,
-                    const RigExecPointsRef<GfVec3f> &entering)
-{
-    const bool mush = revision->op == RigExecRevisionOp::DeltaMush;
-    if (revision->op != RigExecRevisionOp::Smooth && !mush) {
-        return true;
-    }
-    const size_t groups = chain.groupBounds.size() - 1;
-    if (g >= revision->haloGroups.size() || g >= revision->haloPoints.size() ||
-        revision->haloPoints[g].size() != groups ||
-        (mush && g >= revision->mushGroups.size())) {
-        return false;
-    }
-    std::vector<const GfVec3f *> &table = revision->haloPoints[g];
-    std::fill(table.begin(), table.end(), nullptr);
-    table[g] = entering.data;
-    for (const int h : revision->haloGroups[g]) {
-        const RigExecPointsRef<GfVec3f> &group =
-            RigExecBakedGroupAt(chain, revisionIndex, size_t(h));
-        if (group.count != size_t(chain.groupBounds[size_t(h) + 1] -
-                                  chain.groupBounds[size_t(h)])) {
-            return false;
-        }
-        table[size_t(h)] = group.data;
-    }
-    return true;
-}
-
 /// The chunked blend arm of a group step: the group's deltas summed
 /// from its key's channels (blendRangeKernel.h), blended back over the
 /// entering points through the envelope RevisionStatic resolved.
@@ -4681,10 +4656,9 @@ struct BakedChainState {
             view.palette = chunk.palette.data();
             view.paletteSize = chunk.palette.size();
         }
-        return RigExecRunRevisionGroup(rev.op, rev.parameters, rev.rangeInputs,
-                                       &view, in, out, count, begin, end,
-                                       GroupEnvelope(rev), B->useSimd,
-                                       untouched, nullptr, nullptr);
+        return RigExecRunRevisionGroup(
+            rev.op, rev.parameters, rev.rangeInputs, &view, in, out, count,
+            begin, end, GroupEnvelope(rev), B->useSimd, untouched);
     }
     void runBlendGroup(size_t chain, size_t revision, size_t g, size_t begin,
                        size_t end, const RigExecPointsRef<GfVec3f> &entering,
@@ -4697,31 +4671,15 @@ struct BakedChainState {
     {
         return GroupEnvelope(revisionAt(chain, revision));
     }
-    bool prepareGroupHalo(size_t chain, size_t revision, size_t g,
-                          const RigExecPointsRef<GfVec3f> &entering)
-    {
-        return BakedChainGroupHalo(*B, chainAt(chain),
-                                   &revisionAt(chain, revision), revision, g,
-                                   entering);
-    }
-    bool runRevisionGroup(size_t chain, size_t revision, size_t g,
+    bool runRevisionGroup(size_t chain, size_t revision, size_t,
                           const GfVec3f *in, GfVec3f *out, size_t count,
                           size_t begin, size_t end, const float *envelope,
                           bool *untouched)
     {
-        Chain &c = chainAt(chain);
         Revision &rev = revisionAt(chain, revision);
-        const bool mush = rev.op == RigExecRevisionOp::DeltaMush;
-        RigExecGroupPoints<GfVec3f> halo;
-        if (mush) {
-            halo.bounds = c.groupBounds.data();
-            halo.groups = c.groupBounds.size() - 1;
-            halo.points = rev.haloPoints[g].data();
-        }
-        return RigExecRunRevisionGroup(
-            rev.op, rev.parameters, rev.rangeInputs, nullptr, in, out, count,
-            begin, end, envelope, B->useSimd, untouched, mush ? &halo : nullptr,
-            mush ? &rev.mushGroups[g] : nullptr);
+        return RigExecRunRevisionGroup(rev.op, rev.parameters, rev.rangeInputs,
+                                       nullptr, in, out, count, begin, end,
+                                       envelope, B->useSimd, untouched);
     }
     bool runWholeSkinChunk(size_t chain, size_t revision, size_t g)
     {
@@ -6615,6 +6573,119 @@ RigExecBakedRevisionLeaf(const RigExecBakedProgramImpl &B, uint32_t id,
     *radial =
         c.IsHolding<TfToken>() && c.UncheckedGet<TfToken>() == _tokens->radial;
     return true;
+}
+
+bool
+RigExecBakedLookUpRevision(RigExecBakedProgramImpl &B, uint32_t index,
+                           const eval::OpLookup &lookup,
+                           const RigExecTypeDesc &type, void *value,
+                           std::string *error)
+{
+    using Read = eval::OpRevisionRead;
+    using Role = RigExecRevisionLeafRole;
+    const auto fail = [&]() {
+        if (error)
+            *error = "op nodes: revision " + std::to_string(lookup.object) +
+                     " has no input " + std::to_string(lookup.read) +
+                     " of the looked-up type";
+        return false;
+    };
+    if (lookup.object >= B.revisionIndex.size() ||
+        index >= B.revisionLeafHold.size())
+        return fail();
+    const auto &[chain, r] = B.revisionIndex[lookup.object];
+    const RigExecBakedProgramImpl::GeomChain &c = B.chains[size_t(chain)];
+    const RigExecBakedPathLeaves &leaves = c.revisions[size_t(r)].leaves;
+    const auto leaf = [&](int k) {
+        return k >= 0 ? RigExecBakedResolvePathLeaf(B, leaves, size_t(k))
+                      : VtValue();
+    };
+    const auto put = [&](const auto &v) {
+        if (!type.triviallyCopyable || type.size != sizeof(v))
+            return fail();
+        std::memcpy(value, &v, sizeof(v));
+        return true;
+    };
+    const auto lend = [&](const void *data, size_t count) {
+        if (!type.borrow)
+            return fail();
+        type.borrow(value, data, count);
+        return true;
+    };
+    const auto scalar = [&](int offset, auto fallback) {
+        const int begin = leaves.decl.scalarBegin;
+        const VtValue v = begin >= 0 ? leaf(begin + offset) : VtValue();
+        using T = decltype(fallback);
+        return v.IsHolding<T>() ? v.UncheckedGet<T>() : fallback;
+    };
+    const auto token = [&](Role role, const char *fallback) {
+        const VtValue v = leaf(leaves.decl.Role(role));
+        if (!v.IsHolding<TfToken>())
+            return std::string(fallback);
+        const TfToken &held = v.UncheckedGet<TfToken>();
+        return held.IsEmpty() ? std::string() : std::string(held.GetText());
+    };
+    switch (Read(lookup.read)) {
+    case Read::RestPoints:
+    case Read::MushSmoothWeights: {
+        const bool points = Read(lookup.read) == Read::RestPoints;
+        VtValue &held = B.revisionLeafHold[index];
+        held = leaf(
+            leaves.decl.Role(points ? Role::RestPoints : Role::SmoothWeights));
+        if (points) {
+            if (!held.IsHolding<VtVec3fArray>())
+                held = VtValue(VtVec3fArray());
+            const VtVec3fArray &a = held.UncheckedGet<VtVec3fArray>();
+            return lend(a.cdata(), a.size());
+        }
+        if (!held.IsHolding<VtFloatArray>())
+            held = VtValue(VtFloatArray());
+        const VtFloatArray &a = held.UncheckedGet<VtFloatArray>();
+        return lend(a.cdata(), a.size());
+    }
+    case Read::ChainBase:
+        return lend(c.lastBase.cdata(), c.lastBase.size());
+    case Read::MushStep:
+        return put(scalar(1, 0.5f));
+    case Read::MushPinBorders:
+        return put(uint8_t(scalar(2, true) ? 1 : 0));
+    case Read::MushDistanceWeight:
+        return put(scalar(3, 0.0f));
+    case Read::MushDisplacement:
+        return put(scalar(4, 1.0f));
+    case Read::MushSmoothing: {
+        RigExecDeltaMushSmoothing smoothing;
+        return put(int32_t(RigExecParseDeltaMushSmoothing(
+                               token(Role::MushSmoothing, "rest"), &smoothing)
+                               ? int32_t(smoothing)
+                               : -1));
+    }
+    case Read::MushFrameTransport: {
+        RigExecDeltaMushFrameTransport transport;
+        return put(
+            int32_t(RigExecParseDeltaMushFrameTransport(
+                        token(Role::MushFrameTransport, "vertex"), &transport)
+                        ? int32_t(transport)
+                        : -1));
+    }
+    case Read::MushOnlySmooth: {
+        const VtValue v = leaf(leaves.decl.Role(Role::OnlySmooth));
+        return put(
+            uint8_t(v.IsHolding<bool>() && v.UncheckedGet<bool>() ? 1 : 0));
+    }
+    case Read::MushComputationToTarget: {
+        const VtValue v = leaf(leaves.decl.Role(Role::ComputationToTarget));
+        const GfMatrix4d m = v.IsHolding<GfMatrix4d>()
+                                 ? v.UncheckedGet<GfMatrix4d>()
+                                 : GfMatrix4d(1.0);
+        if (!type.triviallyCopyable || type.size != 16 * sizeof(double))
+            return fail();
+        std::memcpy(value, m.data(), type.size);
+        return true;
+    }
+    default:
+        return fail();
+    }
 }
 
 VtValue

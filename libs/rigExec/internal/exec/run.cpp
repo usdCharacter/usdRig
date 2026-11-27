@@ -1415,7 +1415,7 @@ RigExecRun::RunNode(uint32_t node, std::string *error)
 
 bool
 RigExecRun::RunChainHead(uint32_t c, const int *cut, uint32_t groups,
-                         std::string *error)
+                         std::string *error, RigExecNodeId *failed)
 {
     const RigExecProgram &p = *program;
     if (!p.hostOrder || c >= p.chains.size() || !groups || !cut) {
@@ -1437,6 +1437,8 @@ RigExecRun::RunChainHead(uint32_t c, const int *cut, uint32_t groups,
         std::string why;
         if (!_RunHead(at, &why)) {
             const uint32_t b = p.positionBatch[at];
+            if (failed)
+                *failed = node;
             _Fail(b, at - p.batches[b].firstNode, why);
             if (error)
                 *error = errors[b];
@@ -1483,7 +1485,7 @@ RigExecRun::RunChainHead(uint32_t c, const int *cut, uint32_t groups,
 
 bool
 RigExecRun::RunChainRange(uint32_t c, uint32_t segment, uint32_t group,
-                          std::string *error)
+                          std::string *error, RigExecNodeId *failed)
 {
     const RigExecProgram &p = *program;
     const RigExecProgramChain &chain = p.chains[c];
@@ -1518,6 +1520,8 @@ RigExecRun::RunChainRange(uint32_t c, uint32_t segment, uint32_t group,
         _PointRange(at, &range);
         std::string why;
         if (!d.range.run(_View(b), at - p.batches[b].firstNode, range, &why)) {
+            if (failed)
+                *failed = p.batchNodes[at];
             if (error)
                 *error = "node " + std::to_string(p.batchNodes[at]) + " (" +
                          (d.nameSpace ? d.nameSpace : "") + ":" +

@@ -7689,7 +7689,8 @@ TestASmoothGroupReadsItsHalo()
 /// The smooth chain with a delta mush in the smooth's place (ten iterations,
 /// the vertex transport), against itself built with
 /// RIGEXEC_BAKED_RANGE_CHAINS=0, live and export: the delta mush takes the
-/// Range role, its halo covers the rows its smoothing reaches (the groups
+/// Range role and runs as op range steps, its halo covers the rows its
+/// smoothing reaches (the groups
 /// beside its own, and none past the second), and every version and
 /// diagnostic agrees bit for bit under the judges. From frame 1 to 2 only
 /// row 0 moves, which ten iterations carry no further than group 1.
@@ -7751,11 +7752,14 @@ TestADeltaMushGroupReadsItsRegion()
         const int id = R.chainRevisionBegin[0] + 1;
         size_t groupSteps = 0;
         for (const RigExecBakedStep &step : R.steps) {
-            if (step.kind != RigExecBakedStepKind::RevisionChunk ||
-                step.object != id || step.part < 0) {
+            const rigExec::RigExecBakedStepIdentity identity =
+                rigExec::RigExecBakedIdentityOf(R, step);
+            if (step.kind != RigExecBakedStepKind::OpChainRange ||
+                identity.kind != RigExecBakedStepKind::RevisionChunk ||
+                identity.object != id || identity.part < 0) {
                 continue;
             }
-            const size_t g = size_t(step.part);
+            const size_t g = size_t(identity.part);
             size_t slotted = mush.enteringWriter[g] >= 0 ? 1 : 0;
             for (const int h : mush.haloGroups[g]) {
                 slotted += mush.enteringWriter[size_t(h)] >= 0 ? 1 : 0;

@@ -207,6 +207,12 @@ struct RrOpHost {
     {
         return RrGeoRevisionLeaf(&p, id, enabled, weight, radial, error);
     }
+    bool LookUpRevision(uint32_t, const eval::OpLookup &lookup,
+                        const RigExecTypeDesc &type, void *value,
+                        std::string *error) const
+    {
+        return RrGeoLookUpRevision(&p, lookup, type, value, error);
+    }
     bool StoreRevisionEnabled(const eval::OpHostOutput &output,
                               const void *value, std::string *error) const
     {
@@ -559,10 +565,18 @@ RrRunOpStep(RrProgram *p, size_t i, std::string *error)
         return Fail(error, "an op step without op nodes");
     const fb::RigExecWireStep &step = (*p->steps)[i];
     const RrOpHost host{*p, i};
+    RigExecNodeId failed = kRigExecInvalidIndex;
     if (eval::RunOpStep(nodes->layout, host, nodes->state.get(),
                         eval::OpStepKind(uint8_t(step.kind)), step.object,
-                        step.part, error))
+                        step.part, error, &failed))
         return true;
+    // A failing chain member speaks as the revision whose groups it stores.
+    int64_t failedRevision = -1;
+    if (failed < nodes->layout.hostOutputsOf.size())
+        for (const uint32_t o : nodes->layout.hostOutputsOf[failed])
+            if (nodes->layout.hostOutputs[o].target ==
+                uint8_t(eval::OpOutputTarget::ChainGroup))
+                failedRevision = int64_t(nodes->layout.hostOutputs[o].object);
     size_t chain = 0, part = 0;
     if (error && RrPropertyPartOf(p, step, &chain, &part))
         *error = RrPropertyRevisionLabel(p, chain, part) + ": " + *error;
@@ -586,8 +600,10 @@ RrRunOpStep(RrProgram *p, size_t i, std::string *error)
     } else if (error && p->geometry) {
         // An op step standing in for a revision speaks as its mover.
         const auto &geo = *p->geometry;
-        int64_t revision = -1;
+        int64_t revision = failedRevision;
         for (const auto &write : step.writes) {
+            if (revision >= 0)
+                break;
             const auto domain = write.domain();
             if (domain == RigExecWireSlotDomain::RevisionPacket ||
                 domain == RigExecWireSlotDomain::RevisionTransforms)

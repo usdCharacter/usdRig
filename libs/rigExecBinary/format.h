@@ -684,7 +684,11 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// their frame, delta and whether it was measured through
 /// OpGraph.host_outputs targets 35 to 37. A Constraint step remains for
 /// IK/FK match, harmonics, single-chain IK and a constraint with no target.
-inline constexpr uint32_t RigExecFormatVersion = 47;
+///
+/// Format 48 runs every Range delta mush as a DeltaMush op node, its
+/// per-frame inputs read through RevisionLeaf lookups (OpRevisionRead 3-13)
+/// and its frame provider selected as a matrix mover's reference.
+inline constexpr uint32_t RigExecFormatVersion = 48;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -692,7 +696,7 @@ inline constexpr uint32_t RigExecFormatVersion = 47;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 47;
+inline constexpr uint32_t RigExecFormatOldestReadable = 48;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

@@ -1036,9 +1036,19 @@ private:
             if (lookup && lookup->source == 10) {
                 if (!_f.geometry ||
                     lookup->object >= _f.geometry->revisionIndex.size() ||
-                    lookup->read > 2)
+                    lookup->read > 13)
                     return _Bad("op_graph.lookups: a revision lookup reads no "
                                 "input of a revision");
+                const auto &at = _f.geometry->revisionIndex[lookup->object];
+                if (lookup->read > 2 &&
+                    (!_Has(_f.geometry->chains, at.first) ||
+                     !_Has(_f.geometry->chains[size_t(at.first)].revisions,
+                           at.second) ||
+                     _f.geometry->chains[size_t(at.first)]
+                             .revisions[size_t(at.second)]
+                             .op != uint8_t(fb::RevisionOp::DeltaMush)))
+                    return _Bad("op_graph.lookups: a delta mush input lookup "
+                                "reads a revision of another operation");
                 continue;
             }
             if (lookup && lookup->source >= 5 && lookup->source <= 9) {
@@ -5308,8 +5318,11 @@ private:
                     }
                     continue;
                 }
-                // A Range smooth runs as an op node and folds no transform.
-                if (!range || revision.op != uint8_t(fb::RevisionOp::Smooth))
+                // A Range smooth or delta mush runs as an op node and folds
+                // no transform.
+                if (!range ||
+                    (revision.op != uint8_t(fb::RevisionOp::Smooth) &&
+                     revision.op != uint8_t(fb::RevisionOp::DeltaMush)))
                     read(D::RevisionTransforms, id);
                 point(c, uint32_t(r));
                 if (revision.weightObject >= 0)
@@ -7711,7 +7724,9 @@ private:
                 continue;
             }
             // The fuse: a Range revision's join, or a Whole revision's.
-            if (((!range || revision.op != uint8_t(fb::RevisionOp::Smooth)) &&
+            if (((!range ||
+                  (revision.op != uint8_t(fb::RevisionOp::Smooth) &&
+                   revision.op != uint8_t(fb::RevisionOp::DeltaMush))) &&
                  !need(D::RevisionTransforms, id)) ||
                 (revision.weightObject >= 0 &&
                  !need(D::WeightPacket, uint64_t(revision.weightObject))) ||
@@ -10287,13 +10302,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 47,
+    static_assert(RigExecFormatOldestReadable == 48,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: transform and geometry constraints as op nodes"
+                ? "re-export: Range delta mushes as op nodes"
                 : "rebake");
 }
 

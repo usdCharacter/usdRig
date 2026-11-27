@@ -1612,12 +1612,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 47 &&
-                      RigExecFormatOldestReadable == 47,
-                  "format 47 solves transform and geometry constraints as op "
-                  "nodes and is the only format Open reads");
-    // Every older format requires re-export: its constraints solved on their
-    // Constraint steps.
+    static_assert(RigExecFormatVersion == 48 &&
+                      RigExecFormatOldestReadable == 48,
+                  "format 48 runs Range delta mushes as op nodes and is "
+                  "the only format Open reads");
+    // Every older format requires re-export: its delta mushes ran as their
+    // own steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1628,15 +1628,14 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 47 through " +
+            " (this reader reads 48 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 47
-                 ? "re-export: transform and geometry constraints as op nodes"
-                 : "rebake");
+            (version < 48 ? "re-export: Range delta mushes as op nodes"
+                          : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 47 ? reexports : rebakes);
+        ++(version < 48 ? reexports : rebakes);
     }
-    CHECK(reexports == 47 && rebakes == 1);
+    CHECK(reexports == 48 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;

@@ -1166,6 +1166,12 @@ bool RrGeoAdoptOpStored(RrProgram *program, uint32_t revision,
 bool RrGeoRevisionLeaf(const RrProgram *program, uint32_t revision,
                        bool *enabled, float *weight, bool *radial,
                        std::string *error);
+// Revision lookup.object's input lookup.read (eval::OpRevisionRead, past
+// Radial) as its assembler reads it this run; an array is lent from the
+// revision's own storage or its chain's base.
+bool RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
+                         const RigExecTypeDesc &type, void *value,
+                         std::string *error);
 // Revision \p revision of \p chain when its weight object is measured
 // against the points entering it: its weight field's weights as its dense
 // packet. False when the field holds none, \p missing when the program

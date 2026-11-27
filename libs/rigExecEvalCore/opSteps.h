@@ -192,6 +192,25 @@ enum class OpRevisionRead : uint8_t {
     DefaultWeight = 1,
     /// Bool: whether rigExec:weightBlend is radial.
     Radial = 2,
+    /// A delta mush's inputs: inputs:restPoints (Vec3fArray, empty when
+    /// it holds none), inputs:step, inputs:distanceWeight and
+    /// inputs:displacement (Float), inputs:pinBorders and inputs:onlySmooth
+    /// (Bool), inputs:smoothing and inputs:frameTransport (Int: the
+    /// RigExecDeltaMushSmoothing or RigExecDeltaMushFrameTransport value, -1
+    /// for a token that names none), inputs:smoothWeights (FloatArray) and
+    /// inputs:computationToTarget (Mat4d).
+    RestPoints = 3,
+    MushStep = 4,
+    MushPinBorders = 5,
+    MushDistanceWeight = 6,
+    MushDisplacement = 7,
+    MushSmoothing = 8,
+    MushFrameTransport = 9,
+    MushSmoothWeights = 10,
+    MushOnlySmooth = 11,
+    MushComputationToTarget = 12,
+    /// Vec3fArray: the points entering the revision's point chain.
+    ChainBase = 13,
 };
 
 /// Whether a lookup of \p source is one the host answers through
@@ -990,9 +1009,9 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
 
 /// Resolves lookup \p index through the \p host method of its source's
 /// family: LookUpProperty, LookUpPoseVersion, LookUpWeight,
-/// LookUpChainVersion, LookUpWeightField, LookUpCommit or
-/// LookUpConstraint(index, lookup, type, value, error), a Matrix lookup
-/// through Matrix(source, slot), and a FrameRecord
+/// LookUpChainVersion, LookUpWeightField, LookUpCommit, LookUpConstraint
+/// or, for a RevisionLeaf read past Radial, LookUpRevision(index, lookup,
+/// type, value, error), a Matrix lookup through Matrix(source, slot), and a FrameRecord
 /// or ConstraintDelta lookup through PresentMatrix(lookup), null when
 /// absent. A List or Selected lookup resolves through OpLookUpAt.
 template <class Host>
@@ -1012,6 +1031,8 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
     case OpLookupSource::WeightFieldInputs:
         return host.LookUpWeightField(index, lookup, type, value, error);
     case OpLookupSource::RevisionLeaf: {
+        if (lookup.read > uint8_t(OpRevisionRead::Radial))
+            return host.LookUpRevision(index, lookup, type, value, error);
         bool enabled = true, radial = false;
         float weight = 1.0f;
         if (!host.RevisionLeaf(lookup.object, &enabled, &weight, &radial,
@@ -1209,7 +1230,8 @@ ResolveOpLookups(const OpStepLayout &layout, Host &host, OpStepState *state,
 template <class Host>
 bool
 RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
-          OpStepKind kind, int object, int part, std::string *error)
+          OpStepKind kind, int object, int part, std::string *error,
+          RigExecNodeId *failedNode = nullptr)
 {
     RigExecRunState &run = *state->run;
     if (object < 0)
@@ -1288,7 +1310,8 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
         }
         if (state->versions[layout.PlanSlot(index)] == 0)
             moved = true;
-        if (!run.RunChainHead(index, chain.bounds.data(), groups, error))
+        if (!run.RunChainHead(index, chain.bounds.data(), groups, error,
+                              failedNode))
             return false;
         for (size_t i = 0; i < layout.hostInputs.size(); ++i) {
             const uint32_t node = layout.hostInputs[i].node;
@@ -1338,7 +1361,7 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
             for (const uint32_t h : state->haloReads[i][g])
                 table[h] = OpGroupPoints(layout, host, input, h);
     }
-    if (!run.RunChainRange(index, segment, g, error))
+    if (!run.RunChainRange(index, segment, g, error, failedNode))
         return false;
     for (uint32_t m = segment;
          m < desc.members.size() && desc.segments[m] == segment; ++m) {

@@ -880,9 +880,14 @@ struct RigExecBakedGeomRevision {
     /// chunk steps.
     bool opSmooth = false;
     VtIntArray opSmoothCounts, opSmoothIndices;
+    /// A Range delta mush (Build state): a DeltaMush range chain member over
+    /// the pinned topology, edges and iteration count read at Build.
+    bool opMush = false;
+    VtIntArray opMushCounts, opMushIndices, opMushEdges;
+    int opMushIterations = 10;
     bool OpNodes() const
     {
-        return opMatrix || opSmooth;
+        return opMatrix || opSmooth || opMush;
     }
     bool opMatrixRadial = false;
     bool opMatrixRadialLeaf = false;
@@ -911,12 +916,6 @@ struct RigExecBakedGeomRevision {
     /// other groups holding a point its results read. Its group step
     /// reads those groups of the entering version beside its own.
     std::vector<std::vector<int>> haloGroups;
-    /// Range Smooth and DeltaMush: per group, its step's table of
-    /// entering group points (size G, null where not read); only that
-    /// step writes it.
-    std::vector<std::vector<const GfVec3f *>> haloPoints;
-    /// Range DeltaMush: per group, its step's plan and scratch.
-    std::vector<RigExecDeltaMushGroupState<GfVec3f, GfVec3d>> mushGroups;
     /// Range/Whole: size G, indexed by group; only written groups are ever
     /// published. Range: written by the group's step; Whole: chunk g owns
     /// the computed half, the fuse the published half (pointBlocks.h).
@@ -2300,6 +2299,8 @@ struct RigExecBakedProgramImpl {
     /// input until its next run.
     std::vector<VtArray<GfVec2f>> propertyKeyHold;
     std::vector<VtVec3fArray> propertyPointHold;
+    /// Per op lookup: the array a revision input lookup last lent.
+    std::vector<VtValue> revisionLeafHold;
     /// Per op lookup: a ChainVersion lookup's gathered points, when the
     /// version is not one buffer.
     std::vector<std::vector<GfVec3f>> chainVersionGather;
@@ -4784,6 +4785,13 @@ VtValue RigExecBakedResolvePathLeaf(const RigExecBakedProgramImpl &,
                                     const RigExecBakedPathLeaves &, size_t);
 /// Revision \p id's inputs:enabled, inputs:defaultWeight and whether its
 /// rigExec:weightBlend is radial, as its packet assembly reads them this run.
+/// The RevisionLeaf lookup \p lookup (index \p index) past Radial: an input
+/// of revision lookup.object read as RigExecAssembleFromLeaves reads it, an
+/// array lent from B.revisionLeafHold[index] or the chain's base.
+bool RigExecBakedLookUpRevision(RigExecBakedProgramImpl &B, uint32_t index,
+                                const eval::OpLookup &lookup,
+                                const RigExecTypeDesc &type, void *value,
+                                std::string *error);
 bool RigExecBakedRevisionLeaf(const RigExecBakedProgramImpl &B, uint32_t id,
                               bool *enabled, float *weight, bool *radial,
                               std::string *error);

@@ -631,6 +631,192 @@ TestDeltaMush()
     }
 }
 
+/// DeltaMush's mover inputs: its settings and frame through their ports
+/// give the whole kernel over the settings and the composed map; a weight
+/// packet (sparse and constant) and a default weight blend it; the enabled
+/// switch passes the points through; an empty rest falls back to the base;
+/// written ranges hold the packet's weights. Every range setting gives the
+/// whole run's bits. Unparsed tokens, a displacement outside [0, 1] under
+/// rest smoothing, a map without rest points, a default weight outside
+/// [0, 1] and weights past the written ranges are errors.
+void
+TestDeltaMushWeights()
+{
+    using namespace rigExecOps;
+    const Grid rest(17, 4);
+    std::vector<GfVec3f> posed = rest.points;
+    for (GfVec3f &p : posed)
+        p = GfVec3f(p[0], p[1] + 0.02f * p[0] * p[0], p[2] + 0.5f);
+    const Points in = ToStd(posed), restArray = ToStd(rest.points);
+    const Points none;
+    const auto counts = ToArray(rest.counts);
+    const auto indices = ToArray(rest.indices);
+    GfMatrix4d rotated(1.0);
+    rotated.SetRotate(GfRotation(GfVec3d(0.2, 1, 0.1), 35.0));
+    rotated.SetTranslateOnly(GfVec3d(0.5, -1, 2));
+    GfMatrix4d frame(1.0);
+    frame.SetTranslate(GfVec3d(0.25, 0.5, -0.75));
+    const auto mapArray = ToStd(rotated), frameArray = ToStd(frame);
+    const auto mushed = [&](RigExecDeltaMushSettings settings,
+                            const GfMatrix4d &map, int iterations) {
+        std::vector<GfVec3f> expected = posed;
+        CHECK(RigExecApplyDeltaMush(
+            &expected, rest.points, rest.counts, rest.indices, iterations,
+            double(0.4f), true, double(0.5f), double(0.8f), settings, map));
+        return expected;
+    };
+    std::string error;
+
+    DeltaMushPayload payload;
+    payload.iterations = 4;
+    Node ported(DeltaMush(),
+                {&DeltaMushPoints(), &DeltaMushRest(), &DeltaMushCounts(),
+                 &DeltaMushIndices(), &DeltaMushStep(), &DeltaMushPinBorders(),
+                 &DeltaMushDistanceWeight(), &DeltaMushDisplacement(),
+                 &DeltaMushSmoothing(), &DeltaMushFrameTransport(),
+                 &DeltaMushSmoothWeights(), &DeltaMushOnlySmooth(),
+                 &DeltaMushComputationToTarget(), &DeltaMushFrame(),
+                 &DeltaMushEnabled()},
+                DeltaMushOut(), &payload);
+    const float step = 0.4f, distance = 0.5f, displacement = 0.8f, over = 1.5f;
+    const uint8_t on = 1, off = 0;
+    const int32_t restSmoothing = int32_t(RigExecDeltaMushSmoothing::Rest),
+                  corner = int32_t(RigExecDeltaMushFrameTransport::Corner),
+                  unknown = -1;
+    std::vector<float> smoothWeights(posed.size());
+    for (size_t i = 0; i < smoothWeights.size(); ++i)
+        smoothWeights[i] = 0.1f * float(i % 11);
+    const auto weightsArray = ToArray(smoothWeights);
+    const auto noWeights = ToArray(std::vector<float>());
+    Points actual;
+    for (int variant = 0; variant < 4; ++variant) {
+        RigExecDeltaMushSettings settings;
+        settings.smoothing = variant == 2
+                                 ? RigExecDeltaMushSmoothing::LengthWeighted
+                             : variant == 3 ? RigExecDeltaMushSmoothing::Rest
+                                            : RigExecDeltaMushSmoothing::Simple;
+        settings.frameTransport = variant == 0
+                                      ? RigExecDeltaMushFrameTransport::Corner
+                                      : RigExecDeltaMushFrameTransport::Vertex;
+        if (variant == 0)
+            settings.smoothWeights = smoothWeights;
+        settings.onlySmooth = variant == 1;
+        const int32_t smoothing = int32_t(settings.smoothing);
+        const int32_t transport = int32_t(settings.frameTransport);
+        const uint8_t only = settings.onlySmooth ? 1 : 0;
+        CHECK(ported.Run({&in, &restArray, &counts, &indices, &step, &on,
+                          &distance, &displacement, &smoothing, &transport,
+                          variant == 0 ? &weightsArray : &noWeights, &only,
+                          &mapArray, &frameArray, &on},
+                         &actual));
+        if (!SameBits(mushed(settings, rotated * frame, 4), actual)) {
+            std::printf("delta mush ports variant %d differs\n", variant);
+            CHECK(false);
+        }
+    }
+    CHECK(ported.Run({&in, &restArray, &counts, &indices, &step, &on, &distance,
+                      &displacement, &unknown, &corner, &weightsArray, &off,
+                      &mapArray, &frameArray, &off},
+                     &actual));
+    CHECK(SameBits(posed, actual));
+    CHECK(!ported.Run({&in, &restArray, &counts, &indices, &step, &on,
+                       &distance, &displacement, &unknown, &corner,
+                       &weightsArray, &off, &mapArray, &frameArray, &on},
+                      &actual, &error));
+    CHECK(Contains(error, "names no smoothing"));
+    CHECK(!ported.Run({&in, &restArray, &counts, &indices, &step, &on,
+                       &distance, &over, &restSmoothing, &corner, &weightsArray,
+                       &off, &mapArray, &frameArray, &on},
+                      &actual, &error));
+    CHECK(Contains(error, "unusable"));
+
+    Node based(DeltaMush(),
+               {&DeltaMushPoints(), &DeltaMushRest(), &DeltaMushCounts(),
+                &DeltaMushIndices(), &DeltaMushStep(), &DeltaMushPinBorders(),
+                &DeltaMushDistanceWeight(), &DeltaMushDisplacement(),
+                &DeltaMushComputationToTarget(), &DeltaMushBase()},
+               DeltaMushOut(), &payload);
+    const auto identity = ToStd(GfMatrix4d(1.0));
+    CHECK(based.Run({&in, &none, &counts, &indices, &step, &on, &distance,
+                     &displacement, &identity, &restArray},
+                    &actual));
+    CHECK(SameBits(mushed(RigExecDeltaMushSettings(), GfMatrix4d(1.0), 4),
+                   actual));
+    CHECK(!based.Run({&in, &none, &counts, &indices, &step, &on, &distance,
+                      &displacement, &mapArray, &restArray},
+                     &actual, &error));
+    CHECK(Contains(error, "needs inputs:restPoints"));
+
+    std::vector<int32_t> sparseIndices;
+    std::vector<float> sparseWeights;
+    for (int32_t i = 2; i < 120; i += 5) {
+        sparseIndices.push_back(i);
+        sparseWeights.push_back(float(i % 9) / 8.0f);
+    }
+    std::vector<float> dense(posed.size(), 0.0f);
+    for (size_t e = 0; e < sparseIndices.size(); ++e)
+        dense[size_t(sparseIndices[e])] = sparseWeights[e];
+    DeltaMushPayload weighted;
+    weighted.iterations = 3;
+    const auto blended = [&](const std::vector<float> &envelope) {
+        std::vector<GfVec3f> expected = posed;
+        CHECK(RigExecApplyDeltaMush(&expected, rest.points, rest.counts,
+                                    rest.indices, 3));
+        Blend(posed, envelope, &expected);
+        return expected;
+    };
+    Node packed(DeltaMush(),
+                {&DeltaMushPoints(), &DeltaMushRest(), &DeltaMushCounts(),
+                 &DeltaMushIndices(), &DeltaMushPacket(), &DeltaMushWritten()},
+                DeltaMushOut(), &weighted);
+    rigExecRig::PointWeights packet;
+    packet.valid = 1;
+    packet.representation = uint32_t(rigExecRig::WeightRepresentation::Sparse);
+    packet.indices = ToArray(sparseIndices);
+    packet.values = ToArray(sparseWeights);
+    const auto written = ToArray(std::vector<int32_t>{0, 150});
+    CHECK(packed.Run({&in, &restArray, &counts, &indices, &packet, &written},
+                     &actual));
+    CHECK(SameBits(blended(dense), actual));
+    const auto short_ = ToArray(std::vector<int32_t>{0, 50, 60, 150});
+    CHECK(!packed.Run({&in, &restArray, &counts, &indices, &packet, &short_},
+                      &actual, &error));
+    CHECK(Contains(error, "vertex group"));
+    packet.representation =
+        uint32_t(rigExecRig::WeightRepresentation::Constant);
+    packet.indices = RigExecArray<int32_t>();
+    packet.values = RigExecArray<float>();
+    packet.defaultWeight = 0.35f;
+    Node constant(DeltaMush(),
+                  {&DeltaMushPoints(), &DeltaMushRest(), &DeltaMushCounts(),
+                   &DeltaMushIndices(), &DeltaMushPacket()},
+                  DeltaMushOut(), &weighted);
+    CHECK(constant.Run({&in, &restArray, &counts, &indices, &packet}, &actual));
+    CHECK(SameBits(blended(std::vector<float>(posed.size(), 0.35f)), actual));
+
+    Node uniform(DeltaMush(),
+                 {&DeltaMushPoints(), &DeltaMushRest(), &DeltaMushCounts(),
+                  &DeltaMushIndices(), &DeltaMushDefaultWeight()},
+                 DeltaMushOut(), &weighted);
+    const float half = 0.5f;
+    CHECK(uniform.Run({&in, &restArray, &counts, &indices, &half}, &actual));
+    CHECK(SameBits(blended(std::vector<float>(posed.size(), 0.5f)), actual));
+    CHECK(!uniform.Run({&in, &restArray, &counts, &indices, &over}, &actual,
+                       &error));
+    CHECK(Contains(error, "default weight"));
+
+    RigExecRigDescBuilder b;
+    const RigExecNodeId node = b.AddOp(DeltaMush(), &weighted);
+    for (const RigExecPortHandle *port :
+         {&DeltaMushPoints(), &DeltaMushRest(), &DeltaMushCounts(),
+          &DeltaMushIndices(), &DeltaMushDefaultWeight(), &DeltaMushPacket()})
+        b.BindInput(node, *port);
+    b.BindOutput(node, DeltaMushOut());
+    auto desc = b.Build(&error);
+    CHECK(!desc || !RigExecCompile(*desc, RigExecCompileOptions(), &error));
+    CHECK(Contains(error, "one of an envelope"));
+}
+
 /// A cage of d.x * d.y * d.z points over [lo, hi], x fastest, jittered.
 std::vector<GfVec3f>
 Cage(const GfVec3i &d, const GfVec3f &lo, const GfVec3f &hi, float jitter,
@@ -4556,6 +4742,7 @@ main()
     TestSmoothWeights();
     TestVolumeCorrect();
     TestDeltaMush();
+    TestDeltaMushWeights();
     TestLattice();
     TestWrinkle();
     TestSurfaceProject();

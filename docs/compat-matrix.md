@@ -24,8 +24,8 @@ bump here, and update the pinned sidecars.
 
 | Contract | Value | Defined in | Enforced by |
 |---|---|---|---|
-| `.rigexec` format (writer) | **47** | `RigExecFormatVersion` in `libs/rigExecBinary/format.h` | every bake stamps it |
-| `.rigexec` format (reader) | **47** | `RigExecFormatOldestReadable` in `libs/rigExecBinary/format.h` | `libs/rigExecBinary/format.cpp` refuses others at open with a re-export suggestion; a `static_assert` pins the oldest readable, and `tests/testRigExecFormat.cpp` and `tests/testRigExecRuntimeLoader.cpp` pin the accepted range |
+| `.rigexec` format (writer) | **48** | `RigExecFormatVersion` in `libs/rigExecBinary/format.h` | every bake stamps it |
+| `.rigexec` format (reader) | **48** | `RigExecFormatOldestReadable` in `libs/rigExecBinary/format.h` | `libs/rigExecBinary/format.cpp` refuses others at open with a re-export suggestion; a `static_assert` pins the oldest readable, and `tests/testRigExecFormat.cpp` and `tests/testRigExecRuntimeLoader.cpp` pin the accepted range |
 | Mover plugin API | **8** | `RigExecMoverPluginApiVersion` in `libs/rigExec/api/moverRegistry.h` | the loader (`moverRegistry.cpp`) rejects a plugin whose metadata `RigExecMoverPlugin` value differs; `cmake/rigExecMoverPlugin.cmake` stamps the same number into plugin metadata |
 | External-mover wire type IDs | plain API4 IDs, pinned | `RigExecExternalInputType` in `libs/rigExecBinary/external.h` | the format's `InputTag` numeric inventory; IDs never renumber |
 
@@ -90,9 +90,10 @@ in usdRig history.
 | 44 | 2026-11-26 | every Range matrix as op nodes, its weight packet read from the packet's node and its enabled state stored by its MatrixDeform |
 | 45 | 2026-11-27 | connected provider refreshes and provider arithmetic and affine operations as op nodes reading their inputs through lookups |
 | 46 | 2026-11-27 | every Range smooth as a Smooth op node; consecutive op revisions of a point chain share one range chain |
-| 47 | 2026-11-27 | Position, Rotation, Scale, Parent and Aim constraints, the MatrixMover and geometry-target deltas as op nodes reading their inputs through constraint lookups; **oldest readable from here on** |
+| 47 | 2026-11-27 | Position, Rotation, Scale, Parent and Aim constraints, the MatrixMover and geometry-target deltas as op nodes reading their inputs through constraint lookups |
+| 48 | 2026-11-27 | every Range delta mush as a DeltaMush op node reading its inputs through revision lookups; **oldest readable from here on** |
 
-Versions 6 and 11–16 never appeared on `main`. Files written before version 47
+Versions 6 and 11–16 never appeared on `main`. Files written before version 48
 are outside every current reader: re-export them.
 
 ## Mover plugin API history

@@ -160,14 +160,15 @@ RigExecRunState::PointInputHaloGroups(RigExecInputId input,
 
 bool
 RigExecRunState::RunChainHead(size_t chain, const int *bounds, uint32_t groups,
-                              std::string *error)
+                              std::string *error, RigExecNodeId *failed)
 {
-    return _data->run.RunChainHead(uint32_t(chain), bounds, groups, error);
+    return _data->run.RunChainHead(uint32_t(chain), bounds, groups, error,
+                                   failed);
 }
 
 bool
 RigExecRunState::RunChainRange(size_t chain, uint32_t segment, uint32_t group,
-                               std::string *error)
+                               std::string *error, RigExecNodeId *failed)
 {
     const RigExecProgram &p = *_data->program;
     if (chain >= p.chains.size() || segment >= p.chains[chain].memberCount ||
@@ -177,7 +178,8 @@ RigExecRunState::RunChainRange(size_t chain, uint32_t segment, uint32_t group,
                      std::to_string(segment);
         return false;
     }
-    return _data->run.RunChainRange(uint32_t(chain), segment, group, error);
+    return _data->run.RunChainRange(uint32_t(chain), segment, group, error,
+                                    failed);
 }
 
 void

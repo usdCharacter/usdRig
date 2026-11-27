@@ -816,6 +816,13 @@ struct GroupHost {
         *error = "no revisions";
         return false;
     }
+    bool LookUpRevision(uint32_t, const eval::OpLookup &,
+                        const RigExecTypeDesc &, void *,
+                        std::string *error) const
+    {
+        *error = "no revisions";
+        return false;
+    }
     bool StoreRevisionEnabled(const eval::OpHostOutput &, const void *,
                               std::string *error)
     {

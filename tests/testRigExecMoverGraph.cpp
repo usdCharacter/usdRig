@@ -2183,20 +2183,9 @@ TestRevisionGroupsMatchTheWholeKernel()
                 }
                 skin = &view;
             }
-            // A delta mush group reads its neighbours through a halo: the
-            // points before the group, its own buffer, the points after.
-            const int haloBounds[4] = {0, int(b), int(e), int(n)};
-            const GfVec3f *const haloPoints[3] = {in.data(), groupIn,
-                                                  in.data() + e};
-            rigExec::RigExecGroupPoints<GfVec3f> halo;
-            halo.bounds = haloBounds;
-            halo.groups = 3;
-            halo.points = haloPoints;
-            rigExec::RigExecDeltaMushGroupState<GfVec3f, GfVec3d> mush;
-            const bool reads = op == Op::DeltaMush;
             return rigExec::RigExecRunRevisionGroup(
                 op, p, prepared, skin, groupIn, out, n, b, e, separate, useSimd,
-                untouched, reads ? &halo : nullptr, reads ? &mush : nullptr);
+                untouched);
         };
         for (const std::vector<size_t> &bounds : *cuts) {
             std::vector<GfVec3f> assembled;
@@ -2294,53 +2283,6 @@ TestRevisionGroupsMatchTheWholeKernel()
               false);
     }
 
-    // DeltaMush: through the cached rest data and a built one, both frame
-    // transports, smoothing only, length-weighted smoothing, a computation
-    // map, and a dense and a sparse envelope; its region read across group
-    // bounds. One NaN-payload point (no infinities, so no second NaN meets
-    // it) fails itself and the points its smoothing reaches, which keep
-    // their entering positions in the groups as in the whole kernel.
-    {
-        std::vector<GfVec3f> mushIn = entering;
-        for (const size_t i : {size_t(1), size_t(3), size_t(332), size_t(340),
-                               size_t(699), size_t(1000)}) {
-            mushIn[i] =
-                GfVec3f(0.5f * float(i % 7), 0.25f * float(i / 7), 0.05f);
-        }
-        source = &mushIn;
-        for (const bool cached : {false, true}) {
-            check("delta mush", Op::DeltaMush, packets.mush, false, cached,
-                  never, true);
-            auto p = packets.mush;
-            p.mushSettings.frameTransport =
-                rigExec::RigExecDeltaMushFrameTransport::Corner;
-            check("delta mush, corner transport", Op::DeltaMush, p, false,
-                  cached, never, true);
-            p = packets.mush;
-            p.mushSettings.onlySmooth = true;
-            check("delta mush, smoothing only", Op::DeltaMush, p, false, cached,
-                  never, true);
-            p = packets.mush;
-            p.mushSettings.smoothing =
-                rigExec::RigExecDeltaMushSmoothing::LengthWeighted;
-            check("delta mush, length-weighted", Op::DeltaMush, p, false,
-                  cached, never, true);
-            p = packets.mush;
-            p.mushComputationToTarget.SetTransform(
-                GfRotation(GfVec3d(0, 1, 0), 30.0), GfVec3d(1.0, -2.0, 0.5));
-            check("delta mush, computation map", Op::DeltaMush, p, false,
-                  cached, never, true);
-            p = packets.mush;
-            p.weights = packets.denseWire;
-            check("delta mush, dense envelope", Op::DeltaMush, p, false, cached,
-                  never, true);
-            p.weights = packets.sparse;
-            check("delta mush, sparse envelope", Op::DeltaMush, p, false,
-                  cached, never, true);
-        }
-        source = &entering;
-    }
-
     // Skin: the linear blend (SIMD on and off) and the dual-quaternion one,
     // at full strength and under a dense envelope, against the packet's own
     // table, the whole table handed in, and each group's key-filled table.
@@ -2394,9 +2336,12 @@ TestRevisionGroupsMatchTheWholeKernel()
         CHECK(!rigExec::RigExecRunRevisionGroup(
             Op::BlendShape, p, none, nullptr, entering.data(), out.data(),
             count, 0, 10, nullptr, false));
-        // A smooth runs as op nodes: no group arm.
+        // A smooth or a delta mush runs as op nodes: no group arm.
         CHECK(!rigExec::RigExecRunRevisionGroup(
             Op::Smooth, packets.smooth, none, nullptr, entering.data(),
+            out.data(), count, 0, 10, nullptr, false));
+        CHECK(!rigExec::RigExecRunRevisionGroup(
+            Op::DeltaMush, packets.mush, none, nullptr, entering.data(),
             out.data(), count, 0, 10, nullptr, false));
         std::vector<GfVec3f> same(entering.begin(), entering.begin() + 10);
         CHECK(!rigExec::RigExecRunRevisionGroup(

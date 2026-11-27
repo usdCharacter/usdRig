@@ -716,8 +716,6 @@ struct RigExecRevisionRangeInputs {
     /// BlendShape: the envelope resolved at the full count, the weight its
     /// kernel blends each point by; empty at full strength.
     std::vector<float> blendWeights;
-    /// DeltaMush: the rest data the whole kernel deforms with.
-    std::shared_ptr<const RigExecDeltaMushRestData<GfVec3f, GfVec3d>> mushRest;
 };
 
 /// RigExecRevisionKernelAcceptance(op, p, count), exactly; and when that is
@@ -727,10 +725,7 @@ struct RigExecRevisionRangeInputs {
 /// The BlendShape arm's answer is RigExecRevisionKernelAcceptance(BlendShape,
 /// p, count) and, when Applies below full strength, `prepared->blendWeights`
 /// holds ResolveAll(count). A Skin's RevisionStatic decides with
-/// SkinAcceptance and does not call it. A DeltaMush decides here alone, as
-/// its whole kernel does, from its rest data (\p cache's, or built): Applies
-/// when that builds and the packet holds, where RigExecRevisionKernelAcceptance
-/// answers Deferred without it.
+/// SkinAcceptance and does not call it.
 /// \p restVersion (0: unknown) is the content version of p.restPoints; a
 /// lattice bind whose cache recorded the same version skips only the
 /// rest-point comparison.
@@ -751,7 +746,7 @@ bool RigExecRevisionGateHolds(RigExecRevisionOp op,
 /// \p in[k] is entering point begin + k and \p out[k] receives point
 /// begin + k's result, k < end - begin (\p out never aliases \p in). Every
 /// whole-array input (\p p, \p prepared, \p separateEnvelope, sparse indices,
-/// bind tables) is indexed absolutely. Ops: Wire, Lattice, DeltaMush; Skin
+/// bind tables) is indexed absolutely. Ops: Wire, Lattice; Skin
 /// (\p skin is the table the group reads: a chunk's key-filled table or the
 /// fold's; classicLinear or dualQuaternion, then the "apply once" envelope
 /// when \p separateEnvelope is given); BlendShape in target space. Each
@@ -766,18 +761,14 @@ bool RigExecRevisionGateHolds(RigExecRevisionOp op,
 /// (RigExecSkinLayoutIsUsable, RigExecSkinTransformsAreUsable), as for
 /// RigExecApplySkinKernelRange. Pure: concurrent calls for distinct groups
 /// of one revision are safe.
-/// \p halo, required for DeltaMush and unread otherwise, holds the
-/// entering points of this group and of every group a point it reads lies
-/// in; a point in a group it does not hold answers false. \p mush, required
-/// for DeltaMush, is the group's own plan and scratch.
-bool RigExecRunRevisionGroup(
-    RigExecRevisionOp op, const RigExecMoverParameters &p,
-    const RigExecRevisionRangeInputs &prepared,
-    const RigExecSkinTransformsView *skin, const GfVec3f *in, GfVec3f *out,
-    size_t count, size_t begin, size_t end, const float *separateEnvelope,
-    bool useSimd, bool *untouched = nullptr,
-    const RigExecGroupPoints<GfVec3f> *halo = nullptr,
-    RigExecDeltaMushGroupState<GfVec3f, GfVec3d> *mush = nullptr);
+bool RigExecRunRevisionGroup(RigExecRevisionOp op,
+                             const RigExecMoverParameters &p,
+                             const RigExecRevisionRangeInputs &prepared,
+                             const RigExecSkinTransformsView *skin,
+                             const GfVec3f *in, GfVec3f *out, size_t count,
+                             size_t begin, size_t end,
+                             const float *separateEnvelope, bool useSimd,
+                             bool *untouched = nullptr);
 
 /// Points [begin, end) of a revision that applies: \p out (sized \p count)
 /// receives at those indices exactly what RigExecRunRevisionKernel writes

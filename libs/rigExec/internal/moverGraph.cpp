@@ -1349,45 +1349,6 @@ RigExecPrepareRevisionRanges(RigExecRevisionOp op,
     prepared->latticeBasis = nullptr;
     prepared->latticeBind.reset();
     prepared->blendWeights.clear();
-    prepared->mushRest.reset();
-    if (op == RigExecRevisionOp::DeltaMush) {
-        // What fails the whole kernel: the packet, the "apply once" envelope,
-        // the rest data, the displacement and the computation map. Every
-        // other failure is a point's own.
-        if (!_PacketMatches(op, p) ||
-            (!RigExecEnvelopeIsFullStrength(p.weights) &&
-             !p.weights.ResolvesAll(count))) {
-            return Acceptance::Refuses;
-        }
-        std::shared_ptr<const RigExecDeltaMushRestData<GfVec3f, GfVec3d>> rest;
-        if (cache) {
-            if (cache->MushRest(p.restPoints, p.topologyCounts,
-                                p.topologyIndices, p.mushIterations, p.mushStep,
-                                p.mushPinBorders, p.mushDistanceWeight,
-                                p.mushSettings)) {
-                rest = cache->RetainedMushRest();
-            }
-        } else {
-            auto built =
-                std::make_shared<RigExecDeltaMushRestData<GfVec3f, GfVec3d>>();
-            if (RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(
-                    p.restPoints, p.topologyCounts, p.topologyIndices,
-                    p.mushIterations, p.mushStep, p.mushPinBorders,
-                    p.mushDistanceWeight, p.mushSettings, built.get())) {
-                rest = std::move(built);
-            }
-        }
-        const double d = p.mushDisplacement;
-        if (!rest || !rest->validated || rest->rest.size() != count ||
-            !std::isfinite(d) ||
-            (rest->settings.smoothing == RigExecDeltaMushSmoothing::Rest &&
-             (d < 0 || d > 1)) ||
-            !deltaMushDetail::ComputationMapValid(p.mushComputationToTarget)) {
-            return Acceptance::Refuses;
-        }
-        prepared->mushRest = std::move(rest);
-        return Acceptance::Applies;
-    }
     if (op == RigExecRevisionOp::BlendShape) {
         // RigExecRevisionKernelAcceptance's BlendShape answer, by the
         // kernel's own validation; an envelope below full strength resolves
@@ -1464,9 +1425,7 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
                         const RigExecSkinTransformsView *skin,
                         const GfVec3f *in, GfVec3f *out, size_t count,
                         size_t begin, size_t end, const float *separateEnvelope,
-                        bool useSimd, bool *untouched,
-                        const RigExecGroupPoints<GfVec3f> *halo,
-                        RigExecDeltaMushGroupState<GfVec3f, GfVec3d> *mush)
+                        bool useSimd, bool *untouched)
 {
     if (untouched) {
         *untouched = false;
@@ -1474,7 +1433,8 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
     if (begin > end || end > count ||
         (begin < end && (!in || !out || in == out)) ||
         !RigExecRevisionIsRangeOp(op) || op == RigExecRevisionOp::Matrix ||
-        op == RigExecRevisionOp::Smooth || !_PacketMatches(op, p)) {
+        op == RigExecRevisionOp::Smooth || op == RigExecRevisionOp::DeltaMush ||
+        !_PacketMatches(op, p)) {
         return false;
     }
     const size_t n = end - begin;
@@ -1561,13 +1521,6 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
             p.restPoints.size(), p.auxPoints.data(), p.auxPoints.size(),
             p.auxPointsB.data(), p.auxPointsB.size(), p.divisions[0],
             p.divisions[1], p.divisions[2], prepared.latticeBasis);
-    } else if (op == RigExecRevisionOp::DeltaMush) {
-        if (!prepared.mushRest || !halo || !mush || halo->At(begin) != in ||
-            !RigExecApplyDeltaMushGroup<GfVec3f, GfVec3d, GfMatrix4d>(
-                prepared.mushRest, p.mushDisplacement,
-                p.mushComputationToTarget, *halo, begin, end, out, mush)) {
-            return false;
-        }
     } else {
         // Skin: the group's part of the layout against the table it reads
         // (\p skin, or the packet's own), blended over the entering points
@@ -1599,17 +1552,9 @@ RigExecRunRevisionRange(RigExecRevisionOp op, const RigExecMoverParameters &p,
         (count && !entering) || (count && entering == out->data())) {
         return false;
     }
-    // The whole entering array as one group, for an op that reads neighbours.
-    const int bounds[2] = {0, int(count)};
-    const GfVec3f *const points[1] = {entering};
-    RigExecGroupPoints<GfVec3f> whole;
-    whole.bounds = bounds;
-    whole.groups = 1;
-    whole.points = points;
-    RigExecDeltaMushGroupState<GfVec3f, GfVec3d> mush;
-    return RigExecRunRevisionGroup(
-        op, p, prepared, nullptr, entering + begin, out->data() + begin, count,
-        begin, end, separateEnvelope, useSimd, untouched, &whole, &mush);
+    return RigExecRunRevisionGroup(op, p, prepared, nullptr, entering + begin,
+                                   out->data() + begin, count, begin, end,
+                                   separateEnvelope, useSimd, untouched);
 }
 
 // One revision, envelope included: the packet check, the full-strength fast

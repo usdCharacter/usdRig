@@ -142,14 +142,16 @@ public:
     bool RunNode(RigExecNodeId node, std::string *error = nullptr);
     /// Prepares every member of chain \p chain for a frame cut into
     /// \p groups groups of elements, group g holding [bounds[g],
-    /// bounds[g + 1]).
+    /// bounds[g + 1]). A member that fails names its node in \p failed.
     bool RunChainHead(size_t chain, const int *bounds, uint32_t groups,
-                      std::string *error = nullptr);
+                      std::string *error = nullptr,
+                      RigExecNodeId *failed = nullptr);
     /// Runs group \p group of the segment starting at member \p segment of
     /// chain \p chain; a member that runs whole runs as group 0, over
-    /// every element.
+    /// every element. A member that fails names its node in \p failed.
     bool RunChainRange(size_t chain, uint32_t segment, uint32_t group,
-                       std::string *error = nullptr);
+                       std::string *error = nullptr,
+                       RigExecNodeId *failed = nullptr);
     /// The elements, [*lo, *hi), of its neighbourhood input that member
     /// \p member reads for group \p group; known after RunChainHead.
     void ChainReads(size_t chain, uint32_t member, uint32_t group, size_t *lo,

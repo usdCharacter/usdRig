@@ -239,9 +239,9 @@ struct RigExecRun {
                               std::string *error);
     bool RunNode(uint32_t node, std::string *error);
     bool RunChainHead(uint32_t chain, const int *bounds, uint32_t groups,
-                      std::string *error);
+                      std::string *error, RigExecNodeId *failed = nullptr);
     bool RunChainRange(uint32_t chain, uint32_t segment, uint32_t group,
-                       std::string *error);
+                       std::string *error, RigExecNodeId *failed);
     void ChainReads(uint32_t chain, uint32_t member, uint32_t group, size_t *lo,
                     size_t *hi) const;
     /// Copies grouped slot \p slot's ranges into \p value, a value of its
