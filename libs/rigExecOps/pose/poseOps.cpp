@@ -165,10 +165,7 @@ PoseInterpolatorPayload::operator==(const PoseInterpolatorPayload &o) const
 uint32_t
 SpaceCheckpointRotOrderCode(const char *text, size_t size)
 {
-    if (size != 3)
-        return 0;
-    return uint32_t(uint8_t(text[0])) | uint32_t(uint8_t(text[1])) << 8 |
-           uint32_t(uint8_t(text[2])) << 16;
+    return rigExec::RigExecRotOrderCode(text, size);
 }
 
 namespace {

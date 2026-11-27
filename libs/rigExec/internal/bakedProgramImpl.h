@@ -1199,6 +1199,9 @@ enum class RigExecBakedOpFamily : uint8_t {
     ProviderAnswer,
     /// A provider's avar bindings through AvarInputs: object the slot.
     AvarInputs,
+    /// A space checkpoint through SpaceCheckpoint: object its index in
+    /// switchFrameContexts.
+    SpaceCheckpoint,
 };
 
 /// Where an op node's step comes from: its family, that family's object and
@@ -1671,7 +1674,6 @@ struct RigExecBakedProgramImpl {
         std::string key;
         int anchor = -1;
         std::vector<int> recompose;
-        std::vector<RigExecSpaceCheckpointInput> kernelInputs;
     };
     std::vector<SpaceCheckpoint> switchFrameContexts;
     std::vector<GfMatrix4d> switchFrames;
@@ -3063,7 +3065,13 @@ std::string RigExecBakedConstraintFailure(const RigExecBakedProgramImpl &B,
                                           int w, const std::string &error);
 /// Numbers one AvarInputs op node origin per slot, after every other origin.
 void RigExecBakedPlanComposeOps(RigExecBakedProgramImpl *program);
-/// The op nodes of the compose family's origins, each numbered its origin.
+/// The op node of compose family origin \p o (a pose walk origin), numbered
+/// \p o.
+bool RigExecBakedAddComposeOp(const RigExecBakedProgramImpl &B,
+                              RigExecRigDescBuilder *builder,
+                              eval::OpStepLayout *layout, size_t o,
+                              std::string *error);
+/// The op nodes of the AvarInputs origins, each numbered its origin.
 bool RigExecBakedAddComposeOps(const RigExecBakedProgramImpl &B,
                                RigExecRigDescBuilder *builder,
                                eval::OpStepLayout *layout, std::string *error);
@@ -3830,8 +3838,6 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
 /// Binds source and namespace parent anchors to typed provider compose outputs.
 bool RigExecBakedBindSpaceSwitchVersions(RigExecBakedProgramImpl *program,
                                          std::string *error = nullptr);
-void RigExecBakedRunSpaceCheckpoint(RigExecBakedProgramImpl *program,
-                                    RigExecBakedStep *step);
 
 /// Appends the pose half of the program in program order: the compose
 /// subtrees, then one Solve and one commit per walk entry, then the

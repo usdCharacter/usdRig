@@ -4,6 +4,7 @@
 #include "rigExecOps/pose/poseOps.h"
 #include "rigExecStdTypes/array.h"
 
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -52,7 +53,154 @@ struct AvarBindings {
     }
 };
 
+/// Resizes list \p value to \p count elements of \p T and fills element k
+/// with \p at(k).
+template <class T, class At>
+bool
+FillList(const RigExecTypeDesc &type, void *value, size_t count, At &&at)
+{
+    if (!type.resize || !type.data)
+        return false;
+    type.resize(value, count);
+    T *out = static_cast<T *>(type.data(value));
+    for (size_t k = 0; k < count; ++k)
+        out[k] = at(k);
+    return true;
+}
+
+/// Fills Mat4d list \p value with \p table's entries at \p slots.
+bool
+FillMatrices(const RigExecTypeDesc &type, void *value,
+             const std::vector<int> &slots,
+             const std::vector<GfMatrix4d> &table)
+{
+    if (!type.resize || !type.data)
+        return false;
+    type.resize(value, slots.size());
+    auto *out = static_cast<double *>(type.data(value));
+    for (size_t k = 0; k < slots.size(); ++k)
+        std::memcpy(out + 16 * k, table[size_t(slots[k])].data(),
+                    16 * sizeof(double));
+    return true;
+}
+
+/// Answers input \p read of space checkpoint \p object's SpaceCheckpoint
+/// node from the slots it recomposes.
+bool
+LookUpCheckpoint(const RigExecBakedProgramImpl &B, uint32_t object,
+                 eval::OpCheckpointRead read, const RigExecTypeDesc &type,
+                 void *value)
+{
+    using R = eval::OpCheckpointRead;
+    const auto &context = B.switchFrameContexts[object];
+    const std::vector<int> &slots = context.recompose;
+    const auto flags = [&](const std::vector<char> &table) {
+        return FillList<uint8_t>(type, value, slots.size(), [&](size_t k) {
+            return uint8_t(table[size_t(slots[k])] != 0);
+        });
+    };
+    switch (read) {
+    case R::Avars:
+        return FillList<double>(
+            type, value, slots.size() * kRigExecSlotAvars, [&](size_t k) {
+                return B.avars[size_t(slots[k / kRigExecSlotAvars]) *
+                                   kRigExecSlotAvars +
+                               k % kRigExecSlotAvars];
+            });
+    case R::RotOrders:
+        return FillList<uint32_t>(type, value, slots.size(), [&](size_t k) {
+            const TfToken &order = B.rotOrder[size_t(slots[k])];
+            return RigExecRotOrderCode(order.GetText(), order.size());
+        });
+    case R::RotationSigns:
+        return FillList<uint32_t>(type, value, slots.size(), [&](size_t k) {
+            const size_t s = size_t(slots[k]);
+            return s < B.rotationSign.size() ? uint32_t(B.rotationSign[s]) : 0u;
+        });
+    case R::PosedDefault:
+        return FillMatrices(type, value, slots, B.posedD);
+    case R::ParentDefaultInverse:
+        return FillMatrices(type, value, slots, B.parentDinv);
+    case R::ParentExpression:
+        return FillMatrices(type, value, slots, B.parentSpaceM);
+    case R::ParentExpressionAuthored:
+        return flags(B.parentSpaceAuthored);
+    case R::PosedAuthored:
+        return flags(B.posedAuthored);
+    case R::PosedAuthoredMatrix:
+        return FillMatrices(type, value, slots, B.posedAuthoredM);
+    case R::Anchor:
+        if (context.anchor < 0 || type.size != 16 * sizeof(double))
+            return false;
+        std::memcpy(value, B.posedM[size_t(context.anchor)].data(),
+                    16 * sizeof(double));
+        return true;
+    }
+    return false;
+}
+
+/// The SpaceCheckpoint node of space checkpoint \p object: every recomposed
+/// slot's inputs and the anchor's posed matrix, into its switch frame.
+bool
+AddCheckpointOp(const RigExecBakedProgramImpl &B,
+                RigExecRigDescBuilder *builder, eval::OpStepLayout *layout,
+                size_t o, uint32_t object, std::string *error)
+{
+    using namespace rigExecOps;
+    using R = eval::OpCheckpointRead;
+    const auto &context = B.switchFrameContexts[object];
+    SpaceCheckpointPayload payload;
+    payload.noScale.reserve(context.recompose.size());
+    for (const int slot : context.recompose)
+        payload.noScale.push_back(B.noScaleAvars[size_t(slot)] != 0);
+    const RigExecNodeId node = builder->AddOp(SpaceCheckpoint(), &payload);
+    if (node != o)
+        return Fail(error, "space checkpoint " + std::to_string(object) +
+                               " was added as node " + std::to_string(node));
+    const auto feed = [&](const RigExecPortHandle &port, R read) {
+        builder->BindInput(node, port);
+        layout->hostInputs.push_back({node, port.Index(),
+                                      eval::OpHostSource::Lookup,
+                                      uint32_t(layout->lookups.size())});
+        layout->lookups.push_back(
+            {uint8_t(eval::OpLookupSource::CheckpointInputs), object, -1,
+             uint8_t(read)});
+    };
+    feed(SpaceCheckpointAvars(), R::Avars);
+    feed(SpaceCheckpointRotOrders(), R::RotOrders);
+    feed(SpaceCheckpointRotationSigns(), R::RotationSigns);
+    feed(SpaceCheckpointPosedDefault(), R::PosedDefault);
+    feed(SpaceCheckpointParentDefaultInverse(), R::ParentDefaultInverse);
+    feed(SpaceCheckpointParentExpression(), R::ParentExpression);
+    feed(SpaceCheckpointParentExpressionAuthored(),
+         R::ParentExpressionAuthored);
+    feed(SpaceCheckpointPosedAuthored(), R::PosedAuthored);
+    feed(SpaceCheckpointPosedAuthoredMatrix(), R::PosedAuthoredMatrix);
+    if (context.anchor >= 0)
+        feed(SpaceCheckpointAnchor(), R::Anchor);
+    builder->BindOutput(node, SpaceCheckpointOut());
+    layout->hostOutputs.push_back({node, SpaceCheckpointOut().Index(),
+                                   uint8_t(eval::OpOutputTarget::SwitchFrame),
+                                   object});
+    return true;
+}
+
 } // namespace
+
+bool
+RigExecBakedAddComposeOp(const RigExecBakedProgramImpl &B,
+                         RigExecRigDescBuilder *builder,
+                         eval::OpStepLayout *layout, size_t o,
+                         std::string *error)
+{
+    const RigExecBakedOpOrigin &origin = B.opNodeOrigins[o];
+    if (origin.family == RigExecBakedOpFamily::SpaceCheckpoint &&
+        origin.object >= 0 &&
+        size_t(origin.object) < B.switchFrameContexts.size())
+        return AddCheckpointOp(B, builder, layout, o, uint32_t(origin.object),
+                               error);
+    return Fail(error, "node " + std::to_string(o) + " has no compose origin");
+}
 
 void
 RigExecBakedPlanComposeOps(RigExecBakedProgramImpl *program)
@@ -111,6 +259,14 @@ RigExecBakedLookUpCompose(const RigExecBakedProgramImpl &B,
                           const RigExecTypeDesc &type, void *value,
                           std::string *error)
 {
+    if (lookup.source == uint8_t(eval::OpLookupSource::CheckpointInputs)) {
+        if (lookup.object < B.switchFrameContexts.size() &&
+            LookUpCheckpoint(B, lookup.object,
+                             eval::OpCheckpointRead(lookup.read), type, value))
+            return true;
+        return Fail(error, "space checkpoint " + std::to_string(lookup.object) +
+                               " has no input " + std::to_string(lookup.read));
+    }
     if (lookup.source != uint8_t(eval::OpLookupSource::AvarBindings) ||
         lookup.object >= B.paths.size() || !type.resize || !type.data)
         return Fail(error, "no avar bindings of slot " +
@@ -128,6 +284,14 @@ RigExecBakedStoreCompose(RigExecBakedProgramImpl &B,
                          const eval::OpHostOutput &output, const void *value,
                          std::string *error)
 {
+    if (output.target == uint8_t(eval::OpOutputTarget::SwitchFrame)) {
+        if (output.object >= B.switchFrames.size())
+            return Fail(error,
+                        "no space checkpoint " + std::to_string(output.object));
+        std::memcpy(B.switchFrames[output.object].data(), value,
+                    16 * sizeof(double));
+        return true;
+    }
     const Doubles &values = *static_cast<const Doubles *>(value);
     const unsigned channels = AvarBindings(B, output.object).Channels();
     const size_t first = size_t(output.object) * kRigExecSlotAvars;

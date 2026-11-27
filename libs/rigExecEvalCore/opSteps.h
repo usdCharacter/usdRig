@@ -126,6 +126,25 @@ enum class OpLookupSource : uint8_t {
     /// DoubleArray: the values of provider slot `object`'s avar bindings,
     /// its varying ones then its constant ones, each in program order.
     AvarBindings = 40,
+    /// Space checkpoint `object`'s recomposed slots, outermost first, as
+    /// SpaceCheckpoint input `read` (OpCheckpointRead) reads them; Anchor
+    /// its anchor's posed matrix.
+    CheckpointInputs = 41,
+};
+
+/// OpLookup::read of a CheckpointInputs lookup: the SpaceCheckpoint input
+/// it answers.
+enum class OpCheckpointRead : uint8_t {
+    Avars,
+    RotOrders,
+    RotationSigns,
+    PosedDefault,
+    ParentDefaultInverse,
+    ParentExpression,
+    ParentExpressionAuthored,
+    PosedAuthored,
+    PosedAuthoredMatrix,
+    Anchor,
 };
 
 /// OpLookup::read of a constraint lookup. The numbers are part of the file
@@ -318,7 +337,8 @@ OpSpaceLookupSource(uint8_t source)
 constexpr bool
 OpComposeLookupSource(uint8_t source)
 {
-    return source == uint8_t(OpLookupSource::AvarBindings);
+    return source == uint8_t(OpLookupSource::AvarBindings) ||
+           source == uint8_t(OpLookupSource::CheckpointInputs);
 }
 
 /// Whether a lookup of \p source answers a Mat4d that may be absent or,
@@ -459,11 +479,13 @@ enum class OpOutputTarget : uint8_t {
     IkFkMatchIkValues = 72,
     IkFkMatchFkValues = 73,
     IkFkMatchShown = 74,
-    /// Provider operation `object`'s authority and unavailable input,
-    /// stored before its ProviderValueMatrix or ProviderValueFrame.
     /// DoubleArray: an AvarInputs node's values into provider slot
     /// `object`'s bound avars, in ascending channel order.
     Avars = 40,
+    /// Mat4d: space checkpoint `object`'s switch frame.
+    SwitchFrame = 41,
+    /// Provider operation `object`'s authority and unavailable input,
+    /// stored before its ProviderValueMatrix or ProviderValueFrame.
     ProviderValueAuthority = 50,
     ProviderValueUnavailable = 51,
     /// Int: the candidate whose value answers provider value producer
@@ -505,7 +527,8 @@ OpConstraintOutputTarget(uint8_t target)
 constexpr bool
 OpComposeOutputTarget(uint8_t target)
 {
-    return target == uint8_t(OpOutputTarget::Avars);
+    return target == uint8_t(OpOutputTarget::Avars) ||
+           target == uint8_t(OpOutputTarget::SwitchFrame);
 }
 
 /// Whether OpLookUp resolves lookups of \p source.
@@ -1295,6 +1318,7 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
     case OpLookupSource::ProviderCandidates:
         return host.LookUpSpace(index, lookup, type, value, error);
     case OpLookupSource::AvarBindings:
+    case OpLookupSource::CheckpointInputs:
         return host.LookUpCompose(index, lookup, type, value, error);
     }
     return OpLayoutFail(error, "no host resolves lookup source " +
@@ -1356,6 +1380,7 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
     case OpOutputTarget::ProviderAnswerBlocked:
         return host.StoreSpace(output, value, error);
     case OpOutputTarget::Avars:
+    case OpOutputTarget::SwitchFrame:
         return host.StoreCompose(output, value, error);
     }
     return OpLayoutFail(error, "no host stores output target " +

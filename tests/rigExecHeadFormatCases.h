@@ -286,9 +286,7 @@ TestSpaceCheckpointDeclarations()
     avars.succs = {7};
     avars.writes = {fb::SlotRange(fb::SlotDomain::Avars, 1, 2)};
     file.steps.push_back(avars);
-    fb::RigExecWireStep context;
-    context.kind = fb::StepKind::SpaceCheckpoint;
-    context.object = 0;
+    fb::RigExecWireStep context = _CheckpointStep(file, 0);
     context.cluster = 0;
     context.preds = {3, 6};
     context.reads = {fb::SlotRange(fb::SlotDomain::Avars, 1, 2),
@@ -323,6 +321,12 @@ TestSpaceCheckpointDeclarations()
     bad = file;
     bad.steps[7].writes.clear();
     refuses(std::move(bad), "body SSA missing write SwitchFrame[0]");
+    bad = file;
+    bad.steps[7].kind = fb::StepKind::ReservedSpaceCheckpoint;
+    refuses(std::move(bad), "(ReservedSpaceCheckpoint");
+    bad = file;
+    bad.steps[6].kind = fb::StepKind::ReservedAvarInputs;
+    refuses(std::move(bad), "(ReservedAvarInputs");
 }
 
 RigExecWireFile

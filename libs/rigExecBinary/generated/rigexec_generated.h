@@ -1210,7 +1210,8 @@ enum class StepKind : uint8_t {
   ChainInputs = 25,
   /// Reserved. Open refuses it.
   ReservedAvarInputs = 26,
-  SpaceCheckpoint = 27,
+  /// Reserved. Open refuses it.
+  ReservedSpaceCheckpoint = 27,
   /// Reserved. Open refuses it.
   ReservedProviderRefresh = 28,
   /// Reserved. Open refuses it.
@@ -1254,7 +1255,7 @@ inline const StepKind (&EnumValuesStepKind())[33] {
     StepKind::ReservedSpaceExpression,
     StepKind::ChainInputs,
     StepKind::ReservedAvarInputs,
-    StepKind::SpaceCheckpoint,
+    StepKind::ReservedSpaceCheckpoint,
     StepKind::ReservedProviderRefresh,
     StepKind::ReservedOpGraph,
     StepKind::OpNode,
@@ -1293,7 +1294,7 @@ inline const char * const *EnumNamesStepKind() {
     "ReservedSpaceExpression",
     "ChainInputs",
     "ReservedAvarInputs",
-    "SpaceCheckpoint",
+    "ReservedSpaceCheckpoint",
     "ReservedProviderRefresh",
     "ReservedOpGraph",
     "OpNode",

@@ -535,15 +535,6 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
         return runtimePoseDetail::_RrRunConstraintStep(program, step, error);
     }
 
-    case RigExecWireStepKind::SpaceCheckpoint: {
-        RrPoseHost host(program);
-        eval::StepRef ref;
-        ref.kind = uint32_t(wire.kind);
-        ref.object = wire.object;
-        ref.part = wire.part;
-        ref.slot = step;
-        return eval::RunValueStep(host, ref).outcome == eval::Outcome::Applied;
-    }
 
     case RigExecWireStepKind::PoseInterpolator: {
         if (wire.object < 0 ||
@@ -830,11 +821,116 @@ RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
     return true;
 }
 
+namespace {
+
+template <class T, class At>
+bool
+_RrFillList(const RigExecTypeDesc &type, void *value, size_t count, At &&at)
+{
+    if (!type.resize || !type.data)
+        return false;
+    type.resize(value, count);
+    T *out = static_cast<T *>(type.data(value));
+    for (size_t k = 0; k < count; ++k)
+        out[k] = at(k);
+    return true;
+}
+
+bool
+_RrFillMatrices(const RigExecTypeDesc &type, void *value,
+                const std::vector<int32_t> &slots,
+                const std::vector<RrMat4d> &table)
+{
+    if (!type.resize || !type.data)
+        return false;
+    type.resize(value, slots.size());
+    auto *out = static_cast<double *>(type.data(value));
+    for (size_t k = 0; k < slots.size(); ++k)
+        std::memcpy(out + 16 * k, table[size_t(slots[k])]._mtx,
+                    16 * sizeof(double));
+    return true;
+}
+
+// Input \p read of space checkpoint \p object's SpaceCheckpoint node, from
+// the slots it recomposes (RigExecBakedLookUpCompose's twin).
+bool
+_RrLookUpCheckpoint(const RrProgram *program, uint32_t object,
+                    eval::OpCheckpointRead read, const RigExecTypeDesc &type,
+                    void *value)
+{
+    using R = eval::OpCheckpointRead;
+    const auto &context = program->poses->spaceCheckpoints[object];
+    const std::vector<int32_t> &slots = context.recompose;
+    const RrStore &store = program->store;
+    const RrPoseScratch &scratch =
+        *_RrScratch(const_cast<RrProgram *>(program));
+    const auto flags = [&](const std::vector<char> &table) {
+        return _RrFillList<uint8_t>(type, value, slots.size(), [&](size_t k) {
+            return uint8_t(table[size_t(slots[k])] != 0);
+        });
+    };
+    switch (read) {
+    case R::Avars:
+        return _RrFillList<double>(
+            type, value, slots.size() * kRigExecSlotAvars, [&](size_t k) {
+                return store.avars[size_t(slots[k / kRigExecSlotAvars]) *
+                                       kRigExecSlotAvars +
+                                   k % kRigExecSlotAvars];
+            });
+    case R::RotOrders:
+        return _RrFillList<uint32_t>(type, value, slots.size(), [&](size_t k) {
+            const std::string order =
+                program->TextOrEmpty(scratch.rotOrder[size_t(slots[k])]);
+            return RigExecRotOrderCode(order.data(), order.size());
+        });
+    case R::RotationSigns:
+        return _RrFillList<uint32_t>(type, value, slots.size(), [&](size_t k) {
+            const size_t s = size_t(slots[k]);
+            return s < scratch.rotationSign.size()
+                       ? uint32_t(scratch.rotationSign[s])
+                       : 0u;
+        });
+    case R::PosedDefault:
+        return _RrFillMatrices(type, value, slots, scratch.posedD);
+    case R::ParentDefaultInverse:
+        return _RrFillMatrices(type, value, slots, scratch.parentDinv);
+    case R::ParentExpression:
+        return _RrFillMatrices(type, value, slots, scratch.parentSpaceM);
+    case R::ParentExpressionAuthored:
+        return flags(scratch.parentSpaceAuthored);
+    case R::PosedAuthored:
+        return flags(scratch.posedAuthored);
+    case R::PosedAuthoredMatrix:
+        return _RrFillMatrices(type, value, slots, scratch.posedAuthoredM);
+    case R::Anchor:
+        if (context.anchor < 0 || type.size != 16 * sizeof(double))
+            return false;
+        std::memcpy(value, store.posedM[size_t(context.anchor)]._mtx,
+                    16 * sizeof(double));
+        return true;
+    }
+    return false;
+}
+
+} // namespace
+
 bool
 RrLookUpCompose(const RrProgram *program, const eval::OpLookup &lookup,
                 const RigExecTypeDesc &type, void *value, std::string *error)
 {
     const RrInputState &state = program->inputState;
+    if (lookup.source == uint8_t(eval::OpLookupSource::CheckpointInputs)) {
+        if (lookup.object < program->poses->spaceCheckpoints.size() &&
+            _RrLookUpCheckpoint(program, lookup.object,
+                                eval::OpCheckpointRead(lookup.read), type,
+                                value))
+            return true;
+        if (error)
+            *error = "op nodes: space checkpoint " +
+                     std::to_string(lookup.object) + " has no input " +
+                     std::to_string(lookup.read);
+        return false;
+    }
     if (lookup.source != uint8_t(eval::OpLookupSource::AvarBindings) ||
         !type.resize || !type.data) {
         if (error)
@@ -855,6 +951,17 @@ bool
 RrStoreCompose(RrProgram *program, const eval::OpHostOutput &output,
                const void *value, std::string *error)
 {
+    if (output.target == uint8_t(eval::OpOutputTarget::SwitchFrame)) {
+        if (output.object >= program->store.switchFrames.size()) {
+            if (error)
+                *error = "op nodes: no space checkpoint " +
+                         std::to_string(output.object);
+            return false;
+        }
+        std::memcpy(program->store.switchFrames[output.object]._mtx, value,
+                    16 * sizeof(double));
+        return true;
+    }
     const RrInputState &state = program->inputState;
     const auto &values =
         *static_cast<const rigExecStd::RigExecArray<double> *>(value);

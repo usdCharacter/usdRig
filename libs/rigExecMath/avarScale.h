@@ -112,6 +112,18 @@ RigExecAvarElement(unsigned mask, size_t channel)
     return element;
 }
 
+/// A rotation order's code as the pose ops read it: its three axis letters
+/// in the low three bytes, or 0 (the default order) unless it has three
+/// letters.
+inline uint32_t
+RigExecRotOrderCode(const char *text, size_t size)
+{
+    if (size != 3)
+        return 0;
+    return uint32_t(uint8_t(text[0])) | uint32_t(uint8_t(text[1])) << 8 |
+           uint32_t(uint8_t(text[2])) << 16;
+}
+
 } // namespace rigExec
 
 #endif // RIGEXEC_MATH_AVAR_SCALE_H

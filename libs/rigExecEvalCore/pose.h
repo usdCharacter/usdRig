@@ -1824,39 +1824,6 @@ SpaceCheckpointMatrix(
     return posed;
 }
 
-template <class Host>
-StepResult
-RunSpaceCheckpointStep(Host &host, const StepRef &step)
-{
-    static_assert(IsBoundHost<Host>::value, "pose Host is not bound");
-    using Math = typename Host::Math;
-    if (step.object < 0 ||
-        size_t(step.object) >= host.inputs().checkpointObjectCount()) {
-        return {Outcome::Invalid, kNoStepDetail};
-    }
-    const size_t object = size_t(step.object);
-    const size_t count = host.inputs().checkpointRecomposeCount(object);
-    auto &inputs = host.state().checkpointInputs(object);
-    if (inputs.size() < count) {
-        return {Outcome::Invalid, kNoStepDetail};
-    }
-    for (size_t k = 0; k < count; ++k) {
-        PoseSlotComposeT<Math> view;
-        if (!host.inputs().checkpointSlot(object, k, &view)) {
-            return {Outcome::Invalid, kNoStepDetail};
-        }
-        inputs[k] = CheckpointInputOf<Math>(view);
-    }
-    const int anchor = host.inputs().checkpointAnchor(object);
-    typename Math::Mat4 posed = Math::Identity4();
-    if (anchor >= 0 && !host.inputs().posedMatrix(size_t(anchor), &posed)) {
-        return {Outcome::Invalid, kNoStepDetail};
-    }
-    host.state().writeSwitchFrame(
-        object, SpaceCheckpointMatrix<Math>(inputs.data(), count, posed));
-    return {Outcome::Applied, kNoStepDetail};
-}
-
 // ---- RestCompose / LadderCompose ----
 //
 // The ladder channel ids the spaceValues table is indexed by. Both
@@ -2762,8 +2729,6 @@ StepResult
 RunValueStep(Host &host, const StepRef &step)
 {
     switch (StepKind(step.kind)) {
-    case StepKind::SpaceCheckpoint:
-        return RunSpaceCheckpointStep(host, step);
     case StepKind::RestCompose:
         return RunRestComposeStep(host, step, true);
     case StepKind::LadderCompose:

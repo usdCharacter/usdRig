@@ -141,7 +141,8 @@ enum StepKind : ubyte { ComposeSubtree = 0, Solve,
   ReservedSpaceExpression, ChainInputs,
   /// Reserved. Open refuses it.
   ReservedAvarInputs,
-  SpaceCheckpoint,
+  /// Reserved. Open refuses it.
+  ReservedSpaceCheckpoint,
   /// Reserved. Open refuses it.
   ReservedProviderRefresh,
   /// Reserved. Open refuses it.

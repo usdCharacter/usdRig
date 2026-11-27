@@ -132,31 +132,6 @@ public:
     {
     }
 
-    size_t checkpointObjectCount() const
-    {
-        return _program->switchFrameContexts.size();
-    }
-
-    size_t checkpointRecomposeCount(size_t object) const
-    {
-        return _program->switchFrameContexts[object].recompose.size();
-    }
-
-    bool checkpointSlot(size_t object, size_t k,
-                        eval::PoseSlotComposeT<BakedPoseMath> *view) const
-    {
-        const auto &recompose = _program->switchFrameContexts[object].recompose;
-        if (k >= recompose.size() || recompose[k] < 0) {
-            return false;
-        }
-        return slotCompose(size_t(recompose[k]), view);
-    }
-
-    int checkpointAnchor(size_t object) const
-    {
-        return _program->switchFrameContexts[object].anchor;
-    }
-
     bool posedMatrix(size_t slot, GfMatrix4d *out) const
     {
         if (slot >= _program->posedM.size()) {
@@ -1147,16 +1122,6 @@ public:
     void diagnose(const std::string &message)
     {
         _step->diagnostics.push_back(message);
-    }
-
-    std::vector<RigExecSpaceCheckpointInput> &checkpointInputs(size_t object)
-    {
-        return _program->switchFrameContexts[object].kernelInputs;
-    }
-
-    void writeSwitchFrame(size_t object, const GfMatrix4d &matrix)
-    {
-        _program->switchFrames[object] = matrix;
     }
 
     void beforeSlot(eval::StepKind kind, int begin, int i)

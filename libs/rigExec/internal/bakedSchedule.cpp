@@ -2319,8 +2319,6 @@ RouteBakedStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
             TF_VERIFY(false, "invalid head operation");
             break;
         }
-    } else if (step->kind == RigExecBakedStepKind::SpaceCheckpoint) {
-        RigExecBakedRunSpaceCheckpoint(B, step);
     } else if (RigExecBakedIsOpStep(step->kind)) {
         RigExecBakedRunOpStep(B, step);
     } else if (RigExecBakedIsGeometryStep(step->kind)) {

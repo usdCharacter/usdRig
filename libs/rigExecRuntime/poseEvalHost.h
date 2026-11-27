@@ -72,32 +72,6 @@ public:
     {
     }
 
-    size_t checkpointObjectCount() const
-    {
-        return _program->poses->spaceCheckpoints.size();
-    }
-
-    size_t checkpointRecomposeCount(size_t object) const
-    {
-        return _program->poses->spaceCheckpoints[object].recompose.size();
-    }
-
-    bool checkpointSlot(size_t object, size_t k,
-                        eval::PoseSlotComposeT<RrPoseMath> *view) const
-    {
-        const auto &recompose =
-            _program->poses->spaceCheckpoints[object].recompose;
-        if (k >= recompose.size() || recompose[k] < 0) {
-            return false;
-        }
-        return slotCompose(size_t(recompose[k]), view);
-    }
-
-    int checkpointAnchor(size_t object) const
-    {
-        return _program->poses->spaceCheckpoints[object].anchor;
-    }
-
     bool posedMatrix(size_t slot, RrMat4d *out) const
     {
         if (slot >= _program->store.posedM.size()) {
@@ -1024,18 +998,6 @@ class RrPoseState {
 public:
     explicit RrPoseState(RrProgram *program) : _program(program)
     {
-    }
-
-    std::vector<RigExecSpaceCheckpointInputT<RrMat4d>> &
-    checkpointInputs(size_t object)
-    {
-        return runtimePoseDetail::_RrScratch(_program)
-            ->checkpointInputs[object];
-    }
-
-    void writeSwitchFrame(size_t object, const RrMat4d &matrix)
-    {
-        _program->store.switchFrames[object] = matrix;
     }
 
     void beforeSlot(eval::StepKind kind, int begin, int i)

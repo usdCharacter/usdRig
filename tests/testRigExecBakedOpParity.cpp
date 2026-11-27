@@ -2868,10 +2868,9 @@ ProbeAvarInputs(const B &b, int provider)
 // A space checkpoint's switch frame from the slots it recomposes and its
 // anchor's posed matrix, against the frame the step stored.
 void
-ProbeSpaceCheckpoint(const B &b, const RigExecBakedStep &step)
+ProbeSpaceCheckpoint(const B &b, size_t object)
 {
     using namespace rigExecOps;
-    const size_t object = size_t(step.object);
     const auto &context = b.switchFrameContexts[object];
     SpaceCheckpointPayload payload;
     rigExecStd::RigExecArray<double> avars;
@@ -3563,10 +3562,10 @@ ProbePose(const B &b)
         if (const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(b, step);
             id.kind == RigExecBakedStepKind::AvarInputs && id.object >= 0)
             ProbeAvarInputs(b, id.object);
-        else if (step.kind == RigExecBakedStepKind::SpaceCheckpoint &&
-                 step.object >= 0 &&
-                 size_t(step.object) < b.switchFrameContexts.size())
-            ProbeSpaceCheckpoint(b, step);
+        else if (id.kind == RigExecBakedStepKind::SpaceCheckpoint &&
+                 id.object >= 0 &&
+                 size_t(id.object) < b.switchFrameContexts.size())
+            ProbeSpaceCheckpoint(b, size_t(id.object));
         else if (step.kind == RigExecBakedStepKind::PoseInterpolator &&
                  step.object >= 0 &&
                  size_t(step.object) < b.poseInterpolators.size())

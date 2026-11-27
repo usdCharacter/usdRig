@@ -2251,7 +2251,6 @@ RigExecBakedBindSpaceSwitchVersions(RigExecBakedProgramImpl *program,
                     ":" + site;
                 checkpoint.anchor = selected.anchor;
                 checkpoint.recompose = selected.recompose;
-                checkpoint.kernelInputs.resize(checkpoint.recompose.size());
                 read.context = int(B.switchFrameContexts.size());
                 B.switchFrameContexts.push_back(std::move(checkpoint));
             }
@@ -2274,8 +2273,9 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
     const int N = int(B.paths.size());
     for (size_t index = 0; index < B.switchFrameContexts.size(); ++index) {
         const auto &context = B.switchFrameContexts[index];
-        auto &step =
-            AddStep(&B, RigExecBakedStepKind::SpaceCheckpoint, int(index));
+        auto &step = AddOriginStep(&B, RigExecBakedOpFamily::SpaceCheckpoint,
+                                   RigExecBakedStepKind::SpaceCheckpoint,
+                                   int(index), -1);
         step.label = context.key;
         if (context.anchor >= 0)
             step.reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::PosedM,
@@ -4736,23 +4736,6 @@ _ReadFrameVersion(
 }
 
 } // namespace
-
-void
-RigExecBakedRunSpaceCheckpoint(RigExecBakedProgramImpl *program,
-                               RigExecBakedStep *step)
-{
-    BakedPoseHost host(program, step);
-    eval::StepRef ref;
-    ref.kind = uint32_t(step->kind);
-    ref.object = step->object;
-    ref.part = step->part;
-    ref.slot = 0;
-    if (eval::RunValueStep(host, ref).outcome == eval::Outcome::Invalid) {
-        step->diagnostics.push_back("space checkpoint " +
-                                    std::to_string(step->object) +
-                                    " names no checkpoint");
-    }
-}
 
 RigExecBakedProgramImpl::Solver
 RigExecBakedProgramTesting::RefreshedSolverRests(

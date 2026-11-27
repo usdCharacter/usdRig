@@ -597,6 +597,7 @@ public:
         _providerSlotOf.assign(nodes, -1);
         _commitNode.assign(nodes, -1);
         _avarNode.assign(nodes, -1);
+        _checkpointNode.assign(nodes, -1);
         _refreshOf.assign(nodes, -1);
         _providerOpOf.assign(nodes, -1);
         _constraintNode.assign(nodes, -1);
@@ -642,6 +643,10 @@ public:
             if (output && output->node < nodes && output->target == 40 &&
                 _avarNode[output->node] < 0)
                 _avarNode[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 41 &&
+                _checkpointNode[output->node] < 0)
+                _checkpointNode[output->node] = int64_t(output->object);
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node < nodes && output->target == 5 &&
                 _fieldStored[output->node] < 0)
@@ -739,7 +744,7 @@ private:
         std::vector<uint8_t> stored, packets, fields, groupsStored,
             enabledStored;
         std::set<std::pair<uint64_t, uint8_t>> providerStored, answerStored;
-        std::set<uint64_t> avarsStored;
+        std::set<uint64_t> avarsStored, checkpointsStored;
         std::vector<uint8_t> spaceStored(
             4 * std::max<size_t>(_slots, _f.pose->frameRecords.size()), 0);
         for (const auto &output : _f.opGraph->hostOutputs) {
@@ -749,7 +754,8 @@ private:
             const bool constraint = _ConstraintTarget(output->target);
             if ((output->target > 6 && output->target < 20) ||
                 (output->target > 34 && !constraint && output->target != 40 &&
-                 output->target != 50 && output->target != 51 &&
+                 output->target != 41 && output->target != 50 &&
+                 output->target != 51 &&
                  (output->target < 52 || output->target > 54)))
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
@@ -774,6 +780,31 @@ private:
                                 " stores into constraint " +
                                 _N(output->object) +
                                 ", which it does not solve");
+                continue;
+            }
+            if (output->target == 41) {
+                bool reads = false;
+                if (_f.opGraph->nodes[node])
+                    for (const auto &input : _f.opGraph->nodes[node]->inputs)
+                        reads =
+                            reads ||
+                            (input && input->host == 4 &&
+                             input->object < _f.opGraph->lookups.size() &&
+                             _f.opGraph->lookups[input->object] &&
+                             _f.opGraph->lookups[input->object]->source == 41 &&
+                             _f.opGraph->lookups[input->object]->object ==
+                                 output->object);
+                if (!_f.pose ||
+                    output->object >= _f.pose->spaceCheckpoints.size() ||
+                    !reads || _checkpointNode[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the switch frame of checkpoint " +
+                                _N(output->object) +
+                                ", whose inputs it does not read");
+                if (!checkpointsStored.insert(output->object).second)
+                    return _Bad("op_graph.host_outputs: the switch frame of "
+                                "checkpoint " +
+                                _N(output->object) + " is stored twice");
                 continue;
             }
             if (output->target == 40) {
@@ -1036,6 +1067,16 @@ private:
                                 _N(lookup->object) + " holds");
                 continue;
             }
+            if (lookup && lookup->source == 41) {
+                if (!_f.pose ||
+                    lookup->object >= _f.pose->spaceCheckpoints.size() ||
+                    lookup->part != -1 || lookup->read > 9 ||
+                    (lookup->read == 9 &&
+                     _f.pose->spaceCheckpoints[lookup->object].anchor < 0))
+                    return _Bad("op_graph.lookups: a checkpoint inputs lookup "
+                                "reads no input of a space checkpoint");
+                continue;
+            }
             if (lookup && lookup->source == 40) {
                 if (lookup->object >= _slots || lookup->part != -1 ||
                     lookup->read)
@@ -1248,6 +1289,9 @@ private:
                             ": the retired SpaceExpression step");
             if (kind == fb::StepKind::ReservedAvarInputs)
                 return _Bad(_StepName(i) + ": the retired AvarInputs step");
+            if (kind == fb::StepKind::ReservedSpaceCheckpoint)
+                return _Bad(_StepName(i) +
+                            ": the retired SpaceCheckpoint step");
             const bool op = kind == fb::StepKind::OpNode ||
                             kind == fb::StepKind::OpChainHead ||
                             kind == fb::StepKind::OpChainRange;
@@ -1582,6 +1626,10 @@ private:
                                "back");
                 } else if (lookup.source == 40 && _avarNode[n] != object) {
                     return bad(" reads the avar bindings of a slot its node "
+                               "does not store");
+                } else if (lookup.source == 41 &&
+                           _checkpointNode[n] != object) {
+                    return bad(" reads the inputs of a checkpoint its node "
                                "does not store");
                 }
             }
@@ -2738,6 +2786,16 @@ private:
                    : -1;
     }
 
+    /// The space checkpoint whose switch frame the op step \p step stores,
+    /// or -1 for any other step.
+    int64_t _CheckpointOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _checkpointNode.size()
+                   ? _checkpointNode[size_t(step.object)]
+                   : -1;
+    }
+
     /// The slot whose avars the op step \p step stores, or -1 for any
     /// other step.
     int64_t _AvarSlotOf(const fb::RigExecWireStep &step) const
@@ -3030,6 +3088,9 @@ private:
                             ": the retired SpaceExpression step");
             if (step.kind == fb::StepKind::ReservedAvarInputs)
                 return _Bad(_StepName(i) + ": the retired AvarInputs step");
+            if (step.kind == fb::StepKind::ReservedSpaceCheckpoint)
+                return _Bad(_StepName(i) +
+                            ": the retired SpaceCheckpoint step");
             if (!_SpaceOp(i))
                 return false;
             if (const int64_t object = _PacketObjectOf(step); object >= 0) {
@@ -4869,9 +4930,10 @@ private:
         for (const auto &step : _f.steps) {
             if (step.object < 0)
                 continue;
-            if (step.kind == K::SpaceCheckpoint &&
-                size_t(step.object) < checkpointProducers.size())
-                ++checkpointProducers[size_t(step.object)];
+            if (const int64_t checkpoint = _CheckpointOf(step);
+                checkpoint >= 0 &&
+                size_t(checkpoint) < checkpointProducers.size())
+                ++checkpointProducers[size_t(checkpoint)];
         }
         for (const auto &step : _f.steps)
             if (const int64_t refresh = _RefreshOf(step);
@@ -4967,13 +5029,11 @@ private:
                             values[channel] >= 0)
                             read(D::SpaceValue, uint32_t(values[channel]));
                 }
-            } else if (step.kind == K::SpaceCheckpoint) {
-                if (step.object < 0 ||
-                    size_t(step.object) >= pose.spaceCheckpoints.size() ||
-                    step.part != -1)
+            } else if (const int64_t object = _CheckpointOf(step);
+                       object >= 0) {
+                if (size_t(object) >= pose.spaceCheckpoints.size())
                     return _Bad(_StepName(owner) + ": invalid checkpoint body");
-                const auto &checkpoint =
-                    pose.spaceCheckpoints[size_t(step.object)];
+                const auto &checkpoint = pose.spaceCheckpoints[size_t(object)];
                 if (checkpoint.key.empty() ||
                     !_Index(checkpoint.anchor, _slots, true, _StepName(owner),
                             "anchor") ||
@@ -4991,7 +5051,7 @@ private:
                     read(D::Avars, uint32_t(slot));
                     read(D::Ladder, uint32_t(slot));
                 }
-                writes.emplace(D::SwitchFrame, uint32_t(step.object));
+                writes.emplace(D::SwitchFrame, uint32_t(object));
             } else if (const int64_t index = _RefreshOf(step); index >= 0) {
                 if (size_t(index) >= pose.providerRefreshes.size())
                     return _Bad(_StepName(owner) +
@@ -10289,6 +10349,8 @@ private:
     }
     /// Per op node: the slot whose avars its AvarInputs stores, or -1.
     std::vector<int64_t> _avarNode;
+    /// Per op node: the space checkpoint whose switch frame it stores, or -1.
+    std::vector<int64_t> _checkpointNode;
 
     /// The commit a Constraint step or PoseCommit op step works on, or -1.
     int64_t _CommitOf(const fb::RigExecWireStep &step) const
@@ -10781,8 +10843,12 @@ _StepKindName(fb::StepKind kind)
         return "ReservedWeightField";
     case fb::StepKind::ReservedSpaceExpression:
         return "ReservedSpaceExpression";
-    case fb::StepKind::SpaceCheckpoint:
-        return "SpaceCheckpoint";
+    case fb::StepKind::ChainInputs:
+        return "ChainInputs";
+    case fb::StepKind::ReservedAvarInputs:
+        return "ReservedAvarInputs";
+    case fb::StepKind::ReservedSpaceCheckpoint:
+        return "ReservedSpaceCheckpoint";
     case fb::StepKind::ReservedProviderRefresh:
         return "ReservedProviderRefresh";
     case fb::StepKind::ReservedOpGraph:
@@ -10859,12 +10925,8 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
         *out = text(meta->paths[size_t(first)]);
         return true;
     }
-    case fb::StepKind::SpaceCheckpoint: {
-        if (!pose || !_Has(pose->spaceCheckpoints, object))
-            return false;
-        *out = pose->spaceCheckpoints[size_t(object)].key;
-        return true;
-    }
+    case fb::StepKind::ReservedSpaceCheckpoint:
+        return false;
     case fb::StepKind::ReservedProviderRefresh:
     case fb::StepKind::ReservedSpaceExpression:
         return false;
@@ -10933,6 +10995,13 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
                 return true;
             }
         }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
+                output->target == 41 && pose &&
+                _Has(pose->spaceCheckpoints, output->object)) {
+                *out = pose->spaceCheckpoints[size_t(output->object)].key;
+                return true;
+            }
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node == uint64_t(object) &&
                 output->target == 40 && meta &&

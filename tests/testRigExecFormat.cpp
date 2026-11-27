@@ -420,6 +420,50 @@ _AvarStep(RigExecWireFile &f, uint32_t slot)
     return step;
 }
 
+// Fixture authoring only: a SpaceCheckpoint op node reading checkpoint
+// \p checkpoint's inputs and storing its switch frame, and the OpNode step
+// that runs it, writing it.
+fb::RigExecWireStep
+_CheckpointStep(RigExecWireFile &f, uint32_t checkpoint)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = "SpaceCheckpoint";
+    entry->version = 1;
+    f.manifest->coreOps.push_back(std::move(entry));
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = uint32_t(f.manifest->coreOps.size() - 1);
+    const uint32_t reads =
+        f.pose->spaceCheckpoints[checkpoint].anchor >= 0 ? 10 : 9;
+    for (uint32_t read = 0; read < reads; ++read) {
+        auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+        in->port = read;
+        in->host = 4;
+        in->object = uint32_t(f.opGraph->lookups.size());
+        op->inputs.push_back(std::move(in));
+        auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+        lookup->source = 41;
+        lookup->object = checkpoint;
+        lookup->part = -1;
+        lookup->read = uint8_t(read);
+        f.opGraph->lookups.push_back(std::move(lookup));
+    }
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+    output->node = node;
+    output->port = 10;
+    output->target = 41;
+    output->object = checkpoint;
+    f.opGraph->hostOutputs.push_back(std::move(output));
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    return step;
+}
+
 // Whether \p step runs an AvarInputs op node.
 bool
 _IsAvarStep(const RigExecWireFile &f, const fb::RigExecWireStep &step)

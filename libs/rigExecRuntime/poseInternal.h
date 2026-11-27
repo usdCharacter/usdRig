@@ -180,8 +180,6 @@ struct RrPoseScratch {
     // posedAuthored(M)/restRoundTrip/defaultRoundTrip tables.
     std::vector<RrMat4d> restM, selfD, parentDinv, posedAuthoredM;
     std::vector<RrMat4d> posedD, parentSpaceM;
-    std::vector<std::vector<RigExecSpaceCheckpointInputT<RrMat4d>>>
-        checkpointInputs;
     /// Per space switch, the inputs its compose ran on this frame.
     std::vector<RigExecSpaceSwitchInputsT<RrMat4d>> switchInputs;
     std::vector<char> parentSpaceAuthored;
