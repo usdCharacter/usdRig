@@ -1967,10 +1967,21 @@ KeyBlendChannels(const RoleReads &reads,
     return true;
 }
 
+/// Whether \p op runs as op chain members in every chain shape.
+bool
+RevisionRunsAsOps(RigExecRevisionOp op)
+{
+    return op == RigExecRevisionOp::Matrix || op == RigExecRevisionOp::Smooth ||
+           op == RigExecRevisionOp::DeltaMush ||
+           op == RigExecRevisionOp::Lattice;
+}
+
 /// Gives every revision of \p chain its role, groups, gates, pins and
 /// chunks. A chain is range-pipelined when chunking would split
 /// it, it holds two or more groups and one of its revisions takes the Range
-/// role; every other chain keeps its Legacy chunks. The skinning methods and
+/// role, or when one of its revisions runs as op nodes, over one group when
+/// chunking would not split it; every other chain keeps its Legacy chunks.
+/// The skinning methods and
 /// delta spaces of an eligible chain are compiled rig keys: an authored edit to one
 /// rebuilds, so only an override or upstream value flips a role within the compiled rig.
 void
@@ -1978,8 +1989,14 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
                  RigExecBakedProgramImpl::GeomChain *chain, size_t points)
 {
     RigExecBakedProgramImpl &B = *program;
-    const size_t groups = ChainGroupCount(B, points);
-    const bool eligible = ChainRangeCount(B, points) >= 2 && groups >= 2;
+    const size_t cut = ChainGroupCount(B, points);
+    const bool split = ChainRangeCount(B, points) >= 2 && cut >= 2;
+    const bool eligible =
+        split || std::any_of(chain->revisions.begin(), chain->revisions.end(),
+                             [](const auto &revision) {
+                                 return RevisionRunsAsOps(revision.op);
+                             });
+    const size_t groups = split ? cut : 1;
     chain->groupBounds.clear();
     chain->groupPointCount = 0;
     chain->baseOwner.reset();
@@ -2145,7 +2162,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
                 BuildMushHalo(reads, *chain, &revision, points);
             }
             B.exportPinnedPaths.insert(pinned[r].begin(), pinned[r].end());
-        } else if (skin && revision.skinTopologyFixed &&
+        } else if (skin && groups >= 2 && revision.skinTopologyFixed &&
                    PartitionSkinGroups(&revision, chain->groupBounds)) {
             // A Whole keyed skin: one speculative chunk per group.
         } else {
@@ -2724,7 +2741,8 @@ RigExecBakedGroupSlot(const RigExecBakedProgramImpl &B, int id, size_t g)
 }
 
 bool
-RigExecBakedRolesStand(const RigExecBakedProgramImpl &B)
+RigExecBakedRolesStand(const RigExecBakedProgramImpl &B,
+                       std::string *pointCountError)
 {
     // Worker-safe (the frozen worker calls it on its clone): reads sampled
     // leaves and the clone's own tables, compares tokens and paths by
@@ -2752,8 +2770,14 @@ RigExecBakedRolesStand(const RigExecBakedProgramImpl &B)
     for (const RigExecBakedProgramImpl::GeomChain &chain : B.chains) {
         // Only this run's sample counts (the prologue just took it):
         // `haveBase` is the previous run's, false on a program's first run.
-        if (chain.groupPointCount > 0 && chain.sampledHaveBase &&
+        if (!chain.groupBounds.empty() && chain.sampledHaveBase &&
             chain.sampledBase.size() != chain.groupPointCount) {
+            if (pointCountError) {
+                *pointCountError =
+                    chain.target.GetString() + ": " +
+                    eval::ChainPointCountText(chain.sampledBase.size(),
+                                              chain.groupPointCount);
+            }
             return false;
         }
         for (const RigExecBakedProgramImpl::GeomRevision &revision :
@@ -4216,6 +4240,9 @@ struct BakedChainState {
         access.resultVersion = &c.resultVersion;
         access.baseVersion = &c.baseVersion;
         access.scheduleDirty = &c.scheduleDirty;
+        if (!c.groupBounds.empty()) {
+            access.compiledPointCount = c.groupPointCount;
+        }
         access.revisionCount = c.revisions.size();
         return access;
     }
@@ -6487,7 +6514,7 @@ RigExecBakedStoreRevisionEnabled(RigExecBakedProgramImpl &B, uint32_t id,
     revision.weightFieldPublished = false;
     if (BuildCurrentPhasePacket(B, &revision) && !c.groupBounds.empty())
         PublishRevisionWeights(B, &revision, size_t(c.groupBounds.back()),
-                               false);
+                               true);
     return true;
 }
 

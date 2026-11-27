@@ -1282,6 +1282,29 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
         sites(layout ? owner->layoutLeafSites : owner->leafSites);
         return true;
     }
+    // An op chain's head looks up every member revision's own inputs.
+    if (step.kind == RigExecWireStepKind::OpChainHead && step.object >= 0 &&
+        program->opNodes &&
+        size_t(step.object) < program->opNodes->layout.chainDescs.size()) {
+        const eval::OpStepLayout &ops = program->opNodes->layout;
+        uint64_t last = UINT64_MAX;
+        for (const RigExecNodeId member :
+             ops.chainDescs[size_t(step.object)].members)
+            for (const uint32_t o : ops.hostOutputsOf[member]) {
+                const eval::OpHostOutput &output = ops.hostOutputs[o];
+                if (output.target !=
+                        uint8_t(eval::OpOutputTarget::ChainGroup) ||
+                    output.object == last ||
+                    output.object >= program->geometry->revisionIndex.size())
+                    continue;
+                last = output.object;
+                const auto &id =
+                    program->geometry->revisionIndex[output.object];
+                sites(program->geometry->chains[size_t(id.first)]
+                          .revisions[size_t(id.second)]
+                          .leafSites);
+            }
+    }
     if (!step.headInputReads.empty()) {
         for (const auto &input : step.headInputReads)
             read(input);

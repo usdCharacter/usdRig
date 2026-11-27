@@ -15924,6 +15924,7 @@ struct RigExecWireRevision : public ::flatbuffers::NativeTable {
   int32_t weightField = -1;
   std::vector<rigExec::fb::RigExecWireExternalDeclaredInput> leafSites{};
   std::vector<rigExec::fb::RigExecWireExternalDeclaredInput> layoutLeafSites{};
+  bool rangeRole = false;
   RigExecWireRevision() = default;
   RigExecWireRevision(const RigExecWireRevision &o);
   RigExecWireRevision(RigExecWireRevision&&) FLATBUFFERS_NOEXCEPT = default;
@@ -15982,7 +15983,8 @@ struct Revision FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_JOINTWEIGHTSSLOT = 86,
     VT_WEIGHTFIELD = 88,
     VT_LEAFSITES = 90,
-    VT_LAYOUTLEAFSITES = 92
+    VT_LAYOUTLEAFSITES = 92,
+    VT_RANGEROLE = 94
   };
   uint32_t moverPath() const {
     return GetField<uint32_t>(VT_MOVERPATH, 0);
@@ -16139,6 +16141,9 @@ struct Revision FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>> *layoutLeafSites() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>> *>(VT_LAYOUTLEAFSITES);
   }
+  bool rangeRole() const {
+    return GetField<uint8_t>(VT_RANGEROLE, 0) != 0;
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -16209,6 +16214,7 @@ struct Revision FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffset(verifier, VT_LAYOUTLEAFSITES) &&
            verifier.VerifyVector(layoutLeafSites()) &&
            verifier.VerifyVectorOfTables(layoutLeafSites()) &&
+           VerifyField<uint8_t>(verifier, VT_RANGEROLE, 1) &&
            verifier.EndTable();
   }
   RigExecWireRevision *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -16355,6 +16361,9 @@ struct RevisionBuilder {
   void add_layoutLeafSites(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>>> layoutLeafSites) {
     fbb_.AddOffset(Revision::VT_LAYOUTLEAFSITES, layoutLeafSites);
   }
+  void add_rangeRole(bool rangeRole) {
+    fbb_.AddElement<uint8_t>(Revision::VT_RANGEROLE, static_cast<uint8_t>(rangeRole), 0);
+  }
   explicit RevisionBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -16413,7 +16422,8 @@ inline ::flatbuffers::Offset<Revision> CreateRevision(
     int32_t jointWeightsSlot = -1,
     int32_t weightField = -1,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>>> leafSites = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>>> layoutLeafSites = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>>> layoutLeafSites = 0,
+    bool rangeRole = false) {
   RevisionBuilder builder_(_fbb);
   builder_.add_partitionDistinctReads(partitionDistinctReads);
   builder_.add_partitionCandidates(partitionCandidates);
@@ -16452,6 +16462,7 @@ inline ::flatbuffers::Offset<Revision> CreateRevision(
   builder_.add_moverPrim(moverPrim);
   builder_.add_target(target);
   builder_.add_moverPath(moverPath);
+  builder_.add_rangeRole(rangeRole);
   builder_.add_topologyResolved(topologyResolved);
   builder_.add_weightCurrentPhase(weightCurrentPhase);
   builder_.add_weightOperationDomain(weightOperationDomain);
@@ -16514,7 +16525,8 @@ inline ::flatbuffers::Offset<Revision> CreateRevisionDirect(
     int32_t jointWeightsSlot = -1,
     int32_t weightField = -1,
     const std::vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>> *leafSites = nullptr,
-    const std::vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>> *layoutLeafSites = nullptr) {
+    const std::vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>> *layoutLeafSites = nullptr,
+    bool rangeRole = false) {
   auto blendChannels__ = blendChannels ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::BlendChannel>>(*blendChannels) : 0;
   auto influenceSlots__ = influenceSlots ? _fbb.CreateVector<int32_t>(*influenceSlots) : 0;
   auto packetInfluences__ = packetInfluences ? _fbb.CreateVectorOfStructs<rigExec::fb::Matrix4d>(*packetInfluences) : 0;
@@ -16572,7 +16584,8 @@ inline ::flatbuffers::Offset<Revision> CreateRevisionDirect(
       jointWeightsSlot,
       weightField,
       leafSites__,
-      layoutLeafSites__);
+      layoutLeafSites__,
+      rangeRole);
 }
 
 ::flatbuffers::Offset<Revision> CreateRevision(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireRevision *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -27245,7 +27258,8 @@ inline RigExecWireRevision::RigExecWireRevision(const RigExecWireRevision &o)
         jointWeightsSlot(o.jointWeightsSlot),
         weightField(o.weightField),
         leafSites(o.leafSites),
-        layoutLeafSites(o.layoutLeafSites) {
+        layoutLeafSites(o.layoutLeafSites),
+        rangeRole(o.rangeRole) {
 }
 
 inline RigExecWireRevision &RigExecWireRevision::operator=(RigExecWireRevision o) FLATBUFFERS_NOEXCEPT {
@@ -27294,6 +27308,7 @@ inline RigExecWireRevision &RigExecWireRevision::operator=(RigExecWireRevision o
   std::swap(weightField, o.weightField);
   std::swap(leafSites, o.leafSites);
   std::swap(layoutLeafSites, o.layoutLeafSites);
+  std::swap(rangeRole, o.rangeRole);
   return *this;
 }
 
@@ -27351,6 +27366,7 @@ inline void Revision::UnPackTo(RigExecWireRevision *_o, const ::flatbuffers::res
   { auto _e = weightField(); _o->weightField = _e; }
   { auto _e = leafSites(); if (_e) { _o->leafSites.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->leafSites[_i] = *std::unique_ptr<rigExec::fb::RigExecWireExternalDeclaredInput>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->leafSites.resize(0); } }
   { auto _e = layoutLeafSites(); if (_e) { _o->layoutLeafSites.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->layoutLeafSites[_i] = *std::unique_ptr<rigExec::fb::RigExecWireExternalDeclaredInput>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->layoutLeafSites.resize(0); } }
+  { auto _e = rangeRole(); _o->rangeRole = _e; }
 }
 
 inline ::flatbuffers::Offset<Revision> CreateRevision(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireRevision *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -27406,6 +27422,7 @@ inline ::flatbuffers::Offset<Revision> Revision::Pack(::flatbuffers::FlatBufferB
   auto _weightField = _o->weightField;
   auto _leafSites = _o->leafSites.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>> (_o->leafSites.size(), [](size_t i, _VectorArgs *__va) { return CreateExternalDeclaredInput(*__va->__fbb, &(__va->__o->leafSites[i]), __va->__rehasher); }, &_va ) : 0;
   auto _layoutLeafSites = _o->layoutLeafSites.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>> (_o->layoutLeafSites.size(), [](size_t i, _VectorArgs *__va) { return CreateExternalDeclaredInput(*__va->__fbb, &(__va->__o->layoutLeafSites[i]), __va->__rehasher); }, &_va ) : 0;
+  auto _rangeRole = _o->rangeRole;
   return rigExec::fb::CreateRevision(
       _fbb,
       _moverPath,
@@ -27452,7 +27469,8 @@ inline ::flatbuffers::Offset<Revision> Revision::Pack(::flatbuffers::FlatBufferB
       _jointWeightsSlot,
       _weightField,
       _leafSites,
-      _layoutLeafSites);
+      _layoutLeafSites,
+      _rangeRole);
 }
 
 inline RigExecWireDerived::RigExecWireDerived(const RigExecWireDerived &o)
@@ -32090,7 +32108,8 @@ inline const ::flatbuffers::TypeTable *RevisionTypeTable() {
     { ::flatbuffers::ET_INT, 0, -1 },
     { ::flatbuffers::ET_INT, 0, -1 },
     { ::flatbuffers::ET_SEQUENCE, 1, 9 },
-    { ::flatbuffers::ET_SEQUENCE, 1, 9 }
+    { ::flatbuffers::ET_SEQUENCE, 1, 9 },
+    { ::flatbuffers::ET_BOOL, 0, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::RevisionBindingTypeTable,
@@ -32105,7 +32124,7 @@ inline const ::flatbuffers::TypeTable *RevisionTypeTable() {
     rigExec::fb::ExternalDeclaredInputTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 45, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 46, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }

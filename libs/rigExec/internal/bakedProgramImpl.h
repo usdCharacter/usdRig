@@ -4271,9 +4271,11 @@ bool RigExecBakedStoreChainGroup(RigExecBakedProgramImpl &B,
 /// Whether every role pin holds for this run's sampled values. Owning thread
 /// after RigExecBakedRunGeometryPrologue; the frozen worker after
 /// _FrozenPrologue. Reach from *interactiveOverrides and upstream against the
-/// hops; never reads overrideReached; no TfToken from text, no SdfPath text,
-/// no TF_ diagnostics.
-bool RigExecBakedRolesStand(const RigExecBakedProgramImpl &program);
+/// hops; never reads overrideReached; no TfToken from text, no TF_
+/// diagnostics, and SdfPath text only for \p pointCountError, which only the
+/// owning thread asks for: a range chain's base whose count is not Build's.
+bool RigExecBakedRolesStand(const RigExecBakedProgramImpl &program,
+                            std::string *pointCountError = nullptr);
 /// Whether every solver count Build fixed (a ribbon's rigExec:sampleCount)
 /// equals this run's sampled value; RigExecBakedRolesStand asks it.
 bool RigExecBakedSolverCountsStand(const RigExecBakedProgramImpl &program);

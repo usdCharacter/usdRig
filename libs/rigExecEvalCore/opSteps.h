@@ -62,6 +62,10 @@ enum class OpLookupSource : uint8_t {
     Selected = 9,
     /// Revision `object`'s own input `read` (OpRevisionRead).
     RevisionLeaf = 10,
+    /// Mat4d: the identity, always present: the last candidate of a
+    /// Selected transform that may find none, so a revision whose delta has
+    /// no solution this frame leaves its points as they entered.
+    Identity = 11,
     /// PointFrame: the rest frame of slot `object`.
     RestFrame = 20,
     /// The record gates of pose commit `object`: `read` 0 its per-output
@@ -463,6 +467,7 @@ constexpr bool
 OpLookupSourceSelectable(uint8_t source)
 {
     return source == uint8_t(OpLookupSource::Matrix) ||
+           source == uint8_t(OpLookupSource::Identity) ||
            source == uint8_t(OpLookupSource::FrameRecord) ||
            source == uint8_t(OpLookupSource::ConstraintDelta);
 }
@@ -1493,6 +1498,14 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
         std::memcpy(value, matrix, type.size);
         return true;
     }
+    case OpLookupSource::Identity: {
+        if (!type.triviallyCopyable || type.size != 16 * sizeof(double))
+            return OpLayoutFail(error, "the identity is a matrix");
+        double *m = static_cast<double *>(value);
+        for (int k = 0; k < 16; ++k)
+            m[k] = k % 5 == 0 ? 1.0 : 0.0;
+        return true;
+    }
     case OpLookupSource::FrameRecord:
     case OpLookupSource::ConstraintDelta: {
         const void *matrix = host.PresentMatrix(lookup);
@@ -1608,6 +1621,7 @@ OpLookUpAt(const OpStepLayout &layout, Host &host, uint32_t index,
         for (uint32_t e = 0; e < uint32_t(lookup.part); ++e) {
             const OpLookup &candidate = layout.lookups[lookup.object + e];
             if (candidate.source != uint8_t(OpLookupSource::Matrix) &&
+                candidate.source != uint8_t(OpLookupSource::Identity) &&
                 !host.PresentMatrix(candidate))
                 continue;
             return OpLookUp(host, lookup.object + e, candidate, type, value,
@@ -1726,6 +1740,14 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
     const OpChainLayout &chain = layout.chains[index];
     const uint32_t groups = chain.Groups();
     const RigExecChainDesc &desc = layout.chainDescs[index];
+    // A chain whose base this run did not sample publishes nothing, as its
+    // Legacy steps hold.
+    for (const RigExecNodeId member : desc.members)
+        for (const uint32_t o : layout.hostOutputsOf[member])
+            if (layout.hostOutputs[o].target ==
+                    uint8_t(OpOutputTarget::ChainGroup) &&
+                !host.RevisionChainHasBase(layout.hostOutputs[o].object))
+                return true;
     if (kind == OpStepKind::ChainHead) {
         // The plan moves, and every range step reruns, only when a member's
         // looked-up input does: range steps read everything else themselves.

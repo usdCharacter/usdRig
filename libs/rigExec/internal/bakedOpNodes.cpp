@@ -97,6 +97,12 @@ struct BakedOpHost {
         return RigExecBakedStoreRevisionEnabled(
             B, output.object, *static_cast<const uint8_t *>(value) != 0, error);
     }
+    bool RevisionChainHasBase(uint32_t revision) const
+    {
+        return revision < B.revisionIndex.size() &&
+               B.chains[size_t(B.revisionIndex[revision].first)]
+                   .sampledHaveBase;
+    }
     const void *ChainGroupPoints(uint32_t chain, uint32_t g) const
     {
         if (chain >= B.chains.size())
@@ -899,6 +905,8 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
             if (transform.empty())
                 return Fail(error, revision.moverPathText +
                                        ": a matrix mover with no transform");
+            if (revision.transformSlot < 0)
+                transform.push_back({uint8_t(L::Identity), 0, -1, 0});
             rigExecOps::MoverTransformPayload fold;
             fold.posedPoints = revision.posedPoints;
             const RigExecNodeId mover =

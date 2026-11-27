@@ -3689,15 +3689,17 @@ RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
             const auto &revision =
                 B.chains[size_t(at.first)].revisions[size_t(at.second)];
             declareExact(revision.leaves, &step, &revision);
-        } else if (step.kind == RigExecBakedStepKind::OpChainHead &&
-                   RigExecBakedIdentityOf(B, step).kind ==
-                       RigExecBakedStepKind::RevisionStatic) {
-            // An op matrix's head reads its revision's own inputs.
-            const auto &at =
-                B.revisionIndex[size_t(RigExecBakedIdentityOf(B, step).object)];
-            declareExact(
-                B.chains[size_t(at.first)].revisions[size_t(at.second)].leaves,
-                &step);
+        } else if (step.kind == RigExecBakedStepKind::OpChainHead) {
+            // An op chain's head reads every member revision's own inputs.
+            std::vector<int> ids;
+            RigExecBakedOpStepRevisions(B, step, &ids);
+            for (const int id : ids) {
+                const auto &at = B.revisionIndex[size_t(id)];
+                declareExact(B.chains[size_t(at.first)]
+                                 .revisions[size_t(at.second)]
+                                 .leaves,
+                             &step);
+            }
         } else if (step.kind == RigExecBakedStepKind::Derived) {
             const auto &at = B.derivedIndex[size_t(step.object)];
             declareExact(B.chains[size_t(at.first)]

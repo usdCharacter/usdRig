@@ -1471,6 +1471,9 @@ table Revision {
   /// Declaration-order owning consumer leaves; sampled raw fallback and exact typed route.
   leaf_sites: [ExternalDeclaredInput] (native_inline);
   layout_leaf_sites: [ExternalDeclaredInput] (native_inline);
+  // A Range revision whatever its chunk count, so a chain of one vertex
+  // group is still a range chain.
+  range_role: bool;
 }
 table Derived {
   target: uint;

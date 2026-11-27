@@ -1616,7 +1616,8 @@ ProbeRevisions(const B &b)
                 Unprobed("RevisionChunk", kind, "set aside by a cycle");
                 continue;
             }
-            if (revision.opMatrix || revision.blendChunked) {
+            if (revision.opMatrix || revision.opSmooth || revision.opMush ||
+                revision.opLattice || revision.blendChunked) {
                 Unprobed("RevisionChunk", kind, "runs as op nodes");
                 continue;
             }
@@ -1761,7 +1762,8 @@ ProbeRangeChains(const B &b)
                                : std::string(OpName(revision.op)));
             usable =
                 usable && !revision.gpuOwned && !revision.rangeSetAside &&
-                !revision.opMatrix && !revision.blendChunked &&
+                !revision.opMatrix && !revision.opSmooth && !revision.opMush &&
+                !revision.opLattice && !revision.blendChunked &&
                 (external ? RigExecExternalOpHandle(revision.binding) != nullptr
                           : revision.op == RigExecRevisionOp::BlendShape ||
                                 RigExecGeometryOpSupported(revision.op)) &&
@@ -3652,10 +3654,10 @@ Frames(const UsdStageRefPtr &stage)
 }
 
 // The point movers each rig of the painted set must have compared under a
-// dense and a sparse partial envelope.
+// dense and a sparse partial envelope. Matrix, Smooth, DeltaMush and Lattice
+// revisions run only as op chain members (testRigExecOpsPoints).
 const char *const kPaintedKinds[] = {
-    "Matrix", "Skin",    "Smooth",         "DeltaMush",     "Lattice",
-    "Wire",   "Wrinkle", "SurfaceProject", "VolumeCorrect",
+    "Skin", "Wire", "Wrinkle", "SurfaceProject", "VolumeCorrect",
 };
 
 // The radial forms also take a matrix mover's partial weight as a fraction
@@ -4951,13 +4953,9 @@ main(int argc, char **argv)
           "Solve/RigExecRibbon",
           "Solve/RigExecSplineIk",
           "Solve/RigExecSkeleton2d",
-          "RevisionChunk/Matrix",
           "RevisionChunk/Skin",
           "RevisionChunk/BlendShape",
-          "RevisionChunk/Smooth",
-          "RevisionChunk/Lattice",
           "RevisionChunk/Wire",
-          "RevisionChunk/DeltaMush",
           "RevisionChunk/VolumeCorrect",
           "RevisionChunk/SurfaceProject",
           "RevisionChunk/Ribbon",
@@ -4973,8 +4971,6 @@ main(int argc, char **argv)
           "Derived/ShaderDials",
           "SkinMatrices/linear chunk",
           "SkinMatrices/dualQuaternion chunk",
-          "Transform/MoverTransform/Matrix",
-          "RangeChain/",
           "Derived/",
           "SkinMatrices/linear",
           "SkinMatrices/dualQuaternion",
@@ -5017,17 +5013,6 @@ main(int argc, char **argv)
                 compared += tally.compared;
         if (!compared) {
             std::printf("FAIL: no %s step compared\n", family);
-            return 1;
-        }
-    }
-    for (const char *kind : {"BlendShape", "External"}) {
-        size_t compared = 0;
-        for (const auto &[key, tally] : g_tally)
-            if (key.compare(0, 11, "RangeChain/") == 0 &&
-                key.find(kind) != std::string::npos)
-                compared += tally.compared;
-        if (!compared) {
-            std::printf("FAIL: no range chain holding %s compared\n", kind);
             return 1;
         }
     }

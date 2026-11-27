@@ -969,7 +969,9 @@ add_executable(testRigExecDeltaMush tests/testRigExecDeltaMush.cpp)
 target_link_libraries(testRigExecDeltaMush PRIVATE rigExec rigExecAuthoring rigExecBake rigExecRuntime rigExecSampler)
 rigexec_add_test(NAME testRigExecDeltaMush COMMAND testRigExecDeltaMush "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
 add_executable(testRigExecDeltaMushRuntime tests/testRigExecDeltaMushRuntime.cpp)
-target_link_libraries(testRigExecDeltaMushRuntime PRIVATE rigExecRuntime)
+target_link_libraries(testRigExecDeltaMushRuntime PRIVATE rigExecRuntime rigExecOpCore)
+rigexec_link_registrations(testRigExecDeltaMushRuntime
+    TYPE_LIBRARIES rigExecStdTypes rigExecRigTypes OP_LIBRARIES rigExecOps)
 rigexec_add_test(NAME testRigExecDeltaMushBakeFile COMMAND rigExecBakeTool
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/delta_mush_mover.usda"
     --rig /Rig --time 1

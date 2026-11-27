@@ -839,6 +839,10 @@ struct GroupHost {
         *error = "no revisions";
         return false;
     }
+    bool RevisionChainHasBase(uint32_t) const
+    {
+        return true;
+    }
     const void *ChainGroupPoints(uint32_t, uint32_t g) const
     {
         return groups[g].cdata();
@@ -1127,8 +1131,8 @@ TestHostLookupsAndGroupOutputs()
                         reason.c_str());
         CHECK(!laid && reason.find(expected) != std::string::npos);
     };
-    refused([](eval::OpStepLayout *bad) { bad->lookups[0].source = 11; },
-            "reads lookup source 11, which no host resolves");
+    refused([](eval::OpStepLayout *bad) { bad->lookups[0].source = 12; },
+            "reads lookup source 12, which no host resolves");
     refused(
         [&](eval::OpStepLayout *bad) {
             bad->hostInputs[1].source = eval::OpHostSource::Lookup;

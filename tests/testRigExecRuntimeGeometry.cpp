@@ -1372,8 +1372,9 @@ TestChainPointVersions()
 {
     TfSetenv("RIGEXEC_VERIFY_CHAIN_VERSIONS", "1");
     TfSetenv("RIGEXEC_VERIFY_EPILOGUE_LISTS", "1");
-    _TestStage("chain revision passes through and recovers",
-               _StackedChainStage(1.0f, true), {1, 2, 3, 2, 1, 3});
+    _TestStage("chain revision stops and recovers",
+               _StackedChainStage(1.0f, true), {1, 2, 3, 2, 1, 3}, nullptr,
+               false, false, {2.0});
     _TestStage("chain revision keeps its unmoved points",
                _StackedChainStage(0.0f, false), {1, 2, 3, 3, 1});
     TfSetenv("RIGEXEC_VERIFY_CHAIN_VERSIONS", "0");
@@ -1744,8 +1745,8 @@ struct _RangeChainOptions {
 // basis) move the \p count points of /Asset/Shape.points, a box inside the
 // 2 x 2 x 3 cage; above the default 4096 points a range
 // (RIGEXEC_BAKED_CHUNK_VERTS) all seven are cut into ranges, three for 10000
-// points. A matrix mover on the three points of /Asset/Small.points stays
-// whole. The points hold a default, which Build counts, and samples at
+// points. A matrix mover on the three points of /Asset/Small.points runs as
+// an op chain of one vertex group. The points hold a default, which Build counts, and samples at
 // frames 1 to 3 that equal it unless \p options.baseMovesInRangeZero.
 static UsdStageRefPtr
 _RangeChainStage(size_t count, const _RangeChainOptions &options)
@@ -2026,8 +2027,9 @@ TestRangeChainPlays()
 }
 
 // Open sets the Range role on exactly the file's Range revisions (unchunked,
-// two or more chunks: the chain's vertex groups, ten for 10000 points at the
-// default 1024 per group), each its own point source; and the groups cut off
+// range_role, the chunks the chain's vertex groups: ten for 10000 points at
+// the default 1024 per group, one for Small's three), each its own point
+// source; and the groups cut off
 // apart. M0's static sparse weight names points in group 0 alone, so M0 is
 // gated to that group's one step, and WireSparse's (points 0 to 3783) to
 // groups 0 to 3. At frame 2 M0's step runs and every revision after it in
@@ -2059,18 +2061,19 @@ TestRangeChainRolesAndCutoff()
     const fb::RigExecWireDomainGeometry &geometry = *file->geometry;
     // Each cut revision's mover, by its position in its chain.
     std::map<std::string, size_t> position;
-    size_t ranges = 0, wholes = 0;
+    size_t ranges = 0, wholes = 0, oneGroup = 0;
     for (const fb::RigExecWireChain &chain : geometry.chains) {
         for (size_t r = 0; r < chain.revisions.size(); ++r) {
             const fb::RigExecWireRevision &revision = chain.revisions[r];
             const std::string mover =
                 RigExecFormatPathText(*file, revision.moverPath);
-            const bool expected =
-                !revision.chunked && revision.chunks.size() >= 2;
+            const bool expected = RigExecFormatIsRangeRevision(revision);
             bool role = !expected, own = !expected;
             CHECK(player->GetRangeRoleForTesting(mover, &role, &own));
             CHECK(role == expected && own == expected);
-            if (expected) {
+            if (expected && revision.chunks.size() == 1) {
+                ++oneGroup;
+            } else if (expected) {
                 ++ranges;
                 CHECK(revision.chunks.size() == 10);
                 position[mover] = r;
@@ -2080,8 +2083,8 @@ TestRangeChainRolesAndCutoff()
         }
     }
     // M0, M1, M2, the lattice, Half and the two wires are cut; Small's
-    // mover is whole.
-    CHECK(ranges == 7 && wholes == 1);
+    // matrix runs as an op chain over one group.
+    CHECK(ranges == 7 && wholes == 0 && oneGroup == 1);
     // The group steps each cut revision has: one per written group.
     std::map<std::string, std::set<int>> parts;
     for (size_t s = 0; s < file->steps.size(); ++s) {
@@ -4916,9 +4919,9 @@ TestSimdSettingPerReader()
                 name, differing);
 }
 
-// One revision of each class RevisionStatic decides: a matrix, a blend shape
-// and a dense wire whose inputs:defaultWeight leaves [0, 1] at frame 2 (a
-// refused packet) and returns at full and partial strength, and a
+// One revision of each class RevisionStatic decides: a blend shape and a
+// dense wire whose inputs:defaultWeight leaves [0, 1] at frame 2 (a refused
+// packet) and returns at full and partial strength, and a
 // classicLinear skin whose joint weights go negative at frame 2 (the layout
 // half of its validation refuses). At a partial weight the wire blends with
 // the envelope RevisionStatic resolved.
@@ -4970,7 +4973,7 @@ def Scope "Asset"
             {
                 rel rigExec:moves = </Asset/Geom/Lift.points>
                 rel rigExec:transform = </Asset/Rig/Shift>
-                float inputs:defaultWeight.timeSamples = {1: 0.5, 2: 1.5, 3: 1, 4: 0.25}
+                float inputs:defaultWeight.timeSamples = {1: 0.5, 2: 0.75, 3: 1, 4: 0.25}
             }
             def RigExecBlendShapeMover "Blend" (
                 prepend apiSchemas = ["RigExecMoverAPI"]
@@ -5090,9 +5093,9 @@ TestAcceptanceFailureRecovers()
         return;
     }
     RigExecRigEvaluator evaluator(stage, rigPath);
-    const char *const movers[] = {
-        "/Asset/Rig/Movers/Lift", "/Asset/Rig/Movers/Blend",
-        "/Asset/Rig/Movers/Wire", "/Asset/Rig/Movers/Skin"};
+    const char *const movers[] = {"/Asset/Rig/Movers/Blend",
+                                  "/Asset/Rig/Movers/Wire",
+                                  "/Asset/Rig/Movers/Skin"};
     size_t decided = 0;
     for (const double frame : frames) {
         CHECK(evaluator.Evaluate(frame).valid);

@@ -1707,11 +1707,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 56 &&
-                      RigExecFormatOldestReadable == 56,
-                  "format 56 retires the RestCompose step and is the only "
+    static_assert(RigExecFormatVersion == 57 &&
+                      RigExecFormatOldestReadable == 57,
+                  "format 57 runs one-group op chains and is the only "
                   "format Open reads");
-    // Every older format requires re-export: it may hold RestCompose steps.
+    // Every older format requires re-export: its small matrix, smooth,
+    // delta mush and lattice chains ran as their own steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1722,14 +1723,13 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 56 through " +
+            " (this reader reads 57 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 56 ? "re-export: rests as RestCompose op nodes"
-                          : "rebake");
+            (version < 57 ? "re-export: one-group op chains" : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 56 ? reexports : rebakes);
+        ++(version < 57 ? reexports : rebakes);
     }
-    CHECK(reexports == 56 && rebakes == 1);
+    CHECK(reexports == 57 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;

@@ -4411,8 +4411,13 @@ main(int argc, char **argv)
         (std::filesystem::path(RIGEXEC_EXAMPLES_DIR) / "01_FkChainTail.usda")
             .string();
     const std::vector<uint8_t> tailBytes = _BakeFixture(tail, 1001.0);
-    TestWrinkleWireExtensions(tailBytes);
-    TestExternalMoversWire(tailBytes);
+    // A first revision that runs no op node, whose op the codec cases swap.
+    const std::vector<uint8_t> faceBytes = _BakeFixture(
+        (std::filesystem::path(RIGEXEC_EXAMPLES_DIR) / "04_BlendShapeFace.usda")
+            .string(),
+        1001.0);
+    TestWrinkleWireExtensions(faceBytes);
+    TestExternalMoversWire(faceBytes);
     TestRealFileCorruption(tailBytes);
     TestComputedEnvelopeBake();
     TestComputedCurrentPhaseBake();

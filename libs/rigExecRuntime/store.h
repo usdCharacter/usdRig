@@ -1185,6 +1185,8 @@ void RrShareLatticeBinds(RrProgram *program);
 // Step bodies by family.
 bool RrRunPoseStep(RrProgram *program, size_t step, std::string *error);
 bool RrRunGeometryStep(RrProgram *program, size_t step, std::string *error);
+// Whether the chain of revision \p revision sampled a base this run.
+bool RrGeoRevisionChainHasBase(const RrProgram *program, size_t revision);
 // Group \p g of point chain \p chain's final points; null when the chain has
 // none this run.
 const void *RrGeoFinalGroupPoints(const RrProgram *program, size_t chain,

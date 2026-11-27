@@ -161,7 +161,7 @@ _TestFileRefusals(const std::vector<uint8_t> &bytes)
     CHECK(got == "unsupported .rigexec format version 4 (this reader reads " +
                      std::to_string(RigExecFormatOldestReadable) + " through " +
                      std::to_string(RigExecFormatVersion) +
-                     "); re-export: rests as RestCompose op nodes");
+                     "); re-export: one-group op chains");
     if (got.find("format version 4") == std::string::npos) {
         std::printf("version 4: open said '%s'\n", got.c_str());
     }
@@ -682,6 +682,8 @@ _ExpectShownRefusal(const std::string &name, const char *what,
 
 static int recordRefusals = 0;
 static int recordListRefusals = 0;
+// Transform lists an op node reads instead of a fold.
+static int opRecordLists = 0;
 
 // Frame records edited into a real bake, each refused by Open naming the
 // FrameMatrix step or the fold: a record rebound to a version a later
@@ -802,6 +804,10 @@ _TestFrameRecordRefusals(const std::string &name,
             const fb::RigExecWireRevision &revision = chains[c].revisions[r];
             const int64_t fold =
                 _FindStep(*file, fb::StepKind::InfluenceFold, int64_t(id));
+            if (!revision.transformRecords.empty() &&
+                RigExecFormatRunsAsOps(revision)) {
+                ++opRecordLists;
+            }
             if (revision.transformRecords.empty() || fold < 0) {
                 continue;
             }
@@ -950,7 +956,7 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
         "unsupported .rigexec format version " + std::to_string(previous) +
         " (this reader reads " + std::to_string(RigExecFormatOldestReadable) +
         " through " + std::to_string(RigExecFormatVersion) +
-        "); re-export: rests as RestCompose op nodes";
+        "); re-export: one-group op chains";
     CHECK(got == want);
     if (got != want) {
         std::printf("%s, previous version: open said '%s', expected '%s'\n",
@@ -2456,7 +2462,7 @@ main(int argc, char **argv)
                 reservedRefusals, volumeRefusals, versionRefusals);
     CHECK(phaseFixtureRows == 3);
     CHECK(recordRefusals > 0);
-    CHECK(recordListRefusals > 0);
+    CHECK(recordListRefusals > 0 || opRecordLists > 0);
     CHECK(reservedRefusals > 0);
     CHECK(volumeRefusals > 0);
     CHECK(versionRefusals > 0);

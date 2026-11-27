@@ -1335,6 +1335,8 @@ private:
                                 "another operation");
                 continue;
             }
+            if (lookup && lookup->source == 11)
+                continue;
             if (lookup && lookup->source >= 5 && lookup->source <= 9) {
                 using D = fb::SlotDomain;
                 const auto &lookups = _f.opGraph->lookups;
@@ -1355,8 +1357,10 @@ private:
                 for (int32_t e = 0;
                      holds && lookup->source == 9 && e < lookup->part; ++e) {
                     const auto &candidate = lookups[lookup->object + size_t(e)];
-                    holds = candidate && candidate->source >= 6 &&
-                            candidate->source <= 8;
+                    holds =
+                        candidate &&
+                        ((candidate->source >= 6 && candidate->source <= 8) ||
+                         candidate->source == 11);
                 }
                 if (!holds)
                     return _Bad("op_graph.lookups: a matrix or list lookup "
@@ -8743,7 +8747,8 @@ private:
             int64_t at = 0;
             for (size_t k = 0; k < r.chunks.size(); ++k) {
                 const fb::RigExecWireChunk &chunk = r.chunks[k];
-                if (chunk.begin != at || chunk.end <= chunk.begin) {
+                if (chunk.begin != at || chunk.end < chunk.begin ||
+                    (chunk.end == chunk.begin && r.chunks.size() > 1)) {
                     return _Bad(_At(row, "chunks", long(k)) +
                                 ": point range [" +
                                 std::to_string(chunk.begin) + ", " +
@@ -8756,7 +8761,7 @@ private:
             }
             return true;
         }
-        if (r.chunks.size() < 2) {
+        if (r.chunks.size() < (ranges ? 1u : 2u)) {
             return _Bad(row + ": chunked with " + _N(r.chunks.size()) +
                         " chunk(s)");
         }
@@ -9852,7 +9857,7 @@ private:
                 }
             }
         }
-        if (records && fold < 0) {
+        if (records && fold < 0 && !RigExecFormatRunsAsOps(r)) {
             return _Bad(_RowText(row) + ": frame records with no " +
                         std::string(foldKind) + " step to read them");
         }
@@ -10662,13 +10667,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 56,
+    static_assert(RigExecFormatOldestReadable == 57,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: rests as RestCompose op nodes"
+                ? "re-export: one-group op chains"
                 : "rebake");
 }
 

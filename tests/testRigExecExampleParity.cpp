@@ -94,6 +94,11 @@ struct InvalidDrag {
     const char *stage;
     const char *why;
     bool lookedUp = false;
+    // The mover whose node fails, when the drag reaches it through another;
+    // null for the dragged operator itself.
+    const char *failing = nullptr;
+    // The one frame the drag fails at, every other staying valid; 0 for all.
+    double onlyAt = 0.0;
 };
 constexpr const char *kConstraintWeight =
     "inputs:defaultWeight is outside finite [0, 1]";
@@ -108,6 +113,14 @@ const InvalidDrag kInvalidOperatorDrags[] = {
      "StaticWeights: a weight is not finite or outside [0, 1]"},
     // The full-strength matrix's own default weight: 1.25 is out of range.
     {"20_MatrixSphere.usda",
+     "MatrixDeform: a default weight is not finite or outside [0, 1]"},
+    // The dragged gain lifts GainCard's connected weight past 1 at 1024 alone.
+    {"16_ConnectionReadPhases.usda",
+     "MatrixDeform: a default weight is not finite or outside [0, 1]", false,
+     "/PhaseConnectAsset/Rig/Movers/Cards/GainCard", 1024.0},
+    {"simple_rig.usd",
+     "MatrixDeform: a default weight is not finite or outside [0, 1]"},
+    {"simple_rig_anim.usd",
      "MatrixDeform: a default weight is not finite or outside [0, 1]"},
     // A constraint's default weight at 1: 1.25 is out of range.
     {"08_AimEyes.usda", kConstraintWeight, true},
@@ -179,18 +192,24 @@ DragOne(const std::string &where, RigExecRigEvaluator *rig,
     const size_t buildAttempts = rig->GetBakedProgramBuildAttemptCount();
     rig->SetInteractiveOverrides(overrides);
     for (const UsdTimeCode frame : frames) {
+        const InvalidDrag *failsHere =
+            expected && expected->onlyAt != 0.0 &&
+                    frame.GetValue() != expected->onlyAt
+                ? nullptr
+                : expected;
+        const std::string failing =
+            failsHere && failsHere->failing ? failsHere->failing : failingPrim;
         for (int pass = 0; pass < 2; ++pass) {
             const RigExecRigPose pose = rig->Evaluate(frame);
-            if (expected) {
-                const char *expectedError = expected->why;
+            if (failsHere) {
+                const char *expectedError = failsHere->why;
                 // A failed generation is not one the program answered.
                 if (pose.valid) {
                     ++failures;
                     std::printf("FAIL %s: valid at %g; expected \"%s\"\n",
                                 where.c_str(), frame.GetValue(), expectedError);
                     ++*generations;
-                } else if (!ReportsOperatorError(pose, failingPrim,
-                                                 *expected)) {
+                } else if (!ReportsOperatorError(pose, failing, *failsHere)) {
                     ++failures;
                     std::printf("FAIL %s: invalid at %g without \"%s\"\n",
                                 where.c_str(), frame.GetValue(), expectedError);

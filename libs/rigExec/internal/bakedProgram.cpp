@@ -497,7 +497,11 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
             // A Range role or group gate rests on a value this run sampled
             // otherwise (an override, an upstream input, a point count): no
             // step runs on it, the pose is untouched, and the owner rebuilds.
-            if (!RigExecBakedRolesStand(B)) {
+            std::string pointCountError;
+            if (!RigExecBakedRolesStand(B, &pointCountError)) {
+                if (!pointCountError.empty()) {
+                    pose->diagnostics.push_back(std::move(pointCountError));
+                }
                 // The prologue's samples were consumed by no step and the
                 // run commits none of its bookkeeping, so a program run
                 // again (a held replay) re-reads everything, as after a

@@ -736,7 +736,12 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// lookups (OpGraph.lookups source 43) and storing host_outputs target 43:
 /// StepKind 20 is reserved and refused. PoseInterpolator rows carry their
 /// solve kind; their RBF, method, network and maps tables are deprecated.
-inline constexpr uint32_t RigExecFormatVersion = 56;
+///
+/// Format 57 runs every Matrix, Smooth, DeltaMush and Lattice revision as
+/// op chain members: a chain holding one is a range chain even when it is
+/// cut into one vertex group (Revision.range_role), and lookup source 11 is
+/// the identity a matrix transform falls back to.
+inline constexpr uint32_t RigExecFormatVersion = 57;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -744,7 +749,7 @@ inline constexpr uint32_t RigExecFormatVersion = 56;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 56;
+inline constexpr uint32_t RigExecFormatOldestReadable = 57;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool
@@ -771,7 +776,19 @@ bool RigExecFormatExtendedInfluencesValid(uint8_t op, size_t influences);
 inline bool
 RigExecFormatIsRangeRevision(const fb::RigExecWireRevision &r)
 {
-    return !r.chunked && r.chunks.size() >= 2;
+    return !r.chunked && (r.rangeRole || r.chunks.size() >= 2);
+}
+
+/// Whether \p r runs as op chain members: a Range Matrix, Smooth, DeltaMush
+/// or Lattice revision, which folds no transform of its own.
+inline bool
+RigExecFormatRunsAsOps(const fb::RigExecWireRevision &r)
+{
+    return RigExecFormatIsRangeRevision(r) &&
+           (r.op == uint8_t(fb::RevisionOp::Matrix) ||
+            r.op == uint8_t(fb::RevisionOp::Smooth) ||
+            r.op == uint8_t(fb::RevisionOp::DeltaMush) ||
+            r.op == uint8_t(fb::RevisionOp::Lattice));
 }
 
 // Format 29: sparse blend chunks carry their channel indices in key.

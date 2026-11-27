@@ -3701,6 +3701,20 @@ RrStoreChainGroup(RrProgram *program, const eval::OpHostOutput &output,
     return true;
 }
 
+bool
+RrGeoRevisionChainHasBase(const RrProgram *program, size_t revision)
+{
+    const auto *scratch =
+        static_cast<const RrGeometryScratch *>(program->geo.get());
+    if (!scratch || !program->geometry ||
+        revision >= program->geometry->revisionIndex.size())
+        return false;
+    const size_t chain =
+        size_t(program->geometry->revisionIndex[revision].first);
+    return chain < scratch->chains.size() &&
+           scratch->chains[chain].sampleHaveBase;
+}
+
 const void *
 RrGeoFinalGroupPoints(const RrProgram *program, size_t chain, size_t g)
 {
@@ -6430,6 +6444,9 @@ struct RrChainState {
         access.baseVersion = &c.baseVersion;
         access.scheduleDirty = &c.scheduleDirty;
         access.revisionCount = c.revisions.size();
+        if (!c.groupBounds.empty()) {
+            access.compiledPointCount = size_t(c.groupBounds.back());
+        }
         return access;
     }
     void resetChainRevision(size_t chain, size_t revision)
@@ -7655,6 +7672,16 @@ RrRunGeometryStep(RrProgram *program, size_t step, std::string *error)
         const eval::StepResult result = eval::RunGeometryStep(
             host, eval::StepRef{uint32_t(kind), wireStep.object, wireStep.part,
                                 step});
+        if (result.outcome == eval::Outcome::Invalid &&
+            result.detail == eval::kChainDetailPointCount && error) {
+            const RrGeometryScratch::Chain &c =
+                scratch->chains[size_t(wireStep.object)];
+            *error = program->TextOrEmpty(
+                         geo.chains[size_t(wireStep.object)].target) +
+                     ": " +
+                     eval::ChainPointCountText(c.sampledBase.size(),
+                                               size_t(c.groupBounds.back()));
+        }
         return result.outcome != eval::Outcome::Invalid;
     }
     if (kind == RigExecWireStepKind::Derived) {

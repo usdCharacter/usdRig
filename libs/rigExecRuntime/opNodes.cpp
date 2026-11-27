@@ -226,6 +226,10 @@ struct RrOpHost {
             &p, output.object, *static_cast<const uint8_t *>(value) != 0,
             error);
     }
+    bool RevisionChainHasBase(uint32_t revision) const
+    {
+        return RrGeoRevisionChainHasBase(&p, revision);
+    }
     const void *ChainGroupPoints(uint32_t chain, uint32_t g) const
     {
         return RrGeoFinalGroupPoints(&p, chain, g);

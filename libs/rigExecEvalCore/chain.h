@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -51,8 +52,19 @@ enum ChainStepDetail : int32_t {
     kChainDetailNoChunk = 3,
     kChainDetailFold = 4,
     kChainDetailChunk = 5,
-    kChainDetailNoDerived = 6
+    kChainDetailNoDerived = 6,
+    kChainDetailPointCount = 7
 };
+
+/// A range chain's base whose point count is not the compiled rig's: the
+/// error both front ends report, after the chain target's path.
+inline std::string
+ChainPointCountText(size_t count, size_t compiled)
+{
+    return "the base has " + std::to_string(count) +
+           " point(s), but the compiled rig cut its vertex groups from " +
+           std::to_string(compiled);
+}
 
 /// The op ordinals the chain bodies dispatch on, in wire order.
 inline constexpr int kChainOpSkin = int(fb::RevisionOp::Skin);
@@ -79,6 +91,8 @@ struct ChainInputsAccessT {
     uint64_t *baseVersion = nullptr;
     bool *scheduleDirty = nullptr;
     size_t revisionCount = 0;
+    /// A range chain's Build point count; SIZE_MAX for a Legacy chain.
+    size_t compiledPointCount = SIZE_MAX;
 };
 
 /// The fields one group step reads and writes, as the adapter's revision
@@ -358,6 +372,11 @@ RunChainInputsStep(Host &host, const StepRef &step)
         return {Outcome::Held, kNoStepDetail};
     }
     const typename Host::ChainPoints &sampled = *access.sampled;
+    if (access.compiledPointCount != SIZE_MAX &&
+        sampled.size() != access.compiledPointCount) {
+        *access.haveBase = false;
+        return {Outcome::Invalid, kChainDetailPointCount};
+    }
     if (*access.haveResult && sampled.size() != access.last->size()) {
         if (!access.result->empty()) {
             ++*access.resultVersion;
