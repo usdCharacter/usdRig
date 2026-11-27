@@ -4993,21 +4993,7 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         input.end = frame(s.end, s.endRead);
         input.pole = frame(s.pole, s.poleRead);
         input.start = frame(s.start, s.startRead);
-        if (s.type == SchemaTypeName::RigExecTwoBoneIk) {
-            s.kind = RigExecSolverKind::TwoBoneIk;
-            input.ikSpace = rd(s.ikSpace);
-            input.refreshIkParams = true;
-            input.pin = rd(s.pin);
-            input.softDistance = rd(s.softDistance);
-            input.limbTwist = rd(s.limbTwist);
-            input.upperScale = rd(s.upperScale);
-            input.lowerScale = rd(s.lowerScale);
-            input.bend = rd(s.bend);
-            input.stretch = rd(s.stretch);
-            input.softness = rd(s.softness);
-            input.upperOffset = rd(s.upperOffset);
-            input.lowerOffset = rd(s.lowerOffset);
-        } else if (s.type == SchemaTypeName::RigExecBlendPointFrames) {
+        if (s.type == SchemaTypeName::RigExecBlendPointFrames) {
             s.kind = RigExecSolverKind::BlendPointFrames;
             input.blendA = s.inA >= 0 ? &B.aggregates[size_t(s.inA)] : nullptr;
             input.blendB = s.inB >= 0 ? &B.aggregates[size_t(s.inB)] : nullptr;

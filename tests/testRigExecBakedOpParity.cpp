@@ -393,6 +393,17 @@ ProbeSolve(const B &b)
             if (s.start >= 0)
                 composed.startRest = b.restPts[size_t(s.start)];
             composed.hasStart = s.start >= 0;
+            for (size_t k = 0; k < s.restRefs.size(); ++k) {
+                const int element = s.restRefs[k].second;
+                if (s.type == SchemaTypeName::RigExecTwoBoneIk &&
+                    element >= 0 && element < 3)
+                    composed.ikRests[size_t(element)] =
+                        k < s.restIsLive.size() && s.restIsLive[k]
+                            ? b.fin[s.restReads[k]].points
+                            : b.restPts[size_t(s.restRefs[k].first)];
+            }
+            if (s.spaceSlot >= 0)
+                composed.spaceRest = b.restPts[size_t(s.spaceSlot)];
             for (size_t k = 0; k < s.restRefs.size() && k < s.jointRests.size();
                  ++k)
                 composed.jointRests[k] =

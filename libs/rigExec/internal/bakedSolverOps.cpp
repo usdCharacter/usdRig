@@ -4,6 +4,7 @@
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecStdTypes/stdTypes.h"
 
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,17 @@ FromOp(const rigExecRig::PointFrame &f)
     return out;
 }
 
+/// \p v into \p value, a scalar of \p type; false for another type.
+template <class T>
+bool
+Scalar(const RigExecTypeDesc &type, T v, void *value)
+{
+    if (type.element || type.size != sizeof(T))
+        return false;
+    std::memcpy(value, &v, sizeof(T));
+    return true;
+}
+
 /// The frames \p s's op output leads with that are no joint of its
 /// aggregate: an FK chain's start frame.
 size_t
@@ -90,6 +102,8 @@ RigExecBakedSolverOf(const RigExecBakedProgramImpl &B,
 size_t
 RigExecBakedSolverNodeCount(const RigExecBakedProgramImpl::Solver &s)
 {
+    if (s.type == SchemaTypeName::RigExecTwoBoneIk)
+        return 1;
     if (s.type != SchemaTypeName::RigExecFkChain)
         return 0;
     return s.jointGroups.empty() ? 1 : 2;
@@ -131,6 +145,37 @@ RigExecBakedAddSolverOp(const RigExecBakedProgramImpl &B,
                Fail(error, s.pathText + ": its op node " + std::to_string(o) +
                                " was added as node " + std::to_string(node));
     };
+    const auto version = [&](RigExecNodeId node, const RigExecPortHandle &port,
+                             uint32_t read) {
+        look(node, port,
+             {uint8_t(eval::OpLookupSource::PoseVersion), read, 0, 0});
+    };
+    if (s.type == SchemaTypeName::RigExecTwoBoneIk) {
+        TwoBoneIkPayload p;
+        p.softDistancePolicy = s.ikParams.softDistancePolicy;
+        p.scaleSegments = s.ikParams.scaleSegments;
+        p.scaleCalibration = s.ikParams.limb.scaleCalibration;
+        const RigExecNodeId node = builder->AddOp(TwoBoneIk(), &p);
+        if (!placed(node))
+            return false;
+        version(node, TwoBoneIkRoot(), s.rootRead);
+        version(node, TwoBoneIkEffector(), s.endRead);
+        version(node, TwoBoneIkPole(), s.poleRead);
+        read(node, TwoBoneIkRests(), Read::IkRests);
+        read(node, TwoBoneIkSpace(), Read::IkSpace);
+        read(node, TwoBoneIkBend(), Read::Bend);
+        read(node, TwoBoneIkUpperOffset(), Read::UpperOffset);
+        read(node, TwoBoneIkLowerOffset(), Read::LowerOffset);
+        read(node, TwoBoneIkStretch(), Read::Stretch);
+        read(node, TwoBoneIkSoftness(), Read::Softness);
+        read(node, TwoBoneIkPin(), Read::Pin);
+        read(node, TwoBoneIkUpperScale(), Read::UpperScale);
+        read(node, TwoBoneIkLowerScale(), Read::LowerScale);
+        read(node, TwoBoneIkSoftDistance(), Read::SoftDistance);
+        read(node, TwoBoneIkTwist(), Read::Twist);
+        publish(node, TwoBoneIkOut());
+        return true;
+    }
     const bool start = s.start >= 0;
     const size_t nodes = RigExecBakedSolverNodeCount(s);
     if ((origin.part >= 0 ? size_t(origin.part) : nodes - 1) == 0) {
@@ -162,8 +207,7 @@ RigExecBakedAddSolverOp(const RigExecBakedProgramImpl &B,
     builder->Connect(node - 1, FkChainOut(), node, FkJointGroupsIn());
     read(node, FkJointGroupsSelectors(), Read::GroupSelectors);
     if (start) {
-        look(node, FkJointGroupsStart(),
-             {uint8_t(eval::OpLookupSource::PoseVersion), s.startRead, 0, 0});
+        version(node, FkJointGroupsStart(), s.startRead);
         read(node, FkJointGroupsStartRest(), Read::StartRest);
     }
     publish(node, FkJointGroupsOut());
@@ -237,6 +281,74 @@ RigExecBakedLookUpSolver(const RigExecBakedProgramImpl &B,
         if (!Is(type, rigExecRig::PointLandmarksType()))
             break;
         return rest(s.start, static_cast<rigExecRig::PointLandmarks *>(value));
+    case Read::IkRests: {
+        if (!Is(type, rigExecRig::PointLandmarksList()))
+            break;
+        auto &out = *static_cast<Landmarks *>(value);
+        out.Resize(3);
+        for (size_t e = 0; e < 3; ++e)
+            out[e] = ToOp(s.ikRests[e]);
+        for (size_t k = 0; k < s.restRefs.size(); ++k) {
+            const auto [slot, element] = s.restRefs[k];
+            if (element < 0 || element >= 3)
+                continue;
+            if (k < s.restIsLive.size() && s.restIsLive[k]) {
+                if (k >= s.restReads.size() || s.restReads[k] >= B.fin.size())
+                    return Fail(error, s.pathText + " names no live rest " +
+                                           std::to_string(k));
+                out[size_t(element)] = ToOp(B.fin[s.restReads[k]].points);
+            } else if (!rest(slot, &out[size_t(element)])) {
+                return false;
+            }
+        }
+        return true;
+    }
+    case Read::IkSpace: {
+        if (!Is(type, rigExecStd::Mat4dType()))
+            break;
+        GfMatrix4d space = RigExecBakedLeafRead(B, s.ikSpace);
+        if (s.spaceSlot >= 0) {
+            if (size_t(s.spaceSlot) >= B.restPts.size() ||
+                size_t(s.spaceRead) >= B.fin.size())
+                return Fail(error, s.pathText + " names no space frame");
+            GfMatrix4d delta(1.0);
+            if (RigExecPointsToMatrix(B.restPts[size_t(s.spaceSlot)],
+                                      B.fin[size_t(s.spaceRead)], &delta))
+                space = delta * space;
+        }
+        std::memcpy(value, space.data(), sizeof(double) * 16);
+        return true;
+    }
+    case Read::Bend:
+        return Scalar(type, RigExecBakedLeafRead(B, s.bend), value) ||
+               Fail(error, s.pathText + " has no bend of that type");
+    case Read::UpperOffset:
+        return Scalar(type, RigExecBakedLeafRead(B, s.upperOffset), value) ||
+               Fail(error, s.pathText + " has no upper offset of that type");
+    case Read::LowerOffset:
+        return Scalar(type, RigExecBakedLeafRead(B, s.lowerOffset), value) ||
+               Fail(error, s.pathText + " has no lower offset of that type");
+    case Read::Stretch:
+        return Scalar(type, RigExecBakedLeafRead(B, s.stretch), value) ||
+               Fail(error, s.pathText + " has no stretch of that type");
+    case Read::Softness:
+        return Scalar(type, RigExecBakedLeafRead(B, s.softness), value) ||
+               Fail(error, s.pathText + " has no softness of that type");
+    case Read::Pin:
+        return Scalar(type, RigExecBakedLeafRead(B, s.pin), value) ||
+               Fail(error, s.pathText + " has no pin of that type");
+    case Read::UpperScale:
+        return Scalar(type, RigExecBakedLeafRead(B, s.upperScale), value) ||
+               Fail(error, s.pathText + " has no upper scale of that type");
+    case Read::LowerScale:
+        return Scalar(type, RigExecBakedLeafRead(B, s.lowerScale), value) ||
+               Fail(error, s.pathText + " has no lower scale of that type");
+    case Read::SoftDistance:
+        return Scalar(type, RigExecBakedLeafRead(B, s.softDistance), value) ||
+               Fail(error, s.pathText + " has no soft distance of that type");
+    case Read::Twist:
+        return Scalar(type, RigExecBakedLeafRead(B, s.limbTwist), value) ||
+               Fail(error, s.pathText + " has no twist of that type");
     case Read::GroupSelectors: {
         if (!Is(type, rigExecStd::DoubleArray()))
             break;

@@ -13,6 +13,7 @@
 #include "rigExecMath/ribbonFramesKernel.h"
 #include "rigExecMath/splineIkKernel.h"
 #include <algorithm>
+#include <cstring>
 #include <limits>
 #include <utility>
 
@@ -30,29 +31,6 @@ std::vector<RrPointFrame>
 _RrSolveFkChain(const std::vector<RrPoseFkElement> &elements)
 {
     return RigExecSolveFkChainKernel<RrVec3f, RrVec3d, RrPointFrame>(elements);
-}
-
-// RigExecTwoBoneIkLengths.
-void
-_RrTwoBoneIkLengths(const std::array<std::array<RrVec3d, 4>, 3> &restPoints,
-                    const RrMat4d &space, double upperOffset,
-                    double lowerOffset, double *upperLength,
-                    double *lowerLength)
-{
-    RigExecTwoBoneIkLengthsKernel(restPoints, space, upperOffset, lowerOffset,
-                                  upperLength, lowerLength);
-}
-
-// RigExecSolveTwoBoneIk.
-std::array<RrPointFrame, 3>
-_RrSolveTwoBoneIk(const RrPointFrame &rootFrame,
-                  const RrPointFrame &effectorFrame,
-                  const RrPointFrame &poleFrame,
-                  const std::array<std::array<RrVec3d, 4>, 3> &restPoints,
-                  const RrPoseTwoBoneIkParams &params)
-{
-    return RigExecSolveTwoBoneIkKernel<RrVec3f, RrVec3d>(
-        rootFrame, effectorFrame, poleFrame, restPoints, params);
 }
 
 // RigExecSplineIkMakeRest (rigExecMath/splineIkKernel.h).
@@ -136,42 +114,6 @@ _RrRefreshSolverRests(RrProgram *program, size_t step, size_t solver,
                 return false;
             }
             s.startRest = scratch->restPts[size_t(wire.start)];
-        }
-    } else if (type == SchemaTypeName::RigExecTwoBoneIk) {
-        for (size_t k = 0; k < wire.restRefs.size(); ++k) {
-            const int slot = wire.restRefs[k].first;
-            const int element = wire.restRefs[k].second;
-            if (element >= 0 && element < 3) {
-                if (liveRest(k)) {
-                    s.ikRests[size_t(element)] =
-                        store.fin[size_t(wire.restReads[k])].points;
-                } else if (slot >= 0 &&
-                           size_t(slot) < scratch->restPts.size()) {
-                    s.ikRests[size_t(element)] = scratch->restPts[size_t(slot)];
-                } else {
-                    if (error) {
-                        *error =
-                            _RrStepHead(program, step) + " names no rest slot";
-                    }
-                    return false;
-                }
-            }
-        }
-        s.upperLengthBase = (s.ikRests[1][0] - s.ikRests[0][0]).GetLength();
-        s.lowerLengthBase = (s.ikRests[2][0] - s.ikRests[1][0]).GetLength();
-        // The constant arm's lengths, measured in the folded spaceMatrix as
-        // the baked rest refresh measures them.
-        const std::array<int32_t, RrSolverFieldCount> &reads =
-            program->solverRead[solver];
-        const auto constant = [&](int field) {
-            return program->RegisteredConstant(reads[size_t(field)]);
-        };
-        _RrTwoBoneIkLengths(s.ikRests, constant(RrSolverIkSpace).matrix,
-                            constant(RrSolverUpperOffset).f64,
-                            constant(RrSolverLowerOffset).f64,
-                            &s.ikParams.upperLength, &s.ikParams.lowerLength);
-        if (!refreshSpaceRest()) {
-            return false;
         }
     } else if (type == SchemaTypeName::RigExecSplineIk) {
         std::vector<RrPointFrame> restJoints(size_t(wire.splineCount));
@@ -421,73 +363,6 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
         return true;
     };
     if (ws.degenerate) {
-    } else if (type == SchemaTypeName::RigExecTwoBoneIk) {
-        RrPoseTwoBoneIkParams params = s.ikParams;
-        const size_t solver = size_t(wire.object);
-        // rigExec:spaceMatrix, composed after rigExec:space's rest -> pose
-        // map when a space is named (spaceSlot, not spaceRead: an unnamed
-        // space reads no frame).
-        RrMat4d ikSpace = program->ReadSolver(solver, RrSolverIkSpace).matrix;
-        bool spaceMoved = false;
-        if (ws.spaceSlot >= 0) {
-            const RrPointFrame *spaceFrame = nullptr;
-            if (!finAt(ws.spaceRead, &spaceFrame)) {
-                return false;
-            }
-            RrMat4d delta(1.0);
-            if (RrPointsToMatrix(s.spaceRest, *spaceFrame, &delta)) {
-                ikSpace = delta * ikSpace;
-                spaceMoved = true;
-            }
-        }
-        {
-            params.preferredBendRadians =
-                program->ReadSolver(solver, RrSolverBend).f64;
-            params.stretch =
-                double(program->ReadSolver(solver, RrSolverStretch).f32);
-            params.softness =
-                double(program->ReadSolver(solver, RrSolverSoftness).f32);
-            params.space = ikSpace;
-            _RrTwoBoneIkLengths(
-                s.ikRests, ikSpace,
-                program->ReadSolver(solver, RrSolverUpperOffset).f64,
-                program->ReadSolver(solver, RrSolverLowerOffset).f64,
-                &params.upperLength, &params.lowerLength);
-        }
-        params.softDistancePolicy = ws.softDistancePolicy;
-        params.scaleSegments = ws.ikScaleSegments;
-        params.limb.stretch = params.stretch;
-        params.limb.pin =
-            ws.pin ? program->ReadSolver(solver, RrSolverPin).f32 : 0;
-        params.limb.upperScale =
-            ws.upperScale ? program->ReadSolver(solver, RrSolverUpperScale).f64
-                          : 1;
-        params.limb.lowerScale =
-            ws.lowerScale ? program->ReadSolver(solver, RrSolverLowerScale).f64
-                          : 1;
-        params.limb.scaleCalibration = ws.scaleCalibration;
-        const double spaceFactor =
-            RigExecTwoBoneIkSpaceFactorKernel(s.ikRests, ikSpace);
-        params.limb.softDistance =
-            ws.softDistance
-                ? program->ReadSolver(solver, RrSolverSoftDistance).f32 *
-                      spaceFactor
-                : 0;
-        params.twistRadians =
-            ws.limbTwist ? program->ReadSolver(solver, RrSolverLimbTwist).f32 *
-                               _RrPi / 180.0
-                         : 0;
-        const RrPointFrame *root = nullptr;
-        const RrPointFrame *end = nullptr;
-        const RrPointFrame *pole = nullptr;
-        if (!finAt(ws.rootRead, &root) || !finAt(ws.endRead, &end) ||
-            !finAt(ws.poleRead, &pole)) {
-            return false;
-        }
-        const std::array<RrPointFrame, 3> frames =
-            _RrSolveTwoBoneIk(*root, *end, *pole, s.ikRests, params);
-        aggregate.frames.assign(frames.begin(), frames.end());
-        aggregate.rests.assign(s.ikRests.begin(), s.ikRests.end());
     } else if (type == SchemaTypeName::RigExecBlendPointFrames) {
         if ((ws.inA >= 0 && size_t(ws.inA) >= store.aggregates.size()) ||
             (ws.inB >= 0 && size_t(ws.inB) >= store.aggregates.size())) {
@@ -770,6 +645,18 @@ _RrSolverType(const RigExecTypeDesc &type, bool array)
                sizeof(T);
 }
 
+/// \p v into \p value, a scalar of \p type.
+template <class T>
+bool
+_RrSolverScalar(const RigExecTypeDesc &type, T v, void *value,
+                std::string *error)
+{
+    if (type.element || type.size != sizeof(T))
+        return _RrSolverFail(error, "a solver scalar of another type");
+    std::memcpy(value, &v, sizeof(T));
+    return true;
+}
+
 rigExecRig::PointLandmarks
 _RrSolverLandmarks(const std::array<RrVec3d, 4> &points)
 {
@@ -820,8 +707,9 @@ RrLookUpSolver(const RrProgram *program, const eval::OpLookup &lookup,
         return _RrSolverFail(error, "solver " + std::to_string(lookup.object) +
                                         " is no solver of the program");
     const RigExecWireSolver &s = p.poses->solvers[lookup.object];
-    const std::vector<std::array<RrVec3d, 4>> &restPts =
-        static_cast<const RrPoseScratch *>(p.pose.get())->restPts;
+    const RrPoseScratch &scratch =
+        *static_cast<const RrPoseScratch *>(p.pose.get());
+    const std::vector<std::array<RrVec3d, 4>> &restPts = scratch.restPts;
     const std::vector<RrPointFrame> &fin = p.store.fin;
     const size_t base = s.start >= 0 ? 1 : 0, n = s.controls.size();
     const auto rest = [&](int slot, rigExecRig::PointLandmarks *out) {
@@ -885,6 +773,100 @@ RrLookUpSolver(const RrProgram *program, const eval::OpLookup &lookup,
         if (!_RrSolverType<rigExecRig::PointLandmarks>(type, false))
             break;
         return rest(s.start, static_cast<rigExecRig::PointLandmarks *>(value));
+    case Read::IkRests: {
+        if (!_RrSolverType<rigExecRig::PointLandmarks>(type, true) ||
+            lookup.object >= scratch.solvers.size())
+            break;
+        auto &out = *static_cast<
+            rigExecStd::RigExecArray<rigExecRig::PointLandmarks> *>(value);
+        out.Resize(3);
+        for (size_t e = 0; e < 3; ++e)
+            out[e] =
+                _RrSolverLandmarks(scratch.solvers[lookup.object].ikRests[e]);
+        for (size_t k = 0; k < s.restRefs.size(); ++k) {
+            const int slot = s.restRefs[k].first;
+            const int element = s.restRefs[k].second;
+            if (element < 0 || element >= 3)
+                continue;
+            if (k < s.restIsLive.size() && s.restIsLive[k]) {
+                if (k >= s.restReads.size() || s.restReads[k] >= fin.size())
+                    return _RrSolverFail(
+                        error, "solver " + std::to_string(lookup.object) +
+                                   " names no live rest " + std::to_string(k));
+                out[size_t(element)] =
+                    _RrSolverLandmarks(fin[s.restReads[k]].points);
+            } else if (!rest(slot, &out[size_t(element)])) {
+                return false;
+            }
+        }
+        return true;
+    }
+    case Read::IkSpace: {
+        if (!_RrSolverType<RrMat4d>(type, false))
+            break;
+        RrMat4d space = p.ReadSolver(lookup.object, RrSolverIkSpace).matrix;
+        if (s.spaceSlot >= 0) {
+            if (size_t(s.spaceSlot) >= restPts.size() ||
+                size_t(s.spaceRead) >= fin.size())
+                return _RrSolverFail(error, "solver " +
+                                                std::to_string(lookup.object) +
+                                                " names no space frame");
+            RrMat4d delta(1.0);
+            if (RrPointsToMatrix(restPts[size_t(s.spaceSlot)],
+                                 fin[size_t(s.spaceRead)], &delta))
+                space = delta * space;
+        }
+        std::memcpy(value, &space, sizeof(RrMat4d));
+        return true;
+    }
+    case Read::Bend:
+        return _RrSolverScalar(
+            type, p.ReadSolver(lookup.object, RrSolverBend).f64, value, error);
+    case Read::UpperOffset:
+        return _RrSolverScalar(
+            type, p.ReadSolver(lookup.object, RrSolverUpperOffset).f64, value,
+            error);
+    case Read::LowerOffset:
+        return _RrSolverScalar(
+            type, p.ReadSolver(lookup.object, RrSolverLowerOffset).f64, value,
+            error);
+    case Read::Stretch:
+        return _RrSolverScalar(type,
+                               p.ReadSolver(lookup.object, RrSolverStretch).f32,
+                               value, error);
+    case Read::Softness:
+        return _RrSolverScalar(
+            type, p.ReadSolver(lookup.object, RrSolverSoftness).f32, value,
+            error);
+    case Read::Pin:
+        return _RrSolverScalar(
+            type, s.pin ? p.ReadSolver(lookup.object, RrSolverPin).f32 : 0.0f,
+            value, error);
+    case Read::UpperScale:
+        return _RrSolverScalar(
+            type,
+            s.upperScale ? p.ReadSolver(lookup.object, RrSolverUpperScale).f64
+                         : 1.0,
+            value, error);
+    case Read::LowerScale:
+        return _RrSolverScalar(
+            type,
+            s.lowerScale ? p.ReadSolver(lookup.object, RrSolverLowerScale).f64
+                         : 1.0,
+            value, error);
+    case Read::SoftDistance:
+        return _RrSolverScalar(
+            type,
+            s.softDistance
+                ? p.ReadSolver(lookup.object, RrSolverSoftDistance).f32
+                : 0.0f,
+            value, error);
+    case Read::Twist:
+        return _RrSolverScalar(
+            type,
+            s.limbTwist ? p.ReadSolver(lookup.object, RrSolverLimbTwist).f32
+                        : 0.0f,
+            value, error);
     case Read::GroupSelectors: {
         if (!_RrSolverType<double>(type, true) ||
             lookup.object >= p.solverJointGroupRead.size())

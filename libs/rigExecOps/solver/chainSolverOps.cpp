@@ -483,6 +483,7 @@ const rigExec::RigExecOpDesc kIk = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "TwoBoneIk";
+    d.schema = &internalOps::kTwoBoneIk;
     d.ports = kIkPorts;
     d.portCount = std::size(kIkPorts);
     d.runBatch = &RunTwoBoneIk;

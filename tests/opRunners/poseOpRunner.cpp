@@ -47,10 +47,41 @@ RigExecReferenceSolve(const RigExecSolverRecord &s,
                       RigExecSolverWorkspace *workspace,
                       RigExecPointFrameArray *output, std::string *error)
 {
-    if (s.kind != RigExecSolverKind::FkChain || s.degenerate)
+    const bool ik = s.kind == RigExecSolverKind::TwoBoneIk;
+    if ((s.kind != RigExecSolverKind::FkChain && !ik) || s.degenerate)
         return RigExecRunSolver(s, input, workspace, output, error);
     output->frames.clear();
     output->rests.clear();
+    if (ik) {
+        auto params = s.ikParams;
+        auto space = input.ikSpace;
+        bool spaceMoved = false;
+        if (input.hasSpace) {
+            GfMatrix4d delta(1.0);
+            if (RigExecPointsToMatrix(input.spaceRest, input.space, &delta)) {
+                space = delta * space;
+                spaceMoved = true;
+            }
+        }
+        if (input.refreshIkParams || spaceMoved) {
+            params.preferredBendRadians = input.bend;
+            params.stretch = input.stretch;
+            params.softness = input.softness;
+            params.space = space;
+            RigExecTwoBoneIkLengths(s.ikRests, space, input.upperOffset,
+                                    input.lowerOffset, &params.upperLength,
+                                    &params.lowerLength);
+        }
+        if (input.refreshIkParams || spaceMoved)
+            RigExecSetTwoBoneLimbParams(
+                s.ikRests, space, input.stretch, input.pin, input.upperScale,
+                input.lowerScale, input.softDistance, input.limbTwist, &params);
+        const auto frames = RigExecSolveTwoBoneIk(
+            input.root, input.end, input.pole, s.ikRests, params);
+        output->frames.assign(frames.begin(), frames.end());
+        output->rests.assign(s.ikRests.begin(), s.ikRests.end());
+        return true;
+    }
     if (input.controls.size() != s.controlRests.size()) {
         if (error)
             *error = "FK control/rest cardinality mismatch";

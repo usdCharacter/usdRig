@@ -912,7 +912,7 @@ TestTheValidatorRequiresComposeInputs(const std::string &examples)
         // A Solve reading a rest slot no RestCompose writes.
         RigExecBakedStep *solve = nullptr;
         for (RigExecBakedStep &step : B.steps) {
-            if (step.kind == RigExecBakedStepKind::Solve) {
+            if (RigExecBakedSolverOf(B, step) >= 0) {
                 solve = &step;
                 break;
             }

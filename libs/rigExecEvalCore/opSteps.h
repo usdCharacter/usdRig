@@ -182,6 +182,23 @@ enum class OpSolverRead : uint8_t {
     StartRest = 2,
     /// DoubleArray: the joint group selectors.
     GroupSelectors = 3,
+    /// PointLandmarksList: a two-bone IK's three joint rests, a live one
+    /// where a pose step below the solver wrote it.
+    IkRests = 4,
+    /// Mat4d: rigExec:spaceMatrix, after rigExec:space's rest-to-pose map
+    /// where it names a space.
+    IkSpace = 5,
+    /// A two-bone IK's scalar inputs, each of its port's type.
+    Bend = 6,
+    UpperOffset = 7,
+    LowerOffset = 8,
+    Stretch = 9,
+    Softness = 10,
+    Pin = 11,
+    UpperScale = 12,
+    LowerScale = 13,
+    SoftDistance = 14,
+    Twist = 15,
 };
 
 /// OpLookup::read of a constraint lookup. The numbers are part of the file

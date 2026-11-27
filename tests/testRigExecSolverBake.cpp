@@ -32,6 +32,7 @@
 #include "pxr/usd/usd/stage.h"
 
 #include <algorithm>
+#include <map>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -1829,15 +1830,14 @@ TestASpaceRestMoveReachesTheSolve(const std::string &examples)
 
 // TestASolverRefreshesOnlyForItsOwnRests.
 //
-// The Solve step refreshes a solver's rest description only on a run on
-// which a rest it measures from moved: one of its `restSlots`, the space
-// slot among them. On computed_ik_space a keyed rest on the leg's Hip joint
-// moves LegIK's rests and no other solver's, and a keyed rest on the Master
-// control moves ArmIK's space rest alone (and TailIK's, whose space and
-// spline controls sit under Master). Either way the ladder varies, which is
-// the case where a program-wide gate would refresh every solver on every
-// run. Counters are Solver::restRefreshes, which excludes the cone
-// verifier's second pass.
+// A solver's rests move only on a run on which a rest it measures from
+// moved: one of its `restSlots`, the space slot among them, and its op
+// node runs on each such run. On computed_ik_space a keyed rest on the
+// leg's Hip joint moves LegIK's rests and no other solver's, and a keyed
+// rest on the Master control moves ArmIK's space rest alone (and TailIK's,
+// whose space and spline controls sit under Master). Either way the ladder
+// varies, which is the case where a program-wide gate would move every
+// solver's rests on every run.
 
 const SdfPath kIkSpaceHipJoint("/IkSpaceAsset/Rig/Joints/Hip");
 const SdfPath kIkSpaceArmIk("/IkSpaceAsset/Rig/Solvers/ArmIK");
@@ -1878,49 +1878,72 @@ CheckOwnRestRefreshes(const char *what, const MakeStage &make,
     EvaluatorPair pair;
     if (!MakeEvaluatorPair(what, make, &pair))
         return;
+    // Per solver: runs on which one of its rest slots moved, and on which
+    // its op node ran with them.
+    std::map<SdfPath, long long> moved, ran;
+    bool varying = true;
     RigExecRigPose dynamic;
     for (const double frame : {1.0, 5.0, 10.0}) {
         GenerationsAgree(std::string(what) + " frame " +
                              std::to_string(int(frame)),
                          &pair, frame, &dynamic);
+        const RigExecBakedProgram *program = pair.baked->GetBakedProgram();
+        if (!program) {
+            ++failures;
+            std::printf("FAIL %s: no baked program\n", what);
+            return;
+        }
+        const RigExecBakedProgramImpl &B =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*program);
+        varying = varying && B.ladderVarying;
+        for (const auto *paths : {&refreshing, &still})
+            for (const SdfPath &path : *paths)
+                for (size_t si = 0; si < B.solvers.size(); ++si) {
+                    if (B.solvers[si].path != path)
+                        continue;
+                    bool rest = false;
+                    for (const int slot : B.solvers[si].restSlots)
+                        rest = rest ||
+                               std::find(B.restMoved.begin(), B.restMoved.end(),
+                                         slot) != B.restMoved.end();
+                    if (!rest)
+                        continue;
+                    ++moved[path];
+                    for (size_t c = 0; c < B.opGraph.ops.size(); ++c) {
+                        const RigExecBakedStepIdentity id =
+                            RigExecBakedIdentityOf(
+                                B, B.steps[B.opGraph.ops[c].originalIndex]);
+                        if (id.kind == RigExecBakedStepKind::Solve &&
+                            id.object == int(si) &&
+                            c < B.opExecution.ran.size() &&
+                            B.opExecution.ran[c])
+                            ++ran[path];
+                    }
+                }
     }
-    const RigExecBakedProgram *program = pair.baked->GetBakedProgram();
-    if (!program) {
-        ++failures;
-        std::printf("FAIL %s: no baked program\n", what);
-        return;
-    }
-    const RigExecBakedProgramImpl &B =
-        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
-    if (!B.ladderVarying) {
+    if (!varying) {
         ++failures;
         std::printf("FAIL %s: the ladder does not vary, so the case says "
                     "nothing\n",
                     what);
     }
-    const auto refreshesOf = [&B](const SdfPath &path) -> long long {
-        for (const SolverDesc &s : B.solvers) {
-            if (s.path == path)
-                return (long long)s.restRefreshes;
-        }
-        return -1;
-    };
     for (const SdfPath &path : refreshing) {
-        const long long n = refreshesOf(path);
-        std::printf("%s: %s refreshed %lld time(s)\n", what, path.GetText(), n);
-        if (n <= 0) {
+        std::printf("%s: %s ran on %lld of %lld rest move(s)\n", what,
+                    path.GetText(), ran[path], moved[path]);
+        if (moved[path] <= 0 || ran[path] != moved[path]) {
             ++failures;
-            std::printf("FAIL %s: %s never refreshed its rests\n", what,
-                        path.GetText());
+            std::printf("FAIL %s: %s did not run on every move of its "
+                        "rests\n",
+                        what, path.GetText());
         }
     }
     for (const SdfPath &path : still) {
-        const long long n = refreshesOf(path);
-        std::printf("%s: %s refreshed %lld time(s)\n", what, path.GetText(), n);
-        if (n != 0) {
+        std::printf("%s: %s saw %lld rest move(s)\n", what, path.GetText(),
+                    moved[path]);
+        if (moved[path] != 0) {
             ++failures;
-            std::printf("FAIL %s: %s refreshed although none of its rests "
-                        "moved\n",
+            std::printf("FAIL %s: a rest of %s moved although none of its "
+                        "rests is keyed\n",
                         what, path.GetText());
         }
     }

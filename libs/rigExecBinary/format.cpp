@@ -1118,7 +1118,7 @@ private:
             if (lookup && lookup->source == 60) {
                 if (!_f.pose ||
                     !_Has(_f.pose->solvers, int64_t(lookup->object)) ||
-                    lookup->part < 0 || lookup->part > 3 || lookup->read)
+                    lookup->part < 0 || lookup->part > 15 || lookup->read)
                     return _Bad("op_graph.lookups: a solver lookup reads "
                                 "nothing solver " +
                                 _N(lookup->object) + " holds");
@@ -1642,10 +1642,17 @@ private:
                 }
                 if (lookup.source == 1 && _solverOf[n] >= 0) {
                     const auto &solver = _f.pose->solvers[size_t(_solverOf[n])];
-                    if (lookup.part != 0 || solver.start < 0 ||
-                        lookup.object != solver.startRead)
-                        return bad(" reads a pose frame other than its "
-                                   "solver's start");
+                    const auto reads = [&](int32_t slot, uint32_t version) {
+                        return slot >= 0 && lookup.object == version;
+                    };
+                    if (lookup.part != 0 ||
+                        !(reads(solver.start, solver.startRead) ||
+                          reads(solver.root, solver.rootRead) ||
+                          reads(solver.mid, solver.midRead) ||
+                          reads(solver.end, solver.endRead) ||
+                          reads(solver.pole, solver.poleRead)))
+                        return bad(" reads a pose frame its solver does "
+                                   "not read");
                     continue;
                 }
                 if (lookup.source == 1 && _providerSlotOf[n] >= 0)

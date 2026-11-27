@@ -3171,7 +3171,7 @@ TestOpLookupOwners()
            [&](F &f) { look(f, place, 60, 1000000, 0); });
     expect("a solver input past the solver reads",
            "a solver lookup reads nothing solver 0 holds",
-           [&](F &f) { look(f, place, 60, 0, 4); });
+           [&](F &f) { look(f, place, 60, 0, 16); });
     expect("an enabled state stored by a node storing no groups",
            "stores whether revision 0 is enabled, but not its groups",
            [&](F &f) {

@@ -24,36 +24,10 @@ RigExecRunSolver(const RigExecSolverRecord &s, const RigExecSolverInputs &input,
         if (error)
             *error = "an FK chain runs as op nodes";
         return false;
-    case RigExecSolverKind::TwoBoneIk: {
-        auto params = s.ikParams;
-        auto space = input.ikSpace;
-        bool spaceMoved = false;
-        if (input.hasSpace) {
-            GfMatrix4d delta(1.0);
-            if (RigExecPointsToMatrix(input.spaceRest, input.space, &delta)) {
-                space = delta * space;
-                spaceMoved = true;
-            }
-        }
-        if (input.refreshIkParams || spaceMoved) {
-            params.preferredBendRadians = input.bend;
-            params.stretch = input.stretch;
-            params.softness = input.softness;
-            params.space = space;
-            RigExecTwoBoneIkLengths(s.ikRests, space, input.upperOffset,
-                                    input.lowerOffset, &params.upperLength,
-                                    &params.lowerLength);
-        }
-        if (input.refreshIkParams || spaceMoved)
-            RigExecSetTwoBoneLimbParams(
-                s.ikRests, space, input.stretch, input.pin, input.upperScale,
-                input.lowerScale, input.softDistance, input.limbTwist, &params);
-        const auto frames = RigExecSolveTwoBoneIk(
-            input.root, input.end, input.pole, s.ikRests, params);
-        aggregate.frames.assign(frames.begin(), frames.end());
-        aggregate.rests.assign(s.ikRests.begin(), s.ikRests.end());
-        return true;
-    }
+    case RigExecSolverKind::TwoBoneIk:
+        if (error)
+            *error = "a two-bone IK runs as an op node";
+        return false;
     case RigExecSolverKind::BlendPointFrames: {
         const auto *a = input.blendA, *b = input.blendB;
         if (!a) {

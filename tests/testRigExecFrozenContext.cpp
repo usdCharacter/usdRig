@@ -2885,8 +2885,10 @@ TestFrozenConstraintOpsMatchLive(const std::string &examplesDir)
 
 // An FK chain runs as its op node in a frozen job, bit-identical to live
 // at frames and under a drag on one of its controls.
+// An FK chain and a two-bone IK run as their op nodes in a frozen job,
+// bit-identical to live at frames and under a drag on a control of each.
 void
-TestFrozenFkChainOpsMatchLive(const std::string &examplesDir)
+TestFrozenSolverOpsMatchLive(const std::string &examplesDir)
 {
     UsdStageRefPtr stage =
         UsdStage::Open(examplesDir + "/03_IkFkBlendClamp.usda");
@@ -2899,13 +2901,13 @@ TestFrozenFkChainOpsMatchLive(const std::string &examplesDir)
     CHECK(evaluator.Evaluate(UsdTimeCode(1001.0)).valid);
     const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
         *evaluator.GetBakedProgram());
-    std::set<size_t> fkSteps;
+    std::set<size_t> solverSteps;
     for (size_t i = 0; i < B.steps.size(); ++i)
         if (RigExecBakedIdentityOf(B, B.steps[i]).kind ==
                 RigExecBakedStepKind::Solve &&
             B.steps[i].kind == RigExecBakedStepKind::OpNode)
-            fkSteps.insert(i);
-    CHECK(fkSteps.size() == 1);
+            solverSteps.insert(i);
+    CHECK(solverSteps.size() == 2);
     std::shared_ptr<const RigExecFrozenProgram> frozen;
     std::string error;
     CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
@@ -2940,20 +2942,25 @@ TestFrozenFkChainOpsMatchLive(const std::string &examplesDir)
         evaluator.SetInteractiveOverrides({});
         size_t ran = 0;
         for (const auto &entry : report.region)
-            if (fkSteps.count(entry.step)) {
+            if (solverSteps.count(entry.step)) {
                 CHECK(entry.kind == "Solve");
                 ++ran;
             }
         if (ran == 0) {
-            std::printf("FAIL %s: the frozen job ran no FK chain node\n", what);
+            std::printf("FAIL %s: the frozen job ran no solver node\n", what);
             ++failures;
         }
         CHECK(live.valid && pose.valid);
         CheckPosesBitIdentical(what, live, pose);
     };
-    run(1020.0, "frozen FK chain", {});
-    run(1028.0, "frozen FK chain", {});
+    run(1020.0, "frozen solvers", {});
+    run(1028.0, "frozen solvers", {});
     run(1028.0, "frozen FK chain under a drag", {target});
+    RigExecValueOverride effector;
+    effector.prim = SdfPath("/BlendArmAsset/Rig/Controls/HandIK");
+    effector.attribute = TfToken("avars:tx");
+    effector.value = VtValue(0.75);
+    run(1028.0, "frozen two-bone IK under a drag", {effector});
 }
 
 // Frozen publishes exactly live's weightFrames on every path. On
@@ -10826,7 +10833,7 @@ main(int argc, char **argv)
         TestFrozenWeightPacketOpsMatchLive(argv[1]);
         TestFrozenSpaceMatrixOpsMatchLive(argv[1]);
         TestFrozenPoseCommitOpsMatchLive(argv[1]);
-        TestFrozenFkChainOpsMatchLive(argv[1]);
+        TestFrozenSolverOpsMatchLive(argv[1]);
         TestFrozenProviderOpsMatchLive(argv[1]);
         TestFrozenConstraintOpsMatchLive(argv[1]);
         TestFrozenProviderAnswersMatchLive(argv[1]);
