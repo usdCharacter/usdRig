@@ -259,10 +259,33 @@ struct OpReader {
     bool whole = false;
 };
 
+/// Per node, its hostInputs entries in layout order: entries start[n] to
+/// start[n + 1].
+struct HostInputsByNode {
+    std::vector<uint32_t> start, entries;
+};
+
+HostInputsByNode
+IndexHostInputs(const eval::OpStepLayout &layout)
+{
+    HostInputsByNode index;
+    index.start.assign(layout.nodes.size() + 1, 0);
+    for (const eval::OpHostInput &input : layout.hostInputs)
+        ++index.start[input.node + 1];
+    for (size_t n = 0; n < layout.nodes.size(); ++n)
+        index.start[n + 1] += index.start[n];
+    index.entries.resize(layout.hostInputs.size());
+    std::vector<uint32_t> next(index.start.begin(), index.start.end() - 1);
+    for (uint32_t i = 0; i < layout.hostInputs.size(); ++i)
+        index.entries[next[layout.hostInputs[i].node]++] = i;
+    return index;
+}
+
 /// What port \p p of node \p n reads in \p reader's step.
 void
 DeclarePortReads(const RigExecBakedProgramImpl &B,
-                 const RigExecBakedOpProgram &op, uint32_t n, uint32_t p,
+                 const RigExecBakedOpProgram &op,
+                 const HostInputsByNode &inputs, uint32_t n, uint32_t p,
                  const OpReader &reader,
                  std::vector<RigExecBakedSlotRange> *reads)
 {
@@ -328,9 +351,10 @@ DeclarePortReads(const RigExecBakedProgramImpl &B,
             for (int32_t e = 0; e < lookup.part; ++e)
                 matrix(layout.lookups[lookup.object + uint32_t(e)]);
     };
-    for (size_t i = 0; i < layout.hostInputs.size(); ++i) {
+    for (uint32_t k = inputs.start[n]; k < inputs.start[n + 1]; ++k) {
+        const uint32_t i = inputs.entries[k];
         const eval::OpHostInput &input = layout.hostInputs[i];
-        if (input.node != n || input.port != p)
+        if (input.port != p)
             continue;
         if (input.source == eval::OpHostSource::FinalMatrix) {
             reads->push_back(
@@ -377,14 +401,15 @@ DeclarePortReads(const RigExecBakedProgramImpl &B,
 
 void
 DeclareNodeReads(const RigExecBakedProgramImpl &B,
-                 const RigExecBakedOpProgram &op, uint32_t n,
+                 const RigExecBakedOpProgram &op,
+                 const HostInputsByNode &inputs, uint32_t n,
                  const OpReader &reader,
                  std::vector<RigExecBakedSlotRange> *reads)
 {
     const RigExecNodeDesc &d = op.layout.nodes[n];
     for (uint32_t p = 0; p < d.values.size(); ++p)
         if (d.op->ports[p].flags & kRigExecPortInput)
-            DeclarePortReads(B, op, n, p, reader, reads);
+            DeclarePortReads(B, op, inputs, n, p, reader, reads);
 }
 
 /// Per chain, member reading an earlier segment through a neighbourhood
@@ -409,7 +434,7 @@ FindHaloGroups(RigExecBakedOpProgram *op, RigExecRunState &run)
             bool halo = false;
             for (const RigExecChainDesc::Feed &feed : desc.feeds[m])
                 halo = halo || feed.neighbourhood;
-            for (size_t i = 0; i < layout.hostInputs.size(); ++i)
+            for (const uint32_t i : layout.groupedOf[c])
                 halo = halo || (layout.grouped[i] == 2 &&
                                 layout.hostInputs[i].node == desc.members[m]);
             if (!halo)
@@ -819,6 +844,7 @@ void
 EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
 {
     const eval::OpStepLayout &layout = op.layout;
+    const HostInputsByNode inputs = IndexHostInputs(layout);
     const auto outputs = [&](uint32_t n, auto &&visit) {
         const RigExecNodeDesc &d = layout.nodes[n];
         for (size_t p = 0; p < d.values.size(); ++p)
@@ -839,7 +865,7 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
             continue;
         const uint32_t n = uint32_t(step.object);
         if (origin->family == RigExecBakedOpFamily::WeightField || constraint)
-            DeclareNodeReads(*B, op, n, OpReader(), &step.reads);
+            DeclareNodeReads(*B, op, inputs, n, OpReader(), &step.reads);
         outputs(n, [&](uint32_t v) {
             step.writes.push_back(RigExecBakedOne(D::OpValue, int(v)));
         });
@@ -849,7 +875,7 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
             n < B->opNodeOrigins.size())
             continue;
         RigExecBakedStep &step = AddOpStep(B, K::OpNode, int(n), -1);
-        DeclareNodeReads(*B, op, n, OpReader(), &step.reads);
+        DeclareNodeReads(*B, op, inputs, n, OpReader(), &step.reads);
         outputs(n, [&](uint32_t v) {
             step.writes.push_back(RigExecBakedOne(D::OpValue, int(v)));
         });
@@ -866,7 +892,7 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
             reader.chain = c;
             reader.head = true;
             for (const uint32_t n : desc.members)
-                DeclareNodeReads(*B, op, n, reader, &head.reads);
+                DeclareNodeReads(*B, op, inputs, n, reader, &head.reads);
             head.writes.push_back(
                 RigExecBakedOne(D::OpValue, int(layout.PlanSlot(c))));
             int last = -1;
@@ -898,7 +924,7 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
                     reader.segment = s;
                     reader.group = g;
                     reader.whole = whole;
-                    DeclareNodeReads(*B, op, n, reader, &step.reads);
+                    DeclareNodeReads(*B, op, inputs, n, reader, &step.reads);
                     outputs(n, [&](uint32_t v) {
                         const uint32_t base = layout.groupBase[v];
                         step.writes.push_back(
