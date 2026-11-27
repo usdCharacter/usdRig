@@ -1,6 +1,7 @@
 // Compile-time validation of scalar connections and weight domains.
 
 #include "rigExecSchema/schemaNames.h"
+#include "rigExecSchema/schemaTokens.h"
 #include "rigExec/internal/rigEvaluatorInternal.h"
 #include "rigExec/internal/rigEvaluatorConstraints.h"
 #include "rigExec/api/moverRegistry.h"
@@ -34,10 +35,6 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     ((rigExecCombineMode, SchemaAttrText::rigExecCombineMode))
     ((rigExecWeightTarget, SchemaAttrText::rigExecWeightTarget))
     ((rigExecInputWeights, SchemaAttrText::rigExecInputWeights))
-    (dense)
-    (constant)
-    (clamp)
-    (strict)
     (multiply)
     (add)
     (subtract)
@@ -220,16 +217,9 @@ _ValidateWeightObjectDomain(const UsdStageRefPtr &stage,
     };
     const TfToken representation =
         readToken(_tokens->rigExecRepresentation,
-                  (typeName == SchemaTypeName::RigExecCombineWeight ||
-                   _IsVolumeWeightType(typeName))
-                      ? _tokens->dense
-                      : _tokens->constant);
-    const TfToken rangePolicy =
-        readToken(_tokens->rigExecRangePolicy,
-                  (typeName == SchemaTypeName::RigExecCombineWeight ||
-                   _IsVolumeWeightType(typeName))
-                      ? _tokens->clamp
-                      : _tokens->strict);
+                  SchemaFallback::RepresentationFor(typeName));
+    const TfToken rangePolicy = readToken(
+        _tokens->rigExecRangePolicy, SchemaFallback::RangePolicyFor(typeName));
     if (rangePolicy != SchemaValueText::strict &&
         rangePolicy != SchemaValueText::clamp) {
         *error = weightPath.GetString() + ": unknown rigExec:rangePolicy '" +
@@ -363,18 +353,13 @@ _ValidateWeightObjectDomain(const UsdStageRefPtr &stage,
         }
         if (bases.size() == 1) {
             const UsdPrim base = stage->GetPrimAtPath(bases[0]);
-            TfToken actualBaseRepresentation(_tokens->constant);
+            TfToken actualBaseRepresentation;
             if (base) {
+                actualBaseRepresentation =
+                    SchemaFallback::RepresentationFor(base.GetTypeName());
                 if (const UsdAttribute attr =
                         base.GetAttribute(_tokens->rigExecRepresentation)) {
                     attr.Get(&actualBaseRepresentation, UsdTimeCode::Default());
-                }
-                if (base.GetTypeName() ==
-                        SchemaTypeName::RigExecCombineWeight ||
-                    _IsVolumeWeightType(base.GetTypeName())) {
-                    if (!base.GetAttribute(_tokens->rigExecRepresentation)) {
-                        actualBaseRepresentation = _tokens->dense;
-                    }
                 }
             }
             if (!base || actualBaseRepresentation != representation) {

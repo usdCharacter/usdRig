@@ -748,6 +748,62 @@ TestPlaneWeight()
     }
 }
 
+// An unauthored rigExec:planeAxis falls back to the schema's y whether the
+// plane is read as a packet (base points) or as a field (preceding points),
+// in native, frozen and .rigexec evaluation alike.
+static void
+TestUnauthoredPlaneAxis()
+{
+    const VtVec3fArray base{GfVec3f(0, -1, 0), GfVec3f(0, 0, 0),
+                            GfVec3f(0, 1, 0), GfVec3f(9, -5, 9)};
+    const float expected[4] = {1.0f, 0.5f, 0.0f, 1.0f};
+    std::vector<VtVec3fArray> results;
+    for (const bool field : {false, true}) {
+        Fixture f(base, GfVec3d(0, 2, 0));
+        UsdPrim v = f.MakeVolume("Plane", TfToken("RigExecPlaneWeight"),
+                                 GfVec3d(0, 0, 0), -1.0f, 1.0f);
+        CHECK(!v.GetAttribute(TfToken("rigExec:planeAxis")).HasAuthoredValue());
+        v.GetRelationship(TfToken("rigExec:weightTarget"))
+            .SetMetadata(TfToken("rigExecReadPhase"),
+                         std::string(field ? "preceding" : "base"));
+        f.MakeMover(SdfPath("/Asset/Rig/Movers/M"), v.GetPath());
+        const std::string what = std::string("unauthored planeAxis as a ") +
+                                 (field ? "field" : "packet");
+
+        RigExecRigEvaluator evaluator(f.stage, SdfPath("/Asset/Rig"));
+        std::vector<std::string> errors;
+        CHECK(evaluator.Compile(&errors));
+        const auto *program = evaluator.GetBakedProgram();
+        CHECK(program != nullptr);
+        if (!program)
+            continue;
+        size_t revisions = 0;
+        for (const auto &w :
+             rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+                 .weightFields)
+            revisions +=
+                w.form == RigExecBakedProgramImpl::WeightField::Form::Revision;
+        CHECK(revisions == (field ? 1u : 0u));
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(1));
+        CHECK(pose.valid);
+        const auto it = pose.movedProperties.find(Fixture::Target());
+        CHECK(it != pose.movedProperties.end());
+        if (it == pose.movedProperties.end())
+            continue;
+        const VtVec3fArray points = it->second.Get<VtVec3fArray>();
+        CHECK(points.size() == 4);
+        if (points.size() != 4)
+            continue;
+        for (size_t i = 0; i < 4; ++i)
+            CHECK(Near(points[i], Moved(base[i], expected[i])));
+        results.push_back(points);
+        CheckThreeEvaluators(f.stage, what, {1.0, 2.0});
+    }
+    CHECK(results.size() == 2);
+    if (results.size() == 2)
+        CHECK(results[0] == results[1]);
+}
+
 // rigExec:planeBounds = `bounded` clips the field to the in-plane
 // rectangle, and does nothing else: the same points inside it keep exactly
 // the weights the infinite plane gave them.
@@ -2934,6 +2990,7 @@ main(int argc, char **argv)
     TestWeightFieldTokenProducer();
     TestVolumeIgnoresTransformScaleAvars();
     TestPlaneWeight();
+    TestUnauthoredPlaneAxis();
     TestPlaneBounded();
     TestPlaneBoundsCompiledRigSplit();
     TestPlaneBoundedInvalidExtents();

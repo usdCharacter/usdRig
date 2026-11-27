@@ -138,7 +138,7 @@ enum CombineField : uint32_t { kMode, kInputs, kCombineClamp };
 struct WeightFieldSettings {
     rigExec::RigExecFieldView<const float> falloffCurve;
     bool clamp = false;
-    WeightFieldAxis planeAxis = WeightFieldAxis::Z;
+    WeightFieldAxis planeAxis = kWeightFieldAxisFallback;
     bool planeBounded = false;
 };
 
@@ -765,7 +765,7 @@ using authoring::Authored;
 
 const float kZero = 0.0f;
 const float kOne = 1.0f;
-const uint32_t kAxisY = uint32_t(WeightFieldAxis::Y);
+const uint32_t kAxisFallback = uint32_t(kWeightFieldAxisFallback);
 const uint32_t kUnbounded = 0;
 const uint32_t kMultiplyMode = uint32_t(WeightCombineMode::Multiply);
 const rigExecStd::RigExecArray<float> kNoFloats;
@@ -814,7 +814,7 @@ const rigExec::RigExecPropertyInfo kInvert = authoring::Property(
     R"(Reflects the folded field about 0.5; lerped, as elsewhere.)");
 
 const rigExec::RigExecPropertyInfo kPlaneAxisProperty = authoring::Tokens(
-    names::rigExecPlaneAxis, &kAxisY, kAxes,
+    names::rigExecPlaneAxis, &kAxisFallback, kAxes,
     R"(Local axis the signed distance is measured along. Y by default, matching
 the planar-shape convention the control guides already use (circle and
 box are drawn in the local XZ plane with normal +Y).)");

@@ -1,6 +1,7 @@
 // Guide rendering, part 2: the influence-volume iso-surfaces and the
 // weight overlay. Same component as bridgeGuides.cpp (bridgeGuides.h).
 #include "rigExecSchema/schemaNames.h"
+#include "rigExecSchema/schemaTokens.h"
 #include "bridgeGuides.h"
 
 #include "bridgeGuideGeometry.h"
@@ -135,7 +136,7 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
         };
 
         if (typeName == SchemaTypeName::RigExecPlaneWeight) {
-            TfToken axisToken(SchemaValueText::y);
+            TfToken axisToken(SchemaFallback::rigExecPlaneAxis);
             if (UsdAttribute a = prim.GetAttribute(_tRigExecPlaneAxis)) {
                 a.Get(&axisToken, reader.GetTime());
             }
@@ -153,7 +154,7 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
             // size (a max(1, |min|, |max|) half-size would, on every scrub).
             const double extentU = readFloat(_volumeInputsExtentU, 1.0f);
             const double extentV = readFloat(_volumeInputsExtentV, 1.0f);
-            TfToken boundsToken(SchemaValueText::unbounded);
+            TfToken boundsToken(SchemaFallback::rigExecPlaneBounds);
             if (UsdAttribute a = prim.GetAttribute(_tRigExecPlaneBounds)) {
                 a.Get(&boundsToken, reader.GetTime());
             }

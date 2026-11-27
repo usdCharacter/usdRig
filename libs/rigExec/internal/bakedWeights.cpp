@@ -3,6 +3,7 @@
 // point fields and scalar envelopes use the diagnostic field policy and their
 // explicitly bound placement phase. Both scheduled adapters use EvalCore.
 #include "rigExecSchema/schemaNames.h"
+#include "rigExecSchema/schemaTokens.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/bakedSlotDomains.h"
 
@@ -74,9 +75,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((rigExecBaseWeight, rigExec::SchemaAttrText::rigExecBaseWeight))
     ((rigExecInputWeights, rigExec::SchemaAttrText::rigExecInputWeights))
     ((rigExecRepresentation, rigExec::SchemaAttrText::rigExecRepresentation))
-    (constant)
     ((rigExecRangePolicy, rigExec::SchemaAttrText::rigExecRangePolicy))
-    (strict)
     ((rigExecCombineMode, rigExec::SchemaAttrText::rigExecCombineMode))
     ((rigExecPlaneAxis, rigExec::SchemaAttrText::rigExecPlaneAxis))
     (x)
@@ -146,11 +145,14 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx, const SdfPath &path)
     // The structural tokens are read plainly, with no time and no resolution
     // walk, and land in `folded`, so an edit to one rebuilds the program.
     object.representation =
-        ctx->ReadToken(prim, _tokens->rigExecRepresentation, _tokens->constant);
+        ctx->ReadToken(prim, _tokens->rigExecRepresentation,
+                       rigExec::SchemaFallback::RepresentationFor(object.type));
     object.rangePolicy =
-        ctx->ReadToken(prim, _tokens->rigExecRangePolicy, _tokens->strict);
+        ctx->ReadToken(prim, _tokens->rigExecRangePolicy,
+                       rigExec::SchemaFallback::RangePolicyFor(object.type));
     object.combineMode =
-        ctx->ReadToken(prim, _tokens->rigExecCombineMode, TfToken());
+        ctx->ReadToken(prim, _tokens->rigExecCombineMode,
+                       rigExec::SchemaFallback::rigExecCombineMode);
 
     // The painted arrays. Uniform by schema, so they fold; still named, so a
     // resync that authors one is seen.
@@ -231,9 +233,11 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx, const SdfPath &path)
         object.extentU = ctx->Bind(prim, _tokens->inputsExtentU, 1.0f);
         object.extentV = ctx->Bind(prim, _tokens->inputsExtentV, 1.0f);
         object.planeAxis =
-            ctx->ReadToken(prim, _tokens->rigExecPlaneAxis, _tokens->y);
-        object.planeBounds = ctx->ReadToken(prim, _tokens->rigExecPlaneBounds,
-                                            _tokens->unbounded);
+            ctx->ReadToken(prim, _tokens->rigExecPlaneAxis,
+                           rigExec::SchemaFallback::rigExecPlaneAxis);
+        object.planeBounds =
+            ctx->ReadToken(prim, _tokens->rigExecPlaneBounds,
+                           rigExec::SchemaFallback::rigExecPlaneBounds);
         // The authored profile supplies the default table. A declared sample
         // array can replace it without recompiling the profile during a drag.
         ctx->Fold(prim, _tokens->rigExecFalloffProfile);

@@ -771,7 +771,7 @@ TestSavedBytes()
     }
     {
         WeightFieldPayload p;
-        CheckSaved(PlaneWeight(), &p, "010000000000000000000000000200000000");
+        CheckSaved(PlaneWeight(), &p, "010000000000000000000000000100000000");
         p.falloffCurve = {1.0f, 0.5f, 0.0f};
         p.clamp = true;
         p.planeAxis = WeightFieldAxis::X;

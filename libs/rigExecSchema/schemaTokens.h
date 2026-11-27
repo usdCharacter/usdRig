@@ -293,6 +293,51 @@ inline const PXR_NS::TfToken drawModeShell(SchemaValueText::shell);
 inline const PXR_NS::TfToken drawModeWire(SchemaValueText::wire);
 } // namespace SchemaValue
 
+// The SchemaFallbackText fallbacks, interned.
+namespace SchemaFallback {
+inline const PXR_NS::TfToken
+    rigExecPlaneAxis(SchemaFallbackText::rigExecPlaneAxis);
+inline const PXR_NS::TfToken
+    rigExecPlaneBounds(SchemaFallbackText::rigExecPlaneBounds);
+inline const PXR_NS::TfToken
+    rigExecCombineMode(SchemaFallbackText::rigExecCombineMode);
+inline const PXR_NS::TfToken
+    weightRepresentation(SchemaFallbackText::weightRepresentation);
+inline const PXR_NS::TfToken
+    volumeRepresentation(SchemaFallbackText::volumeRepresentation);
+inline const PXR_NS::TfToken
+    combineRepresentation(SchemaFallbackText::combineRepresentation);
+inline const PXR_NS::TfToken
+    weightRangePolicy(SchemaFallbackText::weightRangePolicy);
+inline const PXR_NS::TfToken
+    volumeRangePolicy(SchemaFallbackText::volumeRangePolicy);
+
+inline bool
+IsVolumeWeight(const PXR_NS::TfToken &type)
+{
+    return type == SchemaType::RigExecSphereWeight ||
+           type == SchemaType::RigExecPlaneWeight ||
+           type == SchemaType::RigExecCurveWeight ||
+           type == SchemaType::RigExecVolumeWeight;
+}
+
+/// rigExec:representation's fallback on a weight object of \p type.
+inline const PXR_NS::TfToken &
+RepresentationFor(const PXR_NS::TfToken &type)
+{
+    return type == SchemaType::RigExecCombineWeight ? combineRepresentation
+           : IsVolumeWeight(type)                   ? volumeRepresentation
+                                                    : weightRepresentation;
+}
+
+/// rigExec:rangePolicy's fallback on a weight object of \p type.
+inline const PXR_NS::TfToken &
+RangePolicyFor(const PXR_NS::TfToken &type)
+{
+    return IsVolumeWeight(type) ? volumeRangePolicy : weightRangePolicy;
+}
+} // namespace SchemaFallback
+
 } // namespace rigExec
 
 #endif

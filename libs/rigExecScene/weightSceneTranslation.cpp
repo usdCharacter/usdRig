@@ -1,4 +1,5 @@
 #include "rigExecSchema/schemaNames.h"
+#include "rigExecSchema/schemaTokens.h"
 #include "weightSceneTranslation.h"
 #include "rigExec/internal/pathText.h"
 #include <algorithm>
@@ -9,7 +10,7 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     ((falloffSamples,SchemaAttrText::inputsFalloffSamples))
     ((rigExecValues,SchemaAttrText::rigExecValues)) ((rigExecIndices,SchemaAttrText::rigExecIndices))
     ((rigExecDefaultWeight,SchemaAttrText::rigExecDefaultWeight)) ((rigExecRepresentation,SchemaAttrText::rigExecRepresentation))
-    ((rigExecRangePolicy,SchemaAttrText::rigExecRangePolicy)) (points) (constant) (strict) (multiply) (y) (unbounded)
+    ((rigExecRangePolicy,SchemaAttrText::rigExecRangePolicy)) (points) (multiply)
     (base) (smooth) ((rigExecFalloffCurve,SchemaAttrText::rigExecFalloffCurve))
     ((rigExecCombineMode,SchemaAttrText::rigExecCombineMode)) ((rigExecPlaneAxis,SchemaAttrText::rigExecPlaneAxis))
     ((rigExecPlaneBounds,SchemaAttrText::rigExecPlaneBounds)) ((rigExecFalloffProfile,SchemaAttrText::rigExecFalloffProfile))
@@ -120,19 +121,22 @@ RigExecTranslateSceneWeight(const RigExecSceneDescriptors &scene,
             return value.IsHolding<T>() ? value.UncheckedGet<T>() : fallback;
         };
         record.representationToken =
-            raw(_tokens->rigExecRepresentation, _tokens->constant);
-        record.rangePolicy = raw(_tokens->rigExecRangePolicy, _tokens->strict);
-        record.combineToken =
-            raw(_tokens->rigExecCombineMode, _tokens->multiply);
+            raw(_tokens->rigExecRepresentation,
+                SchemaFallback::RepresentationFor(record.type));
+        record.rangePolicy = raw(_tokens->rigExecRangePolicy,
+                                 SchemaFallback::RangePolicyFor(record.type));
+        record.combineToken = raw(_tokens->rigExecCombineMode,
+                                  SchemaFallback::rigExecCombineMode);
         record.representation =
             record.representationToken == SchemaValueText::constant ? 0
             : record.representationToken == SchemaValueText::dense  ? 1
             : record.representationToken == SchemaValueText::sparse ? 2
                                                                     : -1;
         record.clamp = record.rangePolicy == SchemaValueText::clamp;
-        record.planeAxis = raw(_tokens->rigExecPlaneAxis, _tokens->y);
-        record.planeBounds =
-            raw(_tokens->rigExecPlaneBounds, _tokens->unbounded);
+        record.planeAxis =
+            raw(_tokens->rigExecPlaneAxis, SchemaFallback::rigExecPlaneAxis);
+        record.planeBounds = raw(_tokens->rigExecPlaneBounds,
+                                 SchemaFallback::rigExecPlaneBounds);
         const char *modes[] = {
             SchemaValueText::multiply, SchemaValueText::add,
             SchemaValueText::subtract, SchemaValueText::max,

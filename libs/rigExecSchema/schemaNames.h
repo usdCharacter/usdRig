@@ -1029,6 +1029,26 @@ inline constexpr const char *const surfaceStruts = "surfaceStruts";
 inline constexpr const char *const vertex = "vertex";
 } // namespace SchemaValueText
 
+// The fallbacks schema.usda declares for weight-object properties, for a
+// reader whose prim's type does not define the property.
+namespace SchemaFallbackText {
+inline constexpr const char *const rigExecPlaneAxis = SchemaValueText::y;
+inline constexpr const char *const rigExecPlaneBounds =
+    SchemaValueText::unbounded;
+inline constexpr const char *const rigExecCombineMode =
+    SchemaValueText::multiply;
+// rigExec:representation and rigExec:rangePolicy as RigExecWeightObject,
+// RigExecCombineWeight and RigExecVolumeWeight declare them.
+inline constexpr const char *const weightRepresentation =
+    SchemaValueText::constant;
+inline constexpr const char *const combineRepresentation =
+    SchemaValueText::dense;
+inline constexpr const char *const volumeRepresentation =
+    SchemaValueText::dense;
+inline constexpr const char *const weightRangePolicy = SchemaValueText::strict;
+inline constexpr const char *const volumeRangePolicy = SchemaValueText::clamp;
+} // namespace SchemaFallbackText
+
 } // namespace rigExec
 
 #endif

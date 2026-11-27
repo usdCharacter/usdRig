@@ -1,5 +1,6 @@
 // Reference arithmetic retains the original scalar statement order.
 #include "rigExecSchema/schemaNames.h"
+#include "rigExecSchema/schemaTokens.h"
 #include "rigExec/internal/weightReference.h"
 #include "rigExec/internal/rigEvaluatorInternal.h"
 #include "rigExec/internal/moverGraph.h"
@@ -162,7 +163,7 @@ ResolveVolume(const RigExecWeightReferenceContext &context,
                 prim.GetRelationship(_kGeoInputWeights)) {
             rel.GetTargets(&inputs);
         }
-        TfToken modeName = _kGeoMultiply;
+        TfToken modeName = SchemaFallback::rigExecCombineMode;
         if (RigExecWeightReferenceAttribute a =
                 prim.GetAttribute(_kGeoCombineMode)) {
             a.Get(&modeName, time);
@@ -277,7 +278,7 @@ ResolveVolume(const RigExecWeightReferenceContext &context,
     params.curve = prim.falloff;
 
     if (typeName == _kGeoPlaneWeight) {
-        TfToken axis = _kGeoAxisY;
+        TfToken axis = SchemaFallback::rigExecPlaneAxis;
         if (RigExecWeightReferenceAttribute a =
                 prim.GetAttribute(_kGeoPlaneAxis)) {
             a.Get(&axis, time);
@@ -292,7 +293,7 @@ ResolveVolume(const RigExecWeightReferenceContext &context,
         }
         // Bounded clips the field to the in-plane rectangle; the extents are
         // read only in the bounded arm.
-        TfToken boundsMode = _kGeoUnbounded;
+        TfToken boundsMode = SchemaFallback::rigExecPlaneBounds;
         if (RigExecWeightReferenceAttribute a =
                 prim.GetAttribute(_kGeoPlaneBounds)) {
             a.Get(&boundsMode, time);
@@ -407,7 +408,7 @@ ResolveWeight(const RigExecWeightReferenceContext &context,
                            currentPoints, active)) {
             return false;
         }
-        TfToken volumePolicy = _kGeoClamp;
+        TfToken volumePolicy = SchemaFallback::RangePolicyFor(typeName);
         if (RigExecWeightReferenceAttribute a =
                 prim.GetAttribute(_kGeoRangePolicy)) {
             a.Get(&volumePolicy, time);
@@ -430,14 +431,14 @@ ResolveWeight(const RigExecWeightReferenceContext &context,
         return true;
     }
 
-    TfToken representation = _kGeoConstant;
+    TfToken representation = SchemaFallback::RepresentationFor(typeName);
     if (RigExecWeightReferenceAttribute a =
             prim.GetAttribute(_kGeoRepresentation)) {
         a.Get(&representation, time);
     }
     const float defaultWeight =
         ReadResolved(prim, _kGeoDefaultWeight, 0.0f, time);
-    TfToken rangePolicy = _kGeoStrict;
+    TfToken rangePolicy = SchemaFallback::RangePolicyFor(typeName);
     if (RigExecWeightReferenceAttribute a =
             prim.GetAttribute(_kGeoRangePolicy)) {
         a.Get(&rangePolicy, time);
@@ -508,7 +509,8 @@ ResolveWeight(const RigExecWeightReferenceContext &context,
                          weightPrimPath.GetString();
                 return false;
             }
-            TfToken baseRepresentation = _kGeoConstant;
+            TfToken baseRepresentation =
+                SchemaFallback::RepresentationFor(basePrim.GetTypeName());
             if (RigExecWeightReferenceAttribute a =
                     basePrim.GetAttribute(_kGeoRepresentation)) {
                 a.Get(&baseRepresentation, time);

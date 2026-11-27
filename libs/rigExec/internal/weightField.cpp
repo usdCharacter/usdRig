@@ -848,7 +848,8 @@ RigExecBakedLookUpWeightField(const Baked &B, const eval::OpLookup &lookup,
             if (!token.IsEmpty())
                 name = token.GetString();
         } else if (!(bounds ? w.fieldBoundsAttribute : w.fieldAxisAttribute)) {
-            name = bounds ? SchemaValueText::unbounded : SchemaValueText::x;
+            name = bounds ? SchemaFallbackText::rigExecPlaneBounds
+                          : SchemaFallbackText::rigExecPlaneAxis;
         }
         uint32_t code = 0;
         if (bounds) {

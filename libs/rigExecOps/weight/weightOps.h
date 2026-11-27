@@ -8,13 +8,25 @@
 
 #include "rigExecOps/library.h"
 #include "rigExecRigTypes/rigTypes.h"
+#include "rigExecSchema/schemaNames.h"
 
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
 namespace rigExecOps {
 
 enum class WeightFieldAxis : uint8_t { X, Y, Z };
+
+/// rigExec:planeAxis's schema fallback.
+inline constexpr WeightFieldAxis kWeightFieldAxisFallback =
+    std::string_view(rigExec::SchemaFallbackText::rigExecPlaneAxis) ==
+            rigExec::SchemaValueText::x
+        ? WeightFieldAxis::X
+    : std::string_view(rigExec::SchemaFallbackText::rigExecPlaneAxis) ==
+            rigExec::SchemaValueText::y
+        ? WeightFieldAxis::Y
+        : WeightFieldAxis::Z;
 
 /// What every weight field op is configured with at compile.
 struct WeightFieldPayload {
@@ -25,7 +37,7 @@ struct WeightFieldPayload {
     bool clamp = false;
     /// Plane: the axis the signed distance runs along, and whether the
     /// field is zero outside the ExtentU by ExtentV rectangle.
-    WeightFieldAxis planeAxis = WeightFieldAxis::Z;
+    WeightFieldAxis planeAxis = kWeightFieldAxisFallback;
     bool planeBounded = false;
 
     bool operator==(const WeightFieldPayload &o) const
@@ -157,7 +169,7 @@ struct VolumeWeightsPayload {
     /// Out-of-range weights clamp (true) or fail the op (false).
     bool clamp = false;
     /// Plane: as WeightFieldPayload's.
-    WeightFieldAxis planeAxis = WeightFieldAxis::Z;
+    WeightFieldAxis planeAxis = kWeightFieldAxisFallback;
     bool planeBounded = false;
 
     bool operator==(const VolumeWeightsPayload &o) const

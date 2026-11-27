@@ -80,13 +80,9 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((rigExecSampleSource, SchemaAttrText::rigExecSampleSource))
     ((rigExecCurve, SchemaAttrText::rigExecCurve))
     ((rigExecPlaneAxis, SchemaAttrText::rigExecPlaneAxis))
-    (y)
     ((rigExecPlaneBounds, SchemaAttrText::rigExecPlaneBounds))
-    (unbounded)
     ((rigExecRepresentation, SchemaAttrText::rigExecRepresentation))
-    (constant)
     ((rigExecRangePolicy, SchemaAttrText::rigExecRangePolicy))
-    (strict)
     ((rigExecIndices, SchemaAttrText::rigExecIndices))
     ((rigExecValues, SchemaAttrText::rigExecValues))
     ((rigExecDefaultWeight, SchemaAttrText::rigExecDefaultWeight))
@@ -132,8 +128,8 @@ RigExecBakedProgram::DescribeWeightFieldFacts(
     };
     const auto who = [&prim] { return prim.GetPath().GetAsString(); };
     if (typeName == _tokens->rigExecCombineWeight) {
-        const TfToken mode =
-            readToken(_tokens->rigExecCombineMode, _tokens->multiply);
+        const TfToken mode = readToken(_tokens->rigExecCombineMode,
+                                       SchemaFallback::rigExecCombineMode);
         if (mode != SchemaValueText::multiply && mode != SchemaValueText::add &&
             mode != SchemaValueText::subtract && mode != SchemaValueText::max &&
             mode != SchemaValueText::min && mode != SchemaValueText::average &&
@@ -207,9 +203,10 @@ RigExecBakedProgram::DescribeWeightFieldFacts(
             noteAnimated(pointsSource(_tokens->rigExecCurve));
         }
         if (typeName == _tokens->rigExecPlaneWeight) {
-            facts->planeAxis = readToken(_tokens->rigExecPlaneAxis, _tokens->y);
-            facts->planeBounds =
-                readToken(_tokens->rigExecPlaneBounds, _tokens->unbounded);
+            facts->planeAxis = readToken(_tokens->rigExecPlaneAxis,
+                                         SchemaFallback::rigExecPlaneAxis);
+            facts->planeBounds = readToken(_tokens->rigExecPlaneBounds,
+                                           SchemaFallback::rigExecPlaneBounds);
             noteAnimated(prim.GetAttribute(_tokens->rigExecPlaneAxis));
             noteAnimated(prim.GetAttribute(_tokens->rigExecPlaneBounds));
         }
@@ -217,9 +214,10 @@ RigExecBakedProgram::DescribeWeightFieldFacts(
     }
 
     const TfToken representation =
-        readToken(_tokens->rigExecRepresentation, _tokens->constant);
-    const TfToken rangePolicy =
-        readToken(_tokens->rigExecRangePolicy, _tokens->strict);
+        readToken(_tokens->rigExecRepresentation,
+                  SchemaFallback::RepresentationFor(typeName));
+    const TfToken rangePolicy = readToken(
+        _tokens->rigExecRangePolicy, SchemaFallback::RangePolicyFor(typeName));
     if (rangePolicy != SchemaValueText::strict &&
         rangePolicy != SchemaValueText::clamp) {
         facts->staticError = "unknown rangePolicy on " + path.GetString();
@@ -273,7 +271,8 @@ RigExecBakedProgram::DescribeWeightFieldFacts(
                 "dynamic/base weight target mismatch on " + path.GetString();
             return;
         }
-        TfToken baseRepresentation = _tokens->constant;
+        TfToken baseRepresentation =
+            SchemaFallback::RepresentationFor(basePrim.GetTypeName());
         if (const UsdAttribute a =
                 basePrim.GetAttribute(_tokens->rigExecRepresentation)) {
             a.Get(&baseRepresentation, time);
