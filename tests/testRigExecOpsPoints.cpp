@@ -3023,6 +3023,24 @@ TestConstraints()
                          &actual));
     CHECK(SameBits(RigExecApplyParentConstraint(input, gfSources, parentParams),
                    actual));
+    double movingWeight = weight;
+    std::string steadyError;
+    CHECK(opAllocationCount::SteadyFrameAllocations(
+              ParentConstraint(), &parent,
+              {&ParentConstraintIn(), &ParentConstraintSources(),
+               &ParentConstraintSourceWeights(), &ParentConstraintWeight(),
+               &ParentConstraintSpace(), &ParentConstraintRotationAxes(),
+               &ParentConstraintScaleAxes(),
+               &ParentConstraintTranslationOffsets(),
+               &ParentConstraintRotationOffsets()},
+              {&in, &sources, &weights, &weight, &carryArray, &rotationAxes,
+               &scaleAxes, &translationOffsetArray, &rotationOffsetArray},
+              ParentConstraintOut(), 3,
+              [&](int frame) {
+                  movingWeight = 0.2 + 0.1 * frame;
+                  return &movingWeight;
+              },
+              &steadyError) == 0);
 
     // Aim with a world up, then without one taking the minimum swing.
     ConstraintPayload aim;

@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -185,6 +186,18 @@ struct Source {
     Vec3d rotationOffsetDegrees{0.0, 0.0, 0.0};
 };
 
+/// A node's gathered sources, kept so a steady frame allocates nothing.
+struct ConstraintState {
+    std::vector<Source> sources;
+};
+
+std::vector<Source> &
+SourcesOf(const RigExecOpBatch &batch, size_t k)
+{
+    return static_cast<ConstraintState *>(rigExec::RigExecBatchState(batch, k))
+        ->sources;
+}
+
 struct PositionParams {
     Vec3d offset;
     ConstraintAxes affect;
@@ -259,10 +272,10 @@ GatherSources(const char *op, const RigExecOpIo &io,
         Source &s = (*sources)[i];
         s.frame = frames[i];
         s.normalizedWeight = weights ? (*weights)[i] : 1.0;
-        if (translations)
-            s.translationOffset = (*translations)[i];
-        if (rotations)
-            s.rotationOffsetDegrees = (*rotations)[i];
+        s.translationOffset =
+            translations ? (*translations)[i] : Vec3d(0.0, 0.0, 0.0);
+        s.rotationOffsetDegrees =
+            rotations ? (*rotations)[i] : Vec3d(0.0, 0.0, 0.0);
         if (!std::isfinite(s.normalizedWeight) || s.normalizedWeight < 0.0)
             return Fail(error, op, "has an invalid source weight");
         if ((s.normalizedWeight != 0.0 && !Finite(s.frame)) ||
@@ -375,7 +388,7 @@ bool
 PositionOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
-    std::vector<Source> sources;
+    std::vector<Source> &sources = SourcesOf(batch, k);
     PositionParams params{{}, {}, *In<double>(io, PositionConstraintWeight())};
     if (!MaskAndOffset("PositionConstraint", io, PositionConstraintAffect(),
                        PositionConstraintOffset(), &params.affect,
@@ -405,7 +418,7 @@ RotationOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const ConstraintSettings p = SettingsAt(batch, k);
-    std::vector<Source> sources;
+    std::vector<Source> &sources = SourcesOf(batch, k);
     RotationParams params{{},
                           {},
                           p.rotationOrder,
@@ -440,7 +453,7 @@ ScaleOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const ConstraintSettings p = SettingsAt(batch, k);
-    std::vector<Source> sources;
+    std::vector<Source> &sources = SourcesOf(batch, k);
     ScaleParams params{
         {}, {}, *In<double>(io, ScaleConstraintWeight()), p.blendShear};
     if (!MaskAndOffset("ScaleConstraint", io, ScaleConstraintAffect(),
@@ -471,7 +484,7 @@ ParentOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const ConstraintSettings p = SettingsAt(batch, k);
-    std::vector<Source> sources;
+    std::vector<Source> &sources = SourcesOf(batch, k);
     ParentParams params{{},
                         {},
                         {false, false, false},
@@ -535,7 +548,7 @@ AimOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     if (fed && !Finite(target))
         return Fail(error, "AimConstraint", "has a non-finite target");
     if (!fed) {
-        std::vector<Source> sources;
+        std::vector<Source> &sources = SourcesOf(batch, k);
         if (!GatherSources("AimConstraint", io, AimConstraintSources(),
                            AimConstraintSourceWeights(), {}, &sources, error))
             return false;
@@ -611,6 +624,15 @@ ConstraintDesc(const char *name, const rigExec::RigExecPortDesc *ports,
     d.payloadFieldCount = std::size(kConstraintFields);
     d.payloadVersion = 2;
     d.payloadValues = &ConstraintValues;
+    d.state.size = sizeof(ConstraintState);
+    d.state.align = alignof(ConstraintState);
+    d.state.create = [](void *dst) {
+        std::uninitialized_value_construct_n(
+            static_cast<ConstraintState *>(dst), 1);
+    };
+    d.state.destroy = [](void *dst) {
+        std::destroy_at(static_cast<ConstraintState *>(dst));
+    };
     return d;
 }
 
