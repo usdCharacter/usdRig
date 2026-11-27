@@ -10,6 +10,18 @@
 
 namespace rigExecOps {
 
+/// What a smooth is configured with at compile.
+struct SmoothPayload {
+    /// Runs once over every point instead of group by group: its topology
+    /// can move per frame.
+    bool whole = false;
+
+    bool operator==(const SmoothPayload &o) const
+    {
+        return whole == o.whole;
+    }
+};
+
 /// One Jacobi pass of Laplacian smoothing over the face-vertex topology's
 /// edges. Invalid topology passes the points through.
 const rigExec::RigExecOpHandle &Smooth();

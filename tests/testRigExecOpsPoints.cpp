@@ -336,6 +336,9 @@ struct Node {
     }
 };
 
+/// A ranged Smooth's settings.
+const rigExecOps::SmoothPayload kSmoothPayload;
+
 void
 TestSmooth()
 {
@@ -343,7 +346,7 @@ TestSmooth()
     Node node(Smooth(),
               {&SmoothPoints(), &SmoothCounts(), &SmoothIndices(),
                &SmoothStrength(), &SmoothEnvelope()},
-              SmoothOut());
+              SmoothOut(), &kSmoothPayload);
     Grid grid(9, 3);
     std::vector<float> envelope(grid.points.size());
     for (size_t i = 0; i < envelope.size(); ++i)
@@ -369,7 +372,7 @@ TestSmooth()
         }
     // Unfed strength and envelope apply the smoothing outright.
     Node bare(Smooth(), {&SmoothPoints(), &SmoothCounts(), &SmoothIndices()},
-              SmoothOut());
+              SmoothOut(), &kSmoothPayload);
     std::vector<GfVec3f> expected = grid.points;
     RigExecApplyLaplacianSmooth(&expected, grid.counts, grid.indices, 1.0);
     const auto counts = ToArray(grid.counts);
@@ -419,7 +422,7 @@ TestSmoothWeights()
     Node packed(
         Smooth(),
         {&SmoothPoints(), &SmoothCounts(), &SmoothIndices(), &SmoothPacket()},
-        SmoothOut());
+        SmoothOut(), &kSmoothPayload);
     rigExecRig::PointWeights packet;
     packet.valid = 1;
     packet.representation = uint32_t(rigExecRig::WeightRepresentation::Sparse);
@@ -451,7 +454,7 @@ TestSmoothWeights()
     Node uniform(Smooth(),
                  {&SmoothPoints(), &SmoothCounts(), &SmoothIndices(),
                   &SmoothDefaultWeight(), &SmoothEnabled()},
-                 SmoothOut());
+                 SmoothOut(), &kSmoothPayload);
     const uint8_t on = 1, off = 0;
     const float half = 0.5f, full = 1.0f, over = 1.5f;
     CHECK(uniform.Run({&in, &counts, &indices, &half, &on}, &actual));
@@ -464,7 +467,7 @@ TestSmoothWeights()
     CHECK(Contains(error, "default weight"));
 
     RigExecRigDescBuilder b;
-    const RigExecNodeId node = b.AddOp(Smooth());
+    const RigExecNodeId node = b.AddOp(Smooth(), &kSmoothPayload);
     for (const RigExecPortHandle *port :
          {&SmoothPoints(), &SmoothCounts(), &SmoothIndices(),
           &SmoothDefaultWeight(), &SmoothPacket()})
@@ -1113,13 +1116,12 @@ TestLatticeWeights()
         const RigExecNodeId node = b.AddOp(Lattice(), &settings);
         for (const RigExecPortHandle *port :
              {&LatticePoints(), &LatticeRestPoints(), &LatticeRestCage(),
-              &LatticePosedCage(), &LatticeDefaultWeight(),
-              grid_ ? &LatticeEnabled() : &LatticePacket()})
+              &LatticePosedCage(), &LatticeDefaultWeight(), &LatticePacket()})
             b.BindInput(node, *port);
         b.BindOutput(node, LatticeOut());
         auto desc = b.Build(&error);
         CHECK(!desc || !RigExecCompile(*desc, RigExecCompileOptions(), &error));
-        CHECK(Contains(error, grid_ ? "regular grid" : "one of an envelope"));
+        CHECK(Contains(error, "one of an envelope"));
     }
 }
 
@@ -5063,7 +5065,7 @@ TestRangeChain()
     RigExecRigDescBuilder b;
     const RigExecNodeId s = b.AddOp(Skin(), &skin);
     const RigExecNodeId m = b.AddOp(MatrixDeform(), &matrix);
-    const RigExecNodeId sm = b.AddOp(Smooth());
+    const RigExecNodeId sm = b.AddOp(Smooth(), &kSmoothPayload);
     const RigExecNodeId dm = b.AddOp(DeltaMush(), &mush);
     b.Connect(s, SkinOut(), m, MatrixDeformPoints());
     b.Connect(m, MatrixDeformOut(), sm, SmoothPoints());
@@ -5123,7 +5125,7 @@ TestRangeChain()
                   {&SkinWeights(), &weightArray}});
             step(MatrixDeform(), &matrix, MatrixDeformPoints(),
                  MatrixDeformOut(), {{&MatrixDeformTransform(), &move}});
-            step(Smooth(), nullptr, SmoothPoints(), SmoothOut(),
+            step(Smooth(), &kSmoothPayload, SmoothPoints(), SmoothOut(),
                  {{&SmoothCounts(), &counts}, {&SmoothIndices(), &faces}});
             step(DeltaMush(), &mush, DeltaMushPoints(), DeltaMushOut(),
                  {{&DeltaMushRest(), &in},
@@ -5234,7 +5236,7 @@ ReportRangeTiming()
     RigExecRigDescBuilder b;
     const RigExecNodeId s = b.AddOp(Skin(), &skin);
     const RigExecNodeId m = b.AddOp(MatrixDeform(), &matrix);
-    const RigExecNodeId sm = b.AddOp(Smooth());
+    const RigExecNodeId sm = b.AddOp(Smooth(), &kSmoothPayload);
     b.Connect(s, SkinOut(), m, MatrixDeformPoints());
     b.Connect(m, MatrixDeformOut(), sm, SmoothPoints());
     const RigExecInputId points = b.BindInput(s, SkinPoints());

@@ -936,38 +936,6 @@ RrGeoApplyLinearBlendSkinSimd(const RrVec3f *in, RrVec3f *out,
 // Playback keeps its exact doubles: no radial identity shortcut.
 using RrGeoEnvelopeMath = eval::MatrixKernelMath<RrVec3f, RrVec3d, RrMat4d>;
 
-// \p useSimd is the program's RrGeoSettings::useSimd. Reads \p in and writes
-// \p pts, which may be the same array: point i is written only after it is
-// read.
-void
-RrGeoApplyMatrixKernelRange(const RrGeoMoverParameters &p,
-                            const float *envelope, size_t begin, size_t end,
-                            const RrVec3f *in, RrVec3f *pts, bool useSimd)
-{
-    eval::ApplyMatrixKernelRange<RrGeoEnvelopeMath>(
-        p.radialWeight, p.transform, envelope, begin, end, in, pts, useSimd);
-}
-
-// The matrix kernel's validation, the one definition it runs first and
-// RrGeoRevisionKernelAcceptance decides by. Given \p weights, a dense
-// resolve writes into it.
-bool
-RrGeoMatrixKernelAccepts(const RrGeoMoverParameters &p, size_t count,
-                         std::vector<float> *weights)
-{
-    return eval::MatrixKernelAccepts(RrGeoEnvelopeView(p.weights), p.weights,
-                                     count, weights);
-}
-
-bool
-RrGeoApplyMatrixKernel(const RrGeoMoverParameters &p, std::vector<RrVec3f> *pts,
-                       bool useSimd)
-{
-    return eval::ApplyMatrixKernel<RrGeoEnvelopeMath>(
-        RrGeoEnvelopeView(p.weights), p.weights, p.radialWeight, p.transform,
-        pts, useSimd);
-}
-
 // Dual-quaternion skinning: rigExecMath/dualQuatKernel.h over the runtime
 // mirror is the one numeric definition (gather, palette, blend, point
 // apply), run through EvalCore's skin bodies as the Gf wrappers in
@@ -1005,29 +973,6 @@ RrGeoTransportSurfaceOffsets(const std::vector<RrVec3f> &rest,
         rest, posed, faceCounts, faceIndices, deltas, out);
 }
 
-void
-RrGeoApplyLaplacianSmooth(
-    std::vector<RrVec3f> *points, const std::vector<int> &faceVertexCounts,
-    const std::vector<int> &faceVertexIndices, double strength,
-    RigExecSurfaceKernelCache<RrVec3f, RrVec3d> *cache = nullptr)
-{
-    if (!cache) {
-        RigExecApplyLaplacianSmoothMeshKernel(
-            points, faceVertexCounts.data(), faceVertexCounts.size(),
-            faceVertexIndices.data(), faceVertexIndices.size(), strength);
-        return;
-    }
-    if (points->empty() || strength <= 0.0) {
-        return;
-    }
-    if (const auto *adjacency = cache->MeshAdjacency(
-            points->size(), faceVertexCounts, faceVertexIndices)) {
-        RigExecApplyLaplacianSmoothWithAdjacencyKernel(
-            points, *adjacency, strength, static_cast<const RrVec3f *>(nullptr),
-            0, &cache->SmoothSource());
-    }
-}
-
 std::vector<RrVec3f>
 RrGeoComputeVertexNormals(const std::vector<RrVec3f> &points,
                           const std::vector<int> &faceVertexCounts,
@@ -1043,22 +988,6 @@ RrGeoComputeExtent(const std::vector<RrVec3f> &points,
 {
     return RigExecComputeExtentKernel(points.data(), points.size(),
                                       widths.data(), widths.size());
-}
-
-// The shared lattice kernel (latticeKernel.h); \p cache, the revision's own,
-// retains the bind's Bernstein factors across frames.
-void
-RrGeoApplyLattice(std::vector<RrVec3f> *points,
-                  const std::vector<RrVec3f> &restPoints,
-                  const std::vector<RrVec3f> &restCage,
-                  const std::vector<RrVec3f> &posedCage,
-                  const RrVec3i &divisions,
-                  RigExecSurfaceKernelCache<RrVec3f, RrVec3d> *cache)
-{
-    RigExecApplyLatticeKernel(points, restPoints.data(), restPoints.size(),
-                              restCage.data(), restCage.size(),
-                              posedCage.data(), posedCage.size(), divisions[0],
-                              divisions[1], divisions[2], cache);
 }
 
 void
@@ -1682,10 +1611,6 @@ RrGeoRevisionKernelAcceptance(int op, const RrGeoMoverParameters &p,
         return RrGeoAcceptance::Refuses;
     }
     switch (op) {
-    case RrGeoOpMatrix:
-        return RrGeoMatrixKernelAccepts(p, count, nullptr)
-                   ? RrGeoAcceptance::Applies
-                   : RrGeoAcceptance::Refuses;
     case RrGeoOpBlendShape:
         if (!RrGeoBlendShapeKernelAccepts(p, count, nullptr)) {
             return RrGeoAcceptance::Refuses;
@@ -1708,28 +1633,6 @@ RrGeoRevisionKernelAcceptance(int op, const RrGeoMoverParameters &p,
         }
         return wire;
     }
-    case RrGeoOpLattice:
-        // The kernel fails only on a cardinality mismatch, before it writes;
-        // an invalid cage passes through. Then the "apply once" envelope, as
-        // the wire's.
-        if (p.restPoints.size() != count) {
-            return RrGeoAcceptance::Refuses;
-        }
-        if (RrGeoRevisionTakesSeparateBlend(op, p.weights) &&
-            !RrGeoEnvelopeIsFullStrength(p.weights) &&
-            !(envelopeResolves ? *envelopeResolves
-                               : p.weights.ResolvesAll(count))) {
-            return RrGeoAcceptance::Refuses;
-        }
-        return RrGeoAcceptance::Applies;
-    case RrGeoOpSmooth:
-        // The kernel never refuses (an invalid topology passes through); only
-        // the "apply once" envelope can fail the revision, validated here.
-        if (!RrGeoEnvelopeIsFullStrength(p.weights) &&
-            !p.weights.ResolvesAll(count)) {
-            return RrGeoAcceptance::Refuses;
-        }
-        return RrGeoAcceptance::Applies;
     default:
         return RrGeoAcceptance::Deferred;
     }
@@ -2037,8 +1940,6 @@ RrGeoApplyRevisionKernel(
     switch (op) {
     case RrGeoOpExternal:
         return RrGeoApplyExternal(p, pts);
-    case RrGeoOpMatrix:
-        return RrGeoApplyMatrixKernel(p, pts, useSimd);
     case RrGeoOpSkin: {
         const RigExecRangeRunner ranges = RrGeoRangeRunner(parallelSkin);
         return eval::ApplySkinKernelWithTransforms<RrGeoSkinMath>(
@@ -2052,33 +1953,6 @@ RrGeoApplyRevisionKernel(
     case RrGeoOpVolumeCorrect:
         RrGeoApplyVolumeCorrect(pts, p.referenceVolume, p.strength);
         return true;
-    case RrGeoOpSmooth:
-        RrGeoApplyLaplacianSmooth(pts, p.topologyCounts, p.topologyIndices,
-                                  p.strength, surfaceCache);
-        return true;
-    case RrGeoOpDeltaMush:
-        // Default settings and an identity adapter are the legacy deformer
-        // and its cached rest state (a format-20 file holds no other).
-        if (p.mushSettings == RigExecDeltaMushSettings() &&
-            p.mushComputationToTarget == RrMat4d(1.0)) {
-            if (surfaceCache) {
-                const auto *rest = surfaceCache->MushRest(
-                    p.restPoints, p.topologyCounts, p.topologyIndices,
-                    p.mushIterations, p.mushStep, p.mushPinBorders,
-                    p.mushDistanceWeight);
-                return rest && RigExecApplyDeltaMushWithRestData(
-                                   pts, *rest, p.mushDisplacement);
-            }
-            return RigExecApplyDeltaMushKernel<RrVec3f, RrVec3d>(
-                pts, p.restPoints, p.topologyCounts, p.topologyIndices,
-                p.mushIterations, p.mushStep, p.mushPinBorders,
-                p.mushDistanceWeight, p.mushDisplacement);
-        }
-        return RigExecApplyDeltaMushInSpaceKernel<RrVec3f, RrVec3d, RrMat4d>(
-            pts, p.restPoints, p.topologyCounts, p.topologyIndices,
-            p.mushIterations, p.mushStep, p.mushPinBorders,
-            p.mushDistanceWeight, p.mushDisplacement, p.mushSettings,
-            p.mushComputationToTarget);
     case RrGeoOpWrinkle:
         if (surfaceCache) {
             const auto *topology = surfaceCache->WrinkleTopology(
@@ -2092,18 +1966,6 @@ RrGeoApplyRevisionKernel(
         return RigExecApplyWrinkleKernel<RrVec3f, RrVec3d>(
             pts, p.restPoints, p.topologyCounts, p.topologyIndices,
             p.wrinkleSettings);
-    case RrGeoOpLattice:
-        if (p.latticeSettings.regularGrid) {
-            return RigExecApplyLatticeGridKernel<RrVec3f, RrVec3d>(
-                pts, p.auxPointsB, p.divisions, p.latticeSettings,
-                p.targetToLattice, p.latticeToTarget, p.cageToLattice);
-        }
-        if (p.restPoints.size() != pts->size()) {
-            return false; // cardinality mismatch fails atomically
-        }
-        RrGeoApplyLattice(pts, p.restPoints, p.auxPoints, p.auxPointsB,
-                          p.divisions, surfaceCache);
-        return true;
     case RrGeoOpSurfaceProject: {
         // Default settings and identity maps are the legacy projection.
         if (RigExecSurfaceSnapIsLegacy(p.surfaceSettings, p.targetToSurface,
@@ -2220,12 +2082,6 @@ RrGeoRunRevisionKernel(
         return false;
     }
     if (source) {
-        if (op == RrGeoOpMatrix && RrGeoEnvelopeIsFullStrength(p.weights)) {
-            pts->resize(sourceCount);
-            RrGeoApplyMatrixKernelRange(p, nullptr, 0, sourceCount, source,
-                                        pts->data(), useSimd);
-            return true;
-        }
         pts->assign(source, source + sourceCount);
     }
     if (!RrGeoRevisionTakesSeparateBlend(op, p.weights)) {
@@ -2545,6 +2401,11 @@ struct RrGeometryScratch {
         // The rest and live cages its lattice op's lookups last lent.
         std::array<std::vector<RrVec3f>, 2> lookedUpCages;
         std::vector<float> lookedUpSmoothWeights;
+        // A whole member's per-frame settings: topology counts, indices,
+        // mush edges, lattice divisions and interpolations; grid origin,
+        // spacing and mask.
+        std::array<std::vector<int>, 5> lookedUpInts;
+        std::array<std::vector<float>, 3> lookedUpFloats;
         // Per chain group (pointBlocks.h): its publication and, for a Whole
         // keyed skin, chunk g's speculative result. Only written groups are
         // ever published; each owns two buffers sized at Open.
@@ -4623,45 +4484,6 @@ RrGeoAssembleBlendDeltas(const RrGeoAssembleInputs &in,
     return true;
 }
 
-void
-RrGeoAssembleMatrix(const RrGeoAssembleInputs &in, RrGeoMoverParameters *params)
-{
-    params->kind = RrGeoKindToken(RrGeoOpMatrix);
-    params->enabled = RrGeoAssembleEnabled(in);
-    if (!params->enabled) {
-        params->valid = true;
-        return;
-    }
-    // rigExec:weightBlend, exactly as RigExecAssembleMatrixParameters
-    // reads it: "radial" turns a fraction of the rotation about the
-    // transform's own pivot, "linear" -- the fallback -- blends the
-    // position. A recorded read, so the runtime sees what the bake saw.
-    params->radialWeight =
-        RrGeoReadToken(in.program, in.scratch,
-                       RrGeoAttrRead(in, RrGeoAttrWeightBlend),
-                       "linear") == "radial";
-    if (!in.rev->haveTransform) {
-        return;
-    }
-    params->weights = RrGeoAssembleEnvelope(in, false);
-    if (!params->weights.valid) {
-        return;
-    }
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            if (!std::isfinite(in.rev->transform[i][j])) {
-                return;
-            }
-        }
-    }
-    if (in.rev->transform[0][3] != 0 || in.rev->transform[1][3] != 0 ||
-        in.rev->transform[2][3] != 0 || in.rev->transform[3][3] != 1) {
-        return;
-    }
-    params->transform = in.rev->transform;
-    params->valid = true;
-}
-
 // rigExec:skinningMethod (fallback classicLinear) as a method: the token
 // read every assembly, its text compared only when the token differs from
 // the one this revision last resolved.
@@ -4817,95 +4639,6 @@ RrGeoAssembleBlendShape(const RrGeoAssembleInputs &in,
     // runtime cannot replay it.
     params->blendSurfaceFrame = false;
     params->valid = !params->blendDeltas.empty();
-}
-
-void
-RrGeoAssembleLattice(const RrGeoAssembleInputs &in, std::vector<RrVec3f> &&base,
-                     RrGeoMoverParameters *params)
-{
-    // The regular-grid settings (format 21). A format-20 file holds none,
-    // which reads the legacy evaluation.
-    const std::string evaluation =
-        RrGeoReadToken(in.program, in.scratch,
-                       RrGeoAttrRead(in, RrGeoAttrEvaluation), "legacy");
-    if (evaluation != "legacy" && evaluation != "regularGrid") {
-        return;
-    }
-    RigExecLatticeSettings &settings = params->latticeSettings;
-    settings.regularGrid = evaluation == "regularGrid";
-    if (settings.regularGrid) {
-        const RrGeoAttr axes[3] = {RrGeoAttrInterpolationU,
-                                   RrGeoAttrInterpolationV,
-                                   RrGeoAttrInterpolationW};
-        for (size_t a = 0; a < 3; ++a) {
-            if (!RigExecLatticeInterpolationFromString(
-                    RrGeoReadToken(in.program, in.scratch,
-                                   RrGeoAttrRead(in, axes[a]), "bspline"),
-                    &settings.interpolation[a])) {
-                return;
-            }
-        }
-        const RrVec3f origin =
-            RrGeoReadVec3f(in.scratch, RrGeoAttrRead(in, RrGeoAttrOrigin),
-                           RrVec3f(-0.5f, -0.5f, -0.5f));
-        const RrVec3f spacing =
-            RrGeoReadVec3f(in.scratch, RrGeoAttrRead(in, RrGeoAttrSpacing),
-                           RrVec3f(1.0f, 1.0f, 1.0f));
-        for (size_t a = 0; a < 3; ++a) {
-            settings.origin[a] = origin[a];
-            settings.spacing[a] = spacing[a];
-        }
-        settings.strength = RrGeoReadFloat(
-            in.program, in.scratch, RrGeoAttrRead(in, RrGeoAttrStrength), 1.0f);
-        RrGeoReadFloatArray(in.program, in.scratch,
-                            RrGeoAttrRead(in, RrGeoAttrMask), &settings.mask);
-        RrMat4d cage =
-            RrGeoReadMatrix(in.scratch, RrGeoAttrRead(in, RrGeoAttrCageMatrix));
-        RrMat4d target = RrGeoReadMatrix(
-            in.scratch, RrGeoAttrRead(in, RrGeoAttrTargetMatrix));
-        if (!RigExecSurfaceSnapValidMatrix(cage) ||
-            !RigExecSurfaceSnapValidMatrix(target)) {
-            return;
-        }
-        // rigExec:frames: the cage's, then the target's provider.
-        if (!in.wire->binding->influences.empty()) {
-            if (in.rev->influences.size() != 2) {
-                return;
-            }
-            cage *= in.rev->influences[0];
-            target *= in.rev->influences[1];
-            if (!RigExecSurfaceSnapCanonicalComputedMatrix(&cage) ||
-                !RigExecSurfaceSnapCanonicalComputedMatrix(&target)) {
-                return;
-            }
-        }
-        if (!RigExecLatticeCoordinateMaps(
-                RrGeoReadToken(in.program, in.scratch,
-                               RrGeoAttrRead(in, RrGeoAttrPointSpace), "local"),
-                cage, target, &params->targetToLattice,
-                &params->latticeToTarget, &params->cageToLattice)) {
-            return;
-        }
-    }
-    params->restPoints = std::move(base);
-    RrGeoReadBindingVec3fArray(in,
-                               RrGeoBindingRead(in, RrGeoBindCagePoints, true),
-                               &params->auxPoints);
-    RrGeoReadBindingVec3fArray(in,
-                               RrGeoBindingRead(in, RrGeoBindCagePoints, false),
-                               &params->auxPointsB);
-    params->divisions = RrGeoReadVec3i(
-        in.scratch, RrGeoAttrRead(in, RrGeoAttrDivisions), RrVec3i(0, 0, 0));
-    const size_t cageCount = size_t(params->divisions[0]) *
-                             size_t(params->divisions[1]) *
-                             size_t(params->divisions[2]);
-    // A regular grid reads only the posed cage, and may be one cell thick.
-    const int minimum = settings.regularGrid ? 1 : 2;
-    params->valid =
-        params->divisions[0] >= minimum && params->divisions[1] >= minimum &&
-        params->divisions[2] >= minimum &&
-        (settings.regularGrid || params->auxPoints.size() == cageCount) &&
-        params->auxPointsB.size() == cageCount && !params->restPoints.empty();
 }
 
 void
@@ -5292,10 +5025,6 @@ RrGeoAssembleRevision(const RrGeoAssembleInputs &in)
     const int op = int(in.wire->op);
     RrGeoResolveRevisionPhases(in.program, *in.scratch, *in.wire, in.rev,
                                in.diagnostics);
-    if (op == RrGeoOpMatrix) {
-        RrGeoAssembleMatrix(in, &params);
-        return params;
-    }
     if (op == RrGeoOpSkin) {
         RrGeoAssembleSkin(in, &params);
         return params;
@@ -5328,81 +5057,6 @@ RrGeoAssembleRevision(const RrGeoAssembleInputs &in)
             params.valid = true;
         }
         break;
-    case RrGeoOpSmooth:
-        params.strength = 1.0f;
-        RrGeoReadIntArray(in.program, in.scratch,
-                          RrGeoBindingRead(in, RrGeoBindTopologyCounts),
-                          &params.topologyCounts);
-        RrGeoReadIntArray(in.program, in.scratch,
-                          RrGeoBindingRead(in, RrGeoBindTopologyIndices),
-                          &params.topologyIndices);
-        params.valid = !params.topologyCounts.empty();
-        break;
-    case RrGeoOpDeltaMush: {
-        const auto attr = [&](RrGeoAttr name, bool rest = false) {
-            return RrGeoAttrRead(in, name, rest);
-        };
-        RrGeoReadBindingVec3fArray(in, attr(RrGeoAttrRestPoints, true),
-                                   &params.restPoints);
-        // The smoothing settings (format 21). A format-20 file holds none,
-        // which reads the legacy deformer.
-        const std::string smoothing = RrGeoReadToken(
-            in.program, in.scratch, attr(RrGeoAttrSmoothing, true), "rest");
-        const std::string transport =
-            RrGeoReadToken(in.program, in.scratch,
-                           attr(RrGeoAttrFrameTransport, true), "vertex");
-        if (!RigExecParseDeltaMushSmoothing(smoothing,
-                                            &params.mushSettings.smoothing) ||
-            !RigExecParseDeltaMushFrameTransport(
-                transport, &params.mushSettings.frameTransport)) {
-            break;
-        }
-        RrGeoReadFloatArray(in.program, in.scratch,
-                            attr(RrGeoAttrSmoothWeights),
-                            &params.mushSettings.smoothWeights);
-        RrGeoReadIntArray(in.program, in.scratch, attr(RrGeoAttrEdges, true),
-                          &params.mushSettings.edges);
-        params.mushSettings.onlySmooth =
-            RrGeoReadBool(in.scratch, attr(RrGeoAttrOnlySmooth), false);
-        params.mushComputationToTarget =
-            RrGeoReadMatrix(in.scratch, attr(RrGeoAttrComputationToTarget));
-        // rigExec:frame composes after computationToTarget; a framed or
-        // mapped deformer needs its own reference points.
-        const bool framed = !in.wire->binding->influences.empty();
-        const bool needsRest =
-            framed || params.mushComputationToTarget != RrMat4d(1.0);
-        if (framed) {
-            if (in.rev->influences.size() != 1) {
-                break;
-            }
-            params.mushComputationToTarget *= in.rev->influences[0];
-        }
-        if (params.restPoints.empty()) {
-            if (needsRest && !params.mushSettings.onlySmooth) {
-                break;
-            }
-            params.restPoints = std::move(base);
-        }
-        RrGeoReadIntArray(in.program, in.scratch,
-                          RrGeoBindingRead(in, RrGeoBindTopologyCounts),
-                          &params.topologyCounts);
-        RrGeoReadIntArray(in.program, in.scratch,
-                          RrGeoBindingRead(in, RrGeoBindTopologyIndices),
-                          &params.topologyIndices);
-        params.mushIterations =
-            RrGeoReadInt(in.scratch, attr(RrGeoAttrIterations), 10);
-        params.mushStep =
-            RrGeoReadFloat(in.program, in.scratch, attr(RrGeoAttrStep), 0.5f);
-        params.mushPinBorders =
-            RrGeoReadBool(in.scratch, attr(RrGeoAttrPinBorders), true);
-        params.mushDistanceWeight = RrGeoReadFloat(
-            in.program, in.scratch, attr(RrGeoAttrDistanceWeight), 0.0f);
-        params.mushDisplacement = RrGeoReadFloat(
-            in.program, in.scratch, attr(RrGeoAttrDisplacement), 1.0f);
-        params.valid =
-            !params.restPoints.empty() && !params.topologyCounts.empty();
-        break;
-    }
     case RrGeoOpWrinkle: {
         const auto attr = [&](RrGeoAttr name, bool rest = false) {
             return RrGeoAttrRead(in, name, rest);
@@ -5458,9 +5112,6 @@ RrGeoAssembleRevision(const RrGeoAssembleInputs &in)
             !params.restPoints.empty() && !params.topologyCounts.empty();
         break;
     }
-    case RrGeoOpLattice:
-        RrGeoAssembleLattice(in, std::move(base), &params);
-        break;
     case RrGeoOpSurfaceProject: {
         params.strength = 1.0f;
         RrGeoReadBindingVec3fArray(in,
@@ -8674,7 +8325,7 @@ RrGeoRevisionLeaf(const RrProgram *program, uint32_t revision, bool *enabled,
 bool
 RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
                     const RigExecTypeDesc &type, void *value,
-                    std::string *error)
+                    std::vector<std::string> *lines, std::string *error)
 {
     using Read = eval::OpRevisionRead;
     auto *scratch = static_cast<RrGeometryScratch *>(program->geo.get());
@@ -8727,11 +8378,113 @@ RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
     case Read::LatticeRestCage:
     case Read::LatticeLiveCage: {
         const bool rest = Read(lookup.read) == Read::LatticeRestCage;
+        const RrGeoRead at = RrGeoBindingRead(rev, RrGeoBindCagePoints, rest);
+        if (!rest) {
+            // The phase overlay (RrGeoResolveRevisionPhases) first.
+            const RigExecWireRevision &wire =
+                program->geometry->chains[size_t(chain)].revisions[size_t(r)];
+            for (const RigExecWirePointsBinding &binding : wire.pointBindings) {
+                if (binding.inputPath != at.path)
+                    continue;
+                if (const std::vector<RrVec3f> *answer =
+                        RrGeoResolvePoints(*scratch, binding))
+                    return lend(answer->data(), answer->size());
+                if (binding.diagnoseMiss && lines)
+                    lines->push_back(
+                        "diag " + program->TextOrEmpty(wire.moverPath) +
+                        ": read phase '" +
+                        RrGeoPhaseName(program, binding.phase) + "' for " +
+                        program->TextOrEmpty(binding.inputPath) +
+                        " resolved to nothing; read the authored base");
+                break;
+            }
+        }
         std::vector<RrVec3f> &cage = rev.lookedUpCages[rest ? 0 : 1];
-        RrGeoReadVec3fArray(program, scratch,
-                            RrGeoBindingRead(rev, RrGeoBindCagePoints, rest),
-                            nullptr, &cage);
+        RrGeoReadVec3fArray(program, scratch, at, nullptr, &cage);
         return lend(cage.data(), cage.size());
+    }
+    case Read::TopologyCounts:
+    case Read::TopologyIndices:
+    case Read::MushEdges: {
+        const Read read = Read(lookup.read);
+        std::vector<int> &held =
+            rev.lookedUpInts[read == Read::TopologyCounts    ? 0
+                             : read == Read::TopologyIndices ? 1
+                                                             : 2];
+        RrGeoReadIntArray(program, scratch,
+                          read == Read::TopologyCounts
+                              ? RrGeoBindingRead(rev, RrGeoBindTopologyCounts)
+                          : read == Read::TopologyIndices
+                              ? RrGeoBindingRead(rev, RrGeoBindTopologyIndices)
+                              : attr(RrGeoAttrEdges, true),
+                          &held);
+        return lend(held.data(), held.size());
+    }
+    case Read::MushIterations:
+        return put(
+            int32_t(RrGeoReadInt(scratch, attr(RrGeoAttrIterations), 10)));
+    case Read::LatticeDivisions: {
+        const RrVec3i d =
+            RrGeoReadVec3i(scratch, attr(RrGeoAttrDivisions), RrVec3i(0, 0, 0));
+        std::vector<int> &held = rev.lookedUpInts[3];
+        held = {d[0], d[1], d[2]};
+        return lend(held.data(), held.size());
+    }
+    case Read::LatticeEvaluation: {
+        const std::string evaluation = RrGeoReadToken(
+            program, scratch, attr(RrGeoAttrEvaluation), "legacy");
+        return put(int32_t(evaluation == "legacy"        ? 0
+                           : evaluation == "regularGrid" ? 1
+                                                         : -1));
+    }
+    case Read::LatticeInterpolation: {
+        std::vector<int> &held = rev.lookedUpInts[4];
+        held.assign(3, -1);
+        const RrGeoAttr axes[3] = {RrGeoAttrInterpolationU,
+                                   RrGeoAttrInterpolationV,
+                                   RrGeoAttrInterpolationW};
+        for (size_t a = 0; a < 3; ++a) {
+            RigExecLatticeInterpolation mode;
+            if (RigExecLatticeInterpolationFromString(
+                    RrGeoReadToken(program, scratch, attr(axes[a]), "bspline"),
+                    &mode))
+                held[a] = int(mode);
+        }
+        return lend(held.data(), held.size());
+    }
+    case Read::LatticeOrigin:
+    case Read::LatticeSpacing: {
+        const bool origin = Read(lookup.read) == Read::LatticeOrigin;
+        const RrVec3f axes = RrGeoReadVec3f(
+            scratch, attr(origin ? RrGeoAttrOrigin : RrGeoAttrSpacing),
+            origin ? RrVec3f(-0.5f, -0.5f, -0.5f) : RrVec3f(1.0f, 1.0f, 1.0f));
+        std::vector<float> &held = rev.lookedUpFloats[origin ? 0 : 1];
+        held = {axes[0], axes[1], axes[2]};
+        return lend(held.data(), held.size());
+    }
+    case Read::LatticeStrength:
+        return put(
+            RrGeoReadFloat(program, scratch, attr(RrGeoAttrStrength), 1.0f));
+    case Read::LatticeMask: {
+        std::vector<float> &held = rev.lookedUpFloats[2];
+        RrGeoReadFloatArray(program, scratch, attr(RrGeoAttrMask), &held);
+        return lend(held.data(), held.size());
+    }
+    case Read::LatticeCageMatrix:
+    case Read::LatticeTargetMatrix: {
+        const RrMat4d m = RrGeoReadMatrix(
+            scratch, attr(Read(lookup.read) == Read::LatticeCageMatrix
+                              ? RrGeoAttrCageMatrix
+                              : RrGeoAttrTargetMatrix));
+        if (!type.triviallyCopyable || type.size != sizeof(m))
+            return fail();
+        std::memcpy(value, &m, sizeof(m));
+        return true;
+    }
+    case Read::LatticePointSpace: {
+        const std::string space = RrGeoReadToken(
+            program, scratch, attr(RrGeoAttrPointSpace), "local");
+        return put(int32_t(space == "local" ? 0 : space == "common" ? 1 : -1));
     }
     case Read::MushStep:
         return put(RrGeoReadFloat(program, scratch, attr(RrGeoAttrStep), 0.5f));

@@ -1366,7 +1366,7 @@ private:
             if (lookup && lookup->source == 10) {
                 if (!_f.geometry ||
                     lookup->object >= _f.geometry->revisionIndex.size() ||
-                    lookup->read > 16)
+                    lookup->read > 30)
                     return _Bad("op_graph.lookups: a revision lookup reads no "
                                 "input of a revision");
                 const auto &at = _f.geometry->revisionIndex[lookup->object];
@@ -1381,6 +1381,7 @@ private:
                         : uint8_t(0xff);
                 const bool mush = op == uint8_t(fb::RevisionOp::DeltaMush);
                 const bool lattice = op == uint8_t(fb::RevisionOp::Lattice);
+                const bool smooth = op == uint8_t(fb::RevisionOp::Smooth);
                 const bool blend = op == uint8_t(fb::RevisionOp::BlendShape) &&
                                    RigExecFormatIsChunkBlend(
                                        _f.geometry->chains[size_t(at.first)]
@@ -1392,10 +1393,14 @@ private:
                 if ((lookup->read > 2 && lookup->read < 13 && !mush) ||
                     (lookup->read == 13 && !mush && !lattice) ||
                     (lookup->read > 13 && lookup->read < 16 && !lattice) ||
-                    (lookup->read == 16 && !blend))
-                    return _Bad("op_graph.lookups: a delta mush, lattice or "
-                                "blend shape input lookup reads a revision of "
-                                "another operation");
+                    (lookup->read == 16 && !blend) ||
+                    ((lookup->read == 17 || lookup->read == 18) && !mush &&
+                     !smooth) ||
+                    ((lookup->read == 19 || lookup->read == 20) && !mush) ||
+                    (lookup->read > 20 && !lattice))
+                    return _Bad("op_graph.lookups: a smooth, delta mush, "
+                                "lattice or blend shape input lookup reads a "
+                                "revision of another operation");
                 continue;
             }
             if (lookup && lookup->source == 11)
@@ -8270,6 +8275,7 @@ private:
                     return false;
                 }
                 if (revision.op == uint8_t(fb::RevisionOp::Lattice) &&
+                    !revision.wholeRole &&
                     !_RangeLatticeConstants(revision, row)) {
                     return false;
                 }
@@ -8778,6 +8784,12 @@ private:
         }
         const bool ranges = RigExecFormatIsRangeRevision(r);
         const bool blendGroups = RigExecFormatIsChunkBlend(r);
+        if (r.wholeRole &&
+            (!ranges || r.op == uint8_t(fb::RevisionOp::Matrix) ||
+             !RigExecFormatRunsAsOps(r))) {
+            return _Bad(row + ": whole_role on no smooth, delta mush or "
+                              "lattice op member");
+        }
         if (!keyed) {
             if (ranges && !RigExecFormatIsRangeOp(r.op)) {
                 return _Bad(row + ": " + _N(r.chunks.size()) +
@@ -9629,6 +9641,23 @@ private:
             default:
                 break;
             }
+        }
+        // An op chain's head reads its member revisions' phased points.
+        const fb::RigExecWireOpGraph *graph = _f.opGraph.get();
+        for (const size_t i : _played) {
+            const fb::RigExecWireStep &step = _f.steps[i];
+            if (!graph || step.kind != fb::StepKind::OpChainHead ||
+                !_Has(graph->chains, step.object) ||
+                !graph->chains[size_t(step.object)])
+                continue;
+            const auto &members = graph->chains[size_t(step.object)]->members;
+            for (const auto &output : graph->hostOutputs)
+                if (output && output->target == 4 &&
+                    std::find(members.begin(), members.end(), output->node) !=
+                        members.end() &&
+                    _Has(_staticStep, output->object) &&
+                    _staticStep[size_t(output->object)] < 0)
+                    _staticStep[size_t(output->object)] = int64_t(i);
         }
         return true;
     }

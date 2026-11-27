@@ -1594,6 +1594,7 @@ _FileFill::_Revision(const RigExecBakedProgramImpl::GeomRevision &revision,
     out->chunked =
         revision.chunked && revision.role != RigExecBakedRevisionRole::Range;
     out->rangeRole = revision.role == RigExecBakedRevisionRole::Range;
+    out->wholeRole = revision.opWhole;
     out->partitionCandidates = uint64_t(revision.partitionCandidates);
     out->partitionProducerMin = int32_t(revision.partitionProducerMin);
     out->partitionProducerMax = int32_t(revision.partitionProducerMax);

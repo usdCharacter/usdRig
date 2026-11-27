@@ -1522,18 +1522,27 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
         // version's RevisionDone and ChainDirty, ChainBase for version 0, and
         // ChainPoints for a final read. That covers an own-chain `preceding`
         // binding, which reads version r without a current-phase field.
-        const RigExecBakedProgramImpl::GeomRevision *bound = nullptr;
+        // An op chain's head looks up its members' phased reads.
+        std::vector<const RigExecBakedProgramImpl::GeomRevision *> bounds;
         if (step.kind == RigExecBakedStepKind::RevisionStatic &&
             step.object >= 0 && size_t(step.object) < revisions) {
             const auto &[chain, r] = B.revisionIndex[size_t(step.object)];
-            bound = &B.chains[size_t(chain)].revisions[size_t(r)];
+            bounds.push_back(&B.chains[size_t(chain)].revisions[size_t(r)]);
         } else if (step.kind == RigExecBakedStepKind::Derived &&
                    step.object >= 0 &&
                    size_t(step.object) < B.derivedIndex.size()) {
             const auto &[chain, d] = B.derivedIndex[size_t(step.object)];
-            bound = &B.chains[size_t(chain)].derived[size_t(d)].revision;
+            bounds.push_back(
+                &B.chains[size_t(chain)].derived[size_t(d)].revision);
+        } else if (step.kind == RigExecBakedStepKind::OpChainHead) {
+            std::vector<int> members;
+            RigExecBakedOpStepRevisions(B, step, &members);
+            for (const int id : members) {
+                const auto &[chain, r] = B.revisionIndex[size_t(id)];
+                bounds.push_back(&B.chains[size_t(chain)].revisions[size_t(r)]);
+            }
         }
-        if (bound) {
+        for (const RigExecBakedProgramImpl::GeomRevision *bound : bounds) {
             const auto checkBinding =
                 [&](const RigExecBakedPointsBinding &binding) {
                     for (const RigExecBakedPointVersion &candidate :
@@ -1703,7 +1712,18 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                              std::to_string(id) + " (RevisionOut[" +
                              std::to_string(base + int(g)) + "])");
                 }
-                if (!readsGroup(g)) {
+                // An op member fed by the member before it reads that
+                // member's groups as op values; a whole member reads every
+                // group of the entering version.
+                const bool fedByNode =
+                    opGroup &&
+                    std::any_of(step.reads.begin(), step.reads.end(),
+                                [](const RigExecBakedSlotRange &read) {
+                                    return read.domain ==
+                                           RigExecBakedSlotDomain::OpGroupValue;
+                                });
+                const bool whole = opGroup && own.opWhole;
+                if (!readsGroup(g) && !fedByNode && !whole) {
                     out->Add(NameStep(B, index) + " reads group " +
                              std::to_string(g) + version +
                              " without declaring its writer's slot");
@@ -1721,7 +1741,8 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                     }
                 }
                 for (const RigExecBakedSlotRange &read : step.reads) {
-                    if (read.domain != RigExecBakedSlotDomain::RevisionOut) {
+                    if (read.domain != RigExecBakedSlotDomain::RevisionOut ||
+                        whole) {
                         continue;
                     }
                     for (uint32_t slot = read.begin;

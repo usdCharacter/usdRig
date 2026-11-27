@@ -628,6 +628,28 @@ _FindStep(const fb::RigExecWireFile &file, fb::StepKind kind, int64_t object)
     return -1;
 }
 
+// The step reading revision \p id's phased points: its RevisionStatic, or
+// the head of the op chain one of whose members stores its groups; or -1.
+static int64_t
+_BindingReader(const fb::RigExecWireFile &file, size_t id)
+{
+    const int64_t assemble =
+        _FindStep(file, fb::StepKind::RevisionStatic, int64_t(id));
+    if (assemble >= 0 || !file.opGraph)
+        return assemble;
+    for (const auto &output : file.opGraph->hostOutputs) {
+        if (!output || output->target != 4 || output->object != id)
+            continue;
+        for (size_t c = 0; c < file.opGraph->chains.size(); ++c) {
+            const auto &members = file.opGraph->chains[c]->members;
+            if (std::find(members.begin(), members.end(), output->node) !=
+                members.end())
+                return _FindStep(file, fb::StepKind::OpChainHead, int64_t(c));
+        }
+    }
+    return -1;
+}
+
 // The OpNode step whose node stores frame record \p record's matrix, or -1.
 static int64_t
 _FindRecordStep(const fb::RigExecWireFile &file, int64_t record)
@@ -1020,8 +1042,7 @@ _TestPointBindingRefusals(const std::string &name, const Source &bytes)
     for (size_t c = 0; c < chains.size(); ++c) {
         for (size_t r = 0; r < chains[c].revisions.size(); ++r, ++id) {
             const fb::RigExecWireRevision &revision = chains[c].revisions[r];
-            const int64_t reader =
-                _FindStep(*file, fb::StepKind::RevisionStatic, int64_t(id));
+            const int64_t reader = _BindingReader(*file, id);
             if (revision.pointBindings.empty() ||
                 revision.pointBindings[0].candidates.empty() || reader < 0) {
                 continue;
@@ -1098,10 +1119,15 @@ _TestPointBindingRefusals(const std::string &name, const Source &bytes)
             const auto undeclared = [&](fb::RigExecWireFile *edited) {
                 _DropRead(edited, size_t(reader), domain, slot);
             };
-            _ExpectShownRefusal(name, "reader without its version read", bytes,
-                                undeclared,
-                                who + " does not declare " + domainName + "[" +
-                                    std::to_string(slot) + "] for " + input);
+            // An op chain head's reads are its common graph projection's too,
+            // which refuses the edit first.
+            _ExpectShownRefusal(
+                name, "reader without its version read", bytes, undeclared,
+                file->steps[size_t(reader)].kind == fb::StepKind::OpChainHead
+                    ? std::string("common_graph: semantic typed projection "
+                                  "differs from body")
+                    : who + " does not declare " + domainName + "[" +
+                          std::to_string(slot) + "] for " + input);
             pointBindingRefusals += 5;
             ++pointBindingRows;
             return;
@@ -1198,8 +1224,7 @@ _TestOwnChainPreceding()
     for (size_t c = 0; c < chains.size(); ++c) {
         for (size_t r = 0; r < chains[c].revisions.size(); ++r, ++id) {
             const auto &bindings = chains[c].revisions[r].pointBindings;
-            const int64_t reader =
-                _FindStep(*file, fb::StepKind::RevisionStatic, int64_t(id));
+            const int64_t reader = _BindingReader(*file, id);
             if (bindings.empty() || bindings[0].finalRead ||
                 bindings[0].candidates.size() != 1 || reader < 0) {
                 continue;

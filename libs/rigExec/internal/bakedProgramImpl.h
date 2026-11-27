@@ -897,6 +897,9 @@ struct RigExecBakedGeomRevision {
     /// over the pinned divisions read at Build.
     bool opLattice = false;
     std::array<int, 3> opLatticeDivisions = {2, 2, 2};
+    /// A smooth, delta mush or lattice the classification made Whole: its
+    /// member runs once over every group, every setting looked up per frame.
+    bool opWhole = false;
     bool OpNodes() const
     {
         return opMatrix || opSmooth || opMush || opLattice || blendChunked;
@@ -4877,10 +4880,14 @@ VtValue RigExecBakedResolvePathLeaf(const RigExecBakedProgramImpl &,
 /// rigExec:weightBlend is radial, as its packet assembly reads them this run.
 /// The RevisionLeaf lookup \p lookup (index \p index) past Radial: an input
 /// of revision lookup.object read as RigExecAssembleFromLeaves reads it, an
-/// array lent from B.revisionLeafHold[index] or the chain's base.
+/// array lent from B.revisionLeafHold[index] or the chain's base. A live
+/// cage read through a declared phase reads what its point binding resolves
+/// to, appending the binding's miss line to \p lines when it resolves to
+/// nothing.
 bool RigExecBakedLookUpRevision(RigExecBakedProgramImpl &B, uint32_t index,
                                 const eval::OpLookup &lookup,
                                 const RigExecTypeDesc &type, void *value,
+                                std::vector<std::string> *lines,
                                 std::string *error);
 bool RigExecBakedRevisionLeaf(const RigExecBakedProgramImpl &B, uint32_t id,
                               bool *enabled, float *weight, bool *radial,

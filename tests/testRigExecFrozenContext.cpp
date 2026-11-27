@@ -7893,11 +7893,21 @@ TestPointFinalAvailabilitySurvivesRetainedJobs(const std::string &examplesDir)
         CHECK(sourceRows == 1);
         context.varyingInputCount = inputs.values.size();
         const auto live = evaluator.Evaluate(UsdTimeCode(frame));
-        CHECK(live.valid && evaluator.GetCompiledRigSignature() == compiledRig);
         RigExecFrozenRunReport report;
         const auto pose = RigExecEvaluateFrozen(
             context, inputs, RigExecMakeProductionStepRunner(),
             RigExecCancellationToken(), &report);
+        if (blocked) {
+            // The authored base the miss falls to is blocked too: the
+            // lattice's cage holds no point per node, an error in both.
+            CHECK(!live.valid && !pose.valid);
+            for (const auto *run : {&live, &pose})
+                CHECK(std::find(run->diagnostics.begin(),
+                                run->diagnostics.end(),
+                                fallback) != run->diagnostics.end());
+            continue;
+        }
+        CHECK(live.valid && evaluator.GetCompiledRigSignature() == compiledRig);
         CHECK(report.ran && pose.valid);
         CheckSameReadings("retained point Final availability", live, pose);
         CHECK((std::find(pose.diagnostics.begin(), pose.diagnostics.end(),

@@ -32,6 +32,18 @@ RIGEXEC_DEFINE_PORT_HANDLE(LatticeEnabled)
 RIGEXEC_DEFINE_PORT_HANDLE(LatticeDefaultWeight)
 RIGEXEC_DEFINE_PORT_HANDLE(LatticePacket)
 RIGEXEC_DEFINE_PORT_HANDLE(LatticeWritten)
+RIGEXEC_DEFINE_PORT_HANDLE(LatticeEvaluation)
+RIGEXEC_DEFINE_PORT_HANDLE(LatticeDivisions)
+RIGEXEC_DEFINE_PORT_HANDLE(LatticeInterpolation)
+RIGEXEC_DEFINE_PORT_HANDLE(LatticeOrigin)
+RIGEXEC_DEFINE_PORT_HANDLE(LatticeSpacing)
+RIGEXEC_DEFINE_PORT_HANDLE(LatticeStrength)
+RIGEXEC_DEFINE_PORT_HANDLE(LatticeMask)
+RIGEXEC_DEFINE_PORT_HANDLE(LatticeCageMatrix)
+RIGEXEC_DEFINE_PORT_HANDLE(LatticeTargetMatrix)
+RIGEXEC_DEFINE_PORT_HANDLE(LatticePointSpace)
+RIGEXEC_DEFINE_PORT_HANDLE(LatticeCageFrame)
+RIGEXEC_DEFINE_PORT_HANDLE(LatticeTargetFrame)
 
 namespace {
 
@@ -60,11 +72,13 @@ enum LatticeField : uint32_t {
     kStrength,
     kMaskCount,
     kMask,
+    kWhole,
 };
 
 /// Instance \p k's settings, its mask read in place.
 struct LatticeInstance {
     decltype(LatticePayload::divisions) divisions{};
+    bool whole = false;
     rigExec::RigExecLatticeSettingsView settings;
 };
 
@@ -84,6 +98,7 @@ PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
         p.settings.spacing[a] = spacing[a];
     }
     p.settings.regularGrid = FlagAt(batch, kRegularGrid, k);
+    p.whole = FlagAt(batch, kWhole, k);
     p.settings.strength = ValueAt<float>(batch, kStrength, k);
     const auto mask = ListAt<float>(batch, kMask, k);
     p.settings.mask = {mask.data, mask.Size()};
@@ -91,15 +106,114 @@ PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
 }
 
 /// A node's bind of its rest points into the rest cage, built on the run
-/// that first sees those rest values; this frame's pass through and the
-/// weight at every point when a default weight or a packet gives them.
+/// that first sees those rest values; this frame's pass through, settings,
+/// grid maps and the weight at every point when a default weight or a
+/// packet gives them.
 struct LatticeState {
     std::shared_ptr<const rigExec::RigExecLatticeBind<Vec3f>> bind;
     /// This frame's basis for every range, or null to stream the factors.
     const rigExec::RigExecLatticeBasis *basis = nullptr;
     bool pass = false;
     std::vector<float> dense;
+    LatticeInstance p;
+    std::vector<float> mask;
+    Mat4d targetToLattice = Mat4d(1.0), latticeToTarget = Mat4d(1.0),
+          cageToLattice = Mat4d(1.0);
 };
+
+/// Instance \p k's settings this frame: its payload's, each overridden by
+/// the input that feeds it, and the grid's maps, from the cage and target
+/// frames when those are fed. False, with \p error, for settings no
+/// evaluation can take.
+bool
+ResolveInstance(const rigExec::RigExecOpBatch &batch, size_t k,
+                const RigExecOpIo &io, LatticeState *state, std::string *error)
+{
+    LatticeInstance &p = state->p;
+    p = PayloadAt(batch, k);
+    if (const int32_t *evaluation = In<int32_t>(io, LatticeEvaluation())) {
+        if (*evaluation != 0 && *evaluation != 1)
+            return Fail(error, "Lattice",
+                        "the evaluation names neither a bound lattice nor a "
+                        "regular grid");
+        p.settings.regularGrid = *evaluation == 1;
+    }
+    if (const auto *divisions =
+            In<RigExecArray<int32_t>>(io, LatticeDivisions())) {
+        if (divisions->Size() != 3)
+            return Fail(error, "Lattice", "the divisions hold three counts");
+        for (size_t a = 0; a < 3; ++a)
+            p.divisions[a] = (*divisions)[a];
+    }
+    const int minimum = p.settings.regularGrid ? 1 : 2;
+    if (p.divisions[0] < minimum || p.divisions[1] < minimum ||
+        p.divisions[2] < minimum)
+        return Fail(error, "Lattice",
+                    p.settings.regularGrid
+                        ? "a grid's divisions are below 1"
+                        : "a lattice's divisions are below 2");
+    state->targetToLattice = MatrixOr1(In<Mat4d>(io, LatticeTargetToLattice()));
+    state->latticeToTarget = MatrixOr1(In<Mat4d>(io, LatticeLatticeToTarget()));
+    state->cageToLattice = MatrixOr1(In<Mat4d>(io, LatticeCageToLattice()));
+    if (!p.settings.regularGrid)
+        return true;
+    if (const auto *interpolation =
+            In<RigExecArray<int32_t>>(io, LatticeInterpolation())) {
+        if (interpolation->Size() != 3)
+            return Fail(error, "Lattice",
+                        "the interpolation holds three modes");
+        for (size_t a = 0; a < 3; ++a) {
+            const int32_t mode = (*interpolation)[a];
+            if (mode < 0 ||
+                mode >
+                    int32_t(rigExec::RigExecLatticeInterpolation::CatmullRom))
+                return Fail(error, "Lattice", "an interpolation names no mode");
+            p.settings.interpolation[a] =
+                rigExec::RigExecLatticeInterpolation(mode);
+        }
+    }
+    for (const auto &[port, to] :
+         {std::make_pair(&LatticeOrigin(), &p.settings.origin),
+          std::make_pair(&LatticeSpacing(), &p.settings.spacing)})
+        if (const auto *axes = In<RigExecArray<float>>(io, *port)) {
+            if (axes->Size() != 3)
+                return Fail(error, "Lattice",
+                            "a grid origin or spacing holds three values");
+            for (size_t a = 0; a < 3; ++a)
+                (*to)[a] = (*axes)[a];
+        }
+    if (const float *strength = In<float>(io, LatticeStrength()))
+        p.settings.strength = *strength;
+    if (const auto *mask = In<RigExecArray<float>>(io, LatticeMask())) {
+        state->mask = ToVector(*mask);
+        p.settings.mask = {state->mask.data(), state->mask.size()};
+    }
+    const Mat4d *cageMatrix = In<Mat4d>(io, LatticeCageMatrix());
+    if (!cageMatrix)
+        return true;
+    Mat4d cage = *cageMatrix;
+    Mat4d target = MatrixOr1(In<Mat4d>(io, LatticeTargetMatrix()));
+    const Mat4d *cageFrame = In<Mat4d>(io, LatticeCageFrame());
+    const Mat4d *targetFrame = In<Mat4d>(io, LatticeTargetFrame());
+    const int32_t *space = In<int32_t>(io, LatticePointSpace());
+    bool usable = rigExec::RigExecSurfaceSnapValidMatrix(cage) &&
+                  rigExec::RigExecSurfaceSnapValidMatrix(target) &&
+                  !cageFrame == !targetFrame && space &&
+                  (*space == 0 || *space == 1);
+    if (usable && cageFrame) {
+        cage *= *cageFrame;
+        target *= *targetFrame;
+        usable = rigExec::RigExecSurfaceSnapCanonicalComputedMatrix(&cage) &&
+                 rigExec::RigExecSurfaceSnapCanonicalComputedMatrix(&target);
+    }
+    if (!usable || !rigExec::RigExecLatticeCoordinateMaps(
+                       *space == 0 ? "local" : "common", cage, target,
+                       &state->targetToLattice, &state->latticeToTarget,
+                       &state->cageToLattice))
+        return Fail(error, "Lattice",
+                    "the grid's cage, target or point space is unusable");
+    return true;
+}
 
 /// The bind is keyed by every value its factors derive from (the rest
 /// points' bits, the rest cage's box, the divisions). Null when the cage is
@@ -134,8 +248,9 @@ Plan(const rigExec::RigExecOpBatch &batch, size_t k)
 {
     // A regular grid can fail at any point it reads: only the whole run
     // answers.
-    return FlagAt(batch, kRegularGrid, k) ? rigExec::RigExecRangePlan::Whole
-                                          : rigExec::RigExecRangePlan::Ranges;
+    return FlagAt(batch, kRegularGrid, k) || FlagAt(batch, kWhole, k)
+               ? rigExec::RigExecRangePlan::Whole
+               : rigExec::RigExecRangePlan::Ranges;
 }
 
 bool
@@ -152,8 +267,7 @@ Validate(const rigExec::RigExecOpCheck &check, std::string *error)
                       error))
         return false;
     if (FlagAt(check.batch, kRegularGrid, check.k))
-        return envelopes == int(Fed(check, LatticeEnvelope())) ||
-               Fail(error, "Lattice", "a regular grid weighs by an envelope");
+        return true;
     if (!Fed(check, LatticeRestPoints()) || !Fed(check, LatticeRestCage()))
         return Fail(error, "Lattice",
                     "a bound lattice needs rest points and a rest cage");
@@ -174,31 +288,43 @@ Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
     const uint8_t *enabled = In<uint8_t>(io, LatticeEnabled());
     state.pass = enabled && !*enabled;
     state.dense.clear();
+    state.basis = nullptr;
     if (state.pass)
         return true;
     const Points &in = *In<Points>(io, LatticePoints());
     if (!EnvelopeFits(in, In<Envelope>(io, LatticeEnvelope()), "Lattice",
                       error))
         return false;
-    if (FlagAt(batch, kRegularGrid, k))
-        return true;
+    if (!ResolveInstance(batch, k, io, &state, error))
+        return false;
+    const LatticeInstance &p = state.p;
     const size_t count = in.Size();
-    if (In<Points>(io, LatticeRestPoints())->Size() != count)
-        return Fail(error, "Lattice",
-                    "rest points differ in count from the points");
-    const LatticeInstance p = PayloadAt(batch, k);
-    const Points &restCage = *In<Points>(io, LatticeRestCage());
     const Points &posedCage = *In<Points>(io, LatticePosedCage());
     const size_t nodes = size_t(p.divisions[0]) * size_t(p.divisions[1]) *
                          size_t(p.divisions[2]);
-    if (restCage.Size() != nodes || posedCage.Size() != nodes)
-        return Fail(error, "Lattice",
-                    "a cage does not hold one point per lattice node");
-    for (const Points *cage : {&restCage, &posedCage})
-        for (const Vec3f &v : *cage)
-            if (!std::isfinite(v[0]) || !std::isfinite(v[1]) ||
-                !std::isfinite(v[2]))
-                return Fail(error, "Lattice", "a cage point is not finite");
+    const Points *restCage = nullptr;
+    if (p.settings.regularGrid) {
+        if (posedCage.Size() != nodes)
+            return Fail(error, "Lattice",
+                        "a cage does not hold one point per lattice node");
+    } else {
+        const Points *rest = In<Points>(io, LatticeRestPoints());
+        restCage = In<Points>(io, LatticeRestCage());
+        if (!rest || !restCage)
+            return Fail(error, "Lattice",
+                        "a bound lattice needs rest points and a rest cage");
+        if (rest->Size() != count)
+            return Fail(error, "Lattice",
+                        "rest points differ in count from the points");
+        if (restCage->Size() != nodes || posedCage.Size() != nodes)
+            return Fail(error, "Lattice",
+                        "a cage does not hold one point per lattice node");
+        for (const Points *cage : {restCage, &posedCage})
+            for (const Vec3f &v : *cage)
+                if (!std::isfinite(v[0]) || !std::isfinite(v[1]) ||
+                    !std::isfinite(v[2]))
+                    return Fail(error, "Lattice", "a cage point is not finite");
+    }
     const float *weight = In<float>(io, LatticeDefaultWeight());
     const weightPacket::PointWeights *packet =
         In<weightPacket::PointWeights>(io, LatticePacket());
@@ -231,8 +357,9 @@ Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
         !weightPacket::ResolvePacket(*packet, count, &state.dense))
         return Fail(error, "Lattice",
                     "the weight packet does not resolve over the points");
-    state.basis = BasisOf(state, *In<Points>(io, LatticeRestPoints()), restCage,
-                          posedCage, p);
+    if (!p.settings.regularGrid)
+        state.basis = BasisOf(state, *In<Points>(io, LatticeRestPoints()),
+                              *restCage, posedCage, p);
     return true;
 }
 
@@ -243,44 +370,38 @@ LatticeRange(const rigExec::RigExecOpBatch &batch, size_t k,
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const LatticeState &state = *static_cast<const LatticeState *>(
         rigExec::RigExecBatchState(batch, k));
+    const Vec3f *from = RangeIn<Vec3f>(io, range, LatticePoints());
+    Vec3f *out = RangeOut<Vec3f>(io, range, LatticeOut());
     if (state.pass) {
-        const Vec3f *from = RangeIn<Vec3f>(io, range, LatticePoints());
-        std::copy(from, from + (range.end - range.begin),
-                  RangeOut<Vec3f>(io, range, LatticeOut()));
+        std::copy(from, from + (range.end - range.begin), out);
         return true;
     }
-    const LatticeInstance p = PayloadAt(batch, k);
-    const Points &in = *In<Points>(io, LatticePoints());
+    const LatticeInstance &p = state.p;
     const Points &posedCage = *In<Points>(io, LatticePosedCage());
-    const Envelope *envelope = In<Envelope>(io, LatticeEnvelope());
+    const float *weights = state.dense.empty()
+                               ? RangeIn<float>(io, range, LatticeEnvelope())
+                               : state.dense.data() + range.begin;
     if (p.settings.regularGrid) {
-        std::vector<Vec3f> points(in.begin(), in.end());
+        std::vector<Vec3f> points(from, from + (range.end - range.begin));
         if (!rigExec::RigExecApplyLatticeGridKernel<Vec3f, Vec3d>(
                 &points, std::vector<Vec3f>(posedCage.begin(), posedCage.end()),
-                p.divisions, p.settings,
-                MatrixOr1(In<Mat4d>(io, LatticeTargetToLattice())),
-                MatrixOr1(In<Mat4d>(io, LatticeLatticeToTarget())),
-                MatrixOr1(In<Mat4d>(io, LatticeCageToLattice()))))
+                p.divisions, p.settings, state.targetToLattice,
+                state.latticeToTarget, state.cageToLattice))
             return Fail(error, "Lattice",
                         "the grid's settings, cage or spaces are "
                         "unusable");
-        return WritePoints(io, LatticeOut(), in, points, envelope, "Lattice",
-                           error);
+        std::copy(points.begin(), points.end(), out);
+        BlendEnvelopeAt(from, weights, out, range.end - range.begin);
+        return true;
     }
     const Points &rest = *In<Points>(io, LatticeRestPoints());
     const Points &restCage = *In<Points>(io, LatticeRestCage());
-    const Vec3f *from = RangeIn<Vec3f>(io, range, LatticePoints());
-    Vec3f *out = RangeOut<Vec3f>(io, range, LatticeOut());
     rigExec::RigExecApplyLatticeKernelGroup(
         from, out, range.count, range.begin, range.end, rest.Data(),
         rest.Size(), restCage.Data(), restCage.Size(), posedCage.Data(),
         posedCage.Size(), p.divisions[0], p.divisions[1], p.divisions[2],
         state.basis);
-    BlendEnvelopeAt(from,
-                    state.dense.empty()
-                        ? RangeIn<float>(io, range, LatticeEnvelope())
-                        : state.dense.data() + range.begin,
-                    out, range.end - range.begin);
+    BlendEnvelopeAt(from, weights, out, range.end - range.begin);
     return true;
 }
 
@@ -302,6 +423,7 @@ Values(const void *payload, rigExec::RigExecFieldValues &out)
     out.Set(kSpacing, s.spacing.data(), s.spacing.size());
     out.Set(kStrength, s.strength);
     SetList(out, kMaskCount, s.mask);
+    SetFlag(out, kWhole, p.whole);
 }
 
 const rigExec::RigExecFieldDesc kFields[] = {
@@ -315,6 +437,7 @@ const rigExec::RigExecFieldDesc kFields[] = {
     Value("strength", rigExecStd::FloatType()),
     Count("maskCount"),
     Items("mask", rigExecStd::FloatType(), kMaskCount),
+    Flag("whole"),
 };
 
 } // namespace
@@ -349,6 +472,20 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "defaultWeight"},
     {&LatticePacket(), &rigExecRig::PointWeightsType(), kOptional, "packet"},
     {&LatticeWritten(), &rigExecStd::IntArray(), kOptional, "written"},
+    {&LatticeEvaluation(), &rigExecStd::IntType(), kOptional, "evaluation"},
+    {&LatticeDivisions(), &rigExecStd::IntArray(), kOptional, "divisions"},
+    {&LatticeInterpolation(), &rigExecStd::IntArray(), kOptional,
+     "interpolation"},
+    {&LatticeOrigin(), &rigExecStd::FloatArray(), kOptional, "origin"},
+    {&LatticeSpacing(), &rigExecStd::FloatArray(), kOptional, "spacing"},
+    {&LatticeStrength(), &rigExecStd::FloatType(), kOptional, "strength"},
+    {&LatticeMask(), &rigExecStd::FloatArray(), kOptional, "mask"},
+    {&LatticeCageMatrix(), &rigExecStd::Mat4dType(), kOptional, "cageMatrix"},
+    {&LatticeTargetMatrix(), &rigExecStd::Mat4dType(), kOptional,
+     "targetMatrix"},
+    {&LatticePointSpace(), &rigExecStd::IntType(), kOptional, "pointSpace"},
+    {&LatticeCageFrame(), &rigExecStd::Mat4dType(), kOptional, "cageFrame"},
+    {&LatticeTargetFrame(), &rigExecStd::Mat4dType(), kOptional, "targetFrame"},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {

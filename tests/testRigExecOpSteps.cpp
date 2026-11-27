@@ -59,6 +59,9 @@ static int failures = 0;
 
 namespace {
 
+/// A ranged Smooth's settings.
+const rigExecOps::SmoothPayload kSmoothPayload;
+
 // --- A gated chain ---------------------------------------------------------
 
 constexpr size_t kPoints = 10000;
@@ -250,7 +253,7 @@ MakeOps(bool envelope = false, RigExecRigDescBuilder *into = nullptr)
     MatrixDeformPayload deform;
     rig.math = b.AddOp(MatrixMath(), &math);
     rig.deform = b.AddOp(MatrixDeform(), &deform);
-    rig.smooth = b.AddOp(Smooth());
+    rig.smooth = b.AddOp(Smooth(), &kSmoothPayload);
     b.Connect(rig.math, MatrixOut(), rig.deform, MatrixDeformTransform());
     b.Connect(rig.deform, MatrixDeformOut(), rig.smooth, SmoothPoints());
     rig.matrix = b.BindInput(rig.math, MatrixIn());
@@ -1175,7 +1178,7 @@ TestHaloVersionsAndLists()
     using namespace rigExecOps;
     RigExecRigDescBuilder b;
     SkinPayload skin;
-    const RigExecNodeId smooth = b.AddOp(Smooth());
+    const RigExecNodeId smooth = b.AddOp(Smooth(), &kSmoothPayload);
     const RigExecNodeId skinned = b.AddOp(Skin(), &skin);
     b.Connect(smooth, SmoothOut(), skinned, SkinPoints());
     const RigExecInputId in = b.BindInput(smooth, SmoothPoints());
@@ -1738,8 +1741,8 @@ TestInjectedHalo()
         RigExecOutputId out;
     };
     const auto make = [](RigExecRigDescBuilder &b, Halo *halo) {
-        const RigExecNodeId first = b.AddOp(Smooth());
-        const RigExecNodeId next = b.AddOp(Smooth());
+        const RigExecNodeId first = b.AddOp(Smooth(), &kSmoothPayload);
+        const RigExecNodeId next = b.AddOp(Smooth(), &kSmoothPayload);
         b.Connect(first, SmoothOut(), next, SmoothPoints());
         halo->points = b.BindInput(first, SmoothPoints());
         const RigExecNodeId nodes[2] = {first, next};

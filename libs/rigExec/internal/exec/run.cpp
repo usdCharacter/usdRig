@@ -211,6 +211,7 @@ RigExecRun::Bind(const RigExecProgram &p, const RigExecInputChannel &input,
     boundFront = channel->front;
     hostInputs.assign(p.inputSlots.size(), nullptr);
     hostGroups.assign(p.inputSlots.size(), RigExecOpGroups());
+    hostWhole.resize(p.inputSlots.size());
     hostHalo.assign(p.inputSlots.size(), nullptr);
     hostGroupValues.clear();
     hostGroupValues.resize(p.inputSlots.size());
@@ -1334,8 +1335,7 @@ RigExecRun::_PointInputGroups(uint32_t input, const RigExecOpGroups *groups,
         const uint32_t at = p.batchPosition[n];
         const RigExecProgramNode &node = p.nodes[n];
         const RigExecOpDesc &d = OpOf(node.op);
-        bool reads = p.positionChain[at] != kRigExecInvalidIndex &&
-                     !p.wholePositions[at];
+        bool reads = p.positionChain[at] != kRigExecInvalidIndex;
         for (uint32_t port = 0; reads && port < d.portCount; ++port) {
             if (p.portSlots[node.firstPort + port] != slot)
                 continue;
@@ -1661,8 +1661,27 @@ RigExecRun::_PointRange(uint32_t at, RigExecOpRange *range)
             continue;
         }
         if (hostGroupOfSlot[slot] != kRigExecInvalidIndex) {
-            cells[port] = const_cast<void *>(
-                hostGroups[hostGroupOfSlot[slot]].points[range->index]);
+            const uint32_t input = hostGroupOfSlot[slot];
+            const RigExecOpGroups &given = hostGroups[input];
+            if (plans[at] != kPlanWhole || given.groups < 2) {
+                cells[port] = const_cast<void *>(given.points[range->index]);
+                continue;
+            }
+            // A whole member reads every group as one array.
+            const size_t element = ElementSize(op.portTypes[port]);
+            RigExecAlignedBuffer &whole = hostWhole[input];
+            const size_t bytes = size_t(given.bounds[given.groups]) * element;
+            if (whole.Size() != bytes)
+                whole.Allocate(bytes);
+            std::byte *to = static_cast<std::byte *>(whole.Data());
+            for (uint32_t h = 0; h < given.groups; ++h) {
+                const size_t size =
+                    size_t(given.bounds[h + 1] - given.bounds[h]) * element;
+                if (size)
+                    std::memcpy(to + size_t(given.bounds[h]) * element,
+                                given.points[h], size);
+            }
+            cells[port] = to;
             continue;
         }
         const RigExecTypeDesc &t = TypeOf(op.portTypes[port]);

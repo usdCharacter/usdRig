@@ -181,6 +181,9 @@ struct RigExecRun {
     /// (PointInputHaloGroups): the tables, else null.
     std::vector<const RigExecOpGroups *> hostHalo;
     std::vector<RigExecAlignedBuffer> hostGroupValues;
+    /// Per host input given as groups: every group as one array, for a
+    /// member that runs whole.
+    std::vector<RigExecAlignedBuffer> hostWhole;
     std::vector<uint32_t> hostGroupOfSlot;
     /// Per chain: this frame's range bounds, ranges + 1 of them.
     std::vector<std::vector<int>> chainBounds;

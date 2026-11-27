@@ -4,6 +4,7 @@
 #include "rigExec/api/opFields.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/compile/rigDescData.h"
+#include "rigExec/internal/crossDomainInputs.h"
 #include "rigExec/api/registry.h"
 #include "rigExecBuiltins/builtins.h"
 #include "rigExecEvalCore/constraintLookups.h"
@@ -84,7 +85,9 @@ struct BakedOpHost {
                         const RigExecTypeDesc &type, void *value,
                         std::string *error) const
     {
-        return RigExecBakedLookUpRevision(B, index, lookup, type, value, error);
+        return RigExecBakedLookUpRevision(B, index, lookup, type, value,
+                                          step ? &step->diagnostics : nullptr,
+                                          error);
     }
     void LookupGroups(const eval::OpLookup &lookup, const uint32_t **groups,
                       size_t *count) const
@@ -602,7 +605,7 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
         const RigExecBakedProgramImpl::GeomChain &chain = B.chains[c];
         RigExecNodeId previous = kRigExecInvalidIndex;
         const RigExecPortHandle *previousOut = nullptr;
-        bool previousWritesAll = false;
+        bool previousWritesAll = false, previousWhole = false;
         for (size_t r = 0; r < chain.revisions.size(); ++r) {
             const RigExecBakedProgramImpl::GeomRevision &revision =
                 chain.revisions[r];
@@ -617,7 +620,9 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
             const auto points = [&](RigExecNodeId node,
                                     const RigExecPortHandle &port,
                                     bool neighbourhood) {
-                if (previousOut && (previousWritesAll || !neighbourhood) &&
+                if (previousOut &&
+                    (previousWritesAll ||
+                     (!neighbourhood && !revision.opWhole && !previousWhole)) &&
                     !revision.weightCurrentPhase &&
                     std::find(apart.begin(), apart.end(), id) == apart.end()) {
                     builder->Connect(previous, *previousOut, node, port);
@@ -637,6 +642,13 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                      uint8_t(eval::OpOutputTarget::RevisionEnabled),
                      uint32_t(id)});
             };
+            const auto leafRead = [&](RigExecNodeId node,
+                                      const RigExecPortHandle &port,
+                                      eval::OpRevisionRead read) {
+                bind(node, port,
+                     {{uint8_t(L::RevisionLeaf), uint32_t(id), -1,
+                       uint8_t(read)}});
+            };
             const auto stores = [&](RigExecNodeId node,
                                     const RigExecPortHandle &out) {
                 builder->BindOutput(node, out);
@@ -647,6 +659,7 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                 previous = node;
                 previousOut = &out;
                 previousWritesAll = writesAll;
+                previousWhole = revision.opWhole;
             };
             const int32_t phase = revision.finalPhase ? 0 : 1;
             const bool atPrim = revision.binding.transformPhase.kind ==
@@ -734,15 +747,27 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                 payload.iterations = revision.opMushIterations;
                 payload.settings.edges.assign(revision.opMushEdges.cbegin(),
                                               revision.opMushEdges.cend());
+                payload.whole = revision.opWhole;
                 const RigExecNodeId mush =
                     builder->AddOp(rigExecOps::DeltaMush(), &payload);
                 points(mush, rigExecOps::DeltaMushPoints(), true);
-                constant(mush, rigExecOps::DeltaMushCounts(),
-                         revision.opMushCounts.cdata(),
-                         revision.opMushCounts.size());
-                constant(mush, rigExecOps::DeltaMushIndices(),
-                         revision.opMushIndices.cdata(),
-                         revision.opMushIndices.size());
+                if (revision.opWhole) {
+                    leafRead(mush, rigExecOps::DeltaMushCounts(),
+                             Read::TopologyCounts);
+                    leafRead(mush, rigExecOps::DeltaMushIndices(),
+                             Read::TopologyIndices);
+                    leafRead(mush, rigExecOps::DeltaMushIterations(),
+                             Read::MushIterations);
+                    leafRead(mush, rigExecOps::DeltaMushEdges(),
+                             Read::MushEdges);
+                } else {
+                    constant(mush, rigExecOps::DeltaMushCounts(),
+                             revision.opMushCounts.cdata(),
+                             revision.opMushCounts.size());
+                    constant(mush, rigExecOps::DeltaMushIndices(),
+                             revision.opMushIndices.cdata(),
+                             revision.opMushIndices.size());
+                }
                 enabled(mush, rigExecOps::DeltaMushEnabled());
                 for (const auto &[port, read] :
                      {std::make_pair(&rigExecOps::DeltaMushRest(),
@@ -792,16 +817,54 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                 using Read = eval::OpRevisionRead;
                 const std::array<int, 3> &divisions =
                     revision.opLatticeDivisions;
-                if (divisions[0] < 2 || divisions[1] < 2 || divisions[2] < 2)
+                if (!revision.opWhole &&
+                    (divisions[0] < 2 || divisions[1] < 2 || divisions[2] < 2))
                     return Fail(error, revision.moverPathText +
                                            ": a lattice's divisions are "
                                            "below 2");
+                const std::vector<int> &frames = revision.influenceSlots;
+                if (revision.opWhole && !frames.empty() && frames.size() != 2)
+                    return Fail(error, revision.moverPathText +
+                                           ": a lattice is framed by two "
+                                           "providers, its cage's and its "
+                                           "target's");
                 rigExecOps::LatticePayload payload;
                 payload.divisions = divisions;
+                payload.whole = revision.opWhole;
                 const RigExecNodeId lattice =
                     builder->AddOp(rigExecOps::Lattice(), &payload);
                 points(lattice, rigExecOps::LatticePoints(), false);
                 enabled(lattice, rigExecOps::LatticeEnabled());
+                if (revision.opWhole) {
+                    for (const auto &[port, read] :
+                         {std::make_pair(&rigExecOps::LatticeEvaluation(),
+                                         Read::LatticeEvaluation),
+                          std::make_pair(&rigExecOps::LatticeDivisions(),
+                                         Read::LatticeDivisions),
+                          std::make_pair(&rigExecOps::LatticeInterpolation(),
+                                         Read::LatticeInterpolation),
+                          std::make_pair(&rigExecOps::LatticeOrigin(),
+                                         Read::LatticeOrigin),
+                          std::make_pair(&rigExecOps::LatticeSpacing(),
+                                         Read::LatticeSpacing),
+                          std::make_pair(&rigExecOps::LatticeStrength(),
+                                         Read::LatticeStrength),
+                          std::make_pair(&rigExecOps::LatticeMask(),
+                                         Read::LatticeMask),
+                          std::make_pair(&rigExecOps::LatticeCageMatrix(),
+                                         Read::LatticeCageMatrix),
+                          std::make_pair(&rigExecOps::LatticeTargetMatrix(),
+                                         Read::LatticeTargetMatrix),
+                          std::make_pair(&rigExecOps::LatticePointSpace(),
+                                         Read::LatticePointSpace)})
+                        leafRead(lattice, *port, read);
+                    if (frames.size() == 2) {
+                        bind(lattice, rigExecOps::LatticeCageFrame(),
+                             phased(records(0), table(frames[0])));
+                        bind(lattice, rigExecOps::LatticeTargetFrame(),
+                             phased(records(1), table(frames[1])));
+                    }
+                }
                 for (const auto &[port, read] :
                      {std::make_pair(&rigExecOps::LatticeRestPoints(),
                                      Read::ChainBase),
@@ -874,15 +937,24 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                 continue;
             }
             if (revision.opSmooth) {
+                rigExecOps::SmoothPayload payload;
+                payload.whole = revision.opWhole;
                 const RigExecNodeId smooth =
-                    builder->AddOp(rigExecOps::Smooth());
+                    builder->AddOp(rigExecOps::Smooth(), &payload);
                 points(smooth, rigExecOps::SmoothPoints(), true);
-                constant(smooth, rigExecOps::SmoothCounts(),
-                         revision.opSmoothCounts.cdata(),
-                         revision.opSmoothCounts.size());
-                constant(smooth, rigExecOps::SmoothIndices(),
-                         revision.opSmoothIndices.cdata(),
-                         revision.opSmoothIndices.size());
+                if (revision.opWhole) {
+                    leafRead(smooth, rigExecOps::SmoothCounts(),
+                             eval::OpRevisionRead::TopologyCounts);
+                    leafRead(smooth, rigExecOps::SmoothIndices(),
+                             eval::OpRevisionRead::TopologyIndices);
+                } else {
+                    constant(smooth, rigExecOps::SmoothCounts(),
+                             revision.opSmoothCounts.cdata(),
+                             revision.opSmoothCounts.size());
+                    constant(smooth, rigExecOps::SmoothIndices(),
+                             revision.opSmoothIndices.cdata(),
+                             revision.opSmoothIndices.size());
+                }
                 enabled(smooth, rigExecOps::SmoothEnabled());
                 if (!weighs(smooth, rigExecOps::SmoothEnvelope(),
                             rigExecOps::SmoothPacket(),
@@ -1028,9 +1100,17 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
             for (const uint32_t n : desc.members) {
                 const int id =
                     n < op.nodeRevision.size() ? op.nodeRevision[n] : -1;
-                if (id >= 0 && id != last)
+                if (id >= 0 && id != last) {
                     head.writes.push_back(
                         RigExecBakedOne(D::RevisionPacket, id));
+                    // The head looks up the member's phased point reads.
+                    const auto &[pc, pr] = B->revisionIndex[size_t(id)];
+                    for (const RigExecBakedPointsBinding &binding :
+                         B->chains[size_t(pc)]
+                             .revisions[size_t(pr)]
+                             .pointBindings)
+                        RigExecBakedDeclarePointInput(*B, binding, &head.reads);
+                }
                 last = id >= 0 ? id : last;
             }
         }
@@ -1233,6 +1313,21 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
     std::vector<std::pair<RigExecNodeId, int>> nodeRevision;
     std::vector<PointJoin> joins;
     std::vector<int> apart;
+    // A member reading its own chain through a declared phase heads an op
+    // chain of its own, whose head runs once that version is stored.
+    for (size_t c = 0; c < B.chains.size(); ++c)
+        for (size_t r = 0; r < B.chains[c].revisions.size(); ++r)
+            for (const RigExecBakedPointsBinding &binding :
+                 B.chains[c].revisions[r].pointBindings)
+                if (B.chains[c].revisions[r].OpNodes() &&
+                    std::any_of(binding.candidates.begin(),
+                                binding.candidates.end(),
+                                [c](const RigExecBakedPointVersion &v) {
+                                    return size_t(v.chain) == c;
+                                }) &&
+                    (apart.empty() ||
+                     apart.back() != B.chainRevisionBegin[c] + int(r)))
+                    apart.push_back(B.chainRevisionBegin[c] + int(r));
     std::unique_ptr<RigExecRigDescBuilder> builder;
     RigExecBakedOpInjection injection;
     bool injected = false;

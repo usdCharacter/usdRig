@@ -792,6 +792,17 @@ _TestRetainedPointFinalAvailability(const std::string &examples)
     VtVec3fArray first, recovered;
     for (double frame : {1001.0, 1002.0, 1003.0}) {
         const bool blocked = frame == 1002.0;
+        if (blocked) {
+            // The authored base the miss falls to is blocked too: the
+            // lattice's cage holds no point per node, an error in both.
+            CHECK(!RigExecTestDrive(reader.get(), &sampler, frame, &error));
+            const auto pose = evaluator.Evaluate(UsdTimeCode(frame));
+            CHECK(!pose.valid &&
+                  evaluator.GetCompiledRigSignature() == compiledRig);
+            CHECK(std::find(pose.diagnostics.begin(), pose.diagnostics.end(),
+                            fallback) != pose.diagnostics.end());
+            continue;
+        }
         CHECK(RigExecTestDrive(reader.get(), &sampler, frame, &error));
         const auto pose = evaluator.Evaluate(UsdTimeCode(frame));
         CHECK(pose.valid && evaluator.GetCompiledRigSignature() == compiledRig);
@@ -867,31 +878,29 @@ _TestUnansweredPhaseArray(const std::string &examples)
     CHECK(attribute.Get(&authored));
     {
         UsdEditContext context(stage, stage->GetSessionLayer());
+        CHECK(attribute.Set(authored, UsdTimeCode(1001.0)));
         CHECK(attribute.Set(SdfValueBlock(), UsdTimeCode(1002.0)));
     }
+    // Blocked at 1002, the cage the miss falls to holds no point per
+    // lattice node: an error in both evaluators, so the bake is made at 1001.
     std::vector<uint8_t> bytes;
-    const bool listed = _BakeArrays(label, stage, rigPath, 1002.0, &bytes) &&
+    const bool listed = _BakeArrays(label, stage, rigPath, 1001.0, &bytes) &&
                         rows(bytes, &live, &rest) && live && rest;
     CHECK(listed);
     std::unique_ptr<RigExecRuntimeReader> reader =
         listed ? _OpenRun(label, bytes) : nullptr;
     bool same = reader != nullptr;
-    {
-        const char *text = "native";
+    if (reader) {
         RigExecRigPose pose;
         std::string error;
-        std::vector<std::string> diffs;
-        if (!reader ||
-            !RigExecTestArrayReference(stage, rigPath, {}, 1002.0, &pose,
-                                       &error) ||
-            !RigExecCompareRuntimeRun(pose, *reader, &diffs)) {
-            same = false;
-            std::printf("%s blocked, %s: MISMATCH %s\n", label.c_str(), text,
-                        error.c_str());
-            for (const std::string &line : diffs) {
-                std::printf("    %s\n", line.c_str());
-            }
-        }
+        RigExecInputSampler sampler;
+        CHECK(sampler.Bind(stage, *reader, &error));
+        same = !RigExecTestArrayReference(stage, rigPath, {}, 1002.0, &pose,
+                                          &error) &&
+               !RigExecTestDrive(reader.get(), &sampler, 1002.0, &error) &&
+               RigExecTestDrive(reader.get(), &sampler, 1001.0, &error);
+        if (!same)
+            std::printf("%s blocked: %s\n", label.c_str(), error.c_str());
     }
     CHECK(same);
     bool moved = false;
@@ -1060,8 +1069,19 @@ _TestLatticeArray(const UsdStageRefPtr &stage)
                     {{cage, VtValue(scaled), false}}, true);
     _CheckArraySets(label + " sampled x1.1", stage, rigPath, listed,
                     {{cage, VtValue(scaled), true}}, true);
-    _CheckArraySets(label + " sampled, 11 points", stage, rigPath, listed,
-                    {{cage, VtValue(shorter), true}}, true);
+    // A sampled cage of another count holds no point per lattice node: an
+    // error that stops the frame in both evaluators.
+    {
+        std::unique_ptr<RigExecRuntimeReader> played = _OpenRun(label, listed);
+        RigExecRigPose pose;
+        const std::vector<RigExecTestArraySet> sets = {
+            {cage, VtValue(shorter), true}};
+        CHECK(played && RigExecTestApplyArraySets(played.get(), sets, &error) &&
+              !played->Execute(&error));
+        CHECK(!RigExecTestArrayReference(stage, rigPath, sets,
+                                         played ? played->GetBakeTime() : 0.0,
+                                         &pose, &error));
+    }
     // The authored and the sampled set differ: the rest read takes only
     // the authored one.
     {
@@ -2806,9 +2826,19 @@ main(int argc, char **argv)
         GfMatrix4d offset(1.0);
         offset.SetScale(1.5);
         offset.SetTranslateOnly(GfVec3d(0.0, 0.25, -0.1));
-        cases += 5;
-        _CheckSets("computed_path_reads Mush.inputs:iterations = 6", stage,
-                   10.0, {_Int(mush + "inputs:iterations", 6)}, 1);
+        cases += 4;
+        {
+            // A Range delta mush's iteration count cuts its vertex groups:
+            // the export pins it, and no input stands for it.
+            RigExecRigEvaluator evaluator(stage, SdfPath("/PathReadAsset/Rig"));
+            std::vector<uint8_t> bytes;
+            std::string error;
+            RigExecTestPlayer player;
+            CHECK(RigExecTestBakeAt(evaluator, 10.0, &bytes, &error) &&
+                  player.Open(bytes, stage, &error));
+            size_t index = 0;
+            CHECK(!player->FindInput(mush + "inputs:iterations", &index));
+        }
         _CheckSets("computed_path_reads Mush.inputs:enabled = false", stage,
                    10.0, {_Boolean(mush + "inputs:enabled", false)}, 1);
         _CheckSets(
@@ -2940,7 +2970,7 @@ main(int argc, char **argv)
 
     std::printf("array inputs: %d of %d case(s) == session edit\n",
                 arrayMatched, arrayCases);
-    CHECK(arrayMatched == arrayCases && arrayCases == 17);
+    CHECK(arrayMatched == arrayCases && arrayCases == 16);
     _TestArraysAgainstOverrides(fixtures);
     std::printf("array inputs: %d of %d run(s) == live baked's interactive "
                 "overrides, counters included\n",

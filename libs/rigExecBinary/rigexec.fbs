@@ -1476,6 +1476,9 @@ table Revision {
   // A Range revision whatever its chunk count, so a chain of one vertex
   // group is still a range chain.
   range_role: bool;
+  // A Range revision whose op member runs once over every vertex group
+  // (format 68), reading per frame what its range form pins.
+  whole_role: bool;
 }
 table Derived {
   target: uint;

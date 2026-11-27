@@ -19,13 +19,17 @@ struct DeltaMushPayload {
     double distanceWeight = 0.0;
     double displacement = 1.0;
     rigExec::RigExecDeltaMushSettings settings;
+    /// Runs once over every point instead of group by group: what cuts its
+    /// groups' reach can move per frame.
+    bool whole = false;
 
     bool operator==(const DeltaMushPayload &o) const
     {
         return iterations == o.iterations && step == o.step &&
                pinBorders == o.pinBorders &&
                distanceWeight == o.distanceWeight &&
-               displacement == o.displacement && settings == o.settings;
+               displacement == o.displacement && settings == o.settings &&
+               whole == o.whole;
     }
 };
 
@@ -44,7 +48,8 @@ const rigExec::RigExecOpHandle &DeltaMush();
 // an error when the packet's weights reach past them. Step, DistanceWeight
 // and Displacement (Float), PinBorders and OnlySmooth (Bool), Smoothing and
 // FrameTransport (Int, the settings' enum values) and SmoothWeights
-// (FloatArray) override the payload's settings when fed. Frame (Mat4d)
+// (FloatArray), Iterations (Int) and Edges (IntArray) override the
+// payload's settings when fed. Frame (Mat4d)
 // composes after ComputationToTarget. Base (Vec3fArray) is the rest when
 // Rest is empty, which a map other than the identity or a Frame refuses
 // unless the mover only smooths.
@@ -69,6 +74,8 @@ const rigExec::RigExecPortHandle &DeltaMushSmoothWeights();
 const rigExec::RigExecPortHandle &DeltaMushOnlySmooth();
 const rigExec::RigExecPortHandle &DeltaMushFrame();
 const rigExec::RigExecPortHandle &DeltaMushBase();
+const rigExec::RigExecPortHandle &DeltaMushIterations();
+const rigExec::RigExecPortHandle &DeltaMushEdges();
 
 } // namespace rigExecOps
 

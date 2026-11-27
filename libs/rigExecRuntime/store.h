@@ -1218,7 +1218,7 @@ bool RrGeoRevisionLeaf(const RrProgram *program, uint32_t revision,
 // revision's own storage or its chain's base.
 bool RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
                          const RigExecTypeDesc &type, void *value,
-                         std::string *error);
+                         std::vector<std::string> *lines, std::string *error);
 // The vertex groups the channel a BlendChannelWeight \p lookup reads reaches,
 // from its revision's chunk keys.
 void RrGeoLookupGroups(const RrProgram *program, const eval::OpLookup &lookup,

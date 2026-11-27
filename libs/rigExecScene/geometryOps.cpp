@@ -398,8 +398,9 @@ RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
         result.strength = builder->BindInput(
             result.node, rigExecOps::VolumeCorrectStrength());
         break;
-    case RigExecRevisionOp::Smooth:
-        result.node = builder->AddOp(rigExecOps::Smooth());
+    case RigExecRevisionOp::Smooth: {
+        const rigExecOps::SmoothPayload smooth;
+        result.node = builder->AddOp(rigExecOps::Smooth(), &smooth);
         in = &rigExecOps::SmoothPoints();
         out = &rigExecOps::SmoothOut();
         envelope = &rigExecOps::SmoothEnvelope();
@@ -410,6 +411,7 @@ RigExecAddGeometryOp(RigExecRevisionOp op, const RigExecMoverParameters &p,
         result.strength =
             builder->BindInput(result.node, rigExecOps::SmoothStrength());
         break;
+    }
     case RigExecRevisionOp::DeltaMush: {
         result.node = builder->AddOp(rigExecOps::DeltaMush(), payload);
         in = &rigExecOps::DeltaMushPoints();

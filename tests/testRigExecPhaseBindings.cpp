@@ -99,8 +99,19 @@ Bindings(const RigExecBakedProgramImpl &B)
     };
     const auto readerStep = [&B](RigExecBakedStepKind kind, size_t chain,
                                  size_t index) {
+        std::vector<int> members;
         for (size_t s = 0; s < B.steps.size(); ++s) {
             const RigExecBakedStep &step = B.steps[s];
+            // An op chain's head reads its member revisions' inputs.
+            if (kind == RigExecBakedStepKind::RevisionStatic &&
+                step.kind == RigExecBakedStepKind::OpChainHead) {
+                RigExecBakedOpStepRevisions(B, step, &members);
+                if (std::find(members.begin(), members.end(),
+                              B.chainRevisionBegin[chain] + int(index)) !=
+                    members.end())
+                    return int(s);
+                continue;
+            }
             if (step.kind != kind || step.object < 0) {
                 continue;
             }
@@ -498,8 +509,13 @@ CheckSlabAssembleEdges(const std::string &where,
     int status = -1;
     for (size_t s = 0; s < B.steps.size(); ++s) {
         const RigExecBakedStep &step = B.steps[s];
-        if (step.kind == RigExecBakedStepKind::RevisionStatic &&
-            step.object == slabRevision) {
+        std::vector<int> members;
+        if (step.kind == RigExecBakedStepKind::OpChainHead)
+            RigExecBakedOpStepRevisions(B, step, &members);
+        if ((step.kind == RigExecBakedStepKind::RevisionStatic &&
+             step.object == slabRevision) ||
+            std::find(members.begin(), members.end(), slabRevision) !=
+                members.end()) {
             assemble = int(s);
         } else if (step.kind == RigExecBakedStepKind::ChainStatus &&
                    step.object == cageChain) {
@@ -941,13 +957,13 @@ TestPrecedingOwnChainFixture(const std::string &examples)
             CHECK_AT(where, own->step >= 0);
             if (own->step >= 0 && own->binding->candidates.size() == 1) {
                 RigExecBakedStep &assemble = B.steps[size_t(own->step)];
+                // Echo, a whole lattice member, heads an op chain of its own.
                 CHECK_AT(where,
-                         assemble.kind == RigExecBakedStepKind::RevisionStatic);
-                const auto &[chain, r] =
-                    B.revisionIndex[size_t(assemble.object)];
-                CHECK_AT(where, !B.chains[size_t(chain)]
-                                     .revisions[size_t(r)]
-                                     .weightCurrentPhase);
+                         assemble.kind == RigExecBakedStepKind::OpChainHead);
+                for (const auto &revision :
+                     B.chains[own->readerChain].revisions)
+                    if (revision.moverPath == own->reader)
+                        CHECK_AT(where, !revision.weightCurrentPhase);
                 const RigExecBakedSlotRange done =
                     RigExecBakedOne(RigExecBakedSlotDomain::RevisionDone,
                                     B.chainRevisionBegin[own->readerChain] + 1);
@@ -1028,58 +1044,43 @@ TestAChainWithoutABaseFallsThrough(const std::string &examples)
     const std::string line = "diag " + kSlabLattice.GetString() +
                              ": read phase 'final' for " + kCage.GetString() +
                              " resolved to nothing; read the authored base";
-    const std::string nativeFailure =
-        "MoverFailed " + kSlabLattice.GetString() +
-        ": execution rejected its inputs; revision passed through";
-    const std::string oracleOnly = "MoverFailed " + kSlabLattice.GetString() +
-                                   ": lattice cage/divisions mismatch";
+    // The authored base the miss falls to is blocked too: the lattice's
+    // cage holds no point per node, an error that stops the frame in both.
+    const std::string failure = kSlabLattice.GetString() + ": ";
     for (const double frame : {1001.0, 1002.0, 1003.0}) {
         const std::string where = "blocked cage at " + std::to_string(frame);
+        const bool blocked = frame == 1002.0;
+        if (blocked) {
+            for (RigExecRigEvaluator *evaluator :
+                 {baked.get(), reference.get()}) {
+                const RigExecRigPose pose =
+                    evaluator->Evaluate(UsdTimeCode(frame));
+                CHECK_AT(where, !pose.valid);
+                CHECK_AT(where, Mentions(pose.diagnostics, line));
+                CHECK_AT(where, std::any_of(pose.diagnostics.begin(),
+                                            pose.diagnostics.end(),
+                                            [&](const std::string &text) {
+                                                return text.rfind(failure, 0) ==
+                                                           0 &&
+                                                       text.find("cage") !=
+                                                           std::string::npos;
+                                            }));
+            }
+            continue;
+        }
         Tally tally;
         const RigExecRigPose pose =
             EvaluateCaptured(where, baked.get(), UsdTimeCode(frame), &tally);
         const RigExecRigPose walk = reference->Evaluate(UsdTimeCode(frame));
         CHECK_AT(where, walk.valid);
-        const bool blocked = frame == 1002.0;
-        CHECK_AT(where, Mentions(pose.diagnostics, line) == blocked);
-        CHECK_AT(where, Mentions(walk.diagnostics, line) == blocked);
+        CHECK_AT(where, !Mentions(pose.diagnostics, line));
+        CHECK_AT(where, !Mentions(walk.diagnostics, line));
         CHECK_AT(where, Moved(pose, kSlab) == Moved(walk, kSlab));
         CHECK_AT(where, pose.referenceMismatches == 0 &&
                             walk.referenceMismatches == 0);
-        CHECK_AT(where, Mentions(pose.diagnostics, nativeFailure) == blocked);
-        CHECK_AT(where, Mentions(walk.diagnostics, nativeFailure) == blocked);
-        CHECK_AT(where, !Mentions(pose.diagnostics, oracleOnly));
-        CHECK_AT(where, !Mentions(walk.diagnostics, oracleOnly));
-        CHECK_AT(where, baked->GetBakedProgram() != nullptr);
-        if (blocked && baked->GetBakedProgram()) {
-            auto &B = const_cast<RigExecBakedProgramImpl &>(
-                rigExec::RigExecBakedProgramAccess::StepGraph(
-                    *baked->GetBakedProgram()));
-            const auto chain = std::find_if(
-                B.chains.begin(), B.chains.end(),
-                [](const auto &item) { return item.target == kSlab; });
-            CHECK_AT(where, chain != B.chains.end());
-            CHECK_AT(where, chain != B.chains.end() && !chain->result.empty());
-            if (chain != B.chains.end() && !chain->result.empty()) {
-                const GfVec3f saved = chain->result[0];
-                chain->result[0] = GfVec3f(1234, 5678, 9012);
-                RigExecRigPose mismatch;
-                mismatch.diagnostics = pose.diagnostics;
-                const bool agreed = RigExecBakedRunScalarReference(
-                    &B, UsdTimeCode(frame), &mismatch);
-                chain->result[0] = saved;
-                CHECK_AT(where, !agreed && mismatch.referenceMismatches > 0);
-                CHECK_AT(where, Mentions(mismatch.diagnostics, nativeFailure));
-                CHECK_AT(where, Mentions(mismatch.diagnostics, oracleOnly));
-                CHECK_AT(where,
-                         Mentions(mismatch.diagnostics,
-                                  "cpu reference parity: value mismatch on " +
-                                      kSlab.GetString()));
-            }
-        }
         if (SerialSchedule()) {
             CHECK_AT(where, tally.read == 1);
-            CHECK_AT(where, tally.tails == (blocked ? 1u : 0u));
+            CHECK_AT(where, tally.tails == 0u);
         }
     }
 }
@@ -1391,10 +1392,12 @@ CheckFrameRecordSteps(const std::string &where,
     int fold = -1;
     for (size_t s = 0; s < B.steps.size(); ++s) {
         const RigExecBakedStep &step = B.steps[s];
-        if (step.kind == RigExecBakedStepKind::InfluenceFold &&
-            B.chains[size_t(B.revisionIndex[size_t(step.object)].first)]
+        // A matrix's fold is its MoverTransform op node.
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        if (id.kind == RigExecBakedStepKind::InfluenceFold &&
+            B.chains[size_t(B.revisionIndex[size_t(id.object)].first)]
                     .revisions[size_t(
-                        B.revisionIndex[size_t(step.object)].second)]
+                        B.revisionIndex[size_t(id.object)].second)]
                     .moverPath == reader) {
             fold = int(s);
         }
@@ -1432,7 +1435,8 @@ CheckRecordStepsRan(const std::string &where,
     const RigExecBakedProgramImpl &B =
         rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const auto moverOf = [&B](const RigExecBakedStep &step) {
-        const auto [c, r] = B.revisionIndex[size_t(step.object)];
+        const auto [c, r] =
+            B.revisionIndex[size_t(RigExecBakedIdentityOf(B, step).object)];
         return B.chains[size_t(c)].revisions[size_t(r)].moverPath;
     };
     size_t frameSteps = 0;
@@ -1452,7 +1456,8 @@ CheckRecordStepsRan(const std::string &where,
                   B.opExecution.ran[size_t(&step - B.steps.data())])) ==
                     expected);
         } else if (*folded &&
-                   step.kind == RigExecBakedStepKind::InfluenceFold &&
+                   RigExecBakedIdentityOf(B, step).kind ==
+                       RigExecBakedStepKind::InfluenceFold &&
                    moverOf(step) == RecordReader(folded)) {
             foldRan =
                 (size_t(&step - B.steps.data()) < B.opExecution.ran.size() &&

@@ -42,6 +42,8 @@ RIGEXEC_DEFINE_PORT_HANDLE(DeltaMushSmoothWeights)
 RIGEXEC_DEFINE_PORT_HANDLE(DeltaMushOnlySmooth)
 RIGEXEC_DEFINE_PORT_HANDLE(DeltaMushFrame)
 RIGEXEC_DEFINE_PORT_HANDLE(DeltaMushBase)
+RIGEXEC_DEFINE_PORT_HANDLE(DeltaMushIterations)
+RIGEXEC_DEFINE_PORT_HANDLE(DeltaMushEdges)
 
 namespace {
 
@@ -70,10 +72,12 @@ enum DeltaMushField : uint32_t {
     kEdgeCount,
     kEdges,
     kOnlySmooth,
+    kWhole,
 };
 
 /// Instance \p k's settings, its lists read in place.
 struct MushInstance {
+    bool whole = false;
     int iterations = 0;
     double step = 0.0;
     bool pinBorders = false;
@@ -86,6 +90,7 @@ MushInstance
 PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
 {
     MushInstance p;
+    p.whole = FlagAt(batch, kWhole, k);
     p.iterations = ValueAt<int32_t>(batch, kIterations, k);
     p.step = ValueAt<double>(batch, kStep, k);
     p.pinBorders = FlagAt(batch, kPinBorders, k);
@@ -188,7 +193,7 @@ SettingsOf(const rigExec::RigExecOpBatch &batch, size_t k,
            const RigExecOpIo &io, MushSettings *out, std::string *error)
 {
     const MushInstance p = PayloadAt(batch, k);
-    out->iterations = p.iterations;
+    out->iterations = FedOr<int32_t>(io, DeltaMushIterations(), p.iterations);
     const float *step = In<float>(io, DeltaMushStep());
     out->step = step ? double(*step) : p.step;
     const uint8_t *pin = In<uint8_t>(io, DeltaMushPinBorders());
@@ -217,7 +222,10 @@ SettingsOf(const rigExec::RigExecOpBatch &batch, size_t k,
     else
         s.smoothWeights.assign(p.settings.smoothWeights.begin(),
                                p.settings.smoothWeights.end());
-    s.edges.assign(p.settings.edges.begin(), p.settings.edges.end());
+    if (const auto *edges = In<RigExecArray<int32_t>>(io, DeltaMushEdges()))
+        s.edges = ToVector(*edges);
+    else
+        s.edges.assign(p.settings.edges.begin(), p.settings.edges.end());
     const uint8_t *only = In<uint8_t>(io, DeltaMushOnlySmooth());
     s.onlySmooth = only ? *only != 0 : p.settings.onlySmooth;
     return true;
@@ -231,6 +239,8 @@ PrepareReach(const rigExec::RigExecOpBatch &batch, size_t k,
              const RigExecOpIo &io, size_t count, MushState *state)
 {
     const MushInstance p = PayloadAt(batch, k);
+    if (p.whole)
+        return;
     const auto &counts = *In<RigExecArray<int>>(io, DeltaMushCounts());
     const auto &indices = *In<RigExecArray<int>>(io, DeltaMushIndices());
     const auto same = [](const int *a, size_t n, const std::vector<int> &b) {
@@ -426,6 +436,14 @@ Values(const void *payload, rigExec::RigExecFieldValues &out)
     SetList(out, kSmoothWeightCount, p.settings.smoothWeights);
     SetList(out, kEdgeCount, p.settings.edges);
     SetFlag(out, kOnlySmooth, p.settings.onlySmooth);
+    SetFlag(out, kWhole, p.whole);
+}
+
+rigExec::RigExecRangePlan
+Plan(const rigExec::RigExecOpBatch &batch, size_t k)
+{
+    return FlagAt(batch, kWhole, k) ? rigExec::RigExecRangePlan::Whole
+                                    : rigExec::RigExecRangePlan::Ranges;
 }
 
 namespace names = rigExec::SchemaAttrText;
@@ -523,6 +541,7 @@ const rigExec::RigExecFieldDesc kFields[] = {
     Count("edgeCount"),
     Authored(Items("edges", rigExecStd::IntType(), kEdgeCount), kEdgesProperty),
     Authored(Flag("onlySmooth"), kOnlySmoothProperty),
+    Flag("whole"),
 };
 
 } // namespace
@@ -571,6 +590,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&DeltaMushOnlySmooth(), &rigExecStd::BoolType(), kOptional, "onlySmooth"},
     {&DeltaMushFrame(), &rigExecStd::Mat4dType(), kOptional, "frame"},
     {&DeltaMushBase(), &rigExecStd::Vec3fArray(), kOptional, "base"},
+    {&DeltaMushIterations(), &rigExecStd::IntType(), kOptional, "iterations"},
+    {&DeltaMushEdges(), &rigExecStd::IntArray(), kOptional, "edges"},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {
@@ -584,6 +605,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.range.prepare = &Prepare;
     d.range.run = &MushRange;
     d.range.reads = &MushReads;
+    d.range.plan = &Plan;
     d.range.scratch = StateOf<GroupState>();
     d.state = StateOf<MushState>();
     d.capabilities =

@@ -881,9 +881,23 @@ main(int argc, char **argv)
         // Empty rest array exercises the authored-base fallback in both hosts.
         mush.SetRestPoints({});
         binaryParity({1, 3});
-        // Invalid parameter is an atomic pass-through in both hosts.
+        // An invalid parameter stops its frame in both hosts, which recover
+        // at the next valid frame.
         sample("inputs:iterations", -1, 6);
-        binaryParity({6});
+        {
+            RigExecBakeOpts options;
+            options.time = 5;
+            RigExecBakeResult result;
+            std::string error;
+            CHECK(RigExecBakeToBinary(evaluator, options, &result, &error));
+            RigExecTestPlayer reader;
+            if (!reader.Open(result.bytes, stage, &error))
+                throw std::runtime_error(error);
+            CHECK(!evaluator.Evaluate(UsdTimeCode(6)).valid);
+            CHECK(!reader.Play(6, &error) && !error.empty());
+            CHECK(evaluator.Evaluate(UsdTimeCode(5)).valid);
+            CHECK(reader.Play(5, &error));
+        }
         {
             // A baked input frame contains only the rest pose. Avar inputs set
             // on the binary must rerun skin -> deltaMush, not replay captured

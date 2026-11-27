@@ -452,6 +452,30 @@ enum class OpRevisionRead : uint8_t {
     /// interpolator or its own input answers it. A List of these feeds a
     /// range chain member group by group (OpLookupKeyed).
     BlendChannelWeight = 16,
+    /// IntArray: the face-vertex counts and indices of the revision's
+    /// topology.
+    TopologyCounts = 17,
+    TopologyIndices = 18,
+    /// A delta mush's inputs:iterations (Int) and inputs:edges (IntArray).
+    MushIterations = 19,
+    MushEdges = 20,
+    /// A lattice's rigExec:divisions (IntArray of three), its evaluation
+    /// (Int: 0 the bound lattice, 1 a regular grid, -1 a token that names
+    /// neither) and a regular grid's settings: its interpolations (IntArray
+    /// of three RigExecLatticeInterpolation values, -1 for a token that
+    /// names none), origin and spacing (FloatArray of three), strength
+    /// (Float), mask (FloatArray), cage and target matrices (Mat4d) and
+    /// point space (Int: 0 local, 1 common, -1 neither).
+    LatticeDivisions = 21,
+    LatticeEvaluation = 22,
+    LatticeInterpolation = 23,
+    LatticeOrigin = 24,
+    LatticeSpacing = 25,
+    LatticeStrength = 26,
+    LatticeMask = 27,
+    LatticeCageMatrix = 28,
+    LatticeTargetMatrix = 29,
+    LatticePointSpace = 30,
 };
 
 /// Whether a lookup of \p source is one the host answers through

@@ -2019,6 +2019,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
         revision.opMushIndices = VtIntArray();
         revision.opMushEdges = VtIntArray();
         revision.opLattice = false;
+        revision.opWhole = false;
         revision.blendChunked = false;
         revision.groupWritten.clear();
         revision.enteringWriter.clear();
@@ -2068,6 +2069,14 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
                           .path);
         }
         candidate[r] = ClassifyRevision(reads, &revision, &pinned[r]);
+        if (candidate[r] == GeomRole::Whole && RevisionRunsAsOps(revision.op)) {
+            // Its op member runs whole, reading per frame what the
+            // classification could not pin.
+            revision.pins.clear();
+            pinned[r].clear();
+            revision.opWhole = true;
+            candidate[r] = GeomRole::Range;
+        }
         anyRange = anyRange || candidate[r] == GeomRole::Range;
     }
     if (!anyRange) {
@@ -2125,7 +2134,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
             }
             revision.opMatrix = OpMatrixHolds(reads, &revision, &pinned[r]);
             revision.opSmooth = revision.op == RigExecRevisionOp::Smooth;
-            if (revision.opSmooth) {
+            if (revision.opSmooth && !revision.opWhole) {
                 using Role = RigExecRevisionLeafRole;
                 revision.opSmoothCounts =
                     reads.Ints(revision.leaves,
@@ -2135,7 +2144,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
                     revision.leaves.decl.Role(Role::TopologyIndices));
             }
             revision.opMush = revision.op == RigExecRevisionOp::DeltaMush;
-            if (revision.opMush) {
+            if (revision.opMush && !revision.opWhole) {
                 using Role = RigExecRevisionLeafRole;
                 const RigExecBakedPathLeaves &leaves = revision.leaves;
                 revision.opMushCounts =
@@ -2148,7 +2157,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
                     reads.Int(leaves, leaves.decl.scalarBegin, 10);
             }
             revision.opLattice = revision.op == RigExecRevisionOp::Lattice;
-            if (revision.opLattice) {
+            if (revision.opLattice && !revision.opWhole) {
                 using Role = RigExecRevisionLeafRole;
                 const GfVec3i divisions = reads.Vec3i(
                     revision.leaves, revision.leaves.decl.Role(Role::Divisions),
@@ -2156,9 +2165,10 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
                 revision.opLatticeDivisions = {divisions[0], divisions[1],
                                                divisions[2]};
             }
-            if (revision.op == RigExecRevisionOp::Smooth) {
+            if (revision.op == RigExecRevisionOp::Smooth && !revision.opWhole) {
                 BuildSmoothHalo(reads, *chain, &revision, points);
-            } else if (revision.op == RigExecRevisionOp::DeltaMush) {
+            } else if (revision.op == RigExecRevisionOp::DeltaMush &&
+                       !revision.opWhole) {
                 BuildMushHalo(reads, *chain, &revision, points);
             }
             B.exportPinnedPaths.insert(pinned[r].begin(), pinned[r].end());
@@ -6572,7 +6582,7 @@ bool
 RigExecBakedLookUpRevision(RigExecBakedProgramImpl &B, uint32_t index,
                            const eval::OpLookup &lookup,
                            const RigExecTypeDesc &type, void *value,
-                           std::string *error)
+                           std::vector<std::string> *lines, std::string *error)
 {
     using Read = eval::OpRevisionRead;
     using Role = RigExecRevisionLeafRole;
@@ -6658,14 +6668,136 @@ RigExecBakedLookUpRevision(RigExecBakedProgramImpl &B, uint32_t index,
     }
     case Read::LatticeRestCage:
     case Read::LatticeLiveCage: {
+        const int k = leaves.decl.Role(
+            Read(lookup.read) == Read::LatticeRestCage ? Role::RestCage
+                                                       : Role::LiveCage);
+        if (Read(lookup.read) == Read::LatticeLiveCage && k >= 0 &&
+            leaves.decl.keys[size_t(k)].flavour ==
+                RigExecRevisionLeafFlavour::OverlayThenRaw) {
+            // The phase overlay (RigExecBakedOverlayPointReads) first.
+            for (const RigExecBakedPointsBinding &binding :
+                 c.revisions[size_t(r)].pointBindings) {
+                if (binding.input != leaves.decl.keys[size_t(k)].path)
+                    continue;
+                const GfVec3f *points = nullptr;
+                size_t count = 0;
+                const bool answered =
+                    RigExecBakedResolvePoints(B, binding, &points, &count);
+                CapturePointRead(&B, binding, points, count, answered);
+                if (answered)
+                    return lend(points, count);
+                if (binding.diagnoseMiss && lines)
+                    lines->push_back(binding.missDiagnostic);
+                break;
+            }
+        }
         VtValue &held = B.revisionLeafHold[index];
-        held = leaf(leaves.decl.Role(Read(lookup.read) == Read::LatticeRestCage
-                                         ? Role::RestCage
-                                         : Role::LiveCage));
+        held = leaf(k);
         if (!held.IsHolding<VtVec3fArray>())
             held = VtValue(VtVec3fArray());
         const VtVec3fArray &a = held.UncheckedGet<VtVec3fArray>();
         return lend(a.cdata(), a.size());
+    }
+    case Read::TopologyCounts:
+    case Read::TopologyIndices:
+    case Read::MushEdges: {
+        const Role role =
+            Read(lookup.read) == Read::TopologyCounts    ? Role::TopologyCounts
+            : Read(lookup.read) == Read::TopologyIndices ? Role::TopologyIndices
+                                                         : Role::MushEdges;
+        VtValue &held = B.revisionLeafHold[index];
+        held = leaf(leaves.decl.Role(role));
+        if (!held.IsHolding<VtIntArray>())
+            held = VtValue(VtIntArray());
+        const VtIntArray &a = held.UncheckedGet<VtIntArray>();
+        return lend(a.cdata(), a.size());
+    }
+    case Read::MushIterations:
+        return put(int32_t(scalar(0, 10)));
+    case Read::LatticeDivisions: {
+        const VtValue v = leaf(leaves.decl.Role(Role::Divisions));
+        const GfVec3i d =
+            v.IsHolding<GfVec3i>() ? v.UncheckedGet<GfVec3i>() : GfVec3i(0);
+        VtValue &held = B.revisionLeafHold[index];
+        held = VtValue(VtIntArray{d[0], d[1], d[2]});
+        const VtIntArray &a = held.UncheckedGet<VtIntArray>();
+        return lend(a.cdata(), a.size());
+    }
+    case Read::LatticeEvaluation: {
+        const VtValue v = leaf(leaves.decl.Role(Role::LatticeEvaluation));
+        const std::string_view text =
+            v.IsHolding<TfToken>()
+                ? std::string_view(v.UncheckedGet<TfToken>().GetText())
+                : std::string_view("legacy");
+        return put(int32_t(text == "legacy"        ? 0
+                           : text == "regularGrid" ? 1
+                                                   : -1));
+    }
+    case Read::LatticeInterpolation: {
+        VtIntArray modes(3);
+        const Role axes[3] = {Role::InterpolationU, Role::InterpolationV,
+                              Role::InterpolationW};
+        for (size_t a = 0; a < 3; ++a) {
+            const VtValue v = leaf(leaves.decl.Role(axes[a]));
+            RigExecLatticeInterpolation mode;
+            modes[a] =
+                RigExecLatticeInterpolationFromString(
+                    v.IsHolding<TfToken>() ? v.UncheckedGet<TfToken>().GetText()
+                                           : "bspline",
+                    &mode)
+                    ? int(mode)
+                    : -1;
+        }
+        VtValue &held = B.revisionLeafHold[index];
+        held = VtValue(modes);
+        const VtIntArray &a = held.UncheckedGet<VtIntArray>();
+        return lend(a.cdata(), a.size());
+    }
+    case Read::LatticeOrigin:
+    case Read::LatticeSpacing: {
+        const bool origin = Read(lookup.read) == Read::LatticeOrigin;
+        const VtValue v = leaf(
+            leaves.decl.Role(origin ? Role::GridOrigin : Role::GridSpacing));
+        const GfVec3f axes = v.IsHolding<GfVec3f>()
+                                 ? v.UncheckedGet<GfVec3f>()
+                                 : GfVec3f(origin ? -0.5f : 1.0f);
+        VtValue &held = B.revisionLeafHold[index];
+        held = VtValue(VtFloatArray{axes[0], axes[1], axes[2]});
+        const VtFloatArray &a = held.UncheckedGet<VtFloatArray>();
+        return lend(a.cdata(), a.size());
+    }
+    case Read::LatticeStrength: {
+        const VtValue v = leaf(leaves.decl.Role(Role::GridStrength));
+        return put(v.IsHolding<float>() ? v.UncheckedGet<float>() : 1.0f);
+    }
+    case Read::LatticeMask: {
+        VtValue &held = B.revisionLeafHold[index];
+        held = leaf(leaves.decl.Role(Role::Mask));
+        if (!held.IsHolding<VtFloatArray>())
+            held = VtValue(VtFloatArray());
+        const VtFloatArray &a = held.UncheckedGet<VtFloatArray>();
+        return lend(a.cdata(), a.size());
+    }
+    case Read::LatticeCageMatrix:
+    case Read::LatticeTargetMatrix: {
+        const VtValue v = leaf(leaves.decl.Role(
+            Read(lookup.read) == Read::LatticeCageMatrix ? Role::SourceMatrix
+                                                         : Role::TargetMatrix));
+        const GfMatrix4d m = v.IsHolding<GfMatrix4d>()
+                                 ? v.UncheckedGet<GfMatrix4d>()
+                                 : GfMatrix4d(1.0);
+        if (!type.triviallyCopyable || type.size != 16 * sizeof(double))
+            return fail();
+        std::memcpy(value, m.data(), type.size);
+        return true;
+    }
+    case Read::LatticePointSpace: {
+        const VtValue v = leaf(leaves.decl.Role(Role::PointSpace));
+        const std::string_view text =
+            v.IsHolding<TfToken>()
+                ? std::string_view(v.UncheckedGet<TfToken>().GetText())
+                : std::string_view("local");
+        return put(int32_t(text == "local" ? 0 : text == "common" ? 1 : -1));
     }
     case Read::MushStep:
         return put(scalar(1, 0.5f));

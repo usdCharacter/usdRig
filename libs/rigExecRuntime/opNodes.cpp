@@ -212,7 +212,11 @@ struct RrOpHost {
                         const RigExecTypeDesc &type, void *value,
                         std::string *error) const
     {
-        return RrGeoLookUpRevision(&p, lookup, type, value, error);
+        return RrGeoLookUpRevision(&p, lookup, type, value,
+                                   step < p.store.stepOutputs.size()
+                                       ? &p.store.stepOutputs[step].diagnostics
+                                       : nullptr,
+                                   error);
     }
     void LookupGroups(const eval::OpLookup &lookup, const uint32_t **groups,
                       size_t *count) const

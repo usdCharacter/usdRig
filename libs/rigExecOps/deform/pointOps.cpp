@@ -2,6 +2,7 @@
 
 #include "rigExecOps/authoring.h"
 #include "rigExecOps/deform/weightPacket.h"
+#include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecMath/meshConnectivity.h"
@@ -43,6 +44,25 @@ using rigExecStd::RigExecArray;
 using rigExecStd::Vec3f;
 using Points = RigExecArray<Vec3f>;
 using namespace opIo;
+using namespace fieldIo;
+
+enum SmoothField : uint32_t { kSmoothWhole };
+
+rigExec::RigExecRangePlan
+SmoothPlan(const rigExec::RigExecOpBatch &batch, size_t k)
+{
+    return FlagAt(batch, kSmoothWhole, k) ? rigExec::RigExecRangePlan::Whole
+                                          : rigExec::RigExecRangePlan::Ranges;
+}
+
+void
+SmoothValues(const void *payload, rigExec::RigExecFieldValues &out)
+{
+    SetFlag(out, kSmoothWhole,
+            static_cast<const SmoothPayload *>(payload)->whole);
+}
+
+const rigExec::RigExecFieldDesc kSmoothFields[] = {Flag("whole")};
 
 float
 StrengthOr1(const float *strength)
@@ -301,7 +321,12 @@ const rigExec::RigExecOpDesc kSmoothDesc = [] {
     d.range.prepare = &SmoothPrepare;
     d.range.run = &SmoothRange;
     d.range.reads = &SmoothReads;
+    d.range.plan = &SmoothPlan;
     d.state = StateOf<SmoothState>();
+    d.payloadFields = kSmoothFields;
+    d.payloadFieldCount = std::size(kSmoothFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &SmoothValues;
     return d;
 }();
 
