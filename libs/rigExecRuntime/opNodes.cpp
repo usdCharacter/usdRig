@@ -199,10 +199,17 @@ struct RrOpHost {
                    ? &matrices[lookup.object]
                    : nullptr;
     }
-    bool RevisionLeaf(uint32_t id, bool *enabled, float *weight,
+    bool RevisionLeaf(uint32_t id, bool *enabled, float *weight, bool *radial,
                       std::string *error) const
     {
-        return RrGeoRevisionLeaf(&p, id, enabled, weight, error);
+        return RrGeoRevisionLeaf(&p, id, enabled, weight, radial, error);
+    }
+    bool StoreRevisionEnabled(const eval::OpHostOutput &output,
+                              const void *value, std::string *error) const
+    {
+        return RrGeoStoreRevisionEnabled(
+            &p, output.object, *static_cast<const uint8_t *>(value) != 0,
+            error);
     }
     const void *ChainGroupPoints(uint32_t chain, uint32_t g) const
     {

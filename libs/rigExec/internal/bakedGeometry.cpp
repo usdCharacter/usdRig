@@ -1790,36 +1790,25 @@ GateRevision(const RoleReads &reads,
     return true;
 }
 
-/// Whether a Range matrix \p revision runs as op nodes: it binds a
-/// transform provider, no weight object or field weighs it, its
-/// inputs:enabled and inputs:defaultWeight do not vary with time, and its
-/// rigExec:weightBlend is usable. Pins the blend, so a change rebuilds, and
-/// in Export adds its read to \p pinned.
-bool gOpMatrices = true;
-
+/// Whether a Range \p revision runs as op nodes: every Range matrix does.
+/// A usable rigExec:weightBlend is pinned, so a change rebuilds, and in
+/// Export adds its read to \p pinned; any other is read each frame.
 bool
 OpMatrixHolds(const RoleReads &reads,
               RigExecBakedProgramImpl::GeomRevision *revision,
               std::vector<SdfPath> *pinned)
 {
     using Role = RigExecRevisionLeafRole;
-    if (!gOpMatrices || revision->op != RigExecRevisionOp::Matrix ||
-        revision->transformSlot < 0 || revision->weightObject >= 0 ||
-        revision->weightField >= 0 || revision->weightCurrentPhase ||
-        revision->weightOperationDomain) {
+    revision->opMatrixRadialLeaf = false;
+    if (revision->op != RigExecRevisionOp::Matrix) {
         return false;
     }
     const RigExecBakedPathLeaves &leaves = revision->leaves;
-    const int enabled = leaves.decl.Role(Role::Enabled);
-    const int weight = leaves.decl.Role(Role::DefaultWeight);
     const int blend = leaves.decl.Role(Role::WeightBlend);
-    for (const int k : {enabled, weight}) {
-        if (k >= 0 && !reads.Pinnable(leaves, k)) {
-            return false;
-        }
-    }
     if (blend >= 0 && !reads.Usable(leaves, blend)) {
-        return false;
+        revision->opMatrixRadial = false;
+        revision->opMatrixRadialLeaf = true;
+        return true;
     }
     const TfToken token = blend >= 0 ? reads.Token(leaves, blend) : TfToken();
     revision->opMatrixRadial = token == _tokens->radial;
@@ -3705,6 +3694,71 @@ BakedEnvelopeView(const RigExecWeightPacket &w)
     return v;
 }
 
+/// \p rev's packet when its weight object is measured against the points
+/// entering it: its weight field's weights as a dense packet. False when
+/// the field holds none.
+bool
+BuildCurrentPhasePacket(const RigExecBakedProgramImpl &B,
+                        RigExecBakedProgramImpl::GeomRevision *rev)
+{
+    if (!rev->weightCurrentPhase || rev->weightObject < 0)
+        return true;
+    const auto &weightField = B.weightFields[size_t(rev->weightField)];
+    if (!weightField.ok)
+        return false;
+    RigExecWeightPacket &packet = rev->currentPhasePacket;
+    packet.representation = _tokens->denseRepresentation;
+    packet.rangePolicy = B.weightObjects[size_t(rev->weightObject)].rangePolicy;
+    packet.values = weightField.values;
+    packet.indices.clear();
+    packet.defaultWeight = 0.0f;
+    packet.valid = true;
+    return true;
+}
+
+/// \p rev's weight display: its valid packet resolved over the \p count
+/// points it weighs (one when it weighs the operation). Kept while the
+/// shared packet it reads holds its revision when \p cached.
+void
+PublishRevisionWeights(const RigExecBakedProgramImpl &B,
+                       RigExecBakedProgramImpl::GeomRevision *rev, size_t count,
+                       bool cached)
+{
+    rev->weightFieldPublished = false;
+    if (rev->weightObject < 0 || !B.publishWeightFields)
+        return;
+    const RigExecWeightPacket &packet =
+        rev->weightCurrentPhase ? rev->currentPhasePacket
+                                : B.weightPackets[size_t(rev->weightObject)];
+    if (!packet.valid)
+        return;
+    const size_t logicalCount = rev->weightOperationDomain ? size_t(1) : count;
+    const bool shared =
+        cached && !rev->weightCurrentPhase && rev->weightPacketValue >= 0 &&
+        size_t(rev->weightPacketValue) < B.opAdapter.values.size();
+    const uint64_t packetRevision =
+        shared ? B.opAdapter.values[size_t(rev->weightPacketValue)].revision
+               : 0;
+    if (!shared || !rev->weightValuesHeld ||
+        rev->weightValuesPacketRevision != packetRevision ||
+        rev->weightValuesCount != logicalCount) {
+        std::vector<float> &resolved = rev->resolveScratch;
+        if (!packet.ResolveAll(logicalCount, &resolved)) {
+            resolved.assign(logicalCount, 0.0f);
+            for (size_t i = 0; i < logicalCount; ++i) {
+                const float w = packet.Resolve(i, logicalCount);
+                resolved[i] = w < 0.0f ? 0.0f : w;
+            }
+        }
+        RigExecBakedNoteFloats(&rev->publishedWeightValues, &resolved,
+                               &rev->weightValuesVersion);
+        rev->weightValuesHeld = shared;
+        rev->weightValuesPacketRevision = packetRevision;
+        rev->weightValuesCount = logicalCount;
+    }
+    rev->weightFieldPublished = true;
+}
+
 /// The packet's envelope resolved at the full \p count, as ResolveAll into
 /// `envelope` would leave it (unchanged when it fails), with
 /// `envelopeVersion` moved exactly when the bytes did.
@@ -4300,21 +4354,7 @@ struct BakedChainState {
     }
     bool applyCurrentPhasePacket(size_t chain, size_t revision)
     {
-        Revision &rev = revisionAt(chain, revision);
-        if (!rev.weightCurrentPhase || rev.weightObject < 0)
-            return true;
-        const auto &weightField = B->weightFields[size_t(rev.weightField)];
-        if (!weightField.ok)
-            return false;
-        RigExecWeightPacket &packet = rev.currentPhasePacket;
-        packet.representation = _tokens->denseRepresentation;
-        packet.rangePolicy =
-            B->weightObjects[size_t(rev.weightObject)].rangePolicy;
-        packet.values = weightField.values;
-        packet.indices.clear();
-        packet.defaultWeight = 0.0f;
-        packet.valid = true;
-        return true;
+        return BuildCurrentPhasePacket(*B, &revisionAt(chain, revision));
     }
     void assembleRevision(size_t chain, size_t revision)
     {
@@ -4364,43 +4404,7 @@ struct BakedChainState {
                                 : 1.0f;
         rev.staticDirty = true;
         rev.lastDefaultWeight = rev.defaultWeight;
-        rev.weightFieldPublished = false;
-        Chain &c = chainAt(chain);
-        if (rev.weightObject >= 0 && B->publishWeightFields) {
-            const RigExecWeightPacket &packet =
-                rev.weightCurrentPhase
-                    ? rev.currentPhasePacket
-                    : B->weightPackets[size_t(rev.weightObject)];
-            if (packet.valid) {
-                const size_t logicalCount =
-                    rev.weightOperationDomain ? size_t(1) : c.lastBase.size();
-                const bool shared =
-                    !rev.weightCurrentPhase && rev.weightPacketValue >= 0 &&
-                    size_t(rev.weightPacketValue) < B->opAdapter.values.size();
-                const uint64_t packetRevision =
-                    shared ? B->opAdapter.values[size_t(rev.weightPacketValue)]
-                                 .revision
-                           : 0;
-                if (!shared || !rev.weightValuesHeld ||
-                    rev.weightValuesPacketRevision != packetRevision ||
-                    rev.weightValuesCount != logicalCount) {
-                    std::vector<float> &resolved = rev.resolveScratch;
-                    if (!packet.ResolveAll(logicalCount, &resolved)) {
-                        resolved.assign(logicalCount, 0.0f);
-                        for (size_t i = 0; i < logicalCount; ++i) {
-                            const float w = packet.Resolve(i, logicalCount);
-                            resolved[i] = w < 0.0f ? 0.0f : w;
-                        }
-                    }
-                    RigExecBakedNoteFloats(&rev.publishedWeightValues,
-                                           &resolved, &rev.weightValuesVersion);
-                    rev.weightValuesHeld = shared;
-                    rev.weightValuesPacketRevision = packetRevision;
-                    rev.weightValuesCount = logicalCount;
-                }
-                rev.weightFieldPublished = true;
-            }
-        }
+        PublishRevisionWeights(*B, &rev, chainAt(chain).lastBase.size(), true);
     }
     void finishRevisionStaticHead(size_t, size_t)
     {
@@ -6290,9 +6294,11 @@ RigExecBakedPublishGeometry(RigExecBakedProgramImpl *program,
     // steps name one key, and the later step's value stands as it did.
     for (const uint32_t index : B.epilogue.geometrySteps) {
         const RigExecBakedStep &step = B.steps[index];
-        if (step.kind == RigExecBakedStepKind::RevisionStatic) {
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(B, step);
+        if (identity.kind == RigExecBakedStepKind::RevisionStatic) {
             const auto &[chainIndex, revisionIndex] =
-                B.revisionIndex[size_t(step.object)];
+                B.revisionIndex[size_t(identity.object)];
             const RigExecBakedProgramImpl::GeomChain &chain =
                 B.chains[size_t(chainIndex)];
             const RigExecBakedProgramImpl::GeomRevision &revision =
@@ -6524,10 +6530,27 @@ RigExecBakedHasExternalInputRoute(const RigExecBakedProgramImpl &B,
     return false;
 }
 
-void
-RigExecBakedProgramTesting::SetOpMatrices(bool on)
+bool
+RigExecBakedStoreRevisionEnabled(RigExecBakedProgramImpl &B, uint32_t id,
+                                 bool enabled, std::string *error)
 {
-    gOpMatrices = on;
+    if (id >= B.revisionIndex.size()) {
+        if (error)
+            *error = "op nodes: revision " + std::to_string(id) +
+                     " is not in the program";
+        return false;
+    }
+    const auto &[chain, r] = B.revisionIndex[id];
+    RigExecBakedProgramImpl::GeomChain &c = B.chains[size_t(chain)];
+    RigExecBakedProgramImpl::GeomRevision &revision = c.revisions[size_t(r)];
+    revision.parameters.enabled = enabled;
+    revision.status =
+        RigExecStatusForParameters(revision.parameters, std::string());
+    revision.weightFieldPublished = false;
+    if (BuildCurrentPhasePacket(B, &revision) && !c.groupBounds.empty())
+        PublishRevisionWeights(B, &revision, size_t(c.groupBounds.back()),
+                               false);
+    return true;
 }
 
 namespace {
@@ -6549,7 +6572,8 @@ RigExecBakedPointsBinding::~RigExecBakedPointsBinding()
 
 bool
 RigExecBakedRevisionLeaf(const RigExecBakedProgramImpl &B, uint32_t id,
-                         bool *enabled, float *weight, std::string *error)
+                         bool *enabled, float *weight, bool *radial,
+                         std::string *error)
 {
     if (id >= B.revisionIndex.size()) {
         if (error)
@@ -6570,6 +6594,12 @@ RigExecBakedRevisionLeaf(const RigExecBakedProgramImpl &B, uint32_t id,
         w >= 0 ? RigExecBakedResolvePathLeaf(B, leaves, size_t(w)) : VtValue();
     *enabled = a.IsHolding<bool>() ? a.UncheckedGet<bool>() : true;
     *weight = b.IsHolding<float>() ? b.UncheckedGet<float>() : 1.0f;
+    const int blend = leaves.decl.Role(Role::WeightBlend);
+    const VtValue c =
+        blend >= 0 ? RigExecBakedResolvePathLeaf(B, leaves, size_t(blend))
+                   : VtValue();
+    *radial =
+        c.IsHolding<TfToken>() && c.UncheckedGet<TfToken>() == _tokens->radial;
     return true;
 }
 

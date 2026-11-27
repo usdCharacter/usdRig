@@ -5,6 +5,8 @@
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
+#include "rigExecRigTypes/rigTypes.h"
+#include "rigExecRigTypes/rigTypes.h"
 
 #include <algorithm>
 #include <cmath>
@@ -25,6 +27,9 @@ RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformWeights)
 RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformOut)
 RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformEnabled)
 RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformDefaultWeight)
+RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformPacket)
+RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformRadial)
+RIGEXEC_DEFINE_PORT_HANDLE(MatrixDeformWritten)
 
 RIGEXEC_DEFINE_OP_HANDLE(MoverTransform)
 
@@ -47,6 +52,76 @@ enum MatrixDeformField : uint32_t { kRadial };
 
 using Math = rigExec::eval::MatrixKernelMath<Vec3f, Vec3d, Mat4d>;
 using Indices = rigExecStd::RigExecArray<int32_t>;
+using rigExecRig::PointWeights;
+using rigExecRig::WeightRepresentation;
+
+/// A weight packet as the matrix kernel's predicates read it.
+rigExec::eval::EnvelopePacketView
+PacketView(const PointWeights &packet)
+{
+    rigExec::eval::EnvelopePacketView view;
+    const auto representation = WeightRepresentation(packet.representation);
+    view.valid = packet.valid != 0;
+    view.representation = representation == WeightRepresentation::Constant
+                              ? rigExec::eval::kWeightConstant
+                          : representation == WeightRepresentation::Dense
+                              ? rigExec::eval::kWeightDense
+                              : rigExec::eval::kWeightSparse;
+    view.rangePolicy = rigExecRig::WeightRange(packet.rangePolicy) ==
+                               rigExecRig::WeightRange::Clamp
+                           ? rigExec::eval::kWeightPolicyClamp
+                           : rigExec::eval::kWeightPolicyStrict;
+    view.defaultWeight = packet.defaultWeight;
+    view.values = packet.values.Data();
+    view.valueCount = packet.values.Size();
+    view.indices = packet.indices.Data();
+    view.indexCount = packet.indices.Size();
+    return view;
+}
+
+/// \p packet's weight at each of \p count points into \p out, validated as
+/// a weight packet's ResolveAll validates it; false, \p out untouched, when
+/// it does not resolve.
+bool
+ResolvePacket(const PointWeights &packet, size_t count, std::vector<float> *out)
+{
+    const auto usable = [](float v) {
+        return std::isfinite(v) && v >= 0.0f && v <= 1.0f;
+    };
+    const auto representation = WeightRepresentation(packet.representation);
+    const float *values = packet.values.Data();
+    const int32_t *indices = packet.indices.Data();
+    const size_t valueCount = packet.values.Size();
+    const size_t indexCount = packet.indices.Size();
+    if (!packet.valid)
+        return false;
+    if (representation == WeightRepresentation::Constant) {
+        if (valueCount || indexCount || !usable(packet.defaultWeight))
+            return false;
+        out->assign(count, packet.defaultWeight);
+        return true;
+    }
+    if (representation == WeightRepresentation::Dense) {
+        if (indexCount || valueCount != count)
+            return false;
+        for (size_t i = 0; i < count; ++i)
+            if (!usable(values[i]))
+                return false;
+        out->assign(values, values + count);
+        return true;
+    }
+    if (indexCount != valueCount ||
+        (indexCount < count && !usable(packet.defaultWeight)))
+        return false;
+    for (size_t i = 0; i < indexCount; ++i)
+        if (indices[i] < 0 || size_t(indices[i]) >= count ||
+            (i > 0 && indices[i] <= indices[i - 1]) || !usable(values[i]))
+            return false;
+    out->assign(count, packet.defaultWeight);
+    for (size_t i = 0; i < indexCount; ++i)
+        (*out)[size_t(indices[i])] = values[i];
+    return true;
+}
 
 /// The node's weights as the matrix kernel reads them; false, with \p error,
 /// for weights it cannot take. Checks only when \p check.
@@ -96,11 +171,12 @@ ViewOf(const rigExec::RigExecOpIo &io, bool check,
 }
 
 /// Weights validate could not see, checked each frame; this frame's pass
-/// through and default weight at every point, written by prepare.
+/// through and the weight at every point when the kernel reads them
+/// densely, written by prepare.
 struct MatrixState {
     bool checkEachFrame = true;
     bool pass = false;
-    std::vector<float> constant;
+    std::vector<float> dense;
 };
 
 bool
@@ -117,6 +193,11 @@ Validate(const rigExec::RigExecOpCheck &check, std::string *error)
         (sparse || Fed(check, MatrixDeformEnvelope())))
         return Fail(error, "MatrixDeform",
                     "a default weight or an envelope, not both");
+    if (Fed(check, MatrixDeformPacket()) &&
+        (sparse || Fed(check, MatrixDeformEnvelope()) ||
+         Fed(check, MatrixDeformDefaultWeight())))
+        return Fail(error, "MatrixDeform",
+                    "a weight packet or another envelope, not both");
     const size_t points = CheckElements(check, MatrixDeformPoints());
     if (sparse && !SameCount(CheckElements(check, MatrixDeformWeightIndices()),
                              CheckElements(check, MatrixDeformWeights())))
@@ -176,13 +257,47 @@ Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
         return false;
     const uint8_t *enabled = In<uint8_t>(io, MatrixDeformEnabled());
     const float *weight = In<float>(io, MatrixDeformDefaultWeight());
+    const PointWeights *packet = In<PointWeights>(io, MatrixDeformPacket());
     state.pass = enabled && !*enabled;
-    state.constant.clear();
+    state.dense.clear();
     if (weight && !state.pass && *weight != 1.0f) {
         if (!std::isfinite(*weight) || *weight < 0.0f || *weight > 1.0f)
             return Fail(error, "MatrixDeform",
                         "a default weight is not finite or outside [0, 1]");
-        state.constant.assign(points.Size(), *weight);
+        state.dense.assign(points.Size(), *weight);
+    }
+    const Indices *written = In<Indices>(io, MatrixDeformWritten());
+    if (written && !state.pass) {
+        rigExec::eval::EnvelopePacketView view;
+        if (packet)
+            view = PacketView(*packet);
+        else
+            ViewOf(io, false, &view, nullptr);
+        bool holds = rigExec::eval::EnvelopeIsSparseWalk(view);
+        size_t at = 0;
+        for (size_t e = 0; holds && e < view.indexCount; ++e) {
+            const int32_t index = view.indices[e];
+            while (at + 1 < written->Size() && (*written)[at + 1] <= index)
+                at += 2;
+            holds = at + 1 < written->Size() && (*written)[at] <= index;
+        }
+        if (!holds)
+            return Fail(error, "MatrixDeform",
+                        "the weights reach a vertex group the revision does "
+                        "not write");
+    }
+    if (packet && !state.pass) {
+        const rigExec::eval::EnvelopePacketView view = PacketView(*packet);
+        if (rigExec::eval::EnvelopeIsSparseWalk(view)) {
+            if (!rigExec::eval::SparseEnvelopeIsUsable(view, points.Size()))
+                return Fail(error, "MatrixDeform",
+                            "the weight packet's sparse weights do not fit "
+                            "the points");
+        } else if (!rigExec::eval::EnvelopeIsFullStrength(view) &&
+                   !ResolvePacket(*packet, points.Size(), &state.dense)) {
+            return Fail(error, "MatrixDeform",
+                        "the weight packet does not resolve over the points");
+        }
     }
     rigExec::eval::EnvelopePacketView view;
     return !state.checkEachFrame || ViewOf(io, true, &view, error);
@@ -197,23 +312,36 @@ Deform(const rigExec::RigExecOpBatch &batch, size_t k,
     const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const auto &state =
         *static_cast<const MatrixState *>(rigExec::RigExecBatchState(batch, k));
+    const PointWeights *packet = In<PointWeights>(io, MatrixDeformPacket());
     rigExec::eval::EnvelopePacketView view;
-    ViewOf(io, false, &view, nullptr);
+    if (packet)
+        view = PacketView(*packet);
+    else
+        ViewOf(io, false, &view, nullptr);
     const Vec3f *in = RangeIn<Vec3f>(io, range, MatrixDeformPoints());
     const Mat4d &transform = *In<Mat4d>(io, MatrixDeformTransform());
     const float *envelope = RangeIn<float>(io, range, MatrixDeformEnvelope());
+    const uint8_t *blend = In<uint8_t>(io, MatrixDeformRadial());
     const bool radial =
-        rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kRadial)[k] != 0;
+        blend
+            ? *blend != 0
+            : rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kRadial)[k] != 0;
     Vec3f *out = RangeOut<Vec3f>(io, range, MatrixDeformOut());
     const size_t count = range.end - range.begin;
     if (state.pass) {
         std::copy(in, in + count, out);
         return true;
     }
-    if (!state.constant.empty())
-        envelope = state.constant.data() + range.begin;
+    if (!state.dense.empty())
+        envelope = state.dense.data() + range.begin;
     if (rigExec::eval::EnvelopeIsSparseWalk(view)) {
         std::copy(in, in + count, out);
+        auto *memo =
+            static_cast<rigExec::RigExecSparseWalkMemo<Vec3f> *>(range.scratch);
+        if (memo) {
+            memo->computed = 0;
+            memo->reused = 0;
+        }
         if (transform == Math::Identity())
             return true;
         const auto *first = view.indices;
@@ -222,13 +350,14 @@ Deform(const rigExec::RigExecOpBatch &batch, size_t k,
             size_t(std::lower_bound(first, last, int(range.begin)) - first);
         const size_t to =
             size_t(std::lower_bound(first, last, int(range.end)) - first);
-        rigExec::eval::ApplyMatrixSparseWalk<Math>(radial, transform, view,
-                                                   from, to, out, range.begin);
+        if (from != to)
+            rigExec::eval::ApplyMatrixSparseWalk<Math>(
+                radial, transform, view, from, to, out, range.begin, memo);
         return true;
     }
     rigExec::eval::ApplyMatrixKernelRange<Math>(
         radial, transform,
-        rigExec::eval::EnvelopeIsFullStrength(view) && state.constant.empty()
+        rigExec::eval::EnvelopeIsFullStrength(view) && state.dense.empty()
             ? nullptr
             : envelope,
         0, count, in, out, io.useSimd);
@@ -324,6 +453,12 @@ const rigExec::RigExecPortDesc kPorts[] = {
      kRigExecPortInput | kRigExecPortOptional, "enabled"},
     {&MatrixDeformDefaultWeight(), &rigExecStd::FloatType(),
      kRigExecPortInput | kRigExecPortOptional, "defaultWeight"},
+    {&MatrixDeformPacket(), &rigExecRig::PointWeightsType(),
+     kRigExecPortInput | kRigExecPortOptional, "packet"},
+    {&MatrixDeformRadial(), &rigExecStd::BoolType(),
+     kRigExecPortInput | kRigExecPortOptional, "radial"},
+    {&MatrixDeformWritten(), &rigExecStd::IntArray(),
+     kRigExecPortInput | kRigExecPortOptional, "written"},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {
@@ -336,6 +471,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.range.prepare = &Prepare;
     d.range.run = &Deform;
     d.state = StateOf<MatrixState>();
+    d.range.scratch = StateOf<rigExec::RigExecSparseWalkMemo<Vec3f>>();
     d.capabilities = rigExec::kRigExecOpBakeable |
                      rigExec::kRigExecOpFreezable | rigExec::kRigExecOpRanged |
                      rigExec::kRigExecOpGate | rigExec::kRigExecOpFromLeaves;

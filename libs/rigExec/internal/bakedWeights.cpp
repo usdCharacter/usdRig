@@ -911,7 +911,9 @@ ConstantCombine(const RigExecBakedProgramImpl &B,
 bool
 RigExecBakedAddWeightPacketOps(const RigExecBakedProgramImpl &B,
                                RigExecRigDescBuilder *builder,
-                               eval::OpStepLayout *layout, std::string *error)
+                               eval::OpStepLayout *layout,
+                               std::vector<RigExecBakedOpFeed> *packets,
+                               std::string *error)
 {
     using R = eval::OpWeightRead;
     std::vector<RigExecNodeId> nodeOf(B.weightObjects.size(),
@@ -1085,6 +1087,10 @@ RigExecBakedAddWeightPacketOps(const RigExecBakedProgramImpl &B,
         builder->Connect(nodeOf[feed.from], *outOf[feed.from], feed.node,
                          *feed.port);
     }
+    packets->assign(B.weightObjects.size(), RigExecBakedOpFeed());
+    for (size_t i = 0; i < B.weightObjects.size(); ++i)
+        if (outOf[i])
+            (*packets)[i] = {nodeOf[i], outOf[i]};
     return true;
 }
 

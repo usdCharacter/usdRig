@@ -97,6 +97,8 @@ enum class OpRevisionRead : uint8_t {
     Enabled = 0,
     /// Float: inputs:defaultWeight, 1 when the mover reads none.
     DefaultWeight = 1,
+    /// Bool: whether rigExec:weightBlend is radial.
+    Radial = 2,
 };
 
 /// Whether a lookup of \p source is one the host answers through
@@ -196,6 +198,9 @@ enum class OpOutputTarget : uint8_t {
     ChainGroup = 4,
     /// The weight field `object`'s weights.
     WeightField = 5,
+    /// Bool: whether revision `object` is enabled this frame, stored from
+    /// the RevisionLeaf Enabled input of the node that stores its groups.
+    RevisionEnabled = 6,
     /// Mat4d: the final and the base matrix of slot `object`.
     ProviderFinalMatrix = 20,
     ProviderBaseMatrix = 21,
@@ -245,7 +250,8 @@ constexpr bool
 OpOutputTargetRuns(uint8_t target, bool chainMember)
 {
     return chainMember
-               ? target == uint8_t(OpOutputTarget::ChainGroup)
+               ? target == uint8_t(OpOutputTarget::ChainGroup) ||
+                     target == uint8_t(OpOutputTarget::RevisionEnabled)
                : target == uint8_t(OpOutputTarget::PropertyVersion) ||
                      target == uint8_t(OpOutputTarget::VolumePlacement) ||
                      target == uint8_t(OpOutputTarget::VolumePlacementBase) ||
@@ -688,10 +694,13 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
                                            " to store");
         const bool member =
             layout->chainOf[output.node] != kRigExecInvalidIndex;
+        const bool chainGroup =
+            output.target == uint8_t(OpOutputTarget::ChainGroup);
         if (!OpOutputTargetRuns(output.target, member) ||
             (member &&
-             !(layout->nodes[output.node].op->ports[output.port].flags &
-               kRigExecPortOutput)))
+             chainGroup !=
+                 ((layout->nodes[output.node].op->ports[output.port].flags &
+                   kRigExecPortOutput) != 0)))
             return OpLayoutFail(
                 error, "node " + std::to_string(output.node) + " stores port " +
                            std::to_string(output.port) + " in output target " +
@@ -882,13 +891,19 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
     case OpLookupSource::WeightFieldInputs:
         return host.LookUpWeightField(index, lookup, type, value, error);
     case OpLookupSource::RevisionLeaf: {
-        bool enabled = true;
+        bool enabled = true, radial = false;
         float weight = 1.0f;
-        if (!host.RevisionLeaf(lookup.object, &enabled, &weight, error))
+        if (!host.RevisionLeaf(lookup.object, &enabled, &weight, &radial,
+                               error))
             return false;
-        if (lookup.read == uint8_t(OpRevisionRead::Enabled) &&
+        if ((lookup.read == uint8_t(OpRevisionRead::Enabled) ||
+             lookup.read == uint8_t(OpRevisionRead::Radial)) &&
             type.triviallyCopyable && type.size == 1) {
-            const uint8_t flag = enabled ? 1 : 0;
+            const uint8_t flag =
+                (lookup.read == uint8_t(OpRevisionRead::Enabled) ? enabled
+                                                                 : radial)
+                    ? 1
+                    : 0;
             std::memcpy(value, &flag, 1);
             return true;
         }
@@ -944,7 +959,8 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
 
 /// Stores \p value through the \p host method of \p output's target
 /// family: StorePropertyVersion, StoreVolumePlacement, StoreWeightPacket,
-/// StoreWeightField or StoreCommit(output, value, error).
+/// StoreWeightField, StoreCommit or StoreRevisionEnabled(output, value,
+/// error).
 template <class Host>
 bool
 OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
@@ -966,6 +982,8 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
     case OpOutputTarget::CommitBaseDescendants:
     case OpOutputTarget::CommitPresent:
         return host.StoreCommit(output, value, error);
+    case OpOutputTarget::RevisionEnabled:
+        return host.StoreRevisionEnabled(output, value, error);
     case OpOutputTarget::ChainGroup:
         break;
     case OpOutputTarget::ProviderFinalMatrix:
@@ -1183,6 +1201,8 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
         const RigExecNodeDesc &d = layout.nodes[desc.members[m]];
         for (const uint32_t o : layout.hostOutputsOf[desc.members[m]]) {
             const OpHostOutput &output = layout.hostOutputs[o];
+            if (output.target != uint8_t(OpOutputTarget::ChainGroup))
+                continue;
             RigExecValueRef ref;
             ref.value = d.values[output.port];
             for (uint32_t h = desc.whole[m] ? 0 : g;

@@ -86,9 +86,10 @@ in usdRig history.
 | 40 | 2026-11-25 | weight fields as op nodes reading weight objects through lookups |
 | 41 | 2026-11-26 | provider and frame-record matrices as op nodes reading rest frames and commit record gates through lookups |
 | 42 | 2026-11-26 | full-strength Range matrices as MoverTransform and MatrixDeform op nodes; op chains carry their members and written groups |
-| 43 | 2026-11-26 | pose commits as op nodes reading commit candidates and version lists through lookups; **oldest readable from here on** |
+| 43 | 2026-11-26 | pose commits as op nodes reading commit candidates and version lists through lookups |
+| 44 | 2026-11-26 | every Range matrix as op nodes, its weight packet read from the packet's node and its enabled state stored by its MatrixDeform; **oldest readable from here on** |
 
-Versions 6 and 11–16 never appeared on `main`. Files written before version 43
+Versions 6 and 11–16 never appeared on `main`. Files written before version 44
 are outside every current reader: re-export them.
 
 ## Mover plugin API history

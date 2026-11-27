@@ -1890,8 +1890,8 @@ EpilogueLists(const RigExecBakedProgramImpl &B, std::vector<char> *aliveSolver,
         const auto &step = B.steps[i];
         if (step.kind == K::Solve)
             (*aliveSolver)[size_t(step.object)] = 1;
-        if (step.kind == K::RevisionStatic || step.kind == K::ChainStatus ||
-            step.kind == K::Derived)
+        if (RigExecBakedIdentityOf(B, step).kind == K::RevisionStatic ||
+            step.kind == K::ChainStatus || step.kind == K::Derived)
             geometrySteps->push_back(i);
     }
 }

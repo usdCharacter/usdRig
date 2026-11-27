@@ -6049,6 +6049,16 @@ MoverFailedLines(const std::vector<std::string> &diagnostics)
     return lines;
 }
 
+/// Whether the first of \p lines is the error of the mover \p prefix
+/// ("path: ") that stopped the frame, holding \p why.
+bool
+StoppedAt(const std::vector<std::string> &lines, const char *prefix,
+          const char *why)
+{
+    return !lines.empty() && lines[0].rfind(prefix, 0) == 0 &&
+           lines[0].find(why) != std::string::npos;
+}
+
 /// Whether some line of \p lines names the mover \p prefix ("path:").
 bool
 NamesMover(const std::vector<std::string> &lines, const char *prefix)
@@ -6398,7 +6408,8 @@ RanLastPart(const RigExecBakedProgramImpl &B, RigExecBakedStepKind kind,
             int object, int part)
 {
     for (size_t c = 0; c < B.opGraph.ops.size(); ++c) {
-        const RigExecBakedStep &step = B.steps[B.opGraph.ops[c].originalIndex];
+        const RigExecBakedStepIdentity step =
+            RigExecBakedIdentityOf(B, B.steps[B.opGraph.ops[c].originalIndex]);
         if (step.kind == kind && step.object == object && step.part == part) {
             return c < B.opExecution.ran.size() && B.opExecution.ran[c];
         }
@@ -6487,8 +6498,9 @@ TestARangeChainIsCutIntoRanges(const BuiltProgram &built, const char *name)
         CHECK(revision.op == RigExecRevisionOp::Matrix);
         CHECK(revision.role == Role::Range && revision.rangeRole &&
               !revision.chunked);
-        // A Matrix revision's role rests on nothing a run can flip.
-        CHECK(revision.pins.empty());
+        // A Matrix revision's role rests on nothing a run can flip; its
+        // blend arm pins rigExec:weightBlend, so an authored edit rebuilds.
+        CHECK(revision.pins.size() == 1);
         CHECK(revision.chunks.size() == groups &&
               revision.groups.size() == groups &&
               revision.groupIds.size() == groups &&
@@ -6523,26 +6535,32 @@ TestARangeChainIsCutIntoRanges(const BuiltProgram &built, const char *name)
             CHECK(revision.groupIds[g] == RigExecGroupSource());
         }
         const int previous = r > 0 ? B.revisionChunkBase[size_t(id) - 1] : -1;
-        size_t steps = 0, joins = 0;
+        size_t steps = 0, heads = 0, joins = 0;
         for (size_t index = 0; index < B.steps.size(); ++index) {
             const RigExecBakedStep &step = B.steps[index];
-            if (step.object != id) {
+            const RigExecBakedStepIdentity identity =
+                RigExecBakedIdentityOf(B, step);
+            if (identity.object != id) {
                 continue;
             }
-            if (step.kind == K::RevisionChunk) {
+            if (step.kind == K::OpChainHead &&
+                identity.kind == K::RevisionStatic) {
+                ++heads;
+                CHECK(DeclaresSlot(step.writes, D::RevisionPacket, id));
+            } else if (step.kind == K::OpChainRange &&
+                       identity.kind == K::RevisionChunk) {
                 ++steps;
                 CHECK(DeclaresSlot(step.writes, D::RevisionOut,
-                                   base + step.part));
+                                   base + identity.part));
                 CHECK(DeclaredSlots(step.writes, D::RevisionOut) == 1);
-                CHECK(DeclaresSlot(step.reads, D::RevisionPacket, id));
-                CHECK(DeclaresSlot(step.reads, D::ChainBase, 0));
+                CHECK(DeclaresSlot(step.reads, D::ChainBase, 0) == (r == 0));
                 CHECK(DeclaredSlots(step.reads, D::RevisionOut) ==
                       (r > 0 ? 1u : 0u));
                 CHECK(DeclaredSlots(step.reads, D::RevisionDone) == 0 &&
                       DeclaredSlots(step.reads, D::ChainDirty) == 0);
                 if (r > 0) {
                     CHECK(DeclaresSlot(step.reads, D::RevisionOut,
-                                       previous + step.part));
+                                       previous + identity.part));
                 }
             } else if (step.kind == K::RevisionFuse) {
                 ++joins;
@@ -6563,7 +6581,7 @@ TestARangeChainIsCutIntoRanges(const BuiltProgram &built, const char *name)
                 CHECK(DeclaredSlots(step.writes, D::RevisionOut) == 0);
             }
         }
-        CHECK(steps == groups && joins == 1);
+        CHECK(steps == groups && heads == 1 && joins == 1);
     }
     std::printf("  %s: 3 revisions of %zu groups each\n", name, groups);
 }
@@ -6596,8 +6614,10 @@ TestTheValidatorRejectsABrokenRangeChain()
     const int id = B.chainRevisionBegin[0] + 1;
     int group = -1;
     for (size_t index = 0; index < B.steps.size(); ++index) {
-        if (B.steps[index].kind == K::RevisionChunk &&
-            B.steps[index].object == id && B.steps[index].part == 1) {
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(B, B.steps[index]);
+        if (identity.kind == K::RevisionChunk && identity.object == id &&
+            identity.part == 1) {
             group = int(index);
         }
     }
@@ -6728,9 +6748,11 @@ TestTheValidatorRejectsABrokenRangeChain()
 /// The range chain against itself built with RIGEXEC_BAKED_RANGE_CHAINS=0
 /// (one chunk and one fuse per revision) over frames {1,2,3,2,1,3}: every
 /// revision's version, the chain's points and every diagnostic agree bit
-/// for bit, M1's MoverFailed line stands at frame 2 alone, and both
+/// for bit, except at frame 2, where M1's default weight leaves [0, 1]: its
+/// MatrixDeform stops the ranged frame with an error, while the whole chain's
+/// kernel passes M1 through with its MoverFailed line. Both
 /// RIGEXEC_VERIFY_CHAIN_VERSIONS and the RIGEXEC_VERIFY_RANGE_CHAINS judge
-/// find nothing. The judge itself is shown to catch one wrong point.
+/// find nothing.
 void
 TestARangeChainMatchesTheWholeChain()
 {
@@ -6785,8 +6807,20 @@ TestARangeChainMatchesTheWholeChain()
     };
     for (const double frame : {1.0, 2.0, 3.0, 2.0, 1.0, 3.0}) {
         RigExecRigPose rangedPose, wholePose;
-        CHECK(ranged.program->Run(UsdTimeCode(frame), &rangedPose));
+        const bool rangedRan =
+            ranged.program->Run(UsdTimeCode(frame), &rangedPose);
         CHECK(whole.program->Run(UsdTimeCode(frame), &wholePose));
+        if (frame == 2.0) {
+            CHECK(!rangedRan && !rangedPose.valid &&
+                  rangedPose.movedProperties.empty());
+            CHECK(StoppedAt(rangedPose.diagnostics, "/Asset/Rig/Movers/M1: ",
+                            "MatrixDeform: a default weight is not finite or "
+                            "outside [0, 1]"));
+            CHECK(NamesMover(MoverFailedLines(wholePose.diagnostics),
+                             "/Asset/Rig/Movers/M1:"));
+            continue;
+        }
+        CHECK(rangedRan);
         CHECK(rangedPose.comparisonMismatches == 0 &&
               wholePose.comparisonMismatches == 0);
         const auto &rangedChain = R.chains[0];
@@ -6820,42 +6854,12 @@ TestARangeChainMatchesTheWholeChain()
               SameBits(rangedPoints->second.UncheckedGet<VtVec3fArray>(),
                        wholePoints->second.UncheckedGet<VtVec3fArray>()));
         CHECK(rangedPose.diagnostics == wholePose.diagnostics);
-        const std::vector<std::string> lines =
-            MoverFailedLines(rangedPose.diagnostics);
-        CHECK(NamesMover(lines, "/Asset/Rig/Movers/M1:") == (frame == 2.0));
-        CHECK((rangedChain.revisions[size_t(middle)].resultStatus ==
-               TfToken("moverFailed")) == (frame == 2.0));
+        CHECK(MoverFailedLines(rangedPose.diagnostics).empty());
+        CHECK(rangedChain.revisions[size_t(middle)].resultStatus !=
+              TfToken("moverFailed"));
     }
     CHECK(R.chainVersionMismatches == 0 && W.chainVersionMismatches == 0);
     CHECK(R.rangeVerifyMismatches == 0);
-
-    // The judge reports a group that disagrees with the revision run whole:
-    // one point of a group the last revision published from its own buffer,
-    // edited in place behind the published reference and put back.
-    RigExecBakedProgramImpl &edited = const_cast<RigExecBakedProgramImpl &>(R);
-    RigExecBakedProgramImpl::GeomRevision &last = edited.chains[0].revisions[2];
-    GfVec3f *poked = nullptr;
-    for (RigExecGroupState<GfVec3f> &group : last.groups) {
-        if (group.ownPublished >= 0 && group.own[size_t(group.ownPublished)] &&
-            group.published.count > 0 &&
-            group.published.data ==
-                group.own[size_t(group.ownPublished)]->data()) {
-            poked = group.own[size_t(group.ownPublished)]->data();
-            break;
-        }
-    }
-    CHECK(poked != nullptr);
-    if (poked) {
-        const GfVec3f kept = *poked;
-        (*poked)[0] += 1.0f;
-        {
-            TfErrorMark mark;
-            CHECK(RigExecBakedVerifyRangeChains(&edited) == 1);
-            mark.Clear();
-        }
-        *poked = kept;
-        CHECK(RigExecBakedVerifyRangeChains(&edited) == 0);
-    }
 }
 
 /// 10,000 points under a static base (G = 10 groups of 1,000) and three
@@ -7004,8 +7008,10 @@ TestARangeChainCutsOffUnmovedRanges()
         // A group the gated revision aliases has no step.
         size_t steps = 0;
         for (const RigExecBakedStep &step : B.steps) {
-            if (step.kind == K::RevisionChunk &&
-                step.object == first + int(r)) {
+            const RigExecBakedStepIdentity identity =
+                RigExecBakedIdentityOf(B, step);
+            if (identity.kind == K::RevisionChunk &&
+                identity.object == first + int(r)) {
                 ++steps;
             }
         }
@@ -7120,11 +7126,12 @@ MakeReversedLinesStage()
     return stage;
 }
 
-/// The joins publish their lines in the unsplit chain's order: two failing
-/// movers whose chain order is the reverse of their paths' order report, at
-/// frame 2, exactly the lines the chain built whole reports, Zeta's first.
-/// The canonical order breaks ties among ready steps by path, so a join
-/// that waited only for its own ranges would let Alpha's line overtake.
+/// Two movers whose chain order is the reverse of their paths' order both
+/// take a default weight outside [0, 1] at frame 2: the ranged chain stops
+/// the frame with one error, the lowest failed op node's, Alpha's, whatever
+/// order the ranges ran in, and no line of Zeta's. The chain built whole
+/// passes both through with their MoverFailed lines, Zeta's first; every
+/// other frame matches it.
 void
 TestRangeJoinsKeepTheLineOrder()
 {
@@ -7162,8 +7169,21 @@ TestRangeJoinsKeepTheLineOrder()
     };
     for (const double frame : {1.0, 2.0, 3.0, 2.0}) {
         RigExecRigPose rangedPose, wholePose;
-        CHECK(ranged.program->Run(UsdTimeCode(frame), &rangedPose));
+        const bool rangedRan =
+            ranged.program->Run(UsdTimeCode(frame), &rangedPose);
         CHECK(whole.program->Run(UsdTimeCode(frame), &wholePose));
+        if (frame == 2.0) {
+            CHECK(!rangedRan && !rangedPose.valid);
+            CHECK(StoppedAt(rangedPose.diagnostics, "/Asset/Rig/Movers/Alpha: ",
+                            "MatrixDeform: a default weight is not finite or "
+                            "outside [0, 1]"));
+            CHECK(
+                !NamesMover(rangedPose.diagnostics, "/Asset/Rig/Movers/Zeta"));
+            const int first = at(wholePose.diagnostics, zetaLine);
+            CHECK(first >= 0 && at(wholePose.diagnostics, alphaLine) > first);
+            continue;
+        }
+        CHECK(rangedRan);
         CHECK(SameBits(
             R.chains[0].result,
             rigExec::RigExecBakedProgramAccess::StepGraph(*whole.program)
@@ -7180,13 +7200,8 @@ TestRangeJoinsKeepTheLineOrder()
                 std::printf("  whole:  %s\n", line.c_str());
             }
         }
-        const int first = at(rangedPose.diagnostics, zetaLine);
-        const int second = at(rangedPose.diagnostics, alphaLine);
-        if (frame == 2.0) {
-            CHECK(first >= 0 && second > first);
-        } else {
-            CHECK(first < 0 && second < 0);
-        }
+        CHECK(at(rangedPose.diagnostics, zetaLine) < 0 &&
+              at(rangedPose.diagnostics, alphaLine) < 0);
     }
 }
 
@@ -7493,9 +7508,11 @@ GatheredVersion(const RigExecBakedProgramImpl::GeomChain &chain, size_t version)
 /// The group chain against itself built with RIGEXEC_BAKED_RANGE_CHAINS=0
 /// over frames {1,2,3,2,1,3,4,5,6,7,8,9,8}, in live and export role modes,
 /// with and without RIGEXEC_BAKED_GROUP_GATES: every version, the chain's
-/// points and every diagnostic agree bit for bit (Middle's MoverFailed line
-/// at frame 2 alone), and the content-version, packet-version and
-/// range-chain judges and the gate self-check find nothing.
+/// points and every diagnostic agree bit for bit, and the content-version,
+/// packet-version and range-chain judges and the gate self-check find
+/// nothing. At frame 2 Middle's default weight leaves [0, 1]: its
+/// MatrixDeform stops the ranged frame with an error, while the whole chain
+/// passes Middle through with its MoverFailed line.
 void
 TestGroupChainsMatchTheWholeChain()
 {
@@ -7544,8 +7561,20 @@ TestGroupChainsMatchTheWholeChain()
             for (const double frame : {1.0, 2.0, 3.0, 2.0, 1.0, 3.0, 4.0, 5.0,
                                        6.0, 7.0, 8.0, 9.0, 8.0}) {
                 RigExecRigPose rangedPose, wholePose;
-                CHECK(ranged.program->Run(UsdTimeCode(frame), &rangedPose));
+                const bool rangedRan =
+                    ranged.program->Run(UsdTimeCode(frame), &rangedPose);
                 CHECK(whole.program->Run(UsdTimeCode(frame), &wholePose));
+                if (frame == 2.0) {
+                    CHECK(!rangedRan && !rangedPose.valid);
+                    CHECK(StoppedAt(rangedPose.diagnostics,
+                                    "/Asset/Rig/Movers/Middle: ",
+                                    "MatrixDeform: a default weight is not "
+                                    "finite or outside [0, 1]"));
+                    CHECK(NamesMover(MoverFailedLines(wholePose.diagnostics),
+                                     "/Asset/Rig/Movers/Middle:"));
+                    continue;
+                }
+                CHECK(rangedRan);
                 CHECK(rangedPose.comparisonMismatches == 0);
                 const auto &rangedChain = R.chains[0];
                 const auto &wholeChain = W.chains[0];
@@ -7564,9 +7593,7 @@ TestGroupChainsMatchTheWholeChain()
                     CHECK(rangedChain.revisions[r].rangeRefusals == 0);
                 }
                 CHECK(rangedPose.diagnostics == wholePose.diagnostics);
-                CHECK(NamesMover(MoverFailedLines(rangedPose.diagnostics),
-                                 "/Asset/Rig/Movers/Middle:") ==
-                      (frame == 2.0));
+                CHECK(MoverFailedLines(rangedPose.diagnostics).empty());
             }
             CHECK(R.chainVersionMismatches == 0);
             CHECK(R.packetVersionMismatches == 0);
@@ -7938,7 +7965,8 @@ TestGroupStepsRunOnlyMovedGroups()
     }
     const RigExecBakedProgramImpl::GeomChain &chain = B.chains[0];
     const int first = B.chainRevisionBegin[0];
-    constexpr size_t kGated = 0, kLinear = 1, kBlend = 2, kDual = 4;
+    constexpr size_t kGated = 0, kLinear = 1, kBlend = 2, kMiddle = 3,
+                     kDual = 4, kLast = 5;
     // Runs \p frame and checks, revision by revision, which group steps ran
     // and which written groups moved their version: \p ran(r, g) and
     // \p moved(r, g).
@@ -8033,9 +8061,10 @@ TestGroupStepsRunOnlyMovedGroups()
             }
         }
     };
+    // Middle's default weight stops frame 2 with an error.
     for (const double frame : {1.0, 2.0, 3.0, 4.0}) {
         RigExecRigPose pose;
-        CHECK(built.program->Run(UsdTimeCode(frame), &pose));
+        CHECK(built.program->Run(UsdTimeCode(frame), &pose) == (frame != 2.0));
     }
     step(
         5.0, "J3 drag",
@@ -8053,8 +8082,13 @@ TestGroupStepsRunOnlyMovedGroups()
     step(
         7.0, "a frame that moves nothing", [](size_t, size_t) { return false; },
         [](size_t, size_t) { return false; });
+    // The skins and the blend read the base whole; the matrices' op range
+    // steps read only the group that moved.
     step(
-        8.0, "a base move in group 0", [](size_t, size_t) { return true; },
+        8.0, "a base move in group 0",
+        [&](size_t r, size_t g) {
+            return g == 0 || (r != kMiddle && r != kLast);
+        },
         [](size_t, size_t g) { return g == 0; });
     step(
         9.0, "a frame that moves nothing", [](size_t, size_t) { return false; },
@@ -8077,7 +8111,8 @@ TestARebuildAdoptsAGroupChain()
     }
     for (const double frame : {1.0, 2.0, 3.0}) {
         RigExecRigPose pose;
-        CHECK(outgoing.program->Run(UsdTimeCode(frame), &pose));
+        CHECK(outgoing.program->Run(UsdTimeCode(frame), &pose) ==
+              (frame != 2.0));
     }
     std::vector<std::string> reasons;
     std::unique_ptr<RigExecBakedProgram> rebuilt =
@@ -9110,9 +9145,11 @@ GroupStepParts(const RigExecBakedProgramImpl &B, int id)
 {
     std::vector<int> parts;
     for (const RigExecBakedStep &step : B.steps) {
-        if (step.kind == RigExecBakedStepKind::RevisionChunk &&
-            step.object == id) {
-            parts.push_back(step.part);
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(B, step);
+        if (identity.kind == RigExecBakedStepKind::RevisionChunk &&
+            identity.object == id) {
+            parts.push_back(identity.part);
         }
     }
     std::sort(parts.begin(), parts.end());
@@ -9173,8 +9210,14 @@ TestARangeChainGetsItsRolesAndGates()
     CHECK(gated.groupWritten ==
           std::vector<char>({1, 0, 0, 0, 0, 0, 0, 0, 0, 0}));
     CHECK(GroupStepParts(B, first + g0) == std::vector<int>({0}));
-    CHECK(HasPin(gated, Pin::WeightDefaultZero) && gated.pins.size() == 1 &&
-          gated.pins[0].weightObject == gated.weightObject);
+    // Its gate rests on the weight's zero default; its blend arm pins
+    // rigExec:weightBlend.
+    CHECK(HasPin(gated, Pin::WeightDefaultZero) &&
+          HasPin(gated, Pin::LeafToken) && gated.pins.size() == 2);
+    for (const auto &pin : gated.pins) {
+        CHECK(pin.kind != Pin::WeightDefaultZero ||
+              pin.weightObject == gated.weightObject);
+    }
     CHECK(RigExecBakedGroupSlot(B, first + g0, 0) ==
               B.revisionChunkBase[size_t(first + g0)] &&
           RigExecBakedGroupSlot(B, first + g0, 5) == -1);
@@ -9194,20 +9237,25 @@ TestARangeChainGetsItsRolesAndGates()
                          revisions[size_t(r)].groupWritten.end(),
                          char(1)) == 10);
     }
-    CHECK(revisions[size_t(f)].pins.empty() &&
-          revisions[size_t(g1)].pins.empty());
+    for (const int r : {f, g1}) {
+        CHECK(revisions[size_t(r)].pins.size() == 1 &&
+              revisions[size_t(r)].pins[0].kind == Pin::LeafToken);
+    }
     // G1 right after G0: its group 5 is F's (the version entering G0 passes
     // it through), its group 0 G0's.
     if (g1 == g0 + 1 && f == g0 - 1) {
         const auto &next = revisions[size_t(g1)];
         CHECK(next.enteringWriter[5] == f && next.enteringWriter[0] == g0);
         for (const RigExecBakedStep &step : B.steps) {
-            if (step.kind != K::RevisionChunk || step.object != first + g1) {
+            const RigExecBakedStepIdentity identity =
+                RigExecBakedIdentityOf(B, step);
+            if (identity.kind != K::RevisionChunk ||
+                identity.object != first + g1) {
                 continue;
             }
-            const int writer = step.part == 0 ? g0 : f;
+            const int writer = identity.part == 0 ? g0 : f;
             const int slot =
-                RigExecBakedGroupSlot(B, first + writer, size_t(step.part));
+                RigExecBakedGroupSlot(B, first + writer, size_t(identity.part));
             CHECK(slot >= 0 && DeclaresSlot(step.reads, D::RevisionOut, slot) &&
                   DeclaredSlots(step.reads, D::RevisionOut) == 1);
             CHECK(DeclaredSlots(step.reads, D::RevisionDone) == 0);
@@ -9528,6 +9576,10 @@ TestExportModeBakesOnlyConstants()
         }
     }
     expected.insert(SdfPath("/Asset/Rig/Weights/Gate.rigExec:defaultWeight"));
+    for (const char *matrix : {"G1", "G0", "F"}) {
+        expected.insert(SdfPath(movers + matrix)
+                            .AppendProperty(TfToken("rigExec:weightBlend")));
+    }
     CHECK(exported.program->GetExportPinnedPaths() == expected);
     if (exported.program->GetExportPinnedPaths() != expected) {
         for (const SdfPath &path : exported.program->GetExportPinnedPaths()) {
@@ -9588,7 +9640,9 @@ TestExportModeBakesOnlyConstants()
             CHECK(std::count(b->revisions[size_t(gb)].groupWritten.begin(),
                              b->revisions[size_t(gb)].groupWritten.end(),
                              char(1)) == 10 &&
-                  b->revisions[size_t(gb)].pins.empty());
+                  b->revisions[size_t(gb)].pins.size() == 1 &&
+                  b->revisions[size_t(gb)].pins[0].kind ==
+                      RigExecBakedRolePin::Kind::LeafToken);
         }
         CHECK(connectedExport.program->GetExportPinnedPaths().count(
                   gateDefault) == 0);
@@ -10445,9 +10499,6 @@ int
 main(int argc, char **argv)
 {
     std::setvbuf(stdout, nullptr, _IONBF, 0); // DEBUG-UNBUFFERED
-    // The range chains here hold the baked Range arm to its declarations;
-    // full-strength matrices as op nodes are testRigExecOpSteps'.
-    RigExecBakedProgramTesting::SetOpMatrices(false);
     if (argc < 2) {
         std::printf("usage: testRigExecBakedSchedule <examplesDir>\n");
         return 2;

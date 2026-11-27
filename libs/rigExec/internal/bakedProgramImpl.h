@@ -870,11 +870,13 @@ struct RigExecBakedGeomRevision {
     /// publishes RevisionDone from the range versions without reading
     /// points.
     bool rangeRole = false;
-    /// A Range matrix at full strength (Build state): op nodes compute it, a
-    /// MoverTransform its transform and a MatrixDeform range chain its
-    /// groups, so it has no fold, static or chunk steps.
+    /// A Range matrix (Build state): op nodes compute it, a MoverTransform
+    /// its transform and a MatrixDeform range chain its groups, so it has no
+    /// fold, static or chunk steps. Its weightBlend is pinned to
+    /// opMatrixRadial, or read each frame when opMatrixRadialLeaf.
     bool opMatrix = false;
     bool opMatrixRadial = false;
+    bool opMatrixRadialLeaf = false;
     /// Filled by RevisionStatic (RigExecPrepareRevisionRanges), read by
     /// the range steps. A memo: never shadowed, restored or compared.
     RigExecRevisionRangeInputs rangeInputs;
@@ -2855,9 +2857,17 @@ bool RigExecBakedStorePropertyVersion(RigExecBakedProgramImpl &B,
 /// no packet: an unknown representation, policy, mode, axis or bounds, no
 /// base for a remapped packet, no placement, target or curve for a volume,
 /// or painted weights that fail whatever the frame.
+/// A node's output another node reads directly.
+struct RigExecBakedOpFeed {
+    RigExecNodeId node = kRigExecInvalidIndex;
+    const RigExecPortHandle *port = nullptr;
+};
+/// ... and in \p packets, per weight object, the output its packet comes
+/// from, or none.
 bool RigExecBakedAddWeightPacketOps(const RigExecBakedProgramImpl &B,
                                     RigExecRigDescBuilder *builder,
                                     eval::OpStepLayout *layout,
+                                    std::vector<RigExecBakedOpFeed> *packets,
                                     std::string *error);
 /// Resolves a WeightArrays lookup: input \p lookup.read of weight object
 /// \p lookup.object, an array lent in place.
@@ -2872,9 +2882,12 @@ bool RigExecBakedLookUpWeight(RigExecBakedProgramImpl &B,
 /// WeightFieldInputs lookups (a volume's in-flight points by a ChainVersion
 /// lookup), the root's weights stored in weightFields. False with the reason
 /// for a field no frame can weigh.
+/// Per weight field it adds, \p fields gets the output its weights come
+/// from.
 bool RigExecBakedAddWeightFieldOps(const RigExecBakedProgramImpl &B,
                                    RigExecRigDescBuilder *builder,
                                    eval::OpStepLayout *layout, bool revisions,
+                                   std::vector<RigExecBakedOpFeed> *fields,
                                    std::string *error);
 /// Resolves a WeightFieldInputs lookup: input \p lookup.read of weight
 /// object \p lookup.part as weight field \p lookup.object reads it.
@@ -4642,10 +4655,6 @@ struct RigExecBakedProgramTesting {
     SetOpInjector(std::function<bool(const RigExecBakedProgramImpl &,
                                      RigExecBakedOpInjection *)>
                       injector);
-    /// Whether builds after this one run full-strength Range matrices as op
-    /// nodes (the default) or on the baked Range arm, which weighted
-    /// matrices still run on. Set it on the thread that builds.
-    static void SetOpMatrices(bool on);
     /// Whether a point binding fills its gather buffer with NaN as it is
     /// destroyed, so a reader that outlives the binding reads NaN on every
     /// platform. Set it on the thread that runs, while none runs.
@@ -4700,10 +4709,15 @@ struct RigExecBakedProgramTesting {
 
 VtValue RigExecBakedResolvePathLeaf(const RigExecBakedProgramImpl &,
                                     const RigExecBakedPathLeaves &, size_t);
-/// Revision \p id's inputs:enabled and inputs:defaultWeight as its packet
-/// assembly reads them this run.
+/// Revision \p id's inputs:enabled, inputs:defaultWeight and whether its
+/// rigExec:weightBlend is radial, as its packet assembly reads them this run.
 bool RigExecBakedRevisionLeaf(const RigExecBakedProgramImpl &B, uint32_t id,
-                              bool *enabled, float *weight, std::string *error);
+                              bool *enabled, float *weight, bool *radial,
+                              std::string *error);
+/// Revision \p id, which op nodes compute, enabled or not this frame: its
+/// status, and its weight display from the packet its op reads.
+bool RigExecBakedStoreRevisionEnabled(RigExecBakedProgramImpl &B, uint32_t id,
+                                      bool enabled, std::string *error);
 bool
 RigExecBakedGeometryReadsLeaf(const RigExecBakedProgramImpl::GeomRevision &,
                               const RigExecBakedStep &, size_t);

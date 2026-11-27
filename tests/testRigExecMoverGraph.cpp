@@ -1690,10 +1690,7 @@ TestRevisionRangesMatchTheWholeKernel()
             rigExec::RigExecWireTakesSparseEnvelope(p.weights);
         const bool fullStrength =
             rigExec::RigExecEnvelopeIsFullStrength(p.weights);
-        if (op == RigExecRevisionOp::Matrix) {
-            ok = ok && prepared.matrixWeights.size() ==
-                           (fullStrength || sparseShape ? size_t(0) : count);
-        } else if (op == RigExecRevisionOp::Wire) {
+        if (op == RigExecRevisionOp::Wire) {
             ok = ok && bool(prepared.wireBasis) == sparseShape &&
                  (prepared.wireRestEvaluations != nullptr) ==
                      (cached && !sparseShape);
@@ -1752,37 +1749,12 @@ TestRevisionRangesMatchTheWholeKernel()
         ++compared;
     };
     const auto never = [](size_t, size_t) { return false; };
-    const auto always = [](size_t, size_t) { return true; };
     const auto noIndexIn = [&](size_t b, size_t e) {
         return std::none_of(
             packets.sparseIndices.begin(), packets.sparseIndices.end(),
             [&](int index) { return size_t(index) >= b && size_t(index) < e; });
     };
     using Op = RigExecRevisionOp;
-
-    // Matrix: full strength, a dense envelope and a sparse walk, each with
-    // the linear and the radial blend; the identity's sparse walk writes
-    // nothing at all.
-    for (const bool radial : {false, true}) {
-        for (const bool simd : {false, true}) {
-            auto p = packets.matrix;
-            p.radialWeight = radial;
-            check(radial ? "matrix full strength, radial"
-                         : "matrix full strength",
-                  Op::Matrix, p, simd, false, never, true);
-            p.weights = packets.denseMatrix;
-            check(radial ? "matrix dense, radial" : "matrix dense", Op::Matrix,
-                  p, simd, false, never, true);
-        }
-        auto p = packets.matrix;
-        p.radialWeight = radial;
-        p.weights = packets.sparse;
-        check(radial ? "matrix sparse walk, radial" : "matrix sparse walk",
-              Op::Matrix, p, false, false, noIndexIn, true);
-        p.transform = GfMatrix4d(1.0);
-        check("matrix sparse walk at identity", Op::Matrix, p, false, false,
-              always, false);
-    }
 
     // Wire: the sparse basis (memoized and built per call), the dense walk
     // with and without rest evaluations, and the dense walk blended with a
@@ -1883,7 +1855,6 @@ TestPrepareRevisionRangesDecidesAsTheKernel()
         rigExec::RigExecWireBasisCache wire;
         rigExec::RigExecSurfaceKernelCache<GfVec3f, GfVec3d> surface;
         RigExecRevisionRangeInputs prepared;
-        prepared.matrixWeights.assign(3, 0.5f);
         prepared.wireBasis = std::make_shared<rigExec::RigExecWireBasis>();
         prepared.wireRestEvaluations = &staleTable;
         prepared.latticeBasis = &staleBasis;
@@ -1898,10 +1869,10 @@ TestPrepareRevisionRangesDecidesAsTheKernel()
                   decided == rigExec::RigExecRevisionKernelAcceptance(op, p, n);
         if (decided != RigExecRevisionAcceptance::Applies ||
             !rigExec::RigExecRevisionIsRangeOp(op)) {
-            ok = ok && prepared.matrixWeights.empty() && !prepared.wireBasis &&
-                 !prepared.wireRestEvaluations && !prepared.latticeBasis &&
-                 !prepared.latticeBind && prepared.blendWeights.empty() &&
-                 !prepared.smoothAdjacency && !prepared.smoothAdjacencyOwned;
+            ok = ok && !prepared.wireBasis && !prepared.wireRestEvaluations &&
+                 !prepared.latticeBasis && !prepared.latticeBind &&
+                 prepared.blendWeights.empty() && !prepared.smoothAdjacency &&
+                 !prepared.smoothAdjacencyOwned;
         } else if (op == Op::Smooth) {
             // The adjacency the whole kernel smooths over, or none for a
             // topology it passes through.
@@ -1913,8 +1884,7 @@ TestPrepareRevisionRangesDecidesAsTheKernel()
                  (!valid ||
                   (prepared.smoothAdjacency->Covers(n) &&
                    prepared.smoothAdjacency->neighbors == built.neighbors)) &&
-                 prepared.matrixWeights.empty() && !prepared.latticeBasis &&
-                 prepared.blendWeights.empty();
+                 !prepared.latticeBasis && prepared.blendWeights.empty();
         } else if (op == Op::BlendShape) {
             // The blend kernel's own resolve, or nothing at full strength.
             std::vector<float> resolved;
@@ -1922,7 +1892,7 @@ TestPrepareRevisionRangesDecidesAsTheKernel()
                 ok = ok && p.weights.ResolveAll(n, &resolved);
             }
             ok = ok && prepared.blendWeights == resolved &&
-                 prepared.matrixWeights.empty() && !prepared.latticeBasis;
+                 !prepared.latticeBasis;
         }
         // A packet the kernel refuses is one RigExecRunRevisionKernel fails.
         if (decided == RigExecRevisionAcceptance::Refuses) {
@@ -2259,34 +2229,11 @@ TestRevisionGroupsMatchTheWholeKernel()
         ++compared;
     };
     const auto never = [](size_t, size_t) { return false; };
-    const auto always = [](size_t, size_t) { return true; };
     const auto noIndexIn = [&](size_t b, size_t e) {
         return std::none_of(
             packets.sparseIndices.begin(), packets.sparseIndices.end(),
             [&](int index) { return size_t(index) >= b && size_t(index) < e; });
     };
-
-    // Matrix: full strength (SIMD on and off), a dense envelope and a sparse
-    // walk, each with the linear and the radial blend; the identity's sparse
-    // walk leaves every group untouched.
-    for (const bool radial : {false, true}) {
-        for (const bool simd : {false, true}) {
-            auto p = packets.matrix;
-            p.radialWeight = radial;
-            check("matrix full strength", Op::Matrix, p, simd, false, never,
-                  true);
-            p.weights = packets.denseMatrix;
-            check("matrix dense", Op::Matrix, p, simd, false, never, true);
-        }
-        auto p = packets.matrix;
-        p.radialWeight = radial;
-        p.weights = packets.sparse;
-        check("matrix sparse walk", Op::Matrix, p, false, false, noIndexIn,
-              true);
-        p.transform = GfMatrix4d(1.0);
-        check("matrix sparse walk at identity", Op::Matrix, p, false, false,
-              always, false);
-    }
 
     // Wire: the sparse basis, the dense walk with rest evaluations (cached)
     // and without, and the dense walk blended with a separate envelope.
@@ -2526,111 +2473,6 @@ TestRevisionGroupsMatchTheWholeKernel()
     std::printf("revision groups: %zu revision(s) matched their whole "
                 "kernels\n",
                 compared);
-}
-
-// A group's sparse matrix walk through its memo (pointBlocks.h). Whatever
-// the memo holds, the group's bits are the memo-less kernel's. A walk whose
-// transform and blend arm are the last walk's records its entries; from then
-// on an entry is computed exactly when its entering point or its weight
-// moved a bit, and a point outside the support that moves is forwarded with
-// nothing computed. A walk whose transform or arm moved computes every entry
-// and records none.
-static void
-TestSparseWalkReuseKeepsTheKernelBits()
-{
-    using Op = RigExecRevisionOp;
-    using Memo = rigExec::RigExecSparseWalkMemo<GfVec3f>;
-    const RangeTestPackets packets;
-    const size_t count = RangeTestPackets::count;
-    const rigExec::RigExecRevisionRangeInputs none;
-    // One group cut inside the support; entry 0's point lies outside it.
-    const size_t begin = 1, end = 700;
-    size_t entries = 0;
-    for (const int index : packets.sparseIndices) {
-        entries += size_t(index) >= begin && size_t(index) < end ? 1 : 0;
-    }
-    CHECK(entries + 1 == packets.sparseIndices.size());
-    size_t walks = 0;
-    for (const bool radial : {false, true}) {
-        RigExecMoverParameters p = packets.matrix;
-        p.radialWeight = radial;
-        p.weights = packets.sparse;
-        std::vector<GfVec3f> entering = MakeRangeEnteringPoints(count);
-        // A supported point that is a NaN payload: equal only by its bits.
-        entering[10] = GfVec3f(NanWithPayload(0x51), 1.0f, -2.0f);
-        Memo memo;
-        const auto walk = [&](Memo *through, size_t b, size_t e,
-                              size_t computed, size_t held, const char *what) {
-            std::vector<GfVec3f> plain(e - b), reused(e - b);
-            bool ok = rigExec::RigExecRunRevisionGroup(
-                Op::Matrix, p, none, nullptr, entering.data() + b, plain.data(),
-                count, b, e, nullptr, false);
-            ok = rigExec::RigExecRunRevisionGroup(
-                     Op::Matrix, p, none, nullptr, entering.data() + b,
-                     reused.data(), count, b, e, nullptr, false, nullptr,
-                     through) &&
-                 ok;
-            ok = ok && SameBits(plain, reused) &&
-                 through->computed == computed && through->reused == held;
-            if (!ok) {
-                std::printf("  sparse walk reuse (radial %d): %s computed %u "
-                            "and reused %u, expected %zu and %zu\n",
-                            int(radial), what, through->computed,
-                            through->reused, computed, held);
-            }
-            CHECK(ok);
-            ++walks;
-        };
-        const auto run = [&](size_t computed, const char *what) {
-            walk(&memo, begin, end, computed, entries - computed, what);
-        };
-        run(entries, "the first walk");
-        CHECK(memo.indices.empty());
-        run(entries, "the second walk, which records");
-        CHECK(memo.indices.size() == entries);
-        run(0, "the same inputs");
-        // Index 2 is in the group and outside the support.
-        entering[2] += GfVec3f(1.0f, -2.0f, 0.5f);
-        run(0, "a point outside the support");
-        entering[17] = GfVec3f(0.0f, 1.0f, 2.0f);
-        run(1, "a supported point");
-        entering[17][0] = -0.0f;
-        run(1, "a supported point's signed zero");
-        entering[24][1] += 1.0f;
-        entering[352][2] -= 1.0f;
-        run(2, "two supported points");
-        // Entry 3 names index 17; another finite weight in [0, 1].
-        CHECK(p.weights.indices[3] == 17);
-        p.weights.values[3] = 0.7f;
-        run(1, "a weight");
-        p.transform[3][0] += 0.25;
-        run(entries, "the transform");
-        CHECK(memo.indices.empty());
-        run(entries, "the moved transform, recording");
-        run(0, "the moved transform, recorded");
-        p.radialWeight = !radial;
-        run(entries, "the blend arm");
-        p.radialWeight = radial;
-        run(entries, "the blend arm back");
-        CHECK(memo.indices.empty());
-        run(entries, "the blend arm back, recording");
-        // A copy stands alone: it reuses what its source held, and what it
-        // then computes is not the source's.
-        Memo copy = memo;
-        walk(&copy, begin, end, 0, entries, "a copy");
-        entering[31][0] += 3.0f;
-        walk(&copy, begin, end, 1, entries - 1, "a copy's own point");
-        run(1, "the source after its copy walked");
-        // Another group's walk through the memo forgets this one's.
-        size_t inner = 0;
-        for (const int index : packets.sparseIndices) {
-            inner += index >= 1 && index < 333 ? 1 : 0;
-        }
-        walk(&memo, 1, 333, inner, 0, "another group");
-        run(entries, "the first group after another");
-    }
-    std::printf("sparse walk reuse: %zu walk(s) kept the kernel's bits\n",
-                walks);
 }
 
 // A group gate's kernel half. Under a valid sparse envelope with a zero
@@ -2902,7 +2744,6 @@ main(int argc, char **argv)
     TestRevisionRangesMatchTheWholeKernel();
     TestPrepareRevisionRangesDecidesAsTheKernel();
     TestRevisionGroupsMatchTheWholeKernel();
-    TestSparseWalkReuseKeepsTheKernelBits();
     TestGatedOpsKeepUnlistedPoints();
     TestAssemblerLendsDeltasAndRest();
     TestLongResolvedInputConnections();

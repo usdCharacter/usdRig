@@ -114,4 +114,56 @@ RigExecFrozenMatchesLive(rigExec::RigExecRigEvaluator *evaluator,
     return true;
 }
 
+/// As RigExecFrozenMatchesLive at a time live fails: one warming job fails
+/// in the worker exactly as live did (RigExecFrozenFailedInTheWorker).
+inline bool
+RigExecFrozenFailsAsLive(rigExec::RigExecRigEvaluator *evaluator,
+                         PXR_NS::UsdTimeCode time, std::string *why)
+{
+    using namespace rigExec;
+    std::string error;
+    const RigExecRigPose live = evaluator->Evaluate(time);
+    if (live.valid) {
+        *why = "the live evaluation is valid";
+        return false;
+    }
+    std::shared_ptr<const RigExecFrozenProgram> frozen;
+    if (!RigExecFreezeProgram(*evaluator, &frozen, &error) || !frozen) {
+        *why = "freeze refused: " + error;
+        return false;
+    }
+    RigExecFrameInputs inputs;
+    if (!RigExecSampleFrameInputs(*evaluator, time,
+                                  evaluator->GetInteractiveOverrides(), &inputs,
+                                  &error)) {
+        *why = "sampling refused: " + error;
+        return false;
+    }
+    RigExecCancellationSource cancellation;
+    RigExecFrozenEvalContext context;
+    context.compiledRigSignature = evaluator->GetCompiledRigSignature();
+    context.generation = cancellation.Serial();
+    context.slotCount = evaluator->GetBakedProgram()->GetProviderCount();
+    context.varyingInputCount = inputs.values.size();
+    if (evaluator->GetPublishWeightFields()) {
+        context.flags |= kRigExecFrozenPublishWeightFields;
+    }
+    if (evaluator->GetSolverGuidesEnabled()) {
+        context.flags |= kRigExecFrozenSolverGuidesEnabled;
+    }
+    context.frozen = frozen.get();
+    RigExecFrozenRunnerVerdict verdict;
+    const RigExecRigPose warmed = RigExecEvaluateFrozen(
+        context, inputs, RigExecRecordingStepRunner(&verdict),
+        cancellation.Token(context.generation));
+    if (!RigExecFrozenFailedInTheWorker(warmed, verdict, live)) {
+        *why = "the warming job did not fail as live did";
+        for (const std::string &line : warmed.diagnostics) {
+            *why += "; " + line;
+        }
+        return false;
+    }
+    return true;
+}
+
 #endif

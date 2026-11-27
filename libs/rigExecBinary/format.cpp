@@ -704,14 +704,15 @@ private:
                                 _N(r + 1) + ": runs as no op node");
         if (!_f.opGraph)
             return true;
-        std::vector<uint8_t> stored, packets, fields, groupsStored;
+        std::vector<uint8_t> stored, packets, fields, groupsStored,
+            enabledStored;
         std::vector<uint8_t> spaceStored(
             4 * std::max<size_t>(_slots, _f.pose->frameRecords.size()), 0);
         for (const auto &output : _f.opGraph->hostOutputs) {
             if (!output)
                 return _Bad("op_graph.host_outputs: an entry is missing");
             const bool commit = output->target >= 30 && output->target <= 34;
-            if ((output->target > 5 && output->target < 20) ||
+            if ((output->target > 6 && output->target < 20) ||
                 (output->target > 23 && !commit))
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
@@ -748,6 +749,25 @@ private:
                     return _Bad("op_graph.host_outputs: target " +
                                 _N(output->target) + " of " +
                                 _N(output->object) + " is stored twice");
+                continue;
+            }
+            if (output->target == 6) {
+                bool stores = false;
+                for (const auto &other : _f.opGraph->hostOutputs)
+                    stores = stores || (other && other->target == 4 &&
+                                        other->node == output->node &&
+                                        other->object == output->object);
+                if (!stores)
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores whether revision " +
+                                _N(output->object) +
+                                " is enabled, but not its groups");
+                if (enabledStored.size() <= output->object)
+                    enabledStored.resize(size_t(output->object) + 1, 0);
+                if (enabledStored[size_t(output->object)]++)
+                    return _Bad("op_graph.host_outputs: whether revision " +
+                                _N(output->object) +
+                                " is enabled is stored twice");
                 continue;
             }
             if (output->target == 4) {
@@ -903,7 +923,7 @@ private:
             if (lookup && lookup->source == 10) {
                 if (!_f.geometry ||
                     lookup->object >= _f.geometry->revisionIndex.size() ||
-                    lookup->read > 1)
+                    lookup->read > 2)
                     return _Bad("op_graph.lookups: a revision lookup reads no "
                                 "input of a revision");
                 continue;
@@ -2551,10 +2571,18 @@ private:
             if (!_SpaceOp(i))
                 return false;
             if (const int64_t object = _PacketObjectOf(step); object >= 0) {
-                if (step.writes.size() != 1 ||
-                    step.writes[0].domain() != fb::SlotDomain::WeightPacket ||
-                    step.writes[0].begin() != uint32_t(object) ||
-                    step.writes[0].end() != uint32_t(object) + 1)
+                size_t packets = 0;
+                bool others = false;
+                for (const fb::SlotRange &write : step.writes) {
+                    if (write.domain() == fb::SlotDomain::WeightPacket &&
+                        write.begin() == uint32_t(object) &&
+                        write.end() == uint32_t(object) + 1)
+                        ++packets;
+                    else
+                        others =
+                            others || write.domain() != fb::SlotDomain::OpValue;
+                }
+                if (packets != 1 || others)
                     return _Bad(_StepName(i) +
                                 " writes other than the WeightPacket of "
                                 "weight object " +
@@ -9934,13 +9962,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 43,
+    static_assert(RigExecFormatOldestReadable == 44,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: pose commits as op nodes"
+                ? "re-export: Range matrices as op nodes"
                 : "rebake");
 }
 

@@ -935,8 +935,10 @@ RigExecBakedStoreWeightField(Baked &B, const eval::OpHostOutput &output,
 bool
 RigExecBakedAddWeightFieldOps(const Baked &B, RigExecRigDescBuilder *builder,
                               eval::OpStepLayout *layout, bool revisions,
+                              std::vector<RigExecBakedOpFeed> *fields,
                               std::string *error)
 {
+    fields->resize(B.weightFields.size());
     using R = eval::OpFieldRead;
     using namespace rigExecOps;
     std::vector<RigExecNodeId> nodeOf;
@@ -1128,6 +1130,7 @@ RigExecBakedAddWeightFieldOps(const Baked &B, RigExecRigDescBuilder *builder,
         layout->hostOutputs.push_back(
             {node, out->Index(), uint8_t(eval::OpOutputTarget::WeightField),
              uint32_t(f)});
+        (*fields)[f] = {node, out};
     }
     return true;
 }

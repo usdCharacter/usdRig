@@ -67,10 +67,16 @@ struct BakedOpHost {
                    ? matrices[lookup.object].data()
                    : nullptr;
     }
-    bool RevisionLeaf(uint32_t id, bool *enabled, float *weight,
+    bool RevisionLeaf(uint32_t id, bool *enabled, float *weight, bool *radial,
                       std::string *error) const
     {
-        return RigExecBakedRevisionLeaf(B, id, enabled, weight, error);
+        return RigExecBakedRevisionLeaf(B, id, enabled, weight, radial, error);
+    }
+    bool StoreRevisionEnabled(const eval::OpHostOutput &output,
+                              const void *value, std::string *error) const
+    {
+        return RigExecBakedStoreRevisionEnabled(
+            B, output.object, *static_cast<const uint8_t *>(value) != 0, error);
     }
     const void *ChainGroupPoints(uint32_t chain, uint32_t g) const
     {
@@ -412,7 +418,7 @@ DropRevisionChunks(RigExecBakedProgramImpl *B, std::vector<int> stored)
             step = moved[size_t(step)];
 }
 
-/// Per Range matrix at full strength (GeomRevision::opMatrix): a
+/// Per Range matrix (GeomRevision::opMatrix): a
 /// MoverTransform node fed the matrices FoldInfluences would fold, the
 /// transform the first present of a frame record, the constraint delta and
 /// the provider table, and a MatrixDeform range chain reading the points
@@ -421,6 +427,8 @@ DropRevisionChunks(RigExecBakedProgramImpl *B, std::vector<int> stored)
 bool
 AddMatrixOps(const RigExecBakedProgramImpl &B, RigExecRigDescBuilder *builder,
              eval::OpStepLayout *layout,
+             const std::vector<RigExecBakedOpFeed> &packets,
+             const std::vector<RigExecBakedOpFeed> &fields,
              std::vector<std::pair<RigExecNodeId, int>> *nodeRevision,
              std::string *error)
 {
@@ -512,9 +520,70 @@ AddMatrixOps(const RigExecBakedProgramImpl &B, RigExecRigDescBuilder *builder,
             bind(deform, rigExecOps::MatrixDeformEnabled(),
                  {{uint8_t(L::RevisionLeaf), uint32_t(id), -1,
                    uint8_t(eval::OpRevisionRead::Enabled)}});
-            bind(deform, rigExecOps::MatrixDeformDefaultWeight(),
-                 {{uint8_t(L::RevisionLeaf), uint32_t(id), -1,
-                   uint8_t(eval::OpRevisionRead::DefaultWeight)}});
+            layout->hostOutputs.push_back(
+                {deform, rigExecOps::MatrixDeformEnabled().Index(),
+                 uint8_t(eval::OpOutputTarget::RevisionEnabled), uint32_t(id)});
+            if (revision.opMatrixRadialLeaf)
+                bind(deform, rigExecOps::MatrixDeformRadial(),
+                     {{uint8_t(L::RevisionLeaf), uint32_t(id), -1,
+                       uint8_t(eval::OpRevisionRead::Radial)}});
+            if (std::find(revision.groupWritten.begin(),
+                          revision.groupWritten.end(),
+                          0) != revision.groupWritten.end()) {
+                std::vector<int32_t> written;
+                for (size_t g = 0; g < revision.groupWritten.size() &&
+                                   g + 1 < chain.groupBounds.size();
+                     ++g) {
+                    if (!revision.groupWritten[g])
+                        continue;
+                    if (!written.empty() &&
+                        written.back() == chain.groupBounds[g])
+                        written.back() = chain.groupBounds[g + 1];
+                    else
+                        written.insert(
+                            written.end(),
+                            {chain.groupBounds[g], chain.groupBounds[g + 1]});
+                }
+                builder->BindInput(deform, rigExecOps::MatrixDeformWritten());
+                eval::OpConstant constant;
+                constant.node = deform;
+                constant.port = rigExecOps::MatrixDeformWritten().Index();
+                constant.bytes.resize(written.size() * sizeof(int32_t));
+                if (!written.empty())
+                    std::memcpy(constant.bytes.data(), written.data(),
+                                constant.bytes.size());
+                layout->constants.push_back(std::move(constant));
+            }
+            const auto feed = [](const std::vector<RigExecBakedOpFeed> &feeds,
+                                 int at) {
+                return at >= 0 && size_t(at) < feeds.size() &&
+                               feeds[size_t(at)].port
+                           ? &feeds[size_t(at)]
+                           : nullptr;
+            };
+            if (revision.weightCurrentPhase) {
+                const RigExecBakedOpFeed *field =
+                    feed(fields, revision.weightField);
+                if (!field)
+                    return Fail(error, revision.moverPathText +
+                                           ": its weight field makes no "
+                                           "weights");
+                builder->Connect(field->node, *field->port, deform,
+                                 rigExecOps::MatrixDeformEnvelope());
+            } else if (revision.weightObject >= 0) {
+                const RigExecBakedOpFeed *packet =
+                    feed(packets, revision.weightObject);
+                if (!packet)
+                    return Fail(error, revision.moverPathText +
+                                           ": its weight object makes no "
+                                           "packet");
+                builder->Connect(packet->node, *packet->port, deform,
+                                 rigExecOps::MatrixDeformPacket());
+            } else {
+                bind(deform, rigExecOps::MatrixDeformDefaultWeight(),
+                     {{uint8_t(L::RevisionLeaf), uint32_t(id), -1,
+                       uint8_t(eval::OpRevisionRead::DefaultWeight)}});
+            }
             builder->BindOutput(deform, rigExecOps::MatrixDeformOut());
             layout->hostOutputs.push_back(
                 {deform, rigExecOps::MatrixDeformOut().Index(),
@@ -551,10 +620,12 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
     };
     for (RigExecBakedStep &step : B->steps) {
         const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(*B, step);
-        if (!origin || origin->family != RigExecBakedOpFamily::WeightField)
+        if (!origin || (origin->family != RigExecBakedOpFamily::WeightField &&
+                        origin->family != RigExecBakedOpFamily::WeightPacket))
             continue;
         const uint32_t n = uint32_t(step.object);
-        DeclareNodeReads(*B, op, n, OpReader(), &step.reads);
+        if (origin->family == RigExecBakedOpFamily::WeightField)
+            DeclareNodeReads(*B, op, n, OpReader(), &step.reads);
         outputs(n, [&](uint32_t v) {
             step.writes.push_back(RigExecBakedOne(D::OpValue, int(v)));
         });
@@ -620,6 +691,9 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
                     for (const uint32_t o : layout.hostOutputsOf[n]) {
                         const eval::OpHostOutput &output =
                             layout.hostOutputs[o];
+                        if (output.target !=
+                            uint8_t(eval::OpOutputTarget::ChainGroup))
+                            continue;
                         for (uint32_t h = whole ? 0 : g;
                              h < (whole ? groups : g + 1); ++h) {
                             const int slot = RigExecBakedGroupSlot(
@@ -726,15 +800,20 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
         !RigExecEnsureBuiltinRegistry(error))
         return false;
     RigExecRigDescBuilder builder;
+    std::vector<RigExecBakedOpFeed> packets, fields;
     if (!RigExecBakedAddPropertyOps(B, &builder, &layout, error) ||
-        !RigExecBakedAddWeightFieldOps(B, &builder, &layout, false, error) ||
+        !RigExecBakedAddWeightFieldOps(B, &builder, &layout, false, &fields,
+                                       error) ||
         !AddPoseWalkOps(B, &builder, &layout, error))
         return false;
     RigExecBakedAddVolumePlacementOps(B, &builder, &layout);
     std::vector<std::pair<RigExecNodeId, int>> nodeRevision;
-    if (!RigExecBakedAddWeightPacketOps(B, &builder, &layout, error) ||
-        !RigExecBakedAddWeightFieldOps(B, &builder, &layout, true, error) ||
-        !AddMatrixOps(B, &builder, &layout, &nodeRevision, error))
+    if (!RigExecBakedAddWeightPacketOps(B, &builder, &layout, &packets,
+                                        error) ||
+        !RigExecBakedAddWeightFieldOps(B, &builder, &layout, true, &fields,
+                                       error) ||
+        !AddMatrixOps(B, &builder, &layout, packets, fields, &nodeRevision,
+                      error))
         return false;
     RigExecBakedOpInjection injection;
     injection.builder = &builder;

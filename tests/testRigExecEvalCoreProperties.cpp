@@ -28,6 +28,9 @@
 #include "rigExec/api/bakedProgram.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/api/rigEvaluator.h"
+#include "rigExec/api/runState.h"
+#include "rigExecMath/pointBlocks.h"
+#include "rigExecStdTypes/stdTypes.h"
 #include "rigExecSchema/schemaTokens.h"
 #include "rigExecExampleFixtures.h"
 
@@ -351,10 +354,30 @@ _RunBoth(const _Case &testCase, std::vector<RigExecRigPose> *poses,
                 player.Reader().GetClosedClusterCountForTesting();
             for (const auto &chain : graph.chains) {
                 witness->nativeGroups += chain.baseGroups.size();
-                for (const auto &revision : chain.revisions) {
-                    for (const auto &group : revision.groups) {
-                        witness->sparseEntries +=
-                            group.walk.computed + group.walk.reused;
+            }
+            // A Range matrix walks its sparse weights in its MatrixDeform's
+            // range scratch, one walk memo per group.
+            using Memo = RigExecSparseWalkMemo<rigExecStd::Vec3f>;
+            if (graph.opProgram && graph.opState && graph.opState->run) {
+                const auto &chains = graph.opProgram->chainRevision;
+                for (size_t c = 0; c < chains.size(); ++c) {
+                    RigExecChainDesc desc;
+                    if (chains[c] < 0 ||
+                        !RigExecProgramChainAt(*graph.opProgram->layout.program,
+                                               c, &desc) ||
+                        desc.members.empty()) {
+                        continue;
+                    }
+                    const size_t groups =
+                        graph.opProgram->layout.chains[c].Groups();
+                    for (size_t g = 0; g < groups; ++g) {
+                        const auto *memo = static_cast<const Memo *>(
+                            graph.opState->run->GetRangeScratch(desc.members[0],
+                                                                uint32_t(g)));
+                        if (memo) {
+                            witness->sparseEntries +=
+                                memo->computed + memo->reused;
+                        }
                     }
                 }
             }

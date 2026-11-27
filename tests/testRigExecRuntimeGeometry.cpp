@@ -226,7 +226,8 @@ static void
 _TestStage(const std::string &name, const UsdStageRefPtr &stage,
            const std::vector<double> &frames,
            std::vector<std::vector<RigExecRuntimePoints>> *played = nullptr,
-           bool staticClass = false, bool exportRoles = false)
+           bool staticClass = false, bool exportRoles = false,
+           const std::vector<double> &stops = {})
 {
     const SdfPath rigPath = _FindRig(stage);
     CHECK(!rigPath.IsEmpty() && !frames.empty());
@@ -266,6 +267,25 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
     int compared = 0;
     for (double frame : times) {
         const RigExecRigPose pose = evaluator.Evaluate(frame);
+        // A frame an op fails stops native and runtime with the same error.
+        if (std::find(stops.begin(), stops.end(), frame) != stops.end()) {
+            const bool played = player.Play(frame, &error);
+            const bool same = !pose.valid && !played &&
+                              !pose.diagnostics.empty() &&
+                              pose.diagnostics.front() == error;
+            if (!same) {
+                std::printf("%s frame %g: expected one error, native %s, "
+                            "runtime %s\n",
+                            name.c_str(), frame,
+                            pose.diagnostics.empty()
+                                ? "none"
+                                : pose.diagnostics.front().c_str(),
+                            played ? "played" : error.c_str());
+            }
+            CHECK(same);
+            failed = failed || !same;
+            continue;
+        }
         if (!pose.valid) {
             CHECK(false);
             failed = true;
@@ -1664,7 +1684,7 @@ TestCurrentPhaseThroughCombine()
 static bool
 _RunDiagnostics(const UsdStageRefPtr &stage, const std::vector<double> &frames,
                 std::vector<std::vector<std::string>> *diagnostics,
-                std::string *error)
+                std::string *error, std::vector<std::string> *errors = nullptr)
 {
     std::vector<uint8_t> bytes;
     {
@@ -1678,10 +1698,19 @@ _RunDiagnostics(const UsdStageRefPtr &stage, const std::vector<double> &frames,
         return false;
     }
     for (double frame : frames) {
-        if (!player.Play(frame, error)) {
-            return false;
+        std::string why;
+        if (!player.Play(frame, &why)) {
+            if (!errors) {
+                *error = why;
+                return false;
+            }
+            diagnostics->emplace_back();
+            errors->push_back(why);
+            continue;
         }
         diagnostics->push_back(player->GetDiagnostics());
+        if (errors)
+            errors->emplace_back();
     }
     return true;
 }
@@ -1934,9 +1963,9 @@ _RangeChainStage(size_t count, const _RangeChainOptions &options)
 // ordered diagnostics and operation counts bit for bit -- with
 // RIGEXEC_VERIFY_CHAIN_VERSIONS on, read at Open, which fails any run whose
 // range or join versions and their points' bytes disagree on a change: a
-// revision that passes through at frame 2 and recovers, base points that
-// move in range 0 alone, and a sparse first mover whose other ranges pass
-// through.
+// revision whose default weight stops frame 2 with an error in both, then
+// recovers; base points that move in range 0 alone; and a sparse first
+// mover whose other ranges pass through.
 static void
 TestRangeChainPlays()
 {
@@ -1946,8 +1975,9 @@ TestRangeChainPlays()
     _RangeChainOptions failing;
     failing.failMiddle = true;
     const std::vector<double> frames = {1, 2, 3, 2, 1, 3};
-    _TestStage("range chain passes through and recovers",
-               _RangeChainStage(10000, failing), frames);
+    _TestStage("range chain stops and recovers",
+               _RangeChainStage(10000, failing), frames, nullptr, false, false,
+               {2.0});
     _RangeChainOptions base;
     base.baseMovesInRangeZero = true;
     _TestStage("range chain base moves in range 0",
@@ -1959,20 +1989,28 @@ TestRangeChainPlays()
     TfSetenv("RIGEXEC_VERIFY_CHAIN_VERSIONS", "0");
     _SetEnv("RIGEXEC_VERIFY_CHAIN_VERSIONS", verifyCrt);
 
-    // M1's refusal is reported at frame 2 and nowhere else; every other
-    // mover, the wires and the dense matrix among them, applies.
+    // M1's default weight stops frame 2 with its error and nothing else;
+    // every other mover, the wires and the dense matrix among them, applies.
     std::vector<std::vector<std::string>> diagnostics;
+    std::vector<std::string> errors;
     std::string error;
     CHECK(_RunDiagnostics(_RangeChainStage(10000, failing), frames,
-                          &diagnostics, &error));
+                          &diagnostics, &error, &errors));
     if (!error.empty()) {
         std::printf("range chain diagnostics: %s\n", error.c_str());
     }
-    const std::string failed = "MoverFailed /Asset/Rig/Movers/M1: execution "
-                               "rejected its inputs; revision passed through";
-    CHECK(diagnostics.size() == frames.size());
-    for (size_t i = 0; i < diagnostics.size() && i < frames.size(); ++i) {
-        CHECK(_HasLine(diagnostics[i], failed) == (frames[i] == 2.0));
+    const std::string stop = "/Asset/Rig/Movers/M1: ";
+    const std::string why =
+        "MatrixDeform: a default weight is not finite or outside [0, 1]";
+    CHECK(diagnostics.size() == frames.size() &&
+          errors.size() == frames.size());
+    for (size_t i = 0;
+         i < diagnostics.size() && i < errors.size() && i < frames.size();
+         ++i) {
+        const bool stopped = errors[i].rfind(stop, 0) == 0 &&
+                             errors[i].find(why) != std::string::npos;
+        CHECK(stopped == (frames[i] == 2.0));
+        CHECK(errors[i].empty() == (frames[i] != 2.0));
         for (const std::string &line : diagnostics[i]) {
             const bool other =
                 line.rfind("MoverFailed ", 0) == 0 &&
@@ -2320,9 +2358,9 @@ TestGroupChainPlays()
     const _ScopedEnv verify("RIGEXEC_VERIFY_CHAIN_VERSIONS", "1");
     _GroupChainOptions failing;
     failing.failMiddle = true;
-    _TestStage("group chain passes through and recovers",
-               _GroupChainStage(failing), {1, 2, 3, 2, 1, 3}, nullptr,
-               /*staticClass=*/false, /*exportRoles=*/true);
+    _TestStage("group chain stops and recovers", _GroupChainStage(failing),
+               {1, 2, 3, 2, 1, 3}, nullptr,
+               /*staticClass=*/false, /*exportRoles=*/true, {2.0});
     _GroupChainOptions one;
     one.onlyJ3 = true;
     _TestStage("group chain moves one joint", _GroupChainStage(one),

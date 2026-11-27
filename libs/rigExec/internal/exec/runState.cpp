@@ -241,6 +241,19 @@ RigExecRunState::GetGroupValue(const RigExecValueRef &ref, uint32_t group,
            size_t(cut[group]) * size;
 }
 
+const void *
+RigExecRunState::GetRangeScratch(RigExecNodeId node, uint32_t group) const
+{
+    const RigExecProgram &p = *_data->program;
+    const RigExecRun &run = _data->run;
+    if (node >= p.batchPosition.size())
+        return nullptr;
+    const uint32_t at = p.batchPosition[node];
+    if (at >= run.scratch.size() || group >= run.scratch[at].size())
+        return nullptr;
+    return run.scratch[at][group].Data();
+}
+
 size_t
 RigExecProgramNodeCount(const RigExecProgram &program)
 {

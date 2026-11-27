@@ -959,18 +959,6 @@ RrGeoMatrixKernelAccepts(const RrGeoMoverParameters &p, size_t count,
                                      count, weights);
 }
 
-// The sparse walk's entries [kBegin, kEnd), applied in place to \p data,
-// \p data[index - offset] holding point index, under the shared memo rules.
-void
-RrGeoApplyMatrixSparseWalk(const RrGeoMoverParameters &p, size_t kBegin,
-                           size_t kEnd, RrVec3f *data, size_t offset = 0,
-                           RigExecSparseWalkMemo<RrVec3f> *memo = nullptr)
-{
-    eval::ApplyMatrixSparseWalk<RrGeoEnvelopeMath>(
-        p.radialWeight, p.transform, RrGeoEnvelopeView(p.weights), kBegin, kEnd,
-        data, offset, memo);
-}
-
 bool
 RrGeoApplyMatrixKernel(const RrGeoMoverParameters &p, std::vector<RrVec3f> *pts,
                        bool useSimd)
@@ -2282,9 +2270,6 @@ RrGeoRunRevisionKernel(
 // and read unchanged by its range steps; the pointers alias the revision's
 // own caches, which only RevisionStatic touches for such a revision.
 struct RrGeoRevisionRangeInputs {
-    // Matrix: the dense envelope at the full count; empty for a
-    // full-strength envelope or a sparse walk.
-    std::vector<float> matrixWeights;
     // Wire with a sparse envelope: the cached basis.
     std::shared_ptr<const RrGeoWireBasis> wireBasis;
     // Dense wire: the rest evaluations, or null to evaluate per point.
@@ -2319,8 +2304,6 @@ RrGeoPrepareRevisionRanges(
     RigExecSurfaceKernelCache<RrVec3f, RrVec3d> *surfaceCache,
     RrGeoRevisionRangeInputs *prepared)
 {
-    // Cleared in place: the dense weights keep their capacity.
-    prepared->matrixWeights.clear();
     prepared->wireBasis.reset();
     prepared->wireRestEvaluations = nullptr;
     prepared->latticeBind.reset();
@@ -2375,11 +2358,6 @@ RrGeoPrepareRevisionRanges(
     }
     const RrGeoWeightPacket &w = p.weights;
     switch (op) {
-    case RrGeoOpMatrix:
-        if (!RrGeoEnvelopeIsFullStrength(w) && !RrGeoEnvelopeIsSparseWalk(w)) {
-            w.ResolveAll(count, &prepared->matrixWeights);
-        }
-        break;
     case RrGeoOpWire:
         if (RrGeoWireTakesSparseEnvelope(w)) {
             prepared->wireBasis = RrGeoCachedWireBasis(
@@ -2448,14 +2426,12 @@ RrGeoPrepareRevisionRanges(
 // (\p out never aliases \p in), exactly what RrGeoRunRevisionKernel writes
 // there for the whole array of \p count entering points. Every whole-array
 // input (the packet, \p prepared, \p separateEnvelope, sparse indices, bind
-// tables) is indexed absolutely. Ops: Matrix, Wire, Lattice and a
+// tables) is indexed absolutely. Ops: Wire, Lattice and a
 // target-space BlendShape; a skin runs through EvalCore's group body.
 // \p separateEnvelope is the resolved "apply once" envelope for an op that
 // blends one below full strength, else null. \p untouched, when given,
 // receives whether the result is \p in itself, and then \p out is not
 // written. Reads only \p prepared and the packet, so groups are independent.
-// \p walk, when given, is the group's own memo, which only this call writes:
-// a sparse Matrix walk reuses through it (RrGeoApplyMatrixSparseWalk).
 // \p halo, required for Smooth and DeltaMush, holds the entering points of
 // this group and of every group a point it reads lies in; \p mush, required
 // for DeltaMush, is the group's own plan and scratch.
@@ -2507,28 +2483,6 @@ RrGeoRunRevisionGroup(
                    indices.begin());
     };
     switch (op) {
-    case RrGeoOpMatrix: {
-        if (RrGeoEnvelopeIsFullStrength(w)) {
-            RrGeoApplyMatrixKernelRange(p, nullptr, 0, n, in, out, useSimd);
-            return true;
-        }
-        if (RrGeoEnvelopeIsSparseWalk(w)) {
-            size_t kBegin = 0, kEnd = 0;
-            entries(&kBegin, &kEnd);
-            if (p.transform == RrGeoIdentity() || kBegin == kEnd) {
-                return passThrough();
-            }
-            seed();
-            RrGeoApplyMatrixSparseWalk(p, kBegin, kEnd, out, begin, walk);
-            return true;
-        }
-        if (prepared.matrixWeights.size() != count) {
-            return false;
-        }
-        RrGeoApplyMatrixKernelRange(p, prepared.matrixWeights.data() + begin, 0,
-                                    n, in, out, useSimd);
-        return true;
-    }
     case RrGeoOpWire: {
         if (RrGeoWireTakesSparseEnvelope(w)) {
             if (!prepared.wireBasis) {
@@ -6809,45 +6763,14 @@ struct RrChainState {
     }
     bool applyCurrentPhasePacket(size_t chain, size_t revision)
     {
-        Revision &rev = revisionAt(chain, revision);
-        const auto &wire = wireAt(chain, revision);
-        auto &store = program->store;
-        if (wire.weightCurrentPhase && wire.weightObject >= 0) {
-            const size_t object = size_t(wire.weightObject);
-            if (object >= store.weightPackets.size()) {
-                if (error) {
-                    *error = RrGeoStepLabel(program, step) +
-                             " measures a weight object the program does "
-                             "not hold";
-                }
-                return false;
-            }
-            const auto &field =
-                store.weightFieldResults[size_t(wire.weightField)];
-            if (!field.ok)
-                return false;
-            RrGeoWeightPacket packet;
-            packet.representation = SchemaValueText::dense;
-            packet.rangePolicy = program->TextOrEmpty(
-                program->geometry->weightObjects[object].rangePolicy);
-            const bool same =
-                rev.currentPhaseArrays &&
-                rev.currentPhaseArrays->values.size() == field.values.size() &&
-                (field.values.empty() ||
-                 std::memcmp(rev.currentPhaseArrays->values.data(),
-                             field.values.data(),
-                             field.values.size() * sizeof(float)) == 0);
-            if (!same) {
-                auto arrays = std::make_shared<RrGeoWeightPacket::Arrays>();
-                arrays->values = field.values;
-                rev.currentPhaseArrays = std::move(arrays);
-            }
-            packet.arrays = rev.currentPhaseArrays;
-            packet.defaultWeight = 0.0f;
-            packet.valid = true;
-            rev.currentPhasePacket = std::move(packet);
+        bool missing = false;
+        if (RrGeoBuildCurrentPhasePacket(program, chain, revision, &missing))
+            return true;
+        if (missing && error) {
+            *error = RrGeoStepLabel(program, step) +
+                     " measures a weight object the program does not hold";
         }
-        return true;
+        return false;
     }
     void assembleRevision(size_t chain, size_t revision)
     {
@@ -6882,57 +6805,8 @@ struct RrChainState {
         if (id >= 0 && size_t(id) < store.revisionStaticDirty.size()) {
             store.revisionStaticDirty[size_t(id)] = 1;
         }
-        rev.weightFieldPublished = false;
-        Chain &c = chainAt(chain);
-        if (wire.weightObject >= 0 &&
-            size_t(wire.weightObject) < store.weightPackets.size()) {
-            const RrGeoWeightPacket packet =
-                wire.weightCurrentPhase
-                    ? rev.currentPhasePacket
-                    : RrGeoStorePacket(
-                          program,
-                          store.weightPackets[size_t(wire.weightObject)],
-                          &rev.nativePacketCache);
-            if (packet.valid) {
-                const size_t logicalCount =
-                    wire.weightOperationDomain ? size_t(1) : c.lastBase.size();
-                const bool shared =
-                    !wire.weightCurrentPhase && packet.arrays != nullptr;
-                if (!shared || packet.arrays != rev.weightFieldArrays ||
-                    rev.weightFieldCount != logicalCount) {
-                    std::vector<float> &resolved = rev.resolveScratch;
-                    RrRetainedPrepare(&resolved, logicalCount);
-                    if (!packet.ResolveAll(logicalCount, &resolved)) {
-                        resolved.assign(logicalCount, 0.0f);
-                        for (size_t i = 0; i < logicalCount; ++i) {
-                            const float w = packet.Resolve(i, logicalCount);
-                            resolved[i] = w < 0.0f ? 0.0f : w;
-                        }
-                    }
-                    const std::vector<float> &held = rev.weightField.Read();
-                    if (held.size() != resolved.size() ||
-                        (!held.empty() &&
-                         std::memcmp(held.data(), resolved.data(),
-                                     held.size() * sizeof(float)) != 0)) {
-                        if (id >= 0 &&
-                            size_t(id) < store.revisionPublish.size()) {
-                            store.revisionPublish[size_t(id)]
-                                .weightField.clear();
-                        }
-                        rev.weightField.swap(resolved);
-                        ++rev.weightFieldVersion;
-                    }
-                    rev.weightFieldArrays = shared ? packet.arrays : nullptr;
-                    rev.weightFieldCount = logicalCount;
-                }
-                rev.weightFieldPublished = true;
-            }
-        }
-        if (id >= 0 && size_t(id) < store.revisionPublish.size()) {
-            store.revisionPublish[size_t(id)].weightFieldPublished =
-                rev.weightFieldPublished;
-            store.revisionPublish[size_t(id)].weightField = rev.weightField;
-        }
+        RrGeoPublishRevisionWeights(program, chain, revision, id,
+                                    chainAt(chain).lastBase.size());
     }
     void finishRevisionStaticHead(size_t, size_t)
     {
@@ -8995,7 +8869,7 @@ RrGeoCompareSkinSplitForTesting(std::string *error, double *linearSerialUs,
 
 bool
 RrGeoRevisionLeaf(const RrProgram *program, uint32_t revision, bool *enabled,
-                  float *weight, std::string *error)
+                  float *weight, bool *radial, std::string *error)
 {
     const auto *scratch =
         static_cast<const RrGeometryScratch *>(program->geo.get());
@@ -9015,6 +8889,142 @@ RrGeoRevisionLeaf(const RrProgram *program, uint32_t revision, bool *enabled,
                 .moverPrim == 0 ||
         RrGeoReadBool(scratch, RrGeoAttrRead(rev, RrGeoAttrEnabled), true);
     *weight = RrReadDefaultWeight(program, size_t(chain), size_t(r));
+    *radial = RrGeoReadToken(program, scratch,
+                             RrGeoAttrRead(rev, RrGeoAttrWeightBlend),
+                             "linear") == "radial";
+    return true;
+}
+
+bool
+RrGeoBuildCurrentPhasePacket(RrProgram *program, size_t chain, size_t revision,
+                             bool *missing)
+{
+    auto *scratch = static_cast<RrGeometryScratch *>(program->geo.get());
+    RrGeometryScratch::Revision &rev =
+        scratch->chains[chain].revisions[revision];
+    const RigExecWireRevision &wire =
+        (*program->geometry).chains[chain].revisions[revision];
+    auto &store = program->store;
+    *missing = false;
+    if (wire.weightCurrentPhase && wire.weightObject >= 0) {
+        const size_t object = size_t(wire.weightObject);
+        if (object >= store.weightPackets.size()) {
+            *missing = true;
+            return false;
+        }
+        const auto &field = store.weightFieldResults[size_t(wire.weightField)];
+        if (!field.ok)
+            return false;
+        RrGeoWeightPacket packet;
+        packet.representation = SchemaValueText::dense;
+        packet.rangePolicy = program->TextOrEmpty(
+            program->geometry->weightObjects[object].rangePolicy);
+        const bool same =
+            rev.currentPhaseArrays &&
+            rev.currentPhaseArrays->values.size() == field.values.size() &&
+            (field.values.empty() ||
+             std::memcmp(rev.currentPhaseArrays->values.data(),
+                         field.values.data(),
+                         field.values.size() * sizeof(float)) == 0);
+        if (!same) {
+            auto arrays = std::make_shared<RrGeoWeightPacket::Arrays>();
+            arrays->values = field.values;
+            rev.currentPhaseArrays = std::move(arrays);
+        }
+        packet.arrays = rev.currentPhaseArrays;
+        packet.defaultWeight = 0.0f;
+        packet.valid = true;
+        rev.currentPhasePacket = std::move(packet);
+    }
+    return true;
+}
+
+void
+RrGeoPublishRevisionWeights(RrProgram *program, size_t chain, size_t revision,
+                            int id, size_t count)
+{
+    auto *scratch = static_cast<RrGeometryScratch *>(program->geo.get());
+    RrGeometryScratch::Revision &rev =
+        scratch->chains[chain].revisions[revision];
+    const RigExecWireRevision &wire =
+        (*program->geometry).chains[chain].revisions[revision];
+    auto &store = program->store;
+    rev.weightFieldPublished = false;
+    if (wire.weightObject >= 0 &&
+        size_t(wire.weightObject) < store.weightPackets.size()) {
+        const RrGeoWeightPacket packet =
+            wire.weightCurrentPhase
+                ? rev.currentPhasePacket
+                : RrGeoStorePacket(
+                      program, store.weightPackets[size_t(wire.weightObject)],
+                      &rev.nativePacketCache);
+        if (packet.valid) {
+            const size_t logicalCount =
+                wire.weightOperationDomain ? size_t(1) : count;
+            const bool shared =
+                !wire.weightCurrentPhase && packet.arrays != nullptr;
+            if (!shared || packet.arrays != rev.weightFieldArrays ||
+                rev.weightFieldCount != logicalCount) {
+                std::vector<float> &resolved = rev.resolveScratch;
+                RrRetainedPrepare(&resolved, logicalCount);
+                if (!packet.ResolveAll(logicalCount, &resolved)) {
+                    resolved.assign(logicalCount, 0.0f);
+                    for (size_t i = 0; i < logicalCount; ++i) {
+                        const float w = packet.Resolve(i, logicalCount);
+                        resolved[i] = w < 0.0f ? 0.0f : w;
+                    }
+                }
+                const std::vector<float> &held = rev.weightField.Read();
+                if (held.size() != resolved.size() ||
+                    (!held.empty() &&
+                     std::memcmp(held.data(), resolved.data(),
+                                 held.size() * sizeof(float)) != 0)) {
+                    if (id >= 0 && size_t(id) < store.revisionPublish.size()) {
+                        store.revisionPublish[size_t(id)].weightField.clear();
+                    }
+                    rev.weightField.swap(resolved);
+                    ++rev.weightFieldVersion;
+                }
+                rev.weightFieldArrays = shared ? packet.arrays : nullptr;
+                rev.weightFieldCount = logicalCount;
+            }
+            rev.weightFieldPublished = true;
+        }
+    }
+    if (id >= 0 && size_t(id) < store.revisionPublish.size()) {
+        store.revisionPublish[size_t(id)].weightFieldPublished =
+            rev.weightFieldPublished;
+        store.revisionPublish[size_t(id)].weightField = rev.weightField;
+    }
+}
+
+bool
+RrGeoStoreRevisionEnabled(RrProgram *program, uint32_t revision, bool enabled,
+                          std::string *error)
+{
+    auto *scratch = static_cast<RrGeometryScratch *>(program->geo.get());
+    if (!scratch || !program->geometry ||
+        revision >= program->geometry->revisionIndex.size()) {
+        if (error)
+            *error = "op nodes: revision " + std::to_string(revision) +
+                     " is not in the program";
+        return false;
+    }
+    const auto &[chain, r] = program->geometry->revisionIndex[revision];
+    RrGeometryScratch::Chain &c = scratch->chains[size_t(chain)];
+    RrGeometryScratch::Revision &rev = c.revisions[size_t(r)];
+    rev.parameters.enabled = enabled;
+    rev.status = RrGeoStatusForParameters(rev.parameters, std::string());
+    bool missing = false;
+    if (!RrGeoBuildCurrentPhasePacket(program, size_t(chain), size_t(r),
+                                      &missing) ||
+        c.groupBounds.empty()) {
+        rev.weightFieldPublished = false;
+        program->store.revisionPublish[revision].weightFieldPublished = false;
+        return true;
+    }
+    RrGeoPublishRevisionWeights(program, size_t(chain), size_t(r),
+                                int(revision), size_t(c.groupBounds.back()));
     return true;
 }
 

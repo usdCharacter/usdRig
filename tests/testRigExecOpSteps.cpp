@@ -388,13 +388,15 @@ Reference(const RigExecBakedProgramImpl &B, const RigExecRigPose &pose)
     return result;
 }
 
-/// The (segment, group) op range steps the last run ran.
+/// The (segment, group) range steps of the injected chain the last run
+/// ran; a revision's op range steps stand in for its chunk steps.
 std::set<std::pair<int, int>>
 RanRanges(const RigExecBakedProgramImpl &B, int groups)
 {
     std::set<std::pair<int, int>> ran;
     for (size_t i = 0; i < B.steps.size(); ++i)
-        if (B.steps[i].kind == RigExecBakedStepKind::OpChainRange &&
+        if (RigExecBakedIdentityOf(B, B.steps[i]).kind ==
+                RigExecBakedStepKind::OpChainRange &&
             i < B.opExecution.ran.size() && B.opExecution.ran[i])
             ran.insert({B.steps[i].part / groups, B.steps[i].part % groups});
     return ran;
@@ -454,12 +456,15 @@ TestInjectedChain()
 
     const int groups = int(B.chains[size_t(chain)].groupBounds.size()) - 1;
     CHECK(groups == 10);
+    // The injected nodes' steps; the gated matrix's stand in for its fold,
+    // static and chunk steps.
     size_t nodes = 0, heads = 0, ranges = 0;
     for (const RigExecBakedStep &step : B.steps) {
-        nodes += step.kind == RigExecBakedStepKind::OpNode &&
+        const RigExecBakedStepKind kind = RigExecBakedIdentityOf(B, step).kind;
+        nodes += kind == RigExecBakedStepKind::OpNode &&
                  !RigExecBakedOriginOf(B, step);
-        heads += step.kind == RigExecBakedStepKind::OpChainHead;
-        ranges += step.kind == RigExecBakedStepKind::OpChainRange;
+        heads += kind == RigExecBakedStepKind::OpChainHead;
+        ranges += kind == RigExecBakedStepKind::OpChainRange;
     }
     // MatrixMath alone; one chain; its two segments (the smooth reads a
     // neighbourhood) over every group.
@@ -635,8 +640,13 @@ TestRuntime(const char *writeTo)
             f.manifest->coreTypes[0]->name = "Missing";
         },
         "Missing v1 is in no type library");
-    // The injected nodes come after the rig's weight packet nodes.
+    // The injected nodes come after the rig's own, in the last chain.
     const size_t injected = file->opGraph->nodes.size() - 3;
+    const size_t own = file->opGraph->chains.size() - 1;
+    CHECK(std::find(file->opGraph->chains[own]->members.begin(),
+                    file->opGraph->chains[own]->members.end(),
+                    uint32_t(injected + 1)) !=
+          file->opGraph->chains[own]->members.end());
     damaged(
         [&](fb::RigExecWireFile &f) {
             f.opGraph->nodes[injected]->payload.resize(3);
@@ -671,13 +681,13 @@ TestRuntime(const char *writeTo)
         },
         "is not of its type");
     damaged(
-        [](fb::RigExecWireFile &f) { f.opGraph->chains[0]->bounds[1] = -5; },
+        [&](fb::RigExecWireFile &f) { f.opGraph->chains[own]->bounds[1] = -5; },
         "its bounds are not the vertex groups of point chain");
     // A small file naming many empty groups: refused before Open binds a
     // table of every group per group.
     damaged(
-        [](fb::RigExecWireFile &f) {
-            f.opGraph->chains[0]->bounds.assign(200000, 0);
+        [&](fb::RigExecWireFile &f) {
+            f.opGraph->chains[own]->bounds.assign(200000, 0);
         },
         "its bounds are not the vertex groups of point chain");
     const auto rangeStep = [](fb::RigExecWireFile &f) -> fb::RigExecWireStep & {
@@ -797,7 +807,14 @@ struct GroupHost {
                    ? table[lookup.object].first.data()
                    : nullptr;
     }
-    bool RevisionLeaf(uint32_t, bool *, float *, std::string *error) const
+    bool RevisionLeaf(uint32_t, bool *, float *, bool *,
+                      std::string *error) const
+    {
+        *error = "no revisions";
+        return false;
+    }
+    bool StoreRevisionEnabled(const eval::OpHostOutput &, const void *,
+                              std::string *error)
     {
         *error = "no revisions";
         return false;
@@ -1495,7 +1512,8 @@ TestMatrixOps(const char *writeTo)
     const auto &revisions = B.chains[size_t(chain)].revisions;
     const size_t last = revisions.size() - 1;
     const int id = B.chainRevisionBegin[size_t(chain)] + int(last);
-    CHECK(revisions[last].opMatrix && !revisions[last - 1].opMatrix);
+    // The weighted Gated matrix runs as op nodes too.
+    CHECK(revisions[last].opMatrix && revisions[last - 1].opMatrix);
     const int groups = int(B.chains[size_t(chain)].groupBounds.size()) - 1;
     size_t ranges = 0, folds = 0, own = 0;
     for (const RigExecBakedStep &step : B.steps) {

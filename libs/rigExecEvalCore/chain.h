@@ -56,7 +56,6 @@ enum ChainStepDetail : int32_t {
 };
 
 /// The op ordinals the chain bodies dispatch on, in wire order.
-inline constexpr int kChainOpMatrix = int(fb::RevisionOp::Matrix);
 inline constexpr int kChainOpSkin = int(fb::RevisionOp::Skin);
 inline constexpr int kChainOpBlendShape = int(fb::RevisionOp::BlendShape);
 inline constexpr int kChainOpSmooth = int(fb::RevisionOp::Smooth);

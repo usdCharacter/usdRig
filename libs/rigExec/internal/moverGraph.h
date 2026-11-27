@@ -703,9 +703,6 @@ bool RigExecRevisionIsRangeOp(RigExecRevisionOp op);
 /// its next RevisionStatic body; a copied revision copies the caches, which
 /// share the entries.
 struct RigExecRevisionRangeInputs {
-    /// Matrix: the dense envelope at the full count; empty for a
-    /// full-strength envelope or a sparse walk.
-    std::vector<float> matrixWeights;
     /// Wire with a sparse envelope: RigExecWireBasisCache::Get's basis.
     std::shared_ptr<const RigExecWireBasis> wireBasis;
     /// Dense wire: restEvaluations.Get's table, or null to evaluate per point.

@@ -167,6 +167,10 @@ public:
     /// Valid until the next step writes that value.
     const void *GetGroupValue(const RigExecValueRef &ref, uint32_t group,
                               size_t *count) const;
+    /// The scratch range \p group of ranged node \p node keeps
+    /// (RigExecOpRangeHandling::scratch), as its last run left it; null
+    /// when it keeps none. Valid until that range runs again.
+    const void *GetRangeScratch(RigExecNodeId node, uint32_t group) const;
 
     /// Lets another thread take the run state over: the next call, from
     /// any thread, makes that thread its owner.

@@ -22456,7 +22456,8 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// measured, present when it measured one. 9: the first present of the
   /// `part` lookups from `object`, each a 6, 7 or 8 (Mat4d). 10 (format
   /// 42): input `read` of revision `object` (geometry.revision_index): 0
-  /// inputs:enabled (Bool), 1 inputs:defaultWeight (Float).
+  /// inputs:enabled (Bool), 1 inputs:defaultWeight (Float), 2 (format 44)
+  /// whether rigExec:weightBlend is radial (Bool).
   /// 30 (format 43): the frames of pose commit `object` at version list
   /// `part`: 0 entering, 1 carry, 2 base carry, 3 current descendants, 4
   /// closest, 5 descendant carry, 6 descendant base carry. 31 (format 43):
@@ -22576,7 +22577,9 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// present.
   /// 4 (format 42): a range chain member's output, group by group, into
   /// the vertex groups of revision `object` (geometry.revision_index), the
-  /// groups its OpChain.writes names.
+  /// groups its OpChain.writes names. 6 (format 44): the looked-up
+  /// inputs:enabled of revision `object`, whose groups the same node
+  /// stores.
   uint8_t target() const {
     return GetField<uint8_t>(VT_TARGET, 0);
   }

@@ -667,9 +667,11 @@ _FrozenPublishGeometry(RigExecBakedProgramImpl &B, RigExecRigPose *pose)
                                 &pose->diagnostics);
     for (const uint32_t index : B.epilogue.geometrySteps) {
         const RigExecBakedStep &step = B.steps[index];
-        if (step.kind == RigExecBakedStepKind::RevisionStatic) {
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(B, step);
+        if (identity.kind == RigExecBakedStepKind::RevisionStatic) {
             const auto &[chainIndex, revisionIndex] =
-                B.revisionIndex[size_t(step.object)];
+                B.revisionIndex[size_t(identity.object)];
             const RigExecBakedProgramImpl::GeomChain &chain =
                 B.chains[size_t(chainIndex)];
             const RigExecBakedProgramImpl::GeomRevision &revision =

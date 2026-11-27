@@ -2368,6 +2368,40 @@ TestComputedChainBake()
     }
 }
 
+/// A wire step's own kind, object and part; an op range chain's head and
+/// range steps as the static and group steps of the revision whose groups
+/// its members store (OpHostOutput target 4).
+struct _WireIdentity {
+    fb::StepKind kind;
+    int32_t object, part;
+};
+
+static _WireIdentity
+_IdentityOf(const fb::RigExecWireFile &file, const fb::RigExecWireStep &step)
+{
+    const bool head = step.kind == fb::StepKind::OpChainHead;
+    if ((head || step.kind == fb::StepKind::OpChainRange) && file.opGraph &&
+        step.object >= 0 && size_t(step.object) < file.opGraph->chains.size()) {
+        const fb::RigExecWireOpChain &chain =
+            *file.opGraph->chains[size_t(step.object)];
+        for (const auto &output : file.opGraph->hostOutputs) {
+            if (output->target != uint8_t(eval::OpOutputTarget::ChainGroup) ||
+                std::find(chain.members.begin(), chain.members.end(),
+                          output->node) == chain.members.end()) {
+                continue;
+            }
+            const int32_t groups =
+                chain.bounds.size() > 1 ? int32_t(chain.bounds.size() - 1) : 1;
+            return head ? _WireIdentity{fb::StepKind::RevisionStatic,
+                                        int32_t(output->object), -1}
+                        : _WireIdentity{fb::StepKind::RevisionChunk,
+                                        int32_t(output->object),
+                                        step.part % groups};
+        }
+    }
+    return {step.kind, step.object, step.part};
+}
+
 /// Whether \p step declares a read of slot \p slot of \p domain.
 static bool
 _DeclaresRead(const fb::RigExecWireStep &step, fb::SlotDomain domain,
@@ -2572,15 +2606,19 @@ TestRangeChainBake()
         CHECK(size_t(id) < g.revisionChunkCount.size() &&
               size_t(g.revisionChunkCount[size_t(id)]) == ranges);
         for (const fb::RigExecWireStep &step : file->steps) {
-            if (step.kind == fb::StepKind::RevisionChunk && step.object == id) {
+            const _WireIdentity identity = _IdentityOf(*file, step);
+            if (identity.kind == fb::StepKind::RevisionChunk &&
+                identity.object == id) {
                 ++rangeSteps;
+                // The blend's group steps read the base; a matrix's op range
+                // step reads the group entering it alone.
                 CHECK(_DeclaresRead(step, fb::SlotDomain::ChainBase,
-                                    uint32_t(c)));
+                                    uint32_t(c)) == (r == 0));
                 // Group `part` of the entering version: the previous
                 // revision's group, never its whole version.
                 if (r > 0) {
-                    const uint32_t entering =
-                        uint32_t(chain.revisions[r - 1].chunkBase + step.part);
+                    const uint32_t entering = uint32_t(
+                        chain.revisions[r - 1].chunkBase + identity.part);
                     CHECK(_DeclaresRead(step, fb::SlotDomain::RevisionOut,
                                         entering));
                     CHECK(!_DeclaresRead(step, fb::SlotDomain::RevisionDone,
@@ -2627,8 +2665,10 @@ TestRangeChainBake()
                            uint32_t id, int32_t part) {
         fb::RigExecWireStep *found = nullptr;
         for (fb::RigExecWireStep &step : f.steps) {
-            if (step.kind == kind && step.object == int32_t(id) &&
-                (kind != fb::StepKind::RevisionChunk || step.part == part)) {
+            const _WireIdentity identity = _IdentityOf(f, step);
+            if (identity.kind == kind && identity.object == int32_t(id) &&
+                (kind != fb::StepKind::RevisionChunk ||
+                 identity.part == part)) {
                 found = &step;
             }
         }
@@ -2691,7 +2731,9 @@ TestRangeChainBake()
             _DropRead(step, fb::SlotDomain::RevisionOut, firstBase + 1);
             return true;
         },
-        " does not declare RevisionOut[" + std::to_string(firstBase + 1) + "]");
+        // A matrix's group steps are op range steps, whose reads the op
+        // graph's typed projection fixes.
+        "common_graph: semantic typed projection differs from body");
     refuse(
         "a group step missing the blend shape's group",
         [&](fb::RigExecWireFile &f) {
@@ -2704,7 +2746,7 @@ TestRangeChainBake()
             _DropRead(step, fb::SlotDomain::RevisionOut, blendBase + 1);
             return true;
         },
-        " does not declare RevisionOut[" + std::to_string(blendBase + 1) + "]");
+        "common_graph: semantic typed projection differs from body");
     refuse(
         "a group step declaring the previous revision's version",
         [&](fb::RigExecWireFile &f) {
@@ -2720,7 +2762,8 @@ TestRangeChainBake()
                                      firstRange + 1);
             return true;
         },
-        "which a range-pipelined range step does not read");
+        "reads RevisionDone slots [" + std::to_string(firstRange) + ", " +
+            std::to_string(firstRange + 1) + "), which no earlier step writes");
     refuse(
         "a join missing one of its groups",
         [&](fb::RigExecWireFile &f) {
@@ -3288,15 +3331,18 @@ _GroupsHolding(const std::vector<int> &indices, size_t points, size_t groups)
     return held;
 }
 
-/// The parts of revision \p r of chain \p c's RevisionChunk steps.
+/// The parts of revision \p r of chain \p c's group steps: its
+/// RevisionChunk steps, or the op range steps standing in for them.
 static std::set<int>
 _ChunkParts(const fb::RigExecWireFile &file, size_t c, int r)
 {
     std::set<int> parts;
     const int32_t id = file.geometry->chainRevisionBegin[c] + int32_t(r);
     for (const fb::RigExecWireStep &step : file.steps) {
-        if (step.kind == fb::StepKind::RevisionChunk && step.object == id) {
-            parts.insert(int(step.part));
+        const _WireIdentity identity = _IdentityOf(file, step);
+        if (identity.kind == fb::StepKind::RevisionChunk &&
+            identity.object == id) {
+            parts.insert(int(identity.part));
         }
     }
     return parts;
@@ -4359,9 +4405,6 @@ main(int argc, char **argv)
                     argv[2], time, argv[4], failures);
         return failures ? 1 : 0;
     }
-    // The range chains below hold the baked Range arm's file records;
-    // full-strength matrices as op nodes are testRigExecOpSteps'.
-    rigExec::RigExecBakedProgramTesting::SetOpMatrices(false);
     // The tail rig's file, baked at its fixture time: the real bake the
     // codec and corruption cases edit.
     const std::string tail =

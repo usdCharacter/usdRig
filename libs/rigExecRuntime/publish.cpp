@@ -67,7 +67,11 @@ _RrEpilogueLists(const RrProgram &program, std::vector<char> *aliveSolver,
             (*aliveSolver)[size_t(steps[i].object)] = 1;
         if (kind == RigExecWireStepKind::RevisionStatic ||
             kind == RigExecWireStepKind::ChainStatus ||
-            kind == RigExecWireStepKind::Derived)
+            kind == RigExecWireStepKind::Derived ||
+            (kind == RigExecWireStepKind::OpChainHead &&
+             std::find(program.revisionStaticStep.begin(),
+                       program.revisionStaticStep.end(),
+                       int32_t(i)) != program.revisionStaticStep.end()))
             geometrySteps->push_back(i);
     }
 }
@@ -435,14 +439,22 @@ RrPublishGeometry(RrProgram *program, std::vector<std::string> *poseDiagnostics)
     // shows only where two steps name one key, and the later step's stands.
     for (const uint32_t index : program->epilogue.geometrySteps) {
         const RigExecWireStep &step = steps[index];
-        if (step.kind == RigExecWireStepKind::RevisionStatic) {
-            const auto &entry = geo.revisionIndex[size_t(step.object)];
+        if (step.kind == RigExecWireStepKind::RevisionStatic ||
+            step.kind == RigExecWireStepKind::OpChainHead) {
+            const int32_t object =
+                step.kind == RigExecWireStepKind::RevisionStatic
+                    ? step.object
+                    : int32_t(std::find(program->revisionStaticStep.begin(),
+                                        program->revisionStaticStep.end(),
+                                        int32_t(index)) -
+                              program->revisionStaticStep.begin());
+            const auto &entry = geo.revisionIndex[size_t(object)];
             const size_t chain = size_t(entry.first);
             if (!store.chainPublish[chain].haveBase) {
                 continue;
             }
             const RrRevisionPublish &publish =
-                store.revisionPublish[size_t(step.object)];
+                store.revisionPublish[size_t(object)];
             if (!publish.weightFieldPublished) {
                 continue;
             }

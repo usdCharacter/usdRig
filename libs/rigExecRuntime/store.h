@@ -1117,9 +1117,26 @@ bool RrRevisionWeightFieldCount(const RrProgram *program, size_t field,
 // always applies: its packet valid, its status ok, its acceptance Applies.
 bool RrGeoAdoptOpStored(RrProgram *program, uint32_t revision,
                         std::string *error);
-// Revision \p revision's inputs:enabled and inputs:defaultWeight this run.
+// Revision \p revision's inputs:enabled, inputs:defaultWeight and whether
+// its rigExec:weightBlend is radial this run.
 bool RrGeoRevisionLeaf(const RrProgram *program, uint32_t revision,
-                       bool *enabled, float *weight, std::string *error);
+                       bool *enabled, float *weight, bool *radial,
+                       std::string *error);
+// Revision \p revision of \p chain when its weight object is measured
+// against the points entering it: its weight field's weights as its dense
+// packet. False when the field holds none, \p missing when the program
+// holds no such weight object.
+bool RrGeoBuildCurrentPhasePacket(RrProgram *program, size_t chain,
+                                  size_t revision, bool *missing);
+// Revision \p revision of \p chain's weight display, published for
+// revision id \p id: its valid packet resolved over the \p count points it
+// weighs.
+void RrGeoPublishRevisionWeights(RrProgram *program, size_t chain,
+                                 size_t revision, int id, size_t count);
+// Revision \p revision, which op nodes compute, enabled or not this frame:
+// its status, and its weight display from the packet its op reads.
+bool RrGeoStoreRevisionEnabled(RrProgram *program, uint32_t revision,
+                               bool enabled, std::string *error);
 /// Resolves ChainVersion lookup \p lookup: the points entering revision
 /// \p lookup.part of point chain \p lookup.object, lent in place or from
 /// \p gather, the lookup's own buffer.

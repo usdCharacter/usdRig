@@ -517,14 +517,6 @@ _PacketMatches(RigExecRevisionOp op, const RigExecMoverParameters &p)
     return p.valid && p.kind == _RevisionKindToken(op);
 }
 
-// The sparse field the matrix kernel walks point by point instead of
-// resolving it densely: the shape a wire takes its envelope in.
-bool
-_MatrixWalksSparse(const RigExecWeightPacket &w)
-{
-    return eval::EnvelopeIsSparseWalk(_EnvelopeView(w));
-}
-
 // Every entry a sparse walk names is usable over \p count points: in range,
 // strictly ascending, finite and in [0, 1]. Validated exactly as ResolveAll
 // would, so the same packets fail.
@@ -544,31 +536,6 @@ _MatrixKernelAccepts(const RigExecMoverParameters &p, size_t count,
 {
     return eval::MatrixKernelAccepts(_EnvelopeView(p.weights), p.weights, count,
                                      weights);
-}
-
-// The matrix kernel's sparse walk over entries [first, last) of \p w, in
-// place on \p data, which holds point \p offset at 0 (the whole array: 0; a
-// group's own buffer: its first point): the per-entry body the whole kernel
-// and its group form share. Each entry writes only its own point, and the
-// radial arm's partial for a weight is a pure function of that weight and
-// the transform, so a walk over a subset of the entries writes those points'
-// bits.
-//
-// An entry's result is therefore a pure function of the blend arm, the
-// transform, its weight and its entering point. Given \p memo (a group's
-// own, pointBlocks.h), a walk whose arm and transform are the last walk's
-// records its entries, and an entry whose weight and entering point hold the
-// bits recorded takes the recorded result; only the others are computed.
-// The same bits either way.
-void
-_ApplyMatrixSparseWalk(const RigExecMoverParameters &p,
-                       const RigExecWeightPacket &w, size_t first, size_t last,
-                       GfVec3f *data, size_t offset = 0,
-                       RigExecSparseWalkMemo<GfVec3f> *memo = nullptr)
-{
-    eval::ApplyMatrixSparseWalk<_EnvelopeMath>(p.radialWeight, p.transform,
-                                               _EnvelopeView(w), first, last,
-                                               data, offset, memo);
 }
 
 // The entries [*first, *last) of the ascending \p indices that name a point
@@ -1377,7 +1344,6 @@ RigExecPrepareRevisionRanges(RigExecRevisionOp op,
                              uint64_t restVersion)
 {
     using Acceptance = RigExecRevisionAcceptance;
-    prepared->matrixWeights.clear();
     prepared->wireBasis.reset();
     prepared->wireRestEvaluations = nullptr;
     prepared->latticeBasis = nullptr;
@@ -1438,17 +1404,6 @@ RigExecPrepareRevisionRanges(RigExecRevisionOp op,
             // prepared.
             prepared->blendWeights.clear();
             return Acceptance::Deferred;
-        }
-        return Acceptance::Applies;
-    }
-    if (op == RigExecRevisionOp::Matrix) {
-        // RigExecRevisionKernelAcceptance's Matrix answer, by the kernel's
-        // own validation; a dense envelope resolves into the inputs by the
-        // same call (ResolveAll validates exactly as ResolvesAll does).
-        if (!_PacketMatches(op, p) ||
-            !_MatrixKernelAccepts(p, count, &prepared->matrixWeights)) {
-            prepared->matrixWeights.clear();
-            return Acceptance::Refuses;
         }
         return Acceptance::Applies;
     }
@@ -1517,38 +1472,6 @@ RigExecPrepareRevisionRanges(RigExecRevisionOp op,
     return acceptance;
 }
 
-// Whether RigExecApplyMatrixKernelRange's radial arm returns every point of
-// a group at its entering bytes: every weight clamps to 0 (the partial
-// transform is the identity) and every point is finite with no -0
-// coordinate, which the identity's "+ 0" would turn into +0. That holds in
-// the default floating-point environment only (flush-to-zero or
-// denormals-are-zero zero a subnormal coordinate, and rounding toward
-// negative keeps -0 where nearest makes it +0), so any other environment
-// runs the kernel. A dense eyelid falloff is zero over most of the head, so
-// most groups of such a mover pass through by reference instead of being
-// copied.
-static bool
-_RadialGroupKeepsBytes(const float *weights, const GfVec3f *in, size_t n)
-{
-    if (!RigExecFloatEnvironmentIsDefault()) {
-        return false;
-    }
-    for (size_t i = 0; i < n; ++i) {
-        if (!(weights[i] <= 0.0f)) {
-            return false;
-        }
-    }
-    for (size_t i = 0; i < n; ++i) {
-        for (int c = 0; c < 3; ++c) {
-            const float x = in[i][c];
-            if (!std::isfinite(x) || (x == 0.0f && std::signbit(x))) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
 // Each arm is RunRevisionKernel restricted to [begin, end), reading the
 // group's entering points at \p in and writing its result at \p out: the same
 // kernel over the same packet, through the group forms of its loops, with
@@ -1592,37 +1515,6 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
     // entering points, as RunRevisionKernel copies the whole array.
     const auto seed = [&]() { std::copy(in, in + n, out); };
     const RigExecWeightPacket &w = p.weights;
-    if (op == RigExecRevisionOp::Matrix) {
-        if (RigExecEnvelopeIsFullStrength(w)) {
-            ApplyMatrixFullStrength(p, in, out, n, useSimd);
-            return true;
-        }
-        if (_MatrixWalksSparse(w)) {
-            if (p.transform == GfMatrix4d(1.0)) {
-                return passThrough();
-            }
-            size_t first = 0, last = 0;
-            _SparseEntriesIn(w.indices, begin, end, &first, &last);
-            if (first == last) {
-                return passThrough();
-            }
-            seed();
-            _ApplyMatrixSparseWalk(p, w, first, last, out, begin, walk);
-            return true;
-        }
-        if (prepared.matrixWeights.size() != count) {
-            return false;
-        }
-        if (p.radialWeight &&
-            _RadialGroupKeepsBytes(prepared.matrixWeights.data() + begin, in,
-                                   n)) {
-            return passThrough();
-        }
-        seed();
-        RigExecApplyMatrixKernelRange(p, prepared.matrixWeights.data() + begin,
-                                      0, n, out, useSimd);
-        return true;
-    }
     if (op == RigExecRevisionOp::BlendShape) {
         // Target space only: the surface-frame transport reads every
         // entering point. The envelope is folded in per point, as the whole

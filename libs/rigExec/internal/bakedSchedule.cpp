@@ -1595,9 +1595,14 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
         // The declaration: the steps that read the points entering revision
         // r name version r.
         int enteringRevision = -1;
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(B, step);
+        const bool opGroup =
+            step.kind == RigExecBakedStepKind::OpChainRange &&
+            identity.kind == RigExecBakedStepKind::RevisionChunk;
         if (step.kind == RigExecBakedStepKind::RevisionChunk ||
-            step.kind == RigExecBakedStepKind::RevisionFuse)
-            enteringRevision = step.object;
+            step.kind == RigExecBakedStepKind::RevisionFuse || opGroup)
+            enteringRevision = identity.object;
         else if (const int f = RigExecBakedWeightFieldOf(B, step);
                  f >= 0 &&
                  B.weightFields[size_t(f)].form ==
@@ -1633,7 +1638,7 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
         const bool groupStep =
             own.role != RigExecBakedRevisionRole::Legacy &&
             (step.kind == RigExecBakedStepKind::RevisionChunk ||
-             step.kind == RigExecBakedStepKind::RevisionFuse);
+             step.kind == RigExecBakedStepKind::RevisionFuse || opGroup);
         if (groupStep) {
             if (B.revisionChunkBase.size() != revisions ||
                 B.revisionChunkCount.size() != revisions) {
@@ -1677,11 +1682,11 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
             if (!fuse && (range || own.chunked)) {
                 // A group step: group `part` of the entering version and
                 // nothing else of it.
-                const size_t g = size_t(step.part);
-                if (step.part < 0 || g >= groups ||
+                const size_t g = size_t(identity.part);
+                if (identity.part < 0 || g >= groups ||
                     (range && !own.groupWritten[g])) {
                     out->Add(NameStep(B, index) + " is group " +
-                             std::to_string(step.part) + " of revision " +
+                             std::to_string(identity.part) + " of revision " +
                              std::to_string(id) +
                              ", which writes no such "
                              "group");

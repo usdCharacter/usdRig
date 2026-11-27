@@ -656,7 +656,12 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// commit table, through OpGraph.host_outputs targets 30 to 34. It retires
 /// the SolverCommit, CommitDelta, PropagateChunk and CommitApply steps, and
 /// Commit.split and staging_base with them.
-inline constexpr uint32_t RigExecFormatVersion = 43;
+///
+/// Format 44 runs every Range matrix as op nodes: MatrixDeform reads its
+/// weight object's packet from the packet's node (OpGraph lookup source 10
+/// read 2 its weightBlend each frame where that is not pinned) and stores
+/// whether its revision is enabled through OpGraph.host_outputs target 6.
+inline constexpr uint32_t RigExecFormatVersion = 44;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -664,7 +669,7 @@ inline constexpr uint32_t RigExecFormatVersion = 43;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 43;
+inline constexpr uint32_t RigExecFormatOldestReadable = 44;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

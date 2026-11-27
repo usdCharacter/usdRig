@@ -32,7 +32,15 @@ const rigExec::RigExecOpHandle &MatrixDeform();
 // error. A mover's own inputs come as Enabled (Bool, optional; false
 // passes the points through) and DefaultWeight (Float, optional; every
 // point's weight, full strength at 1; finite and in [0, 1] or an error, and
-// not beside an envelope or sparse weights).
+// not beside an envelope or sparse weights). A weight object's packet comes
+// as Packet (PointWeights, optional; walked sparsely, at full strength or
+// resolved densely each frame exactly as the matrix kernel reads a packet;
+// one that does not resolve is an error, and not beside another envelope).
+// Radial (Bool, optional) stands in for the payload's radial each frame.
+// Written (IntArray, optional) lists the [begin, end) point ranges of the
+// vertex groups the revision writes when it does not write them all: an
+// enabled frame whose weights are not a sparse walk inside them is an
+// error.
 const rigExec::RigExecPortHandle &MatrixDeformPoints();
 const rigExec::RigExecPortHandle &MatrixDeformTransform();
 const rigExec::RigExecPortHandle &MatrixDeformEnvelope();
@@ -41,6 +49,9 @@ const rigExec::RigExecPortHandle &MatrixDeformWeights();
 const rigExec::RigExecPortHandle &MatrixDeformOut();
 const rigExec::RigExecPortHandle &MatrixDeformEnabled();
 const rigExec::RigExecPortHandle &MatrixDeformDefaultWeight();
+const rigExec::RigExecPortHandle &MatrixDeformPacket();
+const rigExec::RigExecPortHandle &MatrixDeformRadial();
+const rigExec::RigExecPortHandle &MatrixDeformWritten();
 
 /// What a mover transform is configured with at compile.
 struct MoverTransformPayload {

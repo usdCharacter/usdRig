@@ -20,6 +20,8 @@
 #include "rigExecMath/weightFields.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecMath/dualQuatMath.h"
+#include "rigExecMath/pointBlocks.h"
+#include "rigExecEvalCore/envelope.h"
 #include "rigExecOps/constraint/autoClavicleOps.h"
 #include "rigExecOps/constraint/constraintOps.h"
 #include "rigExecOps/constraint/matchOps.h"
@@ -984,6 +986,320 @@ TestMatrixDeform()
         Node single(MatrixDeform(), ports, MatrixDeformOut(), &payloads[i]);
         CHECK(single.Run(values, &actual) && SamePoints(actual, results[i]));
     }
+}
+
+using MatrixMath = rigExec::eval::MatrixKernelMath<Vec3f, rigExecStd::Vec3d,
+                                                   rigExecStd::Mat4d>;
+
+/// The matrix kernel's bits, with no walk memo, over \p in.
+Points
+MatrixKernel(const rigExec::eval::EnvelopePacketView &view,
+             const std::vector<float> &dense, bool radial,
+             const rigExecStd::Mat4d &transform, const Points &in, bool simd)
+{
+    Points out(in.Size());
+    rigExec::eval::ApplyAcceptedMatrixKernel<MatrixMath>(
+        view, dense.empty() ? nullptr : dense.data(), radial, transform,
+        in.Data(), out.Data(), in.Size(), simd);
+    return out;
+}
+
+rigExec::eval::EnvelopePacketView
+SparseView(const RigExecArray<int32_t> &indices,
+           const RigExecArray<float> &weights)
+{
+    rigExec::eval::EnvelopePacketView view;
+    view.valid = true;
+    view.rangePolicyEmpty = true;
+    view.representation = rigExec::eval::kWeightSparse;
+    view.indices = indices.Data();
+    view.indexCount = indices.Size();
+    view.values = weights.Data();
+    view.valueCount = weights.Size();
+    return view;
+}
+
+float
+NanWithPayload(uint32_t payload)
+{
+    const uint32_t bits = 0x7fc00000u | (payload & 0x3fffffu);
+    float value;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+/// A MatrixDeform's sparse walk, a weight packet of each representation and
+/// a default weight give the matrix kernel's bits under every range setting
+/// (Node: ranges and the whole run alike); at the identity a sparse walk
+/// writes nothing, NaN payloads and signed zeros included.
+void
+TestMatrixDeformWeights()
+{
+    using namespace rigExecOps;
+    const Grid grid(23, 5);
+    std::vector<GfVec3f> points = grid.points;
+    points[3] = GfVec3f(-0.0f, 0.0f, -0.0f);
+    points[10] = GfVec3f(NanWithPayload(0x51), 1.0f, -2.0f);
+    const Points in = ToStd(points);
+    std::vector<int32_t> indices;
+    std::vector<float> weights;
+    for (int32_t i = 1; i < int32_t(points.size()); i += 3) {
+        indices.push_back(i);
+        weights.push_back(i % 4 == 0 ? 1.0f : float(i % 10) / 10.0f);
+    }
+    const auto indexArray = ToArray(indices);
+    const auto weightArray = ToArray(weights);
+    std::vector<float> dense(points.size(), 0.0f);
+    for (size_t e = 0; e < indices.size(); ++e)
+        dense[size_t(indices[e])] = weights[e];
+    const auto denseArray = ToArray(dense);
+    GfMatrix4d turn(1.0);
+    turn.SetRotate(GfRotation(GfVec3d(0.2, 1, 0.4), 55.0));
+    turn.SetTranslateOnly(GfVec3d(-1, 2, 0.5));
+    size_t checked = 0;
+    for (const GfMatrix4d &t : {turn, GfMatrix4d(1.0)})
+        for (const bool radial : {false, true}) {
+            // Node answers its SIMD whole run and holds every other setting
+            // to the whole run of its mode.
+            const bool simd = true;
+            {
+                MatrixDeformPayload payload;
+                payload.radial = radial;
+                const rigExecStd::Mat4d transform = ToStd(t);
+                const auto check = [&](const char *what, bool ran,
+                                       const Points &actual,
+                                       const Points &expected) {
+                    const bool same = ran && SamePoints(actual, expected);
+                    if (!same)
+                        std::printf("matrix %s (radial %d, identity %d) "
+                                    "differs from the kernel\n",
+                                    what, int(radial),
+                                    int(t == GfMatrix4d(1.0)));
+                    CHECK(same);
+                    ++checked;
+                };
+                Points actual;
+                // Sparse weights walked entry by entry.
+                const auto sparse = SparseView(indexArray, weightArray);
+                const Points walked =
+                    MatrixKernel(sparse, {}, radial, transform, in, simd);
+                if (t == GfMatrix4d(1.0))
+                    CHECK(SamePoints(walked, in));
+                Node walk(MatrixDeform(),
+                          {&MatrixDeformPoints(), &MatrixDeformTransform(),
+                           &MatrixDeformWeightIndices(),
+                           &MatrixDeformWeights()},
+                          MatrixDeformOut(), &payload);
+                check("sparse walk",
+                      walk.Run({&in, &transform, &indexArray, &weightArray},
+                               &actual),
+                      actual, walked);
+                // Weight packets: sparse, dense and constant.
+                Node packed(MatrixDeform(),
+                            {&MatrixDeformPoints(), &MatrixDeformTransform(),
+                             &MatrixDeformPacket()},
+                            MatrixDeformOut(), &payload);
+                rigExecRig::PointWeights packet;
+                packet.valid = 1;
+                packet.representation =
+                    uint32_t(rigExecRig::WeightRepresentation::Sparse);
+                packet.indices = indexArray;
+                packet.values = weightArray;
+                check("sparse packet",
+                      packed.Run({&in, &transform, &packet}, &actual), actual,
+                      walked);
+                packet.representation =
+                    uint32_t(rigExecRig::WeightRepresentation::Dense);
+                packet.indices = RigExecArray<int32_t>();
+                packet.values = denseArray;
+                rigExec::eval::EnvelopePacketView denseView;
+                denseView.valid = true;
+                denseView.rangePolicyEmpty = true;
+                denseView.representation = rigExec::eval::kWeightDense;
+                check("dense packet",
+                      packed.Run({&in, &transform, &packet}, &actual), actual,
+                      MatrixKernel(denseView, dense, radial, transform, in,
+                                   simd));
+                packet.representation =
+                    uint32_t(rigExecRig::WeightRepresentation::Constant);
+                packet.values = RigExecArray<float>();
+                packet.defaultWeight = 0.35f;
+                check("constant packet",
+                      packed.Run({&in, &transform, &packet}, &actual), actual,
+                      MatrixKernel(denseView,
+                                   std::vector<float>(points.size(), 0.35f),
+                                   radial, transform, in, simd));
+                // A default weight.
+                Node uniform(MatrixDeform(),
+                             {&MatrixDeformPoints(), &MatrixDeformTransform(),
+                              &MatrixDeformDefaultWeight()},
+                             MatrixDeformOut(), &payload);
+                const float half = 0.5f;
+                check("default weight",
+                      uniform.Run({&in, &transform, &half}, &actual), actual,
+                      MatrixKernel(denseView,
+                                   std::vector<float>(points.size(), 0.5f),
+                                   radial, transform, in, simd));
+            }
+        }
+    std::printf("matrix weights: %zu range-setting runs gave the kernel's "
+                "bits\n",
+                checked);
+}
+
+/// A group's sparse matrix walk through its range scratch, the walk memo
+/// (pointBlocks.h), in a host's schedule. Whatever the memo holds, the
+/// group's bits are the memo-less kernel's. A walk whose transform and
+/// blend arm are the last walk's records its entries; from then on an
+/// entry is computed exactly when its entering point or its weight moved a
+/// bit, and a point outside the support that moves is forwarded with
+/// nothing computed. A walk whose transform or arm moved computes every
+/// entry and records none.
+void
+TestSparseWalkReuseKeepsTheKernelBits()
+{
+    using namespace rigExecOps;
+    using Memo = RigExecSparseWalkMemo<Vec3f>;
+    const size_t count = 1000;
+    std::vector<GfVec3f> start(count);
+    for (size_t i = 0; i < count; ++i)
+        start[i] = GfVec3f(float(i % 31) * 0.5f - 3.0f, float(i / 31) * 0.25f,
+                           float(i % 7) - 2.0f);
+    // Entry 0 names point 0, outside the group cut inside the support.
+    std::vector<int32_t> indices = {0};
+    std::vector<float> weights = {0.4f};
+    for (int32_t i = 3; i < int32_t(count); i += 7) {
+        indices.push_back(i);
+        weights.push_back(float((i * 37) % 100) / 100.0f * 0.9f + 0.05f);
+    }
+    const std::vector<int> cut = {0, 1, 700, int(count)};
+    size_t entries = 0, inner = 0;
+    for (const int32_t index : indices) {
+        entries += index >= 1 && index < 700 ? 1 : 0;
+        inner += index >= 1 && index < 333 ? 1 : 0;
+    }
+    CHECK(entries > 0 && inner > 0 && inner < entries);
+    MatrixDeformPayload payload;
+    RigExecRigDescBuilder b;
+    const RigExecNodeId m = b.AddOp(MatrixDeform(), &payload);
+    const RigExecInputId pointsIn = b.BindInput(m, MatrixDeformPoints());
+    const RigExecInputId transformIn = b.BindInput(m, MatrixDeformTransform());
+    const RigExecInputId indicesIn =
+        b.BindInput(m, MatrixDeformWeightIndices());
+    const RigExecInputId weightsIn = b.BindInput(m, MatrixDeformWeights());
+    const RigExecInputId radialIn = b.BindInput(m, MatrixDeformRadial());
+    b.BindOutput(m, MatrixDeformOut());
+    std::string error;
+    auto desc = b.Build(&error);
+    RigExecCompileOptions options;
+    options.hostOrder = true;
+    auto program = desc ? RigExecCompile(*desc, options, &error) : nullptr;
+    RigExecValueRef ref;
+    CHECK(program && RigExecProgramChainCount(*program) == 1 &&
+          RigExecResolveNodeOutput(*program, m, MatrixDeformOut(), &ref));
+    if (!program) {
+        std::printf("sparse walk reuse: %s\n", error.c_str());
+        return;
+    }
+    size_t walks = 0;
+    for (const bool radial : {false, true}) {
+        Points entering = ToStd(start);
+        // A supported point that is a NaN payload: equal only by its bits.
+        entering[10] = Vec3f(NanWithPayload(0x51), 1.0f, -2.0f);
+        auto indexArray = ToArray(indices);
+        std::vector<float> w = weights;
+        auto weightArray = ToArray(w);
+        GfMatrix4d t(1.0);
+        t.SetRotate(GfRotation(GfVec3d(1, 0.5, 0.2), 40.0));
+        t.SetTranslateOnly(GfVec3d(0.5, -1, 2));
+        rigExecStd::Mat4d transform = ToStd(t);
+        uint8_t arm = radial ? 1 : 0;
+        auto state = RigExecRunState::Create(program);
+        const auto bind = [&](RigExecRunState &s) {
+            CHECK(s.PointInput(pointsIn, &entering));
+            CHECK(s.PointInput(transformIn, &transform));
+            CHECK(s.PointInput(indicesIn, &indexArray));
+            CHECK(s.PointInput(weightsIn, &weightArray));
+            CHECK(s.PointInput(radialIn, &arm));
+        };
+        bind(*state);
+        const auto walk = [&](RigExecRunState &s, const std::vector<int> &at,
+                              size_t computed, size_t held, const char *what) {
+            weightArray = ToArray(w);
+            const uint32_t groups = uint32_t(at.size() - 1);
+            bool ok = s.RunChainHead(0, at.data(), groups, &error);
+            for (uint32_t g = 0; ok && g < groups; ++g)
+                ok = s.RunChainRange(0, 0, g, &error);
+            const auto *result = static_cast<const Points *>(s.GetValue(ref));
+            const Memo *memo =
+                static_cast<const Memo *>(s.GetRangeScratch(m, 1));
+            const Points expected =
+                MatrixKernel(SparseView(indexArray, weightArray), {}, arm != 0,
+                             transform, entering, true);
+            ok = ok && result && memo && SamePoints(*result, expected) &&
+                 memo->computed == computed && memo->reused == held;
+            if (!ok)
+                std::printf("  sparse walk reuse (radial %d): %s computed %u "
+                            "and reused %u, expected %zu and %zu %s\n",
+                            int(radial), what, memo ? memo->computed : 0u,
+                            memo ? memo->reused : 0u, computed, held,
+                            error.c_str());
+            CHECK(ok);
+            ++walks;
+            return memo;
+        };
+        const auto run = [&](size_t computed, const char *what) {
+            return walk(*state, cut, computed, entries - computed, what);
+        };
+        const Memo *memo = run(entries, "the first walk");
+        CHECK(memo && memo->indices.empty());
+        memo = run(entries, "the second walk, which records");
+        CHECK(memo && memo->indices.size() == entries);
+        run(0, "the same inputs");
+        // Index 2 is in the group and outside the support.
+        entering[2] = Vec3f(entering[2][0] + 1.0f, entering[2][1] - 2.0f,
+                            entering[2][2] + 0.5f);
+        run(0, "a point outside the support");
+        entering[17] = Vec3f(0.0f, 1.0f, 2.0f);
+        run(1, "a supported point");
+        entering[17] = Vec3f(-0.0f, 1.0f, 2.0f);
+        run(1, "a supported point's signed zero");
+        entering[24] =
+            Vec3f(entering[24][0], entering[24][1] + 1.0f, entering[24][2]);
+        entering[353] =
+            Vec3f(entering[353][0], entering[353][1], entering[353][2] - 1.0f);
+        run(2, "two supported points");
+        // Entry 3 names point 17; another finite weight in [0, 1].
+        CHECK(indices[3] == 17);
+        w[3] = 0.7f;
+        run(1, "a weight");
+        t[3][0] += 0.25;
+        transform = ToStd(t);
+        memo = run(entries, "the transform");
+        CHECK(memo && memo->indices.empty());
+        run(entries, "the moved transform, recording");
+        run(0, "the moved transform, recorded");
+        arm = radial ? 0 : 1;
+        run(entries, "the blend arm");
+        arm = radial ? 1 : 0;
+        memo = run(entries, "the blend arm back");
+        CHECK(memo && memo->indices.empty());
+        run(entries, "the blend arm back, recording");
+        // A clone starts with empty scratch, and what it computes is not
+        // the source's.
+        auto copy = state->Clone();
+        bind(*copy);
+        walk(*copy, cut, entries, 0, "a clone");
+        entering[31] =
+            Vec3f(entering[31][0] + 3.0f, entering[31][1], entering[31][2]);
+        walk(*copy, cut, entries, 0, "a clone, recording");
+        run(1, "the source after its clone walked");
+        // Another cut through the same range scratch forgets this one's.
+        walk(*state, {0, 1, 333, int(count)}, inner, 0, "another cut");
+        run(entries, "the first cut after another");
+    }
+    std::printf("sparse walk reuse: %zu walk(s) kept the kernel's bits\n",
+                walks);
 }
 
 void
@@ -4156,6 +4472,8 @@ main()
     TestRetainedState();
     TestRetainedStateBatches();
     TestMatrixDeform();
+    TestMatrixDeformWeights();
+    TestSparseWalkReuseKeepsTheKernelBits();
     TestMoverTransform();
     TestSkin();
     TestBlendShape();

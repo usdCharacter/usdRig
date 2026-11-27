@@ -1610,12 +1610,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 43 &&
-                      RigExecFormatOldestReadable == 43,
-                  "format 43 runs pose commits as op nodes and is the only "
-                  "format Open reads");
-    // Every older format requires re-export: its pose commits ran as their
-    // own steps.
+    static_assert(RigExecFormatVersion == 44 &&
+                      RigExecFormatOldestReadable == 44,
+                  "format 44 runs Range matrices as op nodes and is "
+                  "the only format Open reads");
+    // Every older format requires re-export: its matrices ran as their own
+    // steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1626,13 +1626,13 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 43 through " +
+            " (this reader reads 44 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 43 ? "re-export: pose commits as op nodes" : "rebake");
+            (version < 44 ? "re-export: Range matrices as op nodes" : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 43 ? reexports : rebakes);
+        ++(version < 44 ? reexports : rebakes);
     }
-    CHECK(reexports == 43 && rebakes == 1);
+    CHECK(reexports == 44 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -2985,6 +2985,16 @@ TestOpLookupOwners()
     expect("commit candidates on a placement node",
            "reads a commit its node does not write back",
            [&](F &f) { look(f, place, 31, 0, 0); });
+    expect("an enabled state stored by a node storing no groups",
+           "stores whether revision 0 is enabled, but not its groups",
+           [&](F &f) {
+               auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+               output->node = place;
+               output->port = 1;
+               output->target = 6;
+               output->object = 0;
+               f.opGraph->hostOutputs.push_back(std::move(output));
+           });
     {
         // An unvalidated file may hold a null lookup: labelling its node's
         // step reads no lookup through it.
