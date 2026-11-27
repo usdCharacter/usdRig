@@ -27,7 +27,9 @@ starting its workflow, and keep this list current when adding or changing skills
 - [compose-character](skills/compose-character/SKILL.md): Use when composing,
   fitting, or rebuilding a character from `asset_lib/components`, or adapting
   an existing rig to that library. Covers component selection, character fit
-  layers, bindings, deformation attachments, assembly, and validation.
+  layers, bindings, deformation attachments, assembly, validation, and the
+  headless package check that runs the shipped verifier and animation checks
+  from the extracted archive.
 
 ## Code map
 
