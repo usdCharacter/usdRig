@@ -22,6 +22,7 @@
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/stage.h"
 
+#include <algorithm>
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
@@ -813,6 +814,68 @@ TestAnimatedMaps()
               SdfPath("/Asset/Rig/AnimatedMaps/Wrinkles")) == 1);
 }
 
+// A frame driver with zero scale has no usable frame: the weights are zero
+// and every evaluator gives the interpolator's step the same line.
+void
+TestUnusableDriver()
+{
+    const Case c{"interpolative", "quaternion", "gaussian", false};
+    UsdStageRefPtr stage = MakeStage();
+    RigExecRbfMethodDesc desc;
+    const std::vector<SdfPath> weights = AuthorInterpolator(stage, c, &desc);
+    KeyStage(stage);
+    SetAvar(stage, kElbow, "avars:tx",
+            std::numeric_limits<double>::quiet_NaN());
+    RigExecRigEvaluator evaluator(stage, kRig);
+    CHECK(evaluator.Compile());
+    const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(2.0));
+    CHECK(pose.valid);
+    const std::string expected =
+        "pose interpolator " + kInterpolator.GetString() +
+        " has no usable frame for its driver " + kElbow.GetString() +
+        " after the pose walk; its weights are zero this generation";
+    CHECK(std::count(pose.diagnostics.begin(), pose.diagnostics.end(),
+                     expected) == 1);
+    for (const SdfPath &weight : weights)
+        CHECK(Published(pose, weight) == 0.0);
+
+    // The frame-cache worker gives the same line (the NaN control frame
+    // itself compares unequal to itself, so only the lines are compared).
+    std::shared_ptr<const RigExecFrozenProgram> frozen;
+    std::string error;
+    CHECK(RigExecFreezeProgram(evaluator, &frozen, &error) && frozen);
+    RigExecFrameInputs inputs;
+    CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(2.0), {}, &inputs,
+                                   &error));
+    if (frozen) {
+        RigExecCancellationSource cancellation;
+        RigExecFrozenEvalContext context;
+        context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+        context.generation = cancellation.Serial();
+        context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+        context.varyingInputCount = inputs.values.size();
+        context.frozen = frozen.get();
+        const RigExecRigPose warmed = RigExecEvaluateFrozen(
+            context, inputs, RigExecMakeProductionStepRunner(),
+            cancellation.Token(context.generation));
+        CHECK(warmed.valid && warmed.diagnostics == pose.diagnostics);
+    }
+
+    // The .rigexec runtime gives it too, on every frame.
+    std::vector<uint8_t> bytes;
+    RigExecTestPlayer player;
+    CHECK(RigExecTestBakeAt(evaluator, 1.0, &bytes, &error) &&
+          player.Open(bytes, stage, &error));
+    for (double frame : {2.0, 3.0, 2.0}) {
+        const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
+        CHECK(std::count(live.diagnostics.begin(), live.diagnostics.end(),
+                         expected) == 1);
+        CHECK(player.Play(frame, &error));
+        const std::vector<std::string> got = player.Reader().GetDiagnostics();
+        CHECK(got == live.diagnostics);
+    }
+}
+
 void
 TestValidation()
 {
@@ -887,6 +950,7 @@ main()
     }
     TestMlMover();
     TestAnimatedMaps();
+    TestUnusableDriver();
     TestValidation();
     if (failures) {
         std::printf("%d FAILURE(S)\n", failures);

@@ -48,6 +48,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorExtraRests)
 RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorExtraParentFinals)
 RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorExtraParentRests)
 RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorOut)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseInterpolatorStatus)
 
 RIGEXEC_DEFINE_OP_HANDLE(RestCompose)
 RIGEXEC_DEFINE_PORT_HANDLE(RestComposeRestAvars)
@@ -698,6 +699,8 @@ PoseInterpolatorOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const size_t poseCount = size_t(ValueAt<uint64_t>(batch, kPoseCount, k));
     auto &out = Out<RigExecArray<float>>(io, PoseInterpolatorOut());
+    uint32_t &status = Out<uint32_t>(io, PoseInterpolatorStatus());
+    status = uint32_t(rigExec::RigExecPoseInterpolatorStatus::Success);
     out.Resize(poseCount);
     for (size_t i = 0; i < poseCount; ++i)
         out[i] = 0.0f;
@@ -757,11 +760,15 @@ PoseInterpolatorOne(const RigExecOpBatch &batch, size_t k, std::string *error)
                solve == PoseSolve::Maps,
                &state.maps};
     using Status = rigExec::RigExecPoseInterpolatorStatus;
-    switch (rigExec::RigExecRunPoseInterpolatorArithmetic<InterpolatorMath>(
-        record, input, &state.weights, &state.buffers)) {
+    const Status solved =
+        rigExec::RigExecRunPoseInterpolatorArithmetic<InterpolatorMath>(
+            record, input, &state.weights, &state.buffers);
+    switch (solved) {
     case Status::Disabled:
+        return true;
     case Status::UnusableRotation:
     case Status::UnusableTranslation:
+        status = uint32_t(solved);
         return true;
     case Status::CountMismatch:
         return Fail(error, "PoseInterpolator",
@@ -1261,6 +1268,8 @@ const rigExec::RigExecPortDesc kPoseInterpolatorPorts[] = {
      kOptionalInput, "extraParentRests"},
     {&PoseInterpolatorOut(), &rigExecStd::FloatArray(), kRigExecPortOutput,
      "out", rigExec::RigExecOutputBound::Field, nullptr, nullptr, kPoseCount},
+    {&PoseInterpolatorStatus(), &rigExecStd::UIntType(), kRigExecPortOutput,
+     "status"},
 };
 
 void

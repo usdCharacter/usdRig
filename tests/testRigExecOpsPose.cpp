@@ -300,7 +300,8 @@ TestPoseInterpolator()
     rbf.rbfWeights = {1.0, 0.0, 0.0, 1.0};
     const std::vector<const RigExecPortHandle *> framePorts = {
         &PoseInterpolatorDriverFinal(), &PoseInterpolatorDriverRest()};
-    Harness h(PoseInterpolator(), &rbf, framePorts, {&PoseInterpolatorOut()});
+    Harness h(PoseInterpolator(), &rbf, framePorts,
+              {&PoseInterpolatorOut(), &PoseInterpolatorStatus()});
     rigExecRig::PointFrame rest, turned;
     turned.points[2] = rigExecStd::Vec3d(0.0, 0.6, 0.8);
     turned.points[3] = rigExecStd::Vec3d(0.0, -0.8, 0.6);
@@ -323,11 +324,18 @@ TestPoseInterpolator()
     CHECK(out.Size() == 2 && weights.size() == 2 &&
           out[0] == float(weights[0]) && out[1] == float(weights[1]));
     CHECK(out.Size() == 2 && out[1] > out[0]);
+    CHECK(h.Out<uint32_t>(1) ==
+          uint32_t(RigExecPoseInterpolatorStatus::Success));
     rigExecRig::PointFrame broken;
     broken.flags = 0;
     CHECK(h.Run({&broken, &rest}));
     const auto zero = h.Out<RigExecArray<float>>(0);
     CHECK(zero.Size() == 2 && zero[0] == 0.0f && zero[1] == 0.0f);
+    CHECK(h.Out<uint32_t>(1) ==
+          uint32_t(RigExecPoseInterpolatorStatus::UnusableRotation));
+    CHECK(h.Run({&turned, &rest}));
+    CHECK(h.Out<uint32_t>(1) ==
+          uint32_t(RigExecPoseInterpolatorStatus::Success));
 
     rigExecRig::PointFrame moving = turned;
     std::string steadyError;

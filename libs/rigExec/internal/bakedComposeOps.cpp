@@ -427,6 +427,10 @@ AddInterpolatorOp(const RigExecBakedProgramImpl &B,
     layout->hostOutputs.push_back({node, PoseInterpolatorOut().Index(),
                                    uint8_t(eval::OpOutputTarget::PoseWeights),
                                    object});
+    builder->BindOutput(node, PoseInterpolatorStatus());
+    layout->hostOutputs.push_back(
+        {node, PoseInterpolatorStatus().Index(),
+         uint8_t(eval::OpOutputTarget::InterpolatorStatus), object});
     return true;
 }
 
@@ -676,10 +680,29 @@ RigExecBakedLookUpCompose(const RigExecBakedProgramImpl &B,
 }
 
 bool
-RigExecBakedStoreCompose(RigExecBakedProgramImpl &B,
+RigExecBakedStoreCompose(RigExecBakedProgramImpl &B, RigExecBakedStep *step,
                          const eval::OpHostOutput &output, const void *value,
                          std::string *error)
 {
+    if (output.target == uint8_t(eval::OpOutputTarget::InterpolatorStatus)) {
+        if (output.object >= B.poseInterpolators.size())
+            return Fail(error, "no pose interpolator " +
+                                   std::to_string(output.object));
+        const std::string line = RigExecPoseInterpolatorStatusLine(
+            RigExecPoseInterpolatorStatus(
+                *static_cast<const uint32_t *>(value)),
+            B.poseInterpolators[output.object].pathText, [&] {
+                const int d = B.poseInterpolators[output.object].driverSlot;
+                return d >= 0 ? (*B.pathTexts)[size_t(d)] : std::string();
+            });
+        if (!line.empty()) {
+            if (!step)
+                return Fail(error, "stores a pose interpolator status outside "
+                                   "a step");
+            step->diagnostics.push_back(line);
+        }
+        return true;
+    }
     if (output.target == uint8_t(eval::OpOutputTarget::PoseWeights)) {
         const auto &weights =
             *static_cast<const rigExecStd::RigExecArray<float> *>(value);

@@ -613,6 +613,9 @@ enum class OpOutputTarget : uint8_t {
     /// A RestCompose node's output `port` (OpRestOutput) into compose group
     /// `object`'s slot: its rest matrix, rest frame or rest round trip.
     Rest = 43,
+    /// UInt: pose interpolator `object`'s RigExecPoseInterpolatorStatus;
+    /// an unusable driver gives its node's step one line.
+    InterpolatorStatus = 45,
     /// Provider operation `object`'s authority and unavailable input,
     /// stored before its ProviderValueMatrix or ProviderValueFrame.
     ProviderValueAuthority = 50,
@@ -659,7 +662,8 @@ OpComposeOutputTarget(uint8_t target)
     return target == uint8_t(OpOutputTarget::Avars) ||
            target == uint8_t(OpOutputTarget::SwitchFrame) ||
            target == uint8_t(OpOutputTarget::PoseWeights) ||
-           target == uint8_t(OpOutputTarget::Rest);
+           target == uint8_t(OpOutputTarget::Rest) ||
+           target == uint8_t(OpOutputTarget::InterpolatorStatus);
 }
 
 /// The RestCompose output port a Rest host output stores. The numbers are
@@ -1596,6 +1600,7 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
     case OpOutputTarget::SwitchFrame:
     case OpOutputTarget::PoseWeights:
     case OpOutputTarget::Rest:
+    case OpOutputTarget::InterpolatorStatus:
         return host.StoreCompose(output, value, error);
     }
     return OpLayoutFail(error, "no host stores output target " +

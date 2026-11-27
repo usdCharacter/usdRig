@@ -1095,8 +1095,10 @@ bool RrLookUpCompose(const RrProgram *program, const eval::OpLookup &lookup,
                      const RigExecTypeDesc &type, void *value,
                      std::string *error);
 /// Stores a compose family output (eval::OpComposeOutputTarget).
-bool RrStoreCompose(RrProgram *program, const eval::OpHostOutput &output,
-                    const void *value, std::string *error);
+/// A pose interpolator's status gives step \p step its line.
+bool RrStoreCompose(RrProgram *program, size_t step,
+                    const eval::OpHostOutput &output, const void *value,
+                    std::string *error);
 /// Resolves a CommitVersions lookup.
 bool RrLookUpCommit(const RrProgram *program, const eval::OpLookup &lookup,
                     const RigExecTypeDesc &type, void *value,

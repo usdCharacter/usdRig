@@ -3096,7 +3096,9 @@ bool RigExecBakedLookUpCompose(const RigExecBakedProgramImpl &B,
                                const RigExecTypeDesc &type, void *value,
                                std::string *error);
 /// Stores a compose family output (eval::OpComposeOutputTarget).
+/// A pose interpolator's status gives \p step its line.
 bool RigExecBakedStoreCompose(RigExecBakedProgramImpl &B,
+                              RigExecBakedStep *step,
                               const eval::OpHostOutput &output,
                               const void *value, std::string *error);
 /// The solver a Solve step or a solver op node runs, or -1.

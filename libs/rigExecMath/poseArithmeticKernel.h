@@ -5,6 +5,7 @@
 #include "rbfMethodKernel.h"
 #include <algorithm>
 #include <memory>
+#include <string>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -304,6 +305,26 @@ enum class RigExecPoseInterpolatorStatus {
     UnusableTranslation,
     CountMismatch
 };
+
+/// The line an interpolator whose driver gave no usable frame publishes
+/// this generation, or empty for any other \p status; \p driverPath spells
+/// the driver's path when it is needed.
+template <class DriverPath>
+std::string
+RigExecPoseInterpolatorStatusLine(RigExecPoseInterpolatorStatus status,
+                                  const std::string &path,
+                                  const DriverPath &driverPath)
+{
+    if (status == RigExecPoseInterpolatorStatus::UnusableRotation)
+        return "pose interpolator " + path +
+               " has no usable frame for its driver " + driverPath() +
+               " after the pose walk; its weights are zero this generation";
+    if (status == RigExecPoseInterpolatorStatus::UnusableTranslation)
+        return "pose interpolator " + path +
+               " could not measure its driver's translation; its weights are "
+               "zero this generation";
+    return std::string();
+}
 /// The arithmetic's working rows, kept by a caller that solves every frame
 /// so a steady frame allocates nothing.
 struct RigExecPoseInterpolatorScratch {

@@ -936,9 +936,34 @@ RrLookUpCompose(const RrProgram *program, const eval::OpLookup &lookup,
 }
 
 bool
-RrStoreCompose(RrProgram *program, const eval::OpHostOutput &output,
-               const void *value, std::string *error)
+RrStoreCompose(RrProgram *program, size_t step,
+               const eval::OpHostOutput &output, const void *value,
+               std::string *error)
 {
+    if (output.target == uint8_t(eval::OpOutputTarget::InterpolatorStatus)) {
+        const auto &interps = program->poses->poseInterpolators;
+        if (output.object >= interps.size() ||
+            step >= program->store.stepOutputs.size()) {
+            if (error)
+                *error = "op nodes: no pose interpolator " +
+                         std::to_string(output.object) + " status to store";
+            return false;
+        }
+        const auto &interp = interps[output.object];
+        const std::string line = RigExecPoseInterpolatorStatusLine(
+            RigExecPoseInterpolatorStatus(
+                *static_cast<const uint32_t *>(value)),
+            program->TextOrEmpty(interp.path), [&] {
+                return interp.driverSlot >= 0
+                           ? program->TextOrEmpty(
+                                 program->slotMeta
+                                     ->paths[size_t(interp.driverSlot)])
+                           : std::string();
+            });
+        if (!line.empty())
+            program->store.stepOutputs[step].diagnostics.push_back(line);
+        return true;
+    }
     if (output.target == uint8_t(eval::OpOutputTarget::Rest)) {
         if (output.object < program->poses->composeGroups.size() &&
             _RrStoreRest(program, output.object, output.port, value))

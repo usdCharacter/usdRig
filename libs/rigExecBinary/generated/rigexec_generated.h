@@ -22441,6 +22441,9 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// 43 (format 56): RestCompose output `port` (OpRestOutput: 4 the rest
   /// matrix, 5 the rest frame, 6 the rest round trip) into compose group
   /// `object`'s slot.
+  /// 45 (format 59): pose interpolator `object`'s status
+  /// (RigExecPoseInterpolatorStatus); an unusable driver gives its node's
+  /// step one line.
   /// 60 (format 55): solver `object`'s frames, from its last op node, as
   /// its aggregate and its commit's outputs; 61 (format 55): whether 2D
   /// skeleton solver `object` solved in its plane.

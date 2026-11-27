@@ -762,7 +762,7 @@ TestAvarBindingIndex()
         const eval::OpHostOutput output{
             0, 0, uint8_t(eval::OpOutputTarget::Avars), uint32_t(provider)};
         std::string why;
-        CHECK(RigExecBakedStoreCompose(B, output, &out, &why) ==
+        CHECK(RigExecBakedStoreCompose(B, nullptr, output, &out, &why) ==
               (provider >= 0 && provider < 4));
         CHECK(B.avars == expected);
     }

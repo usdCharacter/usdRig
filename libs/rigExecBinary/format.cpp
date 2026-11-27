@@ -771,6 +771,7 @@ private:
         std::set<uint64_t> avarsStored, checkpointsStored, weightsStored,
             solversStored, planarStored;
         std::set<std::pair<uint64_t, uint32_t>> restsStored;
+        std::set<uint64_t> statusStored;
         std::vector<uint8_t> spaceStored(
             4 * std::max<size_t>(_slots, _f.pose->frameRecords.size()), 0);
         for (const auto &output : _f.opGraph->hostOutputs) {
@@ -781,9 +782,9 @@ private:
             if ((output->target > 6 && output->target < 20) ||
                 (output->target > 34 && !constraint && output->target != 40 &&
                  output->target != 41 && output->target != 42 &&
-                 output->target != 43 && output->target != 50 &&
-                 output->target != 51 && output->target != 60 &&
-                 output->target != 61 &&
+                 output->target != 43 && output->target != 45 &&
+                 output->target != 50 && output->target != 51 &&
+                 output->target != 60 && output->target != 61 &&
                  (output->target < 52 || output->target > 54)))
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
@@ -858,6 +859,20 @@ private:
                 if (!restsStored.emplace(output->object, output->port).second)
                     return _Bad("op_graph.host_outputs: rest port " +
                                 _N(output->port) + " of compose group " +
+                                _N(output->object) + " is stored twice");
+                continue;
+            }
+            if (output->target == 45) {
+                if (!_f.pose ||
+                    output->object >= _f.pose->poseInterpolators.size() ||
+                    _interpolatorNode[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the status of pose interpolator " +
+                                _N(output->object) +
+                                ", whose weights it does not store");
+                if (!statusStored.insert(output->object).second)
+                    return _Bad("op_graph.host_outputs: the status of pose "
+                                "interpolator " +
                                 _N(output->object) + " is stored twice");
                 continue;
             }

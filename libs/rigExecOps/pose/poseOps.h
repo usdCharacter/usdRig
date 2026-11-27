@@ -154,7 +154,9 @@ const rigExec::RigExecOpHandle &PoseInterpolator();
 // = 1), DriverFinal / DriverRest and ParentFinal / ParentRest (PointFrame,
 // fed in pairs), ExtraFinals / ExtraRests (PointFrameList, one per extra
 // driver) and ExtraParentFinals / ExtraParentRests (one per extra driver
-// with a parent). Out (FloatArray, poseCount): zero when disabled.
+// with a parent). Out (FloatArray, poseCount): zero when disabled. Status
+// (UInt, a RigExecPoseInterpolatorStatus): UnusableRotation or
+// UnusableTranslation when the driver gave no usable frame and Out is zero.
 const rigExec::RigExecPortHandle &PoseInterpolatorEnabled();
 const rigExec::RigExecPortHandle &PoseInterpolatorNumeric();
 const rigExec::RigExecPortHandle &PoseInterpolatorMask();
@@ -167,6 +169,7 @@ const rigExec::RigExecPortHandle &PoseInterpolatorExtraRests();
 const rigExec::RigExecPortHandle &PoseInterpolatorExtraParentFinals();
 const rigExec::RigExecPortHandle &PoseInterpolatorExtraParentRests();
 const rigExec::RigExecPortHandle &PoseInterpolatorOut();
+const rigExec::RigExecPortHandle &PoseInterpolatorStatus();
 
 /// RestCompose's and LadderCompose's payload.
 struct SlotActivityPayload {

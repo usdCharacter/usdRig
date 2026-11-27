@@ -227,7 +227,7 @@ struct BakedOpHost {
     bool StoreCompose(const eval::OpHostOutput &output, const void *value,
                       std::string *error) const
     {
-        return RigExecBakedStoreCompose(B, output, value, error);
+        return RigExecBakedStoreCompose(B, step, output, value, error);
     }
     bool LookUpSolver(uint32_t, const eval::OpLookup &lookup,
                       const RigExecTypeDesc &type, void *value,
