@@ -31,7 +31,9 @@ _RIGEXEC_BAKE_PIN_STEP(Solve);
 static_assert(uint8_t(RigExecBakedStepKind::SolverCommit) ==
                   uint8_t(RigExecWireStepKind::ReservedSolverCommit),
               "wire step order drifted");
-_RIGEXEC_BAKE_PIN_STEP(Constraint);
+static_assert(uint8_t(RigExecBakedStepKind::Constraint) ==
+                  uint8_t(RigExecWireStepKind::ReservedConstraint),
+              "wire step order drifted");
 static_assert(uint8_t(RigExecBakedStepKind::CommitDelta) ==
                       uint8_t(RigExecWireStepKind::ReservedCommitDelta) &&
                   uint8_t(RigExecBakedStepKind::PropagateChunk) ==

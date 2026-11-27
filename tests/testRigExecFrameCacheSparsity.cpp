@@ -81,9 +81,14 @@ AddVolatileReadStep(RigExecBakedProgramImpl *program, int cluster)
     program->walkSteps.back().index = int(program->constraints.size());
     program->constraints.emplace_back();
     program->constraints.back().weightObject = SdfPath("/Weights/Envelope");
+    RigExecBakedOpOrigin origin;
+    origin.family = RigExecBakedOpFamily::Constraint;
+    origin.kind = RigExecBakedStepKind::Constraint;
+    origin.object = int32_t(program->walkSteps.size() - 1);
     RigExecBakedStep step;
-    step.kind = RigExecBakedStepKind::Constraint;
-    step.object = int(program->walkSteps.size() - 1);
+    step.kind = RigExecBakedStepKind::OpNode;
+    step.object = int(program->opNodeOrigins.size());
+    program->opNodeOrigins.push_back(origin);
     step.cluster = cluster;
     step.externalReads = true;
     program->steps.push_back(std::move(step));

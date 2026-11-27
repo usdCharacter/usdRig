@@ -1177,7 +1177,8 @@ enum class StepKind : uint8_t {
   Solve = 1,
   /// Reserved. Open refuses it.
   ReservedSolverCommit = 2,
-  Constraint = 3,
+  /// Reserved. Open refuses it.
+  ReservedConstraint = 3,
   /// Reserved. Open refuses them.
   ReservedCommitDelta = 4,
   ReservedPropagateChunk = 5,
@@ -1232,7 +1233,7 @@ inline const StepKind (&EnumValuesStepKind())[33] {
     StepKind::ComposeSubtree,
     StepKind::Solve,
     StepKind::ReservedSolverCommit,
-    StepKind::Constraint,
+    StepKind::ReservedConstraint,
     StepKind::ReservedCommitDelta,
     StepKind::ReservedPropagateChunk,
     StepKind::ReservedCommitApply,
@@ -1271,7 +1272,7 @@ inline const char * const *EnumNamesStepKind() {
     "ComposeSubtree",
     "Solve",
     "ReservedSolverCommit",
-    "Constraint",
+    "ReservedConstraint",
     "ReservedCommitDelta",
     "ReservedPropagateChunk",
     "ReservedCommitApply",

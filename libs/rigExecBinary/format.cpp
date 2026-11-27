@@ -3135,10 +3135,8 @@ private:
             if (step.kind == fb::StepKind::ReservedProviderRefresh)
                 return _Bad(_StepName(i) +
                             ": the retired ProviderRefresh step");
-            if (step.kind == fb::StepKind::Constraint &&
-                _SolvesAsOpNodes(step.object))
-                return _Bad(_StepName(i) + ": constraint " + _N(step.object) +
-                            " solves as op nodes");
+            if (step.kind == fb::StepKind::ReservedConstraint)
+                return _Bad(_StepName(i) + ": the retired Constraint step");
             if (step.kind == fb::StepKind::ReservedSpaceExpression)
                 return _Bad(_StepName(i) +
                             ": the retired SpaceExpression step");
@@ -10371,17 +10369,6 @@ private:
                _Has(_f.pose->constraints, _f.pose->walkSteps[size_t(w)].index);
     }
 
-    /// Whether walk step \p w commits a constraint of a kind that solves as
-    /// op nodes, which no Constraint step runs.
-    bool _SolvesAsOpNodes(int64_t w) const
-    {
-        if (!_ConstraintCommit(w))
-            return false;
-        const auto &c =
-            _f.pose->constraints[size_t(_f.pose->walkSteps[size_t(w)].index)];
-        return c.ikFkMatch || c.target >= 0;
-    }
-
     /// Constraint commit \p w's constraint; \p w must pass
     /// _ConstraintCommit.
     const fb::RigExecWireConstraint &_ConstraintAt(int64_t w) const
@@ -10403,13 +10390,11 @@ private:
         return (source >= 32 && source <= 39) || source == 70 || source == 71;
     }
 
-    /// The constraint commit a Constraint step or a constraint op step
-    /// solves, or -1; with \p delta, also the step measuring its delta.
+    /// The constraint commit a constraint op step solves, or -1; with
+    /// \p delta, also the step measuring its delta.
     int64_t _ConstraintOf(const fb::RigExecWireStep &step,
                           bool delta = false) const
     {
-        if (step.kind == fb::StepKind::Constraint)
-            return step.object;
         if (step.kind != fb::StepKind::OpNode || step.object < 0 ||
             size_t(step.object) >= _constraintNode.size())
             return -1;
@@ -10423,7 +10408,7 @@ private:
     /// Per op node: the pose interpolator whose weights it stores, or -1.
     std::vector<int64_t> _interpolatorNode;
 
-    /// The commit a Constraint step or PoseCommit op step works on, or -1.
+    /// The commit a constraint or PoseCommit op step works on, or -1.
     int64_t _CommitOf(const fb::RigExecWireStep &step) const
     {
         if (_ConstraintOf(step) >= 0)
@@ -10653,13 +10638,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 52,
+    static_assert(RigExecFormatOldestReadable == 53,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: avars, checkpoints and interpolators as op nodes"
+                ? "re-export: the Constraint step retired"
                 : "rebake");
 }
 
@@ -10870,8 +10855,8 @@ _StepKindName(fb::StepKind kind)
         return "Solve";
     case fb::StepKind::ReservedSolverCommit:
         return "ReservedSolverCommit";
-    case fb::StepKind::Constraint:
-        return "Constraint";
+    case fb::StepKind::ReservedConstraint:
+        return "ReservedConstraint";
     case fb::StepKind::ReservedCommitDelta:
         return "ReservedCommitDelta";
     case fb::StepKind::ReservedPropagateChunk:
@@ -10970,15 +10955,8 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
     case fb::StepKind::ReservedPropagateChunk:
     case fb::StepKind::ReservedCommitApply:
         return false;
-    case fb::StepKind::Constraint: {
-        if (!pose || !_Has(pose->commits, object)) {
-            return false;
-        }
-        // An empty mover path is a batch of commits with no one mover.
-        const std::string mover = text(pose->commits[size_t(object)].moverPath);
-        *out = mover.empty() ? "batch " + std::to_string(object) : mover;
-        return true;
-    }
+    case fb::StepKind::ReservedConstraint:
+        return false;
     case fb::StepKind::ReservedProviderMatrix:
         return false;
     case fb::StepKind::SnapshotFinals:

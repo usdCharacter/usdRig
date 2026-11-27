@@ -120,7 +120,9 @@ enum SlotDomain : ubyte { Avars = 0, PoseBase, PoseFin, PosedM, FinalMatrix,
 /// never written, and Open refuses a file that holds one.
 enum StepKind : ubyte { ComposeSubtree = 0, Solve,
   /// Reserved. Open refuses it.
-  ReservedSolverCommit, Constraint,
+  ReservedSolverCommit,
+  /// Reserved. Open refuses it.
+  ReservedConstraint,
   /// Reserved. Open refuses them.
   ReservedCommitDelta, ReservedPropagateChunk, ReservedCommitApply,
   /// Reserved. Open refuses it.

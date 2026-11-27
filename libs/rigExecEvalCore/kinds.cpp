@@ -39,6 +39,8 @@ static_assert(static_cast<uint8_t>(fb::StepKind::ReservedSolverCommit) == 2 &&
                       5 &&
                   static_cast<uint8_t>(fb::StepKind::ReservedCommitApply) == 6,
               "the retired commit ordinals are 2, 4, 5 and 6");
+static_assert(static_cast<uint8_t>(fb::StepKind::ReservedConstraint) == 3,
+              "the retired constraint ordinal is 3");
 static_assert(static_cast<uint8_t>(fb::StepKind::ReservedProviderRefresh) == 28,
               "the retired provider refresh ordinal is 28");
 static_assert(static_cast<uint8_t>(fb::StepKind::ReservedOpGraph) == 29,
@@ -66,6 +68,7 @@ IsReservedStepKind(StepKind kind)
            kind == fb::StepKind::ReservedProviderMatrix ||
            kind == fb::StepKind::ReservedFrameMatrix ||
            kind == fb::StepKind::ReservedSolverCommit ||
+           kind == fb::StepKind::ReservedConstraint ||
            kind == fb::StepKind::ReservedCommitDelta ||
            kind == fb::StepKind::ReservedPropagateChunk ||
            kind == fb::StepKind::ReservedCommitApply ||

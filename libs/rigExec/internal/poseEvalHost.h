@@ -707,20 +707,6 @@ public:
         }
         facts.defaultWeight =
             double(RigExecBakedLeafRead(*_program, c.defaultWeight));
-        facts.code = eval::kPoseConstraintUnknown;
-        if (c.type == SchemaTypeName::RigExecMatrixMover) {
-            facts.code = eval::kPoseConstraintMatrixMover;
-        } else if (c.type == SchemaTypeName::RigExecPositionConstraint) {
-            facts.code = eval::kPoseConstraintPosition;
-        } else if (c.type == SchemaTypeName::RigExecRotationConstraint) {
-            facts.code = eval::kPoseConstraintRotation;
-        } else if (c.type == SchemaTypeName::RigExecScaleConstraint) {
-            facts.code = eval::kPoseConstraintScale;
-        } else if (c.type == SchemaTypeName::RigExecParentConstraint) {
-            facts.code = eval::kPoseConstraintParent;
-        } else if (c.type == SchemaTypeName::RigExecAimConstraint) {
-            facts.code = eval::kPoseConstraintAim;
-        }
         facts.ikFkMatch = c.ikFkMatch;
         facts.harmonics = c.harmonics;
         facts.radialBlend = c.radialBlend;

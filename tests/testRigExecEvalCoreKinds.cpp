@@ -54,6 +54,7 @@ CheckOrdinals()
             continue;
         }
         if (kind == eval::StepKind::ReservedSolverCommit ||
+            kind == eval::StepKind::ReservedConstraint ||
             kind == eval::StepKind::ReservedCommitDelta ||
             kind == eval::StepKind::ReservedPropagateChunk ||
             kind == eval::StepKind::ReservedCommitApply ||
@@ -79,6 +80,7 @@ CheckOrdinals()
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedWeightField));
     CHECK(eval::IsReservedStepKind(eval::StepKind::SnapshotFinals));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedSolverCommit));
+    CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedConstraint));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedCommitApply));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedOpGraph));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedProviderMatrix));

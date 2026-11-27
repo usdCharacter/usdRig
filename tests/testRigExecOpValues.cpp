@@ -867,8 +867,13 @@ void
 TestConstraintSourceAndPropertyAliasKeys()
 {
     RigExecBakedProgramImpl B;
+    RigExecBakedOpOrigin origin;
+    origin.family = RigExecBakedOpFamily::Constraint;
+    origin.kind = RigExecBakedStepKind::Constraint;
+    origin.object = 0;
+    B.opNodeOrigins = {origin};
     RigExecBakedStep step;
-    step.kind = RigExecBakedStepKind::Constraint;
+    step.kind = RigExecBakedStepKind::OpNode;
     step.object = 0;
     B.walkSteps.resize(1);
     B.walkSteps[0].index = 0;

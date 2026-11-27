@@ -638,7 +638,7 @@ SortedContains(const std::vector<int> &values, int value)
     return std::binary_search(values.begin(), values.end(), value);
 }
 
-/// The commit a Constraint step or PoseCommit op step works on, or -1.
+/// The commit a constraint or PoseCommit op step works on, or -1.
 int
 CommitStepObject(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step)
 {
@@ -647,7 +647,7 @@ CommitStepObject(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step)
         return origin->object;
     if (origin && origin->family == RigExecBakedOpFamily::Constraint)
         return origin->part < 0 ? origin->object : -1;
-    return step.kind == RigExecBakedStepKind::Constraint ? step.object : -1;
+    return -1;
 }
 
 /// preds point backward and succs forward, each sorted, unique and the

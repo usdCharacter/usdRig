@@ -51,8 +51,6 @@ _RrKindName(RigExecWireStepKind kind)
         return "Solve";
     case RigExecWireStepKind::ReservedSolverCommit:
         return "ReservedSolverCommit";
-    case RigExecWireStepKind::Constraint:
-        return "Constraint";
     case RigExecWireStepKind::ReservedCommitDelta:
         return "ReservedCommitDelta";
     case RigExecWireStepKind::ReservedPropagateChunk:
@@ -529,10 +527,6 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
 
     case RigExecWireStepKind::Solve: {
         return runtimePoseDetail::_RrRunSolveStep(program, step, error);
-    }
-
-    case RigExecWireStepKind::Constraint: {
-        return runtimePoseDetail::_RrRunConstraintStep(program, step, error);
     }
 
     default:

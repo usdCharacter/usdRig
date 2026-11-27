@@ -93,8 +93,6 @@ RrPointFrame _RrBlendFrames(const RrPointFrame &a, const RrPointFrame &b,
 // RigExecTransformFrame: every landmark carried by \p space, nothing else.
 RrPointFrame _RrTransformFrame(const RrPointFrame &frame, const RrMat4d &space);
 
-bool _RrRunConstraintStep(RrProgram *program, size_t step, std::string *error);
-
 // A control's channels as the compose reads them, for the match kernels.
 RigExecIkFkMatchChannels _RrMatchChannelsOf(const RrProgram &program,
                                             const RrPoseScratch &scratch,

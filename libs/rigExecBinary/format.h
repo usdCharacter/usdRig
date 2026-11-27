@@ -715,7 +715,10 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// OpGraph.host_outputs targets 40 to 42. It retires the AvarInputs,
 /// SpaceCheckpoint and PoseInterpolator steps: StepKinds 26, 27 and 9 are
 /// reserved and refused.
-inline constexpr uint32_t RigExecFormatVersion = 52;
+///
+/// Format 53 retires the Constraint step: StepKind 3 is reserved and
+/// refused. A constraint with no target solves nothing and has no step.
+inline constexpr uint32_t RigExecFormatVersion = 53;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -723,7 +726,7 @@ inline constexpr uint32_t RigExecFormatVersion = 52;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 52;
+inline constexpr uint32_t RigExecFormatOldestReadable = 53;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

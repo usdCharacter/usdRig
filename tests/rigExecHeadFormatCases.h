@@ -347,7 +347,7 @@ _PoseBodyFile()
     fb::RigExecWireConstraint constraint;
     constraint.path = 3;
     constraint.singleChainIk = true;
-    constraint.target = -1;
+    constraint.target = 1;
     constraint.targetSlots = {1};
     constraint.sources = {1};
     for (auto *read :
@@ -377,9 +377,7 @@ _PoseBodyFile()
     f.pose->commits.push_back(std::move(commit));
     auto provider = std::move(f.steps[5]);
     auto &body = f.steps[5];
-    body = fb::RigExecWireStep{};
-    body.kind = fb::StepKind::Constraint;
-    body.object = 0;
+    body = _SpaceStep(f, "SingleChainIk", 70, 0);
     body.cluster = 0;
     body.preds = {2, 4};
     body.succs = {6};
@@ -418,15 +416,17 @@ TestPoseBodyDeclarations()
     const auto refuses = [&](RigExecWireFile file, const std::string &needle) {
         why.clear();
         CHECK(!RigExecFormatValidate(file, &why));
-        CHECK(why.find("Constraint") != std::string::npos &&
-              why.find(needle) != std::string::npos);
+        CHECK(why.find(needle) != std::string::npos);
         why.clear();
         CHECK(!_Open(_PackUnchecked(file), &why));
         CHECK(why.find(needle) != std::string::npos);
     };
     auto changed = valid;
-    changed.steps[5].object = int32_t(valid.pose->commits.size());
-    refuses(std::move(changed), "commit body object out of range");
+    for (auto &output : changed.opGraph->hostOutputs)
+        if (output->node == uint64_t(valid.steps[5].object))
+            output->object = uint32_t(valid.pose->commits.size());
+    refuses(std::move(changed), "stores into constraint 1, which it does not "
+                                "solve");
     changed = valid;
     changed.pose->commits[0].sourceReads[0] =
         0; // In-range, but not the declared body source.

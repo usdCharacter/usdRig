@@ -75,20 +75,6 @@ enum PoseSolverCode : int {
     kPoseSolverSkeleton2d = 6
 };
 
-// The constraint arms the Constraint step selects, in the order the
-// step tests them: a split commit finishes first, then the IK/FK
-// presentation, the target admissibility gate, the enabled gate, the weight gate, the single-chain IK arm, and the
-// FBX-family type dispatch last.
-enum PoseConstraintCode : int {
-    kPoseConstraintUnknown = -1,
-    kPoseConstraintMatrixMover = 0,
-    kPoseConstraintPosition = 1,
-    kPoseConstraintRotation = 2,
-    kPoseConstraintScale = 3,
-    kPoseConstraintParent = 4,
-    kPoseConstraintAim = 5
-};
-
 // The interpolator driver KIND the PoseInterpolator step selects: a
 // NUMERIC driver reads dials, a transform driver reads frames, and an
 // ML mover may read both. The method/network/maps tables select the
@@ -105,21 +91,7 @@ namespace pose_detail {
 // ignores still documents the failure.
 enum PoseStepDetail : int32_t {
     kPoseDetailNone = 0,
-    kPoseDetailNoCommit = 1,
     kPoseDetailNoSlot = 3,
-    kPoseDetailNoVersion = 4,
-    kPoseDetailNoWindow = 5,
-    kPoseDetailNoSource = 6,
-    kPoseDetailNoSpace = 7,
-    kPoseDetailNoDeltaPath = 8,
-    kPoseDetailNoTarget = 9,
-    kPoseDetailNoCandidate = 10,
-    kPoseDetailNoConstraint = 11,
-    kPoseDetailNoArrays = 12,
-    kPoseDetailNoRecord = 13,
-    kPoseDetailNoChain = 14,
-    kPoseDetailNoRest = 15,
-    kPoseDetailNoPole = 16
 };
 
 // The propagation outcomes, in RigExecBakedPropagateOutcome order.
@@ -2406,7 +2378,6 @@ template <class Math> struct PoseConstraintFactsT {
     int target = -1;
     int deltaBase = -1;
     int spaceSlot = -1;
-    PoseConstraintCode code = kPoseConstraintUnknown;
     std::string pathText;
     bool enabled = true;
     bool hasWeightObject = false;
@@ -2690,30 +2661,6 @@ struct PoseIkChainView {
     size_t poleObjects = 0;
 };
 
-// One constraint step: a constraint with no target, which solves nothing;
-// every constraint kind runs as op nodes. The caller ran the entry
-// gates (abandoned/present, record gates, delta-absent); the commit is a
-// PoseCommit op node.
-template <class Host>
-StepResult
-RunConstraintStep(Host &host, const StepRef &step)
-{
-    static_assert(IsBoundHost<Host>::value, "pose Host is not bound");
-    using pose_detail::kPoseDetailNoCommit;
-    if (step.object < 0 ||
-        size_t(step.object) >= host.inputs().commitObjectCount()) {
-        return {Outcome::Invalid, kPoseDetailNoCommit};
-    }
-    const size_t object = size_t(step.object);
-    const PoseConstraintFactsT<typename Host::Math> facts =
-        host.inputs().constraintFacts(object);
-    if (facts.target < 0) {
-        return {Outcome::Applied, kNoStepDetail};
-    }
-    // Every other constraint kind solves as op nodes.
-    return {Outcome::Invalid, kPoseDetailNoCommit};
-}
-
 // The pose family tag: an adapter's RunValueStep entry selects this
 // family's dispatch through Host::EvalValueFamily.
 struct PoseValueFamily {};
@@ -2733,8 +2680,6 @@ RunValueStep(Host &host, const StepRef &step)
         return RunRestComposeStep(host, step, true);
     case StepKind::LadderCompose:
         return RunLadderComposeStep(host, step, true);
-    case StepKind::Constraint:
-        return RunConstraintStep(host, step);
     default:
         return {Outcome::Invalid, kNoStepDetail};
     }

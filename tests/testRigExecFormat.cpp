@@ -840,8 +840,8 @@ _RichFileBody()
     constraint.worldUpVector = _In(InputTag::Vec3d);
     constraint.aimAxisFallback = _V3d(1);
     constraint.sceneUp = _V3d(4);
-    // A single-chain IK with no target, which a Constraint step solves, with
-    // every flag but preserve joint orientation.
+    // A single-chain IK with no target, with every flag but preserve joint
+    // orientation.
     constraint.singleChainIk = true;
     constraint.flags = uint8_t(fb::ConstraintFlags::ANY) &
                        ~RigExecWireConstraintPreserveJointOrientation;
@@ -1182,8 +1182,6 @@ _AddFixtureHeads(RigExecWireFile &f)
             if (step.kind == fb::StepKind::ComposeSubtree)
                 step.reads.push_back(fb::SlotRange(fb::SlotDomain::Ladder,
                                                    group.begin, group.end));
-            if (step.kind == fb::StepKind::Constraint)
-                step.reads.push_back(fb::SlotRange(fb::SlotDomain::Rest, 0, 1));
         }
     }
     // Actual raw avar producers precede fixture region consumers.
@@ -1710,12 +1708,11 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 52 &&
-                      RigExecFormatOldestReadable == 52,
-                  "format 52 runs avars, checkpoints and interpolators as "
-                  "op nodes and is the only format Open reads");
-    // Every older format requires re-export: its avar bindings, space
-    // checkpoints and pose interpolators ran as steps.
+    static_assert(RigExecFormatVersion == 53 &&
+                      RigExecFormatOldestReadable == 53,
+                  "format 53 retires the Constraint step and is the only "
+                  "format Open reads");
+    // Every older format requires re-export: it may hold Constraint steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1726,15 +1723,14 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 52 through " +
+            " (this reader reads 53 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 52
-                 ? "re-export: avars, checkpoints and interpolators as op nodes"
-                 : "rebake");
+            (version < 53 ? "re-export: the Constraint step retired"
+                          : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 52 ? reexports : rebakes);
+        ++(version < 53 ? reexports : rebakes);
     }
-    CHECK(reexports == 52 && rebakes == 1);
+    CHECK(reexports == 53 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -3470,8 +3466,9 @@ TestStepLabels()
     });
     label("Solve /Rig/Ctl",
           [](RigExecWireFile &f) { _RegionStep(f, 0).kind = StepKind::Solve; });
-    label("Constraint /Rig/Ctl", [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::Constraint;
+    label("ReservedConstraint 0", [](RigExecWireFile &f) {
+        _RegionStep(f, 0).kind = StepKind::ReservedConstraint;
+        _RegionStep(f, 0).object = 0;
     });
     label("OpNode /Rig/Ctl final", [](RigExecWireFile &f) {
         _RegionStep(f, 0) = _SpaceStep(f, "ProviderMatrix", 20, 0);
@@ -3523,11 +3520,11 @@ TestStepLabels()
 
 /// The rich file with a second slot, /Rig/Slot0, both composed by step 0
 /// (compose group [0, 2), so PoseFin versions 0 and 1 are the composes);
-/// commit 0 writes slot 0's last version, 2, in step 1; and frame record 0
-/// of slot 0 after commit 0 reads version 2 in step 2, which declares
-/// PoseFin[0] and CommitTable[0] and writes FrameMatrix[0]. \p solver makes
-/// commit 0 a solver batch over both slots (versions 2 and 3), step 1 its
-/// PoseCommit op node, and the record a solver's at position 0.
+/// commit 0's PoseCommit op node writes slot 0's last version, 2, in step 1;
+/// and frame record 0 of slot 0 after commit 0 reads version 2 in step 2,
+/// which declares PoseFin[0] and CommitTable[0] and writes FrameMatrix[0].
+/// \p solver makes commit 0 a solver batch over both slots (versions 2 and
+/// 3) and the record a solver's at position 0.
 RigExecWireFile
 _RecordFile(bool solver = false)
 {
@@ -3548,8 +3545,8 @@ _RecordFile(bool solver = false)
     commit.slotWrites =
         solver ? std::vector<uint32_t>{2, 3} : std::vector<uint32_t>{2};
     fb::RigExecWireStep writer;
-    writer.kind = solver ? fb::StepKind::OpNode : fb::StepKind::Constraint;
-    writer.object = solver ? -1 : 0;
+    writer.kind = fb::StepKind::OpNode;
+    writer.object = -1;
     writer.reads = {fb::SlotRange(fb::SlotDomain::PoseFin, 0, 1)};
     writer.writes = {fb::SlotRange(fb::SlotDomain::CommitTable, 0, 1),
                      fb::SlotRange(fb::SlotDomain::PoseFin, 2, solver ? 4 : 3)};
@@ -3750,11 +3747,8 @@ TestPhaseTables()
         walk.index = 1;
         f.pose->walkSteps.push_back(std::move(walk));
         f.pose->commits.push_back(std::move(later));
-        fb::RigExecWireStep step;
-        step.kind = fb::StepKind::Constraint;
-        step.object = 1;
-        step.reads = {fb::SlotRange(fb::SlotDomain::PoseFin, 0, 1),
-                      fb::SlotRange(fb::SlotDomain::Rest, 0, 1)};
+        fb::RigExecWireStep step = _CommitStep(f, 1);
+        step.reads = {fb::SlotRange(fb::SlotDomain::PoseFin, 0, 1)};
         step.writes = {fb::SlotRange(fb::SlotDomain::CommitTable, 1, 2),
                        fb::SlotRange(fb::SlotDomain::PoseFin, 2, 3)};
         _AppendStep(f, std::move(step));
@@ -3768,17 +3762,15 @@ TestPhaseTables()
         laterCommit(file);
         accepted("record before a later commit", file);
     }
-    // A Constraint step solves IK/FK match and a constraint with no target;
-    // every other kind solves as op nodes.
+    // The Constraint step is retired.
     {
-        _context = "phase tables: a Constraint step of a constraint with a "
-                   "target";
+        _context = "phase tables: a Constraint step";
         F file = _RecordFile();
-        file.pose->constraints[0].target = 0;
+        _RegionStep(file, 1).kind = fb::StepKind::ReservedConstraint;
+        _RegionStep(file, 1).object = 0;
         why.clear();
         const bool ok = RigExecFormatValidate(file, &why);
-        const std::string want =
-            "(Constraint /Rig/Ctl): constraint 0 solves as op nodes";
+        const std::string want = ": the retired Constraint step";
         CHECK(!ok && why.find(want) != std::string::npos);
         if (ok || why.find(want) == std::string::npos)
             std::printf("  got '%s', expected '%s'\n",
@@ -3876,7 +3868,7 @@ TestPhaseTables()
     // The records and their FrameMatrix steps.
     expect("version a later commit writes",
            frame + " is bound to PoseFin version 2 of /Rig/Ctl, which step 3 "
-                   "(Constraint /Rig/Mover) writes at or after it",
+                   "(OpNode /Rig/Mover) writes at or after it",
            record([&](F &f) {
                laterCommit(f);
                f.pose->frameRecords[0] = fb::FrameRecord(0, 0, 0, -1, 2, _pCtl);
@@ -3944,7 +3936,7 @@ TestPhaseTables()
            record([](F &f) { _AppendStep(f, _RegionStep(f, 2)); }));
     expect("object past the records",
            "op_graph.host_outputs: node " +
-               std::to_string(_RecordFile(false).opGraph->nodes.size() - 1) +
+               std::to_string(_RegionStep(_RecordFile(false), 2).object) +
                " stores a matrix of no frame record 1",
            record([](F &f) {
                for (auto &output : f.opGraph->hostOutputs)
@@ -3999,7 +3991,7 @@ TestPhaseTables()
     // CommitTable read instead.
     expect("ahead of its commit",
            "step 1 (OpNode /Rig/Ctl after /Rig/Ctl) reads the exit of "
-           "commit 0, which step 2 (Constraint /Rig/Ctl) writes at or after "
+           "commit 0, which step 2 (OpNode /Rig/Ctl) writes at or after "
            "it",
            record([&](F &f) {
                composeVersion(f);
@@ -4019,7 +4011,7 @@ TestPhaseTables()
                _RegionStep(f, 1).kind = fb::StepKind::SnapshotFinals;
            }));
     expect("another kind writing FrameMatrix",
-           "step 1 (Constraint /Rig/Ctl) writes FrameMatrix, which only a "
+           "step 1 (OpNode /Rig/Ctl) writes FrameMatrix, which only a "
            "FrameMatrix step writes",
            record([](F &f) {
                _RegionStep(f, 1).writes.push_back(
@@ -4250,7 +4242,7 @@ TestPhaseTables()
                         file,
                         frame +
                             " is bound to PoseFin version 2 of /Rig/Ctl, which "
-                            "step 3 (Constraint /Rig/Mover) writes at or after "
+                            "step 3 (OpNode /Rig/Mover) writes at or after "
                             "it"));
     }
     std::printf("phase tables: records, lists and bindings accepted and "

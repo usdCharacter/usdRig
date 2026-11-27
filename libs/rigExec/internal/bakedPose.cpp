@@ -2553,7 +2553,12 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
             }
         }
 
-        // A constraint's step leaves its candidates in the commit table; a
+        // A constraint with no target solves nothing and has no step.
+        if (!walk.solverBatch && !RigExecBakedConstraintRunsAsOps(B, w)) {
+            addFrameRecordSteps(w);
+            continue;
+        }
+        // A constraint's node leaves its candidates in the commit table; a
         // PoseCommit op node writes them back and carries them onto the
         // descendants. A solver batch's node gathers its solvers' candidates
         // itself and publishes which are present in the table.
@@ -2562,15 +2567,12 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
         origin.kind = walk.solverBatch ? RigExecBakedStepKind::SolverCommit
                                        : RigExecBakedStepKind::CommitApply;
         origin.object = int32_t(w);
-        const bool constraintOps =
-            !walk.solverBatch && RigExecBakedConstraintRunsAsOps(B, w);
         RigExecBakedStep &commitStep =
-            walk.solverBatch ? AddStep(&B, RigExecBakedStepKind::OpNode,
-                                       int(B.opNodeOrigins.size()))
-            : constraintOps
-                ? AddOriginStep(&B, RigExecBakedOpFamily::Constraint,
-                                RigExecBakedStepKind::Constraint, int(w), -1)
-                : AddStep(&B, RigExecBakedStepKind::Constraint, int(w));
+            walk.solverBatch
+                ? AddStep(&B, RigExecBakedStepKind::OpNode,
+                          int(B.opNodeOrigins.size()))
+                : AddOriginStep(&B, RigExecBakedOpFamily::Constraint,
+                                RigExecBakedStepKind::Constraint, int(w), -1);
         if (walk.solverBatch)
             B.opNodeOrigins.push_back(origin);
         commitStep.maxDiagnostics = RigExecBakedMaxStepDiagnostics;
@@ -2591,13 +2593,6 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
             if (constraint.target >= 0) {
                 commitStep.reads.push_back(RigExecBakedOne(
                     RigExecBakedSlotDomain::PoseFin, constraint.target));
-            }
-            // A geometry-domain constraint's one write: the delta the Matrix
-            // revision of the same mover rides.
-            if (constraint.deltaBase >= 0 && !constraintOps) {
-                commitStep.writes.push_back(
-                    RigExecBakedOne(RigExecBakedSlotDomain::ConstraintDelta,
-                                    constraint.deltaBase));
             }
             if (constraint.worldUpObject >= 0) {
                 commitStep.reads.push_back(RigExecBakedOne(
@@ -2716,7 +2711,7 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
         RigExecBakedStep *finish = &commitStep;
         if (!walk.solverBatch) {
             const int deltaBase = B.constraints[size_t(walk.index)].deltaBase;
-            if (constraintOps && deltaBase >= 0) {
+            if (deltaBase >= 0) {
                 RigExecBakedStep &delta =
                     AddOriginStep(&B, RigExecBakedOpFamily::Constraint,
                                   RigExecBakedStepKind::Constraint, int(w), 0);
@@ -5065,93 +5060,6 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
             s.outFrames[k] =
                 RigExecExtractElementFrame(&aggregate, size_t(element));
             s.outPresent[k] = 1;
-        }
-        return;
-    }
-
-    case RigExecBakedStepKind::Constraint: {
-        RigExecBakedCommit &commit = B.commits[size_t(step->object)];
-        commit.abandoned = true;
-        std::fill(commit.present.begin(), commit.present.end(), 0);
-        // Non-const because the envelope arm below resolves into this
-        // constraint's own scratch, which is storage one step owns and no
-        // other step names.
-        RigExecBakedProgramImpl::Constraint &c =
-            B.constraints[size_t(B.walkSteps[size_t(step->object)].index)];
-        c.matchValuesValid = false;
-        // Every exit below leaves `recordAfter`/`recordEveryTarget` saying
-        // whether the target's frame is recorded there; the commit's
-        // FrameMatrix steps, which run after its write-back, read them. A
-        // constraint that passed through still leaves its target standing at
-        // the point a phase names.
-        // The GEOMETRY domain writes no transform: it measures a delta against
-        // the target's authored transform and hands it to the Matrix revision
-        // the same mover contributes. Both halves of what makes it different
-        // are set up here: the delta is absent until this run produces one, and
-        // the target's frame is recorded for a read phase only on the exits
-        // that record it.
-        const int deltaBase = c.deltaBase;
-        commit.recordAfter = true;
-        commit.recordEveryTarget = true;
-        if (deltaBase >= 0) {
-            B.deltaPresent[size_t(deltaBase)] = 0;
-        }
-        c.matchShownMask = 0;
-        {
-            BakedPoseHost host(program, step);
-            eval::StepRef ref;
-            ref.kind = uint32_t(step->kind);
-            ref.object = step->object;
-            ref.part = step->part;
-            ref.slot = 0;
-            const eval::StepResult result = eval::RunValueStep(host, ref);
-            if (result.outcome == eval::Outcome::Invalid) {
-                const char *what = "commit";
-                if (result.detail ==
-                    eval::pose_detail::kPoseDetailNoConstraint) {
-                    what = "IK/FK match";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoChain) {
-                    what = "chain target";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoRest) {
-                    what = "rest slot";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoPole) {
-                    what = "pole object";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoVersion) {
-                    what = "fin version";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoDeltaPath) {
-                    what = "delta path";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoCandidate) {
-                    what = "candidate slot";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoTarget) {
-                    what = "target slot";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoArrays) {
-                    what = "constraint arrays";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoSource) {
-                    what = "constraint source";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoSpace) {
-                    what = "space slot";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoWindow) {
-                    what = "harmonics window";
-                } else if (result.detail ==
-                           eval::pose_detail::kPoseDetailNoSlot) {
-                    what = "slot";
-                }
-                step->diagnostics.push_back("constraint " +
-                                            std::to_string(step->object) +
-                                            " names no " + what);
-                return;
-            }
         }
         return;
     }

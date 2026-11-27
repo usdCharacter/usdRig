@@ -599,20 +599,6 @@ public:
         }
         facts.defaultWeight =
             double(_program->ReadConstraint(ci, RrConstraintDefaultWeight).f32);
-        const std::string ctype = _program->TextOrEmpty(c.type);
-        if (ctype == SchemaTypeName::RigExecMatrixMover) {
-            facts.code = eval::kPoseConstraintMatrixMover;
-        } else if (ctype == SchemaTypeName::RigExecPositionConstraint) {
-            facts.code = eval::kPoseConstraintPosition;
-        } else if (ctype == SchemaTypeName::RigExecRotationConstraint) {
-            facts.code = eval::kPoseConstraintRotation;
-        } else if (ctype == SchemaTypeName::RigExecScaleConstraint) {
-            facts.code = eval::kPoseConstraintScale;
-        } else if (ctype == SchemaTypeName::RigExecParentConstraint) {
-            facts.code = eval::kPoseConstraintParent;
-        } else if (ctype == SchemaTypeName::RigExecAimConstraint) {
-            facts.code = eval::kPoseConstraintAim;
-        }
         facts.ikFkMatch = c.ikFkMatch;
         facts.harmonics = c.harmonics;
         facts.radialBlend = (c.flags & RigExecWireConstraintRadialBlend) != 0;

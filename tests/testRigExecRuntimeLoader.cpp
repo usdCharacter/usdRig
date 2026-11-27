@@ -161,8 +161,7 @@ _TestFileRefusals(const std::vector<uint8_t> &bytes)
     CHECK(got == "unsupported .rigexec format version 4 (this reader reads " +
                      std::to_string(RigExecFormatOldestReadable) + " through " +
                      std::to_string(RigExecFormatVersion) +
-                     "); re-export: avars, checkpoints and interpolators as "
-                     "op nodes");
+                     "); re-export: the Constraint step retired");
     if (got.find("format version 4") == std::string::npos) {
         std::printf("version 4: open said '%s'\n", got.c_str());
     }
@@ -657,13 +656,10 @@ _DropRead(fb::RigExecWireFile *file, size_t step, fb::SlotDomain domain,
                 reads.end());
 }
 
-/// The commit a Constraint step or PoseCommit op step of \p file works on,
-/// or -1.
+/// The commit a PoseCommit op step of \p file works on, or -1.
 static int64_t
 _CommitOf(const fb::RigExecWireFile &file, const fb::RigExecWireStep &step)
 {
-    if (step.kind == fb::StepKind::Constraint)
-        return step.object;
     if (step.kind == fb::StepKind::OpNode && file.opGraph)
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->target == 30 &&
@@ -917,8 +913,7 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
             "step " + std::to_string(at) + " is a retired SnapshotFinals step");
         ++reservedRefusals;
     }
-    // A constraint's op arm relabelled as the Constraint step it solved on
-    // before format 47.
+    // A constraint's op arm relabelled as the retired Constraint step.
     int64_t arm = -1;
     uint32_t solved = 0;
     for (size_t s = 0; file->opGraph && s < file->steps.size() && arm < 0;
@@ -935,13 +930,13 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
     }
     if (arm >= 0) {
         const auto relabel = [&](fb::RigExecWireFile *edited) {
-            edited->steps[size_t(arm)].kind = fb::StepKind::Constraint;
+            edited->steps[size_t(arm)].kind = fb::StepKind::ReservedConstraint;
             edited->steps[size_t(arm)].object = int32_t(solved);
         };
-        _ExpectShownRefusal(
-            name, "a constraint's op arm as a Constraint step", bytes, relabel,
-            _EditedStepName(bytes, relabel, size_t(arm)) + ": constraint " +
-                std::to_string(solved) + " solves as op nodes");
+        _ExpectShownRefusal(name, "a constraint's op arm as a Constraint step",
+                            bytes, relabel,
+                            _EditedStepName(bytes, relabel, size_t(arm)) +
+                                ": the retired Constraint step");
         ++reservedRefusals;
     }
 
@@ -955,7 +950,7 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
         "unsupported .rigexec format version " + std::to_string(previous) +
         " (this reader reads " + std::to_string(RigExecFormatOldestReadable) +
         " through " + std::to_string(RigExecFormatVersion) +
-        "); re-export: avars, checkpoints and interpolators as op nodes";
+        "); re-export: the Constraint step retired";
     CHECK(got == want);
     if (got != want) {
         std::printf("%s, previous version: open said '%s', expected '%s'\n",
