@@ -3826,8 +3826,22 @@ TestFrameBlend()
                         &frames));
     check(RigExecDistributeTwist(start, flatEnd, restFrame.points,
                                  endRestFrame.points, weights, 0.0));
-    const double inf = std::numeric_limits<double>::infinity();
     std::string error;
+    rigExecRig::PointFrame moving = rigStart;
+    const double oneTurn = 1.0;
+    CHECK(opAllocationCount::SteadyFrameAllocations(
+              DistributeTwist(), nullptr,
+              {&DistributeTwistStart(), &DistributeTwistEnd(),
+               &DistributeTwistStartRest(), &DistributeTwistEndRest(),
+               &DistributeTwistWeights(), &DistributeTwistTurns()},
+              {&rigStart, &rigEnd, &rest, &endRest, &weightArray, &oneTurn},
+              DistributeTwistOut(), 0,
+              [&](int frame) {
+                  moving.points[0][2] = 0.3 + 0.05 * double(frame);
+                  return &moving;
+              },
+              &error) == 0);
+    const double inf = std::numeric_limits<double>::infinity();
     CHECK(!turnsTwist.Run(
         {&rigStart, &rigEnd, &rest, &endRest, &weightArray, &inf}, &frames,
         &error));

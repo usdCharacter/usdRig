@@ -59,10 +59,9 @@ RigExecRunSolver(const RigExecSolverRecord &s, const RigExecSolverInputs &input,
         return true;
     }
     case RigExecSolverKind::TwistDistribution:
-        aggregate = RigExecSolveTwistDistribution(
-            input.root, input.end, s.twistStartRest, s.twistEndRest,
-            s.twistWeights, input.twistTurns, s.jointRests, s.restIsLive);
-        return true;
+        if (error)
+            *error = "a twist distribution runs as an op node";
+        return false;
     case RigExecSolverKind::Ribbon:
         aggregate = RigExecSampleRibbonFrames(
             input.ribbonPoints, s.ribbonRestPoints, s.ribbonSamples,

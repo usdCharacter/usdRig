@@ -1,6 +1,7 @@
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecOps/solver/chainSolverOps.h"
+#include "rigExecOps/solver/frameBlendOps.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecStdTypes/stdTypes.h"
 
@@ -102,7 +103,8 @@ RigExecBakedSolverOf(const RigExecBakedProgramImpl &B,
 size_t
 RigExecBakedSolverNodeCount(const RigExecBakedProgramImpl::Solver &s)
 {
-    if (s.type == SchemaTypeName::RigExecTwoBoneIk)
+    if (s.type == SchemaTypeName::RigExecTwoBoneIk ||
+        s.type == SchemaTypeName::RigExecTwistDistribution)
         return 1;
     if (s.type != SchemaTypeName::RigExecFkChain)
         return 0;
@@ -150,6 +152,33 @@ RigExecBakedAddSolverOp(const RigExecBakedProgramImpl &B,
         look(node, port,
              {uint8_t(eval::OpLookupSource::PoseVersion), read, 0, 0});
     };
+    const auto constant = [&](RigExecNodeId node, const RigExecPortHandle &port,
+                              const void *data, size_t bytes) {
+        builder->BindInput(node, port);
+        eval::OpConstant value;
+        value.node = node;
+        value.port = port.Index();
+        value.bytes.resize(bytes);
+        if (bytes)
+            std::memcpy(value.bytes.data(), data, bytes);
+        layout->constants.push_back(std::move(value));
+    };
+    if (s.type == SchemaTypeName::RigExecTwistDistribution) {
+        const RigExecNodeId node = builder->AddOp(DistributeTwist());
+        if (!placed(node))
+            return false;
+        version(node, DistributeTwistStart(), s.rootRead);
+        version(node, DistributeTwistEnd(), s.endRead);
+        read(node, DistributeTwistStartRest(), Read::TwistStartRest);
+        read(node, DistributeTwistEndRest(), Read::TwistEndRest);
+        constant(node, DistributeTwistWeights(), s.twistWeights.data(),
+                 s.twistWeights.size() * sizeof(double));
+        read(node, DistributeTwistTurns(), Read::TwistTurns);
+        read(node, DistributeTwistJointRests(), Read::JointRests);
+        read(node, DistributeTwistJointRestLive(), Read::JointRestLive);
+        publish(node, DistributeTwistOut());
+        return true;
+    }
     if (s.type == SchemaTypeName::RigExecTwoBoneIk) {
         TwoBoneIkPayload p;
         p.softDistancePolicy = s.ikParams.softDistancePolicy;
@@ -349,6 +378,42 @@ RigExecBakedLookUpSolver(const RigExecBakedProgramImpl &B,
     case Read::Twist:
         return Scalar(type, RigExecBakedLeafRead(B, s.limbTwist), value) ||
                Fail(error, s.pathText + " has no twist of that type");
+    case Read::JointRests: {
+        if (!Is(type, rigExecRig::PointLandmarksList()))
+            break;
+        auto &out = *static_cast<Landmarks *>(value);
+        out.Resize(s.jointRests.size());
+        for (size_t k = 0; k < s.jointRests.size(); ++k) {
+            if (k < s.restIsLive.size() && s.restIsLive[k] &&
+                k < s.restReads.size() && s.restReads[k] < B.fin.size())
+                out[k] = ToOp(B.fin[s.restReads[k]].points);
+            else if (k >= s.restRefs.size())
+                out[k] = ToOp(s.jointRests[k]);
+            else if (!rest(s.restRefs[k].first, &out[k]))
+                return false;
+        }
+        return true;
+    }
+    case Read::JointRestLive: {
+        if (!Is(type, rigExecStd::BoolArray()))
+            break;
+        auto &out = *static_cast<rigExecStd::RigExecArray<uint8_t> *>(value);
+        out.Resize(s.jointRests.size());
+        for (size_t k = 0; k < s.jointRests.size(); ++k)
+            out[k] = k < s.restIsLive.size() && s.restIsLive[k] ? 1 : 0;
+        return true;
+    }
+    case Read::TwistStartRest:
+        if (!Is(type, rigExecRig::PointLandmarksType()))
+            break;
+        return rest(s.root, static_cast<rigExecRig::PointLandmarks *>(value));
+    case Read::TwistEndRest:
+        if (!Is(type, rigExecRig::PointLandmarksType()))
+            break;
+        return rest(s.end, static_cast<rigExecRig::PointLandmarks *>(value));
+    case Read::TwistTurns:
+        return Scalar(type, RigExecBakedLeafRead(B, s.twistTurns), value) ||
+               Fail(error, s.pathText + " has no twist turns of that type");
     case Read::GroupSelectors: {
         if (!Is(type, rigExecStd::DoubleArray()))
             break;

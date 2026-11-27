@@ -199,6 +199,17 @@ enum class OpSolverRead : uint8_t {
     LowerScale = 13,
     SoftDistance = 14,
     Twist = 15,
+    /// PointLandmarksList: per joint, the rest a pose step below the
+    /// solver wrote where JointRestLive marks it, else its slot's rest.
+    JointRests = 16,
+    /// BoolArray: per joint, whether a pose step below the solver wrote
+    /// its rest.
+    JointRestLive = 17,
+    /// PointLandmarks: a twist distribution's start and end rests.
+    TwistStartRest = 18,
+    TwistEndRest = 19,
+    /// Double: a twist distribution's inputs:twistTurns.
+    TwistTurns = 20,
 };
 
 /// OpLookup::read of a constraint lookup. The numbers are part of the file

@@ -48,10 +48,17 @@ RigExecReferenceSolve(const RigExecSolverRecord &s,
                       RigExecPointFrameArray *output, std::string *error)
 {
     const bool ik = s.kind == RigExecSolverKind::TwoBoneIk;
-    if ((s.kind != RigExecSolverKind::FkChain && !ik) || s.degenerate)
+    const bool twist = s.kind == RigExecSolverKind::TwistDistribution;
+    if ((s.kind != RigExecSolverKind::FkChain && !ik && !twist) || s.degenerate)
         return RigExecRunSolver(s, input, workspace, output, error);
     output->frames.clear();
     output->rests.clear();
+    if (twist) {
+        *output = RigExecSolveTwistDistribution(
+            input.root, input.end, s.twistStartRest, s.twistEndRest,
+            s.twistWeights, input.twistTurns, s.jointRests, s.restIsLive);
+        return true;
+    }
     if (ik) {
         auto params = s.ikParams;
         auto space = input.ikSpace;

@@ -156,24 +156,9 @@ _RrRefreshSolverRests(RrProgram *program, size_t step, size_t solver,
         if (!refreshSpaceRest()) {
             return false;
         }
-    } else if (type == SchemaTypeName::RigExecTwistDistribution) {
-        if (wire.root >= 0 && wire.end >= 0 &&
-            size_t(wire.root) < scratch->restPts.size() &&
-            size_t(wire.end) < scratch->restPts.size()) {
-            s.twistStartRest = scratch->restPts[size_t(wire.root)];
-            s.twistEndRest = scratch->restPts[size_t(wire.end)];
-        }
     }
     return true;
 }
-
-RrPointFrameArray
-_RrSolveTwistDistribution(const RrPointFrame &start, const RrPointFrame &end,
-                          const std::array<RrVec3d, 4> &startRest,
-                          const std::array<RrVec3d, 4> &endRest,
-                          const std::vector<double> &weights, double twistTurns,
-                          const std::vector<std::array<RrVec3d, 4>> &jointRests,
-                          const std::vector<char> &jointRestLive);
 
 RrPointFrameArray
 _RrSampleRibbonFrames(const std::vector<RrVec3f> &posed,
@@ -218,17 +203,6 @@ bool _RrSolveSplineIk(const RrPoseSplineIkRest &rest,
                       const _RrSplineIkParams &params,
                       _RrSplineIkResult *result);
 
-// RigExecDistributeTwist (solvers.cpp).
-std::vector<RrPointFrame>
-_RrDistributeTwist(const RrPointFrame &start, const RrPointFrame &end,
-                   const std::array<RrVec3d, 4> &startRest,
-                   const std::array<RrVec3d, 4> &endRest,
-                   const std::vector<double> &weights, double twistTurns)
-{
-    return RigExecDistributeTwistKernel<RrVec3f, RrVec3d>(
-        start, end, startRest, endRest, weights, twistTurns);
-}
-
 // The joint rest a pose step below the solver wrote for element k
 // (solverKernels.cpp); null keeps the solver's own rest.
 auto
@@ -254,26 +228,6 @@ _RrSampleRibbonFrames(const std::vector<RrVec3f> &posed,
     RigExecSampleRibbonFramesKernel<RrVec3f, RrVec3d>(
         posed.data(), posed.size(), rest.data(), rest.size(), sampleCount,
         &result.frames, &result.rests);
-    RigExecRebaseFramesKernel<RrVec3f, RrVec3d>(
-        _RrLiveJointRest(jointRests, jointRestLive), &result.frames,
-        &result.rests);
-    return result;
-}
-
-// RigExecSolveTwistDistribution (solverKernels.cpp): every frame paired
-// with the START landmarks, re-based where a lower step wrote.
-RrPointFrameArray
-_RrSolveTwistDistribution(const RrPointFrame &start, const RrPointFrame &end,
-                          const std::array<RrVec3d, 4> &startRest,
-                          const std::array<RrVec3d, 4> &endRest,
-                          const std::vector<double> &weights, double twistTurns,
-                          const std::vector<std::array<RrVec3d, 4>> &jointRests,
-                          const std::vector<char> &jointRestLive)
-{
-    RrPointFrameArray result;
-    result.frames =
-        _RrDistributeTwist(start, end, startRest, endRest, weights, twistTurns);
-    result.rests.assign(result.frames.size(), startRest);
     RigExecRebaseFramesKernel<RrVec3f, RrVec3d>(
         _RrLiveJointRest(jointRests, jointRestLive), &result.frames,
         &result.rests);
@@ -406,16 +360,6 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
                 }
             }
         }
-    } else if (type == SchemaTypeName::RigExecTwistDistribution) {
-        const RrPointFrame *start = nullptr;
-        const RrPointFrame *end = nullptr;
-        if (!finAt(ws.rootRead, &start) || !finAt(ws.endRead, &end)) {
-            return false;
-        }
-        aggregate = _RrSolveTwistDistribution(
-            *start, *end, s.twistStartRest, s.twistEndRest, s.twistWeights,
-            program->ReadSolver(size_t(wire.object), RrSolverTwistTurns).f64,
-            liveRests, liveFlags);
     } else if (type == SchemaTypeName::RigExecRibbon) {
         if (size_t(wire.object) >= store.ribbonConstant.size()) {
             if (error) {
@@ -867,6 +811,48 @@ RrLookUpSolver(const RrProgram *program, const eval::OpLookup &lookup,
             s.limbTwist ? p.ReadSolver(lookup.object, RrSolverLimbTwist).f32
                         : 0.0f,
             value, error);
+    case Read::JointRests: {
+        if (!_RrSolverType<rigExecRig::PointLandmarks>(type, true) ||
+            lookup.object >= scratch.solvers.size())
+            break;
+        const RrPoseSolverState &state = scratch.solvers[lookup.object];
+        auto &out = *static_cast<
+            rigExecStd::RigExecArray<rigExecRig::PointLandmarks> *>(value);
+        out.Resize(state.jointRests.size());
+        for (size_t k = 0; k < state.jointRests.size(); ++k) {
+            if (k < s.restIsLive.size() && s.restIsLive[k] &&
+                k < s.restReads.size() && s.restReads[k] < fin.size())
+                out[k] = _RrSolverLandmarks(fin[s.restReads[k]].points);
+            else if (k >= s.restRefs.size())
+                out[k] = _RrSolverLandmarks(state.jointRests[k]);
+            else if (!rest(s.restRefs[k].first, &out[k]))
+                return false;
+        }
+        return true;
+    }
+    case Read::JointRestLive: {
+        if (!_RrSolverType<uint8_t>(type, true) ||
+            lookup.object >= scratch.solvers.size())
+            break;
+        const size_t joints = scratch.solvers[lookup.object].jointRests.size();
+        auto &out = *static_cast<rigExecStd::RigExecArray<uint8_t> *>(value);
+        out.Resize(joints);
+        for (size_t k = 0; k < joints; ++k)
+            out[k] = k < s.restIsLive.size() && s.restIsLive[k] ? 1 : 0;
+        return true;
+    }
+    case Read::TwistStartRest:
+        if (!_RrSolverType<rigExecRig::PointLandmarks>(type, false))
+            break;
+        return rest(s.root, static_cast<rigExecRig::PointLandmarks *>(value));
+    case Read::TwistEndRest:
+        if (!_RrSolverType<rigExecRig::PointLandmarks>(type, false))
+            break;
+        return rest(s.end, static_cast<rigExecRig::PointLandmarks *>(value));
+    case Read::TwistTurns:
+        return _RrSolverScalar(
+            type, p.ReadSolver(lookup.object, RrSolverTwistTurns).f64, value,
+            error);
     case Read::GroupSelectors: {
         if (!_RrSolverType<double>(type, true) ||
             lookup.object >= p.solverJointGroupRead.size())

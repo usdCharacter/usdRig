@@ -108,26 +108,24 @@ RigExecBlendFramesKernel(const F &a, const F &b,
         RigExecParamsToMatrixKernel<Point, Double>(pr));
 }
 
-/// One frame per weight (clamped) between \p start and \p end: swing
-/// slerped, the aim-axis twist unwrapped by \p twistTurns and scaled
-/// linearly, scale and shear linear, origins interpolated. Empty for a
-/// non-finite twist; a singular end holds the nearer end, flagged
-/// degenerate.
+/// One frame per weight (clamped) between \p start and \p end into
+/// \p result, \p count of each: swing slerped, the aim-axis twist unwrapped
+/// by \p twistTurns and scaled linearly, scale and shear linear, origins
+/// interpolated. False, writing nothing, for a non-finite twist; a singular
+/// end holds the nearer end, flagged degenerate.
 template <class Point, class Double, class F>
-std::vector<F>
+bool
 RigExecDistributeTwistKernel(const F &start, const F &end,
                              const std::array<Double, 4> &startRest,
                              const std::array<Double, 4> &endRest,
-                             const std::vector<double> &weights,
-                             double twistTurns)
+                             const double *weights, size_t count,
+                             double twistTurns, F *result)
 {
     using Math = RigExecDualQuatMath<Point, Double>;
     using Quat = typename Math::Quat;
     using Params = RigExecTransformParamsKernelT<Point, Double>;
-    std::vector<F> result;
     if (!std::isfinite(twistTurns))
-        return result;
-    result.reserve(weights.size());
+        return false;
 
     Params ps, pe;
     const bool okS = RigExecPointsToParamsKernel<Point, Double>(
@@ -135,12 +133,12 @@ RigExecDistributeTwistKernel(const F &start, const F &end,
     const bool okE =
         RigExecPointsToParamsKernel<Point, Double>(endRest, end.points, 2, &pe);
     if (!okS || !okE) {
-        for (double w : weights) {
-            F f = (w < 0.5) ? start : end;
+        for (size_t k = 0; k < count; ++k) {
+            F f = (weights[k] < 0.5) ? start : end;
             f.flags |= chainSolverDetail::kFrameDegenerate;
-            result.push_back(f);
+            result[k] = f;
         }
-        return result;
+        return true;
     }
 
     const Double aim = (start.points[1] - start.points[0]).GetNormalized();
@@ -158,9 +156,9 @@ RigExecDistributeTwistKernel(const F &start, const F &end,
         std::atan2(Math::Dot(twist.GetImaginary(), localAim), twist.GetReal());
     twistAngle += 2.0 * std::acos(-1.0) * twistTurns;
     if (!std::isfinite(twistAngle))
-        return result;
+        return false;
 
-    for (size_t k = 0; k < weights.size(); ++k) {
+    for (size_t k = 0; k < count; ++k) {
         const double w = std::min(std::max(weights[k], 0.0), 1.0);
         const Quat swingK =
             Math::Slerp(w, Quat::GetIdentity(), swing).GetNormalized();
@@ -181,8 +179,25 @@ RigExecDistributeTwistKernel(const F &start, const F &end,
         const Double shift = origin - f.points[0];
         for (auto &p : f.points)
             p += shift;
-        result.push_back(f);
+        result[k] = f;
     }
+    return true;
+}
+
+/// RigExecDistributeTwistKernel's frames; empty for a non-finite twist.
+template <class Point, class Double, class F>
+std::vector<F>
+RigExecDistributeTwistKernel(const F &start, const F &end,
+                             const std::array<Double, 4> &startRest,
+                             const std::array<Double, 4> &endRest,
+                             const std::vector<double> &weights,
+                             double twistTurns)
+{
+    std::vector<F> result(weights.size());
+    if (!RigExecDistributeTwistKernel<Point, Double>(
+            start, end, startRest, endRest, weights.data(), weights.size(),
+            twistTurns, result.data()))
+        result.clear();
     return result;
 }
 

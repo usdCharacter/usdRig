@@ -4678,11 +4678,6 @@ RefreshSolverRests(const RigExecBakedProgramImpl &B,
         if (s.spaceSlot >= 0) {
             s.spaceRest = B.restPts[size_t(s.spaceSlot)];
         }
-    } else if (s.type == SchemaTypeName::RigExecTwistDistribution) {
-        if (s.root >= 0 && s.end >= 0) {
-            s.twistStartRest = B.restPts[size_t(s.root)];
-            s.twistEndRest = B.restPts[size_t(s.end)];
-        }
     }
 }
 
@@ -4998,9 +4993,6 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
             input.blendA = s.inA >= 0 ? &B.aggregates[size_t(s.inA)] : nullptr;
             input.blendB = s.inB >= 0 ? &B.aggregates[size_t(s.inB)] : nullptr;
             input.blendWeight = rd(s.blendWeight);
-        } else if (s.type == SchemaTypeName::RigExecTwistDistribution) {
-            s.kind = RigExecSolverKind::TwistDistribution;
-            input.twistTurns = rd(s.twistTurns);
         } else if (s.type == SchemaTypeName::RigExecRibbon) {
             s.kind = RigExecSolverKind::Ribbon;
             const auto &sampled =

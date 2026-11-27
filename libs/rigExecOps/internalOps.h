@@ -47,6 +47,8 @@ inline constexpr rigExec::RigExecSchemaInfo kFkChain =
     Internal("An FK chain's frames from its controls' rest-to-pose maps.");
 inline constexpr rigExec::RigExecSchemaInfo kTwoBoneIk = Internal(
     "A two-bone IK chain's three frames from root, effector and pole.");
+inline constexpr rigExec::RigExecSchemaInfo kDistributeTwist =
+    Internal("A twist distribution's frames between its start and end frames.");
 inline constexpr rigExec::RigExecSchemaInfo kFkJointGroups =
     Internal("An FK chain's joint groups applied to its frames.");
 inline constexpr rigExec::RigExecSchemaInfo kMoverTransform =

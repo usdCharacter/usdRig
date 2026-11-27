@@ -404,6 +404,10 @@ ProbeSolve(const B &b)
             }
             if (s.spaceSlot >= 0)
                 composed.spaceRest = b.restPts[size_t(s.spaceSlot)];
+            if (s.type == SchemaTypeName::RigExecTwistDistribution) {
+                composed.twistStartRest = b.restPts[size_t(s.root)];
+                composed.twistEndRest = b.restPts[size_t(s.end)];
+            }
             for (size_t k = 0; k < s.restRefs.size() && k < s.jointRests.size();
                  ++k)
                 composed.jointRests[k] =

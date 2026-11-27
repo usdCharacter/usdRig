@@ -1,12 +1,14 @@
 #include "rigExecOps/solver/frameBlendOps.h"
 
 #include "rigExecOps/fieldIo.h"
+#include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecOps/solver/liveRests.h"
 #include "rigExecMath/frameBlendKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecMath/dualQuatMath.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iterator>
 #include <string>
@@ -88,25 +90,24 @@ bool
 RunDistributeTwist(const void *, void *, const RigExecOpIo &io,
                    std::string *error)
 {
-    const RigExecArray<double> &weightArray =
+    const RigExecArray<double> &weights =
         *In<RigExecArray<double>>(io, DistributeTwistWeights());
-    const std::vector<double> weights(weightArray.begin(), weightArray.end());
     const double turns = InOr(io, DistributeTwistTurns(), 0.0);
     const PointLandmarks &startRest =
         *In<PointLandmarks>(io, DistributeTwistStartRest());
-    std::vector<PointFrame> frames =
-        rigExec::RigExecDistributeTwistKernel<Vec3f, Vec3d>(
+    PointFrameArray &out = Out<PointFrameArray>(io, DistributeTwistOut());
+    const size_t n = weights.Size();
+    out.frames.Resize(n);
+    if (!rigExec::RigExecDistributeTwistKernel<Vec3f, Vec3d>(
             *In<PointFrame>(io, DistributeTwistStart()),
             *In<PointFrame>(io, DistributeTwistEnd()), startRest,
-            *In<PointLandmarks>(io, DistributeTwistEndRest()), weights, turns);
-    if (frames.size() != weights.size())
+            *In<PointLandmarks>(io, DistributeTwistEndRest()), weights.Data(),
+            n, turns, out.frames.Data()))
         return Fail(error, "DistributeTwist", "needs a finite twist");
-    std::vector<PointLandmarks> rests(frames.size(), startRest);
+    out.rests.Resize(n);
+    std::fill(out.rests.begin(), out.rests.end(), startRest);
     RebaseLive(io, DistributeTwistJointRests(), DistributeTwistJointRestLive(),
-               &frames, &rests);
-    PointFrameArray &out = Out<PointFrameArray>(io, DistributeTwistOut());
-    out.frames.Assign(frames.data(), frames.size());
-    out.rests.Assign(rests.data(), rests.size());
+               &out);
     return true;
 }
 
@@ -182,6 +183,7 @@ const rigExec::RigExecOpDesc kTwist = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "DistributeTwist";
+    d.schema = &internalOps::kDistributeTwist;
     d.ports = kTwistPorts;
     d.portCount = std::size(kTwistPorts);
     d.run = &RunDistributeTwist;

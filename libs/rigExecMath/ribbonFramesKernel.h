@@ -177,15 +177,24 @@ RigExecRebaseFrameKernel(const std::array<Double, 4> &ownRest,
 /// and its rest becomes that joint rest; a singular element is left alone.
 template <class Point, class Double, class F, class JointRest>
 void
+RigExecRebaseFramesKernel(JointRest &&jointRest, F *frames,
+                          std::array<Double, 4> *rests, size_t n)
+{
+    for (size_t k = 0; k < n; ++k) {
+        const std::array<Double, 4> *joint = jointRest(k);
+        if (joint && RigExecRebaseFrameKernel<Point, Double>(rests[k], *joint,
+                                                             &frames[k]))
+            rests[k] = *joint;
+    }
+}
+
+template <class Point, class Double, class F, class JointRest>
+void
 RigExecRebaseFramesKernel(JointRest &&jointRest, std::vector<F> *frames,
                           std::vector<std::array<Double, 4>> *rests)
 {
-    for (size_t k = 0; k < frames->size(); ++k) {
-        const std::array<Double, 4> *joint = jointRest(k);
-        if (joint && RigExecRebaseFrameKernel<Point, Double>(
-                         (*rests)[k], *joint, &(*frames)[k]))
-            (*rests)[k] = *joint;
-    }
+    RigExecRebaseFramesKernel<Point, Double>(jointRest, frames->data(),
+                                             rests->data(), frames->size());
 }
 
 /// The ribbon solver's aggregate: one frame per sample of the \p posed
