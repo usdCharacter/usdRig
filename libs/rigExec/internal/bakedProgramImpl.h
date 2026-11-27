@@ -4839,12 +4839,6 @@ struct RigExecBakedProgramTesting {
         const std::map<SdfPath, std::vector<std::pair<SdfPath, int>>>
             &solverJoints,
         const std::set<SdfPath> &batched);
-    /// A copy of \p program's solver \p index with the Solve step's rest
-    /// refresh (RefreshSolverRests, bakedPose.cpp) applied to it, from the
-    /// rests and `fin` the program holds now. The program is not modified.
-    /// \p index must be below `solvers.size()`.
-    static RigExecBakedProgramImpl::Solver
-    RefreshedSolverRests(const RigExecBakedProgram &program, size_t index);
     /// The ten rest and ladder tables the bake exports.
     using LadderTables = RigExecBakedLadderTables;
     /// \p program's ten tables as they stand.

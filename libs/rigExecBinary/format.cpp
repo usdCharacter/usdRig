@@ -1358,6 +1358,8 @@ private:
                 return _Bad(_StepName(i) + ": the retired ProviderMatrix step");
             if (kind == fb::StepKind::ReservedFrameMatrix)
                 return _Bad(_StepName(i) + ": the retired FrameMatrix step");
+            if (kind == fb::StepKind::ReservedSolve)
+                return _Bad(_StepName(i) + ": the retired Solve step");
             if (kind == fb::StepKind::ReservedSolverCommit)
                 return _Bad(_StepName(i) + ": the retired SolverCommit step");
             if (kind == fb::StepKind::ReservedCommitDelta)
@@ -3190,6 +3192,8 @@ private:
                 return _Bad(_StepName(i) + ": the retired ProviderMatrix step");
             if (step.kind == fb::StepKind::ReservedFrameMatrix)
                 return _Bad(_StepName(i) + ": the retired FrameMatrix step");
+            if (step.kind == fb::StepKind::ReservedSolve)
+                return _Bad(_StepName(i) + ": the retired Solve step");
             if (step.kind == fb::StepKind::ReservedSolverCommit)
                 return _Bad(_StepName(i) + ": the retired SolverCommit step");
             if (step.kind == fb::StepKind::ReservedCommitDelta)
@@ -3523,9 +3527,8 @@ private:
             const auto &solver = solvers[i];
             if (!solver.solveDescriptorKey.empty()) {
                 const std::string prefix =
-                    RigExecFormatPathText(_f, solver.path) +
-                    "/category:" + std::to_string(int(fb::StepKind::Solve)) +
-                    "/";
+                    RigExecFormatPathText(_f, solver.path) + "/category:" +
+                    std::to_string(int(fb::StepKind::ReservedSolve)) + "/";
                 if (solver.solveDescriptorKey.compare(0, prefix.size(),
                                                       prefix) != 0 ||
                     !solverKeys.emplace(solver.solveDescriptorKey, i).second)
@@ -10443,22 +10446,18 @@ private:
     /// solver it runs for: that one, or the one of the node it feeds.
     std::vector<int64_t> _solveNode, _solverOf;
 
-    /// The solver a Solve step or a solver's op node runs, or -1.
+    /// The solver a solver's op node runs, or -1.
     int64_t _SolverOf(const fb::RigExecWireStep &step) const
     {
-        if (step.kind == fb::StepKind::Solve)
-            return step.object;
         return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
                        size_t(step.object) < _solverOf.size()
                    ? _solverOf[size_t(step.object)]
                    : -1;
     }
-    /// The solver a step keeps the Solve identity of: a Solve step's, or
-    /// the one an op node stores the frames of; -1 otherwise.
+    /// The solver whose frames an op node stores, keeping its Solve
+    /// identity; -1 otherwise.
     int64_t _SolveOf(const fb::RigExecWireStep &step) const
     {
-        if (step.kind == fb::StepKind::Solve)
-            return step.object;
         return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
                        size_t(step.object) < _solveNode.size()
                    ? _solveNode[size_t(step.object)]
@@ -10908,7 +10907,7 @@ _StepKindName(fb::StepKind kind)
     switch (kind) {
     case fb::StepKind::ComposeSubtree:
         return "ComposeSubtree";
-    case fb::StepKind::Solve:
+    case fb::StepKind::ReservedSolve:
         return "Solve";
     case fb::StepKind::ReservedSolverCommit:
         return "ReservedSolverCommit";
@@ -11001,7 +11000,7 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
         *out = text(meta->paths[size_t(begin)]);
         return true;
     }
-    case fb::StepKind::Solve:
+    case fb::StepKind::ReservedSolve:
         if (!pose || !_Has(pose->solvers, object)) {
             return false;
         }

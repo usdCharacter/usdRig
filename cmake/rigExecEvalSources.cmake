@@ -49,7 +49,6 @@ add_library(rigExecEval OBJECT
     libs/rigExec/internal/gpuDeformTranslation.cpp
     libs/rigExec/internal/gpuCloth.cpp
     # Scene records' typed operation bodies.
-    libs/rigExecScene/solverProgram.cpp
     libs/rigExecScene/typedValues.cpp)
 target_compile_features(rigExecEval PRIVATE cxx_std_17)
 target_include_directories(rigExecEval PRIVATE

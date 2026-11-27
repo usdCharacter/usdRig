@@ -272,10 +272,8 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 degenerateWhy = why;
             s.degenerate = true;
         };
-        // Every slot whose REST this description measures from. Recorded at
-        // the point the rest is actually read, so the list is exactly what
-        // RigExecBakedRefreshSolverRests has to rebuild from and cannot
-        // drift from it by one solver type.
+        // Every slot whose REST this description measures from, recorded at
+        // the point the rest is read.
         auto foldRest = [&s](int slot) {
             if (slot >= 0) {
                 s.restSlots.push_back(slot);
@@ -356,10 +354,10 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 }
             }
             s.restReads.assign(restRefs.size(), 0u);
-            // The output basis, captured like every other rest description
-            // and rebuilt by RefreshSolverRests. Folded into restSlots so a
-            // ladder recompute -- or a drag on one of these rests -- dirties
-            // this solver exactly as a control rest does.
+            // The output basis, captured like every other rest description.
+            // Folded into restSlots so a ladder recompute -- or a drag on one
+            // of these rests -- dirties this solver exactly as a control rest
+            // does.
             s.jointRests.reserve(restRefs.size());
             for (const auto &[slot, element] : restRefs) {
                 s.jointRests.push_back(B.restPts[foldRest(slot)]);
@@ -873,12 +871,6 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 s.jointGroupSelectors.push_back(std::move(input));
             }
         }
-        s.kernelInputs.controls.resize(s.controls.size());
-        s.kernelInputs.ribbonPoints.reserve(
-            std::max(s.ribbonPoints.size(), s.ribbonConstantPoints.size()));
-        s.kernelWorkspace.fkElements.resize(s.controls.size() +
-                                            size_t(s.start >= 0));
-        s.kernelWorkspace.spacedFrames.reserve(s.splineRestFrames.size());
         const int slot = int(B.solvers.size());
         B.solverIndex[solverPath] = slot;
         B.solvers.push_back(std::move(s));
@@ -2518,15 +2510,9 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
                 for (const auto &[slot, element] : solver.outputs) {
                     solver.outPosition.push_back(positionOf(slot));
                 }
-                // +1 for the start provider's synthetic base element.
-                solver.kernelWorkspace.fkElements.resize(
-                    solver.controls.size() + (solver.start >= 0 ? 1 : 0));
                 const size_t nodes = RigExecBakedSolverNodeCount(solver);
-                for (size_t part = 0; part < std::max<size_t>(nodes, 1);
-                     ++part) {
-                    RigExecBakedStep &step =
-                        nodes ? AddSolverStep(&B, si, part, nodes)
-                              : AddStep(&B, RigExecBakedStepKind::Solve, si);
+                for (size_t part = 0; part < nodes; ++part) {
+                    RigExecBakedStep &step = AddSolverStep(&B, si, part, nodes);
                     // A refused or failed solve reports why.
                     step.maxDiagnostics = 1;
                     for (const int control : solver.controls) {
@@ -2846,14 +2832,9 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
     // counter. Not gated on the guide toggle: the epilogue consults it.
     for (const int si : B.guideSolvers) {
         RigExecBakedProgramImpl::Solver &solver = B.solvers[size_t(si)];
-        // +1 for the start provider's synthetic base element.
-        solver.kernelWorkspace.fkElements.resize(solver.controls.size() +
-                                                 (solver.start >= 0 ? 1 : 0));
         const size_t nodes = RigExecBakedSolverNodeCount(solver);
-        for (size_t part = 0; part < std::max<size_t>(nodes, 1); ++part) {
-            RigExecBakedStep &step =
-                nodes ? AddSolverStep(&B, si, part, nodes)
-                      : AddStep(&B, RigExecBakedStepKind::Solve, si);
+        for (size_t part = 0; part < nodes; ++part) {
+            RigExecBakedStep &step = AddSolverStep(&B, si, part, nodes);
             for (const int control : solver.controls) {
                 if (control >= 0) {
                     step.reads.push_back(RigExecBakedOne(
@@ -4606,39 +4587,6 @@ RigExecBakedRunSolverSources(RigExecBakedProgramImpl *program, UsdTimeCode time)
 
 namespace {
 
-/// Rebuilds one solver's rest description from the ladder this run composed.
-///
-/// Exec rebuilds every one of these from computeRestFrame on EVERY
-/// evaluation; the bake resolves them once and this resolves them again,
-/// from the same B.restPts/B.restFrames the bake read, so the two cannot
-/// disagree about anything but which rests were in the arrays.
-void
-RefreshSolverRests(const RigExecBakedProgramImpl &B,
-                   RigExecBakedProgramImpl::Solver *solver)
-{
-    RigExecBakedProgramImpl::Solver &s = *solver;
-    if (RigExecBakedSolverNodeCount(s))
-        return;
-    // Where a rest ref is LIVE, the rest is the frame the pose step below this
-    // solver left -- read off the ladder by the version bindSolverReads bound
-    // -- and not the authored rest of the slot. Every arithmetic
-    // line below is written against these two accessors and needs no other
-    // change.
-    const auto liveRest = [&s, &B](size_t k) {
-        return k < s.restIsLive.size() && s.restIsLive[k] &&
-               k < s.restReads.size() && size_t(s.restReads[k]) < B.fin.size();
-    };
-    const auto restPtsOf =
-        [&s, &B, &liveRest](size_t k,
-                            int slot) -> const std::array<GfVec3d, 4> & {
-        return liveRest(k) ? B.fin[size_t(s.restReads[k])].points
-                           : B.restPts[size_t(slot)];
-    };
-    for (size_t k = 0; k < s.restRefs.size() && k < s.jointRests.size(); ++k) {
-        s.jointRests[k] = restPtsOf(k, s.restRefs[k].first);
-    }
-}
-
 /// Slot \p i's avars as one matrix, the way computations.cpp composes them.
 GfMatrix4d
 _ComposeAvarsOf(const RigExecBakedProgramImpl &B, int i)
@@ -4712,16 +4660,6 @@ _ReadFrameVersion(
 }
 
 } // namespace
-
-RigExecBakedProgramImpl::Solver
-RigExecBakedProgramTesting::RefreshedSolverRests(
-    const RigExecBakedProgram &program, size_t index)
-{
-    const RigExecBakedProgramImpl &B = *program._impl;
-    RigExecBakedProgramImpl::Solver copy = B.solvers[index];
-    RefreshSolverRests(B, &copy);
-    return copy;
-}
 
 bool
 RigExecBakedEvalFrameRecord(const RigExecBakedProgramImpl &B,
@@ -4889,69 +4827,6 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
                     B.base[size_t(i)] = *frame;
             }
             eval::PublishFinPosedM(host, size_t(i));
-        }
-        return;
-    }
-
-    case RigExecBakedStepKind::Solve: {
-        RigExecBakedProgramImpl::Solver &s = B.solvers[size_t(step->object)];
-        // The rest description, where the rest tier moved a rest it is
-        // measured from this run (`restSlots` holds the space slot too), or
-        // where the closure trusts nothing it holds: a full run can follow
-        // a generation whose rest tier moved rests and whose region never
-        // ran. The refresh is a pure function of those rests, so skipping
-        // it over unchanged ones keeps the description it would write
-        // (TestRefreshSolverRestsOnBuildStateIsIdentity). Pure arithmetic
-        // over the tables the prologue left: no lock, no USD read and no
-        // pose write, which is what lets it sit in a step body at all.
-        // A LIVE rest depends on THIS frame pose, so a solver carrying one
-        // refreshes on every evaluation.
-        bool refresh = s.hasLiveRest || (B.closureFull && !s.restSlots.empty());
-        for (size_t k = 0; !refresh && k < s.restSlots.size(); ++k) {
-            const size_t slot = size_t(s.restSlots[k]);
-            refresh = slot < B.restChanged.size() && B.restChanged[slot];
-        }
-        if (refresh) {
-            RefreshSolverRests(B, &s);
-            if (!B.measurementSuspended) {
-                ++s.restRefreshes;
-            }
-        }
-        RigExecPointFrameArray &aggregate = B.aggregates[size_t(step->object)];
-        s.fallbackSlots.clear();
-        auto &input = s.kernelInputs;
-        s.hasStart = s.start >= 0;
-        input.hasSpace = s.spaceSlot >= 0;
-        if (input.hasSpace) {
-            input.spaceRest = s.spaceRest;
-            input.space = B.fin[size_t(s.spaceRead)];
-        }
-        const auto frame = [&](int provider, uint32_t version) {
-            return provider >= 0 ? B.fin[size_t(version)] : RigExecPointFrame();
-        };
-        input.root = frame(s.root, s.rootRead);
-        input.mid = frame(s.mid, s.midRead);
-        input.end = frame(s.end, s.endRead);
-        input.pole = frame(s.pole, s.poleRead);
-        input.start = frame(s.start, s.startRead);
-        input.jointGroupSelectors.resize(s.jointGroupSelectors.size());
-        for (size_t g = 0; g < s.jointGroupSelectors.size(); ++g)
-            input.jointGroupSelectors[g] = rd(s.jointGroupSelectors[g]);
-        std::string error;
-        if (!RigExecRunSolver(s, input, &s.kernelWorkspace, &aggregate,
-                              &error) &&
-            !error.empty())
-            step->diagnostics.push_back("diag " + s.pathText + ": " + error);
-        for (size_t k = 0; k < s.outputs.size(); ++k) {
-            const auto &[slot, element] = s.outputs[k];
-            if (element < 0 || size_t(element) >= aggregate.GetSize()) {
-                s.outPresent[k] = 0;
-                s.fallbackSlots.push_back(slot);
-                continue;
-            }
-            s.outFrames[k] =
-                RigExecExtractElementFrame(&aggregate, size_t(element));
-            s.outPresent[k] = 1;
         }
         return;
     }

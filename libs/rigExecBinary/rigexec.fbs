@@ -118,7 +118,9 @@ enum SlotDomain : ubyte { Avars = 0, PoseBase, PoseFin, PosedM, FinalMatrix,
 
 /// RigExecBakedStepKind, in the same order. SnapshotFinals (8) is reserved:
 /// never written, and Open refuses a file that holds one.
-enum StepKind : ubyte { ComposeSubtree = 0, Solve,
+enum StepKind : ubyte { ComposeSubtree = 0,
+  /// Reserved. Open refuses it.
+  ReservedSolve,
   /// Reserved. Open refuses it.
   ReservedSolverCommit,
   /// Reserved. Open refuses it.

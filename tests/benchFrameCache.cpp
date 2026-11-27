@@ -363,10 +363,9 @@ MeasureArenaBytes(const RigExecBakedProgramImpl &B, const char *rig)
     for (const RigExecBakedProgramImpl::Solver &solver : B.solvers) {
         solverBytes +=
             VecBytes(solver.outFrames) + VecBytes(solver.outPresent) +
-            VecBytes(solver.outPosition) +
-            VecBytes(solver.kernelWorkspace.fkElements) +
-            VecBytes(solver.controlReads) + VecBytes(solver.fallbackSlots) +
-            VecBytes(solver.ribbonPoints) + VecBytes(solver.lastRibbonPoints);
+            VecBytes(solver.outPosition) + VecBytes(solver.controlReads) +
+            VecBytes(solver.fallbackSlots) + VecBytes(solver.ribbonPoints) +
+            VecBytes(solver.lastRibbonPoints);
         // The rest description is rebuilt per frame only for a solver whose
         // rests can move within the compiled rig; otherwise it is compiled rig state.
         if (solver.restsVary || solver.hasLiveRest) {

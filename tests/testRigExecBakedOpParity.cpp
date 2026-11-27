@@ -377,16 +377,12 @@ ProbeSolve(const B &b)
                      "RigExecSolverOpSupported refuses the record");
             continue;
         }
-        RigExecPoseOpRunner runner;
         RigExecPointFrameArray out;
         std::string error;
         bool ran = false;
-        if (step.kind == RigExecBakedStepKind::Solve) {
-            ran =
-                RigExecRunSolverOp(s, SolveInputs(b, s), runner, &out, &error);
-        } else {
-            // A solver that runs as op nodes against its reference kernels,
-            // over the rests composed this run.
+        {
+            // The solver's op nodes against its reference kernels, over the
+            // rests composed this run.
             B::Solver composed = s;
             for (size_t k = 0; k < s.controls.size(); ++k)
                 composed.controlRests[k] = b.restPts[size_t(s.controls[k])];

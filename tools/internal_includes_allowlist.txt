@@ -68,7 +68,6 @@ libs/rigExecScene/sceneGraphBinding.cpp | rigExec/internal/frameExtraction.h
 libs/rigExecScene/sceneGraphTypedRead.cpp | rigExec/internal/pathText.h
 libs/rigExecScene/setupTransform.h | rigExec/internal/pathText.h
 libs/rigExecScene/skeleton2dTranslation.cpp | rigExec/internal/pathText.h
-libs/rigExecScene/solverProgram.cpp | rigExec/internal/solverKernels.h
 libs/rigExecScene/solverSceneTranslation.cpp | rigExec/internal/pathText.h
 libs/rigExecScene/solverSceneTranslation.cpp | rigExec/internal/solverKernels.h
 libs/rigExecScene/typedValues.cpp | rigExec/internal/bakedOpValues.h

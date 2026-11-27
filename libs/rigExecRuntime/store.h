@@ -1128,8 +1128,8 @@ bool RrStoreConstraint(RrProgram *program, size_t step,
 /// mover reports it.
 std::string RrConstraintFailure(const RrProgram *program, uint32_t commit,
                                 const std::string &error);
-/// The solver a Solve step runs or a solver op node stores the frames of,
-/// or -1 for any other step.
+/// The solver a solver op node stores the frames of, or -1 for any other
+/// step.
 int64_t RrSolveOf(const RrProgram *program, const RigExecWireStep &step);
 /// Resolves a SolverInput lookup.
 bool RrLookUpSolver(const RrProgram *program, const eval::OpLookup &lookup,

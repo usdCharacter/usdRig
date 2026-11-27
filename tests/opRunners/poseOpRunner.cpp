@@ -51,13 +51,10 @@ RigExecReferenceSolve(const RigExecSolverRecord &s,
     const bool twist = s.kind == RigExecSolverKind::TwistDistribution;
     const bool ribbon = s.kind == RigExecSolverKind::Ribbon;
     const bool spline = s.kind == RigExecSolverKind::SplineIk;
-    if ((s.kind != RigExecSolverKind::FkChain && !ik && !twist && !ribbon &&
-         !spline && s.kind != RigExecSolverKind::Skeleton2d &&
-         s.kind != RigExecSolverKind::BlendPointFrames) ||
-        s.degenerate)
-        return RigExecRunSolver(s, input, workspace, output, error);
     output->frames.clear();
     output->rests.clear();
+    if (s.degenerate)
+        return true;
     if (twist) {
         *output = RigExecSolveTwistDistribution(
             input.root, input.end, s.twistStartRest, s.twistEndRest,

@@ -182,21 +182,12 @@ struct RigExecSolverWorkspace {
     std::vector<int32_t> jointGroupSlots;
     std::vector<uint8_t> jointGroupActive;
 };
-/// RigExecRunSolver's Skeleton2d refusals, also given by its op bridge.
+/// The 2D skeleton refusals its op bridge and reference solve give.
 inline constexpr const char *kRigExecSkeleton2dCountsDiffer =
     "2D skeleton bone, rest, channel and parent-space counts differ";
 inline constexpr const char *kRigExecSkeleton2dMalformed =
     "2D skeleton solve order is malformed";
-inline constexpr const char *kRigExecSkeleton2dNotPlanar =
-    "a 2D bone's rest (its rest:space, or the frame a pose step below the "
-    "skeleton wrote) or parent space is not a rotation about +Z in the "
-    "skeleton's plane; publishing the rests";
 inline constexpr const char *kRigExecSkeleton2dNotFinite =
     "2D skeleton solve failed (a non-finite channel); publishing setup frames";
-/// One production numerical body for native and direct SceneDb graphs.
-/// Clears outputs even for malformed/degenerate bindings.
-bool RigExecRunSolver(const RigExecSolverRecord &, const RigExecSolverInputs &,
-                      RigExecSolverWorkspace *, RigExecPointFrameArray *,
-                      std::string *error = nullptr);
 } // namespace rigExec
 #endif

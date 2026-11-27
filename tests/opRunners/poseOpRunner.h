@@ -37,8 +37,8 @@ struct RigExecPoseOpRunner {
     std::vector<RigExecWindowRing> rings;
 };
 
-/// RigExecRunSolver for a record RigExecSolverOpSupported accepts: the same
-/// output where the op runs. False with the compile or evaluation error
+/// A record RigExecSolverOpSupported accepts, run as its op nodes: the
+/// reference solve's output where the op runs. False with the compile or evaluation error
 /// where it does not.
 bool RigExecRunSolverOp(const RigExecSolverRecord &record,
                         const RigExecSolverInputs &input,
@@ -46,9 +46,8 @@ bool RigExecRunSolverOp(const RigExecSolverRecord &record,
                         RigExecPointFrameArray *output,
                         std::string *error = nullptr);
 
-/// A solver's frames from its reference kernels: an FK chain from the
-/// chain kernels the FkChain and FkJointGroups ops run, any other kind
-/// through RigExecRunSolver.
+/// A solver's frames from its reference kernels, the native bodies the
+/// solver ops replaced.
 bool RigExecReferenceSolve(const RigExecSolverRecord &record,
                            const RigExecSolverInputs &input,
                            RigExecSolverWorkspace *workspace,

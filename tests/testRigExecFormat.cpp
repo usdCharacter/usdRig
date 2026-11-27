@@ -3359,6 +3359,13 @@ TestVolumePlacementSteps()
                matrix.object = 0;
                _AppendStep(f, std::move(matrix));
            });
+    expect("a retired solve step",
+           "step 3 (Solve /Rig/Ctl): the retired Solve step", [](F &f) {
+               fb::RigExecWireStep solve;
+               solve.kind = fb::StepKind::ReservedSolve;
+               solve.object = 0;
+               _AppendStep(f, std::move(solve));
+           });
     expect("a retired solver commit step",
            "step 3 (ReservedSolverCommit 0): the retired SolverCommit step",
            [](F &f) {
@@ -3474,8 +3481,9 @@ TestStepLabels()
         group(f);
         _RegionStep(f, 0).object = 7;
     });
-    label("Solve /Rig/Ctl",
-          [](RigExecWireFile &f) { _RegionStep(f, 0).kind = StepKind::Solve; });
+    label("Solve /Rig/Ctl", [](RigExecWireFile &f) {
+        _RegionStep(f, 0).kind = StepKind::ReservedSolve;
+    });
     label("ReservedConstraint 0", [](RigExecWireFile &f) {
         _RegionStep(f, 0).kind = StepKind::ReservedConstraint;
         _RegionStep(f, 0).object = 0;
@@ -6961,16 +6969,17 @@ TestSolverSemanticMetadataRefusals()
         solver.restSlots.clear();
         solver.solveDescriptorKey =
             RigExecFormatPathText(excluded, solver.path) +
-            "/category:" + std::to_string(int(fb::StepKind::Solve)) +
+            "/category:" + std::to_string(int(fb::StepKind::ReservedSolve)) +
             "/fixture";
     }
     fb::RigExecWireSolverRelationshipRequirement dependency;
     dependency.port = "rigExec:controls";
     dependency.solver = 1;
     excluded.pose->solvers[0].relationshipRequirements = {dependency};
+    const fb::RigExecWireStep node = _SpaceStep(excluded, "FkChain", 60, 0);
     auto &solve = _RegionStep(excluded, 0);
-    solve.kind = fb::StepKind::Solve;
-    solve.object = 0;
+    solve.kind = node.kind;
+    solve.object = node.object;
     solve.descriptorKey = excluded.pose->solvers[0].solveDescriptorKey;
     solve.semanticPredecessorKeys = {
         excluded.pose->solvers[1].solveDescriptorKey};
@@ -7014,8 +7023,9 @@ TestSolverSemanticMetadataRefusals()
            "invalid or duplicate canonical Solve identity");
     auto wrongBody = _RichFile();
     const auto body = std::find_if(
-        wrongBody.steps.begin(), wrongBody.steps.end(),
-        [](const auto &step) { return step.kind != fb::StepKind::Solve; });
+        wrongBody.steps.begin(), wrongBody.steps.end(), [](const auto &step) {
+            return step.kind == fb::StepKind::ComposeSubtree;
+        });
     CHECK(body != wrongBody.steps.end());
     if (body != wrongBody.steps.end())
         body->semanticPredecessorKeys = {"/Unrelated/category:1/solver"};

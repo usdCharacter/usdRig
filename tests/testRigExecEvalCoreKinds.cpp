@@ -53,7 +53,8 @@ CheckOrdinals()
                   std::string("Reserved") + RigExecBakedStepKindName(baked));
             continue;
         }
-        if (kind == eval::StepKind::ReservedSolverCommit ||
+        if (kind == eval::StepKind::ReservedSolve ||
+            kind == eval::StepKind::ReservedSolverCommit ||
             kind == eval::StepKind::ReservedConstraint ||
             kind == eval::StepKind::ReservedCommitDelta ||
             kind == eval::StepKind::ReservedPropagateChunk ||
@@ -79,6 +80,7 @@ CheckOrdinals()
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedWeightPacket));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedWeightField));
     CHECK(eval::IsReservedStepKind(eval::StepKind::SnapshotFinals));
+    CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedSolve));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedSolverCommit));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedConstraint));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedCommitApply));
@@ -107,9 +109,9 @@ CheckOrdinals()
 void
 CheckStepShape()
 {
-    eval::StepRef step{static_cast<uint32_t>(eval::StepKind::Solve), 3, 1, 7};
+    eval::StepRef step{static_cast<uint32_t>(eval::StepKind::OpNode), 3, 1, 7};
     eval::StepResult result{eval::Outcome::Held, 0};
-    CHECK(step.kind == static_cast<uint32_t>(eval::StepKind::Solve));
+    CHECK(step.kind == static_cast<uint32_t>(eval::StepKind::OpNode));
     CHECK(result.outcome == eval::Outcome::Held);
     CHECK(result.detail == 0);
 }

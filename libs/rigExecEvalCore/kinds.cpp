@@ -67,6 +67,7 @@ IsReservedStepKind(StepKind kind)
            kind == fb::StepKind::ReservedOpGraph ||
            kind == fb::StepKind::ReservedProviderMatrix ||
            kind == fb::StepKind::ReservedFrameMatrix ||
+           kind == fb::StepKind::ReservedSolve ||
            kind == fb::StepKind::ReservedSolverCommit ||
            kind == fb::StepKind::ReservedConstraint ||
            kind == fb::StepKind::ReservedCommitDelta ||

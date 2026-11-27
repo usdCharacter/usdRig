@@ -1,5 +1,5 @@
 // A solver or constraint run as rigExecOps' pose ops gives the bits
-// RigExecRunSolver, RigExecRunConstraint and the native kernels give: per
+// RigExecReferenceSolve, RigExecRunConstraint and the native kernels give: per
 // kind over its settings, through refusals and a moved setting's rebuild,
 // and for the auto clavicle, harmonics and IK/FK match ops against their
 // kernels.

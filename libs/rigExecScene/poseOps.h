@@ -116,7 +116,7 @@ bool RigExecWriteSolverOpInputs(const RigExecSolverRecord &record,
                                 RigExecEvaluator *evaluator,
                                 std::string *error = nullptr);
 
-/// Reads the evaluated nodes into \p output, as RigExecRunSolver gives it.
+/// Reads the evaluated nodes into \p output as an aggregate.
 /// False where the nodes have no valid output.
 bool RigExecReadSolverOpOutput(const RigExecSolverRecord &record,
                                const RigExecSolverInputs &input,

@@ -47,8 +47,8 @@ _RrKindName(RigExecWireStepKind kind)
     switch (kind) {
     case RigExecWireStepKind::ComposeSubtree:
         return "ComposeSubtree";
-    case RigExecWireStepKind::Solve:
-        return "Solve";
+    case RigExecWireStepKind::ReservedSolve:
+        return "ReservedSolve";
     case RigExecWireStepKind::ReservedSolverCommit:
         return "ReservedSolverCommit";
     case RigExecWireStepKind::ReservedCommitDelta:
@@ -523,10 +523,6 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
             eval::PublishFinPosedM(host, size_t(i));
         }
         return true;
-    }
-
-    case RigExecWireStepKind::Solve: {
-        return runtimePoseDetail::_RrRunSolveStep(program, step, error);
     }
 
     default:

@@ -27,7 +27,9 @@ namespace {
                       uint8_t(RigExecWireStepKind::name),                      \
                   "wire step order drifted")
 _RIGEXEC_BAKE_PIN_STEP(ComposeSubtree);
-_RIGEXEC_BAKE_PIN_STEP(Solve);
+static_assert(uint8_t(RigExecBakedStepKind::Solve) ==
+                  uint8_t(RigExecWireStepKind::ReservedSolve),
+              "wire step order drifted");
 static_assert(uint8_t(RigExecBakedStepKind::SolverCommit) ==
                   uint8_t(RigExecWireStepKind::ReservedSolverCommit),
               "wire step order drifted");

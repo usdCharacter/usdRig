@@ -53,8 +53,6 @@ RrPoseScratch *_RrScratch(RrProgram *program);
 
 std::string _RrStepHead(const RrProgram *program, size_t step);
 
-bool _RrRunSolveStep(RrProgram *program, size_t step, std::string *error);
-
 // RigExecTransformParams (pointFrame.h), field for field.
 struct _RrTransformParams {
     RrVec3d translation{0, 0, 0};

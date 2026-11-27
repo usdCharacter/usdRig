@@ -1,4 +1,4 @@
-// Runtime aggregate solvers: FK, two-bone IK, spline IK, ribbon, and twist.
+// Runtime hosts of the solver op nodes: their lookups and stored frames.
 
 #include "rigExecSchema/schemaNames.h"
 #include "poseEvalHost.h"
@@ -20,157 +20,6 @@
 namespace rigExec {
 
 using namespace runtimePoseDetail;
-
-namespace {
-
-// Solver kernels (rigExecMath/solvers.cpp, splineIk.cpp): Gf -> Rr, the
-// arithmetic untouched.
-
-// RigExecSolveFkChain (rigExecMath/chainSolverKernel.h).
-std::vector<RrPointFrame>
-_RrSolveFkChain(const std::vector<RrPoseFkElement> &elements)
-{
-    return RigExecSolveFkChainKernel<RrVec3f, RrVec3d, RrPointFrame>(elements);
-}
-
-// Rebuilds one solver's rest description from the ladder this run
-// composed (RefreshSolverRests, bakedPose.cpp).
-bool
-_RrRefreshSolverRests(RrProgram *program, size_t step, size_t solver,
-                      std::string *error)
-{
-    RrStore &store = program->store;
-    RrPoseScratch *scratch = _RrScratch(program);
-    const RigExecWireSolver &wire = program->poses->solvers[solver];
-    RrPoseSolverState &s = scratch->solvers[solver];
-    const auto liveRest = [&](size_t k) {
-        return k < wire.restIsLive.size() && wire.restIsLive[k] &&
-               k < wire.restReads.size() &&
-               size_t(wire.restReads[k]) < store.fin.size();
-    };
-    for (size_t k = 0; k < wire.restRefs.size() && k < s.jointRests.size();
-         ++k) {
-        const int slot = wire.restRefs[k].first;
-        if (liveRest(k)) {
-            s.jointRests[k] = store.fin[size_t(wire.restReads[k])].points;
-        } else if (slot >= 0 && size_t(slot) < scratch->restPts.size()) {
-            s.jointRests[k] = scratch->restPts[size_t(slot)];
-        } else {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no rest slot";
-            }
-            return false;
-        }
-    }
-    return true;
-}
-
-} // namespace
-
-namespace runtimePoseDetail {
-
-bool _RrRunSolveStep(RrProgram *program, size_t step, std::string *error);
-
-bool
-_RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
-{
-    RrStore &store = program->store;
-    RrPoseScratch *scratch = _RrScratch(program);
-    const RigExecWireStep &wire = (*program->steps)[step];
-    if (wire.object < 0 ||
-        size_t(wire.object) >= program->poses->solvers.size() ||
-        size_t(wire.object) >= scratch->solvers.size() ||
-        size_t(wire.object) >= store.aggregates.size()) {
-        if (error) {
-            *error = _RrStepHead(program, step) + " names no solver";
-        }
-        return false;
-    }
-    const RigExecWireSolver &ws = program->poses->solvers[size_t(wire.object)];
-    RrPoseSolverState &s = scratch->solvers[size_t(wire.object)];
-    const std::vector<std::array<RrVec3d, 4>> &liveRests = s.jointRests;
-    std::vector<char> liveFlags;
-    if (ws.hasLiveRest) {
-        liveFlags.assign(s.jointRests.size(), 0);
-        for (size_t k = 0; k < ws.restIsLive.size() && k < liveFlags.size();
-             ++k) {
-            liveFlags[k] = ws.restIsLive[k];
-        }
-    }
-    bool restMoved = false;
-    for (const int slot : ws.restSlots) {
-        restMoved = restMoved ||
-                    (slot >= 0 && size_t(slot) < store.restChanged.size() &&
-                     store.restChanged[size_t(slot)]);
-    }
-    if (restMoved || ws.hasLiveRest) {
-        if (!_RrRefreshSolverRests(program, step, size_t(wire.object), error)) {
-            return false;
-        }
-    }
-    RrPointFrameArray &aggregate = store.aggregates[size_t(wire.object)];
-    aggregate.frames.clear();
-    aggregate.rests.clear();
-    const std::string type = program->TextOrEmpty(ws.type);
-    if (size_t(wire.object) >= program->solverJointGroupRead.size()) {
-        if (error) {
-            *error = _RrStepHead(program, step) + " names no solver";
-        }
-        return false;
-    }
-    {
-        const std::vector<int32_t> &groupReads =
-            program->solverJointGroupRead[size_t(wire.object)];
-        s.jointGroupSelectors.resize(groupReads.size());
-        for (size_t g = 0; g < groupReads.size(); ++g) {
-            s.jointGroupSelectors[g] =
-                program->ReadRegistered(groupReads[g]).f64;
-        }
-    }
-    const auto finAt = [&](uint32_t version, const RrPointFrame **out) {
-        if (size_t(version) >= store.fin.size()) {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no fin version";
-            }
-            return false;
-        }
-        *out = &store.fin[size_t(version)];
-        return true;
-    };
-    if (ws.degenerate) {
-    }
-    if (size_t(wire.object) >= store.solverOutFrames.size() ||
-        size_t(wire.object) >= store.solverOutPresent.size()) {
-        if (error) {
-            *error = _RrStepHead(program, step) + " names no solver";
-        }
-        return false;
-    }
-    if (store.solverOutFrames[size_t(wire.object)].size() !=
-            ws.outputs.size() ||
-        store.solverOutPresent[size_t(wire.object)].size() !=
-            ws.outputs.size()) {
-        if (error) {
-            *error = _RrStepHead(program, step) + " names no solver";
-        }
-        return false;
-    }
-    for (size_t k = 0; k < ws.outputs.size(); ++k) {
-        const int32_t slot = ws.outputs[k].first;
-        const int32_t element = ws.outputs[k].second;
-        if (element < 0 || size_t(element) >= aggregate.frames.size()) {
-            store.solverOutPresent[size_t(wire.object)][k] = 0;
-            (void)slot;
-            continue;
-        }
-        store.solverOutFrames[size_t(wire.object)][k] =
-            RrExtractElementFrame(&aggregate, size_t(element));
-        store.solverOutPresent[size_t(wire.object)][k] = 1;
-    }
-    return true;
-}
-
-} // namespace runtimePoseDetail
 
 namespace {
 
@@ -253,8 +102,6 @@ _RrFromSolverLandmarks(const rigExecRig::PointLandmarks &points)
 int64_t
 RrSolveOf(const RrProgram *program, const RigExecWireStep &step)
 {
-    if (step.kind == RigExecWireStepKind::Solve)
-        return step.object;
     return step.kind == RigExecWireStepKind::OpNode && step.object >= 0 &&
                    size_t(step.object) < program->solverOfNode.size()
                ? program->solverOfNode[size_t(step.object)]

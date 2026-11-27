@@ -1174,7 +1174,8 @@ inline const char *EnumNameSlotDomain(SlotDomain e) {
 /// never written, and Open refuses a file that holds one.
 enum class StepKind : uint8_t {
   ComposeSubtree = 0,
-  Solve = 1,
+  /// Reserved. Open refuses it.
+  ReservedSolve = 1,
   /// Reserved. Open refuses it.
   ReservedSolverCommit = 2,
   /// Reserved. Open refuses it.
@@ -1231,7 +1232,7 @@ enum class StepKind : uint8_t {
 inline const StepKind (&EnumValuesStepKind())[33] {
   static const StepKind values[] = {
     StepKind::ComposeSubtree,
-    StepKind::Solve,
+    StepKind::ReservedSolve,
     StepKind::ReservedSolverCommit,
     StepKind::ReservedConstraint,
     StepKind::ReservedCommitDelta,
@@ -1270,7 +1271,7 @@ inline const StepKind (&EnumValuesStepKind())[33] {
 inline const char * const *EnumNamesStepKind() {
   static const char * const names[34] = {
     "ComposeSubtree",
-    "Solve",
+    "ReservedSolve",
     "ReservedSolverCommit",
     "ReservedConstraint",
     "ReservedCommitDelta",

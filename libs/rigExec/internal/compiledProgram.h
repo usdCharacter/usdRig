@@ -1657,8 +1657,6 @@ struct RigExecBakedAvarBinding {
 };
 
 struct RigExecBakedSolver : RigExecSolverRecord {
-    RigExecSolverInputs kernelInputs;
-    RigExecSolverWorkspace kernelWorkspace;
     SdfPath path;
     /// `path` spelled at Build, for the body's diagnostics.
     std::string pathText;
@@ -1668,13 +1666,9 @@ struct RigExecBakedSolver : RigExecSolverRecord {
     std::vector<std::pair<std::string, int>> relationshipRequirements;
     /// Canonical Solve identity, retained even when the common SCC excludes it.
     std::string solveDescriptorKey;
-    // Exec rebuilds every one of the rest members below from the
-    // compiled rig's rests on EVERY evaluation, because it is a pure function
-    // of them. The bake resolves it once, and the Solve step resolves it
-    // again (RefreshSolverRests) on a run on which one of its
-    // `restSlots` moved -- which is what lets a solver measure against
-    // an animated, chain-written or dragged rest instead of refusing
-    // the rig.
+    // The bake resolves the rest members below once; the solver's op
+    // nodes read the rests composed each run, so a solver measures against
+    // an animated, chain-written or dragged rest.
     /// Every provider slot whose rest this description folded in.
     std::vector<int> restSlots;
     /// (slot, element) for the two computations that remap by element:
@@ -1692,10 +1686,6 @@ struct RigExecBakedSolver : RigExecSolverRecord {
     /// per-frame: it is refreshed on EVERY evaluation and can never be
     /// concluded constant.
     bool hasLiveRest = false;
-    /// Test hook: how many times the Solve step refreshed this
-    /// description, the cone verifier's second pass excluded. Written
-    /// only by this solver's own Solve step; read by no step.
-    uint64_t restRefreshes = 0;
     /// One per rest ref, in element order: the basis a solver APPLIES its
     /// solved map to. For RigExecFkChain that is the joint's rest
     /// reference rather than the control's own rest, so a step below the
