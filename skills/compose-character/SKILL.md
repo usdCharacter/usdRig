@@ -187,10 +187,14 @@ report separately if only numerical/composition checks were performed.
 ### Package the delivery as one archive
 
 Build one archive for the delivery, and record the authoring head (commit id)
-it was built from and the archive's SHA-256 in the delivery notes. Prove the
-member list from the built archive's member listing; a reported file
-inventory, such as a `delivery-files.json` list, is not evidence of archive
-contents. Derive the members from resolution rather than memory. For each
+it was built from and the archive's SHA-256 in the delivery notes, together
+with the entry points the delivery promises: the character verifier, plus the
+animation checks only when the delivery carries an animation entry. The
+headless package check selects its gates from that promise, not from the
+archive listing. Prove the member list from the built archive's member
+listing; a reported file inventory, such as a `delivery-files.json` list, is
+not evidence of archive contents. Derive the members from resolution rather
+than memory. For each
 stage entry that means the layers it actually uses, from
 `Stage.GetUsedLayers()`, carrying each referenced
 `asset_lib/components/**` layer at the relative position the reference
@@ -236,10 +240,15 @@ off, or the mask still let USD open the stage — do not run the extracted gates
 record the package gate as `not run`, with the reason. Record which barrier
 proved isolation.
 
-Run both packaged entry points as processes from the extracted tree: the
-packaged verifier against the character entry, and the packaged animation
-checks against the animation entry when the delivery carries one. Run every
-gate whatever the previous one exits: clear errexit for the gates and save
+Select the gates once, before anything is extracted, from the entry points
+the delivery promises, and run that one selection as processes from the
+extracted tree: the packaged verifier against the character entry, and the
+packaged animation checks against the animation entry when the delivery
+promises one. The same selection prints the statuses and drives the record
+comparison: a character-only delivery passes on its character records alone,
+and a promised entry whose script the archive lacks fails its gate in the
+extracted run instead of vanishing. Run every gate
+whatever the previous one exits: clear errexit for the gates and save
 each one's stdout, stderr, and exit code to its own record before any triage
 command runs, so no status is lost or overwritten. The authoring-tree
 baseline is the same function called with the authoring tree, before anything
@@ -369,8 +378,11 @@ def package_paths(stage, package_dir, runtime=()):
 Substitute before running, and only these: `<archive>` the built zip, which the
 block names `delivery.zip`; `<entry>` the packaged entry directory, the one
 `<entry>/verify.py` and `<entry>/tools/check_animation.py` live under;
-`<frame>` one representative pose frame; `$ENTRY_AUTHORING_DIR` the delivery's
-authoring root; and `ENTRY_AUTHORING_SCRATCH=1` only when that root is a
+`<gates>` the entry points the delivery promises — `verify` alone for a
+character-only delivery, `verify animation` when it carries an animation
+entry; `<frame>` one representative pose frame;
+`$ENTRY_AUTHORING_DIR` the delivery's authoring root; and
+`ENTRY_AUTHORING_SCRATCH=1` only when that root is a
 disposable copy this run made, which selects the move-aside barrier instead of
 the namespace mask. `$PY` and `PXR_PLUGINPATH_NAME` come from the retained
 environment; `RIGEXEC_RUNTIME_MODULES` starts empty.
@@ -385,24 +397,43 @@ out=$(mktemp -d); root=$(mktemp -d)            # records dir; fresh extraction
 export RIGEXEC_RUNTIME_MODULES        # one list, exported before either run
 sha256sum "$zip"                    # the digest this record is about
 
+promised="<gates>"                  # verify, or verify animation: the promise
+gate_names=()                       # one selection drives runs, status, cmp
+for promised_gate in $promised; do  # fixed before anything is extracted
+    case $promised_gate in
+        verify)    gate_names+=(verify verify-pose) ;;
+        animation) gate_names+=(animation animation-pose) ;;
+        *) echo "unknown promised gate: $promised_gate" >&2; exit 1 ;;
+    esac
+done
+if [ "${#gate_names[@]}" = 0 ]; then
+    echo "the delivery promises no gates to run" >&2
+    exit 1
+fi
+
 gate() { "$PY" "$@"; }              # the barrier wraps every gate process
+gate_spec() {                       # gate name -> script, stage, optional frame
+    case $1 in
+        verify)         printf '%s\n' <entry>/verify.py \
+                                   <entry>/character.usda ;;
+        verify-pose)    printf '%s\n' <entry>/verify.py \
+                                   <entry>/character.usda <frame> ;;
+        animation)      printf '%s\n' <entry>/tools/check_animation.py \
+                                   <entry>/animation.usda ;;
+        animation-pose) printf '%s\n' <entry>/tools/check_animation.py \
+                                   <entry>/animation.usda <frame> ;;
+    esac
+}
 run_gates() {                     # one entry set, one argument set, both trees
-    local tree=$1 rec=$2
+    local tree=$1 rec=$2 spec g
     mkdir -p "$rec"
     set +e                            # every gate runs, whatever the last one did
-    gate "$tree/<entry>/verify.py" "$tree/<entry>/character.usda" \
-          >"$rec/verify.out" 2>"$rec/verify.err"
-    echo $? >"$rec/verify.rc"
-    gate "$tree/<entry>/verify.py" "$tree/<entry>/character.usda" <frame> \
-          >"$rec/verify-pose.out" 2>"$rec/verify-pose.err"
-    echo $? >"$rec/verify-pose.rc"
-    gate "$tree/<entry>/tools/check_animation.py" "$tree/<entry>/animation.usda" \
-          >"$rec/animation.out" 2>"$rec/animation.err"
-    echo $? >"$rec/animation.rc"
-    gate "$tree/<entry>/tools/check_animation.py" \
-          "$tree/<entry>/animation.usda" <frame> \
-          >"$rec/animation-pose.out" 2>"$rec/animation-pose.err"
-    echo $? >"$rec/animation-pose.rc"
+    for g in "${gate_names[@]}"; do
+        mapfile -t spec < <(gate_spec "$g")
+        gate "$tree/${spec[0]}" "$tree/${spec[1]}" ${spec[2]:+"${spec[2]}"} \
+             >"$rec/$g.out" 2>"$rec/$g.err"
+        echo $? >"$rec/$g.rc"     # a promised script the archive lacks exits here
+    done
     set -e
 }
 ( cd "$authoring" && run_gates "$authoring" "$out/authoring" )   # the baseline
@@ -449,7 +480,7 @@ run_gates "$root" "$out/extracted"
 status=0
 for tree in authoring extracted; do
     printf '%s gates:' "$tree"
-    for gate in verify verify-pose animation animation-pose; do
+    for gate in "${gate_names[@]}"; do
         printf ' %s=%s' "$gate" "$(cat "$out/$tree/$gate.rc")"
         [ "$(cat "$out/$tree/$gate.rc")" = 0 ] || status=1
     done
@@ -458,7 +489,7 @@ done
 # each extracted record must match the authoring baseline for that gate, apart
 # from the anonymous layer identifiers, which embed a process address
 anons='s/^layer with no file: anon:[^ ]*/layer with no file: anon:<id>/'
-for gate in verify verify-pose animation animation-pose; do
+for gate in "${gate_names[@]}"; do
     cmp -s "$out/extracted/$gate.out" "$out/authoring/$gate.out" \
         || { echo "DIFFER $gate stdout"; status=1; }
     diff <(sed "$anons" "$out/authoring/$gate.err") \
