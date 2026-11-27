@@ -238,6 +238,9 @@ struct RigExecRun {
     bool PointInputHaloGroups(uint32_t input, const RigExecOpGroups *groups,
                               std::string *error);
     bool RunNode(uint32_t node, std::string *error);
+    bool LendWindow(uint32_t node, const RigExecWindowRing &ring,
+                    RigExecWindowPacketPtr &capture, bool captureOnly,
+                    std::string *error);
     bool RunChainHead(uint32_t chain, const int *bounds, uint32_t groups,
                       std::string *error, RigExecNodeId *failed = nullptr);
     bool RunChainRange(uint32_t chain, uint32_t segment, uint32_t group,

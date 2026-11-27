@@ -726,7 +726,7 @@ _RichFileBody()
     fb::RigExecWireConstraint constraint;
     constraint.path = _pCtl;
     constraint.type = _pTokenXyz;
-    constraint.target = 0;
+    constraint.target = -1;
     constraint.enabled = _In(InputTag::Bool);
     constraint.defaultWeight = _In(InputTag::Float);
     constraint.offset = _In(InputTag::Vec3d);
@@ -743,8 +743,8 @@ _RichFileBody()
     constraint.worldUpVector = _In(InputTag::Vec3d);
     constraint.aimAxisFallback = _V3d(1);
     constraint.sceneUp = _V3d(4);
-    // A single-chain IK, a kind a Constraint step still solves, with every
-    // flag but preserve joint orientation.
+    // A single-chain IK with no target, which a Constraint step solves, with
+    // every flag but preserve joint orientation.
     constraint.singleChainIk = true;
     constraint.flags = uint8_t(fb::ConstraintFlags::ANY) &
                        ~RigExecWireConstraintPreserveJointOrientation;
@@ -1618,12 +1618,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 50 &&
-                      RigExecFormatOldestReadable == 50,
-                  "format 50 runs Range lattices as op nodes and is "
+    static_assert(RigExecFormatVersion == 51 &&
+                      RigExecFormatOldestReadable == 51,
+                  "format 51 solves constraints by op nodes and is "
                   "the only format Open reads");
-    // Every older format requires re-export: its lattices ran as their own
-    // steps.
+    // Every older format requires re-export: its harmonics and single-chain
+    // IK constraints were solved by Constraint steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1634,13 +1634,14 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 50 through " +
+            " (this reader reads 51 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 50 ? "re-export: Range lattices as op nodes" : "rebake");
+            (version < 51 ? "re-export: constraints solved by op nodes"
+                          : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 50 ? reexports : rebakes);
+        ++(version < 51 ? reexports : rebakes);
     }
-    CHECK(reexports == 50 && rebakes == 1);
+    CHECK(reexports == 51 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -3665,13 +3666,13 @@ TestPhaseTables()
         laterCommit(file);
         accepted("record before a later commit", file);
     }
-    // A Constraint step solves IK/FK match, harmonics, single-chain IK and a
-    // constraint with no target; every other kind solves as op nodes.
+    // A Constraint step solves IK/FK match and a constraint with no target;
+    // every other kind solves as op nodes.
     {
         _context = "phase tables: a Constraint step of a constraint with a "
                    "target";
         F file = _RecordFile();
-        file.pose->constraints[0].singleChainIk = false;
+        file.pose->constraints[0].target = 0;
         why.clear();
         const bool ok = RigExecFormatValidate(file, &why);
         const std::string want =

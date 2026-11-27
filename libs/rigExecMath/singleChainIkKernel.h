@@ -55,16 +55,6 @@ IsFiniteFrame(const F &frame)
     return true;
 }
 
-template <class F>
-std::vector<F>
-Degenerate(const std::vector<F> &frames)
-{
-    std::vector<F> failed = frames;
-    for (F &frame : failed)
-        frame.flags |= chainSolverDetail::kFrameDegenerate;
-    return failed;
-}
-
 template <class Point, class Double> struct Ops {
     using Math = RigExecDualQuatMath<Point, Double>;
 
@@ -301,13 +291,17 @@ template <class Point, class Double> struct Ops {
         return Double(1.0, 0.0, 0.0);
     }
 
-    static std::vector<Double>
+    // Leaves the solved positions in \p best; \p positions and
+    // \p fallback are its scratch.
+    static void
     SolvePositions(const std::vector<Double> &original,
                    const std::vector<double> &lengths,
                    const std::vector<Basis> &bases, const Basis &effectorBasis,
                    const Double &goal,
                    const RigExecSingleChainIkKernelParams<Double> &params,
-                   double positionEpsilon, double angularEpsilon)
+                   double positionEpsilon, double angularEpsilon,
+                   std::vector<Double> &positions,
+                   std::vector<Double> &fallback, std::vector<Double> &best)
     {
         const size_t count = original.size();
         const Double root = original.front();
@@ -332,14 +326,14 @@ template <class Point, class Double> struct Ops {
         // down the root-to-goal ray.
         if (goalDistance >= totalLength - positionEpsilon &&
             goalDistance > positionEpsilon) {
-            std::vector<Double> extended(count);
-            extended[0] = root;
+            best.resize(count);
+            best[0] = root;
             for (size_t i = 0; i < lengths.size(); ++i)
-                extended[i + 1] = extended[i] + solveAxis * lengths[i];
-            return extended;
+                best[i + 1] = best[i] + solveAxis * lengths[i];
+            return;
         }
 
-        std::vector<Double> positions = original;
+        positions = original;
         Double planeUp;
         if (params.mode == kRotatePlane) {
             Double poleOffset = params.pole - root;
@@ -387,7 +381,7 @@ template <class Point, class Double> struct Ops {
             }
         }
 
-        std::vector<Double> fallback(lengths.size());
+        fallback.resize(lengths.size());
         for (size_t i = 0; i < lengths.size(); ++i) {
             Double direction = positions[i + 1] - positions[i];
             direction -= planeNormal * Math::Dot(direction, planeNormal);
@@ -395,7 +389,7 @@ template <class Point, class Double> struct Ops {
                                               positionEpsilon, angularEpsilon);
         }
 
-        std::vector<Double> best = positions;
+        best = positions;
         double bestError = std::numeric_limits<double>::infinity();
         const double tolerance =
             std::max(positionEpsilon * 8.0, totalLength * 1e-12);
@@ -425,47 +419,65 @@ template <class Point, class Double> struct Ops {
             if (error <= tolerance)
                 break;
         }
-        return best;
     }
 };
 
 } // namespace singleChainIkDetail
 
-/// Solves the ordered chain \p current toward \p effector's origin; see
-/// RigExecSolveSingleChainIk. A failed solve returns the input flagged
-/// degenerate; zero weight returns it unchanged.
+/// What RigExecSolveSingleChainIkInto works in, kept by its caller so a
+/// steady solve allocates nothing.
+template <class Point, class Double> struct RigExecSingleChainIkWorkspace {
+    using Basis = typename singleChainIkDetail::Ops<Point, Double>::Basis;
+    std::vector<Double> original, positions, fallback, solved, blended;
+    std::vector<double> lengths, solveLengths;
+    std::vector<Basis> bases, solvedBases;
+};
+
+/// Solves the ordered chain \p current toward \p effector's origin into
+/// \p result; see RigExecSolveSingleChainIk. A failed solve leaves the
+/// input flagged degenerate; zero weight leaves it unchanged.
 template <class Point, class Double, class F>
-std::vector<F>
-RigExecSolveSingleChainIkKernel(
+void
+RigExecSolveSingleChainIkInto(
     const std::vector<F> &current, const F &effector,
-    const RigExecSingleChainIkKernelParams<Double> &params)
+    const RigExecSingleChainIkKernelParams<Double> &params,
+    RigExecSingleChainIkWorkspace<Point, Double> &ws, std::vector<F> *result)
 {
     using namespace singleChainIkDetail;
     using O = Ops<Point, Double>;
     using Basis = typename O::Basis;
+    const auto degenerate = [&] {
+        *result = current;
+        for (F &frame : *result)
+            frame.flags |= chainSolverDetail::kFrameDegenerate;
+    };
     if (!std::isfinite(params.weight))
-        return Degenerate(current);
+        return degenerate();
     const double weight = std::min(std::max(params.weight, 0.0), 1.0);
     // Dormant: disconnected or malformed inputs are not inspected.
-    if (weight <= 0.0)
-        return current;
+    if (weight <= 0.0) {
+        *result = current;
+        return;
+    }
     if (current.size() < 2)
-        return Degenerate(current);
+        return degenerate();
     if (params.mode != kRotatePlane && params.mode != kSingleChain)
-        return Degenerate(current);
+        return degenerate();
     if (!IsFinite(effector.points[0]))
-        return Degenerate(current);
+        return degenerate();
     // SingleChain ignores pole and twist; RotatePlane ignores the effector's
     // orientation.
     if (params.mode == kRotatePlane &&
         (!IsFinite(params.pole) || !std::isfinite(params.twistDegrees)))
-        return Degenerate(current);
+        return degenerate();
     for (const F &frame : current)
         if (!IsFiniteFrame(frame))
-            return Degenerate(current);
+            return degenerate();
 
-    std::vector<Double> original(current.size());
-    std::vector<double> lengths(current.size() - 1);
+    std::vector<Double> &original = ws.original;
+    std::vector<double> &lengths = ws.lengths;
+    original.resize(current.size());
+    lengths.resize(current.size() - 1);
     double segmentScale = 0.0;
     for (size_t i = 0; i < current.size(); ++i) {
         original[i] = current[i].points[0];
@@ -475,26 +487,27 @@ RigExecSolveSingleChainIkKernel(
         }
     }
     if (!std::isfinite(segmentScale) || segmentScale <= 0.0)
-        return Degenerate(current);
+        return degenerate();
     const double positionEpsilon = segmentScale * 1e-10;
     constexpr double angularEpsilon = 1e-12;
 
-    std::vector<Basis> bases(current.size());
+    std::vector<Basis> &bases = ws.bases;
+    bases.resize(current.size());
     for (size_t i = 0; i < current.size(); ++i)
         if (!O::ExtractBasis(current[i], angularEpsilon, &bases[i]))
-            return Degenerate(current);
+            return degenerate();
     Basis effectorBasis = bases.back();
     if (params.mode == kSingleChain &&
         (!IsFiniteFrame(effector) ||
          !O::ExtractBasis(effector, angularEpsilon, &effectorBasis)))
-        return Degenerate(current);
+        return degenerate();
     for (double length : lengths)
         if (!std::isfinite(length) || length <= positionEpsilon)
-            return Degenerate(current);
+            return degenerate();
 
     if (!std::isfinite(params.stretch) || params.stretch < 0 ||
         params.stretch > 1)
-        return Degenerate(current);
+        return degenerate();
     double totalLength = 0;
     for (double length : lengths)
         totalLength += length;
@@ -502,20 +515,23 @@ RigExecSolveSingleChainIkKernel(
         (effector.points[0] - original.front()).GetLength();
     const double growth =
         1 + params.stretch * std::max(0.0, goalDistance / totalLength - 1);
-    std::vector<double> solveLengths = lengths;
+    std::vector<double> &solveLengths = ws.solveLengths;
+    solveLengths = lengths;
     if (growth != 1)
         for (double &length : solveLengths)
             length *= growth;
 
-    const std::vector<Double> solved = O::SolvePositions(
-        original, solveLengths, bases, effectorBasis, effector.points[0],
-        params, positionEpsilon, angularEpsilon);
+    O::SolvePositions(original, solveLengths, bases, effectorBasis,
+                      effector.points[0], params, positionEpsilon,
+                      angularEpsilon, ws.positions, ws.fallback, ws.solved);
+    const std::vector<Double> &solved = ws.solved;
     if (solved.size() != current.size())
-        return Degenerate(current);
+        return degenerate();
 
     // The full-strength orientations first, then the blend from the input
     // ones: continuous as the weight approaches zero.
-    std::vector<Basis> solvedBases = bases;
+    std::vector<Basis> &solvedBases = ws.solvedBases;
+    solvedBases = bases;
     for (size_t i = 0; i + 1 < solvedBases.size(); ++i) {
         const Double solvedSegment = solved[i + 1] - solved[i];
         const Double aim = solvedSegment / solvedSegment.GetLength();
@@ -541,17 +557,19 @@ RigExecSolveSingleChainIkKernel(
             bases.back(), currentTerminal, solvedTerminal, angularEpsilon);
     }
 
-    std::vector<F> result(current.size());
+    result->resize(current.size());
+    std::vector<F> &out = *result;
     if (weight >= 1.0) {
         // The full-strength candidate directly: re-blending at weight 1 is
         // equivalent but not bit-exact.
-        for (size_t i = 0; i < result.size(); ++i)
-            result[i] = O::template FrameFromBasis<F>(
+        for (size_t i = 0; i < out.size(); ++i)
+            out[i] = O::template FrameFromBasis<F>(
                 bases[i], solved[i], solvedBases[i].x, solvedBases[i].up);
     } else {
         // Blend directions, not positions, and re-accumulate the lengths: a
         // rigid chain at every partial weight.
-        std::vector<Double> blended(current.size());
+        std::vector<Double> &blended = ws.blended;
+        blended.resize(current.size());
         blended[0] = original[0];
         for (size_t i = 0; i < lengths.size(); ++i) {
             const Double currentDirection =
@@ -565,23 +583,37 @@ RigExecSolveSingleChainIkKernel(
             blended[i + 1] = blended[i] + direction * lengths[i] *
                                               (1 + weight * (growth - 1));
         }
-        for (size_t i = 0; i < result.size(); ++i)
-            result[i] = O::template BlendEndFrame<F>(
+        for (size_t i = 0; i < out.size(); ++i)
+            out[i] = O::template BlendEndFrame<F>(
                 bases[i], solvedBases[i], blended[i], weight, angularEpsilon);
     }
 
     if (growth != 1)
-        for (size_t i = 0; i + 1 < result.size(); ++i) {
-            const Double segment =
-                result[i + 1].points[0] - result[i].points[0];
-            RigExecScaleFrameAlong(result[i].points.data(),
+        for (size_t i = 0; i + 1 < out.size(); ++i) {
+            const Double segment = out[i + 1].points[0] - out[i].points[0];
+            RigExecScaleFrameAlong(out[i].points.data(),
                                    segment.GetNormalized(),
                                    segment.GetLength() / lengths[i]);
         }
 
-    for (const F &frame : result)
+    for (const F &frame : out)
         if (!IsFiniteFrame(frame))
-            return Degenerate(current);
+            return degenerate();
+}
+
+/// Solves the ordered chain \p current toward \p effector's origin; see
+/// RigExecSolveSingleChainIk. A failed solve returns the input flagged
+/// degenerate; zero weight returns it unchanged.
+template <class Point, class Double, class F>
+std::vector<F>
+RigExecSolveSingleChainIkKernel(
+    const std::vector<F> &current, const F &effector,
+    const RigExecSingleChainIkKernelParams<Double> &params)
+{
+    RigExecSingleChainIkWorkspace<Point, Double> ws;
+    std::vector<F> result;
+    RigExecSolveSingleChainIkInto<Point, Double>(current, effector, params, ws,
+                                                 &result);
     return result;
 }
 

@@ -630,10 +630,11 @@ public:
                 _commitNode[output->node] < 0)
                 _commitNode[output->node] = int64_t(output->object);
         for (const auto &output : file.opGraph->hostOutputs)
-            if (output && output->node < nodes && output->target >= 35 &&
-                output->target <= 37 && _constraintNode[output->node] < 0) {
+            if (output && output->node < nodes &&
+                _ConstraintTarget(output->target) &&
+                _constraintNode[output->node] < 0) {
                 _constraintNode[output->node] = int64_t(output->object);
-                if (output->target == 35)
+                if (output->target == 35 || output->target == 70)
                     _constraintSolve[output->node] = int64_t(output->object);
             }
         for (const auto &output : file.opGraph->hostOutputs)
@@ -739,8 +740,7 @@ private:
             if (!output)
                 return _Bad("op_graph.host_outputs: an entry is missing");
             const bool commit = output->target >= 30 && output->target <= 34;
-            const bool constraint =
-                output->target >= 35 && output->target <= 37;
+            const bool constraint = _ConstraintTarget(output->target);
             if ((output->target > 6 && output->target < 20) ||
                 (output->target > 34 && !constraint && output->target != 50 &&
                  output->target != 51 &&
@@ -754,12 +754,14 @@ private:
             if (constraint) {
                 if (!_ConstraintCommit(int64_t(output->object)) ||
                     _constraintNode[node] != int64_t(output->object) ||
-                    (output->target >= 36 &&
-                     _f.pose
-                             ->constraints[size_t(
-                                 _f.pose->walkSteps[size_t(output->object)]
-                                     .index)]
-                             .deltaBase < 0))
+                    ((output->target == 36 || output->target == 37) &&
+                     _ConstraintAt(int64_t(output->object)).deltaBase < 0) ||
+                    (output->target == 70 &&
+                     !_ConstraintAt(int64_t(output->object)).harmonics &&
+                     !_ConstraintAt(int64_t(output->object)).singleChainIk &&
+                     !_ConstraintAt(int64_t(output->object)).ikFkMatch) ||
+                    (output->target == 71 &&
+                     !_ConstraintAt(int64_t(output->object)).singleChainIk))
                     return _Bad("op_graph.host_outputs: node " + _N(node) +
                                 " stores into constraint " +
                                 _N(output->object) +
@@ -961,13 +963,21 @@ private:
                     return _Bad("op_graph.host_outputs: property version " +
                                 _N(v) + " is never stored");
         for (const auto &lookup : _f.opGraph->lookups) {
-            if (lookup && ((lookup->source >= 32 && lookup->source <= 37) ||
-                           lookup->source == 39)) {
+            if (lookup && _ConstraintLookup(lookup->source)) {
                 const uint8_t s = lookup->source;
                 const int32_t part = lookup->part;
                 const uint8_t read = lookup->read;
                 const bool shaped =
-                    s == 32   ? (part < 0 ? read == 0 : read <= 1)
+                    s == 38
+                        ? part == -1 && read <= 5 &&
+                              _ConstraintCommit(int64_t(lookup->object)) &&
+                              _ConstraintAt(int64_t(lookup->object)).harmonics
+                    : s == 70
+                        ? part == -1 && read <= 5 &&
+                              _ConstraintCommit(int64_t(lookup->object)) &&
+                              _ConstraintAt(int64_t(lookup->object))
+                                  .singleChainIk
+                    : s == 32 ? (part < 0 ? read == 0 : read <= 1)
                     : s == 33 ? part == -1 && read >= 20 && read <= 22
                     : s == 34 ? part == -1 && read <= 16
                     : s == 35 ? part == -1 && read >= 30 && read <= 32
@@ -1460,8 +1470,7 @@ private:
                                    "constraint's target");
                     continue;
                 }
-                if ((lookup.source >= 32 && lookup.source <= 37) ||
-                    lookup.source == 39) {
+                if (_ConstraintLookup(lookup.source)) {
                     const bool present = lookup.source == 35 &&
                                          lookup.read == 32 &&
                                          _commitNode[n] == object;
@@ -7163,7 +7172,7 @@ private:
     }
 
     // A harmonics constraint's fields: absent on every other constraint. Its
-    // window names a windowed op whose step is a Constraint step.
+    // window names a windowed op.
     bool _Harmonics(const fb::RigExecWireConstraint &c, const std::string &row)
     {
         if (!c.harmonics) {
@@ -10182,8 +10191,28 @@ private:
             return false;
         const auto &c =
             _f.pose->constraints[size_t(_f.pose->walkSteps[size_t(w)].index)];
-        return !c.ikFkMatch && c.target >= 0 && !c.harmonics &&
-               !c.singleChainIk;
+        return !c.ikFkMatch && c.target >= 0;
+    }
+
+    /// Constraint commit \p w's constraint; \p w must pass
+    /// _ConstraintCommit.
+    const fb::RigExecWireConstraint &_ConstraintAt(int64_t w) const
+    {
+        return _f.pose
+            ->constraints[size_t(_f.pose->walkSteps[size_t(w)].index)];
+    }
+
+    /// Whether host output target \p target stores a constraint node's
+    /// result.
+    static bool _ConstraintTarget(uint8_t target)
+    {
+        return (target >= 35 && target <= 37) || target == 70 || target == 71;
+    }
+
+    /// Whether lookup source \p source reads a constraint commit's inputs.
+    static bool _ConstraintLookup(uint8_t source)
+    {
+        return (source >= 32 && source <= 39) || source == 70;
     }
 
     /// The constraint commit a Constraint step or a constraint op step
@@ -10430,13 +10459,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 50,
+    static_assert(RigExecFormatOldestReadable == 51,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: Range lattices as op nodes"
+                ? "re-export: constraints solved by op nodes"
                 : "rebake");
 }
 

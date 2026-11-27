@@ -134,6 +134,14 @@ RigExecRunState::RunNode(RigExecNodeId node, std::string *error)
 }
 
 bool
+RigExecRunState::LendWindow(RigExecNodeId node, const RigExecWindowRing &ring,
+                            RigExecWindowPacketPtr &capture, bool captureOnly,
+                            std::string *error)
+{
+    return _data->run.LendWindow(node, ring, capture, captureOnly, error);
+}
+
+bool
 RigExecRunState::PointInputGroups(RigExecInputId input,
                                   const RigExecOpGroups *groups,
                                   std::string *error)

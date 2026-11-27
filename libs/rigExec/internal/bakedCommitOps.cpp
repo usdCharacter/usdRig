@@ -218,7 +218,8 @@ RigExecBakedAddPoseCommitOp(const RigExecBakedProgramImpl &B,
     const auto store = [&](const RigExecPortHandle &port, T target) {
         layout->hostOutputs.push_back({node, port.Index(), uint8_t(target), w});
     };
-    if (RigExecBakedConstraintRunsAsOps(B, w)) {
+    if (RigExecBakedConstraintRunsAsOps(B, w) &&
+        !RigExecBakedConstraintStoresFrames(B, w)) {
         if (slots != 1 || o == 0 ||
             B.opNodeOrigins[o - 1].family != RigExecBakedOpFamily::Constraint ||
             B.opNodeOrigins[o - 1].object != int32_t(w) ||
@@ -228,13 +229,18 @@ RigExecBakedAddPoseCommitOp(const RigExecBakedProgramImpl &B,
                                    "constraint node");
         builder->Connect(RigExecNodeId(o - 1), RigExecBakedConstraintOut(B, w),
                          node, PoseCommitCandidate());
-        builder->BindInput(node, PoseCommitPresent());
-        layout->hostInputs.push_back({node, PoseCommitPresent().Index(),
-                                      eval::OpHostSource::Lookup,
-                                      uint32_t(layout->lookups.size())});
-        layout->lookups.push_back(
-            {uint8_t(eval::OpLookupSource::ConstraintEnvelope), w, -1,
-             uint8_t(eval::OpConstraintRead::Present)});
+        if (RigExecBakedConstraintStoresPresence(B, w)) {
+            look(PoseCommitPresent(), eval::OpLookupSource::CommitCandidates,
+                 1);
+        } else {
+            builder->BindInput(node, PoseCommitPresent());
+            layout->hostInputs.push_back({node, PoseCommitPresent().Index(),
+                                          eval::OpHostSource::Lookup,
+                                          uint32_t(layout->lookups.size())});
+            layout->lookups.push_back(
+                {uint8_t(eval::OpLookupSource::ConstraintEnvelope), w, -1,
+                 uint8_t(eval::OpConstraintRead::Present)});
+        }
     } else {
         look(PoseCommitCandidates(), eval::OpLookupSource::CommitCandidates, 0);
         look(PoseCommitPresent(), eval::OpLookupSource::CommitCandidates, 1);

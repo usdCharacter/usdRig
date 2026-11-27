@@ -6,6 +6,7 @@
 #include "rigExec/api/frameCache.h"
 #include "rigExec/api/frozenContext.h"
 #include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/evaluatorTesting.h"
 #include "rigExecMath/harmonicsKernel.h"
 
@@ -506,6 +507,7 @@ int
 main()
 {
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
+    rigExec::RigExecBakedProgramTesting::SetPoisonReleasedGathers(true);
     TestMatchesKernel();
     TestRandomAccessAgrees();
     TestDragReadsAuthoredHistory();

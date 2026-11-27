@@ -34,8 +34,9 @@ struct RigExecCompileOptions {
     /// Whether a host runs the program's steps in a schedule of its own
     /// (runState.h): a node at a time, and each range chain as a head and
     /// ranges of elements the host cuts. Compile fails when a connection
-    /// or order pair runs from a node to one added before it, or when a
-    /// node keeps history (a Windowed op).
+    /// or order pair runs from a node to one added before it. A node that
+    /// keeps history (a Windowed op) reads the window its host lends it
+    /// (RigExecRunState::LendWindow).
     bool hostOrder = false;
 };
 

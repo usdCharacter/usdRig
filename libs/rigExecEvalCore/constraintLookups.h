@@ -11,9 +11,11 @@
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecStdTypes/stdTypes.h"
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 
 namespace rigExec {
@@ -27,6 +29,16 @@ struct ConstraintGate {
     bool open = false;
 };
 
+/// Why a constraint's lookups left its mover nothing to solve, for the line
+/// its store reports.
+enum class ConstraintNote : uint8_t {
+    None,
+    /// A single-chain IK's effector maps to no transform.
+    EffectorDegenerate,
+    /// Its pole-vector objects weigh nothing in total.
+    PoleWeightless,
+};
+
 /// What one op step read of the constraint commit it works on. The step's
 /// host owns it, so nothing read here outlives the step.
 struct ConstraintStepCache {
@@ -37,6 +49,7 @@ struct ConstraintStepCache {
     ConstraintGate gate;
     bool sampled = false;
     bool sampleOk = false;
+    ConstraintNote note = ConstraintNote::None;
 };
 
 namespace constraint_lookups {
@@ -230,6 +243,66 @@ SourceWeight(Host &host, size_t w, size_t k, size_t sources)
 {
     const auto a = host.inputs().constraintArrays(w);
     return a.ok && a.weightCount == sources && k < sources ? a.weights[k] : 1.0;
+}
+
+/// \p line, a diagnostic line about the mover at \p path, without the path.
+inline std::string
+WithoutPath(std::string line, const std::string &path)
+{
+    if (line.size() > path.size() && line.compare(0, path.size(), path) == 0 &&
+        line[path.size()] == ' ')
+        line.erase(0, path.size() + 1);
+    return line;
+}
+
+/// Single-chain IK commit \p w's pole point: the weighted mean of its
+/// pole-vector objects. An object that does not resolve, or a negative or
+/// non-finite weight, is an error; objects weighing nothing in total give
+/// the non-finite point, which leaves no solution, noted in \p cache.
+template <class Host>
+bool
+IkPolePoint(Host &host, ConstraintStepCache &cache, size_t w, size_t poles,
+            typename Host::Math::Vec3 *pole, std::string *error)
+{
+    using Math = typename Host::Math;
+    if (!Sampled(host, cache, w))
+        return Fail(error, "has no constraint arrays");
+    const auto arrays = host.inputs().constraintArrays(w);
+    if (!arrays.poleOk)
+        return Fail(error,
+                    arrays.poleDiagnosticCount
+                        ? WithoutPath(arrays.poleDiagnostics[0],
+                                      host.inputs().constraintFacts(w).pathText)
+                        : std::string("has unusable pole-vector "
+                                      "weights"));
+    typename Math::Vec3 sum = Math::Vec3Of(0, 0, 0);
+    double total = 0.0;
+    for (size_t k = 0; k < poles; ++k) {
+        if (!host.inputs().ikPoleBounds(w, k) || k >= arrays.poleWeightCount)
+            return Fail(error,
+                        "names no pole-vector object " + std::to_string(k));
+        const double weight = arrays.poleWeights[k];
+        if (!std::isfinite(weight) || weight < 0)
+            return Fail(error, "has a negative or non-finite pole-vector "
+                               "weight");
+        std::array<typename Math::Vec3, 4> points =
+            pose_ops::IdentityLandmarks<Math>();
+        unsigned flags = 0;
+        if (!host.inputs().resolveIkPole(w, k, &points, &flags))
+            return Fail(error, "could not resolve pole-vector object " +
+                                   std::to_string(k));
+        sum = pose_ops::Add3<Math>(sum,
+                                   pose_ops::Scale3<Math>(points[0], weight));
+        total += weight;
+    }
+    if (total <= 0) {
+        cache.note = ConstraintNote::PoleWeightless;
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        *pole = Math::Vec3Of(nan, nan, nan);
+        return true;
+    }
+    *pole = pose_ops::Scale3<Math>(sum, 1.0 / total);
+    return true;
 }
 
 /// Whether an aim on at \p gate reads its world up: it does only while some
@@ -474,6 +547,89 @@ LookUpConstraint(Host &host, ConstraintStepCache &cache, const OpLookup &lookup,
         }
         return Put(type, value, ToStd<Math>(up)) || bad();
     }
+    case L::HarmonicsInput: {
+        using H = OpHarmonicsRead;
+        switch (H(lookup.read)) {
+        case H::Space: {
+            typename Math::Mat4 space = Math::Identity4();
+            if (facts.spaceSlot < 0 ||
+                !host.inputs().posedMatrix(size_t(facts.spaceSlot), &space))
+                return Fail(error, "has no rigExec:space");
+            return Put(type, value, ToStd<Math>(space)) || bad();
+        }
+        case H::Amplitude:
+        case H::Decay:
+        case H::Termination:
+            return Put(type, value,
+                       host.inputs().harmonicsScalar(
+                           w, size_t(lookup.read - uint8_t(H::Amplitude)))) ||
+                   bad();
+        case H::AxisAmplitude:
+            return Put(type, value,
+                       ToStd<Math>(host.inputs().constraintVector(
+                           w, PoseConstraintVector::Offset))) ||
+                   bad();
+        case H::Open:
+            return Put(type, value, uint8_t(gate.open ? 1 : 0)) || bad();
+        }
+        return bad();
+    }
+    case L::SingleChainIkInput: {
+        using S = OpSingleChainIkRead;
+        const PoseIkChainView chain = host.inputs().ikChainView(w);
+        const PoseU32List reads = host.inputs().commitTargetReads(w);
+        if (!facts.singleChainIk || reads.count != chain.count)
+            return Fail(error, "names a chain its commit does not read");
+        std::array<typename Math::Vec3, 4> points =
+            pose_ops::IdentityLandmarks<Math>();
+        unsigned flags = 0;
+        switch (S(lookup.read)) {
+        case S::Chain:
+        case S::Rests: {
+            if (type.size != sizeof(rigExecRig::PointFrameArray) ||
+                std::strcmp(type.name, "PointFrameArray") != 0)
+                return bad();
+            auto &frames =
+                static_cast<rigExecRig::PointFrameArray *>(value)->frames;
+            frames.Resize(chain.count);
+            for (size_t k = 0; k < chain.count; ++k) {
+                const bool live = lookup.read == uint8_t(S::Chain) ||
+                                  host.inputs().ikRestLive(w, k);
+                if (live ? !host.inputs().finFrame(reads.data[k], &points,
+                                                   &flags)
+                         : chain.slots[k] < 0 ||
+                               !host.inputs().restFrame(size_t(chain.slots[k]),
+                                                        &points, &flags))
+                    return bad();
+                frames[k] = ToStd<Math>(points, flags);
+            }
+            return true;
+        }
+        case S::Effector:
+            if (gate.open &&
+                !host.inputs().resolveIkEffector(w, &points, &flags)) {
+                if (!(flags & pose_ops::kPoseFrameDegenerate))
+                    return Fail(error, "could not resolve its effector");
+                cache.note = ConstraintNote::EffectorDegenerate;
+            }
+            return Put(type, value, ToStd<Math>(points, flags)) || bad();
+        case S::Pole:
+        case S::Twist: {
+            typename Math::Vec3 pole = Math::Vec3Of(0.0, 1.0, 0.0);
+            double twist = 0.0;
+            host.inputs().ikPoleVector(w, &pole, &twist);
+            if (lookup.read == uint8_t(S::Twist))
+                return Put(type, value, twist) || bad();
+            if (chain.poleModeObject && gate.open &&
+                !IkPolePoint(host, cache, w, chain.poleObjects, &pole, error))
+                return false;
+            return Put(type, value, ToStd<Math>(pole)) || bad();
+        }
+        case S::Stretch:
+            return Put(type, value, host.inputs().ikStretch(w)) || bad();
+        }
+        return bad();
+    }
     case L::ConstraintDeltaBase: {
         const int d = facts.deltaBase;
         if (!host.inputs().deltaBaseValid(d))
@@ -490,6 +646,103 @@ LookUpConstraint(Host &host, ConstraintStepCache &cache, const OpLookup &lookup,
         return bad();
     }
 }
+
+namespace constraint_lookups {
+
+/// What constraint commit \p w's node made of its frames (\p status, its
+/// kind's op's Status): a solved frame is its commit's candidate, stored
+/// next where the node stores its frames; a frame with no solution leaves
+/// the target as it entered, with one diagnostic line.
+template <class Host>
+bool
+StoreStatus(Host &host, const ConstraintStepCache &cache, size_t w,
+            uint32_t status, std::string *error)
+{
+    const PoseConstraintGateFacts &facts = cache.facts;
+    host.state().setRecordAfter(w, true);
+    host.state().setRecordEveryTarget(w, !facts.harmonics);
+    if (facts.singleChainIk && cache.gate.enabled && facts.hasWeightObject &&
+        !facts.pointsTarget)
+        host.state().recordConstraintEnvelope(w);
+    PoseCommitState state = host.state().commitState(w);
+    std::fill(state.present, state.present + state.presentCount, char(0));
+    *state.abandoned = true;
+    const auto line = [&](const std::string &why,
+                          const char *how = "; constraint passed through") {
+        host.state().diagnose(host.inputs().constraintFacts(w).pathText + why +
+                              how);
+        return true;
+    };
+    if (status == 0)
+        return true;
+    if (facts.harmonics) {
+        // rigExecOps::HarmonicsResult.
+        if (status == 1) {
+            if (state.presentCount < 1)
+                return Fail(error, "commits no candidate");
+            state.present[0] = 1;
+            *state.abandoned = false;
+            return true;
+        }
+        if (status == 2 || status == 3)
+            return line(" could not measure " +
+                        host.inputs().commitPathText(size_t(facts.target)) +
+                        (status == 3 ? " in a degenerate rigExec:space" : ""));
+    } else if (facts.singleChainIk) {
+        // rigExecOps::SingleChainIkResult.
+        if (status == 1) {
+            *state.abandoned = false;
+            return true;
+        }
+        if (status == 2)
+            return line(" could not prepare rest-derived IK inputs");
+        if (status == 3)
+            return cache.note == ConstraintNote::EffectorDegenerate
+                       ? line(" could not resolve its effector")
+                   : cache.note == ConstraintNote::PoleWeightless
+                       ? line(" has zero total pole-vector weight")
+                       : line(" failed to solve its joint chain",
+                              "; constraint passed through atomically");
+    }
+    return Fail(error, "made nothing known of its frames: status " +
+                           std::to_string(status));
+}
+
+/// The chain single-chain IK commit \p w's node solved, written over the
+/// commit's candidates once its status said it solved.
+template <class Host>
+bool
+StoreChain(Host &host, size_t w, const rigExecRig::PointFrameArray &solved,
+           std::string *error)
+{
+    PoseCommitState state = host.state().commitState(w);
+    if (*state.abandoned)
+        return true;
+    const PoseIkChainView chain = host.inputs().ikChainView(w);
+    if (solved.frames.Size() != chain.count)
+        return Fail(error, "solved " + std::to_string(solved.frames.Size()) +
+                               " joints of " + std::to_string(chain.count));
+    const size_t slots = host.inputs().commitSlotCount(w);
+    for (size_t k = 0; k < chain.count; ++k) {
+        for (size_t pos = 0; pos < slots; ++pos) {
+            int slot = -1;
+            if (!host.inputs().commitSlotAt(w, pos, &slot) ||
+                pos >= state.framesCount || pos >= state.presentCount)
+                return Fail(error,
+                            "names no candidate slot " + std::to_string(pos));
+            if (slot != chain.slots[k])
+                continue;
+            const rigExecRig::PointFrame &frame = solved.frames[k];
+            host.state().writeCommitFrame(
+                w, pos, FromStd<typename Host::Math>(frame), frame.flags);
+            state.present[pos] = 1;
+            break;
+        }
+    }
+    return true;
+}
+
+} // namespace constraint_lookups
 
 /// Stores a constraint node's output \p value: the frame its mover solved
 /// (with the commit's presence and record gates), or the delta its geometry
@@ -534,6 +787,13 @@ StoreConstraint(Host &host, ConstraintStepCache &cache,
                               "; constraint passed through");
         return true;
     }
+    if (output.target == uint8_t(OpOutputTarget::ConstraintStatus))
+        return StoreStatus(host, *read, w,
+                           *static_cast<const uint32_t *>(value), error);
+    if (output.target == uint8_t(OpOutputTarget::SingleChainIkFrames))
+        return StoreChain(
+            host, w, *static_cast<const rigExecRig::PointFrameArray *>(value),
+            error);
     if (output.target != uint8_t(OpOutputTarget::ConstraintCandidate))
         return Fail(error,
                     "stores no output target " + std::to_string(output.target));

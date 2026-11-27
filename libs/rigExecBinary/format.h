@@ -699,7 +699,14 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// Format 50 runs every Range lattice as a Lattice op node over the divisions
 /// read at Build, its rest points the chain's base and its cages read through
 /// RevisionLeaf lookups (OpRevisionRead 13-15).
-inline constexpr uint32_t RigExecFormatVersion = 50;
+///
+/// Format 51 solves harmonics and single-chain IK constraints as Harmonics
+/// and SingleChainIk op nodes with the identity of their Constraint step.
+/// They read their inputs through OpGraph.lookups sources 38 and 70 and
+/// store what they made of their frames through OpGraph.host_outputs target
+/// 70 and a single-chain IK's solved chain through 71. A Constraint step
+/// remains for IK/FK match and a constraint with no target.
+inline constexpr uint32_t RigExecFormatVersion = 51;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -707,7 +714,7 @@ inline constexpr uint32_t RigExecFormatVersion = 50;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 50;
+inline constexpr uint32_t RigExecFormatOldestReadable = 51;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

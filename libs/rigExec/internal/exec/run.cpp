@@ -638,7 +638,7 @@ RigExecRun::_Fail(uint32_t b, uint32_t instance, const std::string &error)
     const uint32_t n = program->batchNodes[batch.firstNode + instance];
     const uint32_t w = program->windowOfNode[n];
     if (w != kRigExecInvalidIndex)
-        captures[w].reset();
+        windows[w].capture->reset();
     failed[b] = 1;
     errors[b] = "node " + std::to_string(n) + " (" +
                 (d.nameSpace ? d.nameSpace : "") + ":" +
@@ -1411,6 +1411,25 @@ RigExecRun::RunNode(uint32_t node, std::string *error)
     if (error)
         *error = errors[b];
     return false;
+}
+
+bool
+RigExecRun::LendWindow(uint32_t node, const RigExecWindowRing &ring,
+                       RigExecWindowPacketPtr &capture, bool captureOnly,
+                       std::string *error)
+{
+    const uint32_t w = node < program->windowOfNode.size()
+                           ? program->windowOfNode[node]
+                           : kRigExecInvalidIndex;
+    if (w == kRigExecInvalidIndex) {
+        if (error)
+            *error = "node " + std::to_string(node) + " keeps no window";
+        return false;
+    }
+    windows[w].ring = &ring;
+    windows[w].capture = &capture;
+    windows[w].captureOnly = captureOnly;
+    return true;
 }
 
 bool

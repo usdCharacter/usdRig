@@ -1,45 +1,10 @@
-// RigExecHarmonicsConstraint in the native program, and the windowed-op
-// bookkeeping every windowed operation shares.
-//
-// The constraint's step captures its target's incoming position, measured
-// in rigExec:space, as this tick's packet. When it solves, the earlier
-// ticks' packets (placed before the run) and this one feed
-// harmonicsKernel.h, shared with the binary runtime, and the offset is added
-// to the target's translation under the envelope.
+// The windowed-op bookkeeping every windowed operation shares: a harmonics
+// constraint's Harmonics node and a windowed geometry revision.
 
 #include "rigExec/internal/bakedProgramImpl.h"
-#include "bakedProgramImpl.h"
-#include "poseEvalHost.h"
 #include "rigExecMath/harmonicsKernel.h"
 
-#include "pxr/base/gf/matrix4d.h"
-
-#include <algorithm>
-#include <cmath>
-
 namespace rigExec {
-
-void
-RigExecBakedRunHarmonics(RigExecBakedProgramImpl &B, RigExecBakedStep *step,
-                         RigExecBakedProgramImpl::Constraint &c,
-                         RigExecBakedCommit &commit)
-{
-    (void)c;
-    (void)commit;
-    BakedPoseHost host(&B, step);
-    const eval::StepResult result =
-        eval::RunHarmonicsArm(host, size_t(step->object));
-    if (result.outcome == eval::Outcome::Invalid) {
-        if (result.detail == eval::pose_detail::kPoseDetailNoWindow) {
-            step->diagnostics.push_back(
-                c.pathText +
-                " has no history window; constraint passed through");
-        } else {
-            step->diagnostics.push_back(
-                "commit " + std::to_string(step->object) + " names no slot");
-        }
-    }
-}
 
 bool
 RigExecBakedSettleWindowedOps(RigExecBakedProgramImpl *program,
@@ -55,11 +20,12 @@ RigExecBakedSettleWindowedOps(RigExecBakedProgramImpl *program,
     B.historyTick = false;
     if (B.windowedOps.empty())
         return true;
-    // Each windowed constraint's step.
+    // Each windowed constraint's node step.
     for (size_t i = 0; i < B.steps.size(); ++i) {
-        const RigExecBakedStep &s = B.steps[i];
-        if (s.kind != RigExecBakedStepKind::Constraint || s.object < 0 ||
-            size_t(s.object) >= B.walkSteps.size()) {
+        const RigExecBakedStepIdentity s =
+            RigExecBakedIdentityOf(B, B.steps[i]);
+        if (s.kind != RigExecBakedStepKind::Constraint || s.part >= 0 ||
+            s.object < 0 || size_t(s.object) >= B.walkSteps.size()) {
             continue;
         }
         const auto &walk = B.walkSteps[size_t(s.object)];

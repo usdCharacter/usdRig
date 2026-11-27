@@ -1,6 +1,5 @@
 // The pose family's value-step bodies: one ladder, one compose, one solver
-// selection, one interpolator, one commit fold, one harmonics and one
-// IK/FK body, shared by the baked program and the .rigexec runtime. Both
+// selection, one interpolator, one commit fold and one IK/FK body, shared by the baked program and the .rigexec runtime. Both
 // adapters keep their own input binding (resolved leaves on the baked
 // side, decoded wire records and input slots at playback) and their own
 // typed output store; this header owns the decisions between them: the
@@ -48,7 +47,6 @@
 #include "rigExecGraph/windowHistory.h"
 #include "rigExecMath/autoClavicleKernel.h"
 #include "rigExecMath/avarScale.h"
-#include "rigExecMath/harmonicsKernel.h"
 #include "rigExecMath/ikFkMatchKernel.h"
 #include "rigExecMath/jointGroupKernel.h"
 #include "rigExecMath/poseArithmeticKernel.h"
@@ -79,8 +77,7 @@ enum PoseSolverCode : int {
 
 // The constraint arms the Constraint step selects, in the order the
 // step tests them: a split commit finishes first, then the IK/FK
-// presentation, the target admissibility gate, the harmonics window,
-// the enabled gate, the weight gate, the single-chain IK arm, and the
+// presentation, the target admissibility gate, the enabled gate, the weight gate, the single-chain IK arm, and the
 // FBX-family type dispatch last.
 enum PoseConstraintCode : int {
     kPoseConstraintUnknown = -1,
@@ -1688,8 +1685,6 @@ template <class Math>
 bool FrameUsable(const std::array<typename Math::Vec3, 4> &points,
                  unsigned flags);
 
-template <class Math> struct PoseSourceT;
-
 namespace pose_constraints {
 
 enum PoseEulerOrder {
@@ -2410,192 +2405,6 @@ FrameRecordMatrix(const std::array<typename Math::Vec3, 4> &restPoints,
     return pose_ops::PointsToMatrix<Math>(landmarks, framePoints, matrix);
 }
 
-// ---- Harmonics arm ----
-//
-// One harmonics constraint's bound inputs. Scalars arrive resolved
-// (narrow or wide on each side); the envelope field arrives as one
-// sampled view.
-template <class Math> struct PoseHarmonicsFacts {
-    int target = -1;
-    int spaceSlot = -1;
-    int window = -1;
-    std::string pathText;
-    bool enabled = true;
-    bool hasWeightObject = false;
-    bool fieldOk = false;
-    size_t fieldCount = 0;
-    double fieldValue = 0.0;
-    std::string fieldError;
-    double defaultWeight = 1.0;
-    double scalars[3] = {0.0, 0.0, 0.0};
-    typename Math::Vec3 axis = typename Math::Vec3();
-    bool matchVelocity = false;
-    RigExecHarmonicsSettings settings;
-    bool settingsValid = false;
-};
-
-// The constraint's step captures its target's incoming position,
-// measured in rigExec:space, as this tick's packet. When it solves,
-// the earlier ticks' packets and this one feed the shared harmonics
-// kernel, and the offset revises the one target. Mid-arm failures
-// pass through with the same diagnostic on both sides; only the
-// upfront window/read validation is fatal, and only on the runtime.
-template <class Host>
-StepResult
-RunHarmonicsArm(Host &host, size_t object)
-{
-    static_assert(IsBoundHost<Host>::value, "pose Host is not bound");
-    using Math = typename Host::Math;
-    const PoseCommitFacts commitFacts = host.inputs().commitFacts(object);
-    auto state = host.state().commitState(object);
-    host.state().setRecordEveryTarget(object, false);
-    const PoseHarmonicsFacts<Math> facts = host.inputs().harmonicsFacts(object);
-    if (facts.window < 0 || !host.inputs().windowCaptureValid(facts.window) ||
-        !host.inputs().windowedOpValid(facts.window) || !facts.settingsValid) {
-        return {Outcome::Invalid, pose_detail::kPoseDetailNoWindow};
-    }
-    std::array<typename Math::Vec3, 4> inputPoints = {
-        Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0),
-        Math::Vec3Of(0, 0, 0)};
-    unsigned inputFlags = 0;
-    if (!host.inputs().finFrame(commitFacts.targetRead, &inputPoints,
-                                &inputFlags)) {
-        return {Outcome::Invalid, pose_detail::kPoseDetailNoWindow};
-    }
-    typename Math::Mat4 space = Math::Identity4();
-    typename Math::Mat4 toSpace = Math::Identity4();
-    bool spaceUsable = true;
-    if (facts.spaceSlot >= 0) {
-        if (!host.inputs().posedMatrix(size_t(facts.spaceSlot), &space)) {
-            return {Outcome::Invalid, pose_detail::kPoseDetailNoWindow};
-        }
-        const double det = pose_ops::Determinant4<Math>(space);
-        spaceUsable = std::isfinite(det) && det != 0.0;
-        if (spaceUsable) {
-            pose_ops::Invert4<Math>(space, 0.0, &toSpace, nullptr);
-        }
-    }
-    RigExecWindowPacketPtr captured;
-    if (spaceUsable && FrameUsable<Math>(inputPoints, inputFlags)) {
-        const typename Math::Vec3 p =
-            facts.spaceSlot >= 0
-                ? pose_ops::Transform3<Math>(toSpace, inputPoints[0])
-                : inputPoints[0];
-        if (std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2])) {
-            auto packet = std::make_shared<RigExecWindowPacket>();
-            packet->scalars = {p[0], p[1], p[2]};
-            captured = std::move(packet);
-        }
-    }
-    RigExecWindowPacketPtr &held = host.state().windowCapture(facts.window);
-    if (!RigExecWindowPacketsEqual(held, captured)) {
-        held = std::move(captured);
-    }
-    if (host.inputs().historyTick() &&
-        !host.inputs().windowFeedsWindow(facts.window)) {
-        return {Outcome::Applied, kNoStepDetail};
-    }
-    if (!facts.enabled) {
-        return {Outcome::Applied, kNoStepDetail};
-    }
-    double weight = 1.0;
-    if (facts.hasWeightObject) {
-        if (!facts.fieldOk || facts.fieldCount != 1) {
-            host.state().diagnose(facts.pathText + ": " + facts.fieldError +
-                                  "; constraint passed through");
-            return {Outcome::Applied, kNoStepDetail};
-        }
-        weight = facts.fieldValue;
-    } else {
-        weight = facts.defaultWeight;
-        if (!std::isfinite(weight) || weight < 0.0 || weight > 1.0) {
-            host.state().diagnose(
-                facts.pathText +
-                " has inputs:defaultWeight outside finite [0, 1]; "
-                "constraint passed through");
-            return {Outcome::Applied, kNoStepDetail};
-        }
-    }
-    if (weight <= 0.0) {
-        return {Outcome::Applied, kNoStepDetail};
-    }
-    if (!held) {
-        host.state().diagnose(
-            facts.pathText + " could not measure " +
-            host.inputs().commitPathText(size_t(facts.target)) +
-            (spaceUsable ? "" : " in a degenerate rigExec:space") +
-            "; constraint passed through");
-        return {Outcome::Applied, kNoStepDetail};
-    }
-    const size_t ringCount = host.inputs().windowRingCount(facts.window);
-    size_t begin = ringCount;
-    while (begin > 0) {
-        const RigExecWindowPacketPtr packet =
-            host.inputs().windowRingPacket(facts.window, begin - 1);
-        if (!packet || packet->scalars.size() != 3) {
-            break;
-        }
-        --begin;
-    }
-    std::vector<double> positions;
-    positions.reserve(3 * (ringCount - begin + 1));
-    for (size_t k = begin; k < ringCount; ++k) {
-        const RigExecWindowPacketPtr packet =
-            host.inputs().windowRingPacket(facts.window, k);
-        positions.insert(positions.end(), packet->scalars.begin(),
-                         packet->scalars.end());
-    }
-    positions.insert(positions.end(), held->scalars.begin(),
-                     held->scalars.end());
-    const RigExecHarmonicsSettings &settings = facts.settings;
-    RigExecHarmonicsParameters params;
-    params.amplitude = facts.scalars[0];
-    params.decay = facts.scalars[1];
-    params.termination = facts.scalars[2];
-    params.axisAmplitude[0] = facts.axis[0];
-    params.axisAmplitude[1] = facts.axis[1];
-    params.axisAmplitude[2] = facts.axis[2];
-    params.matchVelocity = facts.matchVelocity;
-    if (!std::isfinite(params.amplitude) || !std::isfinite(params.decay) ||
-        !std::isfinite(params.termination) || !std::isfinite(facts.axis[0]) ||
-        !std::isfinite(facts.axis[1]) || !std::isfinite(facts.axis[2])) {
-        host.state().diagnose(
-            facts.pathText +
-            " has a non-finite input; constraint passed through");
-        return {Outcome::Applied, kNoStepDetail};
-    }
-    double ring3[3];
-    if (!RigExecHarmonicsOffset(
-            settings, params,
-            reinterpret_cast<const double(*)[3]>(positions.data()),
-            positions.size() / 3, ring3)) {
-        return {Outcome::Applied, kNoStepDetail};
-    }
-    typename Math::Vec3 offset = Math::Vec3Of(ring3[0], ring3[1], ring3[2]);
-    if (facts.spaceSlot >= 0) {
-        offset = pose_ops::TransformDir3<Math>(space, offset);
-    }
-    offset = pose_ops::Scale3<Math>(offset, weight);
-    std::array<typename Math::Vec3, 4> candidate = inputPoints;
-    for (size_t q = 0; q < 4; ++q) {
-        candidate[q] = pose_ops::Add3<Math>(candidate[q], offset);
-    }
-    if (!FrameUsable<Math>(candidate, inputFlags)) {
-        host.state().diagnose(
-            facts.pathText + " produced an invalid or degenerate frame for " +
-            host.inputs().commitPathText(size_t(facts.target)) +
-            "; constraint passed through");
-        return {Outcome::Applied, kNoStepDetail};
-    }
-    if (state.framesCount < 1 || state.presentCount < 1) {
-        return {Outcome::Invalid, pose_detail::kPoseDetailNoSlot};
-    }
-    host.state().writeCommitFrame(object, 0, candidate, inputFlags);
-    state.present[0] = 1;
-    *state.abandoned = false;
-    return {Outcome::Applied, kNoStepDetail};
-}
-
 // ---- Constraint prologue ----
 //
 // One constraint's sampled array tables, borrowed from the
@@ -2625,6 +2434,9 @@ struct PoseConstraintGateFacts {
     int spaceSlot = -1;
     uint32_t targetRead = 0;
     bool matrixMover = false;
+    bool harmonics = false;
+    bool singleChainIk = false;
+    bool ikFkMatch = false;
     bool enabled = false;
     bool hasWeightObject = false;
     bool pointsTarget = false;
@@ -2709,16 +2521,6 @@ struct PoseSourceRef {
     std::string pathText;
 };
 
-// One gathered source: the frame plus its envelope weight and
-// offsets.
-template <class Math> struct PoseSourceT {
-    std::array<typename Math::Vec3, 4> points;
-    unsigned flags = 0;
-    double normalizedWeight = 0.0;
-    typename Math::Vec3 translationOffset;
-    typename Math::Vec3 rotationOffsetDegrees;
-};
-
 // The rotation-only world-up direction: the up-object's rotation
 // applied to the authored vector.
 template <class Math>
@@ -2744,78 +2546,6 @@ RotationOnlyUp(const typename Math::Mat4 &up, bool rotationOnly,
         rotation.angle = 2.0 * (x * (180.0 / pi));
     }
     return pose_ops::RotationTransformDir<Math>(rotation, authored);
-}
-
-// One constraint's gathered inputs: the commit binding, the facts,
-// the resolved source set, the envelope, and the space carry.
-template <class Host> struct PoseConstraintPrologueT {
-    using Math = typename Host::Math;
-    PoseCommitFacts commitFacts;
-    PoseCommitState state;
-    PoseConstraintFactsT<Math> facts;
-    std::vector<PoseSourceT<Math>> sources;
-    double weight = 1.0;
-    typename Math::Mat4 carry;
-    bool carryValid = false;
-    bool hasCarry = false;
-};
-
-// The constraint prologue head: arrays, facts, and the envelope.
-// The single-chain IK exit sits between this and the sources below: past
-// the envelope (whose weight the solve takes) and past the arrays (whose
-// pole tables it reads), before any source resolves.
-template <class Host>
-StepResult
-ResolveConstraintHead(Host &host, size_t object,
-                      PoseConstraintPrologueT<Host> *prologue, bool *proceed)
-{
-    using Math = typename Host::Math;
-    using pose_detail::kPoseDetailNoArrays;
-    using pose_detail::kPoseDetailNoDeltaPath;
-    *proceed = false;
-    prologue->carry = Math::Identity4();
-    prologue->commitFacts = host.inputs().commitFacts(object);
-    prologue->state = host.state().commitState(object);
-    if (!host.state().sampleConstraintArrays(object)) {
-        return {Outcome::Invalid, kPoseDetailNoArrays};
-    }
-    prologue->facts = host.inputs().constraintFacts(object);
-    const PoseConstraintFactsT<Math> &facts = prologue->facts;
-    if (!facts.enabled) {
-        return {Outcome::Applied, kNoStepDetail};
-    }
-    double weight = 1.0;
-    if (facts.hasWeightObject && !facts.pointsTarget) {
-        // The front ends record the resolved field in the constraint's own
-        // scratch (baked program record, runtime store slot) before it is
-        // checked.
-        host.state().recordConstraintEnvelope(object);
-        if (!facts.fieldOk || facts.fieldCount != 1) {
-            host.state().diagnose(facts.pathText + ": " + facts.fieldError +
-                                  "; constraint passed through");
-            return {Outcome::Applied, kNoStepDetail};
-        }
-        weight = facts.fieldValue;
-    } else if (!facts.hasWeightObject) {
-        weight = facts.defaultWeight;
-        if (!std::isfinite(weight) || weight < 0.0 || weight > 1.0) {
-            host.state().diagnose(
-                facts.pathText +
-                " has inputs:defaultWeight outside finite [0, 1]; "
-                "constraint passed through");
-            return {Outcome::Applied, kNoStepDetail};
-        }
-    }
-    prologue->weight = weight;
-    if (weight <= 0.0 && (!facts.pointsTarget || !facts.hasWeightObject)) {
-        if (facts.deltaBase >= 0 &&
-            !host.state().writeDeltaIdentity(size_t(facts.deltaBase))) {
-            return {Outcome::Invalid, kPoseDetailNoDeltaPath};
-        }
-        return {Outcome::Applied, kNoStepDetail};
-    }
-    *proceed = true;
-    return {Outcome::Applied, kNoStepDetail};
 }
 
 // A geometry-domain constraint's delta: the map from the target's authored
@@ -3119,6 +2849,68 @@ RunIkFkArm(Host &host, size_t object)
     return {Outcome::Applied, kNoStepDetail};
 }
 
+// A single-chain IK's rest-derived chain: each joint keeps its current
+// root placement and axis directions, with the lengths of its bones and
+// axes taken from \p rest, or from \p current where a rest bone has no
+// length. False where a frame is unusable or a length vanishes.
+template <class Math, class Frame>
+bool
+PrepareRestDerivedIkChain(const Frame *current, const Frame *rest, size_t count,
+                          Frame *prepared)
+{
+    if (!count)
+        return false;
+    bool usableRestLayout = true;
+    for (size_t i = 1; i < count; ++i) {
+        const double segmentLength =
+            (rest[i].points[0] - rest[i - 1].points[0]).GetLength();
+        if (!std::isfinite(segmentLength) || segmentLength <= 0.0) {
+            usableRestLayout = false;
+            break;
+        }
+    }
+    const Frame *lengthReference = usableRestLayout ? rest : current;
+    for (size_t i = 0; i < count; ++i) {
+        if (!FrameUsable<Math>(current[i].points, current[i].flags) ||
+            !FrameUsable<Math>(rest[i].points, rest[i].flags))
+            return false;
+        typename Math::Vec3 origin = current[i].points[0];
+        if (i > 0) {
+            typename Math::Mat4 parentRest = Math::Identity4();
+            typename Math::Mat4 parentPrepared = Math::Identity4();
+            if (!pose_ops::PointsToMatrix<Math>(
+                    pose_ops::IdentityLandmarks<Math>(),
+                    lengthReference[i - 1].points, &parentRest) ||
+                !pose_ops::PointsToMatrix<Math>(
+                    pose_ops::IdentityLandmarks<Math>(), prepared[i - 1].points,
+                    &parentPrepared))
+                return false;
+            origin = parentPrepared.TransformAffine(
+                parentRest.GetInverse().TransformAffine(
+                    lengthReference[i].points[0]));
+        }
+        Frame frame = current[i];
+        frame.points[0] = origin;
+        for (size_t axis = 1; axis < frame.points.size(); ++axis) {
+            typename Math::Vec3 direction =
+                current[i].points[axis] - current[i].points[0];
+            const double directionLength = direction.GetLength();
+            const double length =
+                (lengthReference[i].points[axis] - lengthReference[i].points[0])
+                    .GetLength();
+            if (!std::isfinite(length) || length <= 0.0 ||
+                !std::isfinite(directionLength) || directionLength <= 0.0)
+                return false;
+            direction /= directionLength;
+            frame.points[axis] = origin + direction * length;
+        }
+        if (!FrameUsable<Math>(frame.points, frame.flags))
+            return false;
+        prepared[i] = frame;
+    }
+    return true;
+}
+
 // Absent and empty tables use defaults; a nonempty table must name every source.
 template <class Value, class Read, class Diagnose>
 inline bool
@@ -3160,203 +2952,18 @@ NormalizeConstraintTables(size_t sourceCount, size_t poleCount,
     }
 }
 
-// One single-chain IK's bound inputs, copied: the chain slots, the
-// effector and pole references, and the solve parameters. Small
-// (chain-length) vectors; frames travel through the frame accessors.
-struct PoseIkChainFacts {
-    std::vector<int> targetSlots;
-    int effector = -1;
-    int effectorNative = -1;
-    double stretch = 0.0;
+// One single-chain IK's chain as the host holds it: its joint slots, root
+// first, and the settings Build fixed.
+struct PoseIkChainView {
+    const int *slots = nullptr;
+    size_t count = 0;
     int ikMode = 0;
     bool useAnimatedTs = false;
-    std::vector<char> ikRestLive;
     bool poleModeObject = false;
-    std::vector<int> poleObjects;
+    size_t poleObjects = 0;
 };
 
-// Gathers the chain, effector, pole and rests and atomically commits the
-// result. Rest-derived preparation and the IK solve remain host-specific;
-// both hosts honor preserveJointOrientation.
-template <class Host>
-StepResult
-RunSingleChainIkArm(Host &host, size_t object,
-                    const PoseCommitFacts &commitFacts,
-                    const PoseConstraintFactsT<typename Host::Math> &facts,
-                    double weight, PoseCommitState state)
-{
-    using Math = typename Host::Math;
-    using pose_detail::kPoseDetailNoCandidate;
-    using pose_detail::kPoseDetailNoChain;
-    using pose_detail::kPoseDetailNoPole;
-    using pose_detail::kPoseDetailNoRest;
-    using pose_detail::kPoseDetailNoVersion;
-    PoseIkChainFacts ik;
-    if (!host.inputs().ikChainFacts(object, &ik)) {
-        return {Outcome::Invalid, kPoseDetailNoChain};
-    }
-    if (commitFacts.targetReads.count != ik.targetSlots.size()) {
-        return {Outcome::Invalid, kPoseDetailNoChain};
-    }
-    bool inputsValid = true;
-    std::vector<typename Math::Frame> chain;
-    chain.reserve(ik.targetSlots.size());
-    for (size_t k = 0; k < ik.targetSlots.size(); ++k) {
-        std::array<typename Math::Vec3, 4> points = {
-            Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0),
-            Math::Vec3Of(0, 0, 0)};
-        unsigned flags = 0;
-        if (!host.inputs().finFrame(commitFacts.targetReads.data[k], &points,
-                                    &flags)) {
-            return {Outcome::Invalid, kPoseDetailNoVersion};
-        }
-        chain.push_back(Math::MakeFrame(points, flags));
-    }
-    std::array<typename Math::Vec3, 4> effectorPoints = {
-        Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0),
-        Math::Vec3Of(0, 0, 0)};
-    unsigned effectorFlags = 0;
-    if (!host.inputs().resolveIkEffector(object, &effectorPoints,
-                                         &effectorFlags)) {
-        host.state().diagnose(
-            facts.pathText +
-            " could not resolve its effector; constraint passed through");
-        inputsValid = false;
-    }
-    typename Math::Vec3 pole = Math::Vec3Of(0.0, 1.0, 0.0);
-    double twistDegrees = 0.0;
-    if (ik.ikMode == 0) {
-        host.inputs().ikPoleVector(object, &pole, &twistDegrees);
-    }
-    if (inputsValid && ik.ikMode == 0 && ik.poleModeObject) {
-        if (ik.poleObjects.empty()) {
-            host.state().diagnose(
-                facts.pathText +
-                " uses object pole mode with no pole-vector objects; "
-                "constraint passed through");
-            inputsValid = false;
-        }
-        if (inputsValid && !facts.arrays.poleOk) {
-            for (size_t d = 0; d < facts.arrays.poleDiagnosticCount; ++d) {
-                host.state().diagnose(facts.arrays.poleDiagnostics[d]);
-            }
-            inputsValid = false;
-        }
-        typename Math::Vec3 polePoint = Math::Vec3Of(0, 0, 0);
-        double total = 0.0;
-        for (size_t k = 0; inputsValid && k < ik.poleObjects.size(); ++k) {
-            if (!host.inputs().ikPoleBounds(object, k) ||
-                k >= facts.arrays.poleWeightCount) {
-                return {Outcome::Invalid, kPoseDetailNoPole};
-            }
-            std::array<typename Math::Vec3, 4> polePoints = {
-                Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0),
-                Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0)};
-            unsigned poleFlags = 0;
-            if (!host.inputs().resolveIkPole(object, k, &polePoints,
-                                             &poleFlags) ||
-                !std::isfinite(facts.arrays.poleWeights[k]) ||
-                facts.arrays.poleWeights[k] < 0) {
-                host.state().diagnose(
-                    facts.pathText +
-                    " has an invalid pole-vector source or weight; "
-                    "constraint passed through");
-                inputsValid = false;
-                break;
-            }
-            polePoint = pose_ops::Add3<Math>(
-                polePoint, pose_ops::Scale3<Math>(polePoints[0],
-                                                  facts.arrays.poleWeights[k]));
-            total += facts.arrays.poleWeights[k];
-        }
-        if (inputsValid && total <= 0) {
-            host.state().diagnose(
-                facts.pathText +
-                " has zero total pole-vector weight; constraint passed "
-                "through");
-            inputsValid = false;
-        }
-        if (inputsValid) {
-            pole = pose_ops::Scale3<Math>(polePoint, 1.0 / total);
-        }
-    }
-    std::vector<typename Math::Frame> rests;
-    rests.reserve(ik.targetSlots.size());
-    if (inputsValid && !ik.useAnimatedTs) {
-        for (size_t k = 0; k < ik.targetSlots.size(); ++k) {
-            if (k < ik.ikRestLive.size() && ik.ikRestLive[k] &&
-                k < chain.size()) {
-                rests.push_back(chain[k]);
-            } else {
-                std::array<typename Math::Vec3, 4> points = {
-                    Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0),
-                    Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0)};
-                unsigned flags = 0;
-                if (ik.targetSlots[k] < 0 ||
-                    !host.inputs().restFrame(size_t(ik.targetSlots[k]), &points,
-                                             &flags)) {
-                    return {Outcome::Invalid, kPoseDetailNoRest};
-                }
-                rests.push_back(Math::MakeFrame(points, flags));
-            }
-        }
-    }
-    std::vector<typename Math::Frame> solved;
-    if (inputsValid) {
-        typename Math::Frame effector =
-            Math::MakeFrame(effectorPoints, effectorFlags);
-        if (!host.state().solveIkChain(
-                object, chain, rests, effector, ik.ikMode, ik.stretch, weight,
-                pole, twistDegrees, ik.useAnimatedTs, &solved)) {
-            host.state().diagnose(
-                facts.pathText +
-                " could not prepare rest-derived IK inputs; constraint "
-                "passed through");
-            inputsValid = false;
-        }
-    }
-    if (inputsValid && (solved.size() != ik.targetSlots.size() ||
-                        !std::all_of(solved.begin(), solved.end(),
-                                     [](const typename Math::Frame &frame) {
-                                         return FrameUsable<Math>(frame.points,
-                                                                  frame.flags);
-                                     }))) {
-        host.state().diagnose(
-            facts.pathText +
-            " failed to solve its joint chain; constraint passed through "
-            "atomically");
-        inputsValid = false;
-    }
-    if (inputsValid) {
-        const size_t slots = host.inputs().commitSlotCount(object);
-        for (size_t k = 0; k < ik.targetSlots.size(); ++k) {
-            size_t pos = slots;
-            for (size_t p = 0; p < slots; ++p) {
-                int slot = -1;
-                if (!host.inputs().commitSlotAt(object, p, &slot)) {
-                    return {Outcome::Invalid, kPoseDetailNoCandidate};
-                }
-                if (slot == ik.targetSlots[k]) {
-                    pos = p;
-                    break;
-                }
-            }
-            if (pos >= slots) {
-                continue;
-            }
-            if (pos >= state.framesCount || pos >= state.presentCount) {
-                return {Outcome::Invalid, kPoseDetailNoCandidate};
-            }
-            host.state().writeCommitFrame(object, pos, solved[k].points,
-                                          solved[k].flags);
-            state.present[pos] = 1;
-        }
-        *state.abandoned = false;
-    }
-    return {Outcome::Applied, kNoStepDetail};
-}
-
-// One constraint step: the IK/FK match, harmonics and single-chain IK arms;
+// One constraint step: the IK/FK match arm;
 // every other constraint kind runs as op nodes. The caller ran the entry
 // gates (abandoned/present, record gates, delta-absent); the commit is a
 // PoseCommit op node.
@@ -3379,25 +2986,8 @@ RunConstraintStep(Host &host, const StepRef &step)
     if (facts.target < 0) {
         return {Outcome::Applied, kNoStepDetail};
     }
-    if (facts.harmonics) {
-        return RunHarmonicsArm(host, object);
-    }
     // Every other constraint kind solves as op nodes.
-    if (!facts.singleChainIk) {
-        return {Outcome::Invalid, kPoseDetailNoCommit};
-    }
-    if (!facts.enabled) {
-        return {Outcome::Applied, kNoStepDetail};
-    }
-    PoseConstraintPrologueT<Host> prologue;
-    bool proceed = false;
-    const StepResult headed =
-        ResolveConstraintHead(host, object, &prologue, &proceed);
-    if (!proceed) {
-        return headed;
-    }
-    return RunSingleChainIkArm(host, object, prologue.commitFacts,
-                               prologue.facts, prologue.weight, prologue.state);
+    return {Outcome::Invalid, kPoseDetailNoCommit};
 }
 
 // The pose family tag: an adapter's RunValueStep entry selects this

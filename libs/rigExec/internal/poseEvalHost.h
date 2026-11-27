@@ -522,20 +522,42 @@ public:
         return true;
     }
 
-    bool ikChainFacts(size_t object, eval::PoseIkChainFacts *facts) const
+    eval::PoseIkChainView ikChainView(size_t object) const
     {
         const RigExecBakedProgramImpl::Constraint &c =
             _program->constraints[size_t(_program->walkSteps[object].index)];
-        facts->targetSlots = c.targetSlots;
-        facts->effector = c.effector;
-        facts->effectorNative = c.effectorNative;
-        facts->stretch = double(RigExecBakedLeafRead(*_program, c.stretch));
-        facts->ikMode = int(c.ikMode);
-        facts->useAnimatedTs = c.useAnimatedTs;
-        facts->ikRestLive = c.ikRestLive;
-        facts->poleModeObject = c.poleModeObject;
-        facts->poleObjects = c.poleObjects;
-        return true;
+        eval::PoseIkChainView view;
+        view.slots = c.targetSlots.data();
+        view.count = c.targetSlots.size();
+        view.ikMode = int(c.ikMode);
+        view.useAnimatedTs = c.useAnimatedTs;
+        view.poleModeObject = c.poleModeObject;
+        view.poleObjects = c.poleObjects.size();
+        return view;
+    }
+
+    bool ikRestLive(size_t object, size_t k) const
+    {
+        const RigExecBakedProgramImpl::Constraint &c =
+            _program->constraints[size_t(_program->walkSteps[object].index)];
+        return k < c.ikRestLive.size() && c.ikRestLive[k];
+    }
+
+    double ikStretch(size_t object) const
+    {
+        const RigExecBakedProgramImpl::Constraint &c =
+            _program->constraints[size_t(_program->walkSteps[object].index)];
+        return double(RigExecBakedLeafRead(*_program, c.stretch));
+    }
+
+    eval::PoseU32List commitTargetReads(size_t object) const
+    {
+        const std::vector<uint32_t> &reads =
+            _program->commits[object].targetReads;
+        eval::PoseU32List list;
+        list.data = reads.data();
+        list.count = reads.size();
+        return list;
     }
 
     void ikPoleVector(size_t object, GfVec3d *pole, double *twistDegrees) const
@@ -688,71 +710,13 @@ public:
         return true;
     }
 
-    eval::PoseHarmonicsFacts<BakedPoseMath> harmonicsFacts(size_t object) const
+    double harmonicsScalar(size_t object, size_t k) const
     {
-        const RigExecBakedProgramImpl::Constraint &c =
-            _program->constraints[size_t(_program->walkSteps[object].index)];
-        eval::PoseHarmonicsFacts<BakedPoseMath> facts;
-        facts.target = c.target;
-        facts.spaceSlot = c.spaceSlot;
-        facts.window = c.window;
-        facts.pathText = c.pathText;
-        facts.enabled = RigExecBakedLeafRead(*_program, c.enabled);
-        facts.hasWeightObject = !c.weightObject.IsEmpty();
-        if (facts.hasWeightObject) {
-            const RigExecBakedProgramImpl::WeightField &field =
-                _program->weightFields[size_t(c.weightField)];
-            facts.fieldOk = field.ok;
-            facts.fieldCount = field.values.size();
-            facts.fieldValue =
-                field.values.empty() ? 0.0 : double(field.values[0]);
-            facts.fieldError = field.error;
-        }
-        facts.defaultWeight =
-            double(RigExecBakedLeafRead(*_program, c.defaultWeight));
-        for (size_t k = 0; k < 3; ++k) {
-            const auto &s = c.harmonicsScalars[k];
-            facts.scalars[k] =
-                s.isFloat ? double(RigExecBakedLeafRead(*_program, s.narrow))
-                          : RigExecBakedLeafRead(*_program, s.wide);
-        }
-        facts.axis = RigExecBakedLeafRead(*_program, c.offset);
-        facts.matchVelocity = c.harmonicsMatchVelocity;
-        facts.settings = c.harmonicsSettings;
-        facts.settingsValid = true;
-        return facts;
-    }
-
-    bool windowCaptureValid(int window) const
-    {
-        return window >= 0 && size_t(window) < _program->windowCaptures.size();
-    }
-
-    bool windowedOpValid(int window) const
-    {
-        return window >= 0 && size_t(window) < _program->windowedOps.size();
-    }
-
-    size_t windowRingCount(int window) const
-    {
-        if (window < 0 || size_t(window) >= _program->windowRings.size()) {
-            return 0;
-        }
-        return _program->windowRings[size_t(window)].size();
-    }
-
-    RigExecWindowPacketPtr windowRingPacket(int window, size_t k) const
-    {
-        if (window < 0 || size_t(window) >= _program->windowRings.size()) {
-            return RigExecWindowPacketPtr();
-        }
-        const RigExecWindowRing &ring = _program->windowRings[size_t(window)];
-        return k < ring.size() ? ring[k] : RigExecWindowPacketPtr();
-    }
-
-    bool windowFeedsWindow(int window) const
-    {
-        return _program->windowedOps[size_t(window)].feedsWindow;
+        const auto &s =
+            _program->constraints[size_t(_program->walkSteps[object].index)]
+                .harmonicsScalars[k];
+        return s.isFloat ? double(RigExecBakedLeafRead(*_program, s.narrow))
+                         : RigExecBakedLeafRead(*_program, s.wide);
     }
 
     bool historyTick() const
@@ -970,6 +934,9 @@ public:
         facts->spaceSlot = c.spaceSlot;
         facts->targetRead = P.commits[object].targetRead;
         facts->matrixMover = c.type == SchemaTypeName::RigExecMatrixMover;
+        facts->harmonics = c.harmonics;
+        facts->singleChainIk = c.singleChainIk;
+        facts->ikFkMatch = c.ikFkMatch;
         facts->enabled = RigExecBakedLeafRead(P, c.enabled);
         facts->hasWeightObject = !c.weightObject.IsEmpty();
         facts->pointsTarget = !c.pointsTarget.IsEmpty();
@@ -1405,40 +1372,6 @@ public:
         c.matchValuesValid = value;
     }
 
-    bool solveIkChain(size_t object,
-                      const std::vector<RigExecPointFrame> &chain,
-                      const std::vector<RigExecPointFrame> &rests,
-                      const RigExecPointFrame &effector, int mode,
-                      double stretch, double weight, const GfVec3d &pole,
-                      double twistDegrees, bool useAnimatedTs,
-                      std::vector<RigExecPointFrame> *solved)
-    {
-        RigExecBakedProgramImpl::Constraint &c =
-            _program->constraints[size_t(_program->walkSteps[object].index)];
-        std::vector<RigExecPointFrame> prepared;
-        const std::vector<RigExecPointFrame> *solveChain = &chain;
-        if (!useAnimatedTs) {
-            if (!RigExecPrepareRestDerivedIkChain(chain, rests, &prepared)) {
-                return false;
-            }
-            solveChain = &prepared;
-        }
-        RigExecSingleChainIkParams params;
-        params.mode = RigExecSingleChainIkMode(mode);
-        params.pole = pole;
-        params.twistDegrees = twistDegrees;
-        params.weight = weight;
-        params.preserveJointOrientation = c.preserveJointOrientation;
-        params.stretch = stretch;
-        c.kernelRecord.kind = RigExecConstraintKind::SingleChainIk;
-        c.kernelRecord.singleChain = params;
-        c.kernelInputs.chain = *solveChain;
-        c.kernelInputs.effector = effector;
-        RigExecRunConstraint(c.kernelRecord, c.kernelInputs, &c.kernelResult);
-        *solved = c.kernelResult.chain;
-        return true;
-    }
-
     void setMatchShownMask(size_t object, unsigned mask)
     {
         RigExecBakedProgramImpl::Constraint &c =
@@ -1518,11 +1451,6 @@ public:
     void setRecordEveryTarget(size_t object, bool value)
     {
         _program->commits[object].recordEveryTarget = value;
-    }
-
-    RigExecWindowPacketPtr &windowCapture(int window)
-    {
-        return _program->windowCaptures[size_t(window)];
     }
 
     void recordConstraintEnvelope(size_t object)

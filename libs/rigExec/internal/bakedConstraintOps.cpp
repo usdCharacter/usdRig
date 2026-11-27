@@ -2,6 +2,8 @@
 #include "rigExec/internal/poseEvalHost.h"
 #include "rigExecEvalCore/constraintLookups.h"
 #include "rigExecOps/constraint/constraintOps.h"
+#include "rigExecOps/constraint/harmonicsOps.h"
+#include "rigExecOps/solver/singleChainIkOps.h"
 #include "rigExecOps/constraint/matrixMoverOps.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecStdTypes/stdTypes.h"
@@ -41,7 +43,10 @@ const RigExecPortHandle &
 RigExecBakedConstraintOut(const RigExecBakedProgramImpl &B, size_t w)
 {
     using namespace rigExecOps;
-    const TfToken &type = B.constraints[size_t(B.walkSteps[w].index)].type;
+    const Constraint &c = B.constraints[size_t(B.walkSteps[w].index)];
+    const TfToken &type = c.type;
+    if (c.harmonics)
+        return HarmonicsOut();
     if (type == SchemaTypeName::RigExecMatrixMover)
         return MatrixMoverOut();
     if (type == SchemaTypeName::RigExecPositionConstraint)
@@ -59,8 +64,21 @@ bool
 RigExecBakedConstraintRunsAsOps(const RigExecBakedProgramImpl &B, size_t w)
 {
     const Constraint *c = ConstraintAt(B, w);
-    return c && c->target >= 0 && !c->ikFkMatch && !c->harmonics &&
-           !c->singleChainIk;
+    return c && c->target >= 0 && !c->ikFkMatch;
+}
+
+bool
+RigExecBakedConstraintStoresPresence(const RigExecBakedProgramImpl &B, size_t w)
+{
+    const Constraint *c = ConstraintAt(B, w);
+    return c && c->harmonics;
+}
+
+bool
+RigExecBakedConstraintStoresFrames(const RigExecBakedProgramImpl &B, size_t w)
+{
+    const Constraint *c = ConstraintAt(B, w);
+    return c && c->singleChainIk;
 }
 
 bool
@@ -146,6 +164,78 @@ RigExecBakedAddConstraintOp(const RigExecBakedProgramImpl &B,
     payload.rotationOrder = ConstraintEulerOrder(int(c.order));
     payload.blendShear = c.blendShear;
     payload.preserveInputUp = c.preserveInputUp;
+    if (c.singleChainIk) {
+        using S = eval::OpSingleChainIkRead;
+        const bool rotatePlane =
+            c.ikMode == RigExecSingleChainIkMode::RotatePlane;
+        if (rotatePlane && c.poleModeObject && c.poleObjects.empty())
+            return Fail(error, c.pathText + ": uses object pole mode with no "
+                                            "pole-vector objects");
+        SingleChainIkPayload ik;
+        ik.singleChain = c.ikMode == RigExecSingleChainIkMode::SingleChain;
+        ik.preserveJointOrientation = c.preserveJointOrientation;
+        node = builder->AddOp(SingleChainIk(), &ik);
+        if (node != o)
+            return Fail(error, "op nodes: the single-chain IK of node " +
+                                   std::to_string(o) + " was added as node " +
+                                   std::to_string(node));
+        const auto input = [&](const RigExecPortHandle &port, S read) {
+            look(node, port, L::SingleChainIkInput, -1, R(uint8_t(read)));
+        };
+        input(SingleChainIkChain(), S::Chain);
+        if (!c.useAnimatedTs)
+            input(SingleChainIkRests(), S::Rests);
+        input(SingleChainIkEffector(), S::Effector);
+        if (rotatePlane) {
+            input(SingleChainIkPole(), S::Pole);
+            input(SingleChainIkTwist(), S::Twist);
+        }
+        look(node, SingleChainIkWeight(), L::ConstraintEnvelope, -1,
+             R::SolveWeight);
+        input(SingleChainIkStretch(), S::Stretch);
+        builder->BindOutput(node, SingleChainIkStatus());
+        builder->BindOutput(node, SingleChainIkOut());
+        layout->hostOutputs.push_back(
+            {node, SingleChainIkStatus().Index(),
+             uint8_t(eval::OpOutputTarget::ConstraintStatus), uint32_t(w)});
+        layout->hostOutputs.push_back(
+            {node, SingleChainIkOut().Index(),
+             uint8_t(eval::OpOutputTarget::SingleChainIkFrames), uint32_t(w)});
+        return true;
+    }
+    if (c.harmonics) {
+        using H = eval::OpHarmonicsRead;
+        if (c.window < 0 || size_t(c.window) >= B.windowedOps.size())
+            return Fail(error, c.pathText + ": has no history window");
+        HarmonicsPayload harmonics;
+        harmonics.settings = c.harmonicsSettings;
+        harmonics.matchVelocity = c.harmonicsMatchVelocity;
+        harmonics.hasSpace = c.spaceSlot >= 0;
+        harmonics.frames = B.windowedOps[size_t(c.window)].frames;
+        node = builder->AddOp(Harmonics(), &harmonics);
+        if (node != o)
+            return Fail(error, "op nodes: the harmonics of node " +
+                                   std::to_string(o) + " was added as node " +
+                                   std::to_string(node));
+        const auto input = [&](const RigExecPortHandle &port, H read) {
+            look(node, port, L::HarmonicsInput, -1, R(uint8_t(read)));
+        };
+        entering(node, HarmonicsIn());
+        if (c.spaceSlot >= 0)
+            input(HarmonicsSpace(), H::Space);
+        input(HarmonicsEnabled(), H::Open);
+        look(node, HarmonicsWeight(), L::ConstraintEnvelope, -1,
+             R::SolveWeight);
+        input(HarmonicsAmplitude(), H::Amplitude);
+        input(HarmonicsDecay(), H::Decay);
+        input(HarmonicsTermination(), H::Termination);
+        input(HarmonicsAxisAmplitude(), H::AxisAmplitude);
+        builder->BindOutput(node, HarmonicsStatus());
+        layout->hostOutputs.push_back(
+            {node, HarmonicsStatus().Index(),
+             uint8_t(eval::OpOutputTarget::ConstraintStatus), uint32_t(w)});
+        return true;
+    }
     if (c.type == SchemaTypeName::RigExecMatrixMover) {
         if (c.sources.empty())
             return Fail(error, c.pathText +
@@ -272,6 +362,29 @@ RigExecBakedStoreConstraint(RigExecBakedProgramImpl &B, RigExecBakedStep *step,
         return Fail(error, "stores a constraint result outside a step");
     BakedPoseHost host(&B, step);
     return eval::StoreConstraint(host, cache, output, value, error);
+}
+
+bool
+RigExecBakedLendConstraintWindow(RigExecBakedProgramImpl &B,
+                                 RigExecRunState &run, uint32_t node,
+                                 std::string *error)
+{
+    const Constraint *c =
+        node < B.opNodeOrigins.size() &&
+                B.opNodeOrigins[node].family ==
+                    RigExecBakedOpFamily::Constraint &&
+                B.opNodeOrigins[node].object >= 0
+            ? ConstraintAt(B, size_t(B.opNodeOrigins[node].object))
+            : nullptr;
+    if (!c || c->window < 0 || size_t(c->window) >= B.windowedOps.size() ||
+        size_t(c->window) >= B.windowRings.size() ||
+        size_t(c->window) >= B.windowCaptures.size())
+        return Fail(error, "op nodes: node " + std::to_string(node) +
+                               " keeps no history window");
+    const size_t w = size_t(c->window);
+    return run.LendWindow(
+        RigExecNodeId(node), B.windowRings[w], B.windowCaptures[w],
+        B.historyTick && !B.windowedOps[w].feedsWindow, error);
 }
 
 std::string

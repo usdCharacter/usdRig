@@ -451,23 +451,44 @@ public:
         return true;
     }
 
-    bool ikChainFacts(size_t object, eval::PoseIkChainFacts *facts) const
+    eval::PoseIkChainView ikChainView(size_t object) const
     {
         const size_t ci = size_t(_program->poses->walkSteps[object].index);
         const RigExecWireConstraint &c = _program->poses->constraints[ci];
-        facts->targetSlots.assign(c.targetSlots.begin(), c.targetSlots.end());
-        facts->effector = c.effector;
-        facts->effectorNative = c.effectorNative;
-        facts->stretch =
-            c.stretch
-                ? double(_program->ReadConstraint(ci, RrConstraintStretch).f32)
-                : 0.0;
-        facts->ikMode = int(c.ikMode);
-        facts->useAnimatedTs = c.useAnimatedTs;
-        facts->ikRestLive.assign(c.ikRestLive.begin(), c.ikRestLive.end());
-        facts->poleModeObject = c.poleModeObject;
-        facts->poleObjects.assign(c.poleObjects.begin(), c.poleObjects.end());
-        return true;
+        eval::PoseIkChainView view;
+        view.slots = c.targetSlots.data();
+        view.count = c.targetSlots.size();
+        view.ikMode = int(c.ikMode);
+        view.useAnimatedTs = c.useAnimatedTs;
+        view.poleModeObject = c.poleModeObject;
+        view.poleObjects = c.poleObjects.size();
+        return view;
+    }
+
+    bool ikRestLive(size_t object, size_t k) const
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        const RigExecWireConstraint &c = _program->poses->constraints[ci];
+        return k < c.ikRestLive.size() && c.ikRestLive[k];
+    }
+
+    double ikStretch(size_t object) const
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        return _program->poses->constraints[ci].stretch
+                   ? double(
+                         _program->ReadConstraint(ci, RrConstraintStretch).f32)
+                   : 0.0;
+    }
+
+    eval::PoseU32List commitTargetReads(size_t object) const
+    {
+        const std::vector<uint32_t> &reads =
+            _program->poses->commits[object].targetReads;
+        eval::PoseU32List list;
+        list.data = reads.data();
+        list.count = reads.size();
+        return list;
     }
 
     void ikPoleVector(size_t object, RrVec3d *pole, double *twistDegrees) const
@@ -570,81 +591,12 @@ public:
         return true;
     }
 
-    eval::PoseHarmonicsFacts<RrPoseMath> harmonicsFacts(size_t object) const
+    double harmonicsScalar(size_t object, size_t k) const
     {
         const size_t ci = size_t(_program->poses->walkSteps[object].index);
-        const RigExecWireConstraint &c = _program->poses->constraints[ci];
-        eval::PoseHarmonicsFacts<RrPoseMath> facts;
-        facts.target = c.target;
-        facts.spaceSlot = c.spaceSlot;
-        facts.window = c.window;
-        facts.pathText = _program->TextOrEmpty(c.path);
-        facts.enabled =
-            _program->ReadConstraint(ci, RrConstraintEnabled).boolean;
-        facts.hasWeightObject = c.weightObject != 0;
-        if (facts.hasWeightObject) {
-            const RrWeightFieldResult &field =
-                _program->store.weightFieldResults[size_t(c.weightField)];
-            facts.fieldOk = field.ok;
-            facts.fieldCount = field.values.size();
-            facts.fieldValue =
-                field.values.empty() ? 0.0 : double(field.values[0]);
-            facts.fieldError = field.error;
-        }
-        facts.defaultWeight =
-            double(_program->ReadConstraint(ci, RrConstraintDefaultWeight).f32);
-        for (int k = 0; k < 3; ++k) {
-            const RrInputValue value =
-                _program->ReadConstraint(ci, RrConstraintHarmonicsFirst + k);
-            facts.scalars[size_t(k)] =
-                value.tag == RrInputTag::Float ? double(value.f32) : value.f64;
-        }
-        facts.axis = _program->ReadConstraint(ci, RrConstraintOffset).vec;
-        facts.matchVelocity = c.harmonicsMatchVelocity;
-        facts.settingsValid = c.harmonicsConstants.size() == 3;
-        if (facts.settingsValid) {
-            facts.settings.waves = c.harmonicsConstants[0];
-            facts.settings.waveLength = c.harmonicsConstants[1];
-            facts.settings.frequency = c.harmonicsConstants[2];
-            facts.settings.ignoreFirstFrame = c.harmonicsIgnoreFirstFrame;
-        }
-        return facts;
-    }
-
-    bool windowCaptureValid(int window) const
-    {
-        return window >= 0 &&
-               size_t(window) < _program->store.windowCaptures.size();
-    }
-
-    bool windowedOpValid(int window) const
-    {
-        return window >= 0 && size_t(window) < _program->windowedOps.size();
-    }
-
-    size_t windowRingCount(int window) const
-    {
-        if (window < 0 ||
-            size_t(window) >= _program->store.windowRings.size()) {
-            return 0;
-        }
-        return _program->store.windowRings[size_t(window)].size();
-    }
-
-    RigExecWindowPacketPtr windowRingPacket(int window, size_t k) const
-    {
-        if (window < 0 ||
-            size_t(window) >= _program->store.windowRings.size()) {
-            return RigExecWindowPacketPtr();
-        }
-        const RigExecWindowRing &ring =
-            _program->store.windowRings[size_t(window)];
-        return k < ring.size() ? ring[k] : RigExecWindowPacketPtr();
-    }
-
-    bool windowFeedsWindow(int window) const
-    {
-        return _program->windowedOps[size_t(window)].feedsWindow;
+        const RrInputValue value =
+            _program->ReadConstraint(ci, RrConstraintHarmonicsFirst + int(k));
+        return value.tag == RrInputTag::Float ? double(value.f32) : value.f64;
     }
 
     bool historyTick() const
@@ -834,6 +786,9 @@ public:
         facts->targetRead = poses.commits[object].targetRead;
         facts->matrixMover =
             _program->TextEquals(c.type, SchemaTypeName::RigExecMatrixMover);
+        facts->harmonics = c.harmonics;
+        facts->singleChainIk = c.singleChainIk;
+        facts->ikFkMatch = c.ikFkMatch;
         facts->enabled =
             _program->ReadConstraint(ci, RrConstraintEnabled).boolean;
         facts->hasWeightObject = c.weightObject != 0;
@@ -1343,15 +1298,6 @@ public:
         }
     }
 
-    // Defined in poseConstraints.cpp: the single-chain IK core lives
-    // there until the Solve lift unifies it, and this TU-local call
-    // cannot inline into every includer.
-    bool solveIkChain(size_t object, const std::vector<RrPointFrame> &chain,
-                      const std::vector<RrPointFrame> &rests,
-                      const RrPointFrame &effector, int mode, double stretch,
-                      double weight, const RrVec3d &pole, double twistDegrees,
-                      bool useAnimatedTs, std::vector<RrPointFrame> *solved);
-
     bool writeBaseVersion(uint32_t version,
                           const std::array<RrVec3d, 4> &points, unsigned flags)
     {
@@ -1379,11 +1325,6 @@ public:
     {
         runtimePoseDetail::_RrScratch(_program)->recordEveryTarget[object] =
             value ? 1 : 0;
-    }
-
-    RigExecWindowPacketPtr &windowCapture(int window)
-    {
-        return _program->store.windowCaptures[size_t(window)];
     }
 
     void recordConstraintEnvelope(size_t object)

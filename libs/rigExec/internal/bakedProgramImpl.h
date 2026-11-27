@@ -3020,6 +3020,14 @@ RigExecBakedConstraintOut(const RigExecBakedProgramImpl &B, size_t w);
 /// Whether the constraint walk step \p w commits solves as op nodes.
 bool RigExecBakedConstraintRunsAsOps(const RigExecBakedProgramImpl &B,
                                      size_t w);
+/// Whether those nodes' store writes which of its candidates are present,
+/// which its PoseCommit node then reads from the commit.
+bool RigExecBakedConstraintStoresPresence(const RigExecBakedProgramImpl &B,
+                                          size_t w);
+/// Whether those nodes' store also writes its candidates' frames, which its
+/// PoseCommit node reads from the commit with their presence.
+bool RigExecBakedConstraintStoresFrames(const RigExecBakedProgramImpl &B,
+                                        size_t w);
 /// The Constraint op node of origin \p o, numbered \p o.
 bool RigExecBakedAddConstraintOp(const RigExecBakedProgramImpl &B,
                                  RigExecRigDescBuilder *builder,
@@ -3042,6 +3050,11 @@ bool RigExecBakedStoreConstraint(RigExecBakedProgramImpl &B,
                                  eval::ConstraintStepCache &cache,
                                  const eval::OpHostOutput &output,
                                  const void *value, std::string *error);
+/// Lends windowed constraint node \p node its constraint's history window
+/// for the run of its step.
+bool RigExecBakedLendConstraintWindow(RigExecBakedProgramImpl &B,
+                                      RigExecRunState &run, uint32_t node,
+                                      std::string *error);
 /// The failure \p error of a node of constraint commit \p w, as its mover
 /// reports it.
 std::string RigExecBakedConstraintFailure(const RigExecBakedProgramImpl &B,
@@ -4829,13 +4842,6 @@ void RigExecBakedResetWeightField(RigExecBakedProgramImpl *, int);
 void RigExecBakedPresentIkFkMatches(const RigExecBakedProgramImpl &B,
                                     RigExecRigPose *pose);
 
-/// RigExecHarmonicsConstraint (bakedHarmonics.cpp): one run of its step.
-/// Captures the windowed op's packet and, when it solves, fills \p commit's
-/// one target; a pass-through leaves the commit abandoned.
-void RigExecBakedRunHarmonics(RigExecBakedProgramImpl &B,
-                              RigExecBakedStep *step,
-                              RigExecBakedProgramImpl::Constraint &c,
-                              RigExecBakedCommit &commit);
 /// Settles every windowed op's step, canonical op and inner windowed ops,
 /// and the history-tick mask, from the compiled graph. Build calls it once
 /// the graph is compiled; it sizes the capture and ring tables.

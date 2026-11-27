@@ -345,7 +345,7 @@ _PoseBodyFile()
     fb::RigExecWireConstraint constraint;
     constraint.path = 3;
     constraint.singleChainIk = true;
-    constraint.target = 1;
+    constraint.target = -1;
     constraint.targetSlots = {1};
     constraint.sources = {1};
     for (auto *read :

@@ -140,6 +140,13 @@ public:
                               const RigExecOpGroups *groups,
                               std::string *error = nullptr);
     bool RunNode(RigExecNodeId node, std::string *error = nullptr);
+    /// Hands windowed node \p node, which RunNode runs next, the host's
+    /// earlier frames and where to keep this frame's capture; with
+    /// \p captureOnly it only captures. The host keeps both alive while the
+    /// node runs. False with the reason when \p node keeps no window.
+    bool LendWindow(RigExecNodeId node, const RigExecWindowRing &ring,
+                    RigExecWindowPacketPtr &capture, bool captureOnly,
+                    std::string *error = nullptr);
     /// Prepares every member of chain \p chain for a frame cut into
     /// \p groups groups of elements, group g holding [bounds[g],
     /// bounds[g + 1]). A member that fails names its node in \p failed.

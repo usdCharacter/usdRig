@@ -5,7 +5,9 @@
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
 #include "rigExec/api/rigDesc.h"
+#include "rigExecOps/constraint/harmonicsOps.h"
 #include "rigExecOps/constraint/matrixMoverOps.h"
+#include "rigExecOps/solver/singleChainIkOps.h"
 #include "rigExecOps/pose/poseOps.h"
 #include "rigExecEvalCore/pose.h"
 #include "rigExecRuntime/poseMath.h"
@@ -657,6 +659,89 @@ TestConstraintDelta()
     CHECK(h.error.find("non-finite") != std::string::npos);
 }
 
+// A steady frame of Harmonics allocates only the frame's capture, a packet
+// and its values, which the history ring keeps; its solve reuses its node's
+// buffers.
+void
+TestHarmonicsSteady()
+{
+    HarmonicsPayload p;
+    p.settings.waves = 2.0;
+    p.settings.waveLength = 3.0;
+    p.settings.frequency = 1.0;
+    p.settings.ignoreFirstFrame = true;
+    p.frames = uint32_t(RigExecHarmonicsWindowFrames(p.settings));
+    const rigExecRig::PointFrame in = Landmarks(1, 2, 3);
+    const uint8_t enabled = 1;
+    const double weight = 0.8, amplitude = 1.3, decay = 2.5, termination = 0.1;
+    const rigExecStd::Vec3d axis(1.0, 0.5, 2.0);
+    rigExecRig::PointFrame moving = in;
+    std::string error;
+    const size_t made = opAllocationCount::SteadyFrameAllocations(
+        Harmonics(), &p,
+        {&HarmonicsIn(), &HarmonicsEnabled(), &HarmonicsWeight(),
+         &HarmonicsAmplitude(), &HarmonicsDecay(), &HarmonicsTermination(),
+         &HarmonicsAxisAmplitude()},
+        {&in, &enabled, &weight, &amplitude, &decay, &termination, &axis},
+        HarmonicsOut(), 0,
+        [&](int frame) {
+            moving = Landmarks(1 + 0.25 * frame, 2, 3);
+            return &moving;
+        },
+        &error);
+    CHECK(made <= 2);
+    if (made > 2)
+        std::printf("harmonics steady frame: %zu allocations %s\n", made,
+                    error.c_str());
+}
+
+// SingleChainIk's status, and a steady frame that allocates nothing.
+void
+TestSingleChainIk()
+{
+    SingleChainIkPayload p;
+    rigExecRig::PointFrameArray chain;
+    chain.frames.Resize(3);
+    chain.frames[0] = Landmarks(0, 0, 0);
+    chain.frames[1] = Landmarks(1, 0, 0);
+    chain.frames[2] = Landmarks(2, 0, 0);
+    const rigExecRig::PointFrameArray rests = chain;
+    const rigExecStd::Vec3d pole(0.0, 1.0, 0.0);
+    const double twist = 0.0, full = 1.0, none = 0.0, stretch = 0.0;
+    const rigExecRig::PointFrame effector = Landmarks(1.5, 0.5, 0);
+    const std::vector<const RigExecPortHandle *> ins = {
+        &SingleChainIkChain(),  &SingleChainIkEffector(),
+        &SingleChainIkPole(),   &SingleChainIkTwist(),
+        &SingleChainIkWeight(), &SingleChainIkStretch(),
+        &SingleChainIkRests()};
+    Harness h(SingleChainIk(), &p, ins,
+              {&SingleChainIkOut(), &SingleChainIkStatus()});
+    CHECK(h.Run({&chain, &effector, &pole, &twist, &full, &stretch, &rests}));
+    CHECK(h.Out<uint32_t>(1) == uint32_t(SingleChainIkResult::Solved));
+    CHECK(h.Run({&chain, &effector, &pole, &twist, &none, &stretch, &rests}));
+    CHECK(h.Out<uint32_t>(1) == uint32_t(SingleChainIkResult::Passed));
+    rigExecRig::PointFrameArray unusable = rests;
+    unusable.frames[1].flags = 0;
+    CHECK(
+        h.Run({&chain, &effector, &pole, &twist, &full, &stretch, &unusable}));
+    CHECK(h.Out<uint32_t>(1) == uint32_t(SingleChainIkResult::Unprepared));
+    rigExecRig::PointFrame unresolved = effector;
+    unresolved.flags = 0;
+    CHECK(h.Run({&chain, &unresolved, &pole, &twist, &full, &stretch, &rests}));
+    CHECK(h.Out<uint32_t>(1) == uint32_t(SingleChainIkResult::Unsolved));
+    rigExecRig::PointFrame moving = effector;
+    std::string error;
+    CHECK(opAllocationCount::SteadyFrameAllocations(
+              SingleChainIk(), &p, ins,
+              {&chain, &effector, &pole, &twist, &full, &stretch, &rests},
+              SingleChainIkOut(), 1,
+              [&](int frame) {
+                  moving = Landmarks(1.5, 0.5 + 0.05 * frame, 0);
+                  return &moving;
+              },
+              &error) == 0);
+}
+
 } // namespace
 
 int
@@ -676,6 +761,8 @@ main()
     TestShiftedSlot();
     TestMatrixMover();
     TestConstraintDelta();
+    TestHarmonicsSteady();
+    TestSingleChainIk();
     if (failures) {
         std::printf("%d failures\n", failures);
         return 1;

@@ -2759,16 +2759,17 @@ TestFrozenPoseCommitOpsMatchLive(const std::string &examplesDir)
     run(1028.0, "frozen pose commits under a drag", {target});
 }
 
-// Every transform and geometry constraint solves as op nodes keeping the
-// Constraint identity; the frozen job runs those nodes and publishes live's
-// pose, on animated frames and under a drag of a control.
+// Every transform, geometry and harmonics constraint solves as op nodes
+// keeping the Constraint identity; the frozen job runs those nodes and
+// publishes live's pose, on animated frames and under a drag of a control.
+// A harmonics node reads the history window the frozen job was given.
 void
 TestFrozenConstraintOpsMatchLive(const std::string &examplesDir)
 {
     for (const char *name :
          {"08_AimEyes.usda", "10_AimXformTurret.usda",
           "15_TransformMatrixMover.usda", "aimtest.usda", "aimtest_points.usda",
-          "14_VolumeConstrainedSweep.usda"}) {
+          "14_VolumeConstrainedSweep.usda", "19_HarmonicsChain.usda"}) {
         UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/" + name);
         CHECK(stage);
         if (!stage)

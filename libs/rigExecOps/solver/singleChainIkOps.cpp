@@ -2,9 +2,11 @@
 
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
+#include "rigExecEvalCore/pose.h"
 #include "rigExecMath/singleChainIkKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecMath/dualQuatMath.h"
+#include "rigExecRuntime/poseMath.h"
 
 #include <iterator>
 #include <string>
@@ -21,6 +23,8 @@ RIGEXEC_DEFINE_PORT_HANDLE(SingleChainIkTwist)
 RIGEXEC_DEFINE_PORT_HANDLE(SingleChainIkWeight)
 RIGEXEC_DEFINE_PORT_HANDLE(SingleChainIkStretch)
 RIGEXEC_DEFINE_PORT_HANDLE(SingleChainIkOut)
+RIGEXEC_DEFINE_PORT_HANDLE(SingleChainIkRests)
+RIGEXEC_DEFINE_PORT_HANDLE(SingleChainIkStatus)
 
 namespace {
 
@@ -34,8 +38,17 @@ using rigExecStd::Vec3f;
 using namespace opIo;
 using namespace fieldIo;
 
+using Math = rigExec::RrPoseMathT<PointFrame>;
+
 /// SingleChainIk's declared fields, in saved order.
 enum IkField : uint32_t { kSingleChain, kPreserveJointOrientation };
+
+/// What the solve reads and works in, kept so a steady frame allocates
+/// nothing.
+struct SingleChainIkState {
+    std::vector<PointFrame> current, solved;
+    rigExec::RigExecSingleChainIkWorkspace<Vec3f, Vec3d> workspace;
+};
 
 bool
 SingleChainIkOne(const RigExecOpBatch &batch, size_t k, std::string *error)
@@ -46,6 +59,7 @@ SingleChainIkOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     p.preserveJointOrientation = FlagAt(batch, kPreserveJointOrientation, k);
     const PointFrameArray &chain =
         *In<PointFrameArray>(io, SingleChainIkChain());
+    const PointFrame &effector = *In<PointFrame>(io, SingleChainIkEffector());
     rigExec::RigExecSingleChainIkKernelParams<Vec3d> params;
     params.mode = p.singleChain ? 1 : 0;
     params.pole = InOr(io, SingleChainIkPole(), Vec3d(0.0, 1.0, 0.0));
@@ -53,14 +67,45 @@ SingleChainIkOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     params.weight = InOr(io, SingleChainIkWeight(), 1.0);
     params.stretch = InOr(io, SingleChainIkStretch(), 0.0);
     params.preserveJointOrientation = p.preserveJointOrientation;
-    const std::vector<PointFrame> current(chain.frames.begin(),
-                                          chain.frames.end());
-    const std::vector<PointFrame> solved =
-        rigExec::RigExecSolveSingleChainIkKernel<Vec3f, Vec3d>(
-            current, *In<PointFrame>(io, SingleChainIkEffector()), params);
     PointFrameArray &out = Out<PointFrameArray>(io, SingleChainIkOut());
+    uint32_t &status = Out<uint32_t>(io, SingleChainIkStatus());
+    const auto passThrough = [&](SingleChainIkResult result) {
+        out.frames.Assign(chain.frames.Data(), chain.frames.Size());
+        out.rests = chain.rests;
+        status = uint32_t(result);
+        return true;
+    };
+    if (std::isfinite(params.weight) && params.weight <= 0.0)
+        return passThrough(SingleChainIkResult::Passed);
+    if (!(effector.flags & rigExecRig::kPointFrameValid))
+        return passThrough(SingleChainIkResult::Unsolved);
+    SingleChainIkState &state = *static_cast<SingleChainIkState *>(
+        rigExec::RigExecBatchState(batch, k));
+    std::vector<PointFrame> &current = state.current;
+    current.assign(chain.frames.begin(), chain.frames.end());
+    if (const PointFrameArray *rests =
+            In<PointFrameArray>(io, SingleChainIkRests())) {
+        if (rests->frames.Size() != chain.frames.Size())
+            return Fail(error, "SingleChainIk",
+                        "has " + std::to_string(rests->frames.Size()) +
+                            " rests for " +
+                            std::to_string(chain.frames.Size()) + " joints");
+        if (!rigExec::eval::PrepareRestDerivedIkChain<Math>(
+                chain.frames.Data(), rests->frames.Data(), chain.frames.Size(),
+                current.data()))
+            return passThrough(SingleChainIkResult::Unprepared);
+    }
+    std::vector<PointFrame> &solved = state.solved;
+    rigExec::RigExecSolveSingleChainIkInto<Vec3f, Vec3d>(
+        current, effector, params, state.workspace, &solved);
     out.frames.Assign(solved.data(), solved.size());
     out.rests = chain.rests;
+    bool usable = solved.size() == chain.frames.Size();
+    for (const PointFrame &frame : solved)
+        usable = usable &&
+                 rigExec::eval::FrameUsable<Math>(frame.points, frame.flags);
+    status = uint32_t(usable ? SingleChainIkResult::Solved
+                             : SingleChainIkResult::Unsolved);
     return true;
 }
 
@@ -95,6 +140,10 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&SingleChainIkOut(), &rigExecRig::PointFrameArrayType(),
      kRigExecPortOutput, "out", rigExec::RigExecOutputBound::Input,
      &SingleChainIkChain()},
+    {&SingleChainIkRests(), &rigExecRig::PointFrameArrayType(), kOptional,
+     "rests"},
+    {&SingleChainIkStatus(), &rigExecStd::UIntType(), kRigExecPortOutput,
+     "status"},
 };
 
 void
@@ -117,6 +166,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.runBatch = &RunSingleChainIk;
+    d.state = opIo::StateOf<SingleChainIkState>();
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kFields;
     d.payloadFieldCount = std::size(kFields);

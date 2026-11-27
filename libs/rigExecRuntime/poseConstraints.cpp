@@ -1,12 +1,9 @@
-// Runtime constraints, source resolution, and single-chain IK.
+// Runtime constraints and their op nodes' lookups and stores.
 
 #include "rigExecSchema/schemaNames.h"
 #include "poseEvalHost.h"
 #include "rigExecEvalCore/constraintLookups.h"
 #include "poseInternal.h"
-#include "rigExecMath/dualQuatMath.h"
-#include "rigExecMath/constraintKernel.h"
-#include "rigExecMath/singleChainIkKernel.h"
 #include <algorithm>
 #include <limits>
 #include <utility>
@@ -14,143 +11,6 @@
 namespace rigExec {
 
 using namespace runtimePoseDetail;
-
-namespace {
-
-// Single-chain IK (singleChainIk.cpp).
-
-enum class _RrSingleChainIkMode : uint8_t {
-    RotatePlane = 0,
-    SingleChain = 1,
-};
-
-struct _RrSingleChainIkParams {
-    _RrSingleChainIkMode mode = _RrSingleChainIkMode::RotatePlane;
-    RrVec3d pole{0.0, 1.0, 0.0};
-    double twistDegrees = 0.0;
-    double stretch = 0;
-    double weight = 1.0;
-    bool preserveJointOrientation = false;
-};
-
-// RigExecSolveSingleChainIk (rigExecMath/singleChainIkKernel.h).
-std::vector<RrPointFrame>
-_RrSolveSingleChainIk(const std::vector<RrPointFrame> &currentFrames,
-                      const RrPointFrame &effectorFrame,
-                      const _RrSingleChainIkParams &params)
-{
-    RigExecSingleChainIkKernelParams<RrVec3d> p;
-    p.mode = int(params.mode);
-    p.pole = params.pole;
-    p.twistDegrees = params.twistDegrees;
-    p.weight = params.weight;
-    p.stretch = params.stretch;
-    p.preserveJointOrientation = params.preserveJointOrientation;
-    return RigExecSolveSingleChainIkKernel<RrVec3f, RrVec3d>(currentFrames,
-                                                             effectorFrame, p);
-}
-
-// RigExecPrepareRestDerivedIkChain (rigEvaluator.cpp): rest segment
-// lengths laid along the current chain's directions.
-bool
-_RrPrepareRestDerivedIkChain(const std::vector<RrPointFrame> &current,
-                             const std::vector<RrPointFrame> &rest,
-                             std::vector<RrPointFrame> *prepared)
-{
-    if (current.size() != rest.size() || current.empty()) {
-        return false;
-    }
-    bool usableRestLayout = true;
-    for (size_t i = 1; i < rest.size(); ++i) {
-        const double segmentLength =
-            (rest[i].points[0] - rest[i - 1].points[0]).GetLength();
-        if (!std::isfinite(segmentLength) || segmentLength <= 0.0) {
-            usableRestLayout = false;
-            break;
-        }
-    }
-    const std::vector<RrPointFrame> &lengthReference =
-        usableRestLayout ? rest : current;
-    prepared->clear();
-    prepared->reserve(current.size());
-    for (size_t i = 0; i < current.size(); ++i) {
-        if (!RrFrameUsable(current[i]) || !RrFrameUsable(rest[i])) {
-            return false;
-        }
-        RrVec3d origin = current[i].points[0];
-        if (i > 0) {
-            RrMat4d parentRest = _RrIdentity();
-            RrMat4d parentPrepared = _RrIdentity();
-            if (!RrPointsToMatrix(RrIdentityLandmarks(),
-                                  lengthReference[i - 1].points, &parentRest) ||
-                !RrPointsToMatrix(RrIdentityLandmarks(),
-                                  prepared->back().points, &parentPrepared)) {
-                return false;
-            }
-            origin = parentPrepared.TransformAffine(
-                parentRest.GetInverse().TransformAffine(
-                    lengthReference[i].points[0]));
-        }
-
-        RrPointFrame frame = current[i];
-        frame.points[0] = origin;
-        for (size_t axis = 1; axis < frame.points.size(); ++axis) {
-            RrVec3d direction = current[i].points[axis] - current[i].points[0];
-            const double directionLength = direction.GetLength();
-            const double length =
-                (lengthReference[i].points[axis] - lengthReference[i].points[0])
-                    .GetLength();
-            if (!std::isfinite(length) || length <= 0.0 ||
-                !std::isfinite(directionLength) || directionLength <= 0.0) {
-                return false;
-            }
-            direction /= directionLength;
-            frame.points[axis] = origin + direction * length;
-        }
-        if (!RrFrameUsable(frame)) {
-            return false;
-        }
-        prepared->push_back(frame);
-    }
-    return true;
-}
-
-// The Constraint step (bakedPose.cpp).
-
-} // namespace
-
-// RrPoseState::solveIkChain (poseEvalHost.h): the single-chain IK
-// core, called from pose.h with gathered frames. The core itself
-// stays here until the Solve lift unifies it.
-bool
-RrPoseState::solveIkChain(size_t object, const std::vector<RrPointFrame> &chain,
-                          const std::vector<RrPointFrame> &rests,
-                          const RrPointFrame &effector, int mode,
-                          double stretch, double weight, const RrVec3d &pole,
-                          double twistDegrees, bool useAnimatedTs,
-                          std::vector<RrPointFrame> *solved)
-{
-    std::vector<RrPointFrame> prepared;
-    const std::vector<RrPointFrame> *solveChain = &chain;
-    if (!useAnimatedTs) {
-        if (!_RrPrepareRestDerivedIkChain(chain, rests, &prepared)) {
-            return false;
-        }
-        solveChain = &prepared;
-    }
-    _RrSingleChainIkParams params;
-    params.mode = _RrSingleChainIkMode(mode);
-    params.pole = pole;
-    params.twistDegrees = twistDegrees;
-    params.stretch = stretch;
-    params.weight = weight;
-    const size_t ci = size_t(_program->poses->walkSteps[object].index);
-    params.preserveJointOrientation =
-        (_program->poses->constraints[ci].flags &
-         RigExecWireConstraintPreserveJointOrientation) != 0;
-    *solved = _RrSolveSingleChainIk(*solveChain, effector, params);
-    return true;
-}
 
 namespace runtimePoseDetail {
 

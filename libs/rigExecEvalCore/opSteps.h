@@ -112,6 +112,11 @@ enum class OpLookupSource : uint8_t {
     /// reads; zero where the aim does not read it or its object maps to no
     /// transform.
     ConstraintWorldUp = 37,
+    /// An input of harmonics constraint commit `object` (OpHarmonicsRead).
+    HarmonicsInput = 38,
+    /// An input of single-chain IK constraint commit `object`
+    /// (OpSingleChainIkRead).
+    SingleChainIkInput = 70,
     /// The authored transform of constraint commit `object`'s geometry
     /// target: `read` 0 the Mat4d, 1 whether it was read (Bool).
     ConstraintDeltaBase = 39,
@@ -151,6 +156,37 @@ enum class OpConstraintRead : uint8_t {
     Present = 32,
 };
 
+/// OpLookup::read of a HarmonicsInput lookup. The numbers are part of the
+/// file format.
+enum class OpHarmonicsRead : uint8_t {
+    /// Mat4d: the posed matrix of its rigExec:space.
+    Space = 0,
+    /// Double inputs.
+    Amplitude = 1,
+    Decay = 2,
+    Termination = 3,
+    /// Vec3d: inputs:axisAmplitude.
+    AxisAmplitude = 4,
+    /// Bool: whether the constraint is on and weighs anything.
+    Open = 5,
+};
+
+/// OpLookup::read of a SingleChainIkInput lookup. The numbers are part of
+/// the file format.
+enum class OpSingleChainIkRead : uint8_t {
+    /// PointFrameArray: the chain's joints as the commit reads them, root
+    /// first; and the rests the solve lays them out at.
+    Chain = 0,
+    Rests = 1,
+    /// PointFrame: the effector, its revised ancestors' motion applied.
+    Effector = 2,
+    /// Vec3d: the pole point, its pole vector or the weighted mean of its
+    /// pole-vector objects; Double: its twist (degrees) and stretch.
+    Pole = 3,
+    Twist = 4,
+    Stretch = 5,
+};
+
 /// OpLookup::part of a ConstraintWorldUp lookup: where the aim's world-up
 /// comes from. The numbers are part of the file format.
 enum class OpConstraintWorldUp : uint8_t {
@@ -171,8 +207,9 @@ constexpr bool
 OpConstraintLookupSource(uint8_t source)
 {
     return (source >= uint8_t(OpLookupSource::ConstraintSources) &&
-            source <= uint8_t(OpLookupSource::ConstraintWorldUp)) ||
-           source == uint8_t(OpLookupSource::ConstraintDeltaBase);
+            source <= uint8_t(OpLookupSource::HarmonicsInput)) ||
+           source == uint8_t(OpLookupSource::ConstraintDeltaBase) ||
+           source == uint8_t(OpLookupSource::SingleChainIkInput);
 }
 
 /// OpLookup::part of a CommitVersions lookup: the commit's version list.
@@ -355,6 +392,13 @@ enum class OpOutputTarget : uint8_t {
     ConstraintDelta = 36,
     /// Bool: whether that delta could be measured; stored after it.
     ConstraintDeltaMeasured = 37,
+    /// UInt: what constraint commit `object`'s node made of its frames, as
+    /// its kind's op reports it (Harmonics, SingleChainIk or IkFkMatch
+    /// Status).
+    ConstraintStatus = 70,
+    /// PointFrameArray: the chain single-chain IK constraint commit
+    /// `object`'s node solved, stored after its status.
+    SingleChainIkFrames = 71,
     /// Provider operation `object`'s authority and unavailable input,
     /// stored before its ProviderValueMatrix or ProviderValueFrame.
     ProviderValueAuthority = 50,
@@ -379,6 +423,17 @@ OpSpaceOutputTarget(uint8_t target)
            target == uint8_t(OpOutputTarget::ProviderValueUnavailable) ||
            (target >= uint8_t(OpOutputTarget::ProviderAnswer) &&
             target <= uint8_t(OpOutputTarget::ProviderAnswerBlocked));
+}
+
+/// Whether an output of \p target is one the host stores through
+/// StoreConstraint.
+constexpr bool
+OpConstraintOutputTarget(uint8_t target)
+{
+    return (target >= uint8_t(OpOutputTarget::ConstraintCandidate) &&
+            target <= uint8_t(OpOutputTarget::ConstraintDeltaMeasured)) ||
+           target == uint8_t(OpOutputTarget::ConstraintStatus) ||
+           target == uint8_t(OpOutputTarget::SingleChainIkFrames);
 }
 
 /// Whether OpLookUp resolves lookups of \p source.
@@ -415,7 +470,8 @@ OpOutputTargetRuns(uint8_t target, bool chainMember)
                      OpSpaceOutputTarget(target) ||
                      (target >= uint8_t(OpOutputTarget::CommitSlots) &&
                       target <=
-                          uint8_t(OpOutputTarget::ConstraintDeltaMeasured));
+                          uint8_t(OpOutputTarget::ConstraintDeltaMeasured)) ||
+                     OpConstraintOutputTarget(target);
 }
 
 /// A per-frame read of the rig the host resolves for a Lookup input; what
@@ -1122,6 +1178,8 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
     case OpLookupSource::ConstraintEnvelope:
     case OpLookupSource::ConstraintSpace:
     case OpLookupSource::ConstraintWorldUp:
+    case OpLookupSource::HarmonicsInput:
+    case OpLookupSource::SingleChainIkInput:
     case OpLookupSource::ConstraintDeltaBase:
         return host.LookUpConstraint(index, lookup, type, value, error);
     case OpLookupSource::Matrix: {
@@ -1195,6 +1253,8 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
     case OpOutputTarget::ConstraintCandidate:
     case OpOutputTarget::ConstraintDelta:
     case OpOutputTarget::ConstraintDeltaMeasured:
+    case OpOutputTarget::ConstraintStatus:
+    case OpOutputTarget::SingleChainIkFrames:
         return host.StoreConstraint(output, value, error);
     case OpOutputTarget::ChainGroup:
         break;
@@ -1278,8 +1338,9 @@ ResolveOpLookups(const OpStepLayout &layout, Host &host, OpStepState *state,
 }
 
 /// Runs op step (\p kind, \p object, \p part): node \p object, after its
-/// lookups resolved (ResolveOpLookups), its outputs' hostOutputs stored
-/// after it ran; chain \p object's head, after its members' lookups
+/// lookups resolved (ResolveOpLookups) and, for a windowed op, its window
+/// lent by \p host.LendWindow(run, node, error), its outputs' hostOutputs
+/// stored after it ran; chain \p object's head, after its members' lookups
 /// resolved; or group part % G of the segment starting at member part / G
 /// of chain \p object, each of the segment's hostOutputs stored for the
 /// groups it wrote by \p host.StoreGroup(output, group, elements, count,
@@ -1300,6 +1361,9 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
             return OpLayoutFail(error, "no node " + std::to_string(object));
         const RigExecNodeDesc &d = layout.nodes[index];
         if (!ResolveOpLookups(layout, host, state, index, error))
+            return false;
+        if (d.op->threading == RigExecOpThreading::Windowed &&
+            !host.LendWindow(run, uint32_t(object), error))
             return false;
         if (!run.RunNode(RigExecNodeId(object), error))
             return false;

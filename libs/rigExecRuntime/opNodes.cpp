@@ -324,6 +324,21 @@ struct RrOpHost {
         return RrLookUpConstraint(&p, constraintCache, lookup, type, value,
                                   error);
     }
+    bool LendWindow(RigExecRunState &run, uint32_t node,
+                    std::string *error) const
+    {
+        const int32_t w =
+            step < p.windowOfStep.size() ? p.windowOfStep[step] : -1;
+        if (w < 0 || size_t(w) >= p.store.windowRings.size() ||
+            size_t(w) >= p.store.windowCaptures.size())
+            return Fail(error, "node " + std::to_string(node) +
+                                   " keeps no history window");
+        return run.LendWindow(
+            RigExecNodeId(node), p.store.windowRings[size_t(w)],
+            p.store.windowCaptures[size_t(w)],
+            p.store.historyTick && !p.windowedOps[size_t(w)].feedsWindow,
+            error);
+    }
     bool StoreConstraint(const eval::OpHostOutput &output, const void *value,
                          std::string *error) const
     {
@@ -500,10 +515,7 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
             nodes->weightObject[output->node] = output->object;
         if (output->target == uint8_t(eval::OpOutputTarget::CommitSlots))
             nodes->commit[output->node] = output->object;
-        if (output->target >=
-                uint8_t(eval::OpOutputTarget::ConstraintCandidate) &&
-            output->target <=
-                uint8_t(eval::OpOutputTarget::ConstraintDeltaMeasured))
+        if (eval::OpConstraintOutputTarget(output->target))
             nodes->constraint[output->node] = output->object;
         size_t chain = 0, part = 0;
         if (output->target == uint8_t(eval::OpOutputTarget::PropertyVersion) &&

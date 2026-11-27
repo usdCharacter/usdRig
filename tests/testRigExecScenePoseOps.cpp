@@ -894,11 +894,14 @@ NativeHarmonics(const RigExecHarmonicsOpConstants &constants,
     }
     if (captureOnly || !in.enabled || in.weight <= 0.0)
         return run;
-    if (!usable)
-        return fail("its incoming frame is not usable");
+    bool finite = true;
+    for (const GfVec3d &q : in.incoming.points)
+        finite = finite && std::isfinite(q[0]) && std::isfinite(q[1]) &&
+                 std::isfinite(q[2]);
+    if ((in.incoming.flags & RigExecPointFrameValid) && !finite)
+        return fail("its incoming frame is not finite");
     if (!run.capture)
-        return fail(spaceUsable ? "its origin is not finite in its space"
-                                : "its space is degenerate");
+        return run;
     size_t begin = ring.size();
     while (begin > 0 && ring[begin - 1] && ring[begin - 1]->scalars.size() == 3)
         --begin;
@@ -969,9 +972,10 @@ SameHarmonics(const HarmonicsRun &a, const HarmonicsRun &b)
 /// Frame by frame over a ring the native captures fill, on one runner that
 /// rebuilds when a setting moves: with and without a space (a singular and
 /// an unreadable one), on capture-only ticks, disabled, at zero and partial
-/// weights. A non-finite amplitude, an unusable incoming frame and a space
-/// that measures nothing stop the evaluation with an error and publish
-/// nothing; so does a space the settings do not expect, at compile.
+/// weights. A non-finite amplitude stops the evaluation with an error and
+/// publishes nothing, and so does a space the settings do not expect, at
+/// compile; an unusable incoming frame and a space that measures nothing
+/// leave the frame as it entered.
 void
 TestHarmonics()
 {

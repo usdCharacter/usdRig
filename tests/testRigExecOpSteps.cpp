@@ -934,6 +934,11 @@ struct GroupHost {
         *error = "no constraints";
         return false;
     }
+    bool LendWindow(RigExecRunState &, uint32_t, std::string *error) const
+    {
+        *error = "no windows";
+        return false;
+    }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t g,
                     const void *elements, size_t count, std::string *error)
     {

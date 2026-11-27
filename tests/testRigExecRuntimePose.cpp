@@ -3239,10 +3239,8 @@ _EveryFrameSays(const std::vector<_PlayedFrame> &played,
 }
 
 // A constraint's source or pole weights table with the wrong cardinality:
-// the bake keeps the read's line beside the arrays, and the constraint step
-// replays it where the baked one does, ahead of its pass-through. The
-// played diagnostics match the baked program's verbatim (_TestStage), and
-// carry the line on every frame.
+// the constraint's op node stops the frame with the read's line, so no
+// frame bakes.
 static void
 TestConstraintArrayDiagnostics(const std::string &examplesDir)
 {
@@ -3294,22 +3292,20 @@ TestConstraintArrayDiagnostics(const std::string &examplesDir)
             .CreateAttribute(TfToken("inputs:poleVectorWeights"),
                              SdfValueTypeNames->FloatArray)
             .Set(VtFloatArray{1, 1});
-        std::vector<_PlayedFrame> played;
-        _TestStage("constraint pole weights cardinality", stage,
-                   {1001.0, 1012.0}, &played);
-        const bool said = _EveryFrameSays(
-            played,
-            "/ScIkAsset/Rig/Movers/Pose/ArmIK inputs:poleVectorWeights has "
-            "2 entries for 1 sources");
-        CHECK(said);
-        if (!said) {
-            std::printf("constraint pole weights cardinality: the line is "
-                        "not played\n");
-        }
+        RigExecRigEvaluator evaluator(stage, SdfPath("/ScIkAsset/Rig"));
+        const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1001.0));
+        CHECK(!native.valid);
+        CHECK(!native.diagnostics.empty() &&
+              native.diagnostics.front() ==
+                  "/ScIkAsset/Rig/Movers/Pose/ArmIK: inputs:poleVectorWeights "
+                  "has 2 entries for 1 sources");
+        std::vector<uint8_t> bytes;
+        std::string error;
+        CHECK(!RigExecTestBakeAt(evaluator, 1001.0, &bytes, &error));
     }
     if (failures == failuresBefore) {
-        std::printf("constraint array diagnostics: source and pole lines "
-                    "replayed as the baked program replays them\n");
+        std::printf("constraint array diagnostics: source and pole tables "
+                    "stop the frame\n");
     }
 }
 

@@ -910,38 +910,40 @@ ProbeHarmonics(const B &b, int walk)
     const auto &c = b.constraints[size_t(b.walkSteps[size_t(walk)].index)];
     const auto &commit = b.commits[size_t(walk)];
     const std::string kind = TypeName(c.type);
-    const BakedPoseInputs reads(&b);
-    const auto facts = reads.harmonicsFacts(size_t(walk));
-    if (facts.window < 0) {
+    if (c.window < 0) {
         Unprobed("Constraint", kind, "no window");
         return;
     }
     RigExecHarmonicsOpConstants constants;
-    constants.settings = facts.settings;
-    constants.matchVelocity = facts.matchVelocity;
-    constants.frames = uint32_t(RigExecHarmonicsWindowFrames(facts.settings));
+    constants.settings = c.harmonicsSettings;
+    constants.matchVelocity = c.harmonicsMatchVelocity;
+    constants.frames =
+        uint32_t(RigExecHarmonicsWindowFrames(c.harmonicsSettings));
     RigExecHarmonicsOpInputs in;
     in.incoming = b.fin[size_t(commit.targetRead)];
-    if (facts.spaceSlot >= 0) {
-        GfMatrix4d space(0.0);
-        reads.posedMatrix(size_t(facts.spaceSlot), &space);
-        in.space = space;
-    }
-    double weight = facts.defaultWeight;
-    bool gate = facts.enabled;
-    if (facts.hasWeightObject) {
-        gate = gate && facts.fieldOk && facts.fieldCount == 1;
-        weight = facts.fieldValue;
+    if (c.spaceSlot >= 0)
+        in.space = b.posedM[size_t(c.spaceSlot)];
+    double weight = double(RigExecBakedLeafRead(b, c.defaultWeight));
+    bool gate = RigExecBakedLeafRead(b, c.enabled);
+    if (!c.weightObject.IsEmpty()) {
+        const auto &field = b.weightFields[size_t(c.weightField)];
+        gate = gate && field.ok && field.values.size() == 1;
+        weight = field.values.empty() ? 0.0 : double(field.values[0]);
     } else {
         gate = gate && std::isfinite(weight) && weight >= 0.0 && weight <= 1.0;
     }
     in.enabled = gate;
     in.weight = weight;
-    in.amplitude = facts.scalars[0];
-    in.decay = facts.scalars[1];
-    in.termination = facts.scalars[2];
-    in.axisAmplitude = facts.axis;
-    const RigExecWindowRing &ring = b.windowRings[size_t(facts.window)];
+    const auto scalar = [&](size_t k) {
+        const auto &s = c.harmonicsScalars[k];
+        return s.isFloat ? double(RigExecBakedLeafRead(b, s.narrow))
+                         : RigExecBakedLeafRead(b, s.wide);
+    };
+    in.amplitude = scalar(0);
+    in.decay = scalar(1);
+    in.termination = scalar(2);
+    in.axisAmplitude = RigExecBakedLeafRead(b, c.offset);
+    const RigExecWindowRing &ring = b.windowRings[size_t(c.window)];
     RigExecPoseOpRunner runner;
     RigExecWindowPacketPtr capture;
     RigExecPointFrame frame;
@@ -956,10 +958,10 @@ ProbeHarmonics(const B &b, int walk)
     }
     Compare("Constraint", kind, c.pathText, VtValue(baked), VtValue(frame),
             !present, "window of " + std::to_string(ring.size()));
-    CompareFlag("Constraint", kind, c.pathText, "capture",
-                RigExecWindowPacketsEqual(
-                    b.windowCaptures[size_t(facts.window)], capture),
-                true);
+    CompareFlag(
+        "Constraint", kind, c.pathText, "capture",
+        RigExecWindowPacketsEqual(b.windowCaptures[size_t(c.window)], capture),
+        true);
 }
 
 // SingleChainIk with every input rebuilt from the program as the step
@@ -973,14 +975,10 @@ ProbeSingleChainIk(const B &b, int walk, RigExecPoseOpRunner &runner)
     const auto &c = b.constraints[size_t(b.walkSteps[size_t(walk)].index)];
     const auto &commit = b.commits[size_t(walk)];
     const std::string kind = TypeName(c.type);
-    if (c.kernelResult.chain.empty()) {
-        Unprobed("Constraint", kind, "the kernel did not run");
-        return;
-    }
     const BakedPoseInputs in(&b);
-    eval::PoseIkChainFacts ik;
-    if (!in.ikChainFacts(size_t(walk), &ik) ||
-        commit.targetReads.size() != ik.targetSlots.size()) {
+    const eval::PoseIkChainView ik = in.ikChainView(size_t(walk));
+    const int ikMode = ik.ikMode;
+    if (commit.targetReads.size() != ik.count) {
         Unprobed("Constraint", kind, "a chain the step could not gather");
         return;
     }
@@ -993,13 +991,13 @@ ProbeSingleChainIk(const B &b, int walk, RigExecPoseOpRunner &runner)
         in.resolveIkEffector(size_t(walk), &effector.points, &effector.flags);
     GfVec3d pole(0.0, 1.0, 0.0);
     double twist = 0.0;
-    if (ik.ikMode == 0)
+    if (ikMode == 0)
         in.ikPoleVector(size_t(walk), &pole, &twist);
-    if (usable && ik.ikMode == 0 && ik.poleModeObject) {
-        usable = !ik.poleObjects.empty() && facts.arrays.poleOk;
+    if (usable && ikMode == 0 && ik.poleModeObject) {
+        usable = ik.poleObjects && facts.arrays.poleOk;
         GfVec3d sum(0.0);
         double total = 0.0;
-        for (size_t k = 0; usable && k < ik.poleObjects.size(); ++k) {
+        for (size_t k = 0; usable && k < ik.poleObjects; ++k) {
             RigExecPointFrame source;
             usable = in.ikPoleBounds(size_t(walk), k) &&
                      k < facts.arrays.poleWeightCount &&
@@ -1020,10 +1018,10 @@ ProbeSingleChainIk(const B &b, int walk, RigExecPoseOpRunner &runner)
     const std::vector<RigExecPointFrame> *solve = &chain;
     if (usable && !ik.useAnimatedTs) {
         std::vector<RigExecPointFrame> rests;
-        for (size_t k = 0; k < ik.targetSlots.size(); ++k)
-            rests.push_back(k < ik.ikRestLive.size() && ik.ikRestLive[k]
+        for (size_t k = 0; k < ik.count; ++k)
+            rests.push_back(in.ikRestLive(size_t(walk), k)
                                 ? chain[k]
-                                : b.restFrames[size_t(ik.targetSlots[k])]);
+                                : b.restFrames[size_t(ik.slots[k])]);
         usable = RigExecPrepareRestDerivedIkChain(chain, rests, &prepared);
         solve = &prepared;
     }
@@ -1039,7 +1037,7 @@ ProbeSingleChainIk(const B &b, int walk, RigExecPoseOpRunner &runner)
     record.singleChain.twistDegrees = twist;
     record.singleChain.weight = weight;
     record.singleChain.preserveJointOrientation = c.preserveJointOrientation;
-    record.singleChain.stretch = ik.stretch;
+    record.singleChain.stretch = in.ikStretch(size_t(walk));
     RigExecConstraintInputs inputs;
     inputs.chain = *solve;
     inputs.effector = effector;
@@ -1047,14 +1045,11 @@ ProbeSingleChainIk(const B &b, int walk, RigExecPoseOpRunner &runner)
     std::string error;
     const bool ran =
         RigExecRunConstraintOp(record, inputs, runner, &result, &error);
-    RigExecPointFrameArray bakedChain, opChain;
-    bakedChain.frames = c.kernelResult.chain;
-    if (ran)
-        opChain.frames = result.chain;
-    Compare("Constraint", kind, c.pathText, VtValue(bakedChain),
-            VtValue(opChain), false);
-    for (size_t k = 0;
-         ran && k < c.targetSlots.size() && k < result.chain.size(); ++k)
+    if (!ran) {
+        OpFailed("Constraint", kind, c.pathText, commit.abandoned, error);
+        return;
+    }
+    for (size_t k = 0; k < c.targetSlots.size() && k < result.chain.size(); ++k)
         for (size_t pos = 0; pos < commit.slots.size(); ++pos)
             if (commit.slots[pos] == c.targetSlots[k] && commit.present[pos])
                 Compare("Constraint", kind + " slots",
@@ -1217,10 +1212,16 @@ ProbeCommits(const B &b)
     using namespace rigExecOps;
     using Kind = RigExecBakedStepKind;
     for (const auto &step : b.steps) {
-        if (step.kind != Kind::Constraint && step.kind != Kind::SolverCommit &&
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(b, step);
+        const bool constraint =
+            identity.kind == Kind::Constraint && identity.part < 0 &&
+            RigExecBakedConstraintStoresFrames(b, size_t(identity.object));
+        if (!constraint && step.kind != Kind::SolverCommit &&
             step.kind != Kind::CommitApply)
             continue;
-        const RigExecBakedCommit &commit = b.commits[size_t(step.object)];
+        const RigExecBakedCommit &commit =
+            b.commits[size_t(constraint ? identity.object : step.object)];
         if (commit.split != (step.kind == Kind::CommitApply))
             continue;
         const std::string kind =
@@ -4893,7 +4894,6 @@ main(int argc, char **argv)
           "Solve/RigExecRibbon",
           "Solve/RigExecSplineIk",
           "Solve/RigExecSkeleton2d",
-          "Constraint/RigExecSingleChainIkConstraint",
           "RevisionChunk/Matrix",
           "RevisionChunk/Skin",
           "RevisionChunk/BlendShape",

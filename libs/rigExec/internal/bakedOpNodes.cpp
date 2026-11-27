@@ -195,6 +195,11 @@ struct BakedOpHost {
         return RigExecBakedLookUpConstraint(B, constraintCache, lookup, type,
                                             value, error);
     }
+    bool LendWindow(RigExecRunState &run, uint32_t node,
+                    std::string *error) const
+    {
+        return RigExecBakedLendConstraintWindow(B, run, node, error);
+    }
     bool StoreConstraint(const eval::OpHostOutput &output, const void *value,
                          std::string *error) const
     {

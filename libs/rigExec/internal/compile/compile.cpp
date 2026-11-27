@@ -288,10 +288,6 @@ OrderNodes(CompileState &s)
     if (program.hostOrder) {
         for (const RigExecCompiledOp &op : program.graph.ops) {
             const uint32_t n = op.originalIndex;
-            if (s.OpDesc(n).threading == RigExecOpThreading::Windowed)
-                return Fail(s.error, NodeText(s.registry, s.data, n) +
-                                         " keeps history, which a host-ordered "
-                                         "program cannot run");
             for (const uint32_t predecessor : op.predecessors)
                 if (program.graph.ops[predecessor].originalIndex > n)
                     return Fail(

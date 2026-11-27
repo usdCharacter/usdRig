@@ -5036,9 +5036,8 @@ TestConstraintTableNormalizationAcrossHosts()
             CHECK(evaluator.Compile(&errors));
             const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1));
             const bool mismatch = entries == 1 || entries == 3;
-            // A table its constraint's op node reads stops the frame; the
-            // single-chain IK's pole table still passes through.
-            const bool refused = mismatch && channel < 2;
+            // A table its constraint's op node reads stops the frame.
+            const bool refused = mismatch;
             CHECK(native.valid == !refused);
             CHECK(HasDiagnostic(native, "sourceWeights has") ==
                   (mismatch && channel == 0));
