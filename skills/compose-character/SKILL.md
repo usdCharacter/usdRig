@@ -184,6 +184,88 @@ Open the final entry asset as well as the model to catch broken references or
 namespace remapping. Review representative viewport poses when available, and
 report separately if only numerical/composition checks were performed.
 
+### Package the delivery as one archive
+
+Build one archive for the delivery, and record the authoring head (commit id)
+it was built from and the archive's SHA-256 in the delivery notes. Prove the
+member list from the built archive's member listing; a reported file
+inventory, such as a `delivery-files.json` list, is not evidence of archive
+contents. Derive the members from resolution rather than memory. For each
+stage entry that means the layers it actually uses, from
+`Stage.GetUsedLayers()`, carrying each referenced
+`asset_lib/components/**` layer at the relative position the reference
+expects, without flattening or copying component definitions into the
+character, so the fit/composition separation and the component ports stay
+unchanged. For each packaged entry point it means the import closure of its
+package-local modules. Late-added or untracked authoring helpers are what
+fall out of the member list.
+
+Every packaged entry point resolves its helpers from its own file, such as
+`Path(__file__).resolve().parent / "tools"`, never the authoring directory,
+the repository root, the current working directory, or an absolute path.
+
+### Run the headless package check
+
+Run it on the built archive in a fresh directory outside the
+authoring checkout, after the in-checkout validation above, as its own record.
+Extract that exact archive into an empty directory made by `mktemp -d` and run
+with that directory as the working directory. Keep the supported USD/RigExec
+environment: the interpreter, `pxr`, and the `rigexec` Python module from
+`bin/_env.sh` or `bin\_env.bat` (or an installed usdRig), with
+`PXR_PLUGINPATH_NAME` at the generated schema and imaging resources. The
+engine and its plugin resources are supported dependencies and may live in the
+checkout's build tree or an install; what must be unreachable is the
+delivery's own authoring layers and helper modules. Do not put the authoring
+delivery directory on `PYTHONPATH` or `sys.path`, and prefer a real barrier for
+the authoring sources when one exists. Have the gate assert that every
+package-local imported module's `__file__` and every resolved layer identifier
+lies under the extracted root, and record which barrier was used.
+
+Then run both packaged entry points as processes from the extracted tree: the
+packaged verifier against the character entry, and the packaged animation
+checks against the animation entry when the delivery carries one. Capture each
+gate's document and exit code separately. Compare the extracted results
+bit-for-bit with the authoring-tree run at rest and at one posed or animated
+frame. A packaging gate that only re-opens stages in-process does not prove
+that the packaged scripts import; the gate itself must run the packaged entry
+points from the extracted tree.
+
+```bash
+zip=delivery.zip; root=$(mktemp -d)   # "$PY" is the retained interpreter
+unzip -q "$zip" -d "$root" && cd "$root"
+"$PY" <entry>/verify.py <entry>/character.usda        # character entry
+"$PY" <entry>/tools/check_animation.py <entry>/animation.usda  # animation entry
+unzip -Z1 "$zip" | grep '\.py$'        # members the archive carries
+grep -n 'sys\.path\|^from \|^import ' <entry>/verify.py  # where it looks
+```
+
+### Triage an import failure before recommending a fix
+
+Name the failing class with command evidence before changing anything.
+
+- Environment: `No module named 'pxr'`, `'numpy'`, or `'rigexec'`, or
+  `Cannot find a valid schema`. The interpreter or plugin path was not
+  retained; the package is not at fault.
+- Omitted member: the archive listing has no such file.
+- Mislocated member: the file is in the archive, but outside the packaged
+  entry point's search path.
+
+List the archive's `.py` members, read the packaged entry's `sys.path`
+insertions and import lines, and compare both against the pinned authoring
+tree's file list, including tracked versus untracked files
+(`git status --porcelain`). Then rebuild the archive and re-run the whole
+headless package check from scratch; never patch only the extracted copy.
+
+### Report the package gate
+
+Record each gate as pass, fail, or `not run`, naming the blocking module or
+missing member for a `not run`. A run that stops at import measured nothing,
+so it is never evidence about weights, gait, deformation, or media. Report the
+head id, archive digest, environment, and the barrier used, and keep the
+package-gate record separate from the independent quality verdict of the rig
+(for example an advisory model's medium verdict). An authoring-tree run is not
+package evidence.
+
 Deliver links to the final entry point, fit, bindings, and composition, plus the
 rebuild command and checks actually run. Keep the component library reusable;
 an existing character's legacy monolithic generator is not the new assembly's
