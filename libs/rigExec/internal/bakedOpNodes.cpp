@@ -1116,7 +1116,7 @@ AddPoseWalkOps(const RigExecBakedProgramImpl &B, RigExecRigDescBuilder *builder,
             !RigExecBakedAddSolverOp(B, builder, layout, o, error))
             return false;
     }
-    return true;
+    return RigExecBakedConnectSolverOps(B, builder, error);
 }
 
 } // namespace

@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace rigExec {
@@ -126,6 +127,26 @@ LeadingFrames(const Solver &s)
     return s.type == SchemaTypeName::RigExecFkChain && s.start >= 0 ? 1 : 0;
 }
 
+/// The output of \p s's last op node.
+const RigExecPortHandle &
+SolverOut(const Solver &s)
+{
+    using namespace rigExecOps;
+    if (s.type == SchemaTypeName::RigExecFkChain)
+        return s.jointGroups.empty() ? FkChainOut() : FkJointGroupsOut();
+    if (s.type == SchemaTypeName::RigExecTwoBoneIk)
+        return TwoBoneIkOut();
+    if (s.type == SchemaTypeName::RigExecTwistDistribution)
+        return DistributeTwistOut();
+    if (s.type == SchemaTypeName::RigExecRibbon)
+        return SampleRibbonFramesOut();
+    if (s.type == SchemaTypeName::RigExecSplineIk)
+        return SplineIkOut();
+    if (s.type == SchemaTypeName::RigExecSkeleton2d)
+        return Skeleton2dOut();
+    return BlendFrameArraysOut();
+}
+
 } // namespace
 
 int
@@ -144,6 +165,7 @@ size_t
 RigExecBakedSolverNodeCount(const RigExecBakedProgramImpl::Solver &s)
 {
     if (s.type == SchemaTypeName::RigExecTwoBoneIk ||
+        s.type == SchemaTypeName::RigExecBlendPointFrames ||
         s.type == SchemaTypeName::RigExecTwistDistribution ||
         s.type == SchemaTypeName::RigExecRibbon ||
         s.type == SchemaTypeName::RigExecSplineIk ||
@@ -263,6 +285,22 @@ RigExecBakedAddSolverOp(const RigExecBakedProgramImpl &B,
         publish(node, SplineIkOut());
         return true;
     }
+    if (s.type == SchemaTypeName::RigExecBlendPointFrames) {
+        BlendFrameArraysPayload p;
+        p.logScale = s.scaleMode == RigExecScaleBlend::Log;
+        p.leadingA =
+            s.inA >= 0 ? uint32_t(LeadingFrames(B.solvers[size_t(s.inA)])) : 0;
+        p.leadingB =
+            s.inB >= 0 ? uint32_t(LeadingFrames(B.solvers[size_t(s.inB)])) : 0;
+        const RigExecNodeId node = builder->AddOp(BlendFrameArrays(), &p);
+        if (!placed(node))
+            return false;
+        read(node, BlendFrameArraysWeight(), Read::BlendWeight);
+        read(node, BlendFrameArraysJointRests(), Read::JointRests);
+        read(node, BlendFrameArraysJointRestLive(), Read::JointRestLive);
+        publish(node, BlendFrameArraysOut());
+        return true;
+    }
     if (s.type == SchemaTypeName::RigExecSkeleton2d) {
         Skeleton2dPayload p;
         p.order = s.bone2dOrder;
@@ -348,6 +386,47 @@ RigExecBakedAddSolverOp(const RigExecBakedProgramImpl &B,
         read(node, FkJointGroupsStartRest(), Read::StartRest);
     }
     publish(node, FkJointGroupsOut());
+    return true;
+}
+
+bool
+RigExecBakedConnectSolverOps(const RigExecBakedProgramImpl &B,
+                             RigExecRigDescBuilder *builder, std::string *error)
+{
+    using namespace rigExecOps;
+    // Per solver: the op node that stores its frames, or -1.
+    std::vector<int> solverNode(B.solvers.size(), -1);
+    for (size_t o = 0; o < B.opNodeOrigins.size(); ++o) {
+        const RigExecBakedOpOrigin &origin = B.opNodeOrigins[o];
+        if (origin.family == RigExecBakedOpFamily::Solver &&
+            origin.kind == RigExecBakedStepKind::Solve && origin.object >= 0 &&
+            size_t(origin.object) < solverNode.size())
+            solverNode[size_t(origin.object)] = int(o);
+    }
+    for (size_t si = 0; si < B.solvers.size(); ++si) {
+        const Solver &s = B.solvers[si];
+        if (s.type != SchemaTypeName::RigExecBlendPointFrames)
+            continue;
+        const int node = solverNode[si];
+        if (node < 0)
+            continue;
+        for (const auto &[input, port] :
+             {std::make_pair(s.inA, &BlendFrameArraysA()),
+              std::make_pair(s.inB, &BlendFrameArraysB())}) {
+            if (input < 0)
+                continue;
+            const int from = size_t(input) < solverNode.size()
+                                 ? solverNode[size_t(input)]
+                                 : -1;
+            if (from < 0)
+                return Fail(error, s.pathText + ": its input solver " +
+                                       B.solvers[size_t(input)].pathText +
+                                       " runs no op node");
+            builder->Connect(RigExecNodeId(from),
+                             SolverOut(B.solvers[size_t(input)]),
+                             RigExecNodeId(node), *port);
+        }
+    }
     return true;
 }
 
@@ -715,6 +794,10 @@ RigExecBakedLookUpSolver(const RigExecBakedProgramImpl &B,
         }
         return true;
     }
+    case Read::BlendWeight:
+        return Scalar(type, double(RigExecBakedLeafRead(B, s.blendWeight)),
+                      value) ||
+               Fail(error, s.pathText + " has no weight of that type");
     case Read::Bone2dSelectors: {
         if (!Is(type, rigExecStd::DoubleArray()))
             break;

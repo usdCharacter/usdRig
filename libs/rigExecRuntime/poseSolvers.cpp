@@ -138,49 +138,6 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
         return true;
     };
     if (ws.degenerate) {
-    } else if (type == SchemaTypeName::RigExecBlendPointFrames) {
-        if ((ws.inA >= 0 && size_t(ws.inA) >= store.aggregates.size()) ||
-            (ws.inB >= 0 && size_t(ws.inB) >= store.aggregates.size())) {
-            if (error) {
-                *error =
-                    _RrStepHead(program, step) + " names no solver aggregate";
-            }
-            return false;
-        }
-        const RrPointFrameArray *a =
-            ws.inA >= 0 ? &store.aggregates[size_t(ws.inA)] : nullptr;
-        const RrPointFrameArray *b =
-            ws.inB >= 0 ? &store.aggregates[size_t(ws.inB)] : nullptr;
-        if (!a) {
-            if (b) {
-                aggregate = *b;
-            }
-        } else if (!b) {
-            aggregate = *a;
-        } else if (ws.blendRotationRejected) {
-        } else {
-            const size_t n = a->frames.size();
-            const double w =
-                std::min(std::max(double(program
-                                             ->ReadSolver(size_t(wire.object),
-                                                          RrSolverBlendWeight)
-                                             .f32),
-                                  0.0),
-                         1.0);
-            if (n == b->frames.size() && a->rests.size() == n) {
-                aggregate.frames.reserve(n);
-                aggregate.rests.reserve(n);
-                for (size_t k = 0; k < n; ++k) {
-                    const bool live = k < liveFlags.size() && liveFlags[k] &&
-                                      k < liveRests.size();
-                    aggregate.frames.push_back(_RrBlendFrames(
-                        a->frames[k], b->frames[k], a->rests[k], w,
-                        ws.scaleMode == 0, live ? &liveRests[k] : nullptr));
-                    aggregate.rests.push_back(live ? liveRests[k]
-                                                   : a->rests[k]);
-                }
-            }
-        }
     }
     if (size_t(wire.object) >= store.solverOutFrames.size() ||
         size_t(wire.object) >= store.solverOutPresent.size()) {
@@ -714,6 +671,10 @@ RrLookUpSolver(const RrProgram *program, const eval::OpLookup &lookup,
         }
         return true;
     }
+    case Read::BlendWeight:
+        return _RrSolverScalar(
+            type, double(p.ReadSolver(lookup.object, RrSolverBlendWeight).f32),
+            value, error);
     case Read::Bone2dSelectors: {
         if (!_RrSolverType<double>(type, true) ||
             lookup.object >= p.solverBone2dSelectorRead.size())

@@ -1526,6 +1526,25 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             solver.inB = source(_tokens->rigExecInputB);
         }
     {
+        // A guide-only blend's op node is added after its inputs'.
+        std::vector<char> placed(B.solvers.size(), 0);
+        std::vector<int> ordered;
+        const std::function<void(int)> place = [&](int si) {
+            if (si < 0 || placed[size_t(si)])
+                return;
+            placed[size_t(si)] = 1;
+            if (std::find(B.guideSolvers.begin(), B.guideSolvers.end(), si) ==
+                B.guideSolvers.end())
+                return;
+            place(B.solvers[size_t(si)].inA);
+            place(B.solvers[size_t(si)].inB);
+            ordered.push_back(si);
+        };
+        for (const int si : B.guideSolvers)
+            place(si);
+        B.guideSolvers = std::move(ordered);
+    }
+    {
         // 0 not yet counted, 1 counting, 2 counted.
         std::vector<char> counted(B.solvers.size(), 0);
         const std::function<size_t(int)> frames = [&](int i) -> size_t {
@@ -4915,12 +4934,6 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         input.end = frame(s.end, s.endRead);
         input.pole = frame(s.pole, s.poleRead);
         input.start = frame(s.start, s.startRead);
-        if (s.type == SchemaTypeName::RigExecBlendPointFrames) {
-            s.kind = RigExecSolverKind::BlendPointFrames;
-            input.blendA = s.inA >= 0 ? &B.aggregates[size_t(s.inA)] : nullptr;
-            input.blendB = s.inB >= 0 ? &B.aggregates[size_t(s.inB)] : nullptr;
-            input.blendWeight = rd(s.blendWeight);
-        }
         input.jointGroupSelectors.resize(s.jointGroupSelectors.size());
         for (size_t g = 0; g < s.jointGroupSelectors.size(); ++g)
             input.jointGroupSelectors[g] = rd(s.jointGroupSelectors[g]);

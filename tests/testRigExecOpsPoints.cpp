@@ -3759,6 +3759,80 @@ TestFrameBlend()
                                               RigExecRotationBlend::ShortestArc,
                                               scaleBlend, &outRestFrame.points),
                            actual));
+            // As arrays: A leads with one frame no element is, and the
+            // second element re-bases onto its live joint rest.
+            BlendFrameArraysPayload arrays;
+            arrays.logScale = logScale;
+            arrays.leadingA = 1;
+            rigExecRig::PointFrameArray inA, inB, blended;
+            inA.frames = RigExecArray<rigExecRig::PointFrame>(3);
+            inA.rests = RigExecArray<rigExecRig::PointLandmarks>(3);
+            inB.frames = RigExecArray<rigExecRig::PointFrame>(2);
+            inB.rests = RigExecArray<rigExecRig::PointLandmarks>(2);
+            for (size_t e = 0; e < 3; ++e) {
+                inA.frames[e] = e == 0 ? rigB : rigA;
+                inA.rests[e] = e == 0 ? outRest : rest;
+            }
+            for (size_t e = 0; e < 2; ++e) {
+                inB.frames[e] = rigB;
+                inB.rests[e] = rest;
+            }
+            RigExecArray<rigExecRig::PointLandmarks> joints(2);
+            joints[0] = rest;
+            joints[1] = outRest;
+            RigExecArray<uint8_t> live(2);
+            live[0] = 0;
+            live[1] = 1;
+            Node arrayBlend(BlendFrameArrays(),
+                            {&BlendFrameArraysA(), &BlendFrameArraysB(),
+                             &BlendFrameArraysWeight(),
+                             &BlendFrameArraysJointRests(),
+                             &BlendFrameArraysJointRestLive()},
+                            BlendFrameArraysOut(), &arrays);
+            CHECK(arrayBlend.Run({&inA, &inB, &w, &joints, &live}, &blended));
+            CHECK(blended.frames.Size() == 2 && blended.rests.Size() == 2);
+            if (blended.frames.Size() == 2) {
+                CHECK(SameBits(
+                    RigExecBlendFrames(a, b, restFrame.points, w,
+                                       RigExecRotationBlend::ShortestArc,
+                                       scaleBlend),
+                    blended.frames[0]));
+                CHECK(SameBits(
+                    RigExecBlendFrames(a, b, restFrame.points, w,
+                                       RigExecRotationBlend::ShortestArc,
+                                       scaleBlend, &outRestFrame.points),
+                    blended.frames[1]));
+                CHECK(SameBits(outRestFrame.points, blended.rests[1]));
+            }
+            std::string arrayError;
+            const double steadyWeight = w;
+            double movingWeight = w;
+            CHECK(opAllocationCount::SteadyFrameAllocations(
+                      BlendFrameArrays(), &arrays,
+                      {&BlendFrameArraysA(), &BlendFrameArraysB(),
+                       &BlendFrameArraysWeight(), &BlendFrameArraysJointRests(),
+                       &BlendFrameArraysJointRestLive()},
+                      {&inA, &inB, &steadyWeight, &joints, &live},
+                      BlendFrameArraysOut(), 2,
+                      [&](int frame) {
+                          movingWeight = 0.1 * double(frame);
+                          return &movingWeight;
+                      },
+                      &arrayError) == 0);
+            // One input passes through after its leading frames; counts
+            // that differ publish no frame.
+            Node onlyA(BlendFrameArrays(),
+                       {&BlendFrameArraysA(), &BlendFrameArraysWeight()},
+                       BlendFrameArraysOut(), &arrays);
+            CHECK(onlyA.Run({&inA, &w}, &blended));
+            CHECK(blended.frames.Size() == 2 && blended.rests.Size() == 2);
+            arrays.leadingA = 0;
+            Node uneven(BlendFrameArrays(),
+                        {&BlendFrameArraysA(), &BlendFrameArraysB(),
+                         &BlendFrameArraysWeight()},
+                        BlendFrameArraysOut(), &arrays);
+            CHECK(uneven.Run({&inA, &inB, &w}, &blended));
+            CHECK(blended.frames.Size() == 0);
             // A singular input holds the stronger one, flagged.
             CHECK(bare.Run({&rigA, &rigFlat, &rest, &w}, &actual));
             CHECK(SameBits(RigExecBlendFrames(a, flat, restFrame.points, w,

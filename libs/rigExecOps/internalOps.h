@@ -55,6 +55,8 @@ inline constexpr rigExec::RigExecSchemaInfo kSplineIk =
     Internal("A spline IK's joints laid along its posed control curve.");
 inline constexpr rigExec::RigExecSchemaInfo kSkeleton2d =
     Internal("A 2D skeleton's joints solved in its start frame's plane.");
+inline constexpr rigExec::RigExecSchemaInfo kBlendFrameArrays = Internal(
+    "A frame blend's frames between the frames of its two input solvers.");
 inline constexpr rigExec::RigExecSchemaInfo kFkJointGroups =
     Internal("An FK chain's joint groups applied to its frames.");
 inline constexpr rigExec::RigExecSchemaInfo kMoverTransform =

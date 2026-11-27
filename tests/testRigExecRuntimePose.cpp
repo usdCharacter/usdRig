@@ -224,15 +224,22 @@ _TestSolverSemanticRefusals(const std::vector<uint8_t> &bytes)
     if (!baseline)
         return;
     size_t owner = baseline->steps.size();
-    for (size_t i = 0; i < baseline->steps.size(); ++i)
-        if (baseline->steps[i].kind == fb::StepKind::Solve &&
-            !baseline->steps[i].semanticPredecessorKeys.empty()) {
-            owner = i;
-            break;
-        }
+    int64_t solver = -1;
+    for (size_t i = 0; i < baseline->steps.size() && solver < 0; ++i)
+        if (baseline->steps[i].kind == fb::StepKind::OpNode &&
+            !baseline->steps[i].semanticPredecessorKeys.empty() &&
+            baseline->opGraph)
+            for (const auto &output : baseline->opGraph->hostOutputs)
+                if (output &&
+                    output->node == uint64_t(baseline->steps[i].object) &&
+                    output->target ==
+                        uint8_t(eval::OpOutputTarget::SolverFrames)) {
+                    owner = i;
+                    solver = int64_t(output->object);
+                }
     if (owner == baseline->steps.size())
         return;
-    CHECK(!baseline->pose->solvers[size_t(baseline->steps[owner].object)]
+    CHECK(!baseline->pose->solvers[size_t(solver)]
                .relationshipRequirements.empty());
     std::vector<uint8_t> valid;
     std::string error;

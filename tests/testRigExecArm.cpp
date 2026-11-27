@@ -2487,8 +2487,9 @@ TestPureSolverToSolverCycleRejected(const std::string &examplesDir)
         CHECK(!requiredKeys[0].empty() && !requiredKeys[1].empty());
         bool encountered = false;
         for (const auto &step : B.steps)
-            if (step.kind == RigExecBakedStepKind::Solve &&
-                step.object == blend->second) {
+            if (RigExecBakedIdentityOf(B, step).kind ==
+                    RigExecBakedStepKind::Solve &&
+                RigExecBakedSolverOf(B, step) == blend->second) {
                 encountered = true;
                 CHECK(step.descriptorKey == record.solveDescriptorKey);
                 CHECK(step.semanticPredecessorKeys == requiredKeys);

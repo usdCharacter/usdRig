@@ -2883,84 +2883,115 @@ TestFrozenConstraintOpsMatchLive(const std::string &examplesDir)
     }
 }
 
-// An FK chain runs as its op node in a frozen job, bit-identical to live
-// at frames and under a drag on one of its controls.
-// An FK chain and a two-bone IK run as their op nodes in a frozen job,
-// bit-identical to live at frames and under a drag on a control of each.
+// Every solver kind runs as op nodes keeping the Solve identity; the frozen
+// job runs those nodes and publishes live's pose, on animated frames and
+// under a drag of a control, with released gathers poisoned.
 void
 TestFrozenSolverOpsMatchLive(const std::string &examplesDir)
 {
-    UsdStageRefPtr stage =
-        UsdStage::Open(examplesDir + "/03_IkFkBlendClamp.usda");
-    CHECK(stage);
-    if (!stage)
-        return;
-    const SdfPath rig("/BlendArmAsset/Rig");
-    RigExecRigEvaluator evaluator(stage, rig);
-    CHECK(evaluator.Compile());
-    CHECK(evaluator.Evaluate(UsdTimeCode(1001.0)).valid);
-    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
-        *evaluator.GetBakedProgram());
-    std::set<size_t> solverSteps;
-    for (size_t i = 0; i < B.steps.size(); ++i)
-        if (RigExecBakedIdentityOf(B, B.steps[i]).kind ==
-                RigExecBakedStepKind::Solve &&
-            B.steps[i].kind == RigExecBakedStepKind::OpNode)
-            solverSteps.insert(i);
-    CHECK(solverSteps.size() == 2);
-    std::shared_ptr<const RigExecFrozenProgram> frozen;
-    std::string error;
-    CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
-    if (!frozen)
-        return;
-    RigExecValueOverride target;
-    target.prim = SdfPath("/BlendArmAsset/Rig/Controls/ElbowFK");
-    target.attribute = TfToken("avars:rz");
-    target.value = VtValue(-12.5);
-    const auto run = [&](double frame, const char *what,
-                         const std::vector<RigExecValueOverride> &drags) {
-        evaluator.SetInteractiveOverrides(drags);
-        const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
-        RigExecFrameInputs inputs;
-        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame), drags,
-                                       &inputs, &error));
-        RigExecFrozenEvalContext context;
-        context.compiledRigSignature = evaluator.GetCompiledRigSignature();
-        context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
-        context.varyingInputCount = inputs.values.size();
-        if (evaluator.GetPublishWeightFields())
-            context.flags |= kRigExecFrozenPublishWeightFields;
-        if (evaluator.GetSolverGuidesEnabled())
-            context.flags |= kRigExecFrozenSolverGuidesEnabled;
-        context.frozen = frozen.get();
-        auto workspace = RigExecCreateFrozenWorkspace(frozen);
-        context.workspace = workspace.get();
-        RigExecFrozenRunReport report;
-        const RigExecRigPose pose = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(),
-            RigExecCancellationToken(), &report);
-        evaluator.SetInteractiveOverrides({});
-        size_t ran = 0;
-        for (const auto &entry : report.region)
-            if (solverSteps.count(entry.step)) {
-                CHECK(entry.kind == "Solve");
-                ++ran;
+    RigExecBakedProgramTesting::SetPoisonReleasedGathers(true);
+    std::set<std::string> kinds;
+    for (const char *name :
+         {"03_IkFkBlendClamp.usda", "05_TwistRibbonSpine.usda", "ArmRig.usda",
+          "../tests/fixtures/skeleton2d/nested_chain.usda",
+          "biped/Biped.usda"}) {
+        UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/" + name);
+        CHECK(stage);
+        if (!stage)
+            continue;
+        SdfPath rig;
+        RigExecValueOverride drag;
+        for (const UsdPrim &prim : stage->Traverse()) {
+            if (rig.IsEmpty() && prim.GetTypeName() == "RigExecRoot")
+                rig = prim.GetPath();
+            const UsdAttribute tx = prim.GetAttribute(TfToken("avars:tx"));
+            double value = 0.0;
+            if (drag.prim.IsEmpty() && prim.GetTypeName() == "RigExecControl" &&
+                tx && tx.Get(&value)) {
+                drag.prim = prim.GetPath();
+                drag.attribute = TfToken("avars:tx");
+                drag.value = VtValue(value + 0.5);
             }
+        }
+        CHECK(!rig.IsEmpty());
+        if (rig.IsEmpty())
+            continue;
+        RigExecRigEvaluator evaluator(stage, rig);
+        CHECK(evaluator.Compile());
+        const double start = stage->GetStartTimeCode();
+        const double end = std::max(stage->GetEndTimeCode(), start);
+        CHECK(evaluator.Evaluate(UsdTimeCode(start)).valid);
+        const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
+        std::set<size_t> solverSteps;
+        for (size_t i = 0; i < B.steps.size(); ++i) {
+            const int solver = RigExecBakedSolverOf(B, B.steps[i]);
+            if (solver < 0)
+                continue;
+            CHECK(B.steps[i].kind == RigExecBakedStepKind::OpNode);
+            kinds.insert(B.solvers[size_t(solver)].type.GetString());
+            if (RigExecBakedIdentityOf(B, B.steps[i]).kind ==
+                RigExecBakedStepKind::Solve)
+                solverSteps.insert(i);
+        }
+        CHECK(!solverSteps.empty());
+        std::shared_ptr<const RigExecFrozenProgram> frozen;
+        std::string error;
+        CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
+        if (!frozen)
+            continue;
+        size_t ran = 0;
+        const auto run = [&](double frame, const std::string &what,
+                             const std::vector<RigExecValueOverride> &drags) {
+            evaluator.SetInteractiveOverrides(drags);
+            const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
+            RigExecFrameInputs inputs;
+            CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame), drags,
+                                           &inputs, &error));
+            RigExecFrozenEvalContext context;
+            context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+            context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+            context.varyingInputCount = inputs.values.size();
+            if (evaluator.GetPublishWeightFields())
+                context.flags |= kRigExecFrozenPublishWeightFields;
+            if (evaluator.GetSolverGuidesEnabled())
+                context.flags |= kRigExecFrozenSolverGuidesEnabled;
+            context.frozen = frozen.get();
+            auto workspace = RigExecCreateFrozenWorkspace(frozen);
+            context.workspace = workspace.get();
+            RigExecFrozenRunReport report;
+            const RigExecRigPose pose = RigExecEvaluateFrozen(
+                context, inputs, RigExecMakeProductionStepRunner(),
+                RigExecCancellationToken(), &report);
+            evaluator.SetInteractiveOverrides({});
+            for (const auto &entry : report.region)
+                if (solverSteps.count(entry.step)) {
+                    CHECK(entry.kind == "Solve");
+                    ++ran;
+                }
+            CHECK(live.valid && pose.valid);
+            CheckPosesBitIdentical(what.c_str(), live, pose);
+        };
+        const std::string what = std::string("frozen solvers ") + name;
+        run(0.5 * (start + end), what, {});
+        run(end, what, {});
+        if (!drag.prim.IsEmpty())
+            run(end, what + " under a drag", {drag});
         if (ran == 0) {
-            std::printf("FAIL %s: the frozen job ran no solver node\n", what);
+            std::printf("FAIL %s: the frozen jobs ran no solver node\n",
+                        what.c_str());
             ++failures;
         }
-        CHECK(live.valid && pose.valid);
-        CheckPosesBitIdentical(what, live, pose);
-    };
-    run(1020.0, "frozen solvers", {});
-    run(1028.0, "frozen solvers", {});
-    run(1028.0, "frozen FK chain under a drag", {target});
-    RigExecValueOverride effector;
-    effector.prim = SdfPath("/BlendArmAsset/Rig/Controls/HandIK");
-    effector.attribute = TfToken("avars:tx");
-    effector.value = VtValue(0.75);
-    run(1028.0, "frozen two-bone IK under a drag", {effector});
+    }
+    RigExecBakedProgramTesting::SetPoisonReleasedGathers(false);
+    for (const char *kind :
+         {"RigExecFkChain", "RigExecTwoBoneIk", "RigExecBlendPointFrames",
+          "RigExecTwistDistribution", "RigExecRibbon", "RigExecSplineIk",
+          "RigExecSkeleton2d"})
+        if (!kinds.count(kind)) {
+            std::printf("FAIL frozen solvers: no example ran a %s\n", kind);
+            ++failures;
+        }
 }
 
 // Frozen publishes exactly live's weightFrames on every path. On

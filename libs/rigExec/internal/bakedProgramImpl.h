@@ -3107,6 +3107,11 @@ bool RigExecBakedAddSolverOp(const RigExecBakedProgramImpl &B,
                              RigExecRigDescBuilder *builder,
                              eval::OpStepLayout *layout, size_t o,
                              std::string *error);
+/// Feeds each frame blend's node from its input solvers' last nodes, once
+/// every node is added.
+bool RigExecBakedConnectSolverOps(const RigExecBakedProgramImpl &B,
+                                  RigExecRigDescBuilder *builder,
+                                  std::string *error);
 /// Resolves a SolverInput lookup.
 bool RigExecBakedLookUpSolver(const RigExecBakedProgramImpl &B,
                               const eval::OpLookup &lookup,

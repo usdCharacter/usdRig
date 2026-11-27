@@ -241,6 +241,8 @@ enum class OpSolverRead : uint8_t {
     Bone2dChannels = 35,
     /// DoubleArray: a 2D skeleton's space-switch selectors.
     Bone2dSelectors = 36,
+    /// Double: a frame blend's inputs:weight.
+    BlendWeight = 37,
 };
 
 /// OpLookup::read of a constraint lookup. The numbers are part of the file

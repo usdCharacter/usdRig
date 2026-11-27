@@ -52,7 +52,8 @@ RigExecReferenceSolve(const RigExecSolverRecord &s,
     const bool ribbon = s.kind == RigExecSolverKind::Ribbon;
     const bool spline = s.kind == RigExecSolverKind::SplineIk;
     if ((s.kind != RigExecSolverKind::FkChain && !ik && !twist && !ribbon &&
-         !spline && s.kind != RigExecSolverKind::Skeleton2d) ||
+         !spline && s.kind != RigExecSolverKind::Skeleton2d &&
+         s.kind != RigExecSolverKind::BlendPointFrames) ||
         s.degenerate)
         return RigExecRunSolver(s, input, workspace, output, error);
     output->frames.clear();
@@ -116,6 +117,36 @@ RigExecReferenceSolve(const RigExecSolverRecord &s,
             if (error)
                 *error = kRigExecSkeleton2dNotFinite;
             return false;
+        }
+        return true;
+    }
+    if (s.kind == RigExecSolverKind::BlendPointFrames) {
+        const auto *a = input.blendA, *b = input.blendB;
+        if (!a) {
+            if (b)
+                *output = *b;
+            return true;
+        }
+        if (!b) {
+            *output = *a;
+            return true;
+        }
+        if (s.blendRotationRejected)
+            return true;
+        const size_t n = a->GetSize();
+        const double weight = std::min(std::max(input.blendWeight, 0.0), 1.0);
+        if (n == b->GetSize() && a->rests.size() == n) {
+            output->frames.reserve(n);
+            output->rests.reserve(n);
+            for (size_t k = 0; k < n; ++k) {
+                const bool live = k < s.restIsLive.size() && s.restIsLive[k] &&
+                                  k < s.jointRests.size();
+                output->frames.push_back(RigExecBlendFrames(
+                    a->frames[k], b->frames[k], a->rests[k], weight,
+                    RigExecRotationBlend::ShortestArc, s.scaleMode,
+                    live ? &s.jointRests[k] : nullptr));
+                output->rests.push_back(live ? s.jointRests[k] : a->rests[k]);
+            }
         }
         return true;
     }
