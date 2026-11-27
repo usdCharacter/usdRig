@@ -455,9 +455,8 @@ echo "extraction: $root"
 echo "records: $out"
 if [ "${ENTRY_AUTHORING_SCRATCH:-0}" = 1 ]; then
     aside=$(mktemp -d "${authoring}.hidden.XXXXXX")  # a reserved unique sibling
-    rmdir "$aside"                   # ... whose name mv then takes over
-    mv "$authoring" "$aside"         # a copy this run made: now it is gone
-    trap 'mv "$aside" "$authoring"' EXIT    # back in place for triage
+    mv "$authoring" "$aside/tree"    # a copy this run made: now it is gone
+    trap 'mv "$aside/tree" "$authoring"; rmdir "$aside"' EXIT  # restore it, drop the reservation
     barrier=moved
 else                                    # a checkout that cannot move: cover it
     cat > "$out/hide-authoring.sh" <<'SH'  # kept out of the package
