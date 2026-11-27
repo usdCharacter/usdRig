@@ -90,11 +90,7 @@ enum class OpLookupSource : uint8_t {
     /// PointFrameList: the pose frames at the versions list `part`
     /// (OpCommitList) of commit `object` names.
     CommitVersions = 30,
-    /// Commit `object`'s candidates: `part` 0 their frames
-    /// (PointFrameList), 1 which are present (BoolArray). A constraint's
-    /// come from its commit table, a solver batch's from its solvers'
-    /// outputs, the last in batch order winning a position.
-    CommitCandidates = 31,
+    // 31, a commit's candidates, is retired: they arrive from op nodes.
     /// The sources of the constraint commit `object` commits: `part` -1
     /// all of them (PointFrameArray), else source `part`'s frame (`read`
     /// 0) or rest frame (`read` 1). A source that maps to no transform
@@ -687,7 +683,6 @@ OpLookupSourceRuns(uint8_t source)
            source == uint8_t(OpLookupSource::Selected) ||
            source == uint8_t(OpLookupSource::RevisionLeaf) ||
            source == uint8_t(OpLookupSource::CommitVersions) ||
-           source == uint8_t(OpLookupSource::CommitCandidates) ||
            OpConstraintLookupSource(source) ||
            source == uint8_t(OpLookupSource::SolverInput) ||
            OpLookupSourceSelectable(source) || OpSpaceLookupSource(source) ||
@@ -1472,7 +1467,6 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
                                        " of that type");
     }
     case OpLookupSource::CommitVersions:
-    case OpLookupSource::CommitCandidates:
         return host.LookUpCommit(index, lookup, type, value, error);
     case OpLookupSource::ConstraintSources:
     case OpLookupSource::ConstraintArrays:

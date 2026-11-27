@@ -5,6 +5,7 @@
 #include "rigExecOps/opIo.h"
 #include "rigExecEvalCore/pose.h"
 #include "rigExecMath/poseCommitKernel.h"
+#include "rigExecMath/switchMathKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecRuntime/poseMath.h"
 
@@ -16,7 +17,6 @@ namespace rigExecOps {
 
 RIGEXEC_DEFINE_OP_HANDLE(PoseCommit)
 
-RIGEXEC_DEFINE_PORT_HANDLE(PoseCommitCandidates)
 RIGEXEC_DEFINE_PORT_HANDLE(PoseCommitPresent)
 RIGEXEC_DEFINE_PORT_HANDLE(PoseCommitEntering)
 RIGEXEC_DEFINE_PORT_HANDLE(PoseCommitCarry)
@@ -30,6 +30,9 @@ RIGEXEC_DEFINE_PORT_HANDLE(PoseCommitDescendants)
 RIGEXEC_DEFINE_PORT_HANDLE(PoseCommitBaseSlots)
 RIGEXEC_DEFINE_PORT_HANDLE(PoseCommitBaseDescendants)
 RIGEXEC_DEFINE_PORT_HANDLE(PoseCommitCandidate)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseCommitSources)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseCommitStatus)
+RIGEXEC_DEFINE_PORT_HANDLE(PoseCommitPresence)
 
 namespace {
 
@@ -53,8 +56,44 @@ enum CommitField : uint32_t {
     kClosest,
     kBlockedCount,
     kBlocked,
-    kSolverOutput
+    kSolverOutput,
+    kElementFrames,
+    kEntrySourceCount,
+    kEntrySources,
+    kEntryFrameCount,
+    kEntryFrames,
+    kEntryCandidateCount,
+    kEntryCandidates,
+    kCarriedCount,
+    kCarried,
+    kBaseCarriedCount,
+    kBaseCarried
 };
+
+/// What SingleChainIkResult and HarmonicsResult call a solved frame.
+constexpr uint32_t kSolved = 1;
+
+/// The frame of element \p index of solver frames \p source, as
+/// RigExecExtractElementFrame reads it: a valid, non-degenerate element's
+/// out-space, any other flagged degenerate.
+PointFrame
+ElementFrame(const rigExecRig::PointFrameArray &source, size_t index)
+{
+    using rigExecRig::kPointFrameDegenerate;
+    using rigExecRig::kPointFrameValid;
+    PointFrame out;
+    const PointFrame &f = source.frames[index];
+    if (!(f.flags & kPointFrameValid) || (f.flags & kPointFrameDegenerate)) {
+        out.flags = kPointFrameDegenerate;
+        return out;
+    }
+    const Mat4d m = rigExec::RigExecElementOutSpaceT<Mat4d, rigExecStd::Vec4d>(
+        f.points, index < source.rests.Size() ? &source.rests[index] : nullptr);
+    out.flags = rigExec::RigExecMatrixLandmarksT(m, &out.points)
+                    ? kPointFrameValid
+                    : kPointFrameDegenerate;
+    return out;
+}
 
 constexpr const char *kOp = "PoseCommit";
 
@@ -78,11 +117,38 @@ CheckPoseCommit(const rigExec::RigExecOpCheck &check, std::string *error)
     for (size_t k = 0; k < pairs; ++k)
         if (closest[k] < -1 || closest[k] >= int64_t(slots))
             return Fail(error, kOp, "names a closest candidate it lacks");
-    const bool listed = Fed(check, PoseCommitCandidates());
+    const auto entrySources =
+        ListAt<int32_t>(check.batch, kEntrySources, check.k);
+    const auto entryFrames =
+        ListAt<int32_t>(check.batch, kEntryFrames, check.k);
+    const auto entryCandidates =
+        ListAt<int32_t>(check.batch, kEntryCandidates, check.k);
+    const size_t sources = CheckElements(check, PoseCommitSources());
+    const bool gathered = sources != 0 && sources != rigExec::kRigExecPortUnfed;
+    if (entryFrames.Size() != entrySources.Size() ||
+        entryCandidates.Size() != entrySources.Size() ||
+        (!gathered && entrySources.Size()))
+        return Fail(error, kOp,
+                    "needs a source, frame and candidate per entry");
+    for (size_t e = 0; e < entrySources.Size(); ++e)
+        if (entrySources[e] < 0 || entryFrames[e] < 0 ||
+            entryCandidates[e] < 0 || entryCandidates[e] >= int64_t(slots) ||
+            (sources < rigExec::kRigExecPortUnfed &&
+             size_t(entrySources[e]) >= sources))
+            return Fail(error, kOp, "names a source or candidate it lacks");
+    const auto carried = ListAt<int32_t>(check.batch, kCarried, check.k);
+    const auto baseCarried =
+        ListAt<int32_t>(check.batch, kBaseCarried, check.k);
+    if (carried.Size() != pairs || baseCarried.Size() != pairs)
+        return Fail(error, kOp, "needs one carried candidate per descendant");
+    for (size_t k = 0; k < pairs; ++k)
+        if (carried[k] < -1 || carried[k] >= int64_t(slots) ||
+            baseCarried[k] < -1 || baseCarried[k] >= int64_t(slots) ||
+            (!solver && baseCarried[k] != -1))
+            return Fail(error, kOp, "carries a candidate it lacks");
     const size_t each = CheckElements(check, PoseCommitCandidate());
-    if ((listed ? each != 0 && each < rigExec::kRigExecPortUnfed
-                : !SameCount(each, slots)) ||
-        !SameCount(CheckElements(check, PoseCommitCandidates()), slots) ||
+    if ((gathered ? each != 0 && each < rigExec::kRigExecPortUnfed
+                  : !SameCount(each, slots)) ||
         !FedWith(check, PoseCommitEntering(), slots) ||
         !FedWith(check, PoseCommitCarry(), slots) ||
         !SameCount(CheckElements(check, PoseCommitPresent()), slots))
@@ -116,18 +182,24 @@ CheckPoseCommit(const rigExec::RigExecOpCheck &check, std::string *error)
 bool
 PoseCommitOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
+    using rigExecRig::PointFrameArray;
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
     const size_t slots = ValueAt<uint64_t>(batch, kSlotCount, k);
     const auto closest = ListAt<int32_t>(batch, kClosest, k);
     const auto blocked = ListAt<uint8_t>(batch, kBlocked, k);
     const size_t pairs = closest.Size();
     const bool solver = FlagAt(batch, kSolverOutput, k);
-    const Frames *listed = In<Frames>(io, PoseCommitCandidates());
+    const bool elements = FlagAt(batch, kElementFrames, k);
+    const auto entrySources = ListAt<int32_t>(batch, kEntrySources, k);
+    const auto entryFrames = ListAt<int32_t>(batch, kEntryFrames, k);
+    const auto entryCandidates = ListAt<int32_t>(batch, kEntryCandidates, k);
+    const auto carried = ListAt<int32_t>(batch, kCarried, k);
+    const auto baseCarried = ListAt<int32_t>(batch, kBaseCarried, k);
     const InList<PointFrame> each(io, PoseCommitCandidate());
-    const size_t candidateCount = listed ? listed->Size() : each.Size();
-    const auto candidates = [&](size_t pos) -> const PointFrame & {
-        return listed ? (*listed)[pos] : each[pos];
-    };
+    const InList<PointFrameArray> sources(io, PoseCommitSources());
+    const bool gathered = sources.Size() != 0;
+    const uint32_t *status = In<uint32_t>(io, PoseCommitStatus());
+    const bool solved = !status || *status == kSolved;
     const Frames &entering = *In<Frames>(io, PoseCommitEntering());
     const Frames &carry = *In<Frames>(io, PoseCommitCarry());
     const Frames *baseCarry = In<Frames>(io, PoseCommitBaseCarry());
@@ -140,19 +212,54 @@ PoseCommitOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     const auto fits = [](const Frames *frames, size_t count) {
         return frames && frames->Size() == count;
     };
-    if (candidateCount != slots || entering.Size() != slots ||
+    if ((!gathered && each.Size() != slots) || entering.Size() != slots ||
         carry.Size() != slots || (presentIn && presentIn->Size() != slots) ||
+        carried.Size() != pairs || baseCarried.Size() != pairs ||
         (solver && !fits(baseCarry, slots)) ||
         (pairs && (!fits(current, pairs) || !fits(closestIn, pairs) ||
                    !fits(descendantCarry, pairs) ||
                    (solver && !fits(descendantBaseCarry, pairs)))))
         return Fail(error, kOp, "needs one frame per joint and descendant");
-    std::vector<char> present(slots, 1);
+    // The candidates are gathered into Slots, where a present one stays.
+    Frames &outSlots = Out<Frames>(io, PoseCommitSlots());
+    Frames &outDescendants = Out<Frames>(io, PoseCommitDescendants());
+    Frames &baseSlots = Out<Frames>(io, PoseCommitBaseSlots());
+    Frames &baseDescendants = Out<Frames>(io, PoseCommitBaseDescendants());
+    Flags &presence = Out<Flags>(io, PoseCommitPresence());
+    outSlots.Resize(slots);
+    outDescendants.Resize(pairs);
+    baseSlots.Resize(solver ? slots : 0);
+    baseDescendants.Resize(solver ? pairs : 0);
+    presence.Resize(slots);
+    std::vector<char> present(slots, 0);
+    if (!gathered) {
+        for (size_t pos = 0; pos < slots; ++pos) {
+            outSlots[pos] = each[pos];
+            present[pos] =
+                solved && !(each[pos].flags &
+                            rigExec::eval::pose_ops::kPoseFrameDegenerate);
+        }
+    } else {
+        for (size_t e = 0; solved && e < entrySources.Size(); ++e) {
+            const size_t from = size_t(entrySources[e]);
+            const size_t index = size_t(entryFrames[e]);
+            const size_t pos = size_t(entryCandidates[e]);
+            if (from >= sources.Size() || pos >= slots)
+                return Fail(error, kOp, "names a source or candidate it lacks");
+            const PointFrameArray &source = sources[from];
+            if (index >= source.frames.Size()) {
+                if (elements)
+                    continue;
+                return Fail(error, kOp,
+                            "needs a frame for every joint it commits");
+            }
+            outSlots[pos] =
+                elements ? ElementFrame(source, index) : source.frames[index];
+            present[pos] = 1;
+        }
+    }
     for (size_t pos = 0; presentIn && pos < slots; ++pos)
-        present[pos] = (*presentIn)[pos] ? 1 : 0;
-    for (size_t pos = 0; !listed && pos < slots; ++pos)
-        if (candidates(pos).flags &
-            rigExec::eval::pose_ops::kPoseFrameDegenerate)
+        if (!(*presentIn)[pos])
             present[pos] = 0;
     bool any = false;
     for (const char p : present)
@@ -165,15 +272,14 @@ PoseCommitOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         for (size_t pos = 0; pos < slots; ++pos)
             if (present[pos])
                 deltaOk[pos] = char(rigExec::RigExecMeasureCommitDelta<Math>(
-                    entering[pos].points, candidates(pos).points,
-                    &deltas[pos]));
+                    entering[pos].points, outSlots[pos].points, &deltas[pos]));
         for (size_t d = 0; d < pairs; ++d) {
             const int pos = closest[d];
             if (rigExec::RigExecCommitPairSkipped(blocked[d] != 0, pos,
                                                   present.data(), slots))
                 continue;
             outcome[d] = uint8_t(rigExec::RigExecStageCommitPair<Math>(
-                (*current)[d], (*closestIn)[d], candidates(size_t(pos)),
+                (*current)[d], (*closestIn)[d], outSlots[size_t(pos)],
                 deltas[size_t(pos)], deltaOk[size_t(pos)] == 1, solver,
                 &staged[d]));
         }
@@ -196,24 +302,25 @@ PoseCommitOne(const RigExecOpBatch &batch, size_t k, std::string *error)
             }
         }
     }
-    Frames &outSlots = Out<Frames>(io, PoseCommitSlots());
-    Frames &outDescendants = Out<Frames>(io, PoseCommitDescendants());
-    Frames &baseSlots = Out<Frames>(io, PoseCommitBaseSlots());
-    Frames &baseDescendants = Out<Frames>(io, PoseCommitBaseDescendants());
-    outSlots.Resize(slots);
-    outDescendants.Resize(pairs);
-    baseSlots.Resize(solver ? slots : 0);
-    baseDescendants.Resize(solver ? pairs : 0);
     for (size_t pos = 0; pos < slots; ++pos) {
-        outSlots[pos] = present[pos] ? candidates(pos) : carry[pos];
+        presence[pos] = uint8_t(present[pos] ? 1 : 0);
         if (solver)
-            baseSlots[pos] = present[pos] ? candidates(pos) : (*baseCarry)[pos];
+            baseSlots[pos] = present[pos] ? outSlots[pos] : (*baseCarry)[pos];
+        if (!present[pos])
+            outSlots[pos] = carry[pos];
     }
+    const auto kept = [&](int32_t pos, const PointFrame &otherwise) {
+        return pos >= 0 && present[size_t(pos)] ? outSlots[size_t(pos)]
+                                                : otherwise;
+    };
     for (size_t d = 0; d < pairs; ++d) {
         const bool moved = Outcome(outcome[d]) == Outcome::Staged;
-        outDescendants[d] = moved ? staged[d] : (*descendantCarry)[d];
+        outDescendants[d] =
+            moved ? staged[d] : kept(carried[d], (*descendantCarry)[d]);
         if (solver)
-            baseDescendants[d] = moved ? staged[d] : (*descendantBaseCarry)[d];
+            baseDescendants[d] =
+                moved ? staged[d]
+                      : kept(baseCarried[d], (*descendantBaseCarry)[d]);
     }
     return true;
 }
@@ -234,8 +341,6 @@ constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
 constexpr auto kField = rigExec::RigExecOutputBound::Field;
 
 const rigExec::RigExecPortDesc kPorts[] = {
-    {&PoseCommitCandidates(), &rigExecRig::PointFrameList(), kOptional,
-     "candidates"},
     {&PoseCommitPresent(), &rigExecStd::BoolArray(), kOptional, "present"},
     {&PoseCommitEntering(), &rigExecRig::PointFrameList(), kRigExecPortInput,
      "entering"},
@@ -260,6 +365,11 @@ const rigExec::RigExecPortDesc kPorts[] = {
      kPairCount},
     {&PoseCommitCandidate(), &rigExecRig::PointFrameType(),
      kOptional | kRigExecPortArray, "candidate"},
+    {&PoseCommitSources(), &rigExecRig::PointFrameArrayType(),
+     kOptional | kRigExecPortArray, "sources"},
+    {&PoseCommitStatus(), &rigExecStd::UIntType(), kOptional, "status"},
+    {&PoseCommitPresence(), &rigExecStd::BoolArray(), kRigExecPortOutput,
+     "presence", kField, nullptr, nullptr, kSlotCount},
 };
 
 void
@@ -270,6 +380,12 @@ CommitValues(const void *payload, RigExecFieldValues &out)
     SetList(out, kPairCount, p.closest);
     SetList(out, kBlockedCount, p.blocked);
     SetFlag(out, kSolverOutput, p.solverOutput);
+    SetFlag(out, kElementFrames, p.elementFrames);
+    SetList(out, kEntrySourceCount, p.entrySources);
+    SetList(out, kEntryFrameCount, p.entryFrames);
+    SetList(out, kEntryCandidateCount, p.entryCandidates);
+    SetList(out, kCarriedCount, p.carried);
+    SetList(out, kBaseCarriedCount, p.baseCarried);
 }
 
 const rigExec::RigExecFieldDesc kFields[] = {
@@ -279,6 +395,17 @@ const rigExec::RigExecFieldDesc kFields[] = {
     Count("blockedCount"),
     Items("blocked", rigExecStd::BoolType(), kBlockedCount),
     Flag("solverOutput"),
+    Flag("elementFrames"),
+    Count("entrySourceCount"),
+    Items("entrySources", rigExecStd::IntType(), kEntrySourceCount),
+    Count("entryFrameCount"),
+    Items("entryFrames", rigExecStd::IntType(), kEntryFrameCount),
+    Count("entryCandidateCount"),
+    Items("entryCandidates", rigExecStd::IntType(), kEntryCandidateCount),
+    Count("carriedCount"),
+    Items("carried", rigExecStd::IntType(), kCarriedCount),
+    Count("baseCarriedCount"),
+    Items("baseCarried", rigExecStd::IntType(), kBaseCarriedCount),
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {
@@ -293,7 +420,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kFields;
     d.payloadFieldCount = std::size(kFields);
-    d.payloadVersion = 1;
+    d.payloadVersion = 2;
     d.payloadValues = &CommitValues;
     return d;
 }();

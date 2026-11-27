@@ -59,31 +59,9 @@ RigExecElementOutSpace(const RigExecPointFrameArray *source, size_t index)
         !source->frames[index].IsValid()) {
         return m;
     }
-    const std::array<GfVec3d, 4> &posed = source->frames[index].points;
-    const GfVec3d origin = posed[0];
-    const bool hasRest = index < source->rests.size();
-    GfMatrix4d rm(1.0);
-    for (int a = 0; a < 3; ++a) {
-        GfVec3d direction = posed[a + 1] - origin;
-        const double posedLength = direction.GetLength();
-        if (posedLength < 1e-12) {
-            return m; // degenerate axis: identity
-        }
-        direction /= posedLength;
-        double ratio = 1.0;
-        if (hasRest) {
-            const double restLength =
-                (source->rests[index][a + 1] - source->rests[index][0])
-                    .GetLength();
-            if (restLength > 1e-12) {
-                ratio = posedLength / restLength;
-            }
-        }
-        rm.SetRow(a, GfVec4d(direction[0] * ratio, direction[1] * ratio,
-                             direction[2] * ratio, 0));
-    }
-    rm.SetRow(3, GfVec4d(origin[0], origin[1], origin[2], 1));
-    return rm;
+    return RigExecElementOutSpaceT<GfMatrix4d, GfVec4d>(
+        source->frames[index].points,
+        index < source->rests.size() ? &source->rests[index] : nullptr);
 }
 
 /// Extracts element \p index of \p source as a scalar joint frame.

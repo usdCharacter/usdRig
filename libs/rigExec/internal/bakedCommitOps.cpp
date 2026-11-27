@@ -1,9 +1,12 @@
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecMath/poseCommitKernel.h"
+#include "rigExecOps/constraint/harmonicsOps.h"
 #include "rigExecOps/solver/poseCommitOps.h"
+#include "rigExecOps/solver/singleChainIkOps.h"
 #include "rigExecRigTypes/rigTypes.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -109,43 +112,6 @@ Elements(const RigExecTypeDesc &type, void *value, size_t count, T **data)
     return *data || !count;
 }
 
-/// The frame each candidate position of solver batch \p w holds and
-/// whether one is present: its solvers' published outputs, the last in
-/// batch order winning a position.
-template <class Visit>
-void
-EachSolverCandidate(const RigExecBakedProgramImpl &B, size_t w, Visit visit)
-{
-    for (const int si : B.walkSteps[w].batchSolvers) {
-        const auto &s = B.solvers[size_t(si)];
-        for (size_t k = 0; k < s.outputs.size(); ++k)
-            if (s.outPresent[k] && s.outPosition[k] >= 0)
-                visit(size_t(s.outPosition[k]), s.outFrames[k]);
-    }
-}
-
-/// Whether candidate \p pos of commit \p w is present this frame, and its
-/// frame in \p frame when it is.
-bool
-CandidateAt(const RigExecBakedProgramImpl &B, size_t w, size_t pos,
-            RigExecPointFrame *frame)
-{
-    const Commit &commit = B.commits[w];
-    if (!commit.solverOutput) {
-        if (pos < commit.frames.size())
-            *frame = commit.frames[pos];
-        return pos < commit.present.size() && commit.present[pos];
-    }
-    bool present = false;
-    EachSolverCandidate(B, w, [&](size_t at, const RigExecPointFrame &f) {
-        if (at == pos) {
-            *frame = f;
-            present = true;
-        }
-    });
-    return present;
-}
-
 /// The candidate position whose write descendant \p k of \p commit
 /// carries, or -1 when it carries a version written before the commit.
 int
@@ -181,6 +147,7 @@ RigExecBakedAddPoseCommitOp(const RigExecBakedProgramImpl &B,
     PoseCommitPayload p;
     p.slotCount = slots;
     p.solverOutput = commit.solverOutput;
+    p.elementFrames = commit.solverOutput;
     for (size_t k = 0; k < pairs; ++k) {
         bool known = true;
         const bool blocked = RigExecCommitParentBlocked(
@@ -199,6 +166,36 @@ RigExecBakedAddPoseCommitOp(const RigExecBakedProgramImpl &B,
                                    "parent chain");
         p.closest.push_back(commit.closestPos[k]);
         p.blocked.push_back(blocked ? 1 : 0);
+        p.carried.push_back(CarriedCandidate(commit, k, false));
+        p.baseCarried.push_back(
+            commit.solverOutput ? CarriedCandidate(commit, k, true) : -1);
+    }
+    const auto entry = [&](size_t source, size_t frame, int pos) {
+        if (pos < 0)
+            return;
+        p.entrySources.push_back(int32_t(source));
+        p.entryFrames.push_back(int32_t(frame));
+        p.entryCandidates.push_back(pos);
+    };
+    if (commit.solverOutput) {
+        const std::vector<int> &batch = B.walkSteps[w].batchSolvers;
+        for (size_t j = 0; j < batch.size(); ++j) {
+            const auto &s = B.solvers[size_t(batch[j])];
+            const size_t leading = RigExecBakedSolverLeadingFrames(s);
+            for (size_t k = 0; k < s.outputs.size(); ++k)
+                if (s.outputs[k].second >= 0)
+                    entry(j, size_t(s.outputs[k].second) + leading,
+                          s.outPosition[k]);
+        }
+    } else if (RigExecBakedConstraintStoresFrames(B, w)) {
+        const std::vector<int> &chain =
+            B.constraints[size_t(B.walkSteps[w].index)].targetSlots;
+        for (size_t k = 0; k < chain.size(); ++k) {
+            const auto found = std::lower_bound(commit.slots.begin(),
+                                                commit.slots.end(), chain[k]);
+            if (found != commit.slots.end() && *found == chain[k])
+                entry(0, k, int(found - commit.slots.begin()));
+        }
     }
     const RigExecNodeId node = builder->AddOp(PoseCommit(), &p);
     if (node != o)
@@ -218,21 +215,32 @@ RigExecBakedAddPoseCommitOp(const RigExecBakedProgramImpl &B,
     const auto store = [&](const RigExecPortHandle &port, T target) {
         layout->hostOutputs.push_back({node, port.Index(), uint8_t(target), w});
     };
-    if (RigExecBakedConstraintRunsAsOps(B, w) &&
-        !RigExecBakedConstraintStoresFrames(B, w)) {
-        if (slots != 1 || o == 0 ||
+    if (!commit.solverOutput) {
+        if (!RigExecBakedConstraintRunsAsOps(B, w) || o == 0 ||
             B.opNodeOrigins[o - 1].family != RigExecBakedOpFamily::Constraint ||
             B.opNodeOrigins[o - 1].object != int32_t(w) ||
             B.opNodeOrigins[o - 1].part != -1)
             return Fail(error, commit.moverPathText +
                                    ": a constraint commit without its "
                                    "constraint node");
-        builder->Connect(RigExecNodeId(o - 1), RigExecBakedConstraintOut(B, w),
-                         node, PoseCommitCandidate());
-        if (RigExecBakedConstraintStoresPresence(B, w)) {
-            look(PoseCommitPresent(), eval::OpLookupSource::CommitCandidates,
-                 1);
+        const RigExecNodeId solve(o - 1);
+        if (RigExecBakedConstraintStoresFrames(B, w)) {
+            builder->Connect(solve, SingleChainIkOut(), node,
+                             PoseCommitSources());
+            builder->Connect(solve, SingleChainIkStatus(), node,
+                             PoseCommitStatus());
         } else {
+            if (slots != 1)
+                return Fail(error, commit.moverPathText +
+                                       ": a constraint commit of " +
+                                       std::to_string(slots) + " joints");
+            builder->Connect(solve, RigExecBakedConstraintOut(B, w), node,
+                             PoseCommitCandidate());
+        }
+        if (RigExecBakedConstraintStoresPresence(B, w)) {
+            builder->Connect(solve, HarmonicsStatus(), node,
+                             PoseCommitStatus());
+        } else if (!RigExecBakedConstraintStoresFrames(B, w)) {
             builder->BindInput(node, PoseCommitPresent());
             layout->hostInputs.push_back({node, PoseCommitPresent().Index(),
                                           eval::OpHostSource::Lookup,
@@ -241,9 +249,6 @@ RigExecBakedAddPoseCommitOp(const RigExecBakedProgramImpl &B,
                 {uint8_t(eval::OpLookupSource::ConstraintEnvelope), w, -1,
                  uint8_t(eval::OpConstraintRead::Present)});
         }
-    } else {
-        look(PoseCommitCandidates(), eval::OpLookupSource::CommitCandidates, 0);
-        look(PoseCommitPresent(), eval::OpLookupSource::CommitCandidates, 1);
     }
     versions(PoseCommitEntering(), L::Entering);
     versions(PoseCommitCarry(), L::Carry);
@@ -265,7 +270,8 @@ RigExecBakedAddPoseCommitOp(const RigExecBakedProgramImpl &B,
         builder->BindOutput(node, PoseCommitBaseDescendants());
         store(PoseCommitBaseSlots(), T::CommitBaseSlots);
         store(PoseCommitBaseDescendants(), T::CommitBaseDescendants);
-        store(PoseCommitPresent(), T::CommitPresent);
+        builder->BindOutput(node, PoseCommitPresence());
+        store(PoseCommitPresence(), T::CommitPresent);
     }
     return true;
 }
@@ -280,76 +286,34 @@ RigExecBakedLookUpCommit(const RigExecBakedProgramImpl &B,
         return Fail(error, "commit " + std::to_string(lookup.object) +
                                " is no commit of the program");
     const Commit &commit = B.commits[lookup.object];
-    const size_t slots = commit.slots.size();
-    if (lookup.source == uint8_t(eval::OpLookupSource::CommitVersions)) {
-        bool base = false;
-        const std::vector<uint32_t> *versions =
-            Versions(commit, lookup.part, &base);
-        const std::vector<RigExecPointFrame> &store = base ? B.base : B.fin;
-        rigExecRig::PointFrame *out = nullptr;
-        if (!versions || !Elements(type, value, versions->size(), &out))
-            return Fail(error, "commit " + std::to_string(lookup.object) +
-                                   " names no frame list " +
-                                   std::to_string(lookup.part));
-        const bool descendants =
-            lookup.part == int32_t(eval::OpCommitList::DescendantCarry) ||
-            lookup.part == int32_t(eval::OpCommitList::DescendantBaseCarry);
-        for (size_t i = 0; i < versions->size(); ++i) {
-            // A descendant that is also a candidate carries what the commit
-            // writes for that candidate: its frame when present, else the
-            // candidate's own carry.
-            const int pos =
-                descendants ? CarriedCandidate(commit, i, base) : -1;
-            RigExecPointFrame candidate;
-            if (pos >= 0 &&
-                CandidateAt(B, lookup.object, size_t(pos), &candidate)) {
-                out[i] = ToOp(candidate);
-                continue;
-            }
-            const uint32_t version =
-                pos >= 0 ? (base ? commit.slotBaseCarry
-                                 : commit.slotCarry)[size_t(pos)]
-                         : (*versions)[i];
-            if (version >= store.size())
-                return Fail(error, "pose version " + std::to_string(version) +
-                                       " is no pose frame of the program");
-            out[i] = ToOp(store[version]);
-        }
-        return true;
-    }
-    if (lookup.part == 0) {
-        rigExecRig::PointFrame *out = nullptr;
-        if (!Elements(type, value, slots, &out))
-            return Fail(error, "the candidates of commit " +
-                                   std::to_string(lookup.object) +
-                                   " are no frame list");
-        if (!commit.solverOutput) {
-            for (size_t pos = 0; pos < slots; ++pos)
-                out[pos] = ToOp(commit.frames[pos]);
-            return true;
-        }
-        for (size_t pos = 0; pos < slots; ++pos)
-            out[pos] = rigExecRig::PointFrame();
-        EachSolverCandidate(B, lookup.object,
-                            [&](size_t pos, const RigExecPointFrame &frame) {
-                                if (pos < slots)
-                                    out[pos] = ToOp(frame);
-                            });
-        return true;
-    }
-    uint8_t *out = nullptr;
-    if (lookup.part != 1 || !Elements(type, value, slots, &out))
+    bool base = false;
+    const std::vector<uint32_t> *versions =
+        lookup.source == uint8_t(eval::OpLookupSource::CommitVersions)
+            ? Versions(commit, lookup.part, &base)
+            : nullptr;
+    const std::vector<RigExecPointFrame> &store = base ? B.base : B.fin;
+    rigExecRig::PointFrame *out = nullptr;
+    if (!versions || !Elements(type, value, versions->size(), &out))
         return Fail(error, "commit " + std::to_string(lookup.object) +
-                               " names no candidate list " +
+                               " names no frame list " +
                                std::to_string(lookup.part));
-    for (size_t pos = 0; pos < slots; ++pos)
-        out[pos] = commit.solverOutput ? 0 : uint8_t(commit.present[pos] != 0);
-    if (commit.solverOutput)
-        EachSolverCandidate(B, lookup.object,
-                            [&](size_t pos, const RigExecPointFrame &) {
-                                if (pos < slots)
-                                    out[pos] = 1;
-                            });
+    const bool descendants =
+        lookup.part == int32_t(eval::OpCommitList::DescendantCarry) ||
+        lookup.part == int32_t(eval::OpCommitList::DescendantBaseCarry);
+    for (size_t i = 0; i < versions->size(); ++i) {
+        // A descendant that is also a candidate carries what the commit
+        // writes for that candidate: the candidate's own carry here, its
+        // frame through the PoseCommit node when it is present.
+        const int pos = descendants ? CarriedCandidate(commit, i, base) : -1;
+        const uint32_t version =
+            pos >= 0
+                ? (base ? commit.slotBaseCarry : commit.slotCarry)[size_t(pos)]
+                : (*versions)[i];
+        if (version >= store.size())
+            return Fail(error, "pose version " + std::to_string(version) +
+                                   " is no pose frame of the program");
+        out[i] = ToOp(store[version]);
+    }
     return true;
 }
 

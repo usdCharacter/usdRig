@@ -1707,12 +1707,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 57 &&
-                      RigExecFormatOldestReadable == 57,
-                  "format 57 runs one-group op chains and is the only "
-                  "format Open reads");
-    // Every older format requires re-export: its small matrix, smooth,
-    // delta mush and lattice chains ran as their own steps.
+    static_assert(RigExecFormatVersion == 64 &&
+                      RigExecFormatOldestReadable == 64,
+                  "format 64 retires the commit candidates lookup and is the "
+                  "only format Open reads");
+    // Every older format requires re-export: it may read commit candidates
+    // through a lookup.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1723,13 +1723,14 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 57 through " +
+            " (this reader reads 64 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 57 ? "re-export: one-group op chains" : "rebake");
+            (version < 64 ? "re-export: commit candidates from op nodes"
+                          : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 57 ? reexports : rebakes);
+        ++(version < 64 ? reexports : rebakes);
     }
-    CHECK(reexports == 57 && rebakes == 1);
+    CHECK(reexports == 64 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -3157,8 +3158,8 @@ TestOpLookupOwners()
     expect("commit versions on a placement node",
            "reads a commit its node does not write back",
            [&](F &f) { look(f, place, 30, 0, 0); });
-    expect("commit candidates on a placement node",
-           "reads a commit its node does not write back",
+    expect("the retired commit candidates lookup",
+           "the retired commit candidates lookup",
            [&](F &f) { look(f, place, 31, 0, 0); });
     expect("a solver input on a placement node",
            "reads a solver its node does not run",

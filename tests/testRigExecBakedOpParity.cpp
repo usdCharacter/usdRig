@@ -1307,7 +1307,15 @@ ProbeCommits(const B &b)
                 &known);
             p.closest.push_back(commit.closestPos[k]);
             p.blocked.push_back(blocked ? 1 : 0);
+            p.carried.push_back(-1);
+            p.baseCarried.push_back(-1);
         }
+        for (size_t pos = 0; pos < slots; ++pos)
+            if (commit.present[pos]) {
+                p.entrySources.push_back(0);
+                p.entryFrames.push_back(int32_t(pos));
+                p.entryCandidates.push_back(int32_t(pos));
+            }
         bool refused = false;
         if (!commit.abandoned)
             refused = RigExecFirstCommitFailure(commit.outcome.data(),
@@ -1318,8 +1326,7 @@ ProbeCommits(const B &b)
         const auto bind = [&](const rigExec::RigExecPortHandle &port) {
             return builder.BindInput(id, port);
         };
-        const RigExecInputId candidates = bind(PoseCommitCandidates()),
-                             present = bind(PoseCommitPresent()),
+        const RigExecInputId candidates = bind(PoseCommitSources()),
                              entering = bind(PoseCommitEntering()),
                              carry = bind(PoseCommitCarry());
         RigExecInputId baseCarry, current, closest, descendantCarry,
@@ -1350,14 +1357,10 @@ ProbeCommits(const B &b)
                              ? RigExecEvaluator::Create(
                                    program, RigExecEvaluatorOptions(), &error)
                              : nullptr;
-        OpFrames candidateFrames;
-        candidateFrames.Resize(slots);
-        rigExecStd::RigExecArray<uint8_t> presentFlags;
-        presentFlags.Resize(slots);
-        for (size_t pos = 0; pos < slots; ++pos) {
-            candidateFrames[pos] = ToOp(commit.frames[pos]);
-            presentFlags[pos] = commit.present[pos] ? 1 : 0;
-        }
+        rigExecRig::PointFrameArray candidateFrames;
+        candidateFrames.frames.Resize(slots);
+        for (size_t pos = 0; pos < slots; ++pos)
+            candidateFrames.frames[pos] = ToOp(commit.frames[pos]);
         const auto set = [&](const RigExecInputId &input,
                              const OpFrames &frames) {
             return evaluator->SetInput(input, &frames, &error);
@@ -1365,7 +1368,6 @@ ProbeCommits(const B &b)
         bool ran =
             evaluator &&
             evaluator->SetInput(candidates, &candidateFrames, &error) &&
-            evaluator->SetInput(present, &presentFlags, &error) &&
             set(entering, Gather(b.fin, commit.slotReads)) &&
             set(carry, Gather(b.fin, commit.slotCarry)) &&
             (!commit.solverOutput ||

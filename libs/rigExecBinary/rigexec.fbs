@@ -1995,9 +1995,9 @@ table OpLookup {
   /// external_inputs, routed_inputs, then pose.provider_frame_inputs).
   /// 30 (format 43): the frames of pose commit `object` at version list
   /// `part`: 0 entering, 1 carry, 2 base carry, 3 current descendants, 4
-  /// closest, 5 descendant carry, 6 descendant base carry. 31 (format 43):
-  /// commit `object`'s candidates: `part` 0 their frames, 1 which are
-  /// present.
+  /// closest, 5 descendant carry, 6 descendant base carry. 31 (formats
+  /// 43 to 63), a commit's candidates, is retired: they arrive from op
+  /// nodes (format 64).
   /// 32 to 37 and 39 (format 47) read constraint commit `object`
   /// (OpConstraintRead, rigExecEvalCore/opSteps.h, in `read`): 32 its
   /// sources, `part` -1 all of them, else source `part`'s frame (`read`

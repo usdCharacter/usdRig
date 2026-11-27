@@ -6,6 +6,7 @@
 #include "rigExec/api/rigDesc.h"
 #include "rigExec/api/runState.h"
 #include "rigExec/api/taskSystem.h"
+#include "rigExec/internal/frameExtraction.h"
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecMath/moverTransformKernel.h"
@@ -4305,8 +4306,15 @@ TestPoseCommit()
     p.slotCount = 2;
     p.closest = {0, 0, 1};
     p.blocked = {0, 1, 0};
+    p.carried = {-1, -1, -1};
+    p.baseCarried = {-1, -1, -1};
+    p.entrySources = {0, 0};
+    p.entryFrames = {0, 1};
+    p.entryCandidates = {0, 1};
+    rigExecRig::PointFrameArray sources;
+    sources.frames = candidates;
     const std::vector<const RigExecPortHandle *> ports = {
-        &PoseCommitCandidates(),     &PoseCommitPresent(),
+        &PoseCommitSources(),        &PoseCommitPresent(),
         &PoseCommitEntering(),       &PoseCommitCarry(),
         &PoseCommitCurrent(),        &PoseCommitClosest(),
         &PoseCommitDescendantCarry()};
@@ -4319,7 +4327,7 @@ TestPoseCommit()
     Frames actual;
     const auto values = [&](const RigExecArray<uint8_t> &present,
                             const Frames &enter) {
-        return std::vector<const void *>{&candidates,     &present,   &enter,
+        return std::vector<const void *>{&sources,        &present,   &enter,
                                          &carry,          &currentIn, &closest,
                                          &descendantCarry};
     };
@@ -4347,11 +4355,52 @@ TestPoseCommit()
     CHECK(!descendants.Run(values(first, singular), &actual, &error));
     CHECK(error.find("singular hierarchy delta") != std::string::npos);
 
+    // A descendant that is also a present candidate carries its frame; a
+    // status other than solved leaves every joint at its carry.
+    PoseCommitPayload carrying = p;
+    carrying.carried = {-1, 0, -1};
+    Node carried(PoseCommit(), ports, PoseCommitDescendants(), &carrying);
+    CHECK(carried.Run(values(first, enteringIn), &actual));
+    CHECK(actual.Size() == 3 && SameBits(candidate[0], actual[1]));
+    CHECK(carried.Run(values(none, enteringIn), &actual));
+    CHECK(actual.Size() == 3 && SameResult(actual, descendantCarry));
+    std::vector<const RigExecPortHandle *> gated = ports;
+    gated.push_back(&PoseCommitStatus());
+    Node status(PoseCommit(), gated, PoseCommitSlots(), &p);
+    for (const uint32_t result : {0u, 1u, 2u}) {
+        std::vector<const void *> in = values(first, enteringIn);
+        in.push_back(&result);
+        CHECK(status.Run(in, &actual));
+        CHECK(actual.Size() == 2 &&
+              (result == 1 ? SameBits(candidate[0], actual[0])
+                           : SameResult(actual, carry)));
+    }
+
+    // Solver elements are read as their out-spaces; one past the frames is
+    // absent.
+    PoseCommitPayload solver = p;
+    solver.elementFrames = true;
+    solver.entryFrames = {0, 5};
+    Node elements(PoseCommit(), ports, PoseCommitSlots(), &solver);
+    RigExecPointFrameArray aggregate;
+    aggregate.frames = candidate;
+    aggregate.rests = {entering[0].points, entering[1].points};
+    sources.rests = RigExecArray<rigExecRig::PointLandmarks>(2);
+    sources.rests[0] = ToRigLandmarks(entering[0].points);
+    sources.rests[1] = ToRigLandmarks(entering[1].points);
+    RigExecArray<uint8_t> both(2);
+    both[0] = both[1] = 1;
+    CHECK(elements.Run(values(both, enteringIn), &actual));
+    CHECK(actual.Size() == 2 &&
+          SameBits(RigExecExtractElementFrame(&aggregate, 0), actual[0]) &&
+          SameBits(RigExecPointFrame(frame(-2, 0)), actual[1]));
+    sources.rests = {};
+
     Node unfed(
         PoseCommit(),
-        {&PoseCommitCandidates(), &PoseCommitEntering(), &PoseCommitCarry()},
+        {&PoseCommitSources(), &PoseCommitEntering(), &PoseCommitCarry()},
         PoseCommitSlots(), &p);
-    CHECK(!unfed.Run({&candidates, &enteringIn, &carry}, &actual, &error));
+    CHECK(!unfed.Run({&sources, &enteringIn, &carry}, &actual, &error));
     CHECK(error.find("per descendant") != std::string::npos);
 }
 

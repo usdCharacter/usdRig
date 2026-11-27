@@ -107,6 +107,39 @@ RigExecMatrixLandmarksT(const Mat4 &m, std::array<Vec3, 4> *points)
     return true;
 }
 
+/// The out-space of a solver element posed at \p posed: its axes normalized
+/// and scaled by their posed-to-rest length ratios (\p rest, null when the
+/// element has none), its origin the posed one; identity when an axis
+/// collapses.
+template <class Mat4, class Vec4, class Vec3>
+Mat4
+RigExecElementOutSpaceT(const std::array<Vec3, 4> &posed,
+                        const std::array<Vec3, 4> *rest)
+{
+    Mat4 m;
+    m.SetIdentity();
+    const Vec3 origin = posed[0];
+    Mat4 rm;
+    rm.SetIdentity();
+    for (size_t a = 0; a < 3; ++a) {
+        Vec3 direction = posed[a + 1] - origin;
+        const double posedLength = direction.GetLength();
+        if (posedLength < 1e-12)
+            return m;
+        direction /= posedLength;
+        double ratio = 1.0;
+        if (rest) {
+            const double restLength = ((*rest)[a + 1] - (*rest)[0]).GetLength();
+            if (restLength > 1e-12)
+                ratio = posedLength / restLength;
+        }
+        rm.SetRow(int(a), Vec4(direction[0] * ratio, direction[1] * ratio,
+                               direction[2] * ratio, 0));
+    }
+    rm.SetRow(3, Vec4(origin[0], origin[1], origin[2], 1));
+    return rm;
+}
+
 /// Whether a point frame may be read as a transform: flagged valid, not
 /// flagged degenerate, and every landmark finite. This is every evaluator's
 /// frame check.

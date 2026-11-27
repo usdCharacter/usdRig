@@ -1169,12 +1169,13 @@ private:
                                 _N(lookup->object) + " holds");
                 continue;
             }
-            if (lookup && (lookup->source == 30 || lookup->source == 31)) {
+            if (lookup && lookup->source == 31)
+                return _Bad("op_graph.lookups: the retired commit candidates "
+                            "lookup");
+            if (lookup && lookup->source == 30) {
                 if (!_f.pose ||
                     !_Has(_f.pose->commits, int64_t(lookup->object)) ||
-                    lookup->part < 0 ||
-                    lookup->part > (lookup->source == 30 ? 6 : 1) ||
-                    lookup->read)
+                    lookup->part < 0 || lookup->part > 6 || lookup->read)
                     return _Bad("op_graph.lookups: a commit lookup reads "
                                 "nothing commit " +
                                 _N(lookup->object) + " holds");
@@ -1795,8 +1796,7 @@ private:
                 } else if (lookup.source == 10 && stores[n] != object) {
                     return bad(" reads the inputs of a revision its node does "
                                "not store");
-                } else if ((lookup.source == 30 || lookup.source == 31) &&
-                           _commitNode[n] != object) {
+                } else if (lookup.source == 30 && _commitNode[n] != object) {
                     return bad(" reads a commit its node does not write "
                                "back");
                 } else if (lookup.source == 40 && _avarNode[n] != object) {
@@ -10667,13 +10667,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 57,
+    static_assert(RigExecFormatOldestReadable == 64,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: one-group op chains"
+                ? "re-export: commit candidates from op nodes"
                 : "rebake");
 }
 

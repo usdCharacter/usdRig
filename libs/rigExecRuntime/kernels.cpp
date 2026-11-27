@@ -74,32 +74,9 @@ RrElementOutSpace(const RrPointFrameArray *source, size_t index)
         !source->frames[index].IsValid()) {
         return m;
     }
-    const std::array<RrVec3d, 4> &posed = source->frames[index].points;
-    const RrVec3d origin = posed[0];
-    const bool hasRest = index < source->rests.size();
-    RrMat4d rm;
-    rm.SetIdentity();
-    for (int a = 0; a < 3; ++a) {
-        RrVec3d direction = posed[size_t(a) + 1] - origin;
-        const double posedLength = direction.GetLength();
-        if (posedLength < 1e-12) {
-            return m;
-        }
-        direction /= posedLength;
-        double ratio = 1.0;
-        if (hasRest) {
-            const double restLength =
-                (source->rests[index][size_t(a) + 1] - source->rests[index][0])
-                    .GetLength();
-            if (restLength > 1e-12) {
-                ratio = posedLength / restLength;
-            }
-        }
-        rm.SetRow(a, RrVec4d(direction[0] * ratio, direction[1] * ratio,
-                             direction[2] * ratio, 0));
-    }
-    rm.SetRow(3, RrVec4d(origin[0], origin[1], origin[2], 1));
-    return rm;
+    return RigExecElementOutSpaceT<RrMat4d, RrVec4d>(
+        source->frames[index].points,
+        index < source->rests.size() ? &source->rests[index] : nullptr);
 }
 
 RrPointFrame

@@ -3019,7 +3019,7 @@ bool RigExecBakedAddPoseCommitOp(const RigExecBakedProgramImpl &B,
                                  RigExecRigDescBuilder *builder,
                                  eval::OpStepLayout *layout, size_t o,
                                  std::string *error);
-/// Resolves a CommitVersions or CommitCandidates lookup.
+/// Resolves a CommitVersions lookup.
 bool RigExecBakedLookUpCommit(const RigExecBakedProgramImpl &B,
                               const eval::OpLookup &lookup,
                               const RigExecTypeDesc &type, void *value,
@@ -3039,12 +3039,12 @@ RigExecBakedConstraintOut(const RigExecBakedProgramImpl &B, size_t w);
 /// Whether the constraint walk step \p w commits solves as op nodes.
 bool RigExecBakedConstraintRunsAsOps(const RigExecBakedProgramImpl &B,
                                      size_t w);
-/// Whether those nodes' store writes which of its candidates are present,
-/// which its PoseCommit node then reads from the commit.
+/// Whether those nodes report through a status whether their candidate is
+/// present.
 bool RigExecBakedConstraintStoresPresence(const RigExecBakedProgramImpl &B,
                                           size_t w);
-/// Whether those nodes' store also writes its candidates' frames, which its
-/// PoseCommit node reads from the commit with their presence.
+/// Whether those nodes solve a chain of candidates, which their PoseCommit
+/// node reads whole, rather than one candidate.
 bool RigExecBakedConstraintStoresFrames(const RigExecBakedProgramImpl &B,
                                         size_t w);
 /// The Constraint op node of origin \p o, numbered \p o.
@@ -3109,8 +3109,12 @@ bool RigExecBakedAddSolverOp(const RigExecBakedProgramImpl &B,
                              RigExecRigDescBuilder *builder,
                              eval::OpStepLayout *layout, size_t o,
                              std::string *error);
-/// Feeds each frame blend's node from its input solvers' last nodes, once
-/// every node is added.
+/// The frames solver \p s's op output leads with that are no joint of its
+/// aggregate.
+size_t
+RigExecBakedSolverLeadingFrames(const RigExecBakedProgramImpl::Solver &s);
+/// Feeds each frame blend's node and each solver batch's PoseCommit node
+/// from their solvers' last nodes, once every node is added.
 bool RigExecBakedConnectSolverOps(const RigExecBakedProgramImpl &B,
                                   RigExecRigDescBuilder *builder,
                                   std::string *error);

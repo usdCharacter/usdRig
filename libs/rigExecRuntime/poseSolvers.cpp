@@ -677,50 +677,6 @@ _RrCommitElements(const RigExecTypeDesc &type, void *value, size_t count,
     return *data || !count;
 }
 
-/// Calls \p visit with each candidate position solver batch \p w's
-/// solvers published and its frame, the last in batch order winning.
-template <class Visit>
-void
-_RrEachSolverCandidate(const RrProgram &p, size_t w, Visit visit)
-{
-    for (const int si : p.poses->walkSteps[w].batchSolvers) {
-        if (si < 0 || size_t(si) >= p.poses->solvers.size() ||
-            size_t(si) >= p.store.solverOutFrames.size() ||
-            size_t(si) >= p.store.solverOutPresent.size())
-            continue;
-        const RigExecWireSolver &s = p.poses->solvers[size_t(si)];
-        const auto &frames = p.store.solverOutFrames[size_t(si)];
-        const auto &present = p.store.solverOutPresent[size_t(si)];
-        for (size_t k = 0; k < s.outPosition.size() && k < frames.size() &&
-                           k < present.size();
-             ++k)
-            if (present[k] && s.outPosition[k] >= 0)
-                visit(size_t(s.outPosition[k]), frames[k]);
-    }
-}
-
-/// Whether candidate \p pos of commit \p w is present this frame, and its
-/// frame in \p frame when it is.
-bool
-_RrCandidateAt(const RrProgram &p, size_t w, size_t pos, RrPointFrame *frame)
-{
-    const RigExecWireCommit &commit = p.poses->commits[w];
-    const RrCommitScratch &scratch = p.store.commits[w];
-    if (!commit.solverOutput) {
-        if (pos < scratch.frames.size())
-            *frame = scratch.frames[pos];
-        return pos < scratch.present.size() && scratch.present[pos];
-    }
-    bool present = false;
-    _RrEachSolverCandidate(p, w, [&](size_t at, const RrPointFrame &f) {
-        if (at == pos) {
-            *frame = f;
-            present = true;
-        }
-    });
-    return present;
-}
-
 /// The candidate position whose write descendant \p k of \p commit
 /// carries, or -1 when it carries a version written before the commit.
 int
@@ -745,83 +701,37 @@ RrLookUpCommit(const RrProgram *program, const eval::OpLookup &lookup,
                const RigExecTypeDesc &type, void *value, std::string *error)
 {
     const RrProgram &p = *program;
-    if (lookup.object >= p.poses->commits.size() ||
-        lookup.object >= p.store.commits.size())
+    if (lookup.object >= p.poses->commits.size())
         return _RrCommitFail(error, "commit " + std::to_string(lookup.object) +
                                         " is no commit of the program");
     const RigExecWireCommit &commit = p.poses->commits[lookup.object];
-    const RrCommitScratch &scratch = p.store.commits[lookup.object];
-    const size_t slots = commit.slots.size();
-    if (lookup.source == uint8_t(eval::OpLookupSource::CommitVersions)) {
-        bool base = false;
-        const std::vector<uint32_t> *versions =
-            _RrCommitVersions(commit, lookup.part, &base);
-        const std::vector<RrPointFrame> &store =
-            base ? p.store.base : p.store.fin;
-        RrPointFrame *out = nullptr;
-        if (!versions ||
-            !_RrCommitElements(type, value, versions->size(), &out))
-            return _RrCommitFail(error, "commit " +
-                                            std::to_string(lookup.object) +
-                                            " names no frame list " +
-                                            std::to_string(lookup.part));
-        const bool descendants =
-            lookup.part == int32_t(eval::OpCommitList::DescendantCarry) ||
-            lookup.part == int32_t(eval::OpCommitList::DescendantBaseCarry);
-        for (size_t i = 0; i < versions->size(); ++i) {
-            const int pos =
-                descendants ? _RrCarriedCandidate(commit, i, base) : -1;
-            if (pos >= 0 &&
-                _RrCandidateAt(p, lookup.object, size_t(pos), &out[i]))
-                continue;
-            const uint32_t version =
-                pos >= 0 ? (base ? commit.slotBaseCarry
-                                 : commit.slotCarry)[size_t(pos)]
-                         : (*versions)[i];
-            if (version >= store.size())
-                return _RrCommitFail(error, "pose version " +
-                                                std::to_string(version) +
-                                                " is no pose frame of the "
-                                                "program");
-            out[i] = store[version];
-        }
-        return true;
-    }
-    if (lookup.part == 0) {
-        RrPointFrame *out = nullptr;
-        if (!_RrCommitElements(type, value, slots, &out) ||
-            (!commit.solverOutput && scratch.frames.size() < slots))
-            return _RrCommitFail(error, "the candidates of commit " +
-                                            std::to_string(lookup.object) +
-                                            " are no frame list");
-        if (!commit.solverOutput) {
-            for (size_t pos = 0; pos < slots; ++pos)
-                out[pos] = scratch.frames[pos];
-            return true;
-        }
-        for (size_t pos = 0; pos < slots; ++pos)
-            out[pos] = RrPointFrame();
-        _RrEachSolverCandidate(p, lookup.object,
-                               [&](size_t pos, const RrPointFrame &frame) {
-                                   if (pos < slots)
-                                       out[pos] = frame;
-                               });
-        return true;
-    }
-    uint8_t *out = nullptr;
-    if (lookup.part != 1 || !_RrCommitElements(type, value, slots, &out) ||
-        (!commit.solverOutput && scratch.present.size() < slots))
+    bool base = false;
+    const std::vector<uint32_t> *versions =
+        lookup.source == uint8_t(eval::OpLookupSource::CommitVersions)
+            ? _RrCommitVersions(commit, lookup.part, &base)
+            : nullptr;
+    const std::vector<RrPointFrame> &store = base ? p.store.base : p.store.fin;
+    RrPointFrame *out = nullptr;
+    if (!versions || !_RrCommitElements(type, value, versions->size(), &out))
         return _RrCommitFail(error, "commit " + std::to_string(lookup.object) +
-                                        " names no candidate list " +
+                                        " names no frame list " +
                                         std::to_string(lookup.part));
-    for (size_t pos = 0; pos < slots; ++pos)
-        out[pos] = commit.solverOutput ? 0 : uint8_t(scratch.present[pos] != 0);
-    if (commit.solverOutput)
-        _RrEachSolverCandidate(p, lookup.object,
-                               [&](size_t pos, const RrPointFrame &) {
-                                   if (pos < slots)
-                                       out[pos] = 1;
-                               });
+    const bool descendants =
+        lookup.part == int32_t(eval::OpCommitList::DescendantCarry) ||
+        lookup.part == int32_t(eval::OpCommitList::DescendantBaseCarry);
+    for (size_t i = 0; i < versions->size(); ++i) {
+        const int pos = descendants ? _RrCarriedCandidate(commit, i, base) : -1;
+        const uint32_t version =
+            pos >= 0
+                ? (base ? commit.slotBaseCarry : commit.slotCarry)[size_t(pos)]
+                : (*versions)[i];
+        if (version >= store.size())
+            return _RrCommitFail(error, "pose version " +
+                                            std::to_string(version) +
+                                            " is no pose frame of the "
+                                            "program");
+        out[i] = store[version];
+    }
     return true;
 }
 

@@ -741,7 +741,13 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// op chain members: a chain holding one is a range chain even when it is
 /// cut into one vertex group (Revision.range_role), and lookup source 11 is
 /// the identity a matrix transform falls back to.
-inline constexpr uint32_t RigExecFormatVersion = 57;
+///
+/// Format 64 feeds each PoseCommit node its candidates from the op nodes
+/// that produce them: a solver batch's solvers and a single-chain IK's chain
+/// through its Sources input, a harmonics' and single-chain IK's status
+/// through Status. OpGraph.lookups source 31 is retired and refused; a
+/// solver commit stores its presence from the node's Presence output.
+inline constexpr uint32_t RigExecFormatVersion = 64;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -749,7 +755,7 @@ inline constexpr uint32_t RigExecFormatVersion = 57;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 57;
+inline constexpr uint32_t RigExecFormatOldestReadable = 64;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

@@ -1,6 +1,7 @@
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecOps/solver/chainSolverOps.h"
+#include "rigExecOps/solver/poseCommitOps.h"
 #include "rigExecOps/solver/frameBlendOps.h"
 #include "rigExecOps/solver/ribbonFramesOps.h"
 #include "rigExecOps/solver/skeleton2dOps.h"
@@ -148,6 +149,12 @@ SolverOut(const Solver &s)
 }
 
 } // namespace
+
+size_t
+RigExecBakedSolverLeadingFrames(const RigExecBakedProgramImpl::Solver &s)
+{
+    return LeadingFrames(s);
+}
 
 int
 RigExecBakedSolverOf(const RigExecBakedProgramImpl &B,
@@ -429,6 +436,24 @@ RigExecBakedConnectSolverOps(const RigExecBakedProgramImpl &B,
             builder->Connect(RigExecNodeId(from),
                              SolverOut(B.solvers[size_t(input)]),
                              RigExecNodeId(node), *port);
+        }
+    }
+    for (size_t o = 0; o < B.opNodeOrigins.size(); ++o) {
+        const RigExecBakedOpOrigin &origin = B.opNodeOrigins[o];
+        if (origin.family != RigExecBakedOpFamily::PoseCommit ||
+            origin.kind != RigExecBakedStepKind::SolverCommit)
+            continue;
+        for (const int si : B.walkSteps[size_t(origin.object)].batchSolvers) {
+            const int from = si >= 0 && size_t(si) < solverNode.size()
+                                 ? solverNode[size_t(si)]
+                                 : -1;
+            if (from < 0 || size_t(from) >= o)
+                return Fail(error, "op nodes: the commit of " +
+                                       B.solvers[size_t(si)].pathText +
+                                       " follows no op node of it");
+            builder->Connect(RigExecNodeId(from),
+                             SolverOut(B.solvers[size_t(si)]), RigExecNodeId(o),
+                             PoseCommitSources());
         }
     }
     return true;
