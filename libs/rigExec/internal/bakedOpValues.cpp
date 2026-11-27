@@ -1467,18 +1467,6 @@ RigExecBakedPacketContentKey(const RigExecBakedProgramImpl &B, uint32_t slot,
     Put(out, v->external);
     Put(out, v->status);
     Put(out, v->layoutUsable);
-    if (v->blendChunked) {
-        Put(out, uint64_t(v->blendSamples.size()));
-        for (const auto &channel : v->blendSamples)
-            for (const auto &sample : channel.samples) {
-                Put(out, sample.activation);
-                Put(out, bool(sample.layout));
-                if (sample.layout) {
-                    Array(out, sample.layout->offsets);
-                    Array(out, sample.layout->indices);
-                }
-            }
-    }
     Put(out, v->envelopeOk);
     Array(out, v->envelope);
     Put(out, v->fullStrength);

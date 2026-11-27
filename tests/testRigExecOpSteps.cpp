@@ -827,6 +827,12 @@ struct GroupHost {
         *error = "no revisions";
         return false;
     }
+    void LookupGroups(const eval::OpLookup &, const uint32_t **groups,
+                      size_t *count) const
+    {
+        *groups = nullptr;
+        *count = 0;
+    }
     bool StoreRevisionEnabled(const eval::OpHostOutput &, const void *,
                               std::string *error)
     {

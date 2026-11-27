@@ -499,8 +499,15 @@ struct RigExecBakedGeomRevision {
     /// This revision's blend channels, in `binding.blendInputs` order.
     /// Empty for every operation but a blend shape.
     std::vector<RigExecBakedGeomBlendChannel> blendChannels;
+    /// A Range blend shape (Build state): a BlendShape range chain member
+    /// over the sparse layouts and activations read at Build (pinned), each
+    /// channel's weight looked up per frame. Per channel, its samples'
+    /// activations and layouts and the vertex groups they reach.
     bool blendChunked = false;
-    std::vector<RigExecBlendChannel> blendSamples;
+    std::vector<std::vector<
+        std::pair<float, std::shared_ptr<const RigExecBlendSampleLayout>>>>
+        opBlendSamples;
+    std::vector<std::vector<uint32_t>> blendChannelGroups;
     std::vector<int> influenceSlots;
     int transformSlot = -1;
     /// The rigExec:transformSpace provider's slot, or -1.
@@ -892,7 +899,7 @@ struct RigExecBakedGeomRevision {
     std::array<int, 3> opLatticeDivisions = {2, 2, 2};
     bool OpNodes() const
     {
-        return opMatrix || opSmooth || opMush || opLattice;
+        return opMatrix || opSmooth || opMush || opLattice || blendChunked;
     }
     bool opMatrixRadial = false;
     bool opMatrixRadialLeaf = false;
@@ -4573,7 +4580,6 @@ struct RigExecBakedRunShadow {
     };
     struct RevisionState {
         std::vector<std::vector<BlendSampleState>> blendSamples;
-        std::vector<RigExecBlendChannel> computedBlendSamples;
         std::shared_ptr<const RigExecSkinTopology> topology, partitionTopology;
         bool topologyResolved = false;
         std::shared_ptr<const RigExecSkinTopology> layoutHandle,
@@ -4850,6 +4856,11 @@ bool RigExecBakedRevisionLeaf(const RigExecBakedProgramImpl &B, uint32_t id,
 /// status, and its weight display from the packet its op reads.
 bool RigExecBakedStoreRevisionEnabled(RigExecBakedProgramImpl &B, uint32_t id,
                                       bool enabled, std::string *error);
+/// The vertex groups the channel a BlendChannelWeight \p lookup reads
+/// reaches: of its Range blend shape, as Build keyed them.
+void RigExecBakedLookupGroups(const RigExecBakedProgramImpl &B,
+                              const eval::OpLookup &lookup,
+                              const uint32_t **groups, size_t *count);
 bool
 RigExecBakedGeometryReadsLeaf(const RigExecBakedProgramImpl::GeomRevision &,
                               const RigExecBakedStep &, size_t);

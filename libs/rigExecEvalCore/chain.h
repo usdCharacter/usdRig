@@ -34,7 +34,6 @@
 #include "rigExecEvalCore/kinds.h"
 #include "rigExecEvalCore/skin.h"
 #include "rigExecEvalCore/step.h"
-#include "rigExecMath/blendRangeKernel.h"
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/pointRanges.h"
@@ -57,7 +56,6 @@ enum ChainStepDetail : int32_t {
 
 /// The op ordinals the chain bodies dispatch on, in wire order.
 inline constexpr int kChainOpSkin = int(fb::RevisionOp::Skin);
-inline constexpr int kChainOpBlendShape = int(fb::RevisionOp::BlendShape);
 inline constexpr int kChainOpWire = int(fb::RevisionOp::Wire);
 
 /// Acceptance ordinals both front ends already spell
@@ -90,7 +88,6 @@ template <class Point> struct GroupStepAccessT {
     bool rangeSetAside = false;
     bool applies = false;
     bool skin = false;
-    bool blendChunked = false;
     bool partitionStale = false;
     bool fullStrength = false;
     size_t precedingCount = 0;
@@ -610,12 +607,6 @@ RunGroupStepBody(Host &host, size_t chain, size_t revision, size_t g)
             return {Outcome::Applied, kNoStepDetail};
         }
         RigExecPublishPassedGroup(&state, entering, from);
-        return {Outcome::Applied, kNoStepDetail};
-    }
-    if (access.blendChunked) {
-        host.state().runBlendGroup(chain, revision, g, begin, end, entering,
-                                   &state);
-        state.ok = true;
         return {Outcome::Applied, kNoStepDetail};
     }
     const int k = RigExecGroupScratch(&state, end - begin);

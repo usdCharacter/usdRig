@@ -2092,7 +2092,6 @@ struct RigExecBakedGeomChunk {
     /// UNION over the range, computed from the same indices the kernel
     /// reads.
     std::vector<int> key;
-    std::vector<GfVec3f> blendDeltas;
     /// The revision's influence table as this chunk sees it: identity
     /// everywhere, with the key's entries copied from the matrix slots
     /// each run. Linear blend skinning reads an entry only through an

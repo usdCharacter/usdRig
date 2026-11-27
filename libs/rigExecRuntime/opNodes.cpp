@@ -213,6 +213,11 @@ struct RrOpHost {
     {
         return RrGeoLookUpRevision(&p, lookup, type, value, error);
     }
+    void LookupGroups(const eval::OpLookup &lookup, const uint32_t **groups,
+                      size_t *count) const
+    {
+        RrGeoLookupGroups(&p, lookup, groups, count);
+    }
     bool StoreRevisionEnabled(const eval::OpHostOutput &output,
                               const void *value, std::string *error) const
     {

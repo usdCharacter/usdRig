@@ -340,6 +340,10 @@ enum class OpRevisionRead : uint8_t {
     /// at the evaluated time.
     LatticeRestCage = 14,
     LatticeLiveCage = 15,
+    /// Float: the weight of a blend shape's channel `part`, as its pose
+    /// interpolator or its own input answers it. A List of these feeds a
+    /// range chain member group by group (OpLookupKeyed).
+    BlendChannelWeight = 16,
 };
 
 /// Whether a lookup of \p source is one the host answers through
@@ -781,18 +785,48 @@ struct OpStepLayout {
     /// Per value number: its first OpGroupValue slot, or kRigExecInvalidIndex,
     /// and the node writing it, or kRigExecInvalidIndex for an input.
     std::vector<uint32_t> groupBase, producerOf;
+    /// Per hostInputs entry: whether it is keyed (OpLookupKeyed). Per range
+    /// chain: whether a member reads a keyed input, and its first group
+    /// plan slot past the chains' plans.
+    std::vector<uint8_t> keyed, chainKeyed;
+    std::vector<uint32_t> planGroupBase;
     uint32_t valueCount = 0;
     uint32_t groupValueCount = 0;
+    uint32_t planGroupCount = 0;
 
     uint32_t PlanSlot(size_t chain) const
     {
         return valueCount + uint32_t(chain);
     }
+    /// The plan of group \p g of a keyed chain: it moves when a keyed
+    /// element that reaches the group does.
+    uint32_t PlanGroupSlot(size_t chain, uint32_t g) const
+    {
+        return valueCount + uint32_t(chains.size()) + planGroupBase[chain] + g;
+    }
     uint32_t OpValueCount() const
     {
-        return valueCount + uint32_t(chains.size());
+        return valueCount + uint32_t(chains.size()) + planGroupCount;
     }
 };
+
+/// Whether \p lookup lists blend channel weights of one revision, each
+/// element reaching only the vertex groups the host's LookupGroups names: a
+/// range chain's head moves the plans of those groups alone when it moves.
+inline bool
+OpLookupKeyed(const OpStepLayout &layout, const OpLookup &lookup)
+{
+    if (lookup.source != uint8_t(OpLookupSource::List) || lookup.part <= 0 ||
+        size_t(lookup.object) + size_t(lookup.part) > layout.lookups.size())
+        return false;
+    for (int32_t e = 0; e < lookup.part; ++e) {
+        const OpLookup &element = layout.lookups[lookup.object + uint32_t(e)];
+        if (element.source != uint8_t(OpLookupSource::RevisionLeaf) ||
+            element.read != uint8_t(OpRevisionRead::BlendChannelWeight))
+            return false;
+    }
+    return true;
+}
 
 inline bool
 OpLayoutFail(std::string *error, const std::string &why)
@@ -853,6 +887,12 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
                 layout->groupValueCount += groups;
             }
         }
+    }
+    layout->planGroupBase.assign(chains, 0);
+    layout->planGroupCount = 0;
+    for (size_t c = 0; c < chains; ++c) {
+        layout->planGroupBase[c] = layout->planGroupCount;
+        layout->planGroupCount += layout->chains[c].Groups();
     }
     // Per value: the nodes reading it, built for the first member that
     // leaves groups unwritten.
@@ -923,6 +963,8 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
     }
     layout->hostInputIds.clear();
     layout->grouped.clear();
+    layout->keyed.clear();
+    layout->chainKeyed.assign(chains, 0);
     layout->lookupsOf.assign(nodes, std::vector<uint32_t>());
     layout->hostOutputsOf.assign(nodes, std::vector<uint32_t>());
     for (const OpHostInput &input : layout->hostInputs) {
@@ -942,6 +984,7 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
         const uint8_t grouped =
             (flags & kRigExecPortNeighbourhood) ? uint8_t(2) : uint8_t(1);
         layout->grouped.push_back(0);
+        layout->keyed.push_back(0);
         if (input.source == OpHostSource::ChainPoints) {
             if (!member || !points)
                 return OpLayoutFail(error,
@@ -1020,6 +1063,25 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
                                             std::to_string(lookup.object) +
                                             ", which the layout lacks or which "
                                             "answer no matrix");
+            }
+            if (OpLookupKeyed(*layout, lookup)) {
+                const RigExecTypeDesc &type =
+                    *RigExecRegistry::Get()
+                         .TypeAt(layout->nodes[input.node]
+                                     .op->ports[input.port]
+                                     .type->Index())
+                         .desc;
+                if (!member || !type.element ||
+                    RigExecRegistry::Get()
+                            .TypeAt(type.element->Index())
+                            .desc->size != sizeof(float))
+                    return OpLayoutFail(error,
+                                        "node " + std::to_string(input.node) +
+                                            " reads channel weights group by "
+                                            "group outside a range chain or "
+                                            "into no float array");
+                layout->keyed.back() = 1;
+                layout->chainKeyed[layout->chainOf[input.node]] = 1;
             }
             if (points)
                 layout->grouped.back() = grouped;
@@ -1547,6 +1609,8 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
     if (kind == OpStepKind::ChainHead) {
         // The plan moves, and every range step reruns, only when a member's
         // looked-up input does: range steps read everything else themselves.
+        // A keyed element moves the plans of the groups host.LookupGroups
+        // names for it.
         bool moved = false;
         for (const RigExecNodeId member : desc.members) {
             if (!ResolveOpLookups(layout, host, state, member, error))
@@ -1554,6 +1618,36 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
             for (const uint32_t i : layout.lookupsOf[member]) {
                 const OpPortValue &value = *state->lookedUp[i];
                 std::vector<uint8_t> &held = state->lookedUpBytes[i];
+                if (layout.keyed[i]) {
+                    const OpLookup &list =
+                        layout.lookups[layout.hostInputs[i].object];
+                    const size_t size = sizeof(float);
+                    OpPortValue &weights = *state->lookedUp[i];
+                    const auto *bytes = static_cast<const uint8_t *>(
+                        weights.Type().data(weights.Value()));
+                    const size_t all = size_t(list.part) * size;
+                    if (held.size() != all) {
+                        held.assign(bytes, bytes + all);
+                        moved = true;
+                        continue;
+                    }
+                    for (uint32_t e = 0; e < uint32_t(list.part); ++e) {
+                        if (std::memcmp(held.data() + e * size,
+                                        bytes + e * size, size) == 0)
+                            continue;
+                        std::memcpy(held.data() + e * size, bytes + e * size,
+                                    size);
+                        const uint32_t *reached = nullptr;
+                        size_t count = 0;
+                        host.LookupGroups(layout.lookups[list.object + e],
+                                          &reached, &count);
+                        for (size_t r = 0; r < count; ++r)
+                            if (reached[r] < groups)
+                                ++state->versions[layout.PlanGroupSlot(
+                                    index, reached[r])];
+                    }
+                    continue;
+                }
                 const auto *bytes = static_cast<const uint8_t *>(value.Value());
                 const size_t size = value.Type().size;
                 if (!value.Type().triviallyCopyable || held.size() != size ||

@@ -1199,6 +1199,10 @@ bool RrGeoRevisionLeaf(const RrProgram *program, uint32_t revision,
 bool RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
                          const RigExecTypeDesc &type, void *value,
                          std::string *error);
+// The vertex groups the channel a BlendChannelWeight \p lookup reads reaches,
+// from its revision's chunk keys.
+void RrGeoLookupGroups(const RrProgram *program, const eval::OpLookup &lookup,
+                       const uint32_t **groups, size_t *count);
 // Revision \p revision of \p chain when its weight object is measured
 // against the points entering it: its weight field's weights as its dense
 // packet. False when the field holds none, \p missing when the program

@@ -2468,7 +2468,6 @@ struct RrGeometryScratch {
         int begin = 0;
         int end = 0;
         std::vector<int32_t> key;
-        std::vector<RrVec3f> blendDeltas;
         std::vector<RrMat4d> transforms;
         std::vector<float> rows;
         std::vector<RrGeoScaledDualQuat> palette;
@@ -2476,8 +2475,9 @@ struct RrGeometryScratch {
         bool ok = false;
     };
     struct Revision {
-        bool blendChunked = false;
-        std::vector<RrGeoBlendChannel> blendSamples;
+        // A Range blend shape's op: per channel, the vertex groups its
+        // samples reach, from the file's chunk keys.
+        std::vector<std::vector<uint32_t>> blendChannelGroups;
         std::map<std::tuple<uint32_t, bool, uint8_t>,
                  const RigExecWireExternalDeclaredInput *>
             leafSites;
@@ -3997,7 +3997,16 @@ RrGeometrySizeScratch(RrProgram *program, std::string *error)
             rev.surfaceCache.PinTopology(
                 rev.rangeRole && (wire.op == uint8_t(RrGeoOpSmooth) ||
                                   wire.op == uint8_t(RrGeoOpDeltaMush)));
-            rev.blendChunked = RigExecFormatIsChunkBlend(wire);
+            rev.blendChannelGroups.clear();
+            if (RigExecFormatIsChunkBlend(wire)) {
+                rev.blendChannelGroups.resize(wire.blendChannels.size());
+                for (size_t k = 0; k < wire.chunks.size(); ++k)
+                    for (const int32_t channel : wire.chunks[k].key)
+                        if (channel >= 0 &&
+                            size_t(channel) < wire.blendChannels.size())
+                            rev.blendChannelGroups[size_t(channel)].push_back(
+                                uint32_t(k));
+            }
             // One expansion per layout: a partition the bake shared with
             // the topology shares its expansion here too.
             const std::shared_ptr<const RrGeoSkinTopology> topology =
@@ -4517,11 +4526,8 @@ RrGeoAssembleBlendDeltas(const RrGeoAssembleInputs &in,
     for (size_t c = 0; c < in.wire->blendChannels.size(); ++c) {
         const RigExecWireBlendChannel &bound = in.wire->blendChannels[c];
         RrGeoBlendChannel channel;
-        channel.weight =
-            in.rev->blendChunked
-                ? 0.0f
-                : RigExecBlendInputWeight(RrReadBlendWeight(
-                      in.program, in.chain, in.revision, in.derived, c));
+        channel.weight = RigExecBlendInputWeight(RrReadBlendWeight(
+            in.program, in.chain, in.revision, in.derived, c));
         for (size_t s = 0; s < bound.samples.size(); ++s) {
             const RigExecWireBlendSample &boundSample = bound.samples[s];
             RrGeoBlendSampleData sample;
@@ -4600,8 +4606,6 @@ RrGeoAssembleBlendDeltas(const RrGeoAssembleInputs &in,
     if (!RrGeoSumBlendChannels(channels, base, deltas)) {
         deltas->clear();
     }
-    if (in.rev->blendChunked)
-        in.rev->blendSamples = std::move(channels);
     return true;
 }
 
@@ -6779,7 +6783,6 @@ struct RrChainState {
         access.rangeSetAside = rev.rangeSetAside;
         access.applies = RrGeoRevisionApplies(rev, rev.op);
         access.skin = rev.op == RrGeoOpSkin;
-        access.blendChunked = rev.blendChunked;
         access.partitionStale = rev.partitionStale;
         access.fullStrength = rev.fullStrength;
         access.precedingCount = rev.precedingCount;
@@ -6830,31 +6833,6 @@ struct RrChainState {
         chunk.ok = ok;
         *untouched = false;
         return ok;
-    }
-    void runBlendGroup(size_t chain, size_t revision, size_t g, size_t begin,
-                       size_t end, const RigExecPointsRef<RrVec3f> &entering,
-                       RigExecGroupState<RrVec3f> *state)
-    {
-        Revision &rev = revisionAt(chain, revision);
-        auto &chunk = rev.chunks[g];
-        auto &deltas = chunk.blendDeltas;
-        const size_t n = end - begin;
-        deltas.assign(n, RrVec3f(0.0f));
-        for (int c : chunk.key) {
-            const float weight =
-                RrReadBlendWeight(program, chain, revision, false, size_t(c));
-            RigExecAccumulateBlendRange(rev.blendSamples[size_t(c)].samples,
-                                        weight, begin, end, deltas.data());
-        }
-        const int k = RigExecGroupScratch(state, n);
-        auto &buffer = *state->own[size_t(k)];
-        const bool full = RrGeoEnvelopeIsFullStrength(rev.parameters.weights);
-        for (size_t i = 0; i < n; ++i) {
-            buffer[i] = RigExecBlendEnvelope(
-                entering.data[i], entering.data[i] + deltas[i],
-                full ? 1.0f : rev.rangeInputs.blendWeights[begin + i]);
-        }
-        RigExecPublishOwnGroup(state, k);
     }
     const float *groupEnvelope(size_t chain, size_t revision)
     {
@@ -7976,18 +7954,6 @@ void
 RrOpPacketKey(std::string *key, const RrGeometryScratch::Revision &rev,
               bool content)
 {
-    if (rev.blendChunked) {
-        RrOpBytes(key, rev.blendSamples.size());
-        for (const auto &channel : rev.blendSamples)
-            for (const auto &sample : channel.samples) {
-                RrOpBytes(key, sample.activation);
-                RrOpBytes(key, bool(sample.layout));
-                if (sample.layout) {
-                    RrOpBytes(key, sample.layout->offsets);
-                    RrOpBytes(key, sample.layout->indices);
-                }
-            }
-    }
     RrOpParametersKey(key, rev.parameters, content);
     RrOpBytes(key, rev.status.state);
     RrOpBytes(key, rev.status.firstBadAddress);
@@ -8725,6 +8691,12 @@ RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
                     rev.lookedUpSmoothWeights.size());
     case Read::ChainBase:
         return lend(c.lastBase.data(), c.lastBase.size());
+    case Read::BlendChannelWeight:
+        if (lookup.part < 0 ||
+            size_t(lookup.part) >= rev.blendChannelGroups.size())
+            return fail();
+        return put(RrReadBlendWeight(program, size_t(chain), size_t(r), false,
+                                     size_t(lookup.part)));
     case Read::LatticeRestCage:
     case Read::LatticeLiveCage: {
         const bool rest = Read(lookup.read) == Read::LatticeRestCage;
@@ -8779,6 +8751,26 @@ RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
     default:
         return fail();
     }
+}
+
+void
+RrGeoLookupGroups(const RrProgram *program, const eval::OpLookup &lookup,
+                  const uint32_t **groups, size_t *count)
+{
+    *groups = nullptr;
+    *count = 0;
+    const auto *scratch =
+        static_cast<const RrGeometryScratch *>(program->geo.get());
+    if (!scratch || !program->geometry || lookup.part < 0 ||
+        lookup.object >= program->geometry->revisionIndex.size())
+        return;
+    const auto &[chain, r] = program->geometry->revisionIndex[lookup.object];
+    const auto &reached =
+        scratch->chains[size_t(chain)].revisions[size_t(r)].blendChannelGroups;
+    if (size_t(lookup.part) >= reached.size())
+        return;
+    *groups = reached[size_t(lookup.part)].data();
+    *count = reached[size_t(lookup.part)].size();
 }
 
 bool

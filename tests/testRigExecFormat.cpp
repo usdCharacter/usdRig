@@ -1708,11 +1708,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 53 &&
-                      RigExecFormatOldestReadable == 53,
-                  "format 53 retires the Constraint step and is the only "
-                  "format Open reads");
-    // Every older format requires re-export: it may hold Constraint steps.
+    static_assert(RigExecFormatVersion == 54 &&
+                      RigExecFormatOldestReadable == 54,
+                  "format 54 runs Range blend shapes as op nodes and is "
+                  "the only format Open reads");
+    // Every older format requires re-export: its blend shapes ran as their
+    // own steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1723,14 +1724,14 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 53 through " +
+            " (this reader reads 54 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 53 ? "re-export: the Constraint step retired"
+            (version < 54 ? "re-export: Range blend shapes as op nodes"
                           : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 53 ? reexports : rebakes);
+        ++(version < 54 ? reexports : rebakes);
     }
-    CHECK(reexports == 53 && rebakes == 1);
+    CHECK(reexports == 54 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;

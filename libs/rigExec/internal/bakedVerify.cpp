@@ -485,11 +485,6 @@ CaptureRevision(const RigExecBakedProgramImpl::GeomRevision &revision,
     // never written, so a later writer that finds a buffer held allocates.
     state->groups = revision.groups;
     state->groupIds = revision.groupIds;
-    // The retained chunk-blend cache keys deltasVersion, so it round-trips
-    // with it. Its dense samples borrow points from this revision's own
-    // sample records, whose buffers outlive the shadow, so the copy shares
-    // the pointers.
-    state->computedBlendSamples = revision.blendSamples;
     state->deltasVersion = revision.deltasVersion;
     state->layoutSerial = revision.layoutSerial;
 }
@@ -576,7 +571,6 @@ RestoreRevision(const RigExecBakedRunShadow::RevisionState &state,
     revision->rangeRefusals = state.rangeRefusals;
     revision->groups = state.groups;
     revision->groupIds = state.groupIds;
-    revision->blendSamples = state.computedBlendSamples;
     revision->deltasVersion = state.deltasVersion;
     revision->layoutSerial = state.layoutSerial;
 }

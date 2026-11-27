@@ -1207,7 +1207,7 @@ private:
             if (lookup && lookup->source == 10) {
                 if (!_f.geometry ||
                     lookup->object >= _f.geometry->revisionIndex.size() ||
-                    lookup->read > 15)
+                    lookup->read > 16)
                     return _Bad("op_graph.lookups: a revision lookup reads no "
                                 "input of a revision");
                 const auto &at = _f.geometry->revisionIndex[lookup->object];
@@ -1222,12 +1222,21 @@ private:
                         : uint8_t(0xff);
                 const bool mush = op == uint8_t(fb::RevisionOp::DeltaMush);
                 const bool lattice = op == uint8_t(fb::RevisionOp::Lattice);
+                const bool blend = op == uint8_t(fb::RevisionOp::BlendShape) &&
+                                   RigExecFormatIsChunkBlend(
+                                       _f.geometry->chains[size_t(at.first)]
+                                           .revisions[size_t(at.second)]) &&
+                                   _Has(_f.geometry->chains[size_t(at.first)]
+                                            .revisions[size_t(at.second)]
+                                            .blendChannels,
+                                        lookup->part);
                 if ((lookup->read > 2 && lookup->read < 13 && !mush) ||
                     (lookup->read == 13 && !mush && !lattice) ||
-                    (lookup->read > 13 && !lattice))
-                    return _Bad("op_graph.lookups: a delta mush or lattice "
-                                "input lookup reads a revision of another "
-                                "operation");
+                    (lookup->read > 13 && lookup->read < 16 && !lattice) ||
+                    (lookup->read == 16 && !blend))
+                    return _Bad("op_graph.lookups: a delta mush, lattice or "
+                                "blend shape input lookup reads a revision of "
+                                "another operation");
                 continue;
             }
             if (lookup && lookup->source >= 5 && lookup->source <= 9) {
@@ -3865,32 +3874,6 @@ private:
                         if (!validate(site, row + ".leaf_sites[" + _N(k) + "]"))
                             return false;
                         std::vector<size_t> siteOwners = owners;
-                        if (!isLayout && !derived &&
-                            RigExecFormatIsChunkBlend(rev)) {
-                            for (size_t ch = 0; ch < rev.blendChannels.size();
-                                 ++ch) {
-                                if (site.path !=
-                                    rev.blendChannels[ch].weightPath)
-                                    continue;
-                                siteOwners.clear();
-                                for (size_t step = 0; step < _f.steps.size();
-                                     ++step) {
-                                    const auto &body = _f.steps[step];
-                                    if (body.kind !=
-                                            fb::StepKind::RevisionChunk ||
-                                        body.object != ordinary ||
-                                        !_Has(rev.chunks, body.part))
-                                        continue;
-                                    const auto &key =
-                                        rev.chunks[size_t(body.part)].key;
-                                    if (std::binary_search(key.begin(),
-                                                           key.end(),
-                                                           int32_t(ch)))
-                                        siteOwners.push_back(step);
-                                }
-                                break;
-                            }
-                        }
                         std::vector<int32_t> versions;
                         if (site.exactVersion >= 0)
                             versions.push_back(site.exactVersion);
@@ -5543,10 +5526,9 @@ private:
                     read(D::WeightField, uint32_t(revision.weightField));
                 if (revision.driverFramesSolver >= 0)
                     read(D::Aggregate, uint32_t(revision.driverFramesSolver));
-                if (!RigExecFormatIsChunkBlend(revision))
-                    for (const auto &channel : revision.blendChannels)
-                        if (channel.poseWeight >= 0)
-                            read(D::PoseWeight, uint32_t(channel.poseWeight));
+                for (const auto &channel : revision.blendChannels)
+                    if (channel.poseWeight >= 0)
+                        read(D::PoseWeight, uint32_t(channel.poseWeight));
             } else if (!_groupWritten[c].empty()) {
                 // A chain with groups (format 20), as _RangeSteps holds the
                 // declarations: a group step reads group `part` of the
@@ -5570,16 +5552,6 @@ private:
                 if (step.kind == K::RevisionChunk) {
                     if (!_Has(revision.chunks, step.part))
                         continue;
-                    if (RigExecFormatIsChunkBlend(revision))
-                        for (int channel :
-                             revision.chunks[size_t(step.part)].key)
-                            if (_Has(revision.blendChannels, channel) &&
-                                revision.blendChannels[size_t(channel)]
-                                        .poseWeight >= 0)
-                                read(D::PoseWeight,
-                                     uint32_t(
-                                         revision.blendChannels[size_t(channel)]
-                                             .poseWeight));
                     if (!range && !keyed) {
                         point(c, uint32_t(r));
                         if (skin)
@@ -5626,12 +5598,13 @@ private:
                     }
                     continue;
                 }
-                // A Range smooth, delta mush or lattice runs as an op node
-                // and folds no transform.
+                // A Range smooth, delta mush, lattice or sparse blend shape
+                // runs as an op node and folds no transform.
                 if (!range ||
                     (revision.op != uint8_t(fb::RevisionOp::Smooth) &&
                      revision.op != uint8_t(fb::RevisionOp::DeltaMush) &&
-                     revision.op != uint8_t(fb::RevisionOp::Lattice)))
+                     revision.op != uint8_t(fb::RevisionOp::Lattice) &&
+                     !RigExecFormatIsChunkBlend(revision)))
                     read(D::RevisionTransforms, id);
                 point(c, uint32_t(r));
                 if (revision.weightObject >= 0)
@@ -8046,7 +8019,8 @@ private:
             if (((!range ||
                   (revision.op != uint8_t(fb::RevisionOp::Smooth) &&
                    revision.op != uint8_t(fb::RevisionOp::DeltaMush) &&
-                   revision.op != uint8_t(fb::RevisionOp::Lattice))) &&
+                   revision.op != uint8_t(fb::RevisionOp::Lattice) &&
+                   !RigExecFormatIsChunkBlend(revision))) &&
                  !need(D::RevisionTransforms, id)) ||
                 (revision.weightObject >= 0 &&
                  !need(D::WeightPacket, uint64_t(revision.weightObject))) ||
@@ -10638,13 +10612,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 53,
+    static_assert(RigExecFormatOldestReadable == 54,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: the Constraint step retired"
+                ? "re-export: Range blend shapes as op nodes"
                 : "rebake");
 }
 

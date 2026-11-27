@@ -1582,6 +1582,7 @@ RigExecBakedDeclareHeadReads(RigExecBakedProgramImpl *program)
             }
         }
     };
+    std::vector<int> members;
     for (RigExecBakedStep &step : B.steps) {
         if (step.isHead)
             continue;
@@ -1597,6 +1598,14 @@ RigExecBakedDeclareHeadReads(RigExecBakedProgramImpl *program)
             const auto &[c, d] = B.derivedIndex[size_t(step.object)];
             pathWalks(B.chains[size_t(c)].derived[size_t(d)].revision.leaves,
                       &step.readerWalks);
+        } else if (step.kind == RigExecBakedStepKind::OpChainHead) {
+            // The head looks up every member revision's inputs.
+            RigExecBakedOpStepRevisions(B, step, &members);
+            for (const int id : members) {
+                const auto &[c, r] = B.revisionIndex[size_t(id)];
+                pathWalks(B.chains[size_t(c)].revisions[size_t(r)].leaves,
+                          &step.readerWalks);
+            }
         }
         std::sort(step.readerWalks.begin(), step.readerWalks.end());
         step.readerWalks.erase(

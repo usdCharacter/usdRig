@@ -1353,35 +1353,30 @@ BlendChannels(const B &b, const B::GeomRevision &revision)
     const std::vector<VtValue> &leaves =
         RigExecBakedResolvePathLeaves(b, revision.leaves);
     const auto leaf = [&](int k) {
-        if (revision.blendChunked)
-            return RigExecBakedResolvePathLeaf(b, revision.leaves, size_t(k));
         return k >= 0 && size_t(k) < leaves.size() ? leaves[size_t(k)]
                                                    : VtValue();
     };
     std::vector<RigExecBlendChannel> channels;
-    if (revision.blendChunked)
-        channels = revision.blendSamples;
-    else
-        for (const auto &bound : revision.blendChannels) {
-            RigExecBlendChannel channel;
-            for (const auto &s : bound.samples) {
-                RigExecBlendSampleData sample;
-                const VtValue activation = leaf(s.activationLeaf);
-                if (activation.IsHolding<float>())
-                    sample.activation = activation.UncheckedGet<float>();
-                if (s.blendShape.IsEmpty())
-                    sample.points = s.lastPoints;
-                else
-                    sample.layout = s.layout;
-                channel.samples.push_back(std::move(sample));
-            }
-            std::stable_sort(channel.samples.begin(), channel.samples.end(),
-                             [](const RigExecBlendSampleData &x,
-                                const RigExecBlendSampleData &y) {
-                                 return x.activation < y.activation;
-                             });
-            channels.push_back(std::move(channel));
+    for (const auto &bound : revision.blendChannels) {
+        RigExecBlendChannel channel;
+        for (const auto &s : bound.samples) {
+            RigExecBlendSampleData sample;
+            const VtValue activation = leaf(s.activationLeaf);
+            if (activation.IsHolding<float>())
+                sample.activation = activation.UncheckedGet<float>();
+            if (s.blendShape.IsEmpty())
+                sample.points = s.lastPoints;
+            else
+                sample.layout = s.layout;
+            channel.samples.push_back(std::move(sample));
         }
+        std::stable_sort(channel.samples.begin(), channel.samples.end(),
+                         [](const RigExecBlendSampleData &x,
+                            const RigExecBlendSampleData &y) {
+                             return x.activation < y.activation;
+                         });
+        channels.push_back(std::move(channel));
+    }
     for (size_t c = 0; c < channels.size() && c < revision.blendChannels.size();
          ++c) {
         const auto &bound = revision.blendChannels[c];
@@ -1560,7 +1555,7 @@ ProbeRevisions(const B &b)
                 Unprobed("RevisionChunk", kind, "set aside by a cycle");
                 continue;
             }
-            if (revision.opMatrix) {
+            if (revision.opMatrix || revision.blendChunked) {
                 Unprobed("RevisionChunk", kind, "runs as op nodes");
                 continue;
             }
@@ -1583,10 +1578,9 @@ ProbeRevisions(const B &b)
                 blend ? BlendChannels(b, revision)
                       : std::vector<RigExecBlendChannel>();
             const std::vector<GfVec3f> blendBase =
-                blend && !revision.blendChunked
-                    ? std::vector<GfVec3f>(chain.lastBase.cbegin(),
-                                           chain.lastBase.cend())
-                    : entering;
+                blend ? std::vector<GfVec3f>(chain.lastBase.cbegin(),
+                                             chain.lastBase.cend())
+                      : entering;
             for (const RangeSetting &setting : kRangeSettings) {
                 RigExecGeometryOpRunner runner;
                 runner.compile.useSimd = b.useSimd;
@@ -1706,7 +1700,7 @@ ProbeRangeChains(const B &b)
                                : std::string(OpName(revision.op)));
             usable =
                 usable && !revision.gpuOwned && !revision.rangeSetAside &&
-                !revision.opMatrix &&
+                !revision.opMatrix && !revision.blendChunked &&
                 (external ? RigExecExternalOpHandle(revision.binding) != nullptr
                           : revision.op == RigExecRevisionOp::BlendShape ||
                                 RigExecGeometryOpSupported(revision.op)) &&
@@ -1726,10 +1720,8 @@ ProbeRangeChains(const B &b)
                 x.p.skinTransforms = revision.influences;
             if (revision.op == RigExecRevisionOp::BlendShape) {
                 x.channels = BlendChannels(b, revision);
-                x.base = revision.blendChunked
-                             ? VersionPoints(chain, r)
-                             : std::vector<GfVec3f>(chain.lastBase.cbegin(),
-                                                    chain.lastBase.cend());
+                x.base = std::vector<GfVec3f>(chain.lastBase.cbegin(),
+                                              chain.lastBase.cend());
             }
             if (revision.op == RigExecRevisionOp::External)
                 x.external =

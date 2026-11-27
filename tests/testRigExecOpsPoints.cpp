@@ -2168,6 +2168,151 @@ TestBlendShape()
     CHECK(!noRest.Run({&in, &weightArray}, &actual));
 }
 
+/// The sparse blend shape's Range ports: enabled, a default weight, a weight
+/// packet with its written groups, each under every range setting, over
+/// channels that reach only some groups.
+void
+TestBlendShapeWeights()
+{
+    using namespace rigExecOps;
+    const Grid grid(9, 31);
+    const std::vector<GfVec3f> &base = grid.points;
+    const size_t n = base.size();
+    std::mt19937 rng(5);
+    std::uniform_real_distribution<float> unit(-0.3f, 0.3f);
+    const auto offsets = [&](size_t count) {
+        std::vector<GfVec3f> o(count);
+        for (GfVec3f &v : o)
+            v = GfVec3f(unit(rng), unit(rng), unit(rng));
+        return o;
+    };
+    std::vector<int> low, high;
+    for (int i = 2; i < 30; i += 3)
+        low.push_back(i);
+    for (int i = int(n) - 40; i < int(n); i += 5)
+        high.push_back(i);
+    high.push_back(high.front());
+    const std::vector<std::vector<RefSample>> ref = {
+        {{0.4f, {}, offsets(low.size()), low, true},
+         {1.0f, {}, offsets(low.size()), low, true}},
+        {{1.0f, {}, offsets(high.size()), high, true}},
+        {{1.0f, {}, offsets(n), {}, true}},
+    };
+    BlendShapePayload payload;
+    for (const auto &samples : ref) {
+        BlendShapeChannel channel;
+        for (const RefSample &r : samples) {
+            BlendShapeSample s;
+            s.activation = r.activation;
+            auto layout = std::make_shared<BlendShapeLayout>();
+            for (const GfVec3f &o : r.offsets)
+                layout->offsets.push_back(Vec3f(o[0], o[1], o[2]));
+            layout->indices = r.indices;
+            layout->pointCount = n;
+            layout->valid = true;
+            s.layout = layout;
+            channel.samples.push_back(std::move(s));
+        }
+        payload.channels.push_back(std::move(channel));
+    }
+    const std::vector<float> w = {0.7f, 1.0f, 0.25f};
+    const auto weights = ToArray(w);
+    const Points in = ToStd(base);
+    std::vector<GfVec3f> moved = base;
+    const std::vector<GfVec3f> deltas = RefBlendDeltas(ref, w, base);
+    for (size_t i = 0; i < n; ++i)
+        moved[i] = base[i] + deltas[i];
+    const auto blended = [&](const std::vector<float> &envelope) {
+        std::vector<GfVec3f> expected = moved;
+        Blend(base, envelope, &expected);
+        return expected;
+    };
+    const auto check = [&](Node &node, const std::vector<const void *> &values,
+                           const std::vector<GfVec3f> &expected, bool ok,
+                           const char *what) {
+        Points actual;
+        std::string error;
+        const bool ran = node.Run(values, &actual, &error);
+        if (ran != ok || (ok && !SameBits(expected, actual))) {
+            std::printf("blend shape %s: ran %d, expected %d %s\n", what,
+                        int(ran), int(ok), error.c_str());
+            CHECK(false);
+        }
+    };
+    const uint8_t on = 1, off = 0;
+    Node switched(
+        BlendShape(),
+        {&BlendShapePoints(), &BlendShapeWeights(), &BlendShapeEnabled()},
+        BlendShapeOut(), &payload);
+    check(switched, {&in, &weights, &on}, moved, true, "enabled");
+    check(switched, {&in, &weights, &off}, base, true, "disabled");
+    BlendShapePayload bad = payload;
+    bad.channels[1].samples[0].activation = -1.0f;
+    Node badSwitched(
+        BlendShape(),
+        {&BlendShapePoints(), &BlendShapeWeights(), &BlendShapeEnabled()},
+        BlendShapeOut(), &bad);
+    check(badSwitched, {&in, &weights, &on}, {}, false, "bad activation");
+
+    Node uniform(
+        BlendShape(),
+        {&BlendShapePoints(), &BlendShapeWeights(), &BlendShapeDefaultWeight()},
+        BlendShapeOut(), &payload);
+    const float half = 0.5f, over = 1.5f, one = 1.0f;
+    check(uniform, {&in, &weights, &half}, blended(std::vector<float>(n, 0.5f)),
+          true, "half");
+    check(uniform, {&in, &weights, &one}, moved, true, "full default weight");
+    check(uniform, {&in, &weights, &over}, {}, false, "weight over 1");
+
+    std::vector<int32_t> sparseIndices;
+    std::vector<float> sparseWeights;
+    for (int32_t i = 1; i < 60; i += 4) {
+        sparseIndices.push_back(i);
+        sparseWeights.push_back(float(i % 5) / 4.0f);
+    }
+    std::vector<float> dense(n, 0.0f);
+    for (size_t e = 0; e < sparseIndices.size(); ++e)
+        dense[size_t(sparseIndices[e])] = sparseWeights[e];
+    rigExecRig::PointWeights packet;
+    packet.valid = 1;
+    packet.representation = uint32_t(rigExecRig::WeightRepresentation::Sparse);
+    packet.indices = ToArray(sparseIndices);
+    packet.values = ToArray(sparseWeights);
+    Node packed(BlendShape(),
+                {&BlendShapePoints(), &BlendShapeWeights(), &BlendShapePacket(),
+                 &BlendShapeWritten()},
+                BlendShapeOut(), &payload);
+    const auto written = ToArray(std::vector<int32_t>{0, 70});
+    check(packed, {&in, &weights, &packet, &written}, blended(dense), true,
+          "sparse packet");
+    const auto short_ = ToArray(std::vector<int32_t>{0, 10, 20, 70});
+    check(packed, {&in, &weights, &packet, &short_}, {}, false,
+          "packet past its written groups");
+    packet.representation =
+        uint32_t(rigExecRig::WeightRepresentation::Constant);
+    packet.indices = RigExecArray<int32_t>();
+    packet.values = RigExecArray<float>();
+    packet.defaultWeight = 0.35f;
+    Node constant(
+        BlendShape(),
+        {&BlendShapePoints(), &BlendShapeWeights(), &BlendShapePacket()},
+        BlendShapeOut(), &payload);
+    check(constant, {&in, &weights, &packet},
+          blended(std::vector<float>(n, 0.35f)), true, "constant packet");
+
+    std::string error;
+    RigExecRigDescBuilder b;
+    const RigExecNodeId node = b.AddOp(BlendShape(), &payload);
+    for (const RigExecPortHandle *port :
+         {&BlendShapePoints(), &BlendShapeWeights(), &BlendShapeDefaultWeight(),
+          &BlendShapePacket()})
+        b.BindInput(node, *port);
+    b.BindOutput(node, BlendShapeOut());
+    auto desc = b.Build(&error);
+    CHECK(!desc || !RigExecCompile(*desc, RigExecCompileOptions(), &error));
+    CHECK(Contains(error, "one of an envelope"));
+}
+
 } // namespace
 
 void
@@ -4917,6 +5062,7 @@ main()
     TestMoverTransform();
     TestSkin();
     TestBlendShape();
+    TestBlendShapeWeights();
     TestRecomputeNormals();
     TestRecomputeExtent();
     TestWire();

@@ -64,7 +64,10 @@ const rigExec::RigExecOpHandle &BlendShape();
 // Points (Vec3fArray), Weights (FloatArray, one per channel), Base
 // (optional Vec3fArray the dense targets are measured against; Points when
 // unfed), Rest, Counts and Indices (optional; the surface frame's rest mesh),
-// Envelope (optional FloatArray), Out.
+// Envelope (optional FloatArray), Out. Enabled (Bool, unfed true) false
+// passes the points through; at most one of Envelope, DefaultWeight (Float)
+// and Packet (PointWeights) weighs the result; Written (IntArray, [begin,
+// end) pairs) bounds the groups a sparse packet may reach.
 const rigExec::RigExecPortHandle &BlendShapePoints();
 const rigExec::RigExecPortHandle &BlendShapeWeights();
 const rigExec::RigExecPortHandle &BlendShapeBase();
@@ -73,6 +76,10 @@ const rigExec::RigExecPortHandle &BlendShapeCounts();
 const rigExec::RigExecPortHandle &BlendShapeIndices();
 const rigExec::RigExecPortHandle &BlendShapeEnvelope();
 const rigExec::RigExecPortHandle &BlendShapeOut();
+const rigExec::RigExecPortHandle &BlendShapeEnabled();
+const rigExec::RigExecPortHandle &BlendShapeDefaultWeight();
+const rigExec::RigExecPortHandle &BlendShapePacket();
+const rigExec::RigExecPortHandle &BlendShapeWritten();
 
 } // namespace rigExecOps
 

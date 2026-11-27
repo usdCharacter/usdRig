@@ -1,9 +1,12 @@
 #include "rigExecOps/deform/blendShapeOp.h"
 
 #include "rigExecMath/deltaMushKernel.h"
+#include "rigExecOps/deform/weightPacket.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecOps/payloadIo.h"
 
+#include <algorithm>
+#include <cmath>
 #include <iterator>
 #include <string>
 
@@ -19,6 +22,10 @@ RIGEXEC_DEFINE_PORT_HANDLE(BlendShapeCounts)
 RIGEXEC_DEFINE_PORT_HANDLE(BlendShapeIndices)
 RIGEXEC_DEFINE_PORT_HANDLE(BlendShapeEnvelope)
 RIGEXEC_DEFINE_PORT_HANDLE(BlendShapeOut)
+RIGEXEC_DEFINE_PORT_HANDLE(BlendShapeEnabled)
+RIGEXEC_DEFINE_PORT_HANDLE(BlendShapeDefaultWeight)
+RIGEXEC_DEFINE_PORT_HANDLE(BlendShapePacket)
+RIGEXEC_DEFINE_PORT_HANDLE(BlendShapeWritten)
 
 namespace {
 
@@ -78,9 +85,13 @@ Plan(const rigExec::RigExecOpBatch &batch, size_t k)
                                              : rigExec::RigExecRangePlan::Whole;
 }
 
-/// The point count validate could not see, checked each frame.
+/// The point count validate could not see, checked each frame; this
+/// frame's pass through and the weight at every point when a default weight
+/// or a packet gives them.
 struct BlendState {
     bool checkEachFrame = true;
+    bool pass = false;
+    std::vector<float> dense;
 };
 
 bool
@@ -97,6 +108,13 @@ bool
 Validate(const rigExec::RigExecOpCheck &check, std::string *error)
 {
     const BlendShapePayload &p = PayloadOf(check.batch, check.k);
+    if (int(Fed(check, BlendShapeEnvelope())) +
+            int(Fed(check, BlendShapeDefaultWeight())) +
+            int(Fed(check, BlendShapePacket())) >
+        1)
+        return Fail(error, "BlendShape",
+                    "one of an envelope, a default weight and a weight "
+                    "packet");
     const size_t weights = CheckElements(check, BlendShapeWeights());
     if (!SameCount(weights, p.channels.size()))
         return Fail(error, "BlendShape", "needs one weight per channel");
@@ -124,28 +142,80 @@ bool
 Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
         std::string *error)
 {
-    const auto &state =
-        *static_cast<const BlendState *>(rigExec::RigExecBatchState(batch, k));
+    auto &state =
+        *static_cast<BlendState *>(rigExec::RigExecBatchState(batch, k));
     const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const uint8_t *enabled = In<uint8_t>(io, BlendShapeEnabled());
+    state.pass = enabled && !*enabled;
+    state.dense.clear();
+    if (state.pass)
+        return true;
     const Points *base = In<Points>(io, BlendShapeBase());
     if (!EnvelopeFits(*In<Points>(io, BlendShapePoints()),
                       In<Envelope>(io, BlendShapeEnvelope()), "BlendShape",
                       error))
         return false;
-    if (!state.checkEachFrame)
-        return true;
-    if (base && base->Size() != count)
-        return Fail(error, "BlendShape", "base length differs from the points");
-    return ChannelsFit(PayloadOf(batch, k), count, error);
+    if (state.checkEachFrame) {
+        if (base && base->Size() != count)
+            return Fail(error, "BlendShape",
+                        "base length differs from the points");
+        if (!ChannelsFit(PayloadOf(batch, k), count, error))
+            return false;
+    }
+    const float *weight = In<float>(io, BlendShapeDefaultWeight());
+    const weightPacket::PointWeights *packet =
+        In<weightPacket::PointWeights>(io, BlendShapePacket());
+    if (weight && *weight != 1.0f) {
+        if (!std::isfinite(*weight) || *weight < 0.0f || *weight > 1.0f)
+            return Fail(error, "BlendShape",
+                        "a default weight is not finite or outside [0, 1]");
+        state.dense.assign(count, *weight);
+    }
+    if (const auto *written =
+            In<rigExecStd::RigExecArray<int32_t>>(io, BlendShapeWritten())) {
+        const rigExec::eval::EnvelopePacketView view =
+            packet ? weightPacket::PacketView(*packet)
+                   : rigExec::eval::EnvelopePacketView();
+        bool holds = rigExec::eval::EnvelopeIsSparseWalk(view);
+        size_t at = 0;
+        for (size_t e = 0; holds && e < view.indexCount; ++e) {
+            const int32_t index = view.indices[e];
+            while (at + 1 < written->Size() && (*written)[at + 1] <= index)
+                at += 2;
+            holds = at + 1 < written->Size() && (*written)[at] <= index;
+        }
+        if (!holds)
+            return Fail(error, "BlendShape",
+                        "the weights reach a vertex group the revision does "
+                        "not write");
+    }
+    if (packet &&
+        !rigExec::eval::EnvelopeIsFullStrength(
+            weightPacket::PacketView(*packet)) &&
+        !weightPacket::ResolvePacket(*packet, count, &state.dense))
+        return Fail(error, "BlendShape",
+                    "the weight packet does not resolve over the points");
+    return true;
+}
+
+const BlendState &
+BlendStateAt(const rigExec::RigExecOpBatch &batch, size_t k)
+{
+    return *static_cast<const BlendState *>(
+        rigExec::RigExecBatchState(batch, k));
 }
 
 /// The whole node: the summed deltas, carried on the surface frames when
 /// it has them, added to the points.
 bool
-Whole(const BlendShapePayload &p, const rigExec::RigExecOpIo &io,
-      std::string *error)
+Whole(const BlendShapePayload &p, const BlendState &state,
+      const rigExec::RigExecOpIo &io, std::string *error)
 {
     const Points &in = *In<Points>(io, BlendShapePoints());
+    if (state.pass) {
+        Out<Points>(io, BlendShapeOut()).Assign(in.Data(), in.Size());
+        return true;
+    }
     const Envelope &weights = *In<Envelope>(io, BlendShapeWeights());
     const Points *base = In<Points>(io, BlendShapeBase());
     if (!base)
@@ -176,15 +246,36 @@ Whole(const BlendShapePayload &p, const rigExec::RigExecOpIo &io,
     }
     for (size_t i = 0; i < points.size(); ++i)
         points[i] = points[i] + deltas[i];
+    if (!state.dense.empty()) {
+        BlendEnvelopeAt(in.Data(), state.dense.data(), points.data(),
+                        points.size());
+        return WritePoints(io, BlendShapeOut(), in, points, nullptr,
+                           "BlendShape", error);
+    }
     return WritePoints(io, BlendShapeOut(), in, points,
                        In<Envelope>(io, BlendShapeEnvelope()), "BlendShape",
                        error);
 }
 
-/// A range's summed deltas.
+/// A range's summed deltas, and the channels with a sample reaching
+/// [begin, end), found on its first run.
 struct BlendScratch {
     std::vector<Vec3f> deltas;
+    std::vector<uint32_t> channels;
+    size_t begin = 0, end = 0;
+    bool keyed = false;
 };
+
+bool
+Reaches(const BlendShapeLayout &layout, size_t begin, size_t end)
+{
+    if (layout.indices.empty())
+        return !layout.offsets.empty();
+    for (const int i : layout.indices)
+        if (size_t(i) >= begin && size_t(i) < end)
+            return true;
+    return false;
+}
 
 bool
 BlendRange(const rigExec::RigExecOpBatch &batch, size_t k,
@@ -192,23 +283,44 @@ BlendRange(const rigExec::RigExecOpBatch &batch, size_t k,
 {
     const BlendShapePayload &p = PayloadOf(batch, k);
     const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const BlendState &state = BlendStateAt(batch, k);
     if (!SumsInRanges(p))
-        return Whole(p, io, error);
+        return Whole(p, state, io, error);
     const Vec3f *in = RangeIn<Vec3f>(io, range, BlendShapePoints());
+    Vec3f *out = RangeOut<Vec3f>(io, range, BlendShapeOut());
+    const size_t count = range.end - range.begin;
+    if (state.pass) {
+        std::copy(in, in + count, out);
+        return true;
+    }
     const Envelope &weights = *In<Envelope>(io, BlendShapeWeights());
-    std::vector<Vec3f> &deltas =
-        static_cast<BlendScratch *>(range.scratch)->deltas;
-    deltas.assign(range.end - range.begin, Vec3f(0.0f));
-    for (size_t c = 0; c < p.channels.size(); ++c)
+    BlendScratch &scratch = *static_cast<BlendScratch *>(range.scratch);
+    if (!scratch.keyed || scratch.begin != range.begin ||
+        scratch.end != range.end) {
+        scratch.channels.clear();
+        for (size_t c = 0; c < p.channels.size(); ++c)
+            for (const BlendShapeSample &sample : p.channels[c].samples)
+                if (Reaches(*sample.layout, range.begin, range.end)) {
+                    scratch.channels.push_back(uint32_t(c));
+                    break;
+                }
+        scratch.begin = range.begin;
+        scratch.end = range.end;
+        scratch.keyed = true;
+    }
+    std::vector<Vec3f> &deltas = scratch.deltas;
+    deltas.assign(count, Vec3f(0.0f));
+    for (const uint32_t c : scratch.channels)
         rigExec::RigExecAccumulateBlendRange(p.channels[c].samples, weights[c],
                                              range.begin, range.end,
                                              deltas.data());
-    Vec3f *out = RangeOut<Vec3f>(io, range, BlendShapeOut());
-    const size_t count = range.end - range.begin;
     for (size_t i = 0; i < count; ++i)
         out[i] = in[i] + deltas[i];
-    BlendEnvelopeAt(in, RangeIn<float>(io, range, BlendShapeEnvelope()), out,
-                    count);
+    BlendEnvelopeAt(in,
+                    state.dense.empty()
+                        ? RangeIn<float>(io, range, BlendShapeEnvelope())
+                        : state.dense.data() + range.begin,
+                    out, count);
     return true;
 }
 
@@ -235,6 +347,11 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&BlendShapeOut(), &rigExecStd::Vec3fArray(),
      kRigExecPortOutput | rigExec::kRigExecPortPointwise, "out",
      rigExec::RigExecOutputBound::Input, &BlendShapePoints()},
+    {&BlendShapeEnabled(), &rigExecStd::BoolType(), kOptional, "enabled"},
+    {&BlendShapeDefaultWeight(), &rigExecStd::FloatType(), kOptional,
+     "defaultWeight"},
+    {&BlendShapePacket(), &rigExecRig::PointWeightsType(), kOptional, "packet"},
+    {&BlendShapeWritten(), &rigExecStd::IntArray(), kOptional, "written"},
 };
 
 using payloadIo::Reader;

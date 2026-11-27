@@ -968,7 +968,8 @@ TestSparseBlendChunks()
         for (size_t g = 0; g < 10; ++g)
             if (g != 1)
                 CHECK(!ran.count({id, int(g)}));
-        CHECK(!RanFor(RanSteps(B, RigExecBakedStepKind::RevisionStatic), id));
+        // The head looks the weights up; only the reached group reruns.
+        CHECK(RanFor(RanSteps(B, RigExecBakedStepKind::RevisionStatic), id));
         CHECK(B.rangeVerifyMismatches == 0);
         if (baked) {
             if (!std::isfinite(weight)) {

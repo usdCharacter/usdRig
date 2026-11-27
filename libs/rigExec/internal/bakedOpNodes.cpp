@@ -9,6 +9,7 @@
 #include "rigExecEvalCore/constraintLookups.h"
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecEvalCore/propertyLookups.h"
+#include "rigExecOps/deform/blendShapeOp.h"
 #include "rigExecOps/deform/deltaMushOp.h"
 #include "rigExecOps/deform/latticeOp.h"
 #include "rigExecOps/deform/matrixDeformOp.h"
@@ -84,6 +85,11 @@ struct BakedOpHost {
                         std::string *error) const
     {
         return RigExecBakedLookUpRevision(B, index, lookup, type, value, error);
+    }
+    void LookupGroups(const eval::OpLookup &lookup, const uint32_t **groups,
+                      size_t *count) const
+    {
+        RigExecBakedLookupGroups(B, lookup, groups, count);
     }
     bool StoreRevisionEnabled(const eval::OpHostOutput &output,
                               const void *value, std::string *error) const
@@ -409,8 +415,36 @@ DeclarePortReads(const RigExecBakedProgramImpl &B,
                 reads->push_back(RigExecBakedOne(
                     D::ChainBase, B.revisionIndex[lookup.object].first));
             if (lookup.source == uint8_t(eval::OpLookupSource::List))
-                for (int32_t e = 0; e < lookup.part; ++e)
-                    matrices(layout.lookups[lookup.object + uint32_t(e)]);
+                for (int32_t e = 0; e < lookup.part; ++e) {
+                    const eval::OpLookup &element =
+                        layout.lookups[lookup.object + uint32_t(e)];
+                    matrices(element);
+                    if (element.source !=
+                            uint8_t(eval::OpLookupSource::RevisionLeaf) ||
+                        element.read !=
+                            uint8_t(eval::OpRevisionRead::BlendChannelWeight) ||
+                        element.object >= B.revisionIndex.size())
+                        continue;
+                    const auto &[c, r] = B.revisionIndex[element.object];
+                    const auto &channels =
+                        B.chains[size_t(c)].revisions[size_t(r)].blendChannels;
+                    if (element.part < 0 ||
+                        size_t(element.part) >= channels.size())
+                        continue;
+                    const auto &channel = channels[size_t(element.part)];
+                    if (channel.poseWeight >= 0)
+                        reads->push_back(
+                            RigExecBakedOne(D::PoseWeight, channel.poseWeight));
+                    const auto &exact = B.chains[size_t(c)]
+                                            .revisions[size_t(r)]
+                                            .leaves.exactVersions;
+                    for (const int k :
+                         {channel.weightLeaf, channel.weightHeldLeaf})
+                        if (k >= 0 && size_t(k) < exact.size() &&
+                            exact[size_t(k)] >= 0)
+                            reads->push_back(RigExecBakedOne(D::PropertyResult,
+                                                             exact[size_t(k)]));
+                }
         }
     }
 }
@@ -507,7 +541,10 @@ struct PointJoin {
 /// and iteration count, its other inputs looked up per frame and its frame
 /// provider selected as a matrix mover's reference; per Range lattice
 /// (opLattice) a Lattice member over the divisions read at Build, its rest
-/// points the chain's base and its cages looked up per frame. Each member
+/// points the chain's base and its cages looked up per frame; per Range
+/// blend shape (blendChunked) a BlendShape member over the layouts and
+/// activations read at Build, its channel weights looked up per frame and
+/// keyed to the vertex groups they reach. Each member
 /// stores its groups and reads the points entering its revision: the
 /// output of the op revision before it in its point chain, so the two share
 /// one range chain, when that one writes every group or this one reads
@@ -768,6 +805,57 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                 stores(lattice, rigExecOps::LatticeOut());
                 continue;
             }
+            if (revision.blendChunked) {
+                static_assert(sizeof(rigExecStd::Vec3f) == sizeof(GfVec3f),
+                              "blend offsets copy as bytes");
+                rigExecOps::BlendShapePayload payload;
+                payload.channels.resize(revision.opBlendSamples.size());
+                for (size_t ch = 0; ch < revision.opBlendSamples.size(); ++ch)
+                    for (const auto &[activation, held] :
+                         revision.opBlendSamples[ch]) {
+                        auto shape =
+                            std::make_shared<rigExecOps::BlendShapeLayout>();
+                        shape->offsets.resize(held->offsets.size());
+                        if (!held->offsets.empty())
+                            std::memcpy(shape->offsets.data(),
+                                        held->offsets.data(),
+                                        held->offsets.size() * sizeof(GfVec3f));
+                        shape->indices = held->indices;
+                        shape->pointCount = held->pointCount;
+                        shape->valid = held->valid;
+                        rigExecOps::BlendShapeSample sample;
+                        sample.activation = activation;
+                        sample.layout = std::move(shape);
+                        payload.channels[ch].samples.push_back(
+                            std::move(sample));
+                    }
+                const RigExecNodeId blend =
+                    builder->AddOp(rigExecOps::BlendShape(), &payload);
+                points(blend, rigExecOps::BlendShapePoints(), false);
+                enabled(blend, rigExecOps::BlendShapeEnabled());
+                const RigExecPortHandle &weights =
+                    rigExecOps::BlendShapeWeights();
+                builder->BindInput(blend, weights);
+                layout->hostInputs.push_back(
+                    {blend, weights.Index(), eval::OpHostSource::Lookup,
+                     uint32_t(layout->lookups.size())});
+                layout->lookups.push_back(
+                    {uint8_t(L::List), uint32_t(layout->lookups.size() + 1),
+                     int32_t(payload.channels.size()), 0});
+                for (size_t ch = 0; ch < payload.channels.size(); ++ch)
+                    layout->lookups.push_back(
+                        {uint8_t(L::RevisionLeaf), uint32_t(id), int32_t(ch),
+                         uint8_t(eval::OpRevisionRead::BlendChannelWeight)});
+                if (!weighs(blend, rigExecOps::BlendShapeEnvelope(),
+                            rigExecOps::BlendShapePacket(),
+                            rigExecOps::BlendShapeDefaultWeight()))
+                    return false;
+                if (!writesAll && !revision.weightCurrentPhase &&
+                    revision.weightObject >= 0)
+                    written(blend, rigExecOps::BlendShapeWritten());
+                stores(blend, rigExecOps::BlendShapeOut());
+                continue;
+            }
             if (revision.opSmooth) {
                 const RigExecNodeId smooth =
                     builder->AddOp(rigExecOps::Smooth());
@@ -911,6 +999,10 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
                 DeclareNodeReads(*B, op, inputs, n, reader, &head.reads);
             head.writes.push_back(
                 RigExecBakedOne(D::OpValue, int(layout.PlanSlot(c))));
+            if (layout.chainKeyed[c])
+                head.writes.push_back(RigExecBakedRange(
+                    D::OpValue, int(layout.PlanGroupSlot(c, 0)),
+                    int(layout.PlanGroupSlot(c, 0) + groups)));
             int last = -1;
             for (const uint32_t n : desc.members) {
                 const int id =
@@ -932,6 +1024,14 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
                     AddOpStep(B, K::OpChainRange, int(c), int(s * groups + g));
                 step.reads.push_back(
                     RigExecBakedOne(D::OpValue, int(layout.PlanSlot(c))));
+                if (layout.chainKeyed[c])
+                    step.reads.push_back(
+                        whole
+                            ? RigExecBakedRange(
+                                  D::OpValue, int(layout.PlanGroupSlot(c, 0)),
+                                  int(layout.PlanGroupSlot(c, 0) + groups))
+                            : RigExecBakedOne(D::OpValue,
+                                              int(layout.PlanGroupSlot(c, g))));
                 for (uint32_t m = s;
                      m < desc.members.size() && desc.segments[m] == s; ++m) {
                     const uint32_t n = desc.members[m];

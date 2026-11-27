@@ -718,7 +718,13 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 ///
 /// Format 53 retires the Constraint step: StepKind 3 is reserved and
 /// refused. A constraint with no target solves nothing and has no step.
-inline constexpr uint32_t RigExecFormatVersion = 53;
+///
+/// Format 54 runs every sparse Range blend shape as a BlendShape op node over
+/// the sparse layouts and activations read at Build, each channel's weight
+/// read through a RevisionLeaf lookup (OpRevisionRead 16) listed per channel;
+/// a range step reruns only for the groups its chunk keys give a moved
+/// channel.
+inline constexpr uint32_t RigExecFormatVersion = 54;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -726,7 +732,7 @@ inline constexpr uint32_t RigExecFormatVersion = 53;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 53;
+inline constexpr uint32_t RigExecFormatOldestReadable = 54;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool
