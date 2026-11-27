@@ -52,7 +52,7 @@ RigExecReferenceSolve(const RigExecSolverRecord &s,
     const bool ribbon = s.kind == RigExecSolverKind::Ribbon;
     const bool spline = s.kind == RigExecSolverKind::SplineIk;
     if ((s.kind != RigExecSolverKind::FkChain && !ik && !twist && !ribbon &&
-         !spline) ||
+         !spline && s.kind != RigExecSolverKind::Skeleton2d) ||
         s.degenerate)
         return RigExecRunSolver(s, input, workspace, output, error);
     output->frames.clear();
@@ -67,6 +67,56 @@ RigExecReferenceSolve(const RigExecSolverRecord &s,
         *output = RigExecSampleRibbonFrames(input.ribbonPoints,
                                             s.ribbonRestPoints, s.ribbonSamples,
                                             s.jointRests, s.restIsLive);
+        return true;
+    }
+    if (s.kind == RigExecSolverKind::Skeleton2d) {
+        // Rests and outputs in rigExec:joints order; the kernel runs in solve
+        // order, in the start frame's plane. A failed solve publishes every
+        // bone's setup frame (no deformation) and says why.
+        const size_t n = s.bone2dOrder.size();
+        if (s.jointRests.size() != n || s.bone2dSetup.size() != n ||
+            input.bone2dChannels.size() != n ||
+            input.controls.size() != s.controlRests.size()) {
+            if (error)
+                *error = kRigExecSkeleton2dCountsDiffer;
+            return false;
+        }
+        const RigExecSkeleton2dStatic extra = RigExecSkeleton2dStaticOf(
+            s.bone2dSpaceSources, s.bone2dTargetCandidates, s.jointGroups,
+            s.jointGroupMembers);
+        auto &posed = workspace->bone2dExternalPoses;
+        posed.resize(input.controls.size());
+        for (size_t e = 0; e < input.controls.size(); ++e)
+            posed[e] = input.controls[e].points;
+        RigExecSkeleton2dLandmarkInputs<RigExecSolverRest> frames;
+        if (s.hasStart) {
+            frames.startRest = &s.startRest;
+            frames.startPose = &input.start.points;
+        }
+        frames.externalRests = s.controlRests.data();
+        frames.externalPoses = posed.data();
+        frames.externalCount = posed.size();
+        frames.selectors = input.bone2dSelectors.data();
+        frames.selectorCount = input.bone2dSelectors.size();
+        frames.groupSelectors = input.jointGroupSelectors.data();
+        frames.groupSelectorCount = input.jointGroupSelectors.size();
+        const RigExecSkeleton2dResult result = RigExecSolveSkeleton2dJoints(
+            s.bone2dOrder, s.jointRests, s.bone2dSetup, extra, frames,
+            [&](size_t j, RigExecBone2dChannels *channels) {
+                *channels = input.bone2dChannels[j];
+            },
+            RigExecPointFrameValid, &workspace->bone2d, &output->frames);
+        if (result == RigExecSkeleton2dResult::Malformed) {
+            if (error)
+                *error = kRigExecSkeleton2dMalformed;
+            return false;
+        }
+        output->rests = s.jointRests;
+        if (result == RigExecSkeleton2dResult::NotFinite) {
+            if (error)
+                *error = kRigExecSkeleton2dNotFinite;
+            return false;
+        }
         return true;
     }
     if (spline) {

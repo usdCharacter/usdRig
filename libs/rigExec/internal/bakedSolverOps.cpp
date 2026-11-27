@@ -3,6 +3,7 @@
 #include "rigExecOps/solver/chainSolverOps.h"
 #include "rigExecOps/solver/frameBlendOps.h"
 #include "rigExecOps/solver/ribbonFramesOps.h"
+#include "rigExecOps/solver/skeleton2dOps.h"
 #include "rigExecOps/solver/splineIkOps.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecStdTypes/stdTypes.h"
@@ -10,6 +11,7 @@
 
 #include "pxr/base/gf/math.h"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -144,7 +146,8 @@ RigExecBakedSolverNodeCount(const RigExecBakedProgramImpl::Solver &s)
     if (s.type == SchemaTypeName::RigExecTwoBoneIk ||
         s.type == SchemaTypeName::RigExecTwistDistribution ||
         s.type == SchemaTypeName::RigExecRibbon ||
-        s.type == SchemaTypeName::RigExecSplineIk)
+        s.type == SchemaTypeName::RigExecSplineIk ||
+        s.type == SchemaTypeName::RigExecSkeleton2d)
         return 1;
     if (s.type != SchemaTypeName::RigExecFkChain)
         return 0;
@@ -258,6 +261,30 @@ RigExecBakedAddSolverOp(const RigExecBakedProgramImpl &B,
         read(node, SplineIkMinLengthRatio(), Read::MinLengthRatio);
         read(node, SplineIkOutRests(), Read::SplineJointRests);
         publish(node, SplineIkOut());
+        return true;
+    }
+    if (s.type == SchemaTypeName::RigExecSkeleton2d) {
+        Skeleton2dPayload p;
+        p.order = s.bone2dOrder;
+        p.setup = s.bone2dSetup;
+        p.spaceSources = s.bone2dSpaceSources;
+        p.targetCandidates = s.bone2dTargetCandidates;
+        p.groups = s.jointGroups;
+        p.groupMembers = s.jointGroupMembers;
+        const RigExecNodeId node = builder->AddOp(Skeleton2d(), &p);
+        if (!placed(node))
+            return false;
+        read(node, Skeleton2dRests(), Read::JointRests);
+        if (s.start >= 0) {
+            read(node, Skeleton2dStartRest(), Read::StartRest);
+            read(node, Skeleton2dStartPose(), Read::StartPose);
+        }
+        read(node, Skeleton2dExternalRests(), Read::ControlRests);
+        read(node, Skeleton2dExternalPoses(), Read::ControlPoses);
+        read(node, Skeleton2dChannels(), Read::Bone2dChannels);
+        read(node, Skeleton2dSelectors(), Read::Bone2dSelectors);
+        read(node, Skeleton2dGroupSelectors(), Read::GroupSelectors);
+        publish(node, Skeleton2dOut());
         return true;
     }
     if (s.type == SchemaTypeName::RigExecTwoBoneIk) {
@@ -618,6 +645,85 @@ RigExecBakedLookUpSolver(const RigExecBakedProgramImpl &B,
                           : s.splineParams.minLengthRatio,
                       value) ||
                Fail(error, s.pathText + " has no minLengthRatio of that type");
+    case Read::StartPose:
+        if (!Is(type, rigExecRig::PointLandmarksType()) ||
+            s.startRead >= B.fin.size())
+            break;
+        *static_cast<rigExecRig::PointLandmarks *>(value) =
+            ToOp(B.fin[s.startRead].points);
+        return true;
+    case Read::ControlRests: {
+        if (!Is(type, rigExecRig::PointLandmarksList()))
+            break;
+        auto &out = *static_cast<Landmarks *>(value);
+        out.Resize(s.controls.size());
+        for (size_t k = 0; k < s.controls.size(); ++k)
+            if (!rest(s.controls[k], &out[k]))
+                return false;
+        return true;
+    }
+    case Read::ControlPoses: {
+        if (!Is(type, rigExecRig::PointLandmarksList()) ||
+            s.controlReads.size() != s.controls.size())
+            break;
+        auto &out = *static_cast<Landmarks *>(value);
+        out.Resize(s.controls.size());
+        for (size_t k = 0; k < s.controls.size(); ++k) {
+            if (s.controlReads[k] >= B.fin.size())
+                return Fail(error, "pose version " +
+                                       std::to_string(s.controlReads[k]) +
+                                       " is no pose frame of the program");
+            out[k] = ToOp(B.fin[s.controlReads[k]].points);
+        }
+        return true;
+    }
+    case Read::Bone2dChannels: {
+        if (!Is(type, rigExecStd::DoubleArray()))
+            break;
+        const size_t bones =
+            std::min(s.bone2dDoubles.size() / kRigExecBone2dDoubleChannels,
+                     s.bone2dBools.size() / kRigExecBone2dBoolChannels);
+        auto &out = *static_cast<rigExecStd::RigExecArray<double> *>(value);
+        out.Resize(bones * kRigExecBone2dChannelCount);
+        for (size_t k = 0; k < bones; ++k) {
+            const auto *d = &s.bone2dDoubles[k * kRigExecBone2dDoubleChannels];
+            const auto *f = &s.bone2dBools[k * kRigExecBone2dBoolChannels];
+            RigExecBone2dChannels ch;
+            for (size_t c = 0; c < kRigExecBone2dChannelCount; ++c) {
+                const size_t at = RigExecBone2dChannelStorage(c);
+                RigExecBone2dSetChannel(
+                    &ch, c,
+                    RigExecBone2dChannelIsBool(c)
+                        ? (RigExecBakedLeafRead(B, f[at]) ? 1.0 : 0.0)
+                        : RigExecBakedLeafRead(B, d[at]));
+            }
+            double *x = out.Data() + k * kRigExecBone2dChannelCount;
+            const double values[] = {ch.tx,
+                                     ch.ty,
+                                     ch.rz,
+                                     ch.sx,
+                                     double(ch.sideFlip),
+                                     double(ch.endFlip),
+                                     double(ch.lock),
+                                     ch.lockX,
+                                     ch.lockY,
+                                     ch.lockAngle,
+                                     ch.offsetX,
+                                     ch.offsetY,
+                                     ch.targetIndex};
+            std::memcpy(x, values, sizeof(values));
+        }
+        return true;
+    }
+    case Read::Bone2dSelectors: {
+        if (!Is(type, rigExecStd::DoubleArray()))
+            break;
+        auto &out = *static_cast<rigExecStd::RigExecArray<double> *>(value);
+        out.Resize(s.bone2dSelectors.size());
+        for (size_t g = 0; g < s.bone2dSelectors.size(); ++g)
+            out[g] = RigExecBakedLeafRead(B, s.bone2dSelectors[g]);
+        return true;
+    }
     case Read::GroupSelectors: {
         if (!Is(type, rigExecStd::DoubleArray()))
             break;

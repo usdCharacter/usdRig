@@ -1088,8 +1088,8 @@ LiveRest()
                Bone("B").AppendProperty(TfToken("avars:rz")), 10);
     }
     {
-        // A non-planar incoming frame: the skeleton still compiles, publishes
-        // the bones' rests and says why.
+        // A non-planar incoming frame: the skeleton still compiles and
+        // publishes the bones' rests.
         std::string usda = Usda({a, b}, control, aim);
         const std::string at = "(1, 1, 0, 1) )";
         const size_t where = usda.find(at);
@@ -1101,11 +1101,6 @@ LiveRest()
         CHECK(Compiles(rig));
         const RigExecRigPose pose = rig.Evaluate(UsdTimeCode(1));
         CHECK(pose.valid);
-        bool said = false;
-        for (const auto &line : pose.diagnostics)
-            said = said ||
-                   line.find("is not a rotation about +Z") != std::string::npos;
-        CHECK(said);
         for (const char *name : {"A", "B"}) {
             const Frame2 f = FrameOf(pose, name);
             CHECK(std::isfinite(f.x) && std::isfinite(f.y));

@@ -62,44 +62,6 @@ _RrRefreshSolverRests(RrProgram *program, size_t step, size_t solver,
             return false;
         }
     }
-    // The space target's rest, read where the file's space_rest was read:
-    // the composed rest table, never a live ref.
-    const auto refreshSpaceRest = [&]() {
-        if (wire.spaceSlot < 0) {
-            return true;
-        }
-        if (size_t(wire.spaceSlot) >= scratch->restPts.size()) {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no rest slot";
-            }
-            return false;
-        }
-        s.spaceRest = scratch->restPts[size_t(wire.spaceSlot)];
-        return true;
-    };
-    const std::string type = program->TextOrEmpty(wire.type);
-    // A 2D skeleton's controls are its outside parent spaces.
-    if (type == SchemaTypeName::RigExecSkeleton2d) {
-        for (size_t k = 0; k < wire.controls.size(); ++k) {
-            if (k >= s.controlRests.size() || wire.controls[k] < 0 ||
-                size_t(wire.controls[k]) >= scratch->restPts.size()) {
-                if (error) {
-                    *error = _RrStepHead(program, step) + " names no rest slot";
-                }
-                return false;
-            }
-            s.controlRests[k] = scratch->restPts[size_t(wire.controls[k])];
-        }
-        if (wire.start >= 0) {
-            if (size_t(wire.start) >= scratch->restPts.size()) {
-                if (error) {
-                    *error = _RrStepHead(program, step) + " names no rest slot";
-                }
-                return false;
-            }
-            s.startRest = scratch->restPts[size_t(wire.start)];
-        }
-    }
     return true;
 }
 
@@ -219,87 +181,6 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
                 }
             }
         }
-    } else if (type == SchemaTypeName::RigExecSkeleton2d) {
-        // The native body (RigExecRunSolver's Skeleton2d arm): rests and
-        // outputs in rigExec:joints order, the kernel in solve order in the
-        // start frame's plane, setup frames for every bone when the solve
-        // fails. A rest is the bone's setup frame or the frame a pose step
-        // below the skeleton wrote; the outside parent spaces are the
-        // row's controls.
-        const size_t n = s.bone2dOrder.size();
-        const size_t object = size_t(wire.object);
-        if (object >= program->solverBone2dRead.size() ||
-            object >= program->solverBone2dSelectorRead.size() ||
-            s.jointRests.size() != n || s.bone2dSetup.size() != n ||
-            ws.controlReads.size() != ws.controls.size() ||
-            s.controlRests.size() != ws.controls.size()) {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no 2D skeleton";
-            }
-            return false;
-        }
-        const std::vector<int32_t> &reads = program->solverBone2dRead[object];
-        if (reads.size() != n * kRigExecBone2dChannelCount) {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no 2D skeleton";
-            }
-            return false;
-        }
-        const std::vector<int32_t> &selectorReads =
-            program->solverBone2dSelectorRead[object];
-        s.bone2dSelectors.resize(selectorReads.size());
-        for (size_t g = 0; g < selectorReads.size(); ++g) {
-            s.bone2dSelectors[g] =
-                program->ReadRegistered(selectorReads[g]).f64;
-        }
-        RigExecSkeleton2dLandmarkInputs<std::array<RrVec3d, 4>> frames;
-        if (ws.start >= 0) {
-            const RrPointFrame *startPose = nullptr;
-            if (!finAt(ws.startRead, &startPose)) {
-                return false;
-            }
-            s.bone2dStartPose = startPose->points;
-            frames.startRest = &s.startRest;
-            frames.startPose = &s.bone2dStartPose;
-        }
-        s.bone2dExternalPoses.resize(ws.controls.size());
-        for (size_t e = 0; e < ws.controls.size(); ++e) {
-            const RrPointFrame *posed = nullptr;
-            if (!finAt(ws.controlReads[e], &posed)) {
-                return false;
-            }
-            s.bone2dExternalPoses[e] = posed->points;
-        }
-        frames.externalRests = s.controlRests.data();
-        frames.externalPoses = s.bone2dExternalPoses.data();
-        frames.externalCount = s.bone2dExternalPoses.size();
-        frames.selectors = s.bone2dSelectors.data();
-        frames.selectorCount = s.bone2dSelectors.size();
-        frames.groupSelectors = s.jointGroupSelectors.data();
-        frames.groupSelectorCount = s.jointGroupSelectors.size();
-        const RigExecSkeleton2dStatic extra = RigExecSkeleton2dStaticOf(
-            s.bone2dSpaceSources, s.bone2dTargetCandidates, s.jointGroups,
-            s.jointGroupMembers);
-        const RigExecSkeleton2dResult result = RigExecSolveSkeleton2dJoints(
-            s.bone2dOrder, s.jointRests, s.bone2dSetup, extra, frames,
-            [&](size_t j, RigExecBone2dChannels *channels) {
-                for (size_t c = 0; c < kRigExecBone2dChannelCount; ++c) {
-                    const RrInputValue value = program->ReadRegistered(
-                        reads[j * kRigExecBone2dChannelCount + c]);
-                    RigExecBone2dSetChannel(channels, c,
-                                            value.tag == RrInputTag::Bool
-                                                ? (value.boolean ? 1.0 : 0.0)
-                                                : value.f64);
-                }
-            },
-            RrPointFrameValid, &s.bone2d, &aggregate.frames);
-        if (result == RigExecSkeleton2dResult::Malformed) {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no 2D bone";
-            }
-            return false;
-        }
-        aggregate.rests = s.jointRests;
     }
     if (size_t(wire.object) >= store.solverOutFrames.size() ||
         size_t(wire.object) >= store.solverOutPresent.size()) {
@@ -762,6 +643,88 @@ RrLookUpSolver(const RrProgram *program, const eval::OpLookup &lookup,
             break;
         }
         return _RrSolverScalar(type, v, value, error);
+    }
+    case Read::StartPose:
+        if (!_RrSolverType<rigExecRig::PointLandmarks>(type, false) ||
+            s.startRead >= fin.size())
+            break;
+        *static_cast<rigExecRig::PointLandmarks *>(value) =
+            _RrSolverLandmarks(fin[s.startRead].points);
+        return true;
+    case Read::ControlRests: {
+        if (!_RrSolverType<rigExecRig::PointLandmarks>(type, true))
+            break;
+        auto &out = *static_cast<
+            rigExecStd::RigExecArray<rigExecRig::PointLandmarks> *>(value);
+        out.Resize(s.controls.size());
+        for (size_t k = 0; k < s.controls.size(); ++k)
+            if (!rest(s.controls[k], &out[k]))
+                return false;
+        return true;
+    }
+    case Read::ControlPoses: {
+        if (!_RrSolverType<rigExecRig::PointLandmarks>(type, true) ||
+            s.controlReads.size() != s.controls.size())
+            break;
+        auto &out = *static_cast<
+            rigExecStd::RigExecArray<rigExecRig::PointLandmarks> *>(value);
+        out.Resize(s.controls.size());
+        for (size_t k = 0; k < s.controls.size(); ++k) {
+            if (s.controlReads[k] >= fin.size())
+                return _RrSolverFail(
+                    error, "pose version " + std::to_string(s.controlReads[k]) +
+                               " is no pose frame of the program");
+            out[k] = _RrSolverLandmarks(fin[s.controlReads[k]].points);
+        }
+        return true;
+    }
+    case Read::Bone2dChannels: {
+        if (!_RrSolverType<double>(type, true) ||
+            lookup.object >= p.solverBone2dRead.size())
+            break;
+        const std::vector<int32_t> &reads = p.solverBone2dRead[lookup.object];
+        const size_t bones = reads.size() / kRigExecBone2dChannelCount;
+        auto &out = *static_cast<rigExecStd::RigExecArray<double> *>(value);
+        out.Resize(bones * kRigExecBone2dChannelCount);
+        for (size_t k = 0; k < bones; ++k) {
+            RigExecBone2dChannels ch;
+            for (size_t c = 0; c < kRigExecBone2dChannelCount; ++c) {
+                const RrInputValue v =
+                    p.ReadRegistered(reads[k * kRigExecBone2dChannelCount + c]);
+                RigExecBone2dSetChannel(&ch, c,
+                                        v.tag == RrInputTag::Bool
+                                            ? (v.boolean ? 1.0 : 0.0)
+                                            : v.f64);
+            }
+            const double values[] = {ch.tx,
+                                     ch.ty,
+                                     ch.rz,
+                                     ch.sx,
+                                     double(ch.sideFlip),
+                                     double(ch.endFlip),
+                                     double(ch.lock),
+                                     ch.lockX,
+                                     ch.lockY,
+                                     ch.lockAngle,
+                                     ch.offsetX,
+                                     ch.offsetY,
+                                     ch.targetIndex};
+            std::memcpy(out.Data() + k * kRigExecBone2dChannelCount, values,
+                        sizeof(values));
+        }
+        return true;
+    }
+    case Read::Bone2dSelectors: {
+        if (!_RrSolverType<double>(type, true) ||
+            lookup.object >= p.solverBone2dSelectorRead.size())
+            break;
+        const std::vector<int32_t> &reads =
+            p.solverBone2dSelectorRead[lookup.object];
+        auto &out = *static_cast<rigExecStd::RigExecArray<double> *>(value);
+        out.Resize(reads.size());
+        for (size_t g = 0; g < reads.size(); ++g)
+            out[g] = p.ReadRegistered(reads[g]).f64;
+        return true;
     }
     case Read::GroupSelectors: {
         if (!_RrSolverType<double>(type, true) ||

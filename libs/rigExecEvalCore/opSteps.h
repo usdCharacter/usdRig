@@ -230,6 +230,17 @@ enum class OpSolverRead : uint8_t {
     Roll = 29,
     SplineTwist = 30,
     MinLengthRatio = 31,
+    /// PointLandmarks: the frame a 2D skeleton's start reads, as landmarks.
+    StartPose = 32,
+    /// PointLandmarksList: the rests and the posed frames of a 2D
+    /// skeleton's outside parent spaces.
+    ControlRests = 33,
+    ControlPoses = 34,
+    /// DoubleArray: a 2D skeleton's channels, thirteen per bone in
+    /// rigExec:joints order, booleans as 0 or 1.
+    Bone2dChannels = 35,
+    /// DoubleArray: a 2D skeleton's space-switch selectors.
+    Bone2dSelectors = 36,
 };
 
 /// OpLookup::read of a constraint lookup. The numbers are part of the file

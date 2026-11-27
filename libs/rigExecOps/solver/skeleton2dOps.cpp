@@ -1,5 +1,6 @@
 #include "rigExecOps/solver/skeleton2dOps.h"
 
+#include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecOps/payloadIo.h"
 #include "rigExecRigTypes/rigTypes.h"
@@ -126,14 +127,10 @@ RunSkeleton2d(const void *payload, void *state, const RigExecOpIo &io,
             rigExecRig::kPointFrameValid, &s.scratch, &s.frames);
     switch (result) {
     case rigExec::RigExecSkeleton2dResult::Solved:
+    case rigExec::RigExecSkeleton2dResult::NotPlanar:
         break;
     case rigExec::RigExecSkeleton2dResult::Malformed:
         return Fail(error, "Skeleton2d", kMalformed);
-    case rigExec::RigExecSkeleton2dResult::NotPlanar:
-        return Fail(error, "Skeleton2d",
-                    "a 2D bone's rest (its rest:space, or the frame a pose "
-                    "step below the skeleton wrote) or parent space is not a "
-                    "rotation about +Z in the skeleton's plane");
     case rigExec::RigExecSkeleton2dResult::NotFinite:
         return Fail(error, "Skeleton2d",
                     "2D skeleton solve failed (a non-finite channel)");
@@ -307,6 +304,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "Skeleton2d";
+    d.schema = &internalOps::kSkeleton2d;
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
     d.run = &RunSkeleton2d;

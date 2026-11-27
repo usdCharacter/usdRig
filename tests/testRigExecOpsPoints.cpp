@@ -30,6 +30,7 @@
 #include "rigExecOps/solver/poseCommitOps.h"
 #include "rigExecOps/solver/ribbonFramesOps.h"
 #include "rigExecOps/solver/singleChainIkOps.h"
+#include "rigExecOps/solver/skeleton2dOps.h"
 #include "rigExecOps/solver/splineIkOps.h"
 #include "rigExecOps/deform/blendShapeOp.h"
 #include "rigExecOps/deform/deltaMushOp.h"
@@ -4160,6 +4161,41 @@ TestRibbonFrames()
     CHECK(!single.Run({&curve, &curve}, &actual, &error));
 }
 
+// Skeleton2d: a steady frame of a two-bone skeleton allocates nothing.
+void
+TestSkeleton2dSteadyFrame()
+{
+    using namespace rigExecOps;
+    Skeleton2dPayload payload;
+    payload.order = {0, 1};
+    payload.setup.resize(2);
+    payload.setup[1].parent = 0;
+    RigExecArray<rigExecRig::PointLandmarks> rests(2);
+    rests[0] = ToRigLandmarks(
+        MakeFrame(GfVec3d(0, 0, 0), GfVec3d(0, 0, 1), 0.0, GfVec3d(1.0))
+            .points);
+    rests[1] = ToRigLandmarks(
+        MakeFrame(GfVec3d(2, 0, 0), GfVec3d(0, 0, 1), 30.0, GfVec3d(1.0))
+            .points);
+    RigExecArray<double> channels(2 * rigExec::kRigExecBone2dChannelCount);
+    for (size_t j = 0; j < 2; ++j) {
+        double *c = channels.Data() + j * rigExec::kRigExecBone2dChannelCount;
+        c[3] = 1.0;
+        c[12] = -1.0;
+    }
+    RigExecArray<double> moving = channels;
+    std::string error;
+    CHECK(opAllocationCount::SteadyFrameAllocations(
+              Skeleton2d(), &payload,
+              {&Skeleton2dRests(), &Skeleton2dChannels()}, {&rests, &channels},
+              Skeleton2dOut(), 1,
+              [&](int frame) {
+                  moving[2] = 10.0 + 2.0 * double(frame);
+                  return &moving;
+              },
+              &error) == 0);
+}
+
 // PoseCommit: two joints and three descendants, the second blocked by an
 // authored parent space. Nothing present keeps every carry; a present
 // candidate writes itself and carries its delta onto the descendants under
@@ -5186,6 +5222,7 @@ main()
     TestSingleChainIk();
     TestPoseCommit();
     TestSplineIk();
+    TestSkeleton2dSteadyFrame();
     TestRangeChain();
     TestBuildTimeChecks();
     TestOpChecks();

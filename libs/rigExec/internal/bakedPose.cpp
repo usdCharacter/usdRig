@@ -4615,45 +4615,8 @@ RefreshSolverRests(const RigExecBakedProgramImpl &B,
         return liveRest(k) ? B.fin[size_t(s.restReads[k])].points
                            : B.restPts[size_t(slot)];
     };
-    const auto restFrameOf =
-        [&s, &B, &liveRest](size_t k, int slot) -> const RigExecPointFrame & {
-        return liveRest(k) ? B.fin[size_t(s.restReads[k])]
-                           : B.restFrames[size_t(slot)];
-    };
     for (size_t k = 0; k < s.restRefs.size() && k < s.jointRests.size(); ++k) {
         s.jointRests[k] = restPtsOf(k, s.restRefs[k].first);
-    }
-    if (s.type == SchemaTypeName::RigExecSkeleton2d) {
-        // A 2D skeleton's controls are its outside parent spaces.
-        for (size_t k = 0; k < s.controls.size(); ++k) {
-            s.controlRests[k] = B.restPts[size_t(s.controls[k])];
-        }
-        if (s.start >= 0) {
-            s.startRest = B.restPts[size_t(s.start)];
-        }
-    } else if (s.type == SchemaTypeName::RigExecTwoBoneIk) {
-        for (size_t k = 0; k < s.restRefs.size(); ++k) {
-            const int slot = s.restRefs[k].first;
-            const int element = s.restRefs[k].second;
-            if (element >= 0 && element < 3) {
-                s.ikRests[size_t(element)] = restPtsOf(k, slot);
-            }
-        }
-        s.upperLengthBase = (s.ikRests[1][0] - s.ikRests[0][0]).GetLength();
-        s.lowerLengthBase = (s.ikRests[2][0] - s.ikRests[1][0]).GetLength();
-        // The constant arm of the params below reads these two, so they are
-        // written back into it here; the live arm recomputes them from the
-        // same bases and agrees by construction.
-        RigExecTwoBoneIkLengths(s.ikRests, s.ikSpace.constant,
-                                s.upperOffset.constant, s.lowerOffset.constant,
-                                &s.ikParams.upperLength,
-                                &s.ikParams.lowerLength);
-        // The space target's computeRestFrame, read where Build read it.
-        // Never live: a live ref is a joint rest, and Build reads the space
-        // slot's rest without one.
-        if (s.spaceSlot >= 0) {
-            s.spaceRest = B.restPts[size_t(s.spaceSlot)];
-        }
     }
 }
 
@@ -4957,31 +4920,6 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
             input.blendA = s.inA >= 0 ? &B.aggregates[size_t(s.inA)] : nullptr;
             input.blendB = s.inB >= 0 ? &B.aggregates[size_t(s.inB)] : nullptr;
             input.blendWeight = rd(s.blendWeight);
-        } else if (s.type == SchemaTypeName::RigExecSkeleton2d) {
-            s.kind = RigExecSolverKind::Skeleton2d;
-            input.controls.resize(s.controls.size());
-            for (size_t k = 0; k < s.controls.size(); ++k)
-                input.controls[k] = B.fin[size_t(s.controlReads[k])];
-            const size_t bones =
-                std::min(s.bone2dDoubles.size() / kRigExecBone2dDoubleChannels,
-                         s.bone2dBools.size() / kRigExecBone2dBoolChannels);
-            input.bone2dChannels.resize(bones);
-            for (size_t k = 0; k < bones; ++k) {
-                const auto *d =
-                    &s.bone2dDoubles[k * kRigExecBone2dDoubleChannels];
-                const auto *f = &s.bone2dBools[k * kRigExecBone2dBoolChannels];
-                RigExecBone2dChannels &ch = input.bone2dChannels[k];
-                for (size_t c = 0; c < kRigExecBone2dChannelCount; ++c) {
-                    const size_t at = RigExecBone2dChannelStorage(c);
-                    RigExecBone2dSetChannel(&ch, c,
-                                            RigExecBone2dChannelIsBool(c)
-                                                ? (rd(f[at]) ? 1.0 : 0.0)
-                                                : rd(d[at]));
-                }
-            }
-            input.bone2dSelectors.resize(s.bone2dSelectors.size());
-            for (size_t g = 0; g < s.bone2dSelectors.size(); ++g)
-                input.bone2dSelectors[g] = rd(s.bone2dSelectors[g]);
         }
         input.jointGroupSelectors.resize(s.jointGroupSelectors.size());
         for (size_t g = 0; g < s.jointGroupSelectors.size(); ++g)

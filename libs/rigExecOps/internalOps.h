@@ -53,6 +53,8 @@ inline constexpr rigExec::RigExecSchemaInfo kSampleRibbonFrames = Internal(
     "A ribbon's frames sampled along its driver curve and its rest curve.");
 inline constexpr rigExec::RigExecSchemaInfo kSplineIk =
     Internal("A spline IK's joints laid along its posed control curve.");
+inline constexpr rigExec::RigExecSchemaInfo kSkeleton2d =
+    Internal("A 2D skeleton's joints solved in its start frame's plane.");
 inline constexpr rigExec::RigExecSchemaInfo kFkJointGroups =
     Internal("An FK chain's joint groups applied to its frames.");
 inline constexpr rigExec::RigExecSchemaInfo kMoverTransform =

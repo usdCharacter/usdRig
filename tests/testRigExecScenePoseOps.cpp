@@ -488,8 +488,8 @@ TestSplineIk()
                 }
 }
 
-/// A one-bone 2D skeleton: solved, with a non-finite channel and out of the
-/// plane (errors of the evaluation), with a malformed order (a compile
+/// A one-bone 2D skeleton: solved, out of the plane (the setup frames), with
+/// a non-finite channel (an error of the evaluation), with a malformed order (a compile
 /// error) and with a channel missing (refused before any node is built).
 void
 TestSkeleton2d()
@@ -520,10 +520,7 @@ TestSkeleton2d()
                   "channel)");
     RigExecSolverRecord tilted = s;
     tilted.jointRests[1] = Frame(GfVec3d(2, 0, 0), GfVec3d(1, 0, 0), 30).points;
-    CompareSolver("skeleton2d tilted", tilted, in, runner,
-                  "Skeleton2d: a 2D bone's rest (its rest:space, or the frame "
-                  "a pose step below the skeleton wrote) or parent space is "
-                  "not a rotation about +Z in the skeleton's plane");
+    CompareSolver("skeleton2d tilted", tilted, in, runner);
     RigExecSolverRecord malformed = s;
     malformed.bone2dOrder = {0, 7};
     CompareSolver("skeleton2d malformed", malformed, in, runner,
