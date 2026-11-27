@@ -36,8 +36,8 @@ RigExecProviderReadAvarMatrix(const Op &op, Store &store, size_t first)
         store.ReadToken(id(11)));
 }
 /// Store supplies ReadMatrix/ReadFrame/ReadScalar (an optional double, a
-/// float widened)/ReadVector/ReadToken,
-/// Present/Authoritative, Copy, Invalidate(output,source), PublishMatrix and PublishFrame. It retains
+/// float widened)/ReadVector/ReadToken, Authoritative,
+/// Invalidate(output,source), PublishMatrix and PublishFrame. It retains
 /// validity/change/count/error state independently from this pure arithmetic.
 template <class Math, class Op, class Store>
 bool
@@ -59,17 +59,6 @@ RigExecRunProviderArithmetic(const Op &op, Store &store)
     };
     const auto frame = [&](size_t input) { return store.ReadFrame(id(input)); };
     switch (op.kind) {
-    case RigExecProviderOpKind::Attribute: {
-        const uint64_t selected =
-            store.Authoritative(id(0)) || id(1) == UINT64_MAX ? id(0) : id(1);
-        if (!store.Present(selected)) {
-            store.Invalidate(op.output, selected);
-            break;
-        }
-        store.Copy(op.output, selected,
-                   !store.Authoritative(id(0)) && id(1) != UINT64_MAX);
-        break;
-    }
     case RigExecProviderOpKind::SpaceExpression: {
         const auto *authored = store.ReadMatrix(id(0)),
                    *connected = store.ReadMatrix(id(1));

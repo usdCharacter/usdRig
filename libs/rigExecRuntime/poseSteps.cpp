@@ -640,9 +640,6 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
         return eval::RunValueStep(host, ref).outcome == eval::Outcome::Applied;
     }
 
-    case RigExecWireStepKind::SpaceExpression:
-        return RrRunSpaceExpression(program, wire, error);
-
     case RigExecWireStepKind::PoseInterpolator: {
         if (wire.object < 0 ||
             size_t(wire.object) >= program->poses->poseInterpolators.size() ||
@@ -846,6 +843,8 @@ RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
     };
     if (lookup.source == uint8_t(eval::OpLookupSource::ProviderInputs))
         return RrFillProviderInputs(program, lookup, type, out, error);
+    if (lookup.source == uint8_t(eval::OpLookupSource::ProviderCandidates))
+        return RrProviderCandidates(program, lookup, type, out, error);
     const auto *scratch =
         static_cast<const RrPoseScratch *>(program->pose.get());
     if (lookup.source == uint8_t(eval::OpLookupSource::RestFrame)) {
@@ -929,37 +928,39 @@ RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
 int64_t
 RrProviderOpOf(const RrProgram *program, const RigExecWireStep &step)
 {
-    if (step.kind != RigExecWireStepKind::OpNode || !program->file->opGraph)
-        return -1;
-    for (const auto &output : program->file->opGraph->hostOutputs)
-        if (output && output->node == uint64_t(step.object) &&
-            (output->target ==
-                 uint8_t(eval::OpOutputTarget::ProviderValueMatrix) ||
-             output->target ==
-                 uint8_t(eval::OpOutputTarget::ProviderValueFrame)))
-            return int64_t(output->object);
-    return -1;
+    return step.kind == RigExecWireStepKind::OpNode && step.object >= 0 &&
+                   size_t(step.object) < program->providerOpOfNode.size()
+               ? program->providerOpOfNode[size_t(step.object)]
+               : -1;
+}
+
+int64_t
+RrProviderAnswerOf(const RrProgram *program, const RigExecWireStep &step)
+{
+    return step.kind == RigExecWireStepKind::OpNode && step.object >= 0 &&
+                   size_t(step.object) < program->providerAnswerOfNode.size()
+               ? program->providerAnswerOfNode[size_t(step.object)]
+               : -1;
 }
 
 int64_t
 RrRefreshOf(const RrProgram *program, const RigExecWireStep &step)
 {
-    if (step.kind != RigExecWireStepKind::OpNode || !program->file->opGraph)
-        return -1;
-    for (const auto &output : program->file->opGraph->hostOutputs)
-        if (output && output->node == uint64_t(step.object) &&
-            output->target == uint8_t(eval::OpOutputTarget::RefreshBase))
-            return int64_t(output->object);
-    return -1;
+    return step.kind == RigExecWireStepKind::OpNode && step.object >= 0 &&
+                   size_t(step.object) < program->refreshOfNode.size()
+               ? program->refreshOfNode[size_t(step.object)]
+               : -1;
 }
 
 bool
-RrStoreSpace(RrProgram *program, const eval::OpHostOutput &output,
+RrStoreSpace(RrProgram *program, size_t step, const eval::OpHostOutput &output,
              const void *value, std::string *error)
 {
     using T = eval::OpOutputTarget;
     RrStore &store = program->store;
     const T target = T(output.target);
+    if (target >= T::ProviderAnswer && target <= T::ProviderAnswerBlocked)
+        return RrStoreProviderAnswer(program, step, output, value, error);
     if (target == T::ProviderValueMatrix || target == T::ProviderValueFrame ||
         target == T::ProviderValueAuthority ||
         target == T::ProviderValueUnavailable)

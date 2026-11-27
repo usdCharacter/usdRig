@@ -183,17 +183,6 @@ AffineTargets(const RigExecSceneDescriptors &scene, const SdfPath &prim,
     return found == scene.relationships.end() ? SdfPathVector()
                                               : found->second.fact.targets;
 }
-struct GfProviderMath {
-    using Matrix = GfMatrix4d;
-    using Vector = GfVec3d;
-    using Rotation = GfRotation;
-    using Frame = RigExecPointFrame;
-    static bool PointsToMatrix(const std::array<Vector, 4> &rest,
-                               const std::array<Vector, 4> &pose, Matrix *out)
-    {
-        return RigExecPointsToMatrix(rest, pose, out);
-    }
-};
 } // namespace
 std::string
 RigExecProviderValueKey(const SdfPath &owner, const std::string &computation)
@@ -677,7 +666,7 @@ RigExecCloneProviderContext(
     return true;
 }
 namespace {
-// The kinds RigExecRunProviderOp hands to RigExecRunProviderArithmetic.
+// The kinds a provider op node or a ProviderSelect node runs.
 bool
 ArithmeticKind(RigExecProviderOpKind kind)
 {
@@ -685,8 +674,7 @@ ArithmeticKind(RigExecProviderOpKind kind)
            kind == RigExecProviderOpKind::AvarMatrix ||
            kind == RigExecProviderOpKind::RelativeXform;
 }
-// The cases of RigExecRunProviderArithmetic's switch: the only kinds for
-// which it does not return false.
+// Attribute and the cases of RigExecRunProviderArithmetic's switch.
 bool
 ArithmeticHandles(RigExecProviderOpKind kind)
 {
@@ -797,23 +785,6 @@ RigExecComposeLocalXform(const VtTokenArray &order,
     *local = result;
     return true;
 }
-bool
-RigExecRunProviderOp(const RigExecProviderProgram &program, uint32_t index,
-                     RigExecTypedValueStore *store, std::string *error)
-{
-    if (!store || index >= program.ops.size() ||
-        store->values.size() < program.valueKeys.size())
-        return Fail(error, "invalid provider kernel/store binding");
-    if (!RigExecProviderOpStructurallyValid(program, index, error))
-        return false;
-    const auto &op = program.ops[index];
-    if (op.kind != RigExecProviderOpKind::Attribute)
-        return Fail(error, "the provider operation runs as an op node");
-    GfProviderStore adapter{*store};
-    return RigExecRunProviderArithmetic<GfProviderMath>(op, adapter) ||
-           Fail(error, "unsupported provider arithmetic operation kind");
-}
-
 bool
 RigExecSampleProviderProgram(const RigExecProviderProgram &program,
                              const RigExecSceneDescriptors &scene,

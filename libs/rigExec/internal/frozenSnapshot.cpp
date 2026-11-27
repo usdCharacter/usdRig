@@ -471,6 +471,7 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
         D.providerProgram = src.providerProgram;
     D.providerValues = src.providerValues;
     D.providerOpPending = src.providerOpPending;
+    D.providerAnswerPending = src.providerAnswerPending;
     D.providerLeaves = src.providerLeaves;
     D.providerLeafBlocked = src.providerLeafBlocked;
     D.providerLeafEditSerial = src.providerLeafEditSerial;

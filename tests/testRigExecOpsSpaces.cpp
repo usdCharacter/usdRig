@@ -467,6 +467,48 @@ TestAffineFrame()
     CHECK(!shortLayout.evaluator);
 }
 
+// The answer of a provider value: an authoritative first candidate or the
+// only one answers, else the second with authority; a chosen candidate that
+// holds no value answers none and keeps its blocked flag.
+void
+TestProviderSelect()
+{
+    const std::vector<const RigExecPortHandle *> ins = {
+        &ProviderSelectPresent(), &ProviderSelectAuthoritative(),
+        &ProviderSelectBlocked()};
+    const std::vector<const RigExecPortHandle *> outs = {
+        &ProviderSelectSelected(), &ProviderSelectAuthoritativeOut(),
+        &ProviderSelectBlockedOut()};
+    Harness select(ProviderSelect(), nullptr, ins, outs);
+    CHECK(select.evaluator);
+    const auto run = [&](std::vector<uint8_t> present,
+                         std::vector<uint8_t> authoritative,
+                         std::vector<uint8_t> blocked) {
+        const RigExecArray<uint8_t> p(present.data(), present.size()),
+            a(authoritative.data(), authoritative.size()),
+            b(blocked.data(), blocked.size());
+        return select.Run({&p, &a, &b});
+    };
+    CHECK(run({1}, {0}, {1}));
+    CHECK(select.Out<int32_t>(0) == 0);
+    CHECK(select.Out<uint8_t>(1) == 0 && select.Out<uint8_t>(2) == 1);
+    CHECK(run({1}, {1}, {0}));
+    CHECK(select.Out<int32_t>(0) == 0 && select.Out<uint8_t>(1) == 1);
+    CHECK(run({1, 1}, {1, 0}, {0, 1}));
+    CHECK(select.Out<int32_t>(0) == 0);
+    CHECK(select.Out<uint8_t>(1) == 1 && select.Out<uint8_t>(2) == 0);
+    CHECK(run({1, 1}, {0, 0}, {0, 1}));
+    CHECK(select.Out<int32_t>(0) == 1);
+    CHECK(select.Out<uint8_t>(1) == 1 && select.Out<uint8_t>(2) == 1);
+    CHECK(run({1, 0}, {0, 0}, {0, 1}));
+    CHECK(select.Out<int32_t>(0) == -1);
+    CHECK(select.Out<uint8_t>(1) == 0 && select.Out<uint8_t>(2) == 1);
+    CHECK(!run({}, {}, {}));
+    CHECK(select.error.find("ProviderSelect") != std::string::npos);
+    CHECK(!run({1, 1, 1}, {0, 0, 0}, {0, 0, 0}));
+    CHECK(!run({1, 1}, {0}, {0, 0}));
+}
+
 } // namespace
 
 int
@@ -483,6 +525,7 @@ main()
     TestProviderRefresh();
     TestProviderArithmetic();
     TestAffineFrame();
+    TestProviderSelect();
     if (failures) {
         std::printf("%d failures\n", failures);
         return 1;

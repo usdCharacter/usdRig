@@ -984,6 +984,9 @@ enum class RigExecBakedStepKind {
     LadderCompose = 21,
     SkinTopology = 22,
     WeightField = 23,
+    /// Never a step's kind: a ProviderArithmetic, AffineFrame or
+    /// ProviderSelect op node keeps it as its identity, its object a row of
+    /// the provider table of its part (eval::spaces::ProviderProducer).
     SpaceExpression = 24,
     AvarInputs = 26,
     SpaceCheckpoint = 27,

@@ -5529,8 +5529,9 @@ TestAuthoredPosedSpaceBakesAndAnimatedOneFollows()
         std::find_if(graph.begin(), graph.end(), [&](const auto &node) {
             if (node.kind != "SpaceExpression")
                 return false;
-            const auto &body =
-                binding.steps[binding.opGraph.ops[node.step].originalIndex];
+            const RigExecBakedStepIdentity body = RigExecBakedIdentityOf(
+                binding,
+                binding.steps[binding.opGraph.ops[node.step].originalIndex]);
             if (body.part != 0)
                 return false;
             const auto &op =

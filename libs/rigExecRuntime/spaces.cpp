@@ -1,5 +1,4 @@
 #include "rigExecSchema/schemaNames.h"
-// Portable provider kernels share the native arithmetic definition.
 #include "spaces.h"
 #include "poseInternal.h"
 #include "rigExecMath/affineMath.h"
@@ -9,138 +8,14 @@
 #include "rigExecStdTypes/array.h"
 #include "rigExecStdTypes/stdTypes.h"
 #include <algorithm>
-#include "rigExecGraph/providerArithmetic.h"
 #include <cstring>
-#include <optional>
 #include <type_traits>
 namespace rigExec {
 namespace {
-// SpaceExpression part 0 runs an Attribute op through the shared provider
-// arithmetic; the bridge parts below stay here as input binding.
-struct SpaceMath {
-    using Matrix = RrMat4d;
-    using Vector = RrVec3d;
-    using Rotation = RrRotation;
-    using Frame = RrPointFrame;
-    using AffineMath = RrAffineMath;
-    static bool PointsToMatrix(const std::array<Vector, 4> &a,
-                               const std::array<Vector, 4> &b, Matrix *out)
-    {
-        return RrPointsToMatrix(a, b, out);
-    }
-    static bool PointsToMatrix(const Frame &a, const Frame &b, Matrix *out)
-    {
-        return RrPointsToMatrix(a.points, b, out);
-    }
-    static bool Usable(const Frame &frame)
-    {
-        return RrFrameUsable(frame);
-    }
-    static Frame Transform(const Frame &frame, const Matrix &matrix)
-    {
-        return RrMatrixToPoints(frame.points, matrix);
-    }
-};
 struct Store {
     std::vector<RigExecProviderPlainState> &values;
-    const std::vector<uint64_t> *inputs = nullptr;
-    RrProviderConversionScratch *scratch = nullptr;
     explicit Store(std::vector<RigExecProviderPlainState> &v) : values(v)
     {
-    }
-    Store(std::vector<RigExecProviderPlainState> &v,
-          const std::vector<uint64_t> &ids,
-          RrProviderConversionScratch &converted)
-        : values(v), inputs(&ids), scratch(&converted)
-    {
-    }
-    size_t ConversionIndex(uint64_t id) const
-    {
-        if (!inputs)
-            return size_t(-1);
-        const auto found = std::find(inputs->begin(), inputs->end(), id);
-        return found == inputs->end() ? size_t(-1)
-                                      : size_t(found - inputs->begin());
-    }
-    bool Present(uint64_t id) const
-    {
-        return id < values.size() && values[id].initialized;
-    }
-    bool Authoritative(uint64_t id) const
-    {
-        return id < values.size() && values[id].authoritative;
-    }
-    const RrMat4d *ReadMatrix(uint64_t id)
-    {
-        if (!Present(id) || values[id].blocked)
-            return nullptr;
-        const auto *v = std::get_if<std::array<double, 16>>(&values[id].value);
-        if (!v)
-            return nullptr;
-        const size_t index = ConversionIndex(id);
-        if (index == size_t(-1) || !scratch)
-            return nullptr;
-        std::memcpy(scratch->matrices[index]._mtx, v->data(),
-                    sizeof(double) * 16);
-        return &scratch->matrices[index];
-    }
-    const RrPointFrame *ReadFrame(uint64_t id)
-    {
-        if (!Present(id) || values[id].blocked)
-            return nullptr;
-        const auto *v =
-            std::get_if<RigExecProviderPlainFrame>(&values[id].value);
-        if (!v)
-            return nullptr;
-        const size_t index = ConversionIndex(id);
-        if (index == size_t(-1) || !scratch)
-            return nullptr;
-        for (size_t p = 0; p < 4; ++p)
-            for (size_t a = 0; a < 3; ++a)
-                scratch->frames[index].points[p][a] = v->points[p][a];
-        scratch->frames[index].flags = v->flags;
-        return &scratch->frames[index];
-    }
-    std::optional<double> ReadScalar(uint64_t id)
-    {
-        if (!Present(id) || values[id].blocked ||
-            ConversionIndex(id) == size_t(-1) || !scratch)
-            return std::nullopt;
-        if (const auto *v = std::get_if<double>(&values[id].value))
-            return *v;
-        if (const auto *v = std::get_if<float>(&values[id].value))
-            return double(*v);
-        return std::nullopt;
-    }
-    const RrVec3d *ReadVector(uint64_t id)
-    {
-        if (!Present(id) || values[id].blocked)
-            return nullptr;
-        const auto *v = std::get_if<std::array<double, 3>>(&values[id].value);
-        if (!v)
-            return nullptr;
-        const size_t index = ConversionIndex(id);
-        if (index == size_t(-1) || !scratch)
-            return nullptr;
-        for (size_t a = 0; a < 3; ++a)
-            scratch->vectors[index][a] = (*v)[a];
-        return &scratch->vectors[index];
-    }
-    std::string_view ReadToken(uint64_t id) const
-    {
-        if (!Present(id) || values[id].blocked)
-            return {};
-        const auto *v = std::get_if<std::string>(&values[id].value);
-        return v ? std::string_view(*v) : std::string_view();
-    }
-    bool ResetXformStack(uint64_t id) const
-    {
-        if (!Present(id) || values[id].blocked)
-            return false;
-        const auto *tokens =
-            std::get_if<std::vector<std::string>>(&values[id].value);
-        return tokens && std::find(tokens->begin(), tokens->end(),
-                                   "!resetXformStack!") != tokens->end();
     }
     void Invalidate(uint64_t output, uint64_t source)
     {
@@ -152,11 +27,6 @@ struct Store {
         out.authoritative = false;
         out.count = 0;
         out.error = "provider input unavailable";
-    }
-    void Copy(uint64_t to, uint64_t from, bool authority)
-    {
-        values[to] = values[from];
-        values[to].authoritative = authority || values[from].authoritative;
     }
     void PublishMatrix(uint64_t id, const RrMat4d &matrix, bool authority)
     {
@@ -326,7 +196,35 @@ RrReadCrossDomain(const RrProgram *program, int32_t index, RrWireValue *out)
 bool
 RrOpenProviderProgram(RrProgram *program, std::string *error)
 {
-    if (!program->file || !program->file->providerProgram)
+    if (!program->file)
+        return true;
+    using T = eval::OpOutputTarget;
+    program->providerAnswerOfNode.clear();
+    program->providerOpOfNode.clear();
+    program->refreshOfNode.clear();
+    if (const auto &graph = program->file->opGraph) {
+        const size_t nodes = graph->nodes.size();
+        program->providerAnswerOfNode.assign(nodes, -1);
+        program->providerOpOfNode.assign(nodes, -1);
+        program->refreshOfNode.assign(nodes, -1);
+        for (const auto &output : graph->hostOutputs) {
+            if (!output || output->node >= nodes)
+                continue;
+            const auto set = [&](std::vector<int64_t> &of) {
+                int64_t &at = of[size_t(output->node)];
+                if (at < 0)
+                    at = int64_t(output->object);
+            };
+            if (output->target == uint8_t(T::ProviderAnswer))
+                set(program->providerAnswerOfNode);
+            else if (output->target == uint8_t(T::ProviderValueMatrix) ||
+                     output->target == uint8_t(T::ProviderValueFrame))
+                set(program->providerOpOfNode);
+            else if (output->target == uint8_t(T::RefreshBase))
+                set(program->refreshOfNode);
+        }
+    }
+    if (!program->file->providerProgram)
         return true;
     const auto &wire = *program->file->providerProgram;
     auto &plain = program->providerProgram;
@@ -449,14 +347,8 @@ RrOpenProviderProgram(RrProgram *program, std::string *error)
     leaves(wire.externalInputs, &plain.externalInputs);
     program->store.providerValues = plain.defaults;
     program->store.providerOpPending.assign(plain.ops.size(), {0, -1});
-    auto &converted = program->store.providerConversionScratch;
-    converted.resize(plain.ops.size());
-    for (size_t i = 0; i < plain.ops.size(); ++i) {
-        const size_t count = plain.ops[i].inputs.size();
-        converted[i].matrices.resize(count);
-        converted[i].frames.resize(count);
-        converted[i].vectors.resize(count);
-    }
+    program->store.providerAnswerPending.assign(
+        RrProviderProducers(program).Count(), {0, 0});
     return true;
 }
 bool
@@ -656,283 +548,440 @@ RrProviderEffectiveInputMemo(const RrProgram *program, int part, int64_t object,
     (void)covered;
     return true;
 }
+namespace {
 bool
-RrRunSpaceExpression(RrProgram *program, const RigExecWireStep &step,
-                     std::string *error)
+PublishSampled(RrProgram *program, size_t row, bool authority, bool blocked)
 {
-    if (step.part == 2) {
-        const auto &leaf =
-            program->file->providerProgram->sampled[size_t(step.object)];
-        auto &out = program->store.providerValues[size_t(leaf.value)];
-        const int slot = leaf.inputSlot;
-        out = RigExecProviderPlainState();
-        if (slot >= 0 && program->inputState.slotHasValue[size_t(slot)]) {
-            const auto &v = program->inputState.slotCurrent[size_t(slot)];
+    const auto &leaf = program->file->providerProgram->sampled[row];
+    auto &out = program->store.providerValues[size_t(leaf.value)];
+    const int slot = leaf.inputSlot;
+    out = RigExecProviderPlainState();
+    if (slot >= 0 && program->inputState.slotHasValue[size_t(slot)]) {
+        const auto &v = program->inputState.slotCurrent[size_t(slot)];
+        switch (v.tag) {
+        case RigExecWireInputTag::Double: {
+            double d;
+            std::memcpy(&d, &v.bits, sizeof(d));
+            out.value = d;
+            break;
+        }
+        case RigExecWireInputTag::Float: {
+            uint32_t bits = uint32_t(v.bits);
+            float f;
+            std::memcpy(&f, &bits, sizeof(f));
+            out.value = f;
+            break;
+        }
+        case RigExecWireInputTag::Matrix4d:
+            out.value = v.matrix;
+            break;
+        case RigExecWireInputTag::Vec3d:
+            out.value = v.vec3d;
+            break;
+        case RigExecWireInputTag::Vec3i:
+            out.value = v.vec3i;
+            break;
+        case RigExecWireInputTag::Vec3f:
+            out.value = v.vec3f;
+            break;
+        case RigExecWireInputTag::Token:
+            out.value = program->TextOrEmpty(uint32_t(v.bits));
+            break;
+        case RigExecWireInputTag::Bool:
+            out.value = bool(v.bits);
+            break;
+        case RigExecWireInputTag::Int:
+            out.value = int32_t(uint32_t(v.bits));
+            break;
+        default:
+            break;
+        }
+        if (RigExecFormatIsArrayTag(v.tag)) {
+            const auto copy = [&](const auto *array) {
+                if (array)
+                    out.value = *array;
+            };
             switch (v.tag) {
-            case RigExecWireInputTag::Double: {
-                double d;
-                std::memcpy(&d, &v.bits, sizeof(d));
-                out.value = d;
+            case RigExecWireInputTag::IntArray:
+                copy(RrInputArray<int32_t>(program, uint32_t(slot)));
+                break;
+            case RigExecWireInputTag::FloatArray:
+                copy(RrInputArray<float>(program, uint32_t(slot)));
+                break;
+            case RigExecWireInputTag::DoubleArray:
+                copy(RrInputArray<double>(program, uint32_t(slot)));
+                break;
+            case RigExecWireInputTag::Vec3dArray:
+                copy(RrInputArray<RigExecWireVec3d>(program, uint32_t(slot)));
+                break;
+            case RigExecWireInputTag::Matrix4dArray:
+                copy(
+                    RrInputArray<RigExecWireMatrix4d>(program, uint32_t(slot)));
+                break;
+            case RigExecWireInputTag::TokenArray: {
+                const auto *array =
+                    RrInputArray<uint32_t>(program, uint32_t(slot));
+                if (array) {
+                    std::vector<std::string> text;
+                    for (uint32_t id : *array)
+                        text.push_back(program->TextOrEmpty(id));
+                    out.value = std::move(text);
+                }
                 break;
             }
-            case RigExecWireInputTag::Float: {
-                uint32_t bits = uint32_t(v.bits);
-                float f;
-                std::memcpy(&f, &bits, sizeof(f));
-                out.value = f;
+            case RigExecWireInputTag::BoolArray: {
+                const auto *array =
+                    RrInputArray<uint8_t>(program, uint32_t(slot));
+                if (array) {
+                    std::vector<bool> bits;
+                    for (uint8_t bit : *array)
+                        bits.push_back(bit != 0);
+                    out.value = std::move(bits);
+                }
                 break;
             }
-            case RigExecWireInputTag::Matrix4d:
-                out.value = v.matrix;
+            case RigExecWireInputTag::Vec3fArray: {
+                const auto *array =
+                    RrInputArray<RrVec3f>(program, uint32_t(slot));
+                if (array) {
+                    std::vector<std::array<float, 3>> values;
+                    for (const auto &point : *array)
+                        values.push_back({point[0], point[1], point[2]});
+                    out.value = std::move(values);
+                }
                 break;
-            case RigExecWireInputTag::Vec3d:
-                out.value = v.vec3d;
+            }
+            case RigExecWireInputTag::Vec2fArray: {
+                const auto *array =
+                    RrInputArray<RrVec2f>(program, uint32_t(slot));
+                if (array) {
+                    std::vector<std::array<float, 2>> values;
+                    for (const auto &point : *array)
+                        values.push_back({point[0], point[1]});
+                    out.value = std::move(values);
+                }
                 break;
-            case RigExecWireInputTag::Vec3i:
-                out.value = v.vec3i;
-                break;
-            case RigExecWireInputTag::Vec3f:
-                out.value = v.vec3f;
-                break;
-            case RigExecWireInputTag::Token:
-                out.value = program->TextOrEmpty(uint32_t(v.bits));
-                break;
-            case RigExecWireInputTag::Bool:
-                out.value = bool(v.bits);
-                break;
-            case RigExecWireInputTag::Int:
-                out.value = int32_t(uint32_t(v.bits));
-                break;
+            }
             default:
                 break;
             }
-            if (RigExecFormatIsArrayTag(v.tag)) {
-                const auto copy = [&](const auto *array) {
-                    if (array)
-                        out.value = *array;
-                };
-                switch (v.tag) {
-                case RigExecWireInputTag::IntArray:
-                    copy(RrInputArray<int32_t>(program, uint32_t(slot)));
-                    break;
-                case RigExecWireInputTag::FloatArray:
-                    copy(RrInputArray<float>(program, uint32_t(slot)));
-                    break;
-                case RigExecWireInputTag::DoubleArray:
-                    copy(RrInputArray<double>(program, uint32_t(slot)));
-                    break;
-                case RigExecWireInputTag::Vec3dArray:
-                    copy(RrInputArray<RigExecWireVec3d>(program,
-                                                        uint32_t(slot)));
-                    break;
-                case RigExecWireInputTag::Matrix4dArray:
-                    copy(RrInputArray<RigExecWireMatrix4d>(program,
-                                                           uint32_t(slot)));
-                    break;
-                case RigExecWireInputTag::TokenArray: {
-                    const auto *array =
-                        RrInputArray<uint32_t>(program, uint32_t(slot));
-                    if (array) {
-                        std::vector<std::string> text;
-                        for (uint32_t id : *array)
-                            text.push_back(program->TextOrEmpty(id));
-                        out.value = std::move(text);
-                    }
-                    break;
-                }
-                case RigExecWireInputTag::BoolArray: {
-                    const auto *array =
-                        RrInputArray<uint8_t>(program, uint32_t(slot));
-                    if (array) {
-                        std::vector<bool> bits;
-                        for (uint8_t bit : *array)
-                            bits.push_back(bit != 0);
-                        out.value = std::move(bits);
-                    }
-                    break;
-                }
-                case RigExecWireInputTag::Vec3fArray: {
-                    const auto *array =
-                        RrInputArray<RrVec3f>(program, uint32_t(slot));
-                    if (array) {
-                        std::vector<std::array<float, 3>> values;
-                        for (const auto &point : *array)
-                            values.push_back({point[0], point[1], point[2]});
-                        out.value = std::move(values);
-                    }
-                    break;
-                }
-                case RigExecWireInputTag::Vec2fArray: {
-                    const auto *array =
-                        RrInputArray<RrVec2f>(program, uint32_t(slot));
-                    if (array) {
-                        std::vector<std::array<float, 2>> values;
-                        for (const auto &point : *array)
-                            values.push_back({point[0], point[1]});
-                        out.value = std::move(values);
-                    }
-                    break;
-                }
-                default:
-                    break;
-                }
-            }
-            out.initialized =
-                !std::holds_alternative<std::monostate>(out.value);
-            out.count = out.initialized ? 1 : 0;
-            if (out.initialized && slot >= 0 &&
-                RigExecFormatIsArrayTag(
-                    program->file->inputs[size_t(slot)].type())) {
-                out.count = std::visit(
-                    [](const auto &value) -> size_t {
-                        using T = std::decay_t<decltype(value)>;
-                        if constexpr (
-                            std::is_same_v<T, std::vector<float>> ||
-                            std::is_same_v<T, std::vector<double>> ||
-                            std::is_same_v<T,
-                                           std::vector<std::array<float, 3>>> ||
-                            std::is_same_v<
-                                T, std::vector<std::array<double, 3>>> ||
-                            std::is_same_v<T, std::vector<int32_t>> ||
-                            std::is_same_v<
-                                T, std::vector<std::array<double, 16>>> ||
-                            std::is_same_v<T, std::vector<std::string>> ||
-                            std::is_same_v<T, std::vector<bool>> ||
-                            std::is_same_v<T,
-                                           std::vector<std::array<float, 2>>>)
-                            return value.size();
-                        return 0;
-                    },
-                    out.value);
-            }
         }
-        // A missing sampled source is a current published monostate, not a
-        // never-produced value; native PublishSource also initializes it.
-        out.initialized = true;
-        out.blocked =
-            slot >= 0 && program->inputState.slotBlocked[size_t(slot)] != 0;
-        out.authoritative =
-            slot >= 0 && program->inputState.slotAuthored[size_t(slot)];
-        return true;
-    }
-    if (step.part == 1) {
-        const auto &leaf =
-            program->file->providerProgram->externalInputs[size_t(step.object)];
-        Store store(program->store.providerValues);
-        const int slot = leaf.providerSlot;
-        const auto *pose =
-            static_cast<const RrPoseScratch *>(program->pose.get());
-        if (leaf.computation == SchemaComputationText::computeRestFrame)
-            store.PublishFrame(leaf.value, slot >= 0
-                                               ? pose->restFrames[size_t(slot)]
-                                               : RrFrameFromMatrix(RrMat4d(1)));
-        else if (leaf.computation == SchemaComputationText::computePointFrame ||
-                 leaf.computation ==
-                     SchemaComputationText::computeBasePointFrame) {
-            // Initial provider composition reads its initial base frame.
-            // Contextual refreshed versions are explicit part4 bridges.
-            store.PublishFrame(leaf.value,
-                               slot >= 0 ? program->store.base[size_t(slot)]
-                                         : RrFrameFromMatrix(RrMat4d(1)));
-        } else {
-            RrMat4d matrix(1);
-            if (leaf.interveningRead) {
-                const auto value = RrReadInput(program, *leaf.interveningRead);
-                std::memcpy(matrix._mtx, value.matrix.data(),
-                            sizeof(double) * 16);
-            }
-            store.PublishMatrix(leaf.value, matrix, false);
+        out.initialized = !std::holds_alternative<std::monostate>(out.value);
+        out.count = out.initialized ? 1 : 0;
+        if (out.initialized && slot >= 0 &&
+            RigExecFormatIsArrayTag(
+                program->file->inputs[size_t(slot)].type())) {
+            out.count = std::visit(
+                [](const auto &value) -> size_t {
+                    using T = std::decay_t<decltype(value)>;
+                    if constexpr (
+                        std::is_same_v<T, std::vector<float>> ||
+                        std::is_same_v<T, std::vector<double>> ||
+                        std::is_same_v<T, std::vector<std::array<float, 3>>> ||
+                        std::is_same_v<T, std::vector<std::array<double, 3>>> ||
+                        std::is_same_v<T, std::vector<int32_t>> ||
+                        std::is_same_v<T,
+                                       std::vector<std::array<double, 16>>> ||
+                        std::is_same_v<T, std::vector<std::string>> ||
+                        std::is_same_v<T, std::vector<bool>> ||
+                        std::is_same_v<T, std::vector<std::array<float, 2>>>)
+                        return value.size();
+                    return 0;
+                },
+                out.value);
         }
-        return true;
     }
-    if (step.part == 3) {
-        const auto &route =
-            program->file->providerProgram->routedInputs[size_t(step.object)];
-        auto &out = program->store.providerValues[size_t(route.value)];
-        RrWireValue value;
-        out = RigExecProviderPlainState();
-        out.authoritative = true;
-        const auto &cross =
-            program->file->crossDomainReads[size_t(route.crossRead)];
-        if (cross.kind == fb::CrossDomainReadKind::Points) {
-            if (const auto *points = RrReadCrossDomainPoints(program, cross)) {
-                std::vector<std::array<float, 3>> current;
-                for (const auto &point : *points)
-                    current.push_back({point[0], point[1], point[2]});
-                out.value = std::move(current);
-                out.initialized = true;
-                out.count = points->size();
-            }
-        } else if (RrReadCrossDomain(program, route.crossRead, &value)) {
-            if (value.tag == RigExecWireInputTag::Matrix4d)
-                out.value = value.matrix;
-            else if (value.tag == RigExecWireInputTag::Vec3f)
-                out.value = value.vec3f;
-            else if (value.tag == RigExecWireInputTag::Vec3d)
-                out.value = value.vec3d;
-            else if (value.tag == RigExecWireInputTag::Vec3i)
-                out.value = value.vec3i;
-            else if (value.tag == RigExecWireInputTag::Bool)
-                out.value = bool(value.bits);
-            else if (value.tag == RigExecWireInputTag::Int)
-                out.value = int32_t(uint32_t(value.bits));
-            else if (value.tag == RigExecWireInputTag::Token)
-                out.value = program->TextOrEmpty(uint32_t(value.bits));
-            else if (value.tag == RigExecWireInputTag::Double) {
-                double d;
-                std::memcpy(&d, &value.bits, sizeof(d));
-                out.value = d;
-            } else if (value.tag == RigExecWireInputTag::Float) {
-                uint32_t bits = uint32_t(value.bits);
-                float f;
-                std::memcpy(&f, &bits, sizeof(f));
-                out.value = f;
-            }
-            out.initialized =
-                !std::holds_alternative<std::monostate>(out.value);
-            out.count = out.initialized ? 1 : 0;
+    // A missing sampled source is a current published monostate, not a
+    // never-produced value; native PublishSource also initializes it.
+    out.initialized = true;
+    out.blocked = blocked;
+    out.authoritative = authority;
+    return true;
+}
+
+bool
+PublishRouted(RrProgram *program, size_t step, size_t row, bool authority,
+              bool blocked)
+{
+    const auto &route = program->file->providerProgram->routedInputs[row];
+    auto &out = program->store.providerValues[size_t(route.value)];
+    RrWireValue value;
+    out = RigExecProviderPlainState();
+    out.authoritative = authority;
+    const auto &cross =
+        program->file->crossDomainReads[size_t(route.crossRead)];
+    if (cross.kind == fb::CrossDomainReadKind::Points) {
+        if (const auto *points = RrReadCrossDomainPoints(program, cross)) {
+            std::vector<std::array<float, 3>> current;
+            for (const auto &point : *points)
+                current.push_back({point[0], point[1], point[2]});
+            out.value = std::move(current);
+            out.initialized = true;
+            out.count = points->size();
         }
-        out.blocked = !out.initialized;
-        out.initialized = true;
-        if (out.blocked && !cross.unavailable.empty()) {
-            const size_t physical = size_t(&step - program->steps->data());
-            program->store.stepOutputs[physical].diagnostics.push_back(
-                cross.unavailable);
+    } else if (RrReadCrossDomain(program, route.crossRead, &value)) {
+        if (value.tag == RigExecWireInputTag::Matrix4d)
+            out.value = value.matrix;
+        else if (value.tag == RigExecWireInputTag::Vec3f)
+            out.value = value.vec3f;
+        else if (value.tag == RigExecWireInputTag::Vec3d)
+            out.value = value.vec3d;
+        else if (value.tag == RigExecWireInputTag::Vec3i)
+            out.value = value.vec3i;
+        else if (value.tag == RigExecWireInputTag::Bool)
+            out.value = bool(value.bits);
+        else if (value.tag == RigExecWireInputTag::Int)
+            out.value = int32_t(uint32_t(value.bits));
+        else if (value.tag == RigExecWireInputTag::Token)
+            out.value = program->TextOrEmpty(uint32_t(value.bits));
+        else if (value.tag == RigExecWireInputTag::Double) {
+            double d;
+            std::memcpy(&d, &value.bits, sizeof(d));
+            out.value = d;
+        } else if (value.tag == RigExecWireInputTag::Float) {
+            uint32_t bits = uint32_t(value.bits);
+            float f;
+            std::memcpy(&f, &bits, sizeof(f));
+            out.value = f;
         }
-        return true;
+        out.initialized = !std::holds_alternative<std::monostate>(out.value);
+        out.count = out.initialized ? 1 : 0;
     }
-    if (step.part == 4) {
-        const auto &leaf =
-            program->poses->providerFrameInputs[size_t(step.object)];
-        Store bridge(program->store.providerValues);
-        bridge.PublishFrame(leaf.value, leaf.base
-                                            ? program->store.base[leaf.version]
-                                            : program->store.fin[leaf.version]);
-        return true;
+    out.blocked = blocked;
+    out.initialized = true;
+    if (blocked && !cross.unavailable.empty() &&
+        step < program->store.stepOutputs.size())
+        program->store.stepOutputs[step].diagnostics.push_back(
+            cross.unavailable);
+    return true;
+}
+
+bool
+PublishExternal(RrProgram *program, size_t row)
+{
+    const auto &leaf = program->file->providerProgram->externalInputs[row];
+    Store store(program->store.providerValues);
+    const int slot = leaf.providerSlot;
+    const auto *pose = static_cast<const RrPoseScratch *>(program->pose.get());
+    if (leaf.computation == SchemaComputationText::computeRestFrame)
+        store.PublishFrame(leaf.value, slot >= 0
+                                           ? pose->restFrames[size_t(slot)]
+                                           : RrFrameFromMatrix(RrMat4d(1)));
+    else if (leaf.computation == SchemaComputationText::computePointFrame ||
+             leaf.computation == SchemaComputationText::computeBasePointFrame) {
+        // Initial provider composition reads its initial base frame.
+        // Contextual refreshed versions are explicit part4 bridges.
+        store.PublishFrame(leaf.value, slot >= 0
+                                           ? program->store.base[size_t(slot)]
+                                           : RrFrameFromMatrix(RrMat4d(1)));
+    } else {
+        RrMat4d matrix(1);
+        if (leaf.interveningRead) {
+            const auto value = RrReadInput(program, *leaf.interveningRead);
+            std::memcpy(matrix._mtx, value.matrix.data(), sizeof(double) * 16);
+        }
+        store.PublishMatrix(leaf.value, matrix, false);
     }
-    if (step.part != 0) {
-        if (error)
-            *error = "SpaceExpression has an unsupported bridge part";
+    return true;
+}
+
+bool
+PublishPoseFrame(RrProgram *program, size_t row)
+{
+    const auto &leaf = program->poses->providerFrameInputs[row];
+    Store bridge(program->store.providerValues);
+    bridge.PublishFrame(leaf.value, leaf.base
+                                        ? program->store.base[leaf.version]
+                                        : program->store.fin[leaf.version]);
+    return true;
+}
+
+/// Whether routed input \p row's cross-domain read answers a value
+/// PublishRouted keeps.
+bool
+RoutedAvailable(const RrProgram *program, size_t row)
+{
+    const auto &route = program->file->providerProgram->routedInputs[row];
+    const auto &cross =
+        program->file->crossDomainReads[size_t(route.crossRead)];
+    if (cross.kind == fb::CrossDomainReadKind::Points)
+        return RrReadCrossDomainPoints(program, cross) != nullptr;
+    RrWireValue value;
+    if (!RrReadCrossDomain(program, route.crossRead, &value))
+        return false;
+    switch (value.tag) {
+    case RigExecWireInputTag::Matrix4d:
+    case RigExecWireInputTag::Vec3f:
+    case RigExecWireInputTag::Vec3d:
+    case RigExecWireInputTag::Vec3i:
+    case RigExecWireInputTag::Bool:
+    case RigExecWireInputTag::Int:
+    case RigExecWireInputTag::Token:
+    case RigExecWireInputTag::Double:
+    case RigExecWireInputTag::Float:
+        return true;
+    default:
         return false;
     }
-    if (step.object < 0 ||
-        size_t(step.object) >= program->providerProgram.ops.size() ||
-        program->providerProgram.ops[size_t(step.object)].kind !=
-            RigExecProviderOpKind::Attribute) {
+}
+} // namespace
+
+eval::spaces::ProviderProducers
+RrProviderProducers(const RrProgram *program)
+{
+    eval::spaces::ProviderProducers producers;
+    producers.operations = program->providerProgram.ops.size();
+    if (program->file && program->file->providerProgram) {
+        const auto &wire = *program->file->providerProgram;
+        producers.sampled = wire.sampled.size();
+        producers.external = wire.externalInputs.size();
+        producers.routed = wire.routedInputs.size();
+    }
+    if (program->poses)
+        producers.frames = program->poses->providerFrameInputs.size();
+    return producers;
+}
+
+bool
+RrProviderCandidates(const RrProgram *program, const eval::OpLookup &lookup,
+                     const RigExecTypeDesc &type, void *out, std::string *error)
+{
+    using Producer = eval::spaces::ProviderProducer;
+    using Read = eval::spaces::ProviderCandidateRead;
+    Producer part = Producer::Operation;
+    size_t row = 0;
+    if (!type.element || lookup.read > uint8_t(Read::Blocked) ||
+        !RrProviderProducers(program).Of(lookup.object, &part, &row)) {
         if (error)
-            *error = "SpaceExpression names no Attribute op";
+            *error = "provider value producer " +
+                     std::to_string(lookup.object) + " has no candidates";
         return false;
     }
-    const auto &op = program->providerProgram.ops[size_t(step.object)];
-    if (op.output >= program->store.providerValues.size()) {
+    const Read read = Read(lookup.read);
+    auto &list = *static_cast<rigExecStd::RigExecArray<uint8_t> *>(out);
+    const auto flag = [&](bool present, bool authoritative, bool blocked) {
+        return uint8_t(read == Read::Present         ? present
+                       : read == Read::Authoritative ? authoritative
+                                                     : blocked);
+    };
+    if (part == Producer::Operation) {
+        const auto &op = program->providerProgram.ops[row];
+        const auto &values = program->store.providerValues;
+        const uint64_t raw = op.inputs.empty() ? UINT64_MAX : op.inputs[0];
+        const bool connected =
+            op.inputs.size() > 1 && op.inputs[1] != UINT64_MAX;
+        list.Assign(connected ? 2 : 1);
+        for (size_t k = 0; k < list.Size(); ++k) {
+            const uint64_t id = k ? op.inputs[1] : raw;
+            const RigExecProviderPlainState *state =
+                id < values.size() ? &values[size_t(id)] : nullptr;
+            list[k] =
+                flag(state && state->initialized, state && state->authoritative,
+                     state && state->blocked);
+        }
+        return true;
+    }
+    list.Assign(1);
+    if (part == Producer::Sampled) {
+        const int slot = program->file->providerProgram->sampled[row].inputSlot;
+        list[0] = flag(
+            true, slot >= 0 && program->inputState.slotAuthored[size_t(slot)],
+            slot >= 0 && program->inputState.slotBlocked[size_t(slot)] != 0);
+    } else if (part == Producer::Routed) {
+        list[0] = flag(true, true, !RoutedAvailable(program, row));
+    } else {
+        list[0] = flag(true, false, false);
+    }
+    return true;
+}
+
+bool
+RrStoreProviderAnswer(RrProgram *program, size_t step,
+                      const eval::OpHostOutput &output, const void *value,
+                      std::string *error)
+{
+    using Producer = eval::spaces::ProviderProducer;
+    using T = eval::OpOutputTarget;
+    RrStore &store = program->store;
+    Producer part = Producer::Operation;
+    size_t row = 0;
+    if (output.object >= store.providerAnswerPending.size() ||
+        !RrProviderProducers(program).Of(output.object, &part, &row)) {
+        if (error)
+            *error =
+                "no provider value producer " + std::to_string(output.object);
+        return false;
+    }
+    auto &pending = store.providerAnswerPending[output.object];
+    if (output.target == uint8_t(T::ProviderAnswerAuthority)) {
+        pending.first = *static_cast<const uint8_t *>(value);
+        return true;
+    }
+    if (output.target == uint8_t(T::ProviderAnswerBlocked)) {
+        pending.second = *static_cast<const uint8_t *>(value);
+        return true;
+    }
+    const bool authority = pending.first != 0, blocked = pending.second != 0;
+    pending = {0, 0};
+    const int32_t selected = *static_cast<const int32_t *>(value);
+    auto &values = store.providerValues;
+    uint64_t answered = UINT64_MAX;
+    switch (part) {
+    case Producer::Operation:
+        answered = program->providerProgram.ops[row].output;
+        break;
+    case Producer::Sampled:
+        answered = program->file->providerProgram->sampled[row].value;
+        break;
+    case Producer::External:
+        answered = program->file->providerProgram->externalInputs[row].value;
+        break;
+    case Producer::Routed:
+        answered = program->file->providerProgram->routedInputs[row].value;
+        break;
+    case Producer::PoseFrame:
+        answered = program->poses->providerFrameInputs[row].value;
+        break;
+    }
+    if (answered >= values.size()) {
         if (error)
             *error = "provider output is outside its typed layout";
         return false;
     }
-    Store state(program->store.providerValues, op.inputs,
-                program->store.providerConversionScratch[size_t(step.object)]);
-    RigExecRunProviderArithmetic<SpaceMath>(op, state);
-    return true;
+    if (selected < 0) {
+        auto &out = values[size_t(answered)];
+        out.value = std::monostate{};
+        out.initialized = true;
+        out.blocked = blocked;
+        out.authoritative = false;
+        out.count = 0;
+        out.error = "provider input unavailable";
+        return true;
+    }
+    switch (part) {
+    case Producer::Operation: {
+        const auto &op = program->providerProgram.ops[row];
+        if (size_t(selected) >= op.inputs.size() ||
+            op.inputs[size_t(selected)] >= values.size()) {
+            if (error)
+                *error = "provider operation " + std::to_string(row) +
+                         " has no candidate " + std::to_string(selected);
+            return false;
+        }
+        values[size_t(answered)] = values[size_t(op.inputs[size_t(selected)])];
+        values[size_t(answered)].authoritative = authority;
+        return true;
+    }
+    case Producer::Sampled:
+        return PublishSampled(program, row, authority, blocked);
+    case Producer::Routed:
+        return PublishRouted(program, step, row, authority, blocked);
+    case Producer::External:
+        return PublishExternal(program, row);
+    case Producer::PoseFrame:
+        return PublishPoseFrame(program, row);
+    }
+    return false;
 }
 
 namespace {

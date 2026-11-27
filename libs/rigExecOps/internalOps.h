@@ -41,6 +41,8 @@ inline constexpr rigExec::RigExecSchemaInfo kProviderArithmetic =
     Internal("One provider program operation's matrix or frame.");
 inline constexpr rigExec::RigExecSchemaInfo kAffineFrame =
     Internal("One affine frame expression's matrix.");
+inline constexpr rigExec::RigExecSchemaInfo kProviderSelect =
+    Internal("Which candidate answers a provider value this frame.");
 inline constexpr rigExec::RigExecSchemaInfo kFkJointGroups =
     Internal("An FK chain's joint groups applied to its frames.");
 inline constexpr rigExec::RigExecSchemaInfo kMoverTransform =

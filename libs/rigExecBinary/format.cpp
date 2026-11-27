@@ -6,6 +6,7 @@
 #include "rigExecBinary/manifest.h"
 
 #include "rigExecBinary/stepGraph.h"
+#include "rigExecGraph/providerInputs.h"
 #include "rigExecGraph/providerRecords.h"
 #include "rigExecMath/affineFrameKernel.h"
 #include "rigExecMath/conditionalTableKernel.h"
@@ -599,8 +600,13 @@ public:
         _providerOpOf.assign(nodes, -1);
         _constraintNode.assign(nodes, -1);
         _constraintSolve.assign(nodes, -1);
+        _answerOf.assign(nodes, -1);
         if (!nodes)
             return;
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 52 &&
+                _answerOf[output->node] < 0)
+                _answerOf[output->node] = int64_t(output->object);
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node < nodes &&
                 (output->target == 28 || output->target == 29) &&
@@ -726,7 +732,7 @@ private:
             return true;
         std::vector<uint8_t> stored, packets, fields, groupsStored,
             enabledStored;
-        std::set<std::pair<uint64_t, uint8_t>> providerStored;
+        std::set<std::pair<uint64_t, uint8_t>> providerStored, answerStored;
         std::vector<uint8_t> spaceStored(
             4 * std::max<size_t>(_slots, _f.pose->frameRecords.size()), 0);
         for (const auto &output : _f.opGraph->hostOutputs) {
@@ -737,7 +743,8 @@ private:
                 output->target >= 35 && output->target <= 37;
             if ((output->target > 6 && output->target < 20) ||
                 (output->target > 34 && !constraint && output->target != 50 &&
-                 output->target != 51))
+                 output->target != 51 &&
+                 (output->target < 52 || output->target > 54)))
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
             if (output->node >= _f.opGraph->nodes.size())
@@ -766,6 +773,29 @@ private:
                     return _Bad("op_graph.host_outputs: node " + _N(node) +
                                 " stores into commit " + _N(output->object) +
                                 ", which it does not write back");
+                continue;
+            }
+            if (output->target >= 52) {
+                if (!_f.providerProgram ||
+                    output->object >= _Producers().Count() ||
+                    _answerOf[node] != int64_t(output->object) ||
+                    _providerOpOf[node] >= 0 ||
+                    _propertyChainOf[node] != kNoProperty ||
+                    _placementSlot[node] >= 0 || _packetObject[node] >= 0 ||
+                    _fieldStored[node] >= 0 || _refreshOf[node] >= 0 ||
+                    _frameRecordOf[node] >= 0 || _commitNode[node] >= 0 ||
+                    _constraintNode[node] >= 0)
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the answer of no provider value it "
+                                "answers");
+                if (!answerStored
+                         .emplace(output->object, uint8_t(output->target))
+                         .second)
+                    return _Bad("op_graph.host_outputs: target " +
+                                _N(output->target) +
+                                " of provider value "
+                                "producer " +
+                                _N(output->object) + " is stored twice");
                 continue;
             }
             if (output->target >= 28) {
@@ -1018,6 +1048,15 @@ private:
                                 "reads no provider refresh");
                 continue;
             }
+            if (lookup && lookup->source == 25) {
+                if (!_f.providerProgram ||
+                    lookup->object >= _Producers().Count() ||
+                    lookup->part != -1 || lookup->read > 2)
+                    return _Bad("op_graph.lookups: a provider candidates "
+                                "lookup reads no flag of a provider value "
+                                "producer");
+                continue;
+            }
             if (lookup && lookup->source == 24) {
                 if (!_f.providerProgram ||
                     !_Has(_f.providerProgram->ops, lookup->object) ||
@@ -1144,6 +1183,9 @@ private:
             if (kind == fb::StepKind::ReservedProviderRefresh)
                 return _Bad(_StepName(i) +
                             ": the retired ProviderRefresh step");
+            if (kind == fb::StepKind::ReservedSpaceExpression)
+                return _Bad(_StepName(i) +
+                            ": the retired SpaceExpression step");
             const bool op = kind == fb::StepKind::OpNode ||
                             kind == fb::StepKind::OpChainHead ||
                             kind == fb::StepKind::OpChainRange;
@@ -1370,6 +1412,12 @@ private:
                     if (_providerOpOf[n] != int64_t(lookup.object))
                         return bad(" reads the inputs of a provider operation "
                                    "its node does not run");
+                    continue;
+                }
+                if (lookup.source == 25) {
+                    if (_answerOf[n] != int64_t(lookup.object))
+                        return bad(" reads the candidates of a provider value "
+                                   "its node does not answer");
                     continue;
                 }
                 const int64_t object = int64_t(lookup.object);
@@ -2628,6 +2676,56 @@ private:
 
     /// The provider op whose result the op step \p step stores, or -1 for
     /// any other step.
+    /// The provider value producer whose answer the op step \p step stores,
+    /// or -1 for any other step.
+    int64_t _AnswerOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _answerOf.size()
+                   ? _answerOf[size_t(step.object)]
+                   : -1;
+    }
+
+    /// The provider program's producers, as ProviderCandidates lookups and
+    /// ProviderAnswer outputs number them.
+    eval::spaces::ProviderProducers _Producers() const
+    {
+        eval::spaces::ProviderProducers producers;
+        if (_f.providerProgram) {
+            producers.operations = _f.providerProgram->ops.size();
+            producers.sampled = _f.providerProgram->sampled.size();
+            producers.external = _f.providerProgram->externalInputs.size();
+            producers.routed = _f.providerProgram->routedInputs.size();
+        }
+        if (_f.pose)
+            producers.frames = _f.pose->providerFrameInputs.size();
+        return producers;
+    }
+
+    /// The provider value producer \p index names, or UINT64_MAX.
+    uint64_t _AnsweredValue(uint64_t index) const
+    {
+        using Producer = eval::spaces::ProviderProducer;
+        Producer part = Producer::Operation;
+        size_t row = 0;
+        if (!_Producers().Of(index, &part, &row))
+            return UINT64_MAX;
+        const auto &p = *_f.providerProgram;
+        switch (part) {
+        case Producer::Operation:
+            return p.ops[row].output;
+        case Producer::Sampled:
+            return p.sampled[row].value;
+        case Producer::External:
+            return p.externalInputs[row].value;
+        case Producer::Routed:
+            return p.routedInputs[row].value;
+        case Producer::PoseFrame:
+            return _f.pose->providerFrameInputs[row].value;
+        }
+        return UINT64_MAX;
+    }
+
     int64_t _ProviderOpOf(const fb::RigExecWireStep &step) const
     {
         return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
@@ -2702,6 +2800,16 @@ private:
             !_f.opGraph->nodes[size_t(step.object)])
             return true;
         const uint64_t node = uint64_t(step.object);
+        if (const int64_t answer = _AnswerOf(step); answer >= 0) {
+            const uint64_t value = _AnsweredValue(uint64_t(answer));
+            if (step.writes.size() != 1 ||
+                step.writes[0].domain() != fb::SlotDomain::SpaceValue ||
+                step.writes[0].begin() != value ||
+                step.writes[0].end() != value + 1)
+                return _Bad(_StepName(i) + " writes other than SpaceValue[" +
+                            _N(value) + "]");
+            return true;
+        }
         if (const int64_t op = _ProviderOpOf(step); op >= 0) {
             const auto &provider = _f.providerProgram->ops[size_t(op)];
             if (step.writes.size() != 1 ||
@@ -2843,6 +2951,9 @@ private:
                 _SolvesAsOpNodes(step.object))
                 return _Bad(_StepName(i) + ": constraint " + _N(step.object) +
                             " solves as op nodes");
+            if (step.kind == fb::StepKind::ReservedSpaceExpression)
+                return _Bad(_StepName(i) +
+                            ": the retired SpaceExpression step");
             if (!_SpaceOp(i))
                 return false;
             if (const int64_t object = _PacketObjectOf(step); object >= 0) {
@@ -4199,7 +4310,7 @@ private:
     {
         if (!_f.providerProgram) {
             for (size_t i = 0; i < _f.steps.size(); ++i)
-                if (_f.steps[i].kind == fb::StepKind::SpaceExpression)
+                if (_AnswerOf(_f.steps[i]) >= 0)
                     return _Bad(_StepName(i) + ": missing provider program");
             return true;
         }
@@ -4372,6 +4483,7 @@ private:
             bodyExternal(p.externalInputs.size()),
             bodyRouted(p.routedInputs.size()),
             bodyFrames(_f.pose->providerFrameInputs.size());
+        const eval::spaces::ProviderProducers producers = _Producers();
         for (size_t i = 0; i < _f.steps.size(); ++i) {
             const auto &step = _f.steps[i];
             if (const int64_t op = _ProviderOpOf(step); op >= 0) {
@@ -4385,18 +4497,22 @@ private:
                                     ": missing SpaceValue operand read");
                 continue;
             }
-            if (step.kind != fb::StepKind::SpaceExpression)
+            const int64_t answer = _AnswerOf(step);
+            if (answer < 0)
                 continue;
+            eval::spaces::ProviderProducer producer;
+            size_t row = 0;
             const auto contains = [&](const auto &, fb::SlotDomain domain,
                                       uint64_t slot) {
                 return _BodyRead(i, domain, slot);
             };
             uint64_t output = UINT64_MAX;
             const std::string who = _StepName(i);
-            if (step.object < 0)
-                return _Bad(who + ": negative provider body index");
-            const size_t object = size_t(step.object);
-            if (step.part == 0) {
+            if (!producers.Of(uint64_t(answer), &producer, &row))
+                return _Bad(who + ": answers no provider value producer");
+            const size_t object = row;
+            const int part = int(producer);
+            if (part == 0) {
                 if (object >= p.ops.size() || bodyOps[object]++)
                     return _Bad(who +
                                 ": missing or duplicate provider op body");
@@ -4410,7 +4526,7 @@ private:
                         !contains(step.reads, fb::SlotDomain::SpaceValue,
                                   input))
                         return _Bad(who + ": missing SpaceValue operand read");
-            } else if (step.part == 2) {
+            } else if (part == 2) {
                 if (object >= p.sampled.size() || bodySampled[object]++)
                     return _Bad(who +
                                 ": missing or duplicate provider sampled body");
@@ -4421,7 +4537,7 @@ private:
                 if (leaf.propertyVersion != -1)
                     return _Bad(who + ": raw provider source cannot select a "
                                       "property version");
-            } else if (step.part == 1) {
+            } else if (part == 1) {
                 if (object >= p.externalInputs.size() || bodyExternal[object]++)
                     return _Bad(
                         who + ": missing or duplicate provider external body");
@@ -4505,7 +4621,7 @@ private:
                                                         "pose frame read");
                             }
                 }
-            } else if (step.part == 3) {
+            } else if (part == 3) {
                 if (object >= p.routedInputs.size() || bodyRouted[object]++)
                     return _Bad(who +
                                 ": missing or duplicate provider routed body");
@@ -4557,7 +4673,7 @@ private:
                                     ": missing routed point-version read");
                         }
                     }
-            } else if (step.part == 4) {
+            } else if (part == 4) {
                 if (object >= _f.pose->providerFrameInputs.size() ||
                     bodyFrames[object]++)
                     return _Bad(who +
@@ -5466,8 +5582,7 @@ private:
         }
         for (size_t i = 0; i < _f.steps.size(); ++i) {
             const auto &step = _f.steps[i];
-            const bool helper = _FieldOf(step) >= 0 ||
-                                step.kind == K::SpaceExpression ||
+            const bool helper = _FieldOf(step) >= 0 || _AnswerOf(step) >= 0 ||
                                 _ProviderOpOf(step) >= 0;
             const bool required = step.kind != K::SnapshotFinals &&
                                   !prep(step) && step.kind != K::AvarInputs &&
@@ -10087,6 +10202,9 @@ private:
     }
     /// Per op node: the provider refresh it runs, or -1.
     std::vector<int64_t> _refreshOf;
+    /// Per op node: the provider value producer whose answer it stores
+    /// (host output 52), or -1.
+    std::vector<int64_t> _answerOf;
     /// Per op node: the provider op whose result it stores (host output
     /// 28 or 29), or -1.
     std::vector<int64_t> _providerOpOf;
@@ -10302,13 +10420,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 48,
+    static_assert(RigExecFormatOldestReadable == 49,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: Range delta mushes as op nodes"
+                ? "re-export: provider values answered by op nodes"
                 : "rebake");
 }
 
@@ -10561,6 +10679,8 @@ _StepKindName(fb::StepKind kind)
         return "SkinTopology";
     case fb::StepKind::ReservedWeightField:
         return "ReservedWeightField";
+    case fb::StepKind::ReservedSpaceExpression:
+        return "ReservedSpaceExpression";
     case fb::StepKind::SpaceCheckpoint:
         return "SpaceCheckpoint";
     case fb::StepKind::ReservedProviderRefresh:
@@ -10646,6 +10766,7 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
         return true;
     }
     case fb::StepKind::ReservedProviderRefresh:
+    case fb::StepKind::ReservedSpaceExpression:
         return false;
     case fb::StepKind::ReservedOpGraph:
         return false;
@@ -10659,6 +10780,32 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
                 _Has(meta->paths, output->object)) {
                 *out = text(meta->paths[output->object]) +
                        (output->target == 20 ? " final" : " base");
+                return true;
+            }
+            if (output->target == 52 && file.providerProgram) {
+                eval::spaces::ProviderProducers producers;
+                producers.operations = file.providerProgram->ops.size();
+                producers.sampled = file.providerProgram->sampled.size();
+                producers.external =
+                    file.providerProgram->externalInputs.size();
+                producers.routed = file.providerProgram->routedInputs.size();
+                producers.frames = pose ? pose->providerFrameInputs.size() : 0;
+                eval::spaces::ProviderProducer part;
+                size_t row = 0;
+                if (!producers.Of(output->object, &part, &row))
+                    return false;
+                using Producer = eval::spaces::ProviderProducer;
+                const auto &p = *file.providerProgram;
+                const uint64_t value =
+                    part == Producer::Operation  ? p.ops[row].output
+                    : part == Producer::Sampled  ? p.sampled[row].value
+                    : part == Producer::External ? p.externalInputs[row].value
+                    : part == Producer::Routed
+                        ? p.routedInputs[row].value
+                        : pose->providerFrameInputs[row].value;
+                if (!_Has(p.valueKeys, value))
+                    return false;
+                *out = p.valueKeys[size_t(value)];
                 return true;
             }
             if ((output->target == 28 || output->target == 29) &&

@@ -79,6 +79,10 @@ enum class OpLookupSource : uint8_t {
     /// provider values its inputs name; `read` is an
     /// eval::spaces::ProviderRead.
     ProviderInputs = 24,
+    /// BoolArray: one flag per candidate that can answer provider value
+    /// producer `object` (eval::spaces::ProviderProducers numbering) this
+    /// frame; `read` is an eval::spaces::ProviderCandidateRead.
+    ProviderCandidates = 25,
     /// PointFrameList: the pose frames at the versions list `part`
     /// (OpCommitList) of commit `object` names.
     CommitVersions = 30,
@@ -219,7 +223,7 @@ constexpr bool
 OpSpaceLookupSource(uint8_t source)
 {
     return source >= uint8_t(OpLookupSource::RestFrame) &&
-           source <= uint8_t(OpLookupSource::ProviderInputs);
+           source <= uint8_t(OpLookupSource::ProviderCandidates);
 }
 
 /// Whether a lookup of \p source answers a Mat4d that may be absent or,
@@ -351,6 +355,13 @@ enum class OpOutputTarget : uint8_t {
     /// stored before its ProviderValueMatrix or ProviderValueFrame.
     ProviderValueAuthority = 50,
     ProviderValueUnavailable = 51,
+    /// Int: the candidate whose value answers provider value producer
+    /// `object` (eval::spaces::ProviderProducers numbering), -1 when that
+    /// candidate holds none; published after the answer's authority and
+    /// blocked flag (Bool) were stored.
+    ProviderAnswer = 52,
+    ProviderAnswerAuthority = 53,
+    ProviderAnswerBlocked = 54,
 };
 
 /// Whether an output of \p target is one the host stores through
@@ -361,7 +372,9 @@ OpSpaceOutputTarget(uint8_t target)
     return (target >= uint8_t(OpOutputTarget::ProviderFinalMatrix) &&
             target <= uint8_t(OpOutputTarget::ProviderValueFrame)) ||
            target == uint8_t(OpOutputTarget::ProviderValueAuthority) ||
-           target == uint8_t(OpOutputTarget::ProviderValueUnavailable);
+           target == uint8_t(OpOutputTarget::ProviderValueUnavailable) ||
+           (target >= uint8_t(OpOutputTarget::ProviderAnswer) &&
+            target <= uint8_t(OpOutputTarget::ProviderAnswerBlocked));
 }
 
 /// Whether OpLookUp resolves lookups of \p source.
@@ -581,6 +594,9 @@ struct OpStepLayout {
     /// Per program node: its Lookup hostInputs entries and its hostOutputs
     /// entries.
     std::vector<std::vector<uint32_t>> lookupsOf, hostOutputsOf;
+    /// Per range chain: the hostInputs entries its members read group by
+    /// group.
+    std::vector<std::vector<uint32_t>> groupedOf;
     /// Per value number: its first OpGroupValue slot, or kRigExecInvalidIndex,
     /// and the node writing it, or kRigExecInvalidIndex for an input.
     std::vector<uint32_t> groupBase, producerOf;
@@ -810,6 +826,11 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
         }
         layout->hostInputIds.push_back(id);
     }
+    layout->groupedOf.assign(chains, std::vector<uint32_t>());
+    for (uint32_t i = 0; i < layout->hostInputs.size(); ++i)
+        if (layout->grouped[i])
+            layout->groupedOf[layout->chainOf[layout->hostInputs[i].node]]
+                .push_back(i);
     for (uint32_t o = 0; o < layout->hostOutputs.size(); ++o) {
         const OpHostOutput &output = layout->hostOutputs[o];
         bool stored = output.node < nodes &&
@@ -1104,6 +1125,7 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
     case OpLookupSource::ProviderFrame:
     case OpLookupSource::ProviderParentRaw:
     case OpLookupSource::ProviderInputs:
+    case OpLookupSource::ProviderCandidates:
         return host.LookUpSpace(index, lookup, type, value, error);
     }
     return OpLayoutFail(error, "no host resolves lookup source " +
@@ -1155,6 +1177,9 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
     case OpOutputTarget::ProviderValueFrame:
     case OpOutputTarget::ProviderValueAuthority:
     case OpOutputTarget::ProviderValueUnavailable:
+    case OpOutputTarget::ProviderAnswer:
+    case OpOutputTarget::ProviderAnswerAuthority:
+    case OpOutputTarget::ProviderAnswerBlocked:
         return host.StoreSpace(output, value, error);
     }
     return OpLayoutFail(error, "no host stores output target " +
@@ -1313,9 +1338,9 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
         if (!run.RunChainHead(index, chain.bounds.data(), groups, error,
                               failedNode))
             return false;
-        for (size_t i = 0; i < layout.hostInputs.size(); ++i) {
+        for (const uint32_t i : layout.groupedOf[index]) {
             const uint32_t node = layout.hostInputs[i].node;
-            if (layout.grouped[i] != 2 || layout.chainOf[node] != index)
+            if (layout.grouped[i] != 2)
                 continue;
             state->haloReads[i].resize(groups);
             for (uint32_t g = 0; g < groups; ++g) {
@@ -1337,10 +1362,9 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
         return OpLayoutFail(error, "an op range step names no group");
     const uint32_t segment = uint32_t(part) / groups;
     const uint32_t g = uint32_t(part) % groups;
-    for (size_t i = 0; i < layout.hostInputs.size(); ++i) {
+    for (const uint32_t i : layout.groupedOf[index]) {
         const OpHostInput &input = layout.hostInputs[i];
-        if (!layout.grouped[i] || layout.chainOf[input.node] != index ||
-            desc.segments[layout.memberOf[input.node]] != segment)
+        if (desc.segments[layout.memberOf[input.node]] != segment)
             continue;
         if (layout.grouped[i] == 1) {
             const bool whole = desc.whole[layout.memberOf[input.node]] != 0;

@@ -1,4 +1,7 @@
 #include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/crossDomainInputs.h"
+#include "rigExec/internal/frameExtraction.h"
+#include "rigExecSchema/schemaNames.h"
 
 #include "rigExec/api/rigDesc.h"
 #include "rigExecEvalCore/opSteps.h"
@@ -664,8 +667,39 @@ RigExecBakedAddProviderOps(const RigExecBakedProgramImpl &B,
         *out = value.UncheckedGet<TfToken>().GetString();
         return 1;
     };
+    const eval::spaces::ProviderProducers producers =
+        RigExecBakedProviderProducers(B);
     for (size_t o = 0; o < B.opNodeOrigins.size(); ++o) {
         const RigExecBakedOpOrigin &origin = B.opNodeOrigins[o];
+        if (origin.family == RigExecBakedOpFamily::ProviderAnswer) {
+            using Read = eval::spaces::ProviderCandidateRead;
+            const uint32_t producer = uint32_t(
+                producers.Index(eval::spaces::ProviderProducer(origin.part),
+                                size_t(origin.object)));
+            const RigExecNodeId node = builder->AddOp(ProviderSelect());
+            if (node != o)
+                return SpaceFail(error, "op node " + std::to_string(o) +
+                                            " was numbered " +
+                                            std::to_string(node));
+            const std::pair<const RigExecPortHandle *, Read> flags[] = {
+                {&ProviderSelectPresent(), Read::Present},
+                {&ProviderSelectAuthoritative(), Read::Authoritative},
+                {&ProviderSelectBlocked(), Read::Blocked}};
+            for (const auto &[port, read] : flags) {
+                builder->BindInput(node, *port);
+                layout->hostInputs.push_back(
+                    {node, port->Index(), eval::OpHostSource::Lookup,
+                     uint32_t(layout->lookups.size())});
+                layout->lookups.push_back({uint8_t(S::ProviderCandidates),
+                                           producer, -1, uint8_t(read)});
+            }
+            store(node, ProviderSelectAuthoritativeOut(),
+                  T::ProviderAnswerAuthority, producer);
+            store(node, ProviderSelectBlockedOut(), T::ProviderAnswerBlocked,
+                  producer);
+            store(node, ProviderSelectSelected(), T::ProviderAnswer, producer);
+            continue;
+        }
         if (origin.family != RigExecBakedOpFamily::ProviderOp)
             continue;
         const uint32_t index = uint32_t(origin.object);
@@ -783,6 +817,19 @@ RigExecBakedAddProviderOps(const RigExecBakedProgramImpl &B,
     return true;
 }
 
+eval::spaces::ProviderProducers
+RigExecBakedProviderProducers(const RigExecBakedProgramImpl &B)
+{
+    const RigExecProviderProgram &program = B.GetProviderProgram();
+    eval::spaces::ProviderProducers producers;
+    producers.operations = program.ops.size();
+    producers.sampled = program.sampled.size();
+    producers.external = program.externalInputs.size();
+    producers.routed = program.routedInputs.size();
+    producers.frames = B.providerFrameInputs.size();
+    return producers;
+}
+
 int
 RigExecBakedProviderOpOf(const RigExecBakedProgramImpl &B,
                          const RigExecBakedStep &step)
@@ -793,12 +840,171 @@ RigExecBakedProviderOpOf(const RigExecBakedProgramImpl &B,
                : -1;
 }
 
+namespace {
+
+using Producer = eval::spaces::ProviderProducer;
+
+bool
+LookUpCandidates(const RigExecBakedProgramImpl &B, const eval::OpLookup &lookup,
+                 const RigExecTypeDesc &type, void *out, std::string *error)
+{
+    using Read = eval::spaces::ProviderCandidateRead;
+    Producer part = Producer::Operation;
+    size_t row = 0;
+    if (!type.element || lookup.read > uint8_t(Read::Blocked) ||
+        !RigExecBakedProviderProducers(B).Of(lookup.object, &part, &row))
+        return SpaceFail(error, "provider value producer " +
+                                    std::to_string(lookup.object) +
+                                    " has no candidates");
+    const Read read = Read(lookup.read);
+    auto &list = ListOf<uint8_t>(out);
+    const auto flag = [&](bool present, bool authoritative, bool blocked) {
+        return uint8_t(read == Read::Present         ? present
+                       : read == Read::Authoritative ? authoritative
+                                                     : blocked);
+    };
+    if (part == Producer::Operation) {
+        const RigExecProviderOp &op = B.GetProviderProgram().ops[row];
+        const RigExecValueId raw =
+            op.inputs.empty() ? RigExecNoProviderValue : op.inputs[0];
+        const bool connected =
+            op.inputs.size() > 1 && op.inputs[1] != RigExecNoProviderValue;
+        list.Assign(connected ? 2 : 1);
+        for (size_t k = 0; k < list.Size(); ++k) {
+            const RigExecValueId id = k ? op.inputs[1] : raw;
+            const bool exists = id < B.providerValues.values.size();
+            const RigExecTypedValueState *state =
+                exists ? &B.providerValues.values[size_t(id)] : nullptr;
+            list[k] =
+                flag(state && state->initialized, state && state->authoritative,
+                     state && state->blocked);
+        }
+        return true;
+    }
+    list.Assign(1);
+    if (part == Producer::Sampled) {
+        const bool overlaid = RigExecBakedSpaceLeafOverlay(B, row) != nullptr;
+        list[0] = flag(true, overlaid,
+                       !overlaid && row < B.providerLeafBlocked.size() &&
+                           B.providerLeafBlocked[row]);
+    } else if (part == Producer::Routed) {
+        list[0] = flag(true, true,
+                       !RigExecBakedCrossDomainAvailable(
+                           B, B.providerRoutedReads[row], nullptr));
+    } else {
+        list[0] = flag(true, false, false);
+    }
+    return true;
+}
+
+/// Publishes provider value producer \p index's answer: candidate
+/// \p selected's value with the answer's flags, or no value. An unavailable
+/// routed read reports its line on \p step.
+bool
+PublishAnswer(RigExecBakedProgramImpl &B, RigExecBakedStep *step,
+              uint64_t index, int32_t selected, bool authority, bool blocked,
+              std::string *error)
+{
+    const RigExecProviderProgram &program = B.GetProviderProgram();
+    Producer part = Producer::Operation;
+    size_t row = 0;
+    if (!RigExecBakedProviderProducers(B).Of(index, &part, &row))
+        return SpaceFail(error,
+                         "no provider value producer " + std::to_string(index));
+    auto &store = B.providerValues;
+    const auto unavailable = [&](RigExecValueId output) {
+        store.values[size_t(output)].raw = VtValue();
+        store.Publish(output, std::monostate(), blocked, false, 0,
+                      "provider input unavailable");
+        return true;
+    };
+    switch (part) {
+    case Producer::Operation: {
+        const RigExecProviderOp &op = program.ops[row];
+        if (selected < 0)
+            return unavailable(op.output);
+        if (size_t(selected) >= op.inputs.size() ||
+            op.inputs[size_t(selected)] >= store.values.size())
+            return SpaceFail(
+                error, "provider operation " + std::to_string(row) +
+                           " has no candidate " + std::to_string(selected));
+        store.Copy(op.output, op.inputs[size_t(selected)], authority);
+        return true;
+    }
+    case Producer::Sampled: {
+        const RigExecProviderLeaf &leaf = program.sampled[row];
+        if (selected < 0)
+            return unavailable(leaf.value);
+        const VtValue *overlay = RigExecBakedSpaceLeafOverlay(B, row);
+        store.PublishSource(leaf.value,
+                            overlay ? *overlay : B.providerLeaves.values[row],
+                            blocked, authority);
+        return true;
+    }
+    case Producer::Routed: {
+        const RigExecProviderRoutedInput &route = program.routedInputs[row];
+        if (selected < 0)
+            return unavailable(route.value);
+        VtValue read;
+        std::string diagnostic;
+        RigExecBakedReadCrossDomain(B, B.providerRoutedReads[row], &read,
+                                    &diagnostic);
+        store.PublishSource(route.value, read, blocked, authority);
+        if (step && !diagnostic.empty())
+            step->diagnostics.push_back(diagnostic);
+        return true;
+    }
+    case Producer::External: {
+        const RigExecProviderExternalInput &input = program.externalInputs[row];
+        if (selected < 0)
+            return unavailable(input.value);
+        const int slot = B.providerExternalSlots[row];
+        if (input.computation == SchemaComputationText::computeRestFrame)
+            store.Publish(input.value,
+                          slot >= 0 ? B.restFrames[size_t(slot)]
+                                    : RigExecFrameFromMatrix(GfMatrix4d(1.0)),
+                          blocked, authority);
+        else if (input.computation ==
+                     SchemaComputationText::computePointFrame ||
+                 input.computation ==
+                     SchemaComputationText::computeBasePointFrame)
+            store.Publish(input.value,
+                          slot >= 0 ? B.base[size_t(slot)]
+                                    : RigExecFrameFromMatrix(GfMatrix4d(1.0)),
+                          blocked, authority);
+        else
+            store.Publish(input.value,
+                          slot >= 0
+                              ? RigExecBakedLeafRead(
+                                    B, B.ladders[size_t(slot)].interveningSpace)
+                              : GfMatrix4d(1.0),
+                          blocked, authority);
+        return true;
+    }
+    case Producer::PoseFrame: {
+        const auto &input = B.providerFrameInputs[row];
+        if (selected < 0)
+            return unavailable(input.value);
+        store.Publish(input.value,
+                      input.base ? B.base[input.version] : B.fin[input.version],
+                      blocked, authority);
+        return true;
+    }
+    }
+    return SpaceFail(error,
+                     "no provider value producer " + std::to_string(index));
+}
+
+} // namespace
+
 bool
 RigExecBakedLookUpSpace(const RigExecBakedProgramImpl &B,
                         const eval::OpLookup &lookup,
                         const RigExecTypeDesc &type, void *out,
                         std::string *error)
 {
+    if (lookup.source == uint8_t(eval::OpLookupSource::ProviderCandidates))
+        return LookUpCandidates(B, lookup, type, out, error);
     if (lookup.source == uint8_t(eval::OpLookupSource::ProviderInputs)) {
         const RigExecProviderProgram &program = B.GetProviderProgram();
         if (lookup.object >= program.ops.size() || !type.element)
@@ -877,12 +1083,31 @@ RigExecBakedLookUpSpace(const RigExecBakedProgramImpl &B,
 }
 
 bool
-RigExecBakedStoreSpace(RigExecBakedProgramImpl &B,
+RigExecBakedStoreSpace(RigExecBakedProgramImpl &B, RigExecBakedStep *step,
                        const eval::OpHostOutput &output, const void *value,
                        std::string *error)
 {
     using T = eval::OpOutputTarget;
     const T target = T(output.target);
+    if (target >= T::ProviderAnswer && target <= T::ProviderAnswerBlocked) {
+        if (output.object >= B.providerAnswerPending.size())
+            return SpaceFail(error, "no provider value producer " +
+                                        std::to_string(output.object));
+        auto &pending = B.providerAnswerPending[output.object];
+        if (target == T::ProviderAnswerAuthority) {
+            pending.first = *static_cast<const uint8_t *>(value);
+            return true;
+        }
+        if (target == T::ProviderAnswerBlocked) {
+            pending.second = *static_cast<const uint8_t *>(value);
+            return true;
+        }
+        const auto [authority, blocked] = pending;
+        pending = {0, 0};
+        return PublishAnswer(B, step, output.object,
+                             *static_cast<const int32_t *>(value),
+                             authority != 0, blocked != 0, error);
+    }
     if (target == T::ProviderValueMatrix || target == T::ProviderValueFrame ||
         target == T::ProviderValueAuthority ||
         target == T::ProviderValueUnavailable) {

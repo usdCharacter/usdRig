@@ -1205,7 +1205,8 @@ enum class StepKind : uint8_t {
   SkinTopology = 22,
   /// Reserved. Open refuses it.
   ReservedWeightField = 23,
-  SpaceExpression = 24,
+  /// Reserved. Open refuses it.
+  ReservedSpaceExpression = 24,
   ChainInputs = 25,
   AvarInputs = 26,
   SpaceCheckpoint = 27,
@@ -1249,7 +1250,7 @@ inline const StepKind (&EnumValuesStepKind())[33] {
     StepKind::LadderCompose,
     StepKind::SkinTopology,
     StepKind::ReservedWeightField,
-    StepKind::SpaceExpression,
+    StepKind::ReservedSpaceExpression,
     StepKind::ChainInputs,
     StepKind::AvarInputs,
     StepKind::SpaceCheckpoint,
@@ -1288,7 +1289,7 @@ inline const char * const *EnumNamesStepKind() {
     "LadderCompose",
     "SkinTopology",
     "ReservedWeightField",
-    "SpaceExpression",
+    "ReservedSpaceExpression",
     "ChainInputs",
     "AvarInputs",
     "SpaceCheckpoint",
@@ -22467,7 +22468,11 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// of slot `object`. 24 (format 45): typed input list `read`
   /// (ProviderRead, rigExecEvalCore/spaces.h) of provider operation
   /// `object` (provider_program.ops index), filled from the provider values
-  /// its inputs name.
+  /// its inputs name. 25 (format 49): flag `read` (ProviderCandidateRead,
+  /// rigExecGraph/providerInputs.h: 0 present, 1 authoritative, 2 blocked)
+  /// of each candidate that can answer provider value producer `object`
+  /// (ProviderProducers numbering: provider_program.ops, sampled,
+  /// external_inputs, routed_inputs, then pose.provider_frame_inputs).
   /// 30 (format 43): the frames of pose commit `object` at version list
   /// `part`: 0 entering, 1 carry, 2 base carry, 3 current descendants, 4
   /// closest, 5 descendant carry, 6 descendant base carry. 31 (format 43):
@@ -22594,7 +22599,10 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// and final frames and its carried descendants' base and final frames;
   /// 28 and 29 (format 45): provider operation `object`'s matrix or frame into its
   /// provider value, published after 50, its authority, and 51, the input
-  /// that left it unavailable (-1 when available);
+  /// that left it unavailable (-1 when available); 52 (format 49): the candidate that
+  /// answers provider value producer `object` (-1 when it holds no value),
+  /// published into that producer's value after 53, its authority, and 54,
+  /// its blocked flag;
   /// 30 to 33 (format 43): the final candidate,
   /// final descendant, base candidate and base descendant versions pose
   /// commit `object` writes; 34 (format 43): which of its candidates are

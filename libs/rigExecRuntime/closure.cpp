@@ -706,8 +706,6 @@ RrRunOpBody(RrProgram *p, size_t i, std::string *error)
                 RrRunTopologyHead(p, size_t(step.object));
                 return true;
             }
-            if (step.kind == RigExecWireStepKind::SpaceExpression)
-                return RrRunSpaceExpression(p, step, error);
             if (step.kind == RigExecWireStepKind::OpNode ||
                 step.kind == RigExecWireStepKind::OpChainHead ||
                 step.kind == RigExecWireStepKind::OpChainRange)
@@ -1691,6 +1689,13 @@ RrExecuteOpGraph(RrProgram *p, bool force, std::string *error)
         std::sort(covered.begin(), covered.end());
         std::sort(coveredTyped.begin(), coveredTyped.end());
         const bool providerOp = RrProviderOpOf(p, step) >= 0;
+        using Producer = eval::spaces::ProviderProducer;
+        Producer answerPart = Producer::Operation;
+        size_t answerRow = 0;
+        const int64_t answer = RrProviderAnswerOf(p, step);
+        const bool answers =
+            answer >= 0 && RrProviderProducers(p).Of(uint64_t(answer),
+                                                     &answerPart, &answerRow);
         for (auto id : p->opGraph.ops[c].descriptor.reads) {
             const auto &value = state.values[size_t(id)];
             if (exact && RrRefreshOf(p, step) >= 0 &&
@@ -1709,14 +1714,12 @@ RrExecuteOpGraph(RrProgram *p, bool force, std::string *error)
                                    std::make_pair(value.domain, value.slot)))
                 continue;
             if (exact &&
-                ((step.kind == RigExecWireStepKind::SpaceExpression &&
-                  step.part == 0) ||
+                ((answers && answerPart == Producer::Operation) ||
                  providerOp) &&
                 value.domain == uint32_t(RigExecWireSlotDomain::SpaceValue))
                 continue;
-            if (exact && step.kind == RigExecWireStepKind::SpaceExpression &&
-                ((step.part == 2 &&
-                  value.domain == uint32_t(RigExecWireSlotDomain::SpaceLeaf))))
+            if (exact && answers && answerPart == Producer::Sampled &&
+                value.domain == uint32_t(RigExecWireSlotDomain::SpaceLeaf))
                 continue;
             if (!incoming &&
                 value.domain ==

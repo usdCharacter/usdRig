@@ -2933,10 +2933,13 @@ TestALeafControlDragRunsOnlyItsCone(const std::string &stagePath,
     for (size_t k = 0; k < B.GetProviderProgram().sampled.size(); ++k) {
         if (B.GetProviderProgram().sampled[k].attribute != source)
             continue;
-        for (size_t s = 0; s < B.steps.size(); ++s)
-            if (B.steps[s].kind == RigExecBakedStepKind::SpaceExpression &&
-                B.steps[s].part == 2 && B.steps[s].object == int(k))
+        for (size_t s = 0; s < B.steps.size(); ++s) {
+            const RigExecBakedStepIdentity id =
+                RigExecBakedIdentityOf(B, B.steps[s]);
+            if (id.kind == RigExecBakedStepKind::SpaceExpression &&
+                id.part == 2 && id.object == int(k))
                 sourceSeeds.push_back(int(s));
+        }
     }
     const RigExecBakedClusterSet stepBound = StepConeBound(B, sourceSeeds);
     const size_t stepsRan = B.opExecution.executed;

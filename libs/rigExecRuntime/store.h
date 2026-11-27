@@ -20,6 +20,7 @@
 #include "rigExecRuntime/opNodes.h"
 #include "rigExecRuntime/values.h"
 #include "rigExecGraph/opValues.h"
+#include "rigExecGraph/providerInputs.h"
 #include "rigExecGraph/providerRecords.h"
 #include "rigExecGraph/windowHistory.h"
 
@@ -376,14 +377,6 @@ struct RrWeightScratch;
 
 // The frame's working state. Sized once at Open from the decoded tables;
 // a run mutates values, never sizes.
-// Conversion storage belongs to one provider op. All slots are sized at Open,
-// so Read* pointers stay stable while that op evaluates, including repeated IDs.
-struct RrProviderConversionScratch {
-    std::vector<RrMat4d> matrices;
-    std::vector<RrPointFrame> frames;
-    std::vector<RrVec3d> vectors;
-};
-
 struct RrStore {
     RigExecOpWorkspace opWorkspace;
     RigExecOpExecution opExecution;
@@ -429,10 +422,13 @@ struct RrStore {
     /// key over its float arrays' bytes.
     std::vector<std::string> packetContentKeys;
     std::vector<RigExecProviderPlainState> providerValues;
-    std::vector<RrProviderConversionScratch> providerConversionScratch;
     /// Per provider op: the authority and the unavailable input its op node
     /// stored, read when it publishes its result in the same step.
     std::vector<std::pair<uint8_t, int32_t>> providerOpPending;
+    /// Per provider value producer (eval::spaces::ProviderProducers order):
+    /// the authority and blocked flag its ProviderSelect node stored, read
+    /// when it publishes its answer in the same step.
+    std::vector<std::pair<uint8_t, uint8_t>> providerAnswerPending;
     std::vector<char> propertyPublished;
     std::vector<char> chainHaveBase, chainBaseDirty, lastHaveBase;
     std::vector<char> derivedHaveBase;
@@ -724,6 +720,10 @@ struct RrProgram {
     /// Per step: the windowed op whose body it is, or -1.
     std::vector<int32_t> windowOfStep;
     RigExecProviderPlainProgram providerProgram;
+    /// Per op node: the provider value producer its ProviderSelect node
+    /// answers, the provider op it runs and the provider refresh it runs,
+    /// or -1.
+    std::vector<int64_t> providerAnswerOfNode, providerOpOfNode, refreshOfNode;
     /// What Open decoded. A program a test assembles by hand leaves it
     /// null and points the tables below at its own.
     std::unique_ptr<RigExecWireFile> file;
@@ -1060,14 +1060,34 @@ bool RrFillProviderInputs(const RrProgram *program,
 /// Stores a provider op's authority, unavailable input or result.
 bool RrStoreProviderValue(RrProgram *program, const eval::OpHostOutput &output,
                           const void *value, std::string *error);
-/// Resolves a RestFrame, CommitRecordGate, ProviderFrame, ProviderParentRaw
-/// or ProviderInputs lookup.
+/// The provider program's producer counts, as ProviderCandidates lookups
+/// and ProviderAnswer outputs number producers.
+eval::spaces::ProviderProducers RrProviderProducers(const RrProgram *program);
+/// The provider value producer op step \p step answers, or -1 for any other
+/// step.
+int64_t RrProviderAnswerOf(const RrProgram *program,
+                           const RigExecWireStep &step);
+/// Fills a ProviderCandidates lookup: one flag per candidate of a producer.
+bool RrProviderCandidates(const RrProgram *program,
+                          const eval::OpLookup &lookup,
+                          const RigExecTypeDesc &type, void *out,
+                          std::string *error);
+/// Stores a provider value's answer: its authority, its blocked flag, then
+/// the candidate whose value it publishes. An unavailable routed read
+/// reports its line on step \p step.
+bool RrStoreProviderAnswer(RrProgram *program, size_t step,
+                           const eval::OpHostOutput &output, const void *value,
+                           std::string *error);
+/// Resolves a RestFrame, CommitRecordGate, ProviderFrame, ProviderParentRaw,
+/// ProviderInputs or ProviderCandidates lookup.
 bool RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
                    const RigExecTypeDesc &type, void *out, std::string *error);
 /// Stores a provider's final or base matrix, a frame record's matrix or
-/// validity, a refresh's frames or a provider op's result.
-bool RrStoreSpace(RrProgram *program, const eval::OpHostOutput &output,
-                  const void *value, std::string *error);
+/// validity, a refresh's frames, a provider op's result or a provider
+/// value's answer.
+bool RrStoreSpace(RrProgram *program, size_t step,
+                  const eval::OpHostOutput &output, const void *value,
+                  std::string *error);
 /// Resolves a CommitVersions or CommitCandidates lookup.
 bool RrLookUpCommit(const RrProgram *program, const eval::OpLookup &lookup,
                     const RigExecTypeDesc &type, void *value,

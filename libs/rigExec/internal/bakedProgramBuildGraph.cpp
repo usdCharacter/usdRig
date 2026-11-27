@@ -796,11 +796,14 @@ RigExecBakedProgram::_BuildStepGraph(_BuildAttempt &build)
             return nullptr;
         }
     }
-    for (auto &step : B.steps)
-        if (step.kind == RigExecBakedStepKind::SpaceExpression &&
-            step.part == 3)
+    for (auto &step : B.steps) {
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(B, step);
+        if (identity.kind == RigExecBakedStepKind::SpaceExpression &&
+            identity.part == int(eval::spaces::ProviderProducer::Routed))
             RigExecBakedDeclareCrossDomainRead(
-                B, B.providerRoutedReads[size_t(step.object)], &step.reads);
+                B, B.providerRoutedReads[size_t(identity.object)], &step.reads);
+    }
 
     // Keep authored revision identity stable when an earlier optional
     // revision was withdrawn. Runtime array indices remain dense and local;

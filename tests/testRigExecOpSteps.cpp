@@ -668,8 +668,12 @@ TestRuntime(const char *writeTo)
             f.opGraph->nodes[injected]->inputs[0]->port = 40;
         },
         "has no input port 40");
-    damaged([&](fb::RigExecWireFile &f) { f.opGraph->nodes[injected]->op = 7; },
-            "past manifest core_ops");
+    damaged(
+        [&](fb::RigExecWireFile &f) {
+            f.opGraph->nodes[injected]->op =
+                uint32_t(f.manifest->coreOps.size());
+        },
+        "past manifest core_ops");
     damaged(
         [&](fb::RigExecWireFile &f) {
             f.opGraph->order.emplace_back(uint32_t(injected + 2),

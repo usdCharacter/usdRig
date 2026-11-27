@@ -2508,6 +2508,84 @@ TestFrozenProviderOpsMatchLive(const std::string &examplesDir)
     }
 }
 
+// A provider value's answer (an Attribute's authored value or connection,
+// a sampled attribute, a bridge) runs as a ProviderSelect op node in the
+// frozen job and publishes live's pose bit for bit, at animated frames and
+// under a drag of the sampled default offset.
+void
+TestFrozenProviderAnswersMatchLive(const std::string &examplesDir)
+{
+    UsdStageRefPtr stage = UsdStage::Open(
+        examplesDir + "/../tests/fixtures/solver_checkpoint.usda");
+    CHECK(stage);
+    if (!stage)
+        return;
+    const SdfPath knee("/CheckpointAsset/Rig/Controls/FkHip/FkKnee");
+    const UsdAttribute offset = stage->GetPrimAtPath(knee).CreateAttribute(
+        TfToken("default:tx"), SdfValueTypeNames->Double);
+    CHECK(offset.Set(0.0, UsdTimeCode(1.0)) &&
+          offset.Set(2.0, UsdTimeCode(9.0)));
+    RigExecRigEvaluator evaluator(stage, SdfPath("/CheckpointAsset/Rig"));
+    CHECK(evaluator.Compile());
+    CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
+    std::set<size_t> answerSteps;
+    for (size_t i = 0; i < B.steps.size(); ++i)
+        if (B.steps[i].kind == RigExecBakedStepKind::OpNode &&
+            RigExecBakedProviderOpOf(B, B.steps[i]) < 0 &&
+            RigExecBakedIdentityOf(B, B.steps[i]).kind ==
+                RigExecBakedStepKind::SpaceExpression)
+            answerSteps.insert(i);
+    CHECK(!answerSteps.empty());
+    std::shared_ptr<const RigExecFrozenProgram> frozen;
+    std::string error;
+    CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
+    if (!frozen)
+        return;
+    const auto run = [&](double frame, const char *what,
+                         const std::vector<RigExecValueOverride> &drags) {
+        evaluator.SetInteractiveOverrides(drags);
+        const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
+        RigExecFrameInputs inputs;
+        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame), drags,
+                                       &inputs, &error));
+        RigExecFrozenEvalContext context;
+        context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+        context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+        context.varyingInputCount = inputs.values.size();
+        if (evaluator.GetPublishWeightFields())
+            context.flags |= kRigExecFrozenPublishWeightFields;
+        if (evaluator.GetSolverGuidesEnabled())
+            context.flags |= kRigExecFrozenSolverGuidesEnabled;
+        context.frozen = frozen.get();
+        auto workspace = RigExecCreateFrozenWorkspace(frozen);
+        context.workspace = workspace.get();
+        RigExecFrozenRunReport report;
+        const RigExecRigPose pose = RigExecEvaluateFrozen(
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
+        evaluator.SetInteractiveOverrides({});
+        size_t ran = 0;
+        for (const auto &entry : report.region)
+            ran += answerSteps.count(entry.step);
+        if (ran == 0) {
+            std::printf("FAIL %s: the frozen job ran no provider answer\n",
+                        what);
+            ++failures;
+        }
+        CHECK(live.valid && pose.valid);
+        CheckPosesBitIdentical(what, live, pose);
+    };
+    for (const double frame : {3.0, 6.0})
+        run(frame, "frozen provider answers", {});
+    RigExecValueOverride drag;
+    drag.prim = knee;
+    drag.attribute = TfToken("default:tx");
+    drag.value = VtValue(1.5);
+    run(6.0, "frozen provider answers under a drag", {drag});
+}
+
 // Weight packets run as op nodes in the frozen job: a cold workspace runs
 // every packet node and publishes live's pose bit for bit, at animated
 // frames and under a drag of a combine's strength; a non-finite strength
@@ -10490,6 +10568,7 @@ main(int argc, char **argv)
         TestFrozenPoseCommitOpsMatchLive(argv[1]);
         TestFrozenProviderOpsMatchLive(argv[1]);
         TestFrozenConstraintOpsMatchLive(argv[1]);
+        TestFrozenProviderAnswersMatchLive(argv[1]);
         TestUnavailableTargetSamplesLocalInvalidRoles(argv[1]);
         TestProjectorSpacesMatchDynamic(argv[1]);
         TestProjectorMissPublishesOffset(argv[1]);

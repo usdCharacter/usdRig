@@ -166,7 +166,7 @@ struct BakedOpHost {
     bool StoreSpace(const eval::OpHostOutput &output, const void *value,
                     std::string *error) const
     {
-        return RigExecBakedStoreSpace(B, output, value, error);
+        return RigExecBakedStoreSpace(B, step, output, value, error);
     }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t g,
                     const void *elements, size_t count,

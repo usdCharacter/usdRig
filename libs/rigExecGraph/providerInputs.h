@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace rigExec {
@@ -178,6 +179,79 @@ enum class ProviderRead : uint8_t {
     AffineItemSpans = 17,
     AffineFrames = 18,
     AffinePresent = 19,
+};
+
+/// What produces a provider value that is not an arithmetic or affine
+/// operation's result: an Attribute operation, or a bridge from outside
+/// the provider program. The numbers are the parts of the SpaceExpression
+/// steps these producers once ran as, and part of the file format.
+enum class ProviderProducer : uint8_t {
+    Operation = 0,
+    External = 1,
+    Sampled = 2,
+    Routed = 3,
+    PoseFrame = 4,
+};
+
+/// The producers of a provider program's values in the order a
+/// ProviderCandidates lookup and the ProviderAnswer outputs number them:
+/// its operations, sampled attributes, external inputs, routed inputs, then
+/// pose-frame inputs.
+struct ProviderProducers {
+    size_t operations = 0, sampled = 0, external = 0, routed = 0, frames = 0;
+
+    size_t Count() const
+    {
+        return operations + sampled + external + routed + frames;
+    }
+    /// Producer \p index's part and its row in that part's table; false
+    /// past the last.
+    bool Of(uint64_t index, ProviderProducer *part, size_t *row) const
+    {
+        const std::pair<ProviderProducer, size_t> tables[] = {
+            {ProviderProducer::Operation, operations},
+            {ProviderProducer::Sampled, sampled},
+            {ProviderProducer::External, external},
+            {ProviderProducer::Routed, routed},
+            {ProviderProducer::PoseFrame, frames}};
+        for (const auto &[table, rows] : tables) {
+            if (index < rows) {
+                *part = table;
+                *row = size_t(index);
+                return true;
+            }
+            index -= rows;
+        }
+        return false;
+    }
+    /// The index of row \p row of \p part's table.
+    uint64_t Index(ProviderProducer part, size_t row) const
+    {
+        switch (part) {
+        case ProviderProducer::Operation:
+            return row;
+        case ProviderProducer::Sampled:
+            return operations + row;
+        case ProviderProducer::External:
+            return operations + sampled + row;
+        case ProviderProducer::Routed:
+            return operations + sampled + external + row;
+        case ProviderProducer::PoseFrame:
+            break;
+        }
+        return operations + sampled + external + routed + row;
+    }
+};
+
+/// OpLookup::read of a ProviderCandidates lookup: one flag per candidate
+/// that can answer the producer's value this frame, in the order the
+/// ProviderSelect op chooses among them. The numbers are part of the file
+/// format.
+enum class ProviderCandidateRead : uint8_t {
+    /// It holds a value, blocked or not.
+    Present = 0,
+    Authoritative = 1,
+    Blocked = 2,
 };
 
 } // namespace spaces

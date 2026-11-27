@@ -7682,10 +7682,20 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
                                         read.begin() > leaf ||
                                         leaf >= read.end())
                                         continue;
-                                    CHECK(step.kind ==
-                                          fb::StepKind::SpaceExpression);
-                                    CHECK(step.part == 2 &&
-                                          step.object == int32_t(leaf));
+                                    bool answers = false;
+                                    for (const auto &output :
+                                         file->opGraph->hostOutputs)
+                                        answers = answers ||
+                                                  (output &&
+                                                   output->node ==
+                                                       uint64_t(step.object) &&
+                                                   output->target == 52 &&
+                                                   output->object ==
+                                                       file->providerProgram
+                                                               ->ops.size() +
+                                                           leaf);
+                                    CHECK(step.kind == fb::StepKind::OpNode);
+                                    CHECK(answers);
                                     cone[i] = 1;
                                     ++readers;
                                 }

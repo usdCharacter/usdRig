@@ -1095,9 +1095,14 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
         // Continue through ordinary active-switch input fingerprints below.
         // All other declared typed inputs retain independent revision reasons.
     }
-    if (step.kind == RigExecWireStepKind::SpaceExpression)
-        return RrProviderEffectiveInputMemo(program, step.part, step.object,
+    if (const int64_t answer = RrProviderAnswerOf(program, step); answer >= 0) {
+        eval::spaces::ProviderProducer part;
+        size_t row = 0;
+        if (!RrProviderProducers(program).Of(uint64_t(answer), &part, &row))
+            return false;
+        return RrProviderEffectiveInputMemo(program, int(part), int64_t(row),
                                             key, covered);
+    }
     if (const int64_t op = RrProviderOpOf(program, step); op >= 0)
         return RrProviderEffectiveInputMemo(program, 0, op, key, covered);
     if (const int64_t index = RrRefreshOf(program, step); index >= 0) {

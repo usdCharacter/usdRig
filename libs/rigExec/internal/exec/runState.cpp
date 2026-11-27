@@ -4,6 +4,7 @@
 #include "rigExec/internal/exec/runStateData.h"
 #include "rigExec/internal/exec/view.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <utility>
@@ -282,17 +283,23 @@ RigExecProgramNodeAt(const RigExecProgram &program, size_t node,
             !(desc->op->ports[p].flags & kRigExecPortInput))
             continue;
         desc->producers[p] = program.producer[slot];
-        for (uint32_t i = 0; i < program.inputSlots.size(); ++i)
-            if (program.inputSlots[i] == slot)
-                desc->inputs[p] = i;
+        // inputSlots ascend: BindInputs gives each host input a new slot.
+        const auto input = std::lower_bound(program.inputSlots.begin(),
+                                            program.inputSlots.end(), slot);
+        if (input != program.inputSlots.end() && *input == slot)
+            desc->inputs[p] = uint32_t(input - program.inputSlots.begin());
     }
-    for (const RigExecProgramList &list : program.lists) {
-        if (list.port < n.firstPort || list.port >= n.firstPort + n.portCount)
-            continue;
-        desc->lists[list.port - n.firstPort].assign(
-            program.listSlots.begin() + list.firstSlot,
-            program.listSlots.begin() + list.firstSlot + list.count);
-    }
+    // lists are in node then port order (CheckInputsAndLists).
+    for (auto list = std::lower_bound(
+             program.lists.begin(), program.lists.end(), n.firstPort,
+             [](const RigExecProgramList &l, uint32_t port) {
+                 return l.port < port;
+             });
+         list != program.lists.end() && list->port < n.firstPort + n.portCount;
+         ++list)
+        desc->lists[list->port - n.firstPort].assign(
+            program.listSlots.begin() + list->firstSlot,
+            program.listSlots.begin() + list->firstSlot + list->count);
     return true;
 }
 

@@ -117,6 +117,22 @@ const rigExec::RigExecPortHandle &AffineFrameFrames();
 const rigExec::RigExecPortHandle &AffineFrameOut();
 const rigExec::RigExecPortHandle &AffineFramePresent();
 
+const rigExec::RigExecOpHandle &ProviderSelect();
+
+// Chooses the candidate that answers a provider value this frame (an
+// Attribute's authored value or its connection, or a bridge's one source).
+// Inputs, one flag per candidate (BoolArray, one or two): Present (it holds
+// a value, blocked or not), Authoritative and Blocked. An authoritative
+// first candidate, or the only one, answers; else the second, whose answer
+// is authoritative. Outputs: Selected (Int, the candidate, -1 when it holds
+// no value), AuthoritativeOut and BlockedOut (Bool) of the answer.
+const rigExec::RigExecPortHandle &ProviderSelectPresent();
+const rigExec::RigExecPortHandle &ProviderSelectAuthoritative();
+const rigExec::RigExecPortHandle &ProviderSelectBlocked();
+const rigExec::RigExecPortHandle &ProviderSelectSelected();
+const rigExec::RigExecPortHandle &ProviderSelectAuthoritativeOut();
+const rigExec::RigExecPortHandle &ProviderSelectBlockedOut();
+
 void RegisterProviderOps(rigExec::RigExecOpRegistrar &registrar);
 
 } // namespace rigExecOps

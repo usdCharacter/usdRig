@@ -11,11 +11,11 @@ RrReadCrossDomainPoints(const RrProgram *,
 bool RrReadCrossDomainPoint(const RrProgram *,
                             const fb::RigExecWireCrossDomainRead &, RrVec3f *);
 bool RrOpenProviderProgram(RrProgram *, std::string *);
-/// The effective-input key of SpaceExpression part \p part about \p object,
-/// or of the op node running provider op \p object (part 0).
+/// The effective-input key of the op node that answers row \p object of
+/// provider value producer \p part (eval::spaces::ProviderProducer), or
+/// that runs provider op \p object (part 0).
 bool RrProviderEffectiveInputMemo(const RrProgram *, int part, int64_t object,
                                   std::string *, std::vector<uint32_t> *);
 RrWireValue RrReadProviderRefreshBlocker(const RrProgram *, int);
-bool RrRunSpaceExpression(RrProgram *, const RigExecWireStep &, std::string *);
 } // namespace rigExec
 #endif

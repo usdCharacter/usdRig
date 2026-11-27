@@ -5366,11 +5366,11 @@ TestFrameMatrixGates()
                 restFrame.points, restFrame.flags, frame.points, frame.flags,
                 &matrix);
         const uint8_t validByte = valid ? 1 : 0;
-        return RrStoreSpace(&program,
+        return RrStoreSpace(&program, size_t(-1),
                             {0, 0, uint8_t(eval::OpOutputTarget::FrameMatrix),
                              uint32_t(r)},
                             &matrix, why) &&
-               RrStoreSpace(&program,
+               RrStoreSpace(&program, size_t(-1),
                             {0, 0,
                              uint8_t(eval::OpOutputTarget::FrameMatrixValid),
                              uint32_t(r)},

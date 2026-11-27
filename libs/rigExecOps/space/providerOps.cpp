@@ -49,6 +49,14 @@ RIGEXEC_DEFINE_PORT_HANDLE(AffineFrameFrames)
 RIGEXEC_DEFINE_PORT_HANDLE(AffineFrameOut)
 RIGEXEC_DEFINE_PORT_HANDLE(AffineFramePresent)
 
+RIGEXEC_DEFINE_OP_HANDLE(ProviderSelect)
+RIGEXEC_DEFINE_PORT_HANDLE(ProviderSelectPresent)
+RIGEXEC_DEFINE_PORT_HANDLE(ProviderSelectAuthoritative)
+RIGEXEC_DEFINE_PORT_HANDLE(ProviderSelectBlocked)
+RIGEXEC_DEFINE_PORT_HANDLE(ProviderSelectSelected)
+RIGEXEC_DEFINE_PORT_HANDLE(ProviderSelectAuthoritativeOut)
+RIGEXEC_DEFINE_PORT_HANDLE(ProviderSelectBlockedOut)
+
 using rigExec::RigExecProviderOpKind;
 
 ProviderInputClass
@@ -234,19 +242,11 @@ struct ArithmeticStore {
             Element(resets, Slot(id, ProviderInputClass::Reset));
         return reset && *reset != 0;
     }
-    bool Present(uint64_t /*id*/) const
-    {
-        return false;
-    }
     bool Authoritative(uint64_t id) const
     {
         const uint8_t *flag =
             Element(authoritative, Slot(id, ProviderInputClass::Matrix));
         return flag && *flag != 0;
-    }
-    void Copy(uint64_t, uint64_t, bool)
-    {
-        failed = true;
     }
     void Invalidate(uint64_t, uint64_t source)
     {
@@ -649,6 +649,47 @@ RunAffineFrame(const RigExecOpBatch &batch, size_t *failed, std::string *error)
     });
 }
 
+// ---- ProviderSelect ----
+
+bool
+ProviderSelectOne(const RigExecOpBatch &batch, size_t k, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const auto *present =
+        In<RigExecArray<uint8_t>>(io, ProviderSelectPresent());
+    const auto *authoritative =
+        In<RigExecArray<uint8_t>>(io, ProviderSelectAuthoritative());
+    const auto *blocked =
+        In<RigExecArray<uint8_t>>(io, ProviderSelectBlocked());
+    const size_t n = present ? present->Size() : 0;
+    if (n < 1 || n > 2 || !authoritative || authoritative->Size() != n ||
+        !blocked || blocked->Size() != n)
+        return Fail(error, "ProviderSelect",
+                    "needs one or two candidates with one flag each");
+    const size_t chosen = n == 2 && !(*authoritative)[0] ? 1 : 0;
+    int32_t &selected = Out<int32_t>(io, ProviderSelectSelected());
+    uint8_t &authority = Out<uint8_t>(io, ProviderSelectAuthoritativeOut());
+    Out<uint8_t>(io, ProviderSelectBlockedOut()) =
+        (*blocked)[chosen] != 0 ? 1 : 0;
+    if (!(*present)[chosen]) {
+        selected = -1;
+        authority = 0;
+        return true;
+    }
+    selected = int32_t(chosen);
+    authority = chosen > 0 || (*authoritative)[chosen] != 0 ? 1 : 0;
+    return true;
+}
+
+bool
+RunProviderSelect(const RigExecOpBatch &batch, size_t *failed,
+                  std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return ProviderSelectOne(batch, k, error);
+    });
+}
+
 } // namespace
 
 namespace {
@@ -782,6 +823,33 @@ const rigExec::RigExecOpDesc kAffineFrameDesc = [] {
     return d;
 }();
 
+const rigExec::RigExecPortDesc kProviderSelectPorts[] = {
+    {&ProviderSelectPresent(), &rigExecStd::BoolArray(), kRigExecPortInput,
+     "present"},
+    {&ProviderSelectAuthoritative(), &rigExecStd::BoolArray(),
+     kRigExecPortInput, "authoritative"},
+    {&ProviderSelectBlocked(), &rigExecStd::BoolArray(), kRigExecPortInput,
+     "blocked"},
+    {&ProviderSelectSelected(), &rigExecStd::IntType(), kRigExecPortOutput,
+     "selected"},
+    {&ProviderSelectAuthoritativeOut(), &rigExecStd::BoolType(),
+     kRigExecPortOutput, "authoritativeOut"},
+    {&ProviderSelectBlockedOut(), &rigExecStd::BoolType(), kRigExecPortOutput,
+     "blockedOut"},
+};
+
+const rigExec::RigExecOpDesc kProviderSelectDesc = [] {
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = "ProviderSelect";
+    d.schema = &internalOps::kProviderSelect;
+    d.ports = kProviderSelectPorts;
+    d.portCount = std::size(kProviderSelectPorts);
+    d.runBatch = &RunProviderSelect;
+    d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
+    return d;
+}();
+
 } // namespace
 
 void
@@ -789,6 +857,7 @@ RegisterProviderOps(rigExec::RigExecOpRegistrar &registrar)
 {
     registrar.Add(ProviderArithmetic(), kProviderArithmeticDesc);
     registrar.Add(AffineFrame(), kAffineFrameDesc);
+    registrar.Add(ProviderSelect(), kProviderSelectDesc);
 }
 
 } // namespace rigExecOps

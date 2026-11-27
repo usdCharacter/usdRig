@@ -1346,32 +1346,62 @@ RigExecBakedPruneProviderProgram(RigExecBakedProgramImpl *program,
 void
 RigExecBakedPlanProviderOps(RigExecBakedProgramImpl *program)
 {
+    using Producer = eval::spaces::ProviderProducer;
     auto &B = *program;
+    const eval::spaces::ProviderProducers producers =
+        RigExecBakedProviderProducers(B);
     B.providerOpPending.assign(B.providerProgram.ops.size(), {0, -1});
     B.providerOpOrigin.assign(B.providerProgram.ops.size(), -1);
+    B.providerAnswerPending.assign(producers.Count(), {0, 0});
+    B.providerAnswerOrigin.assign(producers.Count(), -1);
+    const auto plan = [&](RigExecBakedOpFamily family, Producer part,
+                          size_t row) {
+        RigExecBakedOpOrigin origin;
+        origin.family = family;
+        origin.kind = RigExecBakedStepKind::SpaceExpression;
+        origin.object = int32_t(row);
+        origin.part = int32_t(part);
+        const int index = int(B.opNodeOrigins.size());
+        B.opNodeOrigins.push_back(origin);
+        return index;
+    };
     for (size_t k = 0; k < B.providerProgram.ops.size(); ++k) {
         if (B.providerProgram.ops[k].kind == RigExecProviderOpKind::Attribute)
-            continue;
-        RigExecBakedOpOrigin origin;
-        origin.family = RigExecBakedOpFamily::ProviderOp;
-        origin.kind = RigExecBakedStepKind::SpaceExpression;
-        origin.object = int32_t(k);
-        origin.part = 0;
-        B.providerOpOrigin[k] = int(B.opNodeOrigins.size());
-        B.opNodeOrigins.push_back(origin);
+            B.providerAnswerOrigin[producers.Index(Producer::Operation, k)] =
+                plan(RigExecBakedOpFamily::ProviderAnswer, Producer::Operation,
+                     k);
+        else
+            B.providerOpOrigin[k] =
+                plan(RigExecBakedOpFamily::ProviderOp, Producer::Operation, k);
     }
+    const std::pair<Producer, size_t> bridges[] = {
+        {Producer::Sampled, producers.sampled},
+        {Producer::Routed, producers.routed},
+        {Producer::External, producers.external},
+        {Producer::PoseFrame, producers.frames}};
+    for (const auto &[part, rows] : bridges)
+        for (size_t k = 0; k < rows; ++k)
+            B.providerAnswerOrigin[producers.Index(part, k)] =
+                plan(RigExecBakedOpFamily::ProviderAnswer, part, k);
 }
 void
 RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program)
 {
+    using Producer = eval::spaces::ProviderProducer;
     auto &B = *program;
+    const eval::spaces::ProviderProducers producers =
+        RigExecBakedProviderProducers(B);
+    const auto answer = [&](RigExecBakedStep *step, Producer part, size_t row) {
+        step->kind = RigExecBakedStepKind::OpNode;
+        step->object = B.providerAnswerOrigin[producers.Index(part, row)];
+        step->part = -1;
+        step->maxDiagnostics = 1;
+    };
     B.providerLeafChains.assign(B.providerProgram.sampled.size(), -1);
     for (size_t k = 0; k < B.providerProgram.sampled.size(); ++k) {
         const auto &input = B.providerProgram.sampled[k];
         RigExecBakedStep step;
-        step.kind = RigExecBakedStepKind::SpaceExpression;
-        step.object = int(k);
-        step.part = 2;
+        answer(&step, Producer::Sampled, k);
         step.label = "SpaceRaw " + input.attribute.GetString();
         step.reads.push_back(
             RigExecBakedOne(RigExecBakedSlotDomain::SpaceLeaf, int(k)));
@@ -1383,9 +1413,7 @@ RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program)
     for (size_t k = 0; k < B.providerProgram.routedInputs.size(); ++k) {
         const auto &input = B.providerProgram.routedInputs[k];
         RigExecBakedStep step;
-        step.kind = RigExecBakedStepKind::SpaceExpression;
-        step.object = int(k);
-        step.part = 3;
+        answer(&step, Producer::Routed, k);
         step.label = "SpaceConnection " +
                      B.providerProgram.valueKeys[size_t(input.value)];
         step.writes.push_back(RigExecBakedOne(
@@ -1395,9 +1423,7 @@ RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program)
     for (size_t k = 0; k < B.providerProgram.externalInputs.size(); ++k) {
         const auto &input = B.providerProgram.externalInputs[k];
         RigExecBakedStep step;
-        step.kind = RigExecBakedStepKind::SpaceExpression;
-        step.object = int(k);
-        step.part = 1;
+        answer(&step, Producer::External, k);
         step.label =
             "SpaceInput " + B.providerProgram.valueKeys[size_t(input.value)];
         const int slot = B.providerExternalSlots[k];
@@ -1426,14 +1452,13 @@ RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program)
     for (size_t k = 0; k < B.providerProgram.ops.size(); ++k) {
         const auto &descriptor = B.providerProgram.descriptors[k];
         RigExecBakedStep step;
-        step.kind = RigExecBakedStepKind::SpaceExpression;
-        step.object = int(k);
-        step.part = 0;
-        if (k < B.providerOpOrigin.size() && B.providerOpOrigin[k] >= 0) {
+        if (B.providerOpOrigin[k] >= 0) {
             step.kind = RigExecBakedStepKind::OpNode;
             step.object = B.providerOpOrigin[k];
             step.part = -1;
             step.maxDiagnostics = 1;
+        } else {
+            answer(&step, Producer::Operation, k);
         }
         step.label = descriptor.key;
         for (auto value : descriptor.reads)
@@ -1447,9 +1472,7 @@ RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program)
     for (size_t k = 0; k < B.providerFrameInputs.size(); ++k) {
         const auto &input = B.providerFrameInputs[k];
         RigExecBakedStep step;
-        step.kind = RigExecBakedStepKind::SpaceExpression;
-        step.object = int(k);
-        step.part = 4;
+        answer(&step, Producer::PoseFrame, k);
         step.reads.push_back(
             RigExecBakedOne(input.base ? RigExecBakedSlotDomain::PoseBase
                                        : RigExecBakedSlotDomain::PoseFin,
@@ -1457,84 +1480,6 @@ RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program)
         step.writes.push_back(
             RigExecBakedOne(RigExecBakedSlotDomain::SpaceValue, input.value));
         B.steps.push_back(std::move(step));
-    }
-}
-// Build prunes every provider step no root reaches: a consumer of a provider
-// value must be a declared step read, a ladder channel or a cross-domain read,
-// and an op that can fail here must fail RigExecProviderOpStructurallyValid.
-void
-RigExecBakedRunSpaceOp(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
-{
-    auto &B = *program;
-    if (step->part == 4) {
-        const auto &input = B.providerFrameInputs[size_t(step->object)];
-        B.providerValues.Publish(input.value, input.base
-                                                  ? B.base[input.version]
-                                                  : B.fin[input.version]);
-        return;
-    }
-    if (step->part == 2) {
-        const size_t k = size_t(step->object);
-        const auto &input = B.GetProviderProgram().sampled[k];
-        const auto *overlay = RigExecBakedSpaceLeafOverlay(B, k);
-        const VtValue &value = overlay ? *overlay : B.providerLeaves.values[k];
-        const bool authoritative = overlay != nullptr;
-        B.providerValues.PublishSource(
-            input.value, value, !authoritative && B.providerLeafBlocked[k],
-            authoritative);
-        return;
-    }
-    if (step->part == 3) {
-        const size_t k = size_t(step->object);
-        VtValue value;
-        std::string diagnostic;
-        const bool available = RigExecBakedReadCrossDomain(
-            B, B.providerRoutedReads[k], &value, &diagnostic);
-        B.providerValues.PublishSource(
-            B.GetProviderProgram().routedInputs[k].value, value, !available,
-            true);
-        if (!diagnostic.empty())
-            step->diagnostics.push_back(diagnostic);
-        return;
-    }
-    if (step->part == 1) {
-        const size_t k = size_t(step->object);
-        const auto &input = B.GetProviderProgram().externalInputs[k];
-        const int slot = B.providerExternalSlots[k];
-        if (input.computation == SchemaComputationText::computeRestFrame)
-            B.providerValues.Publish(
-                input.value, slot >= 0
-                                 ? B.restFrames[size_t(slot)]
-                                 : RigExecFrameFromMatrix(GfMatrix4d(1.0)));
-        else if (input.computation ==
-                     SchemaComputationText::computePointFrame ||
-                 input.computation ==
-                     SchemaComputationText::computeBasePointFrame)
-            B.providerValues.Publish(
-                input.value, slot >= 0
-                                 ? B.base[size_t(slot)]
-                                 : RigExecFrameFromMatrix(GfMatrix4d(1.0)));
-        else
-            B.providerValues.Publish(
-                input.value,
-                slot >= 0 ? RigExecBakedLeafRead(
-                                B, B.ladders[size_t(slot)].interveningSpace)
-                          : GfMatrix4d(1.0));
-        return;
-    }
-    const auto &ops = B.GetProviderProgram().ops;
-    std::string error;
-    if (step->object < 0 || size_t(step->object) >= ops.size()) {
-        step->diagnostics.push_back("invalid provider kernel/store binding");
-        return;
-    }
-    if (!RigExecRunProviderOp(B.GetProviderProgram(), uint32_t(step->object),
-                              &B.providerValues, &error)) {
-        const auto &op = ops[size_t(step->object)];
-        B.providerValues.Publish(op.output, std::monostate(), true, false, 0,
-                                 error);
-        B.providerValues.values[size_t(op.output)].raw = VtValue();
-        step->diagnostics.push_back(error);
     }
 }
 void

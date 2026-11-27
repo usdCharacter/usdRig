@@ -7,6 +7,7 @@
 #include "rigExec/api/goldenPose.h"
 #include "rigExec/api/rigEvaluator.h"
 #include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/crossDomainInputs.h"
 #include "rigExec/internal/moverGraph.h"
 #include "rigExec/internal/poseEvalHost.h"
 #include "rigExecScene/constraintSceneTranslation.h"
@@ -2674,12 +2675,94 @@ ProbeAffineFrame(const B &b, const RigExecProviderOp &op,
     CompareBits("Spaces", kind, object, baked, out, false);
 }
 
+// A provider value's answer: ProviderSelect over the candidate flags read
+// from what the baked program holds, against what the step published.
+void
+ProbeProviderAnswer(const B &b, eval::spaces::ProviderProducer part, size_t row,
+                    const std::string &kind, const std::string &object)
+{
+    using namespace rigExecOps;
+    using Producer = eval::spaces::ProviderProducer;
+    const auto &program = b.GetProviderProgram();
+    std::vector<uint8_t> present, authoritative, blocked;
+    const auto add = [&](bool p, bool a, bool k) {
+        present.push_back(p ? 1 : 0);
+        authoritative.push_back(a ? 1 : 0);
+        blocked.push_back(k ? 1 : 0);
+    };
+    RigExecValueId value = RigExecNoProviderValue;
+    switch (part) {
+    case Producer::Operation: {
+        const auto &op = program.ops[row];
+        value = op.output;
+        for (size_t k = 0; k < std::min<size_t>(op.inputs.size(), 2); ++k) {
+            const RigExecValueId id = op.inputs[k];
+            if (k && id == RigExecNoProviderValue)
+                break;
+            const auto *state = id < b.providerValues.values.size()
+                                    ? &b.providerValues.values[size_t(id)]
+                                    : nullptr;
+            add(state && state->initialized, state && state->authoritative,
+                state && state->blocked);
+        }
+        break;
+    }
+    case Producer::Sampled: {
+        value = program.sampled[row].value;
+        const bool overlaid = RigExecBakedSpaceLeafOverlay(b, row) != nullptr;
+        add(true, overlaid, !overlaid && b.providerLeafBlocked[row]);
+        break;
+    }
+    case Producer::Routed:
+        value = program.routedInputs[row].value;
+        add(true, true,
+            !RigExecBakedCrossDomainAvailable(b, b.providerRoutedReads[row],
+                                              nullptr));
+        break;
+    case Producer::External:
+        value = program.externalInputs[row].value;
+        add(true, false, false);
+        break;
+    case Producer::PoseFrame:
+        value = b.providerFrameInputs[row].value;
+        add(true, false, false);
+        break;
+    }
+    SpaceNode &node = SpaceNodeFor(
+        "ProviderSelect", ProviderSelect(), nullptr,
+        {&ProviderSelectPresent(), &ProviderSelectAuthoritative(),
+         &ProviderSelectBlocked()},
+        {&ProviderSelectSelected(), &ProviderSelectAuthoritativeOut(),
+         &ProviderSelectBlockedOut()});
+    const rigExecStd::RigExecArray<uint8_t> presentIn(present.data(),
+                                                      present.size()),
+        authoritativeIn(authoritative.data(), authoritative.size()),
+        blockedIn(blocked.data(), blocked.size());
+    std::string error;
+    if (!RunSpaceNode(node, {&presentIn, &authoritativeIn, &blockedIn},
+                      &error)) {
+        OpFailed("Spaces", kind, object, false, error);
+        return;
+    }
+    const auto &published = b.providerValues.values[size_t(value)];
+    const std::vector<double> baked = {double(published.authoritative),
+                                       double(published.blocked)},
+                              out = {double(SpaceOut<uint8_t>(node, 1)),
+                                     double(SpaceOut<uint8_t>(node, 2))};
+    CompareBits("Spaces", kind, object, baked, out, false);
+}
+
 void
 ProbeSpaceExpression(const B &b, const RigExecBakedStep &step)
 {
+    using Producer = eval::spaces::ProviderProducer;
     if (step.part != 0) {
-        Unprobed("Spaces", "SpaceExpression",
-                 "a bridge part is input binding, not an op");
+        const char *names[] = {"", "External", "Sampled", "Routed",
+                               "PoseFrame"};
+        ProbeProviderAnswer(b, Producer(step.part), size_t(step.object),
+                            std::string("SpaceExpression/") +
+                                names[size_t(step.part)],
+                            step.label);
         return;
     }
     const auto &program = b.GetProviderProgram();
@@ -2689,7 +2772,8 @@ ProbeSpaceExpression(const B &b, const RigExecBakedStep &step)
     const std::string kind =
         std::string("SpaceExpression/") + ProviderKindName(op.kind);
     if (op.kind == RigExecProviderOpKind::Attribute) {
-        Unprobed("Spaces", kind, "a connection lookup, not an op");
+        ProbeProviderAnswer(b, Producer::Operation, size_t(step.object), kind,
+                            step.label);
         return;
     }
     const auto &published = b.providerValues.values[size_t(op.output)];
@@ -4853,6 +4937,8 @@ main(int argc, char **argv)
           "Spaces/ProviderRefresh",
           "Spaces/SpaceExpression/SpaceExpression",
           "Spaces/SpaceExpression/AffineFrame",
+          "Spaces/SpaceExpression/Attribute",
+          "Spaces/SpaceExpression/Sampled",
           "Commit/",
           "Solve/RigExecFkChain groups",
           "Pose/AvarInputs",

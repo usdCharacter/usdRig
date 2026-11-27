@@ -298,7 +298,7 @@ struct RrOpHost {
     bool StoreSpace(const eval::OpHostOutput &output, const void *value,
                     std::string *error) const
     {
-        return RrStoreSpace(&p, output, value, error);
+        return RrStoreSpace(&p, step, output, value, error);
     }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t g,
                     const void *elements, size_t count,

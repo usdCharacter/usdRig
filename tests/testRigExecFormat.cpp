@@ -430,7 +430,13 @@ _DeclareFixtureStageFrames(RigExecWireFile &f)
                 field =
                     field || (input->host == 4 &&
                               f.opGraph->lookups[input->object]->source == 4);
-        const bool helper = field || step.kind == K::SpaceExpression;
+        bool answer = false;
+        if (step.kind == K::OpNode && f.opGraph)
+            for (const auto &output : f.opGraph->hostOutputs)
+                answer = answer ||
+                         (output && output->node == uint64_t(step.object) &&
+                          output->target == 52);
+        const bool helper = field || answer;
         if (prep(step) || step.kind == K::AvarInputs ||
             step.kind == K::SnapshotFinals || (helper && ancestors.count(i)))
             continue;
@@ -1612,12 +1618,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 48 &&
-                      RigExecFormatOldestReadable == 48,
-                  "format 48 runs Range delta mushes as op nodes and is "
+    static_assert(RigExecFormatVersion == 49 &&
+                      RigExecFormatOldestReadable == 49,
+                  "format 49 answers provider values by op nodes and is "
                   "the only format Open reads");
-    // Every older format requires re-export: its delta mushes ran as their
-    // own steps.
+    // Every older format requires re-export: its provider values were
+    // answered by SpaceExpression steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1628,14 +1634,14 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 48 through " +
+            " (this reader reads 49 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 48 ? "re-export: Range delta mushes as op nodes"
+            (version < 49 ? "re-export: provider values answered by op nodes"
                           : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 48 ? reexports : rebakes);
+        ++(version < 49 ? reexports : rebakes);
     }
-    CHECK(reexports == 48 && rebakes == 1);
+    CHECK(reexports == 49 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -2988,6 +2994,27 @@ TestOpLookupOwners()
                f.opGraph->lookups.push_back(std::move(element));
                look(f, place, 5, at, 1);
            });
+    expect(
+        "provider candidates on a placement node",
+        "reads the candidates of a provider value its node does not "
+        "answer",
+        [&](F &f) {
+            f.providerProgram =
+                std::make_unique<fb::RigExecWireProviderProgram>();
+            f.providerProgram->valueKeys = {"/Rig/Volume.value"};
+            f.providerProgram->defaults.resize(1);
+            fb::RigExecWireProviderOp attribute;
+            attribute.kind = uint32_t(RigExecProviderOpKind::Attribute);
+            attribute.owner = "/Rig/Volume.value";
+            attribute.output = 0;
+            f.providerProgram->ops.push_back(std::move(attribute));
+            fb::RigExecWireStep answer = _SpaceStep(f, "ProviderSelect", 52, 0);
+            answer.writes = {fb::SlotRange(fb::SlotDomain::SpaceValue, 0, 1)};
+            answer.reads = {fb::SlotRange(
+                fb::SlotDomain::RequiredStageFramesAdmission, 0, 1)};
+            _AppendStep(f, std::move(answer));
+            look(f, place, 25, 0, -1);
+        });
     expect("a weight lookup on a placement node",
            "reads a weight its node does not build", [&](F &f) {
                _AppendStep(f, packetStep(f));
@@ -3198,6 +3225,15 @@ TestVolumePlacementSteps()
                packet.writes = {
                    fb::SlotRange(fb::SlotDomain::WeightPacket, 0, 1)};
                _AppendStep(f, std::move(packet));
+           });
+    expect("a retired space expression step",
+           "step 3 (ReservedSpaceExpression 0): the retired SpaceExpression "
+           "step",
+           [](F &f) {
+               fb::RigExecWireStep space;
+               space.kind = fb::StepKind::ReservedSpaceExpression;
+               space.object = 0;
+               _AppendStep(f, std::move(space));
            });
     expect("a retired provider matrix step",
            "step 3 (ReservedProviderMatrix 0): the retired ProviderMatrix step",
@@ -7390,10 +7426,7 @@ TestRequiredStageFrameSpaceBindings()
     expression.owner = "/Rig/Parent.rest:space";
     expression.output = 0;
     program.ops.push_back(std::move(expression));
-    fb::RigExecWireStep source;
-    source.kind = fb::StepKind::SpaceExpression;
-    source.object = 0;
-    source.part = 0;
+    fb::RigExecWireStep source = _SpaceStep(file, "ProviderSelect", 52, 0);
     source.isSource = true;
     source.cluster = 0;
     source.succs = {1};
