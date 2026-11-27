@@ -1671,7 +1671,7 @@ TestRevisionRangesMatchTheWholeKernel()
                            bool moves) {
         const std::vector<GfVec3f> &in = *source;
         rigExec::RigExecWireBasisCache wholeWire, rangeWire;
-        Cache wholeSurface, rangeSurface;
+        Cache wholeSurface;
         std::vector<GfVec3f> whole = in;
         bool ok = rigExec::RigExecRunRevisionKernel(
             op, p, &whole, useSimd, cached ? &wholeWire : nullptr,
@@ -1680,8 +1680,7 @@ TestRevisionRangesMatchTheWholeKernel()
         RigExecRevisionRangeInputs prepared;
         const RigExecRevisionAcceptance acceptance =
             rigExec::RigExecPrepareRevisionRanges(
-                op, p, count, cached ? &rangeWire : nullptr,
-                cached ? &rangeSurface : nullptr, &prepared);
+                op, p, count, cached ? &rangeWire : nullptr, &prepared);
         ok = ok && acceptance == RigExecRevisionAcceptance::Applies &&
              acceptance ==
                  rigExec::RigExecRevisionKernelAcceptance(op, p, count);
@@ -1690,16 +1689,9 @@ TestRevisionRangesMatchTheWholeKernel()
             rigExec::RigExecWireTakesSparseEnvelope(p.weights);
         const bool fullStrength =
             rigExec::RigExecEnvelopeIsFullStrength(p.weights);
-        if (op == RigExecRevisionOp::Wire) {
-            ok = ok && bool(prepared.wireBasis) == sparseShape &&
-                 (prepared.wireRestEvaluations != nullptr) ==
-                     (cached && !sparseShape);
-        } else {
-            ok = ok && (prepared.latticeBasis != nullptr) == cached &&
-                 (!cached ||
-                  (prepared.latticeBind &&
-                   &prepared.latticeBind->value == prepared.latticeBasis));
-        }
+        ok = ok && bool(prepared.wireBasis) == sparseShape &&
+             (prepared.wireRestEvaluations != nullptr) ==
+                 (cached && !sparseShape);
         std::vector<float> envelope;
         if (rigExec::RigExecRevisionTakesSeparateBlend(op, p.weights) &&
             !fullStrength) {
@@ -1769,67 +1761,6 @@ TestRevisionRangesMatchTheWholeKernel()
               never, true);
     }
 
-    // Lattice: through a retained basis (cached) and per point (not), at
-    // full strength and blended, and with non-finite cage deltas, which
-    // visit every term. Those deltas make NaNs of their own, so that case
-    // enters infinities where the others enter NaN payloads.
-    const float inf = std::numeric_limits<float>::infinity();
-    std::vector<GfVec3f> noPayloads = entering;
-    for (GfVec3f &point : noPayloads) {
-        for (int axis = 0; axis < 3; ++axis) {
-            if (std::isnan(point[axis])) {
-                point[axis] = inf;
-            }
-        }
-    }
-    for (const bool cached : {false, true}) {
-        check("lattice", Op::Lattice, packets.lattice, false, cached, never,
-              true);
-        auto p = packets.lattice;
-        p.weights = RigExecWeightPacket::Constant(0.5f);
-        check("lattice at half", Op::Lattice, p, false, cached, never, true);
-        p = packets.lattice;
-        p.auxPointsB[3][0] = inf;
-        p.auxPointsB[5][1] = -inf;
-        source = &noPayloads;
-        check("lattice, non-finite cage deltas", Op::Lattice, p, false, cached,
-              never, true);
-        source = &entering;
-    }
-
-    // The retained bind outlives its cache's slot: handed an equal bind
-    // between runs (RigExecLatticeBindSharing), the cache drops its own,
-    // which the prepared inputs still hold, and the ranges still answer the
-    // whole kernel's bits through it.
-    {
-        Cache first, second;
-        RigExecRevisionRangeInputs prepared;
-        CHECK(rigExec::RigExecPrepareRevisionRanges(
-                  Op::Lattice, packets.lattice, count, nullptr, &first,
-                  &prepared) == RigExecRevisionAcceptance::Applies);
-        std::vector<GfVec3f> whole = entering;
-        CHECK(rigExec::RigExecRunRevisionKernel(
-            Op::Lattice, packets.lattice, &whole, false, nullptr, &second));
-        const auto held = first.RetainedLatticeBind();
-        CHECK(held && prepared.latticeBind == held &&
-              second.RetainedLatticeBind() &&
-              second.RetainedLatticeBind() != held);
-        {
-            rigExec::RigExecLatticeBindSharing<GfVec3f> sharing;
-            sharing.Offer(&second);
-            sharing.Offer(&first);
-        }
-        CHECK(first.RetainedLatticeBind() == second.RetainedLatticeBind());
-        // Only this test's copy and the prepared inputs hold it now.
-        CHECK(held.use_count() == 2 && &held->value == prepared.latticeBasis);
-        std::vector<GfVec3f> out(count, poison);
-        for (size_t k = 0; k + 1 < partitions[0].size(); ++k) {
-            CHECK(rigExec::RigExecRunRevisionRange(
-                Op::Lattice, packets.lattice, prepared, entering.data(), count,
-                partitions[0][k], partitions[0][k + 1], nullptr, &out, false));
-        }
-        CHECK(SameBits(out, whole));
-    }
     std::printf("revision ranges: %zu revision(s) matched their whole "
                 "kernels\n",
                 compared);
@@ -1848,26 +1779,21 @@ TestPrepareRevisionRangesDecidesAsTheKernel()
     const RangeTestPackets packets;
     const size_t count = RangeTestPackets::count;
     const std::vector<GfVec3f> staleTable(3);
-    const rigExec::RigExecLatticeBasis staleBasis{};
     const auto check = [&](const char *what, Op op,
                            const RigExecMoverParameters &p, size_t n,
                            RigExecRevisionAcceptance expected) {
         rigExec::RigExecWireBasisCache wire;
-        rigExec::RigExecSurfaceKernelCache<GfVec3f, GfVec3d> surface;
         RigExecRevisionRangeInputs prepared;
         prepared.wireBasis = std::make_shared<rigExec::RigExecWireBasis>();
         prepared.wireRestEvaluations = &staleTable;
-        prepared.latticeBasis = &staleBasis;
         prepared.blendWeights.assign(3, 0.25f);
         const RigExecRevisionAcceptance decided =
-            rigExec::RigExecPrepareRevisionRanges(op, p, n, &wire, &surface,
-                                                  &prepared);
+            rigExec::RigExecPrepareRevisionRanges(op, p, n, &wire, &prepared);
         bool ok = decided == expected &&
                   decided == rigExec::RigExecRevisionKernelAcceptance(op, p, n);
         if (decided != RigExecRevisionAcceptance::Applies ||
             !rigExec::RigExecRevisionIsRangeOp(op)) {
             ok = ok && !prepared.wireBasis && !prepared.wireRestEvaluations &&
-                 !prepared.latticeBasis && !prepared.latticeBind &&
                  prepared.blendWeights.empty();
         } else if (op == Op::BlendShape) {
             // The blend kernel's own resolve, or nothing at full strength.
@@ -1875,8 +1801,7 @@ TestPrepareRevisionRangesDecidesAsTheKernel()
             if (!rigExec::RigExecEnvelopeIsFullStrength(p.weights)) {
                 ok = ok && p.weights.ResolveAll(n, &resolved);
             }
-            ok = ok && prepared.blendWeights == resolved &&
-                 !prepared.latticeBasis;
+            ok = ok && prepared.blendWeights == resolved;
         }
         // A packet the kernel refuses is one RigExecRunRevisionKernel fails.
         if (decided == RigExecRevisionAcceptance::Refuses) {
@@ -2133,7 +2058,7 @@ TestRevisionGroupsMatchTheWholeKernel()
         const std::vector<GfVec3f> &in = *source;
         const size_t n = in.size();
         rigExec::RigExecWireBasisCache wholeWire, groupWire;
-        Cache wholeSurface, groupSurface;
+        Cache wholeSurface;
         std::vector<GfVec3f> whole = in;
         bool ok = rigExec::RigExecRunRevisionKernel(
             op, p, &whole, useSimd, cached ? &wholeWire : nullptr,
@@ -2144,7 +2069,6 @@ TestRevisionGroupsMatchTheWholeKernel()
             // A skin's decision is SkinAcceptance's, in the baked program.
             ok = ok && rigExec::RigExecPrepareRevisionRanges(
                            op, p, n, cached ? &groupWire : nullptr,
-                           cached ? &groupSurface : nullptr,
                            &prepared) == RigExecRevisionAcceptance::Applies;
         }
         std::vector<float> envelope;
@@ -2219,70 +2143,6 @@ TestRevisionGroupsMatchTheWholeKernel()
               never, true);
     }
 
-    // Lattice: a retained basis (cached) and per point, at full strength and
-    // blended, with non-finite cage deltas (which visit every term, so that
-    // case enters infinities and no NaN payloads), an overflowing degree (an
-    // unbounded basis, over fewer points), and an invalid cage, whose groups
-    // are written with their entering points over the poison.
-    const float inf = std::numeric_limits<float>::infinity();
-    std::vector<GfVec3f> noPayloads = entering;
-    for (GfVec3f &point : noPayloads) {
-        for (int axis = 0; axis < 3; ++axis) {
-            if (std::isnan(point[axis])) {
-                point[axis] = inf;
-            }
-        }
-    }
-    RigExecMoverParameters wide = packets.lattice;
-    wide.divisions = GfVec3i(1100, 2, 2);
-    wide.auxPoints.clear();
-    for (int c = 0; c < 2; ++c) {
-        for (int b = 0; b < 2; ++b) {
-            for (int a = 0; a < 1100; ++a) {
-                wide.auxPoints.emplace_back(float(a) / 1099.0f, float(b),
-                                            float(c));
-            }
-        }
-    }
-    wide.auxPointsB = wide.auxPoints;
-    for (GfVec3f &point : wide.auxPointsB) {
-        point += GfVec3f(0.0f, 0.1f, 0.0f);
-    }
-    std::vector<GfVec3f> wideIn(25);
-    wide.restPoints.resize(25);
-    for (size_t i = 0; i < 25; ++i) {
-        wide.restPoints[i] =
-            GfVec3f(float(i) / 20.0f - 0.1f, 0.3f + 0.02f * float(i), 0.7f);
-        wideIn[i] = GfVec3f(float(i), -float(i), 0.25f);
-    }
-    wideIn[0] = GfVec3f(-0.0f, 0.0f, -0.0f);
-    const std::vector<std::vector<size_t>> wideCuts = {{0, 1, 8, 9, 17, 25},
-                                                       {0, 25}};
-    for (const bool cached : {false, true}) {
-        check("lattice", Op::Lattice, packets.lattice, false, cached, never,
-              true);
-        auto p = packets.lattice;
-        p.weights = packets.denseWire;
-        check("lattice, separate envelope", Op::Lattice, p, false, cached,
-              never, true);
-        p = packets.lattice;
-        p.auxPointsB[3][0] = inf;
-        p.auxPointsB[5][1] = -inf;
-        source = &noPayloads;
-        check("lattice, non-finite cage deltas", Op::Lattice, p, false, cached,
-              never, true);
-        source = &wideIn;
-        cuts = &wideCuts;
-        check("lattice, unbounded basis", Op::Lattice, wide, false, cached,
-              never, true);
-        source = &entering;
-        cuts = &partitions;
-        p = packets.lattice;
-        p.divisions = GfVec3i(1, 4, 2);
-        check("lattice, invalid cage", Op::Lattice, p, false, cached, never,
-              false);
-    }
-
     // Skin: the linear blend (SIMD on and off) and the dual-quaternion one,
     // at full strength and under a dense envelope, against the packet's own
     // table, the whole table handed in, and each group's key-filled table.
@@ -2305,6 +2165,7 @@ TestRevisionGroupsMatchTheWholeKernel()
 
     // Blend shape in target space: full strength, a sparse envelope and a
     // dense one, with a NaN-payload delta and an infinite one.
+    const float inf = std::numeric_limits<float>::infinity();
     RigExecMoverParameters blend;
     blend.valid = true;
     blend.kind = TfToken("blendShape");
@@ -2336,12 +2197,16 @@ TestRevisionGroupsMatchTheWholeKernel()
         CHECK(!rigExec::RigExecRunRevisionGroup(
             Op::BlendShape, p, none, nullptr, entering.data(), out.data(),
             count, 0, 10, nullptr, false));
-        // A smooth or a delta mush runs as op nodes: no group arm.
+        // A smooth, a delta mush or a lattice runs as op nodes: no group
+        // arm.
         CHECK(!rigExec::RigExecRunRevisionGroup(
             Op::Smooth, packets.smooth, none, nullptr, entering.data(),
             out.data(), count, 0, 10, nullptr, false));
         CHECK(!rigExec::RigExecRunRevisionGroup(
             Op::DeltaMush, packets.mush, none, nullptr, entering.data(),
+            out.data(), count, 0, 10, nullptr, false));
+        CHECK(!rigExec::RigExecRunRevisionGroup(
+            Op::Lattice, packets.lattice, none, nullptr, entering.data(),
             out.data(), count, 0, 10, nullptr, false));
         std::vector<GfVec3f> same(entering.begin(), entering.begin() + 10);
         CHECK(!rigExec::RigExecRunRevisionGroup(
@@ -2357,15 +2222,6 @@ TestRevisionGroupsMatchTheWholeKernel()
             out.data(), count, 0, 10, nullptr, false));
     }
 
-    // RevisionStatic's rest version reaches the lattice bind it prepares.
-    {
-        Cache surface;
-        RigExecRevisionRangeInputs prepared;
-        CHECK(rigExec::RigExecPrepareRevisionRanges(
-                  Op::Lattice, packets.lattice, count, nullptr, &surface,
-                  &prepared, 5) == RigExecRevisionAcceptance::Applies);
-        CHECK(prepared.latticeBasis && surface.LatticeRestVersion() == 5);
-    }
     std::printf("revision groups: %zu revision(s) matched their whole "
                 "kernels\n",
                 compared);
@@ -2497,12 +2353,10 @@ TestGatedOpsKeepUnlistedPoints()
     gated("delta mush", Op::DeltaMush, mush, false);
 }
 
-// The assembler's two lend hooks. Lent blend deltas move into the packet,
-// leaving the lender's vector empty; a retained rest moves into a lattice's
-// packet in place of a copy of the base. Neither is taken unless asked, an
-// empty retained rest falls back to the base, and the packet is the one a
-// copy assembles. Both assemblers: from leaves (the baked program) and from
-// the stage.
+// The assembler's lend hook: lent blend deltas move into the packet, leaving
+// the lender's vector empty, only when asked, and the packet is the one a
+// copy assembles; a lattice's rest is a copy of the base. Both assemblers:
+// from leaves (the baked program) and from the stage.
 static void
 TestAssemblerLendsDeltasAndRest()
 {
@@ -2537,19 +2391,7 @@ TestAssemblerLendsDeltasAndRest()
             rigExec::RigExecAssembleFromLeaves(Op::Lattice, binding, leaves,
                                                values);
         CHECK(SameBits(copied.restPoints, base));
-        std::vector<GfVec3f> retained = base;
-        const GfVec3f *storage = retained.data();
-        values.retainedRest = &retained;
-        const RigExecMoverParameters lent = rigExec::RigExecAssembleFromLeaves(
-            Op::Lattice, binding, leaves, values);
-        CHECK(SameBits(lent.restPoints, base) &&
-              lent.restPoints.data() == storage && retained.empty());
         CHECK(SameBits(values.basePoints, base));
-        CHECK(lent == copied);
-        const RigExecMoverParameters again = rigExec::RigExecAssembleFromLeaves(
-            Op::Lattice, binding, leaves, values);
-        CHECK(SameBits(again.restPoints, base) &&
-              again.restPoints.data() != storage);
     }
     {
         UsdStageRefPtr stage = UsdStage::CreateInMemory();
@@ -2563,17 +2405,6 @@ TestAssemblerLendsDeltasAndRest()
             blendMover, Op::BlendShape, binding, values);
         CHECK(p.valid && SameBits(p.blendDeltas, deltas) &&
               p.blendDeltas.data() == storage && values.blendDeltas.empty());
-        const UsdPrim latticeMover = stage->DefinePrim(
-            SdfPath("/A/Rig/Movers/Cage"), TfToken("RigExecLatticeMover"));
-        rigExec::RigExecProviderValues cage;
-        cage.basePoints = base;
-        std::vector<GfVec3f> retained = base;
-        const GfVec3f *rest = retained.data();
-        cage.retainedRest = &retained;
-        const RigExecMoverParameters q =
-            RigExecAssembleParameters(latticeMover, Op::Lattice, binding, cage);
-        CHECK(SameBits(q.restPoints, base) && q.restPoints.data() == rest &&
-              retained.empty());
     }
 }
 

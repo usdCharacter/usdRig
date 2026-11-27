@@ -886,9 +886,13 @@ struct RigExecBakedGeomRevision {
     bool opMush = false;
     VtIntArray opMushCounts, opMushIndices, opMushEdges;
     int opMushIterations = 10;
+    /// A Range lattice (Build state): a Bernstein Lattice range chain member
+    /// over the pinned divisions read at Build.
+    bool opLattice = false;
+    std::array<int, 3> opLatticeDivisions = {2, 2, 2};
     bool OpNodes() const
     {
-        return opMatrix || opSmooth || opMush;
+        return opMatrix || opSmooth || opMush || opLattice;
     }
     bool opMatrixRadial = false;
     bool opMatrixRadialLeaf = false;
@@ -935,10 +939,6 @@ struct RigExecBakedGeomRevision {
     /// packet before last held. Private to this revision's static step,
     /// never published; a clone drops it.
     std::vector<GfVec3f> deltasSpare;
-    /// RevisionStatic, Lattice: parameters.restPoints holds the base at
-    /// `restBaseVersion` (kept without a copy while it stands).
-    bool restBaseHeld = false;
-    uint64_t restBaseVersion = 0;
     /// SkinTopology op: bumped when `layoutHandle` becomes another object;
     /// the SkinTopology and RevisionPacket keys carry it, not the bytes.
     uint64_t layoutSerial = 0;
@@ -4580,8 +4580,7 @@ struct RigExecBakedRunShadow {
         std::vector<RigExecGroupState<GfVec3f>> groups;
         std::vector<RigExecGroupSource> groupIds;
         uint64_t deltasVersion = 0;
-        bool restBaseHeld = false;
-        uint64_t restBaseVersion = 0, layoutSerial = 0;
+        uint64_t layoutSerial = 0;
     };
     struct DerivedState {
         RevisionState revision;

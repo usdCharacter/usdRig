@@ -684,8 +684,6 @@ RigExecRevisionKernelAcceptance(RigExecRevisionOp op,
                                 const RigExecMoverParameters &p, size_t count,
                                 const bool *envelopeResolves = nullptr);
 
-struct RigExecLatticeBasis; // rigExecMath/latticeKernel.h
-
 /// Ops a revision of a range-pipelined chain may run one step per vertex
 /// group: Matrix, Wire, and -- classified further at Build by lattice
 /// evaluation, skinning method, delta space and fixed topology -- Lattice
@@ -707,12 +705,6 @@ struct RigExecRevisionRangeInputs {
     std::shared_ptr<const RigExecWireBasis> wireBasis;
     /// Dense wire: restEvaluations.Get's table, or null to evaluate per point.
     const std::vector<GfVec3f> *wireRestEvaluations = nullptr;
-    /// Lattice: the cached basis, or null to evaluate per point.
-    const RigExecLatticeBasis *latticeBasis = nullptr;
-    /// The retained bind `latticeBasis` points into, held here because the
-    /// owner may hand the cache an equal bind between runs
-    /// (RigExecLatticeBindSharing), which would otherwise free this one.
-    std::shared_ptr<const RigExecLatticeBind<GfVec3f>> latticeBind;
     /// BlendShape: the envelope resolved at the full count, the weight its
     /// kernel blends each point by; empty at full strength.
     std::vector<float> blendWeights;
@@ -720,20 +712,15 @@ struct RigExecRevisionRangeInputs {
 
 /// RigExecRevisionKernelAcceptance(op, p, count), exactly; and when that is
 /// Applies for a range op, \p prepared filled for RigExecRunRevisionGroup
-/// (otherwise cleared). \p wireBasis and \p cache are the revision's own
-/// memos (null builds per call); the caller is their only writer.
+/// (otherwise cleared). \p wireBasis is the revision's own memo (null builds
+/// per call); the caller is its only writer.
 /// The BlendShape arm's answer is RigExecRevisionKernelAcceptance(BlendShape,
 /// p, count) and, when Applies below full strength, `prepared->blendWeights`
 /// holds ResolveAll(count). A Skin's RevisionStatic decides with
 /// SkinAcceptance and does not call it.
-/// \p restVersion (0: unknown) is the content version of p.restPoints; a
-/// lattice bind whose cache recorded the same version skips only the
-/// rest-point comparison.
 RigExecRevisionAcceptance RigExecPrepareRevisionRanges(
     RigExecRevisionOp op, const RigExecMoverParameters &p, size_t count,
-    RigExecWireBasisCache *wireBasis,
-    RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache,
-    RigExecRevisionRangeInputs *prepared, uint64_t restVersion = 0);
+    RigExecWireBasisCache *wireBasis, RigExecRevisionRangeInputs *prepared);
 
 /// Whether \p p's packet keeps every point whose resolved envelope weight is
 /// <= 0 at its entering bytes: a valid sparse envelope with a zero default
@@ -746,7 +733,7 @@ bool RigExecRevisionGateHolds(RigExecRevisionOp op,
 /// \p in[k] is entering point begin + k and \p out[k] receives point
 /// begin + k's result, k < end - begin (\p out never aliases \p in). Every
 /// whole-array input (\p p, \p prepared, \p separateEnvelope, sparse indices,
-/// bind tables) is indexed absolutely. Ops: Wire, Lattice; Skin
+/// bind tables) is indexed absolutely. Ops: Wire; Skin
 /// (\p skin is the table the group reads: a chunk's key-filled table or the
 /// fold's; classicLinear or dualQuaternion, then the "apply once" envelope
 /// when \p separateEnvelope is given); BlendShape in target space. Each

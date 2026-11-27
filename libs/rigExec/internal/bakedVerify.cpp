@@ -491,8 +491,6 @@ CaptureRevision(const RigExecBakedProgramImpl::GeomRevision &revision,
     // the pointers.
     state->computedBlendSamples = revision.blendSamples;
     state->deltasVersion = revision.deltasVersion;
-    state->restBaseHeld = revision.restBaseHeld;
-    state->restBaseVersion = revision.restBaseVersion;
     state->layoutSerial = revision.layoutSerial;
 }
 
@@ -580,8 +578,6 @@ RestoreRevision(const RigExecBakedRunShadow::RevisionState &state,
     revision->groupIds = state.groupIds;
     revision->blendSamples = state.computedBlendSamples;
     revision->deltasVersion = state.deltasVersion;
-    revision->restBaseHeld = state.restBaseHeld;
-    revision->restBaseVersion = state.restBaseVersion;
     revision->layoutSerial = state.layoutSerial;
 }
 
@@ -760,10 +756,6 @@ CompareRevision(std::vector<std::string> *differences, size_t *count,
                   revision.groupIds);
     CompareValue(differences, count, where + " deltasVersion",
                  shadow.deltasVersion, revision.deltasVersion);
-    CompareValue(differences, count, where + " restBaseHeld",
-                 shadow.restBaseHeld, revision.restBaseHeld);
-    CompareValue(differences, count, where + " restBaseVersion",
-                 shadow.restBaseVersion, revision.restBaseVersion);
 }
 
 } // namespace

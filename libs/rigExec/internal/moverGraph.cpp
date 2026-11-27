@@ -1339,15 +1339,11 @@ RigExecRevisionAcceptance
 RigExecPrepareRevisionRanges(RigExecRevisionOp op,
                              const RigExecMoverParameters &p, size_t count,
                              RigExecWireBasisCache *wireBasis,
-                             RigExecSurfaceKernelCache<GfVec3f, GfVec3d> *cache,
-                             RigExecRevisionRangeInputs *prepared,
-                             uint64_t restVersion)
+                             RigExecRevisionRangeInputs *prepared)
 {
     using Acceptance = RigExecRevisionAcceptance;
     prepared->wireBasis.reset();
     prepared->wireRestEvaluations = nullptr;
-    prepared->latticeBasis = nullptr;
-    prepared->latticeBind.reset();
     prepared->blendWeights.clear();
     if (op == RigExecRevisionOp::BlendShape) {
         // RigExecRevisionKernelAcceptance's BlendShape answer, by the
@@ -1392,23 +1388,6 @@ RigExecPrepareRevisionRanges(RigExecRevisionOp op,
                 rest, p.wireBindCoords.cdata(), p.wireBindCoords.size(),
                 p.dropoffDistance);
         }
-    } else if (op == RigExecRevisionOp::Lattice && cache) {
-        // The basis RigExecApplyLatticeKernel looks up, asked exactly where
-        // the kernel asks: past its pass-through checks, with its bind box.
-        GfVec3f lo(0.0f), size(0.0f);
-        if (RigExecLatticeKernelSetup(
-                count, p.restPoints.data(), p.restPoints.size(),
-                p.auxPoints.data(), p.auxPoints.size(), p.auxPointsB.data(),
-                p.auxPointsB.size(), p.divisions[0], p.divisions[1],
-                p.divisions[2], &lo, &size,
-                static_cast<std::vector<GfVec3f> *>(nullptr))) {
-            prepared->latticeBasis = cache->LatticeBasis(
-                p.restPoints.data(), p.restPoints.size(), lo, size,
-                p.divisions[0], p.divisions[1], p.divisions[2], restVersion);
-            if (prepared->latticeBasis) {
-                prepared->latticeBind = cache->RetainedLatticeBind();
-            }
-        }
     }
     return acceptance;
 }
@@ -1434,7 +1413,7 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
         (begin < end && (!in || !out || in == out)) ||
         !RigExecRevisionIsRangeOp(op) || op == RigExecRevisionOp::Matrix ||
         op == RigExecRevisionOp::Smooth || op == RigExecRevisionOp::DeltaMush ||
-        !_PacketMatches(op, p)) {
+        op == RigExecRevisionOp::Lattice || !_PacketMatches(op, p)) {
         return false;
     }
     const size_t n = end - begin;
@@ -1489,7 +1468,7 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
                                           w.indices, w.values, p.restPoints,
                                           p.auxPoints);
     }
-    // A dense wire, a lattice or a skin, blended over the entering points
+    // A dense wire or a skin, blended over the entering points
     // afterwards unless the envelope is at full strength.
     const bool blend = !RigExecEnvelopeIsFullStrength(w);
     if (blend && !separateEnvelope) {
@@ -1509,18 +1488,6 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
                                    evaluations ? evaluations->size() : 0)) {
             return false;
         }
-    } else if (op == RigExecRevisionOp::Lattice) {
-        // A regular grid runs whole (its revision is never Range), and the
-        // group form is the Bernstein evaluation's.
-        if (p.latticeSettings.regularGrid || p.restPoints.size() != count) {
-            return false; // cardinality mismatch fails atomically
-        }
-        // Seeds \p out itself, which is all a refused setup leaves there.
-        RigExecApplyLatticeKernelGroup(
-            in, out, count, begin, end, p.restPoints.data(),
-            p.restPoints.size(), p.auxPoints.data(), p.auxPoints.size(),
-            p.auxPointsB.data(), p.auxPointsB.size(), p.divisions[0],
-            p.divisions[1], p.divisions[2], prepared.latticeBasis);
     } else {
         // Skin: the group's part of the layout against the table it reads
         // (\p skin, or the packet's own), blended over the entering points
@@ -2998,11 +2965,7 @@ RigExecAssembleParameters(const UsdPrim &moverPrim, RigExecRevisionOp op,
                 break;
             }
         }
-        if (values.retainedRest && !values.retainedRest->empty()) {
-            params.restPoints.swap(*values.retainedRest);
-        } else {
-            params.restPoints = values.basePoints;
-        }
+        params.restPoints = values.basePoints;
         // Operand order matters and is not symmetric: the shared applier is
         // RigExecApplyLattice(points, restPoints, restCage, posedCage, divs),
         // so auxPoints is the BIND-TIME cage and auxPointsB the live one --
@@ -4372,11 +4335,7 @@ RigExecAssembleFromLeaves(RigExecRevisionOp op,
         }
         // auxPoints is the BIND-TIME cage and auxPointsB the live one, as
         // the stage assembler orders them.
-        if (values.retainedRest && !values.retainedRest->empty()) {
-            params.restPoints.swap(*values.retainedRest);
-        } else {
-            values.CopyBasePoints(&params.restPoints);
-        }
+        values.CopyBasePoints(&params.restPoints);
         params.auxPoints = L.Array<GfVec3f>(Role::RestCage);
         params.auxPointsB = L.Array<GfVec3f>(Role::LiveCage);
         params.divisions = L.Scalar<GfVec3i>(Role::Divisions, params.divisions,

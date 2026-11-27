@@ -695,7 +695,11 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// through OpGraph.lookups source 25 and publishes the answer through
 /// OpGraph.host_outputs targets 52 to 54. It retires the SpaceExpression
 /// step: StepKind 24 is reserved and refused.
-inline constexpr uint32_t RigExecFormatVersion = 49;
+///
+/// Format 50 runs every Range lattice as a Lattice op node over the divisions
+/// read at Build, its rest points the chain's base and its cages read through
+/// RevisionLeaf lookups (OpRevisionRead 13-15).
+inline constexpr uint32_t RigExecFormatVersion = 50;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -703,7 +707,7 @@ inline constexpr uint32_t RigExecFormatVersion = 49;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 49;
+inline constexpr uint32_t RigExecFormatOldestReadable = 50;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

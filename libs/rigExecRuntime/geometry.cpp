@@ -2274,11 +2274,6 @@ struct RrGeoRevisionRangeInputs {
     std::shared_ptr<const RrGeoWireBasis> wireBasis;
     // Dense wire: the rest evaluations, or null to evaluate per point.
     const std::vector<RrVec3f> *wireRestEvaluations = nullptr;
-    // Lattice: the retained bind, or null to stream the factors. Held here
-    // because RrShareLatticeBinds may hand the cache an equal bind between
-    // runs, which would otherwise free the basis a later range step reads.
-    std::shared_ptr<const RigExecLatticeBind<RrVec3f>> latticeBind;
-    const RigExecLatticeBasis *latticeBasis = nullptr;
     // BlendShape: the envelope resolved at the full count, the weight its
     // kernel blends each point by; empty at full strength.
     std::vector<float> blendWeights;
@@ -2295,13 +2290,10 @@ RrGeoPrepareRevisionRanges(
     std::unordered_map<uint64_t, RrGeoWireBasisEntry> *wireCache,
     std::shared_ptr<const RrGeoWireBasisEntry> *lastWireBasis,
     RigExecWireRestCache<RrVec3f, RrVec2f> *wireRestCache,
-    RigExecSurfaceKernelCache<RrVec3f, RrVec3d> *surfaceCache,
     RrGeoRevisionRangeInputs *prepared)
 {
     prepared->wireBasis.reset();
     prepared->wireRestEvaluations = nullptr;
-    prepared->latticeBind.reset();
-    prepared->latticeBasis = nullptr;
     prepared->blendWeights.clear();
     const RrGeoAcceptance acceptance =
         RrGeoRevisionKernelAcceptance(op, p, count, envelopeResolves);
@@ -2322,25 +2314,6 @@ RrGeoPrepareRevisionRanges(
                                    p.wireBindCoords.size(), p.dropoffDistance);
         }
         break;
-    case RrGeoOpLattice: {
-        // The bind is consulted under exactly the checks the whole kernel
-        // passes before it asks the cache; otherwise the kernel passes
-        // through and needs none.
-        const int dx = p.divisions[0], dy = p.divisions[1], dz = p.divisions[2];
-        RrVec3f lo, size;
-        if (surfaceCache && count > 0 && dx >= 2 && dy >= 2 && dz >= 2 &&
-            p.auxPoints.size() == size_t(dx) * size_t(dy) * size_t(dz) &&
-            p.auxPointsB.size() == p.auxPoints.size() &&
-            RigExecLatticeBindBox(p.auxPoints.data(), p.auxPoints.size(), &lo,
-                                  &size)) {
-            prepared->latticeBasis = surfaceCache->LatticeBasis(
-                p.restPoints.data(), count, lo, size, dx, dy, dz);
-            if (prepared->latticeBasis) {
-                prepared->latticeBind = surfaceCache->RetainedLatticeBind();
-            }
-        }
-        break;
-    }
     case RrGeoOpBlendShape:
         if (!RrGeoEnvelopeIsFullStrength(w)) {
             w.ResolveAll(count, &prepared->blendWeights);
@@ -2358,8 +2331,8 @@ RrGeoPrepareRevisionRanges(
 // (\p out never aliases \p in), exactly what RrGeoRunRevisionKernel writes
 // there for the whole array of \p count entering points. Every whole-array
 // input (the packet, \p prepared, \p separateEnvelope, sparse indices, bind
-// tables) is indexed absolutely. Ops: Wire, Lattice and a
-// target-space BlendShape; a skin runs through EvalCore's group body.
+// tables) is indexed absolutely. Ops: Wire and a target-space BlendShape;
+// a skin runs through EvalCore's group body.
 // \p separateEnvelope is the resolved "apply once" envelope for an op that
 // blends one below full strength, else null. \p untouched, when given,
 // receives whether the result is \p in itself, and then \p out is not
@@ -2435,20 +2408,6 @@ RrGeoRunRevisionGroup(int op, const RrGeoMoverParameters &p,
         }
         break;
     }
-    case RrGeoOpLattice:
-        // A Range lattice rests on the legacy evaluation (a role pin); a
-        // regular grid has no group form.
-        if (p.latticeSettings.regularGrid || p.restPoints.size() != count) {
-            return false; // cardinality mismatch fails atomically
-        }
-        // An invalid cage copies \p in to \p out: the whole kernel's
-        // pass-through.
-        RigExecApplyLatticeKernelGroup<RrVec3f>(
-            in, out, count, begin, end, p.restPoints.data(),
-            p.restPoints.size(), p.auxPoints.data(), p.auxPoints.size(),
-            p.auxPointsB.data(), p.auxPointsB.size(), p.divisions[0],
-            p.divisions[1], p.divisions[2], prepared.latticeBasis);
-        break;
     case RrGeoOpBlendShape: {
         // Target space only: the runtime never records a surface frame.
         const bool full = RrGeoEnvelopeIsFullStrength(w);
@@ -2583,6 +2542,8 @@ struct RrGeometryScratch {
         int64_t groupSlotBase = 0;
         // The rest points and smoothing weights its op's lookups last lent.
         std::vector<RrVec3f> lookedUpRest;
+        // The rest and live cages its lattice op's lookups last lent.
+        std::array<std::vector<RrVec3f>, 2> lookedUpCages;
         std::vector<float> lookedUpSmoothWeights;
         // Per chain group (pointBlocks.h): its publication and, for a Whole
         // keyed skin, chunk g's speculative result. Only written groups are
@@ -6724,7 +6685,7 @@ struct RrChainState {
             int(wireAt(chain, revision).op), rev.parameters,
             chainAt(chain).lastBase.size(), &rev.envelopeOk,
             &scratch->wireBasis, &rev.lastWireBasis, &rev.wireRestCache,
-            &rev.surfaceCache, &rev.rangeInputs));
+            &rev.rangeInputs));
     }
     int revisionKernelAcceptance(size_t chain, size_t revision)
     {
@@ -8764,6 +8725,15 @@ RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
                     rev.lookedUpSmoothWeights.size());
     case Read::ChainBase:
         return lend(c.lastBase.data(), c.lastBase.size());
+    case Read::LatticeRestCage:
+    case Read::LatticeLiveCage: {
+        const bool rest = Read(lookup.read) == Read::LatticeRestCage;
+        std::vector<RrVec3f> &cage = rev.lookedUpCages[rest ? 0 : 1];
+        RrGeoReadVec3fArray(program, scratch,
+                            RrGeoBindingRead(rev, RrGeoBindCagePoints, rest),
+                            nullptr, &cage);
+        return lend(cage.data(), cage.size());
+    }
     case Read::MushStep:
         return put(RrGeoReadFloat(program, scratch, attr(RrGeoAttrStep), 0.5f));
     case Read::MushPinBorders:

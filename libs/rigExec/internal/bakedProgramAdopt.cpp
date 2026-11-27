@@ -269,8 +269,6 @@ RigExecBakedProgram::AdoptGeometryStateFrom(RigExecBakedProgram &previous)
                 }
                 revision.groupIds = std::move(source.groupIds);
                 revision.deltasVersion = source.deltasVersion;
-                revision.restBaseHeld = source.restBaseHeld;
-                revision.restBaseVersion = source.restBaseVersion;
                 carried.push_back(&revision);
             }
             // A range-pipelined revision's own buffer holds its version,

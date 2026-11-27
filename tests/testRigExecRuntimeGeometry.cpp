@@ -2099,9 +2099,11 @@ TestRangeChainRolesAndCutoff()
     }
     CHECK(parts["/Asset/Rig/Movers/M0"] == std::set<int>({0}));
     CHECK(parts["/Asset/Rig/Movers/WireSparse"] == std::set<int>({0, 1, 2, 3}));
-    for (const char *ungated : {"M1", "M2", "Lattice", "Half", "WireDense"}) {
+    for (const char *ungated : {"M1", "M2", "Half", "WireDense"}) {
         CHECK(parts[std::string("/Asset/Rig/Movers/") + ungated].size() == 10);
     }
+    // The lattice runs in M2's range steps: one segment of their op chain.
+    CHECK(parts["/Asset/Rig/Movers/Lattice"].empty());
     const auto first = position.find("/Asset/Rig/Movers/M0");
     CHECK(first != position.end());
     if (ranges != 7 || first == position.end()) {
@@ -2138,8 +2140,8 @@ TestRangeChainRolesAndCutoff()
         }
         ++checked;
     }
-    // 1 + 4 gated steps and 10 for each of the other five.
-    CHECK(checked == 55);
+    // 1 + 4 gated steps and 10 for each of the other four.
+    CHECK(checked == 45);
     std::printf("%s: %zu group step(s) checked\n", name, checked);
 }
 

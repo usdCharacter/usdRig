@@ -10,6 +10,7 @@
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecEvalCore/propertyLookups.h"
 #include "rigExecOps/deform/deltaMushOp.h"
+#include "rigExecOps/deform/latticeOp.h"
 #include "rigExecOps/deform/matrixDeformOp.h"
 #include "rigExecOps/deform/pointOps.h"
 #include "rigExecStdTypes/array.h"
@@ -20,6 +21,7 @@
 #include "pxr/base/vt/array.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <functional>
 #include <tuple>
@@ -462,15 +464,17 @@ struct PointJoin {
 /// smooth (opSmooth) a Smooth member over the compiled topology; per Range
 /// delta mush (opMush) a DeltaMush member over the compiled topology, edges
 /// and iteration count, its other inputs looked up per frame and its frame
-/// provider selected as a matrix mover's reference. Each member
+/// provider selected as a matrix mover's reference; per Range lattice
+/// (opLattice) a Lattice member over the divisions read at Build, its rest
+/// points the chain's base and its cages looked up per frame. Each member
 /// stores its groups and reads the points entering its revision: the
 /// output of the op revision before it in its point chain, so the two share
 /// one range chain, when that one writes every group or this one reads
 /// point by point, and this one's weights do not read the entering points;
 /// else the stored version. A revision \p apart names always reads the
 /// stored version. \p nodeRevision gets each node's revision id, \p joins
-/// each node-to-node feed. False for a matrix with no transform or a delta
-/// mush framed by more than one provider.
+/// each node-to-node feed. False for a matrix with no transform, a delta
+/// mush framed by more than one provider or a lattice divided below 2.
 bool
 AddPointChainOps(const RigExecBakedProgramImpl &B,
                  RigExecRigDescBuilder *builder, eval::OpStepLayout *layout,
@@ -687,6 +691,40 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                     revision.weightObject >= 0)
                     written(mush, rigExecOps::DeltaMushWritten());
                 stores(mush, rigExecOps::DeltaMushOut());
+                continue;
+            }
+            if (revision.opLattice) {
+                using Read = eval::OpRevisionRead;
+                const std::array<int, 3> &divisions =
+                    revision.opLatticeDivisions;
+                if (divisions[0] < 2 || divisions[1] < 2 || divisions[2] < 2)
+                    return Fail(error, revision.moverPathText +
+                                           ": a lattice's divisions are "
+                                           "below 2");
+                rigExecOps::LatticePayload payload;
+                payload.divisions = divisions;
+                const RigExecNodeId lattice =
+                    builder->AddOp(rigExecOps::Lattice(), &payload);
+                points(lattice, rigExecOps::LatticePoints(), false);
+                enabled(lattice, rigExecOps::LatticeEnabled());
+                for (const auto &[port, read] :
+                     {std::make_pair(&rigExecOps::LatticeRestPoints(),
+                                     Read::ChainBase),
+                      std::make_pair(&rigExecOps::LatticeRestCage(),
+                                     Read::LatticeRestCage),
+                      std::make_pair(&rigExecOps::LatticePosedCage(),
+                                     Read::LatticeLiveCage)})
+                    bind(lattice, *port,
+                         {{uint8_t(L::RevisionLeaf), uint32_t(id), -1,
+                           uint8_t(read)}});
+                if (!weighs(lattice, rigExecOps::LatticeEnvelope(),
+                            rigExecOps::LatticePacket(),
+                            rigExecOps::LatticeDefaultWeight()))
+                    return false;
+                if (!writesAll && !revision.weightCurrentPhase &&
+                    revision.weightObject >= 0)
+                    written(lattice, rigExecOps::LatticeWritten());
+                stores(lattice, rigExecOps::LatticeOut());
                 continue;
             }
             if (revision.opSmooth) {

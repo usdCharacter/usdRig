@@ -977,6 +977,150 @@ TestLattice()
             }
 }
 
+/// The bound lattice's Range ports: enabled, a default weight, a weight
+/// packet with its written groups, its cage errors and a rest cage with no
+/// volume, each under every range setting.
+void
+TestLatticeWeights()
+{
+    using namespace rigExecOps;
+    const Grid grid(9, 3);
+    const Points in = ToStd(grid.points), rest = ToStd(grid.points);
+    const GfVec3i d(3, 4, 2);
+    const auto restCage =
+        Cage(d, GfVec3f(-0.5f, -0.5f, -2), GfVec3f(8.5f, 8.5f, 2), 0, 1);
+    const auto posedCage =
+        Cage(d, GfVec3f(-1, -0.2f, -2.5f), GfVec3f(9, 9.5f, 1.5f), 0.4f, 5u);
+    const Points restCageArray = ToStd(restCage),
+                 posedCageArray = ToStd(posedCage);
+    LatticePayload payload;
+    payload.divisions = {d[0], d[1], d[2]};
+    std::vector<GfVec3f> deformed = grid.points;
+    RigExecApplyLattice(&deformed, grid.points, restCage, posedCage, d);
+    const auto blended = [&](const std::vector<float> &envelope) {
+        std::vector<GfVec3f> expected = deformed;
+        Blend(grid.points, envelope, &expected);
+        return expected;
+    };
+    const size_t count = grid.points.size();
+    const uint8_t on = 1, off = 0;
+
+    Node switched(Lattice(),
+                  {&LatticePoints(), &LatticeRestPoints(), &LatticeRestCage(),
+                   &LatticePosedCage(), &LatticeEnabled()},
+                  LatticeOut(), &payload);
+    CheckLattice(switched, {&in, &rest, &restCageArray, &posedCageArray, &on},
+                 deformed, true, "enabled");
+    CheckLattice(switched, {&in, &rest, &restCageArray, &posedCageArray, &off},
+                 grid.points, true, "disabled");
+    // A disabled lattice passes through whatever its cages hold.
+    const Points shortCage(posedCageArray.Data(), posedCageArray.Size() - 1);
+    CheckLattice(switched, {&in, &rest, &restCageArray, &shortCage, &off},
+                 grid.points, true, "disabled, short cage");
+    CheckLattice(switched, {&in, &rest, &restCageArray, &shortCage, &on}, {},
+                 false, "short cage");
+    std::vector<GfVec3f> nonFinite = posedCage;
+    nonFinite[3][1] = std::numeric_limits<float>::infinity();
+    const Points nonFiniteArray = ToStd(nonFinite);
+    CheckLattice(switched, {&in, &rest, &restCageArray, &nonFiniteArray, &on},
+                 {}, false, "non-finite cage");
+    // A rest cage with no volume is a defined pass-through.
+    const std::vector<GfVec3f> flat(restCage.size(), GfVec3f(1, 2, 3));
+    const Points flatArray = ToStd(flat);
+    CheckLattice(switched, {&in, &rest, &flatArray, &posedCageArray, &on},
+                 grid.points, true, "flat rest cage");
+
+    Node uniform(Lattice(),
+                 {&LatticePoints(), &LatticeRestPoints(), &LatticeRestCage(),
+                  &LatticePosedCage(), &LatticeDefaultWeight()},
+                 LatticeOut(), &payload);
+    const float half = 0.5f, over = 1.5f;
+    CheckLattice(uniform, {&in, &rest, &restCageArray, &posedCageArray, &half},
+                 blended(std::vector<float>(count, 0.5f)), true, "half");
+    CheckLattice(uniform, {&in, &rest, &restCageArray, &posedCageArray, &over},
+                 {}, false, "weight over 1");
+
+    std::vector<int32_t> sparseIndices;
+    std::vector<float> sparseWeights;
+    for (int32_t i = 2; i < 40; i += 3) {
+        sparseIndices.push_back(i);
+        sparseWeights.push_back(float(i % 7) / 6.0f);
+    }
+    std::vector<float> dense(count, 0.0f);
+    for (size_t e = 0; e < sparseIndices.size(); ++e)
+        dense[size_t(sparseIndices[e])] = sparseWeights[e];
+    rigExecRig::PointWeights packet;
+    packet.valid = 1;
+    packet.representation = uint32_t(rigExecRig::WeightRepresentation::Sparse);
+    packet.indices = ToArray(sparseIndices);
+    packet.values = ToArray(sparseWeights);
+    Node packed(Lattice(),
+                {&LatticePoints(), &LatticeRestPoints(), &LatticeRestCage(),
+                 &LatticePosedCage(), &LatticePacket(), &LatticeWritten()},
+                LatticeOut(), &payload);
+    const auto written = ToArray(std::vector<int32_t>{0, 50});
+    CheckLattice(
+        packed,
+        {&in, &rest, &restCageArray, &posedCageArray, &packet, &written},
+        blended(dense), true, "sparse packet");
+    const auto short_ = ToArray(std::vector<int32_t>{0, 10, 20, 50});
+    CheckLattice(
+        packed, {&in, &rest, &restCageArray, &posedCageArray, &packet, &short_},
+        {}, false, "packet past its written groups");
+    packet.representation =
+        uint32_t(rigExecRig::WeightRepresentation::Constant);
+    packet.indices = RigExecArray<int32_t>();
+    packet.values = RigExecArray<float>();
+    packet.defaultWeight = 0.35f;
+    Node constant(Lattice(),
+                  {&LatticePoints(), &LatticeRestPoints(), &LatticeRestCage(),
+                   &LatticePosedCage(), &LatticePacket()},
+                  LatticeOut(), &payload);
+    CheckLattice(
+        constant, {&in, &rest, &restCageArray, &posedCageArray, &packet},
+        blended(std::vector<float>(count, 0.35f)), true, "constant packet");
+
+    // An overflowing degree: an unbounded basis over fewer points.
+    const GfVec3i wideD(1100, 2, 2);
+    const auto wideRest = Cage(wideD, GfVec3f(0, 0, 0), GfVec3f(1, 1, 1), 0, 1);
+    const auto widePosed =
+        Cage(wideD, GfVec3f(0, 0.1f, 0), GfVec3f(1, 1.1f, 1), 0, 1);
+    std::vector<GfVec3f> wideIn(25);
+    for (size_t i = 0; i < wideIn.size(); ++i)
+        wideIn[i] =
+            GfVec3f(float(i) / 20.0f - 0.1f, 0.3f + 0.02f * float(i), 0.7f);
+    std::vector<GfVec3f> wideExpected = wideIn;
+    RigExecApplyLattice(&wideExpected, wideIn, wideRest, widePosed, wideD);
+    LatticePayload widePayload;
+    widePayload.divisions = {wideD[0], wideD[1], wideD[2]};
+    Node wide(Lattice(),
+              {&LatticePoints(), &LatticeRestPoints(), &LatticeRestCage(),
+               &LatticePosedCage()},
+              LatticeOut(), &widePayload);
+    const Points wideInArray = ToStd(wideIn), wideRestArray = ToStd(wideRest),
+                 widePosedArray = ToStd(widePosed);
+    CheckLattice(wide,
+                 {&wideInArray, &wideInArray, &wideRestArray, &widePosedArray},
+                 wideExpected, true, "unbounded basis");
+
+    std::string error;
+    for (const bool grid_ : {false, true}) {
+        LatticePayload settings = payload;
+        settings.settings.regularGrid = grid_;
+        RigExecRigDescBuilder b;
+        const RigExecNodeId node = b.AddOp(Lattice(), &settings);
+        for (const RigExecPortHandle *port :
+             {&LatticePoints(), &LatticeRestPoints(), &LatticeRestCage(),
+              &LatticePosedCage(), &LatticeDefaultWeight(),
+              grid_ ? &LatticeEnabled() : &LatticePacket()})
+            b.BindInput(node, *port);
+        b.BindOutput(node, LatticeOut());
+        auto desc = b.Build(&error);
+        CHECK(!desc || !RigExecCompile(*desc, RigExecCompileOptions(), &error));
+        CHECK(Contains(error, grid_ ? "regular grid" : "one of an envelope"));
+    }
+}
+
 void
 TestWrinkle()
 {
@@ -4744,6 +4888,7 @@ main()
     TestDeltaMush();
     TestDeltaMushWeights();
     TestLattice();
+    TestLatticeWeights();
     TestWrinkle();
     TestSurfaceProject();
     TestRetainedState();

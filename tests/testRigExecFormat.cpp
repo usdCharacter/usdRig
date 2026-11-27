@@ -1618,12 +1618,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 49 &&
-                      RigExecFormatOldestReadable == 49,
-                  "format 49 answers provider values by op nodes and is "
+    static_assert(RigExecFormatVersion == 50 &&
+                      RigExecFormatOldestReadable == 50,
+                  "format 50 runs Range lattices as op nodes and is "
                   "the only format Open reads");
-    // Every older format requires re-export: its provider values were
-    // answered by SpaceExpression steps.
+    // Every older format requires re-export: its lattices ran as their own
+    // steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1634,14 +1634,13 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 49 through " +
+            " (this reader reads 50 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 49 ? "re-export: provider values answered by op nodes"
-                          : "rebake");
+            (version < 50 ? "re-export: Range lattices as op nodes" : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 49 ? reexports : rebakes);
+        ++(version < 50 ? reexports : rebakes);
     }
-    CHECK(reexports == 49 && rebakes == 1);
+    CHECK(reexports == 50 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;

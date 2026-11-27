@@ -710,11 +710,7 @@ PutPacket(std::string *out, const RigExecBakedProgramImpl::GeomRevision &r)
     Array(out, v.topologyIndices);
     Array(out, v.auxPoints);
     Array(out, v.auxPointsB);
-    if (r.restBaseHeld) {
-        Put(out, uint8_t(1));
-        Put(out, r.restBaseVersion);
-    } else
-        Array(out, v.restPoints);
+    Array(out, v.restPoints);
     Put(out, v.divisions);
     Array(out, v.bindCoords);
     Put(out, v.frames);

@@ -215,6 +215,10 @@ enum class OpRevisionRead : uint8_t {
     MushComputationToTarget = 12,
     /// Vec3fArray: the points entering the revision's point chain.
     ChainBase = 13,
+    /// A lattice's cage (Vec3fArray): as authored at the default time, and
+    /// at the evaluated time.
+    LatticeRestCage = 14,
+    LatticeLiveCage = 15,
 };
 
 /// Whether a lookup of \p source is one the host answers through

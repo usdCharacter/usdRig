@@ -1275,6 +1275,21 @@ struct RoleReads {
         return value.IsHolding<int>() ? value.UncheckedGet<int>() : fallback;
     }
 
+    /// Key \p k's Vec3i, sampled as Token samples; \p fallback when it holds
+    /// none.
+    GfVec3i Vec3i(const RigExecBakedPathLeaves &leaves, int k,
+                  const GfVec3i &fallback) const
+    {
+        if (k < 0) {
+            return fallback;
+        }
+        const VtValue value = RigExecSampleRevisionLeaf(
+            leaves.decl.keys[size_t(k)], leaves.attributes[size_t(k)], &overlay,
+            UsdTimeCode::Default(), &B.upstream);
+        return value.IsHolding<GfVec3i>() ? value.UncheckedGet<GfVec3i>()
+                                          : fallback;
+    }
+
     const RigExecBakedProgramImpl &B;
     const bool exportMode;
     RigExecResolvedInputs overlay;
@@ -1416,8 +1431,22 @@ ClassifyRevision(const RoleReads &reads,
         if (value != _tokens->legacyLattice) {
             return GeomRole::Whole;
         }
+        // Its op takes the divisions Build reads; divisions that can move,
+        // or a cage read through a phase, run it whole.
+        const int divisions = leaves.decl.Role(Role::Divisions);
+        if (!revision->binding.phases.empty() || divisions < 0 ||
+            size_t(divisions) >= leaves.hops.size() ||
+            !reads.Usable(leaves, divisions) ||
+            reads.Reaches(leaves.hops[size_t(divisions)])) {
+            return GeomRole::Whole;
+        }
+        RolePin pin;
+        pin.kind = RolePin::Kind::NoLayoutOverride;
+        pin.leaf = divisions;
+        revision->pins.push_back(pin);
         if (reads.exportMode) {
             pinned->push_back(leaves.decl.keys[size_t(evaluation)].path);
+            pinned->push_back(leaves.decl.keys[size_t(divisions)].path);
         }
         return GeomRole::Range;
     }
@@ -1855,6 +1884,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
         revision.opMushCounts = VtIntArray();
         revision.opMushIndices = VtIntArray();
         revision.opMushEdges = VtIntArray();
+        revision.opLattice = false;
         revision.blendChunked = false;
         revision.groupWritten.clear();
         revision.enteringWriter.clear();
@@ -2054,6 +2084,15 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
                     reads.Ints(leaves, leaves.decl.Role(Role::MushEdges));
                 revision.opMushIterations =
                     reads.Int(leaves, leaves.decl.scalarBegin, 10);
+            }
+            revision.opLattice = revision.op == RigExecRevisionOp::Lattice;
+            if (revision.opLattice) {
+                using Role = RigExecRevisionLeafRole;
+                const GfVec3i divisions = reads.Vec3i(
+                    revision.leaves, revision.leaves.decl.Role(Role::Divisions),
+                    RigExecMoverParameters().divisions);
+                revision.opLatticeDivisions = {divisions[0], divisions[1],
+                                               divisions[2]};
             }
             if (revision.op == RigExecRevisionOp::Smooth) {
                 BuildSmoothHalo(reads, *chain, &revision, points);
@@ -3553,15 +3592,9 @@ RigExecBakedAssembleFromLeaves(RigExecBakedProgramImpl *program,
         layoutPointCount = basePointCount;
     RigExecProviderValues values =
         RevisionValues(B, revision, basePoints, basePointCount);
-    // Two arrays the packet takes over rather than copies: the summed blend
-    // deltas `values` owns, and a Range lattice's held rest (the chain base
-    // at the version RevisionStatic checked, `restBaseHeld`), which the last
-    // packet gives up because this assembly replaces it.
+    // The summed blend deltas `values` owns, which the packet takes over
+    // rather than copies.
     values.lendBlendDeltas = true;
-    if (revision->op == RigExecRevisionOp::Lattice && revision->restBaseHeld &&
-        revision->parameters.restPoints.size() == basePointCount) {
-        values.retainedRest = &revision->parameters.restPoints;
-    }
     RigExecRevisionLeafView view;
     view.decl = &revision->leaves.decl;
     if (revision->blendChunked) {
@@ -4351,12 +4384,6 @@ struct BakedChainState {
         Chain &c = chainAt(chain);
         Revision &rev = revisionAt(chain, revision);
         const bool rangeChain = rev.role != RigExecBakedRevisionRole::Legacy;
-        const bool rangeLattice = rev.role == RigExecBakedRevisionRole::Range &&
-                                  rev.op == RigExecRevisionOp::Lattice;
-        if (rev.restBaseHeld &&
-            (!rangeLattice || rev.restBaseVersion != c.baseVersion)) {
-            rev.restBaseHeld = false;
-        }
         RigExecExternalRevision external;
         RigExecMoverParameters assembled =
             AssembleRevision(*B, &rev, c.lastBase.cdata(), c.lastBase.size(),
@@ -4374,12 +4401,6 @@ struct BakedChainState {
         }
         rev.parameters = std::move(assembled);
         rev.external = std::move(external);
-        if (rangeLattice) {
-            rev.restBaseHeld =
-                !rev.parameters.restPoints.empty() &&
-                rev.parameters.restPoints.size() == c.lastBase.size();
-            rev.restBaseVersion = c.baseVersion;
-        }
     }
     void publishAssembledStatus(size_t chain, size_t revision)
     {
@@ -4479,8 +4500,7 @@ struct BakedChainState {
         Revision &rev = revisionAt(chain, revision);
         return int(RigExecPrepareRevisionRanges(
             rev.op, rev.parameters, chainAt(chain).lastBase.size(),
-            &rev.wireBasis, &rev.surfaceCache, &rev.rangeInputs,
-            rev.restBaseHeld ? rev.restBaseVersion : 0));
+            &rev.wireBasis, &rev.rangeInputs));
     }
     int revisionKernelAcceptance(size_t chain, size_t revision)
     {
@@ -5275,18 +5295,6 @@ RigExecBakedShareLatticeBinds(RigExecBakedProgramImpl *program)
     for (auto &chain : program->chains) {
         for (auto &revision : chain.revisions) {
             binds.Offer(&revision.surfaceCache);
-            // A range-pipelined lattice's range steps read the basis its
-            // RevisionStatic retained, through `rangeInputs`, which holds
-            // that bind alive for a step that follows a skipped
-            // RevisionStatic. When the cache now holds an equal shared bind,
-            // name that one, so the one it replaced may be released.
-            if (revision.rangeInputs.latticeBind) {
-                const auto &bind = revision.surfaceCache.RetainedLatticeBind();
-                if (bind && bind != revision.rangeInputs.latticeBind) {
-                    revision.rangeInputs.latticeBind = bind;
-                    revision.rangeInputs.latticeBasis = &bind->value;
-                }
-            }
         }
         for (auto &derived : chain.derived) {
             binds.Offer(&derived.revision.surfaceCache);
@@ -6645,6 +6653,17 @@ RigExecBakedLookUpRevision(RigExecBakedProgramImpl &B, uint32_t index,
     }
     case Read::ChainBase:
         return lend(c.lastBase.cdata(), c.lastBase.size());
+    case Read::LatticeRestCage:
+    case Read::LatticeLiveCage: {
+        VtValue &held = B.revisionLeafHold[index];
+        held = leaf(leaves.decl.Role(Read(lookup.read) == Read::LatticeRestCage
+                                         ? Role::RestCage
+                                         : Role::LiveCage));
+        if (!held.IsHolding<VtVec3fArray>())
+            held = VtValue(VtVec3fArray());
+        const VtVec3fArray &a = held.UncheckedGet<VtVec3fArray>();
+        return lend(a.cdata(), a.size());
+    }
     case Read::MushStep:
         return put(scalar(1, 0.5f));
     case Read::MushPinBorders:

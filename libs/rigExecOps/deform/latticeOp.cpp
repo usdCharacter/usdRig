@@ -1,11 +1,14 @@
 #include "rigExecOps/deform/latticeOp.h"
 
+#include "rigExecOps/deform/weightPacket.h"
 #include "rigExecMath/latticeKernel.h"
 #include "rigExecMath/surfaceKernelCache.h"
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <iterator>
 #include <memory>
@@ -25,6 +28,10 @@ RIGEXEC_DEFINE_PORT_HANDLE(LatticeLatticeToTarget)
 RIGEXEC_DEFINE_PORT_HANDLE(LatticeCageToLattice)
 RIGEXEC_DEFINE_PORT_HANDLE(LatticeEnvelope)
 RIGEXEC_DEFINE_PORT_HANDLE(LatticeOut)
+RIGEXEC_DEFINE_PORT_HANDLE(LatticeEnabled)
+RIGEXEC_DEFINE_PORT_HANDLE(LatticeDefaultWeight)
+RIGEXEC_DEFINE_PORT_HANDLE(LatticePacket)
+RIGEXEC_DEFINE_PORT_HANDLE(LatticeWritten)
 
 namespace {
 
@@ -84,11 +91,14 @@ PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
 }
 
 /// A node's bind of its rest points into the rest cage, built on the run
-/// that first sees those rest values.
+/// that first sees those rest values; this frame's pass through and the
+/// weight at every point when a default weight or a packet gives them.
 struct LatticeState {
     std::shared_ptr<const rigExec::RigExecLatticeBind<Vec3f>> bind;
     /// This frame's basis for every range, or null to stream the factors.
     const rigExec::RigExecLatticeBasis *basis = nullptr;
+    bool pass = false;
+    std::vector<float> dense;
 };
 
 /// The bind is keyed by every value its factors derive from (the rest
@@ -131,11 +141,19 @@ Plan(const rigExec::RigExecOpBatch &batch, size_t k)
 bool
 Validate(const rigExec::RigExecOpCheck &check, std::string *error)
 {
+    const int envelopes = int(Fed(check, LatticeEnvelope())) +
+                          int(Fed(check, LatticeDefaultWeight())) +
+                          int(Fed(check, LatticePacket()));
+    if (envelopes > 1)
+        return Fail(error, "Lattice",
+                    "one of an envelope, a default weight and a weight "
+                    "packet");
     if (!EnvelopeFits(check, LatticePoints(), LatticeEnvelope(), "Lattice",
                       error))
         return false;
     if (FlagAt(check.batch, kRegularGrid, check.k))
-        return true;
+        return envelopes == int(Fed(check, LatticeEnvelope())) ||
+               Fail(error, "Lattice", "a regular grid weighs by an envelope");
     if (!Fed(check, LatticeRestPoints()) || !Fed(check, LatticeRestCage()))
         return Fail(error, "Lattice",
                     "a bound lattice needs rest points and a rest cage");
@@ -151,21 +169,70 @@ Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t,
         std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    LatticeState &state =
+        *static_cast<LatticeState *>(rigExec::RigExecBatchState(batch, k));
+    const uint8_t *enabled = In<uint8_t>(io, LatticeEnabled());
+    state.pass = enabled && !*enabled;
+    state.dense.clear();
+    if (state.pass)
+        return true;
     const Points &in = *In<Points>(io, LatticePoints());
     if (!EnvelopeFits(in, In<Envelope>(io, LatticeEnvelope()), "Lattice",
                       error))
         return false;
     if (FlagAt(batch, kRegularGrid, k))
         return true;
-    if (In<Points>(io, LatticeRestPoints())->Size() != in.Size())
+    const size_t count = in.Size();
+    if (In<Points>(io, LatticeRestPoints())->Size() != count)
         return Fail(error, "Lattice",
                     "rest points differ in count from the points");
-    LatticeState &state =
-        *static_cast<LatticeState *>(rigExec::RigExecBatchState(batch, k));
-    state.basis =
-        BasisOf(state, *In<Points>(io, LatticeRestPoints()),
-                *In<Points>(io, LatticeRestCage()),
-                *In<Points>(io, LatticePosedCage()), PayloadAt(batch, k));
+    const LatticeInstance p = PayloadAt(batch, k);
+    const Points &restCage = *In<Points>(io, LatticeRestCage());
+    const Points &posedCage = *In<Points>(io, LatticePosedCage());
+    const size_t nodes = size_t(p.divisions[0]) * size_t(p.divisions[1]) *
+                         size_t(p.divisions[2]);
+    if (restCage.Size() != nodes || posedCage.Size() != nodes)
+        return Fail(error, "Lattice",
+                    "a cage does not hold one point per lattice node");
+    for (const Points *cage : {&restCage, &posedCage})
+        for (const Vec3f &v : *cage)
+            if (!std::isfinite(v[0]) || !std::isfinite(v[1]) ||
+                !std::isfinite(v[2]))
+                return Fail(error, "Lattice", "a cage point is not finite");
+    const float *weight = In<float>(io, LatticeDefaultWeight());
+    const weightPacket::PointWeights *packet =
+        In<weightPacket::PointWeights>(io, LatticePacket());
+    if (weight && *weight != 1.0f) {
+        if (!std::isfinite(*weight) || *weight < 0.0f || *weight > 1.0f)
+            return Fail(error, "Lattice",
+                        "a default weight is not finite or outside [0, 1]");
+        state.dense.assign(count, *weight);
+    }
+    if (const auto *written = In<RigExecArray<int32_t>>(io, LatticeWritten())) {
+        const rigExec::eval::EnvelopePacketView view =
+            packet ? weightPacket::PacketView(*packet)
+                   : rigExec::eval::EnvelopePacketView();
+        bool holds = rigExec::eval::EnvelopeIsSparseWalk(view);
+        size_t at = 0;
+        for (size_t e = 0; holds && e < view.indexCount; ++e) {
+            const int32_t index = view.indices[e];
+            while (at + 1 < written->Size() && (*written)[at + 1] <= index)
+                at += 2;
+            holds = at + 1 < written->Size() && (*written)[at] <= index;
+        }
+        if (!holds)
+            return Fail(error, "Lattice",
+                        "the weights reach a vertex group the revision does "
+                        "not write");
+    }
+    if (packet &&
+        !rigExec::eval::EnvelopeIsFullStrength(
+            weightPacket::PacketView(*packet)) &&
+        !weightPacket::ResolvePacket(*packet, count, &state.dense))
+        return Fail(error, "Lattice",
+                    "the weight packet does not resolve over the points");
+    state.basis = BasisOf(state, *In<Points>(io, LatticeRestPoints()), restCage,
+                          posedCage, p);
     return true;
 }
 
@@ -174,6 +241,14 @@ LatticeRange(const rigExec::RigExecOpBatch &batch, size_t k,
              const rigExec::RigExecOpRange &range, std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const LatticeState &state = *static_cast<const LatticeState *>(
+        rigExec::RigExecBatchState(batch, k));
+    if (state.pass) {
+        const Vec3f *from = RangeIn<Vec3f>(io, range, LatticePoints());
+        std::copy(from, from + (range.end - range.begin),
+                  RangeOut<Vec3f>(io, range, LatticeOut()));
+        return true;
+    }
     const LatticeInstance p = PayloadAt(batch, k);
     const Points &in = *In<Points>(io, LatticePoints());
     const Points &posedCage = *In<Points>(io, LatticePosedCage());
@@ -194,8 +269,6 @@ LatticeRange(const rigExec::RigExecOpBatch &batch, size_t k,
     }
     const Points &rest = *In<Points>(io, LatticeRestPoints());
     const Points &restCage = *In<Points>(io, LatticeRestCage());
-    const LatticeState &state = *static_cast<const LatticeState *>(
-        rigExec::RigExecBatchState(batch, k));
     const Vec3f *from = RangeIn<Vec3f>(io, range, LatticePoints());
     Vec3f *out = RangeOut<Vec3f>(io, range, LatticeOut());
     rigExec::RigExecApplyLatticeKernelGroup(
@@ -203,8 +276,11 @@ LatticeRange(const rigExec::RigExecOpBatch &batch, size_t k,
         rest.Size(), restCage.Data(), restCage.Size(), posedCage.Data(),
         posedCage.Size(), p.divisions[0], p.divisions[1], p.divisions[2],
         state.basis);
-    BlendEnvelopeAt(from, RangeIn<float>(io, range, LatticeEnvelope()), out,
-                    range.end - range.begin);
+    BlendEnvelopeAt(from,
+                    state.dense.empty()
+                        ? RangeIn<float>(io, range, LatticeEnvelope())
+                        : state.dense.data() + range.begin,
+                    out, range.end - range.begin);
     return true;
 }
 
@@ -268,6 +344,11 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&LatticeOut(), &rigExecStd::Vec3fArray(),
      kRigExecPortOutput | rigExec::kRigExecPortPointwise, "out",
      rigExec::RigExecOutputBound::Input, &LatticePoints()},
+    {&LatticeEnabled(), &rigExecStd::BoolType(), kOptional, "enabled"},
+    {&LatticeDefaultWeight(), &rigExecStd::FloatType(), kOptional,
+     "defaultWeight"},
+    {&LatticePacket(), &rigExecRig::PointWeightsType(), kOptional, "packet"},
+    {&LatticeWritten(), &rigExecStd::IntArray(), kOptional, "written"},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {
