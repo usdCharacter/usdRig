@@ -601,10 +601,9 @@ TestMlMover()
 
 const SdfPath kMapsMesh("/Asset/Geom/Brow");
 
-// The map_unclamped bytes of the first animated maps node \p evaluator
-// bakes at frame 1; false when it does not bake or holds no such node.
+// Whether \p evaluator bakes at frame 1 with an animated maps node.
 bool
-BakedMapUnclamped(RigExecRigEvaluator &evaluator, std::vector<uint8_t> *flags)
+BakesAnimatedMaps(RigExecRigEvaluator &evaluator)
 {
     std::vector<uint8_t> bytes;
     std::string error;
@@ -615,12 +614,9 @@ BakedMapUnclamped(RigExecRigEvaluator &evaluator, std::vector<uint8_t> *flags)
         std::printf("    bake: %s\n", error.c_str());
         return false;
     }
-    for (const auto &interp : file->pose->poseInterpolators) {
-        if (interp.maps) {
-            *flags = interp.maps->mapUnclamped;
+    for (const auto &interp : file->pose->poseInterpolators)
+        if (interp.solve == 3)
             return true;
-        }
-    }
     return false;
 }
 
@@ -662,14 +658,11 @@ TestAnimatedMaps()
     // Map 1: the blink alone, steep, clamped to [0, 1].
     const SdfPath squint =
         maps.AddMap("squint", {2}, {0.2f}, {1}, {2.5f}, {-0.5f});
-    // A clamped-only node bakes no map_unclamped, so its bytes are those
-    // of a bake from before the field existed.
     {
         RigExecRigEvaluator clampedOnly(stage, kRig);
         std::vector<std::string> clampedErrors;
-        std::vector<uint8_t> flags{9};
         CHECK(clampedOnly.Compile(&clampedErrors) &&
-              BakedMapUnclamped(clampedOnly, &flags) && flags.empty());
+              BakesAnimatedMaps(clampedOnly));
     }
     // Map 2: a step table, unclamped (rigExec:clampOutput false), slope-0
     // rows over tx: 30 up to 1 (the first row owns the shared bound), -0.5
@@ -772,12 +765,7 @@ TestAnimatedMaps()
     }
     CHECK(sawClamp && sawGroup && sawHigh && sawLow);
     CheckEvaluators(evaluator, stage, "maps");
-    // The bake carries one flag per map, 1 on the unclamped step map.
-    {
-        std::vector<uint8_t> flags;
-        CHECK(BakedMapUnclamped(evaluator, &flags) &&
-              flags == std::vector<uint8_t>({0, 0, 1}));
-    }
+    CHECK(BakesAnimatedMaps(evaluator));
 
     // rigExec:clampOutput is compiled rig identity: a flip recompiles and
     // the step map clamps (30 -> 1 at frame 1, -0.5 -> 0 at frame 2), and

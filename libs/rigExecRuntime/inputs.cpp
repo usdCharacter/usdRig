@@ -2045,7 +2045,8 @@ RrInputsBindReads(RrProgram *program, std::string *error)
                   &program->interpRead[i])) {
             return unbound("pose.pose_interpolators", i);
         }
-        if (interp.valueInputs.size() > 3 && !interp.network && !interp.maps) {
+        if (interp.valueInputs.size() > 3 && interp.solve != 2 &&
+            interp.solve != 3) {
             return unbound("pose.pose_interpolators", i);
         }
         program->interpValueRead[i].assign(interp.valueInputs.size(), -1);
@@ -2053,7 +2054,7 @@ RrInputsBindReads(RrProgram *program, std::string *error)
             bind(&interp.valueInputs[v], _RrFamily::Interpolator, i, 1 + v,
                  &program->interpValueRead[i][v]);
         }
-        if (interp.network &&
+        if (interp.solve == 2 &&
             !bind(interp.mask.get(), _RrFamily::Interpolator, i,
                   1 + interp.valueInputs.size(), &program->interpMaskRead[i])) {
             return unbound("pose.pose_interpolators", i);

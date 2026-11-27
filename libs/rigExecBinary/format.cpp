@@ -7012,19 +7012,20 @@ private:
                       "enabled")) {
             return false;
         }
+        const bool method = interp.solve == 1, network = interp.solve == 2,
+                   maps = interp.solve == 3;
+        if (interp.solve > 3)
+            return _Bad(row + ": solve out of range");
         // An ML mover reads frames and any number of dials together.
-        if (!interp.network && !interp.maps &&
+        if (!network && !maps &&
             (interp.valueInputs.size() > 3 ||
              (!interp.valueInputs.empty() && interp.driverSlot >= 0))) {
             return _Bad(row + ": value_inputs hold at most three dials of "
                               "a numeric driver");
         }
-        if (bool(interp.network) != bool(interp.mask) ||
-            (interp.network && interp.method) ||
-            (interp.maps &&
-             (interp.network || interp.method || interp.driverSlot >= 0))) {
-            return _Bad(row + ": an ML network needs its mask and no RBF "
-                              "method");
+        if (network != bool(interp.mask) || (maps && interp.driverSlot >= 0)) {
+            return _Bad(row + ": an ML network needs its mask and animated "
+                              "maps read no frame");
         }
         if (interp.mask &&
             !_ReadPtr(interp.mask, int(InputTag::Float), _Baked, row, "mask")) {
@@ -7040,30 +7041,8 @@ private:
                 return false;
             }
         }
-        if (!interp.solver) {
-            return _Bad(row + ".solver: missing");
-        }
-        const fb::RigExecWireRbf &rbf = *interp.solver;
-        if (rbf.kernel > uint8_t(fb::RbfKernel::MAX) ||
-            (!rbf.poseTypes.empty() &&
-             rbf.poseTypes.size() != rbf.poses.size())) {
-            return _Bad(row + ".solver: kernel or pose_types malformed");
-        }
-        for (size_t k = 0; k < rbf.poseTypes.size(); ++k) {
-            if (rbf.poseTypes[k] > uint8_t(fb::RbfPoseType::MAX)) {
-                return _Bad(_At(row + ".solver", "pose_types", long(k)) +
-                            ": out of range");
-            }
-        }
-        for (size_t k = 0; k < rbf.weights.size(); ++k) {
-            if (rbf.weights[k].v.size() != rbf.poses.size()) {
-                return _Bad(_At(row + ".solver", "weights", long(k)) +
-                            ": one weight per pose expected");
-            }
-        }
         if (interp.extraDriverSlots.size() != interp.extraParentSlots.size() ||
-            (!interp.method && !interp.network &&
-             !interp.extraDriverSlots.empty())) {
+            (!method && !network && !interp.extraDriverSlots.empty())) {
             return _Bad(row + ": extra driver and parent slots must be "
                               "parallel and belong to a RigLogic solve");
         }
@@ -7075,33 +7054,6 @@ private:
                         "extra_parent_slots")) {
                 return _Bad(_At(row, "extra_driver_slots", long(k)) +
                             ": out of range");
-            }
-        }
-        if (interp.method) {
-            const fb::RigExecWireRbfMethod &m = *interp.method;
-            const size_t raw = m.rawCount, count = m.targetCount;
-            const bool twist =
-                m.distanceMethod == uint8_t(fb::RbfDistanceMethod::TwistAngle);
-            const bool frames = interp.valueInputs.empty();
-            if (m.solverType > uint8_t(fb::RbfSolverType::MAX) ||
-                m.distanceMethod > uint8_t(fb::RbfDistanceMethod::MAX) ||
-                m.weightFunction > uint8_t(fb::RbfWeightFunction::MAX) ||
-                m.normalizeMethod > uint8_t(fb::RbfNormalizeMethod::MAX) ||
-                m.twistAxis > 2 || raw == 0 ||
-                count != interp.poseSlots.size() ||
-                m.targets.size() != raw * count ||
-                m.distanceTargets.size() != (twist ? raw * count : 0) ||
-                m.targetScales.size() != count ||
-                m.coefficients.size() !=
-                    (m.solverType == uint8_t(fb::RbfSolverType::Interpolative)
-                         ? count * count
-                         : 0) ||
-                (frames && raw != 4 * (1 + interp.extraDriverSlots.size())) ||
-                (!frames && raw != interp.valueInputs.size()) ||
-                (m.distanceMethod !=
-                     uint8_t(fb::RbfDistanceMethod::Euclidean) &&
-                 raw % 4 != 0)) {
-                return _Bad(row + ".method: malformed RigLogic solve");
             }
         }
         const auto inRange = [&](int slot) {
@@ -7117,7 +7069,7 @@ private:
                               "weight range");
         }
         if (interp.primvarSlots.size() != interp.primvarSources.size() ||
-            (!interp.maps && !interp.primvarSlots.empty())) {
+            (!maps && !interp.primvarSlots.empty())) {
             return _Bad(row + ": primvar slots and sources must be parallel "
                               "and belong to animated maps");
         }
@@ -7128,66 +7080,6 @@ private:
                 size_t(interp.primvarSources[k]) >= interp.poseSlots.size()) {
                 return _Bad(_At(row, "primvar_slots", long(k)) +
                             ": out of range");
-            }
-        }
-        if (interp.maps) {
-            const fb::RigExecWireAnimatedMaps &m = *interp.maps;
-            const size_t rows = m.rowInputs.size();
-            bool ok = m.inputCount == interp.valueInputs.size() &&
-                      m.rowFrom.size() == rows && m.rowTo.size() == rows &&
-                      m.rowSlope.size() == rows && m.rowCut.size() == rows &&
-                      m.mapBegin.size() == interp.poseSlots.size() + 1 &&
-                      !m.mapBegin.empty() && m.mapBegin.front() == 0 &&
-                      m.mapBegin.back() == rows;
-            // map_unclamped is absent (every map clamped) or one 0/1 byte per
-            // map.
-            ok = ok && (m.mapUnclamped.empty() ||
-                        m.mapUnclamped.size() + 1 == m.mapBegin.size());
-            for (size_t map = 0; ok && map < m.mapUnclamped.size(); ++map) {
-                ok = m.mapUnclamped[map] <= 1;
-            }
-            RigExecAnimatedMapsTable table;
-            table.inputCount = m.inputCount;
-            for (size_t map = 0; ok && map + 1 < m.mapBegin.size(); ++map) {
-                const size_t begin = m.mapBegin[map], end = m.mapBegin[map + 1];
-                ok = begin <= end && end <= rows;
-                std::vector<RigExecConditionalRow> mapRows;
-                for (size_t r = begin; ok && r < end; ++r) {
-                    mapRows.push_back({m.rowInputs[r], m.rowFrom[r], m.rowTo[r],
-                                       m.rowSlope[r], m.rowCut[r]});
-                }
-                const bool clamp =
-                    !(map < m.mapUnclamped.size() && m.mapUnclamped[map] != 0);
-                ok = ok && table.AddMap(std::move(mapRows), clamp);
-            }
-            if (!ok) {
-                return _Bad(row + ".maps: malformed animated maps");
-            }
-        }
-        if (interp.network) {
-            const fb::RigExecWireMlNetwork &n = *interp.network;
-            std::vector<int> activations(n.layerActivations.begin(),
-                                         n.layerActivations.end());
-            std::vector<float> alphas;
-            for (double alpha : n.layerAlphas)
-                alphas.push_back(float(alpha));
-            RigExecMlNetwork network;
-            std::string why;
-            const size_t frames =
-                interp.driverSlot >= 0 ? 1 + interp.extraDriverSlots.size() : 0;
-            if ((interp.driverSlot < 0 && !interp.extraDriverSlots.empty()) ||
-                n.inputCount != 4 * frames + interp.valueInputs.size() ||
-                !RigExecMlBuildNetwork(n.inputCount, n.layerSizes, activations,
-                                       alphas, n.weights, n.biases, &network,
-                                       &why) ||
-                (!n.inputMean.empty() && n.inputMean.size() != n.inputCount) ||
-                (!n.inputScale.empty() &&
-                 n.inputScale.size() != n.inputCount) ||
-                (!n.outputDefaults.empty() &&
-                 n.outputDefaults.size() != network.OutputCount()) ||
-                network.OutputCount() != interp.poseSlots.size()) {
-                return _Bad(row + ".network: malformed ML network" +
-                            (why.empty() ? std::string() : ": " + why));
             }
         }
         return true;

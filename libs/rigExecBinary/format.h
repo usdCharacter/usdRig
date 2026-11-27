@@ -734,7 +734,8 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 ///
 /// Format 56 composes rests as RestCompose op nodes reading RestInputs
 /// lookups (OpGraph.lookups source 43) and storing host_outputs target 43:
-/// StepKind 20 is reserved and refused.
+/// StepKind 20 is reserved and refused. PoseInterpolator rows carry their
+/// solve kind; their RBF, method, network and maps tables are deprecated.
 inline constexpr uint32_t RigExecFormatVersion = 56;
 
 /// Fields every Solver row carries before its kind-specific inputs, in

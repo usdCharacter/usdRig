@@ -820,19 +820,6 @@ _RichFileBody()
     interp.path = _pCtl;
     interp.enabled = _In(InputTag::Bool);
     interp.valueInputs.push_back(_InValue(InputTag::Double));
-    interp.solver = std::make_unique<fb::RigExecWireRbf>();
-    interp.solver->poses = {_V3d(0), _V3d(1)};
-    interp.solver->translations = {_V3d(2)};
-    interp.solver->poseTypes = {0, 2};
-    interp.solver->twistAxis = _V3d(3);
-    interp.solver->radius = _SD(1);
-    interp.solver->translationRadius = _SD(2);
-    interp.solver->radii = _Ds(2, 3);
-    interp.solver->translationRadii = _Ds(2, 4);
-    interp.solver->regularization = _SD(5);
-    interp.solver->weights.resize(2);
-    interp.solver->weights[0].v = _Ds(2, 0);
-    interp.solver->weights[1].v = _Ds(2, 2);
     pose.poseInterpolators.push_back(std::move(interp));
 
     fb::RigExecWireSolver solver;
@@ -1520,18 +1507,6 @@ TestBitExactness()
     CHECK(_Same(o->clustering->serialCost, file.clustering->serialCost));
     CHECK(_Same(o->clustering->criticalPathCost,
                 file.clustering->criticalPathCost));
-    const fb::RigExecWireRbf &rbf = *o->pose->poseInterpolators[0].solver;
-    const fb::RigExecWireRbf &rbf0 = *file.pose->poseInterpolators[0].solver;
-    CHECK(_Same(rbf.radius, rbf0.radius));
-    CHECK(_Same(rbf.translationRadius, rbf0.translationRadius));
-    CHECK(_Same(rbf.regularization, rbf0.regularization));
-    CHECK(_Same(rbf.radii, rbf0.radii));
-    CHECK(_Same(rbf.translationRadii, rbf0.translationRadii));
-    CHECK(_Same(rbf.poses, rbf0.poses));
-    CHECK(_Same(rbf.translations, rbf0.translations));
-    CHECK(_Same(rbf.twistAxis, rbf0.twistAxis));
-    CHECK(rbf.weights.size() == 2 &&
-          _Same(rbf.weights[1].v, rbf0.weights[1].v));
     const fb::RigExecWireSolver &s = o->pose->solvers[0];
     const fb::RigExecWireSolver &s0 = file.pose->solvers[0];
     const auto &samples =
@@ -2061,9 +2036,6 @@ TestValidationSmoke()
     // Solvers and interpolators.
     expect("ik rests", "ik_rests",
            [](F &f) { f.pose->solvers[0].ikRests.pop_back(); });
-    expect("rbf weights", "weights[0]", [](F &f) {
-        f.pose->poseInterpolators[0].solver->weights[0].v.pop_back();
-    });
     // Constraints.
     expect("envelope without weight object", "weight_object_index",
            [](F &f) { f.pose->constraints[0].weightObjectIndex = 0; });
@@ -7216,15 +7188,7 @@ _AttachAnimatedMaps(fb::RigExecWirePoseInterpolator *interp)
 {
     interp->poseSlots = {0, 1};
     interp->weightEnd = 2;
-    auto maps = std::make_unique<fb::RigExecWireAnimatedMaps>();
-    maps->inputCount = 1;
-    maps->rowInputs = {0, 0, 0};
-    maps->rowFrom = {-1, 1, 0};
-    maps->rowTo = {1, 3, 1};
-    maps->rowSlope = {0, 0, 1};
-    maps->rowCut = {30, -0.5, 0};
-    maps->mapBegin = {0, 2, 3};
-    interp->maps = std::move(maps);
+    interp->solve = 3;
 }
 
 void
@@ -7243,38 +7207,15 @@ TestAnimatedMapsWireShapes()
         CHECK(!RigExecFormatValidate(bad, &error));
         CHECK(error.find(fragment) != std::string::npos);
     };
-    // Every map clamped writes no map_unclamped: the field is absent from
-    // the buffer, so a bake without unclamped maps keeps its old bytes.
-    std::vector<uint8_t> clamped;
-    CHECK(_Write(file, &clamped));
-    if (!clamped.empty()) {
-        const fb::File *root = fb::GetFile(clamped.data());
-        const auto *interps =
-            root && root->pose() ? root->pose()->poseInterpolators() : nullptr;
-        CHECK(interps && interps->size() == 1 && interps->Get(0)->maps() &&
-              interps->Get(0)->maps()->mapUnclamped() == nullptr);
-    }
-    // One byte per map opens and round-trips.
-    RigExecWireFile unclamped = file;
-    unclamped.pose->poseInterpolators[0].maps->mapUnclamped = {1, 0};
-    CHECK(RigExecFormatValidate(unclamped, &why));
-    std::vector<uint8_t> bytes;
-    CHECK(_Write(unclamped, &bytes));
-    const auto opened = _Open(bytes, &why);
-    CHECK(opened && opened->pose->poseInterpolators[0].maps &&
-          opened->pose->poseInterpolators[0].maps->mapUnclamped ==
-              std::vector<uint8_t>({1, 0}));
-    // A size that is neither 0 nor the map count is refused.
-    RigExecWireFile shortFlags = file;
-    shortFlags.pose->poseInterpolators[0].maps->mapUnclamped = {1};
-    reject(std::move(shortFlags), "malformed animated maps");
-    RigExecWireFile longFlags = file;
-    longFlags.pose->poseInterpolators[0].maps->mapUnclamped = {0, 1, 0};
-    reject(std::move(longFlags), "malformed animated maps");
-    // A value above 1 is refused.
-    RigExecWireFile badValue = file;
-    badValue.pose->poseInterpolators[0].maps->mapUnclamped = {0, 2};
-    reject(std::move(badValue), "malformed animated maps");
+    RigExecWireFile badSolve = file;
+    badSolve.pose->poseInterpolators[0].solve = 4;
+    reject(std::move(badSolve), "solve out of range");
+    RigExecWireFile primvars = file;
+    primvars.pose->poseInterpolators[0].primvarSlots = {1};
+    primvars.pose->poseInterpolators[0].primvarSources = {0};
+    CHECK(RigExecFormatValidate(primvars, &why));
+    primvars.pose->poseInterpolators[0].solve = 0;
+    reject(std::move(primvars), "belong to animated maps");
     RigExecWireFile outside = file;
     outside.pose->poseInterpolators[0].poseSlots = {0, 2};
     reject(std::move(outside), "lie in its weight range");

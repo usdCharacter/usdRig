@@ -1051,112 +1051,23 @@ _FileFill::_Pose(fb::RigExecWireDomainPose *pose)
         out.weightEnd = int32_t(interp.weightEnd);
         out.poseSlots = _ToI32s(interp.poseSlots);
         out.disabledSlots = _ToI32s(interp.disabledSlots);
-        const RigExecRbfSolver &solver = interp.solver;
-        auto rbf = std::make_unique<fb::RigExecWireRbf>();
-        rbf->poses.reserve(solver.GetPoses().size());
-        for (const GfVec3d &p : solver.GetPoses()) {
-            rbf->poses.push_back(_ToVec3d(p));
-        }
-        rbf->translations.reserve(solver.GetTranslations().size());
-        for (const GfVec3d &t : solver.GetTranslations()) {
-            rbf->translations.push_back(_ToVec3d(t));
-        }
-        rbf->poseTypes.reserve(solver.GetPoseTypes().size());
-        for (RigExecRbfPoseType type : solver.GetPoseTypes()) {
-            rbf->poseTypes.push_back(uint8_t(type));
-        }
-        rbf->twistAxis = _ToVec3d(solver.GetTwistAxis());
-        rbf->kernel = uint8_t(solver.GetKernel());
-        rbf->radius = solver.GetRadius();
-        rbf->translationRadius = solver.GetTranslationRadius();
-        rbf->radii = solver.GetRadii();
-        rbf->translationRadii = solver.GetTranslationRadii();
-        rbf->regularization = solver.GetRegularization();
-        rbf->normalize = solver.GetNormalize();
-        rbf->enableRotation = solver.GetEnableRotation();
-        rbf->enableTranslation = solver.GetEnableTranslation();
-        rbf->regularizedSingular = solver.GetRegularizedSingular();
-        rbf->weights.resize(solver.GetWeights().size());
-        for (size_t k = 0; k < solver.GetWeights().size(); ++k) {
-            rbf->weights[k].v = solver.GetWeights()[k];
-        }
-        out.solver = std::move(rbf);
         out.enableTranslation = interp.enableTranslation;
         for (size_t k = 0; k < interp.valueInputs.size(); ++k) {
             out.valueInputs.push_back(
                 _RegisteredValue(_Family::Interpolator, i, 1 + k));
         }
-        if (interp.rigLogicSolve) {
-            const RigExecRbfMethodTable &table = interp.method;
-            auto method = std::make_unique<fb::RigExecWireRbfMethod>();
-            method->solverType = uint8_t(table.solverType);
-            method->distanceMethod = uint8_t(table.distanceMethod);
-            method->weightFunction = uint8_t(table.weightFunction);
-            method->normalizeMethod = uint8_t(table.normalizeMethod);
-            method->twistAxis = uint8_t(table.twistAxis);
-            method->rawCount = uint32_t(table.rawCount);
-            method->targetCount = uint32_t(table.targetCount);
-            method->radius = table.radius;
-            method->weightThreshold = table.weightThreshold;
-            method->targets = table.targets;
-            method->distanceTargets = table.distanceTargets;
-            method->targetScales = table.targetScales;
-            method->coefficients = table.coefficients;
-            out.method = std::move(method);
+        out.solve = interp.mapsSolve && interp.maps    ? 3
+                    : interp.mlSolve && interp.network ? 2
+                    : interp.rigLogicSolve             ? 1
+                                                       : 0;
+        if (out.solve == 1 || out.solve == 2) {
             out.extraDriverSlots = _ToI32s(interp.extraDriverSlots);
             out.extraParentSlots = _ToI32s(interp.extraParentSlots);
         }
-        if (interp.mlSolve && interp.network) {
-            const RigExecMlNetwork &net = *interp.network;
-            auto network = std::make_unique<fb::RigExecWireMlNetwork>();
-            network->inputCount = uint32_t(net.inputCount);
-            for (const RigExecMlLayer &layer : net.layers) {
-                network->layerSizes.push_back(int32_t(layer.outputCount));
-                network->layerActivations.push_back(uint8_t(layer.activation));
-                network->layerAlphas.push_back(layer.alpha);
-            }
-            const size_t biasBegin =
-                net.layers.empty() ? 0 : net.layers.front().biasOffset;
-            network->weights.assign(net.parameters.begin(),
-                                    net.parameters.begin() + biasBegin);
-            network->biases.assign(net.parameters.begin() + biasBegin,
-                                   net.parameters.end());
-            network->inputMean = net.inputMean;
-            network->inputScale = net.inputScale;
-            network->outputDefaults = net.defaults;
-            out.network = std::move(network);
-            out.extraDriverSlots = _ToI32s(interp.extraDriverSlots);
-            out.extraParentSlots = _ToI32s(interp.extraParentSlots);
+        if (out.solve == 2)
             out.mask = _Registered(_Family::Interpolator, i,
                                    1 + interp.valueInputs.size());
-        }
-        if (interp.mapsSolve && interp.maps) {
-            const RigExecAnimatedMapsTable &table = *interp.maps;
-            auto maps = std::make_unique<fb::RigExecWireAnimatedMaps>();
-            maps->inputCount = uint32_t(table.inputCount);
-            for (const RigExecConditionalRow &row : table.rows) {
-                maps->rowInputs.push_back(int32_t(row.input));
-                maps->rowFrom.push_back(row.from);
-                maps->rowTo.push_back(row.to);
-                maps->rowSlope.push_back(row.slope);
-                maps->rowCut.push_back(row.cut);
-            }
-            for (size_t begin : table.mapBegin) {
-                maps->mapBegin.push_back(uint32_t(begin));
-            }
-            // One byte per map only when some map is unclamped
-            // (rigExec:clampOutput false), so an all-clamped node writes
-            // the bytes it wrote before the field existed.
-            bool anyUnclamped = false;
-            for (size_t m = 0; m < table.MapCount(); ++m) {
-                anyUnclamped = anyUnclamped || !table.Clamps(m);
-            }
-            if (anyUnclamped) {
-                for (size_t m = 0; m < table.MapCount(); ++m) {
-                    maps->mapUnclamped.push_back(table.Clamps(m) ? 0 : 1);
-                }
-            }
-            out.maps = std::move(maps);
+        if (out.solve == 3) {
             out.primvarSlots = _ToI32s(interp.primvarSlots);
             out.primvarSources = _ToI32s(interp.primvarSources);
         }

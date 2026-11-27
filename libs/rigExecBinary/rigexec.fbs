@@ -648,29 +648,34 @@ table PoseInterpolator {
   weight_end: int;
   pose_slots: [int];
   disabled_slots: [int];
-  solver: Rbf (required);
+  /// Deprecated in format 56: the PoseInterpolator op node's payload
+  /// carries the solve and its tables.
+  solver: Rbf (deprecated);
   /// Whether the solve measures the driver's translation as well.
   enable_translation: bool;
   /// A numeric driver's dials, one per axis, at most three.
   value_inputs: [Input] (native_inline);
-  /// Present for a RigLogic solve, which replaces `solver`'s pose solve.
-  method: RbfMethod;
+  /// Deprecated in format 56, as `solver`.
+  method: RbfMethod (deprecated);
   /// A RigLogic solve's frame drivers after the first, and each one's
   /// measuring ancestor (-1 for none), parallel. Provider slots.
   extra_driver_slots: [int];
   extra_parent_slots: [int];
-  /// Present for a RigExecMlMover, whose network replaces every solve: its
-  /// row is the frame drivers' rotations, then every value input.
-  network: MlNetwork;
+  /// Deprecated in format 56, as `solver`.
+  network: MlNetwork (deprecated);
   /// The ML mover's inputs:mask; registered after the value inputs.
   mask: Input;
-  /// Present for a RigExecAnimatedMaps node: its value inputs are its
-  /// rows' inputs and pose_slots its maps' outputs:value.
-  maps: AnimatedMaps;
+  /// Deprecated in format 56, as `solver`.
+  maps: AnimatedMaps (deprecated);
   /// Animated maps: pose weight slots republishing a map as a mesh
   /// primvar, and the map (an index into pose_slots) each one copies.
   primvar_slots: [int];
   primvar_sources: [int];
+  /// Format 56: the solve its op node runs: 0 an RBF over the driver's
+  /// frame or dials, 1 a RigLogic RBF method, 2 an ML network (reads
+  /// `mask`), 3 animated maps (its value inputs are the rows' inputs and
+  /// pose_slots its maps' outputs:value).
+  solve: ubyte;
 }
 /// Format 31. RigExecSkeleton2d: structural setup per bone in solve order
 /// (parents first). Rests come from the Solver's rest_slots / joint_rests

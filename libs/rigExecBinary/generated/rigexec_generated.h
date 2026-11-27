@@ -1203,6 +1203,7 @@ enum class StepKind : uint8_t {
   ReservedFrameMatrix = 18,
   /// Reserved. Open refuses it.
   ReservedPropertyRevision = 19,
+  /// Reserved. Open refuses it.
   ReservedRestCompose = 20,
   LadderCompose = 21,
   SkinTopology = 22,
@@ -7713,17 +7714,14 @@ struct RigExecWirePoseInterpolator : public ::flatbuffers::NativeTable {
   int32_t weightEnd = 0;
   std::vector<int32_t> poseSlots{};
   std::vector<int32_t> disabledSlots{};
-  std::unique_ptr<rigExec::fb::RigExecWireRbf> solver{};
   bool enableTranslation = false;
   std::vector<rigExec::fb::RigExecWireInput> valueInputs{};
-  std::unique_ptr<rigExec::fb::RigExecWireRbfMethod> method{};
   std::vector<int32_t> extraDriverSlots{};
   std::vector<int32_t> extraParentSlots{};
-  std::unique_ptr<rigExec::fb::RigExecWireMlNetwork> network{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> mask{};
-  std::unique_ptr<rigExec::fb::RigExecWireAnimatedMaps> maps{};
   std::vector<int32_t> primvarSlots{};
   std::vector<int32_t> primvarSources{};
+  uint8_t solve = 0;
   RigExecWirePoseInterpolator() = default;
   RigExecWirePoseInterpolator(const RigExecWirePoseInterpolator &o);
   RigExecWirePoseInterpolator(RigExecWirePoseInterpolator&&) FLATBUFFERS_NOEXCEPT = default;
@@ -7747,17 +7745,14 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_WEIGHTEND = 16,
     VT_POSESLOTS = 18,
     VT_DISABLEDSLOTS = 20,
-    VT_SOLVER = 22,
     VT_ENABLETRANSLATION = 24,
     VT_VALUEINPUTS = 26,
-    VT_METHOD = 28,
     VT_EXTRADRIVERSLOTS = 30,
     VT_EXTRAPARENTSLOTS = 32,
-    VT_NETWORK = 34,
     VT_MASK = 36,
-    VT_MAPS = 38,
     VT_PRIMVARSLOTS = 40,
-    VT_PRIMVARSOURCES = 42
+    VT_PRIMVARSOURCES = 42,
+    VT_SOLVE = 44
   };
   uint32_t path() const {
     return GetField<uint32_t>(VT_PATH, 0);
@@ -7787,9 +7782,6 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<int32_t> *disabledSlots() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_DISABLEDSLOTS);
   }
-  const rigExec::fb::Rbf *solver() const {
-    return GetPointer<const rigExec::fb::Rbf *>(VT_SOLVER);
-  }
   /// Whether the solve measures the driver's translation as well.
   bool enableTranslation() const {
     return GetField<uint8_t>(VT_ENABLETRANSLATION, 0) != 0;
@@ -7797,10 +7789,6 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// A numeric driver's dials, one per axis, at most three.
   const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>> *valueInputs() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>> *>(VT_VALUEINPUTS);
-  }
-  /// Present for a RigLogic solve, which replaces `solver`'s pose solve.
-  const rigExec::fb::RbfMethod *method() const {
-    return GetPointer<const rigExec::fb::RbfMethod *>(VT_METHOD);
   }
   /// A RigLogic solve's frame drivers after the first, and each one's
   /// measuring ancestor (-1 for none), parallel. Provider slots.
@@ -7810,19 +7798,9 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<int32_t> *extraParentSlots() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_EXTRAPARENTSLOTS);
   }
-  /// Present for a RigExecMlMover, whose network replaces every solve: its
-  /// row is the frame drivers' rotations, then every value input.
-  const rigExec::fb::MlNetwork *network() const {
-    return GetPointer<const rigExec::fb::MlNetwork *>(VT_NETWORK);
-  }
   /// The ML mover's inputs:mask; registered after the value inputs.
   const rigExec::fb::Input *mask() const {
     return GetPointer<const rigExec::fb::Input *>(VT_MASK);
-  }
-  /// Present for a RigExecAnimatedMaps node: its value inputs are its
-  /// rows' inputs and pose_slots its maps' outputs:value.
-  const rigExec::fb::AnimatedMaps *maps() const {
-    return GetPointer<const rigExec::fb::AnimatedMaps *>(VT_MAPS);
   }
   /// Animated maps: pose weight slots republishing a map as a mesh
   /// primvar, and the map (an index into pose_slots) each one copies.
@@ -7831,6 +7809,13 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   const ::flatbuffers::Vector<int32_t> *primvarSources() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_PRIMVARSOURCES);
+  }
+  /// Format 56: the solve its op node runs: 0 an RBF over the driver's
+  /// frame or dials, 1 a RigLogic RBF method, 2 an ML network (reads
+  /// `mask`), 3 animated maps (its value inputs are the rows' inputs and
+  /// pose_slots its maps' outputs:value).
+  uint8_t solve() const {
+    return GetField<uint8_t>(VT_SOLVE, 0);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -7847,28 +7832,21 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVector(poseSlots()) &&
            VerifyOffset(verifier, VT_DISABLEDSLOTS) &&
            verifier.VerifyVector(disabledSlots()) &&
-           VerifyOffsetRequired(verifier, VT_SOLVER) &&
-           verifier.VerifyTable(solver()) &&
            VerifyField<uint8_t>(verifier, VT_ENABLETRANSLATION, 1) &&
            VerifyOffset(verifier, VT_VALUEINPUTS) &&
            verifier.VerifyVector(valueInputs()) &&
            verifier.VerifyVectorOfTables(valueInputs()) &&
-           VerifyOffset(verifier, VT_METHOD) &&
-           verifier.VerifyTable(method()) &&
            VerifyOffset(verifier, VT_EXTRADRIVERSLOTS) &&
            verifier.VerifyVector(extraDriverSlots()) &&
            VerifyOffset(verifier, VT_EXTRAPARENTSLOTS) &&
            verifier.VerifyVector(extraParentSlots()) &&
-           VerifyOffset(verifier, VT_NETWORK) &&
-           verifier.VerifyTable(network()) &&
            VerifyOffset(verifier, VT_MASK) &&
            verifier.VerifyTable(mask()) &&
-           VerifyOffset(verifier, VT_MAPS) &&
-           verifier.VerifyTable(maps()) &&
            VerifyOffset(verifier, VT_PRIMVARSLOTS) &&
            verifier.VerifyVector(primvarSlots()) &&
            VerifyOffset(verifier, VT_PRIMVARSOURCES) &&
            verifier.VerifyVector(primvarSources()) &&
+           VerifyField<uint8_t>(verifier, VT_SOLVE, 1) &&
            verifier.EndTable();
   }
   RigExecWirePoseInterpolator *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -7907,17 +7885,11 @@ struct PoseInterpolatorBuilder {
   void add_disabledSlots(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> disabledSlots) {
     fbb_.AddOffset(PoseInterpolator::VT_DISABLEDSLOTS, disabledSlots);
   }
-  void add_solver(::flatbuffers::Offset<rigExec::fb::Rbf> solver) {
-    fbb_.AddOffset(PoseInterpolator::VT_SOLVER, solver);
-  }
   void add_enableTranslation(bool enableTranslation) {
     fbb_.AddElement<uint8_t>(PoseInterpolator::VT_ENABLETRANSLATION, static_cast<uint8_t>(enableTranslation), 0);
   }
   void add_valueInputs(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>>> valueInputs) {
     fbb_.AddOffset(PoseInterpolator::VT_VALUEINPUTS, valueInputs);
-  }
-  void add_method(::flatbuffers::Offset<rigExec::fb::RbfMethod> method) {
-    fbb_.AddOffset(PoseInterpolator::VT_METHOD, method);
   }
   void add_extraDriverSlots(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> extraDriverSlots) {
     fbb_.AddOffset(PoseInterpolator::VT_EXTRADRIVERSLOTS, extraDriverSlots);
@@ -7925,20 +7897,17 @@ struct PoseInterpolatorBuilder {
   void add_extraParentSlots(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> extraParentSlots) {
     fbb_.AddOffset(PoseInterpolator::VT_EXTRAPARENTSLOTS, extraParentSlots);
   }
-  void add_network(::flatbuffers::Offset<rigExec::fb::MlNetwork> network) {
-    fbb_.AddOffset(PoseInterpolator::VT_NETWORK, network);
-  }
   void add_mask(::flatbuffers::Offset<rigExec::fb::Input> mask) {
     fbb_.AddOffset(PoseInterpolator::VT_MASK, mask);
-  }
-  void add_maps(::flatbuffers::Offset<rigExec::fb::AnimatedMaps> maps) {
-    fbb_.AddOffset(PoseInterpolator::VT_MAPS, maps);
   }
   void add_primvarSlots(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSlots) {
     fbb_.AddOffset(PoseInterpolator::VT_PRIMVARSLOTS, primvarSlots);
   }
   void add_primvarSources(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSources) {
     fbb_.AddOffset(PoseInterpolator::VT_PRIMVARSOURCES, primvarSources);
+  }
+  void add_solve(uint8_t solve) {
+    fbb_.AddElement<uint8_t>(PoseInterpolator::VT_SOLVE, solve, 0);
   }
   explicit PoseInterpolatorBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
@@ -7948,7 +7917,6 @@ struct PoseInterpolatorBuilder {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<PoseInterpolator>(end);
     fbb_.Required(o, PoseInterpolator::VT_ENABLED);
-    fbb_.Required(o, PoseInterpolator::VT_SOLVER);
     return o;
   }
 };
@@ -7964,28 +7932,21 @@ inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolator(
     int32_t weightEnd = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> poseSlots = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> disabledSlots = 0,
-    ::flatbuffers::Offset<rigExec::fb::Rbf> solver = 0,
     bool enableTranslation = false,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>>> valueInputs = 0,
-    ::flatbuffers::Offset<rigExec::fb::RbfMethod> method = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> extraDriverSlots = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> extraParentSlots = 0,
-    ::flatbuffers::Offset<rigExec::fb::MlNetwork> network = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> mask = 0,
-    ::flatbuffers::Offset<rigExec::fb::AnimatedMaps> maps = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSlots = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSources = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSources = 0,
+    uint8_t solve = 0) {
   PoseInterpolatorBuilder builder_(_fbb);
   builder_.add_primvarSources(primvarSources);
   builder_.add_primvarSlots(primvarSlots);
-  builder_.add_maps(maps);
   builder_.add_mask(mask);
-  builder_.add_network(network);
   builder_.add_extraParentSlots(extraParentSlots);
   builder_.add_extraDriverSlots(extraDriverSlots);
-  builder_.add_method(method);
   builder_.add_valueInputs(valueInputs);
-  builder_.add_solver(solver);
   builder_.add_disabledSlots(disabledSlots);
   builder_.add_poseSlots(poseSlots);
   builder_.add_weightEnd(weightEnd);
@@ -7994,6 +7955,7 @@ inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolator(
   builder_.add_parentSlot(parentSlot);
   builder_.add_driverSlot(driverSlot);
   builder_.add_path(path);
+  builder_.add_solve(solve);
   builder_.add_enableTranslation(enableTranslation);
   builder_.add_allowNegativeWeights(allowNegativeWeights);
   return builder_.Finish();
@@ -8015,17 +7977,14 @@ inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolatorDirect(
     int32_t weightEnd = 0,
     const std::vector<int32_t> *poseSlots = nullptr,
     const std::vector<int32_t> *disabledSlots = nullptr,
-    ::flatbuffers::Offset<rigExec::fb::Rbf> solver = 0,
     bool enableTranslation = false,
     const std::vector<::flatbuffers::Offset<rigExec::fb::Input>> *valueInputs = nullptr,
-    ::flatbuffers::Offset<rigExec::fb::RbfMethod> method = 0,
     const std::vector<int32_t> *extraDriverSlots = nullptr,
     const std::vector<int32_t> *extraParentSlots = nullptr,
-    ::flatbuffers::Offset<rigExec::fb::MlNetwork> network = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> mask = 0,
-    ::flatbuffers::Offset<rigExec::fb::AnimatedMaps> maps = 0,
     const std::vector<int32_t> *primvarSlots = nullptr,
-    const std::vector<int32_t> *primvarSources = nullptr) {
+    const std::vector<int32_t> *primvarSources = nullptr,
+    uint8_t solve = 0) {
   auto poseSlots__ = poseSlots ? _fbb.CreateVector<int32_t>(*poseSlots) : 0;
   auto disabledSlots__ = disabledSlots ? _fbb.CreateVector<int32_t>(*disabledSlots) : 0;
   auto valueInputs__ = valueInputs ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Input>>(*valueInputs) : 0;
@@ -8044,17 +8003,14 @@ inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolatorDirect(
       weightEnd,
       poseSlots__,
       disabledSlots__,
-      solver,
       enableTranslation,
       valueInputs__,
-      method,
       extraDriverSlots__,
       extraParentSlots__,
-      network,
       mask,
-      maps,
       primvarSlots__,
-      primvarSources__);
+      primvarSources__,
+      solve);
 }
 
 ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolator(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWirePoseInterpolator *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -24628,17 +24584,14 @@ inline RigExecWirePoseInterpolator::RigExecWirePoseInterpolator(const RigExecWir
         weightEnd(o.weightEnd),
         poseSlots(o.poseSlots),
         disabledSlots(o.disabledSlots),
-        solver((o.solver) ? new rigExec::fb::RigExecWireRbf(*o.solver) : nullptr),
         enableTranslation(o.enableTranslation),
         valueInputs(o.valueInputs),
-        method((o.method) ? new rigExec::fb::RigExecWireRbfMethod(*o.method) : nullptr),
         extraDriverSlots(o.extraDriverSlots),
         extraParentSlots(o.extraParentSlots),
-        network((o.network) ? new rigExec::fb::RigExecWireMlNetwork(*o.network) : nullptr),
         mask((o.mask) ? new rigExec::fb::RigExecWireInput(*o.mask) : nullptr),
-        maps((o.maps) ? new rigExec::fb::RigExecWireAnimatedMaps(*o.maps) : nullptr),
         primvarSlots(o.primvarSlots),
-        primvarSources(o.primvarSources) {
+        primvarSources(o.primvarSources),
+        solve(o.solve) {
 }
 
 inline RigExecWirePoseInterpolator &RigExecWirePoseInterpolator::operator=(RigExecWirePoseInterpolator o) FLATBUFFERS_NOEXCEPT {
@@ -24651,17 +24604,14 @@ inline RigExecWirePoseInterpolator &RigExecWirePoseInterpolator::operator=(RigEx
   std::swap(weightEnd, o.weightEnd);
   std::swap(poseSlots, o.poseSlots);
   std::swap(disabledSlots, o.disabledSlots);
-  std::swap(solver, o.solver);
   std::swap(enableTranslation, o.enableTranslation);
   std::swap(valueInputs, o.valueInputs);
-  std::swap(method, o.method);
   std::swap(extraDriverSlots, o.extraDriverSlots);
   std::swap(extraParentSlots, o.extraParentSlots);
-  std::swap(network, o.network);
   std::swap(mask, o.mask);
-  std::swap(maps, o.maps);
   std::swap(primvarSlots, o.primvarSlots);
   std::swap(primvarSources, o.primvarSources);
+  std::swap(solve, o.solve);
   return *this;
 }
 
@@ -24683,17 +24633,14 @@ inline void PoseInterpolator::UnPackTo(RigExecWirePoseInterpolator *_o, const ::
   { auto _e = weightEnd(); _o->weightEnd = _e; }
   { auto _e = poseSlots(); if (_e) { _o->poseSlots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->poseSlots[_i] = _e->Get(_i); } } else { _o->poseSlots.resize(0); } }
   { auto _e = disabledSlots(); if (_e) { _o->disabledSlots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->disabledSlots[_i] = _e->Get(_i); } } else { _o->disabledSlots.resize(0); } }
-  { auto _e = solver(); if (_e) { if(_o->solver) { _e->UnPackTo(_o->solver.get(), _resolver); } else { _o->solver = std::unique_ptr<rigExec::fb::RigExecWireRbf>(_e->UnPack(_resolver)); } } else if (_o->solver) { _o->solver.reset(); } }
   { auto _e = enableTranslation(); _o->enableTranslation = _e; }
   { auto _e = valueInputs(); if (_e) { _o->valueInputs.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->valueInputs[_i] = *std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->valueInputs.resize(0); } }
-  { auto _e = method(); if (_e) { if(_o->method) { _e->UnPackTo(_o->method.get(), _resolver); } else { _o->method = std::unique_ptr<rigExec::fb::RigExecWireRbfMethod>(_e->UnPack(_resolver)); } } else if (_o->method) { _o->method.reset(); } }
   { auto _e = extraDriverSlots(); if (_e) { _o->extraDriverSlots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->extraDriverSlots[_i] = _e->Get(_i); } } else { _o->extraDriverSlots.resize(0); } }
   { auto _e = extraParentSlots(); if (_e) { _o->extraParentSlots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->extraParentSlots[_i] = _e->Get(_i); } } else { _o->extraParentSlots.resize(0); } }
-  { auto _e = network(); if (_e) { if(_o->network) { _e->UnPackTo(_o->network.get(), _resolver); } else { _o->network = std::unique_ptr<rigExec::fb::RigExecWireMlNetwork>(_e->UnPack(_resolver)); } } else if (_o->network) { _o->network.reset(); } }
   { auto _e = mask(); if (_e) { if(_o->mask) { _e->UnPackTo(_o->mask.get(), _resolver); } else { _o->mask = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->mask) { _o->mask.reset(); } }
-  { auto _e = maps(); if (_e) { if(_o->maps) { _e->UnPackTo(_o->maps.get(), _resolver); } else { _o->maps = std::unique_ptr<rigExec::fb::RigExecWireAnimatedMaps>(_e->UnPack(_resolver)); } } else if (_o->maps) { _o->maps.reset(); } }
   { auto _e = primvarSlots(); if (_e) { _o->primvarSlots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->primvarSlots[_i] = _e->Get(_i); } } else { _o->primvarSlots.resize(0); } }
   { auto _e = primvarSources(); if (_e) { _o->primvarSources.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->primvarSources[_i] = _e->Get(_i); } } else { _o->primvarSources.resize(0); } }
+  { auto _e = solve(); _o->solve = _e; }
 }
 
 inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolator(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWirePoseInterpolator *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -24713,17 +24660,14 @@ inline ::flatbuffers::Offset<PoseInterpolator> PoseInterpolator::Pack(::flatbuff
   auto _weightEnd = _o->weightEnd;
   auto _poseSlots = _o->poseSlots.size() ? _fbb.CreateVector(_o->poseSlots) : 0;
   auto _disabledSlots = _o->disabledSlots.size() ? _fbb.CreateVector(_o->disabledSlots) : 0;
-  auto _solver = _o->solver ? CreateRbf(_fbb, _o->solver.get(), _rehasher) : 0;
   auto _enableTranslation = _o->enableTranslation;
   auto _valueInputs = _o->valueInputs.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Input>> (_o->valueInputs.size(), [](size_t i, _VectorArgs *__va) { return CreateInput(*__va->__fbb, &(__va->__o->valueInputs[i]), __va->__rehasher); }, &_va ) : 0;
-  auto _method = _o->method ? CreateRbfMethod(_fbb, _o->method.get(), _rehasher) : 0;
   auto _extraDriverSlots = _o->extraDriverSlots.size() ? _fbb.CreateVector(_o->extraDriverSlots) : 0;
   auto _extraParentSlots = _o->extraParentSlots.size() ? _fbb.CreateVector(_o->extraParentSlots) : 0;
-  auto _network = _o->network ? CreateMlNetwork(_fbb, _o->network.get(), _rehasher) : 0;
   auto _mask = _o->mask ? CreateInput(_fbb, _o->mask.get(), _rehasher) : 0;
-  auto _maps = _o->maps ? CreateAnimatedMaps(_fbb, _o->maps.get(), _rehasher) : 0;
   auto _primvarSlots = _o->primvarSlots.size() ? _fbb.CreateVector(_o->primvarSlots) : 0;
   auto _primvarSources = _o->primvarSources.size() ? _fbb.CreateVector(_o->primvarSources) : 0;
+  auto _solve = _o->solve;
   return rigExec::fb::CreatePoseInterpolator(
       _fbb,
       _path,
@@ -24735,17 +24679,14 @@ inline ::flatbuffers::Offset<PoseInterpolator> PoseInterpolator::Pack(::flatbuff
       _weightEnd,
       _poseSlots,
       _disabledSlots,
-      _solver,
       _enableTranslation,
       _valueInputs,
-      _method,
       _extraDriverSlots,
       _extraParentSlots,
-      _network,
       _mask,
-      _maps,
       _primvarSlots,
-      _primvarSources);
+      _primvarSources,
+      _solve);
 }
 
 inline RigExecWireSkeleton2d *Skeleton2d::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
@@ -31232,7 +31173,8 @@ inline const ::flatbuffers::TypeTable *PoseInterpolatorTypeTable() {
     { ::flatbuffers::ET_SEQUENCE, 0, 0 },
     { ::flatbuffers::ET_SEQUENCE, 0, 4 },
     { ::flatbuffers::ET_INT, 1, -1 },
-    { ::flatbuffers::ET_INT, 1, -1 }
+    { ::flatbuffers::ET_INT, 1, -1 },
+    { ::flatbuffers::ET_UCHAR, 0, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::InputTypeTable,
@@ -31242,7 +31184,7 @@ inline const ::flatbuffers::TypeTable *PoseInterpolatorTypeTable() {
     rigExec::fb::AnimatedMapsTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 20, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 21, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }

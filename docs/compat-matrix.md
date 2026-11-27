@@ -99,7 +99,7 @@ in usdRig history.
 | 53 | 2026-11-27 | the Constraint step retired: a constraint with no target has no step |
 | 54 | 2026-11-27 | sparse Range blend shapes as BlendShape op nodes reading their channel weights through revision lookups keyed to the vertex groups they reach |
 | 55 | 2026-11-27 | every solver kind as op nodes reading their inputs through solver lookups; the Solve step retired and the rest copies only it read deprecated |
-| 56 | 2026-11-27 | rests as RestCompose op nodes reading their inputs through lookups; the RestCompose step retired; **oldest readable from here on** |
+| 56 | 2026-11-27 | rests as RestCompose op nodes reading their inputs through lookups; the RestCompose step retired; pose interpolator rows name their solve and no longer store its tables; **oldest readable from here on** |
 
 Versions 6 and 11–16 never appeared on `main`. Files written before version 56
 are outside every current reader: re-export them.
