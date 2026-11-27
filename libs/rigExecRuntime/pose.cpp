@@ -213,97 +213,12 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
         for (const auto &rest : wire.jointRests) {
             state.jointRests.push_back(_RrWireLandmarks(rest));
         }
-        for (const auto &rest : wire.controlRests) {
-            state.controlRests.push_back(_RrWireLandmarks(rest));
-        }
-        state.startRest = _RrWireLandmarks(wire.startRest);
-        const size_t base = wire.start >= 0 ? 1 : 0;
-        state.elements.resize(wire.controls.size() + base);
-        for (size_t k = 0; k < wire.controls.size(); ++k) {
-            const size_t e = k + base;
-            if (k < state.controlRests.size()) {
-                state.elements[e].restPoints = state.controlRests[k];
-            } else {
-                state.elements[e].restPoints = RrIdentityLandmarks();
-            }
-            state.elements[e].posePoints = RrIdentityLandmarks();
-            state.elements[e].outRestPoints = RrIdentityLandmarks();
-        }
         for (size_t k = 0; k < 3; ++k) {
             state.ikRests[k] = _RrWireLandmarks(wire.ikRests[k]);
         }
-        state.ikParams.upperLength = wire.ikParams.upperLength;
-        state.ikParams.lowerLength = wire.ikParams.lowerLength;
-        state.ikParams.stretch = wire.ikParams.stretch;
-        state.ikParams.softness = wire.ikParams.softness;
-        state.ikParams.preferredBendRadians =
-            wire.ikParams.preferredBendRadians;
-        state.upperLengthBase = wire.upperLengthBase;
-        state.lowerLengthBase = wire.lowerLengthBase;
-        state.spaceRest = _RrWireLandmarks(wire.spaceRest);
-        state.splineRest.cvs = _RrWireLandmarks(wire.splineRest->cvs);
-        state.splineRest.rootControl =
-            RrWireToFrame(wire.splineRest->rootControl);
-        state.splineRest.midControl =
-            RrWireToFrame(wire.splineRest->midControl);
-        state.splineRest.endControl =
-            RrWireToFrame(wire.splineRest->endControl);
-        for (const RigExecWireFrame &joint : wire.splineRest->joints) {
-            state.splineRest.joints.push_back(RrWireToFrame(joint));
-        }
-        state.splineRest.segmentLengths = wire.splineRest->segmentLengths;
-        state.splineRest.restArcLength = wire.splineRest->restArcLength;
-        state.splineRest.volumeWeights = wire.splineRest->volumeWeights;
         for (const auto &rest : wire.splineJointRests) {
             state.splineJointRests.push_back(_RrWireLandmarks(rest));
         }
-        state.twistStartRest = _RrWireLandmarks(wire.twistStartRest);
-        state.twistEndRest = _RrWireLandmarks(wire.twistEndRest);
-        state.twistWeights = wire.twistWeights;
-        for (const RigExecWireVec3f &p : wire.ribbonRestPoints) {
-            state.ribbonRestPoints.push_back(RrVec3f(p[0], p[1], p[2]));
-        }
-        if (const auto *skeleton = wire.skeleton2d.get()) {
-            const size_t bones = skeleton->solveOrder.size();
-            state.bone2dOrder = skeleton->solveOrder;
-            state.bone2dSetup.resize(bones);
-            for (size_t e = 0; e < bones; ++e) {
-                RigExecBone2dSetup &bone = state.bone2dSetup[e];
-                bone.parent = skeleton->parent[e];
-                bone.flags = skeleton->flags[e];
-                bone.minAngle = skeleton->limits[2 * e];
-                bone.maxAngle = skeleton->limits[2 * e + 1];
-                bone.scaling = RigExecBone2dScaling(skeleton->scaling[e]);
-                bone.squashFactor = skeleton->squashFactor[e];
-                bone.maxStretch = skeleton->maxStretch[e];
-                bone.tipBone = skeleton->tipBone[e];
-                bone.tipX = skeleton->tip[2 * e];
-                bone.tipY = skeleton->tip[2 * e + 1];
-                bone.spaceBegin = skeleton->spaceBegin[e];
-                bone.spaceCount = skeleton->spaceCount[e];
-                bone.spaceSelector = skeleton->spaceSelector[e];
-                bone.targetBegin = skeleton->targetBegin[e];
-                bone.targetCount = skeleton->targetCount[e];
-                bone.angleController = skeleton->angleController[e];
-                bone.posController = skeleton->posController[e];
-                bone.scaleController = skeleton->scaleController[e];
-                bone.angleFactor = skeleton->controlFactors[4 * e];
-                bone.posFactorX = skeleton->controlFactors[4 * e + 1];
-                bone.posFactorY = skeleton->controlFactors[4 * e + 2];
-                bone.scaleFactor = skeleton->controlFactors[4 * e + 3];
-            }
-            state.bone2dSpaceSources = skeleton->spaceSources;
-            state.bone2dTargetCandidates = skeleton->targetCandidates;
-        }
-        state.jointGroups.resize(wire.jointGroups.size());
-        for (size_t g = 0; g < wire.jointGroups.size(); ++g) {
-            state.jointGroups[g].memberBegin = wire.jointGroups[g].memberBegin;
-            state.jointGroups[g].memberCount = wire.jointGroups[g].memberCount;
-            state.jointGroups[g].enabled = wire.jointGroups[g].enabled;
-        }
-        state.jointGroupMembers.assign(wire.jointGroupMembers.begin(),
-                                       wire.jointGroupMembers.end());
-        state.jointGroupParents = wire.jointGroupParents;
     }
     scratch->recordAfter.assign(poses.commits.size(), 1);
     scratch->recordEveryTarget.assign(poses.commits.size(), 1);

@@ -20,12 +20,6 @@
 
 namespace rigExec {
 
-struct RrPoseFkElement;
-
-struct RrPoseTwoBoneIkParams;
-
-struct RrPoseSplineIkRest;
-
 struct RrPoseSolverState;
 
 struct RrPoseScratch;
@@ -98,76 +92,12 @@ RigExecIkFkMatchChannels _RrMatchChannelsOf(const RrProgram &program,
 
 } // namespace runtimePoseDetail
 
-// One FkChain element's per-run inputs, mirroring RigExecFkChainElement.
-struct RrPoseFkElement {
-    std::array<RrVec3d, 4> restPoints;
-    std::array<RrVec3d, 4> posePoints;
-    bool hasOutRest = false;
-    std::array<RrVec3d, 4> outRestPoints;
-    int parentIndex = -1;
-};
-
-// RigExecTwoBoneIkParams, field for field.
-struct RrPoseTwoBoneIkParams {
-    double upperLength = 1;
-    double lowerLength = 1;
-    double stretch = 1;
-    double softness = 0;
-    double preferredBendRadians = 0;
-    bool softDistancePolicy = false, scaleSegments = false;
-    RigExecLimbStretch limb;
-    double twistRadians = 0;
-    RrMat4d space = RrMat4d(1.0);
-};
-
-// RigExecSplineIkRest, field for field.
-struct RrPoseSplineIkRest {
-    std::array<RrVec3d, 4> cvs;
-    RrPointFrame rootControl;
-    RrPointFrame midControl;
-    RrPointFrame endControl;
-    std::vector<RrPointFrame> joints;
-    std::vector<double> segmentLengths;
-    double restArcLength = 0;
-    std::vector<double> volumeWeights;
-};
-
-// One solver's mutable rest description: what RefreshSolverRests and the
-// Solve step rewrite every run. The wire solver is the compiled rig half.
+// One solver's rest copies the op hosts fall back on where no rest slot or
+// live rest stands: the wire solver is the compiled rig half.
 struct RrPoseSolverState {
     std::vector<std::array<RrVec3d, 4>> jointRests;
-    std::vector<std::array<RrVec3d, 4>> controlRests;
-    std::array<RrVec3d, 4> startRest;
-    std::vector<RrPoseFkElement> elements;
     std::array<std::array<RrVec3d, 4>, 3> ikRests;
-    RrPoseTwoBoneIkParams ikParams;
-    double upperLengthBase = 0;
-    double lowerLengthBase = 0;
-    // rigExec:space's rest landmarks (TwoBoneIk, SplineIk).
-    std::array<RrVec3d, 4> spaceRest;
-    RrPoseSplineIkRest splineRest;
     std::vector<std::array<RrVec3d, 4>> splineJointRests;
-    std::array<RrVec3d, 4> twistStartRest;
-    std::array<RrVec3d, 4> twistEndRest;
-    std::vector<double> twistWeights;
-    std::vector<RrVec3f> ribbonRestPoints;
-    // RigExecSkeleton2d: the file's setup (solve order) and the solve's
-    // scratch (rigExecMath/skeleton2dKernel.h, the native body). Its start
-    // frame is startRest and its outside parent spaces are controlRests.
-    std::vector<uint32_t> bone2dOrder;
-    std::vector<RigExecBone2dSetup> bone2dSetup;
-    std::vector<int32_t> bone2dSpaceSources, bone2dTargetCandidates;
-    RigExecSkeleton2dScratch bone2d;
-    std::vector<double> bone2dSelectors;
-    // Joint groups (FkChain, Skeleton2d): the file's groups, members and an
-    // FK chain's joint parents; this run's selectors, slots and activity.
-    std::vector<RigExecJointGroup> jointGroups;
-    std::vector<int32_t> jointGroupMembers, jointGroupParents;
-    std::vector<double> jointGroupSelectors;
-    std::vector<int32_t> jointGroupSlots;
-    std::vector<uint8_t> jointGroupActive;
-    std::array<RrVec3d, 4> bone2dStartPose;
-    std::vector<std::array<RrVec3d, 4>> bone2dExternalPoses;
 };
 
 struct RrPoseScratch {
