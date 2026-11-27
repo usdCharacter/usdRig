@@ -1690,6 +1690,7 @@ RrExecuteOpGraph(RrProgram *p, bool force, std::string *error)
             p, i, &scratch, &covered, scalarConsumer ? &coveredTyped : nullptr);
         std::sort(covered.begin(), covered.end());
         std::sort(coveredTyped.begin(), coveredTyped.end());
+        const bool providerOp = RrProviderOpOf(p, step) >= 0;
         for (auto id : p->opGraph.ops[c].descriptor.reads) {
             const auto &value = state.values[size_t(id)];
             if (exact && RrRefreshOf(p, step) >= 0 &&
@@ -1707,11 +1708,14 @@ RrExecuteOpGraph(RrProgram *p, bool force, std::string *error)
                 std::binary_search(coveredTyped.begin(), coveredTyped.end(),
                                    std::make_pair(value.domain, value.slot)))
                 continue;
+            if (exact &&
+                ((step.kind == RigExecWireStepKind::SpaceExpression &&
+                  step.part == 0) ||
+                 providerOp) &&
+                value.domain == uint32_t(RigExecWireSlotDomain::SpaceValue))
+                continue;
             if (exact && step.kind == RigExecWireStepKind::SpaceExpression &&
-                ((step.part == 0 &&
-                  value.domain ==
-                      uint32_t(RigExecWireSlotDomain::SpaceValue)) ||
-                 (step.part == 2 &&
+                ((step.part == 2 &&
                   value.domain == uint32_t(RigExecWireSlotDomain::SpaceLeaf))))
                 continue;
             if (!incoming &&

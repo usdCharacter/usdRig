@@ -429,6 +429,9 @@ struct RrStore {
     std::vector<std::string> packetContentKeys;
     std::vector<RigExecProviderPlainState> providerValues;
     std::vector<RrProviderConversionScratch> providerConversionScratch;
+    /// Per provider op: the authority and the unavailable input its op node
+    /// stored, read when it publishes its result in the same step.
+    std::vector<std::pair<uint8_t, int32_t>> providerOpPending;
     std::vector<char> propertyPublished;
     std::vector<char> chainHaveBase, chainBaseDirty, lastHaveBase;
     std::vector<char> derivedHaveBase;
@@ -1032,12 +1035,22 @@ bool RrStoreVolumePlacement(RrProgram *program,
                             std::string *error);
 /// The provider refresh op step \p step runs, or -1 for any other step.
 int64_t RrRefreshOf(const RrProgram *program, const RigExecWireStep &step);
-/// Resolves a RestFrame, CommitRecordGate, ProviderFrame or
-/// ProviderParentRaw lookup.
+/// The provider op op step \p step runs, or -1 for any other step.
+int64_t RrProviderOpOf(const RrProgram *program, const RigExecWireStep &step);
+/// Fills a ProviderInputs lookup: one typed input list of a provider op.
+bool RrFillProviderInputs(const RrProgram *program,
+                          const eval::OpLookup &lookup,
+                          const RigExecTypeDesc &type, void *out,
+                          std::string *error);
+/// Stores a provider op's authority, unavailable input or result.
+bool RrStoreProviderValue(RrProgram *program, const eval::OpHostOutput &output,
+                          const void *value, std::string *error);
+/// Resolves a RestFrame, CommitRecordGate, ProviderFrame, ProviderParentRaw
+/// or ProviderInputs lookup.
 bool RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
                    const RigExecTypeDesc &type, void *out, std::string *error);
-/// Stores a provider's final or base matrix, or a frame record's matrix or
-/// validity.
+/// Stores a provider's final or base matrix, a frame record's matrix or
+/// validity, a refresh's frames or a provider op's result.
 bool RrStoreSpace(RrProgram *program, const eval::OpHostOutput &output,
                   const void *value, std::string *error);
 /// Resolves a CommitVersions or CommitCandidates lookup.

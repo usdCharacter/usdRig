@@ -1,8 +1,11 @@
 #include "rigExec/internal/bakedOpValues.h"
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/pathText.h"
+#include "rigExecEvalCore/opSteps.h"
+#include "rigExecEvalCore/spaces.h"
 #include "rigExecGraph/opValues.h"
 #include "rigExecScene/providerProgram.h"
+#include "rigExecStdTypes/array.h"
 #include "pxr/base/gf/quatd.h"
 #include "pxr/base/gf/vec2d.h"
 #include "pxr/base/gf/vec4f.h"
@@ -269,15 +272,8 @@ TestProviderOwnerText()
     op.inputs = {1};
     op.xforms.push_back({TfToken("xformOp:translate"), 2, 0});
     program.ops.push_back(op);
-    RigExecTypedValueStore store(3);
-    std::string error;
-    // A body never spells an owner itself.
-    CHECK(!RigExecRunProviderOp(program, 0, &store, &error));
     RigExecSpellProviderOwners(&program);
     CHECK(program.ownerTexts == std::vector<std::string>{"/Rig/Xf"});
-    error.clear();
-    CHECK(RigExecRunProviderOp(program, 0, &store, &error) &&
-          error == "xform order unavailable: " + op.owner.GetString());
     // One text per owner; a copied op keeps its own.
     program.ops.push_back(program.ops[0]);
     op.owner = SdfPath("/Rig/Other");
@@ -293,26 +289,31 @@ TestProviderOwnerText()
 void
 TestProviderFloatScalar()
 {
-    RigExecProviderProgram program;
-    program.valueKeys = {"out", "restSpace", "tx"};
+    RigExecBakedProgramImpl B;
+    B.providerProgram.valueKeys = {"out", "restSpace", "tx"};
     RigExecProviderOp op;
     op.kind = RigExecProviderOpKind::RestFrame;
     op.owner = SdfPath("/Rig/Ctl");
     op.output = 0;
     op.inputs = {1, 2};
-    program.ops.push_back(op);
-    RigExecSpellProviderOwners(&program);
+    B.providerProgram.ops.push_back(op);
+    const RigExecTypeHandle element;
+    RigExecTypeDesc type;
+    type.element = &element;
+    eval::OpLookup lookup;
+    lookup.source = uint8_t(eval::OpLookupSource::ProviderInputs);
+    lookup.read = uint8_t(eval::spaces::ProviderRead::Scalars);
     for (const bool narrow : {false, true}) {
-        RigExecTypedValueStore store(3);
-        store.Publish(1, GfMatrix4d(1.0));
+        B.providerValues = RigExecTypedValueStore(3);
+        B.providerValues.Publish(1, GfMatrix4d(1.0));
         if (narrow)
-            store.Publish(2, 1.5f);
+            B.providerValues.Publish(2, 1.5f);
         else
-            store.Publish(2, 1.5);
+            B.providerValues.Publish(2, 1.5);
+        rigExecStd::RigExecArray<double> scalars;
         std::string error;
-        CHECK(RigExecRunProviderOp(program, 0, &store, &error));
-        const auto *frame = store.Read<RigExecPointFrame>(0);
-        CHECK(frame && frame->points[0][0] == 1.5);
+        CHECK(RigExecBakedLookUpSpace(B, lookup, type, &scalars, &error));
+        CHECK(scalars.Size() == 1 && scalars[0] == 1.5);
     }
 }
 void

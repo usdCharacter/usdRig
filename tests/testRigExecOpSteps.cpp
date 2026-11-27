@@ -652,14 +652,17 @@ TestRuntime(const char *writeTo)
             f.opGraph->nodes[injected]->payload.resize(3);
         },
         "settings do not decode");
+    const size_t past = file->opGraph->nodes.size();
+    const std::string pastText =
+        "node " + std::to_string(past) + " out of range";
     damaged(
-        [](fb::RigExecWireFile &f) {
+        [&](fb::RigExecWireFile &f) {
             for (auto &node : f.opGraph->nodes)
                 for (auto &input : node->inputs)
                     if (input->node >= 0)
-                        input->node = 9;
+                        input->node = decltype(input->node)(past);
         },
-        "node 9 out of range");
+        pastText.c_str());
     damaged(
         [&](fb::RigExecWireFile &f) {
             f.opGraph->nodes[injected]->inputs[0]->port = 40;

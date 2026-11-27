@@ -1179,6 +1179,9 @@ enum class RigExecBakedOpFamily : uint8_t {
     PoseCommit,
     /// A connected provider's refresh: object the providerRefreshes index.
     ProviderRefresh,
+    /// A provider program's arithmetic or affine operation: object its
+    /// index in the provider program's ops.
+    ProviderOp,
 };
 
 /// Where an op node's step comes from: its family, that family's object and
@@ -1355,6 +1358,12 @@ struct RigExecBakedProgramImpl {
                                        : providerProgram;
     }
     RigExecTypedValueStore providerValues{0};
+    /// Per provider op: the authority and the unavailable input its op node
+    /// stored, read when it publishes its result in the same step.
+    std::vector<std::pair<uint8_t, int32_t>> providerOpPending;
+    /// Per provider op: the op node origin it runs as, or -1 for an
+    /// Attribute op, which runs as a SpaceExpression step.
+    std::vector<int> providerOpOrigin;
     RigExecBakedPathLeaves providerLeaves;
     std::vector<uint8_t> providerLeafBlocked;
     /// Persistent invalidation counts; sampling may consume mustSample before
@@ -2632,6 +2641,10 @@ bool RigExecBakedBindOwnPropertySpaces(RigExecBakedProgramImpl *program,
 /// order. False with \p error when a holder cannot be compacted.
 bool RigExecBakedPruneProviderProgram(RigExecBakedProgramImpl *program,
                                       std::string *error);
+/// Pushes an op node origin per provider op that is not an Attribute,
+/// after pruning and before the op program is built, so the provider op
+/// nodes are numbered as their origins are.
+void RigExecBakedPlanProviderOps(RigExecBakedProgramImpl *program);
 void RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program);
 void RigExecBakedSampleSpaces(RigExecBakedProgramImpl *program,
                               UsdTimeCode time, bool all);
@@ -2648,6 +2661,9 @@ bool RigExecBakedBindProviderRefresh(
 /// other step.
 int RigExecBakedProviderRefreshOf(const RigExecBakedProgramImpl &program,
                                   const RigExecBakedStep &step);
+/// The provider op index op step \p step runs, or -1 for any other step.
+int RigExecBakedProviderOpOf(const RigExecBakedProgramImpl &program,
+                             const RigExecBakedStep &step);
 
 void RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program);
 
@@ -2920,13 +2936,19 @@ bool RigExecBakedAddSpaceOp(const RigExecBakedProgramImpl &B,
                             RigExecRigDescBuilder *builder,
                             eval::OpStepLayout *layout, size_t o,
                             std::string *error);
-/// Resolves a RestFrame or CommitRecordGate lookup.
+/// The arithmetic and affine provider operations as op nodes, numbered as
+/// their origins are; their origins are the last pushed.
+bool RigExecBakedAddProviderOps(const RigExecBakedProgramImpl &B,
+                                RigExecRigDescBuilder *builder,
+                                eval::OpStepLayout *layout, std::string *error);
+/// Resolves a RestFrame, CommitRecordGate, ProviderFrame, ProviderParentRaw
+/// or ProviderInputs lookup.
 bool RigExecBakedLookUpSpace(const RigExecBakedProgramImpl &B,
                              const eval::OpLookup &lookup,
                              const RigExecTypeDesc &type, void *out,
                              std::string *error);
-/// Stores a provider's final or base matrix, or a frame record's matrix or
-/// validity.
+/// Stores a provider's final or base matrix, a frame record's matrix or
+/// validity, a refresh's frames or a provider op's result.
 bool RigExecBakedStoreSpace(RigExecBakedProgramImpl &B,
                             const eval::OpHostOutput &output, const void *value,
                             std::string *error);

@@ -10266,8 +10266,10 @@ TestPruningKeepsEveryValue(const std::string &examplesDir)
     size_t kept = 0, unread = 0;
     for (const RigExecBakedStep &step : P.steps) {
         // A routed input is a root: its body may publish a diagnostic.
-        if (step.kind != RigExecBakedStepKind::SpaceExpression ||
-            step.part == 3) {
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(P, step);
+        if (identity.kind != RigExecBakedStepKind::SpaceExpression ||
+            identity.part == 3) {
             continue;
         }
         ++kept;

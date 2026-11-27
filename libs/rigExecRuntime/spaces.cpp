@@ -3,7 +3,11 @@
 #include "spaces.h"
 #include "poseInternal.h"
 #include "rigExecMath/affineMath.h"
+#include "rigExecEvalCore/opSteps.h"
 #include "rigExecEvalCore/spaces.h"
+#include "rigExecRigTypes/rigTypes.h"
+#include "rigExecStdTypes/array.h"
+#include "rigExecStdTypes/stdTypes.h"
 #include <algorithm>
 #include "rigExecGraph/providerArithmetic.h"
 #include <cstring>
@@ -11,8 +15,8 @@
 #include <type_traits>
 namespace rigExec {
 namespace {
-// SpaceExpression part 0 runs through EvalCore's single
-// space body; the bridge parts below stay here as input binding.
+// SpaceExpression part 0 runs an Attribute op through the shared provider
+// arithmetic; the bridge parts below stay here as input binding.
 struct SpaceMath {
     using Matrix = RrMat4d;
     using Vector = RrVec3d;
@@ -181,187 +185,7 @@ struct Store {
         out.count = 1;
         out.error.clear();
     }
-    const RigExecProviderPlainState *AffineState(uint64_t id) const
-    {
-        if (id >= values.size())
-            return nullptr;
-        const auto &state = values[size_t(id)];
-        return state.initialized && !state.blocked ? &state : nullptr;
-    }
-    bool ReadAffineDouble(uint64_t id, double *out) const
-    {
-        const auto *state = AffineState(id);
-        if (!state)
-            return false;
-        if (const auto *v = std::get_if<double>(&state->value)) {
-            *out = *v;
-            return true;
-        }
-        if (const auto *narrow = std::get_if<float>(&state->value)) {
-            *out = *narrow;
-            return true;
-        }
-        return false;
-    }
-    bool ReadAffineVec3i(uint64_t id, RrVec3i *out) const
-    {
-        const auto *state = AffineState(id);
-        if (!state)
-            return false;
-        if (const auto *v =
-                std::get_if<std::array<int32_t, 3>>(&state->value)) {
-            *out = RrVec3i((*v)[0], (*v)[1], (*v)[2]);
-            return true;
-        }
-        return false;
-    }
-    bool ReadAffineBool(uint64_t id, bool *out) const
-    {
-        const auto *state = AffineState(id);
-        if (!state)
-            return false;
-        if (const auto *v = std::get_if<bool>(&state->value)) {
-            *out = *v;
-            return true;
-        }
-        return false;
-    }
-    bool ReadAffineInt(uint64_t id, int *out) const
-    {
-        const auto *state = AffineState(id);
-        if (!state)
-            return false;
-        if (const auto *v = std::get_if<int32_t>(&state->value)) {
-            *out = int(*v);
-            return true;
-        }
-        return false;
-    }
-    bool ReadAffineString(uint64_t id, std::string *out) const
-    {
-        const auto *state = AffineState(id);
-        if (!state)
-            return false;
-        if (const auto *v = std::get_if<std::string>(&state->value)) {
-            *out = *v;
-            return true;
-        }
-        return false;
-    }
-    bool ReadAffineIntArray(uint64_t id, std::vector<int> *out) const
-    {
-        const auto *state = AffineState(id);
-        if (!state)
-            return false;
-        const auto *v = std::get_if<std::vector<int32_t>>(&state->value);
-        if (v && !v->empty()) {
-            out->assign(v->begin(), v->end());
-            return true;
-        }
-        return false;
-    }
-    bool ReadAffineDoubleArray(uint64_t id, std::vector<double> *out) const
-    {
-        const auto *state = AffineState(id);
-        if (!state)
-            return false;
-        const auto *v = std::get_if<std::vector<double>>(&state->value);
-        if (v && !v->empty()) {
-            *out = *v;
-            return true;
-        }
-        return false;
-    }
-    bool ReadAffineMatrixArray(uint64_t id, std::vector<RrMat4d> *out) const
-    {
-        const auto *state = AffineState(id);
-        if (!state)
-            return false;
-        const auto *v =
-            std::get_if<std::vector<std::array<double, 16>>>(&state->value);
-        if (v && !v->empty()) {
-            out->resize(v->size());
-            for (size_t k = 0; k < v->size(); ++k)
-                std::memcpy((*out)[k]._mtx, (*v)[k].data(),
-                            sizeof(double) * 16);
-            return true;
-        }
-        return false;
-    }
-    void PublishAffineFailure(uint64_t id, const std::string &message)
-    {
-        auto &out = values[size_t(id)];
-        out.value = std::monostate{};
-        out.initialized = true;
-        out.blocked = false;
-        out.authoritative = false;
-        out.count = 0;
-        out.error = message;
-    }
-    void PushDiagnostic(const std::string &text)
-    {
-        diagnostics->push_back(text);
-    }
-    std::vector<std::string> *diagnostics = nullptr;
 };
-struct SpaceInputs {
-    const RrProgram *program = nullptr;
-    size_t opCount() const
-    {
-        return program->providerProgram.ops.size();
-    }
-    const RigExecProviderPlainOp &op(size_t index) const
-    {
-        return program->providerProgram.ops[index];
-    }
-    size_t valueCount() const
-    {
-        return program->store.providerValues.size();
-    }
-};
-struct SpaceHost {
-    using Math = SpaceMath;
-    using Inputs = SpaceInputs;
-    using State = Store;
-    SpaceHost(const SpaceInputs &inputs, const Store &state)
-        : _inputs(inputs), _state(state)
-    {
-    }
-    const Inputs &inputs() const
-    {
-        return _inputs;
-    }
-    State &state()
-    {
-        return _state;
-    }
-    const RigExecRangeRunner *ranges() const
-    {
-        return nullptr;
-    }
-
-private:
-    Inputs _inputs;
-    State _state;
-};
-const char *
-SpaceFailureMessage(eval::spaces::SpaceDetail detail)
-{
-    switch (detail) {
-    case eval::spaces::SpaceDetail::NoOp:
-        return "SpaceExpression names no portable op";
-    case eval::spaces::SpaceDetail::OutputRange:
-        return "provider output is outside its typed layout";
-    case eval::spaces::SpaceDetail::AffineLayout:
-        return "affine frame inputs do not match their expression";
-    case eval::spaces::SpaceDetail::AffineKind:
-        return "unknown affine frame expression";
-    case eval::spaces::SpaceDetail::NoRefresh:
-    case eval::spaces::SpaceDetail::None:
-        return "SpaceExpression names no portable op";
-    }
-    return "SpaceExpression names no portable op";
-}
 } // namespace
 bool
 RrReadCrossDomain(const RrProgram *program, int32_t index, RrWireValue *out)
@@ -624,6 +448,7 @@ RrOpenProviderProgram(RrProgram *program, std::string *error)
     leaves(wire.sampled, &plain.sampled);
     leaves(wire.externalInputs, &plain.externalInputs);
     program->store.providerValues = plain.defaults;
+    program->store.providerOpPending.assign(plain.ops.size(), {0, -1});
     auto &converted = program->store.providerConversionScratch;
     converted.resize(plain.ops.size());
     for (size_t i = 0; i < plain.ops.size(); ++i) {
@@ -635,13 +460,12 @@ RrOpenProviderProgram(RrProgram *program, std::string *error)
     return true;
 }
 bool
-RrProviderEffectiveInputMemo(const RrProgram *program,
-                             const RigExecWireStep &step, std::string *key,
-                             std::vector<uint32_t> *covered)
+RrProviderEffectiveInputMemo(const RrProgram *program, int part, int64_t object,
+                             std::string *key, std::vector<uint32_t> *covered)
 {
-    if (step.part == 2) {
+    if (part == 2) {
         const auto &leaf =
-            program->file->providerProgram->sampled[size_t(step.object)];
+            program->file->providerProgram->sampled[size_t(object)];
         if (leaf.inputSlot >= 0) {
             RigExecWireInput raw;
             raw.tag = program->file->inputs[size_t(leaf.inputSlot)].type();
@@ -653,11 +477,11 @@ RrProviderEffectiveInputMemo(const RrProgram *program,
         }
         return true;
     }
-    if (step.part == 4)
+    if (part == 4)
         return true; // Only declared typed frame inputs.
-    if (step.part != 0)
+    if (part != 0)
         return false;
-    const auto &op = program->providerProgram.ops[size_t(step.object)];
+    const auto &op = program->providerProgram.ops[size_t(object)];
     const auto &values = program->store.providerValues;
     const auto append = [&](const auto &value) {
         key->append(reinterpret_cast<const char *>(&value), sizeof(value));
@@ -1092,33 +916,494 @@ RrRunSpaceExpression(RrProgram *program, const RigExecWireStep &step,
         return false;
     }
     if (step.object < 0 ||
-        size_t(step.object) >= program->providerProgram.ops.size()) {
+        size_t(step.object) >= program->providerProgram.ops.size() ||
+        program->providerProgram.ops[size_t(step.object)].kind !=
+            RigExecProviderOpKind::Attribute) {
         if (error)
-            *error = "SpaceExpression names no portable op";
+            *error = "SpaceExpression names no Attribute op";
         return false;
     }
     const auto &op = program->providerProgram.ops[size_t(step.object)];
-    const SpaceInputs inputs{program};
+    if (op.output >= program->store.providerValues.size()) {
+        if (error)
+            *error = "provider output is outside its typed layout";
+        return false;
+    }
     Store state(program->store.providerValues, op.inputs,
                 program->store.providerConversionScratch[size_t(step.object)]);
-    SpaceHost host(inputs, state);
-    const eval::StepResult result =
-        eval::RunValueStep(host, eval::StepRef{uint32_t(step.kind), step.object,
-                                               step.part, size_t(step.object)});
-    if (result.outcome == eval::Outcome::Applied)
-        return true;
-    if (result.outcome == eval::Outcome::Rejected) {
-        auto &out = program->store.providerValues[size_t(op.output)];
-        out.initialized = false;
-        out.blocked = true;
-        out.value = std::monostate();
-        out.count = 0;
-        out.error = "provider input unavailable";
+    RigExecRunProviderArithmetic<SpaceMath>(op, state);
+    return true;
+}
+
+namespace {
+
+using ProviderRead = eval::spaces::ProviderRead;
+using ProviderClass = eval::spaces::ProviderInputClass;
+using AffineClass = eval::spaces::AffineInputClass;
+
+ProviderClass
+ArithmeticClassOf(const RigExecProviderPlainOp &op, size_t p)
+{
+    return op.inputs[p] == UINT64_MAX
+               ? ProviderClass::None
+               : eval::spaces::ProviderArithmeticInputClass(op.kind, p);
+}
+
+AffineClass
+AffineClassOf(const RigExecProviderPlainOp &op, size_t p)
+{
+    return eval::spaces::AffineFrameInputClass<RrAffineMath>(op.affineKind, p);
+}
+
+bool
+ItemsClass(AffineClass c)
+{
+    return c == AffineClass::IntItems || c == AffineClass::DoubleItems ||
+           c == AffineClass::MatrixItems;
+}
+
+template <class T>
+rigExecStd::RigExecArray<T> &
+ListOf(void *out)
+{
+    return *static_cast<rigExecStd::RigExecArray<T> *>(out);
+}
+
+/// \p id's value as a T when it is present and unblocked, as Store reads.
+template <class T>
+const T *
+ReadAs(const std::vector<RigExecProviderPlainState> &values, uint64_t id)
+{
+    return id < values.size() && values[size_t(id)].initialized &&
+                   !values[size_t(id)].blocked
+               ? std::get_if<T>(&values[size_t(id)].value)
+               : nullptr;
+}
+
+bool
+ReadScalar(const std::vector<RigExecProviderPlainState> &values, uint64_t id,
+           double *out)
+{
+    if (const auto *value = ReadAs<double>(values, id)) {
+        *out = *value;
         return true;
     }
-    if (error)
-        *error = SpaceFailureMessage(
-            static_cast<eval::spaces::SpaceDetail>(result.detail));
+    if (const auto *narrow = ReadAs<float>(values, id)) {
+        *out = double(*narrow);
+        return true;
+    }
     return false;
 }
+
+void
+PutMatrix(const std::array<double, 16> *matrix, rigExecStd::Mat4d *out)
+{
+    static_assert(sizeof(rigExecStd::Mat4d) == 16 * sizeof(double),
+                  "a std matrix is sixteen doubles");
+    const std::array<double, 16> identity = {1, 0, 0, 0, 0, 1, 0, 0,
+                                             0, 0, 1, 0, 0, 0, 0, 1};
+    std::memcpy(static_cast<void *>(out), (matrix ? matrix : &identity)->data(),
+                16 * sizeof(double));
+}
+
+void
+PutFrame(const RigExecProviderPlainFrame &frame, rigExecRig::PointFrame *out)
+{
+    for (size_t p = 0; p < 4; ++p)
+        out->points[p] = rigExecStd::Vec3d(
+            frame.points[p][0], frame.points[p][1], frame.points[p][2]);
+    out->flags = frame.flags;
+}
+
+bool
+ArithmeticReadable(const std::vector<RigExecProviderPlainState> &values,
+                   uint64_t id, ProviderClass c)
+{
+    double scalar = 0.0;
+    switch (c) {
+    case ProviderClass::Matrix:
+        return ReadAs<std::array<double, 16>>(values, id) != nullptr;
+    case ProviderClass::Frame:
+        return ReadAs<RigExecProviderPlainFrame>(values, id) != nullptr;
+    case ProviderClass::Scalar:
+        return ReadScalar(values, id, &scalar);
+    case ProviderClass::Vector:
+        return ReadAs<std::array<double, 3>>(values, id) != nullptr;
+    case ProviderClass::Order:
+    case ProviderClass::Reset:
+    case ProviderClass::None:
+        break;
+    }
+    return true;
+}
+
+bool
+AffineReadable(const std::vector<RigExecProviderPlainState> &values,
+               uint64_t id, AffineClass c)
+{
+    double scalar = 0.0;
+    switch (c) {
+    case AffineClass::Matrix:
+        return ReadAs<std::array<double, 16>>(values, id) != nullptr;
+    case AffineClass::Vector:
+        return ReadAs<std::array<double, 3>>(values, id) != nullptr;
+    case AffineClass::IntVector:
+        return ReadAs<std::array<int32_t, 3>>(values, id) != nullptr;
+    case AffineClass::Double:
+        return ReadScalar(values, id, &scalar);
+    case AffineClass::Bool:
+        return ReadAs<bool>(values, id) != nullptr;
+    case AffineClass::Int:
+        return ReadAs<int32_t>(values, id) != nullptr;
+    case AffineClass::Frame:
+        return ReadAs<RigExecProviderPlainFrame>(values, id) != nullptr;
+    case AffineClass::Text:
+    case AffineClass::IntItems:
+    case AffineClass::DoubleItems:
+    case AffineClass::MatrixItems:
+        break;
+    }
+    return true;
+}
+
+bool
+ResetsStack(const std::vector<RigExecProviderPlainState> &values, uint64_t id)
+{
+    const auto *tokens = ReadAs<std::vector<std::string>>(values, id);
+    return tokens && std::find(tokens->begin(), tokens->end(),
+                               "!resetXformStack!") != tokens->end();
+}
+
+bool
+FillArithmetic(const std::vector<RigExecProviderPlainState> &values,
+               const RigExecProviderPlainOp &op, ProviderRead read, void *out,
+               std::string *error)
+{
+    const size_t n = op.inputs.size();
+    const auto count = [&](ProviderClass c) {
+        size_t k = 0;
+        for (size_t p = 0; p < n; ++p)
+            k += ArithmeticClassOf(op, p) == c ? 1 : 0;
+        return k;
+    };
+    const auto each = [&](ProviderClass c, auto &&put) {
+        size_t k = 0;
+        for (size_t p = 0; p < n; ++p)
+            if (ArithmeticClassOf(op, p) == c)
+                put(k++, op.inputs[p]);
+    };
+    switch (read) {
+    case ProviderRead::Present: {
+        auto &list = ListOf<uint8_t>(out);
+        list.Assign(n);
+        for (size_t p = 0; p < n; ++p)
+            list[p] = ArithmeticReadable(values, op.inputs[p],
+                                         ArithmeticClassOf(op, p))
+                          ? 1
+                          : 0;
+        return true;
+    }
+    case ProviderRead::Matrices: {
+        auto &list = ListOf<rigExecStd::Mat4d>(out);
+        list.Assign(count(ProviderClass::Matrix));
+        each(ProviderClass::Matrix, [&](size_t k, uint64_t id) {
+            PutMatrix(ReadAs<std::array<double, 16>>(values, id), &list[k]);
+        });
+        return true;
+    }
+    case ProviderRead::Authoritative: {
+        auto &list = ListOf<uint8_t>(out);
+        list.Assign(count(ProviderClass::Matrix));
+        each(ProviderClass::Matrix, [&](size_t k, uint64_t id) {
+            list[k] =
+                id < values.size() && values[size_t(id)].authoritative ? 1 : 0;
+        });
+        return true;
+    }
+    case ProviderRead::Frames: {
+        auto &list = ListOf<rigExecRig::PointFrame>(out);
+        list.Assign(count(ProviderClass::Frame));
+        each(ProviderClass::Frame, [&](size_t k, uint64_t id) {
+            if (const auto *frame =
+                    ReadAs<RigExecProviderPlainFrame>(values, id))
+                PutFrame(*frame, &list[k]);
+        });
+        return true;
+    }
+    case ProviderRead::Scalars: {
+        auto &list = ListOf<double>(out);
+        list.Assign(count(ProviderClass::Scalar));
+        each(ProviderClass::Scalar,
+             [&](size_t k, uint64_t id) { ReadScalar(values, id, &list[k]); });
+        return true;
+    }
+    case ProviderRead::Vectors: {
+        auto &list = ListOf<rigExecStd::Vec3d>(out);
+        list.Assign(count(ProviderClass::Vector));
+        each(ProviderClass::Vector, [&](size_t k, uint64_t id) {
+            if (const auto *v = ReadAs<std::array<double, 3>>(values, id))
+                list[k] = rigExecStd::Vec3d((*v)[0], (*v)[1], (*v)[2]);
+        });
+        return true;
+    }
+    case ProviderRead::Orders: {
+        auto &list = ListOf<int32_t>(out);
+        list.Assign(count(ProviderClass::Order));
+        each(ProviderClass::Order, [&](size_t k, uint64_t id) {
+            if (const auto *token = ReadAs<std::string>(values, id))
+                list[k] = eval::spaces::ProviderPackOrder(*token);
+        });
+        return true;
+    }
+    case ProviderRead::Resets: {
+        auto &list = ListOf<uint8_t>(out);
+        list.Assign(count(ProviderClass::Reset));
+        each(ProviderClass::Reset, [&](size_t k, uint64_t id) {
+            list[k] = ResetsStack(values, id) ? 1 : 0;
+        });
+        return true;
+    }
+    default:
+        break;
+    }
+    if (error)
+        *error = "provider arithmetic has no input list " +
+                 std::to_string(int(read));
+    return false;
+}
+
+bool
+FillAffine(const std::vector<RigExecProviderPlainState> &values,
+           const RigExecProviderPlainOp &op, ProviderRead read, void *out,
+           std::string *error)
+{
+    const size_t n = op.inputs.size();
+    const auto listed = [&](size_t p, AffineClass c) {
+        return op.inputs[p] != UINT64_MAX && AffineClassOf(op, p) == c;
+    };
+    const auto fill = [&](AffineClass c, auto &list, auto &&put) {
+        size_t k = 0;
+        for (size_t p = 0; p < n; ++p)
+            k += listed(p, c) ? 1 : 0;
+        list.Assign(k);
+        k = 0;
+        for (size_t p = 0; p < n; ++p)
+            if (listed(p, c))
+                put(k++, op.inputs[p]);
+    };
+    const auto items = [&](AffineClass c, auto &list, const auto *sample) {
+        using Array = std::decay_t<decltype(*sample)>;
+        size_t total = 0;
+        for (size_t p = 0; p < n; ++p)
+            if (listed(p, c))
+                if (const auto *array = ReadAs<Array>(values, op.inputs[p]))
+                    total += array->size();
+        list.Assign(total);
+        size_t at = 0;
+        for (size_t p = 0; p < n; ++p)
+            if (listed(p, c))
+                if (const auto *array = ReadAs<Array>(values, op.inputs[p]))
+                    for (const auto &item : *array)
+                        std::memcpy(static_cast<void *>(&list[at++]), &item,
+                                    sizeof(item));
+    };
+    const auto size = [&](AffineClass c, uint64_t id) -> size_t {
+        if (c == AffineClass::IntItems) {
+            const auto *array = ReadAs<std::vector<int32_t>>(values, id);
+            return array ? array->size() : 0;
+        }
+        if (c == AffineClass::DoubleItems) {
+            const auto *array = ReadAs<std::vector<double>>(values, id);
+            return array ? array->size() : 0;
+        }
+        const auto *array =
+            ReadAs<std::vector<std::array<double, 16>>>(values, id);
+        return array ? array->size() : 0;
+    };
+    switch (read) {
+    case ProviderRead::AffinePresent: {
+        auto &list = ListOf<uint8_t>(out);
+        list.Assign(n);
+        for (size_t p = 0; p < n; ++p)
+            list[p] = op.inputs[p] == UINT64_MAX ||
+                              AffineReadable(values, op.inputs[p],
+                                             AffineClassOf(op, p))
+                          ? 1
+                          : 0;
+        return true;
+    }
+    case ProviderRead::AffineMatrices: {
+        auto &list = ListOf<rigExecStd::Mat4d>(out);
+        fill(AffineClass::Matrix, list, [&](size_t k, uint64_t id) {
+            PutMatrix(ReadAs<std::array<double, 16>>(values, id), &list[k]);
+        });
+        return true;
+    }
+    case ProviderRead::AffineDoubles: {
+        auto &list = ListOf<double>(out);
+        fill(AffineClass::Double, list,
+             [&](size_t k, uint64_t id) { ReadScalar(values, id, &list[k]); });
+        return true;
+    }
+    case ProviderRead::AffineBools: {
+        auto &list = ListOf<uint8_t>(out);
+        fill(AffineClass::Bool, list, [&](size_t k, uint64_t id) {
+            const bool *value = ReadAs<bool>(values, id);
+            list[k] = value && *value ? 1 : 0;
+        });
+        return true;
+    }
+    case ProviderRead::AffineInts: {
+        auto &list = ListOf<int32_t>(out);
+        fill(AffineClass::Int, list, [&](size_t k, uint64_t id) {
+            const int32_t *value = ReadAs<int32_t>(values, id);
+            list[k] = value ? *value : 0;
+        });
+        return true;
+    }
+    case ProviderRead::AffineVectors: {
+        auto &list = ListOf<rigExecStd::Vec3d>(out);
+        fill(AffineClass::Vector, list, [&](size_t k, uint64_t id) {
+            if (const auto *v = ReadAs<std::array<double, 3>>(values, id))
+                list[k] = rigExecStd::Vec3d((*v)[0], (*v)[1], (*v)[2]);
+        });
+        return true;
+    }
+    case ProviderRead::AffineIntVectors: {
+        auto &list = ListOf<rigExecStd::Vec3i>(out);
+        fill(AffineClass::IntVector, list, [&](size_t k, uint64_t id) {
+            if (const auto *v = ReadAs<std::array<int32_t, 3>>(values, id))
+                list[k] = rigExecStd::Vec3i((*v)[0], (*v)[1], (*v)[2]);
+        });
+        return true;
+    }
+    case ProviderRead::AffineFrames: {
+        auto &list = ListOf<rigExecRig::PointFrame>(out);
+        fill(AffineClass::Frame, list, [&](size_t k, uint64_t id) {
+            if (const auto *frame =
+                    ReadAs<RigExecProviderPlainFrame>(values, id))
+                PutFrame(*frame, &list[k]);
+        });
+        return true;
+    }
+    case ProviderRead::AffineIntItems:
+        items(AffineClass::IntItems, ListOf<int32_t>(out),
+              static_cast<const std::vector<int32_t> *>(nullptr));
+        return true;
+    case ProviderRead::AffineDoubleItems:
+        items(AffineClass::DoubleItems, ListOf<double>(out),
+              static_cast<const std::vector<double> *>(nullptr));
+        return true;
+    case ProviderRead::AffineMatrixItems:
+        items(
+            AffineClass::MatrixItems, ListOf<rigExecStd::Mat4d>(out),
+            static_cast<const std::vector<std::array<double, 16>> *>(nullptr));
+        return true;
+    case ProviderRead::AffineItemSpans: {
+        size_t spans = 0;
+        for (size_t p = 0; p < n; ++p)
+            spans +=
+                op.inputs[p] != UINT64_MAX && ItemsClass(AffineClassOf(op, p))
+                    ? 1
+                    : 0;
+        auto &list = ListOf<int32_t>(out);
+        list.Assign(2 * spans);
+        size_t k = 0, offsets[3] = {0, 0, 0};
+        for (size_t p = 0; p < n; ++p) {
+            const AffineClass c = AffineClassOf(op, p);
+            if (op.inputs[p] == UINT64_MAX || !ItemsClass(c))
+                continue;
+            size_t &offset = offsets[c == AffineClass::IntItems      ? 0
+                                     : c == AffineClass::DoubleItems ? 1
+                                                                     : 2];
+            const size_t count = size(c, op.inputs[p]);
+            list[2 * k] = int32_t(offset);
+            list[2 * k + 1] = int32_t(count);
+            offset += count;
+            ++k;
+        }
+        return true;
+    }
+    default:
+        break;
+    }
+    if (error)
+        *error =
+            "an affine frame has no input list " + std::to_string(int(read));
+    return false;
+}
+
+} // namespace
+
+bool
+RrFillProviderInputs(const RrProgram *program, const eval::OpLookup &lookup,
+                     const RigExecTypeDesc &type, void *out, std::string *error)
+{
+    const auto &ops = program->providerProgram.ops;
+    if (lookup.object >= ops.size() || !type.element) {
+        if (error)
+            *error = "no provider operation " + std::to_string(lookup.object) +
+                     " fills a list";
+        return false;
+    }
+    const RigExecProviderPlainOp &op = ops[lookup.object];
+    const ProviderRead read = ProviderRead(lookup.read);
+    return op.kind == RigExecProviderOpKind::AffineFrame
+               ? FillAffine(program->store.providerValues, op, read, out, error)
+               : FillArithmetic(program->store.providerValues, op, read, out,
+                                error);
+}
+
+bool
+RrStoreProviderValue(RrProgram *program, const eval::OpHostOutput &output,
+                     const void *value, std::string *error)
+{
+    using T = eval::OpOutputTarget;
+    const auto &ops = program->providerProgram.ops;
+    RrStore &store = program->store;
+    if (output.object >= ops.size() ||
+        output.object >= store.providerOpPending.size()) {
+        if (error)
+            *error = "no provider operation " + std::to_string(output.object);
+        return false;
+    }
+    auto &pending = store.providerOpPending[output.object];
+    const T target = T(output.target);
+    if (target == T::ProviderValueAuthority) {
+        pending.first = *static_cast<const uint8_t *>(value);
+        return true;
+    }
+    if (target == T::ProviderValueUnavailable) {
+        pending.second = *static_cast<const int32_t *>(value);
+        return true;
+    }
+    const RigExecProviderPlainOp &op = ops[output.object];
+    const auto [authority, unavailable] = pending;
+    pending = {0, -1};
+    auto &values = store.providerValues;
+    if (op.output >= values.size()) {
+        if (error)
+            *error = "provider output is outside its typed layout";
+        return false;
+    }
+    Store state(values);
+    if (unavailable >= 0) {
+        state.Invalidate(op.output, size_t(unavailable) < op.inputs.size()
+                                        ? op.inputs[size_t(unavailable)]
+                                        : UINT64_MAX);
+        return true;
+    }
+    if (target == T::ProviderValueFrame) {
+        RrPointFrame frame;
+        static_assert(sizeof(rigExecRig::PointFrame) == sizeof(RrPointFrame),
+                      "a rig frame is a runtime frame");
+        std::memcpy(static_cast<void *>(&frame), value, sizeof(RrPointFrame));
+        state.PublishFrame(op.output, frame);
+        return true;
+    }
+    state.PublishMatrix(op.output, *static_cast<const RrMat4d *>(value),
+                        authority != 0);
+    return true;
+}
+
 } // namespace rigExec

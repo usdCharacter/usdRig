@@ -346,6 +346,30 @@ TestProviderArithmetic()
                         &noOrders, &resets}));
     CHECK(SameMatrix(relative.Out<Mat4d>(0), pair[0]));
 
+    // An input absent this frame: a connection falls back to the authored
+    // space, and a missing source is named as the unavailable input.
+    std::vector<const RigExecPortHandle *> presentIns = ins, presentOuts = outs;
+    presentIns.push_back(&ProviderArithmeticPresent());
+    presentOuts.push_back(&ProviderArithmeticUnavailable());
+    payload.kind = K::SpaceExpression;
+    payload.slots = {0, 1, -1};
+    Harness fallback(ProviderArithmetic(), &payload, presentIns, presentOuts);
+    const uint8_t connectionAbsent[] = {1, 0, 1};
+    const RigExecArray<uint8_t> absentConnection(connectionAbsent, 3);
+    CHECK(fallback.Run({&matrices, &connected, &noFrames, &noScalars,
+                        &noVectors, &noOrders, &noFlags, &absentConnection}));
+    CHECK(SameMatrix(fallback.Out<Mat4d>(0), pair[0]));
+    CHECK(fallback.Out<uint8_t>(2) == 0);
+    CHECK(fallback.Out<int32_t>(3) == -1);
+    payload.kind = K::MatrixToFrame;
+    payload.slots = {1};
+    Harness missing(ProviderArithmetic(), &payload, presentIns, presentOuts);
+    const uint8_t sourceAbsent[] = {0};
+    const RigExecArray<uint8_t> absentSource(sourceAbsent, 1);
+    CHECK(missing.Run({&matrices, &noFlags, &noFrames, &noScalars, &noVectors,
+                       &noOrders, &noFlags, &absentSource}));
+    CHECK(missing.Out<int32_t>(3) == 0);
+
     // Compile errors: a kind that is a lookup, a missing local.
     payload.kind = K::Attribute;
     payload.slots = {0, 1};

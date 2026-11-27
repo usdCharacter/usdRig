@@ -495,7 +495,7 @@ TestARestSpaceConnectedToAComputedSpaceHasAProducer(
             contains(B.steps[rest].writes, RigExecBakedSlotDomain::Rest,
                      uint32_t(slot->second)))
             for (size_t sourceOp = 0; sourceOp < B.steps.size(); ++sourceOp)
-                if (B.steps[sourceOp].kind ==
+                if (RigExecBakedIdentityOf(B, B.steps[sourceOp]).kind ==
                     RigExecBakedStepKind::SpaceExpression)
                     for (const auto &write : B.steps[sourceOp].writes)
                         if (write.domain == RigExecBakedSlotDomain::SpaceValue)

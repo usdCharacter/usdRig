@@ -1096,7 +1096,10 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
         // All other declared typed inputs retain independent revision reasons.
     }
     if (step.kind == RigExecWireStepKind::SpaceExpression)
-        return RrProviderEffectiveInputMemo(program, step, key, covered);
+        return RrProviderEffectiveInputMemo(program, step.part, step.object,
+                                            key, covered);
+    if (const int64_t op = RrProviderOpOf(program, step); op >= 0)
+        return RrProviderEffectiveInputMemo(program, 0, op, key, covered);
     if (const int64_t index = RrRefreshOf(program, step); index >= 0) {
         const auto &refresh = program->poses->providerRefreshes[size_t(index)];
         for (const auto &carry : refresh.carries)

@@ -1,22 +1,11 @@
-// One space step of a compiled rig, shared by the baked program and .rigexec
-// playback: the SpaceExpression provider-op runner (part 0). Both front ends
-// bind their own inputs and publish through their own typed stores; what
-// lives here is the kind dispatch, the affine expression sequencing and the
-// missing-input mapping, so both make the same decision for the same facts.
-// Internal to the evaluator and playback, never an exported API.
+// The provider program's affine frame sequencing and input classes, shared
+// by the AffineFrame and ProviderArithmetic ops and the hosts that fill
+// their typed input lists. Header-only, free of OpenUSD; internal to the
+// evaluator, playback and the op library, never an exported API.
 //
-// A spaces host binds storage and math as host.h requires (nested Math,
-// Inputs, State with inputs(), state() and ranges()) and answers the access
-// below. Inputs are immutable borrowed views of the compiled op tables;
-// views must not outlive the program. State addresses the existing value
-// store and diagnostics sink by the compiled index the adapter already uses.
-// Space steps run serially; ranges() is unused and may be null.
-//
-// LocalXform and InterveningXform ops evaluate only on the baked side (they
-// compose captured UsdGeom xform orders); here they answer Rejected and the
-// runtime reports the output blocked, as it does today. The SpaceExpression
-// bridge parts (sampled, external, routed and frame inputs) stay in the
-// adapters as input binding; this header runs the expression over them.
+// RunSpaceAffineOp's host binds Math::AffineMath and answers state() with
+// the reads below; ReadSpaceAffineField maps one typed value into its
+// member and a missing one keeps the member's default.
 #ifndef RIGEXEC_EVAL_CORE_SPACES_H
 #define RIGEXEC_EVAL_CORE_SPACES_H
 
@@ -30,20 +19,18 @@
 #include "rigExecEvalCore/host.h"
 #include "rigExecEvalCore/step.h"
 #include "rigExecGraph/providerArithmetic.h"
+#include "rigExecGraph/providerInputs.h"
 #include "rigExecMath/affineFrameKernel.h"
 
 namespace rigExec {
 namespace eval {
 namespace spaces {
 
-// Why a space step did not run; the adapter maps each to its own message.
+// Why an affine expression did not run.
 enum class SpaceDetail : int32_t {
     None = 0,
-    NoOp = 1,
-    OutputRange = 2,
     AffineLayout = 3,
     AffineKind = 4,
-    NoRefresh = 5,
 };
 
 // One affine input's value into its member: a present, unblocked value of
@@ -120,8 +107,8 @@ SpaceAffineFrameOf(Host &host, uint64_t id)
 }
 
 // An affine frame expression: the op's inputs in its layout's order through
-// the shared kernel. A failed expression publishes an unblocked empty value
-// carrying the kernel's reason, as both adapters do today.
+// the shared kernel. A failed expression hands the kernel's reason to
+// PublishAffineFailure.
 template <class Host, class Op>
 StepResult
 RunSpaceAffineOp(Host &host, const Op &op)
@@ -172,48 +159,7 @@ RunSpaceAffineOp(Host &host, const Op &op)
                       static_cast<int32_t>(SpaceDetail::None)};
 }
 
-// SpaceExpression part 0: the portable provider op the step names. Unknown
-// kinds answer Rejected; the adapters map that to their existing fallback.
-template <class Host>
-StepResult
-RunSpaceOp(Host &host, const StepRef &step)
-{
-    const auto &inputs = host.inputs();
-    if (step.object < 0 || size_t(step.object) >= inputs.opCount())
-        return StepResult{Outcome::Invalid,
-                          static_cast<int32_t>(SpaceDetail::NoOp)};
-    const auto &op = inputs.op(size_t(step.object));
-    if (uint64_t(op.output) >= inputs.valueCount())
-        return StepResult{Outcome::Invalid,
-                          static_cast<int32_t>(SpaceDetail::OutputRange)};
-    if (op.kind == RigExecProviderOpKind::AffineFrame)
-        return RunSpaceAffineOp(host, op);
-    if (!RigExecRunProviderArithmetic<typename Host::Math>(op, host.state()))
-        return StepResult{Outcome::Rejected,
-                          static_cast<int32_t>(SpaceDetail::None)};
-    return StepResult{Outcome::Applied,
-                      static_cast<int32_t>(SpaceDetail::None)};
-}
-
 } // namespace spaces
-
-// The space kinds behind one entry: SpaceExpression part 0 runs the portable
-// provider op the step names (bridge parts stay adapter-local input
-// binding). Adapters route
-// the step here and map the outcome to their existing stores and messages.
-template <class Host>
-StepResult
-RunValueStep(Host &host, const StepRef &step)
-{
-    static_assert(IsBoundHost<Host>::value,
-                  "a spaces host binds Math, Inputs and State with inputs(), "
-                  "state() and ranges()");
-    if (step.kind == uint32_t(StepKind::SpaceExpression))
-        return spaces::RunSpaceOp(host, step);
-    return StepResult{Outcome::Invalid,
-                      static_cast<int32_t>(spaces::SpaceDetail::None)};
-}
-
 } // namespace eval
 } // namespace rigExec
 

@@ -1957,8 +1957,12 @@ table OpLookup {
   /// 42): input `read` of revision `object` (geometry.revision_index): 0
   /// inputs:enabled (Bool), 1 inputs:defaultWeight (Float), 2 (format 44)
   /// whether rigExec:weightBlend is radial (Bool).
-  /// 22: provider refresh `object`'s re-evaluated base (`read` 0) or
-  /// current (1) frame. 23: the raw parent space of slot `object`.
+  /// 22 (format 45): provider refresh `object`'s re-evaluated base
+  /// (`read` 0) or current (1) frame. 23 (format 45): the raw parent space
+  /// of slot `object`. 24 (format 45): typed input list `read`
+  /// (ProviderRead, rigExecEvalCore/spaces.h) of provider operation
+  /// `object` (provider_program.ops index), filled from the provider values
+  /// its inputs name.
   /// 30 (format 43): the frames of pose commit `object` at version list
   /// `part`: 0 entering, 1 carry, 2 base carry, 3 current descendants, 4
   /// closest, 5 descendant carry, 6 descendant base carry. 31 (format 43):
@@ -1979,8 +1983,11 @@ table OpHostOutput {
   /// packet of weight object `object`; 5 (format 40): the weights of weight
   /// field `object`; 20 and 21 (format 41): the final and the base matrix
   /// of slot `object`; 22 and 23 (format 41): the matrix and the valid byte
-  /// of frame record `object`; 24 to 27: provider refresh `object`'s base
+  /// of frame record `object`; 24 to 27 (format 45): provider refresh `object`'s base
   /// and final frames and its carried descendants' base and final frames;
+  /// 28 and 29 (format 45): provider operation `object`'s matrix or frame into its
+  /// provider value, published after 50, its authority, and 51, the input
+  /// that left it unavailable (-1 when available);
   /// 30 to 33 (format 43): the final candidate,
   /// final descendant, base candidate and base descendant versions pose
   /// commit `object` writes; 34 (format 43): which of its candidates are

@@ -82,11 +82,11 @@ std::string RigExecProviderRawKey(const SdfPath &attribute);
 std::string RigExecProviderAttributeKey(const SdfPath &attribute);
 std::string RigExecProviderRoutedKey(const SdfPath &consumer,
                                      const TfToken &phase);
-/// With composeFrames=false, native rest/posed frames are explicit leaves;
-/// each expression kernel can enter the native graph as one ordinary op.
+/// Native rest and posed frames and intervening spaces are external leaves;
+/// each expression kernel enters the native graph as one ordinary op.
 bool RigExecBuildProviderProgram(
-    const RigExecSceneDescriptors &scene, bool composeFrames,
-    RigExecProviderProgram *program, std::string *error = nullptr,
+    const RigExecSceneDescriptors &scene, RigExecProviderProgram *program,
+    std::string *error = nullptr,
     const std::set<SdfPath> *selectedProviders = nullptr);
 /// Clone one connected expression closure into a consumer's selected frame
 /// context. Explicit replacements are typed SSA IDs; computation name remaps
@@ -205,15 +205,16 @@ struct GfProviderStore {
         store.Publish(id, value);
     }
 };
+/// Runs Attribute op \p originalIndex: its authored value where that is
+/// authoritative or it has no connection, else its connection's. Every
+/// other kind runs as an op node.
 bool RigExecRunProviderOp(const RigExecProviderProgram &program,
                           uint32_t originalIndex, RigExecTypedValueStore *store,
                           std::string *error = nullptr);
 /// Whether op \p index of \p program can run at all: it exists, its output
-/// is inside the typed layout, its kind is one the kernels handle, and a
-/// LocalXform or InterveningXform owner was spelled at build. The per-op
-/// half of RigExecRunProviderOp's failures (the other half is the store
-/// binding); on false, \p error gets the message RigExecRunProviderOp
-/// fails with. A provider op that fails here is a pruning root.
+/// is inside the typed layout and its kind is one the kernels handle. On
+/// false, \p error gets the reason. A provider op that fails here is a
+/// pruning root.
 bool RigExecProviderOpStructurallyValid(const RigExecProviderProgram &program,
                                         uint32_t index, std::string *error);
 /// Sampling/overlays publish raw slots before entering the readiness loop.

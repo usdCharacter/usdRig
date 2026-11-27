@@ -2421,8 +2421,9 @@ RigExecBakedExpectedStageFramesAdmissionReads(
         const auto &step = B->steps[i];
         const bool preparation =
             OriginalPreparationStep(*B, step) || step.kind == K::AvarInputs ||
-            (ancestry[i] && (step.kind == K::SpaceExpression ||
-                             RigExecBakedWeightFieldOf(*B, step) >= 0));
+            (ancestry[i] &&
+             (RigExecBakedIdentityOf(*B, step).kind == K::SpaceExpression ||
+              RigExecBakedWeightFieldOf(*B, step) >= 0));
         required[i] = !preparation && step.kind != K::SnapshotFinals;
     }
     return required;

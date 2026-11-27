@@ -753,6 +753,18 @@ RigExecBakedProgram::_BuildStepGraph(_BuildAttempt &build)
     RigExecBakedBuildWeightSteps(&B);
     graphPhases.Next("Bake.the_step_graph.geometry_steps");
     RigExecBakedBuildGeometrySteps(&B);
+    // Every reader of a provider value outside the provider program is
+    // declared now; the provider steps none of them reaches go before their
+    // leaves are numbered and their steps built, and the provider ops that
+    // remain take their op node origins before the op program is built.
+    {
+        std::string invalid;
+        if (!RigExecBakedPruneProviderProgram(&B, &invalid)) {
+            ctx.Refuse("provider pruning failed: " + invalid, E._rigPath);
+            return nullptr;
+        }
+    }
+    RigExecBakedPlanProviderOps(&B);
     {
         std::string invalid;
         if (!RigExecBakedBuildOpSteps(&B, &invalid)) {
@@ -768,16 +780,6 @@ RigExecBakedProgram::_BuildStepGraph(_BuildAttempt &build)
     RigExecBakedBuildAvarSteps(&B);
     RigExecBakedDeclareInputDependencies(&B);
     RigExecBakedDeclareLayoutReads(&B);
-    // Every reader of a provider value outside the provider program is
-    // declared now; the provider steps none of them reaches go before their
-    // leaves are numbered and their steps built.
-    {
-        std::string invalid;
-        if (!RigExecBakedPruneProviderProgram(&B, &invalid)) {
-            ctx.Refuse("provider pruning failed: " + invalid, E._rigPath);
-            return nullptr;
-        }
-    }
     // The complete prefix changes every region index. Rebuild all shared
     // edges, levels, clusters and cones from the final declarations.
 
@@ -799,6 +801,7 @@ RigExecBakedProgram::_BuildStepGraph(_BuildAttempt &build)
             step.part == 3)
             RigExecBakedDeclareCrossDomainRead(
                 B, B.providerRoutedReads[size_t(step.object)], &step.reads);
+
     // Keep authored revision identity stable when an earlier optional
     // revision was withdrawn. Runtime array indices remain dense and local;
     // only the compiler descriptor key uses the authored position.

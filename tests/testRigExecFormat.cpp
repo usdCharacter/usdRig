@@ -1610,12 +1610,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 44 &&
-                      RigExecFormatOldestReadable == 44,
-                  "format 44 runs Range matrices as op nodes and is "
-                  "the only format Open reads");
-    // Every older format requires re-export: its matrices ran as their own
-    // steps.
+    static_assert(RigExecFormatVersion == 45 &&
+                      RigExecFormatOldestReadable == 45,
+                  "format 45 runs provider refreshes and provider operations "
+                  "as op nodes and is the only format Open reads");
+    // Every older format requires re-export: its provider refreshes and
+    // operations ran as their own steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1626,13 +1626,15 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 44 through " +
+            " (this reader reads 45 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 44 ? "re-export: Range matrices as op nodes" : "rebake");
+            (version < 45 ? "re-export: provider refreshes and provider "
+                            "operations as op nodes"
+                          : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 44 ? reexports : rebakes);
+        ++(version < 45 ? reexports : rebakes);
     }
-    CHECK(reexports == 44 && rebakes == 1);
+    CHECK(reexports == 45 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -7328,7 +7330,7 @@ TestRequiredStageFrameSpaceBindings()
     program.valueKeys = {"/Rig/Parent.rest:space"};
     program.defaults.resize(1);
     fb::RigExecWireProviderOp expression;
-    expression.kind = uint32_t(RigExecProviderOpKind::RestFrame);
+    expression.kind = uint32_t(RigExecProviderOpKind::Attribute);
     expression.owner = "/Rig/Parent.rest:space";
     expression.output = 0;
     program.ops.push_back(std::move(expression));

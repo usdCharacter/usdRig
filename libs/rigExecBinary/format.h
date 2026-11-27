@@ -661,7 +661,18 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// weight object's packet from the packet's node (OpGraph lookup source 10
 /// read 2 its weightBlend each frame where that is not pinned) and stores
 /// whether its revision is enabled through OpGraph.host_outputs target 6.
-inline constexpr uint32_t RigExecFormatVersion = 44;
+///
+/// Format 45 runs each connected provider refresh as a ProviderRefresh op
+/// node and each provider program operation other than Attribute as a
+/// ProviderArithmetic or AffineFrame op node (OpNode steps). A refresh reads
+/// its re-evaluated frames through OpGraph.lookups source 22, blocking
+/// parents through source 23 and prior commits through source 21 read 3,
+/// and stores its frames through OpGraph.host_outputs targets 24 to 27. A
+/// provider operation reads its typed inputs through source 24 and stores
+/// its value through targets 28, 29, 50 and 51. It retires the
+/// ProviderRefresh step and SpaceExpression steps of any operation but
+/// Attribute.
+inline constexpr uint32_t RigExecFormatVersion = 45;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -669,7 +680,7 @@ inline constexpr uint32_t RigExecFormatVersion = 44;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 44;
+inline constexpr uint32_t RigExecFormatOldestReadable = 45;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

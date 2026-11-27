@@ -844,6 +844,8 @@ RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
             *error = std::move(why);
         return false;
     };
+    if (lookup.source == uint8_t(eval::OpLookupSource::ProviderInputs))
+        return RrFillProviderInputs(program, lookup, type, out, error);
     const auto *scratch =
         static_cast<const RrPoseScratch *>(program->pose.get());
     if (lookup.source == uint8_t(eval::OpLookupSource::RestFrame)) {
@@ -925,6 +927,21 @@ RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
 }
 
 int64_t
+RrProviderOpOf(const RrProgram *program, const RigExecWireStep &step)
+{
+    if (step.kind != RigExecWireStepKind::OpNode || !program->file->opGraph)
+        return -1;
+    for (const auto &output : program->file->opGraph->hostOutputs)
+        if (output && output->node == uint64_t(step.object) &&
+            (output->target ==
+                 uint8_t(eval::OpOutputTarget::ProviderValueMatrix) ||
+             output->target ==
+                 uint8_t(eval::OpOutputTarget::ProviderValueFrame)))
+            return int64_t(output->object);
+    return -1;
+}
+
+int64_t
 RrRefreshOf(const RrProgram *program, const RigExecWireStep &step)
 {
     if (step.kind != RigExecWireStepKind::OpNode || !program->file->opGraph)
@@ -943,6 +960,10 @@ RrStoreSpace(RrProgram *program, const eval::OpHostOutput &output,
     using T = eval::OpOutputTarget;
     RrStore &store = program->store;
     const T target = T(output.target);
+    if (target == T::ProviderValueMatrix || target == T::ProviderValueFrame ||
+        target == T::ProviderValueAuthority ||
+        target == T::ProviderValueUnavailable)
+        return RrStoreProviderValue(program, output, value, error);
     if (target >= T::RefreshBase) {
         if (output.object >= program->poses->providerRefreshes.size()) {
             if (error)

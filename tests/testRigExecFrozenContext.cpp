@@ -2442,6 +2442,72 @@ TestFrozenSpaceMatrixOpsMatchLive(const std::string &examplesDir)
     }
 }
 
+// Provider arithmetic and affine expressions run as op nodes in the frozen
+// job: with a time-sampled default offset, the provider ops it reaches run
+// in the frozen region and publish live's pose bit for bit.
+void
+TestFrozenProviderOpsMatchLive(const std::string &examplesDir)
+{
+    UsdStageRefPtr stage = UsdStage::Open(
+        examplesDir + "/../tests/fixtures/solver_checkpoint.usda");
+    CHECK(stage);
+    if (!stage)
+        return;
+    const UsdAttribute offset =
+        stage
+            ->GetPrimAtPath(
+                SdfPath("/CheckpointAsset/Rig/Controls/FkHip/FkKnee"))
+            .CreateAttribute(TfToken("default:tx"), SdfValueTypeNames->Double);
+    CHECK(offset.Set(0.0, UsdTimeCode(1.0)) &&
+          offset.Set(2.0, UsdTimeCode(9.0)));
+    RigExecRigEvaluator evaluator(stage, SdfPath("/CheckpointAsset/Rig"));
+    CHECK(evaluator.Compile());
+    CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
+    std::set<size_t> opSteps;
+    for (size_t i = 0; i < B.steps.size(); ++i)
+        if (RigExecBakedProviderOpOf(B, B.steps[i]) >= 0) {
+            CHECK(B.steps[i].kind == RigExecBakedStepKind::OpNode);
+            CHECK(RigExecBakedIdentityOf(B, B.steps[i]).kind ==
+                  RigExecBakedStepKind::SpaceExpression);
+            opSteps.insert(i);
+        }
+    CHECK(!opSteps.empty());
+    std::shared_ptr<const RigExecFrozenProgram> frozen;
+    std::string error;
+    CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
+    if (!frozen)
+        return;
+    for (const double frame : {3.0, 6.0}) {
+        const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
+        RigExecFrameInputs inputs;
+        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame), {},
+                                       &inputs, &error));
+        RigExecFrozenEvalContext context;
+        context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+        context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+        context.varyingInputCount = inputs.values.size();
+        if (evaluator.GetPublishWeightFields())
+            context.flags |= kRigExecFrozenPublishWeightFields;
+        if (evaluator.GetSolverGuidesEnabled())
+            context.flags |= kRigExecFrozenSolverGuidesEnabled;
+        context.frozen = frozen.get();
+        auto workspace = RigExecCreateFrozenWorkspace(frozen);
+        context.workspace = workspace.get();
+        RigExecFrozenRunReport report;
+        const RigExecRigPose pose = RigExecEvaluateFrozen(
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
+        size_t ran = 0;
+        for (const auto &entry : report.region)
+            ran += opSteps.count(entry.step);
+        CHECK(ran > 0);
+        CHECK(live.valid && pose.valid);
+        CheckPosesBitIdentical("frozen provider ops", live, pose);
+    }
+}
+
 // Weight packets run as op nodes in the frozen job: a cold workspace runs
 // every packet node and publishes live's pose bit for bit, at animated
 // frames and under a drag of a combine's strength; a non-finite strength
@@ -9992,6 +10058,7 @@ main(int argc, char **argv)
         TestFrozenWeightPacketOpsMatchLive(argv[1]);
         TestFrozenSpaceMatrixOpsMatchLive(argv[1]);
         TestFrozenPoseCommitOpsMatchLive(argv[1]);
+        TestFrozenProviderOpsMatchLive(argv[1]);
         TestUnavailableTargetSamplesLocalInvalidRoles(argv[1]);
         TestProjectorSpacesMatchDynamic(argv[1]);
         TestProjectorMissPublishesOffset(argv[1]);

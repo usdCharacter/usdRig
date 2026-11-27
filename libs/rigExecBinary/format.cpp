@@ -596,8 +596,14 @@ public:
         _providerSlotOf.assign(nodes, -1);
         _commitNode.assign(nodes, -1);
         _refreshOf.assign(nodes, -1);
+        _providerOpOf.assign(nodes, -1);
         if (!nodes)
             return;
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes &&
+                (output->target == 28 || output->target == 29) &&
+                _providerOpOf[output->node] < 0)
+                _providerOpOf[output->node] = int64_t(output->object);
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node < nodes && output->target == 24 &&
                 _refreshOf[output->node] < 0)
@@ -711,6 +717,7 @@ private:
             return true;
         std::vector<uint8_t> stored, packets, fields, groupsStored,
             enabledStored;
+        std::set<std::pair<uint64_t, uint8_t>> providerStored;
         std::vector<uint8_t> spaceStored(
             4 * std::max<size_t>(_slots, _f.pose->frameRecords.size()), 0);
         for (const auto &output : _f.opGraph->hostOutputs) {
@@ -718,7 +725,8 @@ private:
                 return _Bad("op_graph.host_outputs: an entry is missing");
             const bool commit = output->target >= 30 && output->target <= 34;
             if ((output->target > 6 && output->target < 20) ||
-                (output->target > 27 && !commit))
+                (output->target > 34 && output->target != 50 &&
+                 output->target != 51))
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
             if (output->node >= _f.opGraph->nodes.size())
@@ -732,6 +740,27 @@ private:
                     return _Bad("op_graph.host_outputs: node " + _N(node) +
                                 " stores into commit " + _N(output->object) +
                                 ", which it does not write back");
+                continue;
+            }
+            if (output->target >= 28) {
+                if (!_f.providerProgram ||
+                    !_Has(_f.providerProgram->ops, output->object) ||
+                    _f.providerProgram->ops[output->object].kind ==
+                        uint32_t(RigExecProviderOpKind::Attribute) ||
+                    _providerOpOf[node] != int64_t(output->object) ||
+                    _propertyChainOf[node] != kNoProperty ||
+                    _placementSlot[node] >= 0 || _packetObject[node] >= 0 ||
+                    _fieldStored[node] >= 0 || _refreshOf[node] >= 0 ||
+                    _frameRecordOf[node] >= 0 || _commitNode[node] >= 0)
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the result of no provider operation "
+                                "it runs");
+                if (!providerStored
+                         .emplace(output->object, uint8_t(output->target))
+                         .second)
+                    return _Bad("op_graph.host_outputs: target " +
+                                _N(output->target) + " of provider operation " +
+                                _N(output->object) + " is stored twice");
                 continue;
             }
             if (output->target >= 24) {
@@ -942,6 +971,14 @@ private:
                     lookup->part != -1 || lookup->read > 1)
                     return _Bad("op_graph.lookups: a provider frame lookup "
                                 "reads no provider refresh");
+                continue;
+            }
+            if (lookup && lookup->source == 24) {
+                if (!_f.providerProgram ||
+                    !_Has(_f.providerProgram->ops, lookup->object) ||
+                    lookup->part != -1 || lookup->read > 19)
+                    return _Bad("op_graph.lookups: a provider inputs lookup "
+                                "reads no list of a provider operation");
                 continue;
             }
             if (lookup && lookup->source == 23) {
@@ -1204,10 +1241,11 @@ private:
     /// slot's rest frame, a frame record's node its record's rest frame,
     /// pose version and commit gates, a provider refresh node its own
     /// refresh's frames, prior constraint gates and blocking parents, a
-    /// revision lookup the revision its node stores, and a commit node its
-    /// own commit's versions and candidates. A List lookup's elements are
-    /// its node's lookups. A ChainVersion lookup on any other node is a
-    /// range chain member's group read, which Open checks.
+    /// revision lookup the revision its node stores, a commit node its own
+    /// commit's versions and candidates, and a provider operation's node its
+    /// own operation's inputs. A List lookup's elements are its node's
+    /// lookups. A ChainVersion lookup on any other node is a range chain
+    /// member's group read, which Open checks.
     bool _OpLookupOwners()
     {
         const fb::RigExecWireOpGraph &graph = *_f.opGraph;
@@ -1273,6 +1311,12 @@ private:
                 if (lookup.source == 22 || lookup.source == 23)
                     return bad(" reads a refresh input on a node that "
                                "refreshes no provider");
+                if (lookup.source == 24) {
+                    if (_providerOpOf[n] != int64_t(lookup.object))
+                        return bad(" reads the inputs of a provider operation "
+                                   "its node does not run");
+                    continue;
+                }
                 const int64_t object = int64_t(lookup.object);
                 const int64_t record = _frameRecordOf[n];
                 const fb::FrameRecord *frame =
@@ -2506,6 +2550,16 @@ private:
                    : -1;
     }
 
+    /// The provider op whose result the op step \p step stores, or -1 for
+    /// any other step.
+    int64_t _ProviderOpOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _providerOpOf.size()
+                   ? _providerOpOf[size_t(step.object)]
+                   : -1;
+    }
+
     int64_t _PacketObjectOf(const fb::RigExecWireStep &step) const
     {
         return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
@@ -2572,6 +2626,21 @@ private:
             !_f.opGraph->nodes[size_t(step.object)])
             return true;
         const uint64_t node = uint64_t(step.object);
+        if (const int64_t op = _ProviderOpOf(step); op >= 0) {
+            const auto &provider = _f.providerProgram->ops[size_t(op)];
+            if (step.writes.size() != 1 ||
+                step.writes[0].domain() != fb::SlotDomain::SpaceValue ||
+                step.writes[0].begin() != provider.output ||
+                step.writes[0].end() != provider.output + 1)
+                return _Bad(_StepName(i) + " writes other than SpaceValue[" +
+                            _N(provider.output) + "]");
+            for (const uint64_t input : provider.inputs)
+                if (input != UINT64_MAX &&
+                    !_Declares(i, fb::SlotDomain::SpaceValue, input))
+                    return _Bad(_StepName(i) + " looks up SpaceValue[" +
+                                _N(input) + "], which it does not read");
+            return true;
+        }
         const bool refresh = _RefreshOf(step) >= 0;
         std::set<std::pair<fb::SlotDomain, uint32_t>> stores;
         for (const auto &output : _f.opGraph->hostOutputs)
@@ -2584,13 +2653,20 @@ private:
                     output->object);
         if (stores.empty() && !refresh)
             return true;
-        std::set<std::pair<fb::SlotDomain, uint32_t>> writes;
-        for (const fb::SlotRange &range : step.writes)
-            for (uint32_t slot = range.begin(); slot < range.end(); ++slot)
-                writes.emplace(range.domain(), slot);
-        if (!refresh && writes != stores)
-            return _Bad(_StepName(i) + " writes other than the matrices it "
-                                       "stores");
+        if (!refresh) {
+            uint64_t written = 0;
+            for (const fb::SlotRange &range : step.writes)
+                written += uint64_t(range.end()) - range.begin();
+            std::set<std::pair<fb::SlotDomain, uint32_t>> writes;
+            if (written == stores.size())
+                for (const fb::SlotRange &range : step.writes)
+                    for (uint32_t slot = range.begin(); slot < range.end();
+                         ++slot)
+                        writes.emplace(range.domain(), slot);
+            if (writes != stores)
+                return _Bad(_StepName(i) + " writes other than the matrices "
+                                           "it stores");
+        }
         const auto declared = [&](const fb::RigExecWireOpLookup &lookup) {
             uint64_t object = lookup.object;
             if (lookup.source == 22) {
@@ -4218,6 +4294,17 @@ private:
             bodyFrames(_f.pose->providerFrameInputs.size());
         for (size_t i = 0; i < _f.steps.size(); ++i) {
             const auto &step = _f.steps[i];
+            if (const int64_t op = _ProviderOpOf(step); op >= 0) {
+                if (size_t(op) >= p.ops.size() || bodyOps[size_t(op)]++)
+                    return _Bad(_StepName(i) +
+                                ": missing or duplicate provider op body");
+                for (uint64_t input : p.ops[size_t(op)].inputs)
+                    if (input != UINT64_MAX &&
+                        !_BodyRead(i, fb::SlotDomain::SpaceValue, input))
+                        return _Bad(_StepName(i) +
+                                    ": missing SpaceValue operand read");
+                continue;
+            }
             if (step.kind != fb::StepKind::SpaceExpression)
                 continue;
             const auto contains = [&](const auto &, fb::SlotDomain domain,
@@ -4234,6 +4321,9 @@ private:
                     return _Bad(who +
                                 ": missing or duplicate provider op body");
                 const auto &op = p.ops[object];
+                if (op.kind != uint32_t(RigExecProviderOpKind::Attribute))
+                    return _Bad(who + ": provider operation " + _N(object) +
+                                " runs as an op node");
                 output = op.output;
                 for (uint64_t input : op.inputs)
                     if (input != UINT64_MAX &&
@@ -5291,8 +5381,9 @@ private:
         }
         for (size_t i = 0; i < _f.steps.size(); ++i) {
             const auto &step = _f.steps[i];
-            const bool helper =
-                _FieldOf(step) >= 0 || step.kind == K::SpaceExpression;
+            const bool helper = _FieldOf(step) >= 0 ||
+                                step.kind == K::SpaceExpression ||
+                                _ProviderOpOf(step) >= 0;
             const bool required = step.kind != K::SnapshotFinals &&
                                   !prep(step) && step.kind != K::AvarInputs &&
                                   !(helper && ancestors.count(i));
@@ -9870,6 +9961,9 @@ private:
     }
     /// Per op node: the provider refresh it runs, or -1.
     std::vector<int64_t> _refreshOf;
+    /// Per op node: the provider op whose result it stores (host output
+    /// 28 or 29), or -1.
+    std::vector<int64_t> _providerOpOf;
     std::vector<uint8_t> _placementBase;
     std::string _error;
     size_t _slots = 0;
@@ -10082,13 +10176,14 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 44,
+    static_assert(RigExecFormatOldestReadable == 45,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: Range matrices as op nodes"
+                ? "re-export: provider refreshes and provider operations "
+                  "as op nodes"
                 : "rebake");
 }
 
@@ -10439,6 +10534,15 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
                 _Has(meta->paths, output->object)) {
                 *out = text(meta->paths[output->object]) +
                        (output->target == 20 ? " final" : " base");
+                return true;
+            }
+            if ((output->target == 28 || output->target == 29) &&
+                file.providerProgram &&
+                _Has(file.providerProgram->ops, output->object) &&
+                _Has(file.providerProgram->valueKeys,
+                     file.providerProgram->ops[output->object].output)) {
+                *out = file.providerProgram->valueKeys[size_t(
+                    file.providerProgram->ops[output->object].output)];
                 return true;
             }
             if (output->target == 24 && pose &&

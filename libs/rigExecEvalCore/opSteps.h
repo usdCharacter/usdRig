@@ -75,6 +75,10 @@ enum class OpLookupSource : uint8_t {
     /// Mat4d: the raw parent space of slot `object`, the identity where
     /// its leaf is blocked.
     ProviderParentRaw = 23,
+    /// A typed input list of provider operation `object`, filled from the
+    /// provider values its inputs name; `read` is an
+    /// eval::spaces::ProviderRead.
+    ProviderInputs = 24,
     /// PointFrameList: the pose frames at the versions list `part`
     /// (OpCommitList) of commit `object` names.
     CommitVersions = 30,
@@ -114,7 +118,7 @@ constexpr bool
 OpSpaceLookupSource(uint8_t source)
 {
     return source >= uint8_t(OpLookupSource::RestFrame) &&
-           source <= uint8_t(OpLookupSource::ProviderParentRaw);
+           source <= uint8_t(OpLookupSource::ProviderInputs);
 }
 
 /// Whether a lookup of \p source answers a Mat4d that may be absent or,
@@ -221,6 +225,12 @@ enum class OpOutputTarget : uint8_t {
     RefreshFinal = 25,
     RefreshCarryBase = 26,
     RefreshCarryFinal = 27,
+    /// Provider operation `object`'s result into its provider value: a
+    /// matrix (Mat4d) or a frame (PointFrame), published after its
+    /// authority (Bool) and the input that left it unavailable (Int, -1
+    /// when available) were stored.
+    ProviderValueMatrix = 28,
+    ProviderValueFrame = 29,
     /// PointFrameList element i into the version commit `object` writes
     /// for its candidate or descendant i: final, then base.
     CommitSlots = 30,
@@ -229,6 +239,10 @@ enum class OpOutputTarget : uint8_t {
     CommitBaseDescendants = 33,
     /// BoolArray: which candidates of commit `object` are present.
     CommitPresent = 34,
+    /// Provider operation `object`'s authority and unavailable input,
+    /// stored before its ProviderValueMatrix or ProviderValueFrame.
+    ProviderValueAuthority = 50,
+    ProviderValueUnavailable = 51,
 };
 
 /// Whether an output of \p target is one the host stores through
@@ -236,8 +250,10 @@ enum class OpOutputTarget : uint8_t {
 constexpr bool
 OpSpaceOutputTarget(uint8_t target)
 {
-    return target >= uint8_t(OpOutputTarget::ProviderFinalMatrix) &&
-           target <= uint8_t(OpOutputTarget::RefreshCarryFinal);
+    return (target >= uint8_t(OpOutputTarget::ProviderFinalMatrix) &&
+            target <= uint8_t(OpOutputTarget::ProviderValueFrame)) ||
+           target == uint8_t(OpOutputTarget::ProviderValueAuthority) ||
+           target == uint8_t(OpOutputTarget::ProviderValueUnavailable);
 }
 
 /// Whether OpLookUp resolves lookups of \p source.
@@ -966,6 +982,7 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
     case OpLookupSource::CommitRecordGate:
     case OpLookupSource::ProviderFrame:
     case OpLookupSource::ProviderParentRaw:
+    case OpLookupSource::ProviderInputs:
         return host.LookUpSpace(index, lookup, type, value, error);
     }
     return OpLayoutFail(error, "no host resolves lookup source " +
@@ -1009,6 +1026,10 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
     case OpOutputTarget::RefreshFinal:
     case OpOutputTarget::RefreshCarryBase:
     case OpOutputTarget::RefreshCarryFinal:
+    case OpOutputTarget::ProviderValueMatrix:
+    case OpOutputTarget::ProviderValueFrame:
+    case OpOutputTarget::ProviderValueAuthority:
+    case OpOutputTarget::ProviderValueUnavailable:
         return host.StoreSpace(output, value, error);
     }
     return OpLayoutFail(error, "no host stores output target " +

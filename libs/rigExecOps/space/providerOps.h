@@ -5,6 +5,7 @@
 /// (rigExecGraph/providerArithmetic.h) and the affine frame expressions
 /// (rigExecMath/affineFrameKernel.h, sequenced by rigExecEvalCore/spaces.h).
 
+#include "rigExecGraph/providerInputs.h"
 #include "rigExecGraph/providerRecords.h"
 #include "rigExecOps/library.h"
 
@@ -15,16 +16,7 @@
 
 namespace rigExecOps {
 
-/// Which typed input list a provider operation's input reads.
-enum class ProviderInputClass : uint8_t {
-    None,
-    Matrix,
-    Frame,
-    Scalar,
-    Vector,
-    Order,
-    Reset,
-};
+using rigExec::eval::spaces::ProviderInputClass;
 
 /// The class of input \p position of an arithmetic operation of \p kind;
 /// None where the kind reads no such input.
@@ -56,9 +48,13 @@ const rigExec::RigExecOpHandle &ProviderArithmetic();
 // with Authoritative (BoolArray, empty or per matrix: an authored value that
 // overrides its connection), Frames (PointFrameList), Scalars (DoubleArray),
 // Vectors (Vec3dArray), Orders (IntArray, ProviderPackOrder) and Resets
-// (BoolArray, per ancestor: its xform order resets the stack). Outputs:
+// (BoolArray, per ancestor: its xform order resets the stack), and Present
+// (BoolArray, empty or one per operation input: whether its value is
+// readable this frame; an unreadable input reads as absent). Outputs:
 // Matrix (Mat4d) for a kind that yields a matrix, Frame (PointFrame) for
-// one that yields a frame, and Authoritative (Bool) of the result.
+// one that yields a frame, Authoritative (Bool) of the result and
+// Unavailable (Int): the input whose missing value leaves the result
+// unavailable, -1 when it is available.
 const rigExec::RigExecPortHandle &ProviderArithmeticMatrices();
 const rigExec::RigExecPortHandle &ProviderArithmeticAuthoritative();
 const rigExec::RigExecPortHandle &ProviderArithmeticFrames();
@@ -69,21 +65,10 @@ const rigExec::RigExecPortHandle &ProviderArithmeticResets();
 const rigExec::RigExecPortHandle &ProviderArithmeticMatrix();
 const rigExec::RigExecPortHandle &ProviderArithmeticFrame();
 const rigExec::RigExecPortHandle &ProviderArithmeticAuthoritativeOut();
+const rigExec::RigExecPortHandle &ProviderArithmeticPresent();
+const rigExec::RigExecPortHandle &ProviderArithmeticUnavailable();
 
-/// Which typed input list an affine expression's input reads.
-enum class AffineInputClass : uint8_t {
-    Matrix,
-    Double,
-    Bool,
-    Int,
-    Vector,
-    IntVector,
-    Text,
-    IntItems,
-    DoubleItems,
-    MatrixItems,
-    Frame,
-};
+using rigExec::eval::spaces::AffineInputClass;
 
 /// The class of input \p position of affine expression \p kind: its
 /// attributes' classes, then frames (relations, targets, target objects).
@@ -115,8 +100,9 @@ const rigExec::RigExecOpHandle &AffineFrame();
 // (Vec3dArray), IntVectors (Vec3iArray), the array attributes' items
 // IntItems (IntArray), DoubleItems (DoubleArray) and MatrixItems
 // (Mat4dArray) with ItemSpans (IntArray, a begin and a count per array
-// slot), and Frames (PointFrameList). Out (Mat4d). An expression the
-// kernel cannot evaluate is an error of the evaluation.
+// slot), Frames (PointFrameList) and Present (BoolArray, empty or one per
+// expression input: an unreadable input keeps its default). Out (Mat4d).
+// An expression the kernel cannot evaluate is an error of the evaluation.
 const rigExec::RigExecPortHandle &AffineFrameMatrices();
 const rigExec::RigExecPortHandle &AffineFrameDoubles();
 const rigExec::RigExecPortHandle &AffineFrameBools();
@@ -129,6 +115,7 @@ const rigExec::RigExecPortHandle &AffineFrameMatrixItems();
 const rigExec::RigExecPortHandle &AffineFrameItemSpans();
 const rigExec::RigExecPortHandle &AffineFrameFrames();
 const rigExec::RigExecPortHandle &AffineFrameOut();
+const rigExec::RigExecPortHandle &AffineFramePresent();
 
 void RegisterProviderOps(rigExec::RigExecOpRegistrar &registrar);
 

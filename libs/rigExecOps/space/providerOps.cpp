@@ -1,6 +1,7 @@
 #include "rigExecOps/space/providerOps.h"
 
 #include "rigExecOps/fieldIo.h"
+#include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecEvalCore/spaces.h"
 #include "rigExecGraph/providerArithmetic.h"
@@ -30,6 +31,8 @@ RIGEXEC_DEFINE_PORT_HANDLE(ProviderArithmeticResets)
 RIGEXEC_DEFINE_PORT_HANDLE(ProviderArithmeticMatrix)
 RIGEXEC_DEFINE_PORT_HANDLE(ProviderArithmeticFrame)
 RIGEXEC_DEFINE_PORT_HANDLE(ProviderArithmeticAuthoritativeOut)
+RIGEXEC_DEFINE_PORT_HANDLE(ProviderArithmeticPresent)
+RIGEXEC_DEFINE_PORT_HANDLE(ProviderArithmeticUnavailable)
 
 RIGEXEC_DEFINE_OP_HANDLE(AffineFrame)
 RIGEXEC_DEFINE_PORT_HANDLE(AffineFrameMatrices)
@@ -44,113 +47,27 @@ RIGEXEC_DEFINE_PORT_HANDLE(AffineFrameMatrixItems)
 RIGEXEC_DEFINE_PORT_HANDLE(AffineFrameItemSpans)
 RIGEXEC_DEFINE_PORT_HANDLE(AffineFrameFrames)
 RIGEXEC_DEFINE_PORT_HANDLE(AffineFrameOut)
+RIGEXEC_DEFINE_PORT_HANDLE(AffineFramePresent)
 
 using rigExec::RigExecProviderOpKind;
-
-namespace {
-
-ProviderInputClass
-AvarClass(size_t offset)
-{
-    using C = ProviderInputClass;
-    return offset <= 10   ? C::Scalar
-           : offset == 11 ? C::Order
-           : offset == 12 ? C::Vector
-                          : C::None;
-}
-
-} // namespace
 
 ProviderInputClass
 ProviderArithmeticInputClass(RigExecProviderOpKind kind, size_t p)
 {
-    using C = ProviderInputClass;
-    using K = RigExecProviderOpKind;
-    switch (kind) {
-    case K::SpaceExpression:
-        return p < 3 ? C::Matrix : C::None;
-    case K::RestFrame:
-        return p == 0 || p == 8   ? C::Matrix
-               : p >= 1 && p <= 6 ? C::Scalar
-               : p == 7           ? C::Frame
-                                  : C::None;
-    case K::DefaultSpace:
-        return p <= 1   ? C::Frame
-               : p == 2 ? C::Matrix
-               : p <= 8 ? C::Scalar
-                        : C::None;
-    case K::FrameToSpace:
-        return p == 0 ? C::Frame : C::None;
-    case K::MatrixToFrame:
-        return p == 0 ? C::Matrix : C::None;
-    case K::PosedFrame:
-        return p <= 3 ? C::Matrix : AvarClass(p - 4);
-    case K::AvarMatrix:
-        return AvarClass(p);
-    case K::RelativeXform:
-        return p % 2 == 0 ? C::Matrix : C::Reset;
-    case K::JointMatrix:
-        return p <= 1 ? C::Frame : C::None;
-    default:
-        return C::None;
-    }
+    return rigExec::eval::spaces::ProviderArithmeticInputClass(kind, p);
 }
 
 int32_t
 ProviderPackOrder(const std::string &order)
 {
-    if (order.size() != 3)
-        return 0;
-    return int32_t(uint32_t(uint8_t(order[0])) |
-                   uint32_t(uint8_t(order[1])) << 8 |
-                   uint32_t(uint8_t(order[2])) << 16);
+    return rigExec::eval::spaces::ProviderPackOrder(order);
 }
-
-namespace {
-
-AffineInputClass
-FieldClass(rigExec::RigExecAffineField field)
-{
-    using C = AffineInputClass;
-    using rigExecStd::Mat4d;
-    rigExec::RrAffineFrameInputs scratch;
-    C out = C::Frame;
-    rigExec::RigExecVisitAffineField(scratch, field, [&](auto &value) {
-        using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_same_v<T, Mat4d>)
-            out = C::Matrix;
-        else if constexpr (std::is_same_v<T, rigExecStd::Vec3d>)
-            out = C::Vector;
-        else if constexpr (std::is_same_v<T, rigExecStd::Vec3i>)
-            out = C::IntVector;
-        else if constexpr (std::is_same_v<T, double>)
-            out = C::Double;
-        else if constexpr (std::is_same_v<T, bool>)
-            out = C::Bool;
-        else if constexpr (std::is_same_v<T, int>)
-            out = C::Int;
-        else if constexpr (std::is_same_v<T, std::string>)
-            out = C::Text;
-        else if constexpr (std::is_same_v<T, std::vector<int>>)
-            out = C::IntItems;
-        else if constexpr (std::is_same_v<T, std::vector<double>>)
-            out = C::DoubleItems;
-        else if constexpr (std::is_same_v<T, std::vector<Mat4d>>)
-            out = C::MatrixItems;
-    });
-    return out;
-}
-
-} // namespace
 
 AffineInputClass
 AffineFrameInputClass(uint32_t kind, size_t position)
 {
-    if (kind < rigExec::RigExecAffineFrameTypeCount &&
-        position < rigExec::RigExecAffineFrameTypes[kind].attributeCount)
-        return FieldClass(
-            rigExec::RigExecAffineFrameTypes[kind].attributes[position].field);
-    return AffineInputClass::Frame;
+    return rigExec::eval::spaces::AffineFrameInputClass<rigExec::RrAffineMath>(
+        kind, position);
 }
 
 namespace {
@@ -260,17 +177,26 @@ struct ArithmeticStore {
     const RigExecArray<Vec3d> *vectors = nullptr;
     const RigExecArray<int32_t> *orders = nullptr;
     const RigExecArray<uint8_t> *resets = nullptr;
+    const RigExecArray<uint8_t> *present = nullptr;
     Mat4d *matrix = nullptr;
     PointFrame *frame = nullptr;
     uint8_t *authority = nullptr;
+    int32_t *unavailable = nullptr;
     char order[3] = {0, 0, 0};
     bool failed = false;
 
     int32_t Slot(uint64_t id, ProviderInputClass c) const
     {
-        return id < slots.Size() && ProviderArithmeticInputClass(kind, id) == c
+        return id < slots.Size() &&
+                       ProviderArithmeticInputClass(kind, id) == c &&
+                       Readable(id)
                    ? slots.data[id]
                    : -1;
+    }
+    bool Readable(uint64_t id) const
+    {
+        return !present || present->Empty() ||
+               (id < present->Size() && (*present)[size_t(id)] != 0);
     }
     const Mat4d *ReadMatrix(uint64_t id) const
     {
@@ -322,9 +248,12 @@ struct ArithmeticStore {
     {
         failed = true;
     }
-    void Invalidate(uint64_t, uint64_t)
+    void Invalidate(uint64_t, uint64_t source)
     {
-        failed = true;
+        if (source >= slots.Size())
+            failed = true;
+        else
+            *unavailable = int32_t(source);
     }
     void PublishMatrix(uint64_t, const Mat4d &value, bool isAuthoritative)
     {
@@ -389,6 +318,11 @@ CheckProviderArithmetic(const rigExec::RigExecOpCheck &check,
                         "input " + std::to_string(p) +
                             " names an element its list does not hold");
     }
+    const size_t present = CheckElements(check, ProviderArithmeticPresent());
+    if (present != 0 && present != rigExec::kRigExecPortUnfed &&
+        !SameCount(present, slots.Size()))
+        return Fail(error, "ProviderArithmetic",
+                    "needs no presence flags or one per input");
     const size_t flags =
         CheckElements(check, ProviderArithmeticAuthoritative());
     if (flags != 0 && flags != rigExec::kRigExecPortUnfed &&
@@ -416,12 +350,15 @@ ProviderArithmeticOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     store.vectors = In<RigExecArray<Vec3d>>(io, ProviderArithmeticVectors());
     store.orders = In<RigExecArray<int32_t>>(io, ProviderArithmeticOrders());
     store.resets = In<RigExecArray<uint8_t>>(io, ProviderArithmeticResets());
+    store.present = In<RigExecArray<uint8_t>>(io, ProviderArithmeticPresent());
     store.matrix = &Out<Mat4d>(io, ProviderArithmeticMatrix());
     store.frame = &Out<PointFrame>(io, ProviderArithmeticFrame());
     store.authority = &Out<uint8_t>(io, ProviderArithmeticAuthoritativeOut());
+    store.unavailable = &Out<int32_t>(io, ProviderArithmeticUnavailable());
     store.matrix->SetIdentity();
     *store.frame = PointFrame{};
     *store.authority = 0;
+    *store.unavailable = -1;
     const ArithmeticOp op{store.kind, 0, InputIds{store.slots},
                           FlagAt(batch, kScaleAvars, k)};
     if (!rigExec::RigExecRunProviderArithmetic<ArithmeticMath>(op, store) ||
@@ -470,12 +407,16 @@ struct AffineState {
     const RigExecArray<Mat4d> *matrixItems = nullptr;
     const RigExecArray<int32_t> *spans = nullptr;
     const RigExecArray<PointFrame> *frames = nullptr;
+    const RigExecArray<uint8_t> *present = nullptr;
     Mat4d *out = nullptr;
     std::string failure;
 
     int32_t Slot(uint64_t id) const
     {
-        return id < slots.Size() ? slots.data[id] : -1;
+        const bool readable =
+            !present || present->Empty() ||
+            (id < present->Size() && (*present)[size_t(id)] != 0);
+        return id < slots.Size() && readable ? slots.data[id] : -1;
     }
     const Mat4d *ReadMatrix(uint64_t id) const
     {
@@ -636,6 +577,11 @@ CheckAffineFrame(const rigExec::RigExecOpCheck &check, std::string *error)
     if (total != chars.Size())
         return Fail(error, "AffineFrame",
                     "its texts do not match their characters");
+    const size_t present = CheckElements(check, AffineFramePresent());
+    if (present != 0 && present != rigExec::kRigExecPortUnfed &&
+        !SameCount(present, slots.Size()))
+        return Fail(error, "AffineFrame",
+                    "needs no presence flags or one per input");
     for (size_t p = 0; p < slots.Size(); ++p) {
         const int32_t slot = slots.data[p];
         if (slot < 0)
@@ -679,6 +625,7 @@ AffineFrameOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     state.matrixItems = In<RigExecArray<Mat4d>>(io, AffineFrameMatrixItems());
     state.spans = In<RigExecArray<int32_t>>(io, AffineFrameItemSpans());
     state.frames = In<RigExecArray<PointFrame>>(io, AffineFrameFrames());
+    state.present = In<RigExecArray<uint8_t>>(io, AffineFramePresent());
     state.out = &Out<Mat4d>(io, AffineFrameOut());
     state.out->SetIdentity();
     const AffineOp op{ValueAt<uint32_t>(batch, kAffineKind, k),
@@ -731,6 +678,10 @@ const rigExec::RigExecPortDesc kProviderArithmeticPorts[] = {
      kRigExecPortOutput, "frame"},
     {&ProviderArithmeticAuthoritativeOut(), &rigExecStd::BoolType(),
      kRigExecPortOutput, "authoritativeOut"},
+    {&ProviderArithmeticPresent(), &rigExecStd::BoolArray(), kOptional,
+     "present"},
+    {&ProviderArithmeticUnavailable(), &rigExecStd::IntType(),
+     kRigExecPortOutput, "unavailable"},
 };
 
 void
@@ -753,6 +704,7 @@ const rigExec::RigExecOpDesc kProviderArithmeticDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "ProviderArithmetic";
+    d.schema = &internalOps::kProviderArithmetic;
     d.ports = kProviderArithmeticPorts;
     d.portCount = std::size(kProviderArithmeticPorts);
     d.runBatch = &RunProviderArithmetic;
@@ -781,6 +733,7 @@ const rigExec::RigExecPortDesc kAffineFramePorts[] = {
     {&AffineFrameItemSpans(), &rigExecStd::IntArray(), kOptional, "itemSpans"},
     {&AffineFrameFrames(), &rigExecRig::PointFrameList(), kOptional, "frames"},
     {&AffineFrameOut(), &rigExecStd::Mat4dType(), kRigExecPortOutput, "out"},
+    {&AffineFramePresent(), &rigExecStd::BoolArray(), kOptional, "present"},
 };
 
 void
@@ -816,6 +769,7 @@ const rigExec::RigExecOpDesc kAffineFrameDesc = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "AffineFrame";
+    d.schema = &internalOps::kAffineFrame;
     d.ports = kAffineFramePorts;
     d.portCount = std::size(kAffineFramePorts);
     d.runBatch = &RunAffineFrame;

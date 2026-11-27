@@ -2690,11 +2690,6 @@ ProbeSpaceExpression(const B &b, const RigExecBakedStep &step)
         Unprobed("Spaces", kind, "a connection lookup, not an op");
         return;
     }
-    if (op.kind == RigExecProviderOpKind::LocalXform ||
-        op.kind == RigExecProviderOpKind::InterveningXform) {
-        Unprobed("Spaces", kind, "no op");
-        return;
-    }
     const auto &published = b.providerValues.values[size_t(op.output)];
     if (op.kind != RigExecProviderOpKind::AffineFrame &&
         (!published.initialized || published.blocked ||
@@ -2725,8 +2720,12 @@ ProbeSpaces(const B &b)
             RigExecBakedStep probe = step;
             probe.object = id.object;
             ProbeProviderRefresh(b, probe);
-        } else if (step.kind == RigExecBakedStepKind::SpaceExpression)
-            ProbeSpaceExpression(b, step);
+        } else if (id.kind == RigExecBakedStepKind::SpaceExpression) {
+            RigExecBakedStep probe = step;
+            probe.object = id.object;
+            probe.part = id.part;
+            ProbeSpaceExpression(b, probe);
+        }
     }
 }
 

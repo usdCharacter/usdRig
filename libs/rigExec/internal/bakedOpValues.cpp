@@ -1874,18 +1874,19 @@ InputKey(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
             }
         return exact;
     }
-    if (effective && step.kind == RigExecBakedStepKind::SpaceExpression &&
-        step.part == 4)
+    const RigExecBakedStepIdentity space = RigExecBakedIdentityOf(B, step);
+    if (effective && space.kind == RigExecBakedStepKind::SpaceExpression &&
+        space.part == 4)
         return true; // Exact typed frame dependencies are appended by the adapter.
-    if (effective && step.kind == RigExecBakedStepKind::SpaceExpression) {
-        if (step.object < 0)
+    if (effective && space.kind == RigExecBakedStepKind::SpaceExpression) {
+        if (space.object < 0)
             invalid();
-        else if (step.part == 0) {
-            if (size_t(step.object) >= B.GetProviderProgram().ops.size())
+        else if (space.part == 0) {
+            if (size_t(space.object) >= B.GetProviderProgram().ops.size())
                 invalid();
             else {
                 const auto &op =
-                    B.GetProviderProgram().ops[size_t(step.object)];
+                    B.GetProviderProgram().ops[size_t(space.object)];
                 Put(out, op.kind);
                 auto input = [&](size_t i) {
                     return i < op.inputs.size() ? op.inputs[i]
@@ -2033,8 +2034,8 @@ InputKey(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
                         state(xform.raw);
                 }
             }
-        } else if (step.part == 1) {
-            const size_t id = size_t(step.object);
+        } else if (space.part == 1) {
+            const size_t id = size_t(space.object);
             if (id >= B.GetProviderProgram().externalInputs.size() ||
                 id >= B.providerExternalSlots.size())
                 invalid();
@@ -2078,8 +2079,8 @@ InputKey(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
                 } else
                     invalid();
             }
-        } else if (step.part == 2) {
-            const size_t id = size_t(step.object);
+        } else if (space.part == 2) {
+            const size_t id = size_t(space.object);
             if (id >= B.GetProviderProgram().sampled.size() ||
                 id >= B.providerLeaves.values.size() ||
                 id >= B.providerLeafBlocked.size())

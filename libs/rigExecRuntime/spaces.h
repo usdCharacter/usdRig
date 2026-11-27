@@ -11,7 +11,9 @@ RrReadCrossDomainPoints(const RrProgram *,
 bool RrReadCrossDomainPoint(const RrProgram *,
                             const fb::RigExecWireCrossDomainRead &, RrVec3f *);
 bool RrOpenProviderProgram(RrProgram *, std::string *);
-bool RrProviderEffectiveInputMemo(const RrProgram *, const RigExecWireStep &,
+/// The effective-input key of SpaceExpression part \p part about \p object,
+/// or of the op node running provider op \p object (part 0).
+bool RrProviderEffectiveInputMemo(const RrProgram *, int part, int64_t object,
                                   std::string *, std::vector<uint32_t> *);
 RrWireValue RrReadProviderRefreshBlocker(const RrProgram *, int);
 bool RrRunSpaceExpression(RrProgram *, const RigExecWireStep &, std::string *);

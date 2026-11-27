@@ -813,6 +813,7 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
                                         error) ||
         !RigExecBakedAddWeightFieldOps(B, &builder, &layout, true, &fields,
                                        error) ||
+        !RigExecBakedAddProviderOps(B, &builder, &layout, error) ||
         !AddMatrixOps(B, &builder, &layout, packets, fields, &nodeRevision,
                       error))
         return false;

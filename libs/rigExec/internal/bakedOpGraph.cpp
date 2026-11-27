@@ -86,6 +86,7 @@ RigExecBakedEffectiveMemo(const RigExecBakedProgramImpl &B, uint32_t c,
             });
         reads = &remappedReads;
     }
+    const RigExecBakedStepIdentity identity = RigExecBakedIdentityOf(B, step);
     for (auto id : *reads) {
         const auto &value = B.opAdapter.values[size_t(id)];
         if (exact && RigExecBakedProviderRefreshOf(B, step) >= 0 &&
@@ -100,10 +101,10 @@ RigExecBakedEffectiveMemo(const RigExecBakedProgramImpl &B, uint32_t c,
             std::binary_search(coveredTyped.begin(), coveredTyped.end(),
                                std::make_pair(value.domain, value.slot)))
             continue;
-        if (exact && step.kind == RigExecBakedStepKind::SpaceExpression &&
-            ((step.part == 0 &&
+        if (exact && identity.kind == RigExecBakedStepKind::SpaceExpression &&
+            ((identity.part == 0 &&
               value.domain == uint32_t(RigExecBakedSlotDomain::SpaceValue)) ||
-             (step.part == 2 &&
+             (identity.part == 2 &&
               value.domain == uint32_t(RigExecBakedSlotDomain::SpaceLeaf))))
             continue;
         if (!incoming &&

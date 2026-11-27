@@ -37,6 +37,10 @@ inline constexpr rigExec::RigExecSchemaInfo kProviderMatrix =
     Internal("A provider's rest-to-final or rest-to-base matrix.");
 inline constexpr rigExec::RigExecSchemaInfo kFrameMatrix =
     Internal("The matrix a commit's frame record holds.");
+inline constexpr rigExec::RigExecSchemaInfo kProviderArithmetic =
+    Internal("One provider program operation's matrix or frame.");
+inline constexpr rigExec::RigExecSchemaInfo kAffineFrame =
+    Internal("One affine frame expression's matrix.");
 inline constexpr rigExec::RigExecSchemaInfo kFkJointGroups =
     Internal("An FK chain's joint groups applied to its frames.");
 inline constexpr rigExec::RigExecSchemaInfo kMoverTransform =
