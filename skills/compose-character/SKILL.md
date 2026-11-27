@@ -226,8 +226,9 @@ USD's C++ layer — then prove it with USD itself. Name one authoring *stage* th
 packaged entry needs, confirm it exists, and stop if it does not: a guard on a
 path that was never there proves nothing, and the gate that should have failed
 would pass. For the disposable scratch copy of a delivery this run built, move
-it out of the way for the run and restore it when the run exits: nothing can
-find a directory that is not there. Never move, delete, or change permissions on
+it aside to a reserved unique sibling for the run and restore it when the run
+exits: nothing can find a directory that is not there, and a fixed sibling name
+could already hold another run's tree. Never move, delete, or change permissions on
 a live checkout or another job's tree; cover the tree with an empty tmpfs in a
 private user and mount namespace (`unshare --user --map-root-user --mount --`,
 the helper first and `--` before it), one namespace per gate
@@ -266,11 +267,15 @@ itself — grants no exception to a delivery layer or a package-local helper, an
 a file found there is reported with its resolved path rather than accepted
 because it was importable. The interpreter's site-packages grants an exception
 to no module on its own: it is exempt only for the names the run wrote down, so
-a delivery helper installed there is the same defect one directory deeper. That
-is the class of defect this check exists to catch: the run succeeds and the
-delivery is broken. Start the check with the list empty and export it before any
-gate runs, so the authoring baseline and the extracted gates share one list and
-their records differ only by the tree they read. Its report names every outside
+a delivery helper installed there is the same defect one directory deeper. The
+subtraction covers the package directories of both the active scheme and the
+base installation, since a virtualenv with system site-packages enabled can
+import a helper from the base tree nested inside the interpreter library the
+exemption covers. That is the class of defect this check exists to catch: the
+run succeeds and the delivery is broken. Start the check with the list empty
+and export it before any gate runs, so the authoring baseline and the extracted
+gates share one list and their records differ only by the tree they read. Its
+report names every outside
 file this process read, and each entry is one of two things: a module the
 delivery must carry, which is the defect, or a module of the retained runtime —
 the engine's compiled extension, a virtualenv bootstrap, a `sitecustomize` the
@@ -334,8 +339,11 @@ def package_paths(stage, package_dir, runtime=()):
         return any(under(path, base) for base in bases)
 
     cfg = sysconfig.get_paths()
+    base_cfg = sysconfig.get_paths(vars={"base": sys.base_prefix,
+                                          "platbase": sys.base_exec_prefix})
     stdlib = [real(cfg[k]) for k in ("stdlib", "platstdlib") if cfg.get(k)]
-    sitepk = [real(cfg[k]) for k in ("purelib", "platlib") if cfg.get(k)]
+    sitepk = [real(d[k]) for d in (cfg, base_cfg)
+              for k in ("purelib", "platlib") if d.get(k)]
 
     def interpreter(path):   # the interpreter's library, not the packages beside it
         return under_any(path, stdlib) and not under_any(path, sitepk)
@@ -446,8 +454,10 @@ echo "archive: $zip"                            # the paths a triage needs
 echo "extraction: $root"
 echo "records: $out"
 if [ "${ENTRY_AUTHORING_SCRATCH:-0}" = 1 ]; then
-    mv "$authoring" "$authoring.hidden"        # a copy this run made: now it is gone
-    trap 'mv "$authoring.hidden" "$authoring"' EXIT    # back in place for triage
+    aside=$(mktemp -d "${authoring}.hidden.XXXXXX")  # a reserved unique sibling
+    rmdir "$aside"                   # ... whose name mv then takes over
+    mv "$authoring" "$aside"         # a copy this run made: now it is gone
+    trap 'mv "$aside" "$authoring"' EXIT    # back in place for triage
     barrier=moved
 else                                    # a checkout that cannot move: cover it
     cat > "$out/hide-authoring.sh" <<'SH'  # kept out of the package
@@ -514,8 +524,9 @@ printed — `archive:`, `extraction:`, `records:` — never a re-extraction or a
 rebuild. This block's exit status says only that the evidence was collected.
 Completed searches with no match count as collected; missing evidence,
 evidence that is not a readable regular file, an archive that fails to list,
-or a search that fails to read its input exits 1. It never restates a gate's
-verdict, which stays in that gate's `$out/<tree>/<gate>.rc`.
+a tools listing or git status that fails, or a search that fails to read its
+input exits 1. It never restates a gate's verdict, which stays in that gate's
+`$out/<tree>/<gate>.rc`.
 
 ```bash
 zip=$(realpath <archive>)                     # the record's "archive:" line
@@ -541,8 +552,16 @@ case $src_rc in                               # where the verifier looks
     *) echo "the search could not read $root/<entry>/verify.py" >&2
        exit 1 ;;                              # grep's own read failure
 esac
-ls "$authoring/<entry>/tools"                  # what the authoring tree has
-git -C "$authoring" status --porcelain        # untracked helpers are the cause
+tools_rc=0
+ls "$authoring/<entry>/tools" || tools_rc=$?  # what the authoring tree has
+[ "$tools_rc" = 0 ] \
+    || { echo "cannot list the authoring tools at $authoring/<entry>/tools (listing status $tools_rc)" >&2
+         exit 1; }                            # missing tools evidence proves nothing
+git_rc=0
+git -C "$authoring" status --porcelain || git_rc=$?   # untracked helpers are the cause
+[ "$git_rc" = 0 ] \
+    || { echo "cannot read git status at $authoring (status $git_rc)" >&2
+         exit 1; }                            # missing status evidence proves nothing
 log_rc=0
 grep -n 'not in the package' "$out/extracted/verify.err" || log_rc=$?
 case $log_rc in                               # 1 is a plain no-match, not a read error
