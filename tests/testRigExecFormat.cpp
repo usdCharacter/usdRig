@@ -1610,12 +1610,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 45 &&
-                      RigExecFormatOldestReadable == 45,
-                  "format 45 runs provider refreshes and provider operations "
-                  "as op nodes and is the only format Open reads");
-    // Every older format requires re-export: its provider refreshes and
-    // operations ran as their own steps.
+    static_assert(RigExecFormatVersion == 46 &&
+                      RigExecFormatOldestReadable == 46,
+                  "format 46 runs Range smooths as op nodes and is "
+                  "the only format Open reads");
+    // Every older format requires re-export: its smooths ran as their own
+    // steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1626,15 +1626,13 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 45 through " +
+            " (this reader reads 46 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 45 ? "re-export: provider refreshes and provider "
-                            "operations as op nodes"
-                          : "rebake");
+            (version < 46 ? "re-export: Range smooths as op nodes" : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 45 ? reexports : rebakes);
+        ++(version < 46 ? reexports : rebakes);
     }
-    CHECK(reexports == 45 && rebakes == 1);
+    CHECK(reexports == 46 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;

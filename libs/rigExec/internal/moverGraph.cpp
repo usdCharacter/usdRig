@@ -1349,8 +1349,6 @@ RigExecPrepareRevisionRanges(RigExecRevisionOp op,
     prepared->latticeBasis = nullptr;
     prepared->latticeBind.reset();
     prepared->blendWeights.clear();
-    prepared->smoothAdjacency = nullptr;
-    prepared->smoothAdjacencyOwned.reset();
     prepared->mushRest.reset();
     if (op == RigExecRevisionOp::DeltaMush) {
         // What fails the whole kernel: the packet, the "apply once" envelope,
@@ -1450,24 +1448,6 @@ RigExecPrepareRevisionRanges(RigExecRevisionOp op,
                 prepared->latticeBind = cache->RetainedLatticeBind();
             }
         }
-    } else if (op == RigExecRevisionOp::Smooth) {
-        // The adjacency ApplyRevisionKernel's smooth arm smooths over; none
-        // for a topology it passes through.
-        if (cache) {
-            if (cache->MeshAdjacency(count, p.topologyCounts,
-                                     p.topologyIndices)) {
-                prepared->smoothAdjacencyOwned = cache->RetainedMeshAdjacency();
-            }
-        } else {
-            auto built = std::make_shared<RigExecMeshAdjacency>();
-            if (RigExecBuildMeshAdjacency(
-                    count, p.topologyCounts.data(), p.topologyCounts.size(),
-                    p.topologyIndices.data(), p.topologyIndices.size(),
-                    built.get())) {
-                prepared->smoothAdjacencyOwned = std::move(built);
-            }
-        }
-        prepared->smoothAdjacency = prepared->smoothAdjacencyOwned.get();
     }
     return acceptance;
 }
@@ -1485,7 +1465,6 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
                         const GfVec3f *in, GfVec3f *out, size_t count,
                         size_t begin, size_t end, const float *separateEnvelope,
                         bool useSimd, bool *untouched,
-                        RigExecSparseWalkMemo<GfVec3f> *walk,
                         const RigExecGroupPoints<GfVec3f> *halo,
                         RigExecDeltaMushGroupState<GfVec3f, GfVec3d> *mush)
 {
@@ -1494,7 +1473,8 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
     }
     if (begin > end || end > count ||
         (begin < end && (!in || !out || in == out)) ||
-        !RigExecRevisionIsRangeOp(op) || !_PacketMatches(op, p)) {
+        !RigExecRevisionIsRangeOp(op) || op == RigExecRevisionOp::Matrix ||
+        op == RigExecRevisionOp::Smooth || !_PacketMatches(op, p)) {
         return false;
     }
     const size_t n = end - begin;
@@ -1581,15 +1561,6 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
             p.restPoints.size(), p.auxPoints.data(), p.auxPoints.size(),
             p.auxPointsB.data(), p.auxPointsB.size(), p.divisions[0],
             p.divisions[1], p.divisions[2], prepared.latticeBasis);
-    } else if (op == RigExecRevisionOp::Smooth) {
-        if (!prepared.smoothAdjacency) {
-            seed();
-        } else if (!halo || halo->At(begin) != in ||
-                   !RigExecApplyLaplacianSmoothGroup(*prepared.smoothAdjacency,
-                                                     p.strength, count, *halo,
-                                                     begin, end, out)) {
-            return false;
-        }
     } else if (op == RigExecRevisionOp::DeltaMush) {
         if (!prepared.mushRest || !halo || !mush || halo->At(begin) != in ||
             !RigExecApplyDeltaMushGroup<GfVec3f, GfVec3d, GfMatrix4d>(
@@ -1636,10 +1607,9 @@ RigExecRunRevisionRange(RigExecRevisionOp op, const RigExecMoverParameters &p,
     whole.groups = 1;
     whole.points = points;
     RigExecDeltaMushGroupState<GfVec3f, GfVec3d> mush;
-    return RigExecRunRevisionGroup(op, p, prepared, nullptr, entering + begin,
-                                   out->data() + begin, count, begin, end,
-                                   separateEnvelope, useSimd, untouched,
-                                   nullptr, &whole, &mush);
+    return RigExecRunRevisionGroup(
+        op, p, prepared, nullptr, entering + begin, out->data() + begin, count,
+        begin, end, separateEnvelope, useSimd, untouched, &whole, &mush);
 }
 
 // One revision, envelope included: the packet check, the full-strength fast

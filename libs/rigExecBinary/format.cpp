@@ -5238,7 +5238,9 @@ private:
                     }
                     continue;
                 }
-                read(D::RevisionTransforms, id);
+                // A Range smooth runs as an op node and folds no transform.
+                if (!range || revision.op != uint8_t(fb::RevisionOp::Smooth))
+                    read(D::RevisionTransforms, id);
                 point(c, uint32_t(r));
                 if (revision.weightObject >= 0)
                     read(D::WeightPacket, uint32_t(revision.weightObject));
@@ -7639,7 +7641,8 @@ private:
                 continue;
             }
             // The fuse: a Range revision's join, or a Whole revision's.
-            if (!need(D::RevisionTransforms, id) ||
+            if (((!range || revision.op != uint8_t(fb::RevisionOp::Smooth)) &&
+                 !need(D::RevisionTransforms, id)) ||
                 (revision.weightObject >= 0 &&
                  !need(D::WeightPacket, uint64_t(revision.weightObject))) ||
                 (!range && !needVersion())) {
@@ -10176,14 +10179,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 45,
+    static_assert(RigExecFormatOldestReadable == 46,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: provider refreshes and provider operations "
-                  "as op nodes"
+                ? "re-export: Range smooths as op nodes"
                 : "rebake");
 }
 

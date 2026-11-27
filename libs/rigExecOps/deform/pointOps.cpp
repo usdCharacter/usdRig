@@ -1,6 +1,7 @@
 #include "rigExecOps/deform/pointOps.h"
 
 #include "rigExecOps/authoring.h"
+#include "rigExecOps/deform/weightPacket.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecMath/meshConnectivity.h"
@@ -24,6 +25,9 @@ RIGEXEC_DEFINE_PORT_HANDLE(SmoothIndices)
 RIGEXEC_DEFINE_PORT_HANDLE(SmoothStrength)
 RIGEXEC_DEFINE_PORT_HANDLE(SmoothEnvelope)
 RIGEXEC_DEFINE_PORT_HANDLE(SmoothOut)
+RIGEXEC_DEFINE_PORT_HANDLE(SmoothEnabled)
+RIGEXEC_DEFINE_PORT_HANDLE(SmoothDefaultWeight)
+RIGEXEC_DEFINE_PORT_HANDLE(SmoothPacket)
 
 RIGEXEC_DEFINE_PORT_HANDLE(VolumeCorrectPoints)
 RIGEXEC_DEFINE_PORT_HANDLE(VolumeCorrectReference)
@@ -47,9 +51,12 @@ StrengthOr1(const float *strength)
 }
 
 /// A node's edge adjacency, rebuilt only when its topology or point count
-/// moves.
+/// moves; this frame's pass through and the weight at every point when a
+/// default weight or a packet gives them, written by prepare.
 struct SmoothState {
     rigExec::RigExecMeshAdjacency adjacency;
+    bool pass = false;
+    std::vector<float> dense;
     std::vector<int> counts;
     std::vector<int> indices;
     size_t pointCount = SIZE_MAX;
@@ -60,6 +67,13 @@ struct SmoothState {
 bool
 SmoothValidate(const rigExec::RigExecOpCheck &check, std::string *error)
 {
+    const int envelopes = int(Fed(check, SmoothEnvelope())) +
+                          int(Fed(check, SmoothDefaultWeight())) +
+                          int(Fed(check, SmoothPacket()));
+    if (envelopes > 1)
+        return Fail(error, "Smooth",
+                    "one of an envelope, a default weight and a weight "
+                    "packet");
     return EnvelopeFits(check, SmoothPoints(), SmoothEnvelope(), "Smooth",
                         error);
 }
@@ -75,6 +89,24 @@ SmoothPrepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
         return false;
     SmoothState &state =
         *static_cast<SmoothState *>(rigExec::RigExecBatchState(batch, k));
+    const uint8_t *enabled = In<uint8_t>(io, SmoothEnabled());
+    const float *weight = In<float>(io, SmoothDefaultWeight());
+    const weightPacket::PointWeights *packet =
+        In<weightPacket::PointWeights>(io, SmoothPacket());
+    state.pass = enabled && !*enabled;
+    state.dense.clear();
+    if (weight && !state.pass && *weight != 1.0f) {
+        if (!std::isfinite(*weight) || *weight < 0.0f || *weight > 1.0f)
+            return Fail(error, "Smooth",
+                        "a default weight is not finite or outside [0, 1]");
+        state.dense.assign(count, *weight);
+    }
+    if (packet && !state.pass &&
+        !rigExec::eval::EnvelopeIsFullStrength(
+            weightPacket::PacketView(*packet)) &&
+        !weightPacket::ResolvePacket(*packet, count, &state.dense))
+        return Fail(error, "Smooth",
+                    "the weight packet does not resolve over the points");
     const auto &counts = *In<RigExecArray<int>>(io, SmoothCounts());
     const auto &indices = *In<RigExecArray<int>>(io, SmoothIndices());
     if (state.pointCount == count &&
@@ -133,13 +165,20 @@ SmoothRange(const rigExec::RigExecOpBatch &batch, size_t k,
     const rigExec::RigExecGroupPoints<Vec3f> groups =
         RangeGroups<Vec3f>(range, SmoothPoints());
     Vec3f *out = RangeOut<Vec3f>(io, range, SmoothOut());
+    if (state.pass) {
+        const Vec3f *in = groups.At(range.begin);
+        std::copy(in, in + (range.end - range.begin), out);
+        return true;
+    }
     if (!rigExec::RigExecApplyLaplacianSmoothGroup(
             state.adjacency, StrengthOr1(In<float>(io, SmoothStrength())),
             range.count, groups, range.begin, range.end, out))
         return Fail(error, "Smooth", "topology addresses no point");
     BlendEnvelopeAt(groups.At(range.begin),
-                    RangeIn<float>(io, range, SmoothEnvelope()), out,
-                    range.end - range.begin);
+                    state.dense.empty()
+                        ? RangeIn<float>(io, range, SmoothEnvelope())
+                        : state.dense.data() + range.begin,
+                    out, range.end - range.begin);
     return true;
 }
 
@@ -234,6 +273,10 @@ const rigExec::RigExecPortDesc kSmoothPorts[] = {
     {&SmoothOut(), &rigExecStd::Vec3fArray(),
      kRigExecPortOutput | rigExec::kRigExecPortPointwise, "out",
      rigExec::RigExecOutputBound::Input, &SmoothPoints()},
+    {&SmoothEnabled(), &rigExecStd::BoolType(), kOptional, "enabled"},
+    {&SmoothDefaultWeight(), &rigExecStd::FloatType(), kOptional,
+     "defaultWeight"},
+    {&SmoothPacket(), &rigExecRig::PointWeightsType(), kOptional, "packet"},
 };
 
 const rigExec::RigExecPortDesc kVolumePorts[] = {

@@ -672,7 +672,11 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// its value through targets 28, 29, 50 and 51. It retires the
 /// ProviderRefresh step and SpaceExpression steps of any operation but
 /// Attribute.
-inline constexpr uint32_t RigExecFormatVersion = 45;
+///
+/// Format 46 runs every Range smooth as a Smooth op node over its compiled
+/// topology, and an op revision reads the output of the op revision before
+/// it in its point chain node to node where the two share a range chain.
+inline constexpr uint32_t RigExecFormatVersion = 46;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -680,7 +684,7 @@ inline constexpr uint32_t RigExecFormatVersion = 45;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 45;
+inline constexpr uint32_t RigExecFormatOldestReadable = 46;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

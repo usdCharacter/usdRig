@@ -7566,8 +7566,8 @@ MakeSmoothChainStage(const char *middle = "RigExecSmoothMover")
 
 /// The smooth chain against itself built with RIGEXEC_BAKED_RANGE_CHAINS=0
 /// over frames {1, 2, 3, 2, 1}, live and export: the smooth takes the Range
-/// role, each of its group steps declares its own group and its halo groups
-/// of the entering version (the rows beside its own) and nothing else, and
+/// role and runs as op range steps, each declaring its own group and its
+/// halo groups of the entering version (the rows beside its own), and
 /// every version and diagnostic agrees bit for bit, under the content,
 /// packet and range-chain judges. From frame 1 to 2 only row 0 moves, so of
 /// the smooth's groups only group 0's bytes move: group 1 reads row 9 of
@@ -7630,11 +7630,14 @@ TestASmoothGroupReadsItsHalo()
         const int id = R.chainRevisionBegin[0] + 1;
         size_t groupSteps = 0;
         for (const RigExecBakedStep &step : R.steps) {
-            if (step.kind != RigExecBakedStepKind::RevisionChunk ||
-                step.object != id || step.part < 0) {
+            const rigExec::RigExecBakedStepIdentity identity =
+                rigExec::RigExecBakedIdentityOf(R, step);
+            if (step.kind != RigExecBakedStepKind::OpChainRange ||
+                identity.kind != RigExecBakedStepKind::RevisionChunk ||
+                identity.object != id || identity.part < 0) {
                 continue;
             }
-            const size_t g = size_t(step.part);
+            const size_t g = size_t(identity.part);
             size_t slotted = smooth.enteringWriter[g] >= 0 ? 1 : 0;
             for (const int h : smooth.haloGroups[g]) {
                 slotted += smooth.enteringWriter[size_t(h)] >= 0 ? 1 : 0;

@@ -1852,6 +1852,9 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
         revision.role = GeomRole::Legacy;
         revision.rangeRole = false;
         revision.opMatrix = false;
+        revision.opSmooth = false;
+        revision.opSmoothCounts = VtIntArray();
+        revision.opSmoothIndices = VtIntArray();
         revision.blendChunked = false;
         revision.groupWritten.clear();
         revision.enteringWriter.clear();
@@ -2031,6 +2034,16 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
                 revision.groupWritten = std::move(written);
             }
             revision.opMatrix = OpMatrixHolds(reads, &revision, &pinned[r]);
+            revision.opSmooth = revision.op == RigExecRevisionOp::Smooth;
+            if (revision.opSmooth) {
+                using Role = RigExecRevisionLeafRole;
+                revision.opSmoothCounts =
+                    reads.Ints(revision.leaves,
+                               revision.leaves.decl.Role(Role::TopologyCounts));
+                revision.opSmoothIndices = reads.Ints(
+                    revision.leaves,
+                    revision.leaves.decl.Role(Role::TopologyIndices));
+            }
             if (revision.op == RigExecRevisionOp::Smooth) {
                 BuildSmoothHalo(reads, *chain, &revision, points);
             } else if (revision.op == RigExecRevisionOp::DeltaMush) {
@@ -2173,7 +2186,7 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
             revision.rangeInputs = RigExecRevisionRangeInputs();
             revision.joinSeen.clear();
             revision.rangeRefusals = 0;
-            if (revision.opMatrix) {
+            if (revision.OpNodes()) {
                 revision.parameters = RigExecMoverParameters();
                 revision.parameters.enabled = true;
                 revision.parameters.valid = true;
@@ -2274,7 +2287,7 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
                 assemble.writes.push_back(RigExecBakedOne(
                     RigExecBakedSlotDomain::RevisionPacket, id));
             };
-            if (revision.opMatrix) {
+            if (revision.OpNodes()) {
             } else if (skin) {
                 addStatic();
                 addFold();
@@ -2287,8 +2300,8 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
             // entering version alone; every other chunk reads the version.
             const bool perGroup = role == GeomRole::Range ||
                                   (role == GeomRole::Whole && revision.chunked);
-            for (size_t k = 0; !revision.opMatrix && k < revision.chunks.size();
-                 ++k) {
+            for (size_t k = 0;
+                 !revision.OpNodes() && k < revision.chunks.size(); ++k) {
                 if (role == GeomRole::Range && !revision.groupWritten[k]) {
                     // A gated group: the entering group is this revision's.
                     continue;
@@ -2359,8 +2372,10 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
                 fuse.maxDiagnostics = 1;
                 fuse.reads.push_back(RigExecBakedOne(
                     RigExecBakedSlotDomain::RevisionPacket, id));
-                fuse.reads.push_back(RigExecBakedOne(
-                    RigExecBakedSlotDomain::RevisionTransforms, id));
+                // A smooth op revision folds no transform.
+                if (!revision.opSmooth)
+                    fuse.reads.push_back(RigExecBakedOne(
+                        RigExecBakedSlotDomain::RevisionTransforms, id));
                 fuse.reads.push_back(
                     RigExecBakedOne(RigExecBakedSlotDomain::ChainBase, int(c)));
                 if (revision.weightObject >= 0) {
@@ -4666,10 +4681,10 @@ struct BakedChainState {
             view.palette = chunk.palette.data();
             view.paletteSize = chunk.palette.size();
         }
-        return RigExecRunRevisionGroup(
-            rev.op, rev.parameters, rev.rangeInputs, &view, in, out, count,
-            begin, end, GroupEnvelope(rev), B->useSimd, untouched,
-            &rev.groups[g].walk, nullptr, nullptr);
+        return RigExecRunRevisionGroup(rev.op, rev.parameters, rev.rangeInputs,
+                                       &view, in, out, count, begin, end,
+                                       GroupEnvelope(rev), B->useSimd,
+                                       untouched, nullptr, nullptr);
     }
     void runBlendGroup(size_t chain, size_t revision, size_t g, size_t begin,
                        size_t end, const RigExecPointsRef<GfVec3f> &entering,
@@ -4697,17 +4712,16 @@ struct BakedChainState {
         Chain &c = chainAt(chain);
         Revision &rev = revisionAt(chain, revision);
         const bool mush = rev.op == RigExecRevisionOp::DeltaMush;
-        const bool smooth = rev.op == RigExecRevisionOp::Smooth || mush;
         RigExecGroupPoints<GfVec3f> halo;
-        if (smooth) {
+        if (mush) {
             halo.bounds = c.groupBounds.data();
             halo.groups = c.groupBounds.size() - 1;
             halo.points = rev.haloPoints[g].data();
         }
         return RigExecRunRevisionGroup(
             rev.op, rev.parameters, rev.rangeInputs, nullptr, in, out, count,
-            begin, end, envelope, B->useSimd, untouched, &rev.groups[g].walk,
-            smooth ? &halo : nullptr, mush ? &rev.mushGroups[g] : nullptr);
+            begin, end, envelope, B->useSimd, untouched, mush ? &halo : nullptr,
+            mush ? &rev.mushGroups[g] : nullptr);
     }
     bool runWholeSkinChunk(size_t chain, size_t revision, size_t g)
     {
@@ -5727,7 +5741,7 @@ RigExecBakedSelectGpuChains(RigExecBakedProgramImpl *program)
             if (revision.snapshotAfter || revision.weightCurrentPhase)
                 eligible = false;
             // Op nodes run on the CPU until a device runs them.
-            if (revision.opMatrix)
+            if (revision.OpNodes())
                 eligible = false;
         }
         // A shader chain's points never come back: a derived step that
@@ -7289,7 +7303,7 @@ RigExecBakedVerifyRangeChains(RigExecBakedProgramImpl *program)
             // A revision a cycle set aside passes the base through: no
             // range result to judge.
             if (!revision.rangeRole || revision.rangeSetAside ||
-                revision.opMatrix) {
+                revision.OpNodes()) {
                 continue;
             }
             const GfVec3f *entering = nullptr;

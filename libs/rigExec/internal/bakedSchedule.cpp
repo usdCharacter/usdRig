@@ -2028,6 +2028,7 @@ RigExecBakedBuildCones(RigExecBakedProgramImpl *program)
     cones.chainBaseClusters.assign(B.chains.size(), {});
     cones.solverPointsClusters.assign(B.solvers.size(), {});
     cones.revisionClusters.assign(B.revisionIndex.size(), {});
+    std::vector<int> opRevisions;
     cones.revisionStaticCluster.assign(B.revisionIndex.size(), -1);
     cones.avarStep.assign(B.paths.size(), -1);
     cones.avarVersionSteps.assign(B.paths.size(), {});
@@ -2091,6 +2092,17 @@ RigExecBakedBuildCones(RigExecBakedProgramImpl *program)
             break;
         default:
             break;
+        }
+        RigExecBakedOpStepRevisions(B, step, &opRevisions);
+        for (const int id : opRevisions) {
+            if (size_t(id) == revision)
+                continue;
+            if (step.kind == RigExecBakedStepKind::OpChainHead) {
+                cones.revisionStaticCluster[size_t(id)] = step.cluster;
+                cones.revisionStaticStep[size_t(id)] = index;
+            }
+            cones.revisionClusters[size_t(id)].push_back(step.cluster);
+            cones.revisionSteps[size_t(id)].push_back(index);
         }
     }
     // The steps a moved property version, a moved rest or ladder slot, or

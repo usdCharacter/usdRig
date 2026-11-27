@@ -875,6 +875,15 @@ struct RigExecBakedGeomRevision {
     /// fold, static or chunk steps. Its weightBlend is pinned to
     /// opMatrixRadial, or read each frame when opMatrixRadialLeaf.
     bool opMatrix = false;
+    /// A Range smooth (Build state): a Smooth range chain member computes
+    /// its groups over the pinned topology read at Build, with no static or
+    /// chunk steps.
+    bool opSmooth = false;
+    VtIntArray opSmoothCounts, opSmoothIndices;
+    bool OpNodes() const
+    {
+        return opMatrix || opSmooth;
+    }
     bool opMatrixRadial = false;
     bool opMatrixRadialLeaf = false;
     /// Filled by RevisionStatic (RigExecPrepareRevisionRanges), read by
@@ -2836,6 +2845,11 @@ RigExecBakedOriginOf(const RigExecBakedProgramImpl &B,
 RigExecBakedStepIdentity
 RigExecBakedIdentityOf(const RigExecBakedProgramImpl &B,
                        const RigExecBakedStep &step);
+/// The revisions op chain step \p step computes: a head's members', a range
+/// step's segment's; empty for any other step.
+void RigExecBakedOpStepRevisions(const RigExecBakedProgramImpl &B,
+                                 const RigExecBakedStep &step,
+                                 std::vector<int> *ids);
 /// The property chain and part (1 to its revision count) op step \p step
 /// runs: revision part, and for part 1 also the chain's base. False for any
 /// other step.

@@ -6892,6 +6892,169 @@ TestWeightedOpMatrixClone()
     CHECK(disabled == 1 && ok == 2);
 }
 
+// Range smooths run as Smooth op nodes sharing range chains with the
+// matrices beside them: a frozen job's clone, with empty range scratch,
+// warms bit-identically to the live program, under a weight object's
+// packet, a default weight and a sparse matrix walk; a disabled smooth
+// reports disabled.
+void
+TestWeightedOpSmoothClone()
+{
+    const auto stage = UsdStage::CreateInMemory();
+    CHECK(stage->GetRootLayer()->ImportFromString(R"USD(#usda 1.0
+ def RigExecRoot "Rig" {
+  def RigExecControl "Lift" {
+   double avars:tz.timeSamples = {1: 0.1, 2: 0.3, 3: 0.45}
+  }
+  def RigExecControl "Frame" {
+   double avars:tx = 0.25
+   double avars:rz.timeSamples = {1: 10, 2: 30, 3: 50}
+  }
+  def Mesh "Target" {}
+  def Scope "Weights" {
+   def RigExecStaticWeight "Dense" {
+    rel rigExec:weightTarget = </Rig/Target.points>
+    token rigExec:representation = "dense"
+    float rigExec:defaultWeight = 0
+   }
+   def RigExecStaticWeight "Sparse" {
+    rel rigExec:weightTarget = </Rig/Target.points>
+    token rigExec:representation = "sparse"
+    float rigExec:defaultWeight = 0
+   }
+  }
+  def Scope "Movers" {
+   def RigExecMatrixMover "Tilt" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+    rel rigExec:moves = </Rig/Target.points>
+    rel rigExec:transform = </Rig/Frame>
+    rel rigExec:weightObject = </Rig/Weights/Sparse>
+   }
+   def RigExecSmoothMover "Settle" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+    rel rigExec:moves = </Rig/Target.points>
+    float inputs:defaultWeight = 0.5
+   }
+   def RigExecSmoothMover "Soften" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+    rel rigExec:moves = </Rig/Target.points>
+    rel rigExec:weightObject = </Rig/Weights/Dense>
+   }
+   def RigExecMatrixMover "Raise" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+    rel rigExec:moves = </Rig/Target.points>
+    rel rigExec:transform = </Rig/Lift>
+   }
+  }
+ }
+)USD"));
+    const SdfPath root("/Rig"), target("/Rig/Target.points");
+    constexpr int kSide = 96;
+    VtVec3fArray points(size_t(kSide * kSide));
+    VtIntArray counts, faces;
+    VtFloatArray dense(points.size());
+    VtFloatArray sparse;
+    VtIntArray indices;
+    for (int y = 0; y < kSide; ++y)
+        for (int x = 0; x < kSide; ++x) {
+            const size_t i = size_t(y * kSide + x);
+            points[i] = GfVec3f(0.25f * float(x), 0.125f * float(y),
+                                0.1f * float((x * 7 + y * 3) % 11));
+            dense[i] = 0.25f * float(i % 5);
+            if (i % 7 == 3) {
+                indices.push_back(int(i));
+                sparse.push_back(0.125f * float(i % 9));
+            }
+            if (x + 1 < kSide && y + 1 < kSide) {
+                const int a = y * kSide + x;
+                counts.push_back(4);
+                for (const int v : {a, a + 1, a + kSide + 1, a + kSide})
+                    faces.push_back(v);
+            }
+        }
+    const UsdPrim mesh = stage->GetPrimAtPath(target.GetPrimPath());
+    mesh.GetAttribute(TfToken("points")).Set(points);
+    mesh.GetAttribute(TfToken("faceVertexCounts")).Set(counts);
+    mesh.GetAttribute(TfToken("faceVertexIndices")).Set(faces);
+    stage->GetPrimAtPath(SdfPath("/Rig/Weights/Dense"))
+        .CreateAttribute(TfToken("rigExec:values"),
+                         SdfValueTypeNames->FloatArray)
+        .Set(dense);
+    const UsdPrim sparseWeight =
+        stage->GetPrimAtPath(SdfPath("/Rig/Weights/Sparse"));
+    sparseWeight
+        .CreateAttribute(TfToken("rigExec:values"),
+                         SdfValueTypeNames->FloatArray)
+        .Set(sparse);
+    sparseWeight
+        .CreateAttribute(TfToken("rigExec:indices"),
+                         SdfValueTypeNames->IntArray)
+        .Set(indices);
+    RigExecRigEvaluator evaluator(stage, root);
+    std::vector<std::string> errors;
+    CHECK(evaluator.Compile(&errors));
+    CHECK(errors.empty());
+    for (const std::string &error : errors)
+        std::printf("weighted op smooth compile: %s\n", error.c_str());
+    CHECK(evaluator.GetBakedProgram() != nullptr);
+    if (!evaluator.GetBakedProgram())
+        return;
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
+    size_t smooths = 0, revisions = 0;
+    for (const auto &chain : B.chains)
+        for (const auto &revision : chain.revisions) {
+            smooths += revision.opSmooth;
+            revisions += revision.OpNodes();
+        }
+    CHECK(smooths == 2 && revisions == 4);
+    CHECK(B.opProgram && B.opProgram->layout.chains.size() < revisions);
+    CHECK(std::none_of(
+        B.steps.begin(), B.steps.end(), [](const RigExecBakedStep &step) {
+            return step.kind == RigExecBakedStepKind::RevisionChunk;
+        }));
+    rigExec::RigExecBakedProgramTesting::SetPoisonReleasedGathers(true);
+    const auto rest = evaluator.Evaluate(UsdTimeCode(1));
+    CHECK(rest.valid);
+    RigExecCancellationSource cancellation;
+    for (double time : {2.0, 3.0}) {
+        std::shared_ptr<const RigExecFrozenProgram> frozen;
+        std::string error;
+        CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
+        if (!frozen) {
+            std::printf("weighted op smooth freeze: %s\n", error.c_str());
+            break;
+        }
+        RigExecFrameInputs inputs;
+        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(time), {},
+                                       &inputs, &error));
+        bool ran = false;
+        const auto warmed = RunWarmingJob(&evaluator, root, frozen, inputs,
+                                          &cancellation, &ran);
+        CHECK(ran);
+        const auto live = evaluator.Evaluate(UsdTimeCode(time));
+        CHECK(live.valid);
+        CheckPosesBitIdentical("weighted op smooth clone", live, warmed);
+        const auto moved = live.movedProperties.find(target);
+        const auto still = rest.movedProperties.find(target);
+        CHECK(moved != live.movedProperties.end() &&
+              still != rest.movedProperties.end() &&
+              moved->second != still->second);
+    }
+    rigExec::RigExecBakedProgramTesting::SetPoisonReleasedGathers(false);
+    stage->GetPrimAtPath(SdfPath("/Rig/Movers/Soften"))
+        .CreateAttribute(TfToken("inputs:enabled"), SdfValueTypeNames->Bool)
+        .Set(false);
+    CHECK(evaluator.Evaluate(UsdTimeCode(3)).valid);
+    const RigExecBakedProgramImpl &after =
+        rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
+    size_t disabled = 0, ok = 0;
+    for (const auto &chain : after.chains)
+        for (const auto &revision : chain.revisions) {
+            disabled += revision.resultStatus == "disabled";
+            ok += revision.resultStatus == "ok";
+        }
+    CHECK(disabled == 1 && ok == 3);
+}
+
 // The ribbon spine (examples/05_TwistRibbonSpine.usda) warms
 // bit-identically: a Ribbon revision and an EmitGuidePoints revision over
 // one solver's driver frames, plus a matrix fin.
@@ -10079,6 +10242,7 @@ main(int argc, char **argv)
     TestRegularLatticeWarmsBitIdentical();
     TestOpMatrixCloneKeepsLookups();
     TestWeightedOpMatrixClone();
+    TestWeightedOpSmoothClone();
     Test9MeshWarmsBitIdenticalAtSweepDistance();
     TestProductionRunnerDeclinesWithoutProof();
     TestFrozenRunIsBitIdentical();

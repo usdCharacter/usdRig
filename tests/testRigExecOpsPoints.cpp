@@ -384,6 +384,95 @@ TestSmooth()
     CHECK(error.find("envelope") != std::string::npos);
 }
 
+/// Smooth's mover inputs: a weight packet (sparse, dense and constant), a
+/// default weight and the enabled switch give the whole kernel's smoothing
+/// blended by the resolved weights, under every range setting; a default
+/// weight outside [0, 1] and a packet that does not resolve are errors.
+void
+TestSmoothWeights()
+{
+    using namespace rigExecOps;
+    Grid grid(17, 4);
+    std::vector<GfVec3f> points = grid.points;
+    points[3] = GfVec3f(-0.0f, 0.0f, -0.0f);
+    const Points in = ToStd(points);
+    const auto counts = ToArray(grid.counts);
+    const auto indices = ToArray(grid.indices);
+    std::vector<GfVec3f> smoothed = points;
+    RigExecApplyLaplacianSmooth(&smoothed, grid.counts, grid.indices, 1.0);
+    const auto blended = [&](const std::vector<float> &envelope) {
+        std::vector<GfVec3f> expected = smoothed;
+        Blend(points, envelope, &expected);
+        return expected;
+    };
+    std::vector<int32_t> sparseIndices;
+    std::vector<float> sparseWeights;
+    for (int32_t i = 2; i < int32_t(points.size()); i += 5) {
+        sparseIndices.push_back(i);
+        sparseWeights.push_back(float(i % 9) / 8.0f);
+    }
+    std::vector<float> dense(points.size(), 0.0f);
+    for (size_t e = 0; e < sparseIndices.size(); ++e)
+        dense[size_t(sparseIndices[e])] = sparseWeights[e];
+    Node packed(
+        Smooth(),
+        {&SmoothPoints(), &SmoothCounts(), &SmoothIndices(), &SmoothPacket()},
+        SmoothOut());
+    rigExecRig::PointWeights packet;
+    packet.valid = 1;
+    packet.representation = uint32_t(rigExecRig::WeightRepresentation::Sparse);
+    packet.indices = ToArray(sparseIndices);
+    packet.values = ToArray(sparseWeights);
+    Points actual;
+    CHECK(packed.Run({&in, &counts, &indices, &packet}, &actual));
+    CHECK(SameBits(blended(dense), actual));
+    packet.representation = uint32_t(rigExecRig::WeightRepresentation::Dense);
+    packet.indices = RigExecArray<int32_t>();
+    packet.values = ToArray(dense);
+    CHECK(packed.Run({&in, &counts, &indices, &packet}, &actual));
+    CHECK(SameBits(blended(dense), actual));
+    packet.representation =
+        uint32_t(rigExecRig::WeightRepresentation::Constant);
+    packet.values = RigExecArray<float>();
+    packet.defaultWeight = 0.35f;
+    CHECK(packed.Run({&in, &counts, &indices, &packet}, &actual));
+    CHECK(SameBits(blended(std::vector<float>(points.size(), 0.35f)), actual));
+    packet.defaultWeight = 1.0f;
+    CHECK(packed.Run({&in, &counts, &indices, &packet}, &actual));
+    CHECK(SameBits(smoothed, actual));
+    packet.representation = uint32_t(rigExecRig::WeightRepresentation::Dense);
+    packet.values = RigExecArray<float>(3);
+    std::string error;
+    CHECK(!packed.Run({&in, &counts, &indices, &packet}, &actual, &error));
+    CHECK(Contains(error, "does not resolve"));
+
+    Node uniform(Smooth(),
+                 {&SmoothPoints(), &SmoothCounts(), &SmoothIndices(),
+                  &SmoothDefaultWeight(), &SmoothEnabled()},
+                 SmoothOut());
+    const uint8_t on = 1, off = 0;
+    const float half = 0.5f, full = 1.0f, over = 1.5f;
+    CHECK(uniform.Run({&in, &counts, &indices, &half, &on}, &actual));
+    CHECK(SameBits(blended(std::vector<float>(points.size(), 0.5f)), actual));
+    CHECK(uniform.Run({&in, &counts, &indices, &full, &on}, &actual));
+    CHECK(SameBits(smoothed, actual));
+    CHECK(uniform.Run({&in, &counts, &indices, &over, &off}, &actual));
+    CHECK(SameBits(points, actual));
+    CHECK(!uniform.Run({&in, &counts, &indices, &over, &on}, &actual, &error));
+    CHECK(Contains(error, "default weight"));
+
+    RigExecRigDescBuilder b;
+    const RigExecNodeId node = b.AddOp(Smooth());
+    for (const RigExecPortHandle *port :
+         {&SmoothPoints(), &SmoothCounts(), &SmoothIndices(),
+          &SmoothDefaultWeight(), &SmoothPacket()})
+        b.BindInput(node, *port);
+    b.BindOutput(node, SmoothOut());
+    auto desc = b.Build(&error);
+    CHECK(!desc || !RigExecCompile(*desc, RigExecCompileOptions(), &error));
+    CHECK(Contains(error, "one of an envelope"));
+}
+
 void
 TestVolumeCorrect()
 {
@@ -4464,6 +4553,7 @@ main()
         return 1;
     }
     TestSmooth();
+    TestSmoothWeights();
     TestVolumeCorrect();
     TestDeltaMush();
     TestLattice();

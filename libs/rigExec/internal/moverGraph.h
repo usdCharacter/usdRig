@@ -716,11 +716,6 @@ struct RigExecRevisionRangeInputs {
     /// BlendShape: the envelope resolved at the full count, the weight its
     /// kernel blends each point by; empty at full strength.
     std::vector<float> blendWeights;
-    /// Smooth: the edge adjacency the whole kernel smooths over, or null for
-    /// a topology it passes through. `smoothAdjacencyOwned` holds it when no
-    /// cache retains one.
-    const RigExecMeshAdjacency *smoothAdjacency = nullptr;
-    std::shared_ptr<const RigExecMeshAdjacency> smoothAdjacencyOwned;
     /// DeltaMush: the rest data the whole kernel deforms with.
     std::shared_ptr<const RigExecDeltaMushRestData<GfVec3f, GfVec3d>> mushRest;
 };
@@ -756,7 +751,7 @@ bool RigExecRevisionGateHolds(RigExecRevisionOp op,
 /// \p in[k] is entering point begin + k and \p out[k] receives point
 /// begin + k's result, k < end - begin (\p out never aliases \p in). Every
 /// whole-array input (\p p, \p prepared, \p separateEnvelope, sparse indices,
-/// bind tables) is indexed absolutely. Ops: Matrix, Wire, Lattice; Skin
+/// bind tables) is indexed absolutely. Ops: Wire, Lattice, DeltaMush; Skin
 /// (\p skin is the table the group reads: a chunk's key-filled table or the
 /// fold's; classicLinear or dualQuaternion, then the "apply once" envelope
 /// when \p separateEnvelope is given); BlendShape in target space. Each
@@ -771,12 +766,7 @@ bool RigExecRevisionGateHolds(RigExecRevisionOp op,
 /// (RigExecSkinLayoutIsUsable, RigExecSkinTransformsAreUsable), as for
 /// RigExecApplySkinKernelRange. Pure: concurrent calls for distinct groups
 /// of one revision are safe.
-/// \p walk, when given, is the group's own memo (pointBlocks.h), which only
-/// this call writes: a sparse Matrix walk whose transform and blend arm are
-/// its last walk's records its entries there, and takes from it each entry
-/// whose weight and entering point hold the bits recorded. The bits written
-/// are the same with and without it.
-/// \p halo, required for Smooth and DeltaMush and unread otherwise, holds the
+/// \p halo, required for DeltaMush and unread otherwise, holds the
 /// entering points of this group and of every group a point it reads lies
 /// in; a point in a group it does not hold answers false. \p mush, required
 /// for DeltaMush, is the group's own plan and scratch.
@@ -786,7 +776,6 @@ bool RigExecRunRevisionGroup(
     const RigExecSkinTransformsView *skin, const GfVec3f *in, GfVec3f *out,
     size_t count, size_t begin, size_t end, const float *separateEnvelope,
     bool useSimd, bool *untouched = nullptr,
-    RigExecSparseWalkMemo<GfVec3f> *walk = nullptr,
     const RigExecGroupPoints<GfVec3f> *halo = nullptr,
     RigExecDeltaMushGroupState<GfVec3f, GfVec3d> *mush = nullptr);
 

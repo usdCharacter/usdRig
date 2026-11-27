@@ -2282,10 +2282,6 @@ struct RrGeoRevisionRangeInputs {
     // BlendShape: the envelope resolved at the full count, the weight its
     // kernel blends each point by; empty at full strength.
     std::vector<float> blendWeights;
-    // Smooth: the adjacency the whole kernel smooths over, or null for a
-    // topology it passes through; `smoothAdjacencyOwned` keeps it alive.
-    const RigExecMeshAdjacency *smoothAdjacency = nullptr;
-    std::shared_ptr<const RigExecMeshAdjacency> smoothAdjacencyOwned;
     // DeltaMush: the rest data the whole kernel deforms with.
     std::shared_ptr<const RigExecDeltaMushRestData<RrVec3f, RrVec3d>> mushRest;
 };
@@ -2309,8 +2305,6 @@ RrGeoPrepareRevisionRanges(
     prepared->latticeBind.reset();
     prepared->latticeBasis = nullptr;
     prepared->blendWeights.clear();
-    prepared->smoothAdjacency = nullptr;
-    prepared->smoothAdjacencyOwned.reset();
     prepared->mushRest.reset();
     if (op == RrGeoOpDeltaMush) {
         // RigExecPrepareRevisionRanges's DeltaMush answer: what fails the
@@ -2394,26 +2388,6 @@ RrGeoPrepareRevisionRanges(
             w.ResolveAll(count, &prepared->blendWeights);
         }
         break;
-    case RrGeoOpSmooth:
-        // The adjacency RrGeoApplyLaplacianSmooth smooths over; none for a
-        // topology it passes through.
-        if (surfaceCache) {
-            if (count > 0 && surfaceCache->MeshAdjacency(
-                                 count, p.topologyCounts, p.topologyIndices)) {
-                prepared->smoothAdjacencyOwned =
-                    surfaceCache->RetainedMeshAdjacency();
-            }
-        } else {
-            auto built = std::make_shared<RigExecMeshAdjacency>();
-            if (RigExecBuildMeshAdjacency(
-                    count, p.topologyCounts.data(), p.topologyCounts.size(),
-                    p.topologyIndices.data(), p.topologyIndices.size(),
-                    built.get())) {
-                prepared->smoothAdjacencyOwned = std::move(built);
-            }
-        }
-        prepared->smoothAdjacency = prepared->smoothAdjacencyOwned.get();
-        break;
     default:
         break;
     }
@@ -2432,7 +2406,7 @@ RrGeoPrepareRevisionRanges(
 // blends one below full strength, else null. \p untouched, when given,
 // receives whether the result is \p in itself, and then \p out is not
 // written. Reads only \p prepared and the packet, so groups are independent.
-// \p halo, required for Smooth and DeltaMush, holds the entering points of
+// \p halo, required for DeltaMush, holds the entering points of
 // this group and of every group a point it reads lies in; \p mush, required
 // for DeltaMush, is the group's own plan and scratch.
 bool
@@ -2441,7 +2415,6 @@ RrGeoRunRevisionGroup(
     const RrGeoRevisionRangeInputs &prepared, const RrVec3f *in, RrVec3f *out,
     size_t count, size_t begin, size_t end, const float *separateEnvelope,
     bool useSimd, bool *untouched = nullptr,
-    RigExecSparseWalkMemo<RrVec3f> *walk = nullptr,
     const RigExecGroupPoints<RrVec3f> *halo = nullptr,
     RigExecDeltaMushGroupState<RrVec3f, RrVec3d> *mush = nullptr)
 {
@@ -2540,18 +2513,6 @@ RrGeoRunRevisionGroup(
         }
         return true;
     }
-    case RrGeoOpSmooth:
-        // An invalid topology copies \p in to \p out, the whole kernel's
-        // pass-through, which the blend below then runs over.
-        if (!prepared.smoothAdjacency) {
-            seed();
-        } else if (n > 0 && (!halo || halo->At(begin) != in ||
-                             !RigExecApplyLaplacianSmoothGroup(
-                                 *prepared.smoothAdjacency, p.strength, count,
-                                 *halo, begin, end, out))) {
-            return false;
-        }
-        break;
     case RrGeoOpDeltaMush:
         if (n > 0 &&
             (!prepared.mushRest || !halo || !mush || halo->At(begin) != in ||
@@ -7078,9 +7039,8 @@ struct RrChainState {
         Chain &c = chainAt(chain);
         Revision &rev = revisionAt(chain, revision);
         const bool mush = rev.op == RrGeoOpDeltaMush;
-        const bool smooth = rev.op == RrGeoOpSmooth || mush;
         RigExecGroupPoints<RrVec3f> halo;
-        if (smooth) {
+        if (mush) {
             halo.bounds = c.groupBounds.data();
             halo.groups = c.groupBounds.size() - 1;
             halo.points = rev.haloPoints[g].data();
@@ -7088,8 +7048,7 @@ struct RrChainState {
         return RrGeoRunRevisionGroup(
             rev.op, rev.parameters, rev.rangeInputs, in, out, count, begin, end,
             envelope, program->geoSettings.useSimd, untouched,
-            &rev.groups[g].walk, smooth ? &halo : nullptr,
-            mush ? &rev.mushGroups[g] : nullptr);
+            mush ? &halo : nullptr, mush ? &rev.mushGroups[g] : nullptr);
     }
     bool runWholeSkinChunk(size_t chain, size_t revision, size_t g)
     {

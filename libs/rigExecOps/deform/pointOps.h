@@ -18,13 +18,21 @@ const rigExec::RigExecOpHandle &Smooth();
 const rigExec::RigExecOpHandle &VolumeCorrect();
 
 // Smooth: Points, Counts and Indices (IntArray), optional Strength (float,
-// clamped to [0, 1], unfed 1) and Envelope, Out.
+// clamped to [0, 1], unfed 1) and Envelope, Out. A mover's own inputs come
+// as Enabled (Bool, optional; false passes the points through) and
+// DefaultWeight (Float, optional; every point's weight, finite and in
+// [0, 1] or an error); a weight object's packet as Packet (PointWeights,
+// optional; resolved over the points each frame, an error when it does not
+// resolve). At most one of Envelope, DefaultWeight and Packet is fed.
 const rigExec::RigExecPortHandle &SmoothPoints();
 const rigExec::RigExecPortHandle &SmoothCounts();
 const rigExec::RigExecPortHandle &SmoothIndices();
 const rigExec::RigExecPortHandle &SmoothStrength();
 const rigExec::RigExecPortHandle &SmoothEnvelope();
 const rigExec::RigExecPortHandle &SmoothOut();
+const rigExec::RigExecPortHandle &SmoothEnabled();
+const rigExec::RigExecPortHandle &SmoothDefaultWeight();
+const rigExec::RigExecPortHandle &SmoothPacket();
 
 // VolumeCorrect: Points, Reference (double), optional Strength (float,
 // unfed 1) and Envelope, Out.

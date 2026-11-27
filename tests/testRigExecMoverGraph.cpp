@@ -1859,9 +1859,6 @@ TestPrepareRevisionRangesDecidesAsTheKernel()
         prepared.wireRestEvaluations = &staleTable;
         prepared.latticeBasis = &staleBasis;
         prepared.blendWeights.assign(3, 0.25f);
-        prepared.smoothAdjacencyOwned =
-            std::make_shared<rigExec::RigExecMeshAdjacency>();
-        prepared.smoothAdjacency = prepared.smoothAdjacencyOwned.get();
         const RigExecRevisionAcceptance decided =
             rigExec::RigExecPrepareRevisionRanges(op, p, n, &wire, &surface,
                                                   &prepared);
@@ -1871,20 +1868,7 @@ TestPrepareRevisionRangesDecidesAsTheKernel()
             !rigExec::RigExecRevisionIsRangeOp(op)) {
             ok = ok && !prepared.wireBasis && !prepared.wireRestEvaluations &&
                  !prepared.latticeBasis && !prepared.latticeBind &&
-                 prepared.blendWeights.empty() && !prepared.smoothAdjacency &&
-                 !prepared.smoothAdjacencyOwned;
-        } else if (op == Op::Smooth) {
-            // The adjacency the whole kernel smooths over, or none for a
-            // topology it passes through.
-            rigExec::RigExecMeshAdjacency built;
-            const bool valid = rigExec::RigExecBuildMeshAdjacency(
-                n, p.topologyCounts.data(), p.topologyCounts.size(),
-                p.topologyIndices.data(), p.topologyIndices.size(), &built);
-            ok = ok && (prepared.smoothAdjacency != nullptr) == valid &&
-                 (!valid ||
-                  (prepared.smoothAdjacency->Covers(n) &&
-                   prepared.smoothAdjacency->neighbors == built.neighbors)) &&
-                 !prepared.latticeBasis && prepared.blendWeights.empty();
+                 prepared.blendWeights.empty();
         } else if (op == Op::BlendShape) {
             // The blend kernel's own resolve, or nothing at full strength.
             std::vector<float> resolved;
@@ -2199,7 +2183,7 @@ TestRevisionGroupsMatchTheWholeKernel()
                 }
                 skin = &view;
             }
-            // A smooth group reads its neighbours through a halo: the
+            // A delta mush group reads its neighbours through a halo: the
             // points before the group, its own buffer, the points after.
             const int haloBounds[4] = {0, int(b), int(e), int(n)};
             const GfVec3f *const haloPoints[3] = {in.data(), groupIn,
@@ -2209,11 +2193,10 @@ TestRevisionGroupsMatchTheWholeKernel()
             halo.groups = 3;
             halo.points = haloPoints;
             rigExec::RigExecDeltaMushGroupState<GfVec3f, GfVec3d> mush;
-            const bool reads = op == Op::Smooth || op == Op::DeltaMush;
+            const bool reads = op == Op::DeltaMush;
             return rigExec::RigExecRunRevisionGroup(
                 op, p, prepared, skin, groupIn, out, n, b, e, separate, useSimd,
-                untouched, nullptr, reads ? &halo : nullptr,
-                op == Op::DeltaMush ? &mush : nullptr);
+                untouched, reads ? &halo : nullptr, reads ? &mush : nullptr);
         };
         for (const std::vector<size_t> &bounds : *cuts) {
             std::vector<GfVec3f> assembled;
@@ -2308,24 +2291,6 @@ TestRevisionGroupsMatchTheWholeKernel()
         p = packets.lattice;
         p.divisions = GfVec3i(1, 4, 2);
         check("lattice, invalid cage", Op::Lattice, p, false, cached, never,
-              false);
-    }
-
-    // Smooth: through a retained adjacency (cached) and a built one, at full
-    // strength and under a dense and a sparse envelope, its neighbours read
-    // across group bounds; an invalid topology passes through.
-    for (const bool cached : {false, true}) {
-        check("smooth", Op::Smooth, packets.smooth, false, cached, never, true);
-        auto p = packets.smooth;
-        p.weights = packets.denseWire;
-        check("smooth, dense envelope", Op::Smooth, p, false, cached, never,
-              true);
-        p.weights = packets.sparse;
-        check("smooth, sparse envelope", Op::Smooth, p, false, cached, never,
-              true);
-        p = packets.smooth;
-        p.topologyIndices[2] = int(count);
-        check("smooth, invalid topology", Op::Smooth, p, false, cached, never,
               false);
     }
 
@@ -2429,24 +2394,10 @@ TestRevisionGroupsMatchTheWholeKernel()
         CHECK(!rigExec::RigExecRunRevisionGroup(
             Op::BlendShape, p, none, nullptr, entering.data(), out.data(),
             count, 0, 10, nullptr, false));
-        // A smooth group reads its neighbours through its halo: refused
-        // without one.
-        RigExecRevisionRangeInputs adjacent;
-        adjacent.smoothAdjacencyOwned = [&] {
-            auto built = std::make_shared<rigExec::RigExecMeshAdjacency>();
-            rigExec::RigExecBuildMeshAdjacency(
-                count, packets.smooth.topologyCounts.data(),
-                packets.smooth.topologyCounts.size(),
-                packets.smooth.topologyIndices.data(),
-                packets.smooth.topologyIndices.size(), built.get());
-            return std::shared_ptr<const rigExec::RigExecMeshAdjacency>(built);
-        }();
-        adjacent.smoothAdjacency = adjacent.smoothAdjacencyOwned.get();
-        p = blend;
-        p.kind = TfToken("smooth");
+        // A smooth runs as op nodes: no group arm.
         CHECK(!rigExec::RigExecRunRevisionGroup(
-            Op::Smooth, p, adjacent, nullptr, entering.data(), out.data(),
-            count, 0, 10, nullptr, false));
+            Op::Smooth, packets.smooth, none, nullptr, entering.data(),
+            out.data(), count, 0, 10, nullptr, false));
         std::vector<GfVec3f> same(entering.begin(), entering.begin() + 10);
         CHECK(!rigExec::RigExecRunRevisionGroup(
             Op::Matrix, packets.matrix, none, nullptr, same.data(), same.data(),

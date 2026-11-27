@@ -88,9 +88,10 @@ in usdRig history.
 | 42 | 2026-11-26 | full-strength Range matrices as MoverTransform and MatrixDeform op nodes; op chains carry their members and written groups |
 | 43 | 2026-11-26 | pose commits as op nodes reading commit candidates and version lists through lookups |
 | 44 | 2026-11-26 | every Range matrix as op nodes, its weight packet read from the packet's node and its enabled state stored by its MatrixDeform |
-| 45 | 2026-11-27 | connected provider refreshes and provider arithmetic and affine operations as op nodes reading their inputs through lookups; **oldest readable from here on** |
+| 45 | 2026-11-27 | connected provider refreshes and provider arithmetic and affine operations as op nodes reading their inputs through lookups |
+| 46 | 2026-11-27 | every Range smooth as a Smooth op node; consecutive op revisions of a point chain share one range chain; **oldest readable from here on** |
 
-Versions 6 and 11–16 never appeared on `main`. Files written before version 45
+Versions 6 and 11–16 never appeared on `main`. Files written before version 46
 are outside every current reader: re-export them.
 
 ## Mover plugin API history
