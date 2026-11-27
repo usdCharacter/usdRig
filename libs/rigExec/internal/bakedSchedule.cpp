@@ -723,15 +723,16 @@ ValidateSemanticRequirements(const RigExecBakedProgramImpl &B,
             out->Add(NameStep(B, int(i)) + " repeats a descriptor key");
     for (size_t i = 0; i < B.steps.size(); ++i) {
         const auto &step = B.steps[i];
-        if (step.kind != RigExecBakedStepKind::Solve) {
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        if (id.kind != RigExecBakedStepKind::Solve) {
             if (!step.semanticPredecessorKeys.empty())
                 out->Add(NameStep(B, int(i)) +
                          " declares solver requirements on another body");
             continue;
         }
-        if (step.object < 0 || size_t(step.object) >= B.solvers.size())
+        if (id.object < 0 || size_t(id.object) >= B.solvers.size())
             continue;
-        const auto &solver = B.solvers[size_t(step.object)];
+        const auto &solver = B.solvers[size_t(id.object)];
         // Pure numerical fixtures have no authored relationship metadata.
         if (solver.solveDescriptorKey.empty() &&
             solver.relationshipRequirements.empty() &&
@@ -776,7 +777,8 @@ ValidateSemanticRequirements(const RigExecBakedProgramImpl &B,
             required.push_back(source.solveDescriptorKey);
             const auto found = active.find(source.solveDescriptorKey);
             if (found != active.end()) {
-                const auto &producer = B.steps[size_t(found->second)];
+                const RigExecBakedStepIdentity producer =
+                    RigExecBakedIdentityOf(B, B.steps[size_t(found->second)]);
                 if (producer.kind != RigExecBakedStepKind::Solve ||
                     producer.object != requirement.second ||
                     !SortedContains(step.preds, found->second))
@@ -1096,9 +1098,9 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
             for (const auto value : values)
                 check(domain, value, reader, own);
         };
-        if (step.kind == RigExecBakedStepKind::Solve && step.object >= 0 &&
-            size_t(step.object) < B.solvers.size()) {
-            const auto &solver = B.solvers[size_t(step.object)];
+        if (const int si = RigExecBakedSolverOf(B, step);
+            si >= 0 && size_t(si) < B.solvers.size()) {
+            const auto &solver = B.solvers[size_t(si)];
             all(kFin, solver.controlReads);
             for (const auto binding :
                  {std::make_pair(solver.start, solver.startRead),

@@ -466,6 +466,7 @@ const rigExec::RigExecOpDesc kFk = [] {
     rigExec::RigExecOpDesc d;
     d.nameSpace = "rig";
     d.name = "FkChain";
+    d.schema = &internalOps::kFkChain;
     d.ports = kFkPorts;
     d.portCount = std::size(kFkPorts);
     d.runBatch = &RunFkChain;

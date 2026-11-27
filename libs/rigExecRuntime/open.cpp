@@ -973,8 +973,9 @@ RigExecRuntimeReader::GetSolverFramePublications() const
     const auto &meta = *_program->slotMeta;
     std::vector<char> aliveSolver(_program->poses->solvers.size(), 0);
     for (const RigExecWireStep &step : *_program->steps)
-        if (step.kind == RigExecWireStepKind::Solve)
-            aliveSolver[size_t(step.object)] = 1;
+        if (const int64_t solver = RrSolveOf(_program.get(), step);
+            solver >= 0 && size_t(solver) < aliveSolver.size())
+            aliveSolver[size_t(solver)] = 1;
     for (int index : meta.solverPublishOrder) {
         if (!aliveSolver[size_t(meta.solverArrayElements[size_t(index)])])
             continue;

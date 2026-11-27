@@ -202,11 +202,13 @@ RrOpenProviderProgram(RrProgram *program, std::string *error)
     program->providerAnswerOfNode.clear();
     program->providerOpOfNode.clear();
     program->refreshOfNode.clear();
+    program->solverOfNode.clear();
     if (const auto &graph = program->file->opGraph) {
         const size_t nodes = graph->nodes.size();
         program->providerAnswerOfNode.assign(nodes, -1);
         program->providerOpOfNode.assign(nodes, -1);
         program->refreshOfNode.assign(nodes, -1);
+        program->solverOfNode.assign(nodes, -1);
         for (const auto &output : graph->hostOutputs) {
             if (!output || output->node >= nodes)
                 continue;
@@ -222,6 +224,8 @@ RrOpenProviderProgram(RrProgram *program, std::string *error)
                 set(program->providerOpOfNode);
             else if (output->target == uint8_t(T::RefreshBase))
                 set(program->refreshOfNode);
+            else if (output->target == uint8_t(T::SolverFrames))
+                set(program->solverOfNode);
         }
     }
     if (!program->file->providerProgram)

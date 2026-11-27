@@ -958,6 +958,18 @@ struct GroupHost {
         *error = "no composes";
         return false;
     }
+    bool LookUpSolver(uint32_t, const eval::OpLookup &, const RigExecTypeDesc &,
+                      void *, std::string *error) const
+    {
+        *error = "no solvers";
+        return false;
+    }
+    bool StoreSolver(const eval::OpHostOutput &, const void *,
+                     std::string *error)
+    {
+        *error = "no solvers";
+        return false;
+    }
     bool StoreGroup(const eval::OpHostOutput &output, uint32_t g,
                     const void *elements, size_t count, std::string *error)
     {

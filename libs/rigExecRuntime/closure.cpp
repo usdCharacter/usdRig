@@ -857,20 +857,19 @@ RrCompileCommonGraph(RrProgram *p, std::string *error)
             return false;
         };
         for (const auto &step : *p->steps) {
-            if (step.kind != RigExecWireStepKind::Solve) {
+            const int64_t owner = RrSolveOf(p, step);
+            if (owner < 0) {
                 if (!step.semanticPredecessorKeys.empty())
                     return invalid(
                         "semantic prerequisites require a Solve body");
                 continue;
             }
             if (step.semanticPredecessorKeys.empty() &&
-                (!p->poses || step.object < 0 ||
-                 size_t(step.object) >= p->poses->solvers.size()))
+                (!p->poses || size_t(owner) >= p->poses->solvers.size()))
                 continue;
-            if (!p->poses || step.object < 0 ||
-                size_t(step.object) >= p->poses->solvers.size())
+            if (!p->poses || size_t(owner) >= p->poses->solvers.size())
                 return invalid("semantic solver owner has no record");
-            const auto &solver = p->poses->solvers[size_t(step.object)];
+            const auto &solver = p->poses->solvers[size_t(owner)];
             if (solver.relationshipRequirements.empty() &&
                 solver.solveDescriptorKey.empty() &&
                 step.semanticPredecessorKeys.empty())
@@ -942,8 +941,7 @@ RrCompileCommonGraph(RrProgram *p, std::string *error)
                                             source.solveDescriptorKey;
                                  });
                 if (found == p->steps->end() ||
-                    found->kind != RigExecWireStepKind::Solve ||
-                    found->object != requirement.solver)
+                    RrSolveOf(p, *found) != requirement.solver)
                     return invalid(
                         "semantic source key names no matching Solve body");
                 keys.push_back(source.solveDescriptorKey);
@@ -1074,14 +1072,13 @@ RrCompileCommonGraph(RrProgram *p, std::string *error)
             }
         const auto &body = (*p->steps)[op.originalIndex];
         std::vector<std::string> requiredKeys;
-        if (body.kind == RigExecWireStepKind::Solve) {
-            if (!p->poses || body.object < 0 ||
-                size_t(body.object) >= p->poses->solvers.size()) {
+        if (const int64_t owner = RrSolveOf(p, body); owner >= 0) {
+            if (!p->poses || size_t(owner) >= p->poses->solvers.size()) {
                 if (error)
                     *error = "semantic solver owner has no record";
                 return false;
             }
-            const auto &solver = p->poses->solvers[size_t(body.object)];
+            const auto &solver = p->poses->solvers[size_t(owner)];
             for (const auto &requirement : solver.relationshipRequirements) {
                 if (requirement.solver < 0 ||
                     size_t(requirement.solver) >= p->poses->solvers.size()) {
@@ -1095,9 +1092,8 @@ RrCompileCommonGraph(RrProgram *p, std::string *error)
                 const auto found = byKey.find(source.solveDescriptorKey);
                 if (found != byKey.end()) {
                     const auto &sourceOp = wire.ops[found->second];
-                    if (sourceOp.kind != uint32_t(RigExecWireStepKind::Solve) ||
-                        sourceOp.originalIndex >= p->steps->size() ||
-                        (*p->steps)[sourceOp.originalIndex].object !=
+                    if (sourceOp.originalIndex >= p->steps->size() ||
+                        RrSolveOf(p, (*p->steps)[sourceOp.originalIndex]) !=
                             requirement.solver) {
                         if (error)
                             *error =

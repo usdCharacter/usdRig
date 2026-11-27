@@ -62,9 +62,9 @@ _RrEpilogueLists(const RrProgram &program, std::vector<char> *aliveSolver,
     geometrySteps->clear();
     for (uint32_t i = 0; i < steps.size(); ++i) {
         const RigExecWireStepKind kind = steps[i].kind;
-        if (kind == RigExecWireStepKind::Solve && steps[i].object >= 0 &&
-            size_t(steps[i].object) < aliveSolver->size())
-            (*aliveSolver)[size_t(steps[i].object)] = 1;
+        if (const int64_t solver = RrSolveOf(&program, steps[i]);
+            solver >= 0 && size_t(solver) < aliveSolver->size())
+            (*aliveSolver)[size_t(solver)] = 1;
         if (kind == RigExecWireStepKind::RevisionStatic ||
             kind == RigExecWireStepKind::ChainStatus ||
             kind == RigExecWireStepKind::Derived ||

@@ -2883,6 +2883,79 @@ TestFrozenConstraintOpsMatchLive(const std::string &examplesDir)
     }
 }
 
+// An FK chain runs as its op node in a frozen job, bit-identical to live
+// at frames and under a drag on one of its controls.
+void
+TestFrozenFkChainOpsMatchLive(const std::string &examplesDir)
+{
+    UsdStageRefPtr stage =
+        UsdStage::Open(examplesDir + "/03_IkFkBlendClamp.usda");
+    CHECK(stage);
+    if (!stage)
+        return;
+    const SdfPath rig("/BlendArmAsset/Rig");
+    RigExecRigEvaluator evaluator(stage, rig);
+    CHECK(evaluator.Compile());
+    CHECK(evaluator.Evaluate(UsdTimeCode(1001.0)).valid);
+    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
+        *evaluator.GetBakedProgram());
+    std::set<size_t> fkSteps;
+    for (size_t i = 0; i < B.steps.size(); ++i)
+        if (RigExecBakedIdentityOf(B, B.steps[i]).kind ==
+                RigExecBakedStepKind::Solve &&
+            B.steps[i].kind == RigExecBakedStepKind::OpNode)
+            fkSteps.insert(i);
+    CHECK(fkSteps.size() == 1);
+    std::shared_ptr<const RigExecFrozenProgram> frozen;
+    std::string error;
+    CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
+    if (!frozen)
+        return;
+    RigExecValueOverride target;
+    target.prim = SdfPath("/BlendArmAsset/Rig/Controls/ElbowFK");
+    target.attribute = TfToken("avars:rz");
+    target.value = VtValue(-12.5);
+    const auto run = [&](double frame, const char *what,
+                         const std::vector<RigExecValueOverride> &drags) {
+        evaluator.SetInteractiveOverrides(drags);
+        const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
+        RigExecFrameInputs inputs;
+        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame), drags,
+                                       &inputs, &error));
+        RigExecFrozenEvalContext context;
+        context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+        context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+        context.varyingInputCount = inputs.values.size();
+        if (evaluator.GetPublishWeightFields())
+            context.flags |= kRigExecFrozenPublishWeightFields;
+        if (evaluator.GetSolverGuidesEnabled())
+            context.flags |= kRigExecFrozenSolverGuidesEnabled;
+        context.frozen = frozen.get();
+        auto workspace = RigExecCreateFrozenWorkspace(frozen);
+        context.workspace = workspace.get();
+        RigExecFrozenRunReport report;
+        const RigExecRigPose pose = RigExecEvaluateFrozen(
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
+        evaluator.SetInteractiveOverrides({});
+        size_t ran = 0;
+        for (const auto &entry : report.region)
+            if (fkSteps.count(entry.step)) {
+                CHECK(entry.kind == "Solve");
+                ++ran;
+            }
+        if (ran == 0) {
+            std::printf("FAIL %s: the frozen job ran no FK chain node\n", what);
+            ++failures;
+        }
+        CHECK(live.valid && pose.valid);
+        CheckPosesBitIdentical(what, live, pose);
+    };
+    run(1020.0, "frozen FK chain", {});
+    run(1028.0, "frozen FK chain", {});
+    run(1028.0, "frozen FK chain under a drag", {target});
+}
+
 // Frozen publishes exactly live's weightFrames on every path. On
 // 14_VolumeConstrainedSweep with a volume outside the rig that only a
 // constraint names, that volume has a slot and a placement step, which the
@@ -10753,6 +10826,7 @@ main(int argc, char **argv)
         TestFrozenWeightPacketOpsMatchLive(argv[1]);
         TestFrozenSpaceMatrixOpsMatchLive(argv[1]);
         TestFrozenPoseCommitOpsMatchLive(argv[1]);
+        TestFrozenFkChainOpsMatchLive(argv[1]);
         TestFrozenProviderOpsMatchLive(argv[1]);
         TestFrozenConstraintOpsMatchLive(argv[1]);
         TestFrozenProviderAnswersMatchLive(argv[1]);

@@ -1894,8 +1894,9 @@ EpilogueLists(const RigExecBakedProgramImpl &B, std::vector<char> *aliveSolver,
     geometrySteps->clear();
     for (uint32_t i = 0; i < B.steps.size(); ++i) {
         const auto &step = B.steps[i];
-        if (step.kind == K::Solve)
-            (*aliveSolver)[size_t(step.object)] = 1;
+        if (const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+            id.kind == K::Solve)
+            (*aliveSolver)[size_t(id.object)] = 1;
         if (RigExecBakedIdentityOf(B, step).kind == K::RevisionStatic ||
             step.kind == K::ChainStatus || step.kind == K::Derived)
             geometrySteps->push_back(i);

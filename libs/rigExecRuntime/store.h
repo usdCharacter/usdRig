@@ -724,6 +724,8 @@ struct RrProgram {
     /// answers, the provider op it runs and the provider refresh it runs,
     /// or -1.
     std::vector<int64_t> providerAnswerOfNode, providerOpOfNode, refreshOfNode;
+    /// Per op node: the solver whose frames it stores, or -1.
+    std::vector<int64_t> solverOfNode;
     /// What Open decoded. A program a test assembles by hand leaves it
     /// null and points the tables below at its own.
     std::unique_ptr<RigExecWireFile> file;
@@ -1126,6 +1128,20 @@ bool RrStoreConstraint(RrProgram *program, size_t step,
 /// mover reports it.
 std::string RrConstraintFailure(const RrProgram *program, uint32_t commit,
                                 const std::string &error);
+/// The solver a Solve step runs or a solver op node stores the frames of,
+/// or -1 for any other step.
+int64_t RrSolveOf(const RrProgram *program, const RigExecWireStep &step);
+/// Resolves a SolverInput lookup.
+bool RrLookUpSolver(const RrProgram *program, const eval::OpLookup &lookup,
+                    const RigExecTypeDesc &type, void *value,
+                    std::string *error);
+/// Stores a solver node's frames as the solver's aggregate and the outputs
+/// its commit reads.
+bool RrStoreSolver(RrProgram *program, const eval::OpHostOutput &output,
+                   const void *value, std::string *error);
+/// The failure \p error of an op node of solver \p solver.
+std::string RrSolverFailure(const RrProgram *program, uint32_t solver,
+                            const std::string &error);
 /// Resolves WeightArrays lookup \p lookup: input \p lookup.read of weight
 /// object \p lookup.object, an array lent in place.
 bool RrLookUpWeight(const RrProgram *program, const eval::OpLookup &lookup,

@@ -459,8 +459,7 @@ TestEveryRestReaderDeclaresIt(const std::string &examples)
                 break;
             }
             case RigExecBakedStepKind::Solve:
-                for (const int slot :
-                     B.solvers[size_t(step.object)].restSlots) {
+                for (const int slot : B.solvers[size_t(id.object)].restSlots) {
                     rest(step, slot, "Solve");
                 }
                 break;

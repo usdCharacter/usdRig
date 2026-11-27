@@ -46,6 +46,15 @@ bool RigExecRunSolverOp(const RigExecSolverRecord &record,
                         RigExecPointFrameArray *output,
                         std::string *error = nullptr);
 
+/// A solver's frames from its reference kernels: an FK chain from the
+/// chain kernels the FkChain and FkJointGroups ops run, any other kind
+/// through RigExecRunSolver.
+bool RigExecReferenceSolve(const RigExecSolverRecord &record,
+                           const RigExecSolverInputs &input,
+                           RigExecSolverWorkspace *workspace,
+                           RigExecPointFrameArray *output,
+                           std::string *error = nullptr);
+
 /// RigExecRunConstraint for a kind RigExecConstraintOpSupported accepts.
 bool RigExecRunConstraintOp(const RigExecConstraintRecord &record,
                             const RigExecConstraintInputs &input,

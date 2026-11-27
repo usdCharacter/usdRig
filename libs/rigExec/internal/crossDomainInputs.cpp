@@ -351,11 +351,10 @@ RigExecBakedFinalizeCrossDomainReads(RigExecBakedProgramImpl *program,
                                    RigExecBakedDeclareCrossDomainRead(
                                        B, read, &step.reads);
                                });
-        if (step.kind == RigExecBakedStepKind::Solve && step.object >= 0 &&
-            size_t(step.object) < B.solvers.size())
+        if (const int si = RigExecBakedSolverOf(B, step);
+            si >= 0 && size_t(si) < B.solvers.size())
             RigExecBakedDeclarePointInput(
-                B, B.solvers[size_t(step.object)].ribbonPointsBinding,
-                &step.reads);
+                B, B.solvers[size_t(si)].ribbonPointsBinding, &step.reads);
     }
     return true;
 }

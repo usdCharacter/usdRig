@@ -1029,19 +1029,21 @@ RigExecBakedProgram::_BuildStepGraph(_BuildAttempt &build)
     // after all numerical descriptors exist. No authored stack order or
     // generated scheduling predecessor is used as semantic authority.
     for (const auto &step : B.steps)
-        if (step.kind == RigExecBakedStepKind::Solve)
-            B.solvers[size_t(step.object)].solveDescriptorKey =
+        if (const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+            id.kind == RigExecBakedStepKind::Solve)
+            B.solvers[size_t(id.object)].solveDescriptorKey =
                 step.descriptorKey;
     for (auto &step : B.steps)
-        if (step.kind == RigExecBakedStepKind::Solve) {
+        if (const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+            id.kind == RigExecBakedStepKind::Solve) {
             for (const auto &requirement :
-                 B.solvers[size_t(step.object)].relationshipRequirements) {
+                 B.solvers[size_t(id.object)].relationshipRequirements) {
                 const int source = requirement.second;
                 if (source < 0 || size_t(source) >= B.solvers.size() ||
                     B.solvers[size_t(source)].solveDescriptorKey.empty()) {
                     ctx.Refuse(
                         "solver relationship has no compiled Solve descriptor",
-                        B.solvers[size_t(step.object)].path);
+                        B.solvers[size_t(id.object)].path);
                     return nullptr;
                 }
                 step.semanticPredecessorKeys.push_back(

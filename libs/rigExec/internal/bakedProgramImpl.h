@@ -1212,6 +1212,9 @@ enum class RigExecBakedOpFamily : uint8_t {
     /// A pose interpolator through PoseInterpolator: object its index in
     /// poseInterpolators.
     PoseInterpolator,
+    /// One op node of solver `object`, `part` its place among the
+    /// solver's nodes; the last one stores the solver's frames.
+    Solver,
 };
 
 /// Where an op node's step comes from: its family, that family's object and
@@ -3094,6 +3097,29 @@ bool RigExecBakedLookUpCompose(const RigExecBakedProgramImpl &B,
 bool RigExecBakedStoreCompose(RigExecBakedProgramImpl &B,
                               const eval::OpHostOutput &output,
                               const void *value, std::string *error);
+/// The solver a Solve step or a solver op node runs, or -1.
+int RigExecBakedSolverOf(const RigExecBakedProgramImpl &B,
+                         const RigExecBakedStep &step);
+/// How many op nodes solver \p s runs as; 0 for one its Solve step runs.
+size_t RigExecBakedSolverNodeCount(const RigExecBakedProgramImpl::Solver &s);
+/// The solver op node of origin \p o, numbered \p o.
+bool RigExecBakedAddSolverOp(const RigExecBakedProgramImpl &B,
+                             RigExecRigDescBuilder *builder,
+                             eval::OpStepLayout *layout, size_t o,
+                             std::string *error);
+/// Resolves a SolverInput lookup.
+bool RigExecBakedLookUpSolver(const RigExecBakedProgramImpl &B,
+                              const eval::OpLookup &lookup,
+                              const RigExecTypeDesc &type, void *value,
+                              std::string *error);
+/// Stores a solver's frames as its aggregate and the outputs its commit
+/// reads.
+bool RigExecBakedStoreSolver(RigExecBakedProgramImpl &B,
+                             const eval::OpHostOutput &output,
+                             const void *value, std::string *error);
+/// The failure \p error of an op node of solver \p solver.
+std::string RigExecBakedSolverFailure(const RigExecBakedProgramImpl &B,
+                                      int solver, const std::string &error);
 /// The cross-domain read diagnostics of revision \p part of \p chain.
 void RigExecBakedPropertyInputLines(const RigExecBakedProgramImpl &B,
                                     size_t chain, size_t part,

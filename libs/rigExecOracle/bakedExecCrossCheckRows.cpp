@@ -1304,8 +1304,8 @@ RigExecBakedExecCheckRows::AfterStep(const B &b, size_t step)
             _inputs[row],
             id.kind == Kind::FrameMatrix &&
                 !b.frameMatrixValid[size_t(id.object)],
-            b.steps[step].kind == Kind::Solve &&
-                b.aggregates[size_t(b.steps[step].object)].frames.empty());
+            id.kind == Kind::Solve &&
+                b.aggregates[size_t(id.object)].frames.empty());
     }
     // A constraint's row publishes what its commit wrote back and the delta
     // its geometry target's node measured, both after the constraint step.

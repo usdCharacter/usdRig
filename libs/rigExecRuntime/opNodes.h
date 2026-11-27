@@ -47,6 +47,11 @@ struct RrOpNodes {
     /// Per node: the constraint commit whose mover it solves or whose delta
     /// it measures, or kRigExecInvalidIndex.
     std::vector<uint32_t> constraint;
+    /// Per node: the solver it runs for, or kRigExecInvalidIndex.
+    std::vector<uint32_t> solver;
+    /// Per solver: the frames its op output leads with that are no joint of
+    /// its aggregate (an FK chain's start frame).
+    std::vector<uint8_t> solverLeading;
 };
 
 /// Builds \p program's op nodes from its file, when it holds any. False

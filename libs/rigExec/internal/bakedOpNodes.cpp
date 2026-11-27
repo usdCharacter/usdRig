@@ -223,6 +223,17 @@ struct BakedOpHost {
     {
         return RigExecBakedStoreCompose(B, output, value, error);
     }
+    bool LookUpSolver(uint32_t, const eval::OpLookup &lookup,
+                      const RigExecTypeDesc &type, void *value,
+                      std::string *error) const
+    {
+        return RigExecBakedLookUpSolver(B, lookup, type, value, error);
+    }
+    bool StoreSolver(const eval::OpHostOutput &output, const void *value,
+                     std::string *error) const
+    {
+        return RigExecBakedStoreSolver(B, output, value, error);
+    }
 };
 
 template <class T>
@@ -963,12 +974,14 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
             (origin->family == RigExecBakedOpFamily::Constraint ||
              (origin->family == RigExecBakedOpFamily::PoseCommit &&
               RigExecBakedConstraintRunsAsOps(*B, size_t(origin->object))));
-        if (!origin || (origin->family != RigExecBakedOpFamily::WeightField &&
-                        origin->family != RigExecBakedOpFamily::WeightPacket &&
-                        !constraint))
+        if (!origin ||
+            (origin->family != RigExecBakedOpFamily::WeightField &&
+             origin->family != RigExecBakedOpFamily::WeightPacket &&
+             origin->family != RigExecBakedOpFamily::Solver && !constraint))
             continue;
         const uint32_t n = uint32_t(step.object);
-        if (origin->family == RigExecBakedOpFamily::WeightField || constraint)
+        if (origin->family == RigExecBakedOpFamily::WeightField ||
+            origin->family == RigExecBakedOpFamily::Solver || constraint)
             DeclareNodeReads(*B, op, inputs, n, OpReader(), &step.reads);
         outputs(n, [&](uint32_t v) {
             step.writes.push_back(RigExecBakedOne(D::OpValue, int(v)));
@@ -1098,6 +1111,9 @@ AddPoseWalkOps(const RigExecBakedProgramImpl &B, RigExecRigDescBuilder *builder,
             return false;
         if ((family == F::SpaceCheckpoint || family == F::PoseInterpolator) &&
             !RigExecBakedAddComposeOp(B, builder, layout, o, error))
+            return false;
+        if (family == F::Solver &&
+            !RigExecBakedAddSolverOp(B, builder, layout, o, error))
             return false;
     }
     return true;
@@ -1494,6 +1510,9 @@ RigExecBakedRunOpStep(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
                     B.revisionIndex[size_t(failedRevision)].second)]
                 .moverPathText +
             ": " + error);
+    else if (origin && origin->family == RigExecBakedOpFamily::Solver)
+        step->diagnostics.push_back(
+            RigExecBakedSolverFailure(B, origin->object, error));
     else if (const RigExecBakedStepIdentity id =
                  RigExecBakedIdentityOf(B, *step);
              !origin && id.kind != step->kind &&

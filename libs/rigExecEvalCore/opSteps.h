@@ -133,6 +133,9 @@ enum class OpLookupSource : uint8_t {
     /// Pose interpolator `object`'s input `read` (OpInterpolatorRead):
     /// its leaves, or its drivers' last fin versions and rest frames.
     InterpolatorInputs = 42,
+    /// Solver `object`'s input `part` (OpSolverRead), from the pose
+    /// versions it reads and the rests composed this run.
+    SolverInput = 60,
 };
 
 /// OpLookup::read of a CheckpointInputs lookup: the SpaceCheckpoint input
@@ -164,6 +167,21 @@ enum class OpInterpolatorRead : uint8_t {
     ExtraRests,
     ExtraParentFinals,
     ExtraParentRests,
+};
+
+/// OpLookup::part of a SolverInput lookup. The numbers are part of the
+/// file format.
+enum class OpSolverRead : uint8_t {
+    /// PointFrameArray: an FK chain's controls at their read versions with
+    /// their rests, its start frame first when it has one.
+    FkControls = 0,
+    /// PointLandmarksList: per FK element, the rest its frame is re-based
+    /// to: a live joint rest where one stands, else the control's rest.
+    FkOutRests = 1,
+    /// PointLandmarks: the rest of the solver's start frame.
+    StartRest = 2,
+    /// DoubleArray: the joint group selectors.
+    GroupSelectors = 3,
 };
 
 /// OpLookup::read of a constraint lookup. The numbers are part of the file
@@ -490,6 +508,9 @@ enum class OpOutputTarget : uint8_t {
     ConstraintDelta = 36,
     /// Bool: whether that delta could be measured; stored after it.
     ConstraintDeltaMeasured = 37,
+    /// PointFrameArray: solver `object`'s frames, published as its
+    /// aggregate and as the outputs its commit reads.
+    SolverFrames = 60,
     /// UInt: what constraint commit `object`'s node made of its frames, as
     /// its kind's op reports it (Harmonics or SingleChainIk Status,
     /// IkFkMatch ShownMask).
@@ -574,6 +595,7 @@ OpLookupSourceRuns(uint8_t source)
            source == uint8_t(OpLookupSource::CommitVersions) ||
            source == uint8_t(OpLookupSource::CommitCandidates) ||
            OpConstraintLookupSource(source) ||
+           source == uint8_t(OpLookupSource::SolverInput) ||
            OpLookupSourceSelectable(source) || OpSpaceLookupSource(source) ||
            OpComposeLookupSource(source);
 }
@@ -596,7 +618,8 @@ OpOutputTargetRuns(uint8_t target, bool chainMember)
                      (target >= uint8_t(OpOutputTarget::CommitSlots) &&
                       target <=
                           uint8_t(OpOutputTarget::ConstraintDeltaMeasured)) ||
-                     OpConstraintOutputTarget(target);
+                     OpConstraintOutputTarget(target) ||
+                     target == uint8_t(OpOutputTarget::SolverFrames);
 }
 
 /// A per-frame read of the rig the host resolves for a Lookup input; what
@@ -1303,9 +1326,9 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
 /// Resolves lookup \p index through the \p host method of its source's
 /// family: LookUpProperty, LookUpPoseVersion, LookUpWeight,
 /// LookUpChainVersion, LookUpWeightField, LookUpCommit, LookUpConstraint,
-/// LookUpCompose or, for a RevisionLeaf read past Radial,
-/// LookUpRevision(index, lookup, type, value, error), a Matrix lookup
-/// through Matrix(source, slot), and a FrameRecord
+/// LookUpCompose or LookUpSolver(index, lookup, type, value, error), or,
+/// for a RevisionLeaf read past Radial, LookUpRevision(index, lookup, type,
+/// value, error), a Matrix lookup through Matrix(source, slot), and a FrameRecord
 /// or ConstraintDelta lookup through PresentMatrix(lookup), null when
 /// absent. A List or Selected lookup resolves through OpLookUpAt.
 template <class Host>
@@ -1367,6 +1390,8 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
     case OpLookupSource::IkFkMatchInput:
     case OpLookupSource::ConstraintDeltaBase:
         return host.LookUpConstraint(index, lookup, type, value, error);
+    case OpLookupSource::SolverInput:
+        return host.LookUpSolver(index, lookup, type, value, error);
     case OpLookupSource::Matrix: {
         const void *matrix = host.Matrix(
             lookup.part ? OpHostSource::BaseMatrix : OpHostSource::FinalMatrix,
@@ -1415,7 +1440,7 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
 /// Stores \p value through the \p host method of \p output's target
 /// family: StorePropertyVersion, StoreVolumePlacement, StoreWeightPacket,
 /// StoreWeightField, StoreCommit, StoreRevisionEnabled, StoreConstraint or
-/// StoreCompose(output, value, error).
+/// StoreCompose or StoreSolver(output, value, error).
 template <class Host>
 bool
 OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
@@ -1437,6 +1462,8 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
     case OpOutputTarget::CommitBaseDescendants:
     case OpOutputTarget::CommitPresent:
         return host.StoreCommit(output, value, error);
+    case OpOutputTarget::SolverFrames:
+        return host.StoreSolver(output, value, error);
     case OpOutputTarget::RevisionEnabled:
         return host.StoreRevisionEnabled(output, value, error);
     case OpOutputTarget::ConstraintCandidate:

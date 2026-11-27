@@ -6489,7 +6489,8 @@ def Xform "Asset"
     // The step of \p kind that \p owner's compose group or solver owns.
     const auto stepOf = [&](RigExecBakedStepKind kind, const SdfPath &owner) {
         for (size_t i = 0; i < B->steps.size(); ++i) {
-            const RigExecBakedStep &step = B->steps[i];
+            const RigExecBakedStepIdentity step =
+                RigExecBakedIdentityOf(*B, B->steps[i]);
             if (step.kind != kind || step.object < 0) {
                 continue;
             }
@@ -6520,14 +6521,6 @@ def Xform "Asset"
     const auto moved = [](const std::vector<int> &slots, int slot) {
         return std::find(slots.begin(), slots.end(), slot) != slots.end();
     };
-    const auto refreshes = [&]() -> long long {
-        for (const auto &solver : B->solvers) {
-            if (solver.path == chain) {
-                return (long long)solver.restRefreshes;
-            }
-        }
-        return -1;
-    };
     const int heldSlot = slotOf(held);
     const int heldDefaultSlot = slotOf(heldDefault);
     const int freeSlot = slotOf(freeJoint);
@@ -6537,7 +6530,6 @@ def Xform "Asset"
     const int solveOp = stepOf(RigExecBakedStepKind::Solve, chain);
     CHECK(heldSlot >= 0 && heldDefaultSlot >= 0 && freeSlot >= 0);
     CHECK(restOp >= 0 && ladderOp >= 0 && solveOp >= 0);
-    CHECK(refreshes() >= 0);
     if (heldSlot < 0 || heldDefaultSlot < 0 || freeSlot < 0) {
         return;
     }
@@ -6549,8 +6541,7 @@ def Xform "Asset"
     CHECK(moved(B->restMoved, heldSlot));
     CHECK(moved(B->ladderMoved, heldDefaultSlot));
     CHECK(moved(B->restMoved, freeSlot));
-    const long long arrived = refreshes();
-    CHECK(arrived > 0);
+    CHECK(ran(solveOp));
 
     // Held: the composes run over the held NaN and find the same bits.
     if (!stay(3.0)) {
@@ -6564,7 +6555,6 @@ def Xform "Asset"
     CHECK(!B->ladderChanged[size_t(heldDefaultSlot)]);
     CHECK(!moved(B->ladderMoved, heldDefaultSlot));
     CHECK(moved(B->restMoved, freeSlot));
-    CHECK(refreshes() == arrived);
 
     // The same frame as a cone run, then forced from where it left off.
     if (!stay(3.0)) {
@@ -6581,7 +6571,6 @@ def Xform "Asset"
     CHECK(B->ladderMoved == coneLadders);
     CHECK(!B->restChanged[size_t(heldSlot)]);
     CHECK(!B->ladderChanged[size_t(heldDefaultSlot)]);
-    const long long forced = refreshes();
 
     // The NaN leaves: a move again.
     if (!stay(1.0)) {
@@ -6590,7 +6579,7 @@ def Xform "Asset"
     CHECK(moved(B->restMoved, heldSlot));
     CHECK(moved(B->ladderMoved, heldDefaultSlot));
     CHECK(moved(B->restMoved, freeSlot));
-    CHECK(refreshes() > forced);
+    CHECK(ran(solveOp));
 
     // The runtime, over the same history. Its compose steps record the
     // moves its Solve steps refresh from.

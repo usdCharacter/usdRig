@@ -599,6 +599,8 @@ public:
         _avarNode.assign(nodes, -1);
         _checkpointNode.assign(nodes, -1);
         _interpolatorNode.assign(nodes, -1);
+        _solveNode.assign(nodes, -1);
+        _solverOf.assign(nodes, -1);
         _refreshOf.assign(nodes, -1);
         _providerOpOf.assign(nodes, -1);
         _constraintNode.assign(nodes, -1);
@@ -652,6 +654,18 @@ public:
             if (output && output->node < nodes && output->target == 42 &&
                 _interpolatorNode[output->node] < 0)
                 _interpolatorNode[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 60 &&
+                _solveNode[output->node] < 0)
+                _solveNode[output->node] = _solverOf[output->node] =
+                    int64_t(output->object);
+        for (size_t n = 0; n < nodes; ++n)
+            if (_solveNode[n] >= 0 && file.opGraph->nodes[n])
+                for (const auto &input : file.opGraph->nodes[n]->inputs)
+                    if (input && input->node >= 0 &&
+                        size_t(input->node) < nodes &&
+                        _solverOf[size_t(input->node)] < 0)
+                        _solverOf[size_t(input->node)] = _solveNode[n];
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node < nodes && output->target == 5 &&
                 _fieldStored[output->node] < 0)
@@ -749,7 +763,8 @@ private:
         std::vector<uint8_t> stored, packets, fields, groupsStored,
             enabledStored;
         std::set<std::pair<uint64_t, uint8_t>> providerStored, answerStored;
-        std::set<uint64_t> avarsStored, checkpointsStored, weightsStored;
+        std::set<uint64_t> avarsStored, checkpointsStored, weightsStored,
+            solversStored;
         std::vector<uint8_t> spaceStored(
             4 * std::max<size_t>(_slots, _f.pose->frameRecords.size()), 0);
         for (const auto &output : _f.opGraph->hostOutputs) {
@@ -761,6 +776,7 @@ private:
                 (output->target > 34 && !constraint && output->target != 40 &&
                  output->target != 41 && output->target != 42 &&
                  output->target != 50 && output->target != 51 &&
+                 output->target != 60 &&
                  (output->target < 52 || output->target > 54)))
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
@@ -859,6 +875,18 @@ private:
                 if (!avarsStored.insert(output->object).second)
                     return _Bad("op_graph.host_outputs: the avars of slot " +
                                 _N(output->object) + " are stored twice");
+                continue;
+            }
+            if (output->target == 60) {
+                if (!_f.pose ||
+                    !_Has(_f.pose->solvers, int64_t(output->object)) ||
+                    _solveNode[node] != int64_t(output->object) ||
+                    !solversStored.insert(output->object).second)
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the frames of solver " +
+                                _N(output->object) +
+                                ", which it does not solve or another node "
+                                "stores");
                 continue;
             }
             if (commit) {
@@ -1084,6 +1112,15 @@ private:
                 if (!_ConstraintCommit(int64_t(lookup->object)) || !shaped)
                     return _Bad("op_graph.lookups: a constraint lookup reads "
                                 "nothing constraint " +
+                                _N(lookup->object) + " holds");
+                continue;
+            }
+            if (lookup && lookup->source == 60) {
+                if (!_f.pose ||
+                    !_Has(_f.pose->solvers, int64_t(lookup->object)) ||
+                    lookup->part < 0 || lookup->part > 3 || lookup->read)
+                    return _Bad("op_graph.lookups: a solver lookup reads "
+                                "nothing solver " +
                                 _N(lookup->object) + " holds");
                 continue;
             }
@@ -1596,6 +1633,19 @@ private:
                     if (!frame || lookup.object != frame->commit())
                         return bad(" reads the gates of a commit its node's "
                                    "record does not name");
+                    continue;
+                }
+                if (lookup.source == 60) {
+                    if (_solverOf[n] != object)
+                        return bad(" reads a solver its node does not run");
+                    continue;
+                }
+                if (lookup.source == 1 && _solverOf[n] >= 0) {
+                    const auto &solver = _f.pose->solvers[size_t(_solverOf[n])];
+                    if (lookup.part != 0 || solver.start < 0 ||
+                        lookup.object != solver.startRead)
+                        return bad(" reads a pose frame other than its "
+                                   "solver's start");
                     continue;
                 }
                 if (lookup.source == 1 && _providerSlotOf[n] >= 0)
@@ -3478,15 +3528,16 @@ private:
         }
         for (size_t step = 0; step < _f.steps.size(); ++step) {
             const auto &body = _f.steps[step];
-            if (body.kind != fb::StepKind::Solve) {
+            const int64_t solve = _SolveOf(body);
+            if (solve < 0) {
                 if (!body.semanticPredecessorKeys.empty())
                     return _Bad(_StepName(step) +
                                 ": semantic prerequisites on a non-Solve body");
                 continue;
             }
-            if (!_Has(solvers, body.object))
+            if (!_Has(solvers, solve))
                 return _Bad(_StepName(step) + ": invalid semantic Solve owner");
-            const size_t owner = size_t(body.object);
+            const size_t owner = size_t(solve);
             if (active[owner] >= 0)
                 return _Bad(_StepName(step) +
                             ": duplicate semantic Solve owner");
@@ -5233,11 +5284,11 @@ private:
                         if (!_RequireCandidateReads(owner, input))
                             return false;
                 }
-            } else if (step.kind == K::Solve) {
-                if (!_Has(pose.solvers, step.object))
+            } else if (const int64_t si = _SolverOf(step); si >= 0) {
+                if (!_Has(pose.solvers, si))
                     return _Bad(_StepName(owner) +
                                 ": solver body object out of range");
-                const auto &solver = pose.solvers[size_t(step.object)];
+                const auto &solver = pose.solvers[size_t(si)];
                 readAll(D::PoseFin, solver.controlReads);
                 for (const auto binding :
                      {std::make_pair(solver.start, solver.startRead),
@@ -6423,10 +6474,9 @@ private:
                                  int(_f.opGraph->lookups[size_t(input->object)]
                                          ->object)))
                         return false;
-            if (step.kind == fb::StepKind::Solve &&
-                _Has(_f.pose->solvers, step.object))
-                for (const auto slot :
-                     _f.pose->solvers[size_t(step.object)].restSlots)
+            if (const int64_t si = _SolverOf(step);
+                si >= 0 && _Has(_f.pose->solvers, si))
+                for (const auto slot : _f.pose->solvers[size_t(si)].restSlots)
                     if (!require(fb::SlotDomain::Rest, slot))
                         return false;
             if (step.kind == fb::StepKind::ComposeSubtree &&
@@ -10382,6 +10432,32 @@ private:
     /// Per op node: the pose interpolator whose weights it stores, or -1.
     std::vector<int64_t> _interpolatorNode;
 
+    /// Per op node: the solver whose frames it stores, or -1; and the
+    /// solver it runs for: that one, or the one of the node it feeds.
+    std::vector<int64_t> _solveNode, _solverOf;
+
+    /// The solver a Solve step or a solver's op node runs, or -1.
+    int64_t _SolverOf(const fb::RigExecWireStep &step) const
+    {
+        if (step.kind == fb::StepKind::Solve)
+            return step.object;
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _solverOf.size()
+                   ? _solverOf[size_t(step.object)]
+                   : -1;
+    }
+    /// The solver a step keeps the Solve identity of: a Solve step's, or
+    /// the one an op node stores the frames of; -1 otherwise.
+    int64_t _SolveOf(const fb::RigExecWireStep &step) const
+    {
+        if (step.kind == fb::StepKind::Solve)
+            return step.object;
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _solveNode.size()
+                   ? _solveNode[size_t(step.object)]
+                   : -1;
+    }
+
     /// The commit a constraint or PoseCommit op step works on, or -1.
     int64_t _CommitOf(const fb::RigExecWireStep &step) const
     {
@@ -11058,6 +11134,28 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
                                      : mover;
                 return true;
             }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
+                output->target == 60 && pose &&
+                _Has(pose->solvers, output->object)) {
+                *out = text(pose->solvers[output->object].path);
+                return true;
+            }
+        if (_Has(file.opGraph->nodes, object) && file.opGraph->nodes[object])
+            for (const auto &input : file.opGraph->nodes[object]->inputs)
+                if (input && input->host == 4 && pose &&
+                    _Has(file.opGraph->lookups, input->object) &&
+                    file.opGraph->lookups[input->object] &&
+                    file.opGraph->lookups[input->object]->source == 60 &&
+                    _Has(pose->solvers,
+                         file.opGraph->lookups[input->object]->object)) {
+                    *out = text(
+                        pose
+                            ->solvers[size_t(
+                                file.opGraph->lookups[input->object]->object)]
+                            .path);
+                    return true;
+                }
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node == uint64_t(object) &&
                 output->target == 3 && geometry &&

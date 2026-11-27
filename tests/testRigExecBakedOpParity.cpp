@@ -366,9 +366,10 @@ void
 ProbeSolve(const B &b)
 {
     for (const auto &step : b.steps) {
-        if (step.kind != RigExecBakedStepKind::Solve)
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(b, step);
+        if (id.kind != RigExecBakedStepKind::Solve)
             continue;
-        const auto &s = b.solvers[size_t(step.object)];
+        const auto &s = b.solvers[size_t(id.object)];
         const std::string kind =
             TypeName(s.type) + (s.jointGroups.empty() ? "" : " groups");
         if (!RigExecSolverOpSupported(s)) {
@@ -379,9 +380,30 @@ ProbeSolve(const B &b)
         RigExecPoseOpRunner runner;
         RigExecPointFrameArray out;
         std::string error;
-        const bool ran =
-            RigExecRunSolverOp(s, SolveInputs(b, s), runner, &out, &error);
-        const auto &baked = b.aggregates[size_t(step.object)];
+        bool ran = false;
+        if (step.kind == RigExecBakedStepKind::Solve) {
+            ran =
+                RigExecRunSolverOp(s, SolveInputs(b, s), runner, &out, &error);
+        } else {
+            // A solver that runs as op nodes against its reference kernels,
+            // over the rests composed this run.
+            B::Solver composed = s;
+            for (size_t k = 0; k < s.controls.size(); ++k)
+                composed.controlRests[k] = b.restPts[size_t(s.controls[k])];
+            if (s.start >= 0)
+                composed.startRest = b.restPts[size_t(s.start)];
+            composed.hasStart = s.start >= 0;
+            for (size_t k = 0; k < s.restRefs.size() && k < s.jointRests.size();
+                 ++k)
+                composed.jointRests[k] =
+                    k < s.restIsLive.size() && s.restIsLive[k]
+                        ? b.fin[s.restReads[k]].points
+                        : b.restPts[size_t(s.restRefs[k].first)];
+            RigExecSolverWorkspace workspace;
+            ran = RigExecReferenceSolve(composed, SolveInputs(b, composed),
+                                        &workspace, &out, &error);
+        }
+        const auto &baked = b.aggregates[size_t(id.object)];
         const std::string prefix = "diag " + s.pathText + ": ";
         std::string bakedError;
         for (const auto &line : step.diagnostics)

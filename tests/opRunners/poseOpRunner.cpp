@@ -2,6 +2,7 @@
 
 #include "rigExec/api/compile.h"
 #include "rigExec/api/types.h"
+#include "rigExec/internal/solverKernels.h"
 
 namespace rigExec {
 
@@ -39,6 +40,66 @@ Ready(RigExecPoseOpRunner &runner, bool built, const Add &add,
 }
 
 } // namespace
+
+bool
+RigExecReferenceSolve(const RigExecSolverRecord &s,
+                      const RigExecSolverInputs &input,
+                      RigExecSolverWorkspace *workspace,
+                      RigExecPointFrameArray *output, std::string *error)
+{
+    if (s.kind != RigExecSolverKind::FkChain || s.degenerate)
+        return RigExecRunSolver(s, input, workspace, output, error);
+    output->frames.clear();
+    output->rests.clear();
+    if (input.controls.size() != s.controlRests.size()) {
+        if (error)
+            *error = "FK control/rest cardinality mismatch";
+        return false;
+    }
+    const bool jointBasis = s.jointRests.size() == input.controls.size();
+    output->rests = s.controlRests;
+    const int base = s.hasStart ? 1 : 0;
+    auto &elements = workspace->fkElements;
+    elements.resize(input.controls.size() + size_t(base));
+    if (base) {
+        elements[0].restPoints = s.startRest;
+        elements[0].posePoints = input.start.points;
+        elements[0].hasOutRest = false;
+        elements[0].parentIndex = -1;
+    }
+    for (size_t k = 0; k < input.controls.size(); ++k) {
+        auto &element = elements[k + size_t(base)];
+        element.restPoints = s.controlRests[k];
+        element.posePoints = input.controls[k].points;
+        const bool live =
+            jointBasis && k < s.restIsLive.size() && s.restIsLive[k];
+        element.hasOutRest = live;
+        if (live) {
+            element.outRestPoints = s.jointRests[k];
+            output->rests[k] = s.jointRests[k];
+        }
+        element.parentIndex = s.parentRelative ? base - 1 : int(k) + base - 1;
+    }
+    output->frames = RigExecSolveFkChain(elements);
+    if (s.scaleSegments)
+        RigExecScaleFkSegments(elements, &output->frames);
+    if (base && !output->frames.empty())
+        output->frames.erase(output->frames.begin());
+    if (!s.jointGroups.empty()) {
+        if (input.jointGroupSelectors.size() != s.jointGroups.size()) {
+            if (error)
+                *error = "FK joint group/selector cardinality mismatch";
+            return false;
+        }
+        RigExecApplyFkJointGroups(
+            elements, size_t(base), s.jointGroupParents, s.jointGroups,
+            s.jointGroupMembers, input.jointGroupSelectors,
+            base ? &s.startRest : nullptr, base ? &input.start.points : nullptr,
+            &workspace->jointGroupSlots, &workspace->jointGroupActive,
+            &output->frames);
+    }
+    return true;
+}
 
 bool
 RigExecRunSolverOp(const RigExecSolverRecord &record,

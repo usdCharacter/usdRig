@@ -298,13 +298,13 @@ RigExecBakedProgram::_BuildWithSceneCapture(
         }
         bool progress = false;
         for (const auto &step : B.excludedSteps)
-            if (step.kind == K::Solve) {
-                if (step.object < 0 || size_t(step.object) >= B.solvers.size())
+            if (const int si = RigExecBakedSolverOf(B, step); si >= 0) {
+                if (size_t(si) >= B.solvers.size())
                     return nullptr;
-                progress = excludedSolverBodies
-                               .insert(B.solvers[size_t(step.object)].path)
-                               .second ||
-                           progress;
+                progress =
+                    excludedSolverBodies.insert(B.solvers[size_t(si)].path)
+                        .second ||
+                    progress;
             }
         for (const auto &owner : newWriters)
             progress = excludedPoseWriters.insert(owner).second || progress;

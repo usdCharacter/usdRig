@@ -7,6 +7,7 @@
 #include "rigExecRuntime/store.h"
 #include "rigExecEvalCore/constraintLookups.h"
 #include "rigExecEvalCore/propertyLookups.h"
+#include "rigExecSchema/schemaNames.h"
 
 #include <cstring>
 #include <utility>
@@ -361,6 +362,17 @@ struct RrOpHost {
     {
         return RrStoreCompose(&p, output, value, error);
     }
+    bool LookUpSolver(uint32_t, const eval::OpLookup &lookup,
+                      const RigExecTypeDesc &type, void *value,
+                      std::string *error) const
+    {
+        return RrLookUpSolver(&p, lookup, type, value, error);
+    }
+    bool StoreSolver(const eval::OpHostOutput &output, const void *value,
+                     std::string *error) const
+    {
+        return RrStoreSolver(&p, output, value, error);
+    }
 };
 
 } // namespace
@@ -509,6 +521,24 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
     nodes->weightObject.assign(graph.nodes.size(), kRigExecInvalidIndex);
     nodes->commit.assign(graph.nodes.size(), kRigExecInvalidIndex);
     nodes->constraint.assign(graph.nodes.size(), kRigExecInvalidIndex);
+    nodes->solver.assign(graph.nodes.size(), kRigExecInvalidIndex);
+    for (size_t n = 0; n < graph.nodes.size(); ++n)
+        for (const auto &input : graph.nodes[n]->inputs)
+            if (input && input->host == 4 &&
+                input->object < graph.lookups.size() &&
+                graph.lookups[input->object]->source ==
+                    uint8_t(eval::OpLookupSource::SolverInput))
+                nodes->solver[n] = graph.lookups[input->object]->object;
+    if (p->poses) {
+        nodes->solverLeading.assign(p->poses->solvers.size(), 0);
+        for (size_t s = 0; s < p->poses->solvers.size(); ++s)
+            nodes->solverLeading[s] =
+                p->poses->solvers[s].start >= 0 &&
+                        p->TextOrEmpty(p->poses->solvers[s].type) ==
+                            SchemaTypeName::RigExecFkChain
+                    ? 1
+                    : 0;
+    }
     // A field node's first field lookup in port order reads its own object;
     // a sparse dynamic weight's base indices read its base's, later.
     for (const auto &[node, object] : fieldObjects)
@@ -533,6 +563,8 @@ RrOpenOpNodes(RrProgram *p, std::string *error)
             nodes->commit[output->node] = output->object;
         if (eval::OpConstraintOutputTarget(output->target))
             nodes->constraint[output->node] = output->object;
+        if (output->target == uint8_t(eval::OpOutputTarget::SolverFrames))
+            nodes->solver[output->node] = output->object;
         size_t chain = 0, part = 0;
         if (output->target == uint8_t(eval::OpOutputTarget::PropertyVersion) &&
             RrPropertyPartOfVersion(p, output->object, &chain, &part) &&
@@ -612,6 +644,10 @@ RrRunOpStep(RrProgram *p, size_t i, std::string *error)
              step.object >= 0 && size_t(step.object) < nodes->commit.size() &&
              nodes->commit[size_t(step.object)] != kRigExecInvalidIndex)
         *error = RrCommitFailure(p, nodes->commit[size_t(step.object)], *error);
+    else if (error && step.kind == RigExecWireStepKind::OpNode &&
+             step.object >= 0 && size_t(step.object) < nodes->solver.size() &&
+             nodes->solver[size_t(step.object)] != kRigExecInvalidIndex)
+        *error = RrSolverFailure(p, nodes->solver[size_t(step.object)], *error);
     else if (error && step.kind == RigExecWireStepKind::OpNode &&
              step.object >= 0 &&
              size_t(step.object) < nodes->constraint.size() &&

@@ -1642,6 +1642,18 @@ AddOriginStep(RigExecBakedProgramImpl *program, RigExecBakedOpFamily family,
     return step;
 }
 
+/// Op node \p part of the \p nodes solver \p si runs as; the last keeps
+/// the Solve step's identity.
+RigExecBakedStep &
+AddSolverStep(RigExecBakedProgramImpl *program, int si, size_t part,
+              size_t nodes)
+{
+    return AddOriginStep(program, RigExecBakedOpFamily::Solver,
+                         part + 1 == nodes ? RigExecBakedStepKind::Solve
+                                           : RigExecBakedStepKind::OpNode,
+                         si, part + 1 == nodes ? -1 : int(part));
+}
+
 /// Binds every pose read and write of the walk to a VERSION of its slot.
 ///
 /// One sweep in program order over the same writes the edge sweep sees,
@@ -2490,66 +2502,73 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
                 // +1 for the start provider's synthetic base element.
                 solver.kernelWorkspace.fkElements.resize(
                     solver.controls.size() + (solver.start >= 0 ? 1 : 0));
-                RigExecBakedStep &step =
-                    AddStep(&B, RigExecBakedStepKind::Solve, si);
-                // A refused or failed solve reports why.
-                step.maxDiagnostics = 1;
-                for (const int control : solver.controls) {
-                    if (control >= 0) {
-                        step.reads.push_back(RigExecBakedOne(
-                            RigExecBakedSlotDomain::PoseFin, control));
-                    }
-                }
-                for (const int control :
-                     {solver.root, solver.mid, solver.end, solver.pole}) {
-                    if (control >= 0) {
-                        step.reads.push_back(RigExecBakedOne(
-                            RigExecBakedSlotDomain::PoseFin, control));
-                    }
-                }
-                // The start provider's posed frame: undeclared, the
-                // scheduler is free to run this solve before the write.
-                if (solver.start >= 0) {
-                    step.reads.push_back(RigExecBakedOne(
-                        RigExecBakedSlotDomain::PoseFin, solver.start));
-                }
-                // The LIVE joint rests: a solver whose rest reference is the
-                // frame a pose step below it left READS that slot's PoseFin,
-                // and a read a step does not declare is a read the scheduler
-                // is free to run before the write.
-                // Empty on every solver with no step below it.
-                if (solver.hasLiveRest) {
-                    for (size_t k = 0; k < solver.restRefs.size(); ++k) {
-                        if (k < solver.restIsLive.size() &&
-                            solver.restIsLive[k] &&
-                            solver.restRefs[k].first >= 0) {
-                            step.reads.push_back(
-                                RigExecBakedOne(RigExecBakedSlotDomain::PoseFin,
-                                                solver.restRefs[k].first));
+                const size_t nodes = RigExecBakedSolverNodeCount(solver);
+                for (size_t part = 0; part < std::max<size_t>(nodes, 1);
+                     ++part) {
+                    RigExecBakedStep &step =
+                        nodes ? AddSolverStep(&B, si, part, nodes)
+                              : AddStep(&B, RigExecBakedStepKind::Solve, si);
+                    // A refused or failed solve reports why.
+                    step.maxDiagnostics = 1;
+                    for (const int control : solver.controls) {
+                        if (control >= 0) {
+                            step.reads.push_back(RigExecBakedOne(
+                                RigExecBakedSlotDomain::PoseFin, control));
                         }
                     }
-                }
-                // The ribbon's driver points, filled by the prologue.
-                // Nothing in the program writes the domain, so the read
-                // raises no edge; it is declared because it is what the cone
-                // follows when the curve moves, and because a step's
-                // declaration is meant to say what the step touches.
-                if (!solver.ribbonPointsPath.IsEmpty()) {
-                    step.reads.push_back(RigExecBakedOne(
-                        RigExecBakedSlotDomain::SolverPoints, si));
-                }
-                // An input solver's Solve step precedes this one; the
-                // validator refuses a program where it does not.
-                for (const int input : {solver.inA, solver.inB}) {
-                    if (input >= 0) {
-                        step.reads.push_back(RigExecBakedOne(
-                            RigExecBakedSlotDomain::Aggregate, input));
+                    for (const int control :
+                         {solver.root, solver.mid, solver.end, solver.pole}) {
+                        if (control >= 0) {
+                            step.reads.push_back(RigExecBakedOne(
+                                RigExecBakedSlotDomain::PoseFin, control));
+                        }
                     }
+                    // The start provider's posed frame: undeclared, the
+                    // scheduler is free to run this solve before the write.
+                    if (solver.start >= 0) {
+                        step.reads.push_back(RigExecBakedOne(
+                            RigExecBakedSlotDomain::PoseFin, solver.start));
+                    }
+                    // The LIVE joint rests: a solver whose rest reference is the
+                    // frame a pose step below it left READS that slot's PoseFin,
+                    // and a read a step does not declare is a read the scheduler
+                    // is free to run before the write.
+                    // Empty on every solver with no step below it.
+                    if (solver.hasLiveRest) {
+                        for (size_t k = 0; k < solver.restRefs.size(); ++k) {
+                            if (k < solver.restIsLive.size() &&
+                                solver.restIsLive[k] &&
+                                solver.restRefs[k].first >= 0) {
+                                step.reads.push_back(RigExecBakedOne(
+                                    RigExecBakedSlotDomain::PoseFin,
+                                    solver.restRefs[k].first));
+                            }
+                        }
+                    }
+                    // The ribbon's driver points, filled by the prologue.
+                    // Nothing in the program writes the domain, so the read
+                    // raises no edge; it is declared because it is what the cone
+                    // follows when the curve moves, and because a step's
+                    // declaration is meant to say what the step touches.
+                    if (!solver.ribbonPointsPath.IsEmpty()) {
+                        step.reads.push_back(RigExecBakedOne(
+                            RigExecBakedSlotDomain::SolverPoints, si));
+                    }
+                    // An input solver's Solve step precedes this one; the
+                    // validator refuses a program where it does not.
+                    for (const int input : {solver.inA, solver.inB}) {
+                        if (input >= 0) {
+                            step.reads.push_back(RigExecBakedOne(
+                                RigExecBakedSlotDomain::Aggregate, input));
+                        }
+                    }
+                    if (part + 1 < nodes)
+                        continue;
+                    step.writes.push_back(
+                        RigExecBakedOne(RigExecBakedSlotDomain::Aggregate, si));
+                    step.writes.push_back(RigExecBakedOne(
+                        RigExecBakedSlotDomain::Candidates, si));
                 }
-                step.writes.push_back(
-                    RigExecBakedOne(RigExecBakedSlotDomain::Aggregate, si));
-                step.writes.push_back(
-                    RigExecBakedOne(RigExecBakedSlotDomain::Candidates, si));
             }
         }
 
@@ -2811,38 +2830,45 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
         // +1 for the start provider's synthetic base element.
         solver.kernelWorkspace.fkElements.resize(solver.controls.size() +
                                                  (solver.start >= 0 ? 1 : 0));
-        RigExecBakedStep &step = AddStep(&B, RigExecBakedStepKind::Solve, si);
-        for (const int control : solver.controls) {
-            if (control >= 0) {
-                step.reads.push_back(
-                    RigExecBakedOne(RigExecBakedSlotDomain::PoseFin, control));
+        const size_t nodes = RigExecBakedSolverNodeCount(solver);
+        for (size_t part = 0; part < std::max<size_t>(nodes, 1); ++part) {
+            RigExecBakedStep &step =
+                nodes ? AddSolverStep(&B, si, part, nodes)
+                      : AddStep(&B, RigExecBakedStepKind::Solve, si);
+            for (const int control : solver.controls) {
+                if (control >= 0) {
+                    step.reads.push_back(RigExecBakedOne(
+                        RigExecBakedSlotDomain::PoseFin, control));
+                }
             }
-        }
-        for (const int control :
-             {solver.root, solver.mid, solver.end, solver.pole}) {
-            if (control >= 0) {
-                step.reads.push_back(
-                    RigExecBakedOne(RigExecBakedSlotDomain::PoseFin, control));
+            for (const int control :
+                 {solver.root, solver.mid, solver.end, solver.pole}) {
+                if (control >= 0) {
+                    step.reads.push_back(RigExecBakedOne(
+                        RigExecBakedSlotDomain::PoseFin, control));
+                }
             }
-        }
-        if (solver.start >= 0) {
-            step.reads.push_back(
-                RigExecBakedOne(RigExecBakedSlotDomain::PoseFin, solver.start));
-        }
-        if (!solver.ribbonPointsPath.IsEmpty()) {
-            step.reads.push_back(
-                RigExecBakedOne(RigExecBakedSlotDomain::SolverPoints, si));
-        }
-        for (const int input : {solver.inA, solver.inB}) {
-            if (input >= 0) {
-                step.reads.push_back(
-                    RigExecBakedOne(RigExecBakedSlotDomain::Aggregate, input));
+            if (solver.start >= 0) {
+                step.reads.push_back(RigExecBakedOne(
+                    RigExecBakedSlotDomain::PoseFin, solver.start));
             }
+            if (!solver.ribbonPointsPath.IsEmpty()) {
+                step.reads.push_back(
+                    RigExecBakedOne(RigExecBakedSlotDomain::SolverPoints, si));
+            }
+            for (const int input : {solver.inA, solver.inB}) {
+                if (input >= 0) {
+                    step.reads.push_back(RigExecBakedOne(
+                        RigExecBakedSlotDomain::Aggregate, input));
+                }
+            }
+            if (part + 1 < nodes)
+                continue;
+            step.writes.push_back(
+                RigExecBakedOne(RigExecBakedSlotDomain::Aggregate, si));
+            step.writes.push_back(
+                RigExecBakedOne(RigExecBakedSlotDomain::Candidates, si));
         }
-        step.writes.push_back(
-            RigExecBakedOne(RigExecBakedSlotDomain::Aggregate, si));
-        step.writes.push_back(
-            RigExecBakedOne(RigExecBakedSlotDomain::Candidates, si));
     }
 
     // Final for every published joint, and the reads
@@ -2949,7 +2975,8 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
         const bool commitNode =
             origin && origin->family == RigExecBakedOpFamily::PoseCommit;
         const bool constraintStep = id.kind == Kind::Constraint && id.part < 0;
-        if (step.kind != Kind::Solve && id.kind != Kind::FrameMatrix &&
+        const int solverIndex = RigExecBakedSolverOf(B, step);
+        if (solverIndex < 0 && id.kind != Kind::FrameMatrix &&
             id.kind != Kind::ProviderMatrix &&
             id.kind != Kind::PoseInterpolator && !constraintStep && !commitNode)
             continue;
@@ -2974,8 +3001,8 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
             for (const auto value : values)
                 step.writes.push_back(RigExecBakedOne(domain, value));
         };
-        if (step.kind == Kind::Solve) {
-            const auto &solver = B.solvers[size_t(step.object)];
+        if (solverIndex >= 0) {
+            const auto &solver = B.solvers[size_t(solverIndex)];
             readAll(Domain::PoseFin, solver.controlReads);
             for (const auto binding :
                  {std::make_pair(solver.start, solver.startRead),
@@ -3282,11 +3309,12 @@ NoteStepInputs(const RigExecBakedProgramImpl &B,
         }
         return;
     }
-    switch (step.kind) {
+    const int solverIndex = RigExecBakedSolverOf(B, step);
+    switch (solverIndex >= 0 ? RigExecBakedStepKind::Solve : step.kind) {
     case RigExecBakedStepKind::Solve:
-        if (step.object < 0 || size_t(step.object) >= B.solvers.size())
+        if (size_t(solverIndex) >= B.solvers.size())
             break;
-        NoteSolverInputs(B.solvers[size_t(step.object)], sink);
+        NoteSolverInputs(B.solvers[size_t(solverIndex)], sink);
         break;
     case RigExecBakedStepKind::ComposeSubtree: {
         if (step.object < 0 || size_t(step.object) >= B.composeGroups.size())
@@ -3583,10 +3611,9 @@ RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
     for (auto &step : B.steps) {
         // Direct bindings are numbered only now. Their current values must
         // reach both source candidates and the effective numerical memo.
-        if (step.kind == RigExecBakedStepKind::Solve) {
+        if (const int si = RigExecBakedSolverOf(B, step); si >= 0) {
             directBindings(&step, [&](const auto &fn) {
-                frozenDetail::_VisitSolverInputs(B.solvers[size_t(step.object)],
-                                                 fn);
+                frozenDetail::_VisitSolverInputs(B.solvers[size_t(si)], fn);
             });
         } else if (RigExecBakedIdentityOf(B, step).kind ==
                    RigExecBakedStepKind::Constraint) {
@@ -4292,7 +4319,8 @@ RigExecBakedRequiredRestReads(const RigExecBakedProgramImpl &B,
                     ladder(slot);
                 }
             };
-        switch (step.kind) {
+        const int solverIndex = RigExecBakedSolverOf(B, step);
+        switch (solverIndex >= 0 ? RigExecBakedStepKind::Solve : step.kind) {
         case RigExecBakedStepKind::ComposeSubtree: {
             if (step.object < 0 ||
                 size_t(step.object) >= B.composeGroups.size())
@@ -4355,9 +4383,9 @@ RigExecBakedRequiredRestReads(const RigExecBakedProgramImpl &B,
                 ladder(slot);
             break;
         case RigExecBakedStepKind::Solve:
-            if (step.object < 0 || size_t(step.object) >= B.solvers.size())
+            if (size_t(solverIndex) >= B.solvers.size())
                 break;
-            for (const int slot : B.solvers[size_t(step.object)].restSlots) {
+            for (const int slot : B.solvers[size_t(solverIndex)].restSlots) {
                 rest(slot);
             }
             break;
@@ -4570,6 +4598,8 @@ RefreshSolverRests(const RigExecBakedProgramImpl &B,
                    RigExecBakedProgramImpl::Solver *solver)
 {
     RigExecBakedProgramImpl::Solver &s = *solver;
+    if (RigExecBakedSolverNodeCount(s))
+        return;
     // Where a rest ref is LIVE, the rest is the frame the pose step below this
     // solver left -- read off the ladder by the version bindSolverReads bound
     // -- and not the authored rest of the slot. Every arithmetic
@@ -4593,8 +4623,7 @@ RefreshSolverRests(const RigExecBakedProgramImpl &B,
     for (size_t k = 0; k < s.restRefs.size() && k < s.jointRests.size(); ++k) {
         s.jointRests[k] = restPtsOf(k, s.restRefs[k].first);
     }
-    if (s.type == SchemaTypeName::RigExecFkChain ||
-        s.type == SchemaTypeName::RigExecSkeleton2d) {
+    if (s.type == SchemaTypeName::RigExecSkeleton2d) {
         // A 2D skeleton's controls are its outside parent spaces.
         for (size_t k = 0; k < s.controls.size(); ++k) {
             s.controlRests[k] = B.restPts[size_t(s.controls[k])];
@@ -4964,12 +4993,7 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         input.end = frame(s.end, s.endRead);
         input.pole = frame(s.pole, s.poleRead);
         input.start = frame(s.start, s.startRead);
-        if (s.type == SchemaTypeName::RigExecFkChain) {
-            s.kind = RigExecSolverKind::FkChain;
-            input.controls.resize(s.controls.size());
-            for (size_t k = 0; k < s.controls.size(); ++k)
-                input.controls[k] = B.fin[size_t(s.controlReads[k])];
-        } else if (s.type == SchemaTypeName::RigExecTwoBoneIk) {
+        if (s.type == SchemaTypeName::RigExecTwoBoneIk) {
             s.kind = RigExecSolverKind::TwoBoneIk;
             input.ikSpace = rd(s.ikSpace);
             input.refreshIkParams = true;

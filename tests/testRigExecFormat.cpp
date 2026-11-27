@@ -3163,6 +3163,15 @@ TestOpLookupOwners()
     expect("commit candidates on a placement node",
            "reads a commit its node does not write back",
            [&](F &f) { look(f, place, 31, 0, 0); });
+    expect("a solver input on a placement node",
+           "reads a solver its node does not run",
+           [&](F &f) { look(f, place, 60, 0, 0); });
+    expect("a solver input of no solver",
+           "a solver lookup reads nothing solver 1000000 holds",
+           [&](F &f) { look(f, place, 60, 1000000, 0); });
+    expect("a solver input past the solver reads",
+           "a solver lookup reads nothing solver 0 holds",
+           [&](F &f) { look(f, place, 60, 0, 4); });
     expect("an enabled state stored by a node storing no groups",
            "stores whether revision 0 is enabled, but not its groups",
            [&](F &f) {

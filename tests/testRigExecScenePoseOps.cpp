@@ -123,7 +123,7 @@ CompareSolver(const std::string &label, const RigExecSolverRecord &s,
     RigExecPointFrameArray want, got;
     std::string wantError, gotError;
     const bool native =
-        RigExecRunSolver(s, input, &workspace, &want, &wantError);
+        RigExecReferenceSolve(s, input, &workspace, &want, &wantError);
     const bool op = RigExecRunSolverOp(s, input, runner, &got, &gotError);
     const bool same = opError ? !op && got.frames.empty() &&
                                     gotError.find(opError) != std::string::npos

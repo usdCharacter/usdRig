@@ -20,57 +20,10 @@ RigExecRunSolver(const RigExecSolverRecord &s, const RigExecSolverInputs &input,
     if (s.degenerate)
         return true;
     switch (s.kind) {
-    case RigExecSolverKind::FkChain: {
-        if (input.controls.size() != s.controlRests.size()) {
-            if (error)
-                *error = "FK control/rest cardinality mismatch";
-            return false;
-        }
-        const bool jointBasis = s.jointRests.size() == input.controls.size();
-        aggregate.rests = s.controlRests;
-        const int base = s.hasStart ? 1 : 0;
-        auto &elements = scratch->fkElements;
-        elements.resize(input.controls.size() + size_t(base));
-        if (base) {
-            elements[0].restPoints = s.startRest;
-            elements[0].posePoints = input.start.points;
-            elements[0].hasOutRest = false;
-            elements[0].parentIndex = -1;
-        }
-        for (size_t k = 0; k < input.controls.size(); ++k) {
-            auto &element = elements[k + size_t(base)];
-            element.restPoints = s.controlRests[k];
-            element.posePoints = input.controls[k].points;
-            const bool live =
-                jointBasis && k < s.restIsLive.size() && s.restIsLive[k];
-            element.hasOutRest = live;
-            if (live) {
-                element.outRestPoints = s.jointRests[k];
-                aggregate.rests[k] = s.jointRests[k];
-            }
-            element.parentIndex =
-                s.parentRelative ? base - 1 : int(k) + base - 1;
-        }
-        aggregate.frames = RigExecSolveFkChain(elements);
-        if (s.scaleSegments)
-            RigExecScaleFkSegments(elements, &aggregate.frames);
-        if (base && !aggregate.frames.empty())
-            aggregate.frames.erase(aggregate.frames.begin());
-        if (!s.jointGroups.empty()) {
-            if (input.jointGroupSelectors.size() != s.jointGroups.size()) {
-                if (error)
-                    *error = "FK joint group/selector cardinality mismatch";
-                return false;
-            }
-            RigExecApplyFkJointGroups(
-                elements, size_t(base), s.jointGroupParents, s.jointGroups,
-                s.jointGroupMembers, input.jointGroupSelectors,
-                base ? &s.startRest : nullptr,
-                base ? &input.start.points : nullptr, &scratch->jointGroupSlots,
-                &scratch->jointGroupActive, &aggregate.frames);
-        }
-        return true;
-    }
+    case RigExecSolverKind::FkChain:
+        if (error)
+            *error = "an FK chain runs as op nodes";
+        return false;
     case RigExecSolverKind::TwoBoneIk: {
         auto params = s.ikParams;
         auto space = input.ikSpace;

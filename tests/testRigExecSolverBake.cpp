@@ -1575,7 +1575,13 @@ TestRefreshSolverRestsOnBuildStateIsIdentity(const char *what,
     program = evaluator->GetBakedProgram();
     RestDiff moved;
     moved.report = false;
-    if (program) {
+    if (program && RigExecBakedSolverNodeCount(build.solvers[draggedSolver])) {
+        // A solver that runs as op nodes holds no description: its nodes
+        // look up the rests RestCompose wrote this run.
+        const auto &rests =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*program).restPts;
+        moved.differing = rests[size_t(slot)] != build.restPts[size_t(slot)];
+    } else if (program) {
         CompareRestDescription(
             build.solvers[draggedSolver],
             rigExec::RigExecBakedProgramAccess::StepGraph(*program)

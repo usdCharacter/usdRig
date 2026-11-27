@@ -4101,8 +4101,10 @@ TestTheValidatorRejectsALaterPoseVersion()
             const size_t solverIndex = size_t(solver - B.solvers.data());
             auto solve = std::find_if(
                 B.steps.begin(), B.steps.end(), [&](const auto &step) {
-                    return step.kind == RigExecBakedStepKind::Solve &&
-                           step.object == int(solverIndex);
+                    const RigExecBakedStepIdentity id =
+                        RigExecBakedIdentityOf(B, step);
+                    return id.kind == RigExecBakedStepKind::Solve &&
+                           id.object == int(solverIndex);
                 });
             CHECK(solve != B.steps.end());
             if (solve != B.steps.end()) {

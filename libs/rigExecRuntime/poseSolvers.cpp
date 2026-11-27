@@ -7,6 +7,7 @@
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecMath/chainSolverKernel.h"
 #include "rigExecMath/poseCommitKernel.h"
+#include "rigExecRigTypes/rigTypes.h"
 #include "rigExecStdTypes/stdTypes.h"
 #include "rigExecMath/frameBlendKernel.h"
 #include "rigExecMath/ribbonFramesKernel.h"
@@ -116,8 +117,7 @@ _RrRefreshSolverRests(RrProgram *program, size_t step, size_t solver,
     };
     const std::string type = program->TextOrEmpty(wire.type);
     // A 2D skeleton's controls are its outside parent spaces.
-    if (type == SchemaTypeName::RigExecFkChain ||
-        type == SchemaTypeName::RigExecSkeleton2d) {
+    if (type == SchemaTypeName::RigExecSkeleton2d) {
         for (size_t k = 0; k < wire.controls.size(); ++k) {
             if (k >= s.controlRests.size() || wire.controls[k] < 0 ||
                 size_t(wire.controls[k]) >= scratch->restPts.size()) {
@@ -421,101 +421,6 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
         return true;
     };
     if (ws.degenerate) {
-    } else if (type == SchemaTypeName::RigExecFkChain) {
-        const size_t base = ws.start >= 0 ? 1 : 0;
-        if (s.elements.size() != ws.controls.size() + base ||
-            ws.controlReads.size() != ws.controls.size()) {
-            if (error) {
-                *error =
-                    _RrStepHead(program, step) + " names no solver control";
-            }
-            return false;
-        }
-        const bool jointBasis = s.jointRests.size() == ws.controls.size();
-        aggregate.rests = s.controlRests;
-        if (base) {
-            s.elements[0].restPoints = s.startRest;
-            const RrPointFrame *startPose = nullptr;
-            if (!finAt(ws.startRead, &startPose)) {
-                return false;
-            }
-            s.elements[0].posePoints = startPose->points;
-            s.elements[0].hasOutRest = false;
-            s.elements[0].parentIndex = -1;
-        }
-        for (size_t k = 0; k < ws.controls.size(); ++k) {
-            if (k >= s.controlRests.size()) {
-                if (error) {
-                    *error =
-                        _RrStepHead(program, step) + " names no solver control";
-                }
-                return false;
-            }
-            const size_t e = k + base;
-            s.elements[e].restPoints = s.controlRests[k];
-            const RrPointFrame *pose = nullptr;
-            if (!finAt(ws.controlReads[k], &pose)) {
-                return false;
-            }
-            s.elements[e].posePoints = pose->points;
-            const bool live =
-                jointBasis && k < ws.restIsLive.size() && ws.restIsLive[k];
-            s.elements[e].hasOutRest = live;
-            if (live) {
-                if (k >= s.jointRests.size() || k >= aggregate.rests.size()) {
-                    if (error) {
-                        *error =
-                            _RrStepHead(program, step) + " names no live rest";
-                    }
-                    return false;
-                }
-                s.elements[e].outRestPoints = s.jointRests[k];
-                aggregate.rests[k] = s.jointRests[k];
-            }
-            s.elements[e].parentIndex =
-                ws.parentRelative ? int(base) - 1 : int(k) + int(base) - 1;
-        }
-        aggregate.frames = _RrSolveFkChain(s.elements);
-        if (ws.scaleSegments)
-            RigExecScaleFkSegmentsKernel<RrVec3d>(s.elements,
-                                                  &aggregate.frames);
-        if (base && !aggregate.frames.empty()) {
-            aggregate.frames.erase(aggregate.frames.begin());
-        }
-        if (!s.jointGroups.empty()) {
-            // RigExecRunSolver's FkChain groups: a joint under an inactive
-            // member publishes its output rest through the start delta.
-            if (s.jointGroupSelectors.size() != s.jointGroups.size()) {
-                if (error) {
-                    *error =
-                        _RrStepHead(program, step) + " names no joint group";
-                }
-                return false;
-            }
-            const size_t joints = s.jointGroupParents.size();
-            s.jointGroupActive.resize(joints);
-            s.jointGroupSlots.resize(s.jointGroups.size());
-            RigExecResolveJointGroups(
-                joints, [&s](size_t i) { return s.jointGroupParents[i]; },
-                s.jointGroups.data(), s.jointGroups.size(),
-                s.jointGroupMembers.data(), s.jointGroupSelectors.data(),
-                s.jointGroupSlots.data(), s.jointGroupActive.data());
-            RrMat4d start = _RrIdentity();
-            if (base) {
-                RrPointsToMatrix(s.elements[0].restPoints,
-                                 s.elements[0].posePoints, &start);
-            }
-            for (size_t k = 0; k < joints && k < aggregate.frames.size(); ++k) {
-                if (s.jointGroupActive[k]) {
-                    continue;
-                }
-                const RrPoseFkElement &element = s.elements[k + base];
-                aggregate.frames[k] =
-                    RrMatrixToPoints(element.hasOutRest ? element.outRestPoints
-                                                        : element.restPoints,
-                                     start);
-            }
-        }
     } else if (type == SchemaTypeName::RigExecTwoBoneIk) {
         RrPoseTwoBoneIkParams params = s.ikParams;
         const size_t solver = size_t(wire.object);
@@ -842,6 +747,221 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
 }
 
 } // namespace runtimePoseDetail
+
+namespace {
+
+bool
+_RrSolverFail(std::string *error, const std::string &why)
+{
+    if (error)
+        *error = "op nodes: " + why;
+    return false;
+}
+
+/// Whether \p type holds one \p T, or with \p array an array of them.
+template <class T>
+bool
+_RrSolverType(const RigExecTypeDesc &type, bool array)
+{
+    if (!array)
+        return !type.element && type.size == sizeof(T);
+    return type.element && type.resize && type.data &&
+           RigExecRegistry::Get().TypeAt(type.element->Index()).desc->size ==
+               sizeof(T);
+}
+
+rigExecRig::PointLandmarks
+_RrSolverLandmarks(const std::array<RrVec3d, 4> &points)
+{
+    rigExecRig::PointLandmarks out;
+    for (size_t i = 0; i < 4; ++i)
+        out[i] = rigExecStd::Vec3d(points[i][0], points[i][1], points[i][2]);
+    return out;
+}
+
+rigExecRig::PointFrame
+_RrSolverFrame(const RrPointFrame &frame)
+{
+    rigExecRig::PointFrame out;
+    out.points = _RrSolverLandmarks(frame.points);
+    out.flags = frame.flags;
+    return out;
+}
+
+std::array<RrVec3d, 4>
+_RrFromSolverLandmarks(const rigExecRig::PointLandmarks &points)
+{
+    std::array<RrVec3d, 4> out;
+    for (size_t i = 0; i < 4; ++i)
+        out[i] = RrVec3d(points[i][0], points[i][1], points[i][2]);
+    return out;
+}
+
+} // namespace
+
+int64_t
+RrSolveOf(const RrProgram *program, const RigExecWireStep &step)
+{
+    if (step.kind == RigExecWireStepKind::Solve)
+        return step.object;
+    return step.kind == RigExecWireStepKind::OpNode && step.object >= 0 &&
+                   size_t(step.object) < program->solverOfNode.size()
+               ? program->solverOfNode[size_t(step.object)]
+               : -1;
+}
+
+bool
+RrLookUpSolver(const RrProgram *program, const eval::OpLookup &lookup,
+               const RigExecTypeDesc &type, void *value, std::string *error)
+{
+    using Read = eval::OpSolverRead;
+    const RrProgram &p = *program;
+    if (!p.poses || lookup.object >= p.poses->solvers.size())
+        return _RrSolverFail(error, "solver " + std::to_string(lookup.object) +
+                                        " is no solver of the program");
+    const RigExecWireSolver &s = p.poses->solvers[lookup.object];
+    const std::vector<std::array<RrVec3d, 4>> &restPts =
+        static_cast<const RrPoseScratch *>(p.pose.get())->restPts;
+    const std::vector<RrPointFrame> &fin = p.store.fin;
+    const size_t base = s.start >= 0 ? 1 : 0, n = s.controls.size();
+    const auto rest = [&](int slot, rigExecRig::PointLandmarks *out) {
+        if (slot < 0 || size_t(slot) >= restPts.size())
+            return _RrSolverFail(
+                error, "solver " + std::to_string(lookup.object) +
+                           " names no rest slot " + std::to_string(slot));
+        *out = _RrSolverLandmarks(restPts[size_t(slot)]);
+        return true;
+    };
+    const auto frame = [&](uint32_t version, rigExecRig::PointFrame *out) {
+        if (version >= fin.size())
+            return _RrSolverFail(error, "pose version " +
+                                            std::to_string(version) +
+                                            " is no pose frame of the "
+                                            "program");
+        *out = _RrSolverFrame(fin[version]);
+        return true;
+    };
+    switch (Read(lookup.part)) {
+    case Read::FkControls: {
+        if (!_RrSolverType<rigExecRig::PointFrameArray>(type, false) ||
+            s.controlReads.size() != n)
+            break;
+        auto &out = *static_cast<rigExecRig::PointFrameArray *>(value);
+        out.frames.Resize(n + base);
+        out.rests.Resize(n + base);
+        if (base && (!frame(s.startRead, &out.frames[0]) ||
+                     !rest(s.start, &out.rests[0])))
+            return false;
+        for (size_t k = 0; k < n; ++k)
+            if (!frame(s.controlReads[k], &out.frames[k + base]) ||
+                !rest(s.controls[k], &out.rests[k + base]))
+                return false;
+        return true;
+    }
+    case Read::FkOutRests: {
+        if (!_RrSolverType<rigExecRig::PointLandmarks>(type, true))
+            break;
+        auto &out = *static_cast<
+            rigExecStd::RigExecArray<rigExecRig::PointLandmarks> *>(value);
+        out.Resize(n + base);
+        if (base && !rest(s.start, &out[0]))
+            return false;
+        const bool jointBasis = s.jointRests.size() == n;
+        for (size_t k = 0; k < n; ++k) {
+            if (!jointBasis || k >= s.restIsLive.size() || !s.restIsLive[k]) {
+                if (!rest(s.controls[k], &out[k + base]))
+                    return false;
+                continue;
+            }
+            if (k >= s.restReads.size() || s.restReads[k] >= fin.size())
+                return _RrSolverFail(
+                    error, "solver " + std::to_string(lookup.object) +
+                               " names no live rest " + std::to_string(k));
+            out[k + base] = _RrSolverLandmarks(fin[s.restReads[k]].points);
+        }
+        return true;
+    }
+    case Read::StartRest:
+        if (!_RrSolverType<rigExecRig::PointLandmarks>(type, false))
+            break;
+        return rest(s.start, static_cast<rigExecRig::PointLandmarks *>(value));
+    case Read::GroupSelectors: {
+        if (!_RrSolverType<double>(type, true) ||
+            lookup.object >= p.solverJointGroupRead.size())
+            break;
+        const std::vector<int32_t> &reads =
+            p.solverJointGroupRead[lookup.object];
+        auto &out = *static_cast<rigExecStd::RigExecArray<double> *>(value);
+        out.Resize(reads.size());
+        for (size_t g = 0; g < reads.size(); ++g)
+            out[g] = p.ReadRegistered(reads[g]).f64;
+        return true;
+    }
+    }
+    return _RrSolverFail(
+        error, "solver " + std::to_string(lookup.object) + " has no input " +
+                   std::to_string(lookup.part) + " of that type");
+}
+
+bool
+RrStoreSolver(RrProgram *program, const eval::OpHostOutput &output,
+              const void *value, std::string *error)
+{
+    RrProgram &p = *program;
+    RrStore &store = p.store;
+    if (!p.poses || output.object >= p.poses->solvers.size() ||
+        output.object >= store.aggregates.size() ||
+        output.object >= store.solverOutFrames.size() ||
+        output.object >= store.solverOutPresent.size())
+        return _RrSolverFail(error, "solver " + std::to_string(output.object) +
+                                        " is no solver of the program");
+    const RigExecWireSolver &s = p.poses->solvers[output.object];
+    const auto &out = *static_cast<const rigExecRig::PointFrameArray *>(value);
+    const size_t first =
+        p.opNodes && output.object < p.opNodes->solverLeading.size()
+            ? p.opNodes->solverLeading[output.object]
+            : 0;
+    RrPointFrameArray &aggregate = store.aggregates[output.object];
+    const size_t frames =
+        out.frames.Size() > first ? out.frames.Size() - first : 0;
+    const size_t rests =
+        out.rests.Size() > first ? out.rests.Size() - first : 0;
+    aggregate.frames.resize(frames);
+    aggregate.rests.resize(rests);
+    for (size_t k = 0; k < frames; ++k) {
+        aggregate.frames[k].points =
+            _RrFromSolverLandmarks(out.frames[k + first].points);
+        aggregate.frames[k].flags = out.frames[k + first].flags;
+    }
+    for (size_t k = 0; k < rests; ++k)
+        aggregate.rests[k] = _RrFromSolverLandmarks(out.rests[k + first]);
+    std::vector<RrPointFrame> &outFrames = store.solverOutFrames[output.object];
+    std::vector<char> &outPresent = store.solverOutPresent[output.object];
+    if (outFrames.size() != s.outputs.size() ||
+        outPresent.size() != s.outputs.size())
+        return _RrSolverFail(error, "solver " + std::to_string(output.object) +
+                                        " publishes no outputs");
+    for (size_t k = 0; k < s.outputs.size(); ++k) {
+        const int32_t element = s.outputs[k].second;
+        if (element < 0 || size_t(element) >= aggregate.frames.size()) {
+            outPresent[k] = 0;
+            continue;
+        }
+        outFrames[k] = RrExtractElementFrame(&aggregate, size_t(element));
+        outPresent[k] = 1;
+    }
+    return true;
+}
+
+std::string
+RrSolverFailure(const RrProgram *program, uint32_t solver,
+                const std::string &error)
+{
+    const RrProgram &p = *program;
+    if (!p.poses || solver >= p.poses->solvers.size())
+        return error;
+    return p.TextOrEmpty(p.poses->solvers[solver].path) + ": " + error;
+}
 
 namespace {
 
