@@ -57,6 +57,10 @@ const rigExec::RigExecTypeHandle &QuatdArray();
 
 const rigExec::RigExecTypeHandle &UInt64Type(); // uint64_t
 
+// RigExecArrayList<T>: a list of the arrays above.
+const rigExec::RigExecTypeHandle &IntArrayList();
+const rigExec::RigExecTypeHandle &Vec3fArrayList();
+
 } // namespace rigExecStd
 
 /// The library, for type libraries that compose standard types.

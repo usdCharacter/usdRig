@@ -799,17 +799,13 @@ RigExecFormatRunsAsOps(const fb::RigExecWireRevision &r)
             r.op == uint8_t(fb::RevisionOp::External));
 }
 
-// Format 29: sparse blend chunks carry their channel indices in key.
+/// A Range blend shape: a BlendShape op node whose chunks carry, in key,
+/// the channels that reach each vertex group (format 68).
 inline bool
 RigExecFormatIsChunkBlend(const fb::RigExecWireRevision &r)
 {
-    if (!RigExecFormatIsRangeRevision(r) ||
-        r.op != uint8_t(fb::RevisionOp::BlendShape))
-        return false;
-    for (const auto &chunk : r.chunks)
-        if (!chunk.key.empty())
-            return true;
-    return false;
+    return RigExecFormatIsRangeRevision(r) &&
+           r.op == uint8_t(fb::RevisionOp::BlendShape);
 }
 
 /// The ops a Range revision may have in format 20: Matrix, Wire, Lattice,

@@ -70,6 +70,7 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 using namespace rigExec;
 using rigExecStd::RigExecArray;
+using rigExecStd::RigExecArrayList;
 using rigExecStd::Vec3f;
 using Points = RigExecArray<Vec3f>;
 
@@ -2170,6 +2171,134 @@ TestBlendShape()
     Node noRest(BlendShape(), {&BlendShapePoints(), &BlendShapeWeights()},
                 BlendShapeOut(), &bad);
     CHECK(!noRest.Run({&in, &weightArray}, &actual));
+}
+
+/// Samples whose values move: activations, dense targets and sparse layouts
+/// given as inputs, dense samples measured against Base, each channel
+/// sorted by the activations it is given, under every range setting.
+void
+TestBlendShapeLiveSamples()
+{
+    using namespace rigExecOps;
+    const Grid grid(9, 31);
+    const std::vector<GfVec3f> &base = grid.points;
+    const size_t n = base.size();
+    std::mt19937 rng(11);
+    std::uniform_real_distribution<float> unit(-0.3f, 0.3f);
+    const auto random = [&](size_t count) {
+        std::vector<GfVec3f> o(count);
+        for (GfVec3f &v : o)
+            v = GfVec3f(unit(rng), unit(rng), unit(rng));
+        return o;
+    };
+    const auto target = [&]() {
+        std::vector<GfVec3f> t = random(n);
+        for (size_t i = 0; i < n; ++i)
+            t[i] += base[i];
+        return t;
+    };
+    std::vector<int> low, high;
+    for (int i = 2; i < 30; i += 3)
+        low.push_back(i);
+    for (int i = int(n) - 40; i < int(n); i += 5)
+        high.push_back(i);
+    high.push_back(high.front());
+    const std::vector<GfVec3f> t0 = target(), t1 = target(), t2 = target(),
+                               pinned = target();
+    const std::vector<GfVec3f> lowOffsets = random(low.size()),
+                               highOffsets = random(high.size());
+    const std::vector<std::vector<RefSample>> ref = {
+        {{0.5f, t0, {}, {}, false}, {1.0f, {}, lowOffsets, low, true}},
+        {{1.0f, pinned, {}, {}, false}},
+        {{1.0f, {}, highOffsets, high, true}},
+        {{0.6f, t1, {}, {}, false}, {1.0f, t2, {}, {}, false}},
+    };
+    const auto layoutOf = [&](const std::vector<GfVec3f> &offsets,
+                              const std::vector<int> &indices) {
+        auto layout = std::make_shared<BlendShapeLayout>();
+        for (const GfVec3f &o : offsets)
+            layout->offsets.push_back(Vec3f(o[0], o[1], o[2]));
+        layout->indices = indices;
+        layout->pointCount = n;
+        layout->valid = true;
+        return layout;
+    };
+    BlendShapePayload payload;
+    payload.channels.resize(4);
+    BlendShapeSample s;
+    s.target = 0;
+    payload.channels[0].samples.push_back(s);
+    s = BlendShapeSample();
+    s.layout = layoutOf(lowOffsets, low);
+    payload.channels[0].samples.push_back(s);
+    s = BlendShapeSample();
+    for (const GfVec3f &p : pinned)
+        s.points.push_back(Vec3f(p[0], p[1], p[2]));
+    payload.channels[1].samples.push_back(s);
+    s = BlendShapeSample();
+    s.sparse = 0;
+    payload.channels[2].samples.push_back(s);
+    s = BlendShapeSample();
+    s.target = 2;
+    payload.channels[3].samples.push_back(s);
+    s = BlendShapeSample();
+    s.target = 1;
+    payload.channels[3].samples.push_back(s);
+    const std::vector<float> w = {0.8f, 0.6f, 1.0f, 0.75f};
+    const auto weights = ToArray(w);
+    const auto activations =
+        ToArray(std::vector<float>{0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 0.6f});
+    RigExecArrayList<Vec3f> targets, offsets;
+    RigExecArrayList<int32_t> indices;
+    targets.Resize(3);
+    targets[0] = ToStd(t0);
+    targets[1] = ToStd(t1);
+    targets[2] = ToStd(t2);
+    offsets.Resize(1);
+    offsets[0] = ToStd(highOffsets);
+    indices.Resize(1);
+    indices[0] = ToArray(std::vector<int32_t>(high.begin(), high.end()));
+    std::vector<GfVec3f> entering = base;
+    for (GfVec3f &p : entering)
+        p += GfVec3f(0.01f, -0.02f, 0.005f);
+    const Points in = ToStd(entering), from = ToStd(base);
+    const std::vector<GfVec3f> deltas = RefBlendDeltas(ref, w, base);
+    std::vector<GfVec3f> expected = entering;
+    for (size_t i = 0; i < n; ++i)
+        expected[i] = entering[i] + deltas[i];
+    Node node(BlendShape(),
+              {&BlendShapePoints(), &BlendShapeWeights(), &BlendShapeBase(),
+               &BlendShapeActivations(), &BlendShapeTargets(),
+               &BlendShapeOffsets(), &BlendShapeSampleIndices()},
+              BlendShapeOut(), &payload);
+    const auto run = [&](const std::vector<const void *> &values, bool ok,
+                         const char *what) {
+        Points actual;
+        std::string error;
+        const bool ran = node.Run(values, &actual, &error);
+        if (ran != ok || (ok && !SameBits(expected, actual))) {
+            std::printf("live blend %s: ran %d, expected %d %s\n", what,
+                        int(ran), int(ok), error.c_str());
+            CHECK(false);
+        }
+    };
+    run({&in, &weights, &from, &activations, &targets, &offsets, &indices},
+        true, "live samples");
+    const auto twice =
+        ToArray(std::vector<float>{0.5f, 1.0f, 1.0f, 1.0f, 0.6f, 0.6f});
+    run({&in, &weights, &from, &twice, &targets, &offsets, &indices}, false,
+        "a shared activation");
+    RigExecArrayList<Vec3f> shortTargets;
+    shortTargets.Resize(2);
+    shortTargets[0] = ToStd(t0);
+    shortTargets[1] = ToStd(t1);
+    run({&in, &weights, &from, &activations, &shortTargets, &offsets, &indices},
+        false, "a missing target");
+    RigExecArrayList<int32_t> outside;
+    outside.Resize(1);
+    outside[0] = ToArray(std::vector<int32_t>(high.size(), int32_t(n)));
+    run({&in, &weights, &from, &activations, &targets, &offsets, &outside},
+        false, "an index past the points");
 }
 
 /// The sparse blend shape's Range ports: enabled, a default weight, a weight
@@ -5333,6 +5462,7 @@ main()
     TestSkin();
     TestBlendShape();
     TestBlendShapeWeights();
+    TestBlendShapeLiveSamples();
     TestRecomputeNormals();
     TestRecomputeExtent();
     TestWire();

@@ -2131,9 +2131,6 @@ struct RrGeoRevisionRangeInputs {
     std::shared_ptr<const RrGeoWireBasis> wireBasis;
     // Dense wire: the rest evaluations, or null to evaluate per point.
     const std::vector<RrVec3f> *wireRestEvaluations = nullptr;
-    // BlendShape: the envelope resolved at the full count, the weight its
-    // kernel blends each point by; empty at full strength.
-    std::vector<float> blendWeights;
 };
 
 // RrGeoRevisionKernelAcceptance(op, p, count, envelopeResolves), exactly
@@ -2151,7 +2148,6 @@ RrGeoPrepareRevisionRanges(
 {
     prepared->wireBasis.reset();
     prepared->wireRestEvaluations = nullptr;
-    prepared->blendWeights.clear();
     const RrGeoAcceptance acceptance =
         RrGeoRevisionKernelAcceptance(op, p, count, envelopeResolves);
     if (acceptance != RrGeoAcceptance::Applies) {
@@ -2171,11 +2167,6 @@ RrGeoPrepareRevisionRanges(
                                    p.wireBindCoords.size(), p.dropoffDistance);
         }
         break;
-    case RrGeoOpBlendShape:
-        if (!RrGeoEnvelopeIsFullStrength(w)) {
-            w.ResolveAll(count, &prepared->blendWeights);
-        }
-        break;
     default:
         break;
     }
@@ -2188,8 +2179,8 @@ RrGeoPrepareRevisionRanges(
 // (\p out never aliases \p in), exactly what RrGeoRunRevisionKernel writes
 // there for the whole array of \p count entering points. Every whole-array
 // input (the packet, \p prepared, \p separateEnvelope, sparse indices, bind
-// tables) is indexed absolutely. Ops: Wire and a target-space BlendShape;
-// a skin runs through EvalCore's group body.
+// tables) is indexed absolutely. Ops: Wire; a skin runs through EvalCore's
+// group body.
 // \p separateEnvelope is the resolved "apply once" envelope for an op that
 // blends one below full strength, else null. \p untouched, when given,
 // receives whether the result is \p in itself, and then \p out is not
@@ -2264,23 +2255,6 @@ RrGeoRunRevisionGroup(int op, const RrGeoMoverParameters &p,
             return false;
         }
         break;
-    }
-    case RrGeoOpBlendShape: {
-        // Target space only: the runtime never records a surface frame.
-        const bool full = RrGeoEnvelopeIsFullStrength(w);
-        if (p.blendSurfaceFrame || p.blendDeltas.size() != count ||
-            (!full && prepared.blendWeights.size() != count)) {
-            return false;
-        }
-        const RrVec3f *const delta = p.blendDeltas.data() + begin;
-        const float *const weight =
-            full ? nullptr : prepared.blendWeights.data() + begin;
-        for (size_t k = 0; k < n; ++k) {
-            const RrVec3f preceding = in[k];
-            out[k] = RigExecBlendEnvelope(preceding, preceding + delta[k],
-                                          full ? 1.0f : weight[k]);
-        }
-        return true;
     }
     default:
         return false;
@@ -8450,6 +8424,64 @@ RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
             return fail();
         return put(RrReadBlendWeight(program, size_t(chain), size_t(r), false,
                                      size_t(lookup.part)));
+    case Read::BlendSampleActivation:
+    case Read::BlendSamplePoints:
+    case Read::BlendSampleOffsets:
+    case Read::BlendSampleIndices: {
+        const RigExecWireRevision &wire =
+            program->geometry->chains[size_t(chain)].revisions[size_t(r)];
+        size_t ch = 0;
+        int s = lookup.part;
+        while (ch < wire.blendChannels.size() && s >= 0 &&
+               size_t(s) >= wire.blendChannels[ch].samples.size())
+            s -= int(wire.blendChannels[ch++].samples.size());
+        if (s < 0 || ch >= wire.blendChannels.size())
+            return fail();
+        const RigExecWireBlendSample &sample =
+            wire.blendChannels[ch].samples[size_t(s)];
+        switch (Read(lookup.read)) {
+        case Read::BlendSampleActivation:
+            return put(RrReadBlendActivation(program, size_t(chain), size_t(r),
+                                             false, ch, size_t(s)));
+        case Read::BlendSamplePoints: {
+            const std::vector<RrVec3f> *points =
+                sample.pointsRead
+                    ? RrArrayRead<RrVec3f>(program, *sample.pointsRead)
+                    : scratch->blendPoints[size_t(chain)][size_t(r)][ch]
+                                          [size_t(s)];
+            if (!points)
+                points = &scratch->noPoints;
+            return lend(points->data(), points->size());
+        }
+        default:
+            break;
+        }
+        if (size_t(chain) >= scratch->blendSources.size() ||
+            size_t(r) >= scratch->blendSources[size_t(chain)].size() ||
+            ch >= scratch->blendSources[size_t(chain)][size_t(r)].size() ||
+            size_t(s) >=
+                scratch->blendSources[size_t(chain)][size_t(r)][ch].size())
+            return fail();
+        const RrGeometryScratch::SparseSource &source =
+            scratch->blendSources[size_t(chain)][size_t(r)][ch][size_t(s)];
+        RrGeoRead at;
+        at.rest = true;
+        at.owner = &rev;
+        if (Read(lookup.read) == Read::BlendSampleOffsets) {
+            at.path = source.offsetsPath;
+            at.row = source.offsetsRow;
+            const std::vector<RrVec3f> *offsets =
+                RrGeoArraySource<RrVec3f>(program, scratch, at);
+            return offsets ? lend(offsets->data(), offsets->size())
+                           : lend(nullptr, 0);
+        }
+        at.path = source.indicesPath;
+        at.row = source.indicesRow;
+        const std::vector<int> *indices =
+            RrGeoArraySource<int>(program, scratch, at);
+        return indices ? lend(indices->data(), indices->size())
+                       : lend(nullptr, 0);
+    }
     case Read::LatticeRestCage:
     case Read::LatticeLiveCage: {
         const bool rest = Read(lookup.read) == Read::LatticeRestCage;

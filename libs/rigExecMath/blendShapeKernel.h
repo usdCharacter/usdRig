@@ -45,6 +45,29 @@ Accumulate(const S &sample, const V *base, size_t baseCount, float scale,
         deltas[i] += (points[i] - base[i]) * scale;
 }
 
+template <class T, class S, class V>
+void
+AccumulateRange(const S &sample, const V *base, float scale, size_t begin,
+                size_t end, V *deltas)
+{
+    if (const auto *layout = T::Layout(sample)) {
+        if (layout->indices.empty()) {
+            for (size_t i = begin; i < end && i < layout->offsets.size(); ++i)
+                deltas[i - begin] += layout->offsets[i] * scale;
+            return;
+        }
+        for (size_t k = 0; k < layout->indices.size(); ++k) {
+            const size_t i = size_t(layout->indices[k]);
+            if (i >= begin && i < end)
+                deltas[i - begin] += layout->offsets[k] * scale;
+        }
+        return;
+    }
+    const V *points = T::DensePoints(sample);
+    for (size_t i = begin; i < end; ++i)
+        deltas[i - begin] += (points[i] - base[i - begin]) * scale;
+}
+
 } // namespace blendDetail
 
 /// Whether every channel has samples, each sample fits a base of
@@ -131,6 +154,48 @@ RigExecSumBlendChannelsKernel(const Channels &channels, WeightOf weightOf,
         blendDetail::Accumulate<T>(hiSample, base, baseCount, t, out);
     }
     return true;
+}
+
+/// Channel \p channel's part of RigExecSumBlendChannelsKernel over the
+/// points [begin, end): adds to deltas[i - begin] what the whole sum adds to
+/// point i, in the same order, so the two agree bit for bit. The channel
+/// must fit (RigExecBlendChannelsFitKernel); base[i - begin] is point i's
+/// base.
+template <class T, class V, class Channel>
+void
+RigExecSumBlendChannelRangeKernel(const Channel &channel, float weight,
+                                  const V *base, size_t begin, size_t end,
+                                  V *deltas)
+{
+    const auto &samples = channel.samples;
+    const float w = std::min(std::max(RigExecBlendInputWeight(weight), 0.0f),
+                             T::Activation(samples.back()));
+    if (w == 0.0f)
+        return;
+    size_t hi = 0;
+    while (hi < samples.size() && T::Activation(samples[hi]) < w)
+        ++hi;
+    if (hi >= samples.size())
+        hi = samples.size() - 1;
+    const float aHi = T::Activation(samples[hi]);
+    const float aLo = hi > 0 ? T::Activation(samples[hi - 1]) : 0.0f;
+    const float t = aHi > aLo ? (w - aLo) / (aHi - aLo) : 1.0f;
+    const auto *loSample = hi > 0 ? &samples[hi - 1] : nullptr;
+    const auto &hiSample = samples[hi];
+    if (!T::Layout(hiSample) && (!loSample || !T::Layout(*loSample))) {
+        const V *lo = loSample ? T::DensePoints(*loSample) : nullptr;
+        const V *hiPts = T::DensePoints(hiSample);
+        for (size_t i = begin; i < end; ++i) {
+            const V dHi = hiPts[i] - base[i - begin];
+            const V dLo = lo ? V(lo[i] - base[i - begin]) : V(0.0f);
+            deltas[i - begin] += dLo + (dHi - dLo) * t;
+        }
+        return;
+    }
+    if (loSample)
+        blendDetail::AccumulateRange<T>(*loSample, base, 1.0f - t, begin, end,
+                                        deltas);
+    blendDetail::AccumulateRange<T>(hiSample, base, t, begin, end, deltas);
 }
 
 } // namespace rigExec

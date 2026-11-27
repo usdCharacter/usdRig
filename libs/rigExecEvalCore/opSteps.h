@@ -481,6 +481,14 @@ enum class OpRevisionRead : uint8_t {
     LatticeCageMatrix = 28,
     LatticeTargetMatrix = 29,
     LatticePointSpace = 30,
+    /// Sample `part` of a blend shape, counted across its channels in
+    /// channel order: its activation (Float), its dense target points
+    /// (Vec3fArray) and its sparse offsets (Vec3fArray) and point indices
+    /// (IntArray), each as the evaluated time answers it.
+    BlendSampleActivation = 31,
+    BlendSamplePoints = 32,
+    BlendSampleOffsets = 33,
+    BlendSampleIndices = 34,
 };
 
 /// What an ExternalInput lookup answers, by the standard type of the input
@@ -1250,11 +1258,14 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
                                      .op->ports[input.port]
                                      .type->Index())
                          .desc;
-                bool listed = lookup.part >= 0 && type.element && type.resize &&
+                const RigExecTypeDesc *element =
+                    type.element ? RigExecRegistry::Get()
+                                       .TypeAt(type.element->Index())
+                                       .desc
+                                 : nullptr;
+                bool listed = lookup.part >= 0 && element && type.resize &&
                               type.data &&
-                              RigExecRegistry::Get()
-                                  .TypeAt(type.element->Index())
-                                  .desc->triviallyCopyable &&
+                              (element->triviallyCopyable || element->borrow) &&
                               size_t(lookup.object) + size_t(lookup.part) <=
                                   layout->lookups.size();
                 for (int32_t e = 0; listed && e < lookup.part; ++e) {
@@ -1397,8 +1408,8 @@ struct OpStepState {
     std::unique_ptr<RigExecRunState> run;
     /// Per hostInputs entry: the value a Lookup input reads, else null.
     std::vector<std::unique_ptr<OpPortValue>> lookedUp;
-    /// Per hostInputs entry: the bytes a trivially copyable looked-up input
-    /// held when its chain's head last ran.
+    /// Per hostInputs entry: what OpLookedUpMoved recorded of the looked-up
+    /// input when its chain's head last ran.
     std::vector<std::vector<uint8_t>> lookedUpBytes;
     /// Per op value a node step writes: the bytes of a trivially copyable
     /// value when its version last moved.
@@ -1413,6 +1424,69 @@ struct OpStepState {
     std::vector<std::vector<std::vector<uint32_t>>> haloReads;
     std::vector<uint64_t> versions, groupVersions;
 };
+
+/// Whether \p value's content differs from what \p held recorded, which
+/// it then records: a trivially copyable value by its bytes, an array of
+/// trivially copyable elements, or of such arrays, by its counts and
+/// elements. Any other value counts as moved.
+inline bool
+OpLookedUpMoved(const RigExecTypeDesc &type, void *value,
+                std::vector<uint8_t> *held)
+{
+    std::vector<uint8_t> &h = *held;
+    size_t at = 0;
+    bool same = true;
+    const auto take = [&](const void *data, size_t size) {
+        const auto *bytes = static_cast<const uint8_t *>(data);
+        if (same && at + size <= h.size() &&
+            (!size || std::memcmp(h.data() + at, bytes, size) == 0)) {
+            at += size;
+            return;
+        }
+        if (same) {
+            h.resize(at);
+            same = false;
+        }
+        h.insert(h.end(), bytes, bytes + size);
+        at += size;
+    };
+    if (type.triviallyCopyable) {
+        take(value, type.size);
+    } else {
+        const RigExecTypeDesc *element =
+            type.element && type.count && type.data
+                ? RigExecRegistry::Get().TypeAt(type.element->Index()).desc
+                : nullptr;
+        if (!element)
+            return true;
+        const size_t count = type.count(value);
+        auto *data = static_cast<uint8_t *>(type.data(value));
+        take(&count, sizeof(count));
+        if (element->triviallyCopyable) {
+            take(data, count * element->size);
+        } else {
+            const RigExecTypeDesc *inner =
+                element->element && element->count && element->data
+                    ? RigExecRegistry::Get()
+                          .TypeAt(element->element->Index())
+                          .desc
+                    : nullptr;
+            if (!inner || !inner->triviallyCopyable)
+                return true;
+            for (size_t e = 0; e < count; ++e) {
+                void *item = data + e * element->size;
+                const size_t n = element->count(item);
+                take(&n, sizeof(n));
+                take(element->data(item), n * inner->size);
+            }
+        }
+    }
+    if (same && at != h.size()) {
+        h.resize(at);
+        same = false;
+    }
+    return !same;
+}
 
 /// Gives \p to, bound by BindOpStepState, \p from's looked-up input values:
 /// a range step can run before its chain's head resolves them again.
@@ -1899,14 +1973,9 @@ RunOpStep(const OpStepLayout &layout, Host &host, OpStepState *state,
                     }
                     continue;
                 }
-                const auto *bytes = static_cast<const uint8_t *>(value.Value());
-                const size_t size = value.Type().size;
-                if (!value.Type().triviallyCopyable || held.size() != size ||
-                    std::memcmp(held.data(), bytes, size) != 0) {
+                if (OpLookedUpMoved(value.Type(), state->lookedUp[i]->Value(),
+                                    &held))
                     moved = true;
-                    if (value.Type().triviallyCopyable)
-                        held.assign(bytes, bytes + size);
-                }
             }
         }
         if (state->versions[layout.PlanSlot(index)] == 0)

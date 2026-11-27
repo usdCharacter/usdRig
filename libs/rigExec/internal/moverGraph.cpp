@@ -1344,24 +1344,6 @@ RigExecPrepareRevisionRanges(RigExecRevisionOp op,
     using Acceptance = RigExecRevisionAcceptance;
     prepared->wireBasis.reset();
     prepared->wireRestEvaluations = nullptr;
-    prepared->blendWeights.clear();
-    if (op == RigExecRevisionOp::BlendShape) {
-        // RigExecRevisionKernelAcceptance's BlendShape answer, by the
-        // kernel's own validation; an envelope below full strength resolves
-        // into the inputs by the same call.
-        if (!_PacketMatches(op, p) ||
-            !_BlendShapeKernelAccepts(p, count, &prepared->blendWeights)) {
-            prepared->blendWeights.clear();
-            return Acceptance::Refuses;
-        }
-        if (p.blendSurfaceFrame) {
-            // The transport reads the entering points: Deferred, nothing
-            // prepared.
-            prepared->blendWeights.clear();
-            return Acceptance::Deferred;
-        }
-        return Acceptance::Applies;
-    }
     const Acceptance acceptance = RigExecRevisionKernelAcceptance(op, p, count);
     if (acceptance != Acceptance::Applies) {
         return acceptance;
@@ -1413,7 +1395,8 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
         (begin < end && (!in || !out || in == out)) ||
         !RigExecRevisionIsRangeOp(op) || op == RigExecRevisionOp::Matrix ||
         op == RigExecRevisionOp::Smooth || op == RigExecRevisionOp::DeltaMush ||
-        op == RigExecRevisionOp::Lattice || !_PacketMatches(op, p)) {
+        op == RigExecRevisionOp::Lattice ||
+        op == RigExecRevisionOp::BlendShape || !_PacketMatches(op, p)) {
         return false;
     }
     const size_t n = end - begin;
@@ -1434,25 +1417,6 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
     // entering points, as RunRevisionKernel copies the whole array.
     const auto seed = [&]() { std::copy(in, in + n, out); };
     const RigExecWeightPacket &w = p.weights;
-    if (op == RigExecRevisionOp::BlendShape) {
-        // Target space only: the surface-frame transport reads every
-        // entering point. The envelope is folded in per point, as the whole
-        // kernel folds it: the delta added and blended back in one step.
-        const bool fullStrength = RigExecEnvelopeIsFullStrength(w);
-        if (p.blendSurfaceFrame || p.blendDeltas.size() != count ||
-            (!fullStrength && prepared.blendWeights.size() != count)) {
-            return false;
-        }
-        const GfVec3f *const delta = p.blendDeltas.data() + begin;
-        const float *const weight =
-            fullStrength ? nullptr : prepared.blendWeights.data() + begin;
-        for (size_t k = 0; k < n; ++k) {
-            const GfVec3f preceding = in[k];
-            out[k] = RigExecBlendEnvelope(preceding, preceding + delta[k],
-                                          fullStrength ? 1.0f : weight[k]);
-        }
-        return true;
-    }
     if (op == RigExecRevisionOp::Wire && RigExecWireTakesSparseEnvelope(w)) {
         // The envelope is the walk's own: no separate blend.
         if (!prepared.wireBasis) {

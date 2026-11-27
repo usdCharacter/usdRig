@@ -5544,7 +5544,7 @@ TestRangeChunkTables()
     int accepted = 0;
     for (const fb::RevisionOp op :
          {fb::RevisionOp::Matrix, fb::RevisionOp::Wire, fb::RevisionOp::Lattice,
-          fb::RevisionOp::BlendShape, fb::RevisionOp::Skin}) {
+          fb::RevisionOp::Skin}) {
         const auto opened = accept(
             std::string("as ") + fb::EnumNameRevisionOp(op), _GroupFile(op));
         const bool skin = op == fb::RevisionOp::Skin;
@@ -5568,7 +5568,7 @@ TestRangeChunkTables()
     }
     accepted +=
         accept("gated", _GroupFile(fb::RevisionOp::Matrix, {0}, true)) ? 1 : 0;
-    CHECK(accepted == 8);
+    CHECK(accepted == 7);
 
     // The steps of a file, named as the validator names them.
     const auto stepName = [](const F &f, K kind, int32_t object, int32_t part) {

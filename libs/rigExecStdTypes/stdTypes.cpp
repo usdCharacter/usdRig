@@ -32,6 +32,8 @@ RIGEXEC_DEFINE_TYPE_HANDLE(Mat3dArray)
 RIGEXEC_DEFINE_TYPE_HANDLE(Mat4dArray)
 RIGEXEC_DEFINE_TYPE_HANDLE(QuatdArray)
 RIGEXEC_DEFINE_TYPE_HANDLE(UInt64Type)
+RIGEXEC_DEFINE_TYPE_HANDLE(IntArrayList)
+RIGEXEC_DEFINE_TYPE_HANDLE(Vec3fArrayList)
 
 namespace {
 
@@ -51,6 +53,61 @@ RigExecTypeDesc
 ArrayDesc(const char *name, const RigExecTypeHandle &element)
 {
     return TypeDescFor<RigExecArray<T>>("std", name, &element);
+}
+
+template <class T>
+RigExecTypeDesc
+ListDesc(const char *name, const RigExecTypeHandle &element)
+{
+    using A = RigExecArray<T>;
+    using L = RigExecArrayList<T>;
+    RigExecTypeDesc d;
+    d.nameSpace = "std";
+    d.name = name;
+    const uint64_t key[] = {sizeof(L), alignof(L), LayoutKey<A>()};
+    d.layoutHash = HashBytes(key, sizeof(key), HashBytes("list", 4, 0));
+    d.size = sizeof(L);
+    d.align = alignof(L);
+    d.element = &element;
+    d.construct = &TypeOps<L>::Construct;
+    d.copy = &TypeOps<L>::Copy;
+    d.move = &TypeOps<L>::Move;
+    d.destroy = &TypeOps<L>::Destroy;
+    d.equal = [](const void *a, const void *b, rigExec::RigExecEqualMode mode) {
+        const L &x = *static_cast<const L *>(a);
+        const L &y = *static_cast<const L *>(b);
+        if (x.Size() != y.Size())
+            return false;
+        for (size_t i = 0; i < x.Size(); ++i)
+            if (!ValueEqual(x[i], y[i], mode))
+                return false;
+        return true;
+    };
+    d.hashClass = rigExec::RigExecHashClass::Exact;
+    d.hash = [](const void *value) {
+        const L &list = *static_cast<const L *>(value);
+        const size_t size = list.Size();
+        uint64_t h = HashBytes(&size, sizeof(size), 0);
+        for (size_t i = 0; i < size; ++i)
+            h = ValueHash(list[i], h);
+        return h;
+    };
+    d.count = [](const void *value) {
+        return static_cast<const L *>(value)->Size();
+    };
+    d.reserve = [](void *value, size_t count) {
+        static_cast<L *>(value)->Reserve(count);
+    };
+    d.elements = [](const void *value) {
+        return static_cast<const L *>(value)->Size();
+    };
+    d.resize = [](void *value, size_t count) {
+        static_cast<L *>(value)->Resize(count);
+    };
+    d.data = [](void *value) -> void * {
+        return static_cast<L *>(value)->Data();
+    };
+    return d;
 }
 
 struct Entry {
@@ -88,6 +145,8 @@ const Entry kEntries[] = {
     {Mat4dArray(), ArrayDesc<Mat4d>("Mat4dArray", Mat4dType())},
     {QuatdArray(), ArrayDesc<Quatd>("QuatdArray", QuatdType())},
     {UInt64Type(), ValueDesc<uint64_t>("UInt64")},
+    {IntArrayList(), ListDesc<int32_t>("IntArrayList", IntArray())},
+    {Vec3fArrayList(), ListDesc<Vec3f>("Vec3fArrayList", Vec3fArray())},
 };
 
 void

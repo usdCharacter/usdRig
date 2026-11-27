@@ -7634,6 +7634,131 @@ TestWeightedOpMushClone()
 // dense-weighted Bulge over an animated cage and a Raise share op chains,
 // and a frozen job over them runs bit-identically with released gathers
 // poisoned. Disabling the lattice reports it disabled.
+void TestWeightedOpLatticeClone();
+
+// A Range blend shape whose dense targets move (one animated, one held) and
+// whose channel weight moves runs as a BlendShape op node beside a matrix
+// mover; frozen jobs over its shared chain warm bit-identically with released
+// gathers poisoned.
+void
+TestDenseOpBlendClone()
+{
+    const auto stage = UsdStage::CreateInMemory();
+    CHECK(stage->GetRootLayer()->ImportFromString(R"USD(#usda 1.0
+ def RigExecRoot "Rig" {
+  def RigExecControl "Lift" {
+   double avars:tz.timeSamples = {1: 0.1, 2: 0.3, 3: 0.45}
+  }
+  def Mesh "Target" {}
+  def Scope "Channels" {
+   def RigExecBlendInput "Smile" {
+    float inputs:weight.timeSamples = {1: 0.2, 2: 0.55, 3: 0.9}
+    rel rigExec:samples = [</Rig/Channels/Smile/Half>, </Rig/Channels/Smile/Full>]
+    def RigExecBlendSample "Half" {
+     float rigExec:activation = 0.5
+     rel rigExec:targetPoints = </Rig/Shapes/Half.points>
+    }
+    def RigExecBlendSample "Full" {
+     float rigExec:activation = 1
+     rel rigExec:targetPoints = </Rig/Shapes/Full.points>
+    }
+   }
+  }
+  def Scope "Shapes" {
+   def Mesh "Half" {}
+   def Mesh "Full" {}
+  }
+  def Scope "Movers" {
+   def RigExecMatrixMover "Raise" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+    rel rigExec:moves = </Rig/Target.points>
+    rel rigExec:transform = </Rig/Lift>
+   }
+   def RigExecBlendShapeMover "Blend" (prepend apiSchemas = ["RigExecMoverAPI"]) {
+    rel rigExec:moves = </Rig/Target.points>
+    rel rigExec:blendInputs = </Rig/Channels/Smile>
+   }
+  }
+ }
+)USD"));
+    const SdfPath root("/Rig"), target("/Rig/Target.points");
+    constexpr int kSide = 96;
+    VtVec3fArray points(size_t(kSide * kSide));
+    for (int y = 0; y < kSide; ++y)
+        for (int x = 0; x < kSide; ++x)
+            points[size_t(y * kSide + x)] =
+                GfVec3f(0.25f * float(x), 0.125f * float(y),
+                        0.1f * float((x * 7 + y * 3) % 11));
+    stage->GetPrimAtPath(target.GetPrimPath())
+        .GetAttribute(TfToken("points"))
+        .Set(points);
+    const auto shifted = [&](float dz) {
+        VtVec3fArray moved = points;
+        for (size_t i = 0; i < moved.size(); ++i)
+            moved[i] += GfVec3f(0.0f, 0.01f * float(i % 7), dz);
+        return moved;
+    };
+    const UsdAttribute half = stage->GetPrimAtPath(SdfPath("/Rig/Shapes/Half"))
+                                  .GetAttribute(TfToken("points"));
+    for (double time : {1.0, 2.0, 3.0})
+        half.Set(shifted(0.2f * float(time)), UsdTimeCode(time));
+    stage->GetPrimAtPath(SdfPath("/Rig/Shapes/Full"))
+        .GetAttribute(TfToken("points"))
+        .Set(shifted(1.0f));
+    RigExecRigEvaluator evaluator(stage, root);
+    std::vector<std::string> errors;
+    CHECK(evaluator.Compile(&errors));
+    for (const std::string &error : errors)
+        std::printf("dense op blend compile: %s\n", error.c_str());
+    CHECK(evaluator.GetBakedProgram() != nullptr);
+    if (!evaluator.GetBakedProgram())
+        return;
+    const RigExecBakedProgramImpl &B =
+        rigExec::RigExecBakedProgramAccess::StepGraph(
+            *evaluator.GetBakedProgram());
+    size_t blends = 0, targets = 0;
+    for (const auto &chain : B.chains)
+        for (const auto &revision : chain.revisions) {
+            blends += revision.blendChunked;
+            for (const auto &channel : revision.opBlendSamples)
+                for (const auto &sample : channel)
+                    targets += sample.target >= 0;
+        }
+    CHECK(blends == 1 && targets == 1);
+    CHECK(std::none_of(
+        B.steps.begin(), B.steps.end(), [](const RigExecBakedStep &step) {
+            return step.kind == RigExecBakedStepKind::RevisionChunk;
+        }));
+    rigExec::RigExecBakedProgramTesting::SetPoisonReleasedGathers(true);
+    const auto rest = evaluator.Evaluate(UsdTimeCode(1));
+    CHECK(rest.valid);
+    RigExecCancellationSource cancellation;
+    for (double time : {2.0, 3.0}) {
+        std::shared_ptr<const RigExecFrozenProgram> frozen;
+        std::string error;
+        CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
+        if (!frozen) {
+            std::printf("dense op blend freeze: %s\n", error.c_str());
+            break;
+        }
+        RigExecFrameInputs inputs;
+        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(time), {},
+                                       &inputs, &error));
+        bool ran = false;
+        const auto warmed = RunWarmingJob(&evaluator, root, frozen, inputs,
+                                          &cancellation, &ran);
+        CHECK(ran);
+        const auto live = evaluator.Evaluate(UsdTimeCode(time));
+        CHECK(live.valid);
+        CheckPosesBitIdentical("dense op blend clone", live, warmed);
+        const auto moved = live.movedProperties.find(target);
+        const auto still = rest.movedProperties.find(target);
+        CHECK(moved != live.movedProperties.end() &&
+              still != rest.movedProperties.end() &&
+              moved->second != still->second);
+    }
+    rigExec::RigExecBakedProgramTesting::SetPoisonReleasedGathers(false);
+}
+
 void
 TestWeightedOpLatticeClone()
 {
@@ -10997,6 +11122,7 @@ main(int argc, char **argv)
     TestWeightedOpSmoothClone();
     TestWeightedOpMushClone();
     TestWeightedOpLatticeClone();
+    TestDenseOpBlendClone();
     Test9MeshWarmsBitIdenticalAtSweepDistance();
     TestProductionRunnerDeclinesWithoutProof();
     TestFrozenRunIsBitIdentical();

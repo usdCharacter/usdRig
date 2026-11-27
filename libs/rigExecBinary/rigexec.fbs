@@ -1987,7 +1987,9 @@ table OpLookup {
   /// whether rigExec:weightBlend is radial (Bool), 3-13 (format 48) a delta
   /// mush's inputs and its chain's base points, 14-15 (format 50) a lattice's
   /// rest and live cages, 16 (format 54) the weight of a blend shape's
-  /// channel `part` (OpRevisionRead, rigExecEvalCore/opSteps.h).
+  /// channel `part`, 31-34 (format 68) the activation, dense points,
+  /// sparse offsets and indices of its sample `part` (OpRevisionRead,
+  /// rigExecEvalCore/opSteps.h).
   /// 22 (format 45): provider refresh `object`'s re-evaluated base
   /// (`read` 0) or current (1) frame. 23 (format 45): the raw parent space
   /// of slot `object`. 24 (format 45): typed input list `read`

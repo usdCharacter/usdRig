@@ -1366,7 +1366,7 @@ private:
             if (lookup && lookup->source == 10) {
                 if (!_f.geometry ||
                     lookup->object >= _f.geometry->revisionIndex.size() ||
-                    lookup->read > 30)
+                    lookup->read > 34)
                     return _Bad("op_graph.lookups: a revision lookup reads no "
                                 "input of a revision");
                 const auto &at = _f.geometry->revisionIndex[lookup->object];
@@ -1383,22 +1383,35 @@ private:
                 const bool lattice = op == uint8_t(fb::RevisionOp::Lattice);
                 const bool external = op == uint8_t(fb::RevisionOp::External);
                 const bool smooth = op == uint8_t(fb::RevisionOp::Smooth);
-                const bool blend = op == uint8_t(fb::RevisionOp::BlendShape) &&
-                                   RigExecFormatIsChunkBlend(
-                                       _f.geometry->chains[size_t(at.first)]
-                                           .revisions[size_t(at.second)]) &&
-                                   _Has(_f.geometry->chains[size_t(at.first)]
-                                            .revisions[size_t(at.second)]
-                                            .blendChannels,
-                                        lookup->part);
+                const bool chunkBlend =
+                    op == uint8_t(fb::RevisionOp::BlendShape) &&
+                    RigExecFormatIsChunkBlend(
+                        _f.geometry->chains[size_t(at.first)]
+                            .revisions[size_t(at.second)]);
+                size_t samples = 0;
+                if (chunkBlend)
+                    for (const auto &channel :
+                         _f.geometry->chains[size_t(at.first)]
+                             .revisions[size_t(at.second)]
+                             .blendChannels)
+                        samples += channel.samples.size();
+                const bool blend =
+                    chunkBlend && _Has(_f.geometry->chains[size_t(at.first)]
+                                           .revisions[size_t(at.second)]
+                                           .blendChannels,
+                                       lookup->part);
+                const bool sample = chunkBlend && lookup->part >= 0 &&
+                                    size_t(lookup->part) < samples;
                 if ((lookup->read > 2 && lookup->read < 13 && !mush) ||
-                    (lookup->read == 13 && !mush && !lattice && !external) ||
+                    (lookup->read == 13 && !mush && !lattice && !external &&
+                     !chunkBlend) ||
                     (lookup->read > 13 && lookup->read < 16 && !lattice) ||
                     (lookup->read == 16 && !blend) ||
                     ((lookup->read == 17 || lookup->read == 18) && !mush &&
                      !smooth) ||
                     ((lookup->read == 19 || lookup->read == 20) && !mush) ||
-                    (lookup->read > 20 && !lattice))
+                    (lookup->read > 20 && lookup->read <= 30 && !lattice) ||
+                    (lookup->read > 30 && !sample))
                     return _Bad("op_graph.lookups: a smooth, delta mush, "
                                 "lattice or blend shape input lookup reads a "
                                 "revision of another operation");
@@ -4225,26 +4238,6 @@ private:
                                     row +
                                     ": sparse blend source requires raw "
                                     "Default head or missing-source fallback");
-                            if (RigExecFormatIsChunkBlend(rev)) {
-                                if (source &&
-                                    !_PrivateConstant(read.walk.front()))
-                                    return _Bad(row +
-                                                ": chunk blend layout requires "
-                                                "private, unanimated inputs");
-                                if (tag == InputTag::IntArray) {
-                                    const auto &value =
-                                        _f.values
-                                            [source
-                                                 ? _f.inputs[read.walk.front()]
-                                                       .value()
-                                                 : read.constant];
-                                    if (_f.intArrays[value.array].v !=
-                                        sample.indices)
-                                        return _Bad(
-                                            row + ": chunk blend indices "
-                                                  "differ from pinned source");
-                                }
-                            }
                             if (missing) {
                                 const auto &fallback = _f.values[read.constant];
                                 const bool empty =
@@ -8843,11 +8836,8 @@ private:
                     for (size_t c = 0; c < r.blendChannels.size(); ++c) {
                         bool touches = false;
                         for (const auto &sample : r.blendChannels[c].samples) {
-                            if (!sample.blendShape || !sample.hasLayout)
-                                return _Bad(row +
-                                            ": blend channel keys require "
-                                            "compiled sparse samples");
-                            if (sample.indices.empty())
+                            if (!sample.blendShape || !sample.hasLayout ||
+                                sample.indices.empty())
                                 touches = true;
                             for (int i : sample.indices)
                                 touches = touches || (i >= r.chunks[k].begin &&

@@ -18,15 +18,20 @@ namespace rigExecOps {
 using BlendShapeLayout = rigExec::RigExecBlendLayoutOf<rigExecStd::Vec3f>;
 
 /// One in-between: either the target's moved points (dense, measured
-/// against Base) or an offset layout.
+/// against Base) or an offset layout. A sample whose values can move reads
+/// them each frame: its dense points from element `target` of Targets, or
+/// its layout from element `sparse` of Offsets and SampleIndices.
 struct BlendShapeSample {
     float activation = 1.0f;
     std::vector<rigExecStd::Vec3f> points;
     std::shared_ptr<const BlendShapeLayout> layout;
+    int32_t target = -1;
+    int32_t sparse = -1;
 
     bool operator==(const BlendShapeSample &o) const
     {
-        if (activation != o.activation || points != o.points)
+        if (activation != o.activation || points != o.points ||
+            target != o.target || sparse != o.sparse)
             return false;
         if (layout == o.layout)
             return true;
@@ -67,7 +72,11 @@ const rigExec::RigExecOpHandle &BlendShape();
 // Envelope (optional FloatArray), Out. Enabled (Bool, unfed true) false
 // passes the points through; at most one of Envelope, DefaultWeight (Float)
 // and Packet (PointWeights) weighs the result; Written (IntArray, [begin,
-// end) pairs) bounds the groups a sparse packet may reach.
+// end) pairs) bounds the groups a sparse packet may reach. Activations
+// (optional FloatArray, one per sample in channel order) replaces the
+// payload's activations; Targets (Vec3fArrayList), Offsets (Vec3fArrayList)
+// and SampleIndices (IntArrayList) give the samples that name them their
+// points or layout this frame.
 const rigExec::RigExecPortHandle &BlendShapePoints();
 const rigExec::RigExecPortHandle &BlendShapeWeights();
 const rigExec::RigExecPortHandle &BlendShapeBase();
@@ -80,6 +89,10 @@ const rigExec::RigExecPortHandle &BlendShapeEnabled();
 const rigExec::RigExecPortHandle &BlendShapeDefaultWeight();
 const rigExec::RigExecPortHandle &BlendShapePacket();
 const rigExec::RigExecPortHandle &BlendShapeWritten();
+const rigExec::RigExecPortHandle &BlendShapeActivations();
+const rigExec::RigExecPortHandle &BlendShapeTargets();
+const rigExec::RigExecPortHandle &BlendShapeOffsets();
+const rigExec::RigExecPortHandle &BlendShapeSampleIndices();
 
 } // namespace rigExecOps
 

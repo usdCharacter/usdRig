@@ -1786,22 +1786,13 @@ TestPrepareRevisionRangesDecidesAsTheKernel()
         RigExecRevisionRangeInputs prepared;
         prepared.wireBasis = std::make_shared<rigExec::RigExecWireBasis>();
         prepared.wireRestEvaluations = &staleTable;
-        prepared.blendWeights.assign(3, 0.25f);
         const RigExecRevisionAcceptance decided =
             rigExec::RigExecPrepareRevisionRanges(op, p, n, &wire, &prepared);
         bool ok = decided == expected &&
                   decided == rigExec::RigExecRevisionKernelAcceptance(op, p, n);
         if (decided != RigExecRevisionAcceptance::Applies ||
             !rigExec::RigExecRevisionIsRangeOp(op)) {
-            ok = ok && !prepared.wireBasis && !prepared.wireRestEvaluations &&
-                 prepared.blendWeights.empty();
-        } else if (op == Op::BlendShape) {
-            // The blend kernel's own resolve, or nothing at full strength.
-            std::vector<float> resolved;
-            if (!rigExec::RigExecEnvelopeIsFullStrength(p.weights)) {
-                ok = ok && p.weights.ResolveAll(n, &resolved);
-            }
-            ok = ok && prepared.blendWeights == resolved;
+            ok = ok && !prepared.wireBasis && !prepared.wireRestEvaluations;
         }
         // A packet the kernel refuses is one RigExecRunRevisionKernel fails.
         if (decided == RigExecRevisionAcceptance::Refuses) {
@@ -2163,8 +2154,7 @@ TestRevisionGroupsMatchTheWholeKernel()
         }
     }
 
-    // Blend shape in target space: full strength, a sparse envelope and a
-    // dense one, with a NaN-payload delta and an infinite one.
+    // A blend shape runs as op nodes: no group arm.
     const float inf = std::numeric_limits<float>::infinity();
     RigExecMoverParameters blend;
     blend.valid = true;
@@ -2177,14 +2167,6 @@ TestRevisionGroupsMatchTheWholeKernel()
     }
     blend.blendDeltas[5] = GfVec3f(0.5f, NanWithPayload(0x77), 0.0f);
     blend.blendDeltas[900] = GfVec3f(inf, 1.0f, -0.0f);
-    check("blend shape, full strength", Op::BlendShape, blend, false, false,
-          never, true);
-    blend.weights = packets.sparse;
-    check("blend shape, sparse envelope", Op::BlendShape, blend, false, false,
-          never, true);
-    blend.weights = packets.denseWire;
-    check("blend shape, dense envelope", Op::BlendShape, blend, false, false,
-          never, true);
 
     // What a group refuses: a surface-frame blend, an op that is not a
     // group op, an output that aliases the input, a skin method neither
@@ -2192,10 +2174,8 @@ TestRevisionGroupsMatchTheWholeKernel()
     {
         RigExecRevisionRangeInputs none;
         std::vector<GfVec3f> out(10);
-        auto p = blend;
-        p.blendSurfaceFrame = true;
         CHECK(!rigExec::RigExecRunRevisionGroup(
-            Op::BlendShape, p, none, nullptr, entering.data(), out.data(),
+            Op::BlendShape, blend, none, nullptr, entering.data(), out.data(),
             count, 0, 10, nullptr, false));
         // A smooth, a delta mush or a lattice runs as op nodes: no group
         // arm.

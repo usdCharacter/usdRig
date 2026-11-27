@@ -1,5 +1,6 @@
 #include "rigExecOps/deform/blendShapeOp.h"
 
+#include "rigExecMath/blendLayoutKernel.h"
 #include "rigExecMath/deltaMushKernel.h"
 #include "rigExecOps/deform/weightPacket.h"
 #include "rigExecOps/opIo.h"
@@ -7,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <iterator>
 #include <string>
 
@@ -26,6 +28,10 @@ RIGEXEC_DEFINE_PORT_HANDLE(BlendShapeEnabled)
 RIGEXEC_DEFINE_PORT_HANDLE(BlendShapeDefaultWeight)
 RIGEXEC_DEFINE_PORT_HANDLE(BlendShapePacket)
 RIGEXEC_DEFINE_PORT_HANDLE(BlendShapeWritten)
+RIGEXEC_DEFINE_PORT_HANDLE(BlendShapeActivations)
+RIGEXEC_DEFINE_PORT_HANDLE(BlendShapeTargets)
+RIGEXEC_DEFINE_PORT_HANDLE(BlendShapeOffsets)
+RIGEXEC_DEFINE_PORT_HANDLE(BlendShapeSampleIndices)
 
 namespace {
 
@@ -33,23 +39,59 @@ using namespace opIo;
 using rigExecStd::Vec3d;
 using rigExecStd::Vec3f;
 using Ints = rigExecStd::RigExecArray<int32_t>;
+using PointsList = rigExecStd::RigExecArrayList<Vec3f>;
+using IntsList = rigExecStd::RigExecArrayList<int32_t>;
 
-struct SampleTraits {
-    static float Activation(const BlendShapeSample &s)
+/// A sample as this frame reads it: its activation, and its dense points or
+/// its layout, held by the payload, an input or the node's state.
+struct LiveSample {
+    float activation = 1.0f;
+    const Vec3f *points = nullptr;
+    size_t count = 0;
+    const BlendShapeLayout *layout = nullptr;
+};
+
+struct LiveChannel {
+    std::vector<LiveSample> samples;
+};
+
+/// An input array read as the layout builder reads its arguments.
+template <class T> struct ArraySpan {
+    const rigExecStd::RigExecArray<T> &array;
+    bool empty() const
+    {
+        return array.Empty();
+    }
+    size_t size() const
+    {
+        return array.Size();
+    }
+    const T *begin() const
+    {
+        return array.begin();
+    }
+    const T *end() const
+    {
+        return array.end();
+    }
+};
+
+struct LiveTraits {
+    static float Activation(const LiveSample &s)
     {
         return s.activation;
     }
-    static const BlendShapeLayout *Layout(const BlendShapeSample &s)
+    static const BlendShapeLayout *Layout(const LiveSample &s)
     {
-        return s.layout.get();
+        return s.layout;
     }
-    static const Vec3f *DensePoints(const BlendShapeSample &s)
+    static const Vec3f *DensePoints(const LiveSample &s)
     {
-        return s.points.data();
+        return s.points;
     }
-    static size_t DenseCount(const BlendShapeSample &s)
+    static size_t DenseCount(const LiveSample &s)
     {
-        return s.points.size();
+        return s.count;
     }
 };
 
@@ -60,22 +102,12 @@ PayloadOf(const rigExec::RigExecOpBatch &batch, size_t k)
         rigExec::RigExecBatchPayload(batch, k));
 }
 
-/// Whether the node's deltas sum per point range: no surface frame, and
-/// every sample an offset layout the range kernel reads as the whole
-/// kernel does.
+/// Whether the node's deltas sum per point range: every point's delta reads
+/// only its own samples' values, unless the surface frame carries them.
 bool
 SumsInRanges(const BlendShapePayload &p)
 {
-    if (p.surfaceFrame)
-        return false;
-    for (const BlendShapeChannel &channel : p.channels)
-        for (const BlendShapeSample &sample : channel.samples)
-            if (!sample.layout ||
-                (sample.layout->indices.empty() &&
-                 !sample.layout->offsets.empty() &&
-                 sample.layout->offsets.size() != sample.layout->pointCount))
-                return false;
-    return true;
+    return !p.surfaceFrame;
 }
 
 rigExec::RigExecRangePlan
@@ -86,21 +118,103 @@ Plan(const rigExec::RigExecOpBatch &batch, size_t k)
 }
 
 /// The point count validate could not see, checked each frame; this
-/// frame's pass through and the weight at every point when a default weight
-/// or a packet gives them.
+/// frame's pass through, the weight at every point when a default weight
+/// or a packet gives them, its samples sorted by activation, and the
+/// layouts of the samples whose layout moves.
 struct BlendState {
     bool checkEachFrame = true;
     bool pass = false;
     std::vector<float> dense;
+    std::vector<LiveChannel> channels;
+    std::vector<BlendShapeLayout> built;
 };
 
 bool
-ChannelsFit(const BlendShapePayload &p, size_t count, std::string *error)
+ChannelsFit(const std::vector<LiveChannel> &channels, size_t count,
+            std::string *error)
 {
-    if (!count || !rigExec::RigExecBlendChannelsFitKernel<SampleTraits>(
-                      p.channels, count))
+    if (!count ||
+        !rigExec::RigExecBlendChannelsFitKernel<LiveTraits>(channels, count))
         return Fail(error, "BlendShape",
                     "a channel has no samples or a sample doesn't fit");
+    return true;
+}
+
+/// Fills \p state's channels with this frame's samples: the payload's,
+/// with the activations, points and layouts the inputs give in place of
+/// those that can move, each channel stably sorted by activation.
+bool
+GatherSamples(const BlendShapePayload &p, const rigExec::RigExecOpIo &io,
+              size_t count, BlendState *state, std::string *error)
+{
+    const Envelope *activations = In<Envelope>(io, BlendShapeActivations());
+    const PointsList *targets = In<PointsList>(io, BlendShapeTargets());
+    const PointsList *offsets = In<PointsList>(io, BlendShapeOffsets());
+    const IntsList *indices = In<IntsList>(io, BlendShapeSampleIndices());
+    size_t k = 0;
+    state->channels.resize(p.channels.size());
+    for (size_t c = 0; c < p.channels.size(); ++c) {
+        const std::vector<BlendShapeSample> &samples = p.channels[c].samples;
+        std::vector<LiveSample> &live = state->channels[c].samples;
+        live.resize(samples.size());
+        for (size_t s = 0; s < samples.size(); ++s, ++k) {
+            const BlendShapeSample &sample = samples[s];
+            LiveSample &l = live[s];
+            l = LiveSample();
+            if (activations && k >= activations->Size())
+                return Fail(error, "BlendShape",
+                            "needs one activation per sample");
+            l.activation = activations ? (*activations)[k] : sample.activation;
+            if (sample.target >= 0) {
+                if (!targets || size_t(sample.target) >= targets->Size())
+                    return Fail(error, "BlendShape",
+                                "a sample's target points are missing");
+                const auto &points = (*targets)[size_t(sample.target)];
+                l.points = points.Data();
+                l.count = points.Size();
+            } else if (sample.sparse >= 0) {
+                const size_t at = size_t(sample.sparse);
+                if (!offsets || !indices || at >= offsets->Size() ||
+                    at >= indices->Size())
+                    return Fail(error, "BlendShape",
+                                "a sample's offsets or indices are missing");
+                if (state->built.size() <= at)
+                    state->built.resize(at + 1);
+                BlendShapeLayout &layout = state->built[at];
+                const auto &o = (*offsets)[at];
+                const auto &i = (*indices)[at];
+                const std::vector<Vec3f> &held = layout.offsets;
+                const std::vector<int> &heldIndices = layout.indices;
+                const bool same =
+                    layout.pointCount == count && held.size() == o.Size() &&
+                    heldIndices.size() == i.Size() &&
+                    std::equal(i.begin(), i.end(), heldIndices.begin()) &&
+                    (!o.Size() || std::memcmp(held.data(), o.Data(),
+                                              o.Size() * sizeof(Vec3f)) == 0);
+                if (!same && !rigExec::RigExecBuildBlendLayout(
+                                 ArraySpan<Vec3f>{o}, ArraySpan<int32_t>{i},
+                                 count, &layout))
+                    return Fail(error, "BlendShape",
+                                "a sample's offsets do not fit the points");
+                if (!layout.valid)
+                    return Fail(error, "BlendShape",
+                                "a sample's offsets do not fit the points");
+                l.layout = &layout;
+            } else if (sample.layout) {
+                l.layout = sample.layout.get();
+            } else {
+                l.points = sample.points.data();
+                l.count = sample.points.size();
+            }
+        }
+        if (activations)
+            for (size_t s = 1; s < live.size(); ++s)
+                for (size_t j = s;
+                     j > 0 && live[j].activation < live[j - 1].activation; --j)
+                    std::swap(live[j], live[j - 1]);
+    }
+    if (activations && k != activations->Size())
+        return Fail(error, "BlendShape", "needs one activation per sample");
     return true;
 }
 
@@ -132,10 +246,29 @@ Validate(const rigExec::RigExecOpCheck &check, std::string *error)
     if (!EnvelopeFits(check, BlendShapePoints(), BlendShapeEnvelope(),
                       "BlendShape", error))
         return false;
+    const bool live = Fed(check, BlendShapeActivations()) ||
+                      Fed(check, BlendShapeTargets()) ||
+                      Fed(check, BlendShapeOffsets()) ||
+                      Fed(check, BlendShapeSampleIndices());
     const bool known = base < rigExec::kRigExecPortUnfed;
     if (BlendState *state = CheckState<BlendState>(check))
-        state->checkEachFrame = !known;
-    return !known || ChannelsFit(p, base, error);
+        state->checkEachFrame = live || !known;
+    if (live || !known)
+        return true;
+    std::vector<LiveChannel> channels(p.channels.size());
+    for (size_t c = 0; c < p.channels.size(); ++c)
+        for (const BlendShapeSample &sample : p.channels[c].samples) {
+            if (sample.target >= 0 || sample.sparse >= 0)
+                return Fail(error, "BlendShape",
+                            "a sample reads an input that is not fed");
+            LiveSample l;
+            l.activation = sample.activation;
+            l.layout = sample.layout.get();
+            l.points = sample.layout ? nullptr : sample.points.data();
+            l.count = sample.layout ? 0 : sample.points.size();
+            channels[c].samples.push_back(l);
+        }
+    return ChannelsFit(channels, base, error);
 }
 
 bool
@@ -155,13 +288,12 @@ Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
                       In<Envelope>(io, BlendShapeEnvelope()), "BlendShape",
                       error))
         return false;
-    if (state.checkEachFrame) {
-        if (base && base->Size() != count)
-            return Fail(error, "BlendShape",
-                        "base length differs from the points");
-        if (!ChannelsFit(PayloadOf(batch, k), count, error))
-            return false;
-    }
+    if (state.checkEachFrame && base && base->Size() != count)
+        return Fail(error, "BlendShape", "base length differs from the points");
+    if (!GatherSamples(PayloadOf(batch, k), io, count, &state, error))
+        return false;
+    if (state.checkEachFrame && !ChannelsFit(state.channels, count, error))
+        return false;
     const float *weight = In<float>(io, BlendShapeDefaultWeight());
     const weightPacket::PointWeights *packet =
         In<weightPacket::PointWeights>(io, BlendShapePacket());
@@ -220,13 +352,11 @@ Whole(const BlendShapePayload &p, const BlendState &state,
     const Points *base = In<Points>(io, BlendShapeBase());
     if (!base)
         base = &in;
-    const BlendShapeChannel *first = p.channels.data();
+    const LiveChannel *first = state.channels.data();
     std::vector<Vec3f> deltas;
-    if (!rigExec::RigExecSumBlendChannelsKernel<SampleTraits>(
-            p.channels,
-            [&](const BlendShapeChannel &c) {
-                return weights[size_t(&c - first)];
-            },
+    if (!rigExec::RigExecSumBlendChannelsKernel<LiveTraits>(
+            state.channels,
+            [&](const LiveChannel &c) { return weights[size_t(&c - first)]; },
             base->Data(), base->Size(), &deltas,
             [](size_t n, const auto &fn) { fn(0, n); }))
         return Fail(error, "BlendShape",
@@ -266,9 +396,14 @@ struct BlendScratch {
     bool keyed = false;
 };
 
+/// Whether \p sample can move a point in [begin, end): a dense sample, or
+/// one whose values move, can move any.
 bool
-Reaches(const BlendShapeLayout &layout, size_t begin, size_t end)
+Reaches(const BlendShapeSample &sample, size_t begin, size_t end)
 {
+    if (!sample.layout || sample.target >= 0 || sample.sparse >= 0)
+        return true;
+    const BlendShapeLayout &layout = *sample.layout;
     if (layout.indices.empty())
         return !layout.offsets.empty();
     for (const int i : layout.indices)
@@ -300,7 +435,7 @@ BlendRange(const rigExec::RigExecOpBatch &batch, size_t k,
         scratch.channels.clear();
         for (size_t c = 0; c < p.channels.size(); ++c)
             for (const BlendShapeSample &sample : p.channels[c].samples)
-                if (Reaches(*sample.layout, range.begin, range.end)) {
+                if (Reaches(sample, range.begin, range.end)) {
                     scratch.channels.push_back(uint32_t(c));
                     break;
                 }
@@ -308,12 +443,14 @@ BlendRange(const rigExec::RigExecOpBatch &batch, size_t k,
         scratch.end = range.end;
         scratch.keyed = true;
     }
+    const Points *base = In<Points>(io, BlendShapeBase());
+    const Vec3f *from = base ? base->Data() + range.begin : in;
     std::vector<Vec3f> &deltas = scratch.deltas;
     deltas.assign(count, Vec3f(0.0f));
     for (const uint32_t c : scratch.channels)
-        rigExec::RigExecAccumulateBlendRange(p.channels[c].samples, weights[c],
-                                             range.begin, range.end,
-                                             deltas.data());
+        rigExec::RigExecSumBlendChannelRangeKernel<LiveTraits>(
+            state.channels[c], weights[c], from, range.begin, range.end,
+            deltas.data());
     for (size_t i = 0; i < count; ++i)
         out[i] = in[i] + deltas[i];
     BlendEnvelopeAt(in,
@@ -352,19 +489,28 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "defaultWeight"},
     {&BlendShapePacket(), &rigExecRig::PointWeightsType(), kOptional, "packet"},
     {&BlendShapeWritten(), &rigExecStd::IntArray(), kOptional, "written"},
+    {&BlendShapeActivations(), &rigExecStd::FloatArray(), kOptional,
+     "activations"},
+    {&BlendShapeTargets(), &rigExecStd::Vec3fArrayList(), kOptional, "targets"},
+    {&BlendShapeOffsets(), &rigExecStd::Vec3fArrayList(), kOptional, "offsets"},
+    {&BlendShapeSampleIndices(), &rigExecStd::IntArrayList(), kOptional,
+     "sampleIndices"},
 };
 
 using payloadIo::Reader;
 using payloadIo::Writer;
 
-// A sample's fixed part: activation, the points count and the layout flag.
-constexpr size_t kSampleBytes = 4 + 8 + 1;
+// A sample's fixed part: activation, the points count, the layout flag and
+// its target and sparse elements.
+constexpr size_t kSampleBytes = 4 + 8 + 1 + 4 + 4;
 
 void
 PutSample(Writer &w, const BlendShapeSample &s)
 {
     w.F32(s.activation);
     payloadIo::PutList(w, s.points);
+    w.I32(s.target);
+    w.I32(s.sparse);
     w.Bool(s.layout != nullptr);
     if (!s.layout)
         return;
@@ -379,6 +525,8 @@ GetSample(Reader &r, BlendShapeSample &s)
 {
     s.activation = r.F32();
     payloadIo::GetList(r, s.points);
+    s.target = r.I32();
+    s.sparse = r.I32();
     s.layout.reset();
     if (!r.Bool() || !r.Ok())
         return;
@@ -393,7 +541,7 @@ GetSample(Reader &r, BlendShapeSample &s)
 void
 Save(Writer &w, const BlendShapePayload &p)
 {
-    w.Version(1);
+    w.Version(2);
     w.List(p.channels, [](Writer &out, const BlendShapeChannel &c) {
         out.List(c.samples, &PutSample);
     });
@@ -403,7 +551,7 @@ Save(Writer &w, const BlendShapePayload &p)
 void
 Load(Reader &r, BlendShapePayload &p)
 {
-    r.Version(1);
+    r.Version(2);
     r.List(p.channels, 8, [](Reader &in, BlendShapeChannel &c) {
         in.List(c.samples, kSampleBytes, &GetSample);
     });

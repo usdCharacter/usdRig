@@ -1468,11 +1468,18 @@ ClassifyRevision(const RoleReads &reads,
     }
     case RigExecRevisionOp::BlendShape: {
         // rigExec:deltaSpace never enters the file, so Export pins it as
-        // Live does.
+        // Live does. A device chain sums its blends whole, and a target read
+        // through a phase runs whole.
         const int space = leaves.decl.Role(Role::DeltaSpace);
-        if (!reads.Pinnable(leaves, space)) {
+        if (!reads.Pinnable(leaves, space) ||
+            reads.B.gpuDeformMode != RigExecGpuDeformMode::Off ||
+            !revision->binding.phases.empty()) {
             return GeomRole::Whole;
         }
+        for (const auto &channel : revision->blendChannels)
+            for (const auto &sample : channel.samples)
+                if (sample.pointBinding.id >= 0)
+                    return GeomRole::Whole;
         const TfToken value = reads.Token(leaves, space);
         pinToken(space, value);
         return value == _tokens->targetSpace ? GeomRole::Range
@@ -1866,106 +1873,139 @@ OpMatrixHolds(const RoleReads &reads,
     return true;
 }
 
-/// Whether the Range blend shape \p revision runs as a BlendShape op over
-/// what Build reads: on the CPU, every channel holding sparse samples whose
-/// indices, offsets and activation cannot move (pinned here) and fit the
-/// kernel, one reaching some vertex group. Fills its blendChunked state; any
-/// other Range blend runs its group steps over the deltas its static sums.
-bool
+/// Makes the Range blend shape \p revision a BlendShape op over what Build
+/// reads: each sample's activation, dense points or sparse layout, pinned
+/// here when it cannot move and otherwise looked up each frame, and per
+/// channel the vertex groups its samples can reach. What Build finds invalid
+/// is kept in opBlendError, which fails the compile.
+void
 KeyBlendChannels(const RoleReads &reads,
                  const RigExecBakedProgramImpl::GeomChain &chain, size_t points,
                  RigExecBakedProgramImpl::GeomRevision *revision,
                  std::vector<SdfPath> *pinned)
 {
+    using OpSample = RigExecBakedProgramImpl::GeomRevision::OpBlendSample;
     const RigExecBakedProgramImpl &B = reads.B;
     const RigExecBakedPathLeaves &leaves = revision->leaves;
-    if (B.gpuDeformMode != RigExecGpuDeformMode::Off ||
-        revision->blendChannels.empty() || chain.groupBounds.size() < 2)
-        return false;
     const size_t groups = chain.groupBounds.size() - 1;
     const auto fixed = [&](int k) {
         return k >= 0 && size_t(k) < leaves.hops.size() &&
                reads.Usable(leaves, k) &&
                !reads.Reaches(leaves.hops[size_t(k)]);
     };
-    std::vector<std::vector<
-        std::pair<float, std::shared_ptr<const RigExecBlendSampleLayout>>>>
-        samples(revision->blendChannels.size());
+    const auto fail = [&](const char *why) {
+        if (revision->opBlendError.empty())
+            revision->opBlendError = why;
+    };
+    std::vector<std::vector<OpSample>> samples(revision->blendChannels.size());
     std::vector<std::vector<uint32_t>> reached(revision->blendChannels.size());
-    std::vector<std::shared_ptr<const RigExecBlendSampleLayout>> built;
-    bool any = false;
+    std::vector<int> pins;
+    bool live = false;
+    int flat = 0, targets = 0, sparse = 0;
+    for (const auto &channel : revision->blendChannels)
+        for (const auto &sample : channel.samples)
+            live = live || !fixed(sample.activationLeaf);
     for (size_t c = 0; c < revision->blendChannels.size(); ++c) {
         const auto &channel = revision->blendChannels[c];
         if (channel.samples.empty())
-            return false;
+            fail("a blend channel has no samples");
         std::vector<char> touches(groups, 0);
-        for (const auto &sample : channel.samples) {
-            if (sample.blendShape.IsEmpty() || !sample.shapeValid ||
-                sample.layoutRefused || !fixed(sample.indicesLeaf) ||
-                !fixed(sample.offsetsLeaf) || !fixed(sample.activationLeaf))
-                return false;
-            const auto indices = reads.Ints(leaves, sample.indicesLeaf);
-            const auto value = RigExecSampleRevisionLeaf(
-                leaves.decl.keys[size_t(sample.offsetsLeaf)],
-                leaves.attributes[size_t(sample.offsetsLeaf)], &reads.overlay,
-                UsdTimeCode::Default(), &B.upstream);
-            const auto offsets = value.IsHolding<VtVec3fArray>()
-                                     ? value.UncheckedGet<VtVec3fArray>()
-                                     : VtVec3fArray();
-            auto layout = std::make_shared<RigExecBlendSampleLayout>();
-            if (!RigExecBuildGeometryBlendLayout(offsets, indices, points,
-                                                 layout.get()) ||
-                !layout->valid || layout->pointCount != points)
-                return false;
-            built.push_back(layout);
-            const float activation =
-                reads.Float(leaves, sample.activationLeaf,
-                            RigExecBlendSampleData().activation);
-            if (!std::isfinite(activation) || activation <= 0.0f)
-                return false;
-            samples[c].emplace_back(activation, std::move(layout));
-            if (indices.empty())
-                std::fill(touches.begin(), touches.end(), 1);
-            for (int i : indices)
-                if (i >= 0 && size_t(i) < points)
-                    touches[size_t(std::upper_bound(chain.groupBounds.begin(),
-                                                    chain.groupBounds.end(),
-                                                    i) -
-                                   chain.groupBounds.begin() - 1)] = 1;
-        }
-        std::stable_sort(
-            samples[c].begin(), samples[c].end(),
-            [](const auto &a, const auto &b) { return a.first < b.first; });
-        for (size_t s = 1; s < samples[c].size(); ++s)
-            if (samples[c][s].first == samples[c][s - 1].first)
-                return false;
-        for (size_t g = 0; g < groups; ++g)
-            if (touches[g]) {
-                reached[c].push_back(uint32_t(g));
-                any = true;
+        for (size_t s = 0; s < channel.samples.size(); ++s) {
+            const auto &sample = channel.samples[s];
+            OpSample op;
+            op.flat = flat++;
+            if (!live) {
+                op.activation =
+                    reads.Float(leaves, sample.activationLeaf,
+                                RigExecBlendSampleData().activation);
+                if (!std::isfinite(op.activation) || op.activation <= 0.0f)
+                    fail("a blend sample's activation is not finite and "
+                         "above zero");
+                pins.push_back(sample.activationLeaf);
             }
+            if (!sample.blendShape.IsEmpty()) {
+                if (!sample.shapeValid)
+                    fail("a blend sample names no BlendShape");
+                if (sample.layoutRefused || !fixed(sample.indicesLeaf) ||
+                    !fixed(sample.offsetsLeaf)) {
+                    op.sparse = sparse++;
+                    std::fill(touches.begin(), touches.end(), 1);
+                    samples[c].push_back(std::move(op));
+                    continue;
+                }
+                const auto indices = reads.Ints(leaves, sample.indicesLeaf);
+                const auto value = RigExecSampleRevisionLeaf(
+                    leaves.decl.keys[size_t(sample.offsetsLeaf)],
+                    leaves.attributes[size_t(sample.offsetsLeaf)],
+                    &reads.overlay, UsdTimeCode::Default(), &B.upstream);
+                const auto offsets = value.IsHolding<VtVec3fArray>()
+                                         ? value.UncheckedGet<VtVec3fArray>()
+                                         : VtVec3fArray();
+                auto layout = std::make_shared<RigExecBlendSampleLayout>();
+                if (!RigExecBuildGeometryBlendLayout(offsets, indices, points,
+                                                     layout.get()) ||
+                    !layout->valid || layout->pointCount != points)
+                    fail("a sparse blend sample does not fit the points");
+                revision->blendChannels[c].samples[s].layout = layout;
+                op.layout = std::move(layout);
+                pins.push_back(sample.indicesLeaf);
+                pins.push_back(sample.offsetsLeaf);
+                if (indices.empty())
+                    std::fill(touches.begin(), touches.end(), 1);
+                for (int i : indices)
+                    if (i >= 0 && size_t(i) < points)
+                        touches[size_t(
+                            std::upper_bound(chain.groupBounds.begin(),
+                                             chain.groupBounds.end(), i) -
+                            chain.groupBounds.begin() - 1)] = 1;
+                samples[c].push_back(std::move(op));
+                continue;
+            }
+            std::fill(touches.begin(), touches.end(), 1);
+            if (!fixed(sample.pointsLeaf)) {
+                op.target = targets++;
+                samples[c].push_back(std::move(op));
+                continue;
+            }
+            const auto value = RigExecSampleRevisionLeaf(
+                leaves.decl.keys[size_t(sample.pointsLeaf)],
+                leaves.attributes[size_t(sample.pointsLeaf)], &reads.overlay,
+                UsdTimeCode::Default(), &B.upstream);
+            op.points = value.IsHolding<VtVec3fArray>()
+                            ? value.UncheckedGet<VtVec3fArray>()
+                            : VtVec3fArray();
+            if (op.points.size() != points)
+                fail("a dense blend sample does not hold one point per "
+                     "point");
+            pins.push_back(sample.pointsLeaf);
+            samples[c].push_back(std::move(op));
+        }
+        if (!live) {
+            std::stable_sort(samples[c].begin(), samples[c].end(),
+                             [](const OpSample &a, const OpSample &b) {
+                                 return a.activation < b.activation;
+                             });
+            for (size_t s = 1; s < samples[c].size(); ++s)
+                if (samples[c][s].activation == samples[c][s - 1].activation)
+                    fail("two blend samples of a channel share an "
+                         "activation");
+        }
+        for (size_t g = 0; g < groups; ++g)
+            if (touches[g])
+                reached[c].push_back(uint32_t(g));
     }
-    if (!any)
-        return false;
     revision->blendChunked = true;
+    revision->opBlendLiveActivations = live;
     revision->opBlendSamples = std::move(samples);
     revision->blendChannelGroups = std::move(reached);
-    size_t at = 0;
-    for (auto &channel : revision->blendChannels)
-        for (auto &sample : channel.samples)
-            sample.layout = built[at++];
-    for (const auto &channel : revision->blendChannels)
-        for (const auto &sample : channel.samples)
-            for (int k : {sample.indicesLeaf, sample.offsetsLeaf,
-                          sample.activationLeaf}) {
-                RolePin pin;
-                pin.kind = RolePin::Kind::NoLayoutOverride;
-                pin.leaf = k;
-                revision->pins.push_back(pin);
-                if (reads.exportMode)
-                    pinned->push_back(leaves.decl.keys[size_t(k)].path);
-            }
-    return true;
+    for (const int k : pins) {
+        RolePin pin;
+        pin.kind = RolePin::Kind::NoLayoutOverride;
+        pin.leaf = k;
+        revision->pins.push_back(pin);
+        if (reads.exportMode)
+            pinned->push_back(leaves.decl.keys[size_t(k)].path);
+    }
 }
 
 /// Whether \p revision runs as op chain members in every chain shape: an
@@ -2113,6 +2153,8 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
             pinned[r].clear();
         }
         revision.blendChunked = false;
+        revision.opBlendLiveActivations = false;
+        revision.opBlendError.clear();
         revision.opBlendSamples.clear();
         revision.blendChannelGroups.clear();
         if (revision.rangeRole && revision.op == RigExecRevisionOp::BlendShape)
@@ -6725,6 +6767,44 @@ RigExecBakedLookUpRevision(RigExecBakedProgramImpl &B, uint32_t index,
                 weight = v.UncheckedGet<float>();
         }
         return put(weight);
+    }
+    case Read::BlendSampleActivation:
+    case Read::BlendSamplePoints:
+    case Read::BlendSampleOffsets:
+    case Read::BlendSampleIndices: {
+        const RigExecBakedProgramImpl::GeomBlendChannel::Sample *sample =
+            nullptr;
+        int k = lookup.part;
+        for (const auto &channel : c.revisions[size_t(r)].blendChannels) {
+            if (k >= 0 && size_t(k) < channel.samples.size()) {
+                sample = &channel.samples[size_t(k)];
+                break;
+            }
+            k -= int(channel.samples.size());
+        }
+        if (!sample)
+            return fail();
+        if (Read(lookup.read) == Read::BlendSampleActivation) {
+            const VtValue v = leaf(sample->activationLeaf);
+            return put(v.IsHolding<float>()
+                           ? v.UncheckedGet<float>()
+                           : RigExecBlendSampleData().activation);
+        }
+        VtValue &held = B.revisionLeafHold[index];
+        if (Read(lookup.read) == Read::BlendSampleIndices) {
+            held = leaf(sample->indicesLeaf);
+            if (!held.IsHolding<VtIntArray>())
+                held = VtValue(VtIntArray());
+            const VtIntArray &a = held.UncheckedGet<VtIntArray>();
+            return lend(a.cdata(), a.size());
+        }
+        held = leaf(Read(lookup.read) == Read::BlendSamplePoints
+                        ? sample->pointsLeaf
+                        : sample->offsetsLeaf);
+        if (!held.IsHolding<VtVec3fArray>())
+            held = VtValue(VtVec3fArray());
+        const VtVec3fArray &a = held.UncheckedGet<VtVec3fArray>();
+        return lend(a.cdata(), a.size());
     }
     case Read::LatticeRestCage:
     case Read::LatticeLiveCage: {

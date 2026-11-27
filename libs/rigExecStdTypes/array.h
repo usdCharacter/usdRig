@@ -11,6 +11,7 @@
 #include <cstring>
 #include <memory>
 #include <type_traits>
+#include <vector>
 
 namespace rigExecStd {
 
@@ -193,6 +194,43 @@ private:
     T *_data = nullptr;
     size_t _size = 0;
     size_t _capacity = 0;
+};
+
+/// A list of arrays, each read or held as a RigExecArray: the storage of
+/// the standard array-list types. Copying copies every element's values.
+template <class T> class RigExecArrayList {
+public:
+    size_t Size() const
+    {
+        return _items.size();
+    }
+    void Resize(size_t size)
+    {
+        _items.resize(size);
+    }
+    void Reserve(size_t capacity)
+    {
+        _items.reserve(capacity);
+    }
+    RigExecArray<T> *Data()
+    {
+        return _items.data();
+    }
+    const RigExecArray<T> *Data() const
+    {
+        return _items.data();
+    }
+    RigExecArray<T> &operator[](size_t i)
+    {
+        return _items[i];
+    }
+    const RigExecArray<T> &operator[](size_t i) const
+    {
+        return _items[i];
+    }
+
+private:
+    std::vector<RigExecArray<T>> _items;
 };
 
 } // namespace rigExecStd

@@ -499,14 +499,26 @@ struct RigExecBakedGeomRevision {
     /// This revision's blend channels, in `binding.blendInputs` order.
     /// Empty for every operation but a blend shape.
     std::vector<RigExecBakedGeomBlendChannel> blendChannels;
-    /// A Range blend shape (Build state): a BlendShape range chain member
-    /// over the sparse layouts and activations read at Build (pinned), each
-    /// channel's weight looked up per frame. Per channel, its samples'
-    /// activations and layouts and the vertex groups they reach.
+    /// A Range blend shape (Build state): a BlendShape range chain member,
+    /// each channel's weight looked up per frame. Per channel, its samples
+    /// and the vertex groups they reach. A sample holds what Build pinned:
+    /// its activation unless opBlendLiveActivations, and its sparse layout
+    /// or dense points, else the element of the Targets (`target`) or the
+    /// Offsets and SampleIndices (`sparse`) lookups that read them; `flat`
+    /// counts it across the channels in authored order. What Build found
+    /// invalid fails the compile with opBlendError.
+    struct OpBlendSample {
+        float activation = 1.0f;
+        std::shared_ptr<const RigExecBlendSampleLayout> layout;
+        VtVec3fArray points;
+        int target = -1;
+        int sparse = -1;
+        int flat = 0;
+    };
     bool blendChunked = false;
-    std::vector<std::vector<
-        std::pair<float, std::shared_ptr<const RigExecBlendSampleLayout>>>>
-        opBlendSamples;
+    bool opBlendLiveActivations = false;
+    std::string opBlendError;
+    std::vector<std::vector<OpBlendSample>> opBlendSamples;
     std::vector<std::vector<uint32_t>> blendChannelGroups;
     std::vector<int> influenceSlots;
     int transformSlot = -1;

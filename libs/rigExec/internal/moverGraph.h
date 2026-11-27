@@ -705,19 +705,13 @@ struct RigExecRevisionRangeInputs {
     std::shared_ptr<const RigExecWireBasis> wireBasis;
     /// Dense wire: restEvaluations.Get's table, or null to evaluate per point.
     const std::vector<GfVec3f> *wireRestEvaluations = nullptr;
-    /// BlendShape: the envelope resolved at the full count, the weight its
-    /// kernel blends each point by; empty at full strength.
-    std::vector<float> blendWeights;
 };
 
 /// RigExecRevisionKernelAcceptance(op, p, count), exactly; and when that is
 /// Applies for a range op, \p prepared filled for RigExecRunRevisionGroup
 /// (otherwise cleared). \p wireBasis is the revision's own memo (null builds
-/// per call); the caller is its only writer.
-/// The BlendShape arm's answer is RigExecRevisionKernelAcceptance(BlendShape,
-/// p, count) and, when Applies below full strength, `prepared->blendWeights`
-/// holds ResolveAll(count). A Skin's RevisionStatic decides with
-/// SkinAcceptance and does not call it.
+/// per call); the caller is its only writer. A Skin's RevisionStatic decides
+/// with SkinAcceptance and does not call it.
 RigExecRevisionAcceptance RigExecPrepareRevisionRanges(
     RigExecRevisionOp op, const RigExecMoverParameters &p, size_t count,
     RigExecWireBasisCache *wireBasis, RigExecRevisionRangeInputs *prepared);
@@ -736,7 +730,7 @@ bool RigExecRevisionGateHolds(RigExecRevisionOp op,
 /// bind tables) is indexed absolutely. Ops: Wire; Skin
 /// (\p skin is the table the group reads: a chunk's key-filled table or the
 /// fold's; classicLinear or dualQuaternion, then the "apply once" envelope
-/// when \p separateEnvelope is given); BlendShape in target space. Each
+/// when \p separateEnvelope is given). Each
 /// point's bits are the whole kernel's; \p out is fully written unless
 /// \p untouched is set true. \p untouched, when non-null, receives whether
 /// the result is \p in itself (then \p out is not written). False where the

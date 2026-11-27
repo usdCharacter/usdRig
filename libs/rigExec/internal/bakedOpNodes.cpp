@@ -440,6 +440,42 @@ DeclarePortReads(const RigExecBakedProgramImpl &B,
                     const eval::OpLookup &element =
                         layout.lookups[lookup.object + uint32_t(e)];
                     matrices(element);
+                    using Read = eval::OpRevisionRead;
+                    if (element.source ==
+                            uint8_t(eval::OpLookupSource::RevisionLeaf) &&
+                        element.read >= uint8_t(Read::BlendSampleActivation) &&
+                        element.read <= uint8_t(Read::BlendSampleIndices) &&
+                        element.object < B.revisionIndex.size()) {
+                        const auto &[c, r] = B.revisionIndex[element.object];
+                        const auto &revision =
+                            B.chains[size_t(c)].revisions[size_t(r)];
+                        const auto &exact = revision.leaves.exactVersions;
+                        int k = element.part;
+                        for (const auto &channel : revision.blendChannels) {
+                            if (k < 0 || size_t(k) >= channel.samples.size()) {
+                                k -= int(channel.samples.size());
+                                continue;
+                            }
+                            const auto &sample = channel.samples[size_t(k)];
+                            const int leaf =
+                                element.read ==
+                                        uint8_t(Read::BlendSampleActivation)
+                                    ? sample.activationLeaf
+                                : element.read ==
+                                        uint8_t(Read::BlendSamplePoints)
+                                    ? sample.pointsLeaf
+                                : element.read ==
+                                        uint8_t(Read::BlendSampleOffsets)
+                                    ? sample.offsetsLeaf
+                                    : sample.indicesLeaf;
+                            if (leaf >= 0 && size_t(leaf) < exact.size() &&
+                                exact[size_t(leaf)] >= 0)
+                                reads->push_back(RigExecBakedOne(
+                                    D::PropertyResult, exact[size_t(leaf)]));
+                            break;
+                        }
+                        continue;
+                    }
                     if (element.source !=
                             uint8_t(eval::OpLookupSource::RevisionLeaf) ||
                         element.read !=
@@ -921,31 +957,84 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                 continue;
             }
             if (revision.blendChunked) {
+                using Read = eval::OpRevisionRead;
                 static_assert(sizeof(rigExecStd::Vec3f) == sizeof(GfVec3f),
                               "blend offsets copy as bytes");
+                if (!revision.opBlendError.empty())
+                    return Fail(error, revision.moverPathText + ": " +
+                                           revision.opBlendError);
                 rigExecOps::BlendShapePayload payload;
                 payload.channels.resize(revision.opBlendSamples.size());
+                std::vector<int> activations, targets, sparse;
+                bool dense = false;
                 for (size_t ch = 0; ch < revision.opBlendSamples.size(); ++ch)
-                    for (const auto &[activation, held] :
-                         revision.opBlendSamples[ch]) {
-                        auto shape =
-                            std::make_shared<rigExecOps::BlendShapeLayout>();
-                        shape->offsets.resize(held->offsets.size());
-                        if (!held->offsets.empty())
-                            std::memcpy(shape->offsets.data(),
-                                        held->offsets.data(),
-                                        held->offsets.size() * sizeof(GfVec3f));
-                        shape->indices = held->indices;
-                        shape->pointCount = held->pointCount;
-                        shape->valid = held->valid;
+                    for (const auto &held : revision.opBlendSamples[ch]) {
                         rigExecOps::BlendShapeSample sample;
-                        sample.activation = activation;
-                        sample.layout = std::move(shape);
+                        sample.activation = held.activation;
+                        sample.target = held.target;
+                        sample.sparse = held.sparse;
+                        activations.push_back(held.flat);
+                        if (held.target >= 0)
+                            targets.push_back(held.flat);
+                        if (held.sparse >= 0)
+                            sparse.push_back(held.flat);
+                        if (held.layout) {
+                            auto shape = std::make_shared<
+                                rigExecOps::BlendShapeLayout>();
+                            shape->offsets.resize(held.layout->offsets.size());
+                            if (!held.layout->offsets.empty())
+                                std::memcpy(shape->offsets.data(),
+                                            held.layout->offsets.data(),
+                                            held.layout->offsets.size() *
+                                                sizeof(GfVec3f));
+                            shape->indices = held.layout->indices;
+                            shape->pointCount = held.layout->pointCount;
+                            shape->valid = held.layout->valid;
+                            sample.layout = std::move(shape);
+                        } else if (held.sparse < 0) {
+                            dense = true;
+                            sample.points.resize(held.points.size());
+                            if (!held.points.empty())
+                                std::memcpy(
+                                    sample.points.data(), held.points.cdata(),
+                                    held.points.size() * sizeof(GfVec3f));
+                        }
                         payload.channels[ch].samples.push_back(
                             std::move(sample));
                     }
                 const RigExecNodeId blend =
                     builder->AddOp(rigExecOps::BlendShape(), &payload);
+                const auto list = [&](const RigExecPortHandle &port,
+                                      const std::vector<int> &flats,
+                                      eval::OpRevisionRead read) {
+                    builder->BindInput(blend, port);
+                    layout->hostInputs.push_back(
+                        {blend, port.Index(), eval::OpHostSource::Lookup,
+                         uint32_t(layout->lookups.size())});
+                    layout->lookups.push_back(
+                        {uint8_t(L::List), uint32_t(layout->lookups.size() + 1),
+                         int32_t(flats.size()), 0});
+                    for (const int flat : flats)
+                        layout->lookups.push_back({uint8_t(L::RevisionLeaf),
+                                                   uint32_t(id), int32_t(flat),
+                                                   uint8_t(read)});
+                };
+                if (revision.opBlendLiveActivations)
+                    list(rigExecOps::BlendShapeActivations(), activations,
+                         Read::BlendSampleActivation);
+                if (!targets.empty())
+                    list(rigExecOps::BlendShapeTargets(), targets,
+                         Read::BlendSamplePoints);
+                if (!sparse.empty()) {
+                    list(rigExecOps::BlendShapeOffsets(), sparse,
+                         Read::BlendSampleOffsets);
+                    list(rigExecOps::BlendShapeSampleIndices(), sparse,
+                         Read::BlendSampleIndices);
+                }
+                if (dense || !targets.empty())
+                    bind(blend, rigExecOps::BlendShapeBase(),
+                         {{uint8_t(L::RevisionLeaf), uint32_t(id), -1,
+                           uint8_t(Read::ChainBase)}});
                 points(blend, rigExecOps::BlendShapePoints(), false);
                 enabled(blend, rigExecOps::BlendShapeEnabled());
                 const RigExecPortHandle &weights =

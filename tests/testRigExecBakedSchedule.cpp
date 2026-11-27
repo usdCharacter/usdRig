@@ -9480,6 +9480,10 @@ TestExportModeBakesOnlyConstants()
         expected.insert(SdfPath(movers + matrix)
                             .AppendProperty(TfToken("rigExec:weightBlend")));
     }
+    // The blend op holds its dense target and activation as Build read them.
+    expected.insert(SdfPath("/Asset/Raised.points"));
+    expected.insert(
+        SdfPath("/Asset/Rig/BlendInputs/Raise/Full.rigExec:activation"));
     CHECK(exported.program->GetExportPinnedPaths() == expected);
     if (exported.program->GetExportPinnedPaths() != expected) {
         for (const SdfPath &path : exported.program->GetExportPinnedPaths()) {
@@ -9652,10 +9656,9 @@ ChainPositionOf(const RigExecBakedProgramImpl &B, const char *mover)
 }
 
 /// Shift, a full-strength matrix mover, then Blend, whose one sample reads
-/// the chain's points as of Blend itself: a cycle through Blend's packet,
-/// its group steps and its join, which the cycle handling sets aside, so
-/// Blend passes the base through and its join's ids are published before
-/// ChainInputs takes the base. The 8 base points move at frames 2 and 3.
+/// the chain's points as of Blend itself through a phase, which runs Blend
+/// whole: a cycle through Blend's packet, which the cycle handling sets
+/// aside. The 8 base points move at frames 2 and 3.
 const char *const kSetAsideChain = R"USDA(#usda 1.0
 (
     startTimeCode = 1
@@ -9756,12 +9759,11 @@ TestASetAsideJoinFollowsTheBase()
     const RigExecBakedProgramImpl::GeomChain &chain = R.chains[0];
     CHECK(chain.groupBounds.size() == 5);
     CHECK(chain.revisions[size_t(blend)].role ==
-          RigExecBakedRevisionRole::Range);
+          RigExecBakedRevisionRole::Whole);
     for (const double frame : {1.0, 2.0, 2.0, 3.0, 3.0, 1.0}) {
         RigExecRigPose rangedPose, wholePose;
         CHECK(ranged.program->Run(UsdTimeCode(frame), &rangedPose));
         CHECK(whole.program->Run(UsdTimeCode(frame), &wholePose));
-        CHECK(chain.revisions[size_t(blend)].rangeSetAside);
         if (!SameBits(chain.result, W.chains[0].result)) {
             ++failures;
             std::printf("FAIL set-aside chain frame %g: the chain's points "
@@ -9984,10 +9986,12 @@ TestWholeReadersGatherAfterRangeRevisions()
                                   "/Asset/Rig/Movers/Raise"};
     bool shaped = R.chains.size() == 1 && W.chains.size() == 1 &&
                   R.chains[0].groupBounds.size() == 5;
+    // Raise reads its target through a phase, which runs it whole.
     for (size_t r = 0; shaped && r < 3; ++r) {
-        shaped =
-            ChainPositionOf(R, movers[r]) == int(r) &&
-            R.chains[0].revisions[r].role == RigExecBakedRevisionRole::Range;
+        shaped = ChainPositionOf(R, movers[r]) == int(r) &&
+                 R.chains[0].revisions[r].role ==
+                     (r < 2 ? RigExecBakedRevisionRole::Range
+                            : RigExecBakedRevisionRole::Whole);
     }
     CHECK(shaped);
     if (!shaped) {
