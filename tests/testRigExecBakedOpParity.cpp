@@ -2818,13 +2818,13 @@ ProbeSpaces(const B &b)
 // Pose: a provider's bound avar values, read as its AvarInputs step reads
 // them, against the avars the step wrote.
 void
-ProbeAvarInputs(const B &b, const RigExecBakedStep &step)
+ProbeAvarInputs(const B &b, int provider)
 {
     using namespace rigExecOps;
     const auto varying =
-        RigExecBakedAvarBindingRange(b.avarBindingBegin, step.object);
+        RigExecBakedAvarBindingRange(b.avarBindingBegin, provider);
     const auto constant =
-        RigExecBakedAvarBindingRange(b.avarConstantBindingBegin, step.object);
+        RigExecBakedAvarBindingRange(b.avarConstantBindingBegin, provider);
     AvarInputsPayload payload;
     std::vector<uint32_t> slots;
     rigExecStd::RigExecArray<double> values;
@@ -3560,8 +3560,9 @@ void
 ProbePose(const B &b)
 {
     for (const auto &step : b.steps) {
-        if (step.kind == RigExecBakedStepKind::AvarInputs && step.object >= 0)
-            ProbeAvarInputs(b, step);
+        if (const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(b, step);
+            id.kind == RigExecBakedStepKind::AvarInputs && id.object >= 0)
+            ProbeAvarInputs(b, id.object);
         else if (step.kind == RigExecBakedStepKind::SpaceCheckpoint &&
                  step.object >= 0 &&
                  size_t(step.object) < b.switchFrameContexts.size())

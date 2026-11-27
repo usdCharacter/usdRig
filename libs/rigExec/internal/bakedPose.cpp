@@ -3239,6 +3239,18 @@ NoteStepInputs(const RigExecBakedProgramImpl &B,
                 NoteInput(B.ladders[size_t(slot)].parentSpace, sink);
         return;
     }
+    if (identity.kind == RigExecBakedStepKind::AvarInputs) {
+        const auto note = [&](const auto &bindings,
+                              const std::vector<uint32_t> &begin) {
+            const auto range =
+                RigExecBakedAvarBindingRange(begin, identity.object);
+            for (size_t i = range.first; i < range.second; ++i)
+                NoteInput(bindings[i].input, sink);
+        };
+        note(B.avarBindings, B.avarBindingBegin);
+        note(B.avarConstantBindings, B.avarConstantBindingBegin);
+        return;
+    }
     if (identity.kind == RigExecBakedStepKind::Constraint) {
         if (identity.object < 0 ||
             size_t(identity.object) >= B.walkSteps.size())
@@ -3264,17 +3276,6 @@ NoteStepInputs(const RigExecBakedProgramImpl &B,
             break;
         NoteSolverInputs(B.solvers[size_t(step.object)], sink);
         break;
-    case RigExecBakedStepKind::AvarInputs: {
-        const auto note = [&](const auto &bindings,
-                              const std::vector<uint32_t> &begin) {
-            const auto range = RigExecBakedAvarBindingRange(begin, step.object);
-            for (size_t i = range.first; i < range.second; ++i)
-                NoteInput(bindings[i].input, sink);
-        };
-        note(B.avarBindings, B.avarBindingBegin);
-        note(B.avarConstantBindings, B.avarConstantBindingBegin);
-        break;
-    }
     case RigExecBakedStepKind::ComposeSubtree: {
         if (step.object < 0 || size_t(step.object) >= B.composeGroups.size())
             break;
@@ -4498,11 +4499,16 @@ void
 RigExecBakedBuildAvarSteps(RigExecBakedProgramImpl *program)
 {
     auto &B = *program;
+    std::vector<int> origin(B.paths.size(), -1);
+    for (size_t o = 0; o < B.opNodeOrigins.size(); ++o)
+        if (B.opNodeOrigins[o].family == RigExecBakedOpFamily::AvarInputs)
+            origin[size_t(B.opNodeOrigins[o].object)] = int(o);
     RigExecPathText pathText;
     for (size_t slot = 0; slot < B.paths.size(); ++slot) {
         RigExecBakedStep step;
-        step.kind = RigExecBakedStepKind::AvarInputs;
-        step.object = int(slot);
+        step.kind = RigExecBakedStepKind::OpNode;
+        step.object = origin[slot];
+        step.maxDiagnostics = 1;
         step.label = "AvarInputs " + pathText(B.paths[slot]);
         step.writes.push_back(
             RigExecBakedOne(RigExecBakedSlotDomain::Avars, slot));
@@ -4535,18 +4541,6 @@ RigExecBakedIndexAvarBindings(RigExecBakedProgramImpl *program)
     index(B.avarBindings, &B.avarBindingBegin);
     index(B.avarConstantBindings, &B.avarConstantBindingBegin);
 }
-void
-RigExecBakedRunAvarOp(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
-{
-    BakedPoseHost host(program, step);
-    eval::StepRef ref;
-    ref.kind = uint32_t(step->kind);
-    ref.object = step->object;
-    ref.part = step->part;
-    ref.slot = 0;
-    eval::RunValueStep(host, ref);
-}
-
 void
 RigExecBakedRunSolverSources(RigExecBakedProgramImpl *program, UsdTimeCode time)
 {

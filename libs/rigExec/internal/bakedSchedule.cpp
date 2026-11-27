@@ -2041,9 +2041,11 @@ RigExecBakedBuildCones(RigExecBakedProgramImpl *program)
     cones.revisionStaticStep.assign(B.revisionIndex.size(), -1);
     for (const RigExecBakedStep &step : B.steps) {
         const int index = int(&step - B.steps.data());
-        if (step.kind == RigExecBakedStepKind::AvarInputs) {
-            cones.avarCluster[size_t(step.object)] = step.cluster;
-            cones.avarStep[size_t(step.object)] = index;
+        if (const RigExecBakedStepIdentity avar =
+                RigExecBakedIdentityOf(B, step);
+            avar.kind == RigExecBakedStepKind::AvarInputs) {
+            cones.avarCluster[size_t(avar.object)] = step.cluster;
+            cones.avarStep[size_t(avar.object)] = index;
         }
         if (step.kind == RigExecBakedStepKind::ComposeSubtree) {
             const RigExecBakedComposeGroup &group =
@@ -2319,8 +2321,6 @@ RouteBakedStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
         }
     } else if (step->kind == RigExecBakedStepKind::SpaceCheckpoint) {
         RigExecBakedRunSpaceCheckpoint(B, step);
-    } else if (step->kind == RigExecBakedStepKind::AvarInputs) {
-        RigExecBakedRunAvarOp(B, step);
     } else if (RigExecBakedIsOpStep(step->kind)) {
         RigExecBakedRunOpStep(B, step);
     } else if (RigExecBakedIsGeometryStep(step->kind)) {
@@ -2434,7 +2434,8 @@ RigExecBakedExpectedStageFramesAdmissionReads(
     for (size_t i = 0; i < B->steps.size(); ++i) {
         const auto &step = B->steps[i];
         const bool preparation =
-            OriginalPreparationStep(*B, step) || step.kind == K::AvarInputs ||
+            OriginalPreparationStep(*B, step) ||
+            RigExecBakedIdentityOf(*B, step).kind == K::AvarInputs ||
             (ancestry[i] &&
              (RigExecBakedIdentityOf(*B, step).kind == K::SpaceExpression ||
               RigExecBakedWeightFieldOf(*B, step) >= 0));

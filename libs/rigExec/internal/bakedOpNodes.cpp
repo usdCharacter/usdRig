@@ -206,6 +206,17 @@ struct BakedOpHost {
         return RigExecBakedStoreConstraint(B, step, constraintCache, output,
                                            value, error);
     }
+    bool LookUpCompose(uint32_t, const eval::OpLookup &lookup,
+                       const RigExecTypeDesc &type, void *value,
+                       std::string *error) const
+    {
+        return RigExecBakedLookUpCompose(B, lookup, type, value, error);
+    }
+    bool StoreCompose(const eval::OpHostOutput &output, const void *value,
+                      std::string *error) const
+    {
+        return RigExecBakedStoreCompose(B, output, value, error);
+    }
 };
 
 template <class T>
@@ -1120,6 +1131,7 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
             !RigExecBakedAddWeightFieldOps(B, builder.get(), &layout, true,
                                            &fields, error) ||
             !RigExecBakedAddProviderOps(B, builder.get(), &layout, error) ||
+            !RigExecBakedAddComposeOps(B, builder.get(), &layout, error) ||
             !AddPointChainOps(B, builder.get(), &layout, packets, fields, apart,
                               &nodeRevision, &joins, error))
             return false;

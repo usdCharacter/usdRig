@@ -1124,7 +1124,7 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
         RrPropertyPartOf(program, step, &propertyChain, &propertyPart);
     const bool crossCoverage =
         coveredTyped &&
-        (propertyStep || step.kind == RigExecWireStepKind::AvarInputs);
+        (propertyStep || RrAvarSlotOf(program->inputState, step) >= 0);
     const auto read = [&](const RigExecWireInput &input) {
         _RrCoveredRead(input, covered);
         RrEffectiveReadMemo(program, input, key);
@@ -1241,9 +1241,10 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
         }
         return true;
     }
-    if (step.kind == RigExecWireStepKind::AvarInputs) {
+    if (const int64_t avar = RrAvarSlotOf(program->inputState, step);
+        avar >= 0) {
         const auto &state = program->inputState;
-        const auto range = RrAvarReadRange(state, step.object);
+        const auto range = RrAvarReadRange(state, avar);
         for (uint32_t i = range.first; i < range.second; ++i)
             read(*program->registeredReads[state.avarReads[i]].read);
         return true;
@@ -1924,6 +1925,7 @@ RrInputsBindReads(RrProgram *program, std::string *error)
     // then the constant ones (avarConstantBindings), each in file order.
     std::vector<uint32_t> avarOrder;
     for (const bool varying : {true, false}) {
+        const size_t group = avarOrder.size();
         for (size_t i = 0; i < poses.avarBindings.size(); ++i) {
             const RigExecWireAvarBinding &binding = poses.avarBindings[i];
             const RigExecWireInput *read = binding.read.get();
@@ -1959,6 +1961,12 @@ RrInputsBindReads(RrProgram *program, std::string *error)
                  i, 0, nullptr);
             program->registeredReads.back().avar = int32_t(binding.flat);
         }
+        // The order the bake numbers an AvarInputs node's targets in.
+        std::stable_sort(avarOrder.begin() + std::ptrdiff_t(group),
+                         avarOrder.end(), [&](uint32_t a, uint32_t b) {
+                             return program->registeredReads[a].avar <
+                                    program->registeredReads[b].avar;
+                         });
     }
     // Bucketed by provider with a stable counting sort, so a provider's
     // reads keep the walk order above whatever order the file lists them.
@@ -1984,6 +1992,15 @@ RrInputsBindReads(RrProgram *program, std::string *error)
                 state.avarReads[next[size_t(providerOf(id)) / 11]++] = id;
             }
         }
+    }
+    state.avarNodeSlot.clear();
+    if (file.opGraph) {
+        state.avarNodeSlot.assign(file.opGraph->nodes.size(), -1);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < state.avarNodeSlot.size() &&
+                output->target == uint8_t(eval::OpOutputTarget::Avars))
+                state.avarNodeSlot[size_t(output->node)] =
+                    int64_t(output->object);
     }
     for (size_t i = 0; i < poses.ladders.size(); ++i) {
         for (int field = 0; field < RrLadderFieldCount; ++field) {

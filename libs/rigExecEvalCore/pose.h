@@ -1704,30 +1704,6 @@ struct PoseAxisMask {
 
 } // namespace pose_constraints
 
-// ---- AvarInputs ----
-//
-// One ordered write of bound avar values: entry k writes value k to
-// slot k, in order, so a later binding for the same slot wins on both
-// sides exactly as the baked varying-then-constant lists and the
-// runtime's single range already order them.
-template <class Host>
-StepResult
-RunAvarInputsStep(Host &host, const StepRef &step)
-{
-    static_assert(IsBoundHost<Host>::value, "pose Host is not bound");
-    // A negative object, or one past every binding, binds nothing on
-    // both sides (the ranges answer empty); the step succeeds with no
-    // writes. The adapter clamps the count; there is no Invalid arm.
-    const size_t count =
-        step.object < 0 ? 0 : host.inputs().avarWriteCount(size_t(step.object));
-    const size_t object = size_t(step.object);
-    RigExecWriteAvarBindings(
-        count, [&](size_t k) { return host.inputs().avarWriteSlot(object, k); },
-        [&](size_t k) { return host.inputs().avarWriteValue(object, k); },
-        [&](auto slot, double value) { host.state().writeAvar(slot, value); });
-    return {Outcome::Applied, kNoStepDetail};
-}
-
 // ---- SpaceCheckpoint ----
 //
 // A slot's compose inputs as one borrowed view, shared by the
@@ -2786,8 +2762,6 @@ StepResult
 RunValueStep(Host &host, const StepRef &step)
 {
     switch (StepKind(step.kind)) {
-    case StepKind::AvarInputs:
-        return RunAvarInputsStep(host, step);
     case StepKind::SpaceCheckpoint:
         return RunSpaceCheckpointStep(host, step);
     case StepKind::RestCompose:

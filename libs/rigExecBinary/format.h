@@ -707,7 +707,15 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// OpGraph.host_outputs target 70, a single-chain IK's solved chain through
 /// 71 and an IK/FK match's values and presented controls through 72 to 74.
 /// A Constraint step remains only for a constraint with no target.
-inline constexpr uint32_t RigExecFormatVersion = 51;
+///
+/// Format 52 runs a provider slot's avar bindings, a space checkpoint and a
+/// pose interpolator as AvarInputs, SpaceCheckpoint and PoseInterpolator op
+/// nodes. They read their inputs through OpGraph.lookups sources 40 to 42
+/// and store the slot's avars, the switch frame and the weights through
+/// OpGraph.host_outputs targets 40 to 42. It retires the AvarInputs,
+/// SpaceCheckpoint and PoseInterpolator steps: StepKinds 26, 27 and 9 are
+/// reserved and refused.
+inline constexpr uint32_t RigExecFormatVersion = 52;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -715,7 +723,7 @@ inline constexpr uint32_t RigExecFormatVersion = 51;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 51;
+inline constexpr uint32_t RigExecFormatOldestReadable = 52;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool

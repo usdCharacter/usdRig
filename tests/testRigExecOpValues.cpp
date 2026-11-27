@@ -745,7 +745,25 @@ TestAvarBindingIndex()
         for (size_t i : constant)
             expected[B.avarConstantBindings[i].slot] =
                 RigExecBakedLeafRead(B, B.avarConstantBindings[i].input);
-        RigExecBakedRunAvarOp(&B, &step);
+        // Stored through the AvarInputs output target, its bound channels
+        // in ascending order.
+        std::vector<char> bound(11, 0);
+        for (size_t i : varying)
+            bound[B.avarBindings[i].slot % 11] = 1;
+        for (size_t i : constant)
+            bound[B.avarConstantBindings[i].slot % 11] = 1;
+        std::vector<double> values;
+        const size_t first = size_t(std::max(provider, 0)) * 11;
+        for (size_t c = 0; c < 11 && first + c < expected.size(); ++c)
+            if (bound[c])
+                values.push_back(expected[first + c]);
+        rigExecStd::RigExecArray<double> out;
+        out.Assign(values.data(), values.size());
+        const eval::OpHostOutput output{
+            0, 0, uint8_t(eval::OpOutputTarget::Avars), uint32_t(provider)};
+        std::string why;
+        CHECK(RigExecBakedStoreCompose(B, output, &out, &why) ==
+              (provider >= 0 && provider < 4));
         CHECK(B.avars == expected);
     }
     // Another provider's leaf moves no key of provider 0; its own does.

@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 
 namespace rigExec {
 
@@ -83,6 +84,32 @@ RigExecWriteAvarBindings(size_t count, const Slot &slot, const Value &value,
     for (size_t k = 0; k < count; ++k) {
         write(slot(k), value(k));
     }
+}
+
+/// The avars of one provider slot: avar slot provider * 11 + channel.
+inline constexpr size_t kRigExecSlotAvars = 11;
+
+/// The channels \p count bindings of one provider write, bit c for channel
+/// c, \p slot(k) binding k's avar slot.
+template <class Slot>
+unsigned
+RigExecBoundAvarChannels(size_t count, const Slot &slot)
+{
+    unsigned mask = 0;
+    for (size_t k = 0; k < count; ++k)
+        mask |= 1u << (size_t(slot(k)) % kRigExecSlotAvars);
+    return mask;
+}
+
+/// Channel \p channel's element in an AvarInputs output over the channels
+/// \p mask holds: its rank among them.
+inline uint32_t
+RigExecAvarElement(unsigned mask, size_t channel)
+{
+    uint32_t element = 0;
+    for (size_t c = 0; c < channel; ++c)
+        element += (mask >> c) & 1u;
+    return element;
 }
 
 } // namespace rigExec

@@ -544,15 +544,6 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
         ref.slot = step;
         return eval::RunValueStep(host, ref).outcome == eval::Outcome::Applied;
     }
-    case RigExecWireStepKind::AvarInputs: {
-        RrPoseHost host(program);
-        eval::StepRef ref;
-        ref.kind = uint32_t(wire.kind);
-        ref.object = wire.object;
-        ref.part = wire.part;
-        ref.slot = step;
-        return eval::RunValueStep(host, ref).outcome == eval::Outcome::Applied;
-    }
 
     case RigExecWireStepKind::PoseInterpolator: {
         if (wire.object < 0 ||
@@ -836,6 +827,57 @@ RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
     const std::vector<char> &gates =
         lookup.read == 1 ? scratch->recordAfter : scratch->recordEveryTarget;
     *static_cast<uint8_t *>(out) = gates[lookup.object] != 0 ? 1 : 0;
+    return true;
+}
+
+bool
+RrLookUpCompose(const RrProgram *program, const eval::OpLookup &lookup,
+                const RigExecTypeDesc &type, void *value, std::string *error)
+{
+    const RrInputState &state = program->inputState;
+    if (lookup.source != uint8_t(eval::OpLookupSource::AvarBindings) ||
+        !type.resize || !type.data) {
+        if (error)
+            *error = "op nodes: no avar bindings of slot " +
+                     std::to_string(lookup.object);
+        return false;
+    }
+    const auto range = RrAvarReadRange(state, int64_t(lookup.object));
+    type.resize(value, size_t(range.second - range.first));
+    auto *out = static_cast<double *>(type.data(value));
+    for (uint32_t i = range.first; i < range.second; ++i)
+        out[i - range.first] =
+            program->ReadRegistered(int32_t(state.avarReads[i])).f64;
+    return true;
+}
+
+bool
+RrStoreCompose(RrProgram *program, const eval::OpHostOutput &output,
+               const void *value, std::string *error)
+{
+    const RrInputState &state = program->inputState;
+    const auto &values =
+        *static_cast<const rigExecStd::RigExecArray<double> *>(value);
+    const auto range = RrAvarReadRange(state, int64_t(output.object));
+    const unsigned channels = RigExecBoundAvarChannels(
+        size_t(range.second - range.first), [&](size_t k) {
+            return program->registeredReads[state.avarReads[range.first + k]]
+                .avar;
+        });
+    std::vector<double> &avars = program->store.avars;
+    const size_t first = size_t(output.object) * kRigExecSlotAvars;
+    if (output.target != uint8_t(eval::OpOutputTarget::Avars) ||
+        first + kRigExecSlotAvars > avars.size() ||
+        values.Size() != RigExecAvarElement(channels, kRigExecSlotAvars)) {
+        if (error)
+            *error = "op nodes: slot " + std::to_string(output.object) +
+                     " stores no " + std::to_string(values.Size()) + " avars";
+        return false;
+    }
+    size_t element = 0;
+    for (size_t c = 0; c < kRigExecSlotAvars; ++c)
+        if ((channels >> c) & 1u)
+            avars[first + c] = values[element++];
     return true;
 }
 

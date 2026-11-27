@@ -123,6 +123,9 @@ enum class OpLookupSource : uint8_t {
     /// The authored transform of constraint commit `object`'s geometry
     /// target: `read` 0 the Mat4d, 1 whether it was read (Bool).
     ConstraintDeltaBase = 39,
+    /// DoubleArray: the values of provider slot `object`'s avar bindings,
+    /// its varying ones then its constant ones, each in program order.
+    AvarBindings = 40,
 };
 
 /// OpLookup::read of a constraint lookup. The numbers are part of the file
@@ -310,6 +313,14 @@ OpSpaceLookupSource(uint8_t source)
            source <= uint8_t(OpLookupSource::ProviderCandidates);
 }
 
+/// Whether a lookup of \p source is one the host answers through
+/// LookUpCompose.
+constexpr bool
+OpComposeLookupSource(uint8_t source)
+{
+    return source == uint8_t(OpLookupSource::AvarBindings);
+}
+
 /// Whether a lookup of \p source answers a Mat4d that may be absent or,
 /// for Matrix, always is present: a candidate of a Selected lookup.
 constexpr bool
@@ -450,6 +461,9 @@ enum class OpOutputTarget : uint8_t {
     IkFkMatchShown = 74,
     /// Provider operation `object`'s authority and unavailable input,
     /// stored before its ProviderValueMatrix or ProviderValueFrame.
+    /// DoubleArray: an AvarInputs node's values into provider slot
+    /// `object`'s bound avars, in ascending channel order.
+    Avars = 40,
     ProviderValueAuthority = 50,
     ProviderValueUnavailable = 51,
     /// Int: the candidate whose value answers provider value producer
@@ -486,6 +500,14 @@ OpConstraintOutputTarget(uint8_t target)
             target <= uint8_t(OpOutputTarget::IkFkMatchShown));
 }
 
+/// Whether an output of \p target is one the host stores through
+/// StoreCompose.
+constexpr bool
+OpComposeOutputTarget(uint8_t target)
+{
+    return target == uint8_t(OpOutputTarget::Avars);
+}
+
 /// Whether OpLookUp resolves lookups of \p source.
 constexpr bool
 OpLookupSourceRuns(uint8_t source)
@@ -501,7 +523,8 @@ OpLookupSourceRuns(uint8_t source)
            source == uint8_t(OpLookupSource::CommitVersions) ||
            source == uint8_t(OpLookupSource::CommitCandidates) ||
            OpConstraintLookupSource(source) ||
-           OpLookupSourceSelectable(source) || OpSpaceLookupSource(source);
+           OpLookupSourceSelectable(source) || OpSpaceLookupSource(source) ||
+           OpComposeLookupSource(source);
 }
 
 /// Whether OpStoreOutput stores outputs of \p target, or, for a range chain
@@ -518,6 +541,7 @@ OpOutputTargetRuns(uint8_t target, bool chainMember)
                      target == uint8_t(OpOutputTarget::WeightPacket) ||
                      target == uint8_t(OpOutputTarget::WeightField) ||
                      OpSpaceOutputTarget(target) ||
+                     OpComposeOutputTarget(target) ||
                      (target >= uint8_t(OpOutputTarget::CommitSlots) &&
                       target <=
                           uint8_t(OpOutputTarget::ConstraintDeltaMeasured)) ||
@@ -1169,9 +1193,10 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
 
 /// Resolves lookup \p index through the \p host method of its source's
 /// family: LookUpProperty, LookUpPoseVersion, LookUpWeight,
-/// LookUpChainVersion, LookUpWeightField, LookUpCommit, LookUpConstraint
-/// or, for a RevisionLeaf read past Radial, LookUpRevision(index, lookup,
-/// type, value, error), a Matrix lookup through Matrix(source, slot), and a FrameRecord
+/// LookUpChainVersion, LookUpWeightField, LookUpCommit, LookUpConstraint,
+/// LookUpCompose or, for a RevisionLeaf read past Radial,
+/// LookUpRevision(index, lookup, type, value, error), a Matrix lookup
+/// through Matrix(source, slot), and a FrameRecord
 /// or ConstraintDelta lookup through PresentMatrix(lookup), null when
 /// absent. A List or Selected lookup resolves through OpLookUpAt.
 template <class Host>
@@ -1269,6 +1294,8 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
     case OpLookupSource::ProviderInputs:
     case OpLookupSource::ProviderCandidates:
         return host.LookUpSpace(index, lookup, type, value, error);
+    case OpLookupSource::AvarBindings:
+        return host.LookUpCompose(index, lookup, type, value, error);
     }
     return OpLayoutFail(error, "no host resolves lookup source " +
                                    std::to_string(lookup.source));
@@ -1276,8 +1303,8 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
 
 /// Stores \p value through the \p host method of \p output's target
 /// family: StorePropertyVersion, StoreVolumePlacement, StoreWeightPacket,
-/// StoreWeightField, StoreCommit, StoreRevisionEnabled or
-/// StoreConstraint(output, value, error).
+/// StoreWeightField, StoreCommit, StoreRevisionEnabled, StoreConstraint or
+/// StoreCompose(output, value, error).
 template <class Host>
 bool
 OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
@@ -1328,6 +1355,8 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
     case OpOutputTarget::ProviderAnswerAuthority:
     case OpOutputTarget::ProviderAnswerBlocked:
         return host.StoreSpace(output, value, error);
+    case OpOutputTarget::Avars:
+        return host.StoreCompose(output, value, error);
     }
     return OpLayoutFail(error, "no host stores output target " +
                                    std::to_string(output.target));

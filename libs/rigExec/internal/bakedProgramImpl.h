@@ -1197,6 +1197,8 @@ enum class RigExecBakedOpFamily : uint8_t {
     /// The ProviderSelect node that answers a provider value: object its
     /// row in the table of eval::spaces::ProviderProducer `part`.
     ProviderAnswer,
+    /// A provider's avar bindings through AvarInputs: object the slot.
+    AvarInputs,
 };
 
 /// Where an op node's step comes from: its family, that family's object and
@@ -3059,6 +3061,21 @@ bool RigExecBakedLendConstraintWindow(RigExecBakedProgramImpl &B,
 /// reports it.
 std::string RigExecBakedConstraintFailure(const RigExecBakedProgramImpl &B,
                                           int w, const std::string &error);
+/// Numbers one AvarInputs op node origin per slot, after every other origin.
+void RigExecBakedPlanComposeOps(RigExecBakedProgramImpl *program);
+/// The op nodes of the compose family's origins, each numbered its origin.
+bool RigExecBakedAddComposeOps(const RigExecBakedProgramImpl &B,
+                               RigExecRigDescBuilder *builder,
+                               eval::OpStepLayout *layout, std::string *error);
+/// Resolves a compose family lookup (eval::OpComposeLookupSource).
+bool RigExecBakedLookUpCompose(const RigExecBakedProgramImpl &B,
+                               const eval::OpLookup &lookup,
+                               const RigExecTypeDesc &type, void *value,
+                               std::string *error);
+/// Stores a compose family output (eval::OpComposeOutputTarget).
+bool RigExecBakedStoreCompose(RigExecBakedProgramImpl &B,
+                              const eval::OpHostOutput &output,
+                              const void *value, std::string *error);
 /// The cross-domain read diagnostics of revision \p part of \p chain.
 void RigExecBakedPropertyInputLines(const RigExecBakedProgramImpl &B,
                                     size_t chain, size_t part,
@@ -3990,8 +4007,6 @@ void RigExecBakedNoteRestLeaves(RigExecBakedProgramImpl *program);
 
 /// The pose half of the prologue: the bound inputs, once per run.
 void RigExecBakedBuildAvarSteps(RigExecBakedProgramImpl *program);
-void RigExecBakedRunAvarOp(RigExecBakedProgramImpl *program,
-                           RigExecBakedStep *step);
 
 /// Fills avarBindingBegin and avarConstantBindingBegin from the two binding
 /// lists, which must be sorted by flat slot (verified). Build calls it once

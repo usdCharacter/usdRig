@@ -2120,12 +2120,13 @@ InputKey(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
         Put(out, uint8_t(1));
         exact = Box(out, B.headOverrides[id]) && exact;
     };
-    if (step.kind == RigExecBakedStepKind::AvarInputs) {
+    if (const RigExecBakedStepIdentity avar = RigExecBakedIdentityOf(B, step);
+        avar.kind == RigExecBakedStepKind::AvarInputs) {
         Put(out, uint8_t(26));
-        Put(out, step.object);
+        Put(out, avar.object);
         auto bindings = [&](const auto &values,
                             const std::vector<uint32_t> &begin) {
-            const auto range = RigExecBakedAvarBindingRange(begin, step.object);
+            const auto range = RigExecBakedAvarBindingRange(begin, avar.object);
             Put(out, uint64_t(range.second - range.first));
             for (size_t b = range.first; b < range.second; ++b) {
                 const auto &binding = values[b];
@@ -2140,7 +2141,7 @@ InputKey(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
                         invalid();
                         continue;
                     }
-                    // Same pure selection as the AvarInputs body's LeafRead.
+                    // Same pure selection as the AvarBindings lookup's LeafRead.
                     // A successful walk shadows the stored fallback entirely.
                     double value = input.constant;
                     Put(out,
@@ -2476,7 +2477,8 @@ bool
 RigExecBakedOpInputKeyIsConstant(const RigExecBakedProgramImpl &B,
                                  const RigExecBakedStep &step)
 {
-    return step.kind != RigExecBakedStepKind::AvarInputs &&
+    return RigExecBakedIdentityOf(B, step).kind !=
+               RigExecBakedStepKind::AvarInputs &&
            RigExecBakedIdentityOf(B, step).kind !=
                RigExecBakedStepKind::Constraint &&
            step.bindingLeaves.empty() && step.leaves.empty() &&

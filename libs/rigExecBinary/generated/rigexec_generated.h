@@ -1208,7 +1208,8 @@ enum class StepKind : uint8_t {
   /// Reserved. Open refuses it.
   ReservedSpaceExpression = 24,
   ChainInputs = 25,
-  AvarInputs = 26,
+  /// Reserved. Open refuses it.
+  ReservedAvarInputs = 26,
   SpaceCheckpoint = 27,
   /// Reserved. Open refuses it.
   ReservedProviderRefresh = 28,
@@ -1252,7 +1253,7 @@ inline const StepKind (&EnumValuesStepKind())[33] {
     StepKind::ReservedWeightField,
     StepKind::ReservedSpaceExpression,
     StepKind::ChainInputs,
-    StepKind::AvarInputs,
+    StepKind::ReservedAvarInputs,
     StepKind::SpaceCheckpoint,
     StepKind::ReservedProviderRefresh,
     StepKind::ReservedOpGraph,
@@ -1291,7 +1292,7 @@ inline const char * const *EnumNamesStepKind() {
     "ReservedWeightField",
     "ReservedSpaceExpression",
     "ChainInputs",
-    "AvarInputs",
+    "ReservedAvarInputs",
     "SpaceCheckpoint",
     "ReservedProviderRefresh",
     "ReservedOpGraph",
@@ -22491,6 +22492,14 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// and IK/FK match constraint commit `object`, `read` an
   /// OpHarmonicsRead, OpSingleChainIkRead or OpIkFkMatchRead
   /// (rigExecEvalCore/opSteps.h).
+  /// 40 (format 52): the values of provider slot `object`'s avar
+  /// bindings, its varying ones then its constant ones. 41 (format 52):
+  /// input `read` (OpCheckpointRead, rigExecEvalCore/opSteps.h) of space
+  /// checkpoint `object` over the slots it recomposes, outermost first: 0
+  /// their avars, 1 rotation orders, 2 rotation signs, 3 posed defaults, 4
+  /// parent default inverses, 5 parent expressions and 6 whether each was
+  /// authored, 7 whether the posed matrix was authored and 8 that matrix,
+  /// 9 its anchor's posed matrix.
   uint8_t source() const {
     return GetField<uint8_t>(VT_SOURCE, 0);
   }
@@ -22617,6 +22626,9 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// SingleChainIk or IkFkMatch node made of its frames; 71 (format 51):
   /// the chain its single-chain IK solved; 72 to 74 (format 51): the IK and
   /// FK values its IK/FK match matched and the controls it presents.
+  /// 40 (format 52): an AvarInputs node's values into provider slot
+  /// `object`'s bound avars, in ascending channel order; 41 (format 52):
+  /// space checkpoint `object`'s switch frame;
   /// 4 (format 42): a range chain member's output, group by group, into
   /// the vertex groups of revision `object` (geometry.revision_index), the
   /// groups its OpChain.writes names. 6 (format 44): the looked-up

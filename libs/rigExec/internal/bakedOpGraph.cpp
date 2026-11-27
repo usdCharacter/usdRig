@@ -66,7 +66,9 @@ RigExecBakedEffectiveMemo(const RigExecBakedProgramImpl &B, uint32_t c,
     const bool propertyStep =
         RigExecBakedPropertyPartOf(B, step, &propertyChain, &propertyPart);
     const bool projectedConsumer =
-        propertyStep || step.kind == RigExecBakedStepKind::AvarInputs ||
+        propertyStep ||
+        RigExecBakedIdentityOf(B, step).kind ==
+            RigExecBakedStepKind::AvarInputs ||
         step.kind == RigExecBakedStepKind::ComposeSubtree;
     const bool exact = RigExecBakedOpEffectiveInputKey(
         B, step, &scratch, &covered,
@@ -656,12 +658,14 @@ BuildSourceLeafIndex(RigExecBakedProgramImpl *program)
         }
         const auto head = [&](uint32_t id) { watch(K::Head, 0, id, c); };
         const auto slot = [&](uint32_t id) { watch(K::Override, 0, id, c); };
-        if (step.kind == RigExecBakedStepKind::AvarInputs) {
+        if (const RigExecBakedStepIdentity avar =
+                RigExecBakedIdentityOf(B, step);
+            avar.kind == RigExecBakedStepKind::AvarInputs) {
             const auto bindings = [&](const auto &list,
                                       const std::vector<uint32_t> &begin,
                                       uint8_t table) {
                 const auto range =
-                    RigExecBakedAvarBindingRange(begin, step.object);
+                    RigExecBakedAvarBindingRange(begin, avar.object);
                 for (size_t b = range.first;
                      b < range.second && b < list.size(); ++b) {
                     watch(K::AvarConstant, table, uint32_t(b), c);

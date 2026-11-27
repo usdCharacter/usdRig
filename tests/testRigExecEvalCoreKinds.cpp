@@ -56,7 +56,8 @@ CheckOrdinals()
         if (kind == eval::StepKind::ReservedSolverCommit ||
             kind == eval::StepKind::ReservedCommitDelta ||
             kind == eval::StepKind::ReservedPropagateChunk ||
-            kind == eval::StepKind::ReservedCommitApply) {
+            kind == eval::StepKind::ReservedCommitApply ||
+            kind == eval::StepKind::ReservedAvarInputs) {
             CHECK(std::string(eval::StepKindName(kind)) ==
                   std::string("Reserved") + RigExecBakedStepKindName(baked));
             continue;
@@ -82,12 +83,13 @@ CheckOrdinals()
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedFrameMatrix));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedProviderRefresh));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedSpaceExpression));
+    CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedAvarInputs));
     CHECK(!eval::IsReservedStepKind(eval::StepKind::ComposeSubtree));
     CHECK(eval::StepKindName(
               static_cast<eval::StepKind>(eval::StepKindCount))[0] == '\0');
     CHECK(static_cast<uint8_t>(eval::StepKind::ReservedSpaceExpression) == 24);
     CHECK(static_cast<uint8_t>(eval::StepKind::ChainInputs) == 25);
-    CHECK(static_cast<uint8_t>(eval::StepKind::AvarInputs) == 26);
+    CHECK(static_cast<uint8_t>(eval::StepKind::ReservedAvarInputs) == 26);
     CHECK(static_cast<uint8_t>(eval::StepKind::ReservedProviderRefresh) == 28);
     CHECK(static_cast<uint8_t>(eval::StepKind::ReservedOpGraph) == 29);
     CHECK(static_cast<uint8_t>(eval::StepKind::OpNode) == 30);

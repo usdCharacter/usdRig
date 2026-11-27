@@ -24,6 +24,7 @@
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/rigDesc.h"
 #include "rigExec/api/registry.h"
+#include "rigExecOps/pose/poseOps.h"
 #include "rigExecOps/weight/weightOps.h"
 #include "rigExecMath/weightFieldKernel.h"
 #include "rigExecMath/dualQuatMath.h"
@@ -625,24 +626,34 @@ _SynthCompare(const char *name, const RigExecWeightPacket &expected,
     return ok;
 }
 
+// The manifest index of core op \p name, added on first use.
+static uint32_t
+_SynthOpEntry(fb::RigExecWireFile *file, const char *name)
+{
+    auto &ops = file->manifest->coreOps;
+    for (size_t i = 0; i < ops.size(); ++i)
+        if (ops[i] && ops[i]->nameSpace == "rig" && ops[i]->name == name)
+            return uint32_t(i);
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = name;
+    entry->version = 1;
+    ops.push_back(std::move(entry));
+    return uint32_t(ops.size() - 1);
+}
+
 // A VolumePlacement op node placing slot \p slot, its base placement when
 // \p base, from pose version \p slot (the slot's sampled Xform seed); its
 // node index.
 static uint32_t
 _SynthPlacementNode(fb::RigExecWireFile *file, uint32_t slot, bool base)
 {
-    if (!file->opGraph) {
+    if (!file->opGraph)
         file->opGraph = std::make_unique<fb::RigExecWireOpGraph>();
-        auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
-        entry->nameSpace = "rig";
-        entry->name = "VolumePlacement";
-        entry->version = 1;
-        file->manifest->coreOps.push_back(std::move(entry));
-    }
     auto &graph = *file->opGraph;
     const uint32_t node = uint32_t(graph.nodes.size());
     auto op = std::make_unique<fb::RigExecWireOpNode>();
-    op->op = uint32_t(file->manifest->coreOps.size() - 1);
+    op->op = _SynthOpEntry(file, "VolumePlacement");
     auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
     in->port = 0;
     in->host = 4;
@@ -663,20 +674,41 @@ _SynthPlacementNode(fb::RigExecWireFile *file, uint32_t slot, bool base)
     return node;
 }
 
-// The manifest index of core op \p name, added on first use.
+// The AvarInputs op node of slot \p slot, as the bake writes it for a slot
+// that binds no avar. Its node index.
 static uint32_t
-_SynthOpEntry(fb::RigExecWireFile *file, const char *name)
+_SynthAvarNode(fb::RigExecWireFile *file, uint32_t slot)
 {
-    auto &ops = file->manifest->coreOps;
-    for (size_t i = 0; i < ops.size(); ++i)
-        if (ops[i] && ops[i]->nameSpace == "rig" && ops[i]->name == name)
-            return uint32_t(i);
-    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
-    entry->nameSpace = "rig";
-    entry->name = name;
-    entry->version = 1;
-    ops.push_back(std::move(entry));
-    return uint32_t(ops.size() - 1);
+    if (!file->opGraph)
+        file->opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto &graph = *file->opGraph;
+    const uint32_t node = uint32_t(graph.nodes.size());
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = _SynthOpEntry(file, "AvarInputs");
+    const rigExecOps::AvarInputsPayload payload;
+    CHECK(rigExec::RigExecEncodeOpPayload(
+        *rigExec::RigExecRegistry::Get()
+             .OpAt(rigExecOps::AvarInputs().Index())
+             .desc,
+        &payload, op->payload));
+    auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+    in->port = rigExecOps::AvarInputsValues().Index();
+    in->host = 4;
+    in->object = uint32_t(graph.lookups.size());
+    op->inputs.push_back(std::move(in));
+    graph.nodes.push_back(std::move(op));
+    auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+    lookup->source = 40;
+    lookup->object = slot;
+    lookup->part = -1;
+    graph.lookups.push_back(std::move(lookup));
+    auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+    output->node = node;
+    output->port = rigExecOps::AvarInputsOut().Index();
+    output->target = 40;
+    output->object = slot;
+    graph.hostOutputs.push_back(std::move(output));
+    return node;
 }
 
 // The weight packet op node of weight object \p object, as the bake writes
@@ -867,7 +899,7 @@ _SynthCompileGraph(fb::RigExecWireFile *file, std::string *error,
     for (size_t slot = 0; slot < file->slotMeta->paths.size(); ++slot) {
         const auto owner =
             RigExecFormatPathText(*file, file->slotMeta->paths[slot]);
-        add(K::AvarInputs, int(slot), -1, owner);
+        add(K::OpNode, int(_SynthAvarNode(file, uint32_t(slot))), -1, owner);
         file->steps.back().writes = {one(D::Avars, uint32_t(slot))};
         for (const int part : {1, 2}) {
             add(K::OpNode,
@@ -935,7 +967,7 @@ _SynthCompileGraph(fb::RigExecWireFile *file, std::string *error,
     }
     // This fixture has only input preparation and post-admission weight/geometry bodies.
     for (auto &step : file->steps)
-        if (step.kind != K::AvarInputs)
+        if (step.writes.empty() || step.writes[0].domain() != D::Avars)
             step.reads.push_back(one(D::RequiredStageFramesAdmission, 0));
     RigExecCompiledGraph graph;
     RigExecOpAdapterState values;
@@ -1036,8 +1068,8 @@ _SynthCompileGraph(fb::RigExecWireFile *file, std::string *error,
     cones.chainBaseClusters.resize(file->geometry->chains.size());
     for (size_t i = 0; i < graph.ops.size(); ++i) {
         const auto &step = file->steps[i];
-        if (step.kind == K::AvarInputs)
-            cones.avarCluster[size_t(step.object)] = step.cluster;
+        if (!step.writes.empty() && step.writes[0].domain() == D::Avars)
+            cones.avarCluster[step.writes[0].begin()] = step.cluster;
         if (step.kind == K::ChainInputs)
             cones.chainBaseClusters[size_t(step.object)].v.push_back(
                 step.cluster);

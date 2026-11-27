@@ -765,6 +765,7 @@ RigExecBakedProgram::_BuildStepGraph(_BuildAttempt &build)
         }
     }
     RigExecBakedPlanProviderOps(&B);
+    RigExecBakedPlanComposeOps(&B);
     {
         std::string invalid;
         if (!RigExecBakedBuildOpSteps(&B, &invalid)) {

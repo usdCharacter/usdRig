@@ -596,6 +596,7 @@ public:
         _frameRecordOf.assign(nodes, -1);
         _providerSlotOf.assign(nodes, -1);
         _commitNode.assign(nodes, -1);
+        _avarNode.assign(nodes, -1);
         _refreshOf.assign(nodes, -1);
         _providerOpOf.assign(nodes, -1);
         _constraintNode.assign(nodes, -1);
@@ -637,6 +638,10 @@ public:
                 if (output->target == 35 || output->target == 70)
                     _constraintSolve[output->node] = int64_t(output->object);
             }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 40 &&
+                _avarNode[output->node] < 0)
+                _avarNode[output->node] = int64_t(output->object);
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node < nodes && output->target == 5 &&
                 _fieldStored[output->node] < 0)
@@ -734,6 +739,7 @@ private:
         std::vector<uint8_t> stored, packets, fields, groupsStored,
             enabledStored;
         std::set<std::pair<uint64_t, uint8_t>> providerStored, answerStored;
+        std::set<uint64_t> avarsStored;
         std::vector<uint8_t> spaceStored(
             4 * std::max<size_t>(_slots, _f.pose->frameRecords.size()), 0);
         for (const auto &output : _f.opGraph->hostOutputs) {
@@ -742,8 +748,8 @@ private:
             const bool commit = output->target >= 30 && output->target <= 34;
             const bool constraint = _ConstraintTarget(output->target);
             if ((output->target > 6 && output->target < 20) ||
-                (output->target > 34 && !constraint && output->target != 50 &&
-                 output->target != 51 &&
+                (output->target > 34 && !constraint && output->target != 40 &&
+                 output->target != 50 && output->target != 51 &&
                  (output->target < 52 || output->target > 54)))
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
@@ -768,6 +774,29 @@ private:
                                 " stores into constraint " +
                                 _N(output->object) +
                                 ", which it does not solve");
+                continue;
+            }
+            if (output->target == 40) {
+                bool reads = false;
+                if (_f.opGraph->nodes[node])
+                    for (const auto &input : _f.opGraph->nodes[node]->inputs)
+                        reads =
+                            reads ||
+                            (input && input->host == 4 &&
+                             input->object < _f.opGraph->lookups.size() &&
+                             _f.opGraph->lookups[input->object] &&
+                             _f.opGraph->lookups[input->object]->source == 40 &&
+                             _f.opGraph->lookups[input->object]->object ==
+                                 output->object);
+                if (output->object >= _slots || !reads ||
+                    _avarNode[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the avars of slot " +
+                                _N(output->object) +
+                                ", whose bindings it does not read");
+                if (!avarsStored.insert(output->object).second)
+                    return _Bad("op_graph.host_outputs: the avars of slot " +
+                                _N(output->object) + " are stored twice");
                 continue;
             }
             if (commit) {
@@ -1007,6 +1036,13 @@ private:
                                 _N(lookup->object) + " holds");
                 continue;
             }
+            if (lookup && lookup->source == 40) {
+                if (lookup->object >= _slots || lookup->part != -1 ||
+                    lookup->read)
+                    return _Bad("op_graph.lookups: an avar bindings lookup "
+                                "reads no slot");
+                continue;
+            }
             if (lookup && lookup->source == 1) {
                 if ((lookup->part != 0 && lookup->part != 1) || lookup->read)
                     return _Bad("op_graph.lookups: a pose version lookup "
@@ -1210,6 +1246,8 @@ private:
             if (kind == fb::StepKind::ReservedSpaceExpression)
                 return _Bad(_StepName(i) +
                             ": the retired SpaceExpression step");
+            if (kind == fb::StepKind::ReservedAvarInputs)
+                return _Bad(_StepName(i) + ": the retired AvarInputs step");
             const bool op = kind == fb::StepKind::OpNode ||
                             kind == fb::StepKind::OpChainHead ||
                             kind == fb::StepKind::OpChainRange;
@@ -1542,6 +1580,9 @@ private:
                            _commitNode[n] != object) {
                     return bad(" reads a commit its node does not write "
                                "back");
+                } else if (lookup.source == 40 && _avarNode[n] != object) {
+                    return bad(" reads the avar bindings of a slot its node "
+                               "does not store");
                 }
             }
             if (_placementSlot[n] >= 0 && poses != 1)
@@ -2697,6 +2738,16 @@ private:
                    : -1;
     }
 
+    /// The slot whose avars the op step \p step stores, or -1 for any
+    /// other step.
+    int64_t _AvarSlotOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _avarNode.size()
+                   ? _avarNode[size_t(step.object)]
+                   : -1;
+    }
+
     /// The provider op whose result the op step \p step stores, or -1 for
     /// any other step.
     /// The provider value producer whose answer the op step \p step stores,
@@ -2977,6 +3028,8 @@ private:
             if (step.kind == fb::StepKind::ReservedSpaceExpression)
                 return _Bad(_StepName(i) +
                             ": the retired SpaceExpression step");
+            if (step.kind == fb::StepKind::ReservedAvarInputs)
+                return _Bad(_StepName(i) + ": the retired AvarInputs step");
             if (!_SpaceOp(i))
                 return false;
             if (const int64_t object = _PacketObjectOf(step); object >= 0) {
@@ -5609,7 +5662,7 @@ private:
             const bool helper = _FieldOf(step) >= 0 || _AnswerOf(step) >= 0 ||
                                 _ProviderOpOf(step) >= 0;
             const bool required = step.kind != K::SnapshotFinals &&
-                                  !prep(step) && step.kind != K::AvarInputs &&
+                                  !prep(step) && _AvarSlotOf(step) < 0 &&
                                   !(helper && ancestors.count(i));
             size_t count = 0;
             for (const auto &range : step.reads)
@@ -10234,6 +10287,8 @@ private:
         return delta ? _constraintNode[size_t(step.object)]
                      : _constraintSolve[size_t(step.object)];
     }
+    /// Per op node: the slot whose avars its AvarInputs stores, or -1.
+    std::vector<int64_t> _avarNode;
 
     /// The commit a Constraint step or PoseCommit op step works on, or -1.
     int64_t _CommitOf(const fb::RigExecWireStep &step) const
@@ -10465,13 +10520,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 51,
+    static_assert(RigExecFormatOldestReadable == 52,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: constraints solved by op nodes"
+                ? "re-export: avars, checkpoints and interpolators as op nodes"
                 : "rebake");
 }
 
@@ -10878,6 +10933,13 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
                 return true;
             }
         }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
+                output->target == 40 && meta &&
+                _Has(meta->paths, output->object)) {
+                *out = text(meta->paths[output->object]) + " avars";
+                return true;
+            }
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node == uint64_t(object) &&
                 (output->target == 1 || output->target == 2) && meta &&

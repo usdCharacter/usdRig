@@ -26,8 +26,8 @@ static_assert(static_cast<uint8_t>(fb::StepKind::ReservedSpaceExpression) == 24,
               "the retired space expression ordinal is 24");
 static_assert(static_cast<uint8_t>(fb::StepKind::ChainInputs) == 25,
               "ChainInputs keeps its ordinal");
-static_assert(static_cast<uint8_t>(fb::StepKind::AvarInputs) == 26,
-              "AvarInputs keeps its ordinal");
+static_assert(static_cast<uint8_t>(fb::StepKind::ReservedAvarInputs) == 26,
+              "the retired avar inputs ordinal is 26");
 static_assert(static_cast<uint8_t>(fb::StepKind::ReservedSolverCommit) == 2 &&
                   static_cast<uint8_t>(fb::StepKind::ReservedCommitDelta) ==
                       4 &&
@@ -66,7 +66,8 @@ IsReservedStepKind(StepKind kind)
            kind == fb::StepKind::ReservedPropagateChunk ||
            kind == fb::StepKind::ReservedCommitApply ||
            kind == fb::StepKind::ReservedProviderRefresh ||
-           kind == fb::StepKind::ReservedSpaceExpression;
+           kind == fb::StepKind::ReservedSpaceExpression ||
+           kind == fb::StepKind::ReservedAvarInputs;
 }
 
 } // namespace eval

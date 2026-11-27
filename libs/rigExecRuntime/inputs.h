@@ -301,10 +301,13 @@ struct RrInputState {
     /// avarConstantBindings), as RrProgram::registeredReads indices,
     /// bucketed by provider slot (avar / 11): provider p's reads are
     /// avarReads[avarReadBegin[p], avarReadBegin[p + 1]), its varying ones
-    /// then its constant ones, each in file order -- the order an
-    /// AvarInputs step walks them in. Read through RrAvarReadRange.
+    /// then its constant ones, each by avar -- the order an AvarBindings
+    /// lookup reads them in. Read through RrAvarReadRange.
     std::vector<uint32_t> avarReadBegin;
     std::vector<uint32_t> avarReads;
+    /// Per op node: the slot whose avars it stores
+    /// (eval::OpOutputTarget::Avars), or -1.
+    std::vector<int64_t> avarNodeSlot;
     /// The override numbers of the provider ladders' inputs, sorted
     /// (RigExecBakedProgramImpl::ladderOverrides).
     std::vector<int32_t> ladderOverrides;
@@ -370,6 +373,16 @@ RrAvarReadRange(const RrInputState &state, int64_t provider)
     }
     return {state.avarReadBegin[size_t(provider)],
             state.avarReadBegin[size_t(provider) + 1]};
+}
+
+/// The slot whose avars op step \p step stores, or -1 for any other step.
+inline int64_t
+RrAvarSlotOf(const RrInputState &state, const RigExecWireStep &step)
+{
+    return step.kind == RigExecWireStepKind::OpNode && step.object >= 0 &&
+                   size_t(step.object) < state.avarNodeSlot.size()
+               ? state.avarNodeSlot[size_t(step.object)]
+               : -1;
 }
 
 /// Attaches \p file's slots to the program: the value pool inline, each

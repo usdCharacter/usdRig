@@ -1474,8 +1474,10 @@ TestTheLayoutHandleSurvivesUnrelatedNotices()
             bool initialized = false;
             if (extra != B.index.end())
                 for (size_t i = 0; i < B.steps.size(); ++i)
-                    if (B.steps[i].kind == RigExecBakedStepKind::AvarInputs &&
-                        B.steps[i].object == extra->second &&
+                    if (rigExec::RigExecBakedIdentityOf(B, B.steps[i]).kind ==
+                            RigExecBakedStepKind::AvarInputs &&
+                        rigExec::RigExecBakedIdentityOf(B, B.steps[i]).object ==
+                            extra->second &&
                         i < B.opExecution.ran.size() && B.opExecution.ran[i])
                         initialized = true;
             CHECK(initialized);

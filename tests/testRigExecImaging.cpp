@@ -7599,6 +7599,16 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
                               info.defaultValue.matrix[3][0] == 0.0 &&
                               info.defaultValue.matrix[3][2] == 10.0);
                     std::vector<char> cone(file->steps.size(), 0);
+                    const auto avarSlotOf = [&](const auto &step) {
+                        if (step.kind != fb::StepKind::OpNode || !file->opGraph)
+                            return int64_t(-1);
+                        for (const auto &output : file->opGraph->hostOutputs)
+                            if (output &&
+                                output->node == uint64_t(step.object) &&
+                                output->target == 40)
+                                return int64_t(output->object);
+                        return int64_t(-1);
+                    };
                     for (size_t i = 0; i < file->steps.size(); ++i) {
                         const auto &step = file->steps[i];
                         if (std::find(step.headInputSlots.begin(),
@@ -7633,8 +7643,7 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
                                 avar.read->walk.end())
                                 continue;
                             const uint32_t provider = avar.flat / 11;
-                            if (step.kind != fb::StepKind::AvarInputs ||
-                                step.object != int32_t(provider))
+                            if (avarSlotOf(step) != int64_t(provider))
                                 continue;
                             CHECK(std::any_of(
                                 step.writes.begin(), step.writes.end(),
@@ -7653,13 +7662,12 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
                                       uint32_t(slot)) == avar.read->walk.end())
                             continue;
                         const uint32_t provider = avar.flat / 11;
-                        CHECK(std::count_if(
-                                  file->steps.begin(), file->steps.end(),
-                                  [&](const auto &step) {
-                                      return step.kind ==
-                                                 fb::StepKind::AvarInputs &&
-                                             step.object == int32_t(provider);
-                                  }) == 1);
+                        CHECK(std::count_if(file->steps.begin(),
+                                            file->steps.end(),
+                                            [&](const auto &step) {
+                                                return avarSlotOf(step) ==
+                                                       int64_t(provider);
+                                            }) == 1);
                     }
                     // Provider raw sampling enters through a typed SpaceLeaf,
                     // rather than a head input memo or an avar binding.

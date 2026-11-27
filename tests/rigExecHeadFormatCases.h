@@ -281,9 +281,7 @@ TestSpaceCheckpointDeclarations()
     checkpoint.key = "test:unswitched";
     checkpoint.recompose = {1};
     file.pose->spaceCheckpoints.push_back(checkpoint);
-    fb::RigExecWireStep avars;
-    avars.kind = fb::StepKind::AvarInputs;
-    avars.object = 1;
+    fb::RigExecWireStep avars = _AvarStep(file, 1);
     avars.cluster = 0;
     avars.succs = {7};
     avars.writes = {fb::SlotRange(fb::SlotDomain::Avars, 1, 2)};

@@ -1088,6 +1088,13 @@ bool RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
 bool RrStoreSpace(RrProgram *program, size_t step,
                   const eval::OpHostOutput &output, const void *value,
                   std::string *error);
+/// Resolves a compose family lookup (eval::OpComposeLookupSource).
+bool RrLookUpCompose(const RrProgram *program, const eval::OpLookup &lookup,
+                     const RigExecTypeDesc &type, void *value,
+                     std::string *error);
+/// Stores a compose family output (eval::OpComposeOutputTarget).
+bool RrStoreCompose(RrProgram *program, const eval::OpHostOutput &output,
+                    const void *value, std::string *error);
 /// Resolves a CommitVersions or CommitCandidates lookup.
 bool RrLookUpCommit(const RrProgram *program, const eval::OpLookup &lookup,
                     const RigExecTypeDesc &type, void *value,

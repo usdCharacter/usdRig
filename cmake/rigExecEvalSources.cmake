@@ -18,6 +18,7 @@ add_library(rigExecEval OBJECT
     libs/rigExec/internal/bakedOpNodes.cpp
     libs/rigExec/internal/bakedCommitOps.cpp
     libs/rigExec/internal/bakedConstraintOps.cpp
+    libs/rigExec/internal/bakedComposeOps.cpp
     libs/rigExec/internal/bakedTrace.cpp
     libs/rigExec/internal/moverGraph.cpp
     libs/rigExec/internal/solverKernels.cpp

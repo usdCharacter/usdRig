@@ -237,8 +237,8 @@ _RrInputMemo(const RrProgram *program, const RigExecWireStep &step,
         appendSlot(slot);
     for (const auto &read : step.headInputReads)
         RrSourceReadMemo(program, read, key, versioned);
-    if (step.kind == RigExecWireStepKind::AvarInputs) {
-        const auto range = RrAvarReadRange(state, step.object);
+    if (const int64_t avar = RrAvarSlotOf(state, step); avar >= 0) {
+        const auto range = RrAvarReadRange(state, avar);
         for (uint32_t i = range.first; i < range.second; ++i) {
             const auto &binding = program->registeredReads[state.avarReads[i]];
             const auto &read = *binding.read;
@@ -267,11 +267,10 @@ _RrInputMemo(const RrProgram *program, const RigExecWireStep &step,
 // The gates of every input read in _RrInputMemo; a step with none memoizes
 // the empty key. Mirrors RigExecBakedOpInputKeyIsConstant.
 bool
-_RrInputMemoIsConstant(const RigExecWireStep &step)
+_RrInputMemoIsConstant(const RrInputState &state, const RigExecWireStep &step)
 {
-    return step.kind != RigExecWireStepKind::AvarInputs &&
-           step.headInputSlots.empty() && step.headInputReads.empty() &&
-           step.overrideInputs.empty();
+    return RrAvarSlotOf(state, step) < 0 && step.headInputSlots.empty() &&
+           step.headInputReads.empty() && step.overrideInputs.empty();
 }
 // Indexes the input slots each keyed step's source memo (_RrInputMemo,
 // RrSourceReadMemo) reads. Everything else a memo reads (file values, the
@@ -309,8 +308,8 @@ _RrIndexSourceSlots(RrProgram *p)
             read(slot, c);
         for (const auto &r : step.headInputReads)
             input(r, c);
-        if (step.kind == RigExecWireStepKind::AvarInputs) {
-            const auto range = RrAvarReadRange(inputs, step.object);
+        if (const int64_t avar = RrAvarSlotOf(inputs, step); avar >= 0) {
+            const auto range = RrAvarReadRange(inputs, avar);
             for (uint32_t i = range.first; i < range.second; ++i)
                 input(*p->registeredReads[inputs.avarReads[i]].read, c);
         }
@@ -1342,7 +1341,8 @@ RrCompileOpGraph(RrProgram *p, std::string *error)
     p->store.sourceAlways.clear();
     for (uint32_t c = 0; c < p->opGraph.ops.size(); ++c) {
         const auto &step = (*p->steps)[p->opGraph.ops[c].originalIndex];
-        state.constantSource[c] = _RrInputMemoIsConstant(step) ? 1 : 0;
+        state.constantSource[c] =
+            _RrInputMemoIsConstant(p->inputState, step) ? 1 : 0;
         if (!state.constantSource[c] || step.headAlwaysRuns)
             state.sourceVisits.push_back(c);
         if (step.headAlwaysRuns)
@@ -1682,7 +1682,7 @@ RrExecuteOpGraph(RrProgram *p, bool force, std::string *error)
         const bool propertyStep =
             RrPropertyPartOf(p, step, &propertyChain, &propertyPart);
         const bool scalarConsumer =
-            propertyStep || step.kind == RigExecWireStepKind::AvarInputs ||
+            propertyStep || RrAvarSlotOf(p->inputState, step) >= 0 ||
             step.kind == RigExecWireStepKind::ComposeSubtree;
         const bool exact = RrEffectiveInputMemo(
             p, i, &scratch, &covered, scalarConsumer ? &coveredTyped : nullptr);

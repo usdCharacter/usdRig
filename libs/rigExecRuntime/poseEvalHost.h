@@ -72,32 +72,6 @@ public:
     {
     }
 
-    size_t avarWriteCount(size_t object) const
-    {
-        const RrInputState &state = _program->inputState;
-        if (object + 1 >= state.avarReadBegin.size()) {
-            return 0;
-        }
-        return size_t(state.avarReadBegin[object + 1] -
-                      state.avarReadBegin[object]);
-    }
-
-    int32_t avarWriteSlot(size_t object, size_t k) const
-    {
-        const RrInputState &state = _program->inputState;
-        const uint32_t read =
-            state.avarReads[size_t(state.avarReadBegin[object]) + k];
-        return _program->registeredReads[read].avar;
-    }
-
-    double avarWriteValue(size_t object, size_t k) const
-    {
-        const RrInputState &state = _program->inputState;
-        const uint32_t read =
-            state.avarReads[size_t(state.avarReadBegin[object]) + k];
-        return _program->ReadRegistered(int32_t(read)).f64;
-    }
-
     size_t checkpointObjectCount() const
     {
         return _program->poses->spaceCheckpoints.size();
@@ -1050,11 +1024,6 @@ class RrPoseState {
 public:
     explicit RrPoseState(RrProgram *program) : _program(program)
     {
-    }
-
-    void writeAvar(int32_t slot, double value)
-    {
-        _program->store.avars[size_t(slot)] = value;
     }
 
     std::vector<RigExecSpaceCheckpointInputT<RrMat4d>> &

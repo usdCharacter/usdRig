@@ -380,6 +380,59 @@ _AddPropertyOpGraph(RigExecWireFile &f)
     }
 }
 
+// Fixture authoring only: an AvarInputs op node reading slot \p slot's
+// bindings and storing its avars, and the OpNode step that runs it, writing
+// them.
+fb::RigExecWireStep
+_AvarStep(RigExecWireFile &f, uint32_t slot)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = "AvarInputs";
+    entry->version = 1;
+    f.manifest->coreOps.push_back(std::move(entry));
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = uint32_t(f.manifest->coreOps.size() - 1);
+    auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+    in->port = 0;
+    in->host = 4;
+    in->object = uint32_t(f.opGraph->lookups.size());
+    op->inputs.push_back(std::move(in));
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+    lookup->source = 40;
+    lookup->object = slot;
+    lookup->part = -1;
+    f.opGraph->lookups.push_back(std::move(lookup));
+    auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+    output->node = node;
+    output->port = 1;
+    output->target = 40;
+    output->object = slot;
+    f.opGraph->hostOutputs.push_back(std::move(output));
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    step.writes = {fb::SlotRange(fb::SlotDomain::Avars, slot, slot + 1)};
+    return step;
+}
+
+// Whether \p step runs an AvarInputs op node.
+bool
+_IsAvarStep(const RigExecWireFile &f, const fb::RigExecWireStep &step)
+{
+    if (step.kind != fb::StepKind::OpNode || !f.opGraph)
+        return false;
+    for (const auto &output : f.opGraph->hostOutputs)
+        if (output && output->node == uint64_t(step.object) &&
+            output->target == 40)
+            return true;
+    return false;
+}
+
 // Fixture authoring only: declare the new source role before malformed copies are made.
 void
 _DeclareFixtureStageFrames(RigExecWireFile &f)
@@ -437,7 +490,7 @@ _DeclareFixtureStageFrames(RigExecWireFile &f)
                          (output && output->node == uint64_t(step.object) &&
                           output->target == 52);
         const bool helper = field || answer;
-        if (prep(step) || step.kind == K::AvarInputs ||
+        if (prep(step) || _IsAvarStep(f, step) ||
             step.kind == K::SnapshotFinals || (helper && ancestors.count(i)))
             continue;
         if (std::none_of(
@@ -960,7 +1013,7 @@ _RegionBegin(const RigExecWireFile &f)
 {
     size_t n = 0;
     while (n < f.steps.size() &&
-           (f.steps[n].isHead || f.steps[n].kind == fb::StepKind::AvarInputs ||
+           (f.steps[n].isHead || _IsAvarStep(f, f.steps[n]) ||
             f.steps[n].kind == fb::StepKind::ChainInputs))
         ++n;
     return n;
@@ -1093,12 +1146,7 @@ _AddFixtureHeads(RigExecWireFile &f)
     for (size_t slot = 0; slot < f.slotMeta->paths.size(); ++slot) {
         if (f.slotMeta->slotKind[slot] != fb::SlotKind::FirstFramePose)
             continue;
-        fb::RigExecWireStep avars;
-        avars.kind = fb::StepKind::AvarInputs;
-        avars.object = int32_t(slot);
-        avars.writes = {fb::SlotRange(fb::SlotDomain::Avars, uint32_t(slot),
-                                      uint32_t(slot + 1))};
-        heads.push_back(std::move(avars));
+        heads.push_back(_AvarStep(f, uint32_t(slot)));
     }
     // ChainBase is produced from the actual sampled ChainInput source.
     for (size_t chain = 0; chain < f.geometry->chains.size(); ++chain) {
@@ -1618,12 +1666,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 51 &&
-                      RigExecFormatOldestReadable == 51,
-                  "format 51 solves every constraint by op nodes and is "
-                  "the only format Open reads");
-    // Every older format requires re-export: its harmonics, single-chain IK
-    // and IK/FK match constraints were solved by Constraint steps.
+    static_assert(RigExecFormatVersion == 52 &&
+                      RigExecFormatOldestReadable == 52,
+                  "format 52 runs avars, checkpoints and interpolators as "
+                  "op nodes and is the only format Open reads");
+    // Every older format requires re-export: its avar bindings, space
+    // checkpoints and pose interpolators ran as steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1634,14 +1682,15 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 51 through " +
+            " (this reader reads 52 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 51 ? "re-export: constraints solved by op nodes"
-                          : "rebake");
+            (version < 52
+                 ? "re-export: avars, checkpoints and interpolators as op nodes"
+                 : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 51 ? reexports : rebakes);
+        ++(version < 52 ? reexports : rebakes);
     }
-    CHECK(reexports == 51 && rebakes == 1);
+    CHECK(reexports == 52 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -2972,6 +3021,15 @@ TestOpLookupOwners()
     expect("a commit gate on a placement node",
            "reads the gates of a commit its node's record does not name",
            [&](F &f) { look(f, place, 21, 0, -1); });
+    expect("avar bindings on a placement node",
+           "reads the avar bindings of a slot its node does not store",
+           [&](F &f) { look(f, place, 40, 0, -1); });
+    expect("a checkpoint the file does not hold",
+           "a checkpoint inputs lookup reads no input",
+           [&](F &f) { look(f, place, 41, 0, -1); });
+    expect("pose interpolator inputs on a placement node",
+           "reads the inputs of a pose interpolator its node does not store",
+           [&](F &f) { look(f, place, 42, 0, -1); });
     expect(
         "another slot's rest frame on a provider matrix node",
         "reads a rest frame of a slot its node does not store", [&](F &f) {

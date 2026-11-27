@@ -132,45 +132,6 @@ public:
     {
     }
 
-    size_t avarWriteCount(size_t object) const
-    {
-        const auto varying = RigExecBakedAvarBindingRange(
-            _program->avarBindingBegin, int64_t(object));
-        const auto constant = RigExecBakedAvarBindingRange(
-            _program->avarConstantBindingBegin, int64_t(object));
-        return (varying.second - varying.first) +
-               (constant.second - constant.first);
-    }
-
-    size_t avarWriteSlot(size_t object, size_t k) const
-    {
-        const auto varying = RigExecBakedAvarBindingRange(
-            _program->avarBindingBegin, int64_t(object));
-        const size_t n0 = varying.second - varying.first;
-        if (k < n0) {
-            return _program->avarBindings[varying.first + k].slot;
-        }
-        const auto constant = RigExecBakedAvarBindingRange(
-            _program->avarConstantBindingBegin, int64_t(object));
-        return _program->avarConstantBindings[constant.first + (k - n0)].slot;
-    }
-
-    double avarWriteValue(size_t object, size_t k) const
-    {
-        const auto varying = RigExecBakedAvarBindingRange(
-            _program->avarBindingBegin, int64_t(object));
-        const size_t n0 = varying.second - varying.first;
-        if (k < n0) {
-            return RigExecBakedLeafRead(
-                *_program, _program->avarBindings[varying.first + k].input);
-        }
-        const auto constant = RigExecBakedAvarBindingRange(
-            _program->avarConstantBindingBegin, int64_t(object));
-        return RigExecBakedLeafRead(
-            *_program,
-            _program->avarConstantBindings[constant.first + (k - n0)].input);
-    }
-
     size_t checkpointObjectCount() const
     {
         return _program->switchFrameContexts.size();
@@ -1186,11 +1147,6 @@ public:
     void diagnose(const std::string &message)
     {
         _step->diagnostics.push_back(message);
-    }
-
-    void writeAvar(size_t slot, double value)
-    {
-        _program->avars[slot] = value;
     }
 
     std::vector<RigExecSpaceCheckpointInput> &checkpointInputs(size_t object)

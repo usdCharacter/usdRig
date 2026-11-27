@@ -345,6 +345,17 @@ struct RrOpHost {
         return RrStoreConstraint(&p, step, constraintCache, output, value,
                                  error);
     }
+    bool LookUpCompose(uint32_t, const eval::OpLookup &lookup,
+                       const RigExecTypeDesc &type, void *value,
+                       std::string *error) const
+    {
+        return RrLookUpCompose(&p, lookup, type, value, error);
+    }
+    bool StoreCompose(const eval::OpHostOutput &output, const void *value,
+                      std::string *error) const
+    {
+        return RrStoreCompose(&p, output, value, error);
+    }
 };
 
 } // namespace
