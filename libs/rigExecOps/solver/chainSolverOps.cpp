@@ -88,6 +88,19 @@ struct Element {
     int parentIndex = -1;
 };
 
+/// FkChain's op state: the kernel's elements and accumulated maps.
+struct FkScratch {
+    std::vector<Element> elements;
+    std::vector<rigExec::RigExecDualQuatMath<Vec3f, Vec3d>::Mat4> accumulated;
+};
+
+/// FkJointGroups' op state.
+struct GroupScratch {
+    std::vector<rigExec::RigExecJointGroup> groups;
+    std::vector<int32_t> slots;
+    std::vector<uint8_t> active;
+};
+
 struct IkParams {
     double upperLength = 1.0;
     double lowerLength = 1.0;
@@ -142,7 +155,11 @@ FkChainOne(const RigExecOpBatch &batch, size_t k, std::string *error)
                     "needs one rest and one parent index per control");
     if (outRests && outRests->Size() != n)
         return Fail(error, "FkChain", "needs one output rest per control");
-    std::vector<Element> elements(n);
+    auto &scratch =
+        *static_cast<FkScratch *>(rigExec::RigExecBatchState(batch, k));
+    std::vector<Element> &elements = scratch.elements;
+    elements.resize(n);
+    scratch.accumulated.resize(n);
     for (size_t i = 0; i < n; ++i) {
         const int parent = parents[i];
         if (parent >= int(i) || parent < -1)
@@ -155,12 +172,13 @@ FkChainOne(const RigExecOpBatch &batch, size_t k, std::string *error)
             e.outRestPoints = (*outRests)[i];
         e.parentIndex = parent;
     }
-    std::vector<PointFrame> frames =
-        rigExec::RigExecSolveFkChainKernel<Vec3f, Vec3d, PointFrame>(elements);
-    if (FlagAt(batch, kScaleSegments, k))
-        rigExec::RigExecScaleFkSegmentsKernel<Vec3d>(elements, &frames);
     PointFrameArray &out = Out<PointFrameArray>(io, FkChainOut());
-    out.frames.Assign(frames.data(), frames.size());
+    out.frames.Resize(n);
+    rigExec::RigExecSolveFkChainKernel<Vec3f, Vec3d>(
+        elements.data(), n, scratch.accumulated.data(), out.frames.Data());
+    if (FlagAt(batch, kScaleSegments, k))
+        rigExec::RigExecScaleFkSegmentsKernel<Vec3d>(elements.data(), n,
+                                                     out.frames.Data(), n);
     out.rests = outRests ? *outRests : controls.rests;
     return true;
 }
@@ -277,7 +295,9 @@ bool
 FkJointGroupsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
-    std::vector<rigExec::RigExecJointGroup> groups;
+    auto &scratch =
+        *static_cast<GroupScratch *>(rigExec::RigExecBatchState(batch, k));
+    std::vector<rigExec::RigExecJointGroup> &groups = scratch.groups;
     if (!GroupsAt(batch, k, &groups))
         return Fail(error, "FkJointGroups",
                     "needs each group's members inside the member list");
@@ -296,18 +316,17 @@ FkJointGroupsOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     const PointFrame *start = In<PointFrame>(io, FkJointGroupsStart());
     const PointLandmarks *startRest =
         In<PointLandmarks>(io, FkJointGroupsStartRest());
-    std::vector<int32_t> slots(groups.size());
-    std::vector<uint8_t> active(joints);
-    std::vector<PointFrame> frames(in.frames.begin(), in.frames.end());
+    scratch.slots.resize(groups.size());
+    scratch.active.resize(joints);
+    PointFrameArray &out = Out<PointFrameArray>(io, FkJointGroupsOut());
+    out.frames.Assign(in.frames.Data(), in.frames.Size());
     rigExec::RigExecApplyFkJointGroupsKernel<Vec3f, Vec3d>(
         joints, [&](size_t i) { return parents[i]; }, groups.data(),
         groups.size(), members.begin(), selectors.Data(),
         start && startRest ? startRest : nullptr,
         start && startRest ? &start->points : nullptr,
-        [&](size_t j) { return in.rests[begin + j]; }, slots.data(),
-        active.data(), frames.data() + begin, joints);
-    PointFrameArray &out = Out<PointFrameArray>(io, FkJointGroupsOut());
-    out.frames.Assign(frames.data(), frames.size());
+        [&](size_t j) { return in.rests[begin + j]; }, scratch.slots.data(),
+        scratch.active.data(), out.frames.Data() + begin, joints);
     out.rests = in.rests;
     return true;
 }
@@ -425,6 +444,7 @@ const rigExec::RigExecOpDesc kGroups = [] {
     d.portCount = std::size(kGroupPorts);
     d.runBatch = &RunFkJointGroups;
     d.validate = &CheckFkJointGroups;
+    d.state = StateOf<GroupScratch>();
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kGroupFields;
     d.payloadFieldCount = std::size(kGroupFields);
@@ -471,6 +491,7 @@ const rigExec::RigExecOpDesc kFk = [] {
     d.portCount = std::size(kFkPorts);
     d.runBatch = &RunFkChain;
     d.validate = &CheckFkChain;
+    d.state = StateOf<FkScratch>();
     d.capabilities = rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     d.payloadFields = kFkFields;
     d.payloadFieldCount = std::size(kFkFields);

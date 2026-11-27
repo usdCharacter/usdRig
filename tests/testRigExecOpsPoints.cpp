@@ -3566,10 +3566,30 @@ TestChainSolvers()
         for (size_t i = 0; i < 3 && i < actual.frames.Size(); ++i)
             CHECK(SameBits(expected[i], actual.frames[i]));
     }
+    std::string error;
+    rigExecRig::PointFrameArray moving = controls;
+    const auto moveControls = [&](int frame) {
+        for (size_t i = 0; i < 3; ++i)
+            moving.frames[i].points[0][1] = 0.5 + 0.25 * double(frame + int(i));
+        return &moving;
+    };
+    CHECK(opAllocationCount::SteadyFrameAllocations(
+              FkChain(), &fk, {&FkChainControls(), &FkChainOutRests()},
+              {&controls, &outRests}, FkChainOut(), 0, moveControls,
+              &error) == 0);
+    FkJointGroupsPayload groups;
+    groups.parents = {-1, 0, 1};
+    groups.groups = {{0, 2, true}};
+    groups.members = {1, 2};
+    const RigExecArray<double> selectors(std::vector<double>{0.0}.data(), 1);
+    CHECK(opAllocationCount::SteadyFrameAllocations(
+              FkJointGroups(), &groups,
+              {&FkJointGroupsIn(), &FkJointGroupsSelectors()},
+              {&controls, &selectors}, FkJointGroupsOut(), 0, moveControls,
+              &error) == 0);
     FkChainPayload loop;
     loop.parentIndices = {-1, 2, 1};
     Node badParents(FkChain(), {&FkChainControls()}, FkChainOut(), &loop);
-    std::string error;
     CHECK(!badParents.Run({&controls}, &actual, &error));
 
     // Two-bone IK: both stretch policies, scaled segments and a space.
@@ -3633,6 +3653,25 @@ TestChainSolvers()
             CHECK(actual.frames.Size() == 3);
             for (size_t i = 0; i < 3 && i < actual.frames.Size(); ++i)
                 CHECK(SameBits(expected[i], actual.frames[i]));
+            rigExecRig::PointFrame reaching = e;
+            CHECK(
+                opAllocationCount::SteadyFrameAllocations(
+                    TwoBoneIk(), &ik,
+                    {&TwoBoneIkRoot(), &TwoBoneIkEffector(), &TwoBoneIkPole(),
+                     &TwoBoneIkRests(), &TwoBoneIkSpace(), &TwoBoneIkBend(),
+                     &TwoBoneIkUpperOffset(), &TwoBoneIkLowerOffset(),
+                     &TwoBoneIkStretch(), &TwoBoneIkSoftness(), &TwoBoneIkPin(),
+                     &TwoBoneIkUpperScale(), &TwoBoneIkLowerScale(),
+                     &TwoBoneIkSoftDistance(), &TwoBoneIkTwist()},
+                    {&r, &e, &p, &rests, &space, &bend, &upperOffset,
+                     &lowerOffset, &stretch, &softness, &pin, &upperScale,
+                     &lowerScale, &softDistance, &twist},
+                    TwoBoneIkOut(), 1,
+                    [&](int frame) {
+                        reaching.points[0][0] = 0.4 + 0.1 * double(frame);
+                        return &reaching;
+                    },
+                    &error) == 0);
         }
     }
     // Defaults match the native defaults; two rests refuse.

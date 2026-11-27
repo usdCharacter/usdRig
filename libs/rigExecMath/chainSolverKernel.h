@@ -112,27 +112,38 @@ FrameFromAxes(const std::array<Double, 4> &rest, const Double &origin,
 
 /// Each control's rest-to-pose map composed with its parent's accumulated
 /// one (row convention: own * parent), applied to the element's output
-/// rest. Elements are topologically ordered.
+/// rest. Elements are topologically ordered. \p accumulated and \p result
+/// hold \p n entries each.
+template <class Point, class Double, class F, class E>
+void
+RigExecSolveFkChainKernel(
+    const E *elements, size_t n,
+    typename RigExecDualQuatMath<Point, Double>::Mat4 *accumulated, F *result)
+{
+    using Math = RigExecDualQuatMath<Point, Double>;
+    using Mat4 = typename Math::Mat4;
+    for (size_t k = 0; k < n; ++k) {
+        const E &e = elements[k];
+        Mat4 own(1.0);
+        Math::PointsToMatrix(e.restPoints, e.posePoints, &own);
+        Mat4 w = own;
+        if (e.parentIndex >= 0 && size_t(e.parentIndex) < k)
+            w = own * accumulated[size_t(e.parentIndex)];
+        accumulated[k] = w;
+        result[k] = chainSolverDetail::MatrixToFrame<Point, Double, F>(
+            e.hasOutRest ? e.outRestPoints : e.restPoints, w);
+    }
+}
+
 template <class Point, class Double, class F, class E>
 std::vector<F>
 RigExecSolveFkChainKernel(const std::vector<E> &elements)
 {
-    using Math = RigExecDualQuatMath<Point, Double>;
-    using Mat4 = typename Math::Mat4;
-    std::vector<F> result;
-    result.reserve(elements.size());
-    std::vector<Mat4> accumulated;
-    accumulated.reserve(elements.size());
-    for (const E &e : elements) {
-        Mat4 own(1.0);
-        Math::PointsToMatrix(e.restPoints, e.posePoints, &own);
-        Mat4 w = own;
-        if (e.parentIndex >= 0 && size_t(e.parentIndex) < accumulated.size())
-            w = own * accumulated[size_t(e.parentIndex)];
-        accumulated.push_back(w);
-        result.push_back(chainSolverDetail::MatrixToFrame<Point, Double, F>(
-            e.hasOutRest ? e.outRestPoints : e.restPoints, w));
-    }
+    std::vector<F> result(elements.size());
+    std::vector<typename RigExecDualQuatMath<Point, Double>::Mat4> accumulated(
+        elements.size());
+    RigExecSolveFkChainKernel<Point, Double>(elements.data(), elements.size(),
+                                             accumulated.data(), result.data());
     return result;
 }
 
@@ -140,22 +151,30 @@ RigExecSolveFkChainKernel(const std::vector<E> &elements)
 /// posed over rest length, the rest measured under its own frame.
 template <class Double, class F, class E>
 void
-RigExecScaleFkSegmentsKernel(const std::vector<E> &elements,
-                             std::vector<F> *frames)
+RigExecScaleFkSegmentsKernel(const E *elements, size_t n, F *frames,
+                             size_t frameCount)
 {
-    for (size_t k = 0; k + 1 < elements.size() && k + 1 < frames->size(); ++k) {
+    for (size_t k = 0; k + 1 < n && k + 1 < frameCount; ++k) {
         const E &a = elements[k];
         const E &b = elements[k + 1];
         const auto &ra = a.hasOutRest ? a.outRestPoints : a.restPoints;
         const auto &rb = b.hasOutRest ? b.outRestPoints : b.restPoints;
         const double rest = RigExecBoneLengthUnderFrame(
-            ra.data(), (*frames)[k].points.data(), Double(rb[0] - ra[0]));
-        const Double bone = (*frames)[k + 1].points[0] - (*frames)[k].points[0];
+            ra.data(), frames[k].points.data(), Double(rb[0] - ra[0]));
+        const Double bone = frames[k + 1].points[0] - frames[k].points[0];
         const double posed = bone.GetLength();
         if (rest > 1e-12 && posed > 1e-12)
-            RigExecScaleFrameAlong((*frames)[k].points.data(), bone,
-                                   posed / rest);
+            RigExecScaleFrameAlong(frames[k].points.data(), bone, posed / rest);
     }
+}
+
+template <class Double, class F, class E>
+void
+RigExecScaleFkSegmentsKernel(const std::vector<E> &elements,
+                             std::vector<F> *frames)
+{
+    RigExecScaleFkSegmentsKernel<Double>(elements.data(), elements.size(),
+                                         frames->data(), frames->size());
 }
 
 /// RigExecFkChain's joint groups: each of the first \p joints frames whose
