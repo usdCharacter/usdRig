@@ -796,9 +796,9 @@ RigExecBakedProgram::_BuildLadder(_BuildAttempt &build)
     // frame path never reads one again, while a rig that animates, connects
     // or chain-writes a rest keeps the same fifteen bindings and recomposes
     // the ladder in the prologue. One resolution either way --
-    // RigExecBakedComposeRests and RigExecBakedComposeLadderRange, called
-    // once below over every slot, run the kernels the RestCompose op nodes
-    // and the ladder head ops run per compose group -- so the two cannot
+    // RigExecBakedComposeRests and RigExecBakedComposeLadders, called once
+    // below over every slot, run the kernels the RestCompose and
+    // LadderCompose op nodes run per compose group -- so the two cannot
     // drift.
     B.xyzToken = _tokens->xyz;
     B.posedAuthored.assign(size_t(N), 0);
@@ -1137,7 +1137,7 @@ RigExecBakedProgram::_BuildLadder(_BuildAttempt &build)
     // Every rest before any ladder: a ladder reads its own slot's rest and
     // its parent's, and a slot's parent is below it.
     RigExecBakedComposeRests(&B);
-    RigExecBakedComposeLadderRange(&B, 0, N, /* trackMoves = */ false);
+    RigExecBakedComposeLadders(&B);
     bindPhases.Close();
     // The comparison buffers the rest and ladder ops compare against,
     // seeded with what Build just composed: a later compose that lands on

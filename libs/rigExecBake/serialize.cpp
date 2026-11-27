@@ -69,7 +69,9 @@ _RIGEXEC_BAKE_PIN_STEP(ReservedPropertyRevision);
 static_assert(uint8_t(RigExecBakedStepKind::RestCompose) ==
                   uint8_t(RigExecWireStepKind::ReservedRestCompose),
               "wire step order drifted");
-_RIGEXEC_BAKE_PIN_STEP(LadderCompose);
+static_assert(uint8_t(RigExecBakedStepKind::LadderCompose) ==
+                  uint8_t(RigExecWireStepKind::ReservedLadderCompose),
+              "wire step order drifted");
 _RIGEXEC_BAKE_PIN_STEP(SkinTopology);
 static_assert(uint8_t(RigExecBakedStepKind::SpaceExpression) ==
                   uint8_t(RigExecWireStepKind::ReservedSpaceExpression),

@@ -2995,8 +2995,9 @@ TestFrozenSolverOpsMatchLive(const std::string &examplesDir)
 }
 
 // Frozen jobs of pose_interpolator.usda match live bit for bit with released
-// gathers poisoned: at rest, under a drag of the interpolator's driver, and
-// under a drag of the driver's rest, which reruns its RestCompose node.
+// gathers poisoned: at rest, under a drag of the interpolator's driver,
+// under a drag of the driver's rest, which reruns its RestCompose node, and
+// under a drag of its default, which reruns its LadderCompose node.
 void
 TestFrozenComposeOpsMatchLive(const std::string &examplesDir)
 {
@@ -3015,15 +3016,17 @@ TestFrozenComposeOpsMatchLive(const std::string &examplesDir)
     CHECK(evaluator.Evaluate(UsdTimeCode(end)).valid);
     const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
         *evaluator.GetBakedProgram());
-    size_t interpolators = 0, rests = 0;
+    size_t interpolators = 0, rests = 0, ladders = 0;
     for (const RigExecBakedStep &step : B.steps) {
         const RigExecBakedStepKind kind = RigExecBakedIdentityOf(B, step).kind;
         interpolators += kind == RigExecBakedStepKind::PoseInterpolator &&
                          step.kind == RigExecBakedStepKind::OpNode;
         rests += kind == RigExecBakedStepKind::RestCompose &&
                  step.kind == RigExecBakedStepKind::OpNode;
+        ladders += kind == RigExecBakedStepKind::LadderCompose &&
+                   step.kind == RigExecBakedStepKind::OpNode;
     }
-    CHECK(interpolators > 0 && rests > 0);
+    CHECK(interpolators > 0 && rests > 0 && ladders > 0);
     std::shared_ptr<const RigExecFrozenProgram> frozen;
     std::string error;
     CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
@@ -3070,9 +3073,19 @@ TestFrozenComposeOpsMatchLive(const std::string &examplesDir)
     const RigExecRigPose moved =
         run("frozen compose ops under a rest drag", {rest});
     run("frozen compose ops under both drags", {driver, rest});
+    RigExecValueOverride ladder;
+    ladder.prim = elbow;
+    ladder.attribute = TfToken("default:tx");
+    ladder.value = VtValue(0.5);
+    const RigExecRigPose shifted =
+        run("frozen compose ops under a default drag", {ladder});
+    run("frozen compose ops under every drag", {driver, rest, ladder});
     RigExecRigPose diff;
     RigExecComparePoses(still, moved, &diff);
     CHECK(diff.comparisonMismatches != 0);
+    RigExecRigPose ladderDiff;
+    RigExecComparePoses(still, shifted, &ladderDiff);
+    CHECK(ladderDiff.comparisonMismatches != 0);
     rigExec::RigExecBakedProgramTesting::SetPoisonReleasedGathers(false);
 }
 

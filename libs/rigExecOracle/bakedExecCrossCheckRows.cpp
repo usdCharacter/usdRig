@@ -959,7 +959,7 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error,
                     if (!add(
                             b.paths[size_t(s)],
                             SchemaComputationText::computedDefaultSpace, s,
-                            true,
+                            bakedStep.kind != Kind::OpNode,
                             [s](const B &p) { return LadderInputs(p, s); },
                             [s](const B &p) {
                                 return VtValue(p.selfD[size_t(s)]);

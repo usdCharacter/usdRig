@@ -2295,11 +2295,6 @@ RouteBakedStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
         case RigExecBakedStepKind::OpNode:
             RigExecBakedRunOpStep(B, step);
             break;
-        case RigExecBakedStepKind::LadderCompose: {
-            const auto &g = B->composeGroups[size_t(step->object)];
-            RigExecBakedComposeLadderRange(B, g.begin, g.end, true);
-            break;
-        }
         case RigExecBakedStepKind::SkinTopology: {
             auto *revision =
                 RigExecBakedLayoutRevision(B, size_t(step->object));

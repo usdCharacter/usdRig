@@ -1118,80 +1118,6 @@ public:
         }
     }
 
-    void writeLadder(size_t slot, const GfMatrix4d &selfD,
-                     const GfMatrix4d &parentDinv,
-                     const GfMatrix4d &defaultRoundTrip,
-                     const GfMatrix4d &posedD, const GfMatrix4d &parentSpaceM,
-                     const GfMatrix4d &posedAuthoredM, bool posedAuthored,
-                     bool parentSpaceAuthored, unsigned char rotationSign)
-    {
-        _program->selfD[slot] = selfD;
-        _program->parentDinv[slot] = parentDinv;
-        _program->defaultRoundTrip[slot] = defaultRoundTrip;
-        _program->posedD[slot] = posedD;
-        _program->parentSpaceM[slot] = parentSpaceM;
-        _program->posedAuthoredM[slot] = posedAuthoredM;
-        _program->posedAuthored[slot] = posedAuthored ? 1 : 0;
-        _program->parentSpaceAuthored[slot] = parentSpaceAuthored ? 1 : 0;
-        _program->rotationSign[slot] = rotationSign;
-    }
-
-    void writeLadderUnavailable(size_t slot)
-    {
-        GfMatrix4d unavailable(1.0);
-        unavailable[3][0] = std::numeric_limits<double>::quiet_NaN();
-        _program->selfD[slot] = unavailable;
-        _program->parentDinv[slot] = unavailable;
-        _program->restRoundTrip[slot] = unavailable;
-        _program->defaultRoundTrip[slot] = unavailable;
-        _program->posedAuthoredM[slot] = unavailable;
-        _program->posedD[slot] = unavailable;
-        _program->parentSpaceM[slot] = unavailable;
-        _program->posedAuthored[slot] = 0;
-        _program->parentSpaceAuthored[slot] = 0;
-        _program->rotOrder[slot] = _program->xyzToken;
-        _program->rotationSign[slot] = 0;
-    }
-
-    void writeRotOrder(size_t slot)
-    {
-        const TfToken order = RigExecBakedLeafRead(
-            *_program, _program->ladders[slot].rotationOrder);
-        _program->rotOrder[slot] = order.IsEmpty() ? _program->xyzToken : order;
-    }
-
-    eval::PoseLadderLastsT<BakedPoseMath> ladderLasts(size_t slot)
-    {
-        eval::PoseLadderLastsT<BakedPoseMath> lasts;
-        lasts.restM = &_program->lastRestM[slot];
-        lasts.selfD = &_program->lastSelfD[slot];
-        lasts.parentDinv = &_program->lastParentDinv[slot];
-        lasts.posedAuthoredM = &_program->lastPosedAuthoredM[slot];
-        lasts.posedD = &_program->lastPosedD[slot];
-        lasts.parentSpaceM = &_program->lastParentSpaceM[slot];
-        lasts.posedAuthored = &_program->lastPosedAuthored[slot];
-        lasts.parentSpaceAuthored = &_program->lastParentSpaceAuthored[slot];
-        lasts.rotationSign = &_program->lastRotationSign[slot];
-        return lasts;
-    }
-
-    bool rotOrderMoved(size_t slot)
-    {
-        return _program->rotOrder[slot] != _program->lastRotOrder[slot];
-    }
-
-    void commitRotOrder(size_t slot)
-    {
-        _program->lastRotOrder[slot] = _program->rotOrder[slot];
-    }
-
-    void markLadderChanged(size_t slot)
-    {
-        if (!_program->ladderChanged[slot]) {
-            _program->ladderChanged[slot] = 1;
-        }
-    }
-
     void writeBase(size_t slot, const std::array<GfVec3d, 4> &points,
                    unsigned flags)
     {
@@ -1415,7 +1341,6 @@ public:
     using Math = BakedPoseMath;
     using Inputs = BakedPoseInputs;
     using State = BakedPoseState;
-    using EvalValueFamily = eval::PoseValueFamily;
 
     BakedPoseHost(RigExecBakedProgramImpl *program, RigExecBakedStep *step)
         : _inputs(program), _state(program, step), _program(program)

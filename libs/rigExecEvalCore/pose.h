@@ -1811,22 +1811,6 @@ enum PoseLadderChannel : int {
     kPoseLadderPosedDefaultSpace = 6
 };
 
-// The mutable last-values a tracking run compares against, borrowed
-// from the adapter's tables. Rotation order compares through the
-// adapter (token identity on one side, integer identity on the
-// other); every other table compares here, bit for bit.
-template <class Math> struct PoseLadderLastsT {
-    typename Math::Mat4 *restM = nullptr;
-    typename Math::Mat4 *selfD = nullptr;
-    typename Math::Mat4 *parentDinv = nullptr;
-    typename Math::Mat4 *posedAuthoredM = nullptr;
-    typename Math::Mat4 *posedD = nullptr;
-    typename Math::Mat4 *parentSpaceM = nullptr;
-    char *posedAuthored = nullptr;
-    char *parentSpaceAuthored = nullptr;
-    unsigned char *rotationSign = nullptr;
-};
-
 // Elementwise exact matrix equality (no tolerance, no FMA).
 template <class Math>
 bool
@@ -1975,115 +1959,6 @@ LadderComposeSlot(const PoseLadderInputT<Math> &in)
     out.rotationSign = RigExecRotationSignMask(
         in.rotationSign[0], in.rotationSign[1], in.rotationSign[2]);
     return out;
-}
-
-// One slot's default-space ladder: the posed/default/parent matrices
-// and the rotation order and sign the compose reads.
-template <class Host>
-StepResult
-RunLadderComposeRange(Host &host, int begin, int end, bool trackMoves)
-{
-    static_assert(IsBoundHost<Host>::value, "pose Host is not bound");
-    using Math = typename Host::Math;
-    const typename Math::Mat4 identity = Math::Identity4();
-    for (int i = begin; i < end; ++i) {
-        const size_t slot = size_t(i);
-        if (!host.inputs().isPoseSlot(slot)) {
-            continue;
-        }
-        host.state().beforeSlot(StepKind::LadderCompose, begin, i);
-        if (!host.inputs().providerActive(slot)) {
-            host.state().writeLadderUnavailable(slot);
-            continue;
-        }
-        PoseLadderInputT<Math> in;
-        in.spaces[kPoseLadderRestSpace] = identity;
-        for (int channel = kPoseLadderDefaultSpace;
-             channel <= kPoseLadderPosedDefaultSpace; ++channel) {
-            const bool defaultChannel =
-                channel == kPoseLadderDefaultSpace ||
-                channel == kPoseLadderParentDefaultSpace ||
-                channel == kPoseLadderAvarDefaultSpace ||
-                channel == kPoseLadderPosedDefaultSpace;
-            in.spaces[channel] = host.inputs().ladderSpace(slot, channel);
-            in.authored[channel] =
-                (defaultChannel &&
-                 host.inputs().ladderChannelReady(slot, channel)) ||
-                host.inputs().ladderAuthoritative(slot, channel);
-        }
-        in.parentSpaceLeaf = host.inputs().ladderParentSpaceLeaf(slot);
-        in.rotationSign = host.inputs().ladderRotationSign(slot);
-        for (size_t k = 0; k < 6; ++k) {
-            in.defaultAvars[k] = host.inputs().defaultAvar(slot, k);
-        }
-        if (!host.inputs().restRoundTrip(slot, &in.ownRest)) {
-            return {Outcome::Invalid, pose_detail::kPoseDetailNoSlot};
-        }
-        const int parent = host.inputs().parent(slot);
-        typename Math::Mat4 parentRest = identity;
-        typename Math::Mat4 parentDefault = identity;
-        if (parent >= 0) {
-            if (!host.inputs().restRoundTrip(size_t(parent), &parentRest) ||
-                !host.inputs().defaultRoundTrip(size_t(parent),
-                                                &parentDefault)) {
-                return {Outcome::Invalid, pose_detail::kPoseDetailNoSlot};
-            }
-            in.parentRest = &parentRest;
-            in.parentDefault = &parentDefault;
-        }
-        const PoseLadderT<Math> ladder = LadderComposeSlot<Math>(in);
-        const typename Math::Mat4 &selfD = ladder.selfD;
-        const typename Math::Mat4 &parentDinv = ladder.parentDinv;
-        const typename Math::Mat4 &defaultRoundTrip = ladder.defaultRoundTrip;
-        const typename Math::Mat4 &posedD = ladder.posedD;
-        const typename Math::Mat4 &parentSpaceM = ladder.parentSpaceM;
-        const typename Math::Mat4 &posed = ladder.posed;
-        const bool posedAuthored = ladder.posedAuthored;
-        const bool parentSpaceAuthored = ladder.parentSpaceAuthored;
-        const unsigned char rotationSign = ladder.rotationSign;
-        host.state().writeLadder(slot, selfD, parentDinv, defaultRoundTrip,
-                                 posedD, parentSpaceM, posed, posedAuthored,
-                                 parentSpaceAuthored, rotationSign);
-        host.state().writeRotOrder(slot);
-        if (trackMoves) {
-            auto lasts = host.state().ladderLasts(slot);
-            if (!BitEqualMat4<Math>(selfD, *lasts.selfD) ||
-                !BitEqualMat4<Math>(parentDinv, *lasts.parentDinv) ||
-                (posedAuthored ? 1 : 0) != *lasts.posedAuthored ||
-                !BitEqualMat4<Math>(posed, *lasts.posedAuthoredM) ||
-                host.state().rotOrderMoved(slot) ||
-                !BitEqualMat4<Math>(posedD, *lasts.posedD) ||
-                !BitEqualMat4<Math>(parentSpaceM, *lasts.parentSpaceM) ||
-                (parentSpaceAuthored ? 1 : 0) != *lasts.parentSpaceAuthored ||
-                rotationSign != *lasts.rotationSign) {
-                *lasts.selfD = selfD;
-                *lasts.parentDinv = parentDinv;
-                *lasts.posedAuthored = posedAuthored ? 1 : 0;
-                *lasts.posedAuthoredM = posed;
-                host.state().commitRotOrder(slot);
-                *lasts.posedD = posedD;
-                *lasts.parentSpaceM = parentSpaceM;
-                *lasts.parentSpaceAuthored = parentSpaceAuthored ? 1 : 0;
-                *lasts.rotationSign = rotationSign;
-                host.state().markLadderChanged(slot);
-            }
-        }
-    }
-    return {Outcome::Applied, kNoStepDetail};
-}
-
-template <class Host>
-StepResult
-RunLadderComposeStep(Host &host, const StepRef &step, bool trackMoves)
-{
-    if (step.object < 0 ||
-        size_t(step.object) >= host.inputs().composeGroupCount()) {
-        return {Outcome::Invalid, kNoStepDetail};
-    }
-    int begin = 0;
-    int end = 0;
-    host.inputs().composeGroupRange(size_t(step.object), &begin, &end);
-    return RunLadderComposeRange(host, begin, end, trackMoves);
 }
 
 // ---- ComposeSubtree ----
@@ -2600,28 +2475,6 @@ struct PoseIkChainView {
     bool poleModeObject = false;
     size_t poleObjects = 0;
 };
-
-// The pose family tag: an adapter's RunValueStep entry selects this
-// family's dispatch through Host::EvalValueFamily.
-struct PoseValueFamily {};
-
-// The pose family's RunValueStep over the value-step kinds both
-// adapters route here (step.h's StepRef; object/part are the
-// adapters' own bindings). Steps always track ladder moves; the
-// Build-time direct calls pass trackMoves=false instead.
-template <class Host,
-          class = std::enable_if_t<std::is_same<typename Host::EvalValueFamily,
-                                                PoseValueFamily>::value>>
-StepResult
-RunValueStep(Host &host, const StepRef &step)
-{
-    switch (StepKind(step.kind)) {
-    case StepKind::LadderCompose:
-        return RunLadderComposeStep(host, step, true);
-    default:
-        return {Outcome::Invalid, kNoStepDetail};
-    }
-}
 
 } // namespace eval
 } // namespace rigExec

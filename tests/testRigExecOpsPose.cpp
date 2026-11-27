@@ -437,6 +437,18 @@ TestSlotCompose()
         Harness bad(LadderCompose(), &active, half, ladderOuts);
         CHECK(!bad.evaluator);
         CHECK(bad.error.find("fed together") != std::string::npos);
+        auto movingDefaults = defaultAvars;
+        std::string steadyError;
+        CHECK(opAllocationCount::SteadyFrameAllocations(
+                  LadderCompose(), &active, ladderIns,
+                  {&spaces, &authored, &identity, &sign, &movingDefaults,
+                   &identity},
+                  LadderComposeSelfDefault(), 4,
+                  [&](int frame) {
+                      movingDefaults[0] = 0.25 * frame;
+                      return &movingDefaults;
+                  },
+                  &steadyError) == 0);
     }
 
     const std::vector<const RigExecPortHandle *> slotIns = {

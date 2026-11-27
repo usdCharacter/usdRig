@@ -877,6 +877,159 @@ _RrStoreRest(RrProgram *program, uint32_t object, uint32_t port,
     return false;
 }
 
+// Input \p read of compose group \p object's LadderCompose node
+// (RigExecBakedLookUpCompose's twin).
+bool
+_RrLookUpLadder(const RrProgram *program, uint32_t object,
+                eval::OpLadderRead read, const RigExecTypeDesc &type,
+                void *value)
+{
+    using R = eval::OpLadderRead;
+    const RrPoseInputs inputs(program);
+    const size_t slot = size_t(program->poses->composeGroups[object].begin);
+    const int parent = inputs.parent(slot);
+    RrMat4d matrix;
+    switch (read) {
+    case R::Spaces: {
+        if (!type.resize || !type.data)
+            return false;
+        type.resize(value, 6);
+        auto *out = static_cast<double *>(type.data(value));
+        for (int c = 0; c < 6; ++c)
+            std::memcpy(out + 16 * c, inputs.ladderSpace(slot, c + 1)._mtx,
+                        16 * sizeof(double));
+        return true;
+    }
+    case R::Authored:
+        return _RrFillList<uint8_t>(type, value, 6, [&](size_t k) {
+            const int channel = int(k) + 1;
+            const bool defaultChannel =
+                channel == eval::kPoseLadderDefaultSpace ||
+                channel == eval::kPoseLadderParentDefaultSpace ||
+                channel == eval::kPoseLadderAvarDefaultSpace ||
+                channel == eval::kPoseLadderPosedDefaultSpace;
+            return uint8_t(
+                (defaultChannel && inputs.ladderChannelReady(slot, channel)) ||
+                inputs.ladderAuthoritative(slot, channel));
+        });
+    case R::ParentSpaceLeaf:
+        return _RrPutMatrix(type, value, inputs.ladderParentSpaceLeaf(slot));
+    case R::RotationSign: {
+        if (type.size != 3 * sizeof(double))
+            return false;
+        const RrVec3d sign = inputs.ladderRotationSign(slot);
+        const double v[3] = {sign[0], sign[1], sign[2]};
+        std::memcpy(value, v, sizeof(v));
+        return true;
+    }
+    case R::DefaultAvars:
+        return _RrFillList<double>(type, value, 6, [&](size_t k) {
+            return inputs.defaultAvar(slot, k);
+        });
+    case R::OwnRest:
+        return inputs.restRoundTrip(slot, &matrix) &&
+               _RrPutMatrix(type, value, matrix);
+    case R::ParentRest:
+        return parent >= 0 && inputs.restRoundTrip(size_t(parent), &matrix) &&
+               _RrPutMatrix(type, value, matrix);
+    case R::ParentDefault:
+        return parent >= 0 &&
+               inputs.defaultRoundTrip(size_t(parent), &matrix) &&
+               _RrPutMatrix(type, value, matrix);
+    }
+    return false;
+}
+
+// Output \p port of compose group \p object's LadderCompose node into its
+// slot's ladder tables (RigExecBakedStoreCompose's twin). The last port
+// takes the rotation order, publishes the live ladder echo and marks a
+// moved ladder.
+bool
+_RrStoreLadder(RrProgram *program, uint32_t object, uint32_t port,
+               const void *value)
+{
+    using P = eval::OpLadderOutput;
+    RrPoseScratch &s = *_RrScratch(program);
+    const size_t slot = size_t(program->poses->composeGroups[object].begin);
+    const auto matrix = [&](std::vector<RrMat4d> &table) {
+        std::memcpy(table[slot]._mtx, value, 16 * sizeof(double));
+        return true;
+    };
+    const auto flag = [&](std::vector<char> &table) {
+        table[slot] = *static_cast<const uint8_t *>(value) ? 1 : 0;
+        return true;
+    };
+    switch (P(port)) {
+    case P::SelfDefault:
+        return matrix(s.selfD);
+    case P::ParentDefaultInverse:
+        return matrix(s.parentDinv);
+    case P::DefaultRoundTrip:
+        return matrix(s.defaultRoundTrip);
+    case P::PosedDefault:
+        return matrix(s.posedD);
+    case P::ParentSpace:
+        return matrix(s.parentSpaceM);
+    case P::PosedAuthoredMatrix:
+        return matrix(s.posedAuthoredM);
+    case P::PosedAuthored:
+        return flag(s.posedAuthored);
+    case P::ParentSpaceAuthored:
+        return flag(s.parentSpaceAuthored);
+    case P::RotationSign:
+        break;
+    default:
+        return false;
+    }
+    s.rotationSign[slot] =
+        static_cast<unsigned char>(*static_cast<const uint32_t *>(value));
+    const RigExecWireSlotMeta &meta = *program->slotMeta;
+    if (!meta.providerActive.empty() && !meta.providerActive[slot]) {
+        s.rotOrder[slot] = 0;
+        return true;
+    }
+    s.rotOrder[slot] = program->ReadLadder(slot, RrLadderRotationOrder).token;
+    RrStore &store = program->store;
+    if (slot < store.ladders.size()) {
+        RrLadderLive &live = store.ladders[slot];
+        live.restSpace = program->ReadLadder(slot, RrLadderRestSpace).matrix;
+        live.defaultSpace =
+            program->ReadLadder(slot, RrLadderDefaultSpace).matrix;
+        live.posedSpace = program->ReadLadder(slot, RrLadderPosedSpace).matrix;
+        for (int k = 0; k < 6; ++k) {
+            live.restAvars[size_t(k)] =
+                program->ReadLadder(slot, RrLadderRestAvar0 + k).f64;
+            live.defaultAvars[size_t(k)] =
+                program->ReadLadder(slot, RrLadderDefaultAvar0 + k).f64;
+        }
+        live.rotationOrder = s.rotOrder[slot];
+    }
+    const auto same = [](const RrMat4d &a, const RrMat4d &b) {
+        return std::memcmp(a._mtx, b._mtx, 16 * sizeof(double)) == 0;
+    };
+    if (same(s.selfD[slot], s.lastSelfD[slot]) &&
+        same(s.parentDinv[slot], s.lastParentDinv[slot]) &&
+        s.posedAuthored[slot] == s.lastPosedAuthored[slot] &&
+        same(s.posedAuthoredM[slot], s.lastPosedAuthoredM[slot]) &&
+        s.rotOrder[slot] == s.lastRotOrder[slot] &&
+        same(s.posedD[slot], s.lastPosedD[slot]) &&
+        same(s.parentSpaceM[slot], s.lastParentSpaceM[slot]) &&
+        s.parentSpaceAuthored[slot] == s.lastParentSpaceAuthored[slot] &&
+        s.rotationSign[slot] == s.lastRotationSign[slot])
+        return true;
+    s.lastSelfD[slot] = s.selfD[slot];
+    s.lastParentDinv[slot] = s.parentDinv[slot];
+    s.lastPosedAuthored[slot] = s.posedAuthored[slot];
+    s.lastPosedAuthoredM[slot] = s.posedAuthoredM[slot];
+    s.lastRotOrder[slot] = s.rotOrder[slot];
+    s.lastPosedD[slot] = s.posedD[slot];
+    s.lastParentSpaceM[slot] = s.parentSpaceM[slot];
+    s.lastParentSpaceAuthored[slot] = s.parentSpaceAuthored[slot];
+    s.lastRotationSign[slot] = s.rotationSign[slot];
+    store.ladderChanged[slot] = 1;
+    return true;
+}
+
 } // namespace
 
 bool
@@ -884,6 +1037,17 @@ RrLookUpCompose(const RrProgram *program, const eval::OpLookup &lookup,
                 const RigExecTypeDesc &type, void *value, std::string *error)
 {
     const RrInputState &state = program->inputState;
+    if (lookup.source == uint8_t(eval::OpLookupSource::LadderInputs)) {
+        if (lookup.object < program->poses->composeGroups.size() &&
+            _RrLookUpLadder(program, lookup.object,
+                            eval::OpLadderRead(lookup.read), type, value))
+            return true;
+        if (error)
+            *error = "op nodes: compose group " +
+                     std::to_string(lookup.object) + " has no ladder input " +
+                     std::to_string(lookup.read);
+        return false;
+    }
     if (lookup.source == uint8_t(eval::OpLookupSource::RestInputs)) {
         if (lookup.object < program->poses->composeGroups.size() &&
             _RrLookUpRest(program, lookup.object, eval::OpRestRead(lookup.read),
@@ -963,6 +1127,16 @@ RrStoreCompose(RrProgram *program, size_t step,
         if (!line.empty())
             program->store.stepOutputs[step].diagnostics.push_back(line);
         return true;
+    }
+    if (output.target == uint8_t(eval::OpOutputTarget::Ladder)) {
+        if (output.object < program->poses->composeGroups.size() &&
+            _RrStoreLadder(program, output.object, output.port, value))
+            return true;
+        if (error)
+            *error = "op nodes: compose group " +
+                     std::to_string(output.object) + " stores no ladder port " +
+                     std::to_string(output.port);
+        return false;
     }
     if (output.target == uint8_t(eval::OpOutputTarget::Rest)) {
         if (output.object < program->poses->composeGroups.size() &&

@@ -4301,15 +4301,17 @@ TestRegisteredReadRefusals()
     std::printf("%s: checked\n", name);
 }
 
-// Whether \p step runs a RestCompose op node.
+// Whether \p step runs an op node storing host output target \p target:
+// 43 a RestCompose node, 44 a LadderCompose node.
 static bool
-_RunsRestOp(const fb::RigExecWireFile &file, const fb::RigExecWireStep &step)
+_RunsComposeOp(const fb::RigExecWireFile &file, const fb::RigExecWireStep &step,
+               uint8_t target)
 {
     if (step.kind != fb::StepKind::OpNode || !file.opGraph)
         return false;
     for (const auto &output : file.opGraph->hostOutputs)
         if (output && output->node == uint64_t(step.object) &&
-            output->target == 43)
+            output->target == target)
             return true;
     return false;
 }
@@ -5940,7 +5942,7 @@ TestRepeatedSetRunsNothing()
                 if (step >= 0 && size_t(step) < file->steps.size() &&
                     file->steps[size_t(step)].kind == row.readerKind &&
                     (!row.matrix ||
-                     _RunsRestOp(*file, file->steps[size_t(step)])) &&
+                     _RunsComposeOp(*file, file->steps[size_t(step)], 43)) &&
                     player->GetStepLabelForTesting(size_t(step)) ==
                         row.reader) {
                     return true;
@@ -6709,12 +6711,10 @@ def Xform "Asset"
         return std::find(paths.begin(), paths.end(), path.GetString()) !=
                paths.end();
     };
-    const auto headRan = [&](fb::StepKind kind, const std::string &owner) {
+    const auto headRan = [&](uint8_t target, const std::string &owner) {
         for (const int32_t step : player->GetLastRunTraceForTesting()) {
             if (step >= 0 && size_t(step) < file->steps.size() &&
-                file->steps[size_t(step)].kind == kind &&
-                (kind != fb::StepKind::OpNode ||
-                 _RunsRestOp(*file, file->steps[size_t(step)])) &&
+                _RunsComposeOp(*file, file->steps[size_t(step)], target) &&
                 player->GetStepLabelForTesting(size_t(step)) == owner) {
                 return true;
             }
@@ -6727,8 +6727,8 @@ def Xform "Asset"
     CHECK(moves(true, heldDefault));
     CHECK(moves(false, freeJoint));
     play(3.0);
-    CHECK(headRan(fb::StepKind::OpNode, held.GetString()));
-    CHECK(headRan(fb::StepKind::LadderCompose, heldDefault.GetString()));
+    CHECK(headRan(43, held.GetString()));
+    CHECK(headRan(44, heldDefault.GetString()));
     CHECK(!moves(false, held));
     CHECK(!moves(true, heldDefault));
     CHECK(moves(false, freeJoint));

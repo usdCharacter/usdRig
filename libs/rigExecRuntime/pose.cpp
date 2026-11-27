@@ -242,53 +242,6 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
     return true;
 }
 
-bool
-RrRunLadderHead(RrProgram *program, size_t group)
-{
-    RrPoseHost host(program);
-    eval::StepRef ref;
-    ref.kind = uint32_t(eval::StepKind::LadderCompose);
-    ref.object = int32_t(group);
-    ref.part = eval::kNoStepPart;
-    ref.slot = 0;
-    if (eval::RunValueStep(host, ref).outcome == eval::Outcome::Invalid) {
-        return false;
-    }
-    // The live ladder echo, kept adapter-local: the inputs the
-    // ladder just composed from, re-read. Only the ladder head
-    // publishes it, for active pose slots only.
-    const auto &range = program->poses->composeGroups[group];
-    const RigExecWireSlotMeta &meta = *program->slotMeta;
-    RrStore &store = program->store;
-    const size_t slots = meta.paths.size();
-    for (size_t i = size_t(range.begin); i < std::min(size_t(range.end), slots);
-         ++i) {
-        if (i >= meta.slotKind.size() ||
-            meta.slotKind[i] != RigExecWireSlotKind::FirstFramePose) {
-            continue;
-        }
-        if (!meta.providerActive.empty() && !meta.providerActive[i]) {
-            continue;
-        }
-        if (i >= store.ladders.size()) {
-            continue;
-        }
-        RrLadderLive &live = store.ladders[i];
-        live.restSpace = program->ReadLadder(i, RrLadderRestSpace).matrix;
-        live.defaultSpace = program->ReadLadder(i, RrLadderDefaultSpace).matrix;
-        live.posedSpace = program->ReadLadder(i, RrLadderPosedSpace).matrix;
-        for (int k = 0; k < 6; ++k) {
-            live.restAvars[size_t(k)] =
-                program->ReadLadder(i, RrLadderRestAvar0 + k).f64;
-            live.defaultAvars[size_t(k)] =
-                program->ReadLadder(i, RrLadderDefaultAvar0 + k).f64;
-        }
-        live.rotationOrder =
-            program->ReadLadder(i, RrLadderRotationOrder).token;
-    }
-    return host.state().movedAny();
-}
-
 void
 RrProloguePose(RrProgram *program)
 {

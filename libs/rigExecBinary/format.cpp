@@ -602,6 +602,7 @@ public:
         _solveNode.assign(nodes, -1);
         _solverOf.assign(nodes, -1);
         _restNode.assign(nodes, -1);
+        _ladderNode.assign(nodes, -1);
         _refreshOf.assign(nodes, -1);
         _providerOpOf.assign(nodes, -1);
         _constraintNode.assign(nodes, -1);
@@ -671,6 +672,10 @@ public:
             if (output && output->node < nodes && output->target == 43 &&
                 _restNode[output->node] < 0)
                 _restNode[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 44 &&
+                _ladderNode[output->node] < 0)
+                _ladderNode[output->node] = int64_t(output->object);
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node < nodes && output->target == 5 &&
                 _fieldStored[output->node] < 0)
@@ -772,6 +777,7 @@ private:
             solversStored, planarStored;
         std::set<std::pair<uint64_t, uint32_t>> restsStored;
         std::set<uint64_t> statusStored;
+        std::set<std::pair<uint64_t, uint32_t>> laddersStored;
         std::vector<uint8_t> spaceStored(
             4 * std::max<size_t>(_slots, _f.pose->frameRecords.size()), 0);
         for (const auto &output : _f.opGraph->hostOutputs) {
@@ -782,9 +788,10 @@ private:
             if ((output->target > 6 && output->target < 20) ||
                 (output->target > 34 && !constraint && output->target != 40 &&
                  output->target != 41 && output->target != 42 &&
-                 output->target != 43 && output->target != 45 &&
-                 output->target != 50 && output->target != 51 &&
-                 output->target != 60 && output->target != 61 &&
+                 output->target != 43 && output->target != 44 &&
+                 output->target != 45 && output->target != 50 &&
+                 output->target != 51 && output->target != 60 &&
+                 output->target != 61 &&
                  (output->target < 52 || output->target > 54)))
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
@@ -858,6 +865,32 @@ private:
                                 ", whose inputs it does not read");
                 if (!restsStored.emplace(output->object, output->port).second)
                     return _Bad("op_graph.host_outputs: rest port " +
+                                _N(output->port) + " of compose group " +
+                                _N(output->object) + " is stored twice");
+                continue;
+            }
+            if (output->target == 44) {
+                bool reads = false;
+                if (_f.opGraph->nodes[node])
+                    for (const auto &input : _f.opGraph->nodes[node]->inputs)
+                        reads =
+                            reads ||
+                            (input && input->host == 4 &&
+                             input->object < _f.opGraph->lookups.size() &&
+                             _f.opGraph->lookups[input->object] &&
+                             _f.opGraph->lookups[input->object]->source == 44 &&
+                             _f.opGraph->lookups[input->object]->object ==
+                                 output->object);
+                if (!_f.pose ||
+                    output->object >= _f.pose->composeGroups.size() ||
+                    output->port < 8 || output->port > 16 || !reads ||
+                    _ladderNode[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the ladder of compose group " +
+                                _N(output->object) +
+                                ", whose inputs it does not read");
+                if (!laddersStored.emplace(output->object, output->port).second)
+                    return _Bad("op_graph.host_outputs: ladder port " +
                                 _N(output->port) + " of compose group " +
                                 _N(output->object) + " is stored twice");
                 continue;
@@ -1196,6 +1229,20 @@ private:
                                 _N(lookup->object) + " holds");
                 continue;
             }
+            if (lookup && lookup->source == 44) {
+                if (!_f.pose ||
+                    lookup->object >= _f.pose->composeGroups.size() ||
+                    lookup->part != -1 || lookup->read > 7 ||
+                    !_Has(_f.slotMeta->parent,
+                          int64_t(
+                              _f.pose->composeGroups[lookup->object].begin)) ||
+                    (lookup->read >= 6 &&
+                     _f.slotMeta->parent[size_t(
+                         _f.pose->composeGroups[lookup->object].begin)] < 0))
+                    return _Bad("op_graph.lookups: a ladder inputs lookup "
+                                "reads no ladder input of a compose group");
+                continue;
+            }
             if (lookup && lookup->source == 43) {
                 if (!_f.pose ||
                     lookup->object >= _f.pose->composeGroups.size() ||
@@ -1463,6 +1510,8 @@ private:
                             ": the retired PoseInterpolator step");
             if (kind == fb::StepKind::ReservedRestCompose)
                 return _Bad(_StepName(i) + ": the retired RestCompose step");
+            if (kind == fb::StepKind::ReservedLadderCompose)
+                return _Bad(_StepName(i) + ": the retired LadderCompose step");
             const bool op = kind == fb::StepKind::OpNode ||
                             kind == fb::StepKind::OpChainHead ||
                             kind == fb::StepKind::OpChainRange;
@@ -1828,6 +1877,9 @@ private:
                 } else if (lookup.source == 43 && _restNode[n] != object) {
                     return bad(" reads the rest inputs of a compose group its "
                                "node does not store");
+                } else if (lookup.source == 44 && _ladderNode[n] != object) {
+                    return bad(" reads the ladder inputs of a compose group "
+                               "its node does not store");
                 }
             }
             if (_placementSlot[n] >= 0 && poses != 1)
@@ -2064,11 +2116,12 @@ private:
                         eligible = at != found->second.rests.end() &&
                                    *at < size_t(group.end);
                     }
-                } else if (step.kind == fb::StepKind::LadderCompose &&
-                           size_t(step.object) <
+                } else if (const int64_t ladderGroup = _LadderGroupOf(step);
+                           ladderGroup >= 0 &&
+                           size_t(ladderGroup) <
                                _f.pose->composeGroups.size()) {
                     const auto &group =
-                        _f.pose->composeGroups[size_t(step.object)];
+                        _f.pose->composeGroups[size_t(ladderGroup)];
                     if (group.begin >= 0 && group.end >= group.begin) {
                         const auto at = found->second.signs.lower_bound(
                             size_t(group.begin));
@@ -2994,6 +3047,16 @@ private:
                    : -1;
     }
 
+    /// The compose group whose ladder the op step \p step stores, or -1 for
+    /// any other step.
+    int64_t _LadderGroupOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _ladderNode.size()
+                   ? _ladderNode[size_t(step.object)]
+                   : -1;
+    }
+
     /// The pose interpolator whose weights the op step \p step stores, or -1
     /// for any other step.
     int64_t _InterpolatorOf(const fb::RigExecWireStep &step) const
@@ -3314,6 +3377,8 @@ private:
                             ": the retired PoseInterpolator step");
             if (step.kind == fb::StepKind::ReservedRestCompose)
                 return _Bad(_StepName(i) + ": the retired RestCompose step");
+            if (step.kind == fb::StepKind::ReservedLadderCompose)
+                return _Bad(_StepName(i) + ": the retired LadderCompose step");
             if (!_SpaceOp(i))
                 return false;
             if (const int64_t object = _PacketObjectOf(step); object >= 0) {
@@ -5211,10 +5276,11 @@ private:
                 for (auto value : values)
                     writes.emplace(domain, uint32_t(value));
             };
-            if (const int64_t restGroup = _RestGroupOf(step);
-                restGroup >= 0 || step.kind == K::LadderCompose) {
+            if (const int64_t restGroup = _RestGroupOf(step),
+                ladderGroup = _LadderGroupOf(step);
+                restGroup >= 0 || ladderGroup >= 0) {
                 const bool restBody = restGroup >= 0;
-                const int64_t object = restBody ? restGroup : step.object;
+                const int64_t object = restBody ? restGroup : ladderGroup;
                 if (!_Has(pose.composeGroups, object))
                     return _Bad(_StepName(owner) + ": invalid compose group");
                 const auto &group = pose.composeGroups[size_t(object)];
@@ -5832,7 +5898,7 @@ private:
                             "stage-frame admission cannot be excluded");
         const auto prep = [this](const RigExecWireStep &step) {
             return _PropertyPart(step, nullptr, nullptr) ||
-                   _RestGroupOf(step) >= 0 || step.kind == K::LadderCompose ||
+                   _RestGroupOf(step) >= 0 || _LadderGroupOf(step) >= 0 ||
                    step.kind == K::SkinTopology;
         };
         std::map<std::pair<D, uint32_t>, std::vector<size_t>> producers;
@@ -5956,9 +6022,9 @@ private:
             const bool property =
                 _PropertyPart(step, &propertyChain, &propertyPart);
             const int64_t restGroup = _RestGroupOf(step);
+            const int64_t ladderGroup = _LadderGroupOf(step);
             const bool kindHead =
-                property || restGroup >= 0 ||
-                step.kind == fb::StepKind::LadderCompose ||
+                property || restGroup >= 0 || ladderGroup >= 0 ||
                 step.kind == fb::StepKind::SkinTopology ||
                 (_FieldOf(step) >= 0 &&
                  _Has(_f.geometry->weightFields, _FieldOf(step)) &&
@@ -5983,16 +6049,15 @@ private:
                 if (range.end() > table->size())
                     return _Bad(_StepName(i) + ": head write out of range");
                 const auto required =
-                    range.domain() == fb::SlotDomain::PropertyResult ||
-                            range.domain() == fb::SlotDomain::Rest
-                        ? fb::StepKind::OpNode
-                    : range.domain() == fb::SlotDomain::Ladder
-                        ? fb::StepKind::LadderCompose
-                        : fb::StepKind::SkinTopology;
+                    range.domain() == fb::SlotDomain::SkinTopology
+                        ? fb::StepKind::SkinTopology
+                        : fb::StepKind::OpNode;
                 if (step.kind != required ||
                     (range.domain() == fb::SlotDomain::PropertyResult &&
                      !property) ||
-                    (range.domain() == fb::SlotDomain::Rest && restGroup < 0))
+                    (range.domain() == fb::SlotDomain::Rest && restGroup < 0) ||
+                    (range.domain() == fb::SlotDomain::Ladder &&
+                     ladderGroup < 0))
                     return _Bad(_StepName(i) +
                                 ": wrong head domain writer kind");
                 for (uint32_t v = range.begin(); v < range.end(); ++v) {
@@ -6029,16 +6094,14 @@ private:
                                chain.versionBase + uint32_t(propertyPart) - 1))
                     return _Bad(_StepName(i) +
                                 ": part does not declare predecessor version");
-            } else if (restGroup >= 0 ||
-                       step.kind == fb::StepKind::LadderCompose) {
-                const int64_t object = restGroup >= 0 ? restGroup : step.object;
+            } else if (restGroup >= 0 || ladderGroup >= 0) {
+                const int64_t object = restGroup >= 0 ? restGroup : ladderGroup;
                 if (!_Has(_f.pose->composeGroups, object))
                     return _Bad(_StepName(i) + ": invalid compose group");
                 const auto &group = _f.pose->composeGroups[size_t(object)];
                 const auto domain = restGroup >= 0 ? fb::SlotDomain::Rest
                                                    : fb::SlotDomain::Ladder;
-                if (step.part != (restGroup >= 0 ? -1 : 1) ||
-                    step.writes.size() != 1 ||
+                if (step.part != -1 || step.writes.size() != 1 ||
                     step.writes[0].domain() != domain ||
                     step.writes[0].begin() != uint32_t(group.begin) ||
                     step.writes[0].end() != uint32_t(group.end))
@@ -6141,11 +6204,12 @@ private:
                     return _Bad(_StepName(i) +
                                 ": raw head carries binding-varying flag");
             }
-            if (const int64_t restGroup = _RestGroupOf(step);
-                restGroup >= 0 || step.kind == fb::StepKind::LadderCompose) {
+            if (const int64_t restGroup = _RestGroupOf(step),
+                ladderGroup = _LadderGroupOf(step);
+                restGroup >= 0 || ladderGroup >= 0) {
                 const bool restBody = restGroup >= 0;
                 const auto &group = _f.pose->composeGroups[size_t(
-                    restBody ? restGroup : step.object)];
+                    restBody ? restGroup : ladderGroup)];
                 std::vector<const RigExecWireInput *> expected;
                 for (int slot = group.begin; slot < group.end; ++slot) {
                     if (_f.slotMeta->slotKind[size_t(slot)] !=
@@ -6478,12 +6542,12 @@ private:
                            rigExecStepGraphDetail::DomainName(uint8_t(domain)) +
                            "[" + _N(size_t(slot)) + "] read");
             };
-            if (const int64_t restGroup = _RestGroupOf(step);
-                restGroup >= 0 || step.kind == fb::StepKind::LadderCompose) {
+            if (const int64_t restGroup = _RestGroupOf(step),
+                ladderGroup = _LadderGroupOf(step);
+                restGroup >= 0 || ladderGroup >= 0) {
                 const auto &group = _f.pose->composeGroups[size_t(
-                    restGroup >= 0 ? restGroup : step.object)];
-                const bool ladderBody =
-                    step.kind == fb::StepKind::LadderCompose;
+                    restGroup >= 0 ? restGroup : ladderGroup)];
+                const bool ladderBody = ladderGroup >= 0;
                 for (int slot = group.begin; slot < group.end; ++slot) {
                     if (ladderBody && !require(fb::SlotDomain::Rest, slot))
                         return false;
@@ -10429,6 +10493,8 @@ private:
     std::vector<int64_t> _interpolatorNode;
     /// Per op node: the compose group whose rest it stores, or -1.
     std::vector<int64_t> _restNode;
+    /// Per op node: the compose group whose ladder it stores, or -1.
+    std::vector<int64_t> _ladderNode;
 
     /// Per op node: the solver whose frames it stores, or -1; and the
     /// solver it runs for: that one, or the one of the node it feeds.
@@ -10682,13 +10748,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 64,
+    static_assert(RigExecFormatOldestReadable == 68,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: commit candidates from op nodes"
+                ? "re-export: step 10 op nodes"
                 : "rebake");
 }
 
@@ -10935,8 +11001,8 @@ _StepKindName(fb::StepKind kind)
         return "ReservedPropertyRevision";
     case fb::StepKind::ReservedRestCompose:
         return "ReservedRestCompose";
-    case fb::StepKind::LadderCompose:
-        return "LadderCompose";
+    case fb::StepKind::ReservedLadderCompose:
+        return "ReservedLadderCompose";
     case fb::StepKind::SkinTopology:
         return "SkinTopology";
     case fb::StepKind::ReservedWeightField:
@@ -11010,15 +11076,8 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
         return false;
     case fb::StepKind::ReservedRestCompose:
         return false;
-    case fb::StepKind::LadderCompose: {
-        if (!pose || !meta || !_Has(pose->composeGroups, object))
-            return false;
-        const int first = pose->composeGroups[size_t(object)].begin;
-        if (!_Has(meta->paths, first))
-            return false;
-        *out = text(meta->paths[size_t(first)]);
-        return true;
-    }
+    case fb::StepKind::ReservedLadderCompose:
+        return false;
     case fb::StepKind::ReservedSpaceCheckpoint:
         return false;
     case fb::StepKind::ReservedProviderRefresh:
@@ -11089,6 +11148,18 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
                 return true;
             }
         }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
+                output->target == 44 && pose && meta &&
+                _Has(pose->composeGroups, output->object) &&
+                _Has(meta->paths,
+                     pose->composeGroups[size_t(output->object)].begin)) {
+                *out =
+                    text(meta->paths[size_t(
+                        pose->composeGroups[size_t(output->object)].begin)]) +
+                    " ladder";
+                return true;
+            }
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node == uint64_t(object) &&
                 output->target == 43 && pose && meta &&

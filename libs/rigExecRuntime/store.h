@@ -1167,7 +1167,6 @@ void RrPropertyBegin(RrProgram *program);
 void RrPropertyPublish(RrProgram *program);
 void RrPropertyPublishFinished(RrProgram *program,
                                const std::vector<char> &finished);
-bool RrRunLadderHead(RrProgram *program, size_t group);
 bool RrRunTopologyHead(RrProgram *program, size_t revision);
 bool RrRunPropertyChains(RrProgram *program,
                          std::vector<std::string> *poseDiagnostics);

@@ -4153,11 +4153,77 @@ RigExecBakedComposeRests(RigExecBakedProgramImpl *program)
 }
 
 void
-RigExecBakedComposeLadderRange(RigExecBakedProgramImpl *program, int begin,
-                               int end, bool trackMoves)
+RigExecBakedComposeLadders(RigExecBakedProgramImpl *program)
 {
-    BakedPoseHost host(program, nullptr);
-    eval::RunLadderComposeRange(host, begin, end, trackMoves);
+    RigExecBakedProgramImpl &B = *program;
+    const BakedPoseInputs inputs(program);
+    const GfMatrix4d identity(1.0);
+    for (size_t slot = 0; slot < B.paths.size(); ++slot) {
+        if (!inputs.isPoseSlot(slot))
+            continue;
+        if (!inputs.providerActive(slot)) {
+            const GfMatrix4d unavailable =
+                eval::UnavailableSpace<BakedPoseMath>();
+            B.selfD[slot] = B.parentDinv[slot] = B.restRoundTrip[slot] =
+                B.defaultRoundTrip[slot] = B.posedAuthoredM[slot] =
+                    B.posedD[slot] = B.parentSpaceM[slot] = unavailable;
+            B.posedAuthored[slot] = 0;
+            B.parentSpaceAuthored[slot] = 0;
+            B.rotOrder[slot] = B.xyzToken;
+            B.rotationSign[slot] = 0;
+            continue;
+        }
+        eval::PoseLadderInputT<BakedPoseMath> in;
+        in.spaces[eval::kPoseLadderRestSpace] = identity;
+        for (int channel = eval::kPoseLadderDefaultSpace;
+             channel <= eval::kPoseLadderPosedDefaultSpace; ++channel) {
+            in.spaces[channel] = inputs.ladderSpace(slot, channel);
+            in.authored[channel] = RigExecBakedLadderAuthored(B, slot, channel);
+        }
+        in.parentSpaceLeaf = inputs.ladderParentSpaceLeaf(slot);
+        in.rotationSign = inputs.ladderRotationSign(slot);
+        for (size_t k = 0; k < 6; ++k)
+            in.defaultAvars[k] = inputs.defaultAvar(slot, k);
+        in.ownRest = B.restRoundTrip[slot];
+        const int parent = inputs.parent(slot);
+        if (parent >= 0) {
+            in.parentRest = &B.restRoundTrip[size_t(parent)];
+            in.parentDefault = &B.defaultRoundTrip[size_t(parent)];
+        }
+        const auto ladder = eval::LadderComposeSlot<BakedPoseMath>(in);
+        B.selfD[slot] = ladder.selfD;
+        B.parentDinv[slot] = ladder.parentDinv;
+        B.defaultRoundTrip[slot] = ladder.defaultRoundTrip;
+        B.posedD[slot] = ladder.posedD;
+        B.parentSpaceM[slot] = ladder.parentSpaceM;
+        B.posedAuthoredM[slot] = ladder.posed;
+        B.posedAuthored[slot] = ladder.posedAuthored ? 1 : 0;
+        B.parentSpaceAuthored[slot] = ladder.parentSpaceAuthored ? 1 : 0;
+        B.rotationSign[slot] = ladder.rotationSign;
+        B.rotOrder[slot] = RigExecBakedLadderRotOrder(B, slot);
+    }
+}
+
+bool
+RigExecBakedLadderAuthored(const RigExecBakedProgramImpl &B, size_t slot,
+                           int channel)
+{
+    const BakedPoseInputs inputs(&B);
+    const bool defaultChannel =
+        channel == eval::kPoseLadderDefaultSpace ||
+        channel == eval::kPoseLadderParentDefaultSpace ||
+        channel == eval::kPoseLadderAvarDefaultSpace ||
+        channel == eval::kPoseLadderPosedDefaultSpace;
+    return (defaultChannel && inputs.ladderChannelReady(slot, channel)) ||
+           inputs.ladderAuthoritative(slot, channel);
+}
+
+TfToken
+RigExecBakedLadderRotOrder(const RigExecBakedProgramImpl &B, size_t slot)
+{
+    const TfToken order =
+        RigExecBakedLeafRead(B, B.ladders[slot].rotationOrder);
+    return order.IsEmpty() ? B.xyzToken : order;
 }
 
 namespace {
@@ -4215,19 +4281,18 @@ RigExecBakedBuildRestSteps(RigExecBakedProgramImpl *program)
         for (const bool rest : {true, false}) {
             RigExecBakedStep step;
             step.isHead = true;
-            step.kind = rest ? RigExecBakedStepKind::OpNode
-                             : RigExecBakedStepKind::LadderCompose;
-            step.object = rest ? int(B.opNodeOrigins.size()) : int(g);
-            step.part = rest ? -1 : 1;
-            if (rest) {
-                RigExecBakedOpOrigin origin;
-                origin.family = RigExecBakedOpFamily::RestCompose;
-                origin.kind = RigExecBakedStepKind::RestCompose;
-                origin.object = int32_t(g);
-                origin.part = 0;
-                B.opNodeOrigins.push_back(origin);
-                step.maxDiagnostics = 1;
-            }
+            step.kind = RigExecBakedStepKind::OpNode;
+            step.object = int(B.opNodeOrigins.size());
+            step.part = -1;
+            RigExecBakedOpOrigin origin;
+            origin.family = rest ? RigExecBakedOpFamily::RestCompose
+                                 : RigExecBakedOpFamily::LadderCompose;
+            origin.kind = rest ? RigExecBakedStepKind::RestCompose
+                               : RigExecBakedStepKind::LadderCompose;
+            origin.object = int32_t(g);
+            origin.part = rest ? 0 : 1;
+            B.opNodeOrigins.push_back(origin);
+            step.maxDiagnostics = 1;
             step.label = std::string(rest ? "RestCompose " : "LadderCompose ") +
                          pathText(first);
             std::set<uint32_t> versions, rests, ladders, spaces;

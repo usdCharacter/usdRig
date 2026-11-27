@@ -137,6 +137,10 @@ enum class OpLookupSource : uint8_t {
     /// (OpRestRead): its rest avars, rest space and intervening space as
     /// sampled, or its parent's rest round trip.
     RestInputs = 43,
+    /// Compose group `object`'s slot's LadderCompose input `read`
+    /// (OpLadderRead): its ladder channels as sampled or answered, or the
+    /// rest and default round trips composed before it.
+    LadderInputs = 44,
     /// Solver `object`'s input `part` (OpSolverRead), from the pose
     /// versions it reads and the rests composed this run.
     SolverInput = 60,
@@ -148,6 +152,19 @@ enum class OpRestRead : uint8_t {
     RestSpace,
     Intervening,
     ParentRest,
+};
+
+/// OpLookup::read of a LadderInputs lookup: the LadderCompose input it
+/// answers.
+enum class OpLadderRead : uint8_t {
+    Spaces,
+    Authored,
+    ParentSpaceLeaf,
+    RotationSign,
+    DefaultAvars,
+    OwnRest,
+    ParentRest,
+    ParentDefault,
 };
 
 /// OpLookup::read of a CheckpointInputs lookup: the SpaceCheckpoint input
@@ -454,7 +471,8 @@ OpComposeLookupSource(uint8_t source)
     return source == uint8_t(OpLookupSource::AvarBindings) ||
            source == uint8_t(OpLookupSource::CheckpointInputs) ||
            source == uint8_t(OpLookupSource::InterpolatorInputs) ||
-           source == uint8_t(OpLookupSource::RestInputs);
+           source == uint8_t(OpLookupSource::RestInputs) ||
+           source == uint8_t(OpLookupSource::LadderInputs);
 }
 
 /// Whether a lookup of \p source answers a Mat4d that may be absent or,
@@ -613,6 +631,9 @@ enum class OpOutputTarget : uint8_t {
     /// A RestCompose node's output `port` (OpRestOutput) into compose group
     /// `object`'s slot: its rest matrix, rest frame or rest round trip.
     Rest = 43,
+    /// A LadderCompose node's output `port` (OpLadderOutput) into compose
+    /// group `object`'s slot's ladder tables; the last one commits them.
+    Ladder = 44,
     /// UInt: pose interpolator `object`'s RigExecPoseInterpolatorStatus;
     /// an unusable driver gives its node's step one line.
     InterpolatorStatus = 45,
@@ -663,6 +684,7 @@ OpComposeOutputTarget(uint8_t target)
            target == uint8_t(OpOutputTarget::SwitchFrame) ||
            target == uint8_t(OpOutputTarget::PoseWeights) ||
            target == uint8_t(OpOutputTarget::Rest) ||
+           target == uint8_t(OpOutputTarget::Ladder) ||
            target == uint8_t(OpOutputTarget::InterpolatorStatus);
 }
 
@@ -672,6 +694,21 @@ enum class OpRestOutput : uint32_t {
     RestMatrix = 4,
     Rest = 5,
     RoundTrip = 6,
+};
+
+/// The LadderCompose output port a Ladder host output stores, in the order
+/// the host stores them. The numbers are the op's port indices and part of
+/// the file format.
+enum class OpLadderOutput : uint32_t {
+    SelfDefault = 8,
+    ParentDefaultInverse = 9,
+    DefaultRoundTrip = 10,
+    PosedDefault = 11,
+    ParentSpace = 12,
+    PosedAuthoredMatrix = 13,
+    PosedAuthored = 14,
+    ParentSpaceAuthored = 15,
+    RotationSign = 16,
 };
 
 /// Whether OpLookUp resolves lookups of \p source.
@@ -1533,6 +1570,7 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
     case OpLookupSource::CheckpointInputs:
     case OpLookupSource::InterpolatorInputs:
     case OpLookupSource::RestInputs:
+    case OpLookupSource::LadderInputs:
         return host.LookUpCompose(index, lookup, type, value, error);
     }
     return OpLayoutFail(error, "no host resolves lookup source " +
@@ -1600,6 +1638,7 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
     case OpOutputTarget::SwitchFrame:
     case OpOutputTarget::PoseWeights:
     case OpOutputTarget::Rest:
+    case OpOutputTarget::Ladder:
     case OpOutputTarget::InterpolatorStatus:
         return host.StoreCompose(output, value, error);
     }

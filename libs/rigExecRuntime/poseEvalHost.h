@@ -993,88 +993,6 @@ public:
         (void)i;
     }
 
-    void writeLadder(size_t slot, const RrMat4d &selfD,
-                     const RrMat4d &parentDinv, const RrMat4d &defaultRoundTrip,
-                     const RrMat4d &posedD, const RrMat4d &parentSpaceM,
-                     const RrMat4d &posedAuthoredM, bool posedAuthored,
-                     bool parentSpaceAuthored, unsigned char rotationSign)
-    {
-        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
-        scratch->selfD[slot] = selfD;
-        scratch->parentDinv[slot] = parentDinv;
-        scratch->defaultRoundTrip[slot] = defaultRoundTrip;
-        scratch->posedD[slot] = posedD;
-        scratch->parentSpaceM[slot] = parentSpaceM;
-        scratch->posedAuthoredM[slot] = posedAuthoredM;
-        scratch->posedAuthored[slot] = posedAuthored ? 1 : 0;
-        scratch->parentSpaceAuthored[slot] = parentSpaceAuthored ? 1 : 0;
-        scratch->rotationSign[slot] = rotationSign;
-    }
-
-    void writeLadderUnavailable(size_t slot)
-    {
-        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
-        RrMat4d unavailable(1);
-        unavailable[3][0] = std::numeric_limits<double>::quiet_NaN();
-        scratch->restRoundTrip[slot] = unavailable;
-        scratch->defaultRoundTrip[slot] = unavailable;
-        scratch->selfD[slot] = unavailable;
-        scratch->parentDinv[slot] = unavailable;
-        scratch->posedD[slot] = unavailable;
-        scratch->posedAuthoredM[slot] = unavailable;
-        scratch->parentSpaceM[slot] = unavailable;
-        scratch->posedAuthored[slot] = 0;
-        scratch->parentSpaceAuthored[slot] = 0;
-        scratch->rotationSign[slot] = 0;
-        scratch->rotOrder[slot] = 0;
-    }
-
-    void writeRotOrder(size_t slot)
-    {
-        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
-        scratch->rotOrder[slot] =
-            _program->ReadLadder(slot, RrLadderRotationOrder).token;
-    }
-
-    eval::PoseLadderLastsT<RrPoseMath> ladderLasts(size_t slot)
-    {
-        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
-        eval::PoseLadderLastsT<RrPoseMath> lasts;
-        lasts.restM = &scratch->lastRestM[slot];
-        lasts.selfD = &scratch->lastSelfD[slot];
-        lasts.parentDinv = &scratch->lastParentDinv[slot];
-        lasts.posedAuthoredM = &scratch->lastPosedAuthoredM[slot];
-        lasts.posedD = &scratch->lastPosedD[slot];
-        lasts.parentSpaceM = &scratch->lastParentSpaceM[slot];
-        lasts.posedAuthored = &scratch->lastPosedAuthored[slot];
-        lasts.parentSpaceAuthored = &scratch->lastParentSpaceAuthored[slot];
-        lasts.rotationSign = &scratch->lastRotationSign[slot];
-        return lasts;
-    }
-
-    bool rotOrderMoved(size_t slot)
-    {
-        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
-        return scratch->rotOrder[slot] != scratch->lastRotOrder[slot];
-    }
-
-    void commitRotOrder(size_t slot)
-    {
-        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
-        scratch->lastRotOrder[slot] = scratch->rotOrder[slot];
-    }
-
-    void markLadderChanged(size_t slot)
-    {
-        _program->store.ladderChanged[slot] = 1;
-        _movedAny = true;
-    }
-
-    bool movedAny() const
-    {
-        return _movedAny;
-    }
-
     void writeBase(size_t slot, const std::array<RrVec3d, 4> &points,
                    unsigned flags)
     {
@@ -1381,7 +1299,6 @@ public:
 private:
     RrProgram *_program;
     size_t _step = size_t(-1);
-    bool _movedAny = false;
 };
 
 class RrPoseHost {
@@ -1389,7 +1306,6 @@ public:
     using Math = RrPoseMath;
     using Inputs = RrPoseInputs;
     using State = RrPoseState;
-    using EvalValueFamily = eval::PoseValueFamily;
 
     explicit RrPoseHost(RrProgram *program, size_t step = size_t(-1))
         : _inputs(program), _state(program), _program(program)

@@ -1205,7 +1205,8 @@ enum class StepKind : uint8_t {
   ReservedPropertyRevision = 19,
   /// Reserved. Open refuses it.
   ReservedRestCompose = 20,
-  LadderCompose = 21,
+  /// Reserved. Open refuses it.
+  ReservedLadderCompose = 21,
   SkinTopology = 22,
   /// Reserved. Open refuses it.
   ReservedWeightField = 23,
@@ -1253,7 +1254,7 @@ inline const StepKind (&EnumValuesStepKind())[33] {
     StepKind::ReservedFrameMatrix,
     StepKind::ReservedPropertyRevision,
     StepKind::ReservedRestCompose,
-    StepKind::LadderCompose,
+    StepKind::ReservedLadderCompose,
     StepKind::SkinTopology,
     StepKind::ReservedWeightField,
     StepKind::ReservedSpaceExpression,
@@ -1292,7 +1293,7 @@ inline const char * const *EnumNamesStepKind() {
     "ReservedFrameMatrix",
     "ReservedPropertyRevision",
     "ReservedRestCompose",
-    "LadderCompose",
+    "ReservedLadderCompose",
     "SkinTopology",
     "ReservedWeightField",
     "ReservedSpaceExpression",
@@ -22305,6 +22306,11 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// 43 (format 56): input `read` (OpRestRead) of compose group
   /// `object`'s RestCompose node: 0 its slot's rest avars, 1 rest space, 2
   /// intervening space, 3 its parent's rest round trip.
+  /// 44 (format 68): input `read` (OpLadderRead) of compose group
+  /// `object`'s LadderCompose node: 0 its ladder channels 1 to 6, 1 their
+  /// authored flags, 2 the parent space leaf, 3 the rotation sign, 4 the
+  /// default avars, 5 its slot's rest round trip, 6 and 7 its parent's rest
+  /// and default round trips.
   /// 60 (format 55): input `part` (OpSolverRead, rigExecEvalCore/opSteps.h)
   /// of solver `object` (pose.solvers index), read by one of its op nodes.
   uint8_t source() const {
@@ -22441,7 +22447,9 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// 43 (format 56): RestCompose output `port` (OpRestOutput: 4 the rest
   /// matrix, 5 the rest frame, 6 the rest round trip) into compose group
   /// `object`'s slot.
-  /// 45 (format 59): pose interpolator `object`'s status
+  /// 44 (format 68): LadderCompose output `port` (OpLadderOutput, 8 to 16)
+  /// into compose group `object`'s slot's ladder tables.
+  /// 45 (format 68): pose interpolator `object`'s status
   /// (RigExecPoseInterpolatorStatus); an unusable driver gives its node's
   /// step one line.
   /// 60 (format 55): solver `object`'s frames, from its last op node, as

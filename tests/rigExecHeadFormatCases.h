@@ -3,7 +3,7 @@
 
 static_assert(uint8_t(fb::StepKind::ReservedPropertyRevision) == 19 &&
                   uint8_t(fb::StepKind::ReservedRestCompose) == 20 &&
-                  uint8_t(fb::StepKind::LadderCompose) == 21 &&
+                  uint8_t(fb::StepKind::ReservedLadderCompose) == 21 &&
                   uint8_t(fb::StepKind::SkinTopology) == 22 &&
                   uint8_t(fb::SlotDomain::Rest) == 27 &&
                   uint8_t(fb::SlotDomain::Ladder) == 28 &&
@@ -206,10 +206,7 @@ _HeadComposeFile()
         rest.headInputReads.push_back(*body.restSpace);
         rest.headInputReads.push_back(*body.interveningSpace);
         auto &ladder = f.steps[slot * 2 + 1];
-        ladder.kind = fb::StepKind::LadderCompose;
-        ladder.object = int32_t(slot);
-        ladder.part = 1;
-        ladder.isHead = true;
+        ladder = _LadderStep(f, uint32_t(slot));
         ladder.reads = {fb::SlotRange(fb::SlotDomain::Rest, uint32_t(slot),
                                       uint32_t(slot + 1))};
         ladder.writes = {fb::SlotRange(fb::SlotDomain::Ladder, uint32_t(slot),
@@ -771,7 +768,7 @@ TestHeadComposeFormatCases()
     expect("RestCompose wrong part", "not its group range", 2,
            [](auto &f) { f.steps[2].part = 1; });
     expect("LadderCompose wrong part", "not its group range", 3,
-           [](auto &f) { f.steps[3].part = 0; });
+           [](auto &f) { f.steps[3].part = 1; });
     expect("RestCompose wrong group output", "not its group range", 2,
            [](auto &f) {
                f.steps[2].writes = {fb::SlotRange(fb::SlotDomain::Rest, 1, 1)};

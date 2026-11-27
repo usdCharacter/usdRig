@@ -558,6 +558,182 @@ StoreRest(RigExecBakedProgramImpl &B, uint32_t object, uint32_t port,
     return false;
 }
 
+/// Answers input \p read of compose group \p object's LadderCompose node.
+bool
+LookUpLadder(const RigExecBakedProgramImpl &B, uint32_t object,
+             eval::OpLadderRead read, const RigExecTypeDesc &type, void *value)
+{
+    using R = eval::OpLadderRead;
+    const BakedPoseInputs inputs(&B);
+    const size_t slot = GroupSlot(B, object);
+    const int parent = inputs.parent(slot);
+    switch (read) {
+    case R::Spaces: {
+        if (!type.resize || !type.data)
+            return false;
+        type.resize(value, 6);
+        auto *out = static_cast<double *>(type.data(value));
+        for (int c = 0; c < 6; ++c)
+            std::memcpy(out + 16 * c, inputs.ladderSpace(slot, c + 1).data(),
+                        16 * sizeof(double));
+        return true;
+    }
+    case R::Authored:
+        return FillList<uint8_t>(type, value, 6, [&](size_t c) {
+            return uint8_t(RigExecBakedLadderAuthored(B, slot, int(c) + 1));
+        });
+    case R::ParentSpaceLeaf:
+        return PutMatrix(type, value, inputs.ladderParentSpaceLeaf(slot));
+    case R::RotationSign: {
+        if (type.size != 3 * sizeof(double))
+            return false;
+        const GfVec3d sign = inputs.ladderRotationSign(slot);
+        std::memcpy(value, sign.data(), 3 * sizeof(double));
+        return true;
+    }
+    case R::DefaultAvars:
+        return FillList<double>(type, value, 6, [&](size_t k) {
+            return inputs.defaultAvar(slot, k);
+        });
+    case R::OwnRest:
+        return PutMatrix(type, value, B.restRoundTrip[slot]);
+    case R::ParentRest:
+        return parent >= 0 &&
+               PutMatrix(type, value, B.restRoundTrip[size_t(parent)]);
+    case R::ParentDefault:
+        return parent >= 0 &&
+               PutMatrix(type, value, B.defaultRoundTrip[size_t(parent)]);
+    }
+    return false;
+}
+
+/// The LadderCompose node of compose group \p object: its slot's ladder
+/// channels and the rests and parent ladder composed before it in, the
+/// slot's ladder tables out.
+bool
+AddLadderOp(const RigExecBakedProgramImpl &B, RigExecRigDescBuilder *builder,
+            eval::OpStepLayout *layout, size_t o, uint32_t object,
+            std::string *error)
+{
+    using namespace rigExecOps;
+    using R = eval::OpLadderRead;
+    using P = eval::OpLadderOutput;
+    const RigExecPortHandle *outputs[] = {
+        &LadderComposeSelfDefault(),      &LadderComposeParentDefaultInverse(),
+        &LadderComposeDefaultRoundTrip(), &LadderComposePosedDefault(),
+        &LadderComposeParentSpace(),      &LadderComposePosedAuthoredMatrix(),
+        &LadderComposePosedAuthored(),    &LadderComposeParentSpaceAuthored(),
+        &LadderComposeOutRotationSign()};
+    for (size_t k = 0; k < std::size(outputs); ++k)
+        if (outputs[k]->Index() != uint32_t(P::SelfDefault) + k)
+            return Fail(error, "LadderCompose's outputs are not ports 8 to 16");
+    const size_t slot = GroupSlot(B, object);
+    SlotActivityPayload payload;
+    payload.active = BakedPoseInputs(&B).providerActive(slot);
+    const RigExecNodeId node = builder->AddOp(LadderCompose(), &payload);
+    if (node != o)
+        return Fail(error, "compose group " + std::to_string(object) +
+                               " was added as node " + std::to_string(node));
+    const auto feed = [&](const RigExecPortHandle &port, R read) {
+        builder->BindInput(node, port);
+        layout->hostInputs.push_back({node, port.Index(),
+                                      eval::OpHostSource::Lookup,
+                                      uint32_t(layout->lookups.size())});
+        layout->lookups.push_back({uint8_t(eval::OpLookupSource::LadderInputs),
+                                   object, -1, uint8_t(read)});
+    };
+    feed(LadderComposeSpaces(), R::Spaces);
+    feed(LadderComposeAuthored(), R::Authored);
+    feed(LadderComposeParentSpaceLeaf(), R::ParentSpaceLeaf);
+    feed(LadderComposeRotationSign(), R::RotationSign);
+    feed(LadderComposeDefaultAvars(), R::DefaultAvars);
+    feed(LadderComposeOwnRest(), R::OwnRest);
+    if (B.parent[slot] >= 0) {
+        feed(LadderComposeParentRest(), R::ParentRest);
+        feed(LadderComposeParentDefault(), R::ParentDefault);
+    }
+    for (const RigExecPortHandle *port : outputs) {
+        builder->BindOutput(node, *port);
+        layout->hostOutputs.push_back({node, port->Index(),
+                                       uint8_t(eval::OpOutputTarget::Ladder),
+                                       object});
+    }
+    return true;
+}
+
+/// Stores output \p port of compose group \p object's LadderCompose node
+/// into its slot's ladder tables. The last port, the rotation sign, also
+/// takes the slot's rotation order and, for an active slot whose ladder
+/// moved, marks it changed.
+bool
+StoreLadder(RigExecBakedProgramImpl &B, uint32_t object, uint32_t port,
+            const void *value)
+{
+    using P = eval::OpLadderOutput;
+    const size_t slot = GroupSlot(B, object);
+    const auto matrix = [&](std::vector<GfMatrix4d> &table) {
+        std::memcpy(table[slot].data(), value, 16 * sizeof(double));
+        return true;
+    };
+    const auto flag = [&](std::vector<char> &table) {
+        table[slot] = *static_cast<const uint8_t *>(value) ? 1 : 0;
+        return true;
+    };
+    switch (P(port)) {
+    case P::SelfDefault:
+        return matrix(B.selfD);
+    case P::ParentDefaultInverse:
+        return matrix(B.parentDinv);
+    case P::DefaultRoundTrip:
+        return matrix(B.defaultRoundTrip);
+    case P::PosedDefault:
+        return matrix(B.posedD);
+    case P::ParentSpace:
+        return matrix(B.parentSpaceM);
+    case P::PosedAuthoredMatrix:
+        return matrix(B.posedAuthoredM);
+    case P::PosedAuthored:
+        return flag(B.posedAuthored);
+    case P::ParentSpaceAuthored:
+        return flag(B.parentSpaceAuthored);
+    case P::RotationSign:
+        break;
+    default:
+        return false;
+    }
+    B.rotationSign[slot] =
+        static_cast<unsigned char>(*static_cast<const uint32_t *>(value));
+    if (!BakedPoseInputs(&B).providerActive(slot)) {
+        B.rotOrder[slot] = B.xyzToken;
+        return true;
+    }
+    B.rotOrder[slot] = RigExecBakedLadderRotOrder(B, slot);
+    const auto same = [](const GfMatrix4d &a, const GfMatrix4d &b) {
+        return std::memcmp(a.data(), b.data(), 16 * sizeof(double)) == 0;
+    };
+    if (same(B.selfD[slot], B.lastSelfD[slot]) &&
+        same(B.parentDinv[slot], B.lastParentDinv[slot]) &&
+        B.posedAuthored[slot] == B.lastPosedAuthored[slot] &&
+        same(B.posedAuthoredM[slot], B.lastPosedAuthoredM[slot]) &&
+        B.rotOrder[slot] == B.lastRotOrder[slot] &&
+        same(B.posedD[slot], B.lastPosedD[slot]) &&
+        same(B.parentSpaceM[slot], B.lastParentSpaceM[slot]) &&
+        B.parentSpaceAuthored[slot] == B.lastParentSpaceAuthored[slot] &&
+        B.rotationSign[slot] == B.lastRotationSign[slot])
+        return true;
+    B.lastSelfD[slot] = B.selfD[slot];
+    B.lastParentDinv[slot] = B.parentDinv[slot];
+    B.lastPosedAuthored[slot] = B.posedAuthored[slot];
+    B.lastPosedAuthoredM[slot] = B.posedAuthoredM[slot];
+    B.lastRotOrder[slot] = B.rotOrder[slot];
+    B.lastPosedD[slot] = B.posedD[slot];
+    B.lastParentSpaceM[slot] = B.parentSpaceM[slot];
+    B.lastParentSpaceAuthored[slot] = B.parentSpaceAuthored[slot];
+    B.lastRotationSign[slot] = B.rotationSign[slot];
+    B.ladderChanged[slot] = 1;
+    return true;
+}
+
 } // namespace
 
 bool
@@ -580,6 +756,10 @@ RigExecBakedAddComposeOp(const RigExecBakedProgramImpl &B,
     if (origin.family == RigExecBakedOpFamily::RestCompose &&
         origin.object >= 0 && size_t(origin.object) < B.composeGroups.size())
         return AddRestOp(B, builder, layout, o, uint32_t(origin.object), error);
+    if (origin.family == RigExecBakedOpFamily::LadderCompose &&
+        origin.object >= 0 && size_t(origin.object) < B.composeGroups.size())
+        return AddLadderOp(B, builder, layout, o, uint32_t(origin.object),
+                           error);
     return Fail(error, "node " + std::to_string(o) + " has no compose origin");
 }
 
@@ -649,6 +829,15 @@ RigExecBakedLookUpCompose(const RigExecBakedProgramImpl &B,
         return Fail(error, "pose interpolator " +
                                std::to_string(lookup.object) +
                                " has no input " + std::to_string(lookup.read));
+    }
+    if (lookup.source == uint8_t(eval::OpLookupSource::LadderInputs)) {
+        if (lookup.object < B.composeGroups.size() &&
+            LookUpLadder(B, lookup.object, eval::OpLadderRead(lookup.read),
+                         type, value))
+            return true;
+        return Fail(error, "compose group " + std::to_string(lookup.object) +
+                               " has no ladder input " +
+                               std::to_string(lookup.read));
     }
     if (lookup.source == uint8_t(eval::OpLookupSource::RestInputs)) {
         if (lookup.object < B.composeGroups.size() &&
@@ -723,6 +912,14 @@ RigExecBakedStoreCompose(RigExecBakedProgramImpl &B, RigExecBakedStep *step,
                 B.poseWeights[size_t(
                     interp.poseSlots[size_t(interp.primvarSources[j])])];
         return true;
+    }
+    if (output.target == uint8_t(eval::OpOutputTarget::Ladder)) {
+        if (output.object < B.composeGroups.size() &&
+            StoreLadder(B, output.object, output.port, value))
+            return true;
+        return Fail(error, "compose group " + std::to_string(output.object) +
+                               " stores no ladder port " +
+                               std::to_string(output.port));
     }
     if (output.target == uint8_t(eval::OpOutputTarget::Rest)) {
         if (output.object < B.composeGroups.size() &&

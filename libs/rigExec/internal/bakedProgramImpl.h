@@ -1217,6 +1217,8 @@ enum class RigExecBakedOpFamily : uint8_t {
     Solver,
     /// A compose group's rest through RestCompose: object the group.
     RestCompose,
+    /// A compose group's ladder through LadderCompose: object the group.
+    LadderCompose,
 };
 
 /// Where an op node's step comes from: its family, that family's object and
@@ -4029,15 +4031,20 @@ void RigExecBakedSkipGeometryStep(RigExecBakedProgramImpl *program,
 /// simplified away, because a deep chain drifts without them.
 void RigExecBakedComposeRests(RigExecBakedProgramImpl *program);
 
-/// The default-space ladder of slots [\p begin, \p end), as above:
-/// `posedAuthored`, `posedAuthoredM`, `selfD`, `defaultRoundTrip`,
-/// `parentDinv` and `rotOrder`. Reads the range's rests and its parents'
-/// rests and ladders, which must be composed already. \p trackMoves
-/// compares `selfD`, `parentDinv`, `posedAuthored`, `posedAuthoredM` and
-/// `rotOrder` with their `last` buffers and records a move in
-/// `ladderChanged` and `ladderMoved`.
-void RigExecBakedComposeLadderRange(RigExecBakedProgramImpl *program, int begin,
-                                    int end, bool trackMoves);
+/// Every slot's default-space ladder, as above, after the rests, through
+/// the kernel the LadderCompose op runs per frame: `posedAuthored`,
+/// `posedAuthoredM`, `selfD`, `defaultRoundTrip`, `parentDinv`,
+/// `posedD`, `parentSpaceM`, `rotationSign` and `rotOrder`.
+void RigExecBakedComposeLadders(RigExecBakedProgramImpl *program);
+
+/// Whether ladder channel \p channel of \p slot is authored: connected or
+/// overridden, or for a default channel answered by a provider value.
+bool RigExecBakedLadderAuthored(const RigExecBakedProgramImpl &B, size_t slot,
+                                int channel);
+
+/// \p slot's rotation order as last sampled, xyz when empty.
+TfToken RigExecBakedLadderRotOrder(const RigExecBakedProgramImpl &B,
+                                   size_t slot);
 
 /// One RestCompose (part 0) and one LadderCompose (part 1) head op per
 /// compose group, appended to `steps`, with their declared reads: the

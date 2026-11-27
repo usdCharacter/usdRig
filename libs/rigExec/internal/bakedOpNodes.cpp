@@ -1118,7 +1118,7 @@ AddPoseWalkOps(const RigExecBakedProgramImpl &B, RigExecRigDescBuilder *builder,
             !RigExecBakedAddConstraintOp(B, builder, layout, o, error))
             return false;
         if ((family == F::SpaceCheckpoint || family == F::PoseInterpolator ||
-             family == F::RestCompose) &&
+             family == F::RestCompose || family == F::LadderCompose) &&
             !RigExecBakedAddComposeOp(B, builder, layout, o, error))
             return false;
         if (family == F::Solver &&

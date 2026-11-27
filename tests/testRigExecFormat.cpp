@@ -517,6 +517,73 @@ _RestStep(RigExecWireFile &f, uint32_t group)
     return step;
 }
 
+// A LadderCompose op node of compose group \p group (lookups 44 on input
+// ports equal to their read, its nine outputs into target 44), and the
+// OpNode step that runs it.
+fb::RigExecWireStep
+_LadderStep(RigExecWireFile &f, uint32_t group)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    uint32_t entry = 0;
+    while (entry < f.manifest->coreOps.size() &&
+           f.manifest->coreOps[entry]->name != "LadderCompose")
+        ++entry;
+    if (entry == f.manifest->coreOps.size()) {
+        auto added = std::make_unique<fb::RigExecWireManifestEntry>();
+        added->nameSpace = "rig";
+        added->name = "LadderCompose";
+        added->version = 1;
+        f.manifest->coreOps.push_back(std::move(added));
+    }
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = entry;
+    const int32_t slot = f.pose->composeGroups[group].begin;
+    const uint32_t reads = f.slotMeta->parent[size_t(slot)] >= 0 ? 8 : 6;
+    for (uint32_t read = 0; read < reads; ++read) {
+        auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+        in->port = read;
+        in->host = 4;
+        in->object = uint32_t(f.opGraph->lookups.size());
+        op->inputs.push_back(std::move(in));
+        auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+        lookup->source = 44;
+        lookup->object = group;
+        lookup->part = -1;
+        lookup->read = uint8_t(read);
+        f.opGraph->lookups.push_back(std::move(lookup));
+    }
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    for (uint32_t port = 8; port <= 16; ++port) {
+        auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+        output->node = node;
+        output->port = port;
+        output->target = 44;
+        output->object = group;
+        f.opGraph->hostOutputs.push_back(std::move(output));
+    }
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    step.part = -1;
+    step.isHead = true;
+    return step;
+}
+
+// Whether \p step runs a LadderCompose op node.
+bool
+_IsLadderStep(const RigExecWireFile &f, const fb::RigExecWireStep &step)
+{
+    if (step.kind != fb::StepKind::OpNode || !f.opGraph)
+        return false;
+    for (const auto &output : f.opGraph->hostOutputs)
+        if (output && output->node == uint64_t(step.object) &&
+            output->target == 44)
+            return true;
+    return false;
+}
+
 // Whether \p step runs a RestCompose op node.
 bool
 _IsRestStep(const RigExecWireFile &f, const fb::RigExecWireStep &step)
@@ -551,7 +618,7 @@ _DeclareFixtureStageFrames(RigExecWireFile &f)
     using K = fb::StepKind;
     const auto prep = [&f](const RigExecWireStep &step) {
         return RigExecFormatPropertyPart(f, step, nullptr, nullptr) ||
-               _IsRestStep(f, step) || step.kind == K::LadderCompose ||
+               _IsRestStep(f, step) || _IsLadderStep(f, step) ||
                step.kind == K::SkinTopology;
     };
     std::map<std::pair<D, uint32_t>, std::vector<size_t>> producers;
@@ -1172,10 +1239,7 @@ _AddFixtureHeads(RigExecWireFile &f)
         fb::RigExecWireStep rest = _RestStep(f, 0);
         rest.writes = {
             fb::SlotRange(fb::SlotDomain::Rest, group.begin, group.end)};
-        fb::RigExecWireStep ladder = rest;
-        ladder.kind = fb::StepKind::LadderCompose;
-        ladder.object = 0;
-        ladder.part = 1;
+        fb::RigExecWireStep ladder = _LadderStep(f, 0);
         ladder.reads = rest.writes;
         ladder.writes = {
             fb::SlotRange(fb::SlotDomain::Ladder, group.begin, group.end)};
@@ -1707,12 +1771,11 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 64 &&
-                      RigExecFormatOldestReadable == 64,
-                  "format 64 retires the commit candidates lookup and is the "
-                  "only format Open reads");
-    // Every older format requires re-export: it may read commit candidates
-    // through a lookup.
+    static_assert(RigExecFormatVersion == 68 &&
+                      RigExecFormatOldestReadable == 68,
+                  "format 68 runs the remaining step 10 families as op nodes "
+                  "and is the only format Open reads");
+    // Every older format requires re-export: it may hold retired steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
@@ -1723,14 +1786,13 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 64 through " +
+            " (this reader reads 68 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 64 ? "re-export: commit candidates from op nodes"
-                          : "rebake");
+            (version < 68 ? "re-export: step 10 op nodes" : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 64 ? reexports : rebakes);
+        ++(version < 68 ? reexports : rebakes);
     }
-    CHECK(reexports == 64 && rebakes == 1);
+    CHECK(reexports == 68 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
