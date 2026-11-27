@@ -3778,3 +3778,16 @@ foreach(_rigexec_math_user
         target_link_libraries(${_rigexec_math_user} PRIVATE rigExecMathGf)
     endif()
 endforeach()
+
+# These include eval-core, runtime or binary headers, which reach the vendored
+# FlatBuffers headers, and link no library that carries that include path.
+foreach(_rigexec_flatbuffers_user
+        testRigExecClothKernel
+        testRigExecOpValues
+        testRigExecSceneExternalOps
+    )
+    if(TARGET ${_rigexec_flatbuffers_user})
+        target_link_libraries(${_rigexec_flatbuffers_user}
+            PRIVATE rigExecFlatBuffers)
+    endif()
+endforeach()
