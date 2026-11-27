@@ -16,6 +16,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -248,8 +249,16 @@ TestProviderRefresh()
                  &blocking}));
     CHECK(SameBits(h.Out<PointFrame>(0), before));
     CHECK(SameBits(h.Out<PointFrame>(1), before));
+    // A degenerate current frame keeps the refreshed base and the entering
+    // current; a non-finite one is an error.
     const PointFrame degenerate = Moved(2, 0, 0, 1 | 2);
-    CHECK(!h.Run({&before, &before, &raw, &degenerate, &none, &carry, &carry,
+    CHECK(h.Run({&before, &before, &raw, &degenerate, &none, &carry, &carry,
+                 &blocking}));
+    CHECK(SameBits(h.Out<PointFrame>(0), raw));
+    CHECK(SameBits(h.Out<PointFrame>(1), before));
+    PointFrame nonFinite = current;
+    nonFinite.points[0][0] = std::numeric_limits<double>::quiet_NaN();
+    CHECK(!h.Run({&before, &before, &raw, &nonFinite, &none, &carry, &carry,
                   &blocking}));
     CHECK(h.error.find("ProviderRefresh") != std::string::npos);
     PointFrame moving = current;

@@ -83,7 +83,9 @@ const rigExec::RigExecOpHandle &ProviderRefresh();
 // carried descendants' entering versions; BlockingParents (Mat4dArray) the
 // parent spaces between each descendant and the provider, in payload order,
 // any not identity holding the descendant in place. BaseOut, FinalOut
-// (PointFrame), CarryBaseOut and CarryFinalOut (PointFrameList).
+// (PointFrame), CarryBaseOut and CarryFinalOut (PointFrameList). A frame
+// that maps to no transform keeps what the refresh could measure and the
+// entering frames for the rest; an absent or non-finite input is an error.
 const rigExec::RigExecPortHandle &ProviderRefreshBase();
 const rigExec::RigExecPortHandle &ProviderRefreshFinal();
 const rigExec::RigExecPortHandle &ProviderRefreshRaw();

@@ -10,6 +10,7 @@
 #include "rigExecMath/switchMathKernel.h"
 #include "rigExecRigTypes/rigTypes.h"
 
+#include <cmath>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -286,6 +287,36 @@ RefreshFailure(rigExec::RigExecProviderRefreshOutcome outcome)
 }
 
 bool
+Finite(const PointFrame &frame)
+{
+    for (const auto &point : frame.points)
+        for (size_t a = 0; a < 3; ++a)
+            if (!std::isfinite(point[a]))
+                return false;
+    return true;
+}
+
+/// Whether every frame the refresh reads is finite. Where they are, a frame
+/// that maps to no transform is a geometric degeneracy: the refresh keeps
+/// the frames the kernel left, its entering ones where it found no delta.
+bool
+RefreshInputsFinite(const RigExecOpIo &io,
+                    const RigExecArray<PointFrame> &carryBase,
+                    const RigExecArray<PointFrame> &carryFinal)
+{
+    for (const rigExec::RigExecPortHandle *port :
+         {&ProviderRefreshBase(), &ProviderRefreshFinal(),
+          &ProviderRefreshRaw(), &ProviderRefreshCurrent()})
+        if (const PointFrame *frame = In<PointFrame>(io, *port);
+            frame && !Finite(*frame))
+            return false;
+    for (size_t k = 0; k < carryBase.Size(); ++k)
+        if (!Finite(carryBase[k]) || !Finite(carryFinal[k]))
+            return false;
+    return true;
+}
+
+bool
 ProviderRefreshOne(const RigExecOpBatch &batch, size_t k, std::string *error)
 {
     const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
@@ -335,6 +366,12 @@ ProviderRefreshOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         carryFinalOut.Data(), &failedCarry);
     const char *failure = RefreshFailure(outcome);
     if (!failure)
+        return true;
+    using O = rigExec::RigExecProviderRefreshOutcome;
+    if (outcome != O::MissingBase && outcome != O::MissingCurrent &&
+        RefreshInputsFinite(io, carryBase, carryFinal) &&
+        (outcome != O::InvalidTransformedDescendant ||
+         Finite(carryFinalOut[failedCarry])))
         return true;
     std::string why = failure;
     if (outcome == rigExec::RigExecProviderRefreshOutcome::InvalidDescendant ||
