@@ -1185,7 +1185,8 @@ enum class StepKind : uint8_t {
   /// Reserved. Open refuses it.
   ReservedProviderMatrix = 7,
   SnapshotFinals = 8,
-  PoseInterpolator = 9,
+  /// Reserved. Open refuses it.
+  ReservedPoseInterpolator = 9,
   /// Reserved. Open refuses it.
   ReservedVolumePlacements = 10,
   /// Reserved. Open refuses it.
@@ -1237,7 +1238,7 @@ inline const StepKind (&EnumValuesStepKind())[33] {
     StepKind::ReservedCommitApply,
     StepKind::ReservedProviderMatrix,
     StepKind::SnapshotFinals,
-    StepKind::PoseInterpolator,
+    StepKind::ReservedPoseInterpolator,
     StepKind::ReservedVolumePlacements,
     StepKind::ReservedWeightPacket,
     StepKind::InfluenceFold,
@@ -1276,7 +1277,7 @@ inline const char * const *EnumNamesStepKind() {
     "ReservedCommitApply",
     "ReservedProviderMatrix",
     "SnapshotFinals",
-    "PoseInterpolator",
+    "ReservedPoseInterpolator",
     "ReservedVolumePlacements",
     "ReservedWeightPacket",
     "InfluenceFold",
@@ -22501,6 +22502,11 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// parent default inverses, 5 parent expressions and 6 whether each was
   /// authored, 7 whether the posed matrix was authored and 8 that matrix,
   /// 9 its anchor's posed matrix.
+  /// 42 (format 52): input `read` (OpInterpolatorRead,
+  /// rigExecEvalCore/opSteps.h) of pose interpolator `object`: 0
+  /// inputs:enabled, 1 its numeric driver values, 2 inputs:mask, 3 and 4
+  /// its driver's last fin and rest frames, 5 and 6 its parent's, 7 to 10
+  /// its extra drivers' and their parents' (lists).
   uint8_t source() const {
     return GetField<uint8_t>(VT_SOURCE, 0);
   }
@@ -22630,6 +22636,8 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// 40 (format 52): an AvarInputs node's values into provider slot
   /// `object`'s bound avars, in ascending channel order; 41 (format 52):
   /// space checkpoint `object`'s switch frame;
+  /// 42 (format 52): pose interpolator `object`'s weights, one per pose in
+  /// its solve's order; the rest of its weight range publishes zero.
   /// 4 (format 42): a range chain member's output, group by group, into
   /// the vertex groups of revision `object` (geometry.revision_index), the
   /// groups its OpChain.writes names. 6 (format 44): the looked-up

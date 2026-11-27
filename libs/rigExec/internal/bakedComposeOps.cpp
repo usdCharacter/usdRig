@@ -2,8 +2,10 @@
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecMath/avarScale.h"
 #include "rigExecOps/pose/poseOps.h"
+#include "rigExecRigTypes/rigTypes.h"
 #include "rigExecStdTypes/array.h"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -185,6 +187,248 @@ AddCheckpointOp(const RigExecBakedProgramImpl &B,
     return true;
 }
 
+/// Pose interpolator \p interp's solve and tables as its PoseInterpolator
+/// payload.
+void
+InterpolatorPayload(const RigExecBakedProgramImpl::PoseInterpolator &interp,
+                    rigExecOps::PoseInterpolatorPayload *payload)
+{
+    using rigExecOps::PoseSolve;
+    payload->poseCount = interp.poseSlots.size();
+    payload->enableTranslation = interp.enableTranslation;
+    payload->allowNegativeWeights = interp.allowNegativeWeights;
+    const auto vector = [](const GfVec3d &v) {
+        return rigExecStd::Vec3d(v[0], v[1], v[2]);
+    };
+    if (interp.mapsSolve && interp.maps) {
+        payload->solve = PoseSolve::Maps;
+        const RigExecAnimatedMapsTable &table = *interp.maps;
+        payload->mapsInputCount = table.inputCount;
+        for (const RigExecConditionalRow &row : table.rows) {
+            payload->mapRowInputs.push_back(int32_t(row.input));
+            payload->mapRowFrom.push_back(row.from);
+            payload->mapRowTo.push_back(row.to);
+            payload->mapRowSlope.push_back(row.slope);
+            payload->mapRowCut.push_back(row.cut);
+        }
+        for (const size_t begin : table.mapBegin)
+            payload->mapBegin.push_back(begin);
+        for (size_t m = 0; m < table.MapCount(); ++m)
+            payload->mapUnclamped.push_back(table.Clamps(m) ? 0 : 1);
+    } else if (interp.mlSolve && interp.network) {
+        payload->solve = PoseSolve::Network;
+        const RigExecMlNetwork &net = *interp.network;
+        payload->networkInputCount = net.inputCount;
+        for (const RigExecMlLayer &layer : net.layers) {
+            payload->networkLayerSizes.push_back(int32_t(layer.outputCount));
+            payload->networkActivations.push_back(uint32_t(layer.activation));
+            payload->networkAlphas.push_back(float(layer.alpha));
+        }
+        const size_t biasBegin =
+            net.layers.empty() ? 0 : net.layers.front().biasOffset;
+        payload->networkWeights.assign(net.parameters.begin(),
+                                       net.parameters.begin() + biasBegin);
+        payload->networkBiases.assign(net.parameters.begin() + biasBegin,
+                                      net.parameters.end());
+        payload->networkInputMean = net.inputMean;
+        payload->networkInputScale = net.inputScale;
+        payload->networkDefaults = net.defaults;
+    } else if (interp.rigLogicSolve) {
+        payload->solve = PoseSolve::RbfMethod;
+        const RigExecRbfMethodTable &table = interp.method;
+        payload->methodSolverType = uint32_t(table.solverType);
+        payload->methodDistance = uint32_t(table.distanceMethod);
+        payload->methodWeightFunction = uint32_t(table.weightFunction);
+        payload->methodNormalize = uint32_t(table.normalizeMethod);
+        payload->methodTwistAxis = uint32_t(table.twistAxis);
+        payload->methodRawCount = table.rawCount;
+        payload->methodTargetCount = table.targetCount;
+        payload->methodRadius = table.radius;
+        payload->methodWeightThreshold = table.weightThreshold;
+        payload->methodTargets = table.targets;
+        payload->methodDistanceTargets = table.distanceTargets;
+        payload->methodTargetScales = table.targetScales;
+        payload->methodCoefficients = table.coefficients;
+    } else {
+        const RigExecRbfSolver &solver = interp.solver;
+        for (const GfVec3d &p : solver.GetPoses())
+            payload->rbfPoses.push_back(vector(p));
+        for (const GfVec3d &t : solver.GetTranslations())
+            payload->rbfTranslations.push_back(vector(t));
+        for (const RigExecRbfPoseType type : solver.GetPoseTypes())
+            payload->rbfPoseTypes.push_back(uint32_t(type));
+        payload->rbfTwistAxis = vector(solver.GetTwistAxis());
+        payload->rbfKernel = uint32_t(solver.GetKernel());
+        payload->rbfRadius = solver.GetRadius();
+        payload->rbfTranslationRadius = solver.GetTranslationRadius();
+        payload->rbfRadii = solver.GetRadii();
+        payload->rbfTranslationRadii = solver.GetTranslationRadii();
+        payload->rbfNormalize = solver.GetNormalize();
+        payload->rbfEnableRotation = solver.GetEnableRotation();
+        payload->rbfEnableTranslation = solver.GetEnableTranslation();
+        payload->rbfWeightRows = solver.GetWeights().size();
+        for (const auto &row : solver.GetWeights())
+            payload->rbfWeights.insert(payload->rbfWeights.end(), row.begin(),
+                                       row.end());
+    }
+    if (payload->solve == PoseSolve::RbfMethod ||
+        payload->solve == PoseSolve::Network)
+        for (const int parent : interp.extraParentSlots)
+            payload->extraParents.push_back(parent >= 0);
+}
+
+/// Whether pose interpolator \p interp's node reads extra driver frames.
+bool
+ReadsExtraDrivers(const RigExecBakedProgramImpl::PoseInterpolator &interp)
+{
+    return (interp.rigLogicSolve || (interp.mlSolve && interp.network)) &&
+           !(interp.mapsSolve && interp.maps) &&
+           !interp.extraDriverSlots.empty();
+}
+
+void
+PutFrame(const RigExecPointFrame &frame, rigExecRig::PointFrame *out)
+{
+    for (size_t i = 0; i < 4; ++i)
+        out->points[i] = rigExecStd::Vec3d(
+            frame.points[i][0], frame.points[i][1], frame.points[i][2]);
+    out->flags = frame.flags;
+}
+
+/// Answers input \p read of pose interpolator \p object's node: its leaves
+/// as the prologue sampled them, its drivers' last fin versions and rest
+/// frames.
+bool
+LookUpInterpolator(const RigExecBakedProgramImpl &B, uint32_t object,
+                   eval::OpInterpolatorRead read, const RigExecTypeDesc &type,
+                   void *value)
+{
+    using R = eval::OpInterpolatorRead;
+    using Frame = rigExecRig::PointFrame;
+    const auto &interp = B.poseInterpolators[object];
+    const auto frame = [&](int slot, bool final) {
+        if (slot < 0 || type.size != sizeof(Frame))
+            return false;
+        PutFrame(final ? B.fin[size_t(B.finLast[size_t(slot)])]
+                       : B.restFrames[size_t(slot)],
+                 static_cast<Frame *>(value));
+        return true;
+    };
+    const auto frames = [&](bool parents, bool final) {
+        size_t count = 0;
+        for (size_t e = 0; e < interp.extraDriverSlots.size(); ++e)
+            count += !parents || interp.extraParentSlots[e] >= 0;
+        if (!type.resize || !type.data)
+            return false;
+        type.resize(value, count);
+        Frame *out = static_cast<Frame *>(type.data(value));
+        for (size_t e = 0, k = 0; e < interp.extraDriverSlots.size(); ++e) {
+            const int slot = parents ? interp.extraParentSlots[e]
+                                     : interp.extraDriverSlots[e];
+            if (slot < 0)
+                continue;
+            PutFrame(final ? B.fin[size_t(B.finLast[size_t(slot)])]
+                           : B.restFrames[size_t(slot)],
+                     &out[k++]);
+        }
+        return true;
+    };
+    switch (read) {
+    case R::Enabled:
+        if (type.size != sizeof(uint8_t))
+            return false;
+        *static_cast<uint8_t *>(value) =
+            RigExecBakedLeafRead(B, interp.enabled) ? 1 : 0;
+        return true;
+    case R::Numeric:
+        return FillList<double>(
+            type, value, interp.valueInputs.size(), [&](size_t i) {
+                return i < interp.valueIsFloat.size() && interp.valueIsFloat[i]
+                           ? double(RigExecBakedLeafRead(
+                                 B, interp.floatValueInputs[i]))
+                           : RigExecBakedLeafRead(B, interp.valueInputs[i]);
+            });
+    case R::Mask:
+        if (type.size != sizeof(double))
+            return false;
+        *static_cast<double *>(value) =
+            double(RigExecBakedLeafRead(B, interp.mask));
+        return true;
+    case R::DriverFinal:
+        return frame(interp.driverSlot, true);
+    case R::DriverRest:
+        return frame(interp.driverSlot, false);
+    case R::ParentFinal:
+        return frame(interp.parentSlot, true);
+    case R::ParentRest:
+        return frame(interp.parentSlot, false);
+    case R::ExtraFinals:
+        return frames(false, true);
+    case R::ExtraRests:
+        return frames(false, false);
+    case R::ExtraParentFinals:
+        return frames(true, true);
+    case R::ExtraParentRests:
+        return frames(true, false);
+    }
+    return false;
+}
+
+/// The PoseInterpolator node of pose interpolator \p object: its leaves and
+/// driver frames in, its weights out.
+bool
+AddInterpolatorOp(const RigExecBakedProgramImpl &B,
+                  RigExecRigDescBuilder *builder, eval::OpStepLayout *layout,
+                  size_t o, uint32_t object, std::string *error)
+{
+    using namespace rigExecOps;
+    using R = eval::OpInterpolatorRead;
+    const auto &interp = B.poseInterpolators[object];
+    PoseInterpolatorPayload payload;
+    InterpolatorPayload(interp, &payload);
+    const RigExecNodeId node = builder->AddOp(PoseInterpolator(), &payload);
+    if (node != o)
+        return Fail(error, "pose interpolator " + std::to_string(object) +
+                               " was added as node " + std::to_string(node));
+    const auto feed = [&](const RigExecPortHandle &port, R read) {
+        builder->BindInput(node, port);
+        layout->hostInputs.push_back({node, port.Index(),
+                                      eval::OpHostSource::Lookup,
+                                      uint32_t(layout->lookups.size())});
+        layout->lookups.push_back(
+            {uint8_t(eval::OpLookupSource::InterpolatorInputs), object, -1,
+             uint8_t(read)});
+    };
+    feed(PoseInterpolatorEnabled(), R::Enabled);
+    if (!interp.valueInputs.empty())
+        feed(PoseInterpolatorNumeric(), R::Numeric);
+    if (payload.solve == PoseSolve::Network)
+        feed(PoseInterpolatorMask(), R::Mask);
+    if (interp.driverSlot >= 0) {
+        feed(PoseInterpolatorDriverFinal(), R::DriverFinal);
+        feed(PoseInterpolatorDriverRest(), R::DriverRest);
+        if (interp.parentSlot >= 0) {
+            feed(PoseInterpolatorParentFinal(), R::ParentFinal);
+            feed(PoseInterpolatorParentRest(), R::ParentRest);
+        }
+    }
+    if (ReadsExtraDrivers(interp)) {
+        feed(PoseInterpolatorExtraFinals(), R::ExtraFinals);
+        feed(PoseInterpolatorExtraRests(), R::ExtraRests);
+        if (std::any_of(interp.extraParentSlots.begin(),
+                        interp.extraParentSlots.end(),
+                        [](int parent) { return parent >= 0; })) {
+            feed(PoseInterpolatorExtraParentFinals(), R::ExtraParentFinals);
+            feed(PoseInterpolatorExtraParentRests(), R::ExtraParentRests);
+        }
+    }
+    builder->BindOutput(node, PoseInterpolatorOut());
+    layout->hostOutputs.push_back({node, PoseInterpolatorOut().Index(),
+                                   uint8_t(eval::OpOutputTarget::PoseWeights),
+                                   object});
+    return true;
+}
+
 } // namespace
 
 bool
@@ -199,6 +443,11 @@ RigExecBakedAddComposeOp(const RigExecBakedProgramImpl &B,
         size_t(origin.object) < B.switchFrameContexts.size())
         return AddCheckpointOp(B, builder, layout, o, uint32_t(origin.object),
                                error);
+    if (origin.family == RigExecBakedOpFamily::PoseInterpolator &&
+        origin.object >= 0 &&
+        size_t(origin.object) < B.poseInterpolators.size())
+        return AddInterpolatorOp(B, builder, layout, o, uint32_t(origin.object),
+                                 error);
     return Fail(error, "node " + std::to_string(o) + " has no compose origin");
 }
 
@@ -259,6 +508,16 @@ RigExecBakedLookUpCompose(const RigExecBakedProgramImpl &B,
                           const RigExecTypeDesc &type, void *value,
                           std::string *error)
 {
+    if (lookup.source == uint8_t(eval::OpLookupSource::InterpolatorInputs)) {
+        if (lookup.object < B.poseInterpolators.size() &&
+            LookUpInterpolator(B, lookup.object,
+                               eval::OpInterpolatorRead(lookup.read), type,
+                               value))
+            return true;
+        return Fail(error, "pose interpolator " +
+                               std::to_string(lookup.object) +
+                               " has no input " + std::to_string(lookup.read));
+    }
     if (lookup.source == uint8_t(eval::OpLookupSource::CheckpointInputs)) {
         if (lookup.object < B.switchFrameContexts.size() &&
             LookUpCheckpoint(B, lookup.object,
@@ -284,6 +543,27 @@ RigExecBakedStoreCompose(RigExecBakedProgramImpl &B,
                          const eval::OpHostOutput &output, const void *value,
                          std::string *error)
 {
+    if (output.target == uint8_t(eval::OpOutputTarget::PoseWeights)) {
+        const auto &weights =
+            *static_cast<const rigExecStd::RigExecArray<float> *>(value);
+        if (output.object >= B.poseInterpolators.size() ||
+            weights.Size() !=
+                B.poseInterpolators[output.object].poseSlots.size())
+            return Fail(error, "pose interpolator " +
+                                   std::to_string(output.object) +
+                                   " stores no " +
+                                   std::to_string(weights.Size()) + " weights");
+        const auto &interp = B.poseInterpolators[output.object];
+        for (int slot = interp.weightBegin; slot < interp.weightEnd; ++slot)
+            B.poseWeights[size_t(slot)] = 0.0f;
+        for (size_t i = 0; i < interp.poseSlots.size(); ++i)
+            B.poseWeights[size_t(interp.poseSlots[i])] = weights[i];
+        for (size_t j = 0; j < interp.primvarSlots.size(); ++j)
+            B.poseWeights[size_t(interp.primvarSlots[j])] =
+                B.poseWeights[size_t(
+                    interp.poseSlots[size_t(interp.primvarSources[j])])];
+        return true;
+    }
     if (output.target == uint8_t(eval::OpOutputTarget::SwitchFrame)) {
         if (output.object >= B.switchFrames.size())
             return Fail(error,

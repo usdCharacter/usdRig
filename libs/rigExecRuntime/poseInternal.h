@@ -200,24 +200,6 @@ struct RrPoseScratch {
     std::vector<uint32_t> lastRotOrder;
     // A drag stood last run, so this run writes the constant avars back.
     bool avarsDisturbed = false;
-    // Interpolator enables, read by the prologue so the step reads no
-    // input table.
-    std::vector<char> interpEnabled;
-    // A numeric driver's dials, read there for the same reason. Three per
-    // interpolator, one per axis; a transform-driven one leaves them at
-    // zero and never looks.
-    std::vector<std::vector<double>> interpValues;
-    std::vector<double> interpMasks;
-    // The reconstituted RBF solvers plus one step's own scratch.
-    std::vector<RrRbfSolver> interpSolvers;
-    /// RigLogic solves, reconstituted from the wire; empty tables for the
-    /// pose solver.
-    std::vector<RigExecRbfMethodTable> interpMethods;
-    /// ML movers' networks, reconstituted from the wire; empty otherwise.
-    std::vector<RigExecMlNetwork> interpNetworks;
-    /// Animated maps' tables, reconstituted from the wire; empty otherwise.
-    std::vector<RigExecAnimatedMapsTable> interpMaps;
-    std::vector<std::vector<double>> interpScratch;
     // Solver live rests and per-run elements.
     std::vector<RrPoseSolverState> solvers;
     // A constraint commit's exit flags, written by its constraint step on

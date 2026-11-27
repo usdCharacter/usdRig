@@ -393,7 +393,6 @@ RigExecBakedProgram::_BuildPoseInterpolators(_BuildAttempt &build)
                 isFloat ? ctx.Bind<float>(owner, valueName, 0.0f)
                         : RigExecBakedInput<float>());
         }
-        out.values.assign(out.valueInputs.size(), 0.0);
         const auto addWeight = [&B](const SdfPath &weight) {
             const int slot = int(B.poseWeightPaths.size());
             B.poseWeightPaths.push_back(weight);
@@ -413,8 +412,6 @@ RigExecBakedProgram::_BuildPoseInterpolators(_BuildAttempt &build)
         }
         out.weightEnd = int(B.poseWeightPaths.size());
         out.poseCount = out.poseSlots.size();
-        out.kernelInputs.numeric.resize(out.valueInputs.size());
-        out.kernelInputs.extraDrivers.resize(out.extraDriverSlots.size());
         B.poseInterpolators.push_back(std::move(out));
     }
     B.poseWeights.assign(B.poseWeightPaths.size(), 0.0f);

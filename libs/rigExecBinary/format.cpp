@@ -598,6 +598,7 @@ public:
         _commitNode.assign(nodes, -1);
         _avarNode.assign(nodes, -1);
         _checkpointNode.assign(nodes, -1);
+        _interpolatorNode.assign(nodes, -1);
         _refreshOf.assign(nodes, -1);
         _providerOpOf.assign(nodes, -1);
         _constraintNode.assign(nodes, -1);
@@ -647,6 +648,10 @@ public:
             if (output && output->node < nodes && output->target == 41 &&
                 _checkpointNode[output->node] < 0)
                 _checkpointNode[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 42 &&
+                _interpolatorNode[output->node] < 0)
+                _interpolatorNode[output->node] = int64_t(output->object);
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node < nodes && output->target == 5 &&
                 _fieldStored[output->node] < 0)
@@ -744,7 +749,7 @@ private:
         std::vector<uint8_t> stored, packets, fields, groupsStored,
             enabledStored;
         std::set<std::pair<uint64_t, uint8_t>> providerStored, answerStored;
-        std::set<uint64_t> avarsStored, checkpointsStored;
+        std::set<uint64_t> avarsStored, checkpointsStored, weightsStored;
         std::vector<uint8_t> spaceStored(
             4 * std::max<size_t>(_slots, _f.pose->frameRecords.size()), 0);
         for (const auto &output : _f.opGraph->hostOutputs) {
@@ -754,8 +759,8 @@ private:
             const bool constraint = _ConstraintTarget(output->target);
             if ((output->target > 6 && output->target < 20) ||
                 (output->target > 34 && !constraint && output->target != 40 &&
-                 output->target != 41 && output->target != 50 &&
-                 output->target != 51 &&
+                 output->target != 41 && output->target != 42 &&
+                 output->target != 50 && output->target != 51 &&
                  (output->target < 52 || output->target > 54)))
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
@@ -805,6 +810,32 @@ private:
                     return _Bad("op_graph.host_outputs: the switch frame of "
                                 "checkpoint " +
                                 _N(output->object) + " is stored twice");
+                continue;
+            }
+            if (output->target == 42) {
+                bool reads = false;
+                if (_f.opGraph->nodes[node])
+                    for (const auto &input : _f.opGraph->nodes[node]->inputs)
+                        reads =
+                            reads ||
+                            (input && input->host == 4 &&
+                             input->object < _f.opGraph->lookups.size() &&
+                             _f.opGraph->lookups[input->object] &&
+                             _f.opGraph->lookups[input->object]->source == 42 &&
+                             _f.opGraph->lookups[input->object]->object ==
+                                 output->object);
+                if (!_f.pose ||
+                    output->object >= _f.pose->poseInterpolators.size() ||
+                    !reads ||
+                    _interpolatorNode[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the weights of pose interpolator " +
+                                _N(output->object) +
+                                ", whose inputs it does not read");
+                if (!weightsStored.insert(output->object).second)
+                    return _Bad("op_graph.host_outputs: the weights of pose "
+                                "interpolator " +
+                                _N(output->object) + " are stored twice");
                 continue;
             }
             if (output->target == 40) {
@@ -1067,6 +1098,14 @@ private:
                                 _N(lookup->object) + " holds");
                 continue;
             }
+            if (lookup && lookup->source == 42) {
+                if (!_f.pose ||
+                    lookup->object >= _f.pose->poseInterpolators.size() ||
+                    lookup->part != -1 || lookup->read > 10)
+                    return _Bad("op_graph.lookups: an interpolator inputs "
+                                "lookup reads no input of a pose interpolator");
+                continue;
+            }
             if (lookup && lookup->source == 41) {
                 if (!_f.pose ||
                     lookup->object >= _f.pose->spaceCheckpoints.size() ||
@@ -1292,6 +1331,9 @@ private:
             if (kind == fb::StepKind::ReservedSpaceCheckpoint)
                 return _Bad(_StepName(i) +
                             ": the retired SpaceCheckpoint step");
+            if (kind == fb::StepKind::ReservedPoseInterpolator)
+                return _Bad(_StepName(i) +
+                            ": the retired PoseInterpolator step");
             const bool op = kind == fb::StepKind::OpNode ||
                             kind == fb::StepKind::OpChainHead ||
                             kind == fb::StepKind::OpChainRange;
@@ -1631,6 +1673,10 @@ private:
                            _checkpointNode[n] != object) {
                     return bad(" reads the inputs of a checkpoint its node "
                                "does not store");
+                } else if (lookup.source == 42 &&
+                           _interpolatorNode[n] != object) {
+                    return bad(" reads the inputs of a pose interpolator its "
+                               "node does not store");
                 }
             }
             if (_placementSlot[n] >= 0 && poses != 1)
@@ -2786,6 +2832,16 @@ private:
                    : -1;
     }
 
+    /// The pose interpolator whose weights the op step \p step stores, or -1
+    /// for any other step.
+    int64_t _InterpolatorOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _interpolatorNode.size()
+                   ? _interpolatorNode[size_t(step.object)]
+                   : -1;
+    }
+
     /// The space checkpoint whose switch frame the op step \p step stores,
     /// or -1 for any other step.
     int64_t _CheckpointOf(const fb::RigExecWireStep &step) const
@@ -3091,6 +3147,9 @@ private:
             if (step.kind == fb::StepKind::ReservedSpaceCheckpoint)
                 return _Bad(_StepName(i) +
                             ": the retired SpaceCheckpoint step");
+            if (step.kind == fb::StepKind::ReservedPoseInterpolator)
+                return _Bad(_StepName(i) +
+                            ": the retired PoseInterpolator step");
             if (!_SpaceOp(i))
                 return false;
             if (const int64_t object = _PacketObjectOf(step); object >= 0) {
@@ -5212,12 +5271,11 @@ private:
                 for (size_t k = 0; k < solver.restReads.size(); ++k)
                     if (k < solver.restIsLive.size() && solver.restIsLive[k])
                         read(D::PoseFin, solver.restReads[k]);
-            } else if (step.kind == K::PoseInterpolator) {
-                if (!_Has(pose.poseInterpolators, step.object))
+            } else if (const int64_t ip = _InterpolatorOf(step); ip >= 0) {
+                if (!_Has(pose.poseInterpolators, ip))
                     return _Bad(_StepName(owner) +
                                 ": interpolator body object out of range");
-                const auto &interp =
-                    pose.poseInterpolators[size_t(step.object)];
+                const auto &interp = pose.poseInterpolators[size_t(ip)];
                 if (interp.driverSlot >= 0)
                     read(D::PoseFin, finLast[size_t(interp.driverSlot)]);
                 if (interp.parentSlot >= 0)
@@ -6431,10 +6489,9 @@ private:
                                 return false;
                 }
             }
-            if (step.kind == fb::StepKind::PoseInterpolator &&
-                _Has(_f.pose->poseInterpolators, step.object)) {
-                const auto &interp =
-                    _f.pose->poseInterpolators[size_t(step.object)];
+            if (const int64_t ip = _InterpolatorOf(step);
+                ip >= 0 && _Has(_f.pose->poseInterpolators, ip)) {
+                const auto &interp = _f.pose->poseInterpolators[size_t(ip)];
                 if (interp.valueInputs.empty() &&
                     (!require(fb::SlotDomain::Rest, interp.driverSlot) ||
                      !require(fb::SlotDomain::Rest, interp.parentSlot)))
@@ -6934,6 +6991,18 @@ private:
                  raw % 4 != 0)) {
                 return _Bad(row + ".method: malformed RigLogic solve");
             }
+        }
+        const auto inRange = [&](int slot) {
+            return slot >= interp.weightBegin && slot < interp.weightEnd;
+        };
+        if (interp.weightBegin < 0 || interp.weightBegin > interp.weightEnd ||
+            size_t(interp.weightEnd) > _f.pose->poseWeightPaths.size() ||
+            !std::all_of(interp.poseSlots.begin(), interp.poseSlots.end(),
+                         inRange) ||
+            !std::all_of(interp.disabledSlots.begin(),
+                         interp.disabledSlots.end(), inRange)) {
+            return _Bad(row + ": pose and disabled slots must lie in its "
+                              "weight range");
         }
         if (interp.primvarSlots.size() != interp.primvarSources.size() ||
             (!interp.maps && !interp.primvarSlots.empty())) {
@@ -10351,6 +10420,8 @@ private:
     std::vector<int64_t> _avarNode;
     /// Per op node: the space checkpoint whose switch frame it stores, or -1.
     std::vector<int64_t> _checkpointNode;
+    /// Per op node: the pose interpolator whose weights it stores, or -1.
+    std::vector<int64_t> _interpolatorNode;
 
     /// The commit a Constraint step or PoseCommit op step works on, or -1.
     int64_t _CommitOf(const fb::RigExecWireStep &step) const
@@ -10811,8 +10882,8 @@ _StepKindName(fb::StepKind kind)
         return "ReservedProviderMatrix";
     case fb::StepKind::SnapshotFinals:
         return "SnapshotFinals";
-    case fb::StepKind::PoseInterpolator:
-        return "PoseInterpolator";
+    case fb::StepKind::ReservedPoseInterpolator:
+        return "ReservedPoseInterpolator";
     case fb::StepKind::ReservedVolumePlacements:
         return "ReservedVolumePlacements";
     case fb::StepKind::ReservedWeightPacket:
@@ -10997,6 +11068,14 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
         }
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node == uint64_t(object) &&
+                output->target == 42 && pose &&
+                _Has(pose->poseInterpolators, output->object)) {
+                *out =
+                    text(pose->poseInterpolators[size_t(output->object)].path);
+                return true;
+            }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
                 output->target == 41 && pose &&
                 _Has(pose->spaceCheckpoints, output->object)) {
                 *out = pose->spaceCheckpoints[size_t(output->object)].key;
@@ -11094,12 +11173,8 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
     }
     case fb::StepKind::ReservedFrameMatrix:
         return false;
-    case fb::StepKind::PoseInterpolator:
-        if (!pose || !_Has(pose->poseInterpolators, object)) {
-            return false;
-        }
-        *out = text(pose->poseInterpolators[size_t(object)].path);
-        return true;
+    case fb::StepKind::ReservedPoseInterpolator:
+        return false;
     case fb::StepKind::ReservedVolumePlacements:
         return false;
     case fb::StepKind::ReservedWeightPacket:

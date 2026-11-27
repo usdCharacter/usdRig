@@ -325,8 +325,34 @@ TestPoseInterpolator()
     CHECK(out.Size() == 2 && out[1] > out[0]);
     rigExecRig::PointFrame broken;
     broken.flags = 0;
-    CHECK(!h.Run({&broken, &rest}));
-    CHECK(h.error.find("no usable frame") != std::string::npos);
+    CHECK(h.Run({&broken, &rest}));
+    const auto zero = h.Out<RigExecArray<float>>(0);
+    CHECK(zero.Size() == 2 && zero[0] == 0.0f && zero[1] == 0.0f);
+
+    rigExecRig::PointFrame moving = turned;
+    std::string steadyError;
+    CHECK(opAllocationCount::SteadyFrameAllocations(
+              PoseInterpolator(), &rbf, framePorts, {&turned, &rest},
+              PoseInterpolatorOut(), 0,
+              [&](int frame) {
+                  const double angle = 0.3 + 0.05 * frame;
+                  moving.points[2] =
+                      rigExecStd::Vec3d(0.0, std::sin(angle), std::cos(angle));
+                  moving.points[3] =
+                      rigExecStd::Vec3d(0.0, -std::cos(angle), std::sin(angle));
+                  return &moving;
+              },
+              &steadyError) == 0);
+    const uint8_t enabled = 1;
+    auto dial = Doubles({0.25});
+    CHECK(opAllocationCount::SteadyFrameAllocations(
+              PoseInterpolator(), &maps, mapPorts, {&enabled, &dial},
+              PoseInterpolatorOut(), 1,
+              [&](int frame) {
+                  dial[0] = 0.1 * frame;
+                  return &dial;
+              },
+              &steadyError) == 0);
 
     PoseInterpolatorPayload uneven = rbf;
     uneven.rbfWeightRows = 1;

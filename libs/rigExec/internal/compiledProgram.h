@@ -1634,30 +1634,21 @@ struct RigExecBakedPoseInterpolator : RigExecPoseInterpolatorRecord {
     /// valueInputs the unbound default, and the other way round.
     std::vector<RigExecBakedInput<float>> floatValueInputs;
     std::vector<char> valueIsFloat;
-    std::vector<double> values;
     /// Animated maps: weight slots republishing a map's value as a mesh
     /// primvar, and the map (an index into poseSlots) each one copies.
     std::vector<int> primvarSlots;
     std::vector<int> primvarSources;
-    /// `inputs:enabled`, a per-frame input the prologue reads into
-    /// `enabledValue` so the body touches no USD.
+    /// `inputs:enabled`, a per-frame input.
     RigExecBakedInput<bool> enabled;
-    bool enabledValue = true;
     /// A RigExecMlMover's `inputs:mask` (a float), bound only when
     /// mlSolve.
     RigExecBakedInput<float> mask;
-    double maskValue = 1.0;
     /// This interpolator's slots in poseWeights: the whole range it
     /// writes, the subset the solver fills in ITS pose order, and the
     /// disabled poses' slots, which publish a hard zero.
     int weightBegin = 0, weightEnd = 0;
     std::vector<int> poseSlots;
     std::vector<int> disabledSlots;
-    /// The solved table, copied from the evaluator's compiled record: a
-    /// constant of the compiled rig, and the program is dropped with the compiled rig.
-    RigExecPoseInterpolatorInputs kernelInputs;
-    /// The solve's output, retained so a frame allocates nothing.
-    std::vector<double> scratch;
 };
 
 struct RigExecBakedAvarBinding {

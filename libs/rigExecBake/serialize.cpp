@@ -43,7 +43,9 @@ static_assert(uint8_t(RigExecBakedStepKind::ProviderMatrix) ==
                   uint8_t(RigExecWireStepKind::ReservedProviderMatrix),
               "wire step order drifted");
 _RIGEXEC_BAKE_PIN_STEP(SnapshotFinals);
-_RIGEXEC_BAKE_PIN_STEP(PoseInterpolator);
+static_assert(uint8_t(RigExecBakedStepKind::PoseInterpolator) ==
+                  uint8_t(RigExecWireStepKind::ReservedPoseInterpolator),
+              "wire step order drifted");
 static_assert(uint8_t(RigExecBakedStepKind::VolumePlacements) ==
                   uint8_t(RigExecWireStepKind::ReservedVolumePlacements),
               "wire step order drifted");

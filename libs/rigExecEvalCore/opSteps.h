@@ -130,6 +130,9 @@ enum class OpLookupSource : uint8_t {
     /// SpaceCheckpoint input `read` (OpCheckpointRead) reads them; Anchor
     /// its anchor's posed matrix.
     CheckpointInputs = 41,
+    /// Pose interpolator `object`'s input `read` (OpInterpolatorRead):
+    /// its leaves, or its drivers' last fin versions and rest frames.
+    InterpolatorInputs = 42,
 };
 
 /// OpLookup::read of a CheckpointInputs lookup: the SpaceCheckpoint input
@@ -145,6 +148,22 @@ enum class OpCheckpointRead : uint8_t {
     PosedAuthored,
     PosedAuthoredMatrix,
     Anchor,
+};
+
+/// OpLookup::read of an InterpolatorInputs lookup: the PoseInterpolator
+/// input it answers.
+enum class OpInterpolatorRead : uint8_t {
+    Enabled,
+    Numeric,
+    Mask,
+    DriverFinal,
+    DriverRest,
+    ParentFinal,
+    ParentRest,
+    ExtraFinals,
+    ExtraRests,
+    ExtraParentFinals,
+    ExtraParentRests,
 };
 
 /// OpLookup::read of a constraint lookup. The numbers are part of the file
@@ -338,7 +357,8 @@ constexpr bool
 OpComposeLookupSource(uint8_t source)
 {
     return source == uint8_t(OpLookupSource::AvarBindings) ||
-           source == uint8_t(OpLookupSource::CheckpointInputs);
+           source == uint8_t(OpLookupSource::CheckpointInputs) ||
+           source == uint8_t(OpLookupSource::InterpolatorInputs);
 }
 
 /// Whether a lookup of \p source answers a Mat4d that may be absent or,
@@ -484,6 +504,9 @@ enum class OpOutputTarget : uint8_t {
     Avars = 40,
     /// Mat4d: space checkpoint `object`'s switch frame.
     SwitchFrame = 41,
+    /// FloatArray: pose interpolator `object`'s weights in its solve's
+    /// pose order; its other weight slots publish zero.
+    PoseWeights = 42,
     /// Provider operation `object`'s authority and unavailable input,
     /// stored before its ProviderValueMatrix or ProviderValueFrame.
     ProviderValueAuthority = 50,
@@ -528,7 +551,8 @@ constexpr bool
 OpComposeOutputTarget(uint8_t target)
 {
     return target == uint8_t(OpOutputTarget::Avars) ||
-           target == uint8_t(OpOutputTarget::SwitchFrame);
+           target == uint8_t(OpOutputTarget::SwitchFrame) ||
+           target == uint8_t(OpOutputTarget::PoseWeights);
 }
 
 /// Whether OpLookUp resolves lookups of \p source.
@@ -1319,6 +1343,7 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
         return host.LookUpSpace(index, lookup, type, value, error);
     case OpLookupSource::AvarBindings:
     case OpLookupSource::CheckpointInputs:
+    case OpLookupSource::InterpolatorInputs:
         return host.LookUpCompose(index, lookup, type, value, error);
     }
     return OpLayoutFail(error, "no host resolves lookup source " +
@@ -1381,6 +1406,7 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
         return host.StoreSpace(output, value, error);
     case OpOutputTarget::Avars:
     case OpOutputTarget::SwitchFrame:
+    case OpOutputTarget::PoseWeights:
         return host.StoreCompose(output, value, error);
     }
     return OpLayoutFail(error, "no host stores output target " +

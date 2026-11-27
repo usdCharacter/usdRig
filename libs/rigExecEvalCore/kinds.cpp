@@ -30,6 +30,8 @@ static_assert(static_cast<uint8_t>(fb::StepKind::ReservedAvarInputs) == 26,
               "the retired avar inputs ordinal is 26");
 static_assert(static_cast<uint8_t>(fb::StepKind::ReservedSpaceCheckpoint) == 27,
               "the retired space checkpoint ordinal is 27");
+static_assert(static_cast<uint8_t>(fb::StepKind::ReservedPoseInterpolator) == 9,
+              "the retired pose interpolator ordinal is 9");
 static_assert(static_cast<uint8_t>(fb::StepKind::ReservedSolverCommit) == 2 &&
                   static_cast<uint8_t>(fb::StepKind::ReservedCommitDelta) ==
                       4 &&
@@ -70,7 +72,8 @@ IsReservedStepKind(StepKind kind)
            kind == fb::StepKind::ReservedProviderRefresh ||
            kind == fb::StepKind::ReservedSpaceExpression ||
            kind == fb::StepKind::ReservedAvarInputs ||
-           kind == fb::StepKind::ReservedSpaceCheckpoint;
+           kind == fb::StepKind::ReservedSpaceCheckpoint ||
+           kind == fb::StepKind::ReservedPoseInterpolator;
 }
 
 } // namespace eval

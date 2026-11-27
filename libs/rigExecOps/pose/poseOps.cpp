@@ -431,6 +431,8 @@ struct PoseInterpolatorState {
     rigExec::RigExecMlNetwork network;
     rigExec::RigExecAnimatedMapsTable maps;
     std::vector<double> weights;
+    rigExec::RigExecPoseInterpolatorInputsT<PointFrame> input;
+    rigExec::RigExecPoseInterpolatorScratch buffers;
 };
 
 template <class T>
@@ -506,7 +508,7 @@ BuildMethod(const RigExecOpBatch &batch, size_t k, PoseInterpolatorState &s,
         table.targets.size() != targets * table.rawCount ||
         table.targetScales.size() != targets ||
         (table.distanceMethod == rigExec::RigExecRbfDistanceMethod::TwistAngle
-             ? table.distanceTargets.size() != targets
+             ? table.distanceTargets.size() != targets * table.rawCount
              : !table.distanceTargets.empty()) ||
         (table.solverType == rigExec::RigExecRbfSolverType::Interpolative
              ? table.coefficients.size() != targets * targets
@@ -699,8 +701,9 @@ PoseInterpolatorOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     out.Resize(poseCount);
     for (size_t i = 0; i < poseCount; ++i)
         out[i] = 0.0f;
-    rigExec::RigExecPoseInterpolatorInputsT<PointFrame> input;
+    auto &input = state.input;
     input.enabled = InOr(io, PoseInterpolatorEnabled(), uint8_t(1)) != 0;
+    input.numeric.clear();
     if (const auto *numeric =
             In<RigExecArray<double>>(io, PoseInterpolatorNumeric()))
         input.numeric.assign(numeric->begin(), numeric->end());
@@ -710,6 +713,7 @@ PoseInterpolatorOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     input.parentFinal = In<PointFrame>(io, PoseInterpolatorParentFinal());
     input.parentRest = In<PointFrame>(io, PoseInterpolatorParentRest());
     const auto parents = ListAt<uint8_t>(batch, kExtraParents, k);
+    input.extraDrivers.clear();
     if (parents.Size()) {
         const auto &finals =
             *In<RigExecArray<PointFrame>>(io, PoseInterpolatorExtraFinals());
@@ -729,8 +733,7 @@ PoseInterpolatorOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         input.extraDrivers.resize(parents.Size());
         for (size_t e = 0, p = 0; e < parents.Size(); ++e) {
             auto &extra = input.extraDrivers[e];
-            extra.final = &finals[e];
-            extra.rest = &rests[e];
+            extra = {&finals[e], &rests[e], nullptr, nullptr};
             if (parents.data[e]) {
                 extra.parentFinal = &(*parentFinals)[p];
                 extra.parentRest = &(*parentRests)[p];
@@ -755,15 +758,11 @@ PoseInterpolatorOne(const RigExecOpBatch &batch, size_t k, std::string *error)
                &state.maps};
     using Status = rigExec::RigExecPoseInterpolatorStatus;
     switch (rigExec::RigExecRunPoseInterpolatorArithmetic<InterpolatorMath>(
-        record, input, &state.weights)) {
+        record, input, &state.weights, &state.buffers)) {
     case Status::Disabled:
-        return true;
     case Status::UnusableRotation:
-        return Fail(error, "PoseInterpolator",
-                    "has no usable frame for its driver");
     case Status::UnusableTranslation:
-        return Fail(error, "PoseInterpolator",
-                    "could not measure its driver's translation");
+        return true;
     case Status::CountMismatch:
         return Fail(error, "PoseInterpolator",
                     "solved " + std::to_string(state.weights.size()) +

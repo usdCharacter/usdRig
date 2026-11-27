@@ -58,7 +58,8 @@ CheckOrdinals()
             kind == eval::StepKind::ReservedPropagateChunk ||
             kind == eval::StepKind::ReservedCommitApply ||
             kind == eval::StepKind::ReservedAvarInputs ||
-            kind == eval::StepKind::ReservedSpaceCheckpoint) {
+            kind == eval::StepKind::ReservedSpaceCheckpoint ||
+            kind == eval::StepKind::ReservedPoseInterpolator) {
             CHECK(std::string(eval::StepKindName(kind)) ==
                   std::string("Reserved") + RigExecBakedStepKindName(baked));
             continue;
@@ -86,9 +87,11 @@ CheckOrdinals()
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedSpaceExpression));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedAvarInputs));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedSpaceCheckpoint));
+    CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedPoseInterpolator));
     CHECK(!eval::IsReservedStepKind(eval::StepKind::ComposeSubtree));
     CHECK(eval::StepKindName(
               static_cast<eval::StepKind>(eval::StepKindCount))[0] == '\0');
+    CHECK(static_cast<uint8_t>(eval::StepKind::ReservedPoseInterpolator) == 9);
     CHECK(static_cast<uint8_t>(eval::StepKind::ReservedSpaceExpression) == 24);
     CHECK(static_cast<uint8_t>(eval::StepKind::ChainInputs) == 25);
     CHECK(static_cast<uint8_t>(eval::StepKind::ReservedAvarInputs) == 26);

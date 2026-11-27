@@ -451,7 +451,7 @@ TestEveryRestReaderDeclaresIt(const std::string &examples)
                 break;
             case RigExecBakedStepKind::PoseInterpolator: {
                 const auto &interpolator =
-                    B.poseInterpolators[size_t(step.object)];
+                    B.poseInterpolators[size_t(id.object)];
                 if (interpolator.valueInputs.empty()) {
                     rest(step, interpolator.driverSlot, "PoseInterpolator");
                     rest(step, interpolator.parentSlot, "PoseInterpolator");

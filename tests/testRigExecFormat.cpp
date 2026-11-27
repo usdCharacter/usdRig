@@ -3486,8 +3486,8 @@ TestStepLabels()
     label("SnapshotFinals every provider", [](RigExecWireFile &f) {
         _RegionStep(f, 0).kind = StepKind::SnapshotFinals;
     });
-    label("PoseInterpolator /Rig/Ctl", [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::PoseInterpolator;
+    label("ReservedPoseInterpolator 0", [](RigExecWireFile &f) {
+        _RegionStep(f, 0).kind = StepKind::ReservedPoseInterpolator;
     });
     label("RevisionFuse /Rig/Mover", [](RigExecWireFile &f) {
         _RegionStep(f, 0).kind = StepKind::RevisionFuse;
@@ -7179,6 +7179,7 @@ static void
 _AttachAnimatedMaps(fb::RigExecWirePoseInterpolator *interp)
 {
     interp->poseSlots = {0, 1};
+    interp->weightEnd = 2;
     auto maps = std::make_unique<fb::RigExecWireAnimatedMaps>();
     maps->inputCount = 1;
     maps->rowInputs = {0, 0, 0};
@@ -7197,6 +7198,7 @@ TestAnimatedMapsWireShapes()
     std::string why;
     RigExecWireFile file = _RichFile();
     _AttachAnimatedMaps(&file.pose->poseInterpolators[0]);
+    file.pose->poseWeightPaths = {_pCtl, _pCtl};
     CHECK(RigExecFormatValidate(file, &why));
     if (!why.empty())
         std::printf("    %s\n", why.c_str());
@@ -7237,6 +7239,9 @@ TestAnimatedMapsWireShapes()
     RigExecWireFile badValue = file;
     badValue.pose->poseInterpolators[0].maps->mapUnclamped = {0, 2};
     reject(std::move(badValue), "malformed animated maps");
+    RigExecWireFile outside = file;
+    outside.pose->poseInterpolators[0].poseSlots = {0, 2};
+    reject(std::move(outside), "lie in its weight range");
 }
 
 void

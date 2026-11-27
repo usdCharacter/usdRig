@@ -2946,10 +2946,10 @@ ProbeSpaceCheckpoint(const B &b, size_t object)
 // A pose interpolator's weights from the frames, values and enable its step
 // read, against the weights it wrote.
 void
-ProbePoseInterpolator(const B &b, const RigExecBakedStep &step)
+ProbePoseInterpolator(const B &b, size_t index, const RigExecBakedStep &step)
 {
     using namespace rigExecOps;
-    const auto &interp = b.poseInterpolators[size_t(step.object)];
+    const auto &interp = b.poseInterpolators[index];
     PoseInterpolatorPayload payload;
     payload.poseCount = interp.poseSlots.size();
     payload.enableTranslation = interp.enableTranslation;
@@ -3034,16 +3034,21 @@ ProbePoseInterpolator(const B &b, const RigExecBakedStep &step)
     const bool extras = payload.solve == PoseSolve::RbfMethod ||
                         payload.solve == PoseSolve::Network;
     std::vector<const RigExecPortHandle *> ins = {&PoseInterpolatorEnabled()};
-    const uint8_t enabled = interp.enabledValue ? 1 : 0;
+    const uint8_t enabled = RigExecBakedLeafRead(b, interp.enabled) ? 1 : 0;
     std::vector<const void *> values = {&enabled};
-    rigExecStd::RigExecArray<double> numeric(interp.values.size());
-    for (size_t i = 0; i < interp.values.size(); ++i)
-        numeric[i] = interp.values[i];
-    if (!interp.values.empty()) {
+    rigExecStd::RigExecArray<double> numeric(interp.valueInputs.size());
+    for (size_t i = 0; i < interp.valueInputs.size(); ++i)
+        numeric[i] =
+            i < interp.valueIsFloat.size() && interp.valueIsFloat[i]
+                ? double(RigExecBakedLeafRead(b, interp.floatValueInputs[i]))
+                : RigExecBakedLeafRead(b, interp.valueInputs[i]);
+    if (!interp.valueInputs.empty()) {
         ins.push_back(&PoseInterpolatorNumeric());
         values.push_back(&numeric);
     }
-    const double mask = interp.maskValue;
+    const double mask = payload.solve == PoseSolve::Network
+                            ? double(RigExecBakedLeafRead(b, interp.mask))
+                            : 1.0;
     if (payload.solve == PoseSolve::Network) {
         ins.push_back(&PoseInterpolatorMask());
         values.push_back(&mask);
@@ -3566,10 +3571,10 @@ ProbePose(const B &b)
                  id.object >= 0 &&
                  size_t(id.object) < b.switchFrameContexts.size())
             ProbeSpaceCheckpoint(b, size_t(id.object));
-        else if (step.kind == RigExecBakedStepKind::PoseInterpolator &&
-                 step.object >= 0 &&
-                 size_t(step.object) < b.poseInterpolators.size())
-            ProbePoseInterpolator(b, step);
+        else if (id.kind == RigExecBakedStepKind::PoseInterpolator &&
+                 id.object >= 0 &&
+                 size_t(id.object) < b.poseInterpolators.size())
+            ProbePoseInterpolator(b, size_t(id.object), step);
         else if (step.object >= 0 &&
                  size_t(step.object) < b.composeGroups.size()) {
             if (step.kind == RigExecBakedStepKind::RestCompose)

@@ -1220,10 +1220,10 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
             if (id.part)
                 check(kFin, B.finLast[slot], reader, -1);
             check(kBase, B.baseLast[slot], reader, -1);
-        } else if (step.kind == RigExecBakedStepKind::PoseInterpolator &&
-                   step.object >= 0 &&
-                   size_t(step.object) < B.poseInterpolators.size()) {
-            const auto &interp = B.poseInterpolators[size_t(step.object)];
+        } else if (id.kind == RigExecBakedStepKind::PoseInterpolator &&
+                   id.object >= 0 &&
+                   size_t(id.object) < B.poseInterpolators.size()) {
+            const auto &interp = B.poseInterpolators[size_t(id.object)];
             if (interp.driverSlot >= 0 && size_t(interp.driverSlot) < n)
                 check(kFin, B.finLast[size_t(interp.driverSlot)], reader, -1);
             if (interp.parentSlot >= 0 && size_t(interp.parentSlot) < n)

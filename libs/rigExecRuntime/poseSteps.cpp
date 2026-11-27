@@ -61,8 +61,8 @@ _RrKindName(RigExecWireStepKind kind)
         return "ReservedCommitApply";
     case RigExecWireStepKind::SnapshotFinals:
         return "SnapshotFinals";
-    case RigExecWireStepKind::PoseInterpolator:
-        return "PoseInterpolator";
+    case RigExecWireStepKind::ReservedPoseInterpolator:
+        return "ReservedPoseInterpolator";
     default:
         return "Unknown";
     }
@@ -535,189 +535,6 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
         return runtimePoseDetail::_RrRunConstraintStep(program, step, error);
     }
 
-
-    case RigExecWireStepKind::PoseInterpolator: {
-        if (wire.object < 0 ||
-            size_t(wire.object) >= program->poses->poseInterpolators.size() ||
-            size_t(wire.object) >= scratch->interpEnabled.size() ||
-            size_t(wire.object) >= scratch->interpSolvers.size() ||
-            size_t(wire.object) >= scratch->interpScratch.size()) {
-            if (error) {
-                *error =
-                    _RrStepHead(program, step) + " names no pose interpolator";
-            }
-            return false;
-        }
-        const RigExecWirePoseInterpolator &interp =
-            program->poses->poseInterpolators[size_t(wire.object)];
-        // Resolve current producer outputs in the consuming graph body.
-        const size_t object = size_t(wire.object);
-        scratch->interpEnabled[object] =
-            program->ReadInterp(object).boolean ? 1 : 0;
-        for (size_t v = 0; v < interp.valueInputs.size(); ++v) {
-            const RrInputValue value = program->ReadInterpValue(object, v);
-            scratch->interpValues[object][v] =
-                value.tag == RrInputTag::Float ? double(value.f32) : value.f64;
-        }
-        if (interp.network) {
-            scratch->interpMasks[object] =
-                double(program->ReadInterpMask(object).f32);
-        }
-        for (int slot = interp.weightBegin; slot < interp.weightEnd; ++slot) {
-            if (slot < 0 || size_t(slot) >= store.poseWeights.size()) {
-                if (error) {
-                    *error =
-                        _RrStepHead(program, step) + " names no pose weight";
-                }
-                return false;
-            }
-            store.poseWeights[size_t(slot)] = 0.0f;
-        }
-        if (!scratch->interpEnabled[size_t(wire.object)] ||
-            interp.poseSlots.empty()) {
-            return true;
-        }
-        // A NUMERIC driver reads dials, not a frame: it names no driver
-        // prim and takes no slot, and its rotation channel is the
-        // identity, so every frame lookup below is skipped. An ML mover
-        // may read both.
-        const bool numeric =
-            !interp.valueInputs.empty() && interp.driverSlot < 0;
-        if (!numeric &&
-            (interp.driverSlot < 0 ||
-             size_t(interp.driverSlot) >= store.finLast.size() ||
-             size_t(interp.driverSlot) >= scratch->restFrames.size() ||
-             size_t(interp.driverSlot) >= program->slotMeta->paths.size() ||
-             (interp.parentSlot >= 0 &&
-              (size_t(interp.parentSlot) >= store.finLast.size() ||
-               size_t(interp.parentSlot) >= scratch->restFrames.size())))) {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no driver slot";
-            }
-            return false;
-        }
-        const size_t d = size_t(numeric ? 0 : interp.driverSlot);
-        if (!numeric && size_t(store.finLast[d]) >= store.fin.size()) {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no fin version";
-            }
-            return false;
-        }
-        RigExecPoseInterpolatorInputsT<RrPointFrame> input;
-        input.enabled = true;
-        input.numeric = scratch->interpValues[object];
-        input.mask = scratch->interpMasks[object];
-        if (!numeric) {
-            input.driverFinal = &store.fin[size_t(store.finLast[d])];
-            input.driverRest = &scratch->restFrames[d];
-            if (interp.parentSlot >= 0) {
-                const size_t p = size_t(interp.parentSlot);
-                if (size_t(store.finLast[p]) >= store.fin.size()) {
-                    if (error)
-                        *error = _RrStepHead(program, step) +
-                                 " names no fin version";
-                    return false;
-                }
-                input.parentFinal = &store.fin[size_t(store.finLast[p])];
-                input.parentRest = &scratch->restFrames[p];
-            }
-            const size_t extras = interp.extraDriverSlots.size();
-            if (extras != interp.extraParentSlots.size() ||
-                (extras && !interp.method)) {
-                if (error)
-                    *error =
-                        _RrStepHead(program, step) + " names no driver slot";
-                return false;
-            }
-            input.extraDrivers.resize(extras);
-            for (size_t e = 0; e < extras; ++e) {
-                const int slots[2] = {interp.extraDriverSlots[e],
-                                      interp.extraParentSlots[e]};
-                const RrPointFrame *finals[2] = {nullptr, nullptr},
-                                   *rests[2] = {nullptr, nullptr};
-                for (int k = 0; k < 2; ++k) {
-                    if (slots[k] < 0 && k == 1)
-                        continue;
-                    if (slots[k] < 0 ||
-                        size_t(slots[k]) >= store.finLast.size() ||
-                        size_t(slots[k]) >= scratch->restFrames.size() ||
-                        size_t(store.finLast[size_t(slots[k])]) >=
-                            store.fin.size()) {
-                        if (error)
-                            *error = _RrStepHead(program, step) +
-                                     " names no driver slot";
-                        return false;
-                    }
-                    finals[k] =
-                        &store.fin[size_t(store.finLast[size_t(slots[k])])];
-                    rests[k] = &scratch->restFrames[size_t(slots[k])];
-                }
-                input.extraDrivers[e] = {finals[0], rests[0], finals[1],
-                                         rests[1]};
-            }
-        }
-        auto &solver = scratch->interpSolvers[object];
-        RigExecPoseInterpolatorRecordT<
-            decltype(solver), const RigExecRbfMethodTable &,
-            const RigExecMlNetwork *, const RigExecAnimatedMapsTable *>
-            record{solver,
-                   interp.enableTranslation,
-                   interp.allowNegativeWeights,
-                   interp.poseSlots.size(),
-                   bool(interp.method),
-                   scratch->interpMethods[object],
-                   bool(interp.network),
-                   &scratch->interpNetworks[object],
-                   bool(interp.maps),
-                   &scratch->interpMaps[object]};
-        std::vector<double> &interpScratch = scratch->interpScratch[object];
-        const auto status = RigExecRunPoseInterpolatorArithmetic<
-            RrPoseInterpolatorMathT<RrPointFrame>>(record, input,
-                                                   &interpScratch);
-        if (status == RigExecPoseInterpolatorStatus::UnusableRotation) {
-            output.diagnostics.push_back(
-                "pose interpolator " + program->TextOrEmpty(interp.path) +
-                " has no usable frame for its driver " +
-                program->TextOrEmpty(program->slotMeta->paths[d]) +
-                " after the pose walk; its weights are zero this generation");
-            return true;
-        }
-        if (status == RigExecPoseInterpolatorStatus::UnusableTranslation) {
-            output.diagnostics.push_back(
-                "pose interpolator " + program->TextOrEmpty(interp.path) +
-                " could not measure its driver's translation; its weights are "
-                "zero this generation");
-            return true;
-        }
-        if (interpScratch.size() != interp.poseSlots.size()) {
-            output.diagnostics.push_back(
-                "pose interpolator " + program->TextOrEmpty(interp.path) +
-                " solved " + std::to_string(interpScratch.size()) +
-                " weights for " + std::to_string(interp.poseSlots.size()) +
-                " poses");
-            return true;
-        }
-        for (size_t i = 0; i < interp.poseSlots.size(); ++i) {
-            if (interp.poseSlots[i] < 0 ||
-                size_t(interp.poseSlots[i]) >= store.poseWeights.size()) {
-                if (error) {
-                    *error =
-                        _RrStepHead(program, step) + " names no pose weight";
-                }
-                return false;
-            }
-            store.poseWeights[size_t(interp.poseSlots[i])] =
-                static_cast<float>(interpScratch[i]);
-        }
-        // Open validated these against the weight range and the poses.
-        for (size_t j = 0; j < interp.primvarSlots.size(); ++j) {
-            store.poseWeights[size_t(interp.primvarSlots[j])] =
-                store.poseWeights[size_t(
-                    interp.poseSlots[size_t(interp.primvarSources[j])])];
-        }
-        return true;
-    }
-
     default:
         break;
     }
@@ -912,6 +729,92 @@ _RrLookUpCheckpoint(const RrProgram *program, uint32_t object,
     return false;
 }
 
+// Input \p read of pose interpolator \p object's PoseInterpolator node
+// (RigExecBakedLookUpCompose's twin).
+bool
+_RrLookUpInterpolator(const RrProgram *program, uint32_t object,
+                      eval::OpInterpolatorRead read,
+                      const RigExecTypeDesc &type, void *value)
+{
+    using R = eval::OpInterpolatorRead;
+    using Frame = rigExecRig::PointFrame;
+    static_assert(sizeof(Frame) == sizeof(RrPointFrame),
+                  "op and runtime frames share a layout");
+    const auto &interp = program->poses->poseInterpolators[object];
+    const RrStore &store = program->store;
+    const RrPoseScratch &scratch =
+        *_RrScratch(const_cast<RrProgram *>(program));
+    const auto put = [&](int slot, bool final, Frame *out) {
+        if (slot < 0 || size_t(slot) >= store.finLast.size() ||
+            size_t(store.finLast[size_t(slot)]) >= store.fin.size() ||
+            size_t(slot) >= scratch.restFrames.size())
+            return false;
+        std::memcpy(out,
+                    final ? &store.fin[size_t(store.finLast[size_t(slot)])]
+                          : &scratch.restFrames[size_t(slot)],
+                    sizeof(Frame));
+        return true;
+    };
+    const auto frame = [&](int slot, bool final) {
+        return type.size == sizeof(Frame) &&
+               put(slot, final, static_cast<Frame *>(value));
+    };
+    const auto frames = [&](bool parents, bool final) {
+        if (!type.resize || !type.data)
+            return false;
+        size_t count = 0;
+        for (size_t e = 0; e < interp.extraDriverSlots.size(); ++e)
+            count += !parents || interp.extraParentSlots[e] >= 0;
+        type.resize(value, count);
+        Frame *out = static_cast<Frame *>(type.data(value));
+        for (size_t e = 0, k = 0; e < interp.extraDriverSlots.size(); ++e) {
+            const int slot = parents ? interp.extraParentSlots[e]
+                                     : interp.extraDriverSlots[e];
+            if (slot >= 0 && !put(slot, final, &out[k++]))
+                return false;
+        }
+        return true;
+    };
+    switch (read) {
+    case R::Enabled:
+        if (type.size != sizeof(uint8_t))
+            return false;
+        *static_cast<uint8_t *>(value) =
+            program->ReadInterp(object).boolean ? 1 : 0;
+        return true;
+    case R::Numeric:
+        return _RrFillList<double>(
+            type, value, interp.valueInputs.size(), [&](size_t v) {
+                const RrInputValue read = program->ReadInterpValue(object, v);
+                return read.tag == RrInputTag::Float ? double(read.f32)
+                                                     : read.f64;
+            });
+    case R::Mask:
+        if (type.size != sizeof(double))
+            return false;
+        *static_cast<double *>(value) =
+            double(program->ReadInterpMask(object).f32);
+        return true;
+    case R::DriverFinal:
+        return frame(interp.driverSlot, true);
+    case R::DriverRest:
+        return frame(interp.driverSlot, false);
+    case R::ParentFinal:
+        return frame(interp.parentSlot, true);
+    case R::ParentRest:
+        return frame(interp.parentSlot, false);
+    case R::ExtraFinals:
+        return frames(false, true);
+    case R::ExtraRests:
+        return frames(false, false);
+    case R::ExtraParentFinals:
+        return frames(true, true);
+    case R::ExtraParentRests:
+        return frames(true, false);
+    }
+    return false;
+}
+
 } // namespace
 
 bool
@@ -919,6 +822,18 @@ RrLookUpCompose(const RrProgram *program, const eval::OpLookup &lookup,
                 const RigExecTypeDesc &type, void *value, std::string *error)
 {
     const RrInputState &state = program->inputState;
+    if (lookup.source == uint8_t(eval::OpLookupSource::InterpolatorInputs)) {
+        if (lookup.object < program->poses->poseInterpolators.size() &&
+            _RrLookUpInterpolator(program, lookup.object,
+                                  eval::OpInterpolatorRead(lookup.read), type,
+                                  value))
+            return true;
+        if (error)
+            *error = "op nodes: pose interpolator " +
+                     std::to_string(lookup.object) + " has no input " +
+                     std::to_string(lookup.read);
+        return false;
+    }
     if (lookup.source == uint8_t(eval::OpLookupSource::CheckpointInputs)) {
         if (lookup.object < program->poses->spaceCheckpoints.size() &&
             _RrLookUpCheckpoint(program, lookup.object,
@@ -951,6 +866,30 @@ bool
 RrStoreCompose(RrProgram *program, const eval::OpHostOutput &output,
                const void *value, std::string *error)
 {
+    if (output.target == uint8_t(eval::OpOutputTarget::PoseWeights)) {
+        const auto &weights =
+            *static_cast<const rigExecStd::RigExecArray<float> *>(value);
+        const auto &interps = program->poses->poseInterpolators;
+        std::vector<float> &poseWeights = program->store.poseWeights;
+        if (output.object >= interps.size() ||
+            weights.Size() != interps[output.object].poseSlots.size()) {
+            if (error)
+                *error = "op nodes: pose interpolator " +
+                         std::to_string(output.object) + " stores no " +
+                         std::to_string(weights.Size()) + " weights";
+            return false;
+        }
+        const auto &interp = interps[output.object];
+        // Open validated the pose and primvar slots against the range.
+        for (int slot = interp.weightBegin; slot < interp.weightEnd; ++slot)
+            poseWeights[size_t(slot)] = 0.0f;
+        for (size_t i = 0; i < interp.poseSlots.size(); ++i)
+            poseWeights[size_t(interp.poseSlots[i])] = weights[i];
+        for (size_t j = 0; j < interp.primvarSlots.size(); ++j)
+            poseWeights[size_t(interp.primvarSlots[j])] = poseWeights[size_t(
+                interp.poseSlots[size_t(interp.primvarSources[j])])];
+        return true;
+    }
     if (output.target == uint8_t(eval::OpOutputTarget::SwitchFrame)) {
         if (output.object >= program->store.switchFrames.size()) {
             if (error)

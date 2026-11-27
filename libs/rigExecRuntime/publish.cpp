@@ -123,14 +123,14 @@ _RrAppendBlock(const RrProgram &program, RrStepLines block, const Visit &visit,
         visit([&](size_t i) {
             const RigExecWireStepKind kind = steps[i].kind;
             if (!RrPropertyPartOf(&program, steps[i], nullptr, nullptr) &&
-                kind != RigExecWireStepKind::PoseInterpolator &&
+                RrInterpolatorOf(program.inputState, steps[i]) < 0 &&
                 !_RrPublishedGeometryKind(kind))
                 diagnostics(i);
         });
         return;
     case RrStepLines::Interpolator:
         visit([&](size_t i) {
-            if (steps[i].kind == RigExecWireStepKind::PoseInterpolator)
+            if (RrInterpolatorOf(program.inputState, steps[i]) >= 0)
                 diagnostics(i);
         });
         return;

@@ -48,8 +48,9 @@ public:
                         const std::vector<double> &translationRadii,
                         const std::vector<std::vector<double>> &weights);
 
+    /// Keeps its kernel row between calls: one thread at a time.
     void Evaluate(const RrVec3d &euler, const RrVec3d *translation,
-                  std::vector<double> *out, bool allowNegativeWeights) const;
+                  std::vector<double> *out, bool allowNegativeWeights);
 
 private:
     void Kernels(const RrVec3d &euler, const RrVec3d *translation,
@@ -88,6 +89,7 @@ private:
     bool _enableRotation = true;
     bool _enableTranslation = false;
     std::vector<std::vector<double>> _weights;
+    std::vector<double> _found;
 };
 
 // std::acos(-1) rather than M_PI, as the kernels do.
@@ -351,13 +353,13 @@ RrRbfSolver::Normalize(std::vector<double> *weights) const
 
 inline void
 RrRbfSolver::Evaluate(const RrVec3d &euler, const RrVec3d *translation,
-                      std::vector<double> *out, bool allowNegativeWeights) const
+                      std::vector<double> *out, bool allowNegativeWeights)
 {
     out->clear();
     if (_weights.empty()) {
         return;
     }
-    std::vector<double> found;
+    std::vector<double> &found = _found;
     Kernels(euler, translation, &found);
     out->resize(_weights.size());
     for (size_t row = 0; row < _weights.size(); ++row) {

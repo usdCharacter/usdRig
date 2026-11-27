@@ -1993,13 +1993,20 @@ RrInputsBindReads(RrProgram *program, std::string *error)
         }
     }
     state.avarNodeSlot.clear();
+    state.interpolatorNode.clear();
     if (file.opGraph) {
         state.avarNodeSlot.assign(file.opGraph->nodes.size(), -1);
-        for (const auto &output : file.opGraph->hostOutputs)
-            if (output && output->node < state.avarNodeSlot.size() &&
-                output->target == uint8_t(eval::OpOutputTarget::Avars))
+        state.interpolatorNode.assign(file.opGraph->nodes.size(), -1);
+        for (const auto &output : file.opGraph->hostOutputs) {
+            if (!output || output->node >= state.avarNodeSlot.size())
+                continue;
+            if (output->target == uint8_t(eval::OpOutputTarget::Avars))
                 state.avarNodeSlot[size_t(output->node)] =
                     int64_t(output->object);
+            if (output->target == uint8_t(eval::OpOutputTarget::PoseWeights))
+                state.interpolatorNode[size_t(output->node)] =
+                    int64_t(output->object);
+        }
     }
     for (size_t i = 0; i < poses.ladders.size(); ++i) {
         for (int field = 0; field < RrLadderFieldCount; ++field) {

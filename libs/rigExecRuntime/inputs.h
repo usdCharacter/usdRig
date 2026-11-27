@@ -308,6 +308,9 @@ struct RrInputState {
     /// Per op node: the slot whose avars it stores
     /// (eval::OpOutputTarget::Avars), or -1.
     std::vector<int64_t> avarNodeSlot;
+    /// Per op node: the pose interpolator whose weights it stores
+    /// (eval::OpOutputTarget::PoseWeights), or -1.
+    std::vector<int64_t> interpolatorNode;
     /// The override numbers of the provider ladders' inputs, sorted
     /// (RigExecBakedProgramImpl::ladderOverrides).
     std::vector<int32_t> ladderOverrides;
@@ -382,6 +385,17 @@ RrAvarSlotOf(const RrInputState &state, const RigExecWireStep &step)
     return step.kind == RigExecWireStepKind::OpNode && step.object >= 0 &&
                    size_t(step.object) < state.avarNodeSlot.size()
                ? state.avarNodeSlot[size_t(step.object)]
+               : -1;
+}
+
+/// The pose interpolator whose weights op step \p step stores, or -1 for
+/// any other step.
+inline int64_t
+RrInterpolatorOf(const RrInputState &state, const RigExecWireStep &step)
+{
+    return step.kind == RigExecWireStepKind::OpNode && step.object >= 0 &&
+                   size_t(step.object) < state.interpolatorNode.size()
+               ? state.interpolatorNode[size_t(step.object)]
                : -1;
 }
 

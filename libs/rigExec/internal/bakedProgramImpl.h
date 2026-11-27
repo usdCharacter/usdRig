@@ -1202,6 +1202,9 @@ enum class RigExecBakedOpFamily : uint8_t {
     /// A space checkpoint through SpaceCheckpoint: object its index in
     /// switchFrameContexts.
     SpaceCheckpoint,
+    /// A pose interpolator through PoseInterpolator: object its index in
+    /// poseInterpolators.
+    PoseInterpolator,
 };
 
 /// Where an op node's step comes from: its family, that family's object and

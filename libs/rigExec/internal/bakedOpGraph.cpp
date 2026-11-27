@@ -1938,7 +1938,7 @@ AppendBlock(const RigExecBakedProgramImpl &B, RigExecBakedStepLines block,
         // observable on clean skips.
         visit([&](const RigExecBakedStep &step) {
             if (RigExecBakedIsGeometryStep(step.kind) ||
-                step.kind == K::PoseInterpolator ||
+                RigExecBakedIdentityOf(B, step).kind == K::PoseInterpolator ||
                 RigExecBakedPropertyPartOf(B, step, nullptr, nullptr))
                 return;
             append(step.diagnostics);
@@ -1947,7 +1947,7 @@ AppendBlock(const RigExecBakedProgramImpl &B, RigExecBakedStepLines block,
         return;
     case RigExecBakedStepLines::Interpolator:
         visit([&](const RigExecBakedStep &step) {
-            if (step.kind == K::PoseInterpolator)
+            if (RigExecBakedIdentityOf(B, step).kind == K::PoseInterpolator)
                 append(step.diagnostics);
         });
         return;
