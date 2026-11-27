@@ -56,6 +56,14 @@ RigExecBakeOpGraph(const RigExecBakedProgramImpl &program,
     auto graph = std::make_unique<fb::RigExecWireOpGraph>();
     std::vector<const RigExecOpDesc *> ops;
     std::vector<uint32_t> types;
+    std::vector<std::vector<uint32_t>> hostOf(layout.nodes.size()),
+        constantOf(layout.nodes.size());
+    for (uint32_t i = 0; i < layout.hostInputs.size(); ++i)
+        if (layout.hostInputs[i].node < layout.nodes.size())
+            hostOf[layout.hostInputs[i].node].push_back(i);
+    for (uint32_t i = 0; i < layout.constants.size(); ++i)
+        if (layout.constants[i].node < layout.nodes.size())
+            constantOf[layout.constants[i].node].push_back(i);
     for (size_t n = 0; n < layout.nodes.size(); ++n) {
         const RigExecNodeDesc &d = layout.nodes[n];
         if (!op.savable[n])
@@ -104,14 +112,16 @@ RigExecBakeOpGraph(const RigExecBakedProgramImpl &program,
                 continue;
             }
             bool fed = false;
-            for (const eval::OpHostInput &host : layout.hostInputs)
-                if (host.node == n && host.port == p) {
+            for (const uint32_t i : hostOf[n])
+                if (const eval::OpHostInput &host = layout.hostInputs[i];
+                    host.port == p) {
                     input->host = int8_t(host.source);
                     input->object = host.object;
                     fed = true;
                 }
-            for (const eval::OpConstant &constant : layout.constants)
-                if (constant.node == n && constant.port == p) {
+            for (const uint32_t i : constantOf[n])
+                if (const eval::OpConstant &constant = layout.constants[i];
+                    constant.port == p) {
                     input->host = 3;
                     input->constant = constant.bytes;
                     fed = true;
