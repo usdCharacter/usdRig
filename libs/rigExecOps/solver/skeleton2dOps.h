@@ -39,7 +39,8 @@ const rigExec::RigExecOpHandle &Skeleton2d();
 // parent space), Channels (DoubleArray, kRigExecBone2dChannelCount per
 // joint in rigExec:joints order, RigExecBone2dSetChannel's order, a bool
 // channel 0 or 1), optional Selectors and GroupSelectors (DoubleArray). Out
-// (PointFrameArray, the joints' frames on Rests).
+// (PointFrameArray, the joints' frames on Rests); Planar (Bool, 0 when a
+// rest or parent space left the plane and Out holds the setup frames).
 const rigExec::RigExecPortHandle &Skeleton2dRests();
 const rigExec::RigExecPortHandle &Skeleton2dStartRest();
 const rigExec::RigExecPortHandle &Skeleton2dStartPose();
@@ -49,6 +50,7 @@ const rigExec::RigExecPortHandle &Skeleton2dChannels();
 const rigExec::RigExecPortHandle &Skeleton2dSelectors();
 const rigExec::RigExecPortHandle &Skeleton2dGroupSelectors();
 const rigExec::RigExecPortHandle &Skeleton2dOut();
+const rigExec::RigExecPortHandle &Skeleton2dPlanar();
 
 } // namespace rigExecOps
 

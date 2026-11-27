@@ -23,6 +23,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(Skeleton2dChannels)
 RIGEXEC_DEFINE_PORT_HANDLE(Skeleton2dSelectors)
 RIGEXEC_DEFINE_PORT_HANDLE(Skeleton2dGroupSelectors)
 RIGEXEC_DEFINE_PORT_HANDLE(Skeleton2dOut)
+RIGEXEC_DEFINE_PORT_HANDLE(Skeleton2dPlanar)
 
 namespace {
 
@@ -138,6 +139,8 @@ RunSkeleton2d(const void *payload, void *state, const RigExecOpIo &io,
     PointFrameArray &out = Out<PointFrameArray>(io, Skeleton2dOut());
     out.frames.Assign(s.frames.data(), s.frames.size());
     out.rests = rests;
+    Out<uint8_t>(io, Skeleton2dPlanar()) =
+        result == rigExec::RigExecSkeleton2dResult::NotPlanar ? 0 : 1;
     return true;
 }
 
@@ -197,6 +200,8 @@ const rigExec::RigExecPortDesc kPorts[] = {
      "groupSelectors"},
     {&Skeleton2dOut(), &rigExecRig::PointFrameArrayType(), kRigExecPortOutput,
      "out", rigExec::RigExecOutputBound::Input, &Skeleton2dRests()},
+    {&Skeleton2dPlanar(), &rigExecStd::BoolType(), kRigExecPortOutput,
+     "planar"},
 };
 
 using payloadIo::Reader;

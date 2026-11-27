@@ -1107,8 +1107,27 @@ LiveRest()
         }
         Near(FrameOf(pose, "A").Angle(), 0, 1e-9,
              "non-planar: A keeps its rest");
+        bool said = false;
+        for (const auto &line : pose.diagnostics)
+            said = said ||
+                   line.find("is not a rotation about +Z") != std::string::npos;
+        CHECK(said);
         Frozen(rig, 1, "live rest non-planar");
         Runtime(stage, "live rest non-planar", {1});
+        // The runtime gives the same line.
+        std::vector<uint8_t> bytes;
+        std::string error;
+        RigExecTestPlayer player;
+        const bool played = RigExecTestBakeAt(rig, 1, &bytes, &error) &&
+                            player.Open(bytes, stage, &error) &&
+                            player.Play(1, &error);
+        CHECK(played);
+        std::vector<std::string> diffs;
+        if (played)
+            CHECK(RigExecCompareRuntimeRun(rig.Evaluate(UsdTimeCode(1)),
+                                           player.Reader(), &diffs));
+        for (const auto &line : diffs)
+            std::printf("live rest non-planar: %s\n", line.c_str());
     }
 }
 

@@ -322,6 +322,10 @@ RigExecBakedAddSolverOp(const RigExecBakedProgramImpl &B,
         read(node, Skeleton2dChannels(), Read::Bone2dChannels);
         read(node, Skeleton2dSelectors(), Read::Bone2dSelectors);
         read(node, Skeleton2dGroupSelectors(), Read::GroupSelectors);
+        builder->BindOutput(node, Skeleton2dPlanar());
+        layout->hostOutputs.push_back(
+            {node, Skeleton2dPlanar().Index(),
+             uint8_t(eval::OpOutputTarget::SolverPlanar), si});
         publish(node, Skeleton2dOut());
         return true;
     }
@@ -822,7 +826,7 @@ RigExecBakedLookUpSolver(const RigExecBakedProgramImpl &B,
 }
 
 bool
-RigExecBakedStoreSolver(RigExecBakedProgramImpl &B,
+RigExecBakedStoreSolver(RigExecBakedProgramImpl &B, RigExecBakedStep *step,
                         const eval::OpHostOutput &output, const void *value,
                         std::string *error)
 {
@@ -831,6 +835,14 @@ RigExecBakedStoreSolver(RigExecBakedProgramImpl &B,
         return Fail(error, "solver " + std::to_string(output.object) +
                                " is no solver of the program");
     Solver &s = B.solvers[output.object];
+    if (output.target == uint8_t(eval::OpOutputTarget::SolverPlanar)) {
+        if (!step)
+            return Fail(error, "stores a solver result outside a step");
+        if (!*static_cast<const uint8_t *>(value))
+            step->diagnostics.push_back("diag " + s.pathText + ": " +
+                                        kRigExecSkeleton2dNotPlanar);
+        return true;
+    }
     const auto &out = *static_cast<const rigExecRig::PointFrameArray *>(value);
     const size_t first = LeadingFrames(s);
     RigExecPointFrameArray &aggregate = B.aggregates[output.object];

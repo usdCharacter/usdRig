@@ -1136,9 +1136,10 @@ bool RrLookUpSolver(const RrProgram *program, const eval::OpLookup &lookup,
                     const RigExecTypeDesc &type, void *value,
                     std::string *error);
 /// Stores a solver node's frames as the solver's aggregate and the outputs
-/// its commit reads.
-bool RrStoreSolver(RrProgram *program, const eval::OpHostOutput &output,
-                   const void *value, std::string *error);
+/// its commit reads; a 2D skeleton's planar flag gives step \p step its line.
+bool RrStoreSolver(RrProgram *program, size_t step,
+                   const eval::OpHostOutput &output, const void *value,
+                   std::string *error);
 /// The failure \p error of an op node of solver \p solver.
 std::string RrSolverFailure(const RrProgram *program, uint32_t solver,
                             const std::string &error);

@@ -11,6 +11,7 @@
 #include "rigExecStdTypes/stdTypes.h"
 #include "rigExecMath/frameBlendKernel.h"
 #include "rigExecMath/ribbonFramesKernel.h"
+#include "rigExecMath/skeleton2dKernel.h"
 #include "rigExecMath/splineIkKernel.h"
 #include <algorithm>
 #include <cstring>
@@ -553,7 +554,7 @@ RrLookUpSolver(const RrProgram *program, const eval::OpLookup &lookup,
 }
 
 bool
-RrStoreSolver(RrProgram *program, const eval::OpHostOutput &output,
+RrStoreSolver(RrProgram *program, size_t step, const eval::OpHostOutput &output,
               const void *value, std::string *error)
 {
     RrProgram &p = *program;
@@ -565,6 +566,16 @@ RrStoreSolver(RrProgram *program, const eval::OpHostOutput &output,
         return _RrSolverFail(error, "solver " + std::to_string(output.object) +
                                         " is no solver of the program");
     const RigExecWireSolver &s = p.poses->solvers[output.object];
+    if (output.target == uint8_t(eval::OpOutputTarget::SolverPlanar)) {
+        if (step >= store.stepOutputs.size())
+            return _RrSolverFail(error, "stores a solver result outside a "
+                                        "step");
+        if (!*static_cast<const uint8_t *>(value))
+            store.stepOutputs[step].diagnostics.push_back(
+                "diag " + p.TextOrEmpty(s.path) + ": " +
+                kRigExecSkeleton2dNotPlanar);
+        return true;
+    }
     const auto &out = *static_cast<const rigExecRig::PointFrameArray *>(value);
     const size_t first =
         p.opNodes && output.object < p.opNodes->solverLeading.size()

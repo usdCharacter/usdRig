@@ -572,6 +572,9 @@ enum class OpOutputTarget : uint8_t {
     /// PointFrameArray: solver `object`'s frames, published as its
     /// aggregate and as the outputs its commit reads.
     SolverFrames = 60,
+    /// Bool: whether 2D skeleton solver `object` found every rest and
+    /// parent space in its plane; 0 gives its node's step one line.
+    SolverPlanar = 61,
     /// UInt: what constraint commit `object`'s node made of its frames, as
     /// its kind's op reports it (Harmonics or SingleChainIk Status,
     /// IkFkMatch ShownMask).
@@ -680,7 +683,8 @@ OpOutputTargetRuns(uint8_t target, bool chainMember)
                       target <=
                           uint8_t(OpOutputTarget::ConstraintDeltaMeasured)) ||
                      OpConstraintOutputTarget(target) ||
-                     target == uint8_t(OpOutputTarget::SolverFrames);
+                     target == uint8_t(OpOutputTarget::SolverFrames) ||
+                     target == uint8_t(OpOutputTarget::SolverPlanar);
 }
 
 /// A per-frame read of the rig the host resolves for a Lookup input; what
@@ -1524,6 +1528,7 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
     case OpOutputTarget::CommitPresent:
         return host.StoreCommit(output, value, error);
     case OpOutputTarget::SolverFrames:
+    case OpOutputTarget::SolverPlanar:
         return host.StoreSolver(output, value, error);
     case OpOutputTarget::RevisionEnabled:
         return host.StoreRevisionEnabled(output, value, error);

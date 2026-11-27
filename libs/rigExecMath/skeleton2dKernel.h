@@ -1963,6 +1963,13 @@ enum class RigExecSkeleton2dResult : uint8_t {
     NotFinite
 };
 
+/// The line every evaluator gives after the solver's path when a solve
+/// returned NotPlanar and published the setup frames.
+inline constexpr const char *kRigExecSkeleton2dNotPlanar =
+    "a 2D bone's rest (its rest:space, or the frame a pose step below the "
+    "skeleton wrote) or parent space is not a rotation about +Z in the "
+    "skeleton's plane; publishing the rests";
+
 /// The shared parent-space, target and group arrays as the kernel reads
 /// them; the vectors must outlive the result.
 inline RigExecSkeleton2dStatic

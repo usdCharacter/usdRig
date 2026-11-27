@@ -232,7 +232,7 @@ struct BakedOpHost {
     bool StoreSolver(const eval::OpHostOutput &output, const void *value,
                      std::string *error) const
     {
-        return RigExecBakedStoreSolver(B, output, value, error);
+        return RigExecBakedStoreSolver(B, step, output, value, error);
     }
 };
 

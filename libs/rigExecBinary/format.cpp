@@ -764,7 +764,7 @@ private:
             enabledStored;
         std::set<std::pair<uint64_t, uint8_t>> providerStored, answerStored;
         std::set<uint64_t> avarsStored, checkpointsStored, weightsStored,
-            solversStored;
+            solversStored, planarStored;
         std::vector<uint8_t> spaceStored(
             4 * std::max<size_t>(_slots, _f.pose->frameRecords.size()), 0);
         for (const auto &output : _f.opGraph->hostOutputs) {
@@ -776,7 +776,7 @@ private:
                 (output->target > 34 && !constraint && output->target != 40 &&
                  output->target != 41 && output->target != 42 &&
                  output->target != 50 && output->target != 51 &&
-                 output->target != 60 &&
+                 output->target != 60 && output->target != 61 &&
                  (output->target < 52 || output->target > 54)))
                 return _Bad("op_graph.host_outputs: unknown target " +
                             _N(output->target));
@@ -887,6 +887,18 @@ private:
                                 _N(output->object) +
                                 ", which it does not solve or another node "
                                 "stores");
+                continue;
+            }
+            if (output->target == 61) {
+                if (!_f.pose ||
+                    !_Has(_f.pose->solvers, int64_t(output->object)) ||
+                    !_f.pose->solvers[size_t(output->object)].skeleton2d ||
+                    _solveNode[node] != int64_t(output->object) ||
+                    !planarStored.insert(output->object).second)
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores whether solver " + _N(output->object) +
+                                " solved in its plane, which is no 2D "
+                                "skeleton it solves or another node stores");
                 continue;
             }
             if (commit) {

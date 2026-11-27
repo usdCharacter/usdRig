@@ -371,7 +371,7 @@ struct RrOpHost {
     bool StoreSolver(const eval::OpHostOutput &output, const void *value,
                      std::string *error) const
     {
-        return RrStoreSolver(&p, output, value, error);
+        return RrStoreSolver(&p, step, output, value, error);
     }
 };
 

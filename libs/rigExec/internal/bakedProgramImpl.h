@@ -3118,8 +3118,8 @@ bool RigExecBakedLookUpSolver(const RigExecBakedProgramImpl &B,
                               const RigExecTypeDesc &type, void *value,
                               std::string *error);
 /// Stores a solver's frames as its aggregate and the outputs its commit
-/// reads.
-bool RigExecBakedStoreSolver(RigExecBakedProgramImpl &B,
+/// reads; a 2D skeleton's planar flag gives \p step its line.
+bool RigExecBakedStoreSolver(RigExecBakedProgramImpl &B, RigExecBakedStep *step,
                              const eval::OpHostOutput &output,
                              const void *value, std::string *error);
 /// The failure \p error of an op node of solver \p solver.
