@@ -1531,7 +1531,8 @@ RigExecReadIkFkMatchOpOutput(const RigExecIkFkMatchOpNode &node,
     std::copy(fk->begin(), fk->end(), output->fkValues.begin());
     for (size_t k = 0; k < 5; ++k)
         output->shown[k] = FromStd((*shown)[k]);
-    output->shownMask = *mask;
+    output->matched = (*mask & rigExecOps::kIkFkMatchMatched) != 0;
+    output->shownMask = *mask & ~rigExecOps::kIkFkMatchMatched;
     return true;
 }
 

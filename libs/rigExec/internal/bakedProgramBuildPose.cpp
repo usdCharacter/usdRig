@@ -487,7 +487,6 @@ RigExecBakedProgram::_BuildPoseInterpolators(_BuildAttempt &build)
                     source >= 0 && B.paths[size_t(source)].HasPrefix(ik) ? 1
                                                                          : 0);
             }
-            c.matchPoleInputs.sources.reserve(c.matchPoleSourceRides.size());
         }
         const int parent = B.parent[size_t(pole)];
         c.matchPoleParentRides =

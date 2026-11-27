@@ -761,7 +761,9 @@ private:
                      !_ConstraintAt(int64_t(output->object)).singleChainIk &&
                      !_ConstraintAt(int64_t(output->object)).ikFkMatch) ||
                     (output->target == 71 &&
-                     !_ConstraintAt(int64_t(output->object)).singleChainIk))
+                     !_ConstraintAt(int64_t(output->object)).singleChainIk) ||
+                    (output->target >= 72 && output->target <= 74 &&
+                     !_ConstraintAt(int64_t(output->object)).ikFkMatch))
                     return _Bad("op_graph.host_outputs: node " + _N(node) +
                                 " stores into constraint " +
                                 _N(output->object) +
@@ -977,6 +979,10 @@ private:
                               _ConstraintCommit(int64_t(lookup->object)) &&
                               _ConstraintAt(int64_t(lookup->object))
                                   .singleChainIk
+                    : s == 71
+                        ? part == -1 && read <= 24 &&
+                              _ConstraintCommit(int64_t(lookup->object)) &&
+                              _ConstraintAt(int64_t(lookup->object)).ikFkMatch
                     : s == 32 ? (part < 0 ? read == 0 : read <= 1)
                     : s == 33 ? part == -1 && read >= 20 && read <= 22
                     : s == 34 ? part == -1 && read <= 16
@@ -10191,7 +10197,7 @@ private:
             return false;
         const auto &c =
             _f.pose->constraints[size_t(_f.pose->walkSteps[size_t(w)].index)];
-        return !c.ikFkMatch && c.target >= 0;
+        return c.ikFkMatch || c.target >= 0;
     }
 
     /// Constraint commit \p w's constraint; \p w must pass
@@ -10206,13 +10212,13 @@ private:
     /// result.
     static bool _ConstraintTarget(uint8_t target)
     {
-        return (target >= 35 && target <= 37) || target == 70 || target == 71;
+        return (target >= 35 && target <= 37) || (target >= 70 && target <= 74);
     }
 
     /// Whether lookup source \p source reads a constraint commit's inputs.
     static bool _ConstraintLookup(uint8_t source)
     {
-        return (source >= 32 && source <= 39) || source == 70;
+        return (source >= 32 && source <= 39) || source == 70 || source == 71;
     }
 
     /// The constraint commit a Constraint step or a constraint op step

@@ -2769,7 +2769,8 @@ TestFrozenConstraintOpsMatchLive(const std::string &examplesDir)
     for (const char *name :
          {"08_AimEyes.usda", "10_AimXformTurret.usda",
           "15_TransformMatrixMover.usda", "aimtest.usda", "aimtest_points.usda",
-          "14_VolumeConstrainedSweep.usda", "19_HarmonicsChain.usda"}) {
+          "14_VolumeConstrainedSweep.usda", "19_HarmonicsChain.usda",
+          "biped/Biped_stack_anim.usda"}) {
         UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/" + name);
         CHECK(stage);
         if (!stage)
@@ -2851,6 +2852,29 @@ TestFrozenConstraintOpsMatchLive(const std::string &examplesDir)
         run(end, what, {});
         if (!drag.prim.IsEmpty())
             run(end, what + " under a drag", {drag});
+        // An IK/FK match: its IK control dragged, then its switch flipped.
+        const SdfPath arm("/Biped/Rig/Main/Shot/Aux/Controls/L_Arm");
+        const SdfPath ik("/Biped/Rig/Main/Shot/Aux/Controls/L_ArmIK");
+        double ikfk = 0.0, ikTx = 0.0;
+        const UsdAttribute ikfkAttr = stage->GetAttributeAtPath(
+            arm.AppendProperty(TfToken("avars:ikfk")));
+        const UsdAttribute ikTxAttr =
+            stage->GetAttributeAtPath(ik.AppendProperty(TfToken("avars:tx")));
+        if (ikfkAttr && ikTxAttr && ikfkAttr.Get(&ikfk, UsdTimeCode(end)) &&
+            ikTxAttr.Get(&ikTx, UsdTimeCode(end))) {
+            RigExecValueOverride effector;
+            effector.prim = ik;
+            effector.attribute = TfToken("avars:tx");
+            effector.value = VtValue(ikTx + 0.25);
+            RigExecValueOverride flip;
+            flip.prim = arm;
+            flip.attribute = TfToken("avars:ikfk");
+            flip.value = VtValue(ikfk > 0.5 ? 0.0 : 1.0);
+            run(end, what + " under an IK drag", {effector});
+            run(end, what + " with the switch flipped", {flip});
+            run(end, what + " under an IK drag, switch flipped",
+                {effector, flip});
+        }
         if (ran == 0) {
             std::printf("FAIL %s: the frozen jobs ran no constraint\n",
                         what.c_str());

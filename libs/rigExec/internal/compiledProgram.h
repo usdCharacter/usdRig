@@ -1967,9 +1967,6 @@ struct RigExecBakedConstraint {
     int matchPoleSwitch = -1;
     std::vector<char> matchPoleSourceRides;
     bool matchPoleParentRides = false;
-    /// The pole switch's inputs as its compose left them, re-run with
-    /// the IK control moved; scratch, so the body does not allocate.
-    RigExecSpaceSwitchInputs matchPoleInputs;
     /// This run's outputs:ikValues and outputs:fkValues, published after
     /// the walk when `matchValuesValid`.
     std::array<double, 11> matchIkValues{};

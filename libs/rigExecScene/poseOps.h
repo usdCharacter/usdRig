@@ -284,8 +284,10 @@ struct RigExecIkFkMatchOpInputs {
     RigExecSpaceSwitchInputs poleSwitch;
 };
 
-/// The op's results: the published values, and the frames presented.
+/// The op's results: whether both halves matched, the published values, and
+/// the frames presented.
 struct RigExecIkFkMatchOpOutputs {
+    bool matched = false;
     std::array<double, 11> ikValues{};
     std::array<double, 20> fkValues{};
     std::array<GfMatrix4d, 5> shown;

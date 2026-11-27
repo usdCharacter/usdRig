@@ -117,6 +117,9 @@ enum class OpLookupSource : uint8_t {
     /// An input of single-chain IK constraint commit `object`
     /// (OpSingleChainIkRead).
     SingleChainIkInput = 70,
+    /// An input of IK/FK match constraint commit `object`
+    /// (OpIkFkMatchRead).
+    IkFkMatchInput = 71,
     /// The authored transform of constraint commit `object`'s geometry
     /// target: `read` 0 the Mat4d, 1 whether it was read (Bool).
     ConstraintDeltaBase = 39,
@@ -187,6 +190,45 @@ enum class OpSingleChainIkRead : uint8_t {
     Stretch = 5,
 };
 
+/// OpLookup::read of an IkFkMatchInput lookup, one per IkFkMatch input
+/// port. The numbers are part of the file format.
+enum class OpIkFkMatchRead : uint8_t {
+    /// Bool: whether every frame and rest of the limb maps to a transform.
+    Readable = 0,
+    /// Double: inputs:defaultWeight as authored.
+    Weight = 1,
+    /// Double: inputs:switch, stretch, softDistance, upperScale, lowerScale,
+    /// pin and twist.
+    Switch = 2,
+    Stretch = 3,
+    SoftDistance = 4,
+    UpperScale = 5,
+    LowerScale = 6,
+    Pin = 7,
+    Twist = 8,
+    /// Mat4dArray: the ten limb frames and the eight rests; DoubleArray: the
+    /// five controls' channels.
+    Sources = 9,
+    Rests = 10,
+    Channels = 11,
+    /// Bool and Mat4d: the IK solve's rigExec:space.
+    HasSpace = 12,
+    SpaceRest = 13,
+    SpacePosed = 14,
+    /// UInt: how the pole's parent follows the IK control.
+    PoleMode = 15,
+    /// The inputs the pole's space switch composed with this frame.
+    PolePosedDefault = 16,
+    PoleParentDefaultInverse = 17,
+    PoleParentPosed = 18,
+    PoleParentDefault = 19,
+    PoleSpaceDefault = 20,
+    PoleSpacePosed = 21,
+    PoleSourceDefaults = 22,
+    PoleSourcePosed = 23,
+    PoleActive = 24,
+};
+
 /// OpLookup::part of a ConstraintWorldUp lookup: where the aim's world-up
 /// comes from. The numbers are part of the file format.
 enum class OpConstraintWorldUp : uint8_t {
@@ -209,7 +251,8 @@ OpConstraintLookupSource(uint8_t source)
     return (source >= uint8_t(OpLookupSource::ConstraintSources) &&
             source <= uint8_t(OpLookupSource::HarmonicsInput)) ||
            source == uint8_t(OpLookupSource::ConstraintDeltaBase) ||
-           source == uint8_t(OpLookupSource::SingleChainIkInput);
+           source == uint8_t(OpLookupSource::SingleChainIkInput) ||
+           source == uint8_t(OpLookupSource::IkFkMatchInput);
 }
 
 /// OpLookup::part of a CommitVersions lookup: the commit's version list.
@@ -393,12 +436,18 @@ enum class OpOutputTarget : uint8_t {
     /// Bool: whether that delta could be measured; stored after it.
     ConstraintDeltaMeasured = 37,
     /// UInt: what constraint commit `object`'s node made of its frames, as
-    /// its kind's op reports it (Harmonics, SingleChainIk or IkFkMatch
-    /// Status).
+    /// its kind's op reports it (Harmonics or SingleChainIk Status,
+    /// IkFkMatch ShownMask).
     ConstraintStatus = 70,
     /// PointFrameArray: the chain single-chain IK constraint commit
     /// `object`'s node solved, stored after its status.
     SingleChainIkFrames = 71,
+    /// DoubleArray: the values IK/FK match constraint commit `object`'s node
+    /// matched, IK then FK; Mat4dArray: the controls it presents. Each is
+    /// stored after its status.
+    IkFkMatchIkValues = 72,
+    IkFkMatchFkValues = 73,
+    IkFkMatchShown = 74,
     /// Provider operation `object`'s authority and unavailable input,
     /// stored before its ProviderValueMatrix or ProviderValueFrame.
     ProviderValueAuthority = 50,
@@ -433,7 +482,8 @@ OpConstraintOutputTarget(uint8_t target)
     return (target >= uint8_t(OpOutputTarget::ConstraintCandidate) &&
             target <= uint8_t(OpOutputTarget::ConstraintDeltaMeasured)) ||
            target == uint8_t(OpOutputTarget::ConstraintStatus) ||
-           target == uint8_t(OpOutputTarget::SingleChainIkFrames);
+           (target >= uint8_t(OpOutputTarget::SingleChainIkFrames) &&
+            target <= uint8_t(OpOutputTarget::IkFkMatchShown));
 }
 
 /// Whether OpLookUp resolves lookups of \p source.
@@ -1180,6 +1230,7 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
     case OpLookupSource::ConstraintWorldUp:
     case OpLookupSource::HarmonicsInput:
     case OpLookupSource::SingleChainIkInput:
+    case OpLookupSource::IkFkMatchInput:
     case OpLookupSource::ConstraintDeltaBase:
         return host.LookUpConstraint(index, lookup, type, value, error);
     case OpLookupSource::Matrix: {
@@ -1255,6 +1306,9 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
     case OpOutputTarget::ConstraintDeltaMeasured:
     case OpOutputTarget::ConstraintStatus:
     case OpOutputTarget::SingleChainIkFrames:
+    case OpOutputTarget::IkFkMatchIkValues:
+    case OpOutputTarget::IkFkMatchFkValues:
+    case OpOutputTarget::IkFkMatchShown:
         return host.StoreConstraint(output, value, error);
     case OpOutputTarget::ChainGroup:
         break;

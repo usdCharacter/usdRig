@@ -625,11 +625,13 @@ RigExecRuntimeReader::_Reach(size_t index,
             // A derived mesh publishes points or a matrix by what it ran.
             points.insert(target);
             matrices.insert(target);
-        } else if (step.kind == RigExecWireStepKind::Constraint && p.poses &&
-                   object < p.poses->walkSteps.size()) {
+        } else if (step.kind == RigExecWireStepKind::OpNode && p.opNodes &&
+                   p.poses && object < p.opNodes->constraint.size() &&
+                   p.opNodes->constraint[object] < p.poses->walkSteps.size()) {
             // An IK/FK match presents its five controls, and every control
             // riding them, elsewhere than their final frames.
-            const int walk = p.poses->walkSteps[object].index;
+            const int walk =
+                p.poses->walkSteps[p.opNodes->constraint[object]].index;
             if (walk < 0 || size_t(walk) >= p.poses->constraints.size())
                 continue;
             const RigExecWireConstraint &c = p.poses->constraints[size_t(walk)];

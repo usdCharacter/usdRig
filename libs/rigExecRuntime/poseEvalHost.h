@@ -451,6 +451,25 @@ public:
         return true;
     }
 
+    const RigExecSpaceSwitchInputsT<RrMat4d> *
+    matchPoleSwitch(size_t object, uint32_t *mode) const
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        const RigExecWireConstraint &c = _program->poses->constraints[ci];
+        const RrPoseScratch *scratch = _RrScratch();
+        const int pole = c.sources.size() > 6 ? c.sources[6] : -1;
+        const bool switched =
+            c.matchPoleSwitch >= 0 &&
+            size_t(c.matchPoleSwitch) < scratch->switchInputs.size();
+        *mode = c.matchPoleParentRides ? 2u : 0u;
+        if (switched && pole >= 0 &&
+            size_t(pole) < scratch->posedAuthored.size() &&
+            !scratch->posedAuthored[size_t(pole)])
+            *mode = 1u;
+        return switched ? &scratch->switchInputs[size_t(c.matchPoleSwitch)]
+                        : nullptr;
+    }
+
     eval::PoseIkChainView ikChainView(size_t object) const
     {
         const size_t ci = size_t(_program->poses->walkSteps[object].index);
@@ -1274,28 +1293,6 @@ public:
         *ik = _program->store.matchValues[ci].data();
         *fk = _program->store.matchValues[ci].data() + 11;
         return true;
-    }
-
-    void matchPoleParent(size_t object, const RrMat4d &moved, RrMat4d *parent)
-    {
-        const size_t ci = size_t(_program->poses->walkSteps[object].index);
-        const RigExecWireConstraint &c = _program->poses->constraints[ci];
-        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
-        const int poleSlot = c.sources.size() > 6 ? c.sources[6] : -1;
-        if (c.matchPoleSwitch >= 0 && poleSlot >= 0 &&
-            size_t(poleSlot) < scratch->posedAuthored.size() &&
-            !scratch->posedAuthored[size_t(poleSlot)]) {
-            RrMat4d switched;
-            if (runtimePoseDetail::_RrMatchPoleParent(
-                    _program, c.matchPoleSwitch, c.matchPoleSourceRides, moved,
-                    &switched)) {
-                *parent = switched;
-            }
-            return;
-        }
-        if (c.matchPoleParentRides) {
-            *parent = eval::pose_ops::Multiply4<RrPoseMath>(*parent, moved);
-        }
     }
 
     bool writeBaseVersion(uint32_t version,

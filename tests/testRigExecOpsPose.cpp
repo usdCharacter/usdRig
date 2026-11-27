@@ -6,6 +6,7 @@
 #include "rigExec/api/registry.h"
 #include "rigExec/api/rigDesc.h"
 #include "rigExecOps/constraint/harmonicsOps.h"
+#include "rigExecOps/constraint/matchOps.h"
 #include "rigExecOps/constraint/matrixMoverOps.h"
 #include "rigExecOps/solver/singleChainIkOps.h"
 #include "rigExecOps/pose/poseOps.h"
@@ -742,6 +743,89 @@ TestSingleChainIk()
               &error) == 0);
 }
 
+// IkFkMatch on a bent arm: a match on either side reports it, presenting
+// the half the switch is not on; a limb the host could not read presents nothing; a steady frame
+// with the pole switched allocates nothing.
+void
+TestIkFkMatch()
+{
+    IkFkMatchPayload p;
+    p.poleSwitch.world = {0, 1};
+    p.poleSourceRides = {1, 0};
+    const auto mats = [](std::vector<Mat4d> values) {
+        RigExecArray<Mat4d> out(values.size());
+        for (size_t i = 0; i < values.size(); ++i)
+            out[i] = values[i];
+        return out;
+    };
+    RigExecArray<Mat4d> sources = mats(
+        {Translate(0, 0, 0), Translate(0.98, -0.17, 0), Translate(1.9, 0.1, 0),
+         Translate(0, 0, 0), Translate(1.9, 0.1, 0), Translate(1.8, 0.4, 0.1),
+         Translate(1.1, -1.4, 0.3), Translate(0, 0, 0),
+         Translate(0.98, -0.17, 0), Translate(1.9, 0.1, 0)});
+    const RigExecArray<Mat4d> rests =
+        mats({Translate(0, 0, 0), Translate(1, 0, 0), Translate(2, 0, 0),
+              Translate(2, 0, 0), Translate(1, -1.5, 0), Translate(0, 0, 0),
+              Translate(1, 0, 0), Translate(2, 0, 0)});
+    RigExecArray<double> channels(5 * kMatchChannelStride);
+    for (size_t i = 0; i < channels.Size(); ++i)
+        channels[i] = 0.0;
+    for (size_t k = 0; k < 5; ++k) {
+        double *c = channels.Data() + k * kMatchChannelStride;
+        c[3] = c[4] = c[5] = 1.0;
+        c[10] = c[11] = c[12] = 1.0;
+        c[15] = 'X';
+        c[16] = 'Y';
+        c[17] = 'Z';
+    }
+    const RigExecArray<Mat4d> switchSources =
+        mats({Translate(0, 0, 0), Translate(1, 0, 0)});
+    const uint8_t on = 1, off = 0;
+    const double weight = 1.0, ikSide = 1.0, zero = 0.0, one = 1.0;
+    const uint32_t switched = uint32_t(IkFkPoleMode::Switch);
+    const Mat4d identity = Translate(0, 0, 0);
+    const std::vector<const RigExecPortHandle *> ins = {
+        &IkFkMatchEnabled(),        &IkFkMatchWeight(),
+        &IkFkMatchSwitch(),         &IkFkMatchStretch(),
+        &IkFkMatchSoftDistance(),   &IkFkMatchUpperScale(),
+        &IkFkMatchLowerScale(),     &IkFkMatchPin(),
+        &IkFkMatchTwist(),          &IkFkMatchSources(),
+        &IkFkMatchRests(),          &IkFkMatchChannels(),
+        &IkFkMatchHasSpace(),       &IkFkMatchSpaceRest(),
+        &IkFkMatchSpacePosed(),     &IkFkMatchPoleMode(),
+        &IkFkMatchPosedDefault(),   &IkFkMatchParentDefaultInverse(),
+        &IkFkMatchParentPosed(),    &IkFkMatchParentDefault(),
+        &IkFkMatchSourceDefaults(), &IkFkMatchSourcePosed(),
+        &IkFkMatchActive()};
+    const auto values = [&](const uint8_t *enabled, const double *side) {
+        return std::vector<const void *>{
+            enabled,        &weight,        side,      &zero,     &zero,
+            &one,           &one,           &zero,     &zero,     &sources,
+            &rests,         &channels,      &off,      &identity, &identity,
+            &switched,      &identity,      &identity, &identity, &identity,
+            &switchSources, &switchSources, &zero};
+    };
+    Harness h(IkFkMatch(), &p, ins,
+              {&IkFkMatchShownMask(), &IkFkMatchIkValues()});
+    CHECK(h.Run(values(&on, &ikSide)));
+    const uint32_t mask = h.Out<uint32_t>(0);
+    CHECK((mask & kIkFkMatchMatched) != 0);
+    CHECK((mask & 0x1cu) == 0x1cu);
+    CHECK(h.Run(values(&on, &zero)));
+    CHECK((h.Out<uint32_t>(0) & 3u) == 3u);
+    CHECK(h.Run(values(&off, &ikSide)));
+    CHECK(h.Out<uint32_t>(0) == 0);
+    std::string error;
+    CHECK(opAllocationCount::SteadyFrameAllocations(
+              IkFkMatch(), &p, ins, values(&on, &ikSide), IkFkMatchShownMask(),
+              9,
+              [&](int frame) {
+                  sources[5] = Translate(1.8, 0.4 + 0.02 * frame, 0.1);
+                  return &sources;
+              },
+              &error) == 0);
+}
+
 } // namespace
 
 int
@@ -763,6 +847,7 @@ main()
     TestConstraintDelta();
     TestHarmonicsSteady();
     TestSingleChainIk();
+    TestIkFkMatch();
     if (failures) {
         std::printf("%d failures\n", failures);
         return 1;

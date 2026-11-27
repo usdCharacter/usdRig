@@ -70,6 +70,8 @@ enum class IkFkPoleMode : uint32_t { Keep, Switch, Ride };
 
 const rigExec::RigExecOpHandle &IkFkMatch();
 
+inline constexpr uint32_t kIkFkMatchMatched = 1u << 5;
+
 // Frames are Mat4d, row vectors. Enabled (Bool); Weight and the limb's
 // Switch, Stretch, SoftDistance, UpperScale, LowerScale, Pin and Twist
 // (degrees) (Double); Sources (Mat4dArray: joints 0-2, IK root 3, effector
@@ -78,9 +80,11 @@ const rigExec::RigExecOpHandle &IkFkMatch();
 // controls' at kMatchChannelStride each); HasSpace (Bool) with SpaceRest and
 // SpacePosed (Mat4d), the IK solve's space. PoleMode (UInt, an
 // IkFkPoleMode) and the pole switch's ports, read in Switch mode.
-// IkValues (DoubleArray, 11) and FkValues (DoubleArray, 20),
-// Shown (Mat4dArray, 5: the IK control, pole and FK controls as presented)
-// and ShownMask (UInt, which of Shown are presented).
+// IkValues (DoubleArray, 11) and FkValues (DoubleArray, 20), zero unless
+// matched; Shown (Mat4dArray, 5: the IK control, pole and FK controls as
+// presented) and ShownMask (UInt: bit k, Shown[k] is presented;
+// kIkFkMatchMatched, both halves matched). A limb with no match is a result,
+// not a failure.
 const rigExec::RigExecPortHandle &IkFkMatchEnabled();
 const rigExec::RigExecPortHandle &IkFkMatchWeight();
 const rigExec::RigExecPortHandle &IkFkMatchSwitch();

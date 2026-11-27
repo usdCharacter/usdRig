@@ -3,6 +3,7 @@
 #include "rigExecEvalCore/constraintLookups.h"
 #include "rigExecOps/constraint/constraintOps.h"
 #include "rigExecOps/constraint/harmonicsOps.h"
+#include "rigExecOps/constraint/matchOps.h"
 #include "rigExecOps/solver/singleChainIkOps.h"
 #include "rigExecOps/constraint/matrixMoverOps.h"
 #include "rigExecRigTypes/rigTypes.h"
@@ -64,7 +65,7 @@ bool
 RigExecBakedConstraintRunsAsOps(const RigExecBakedProgramImpl &B, size_t w)
 {
     const Constraint *c = ConstraintAt(B, w);
-    return c && c->target >= 0 && !c->ikFkMatch;
+    return c && (c->target >= 0 || c->ikFkMatch);
 }
 
 bool
@@ -164,6 +165,83 @@ RigExecBakedAddConstraintOp(const RigExecBakedProgramImpl &B,
     payload.rotationOrder = ConstraintEulerOrder(int(c.order));
     payload.blendShear = c.blendShear;
     payload.preserveInputUp = c.preserveInputUp;
+    if (c.ikFkMatch) {
+        using M = eval::OpIkFkMatchRead;
+        static_assert(eval::constraint_lookups::kMatchChannelStride ==
+                              kMatchChannelStride &&
+                          kIkFkMatchMatched == 1u << 5,
+                      "the host reads IkFkMatch's channels and status");
+        if (c.sources.size() != 10)
+            return Fail(error,
+                        c.pathText + ": names an incomplete IK/FK match");
+        IkFkMatchPayload match;
+        match.ikValue = c.matchIkValue;
+        match.scaleCalibration = c.matchScaleCalibration;
+        match.upperLengthOffset = c.matchUpperOffset;
+        match.lowerLengthOffset = c.matchLowerOffset;
+        match.stretchLimb = c.matchStretchLimb;
+        if (c.matchPoleSwitch >= 0) {
+            const auto &sw = B.spaceSwitches[size_t(c.matchPoleSwitch)];
+            const RigExecSpaceSwitchRecord &record = sw.kernelRecord;
+            match.poleSwitch.filters = record.filters;
+            match.poleSwitch.twistAxis = rigExecStd::Vec3d(
+                record.twistAxis[0], record.twistAxis[1], record.twistAxis[2]);
+            match.poleSwitch.affectTranslation = record.affectTranslation;
+            match.poleSwitch.affectRotation = record.affectRotation;
+            match.poleSwitch.affectScale = record.affectScale;
+            match.poleSwitch.hasCarry = sw.spaceSlot >= 0;
+            for (const int slot : sw.sourceSlots)
+                match.poleSwitch.world.push_back(slot < 0 ? 1 : 0);
+            match.poleSourceRides.assign(c.matchPoleSourceRides.begin(),
+                                         c.matchPoleSourceRides.end());
+        }
+        node = builder->AddOp(IkFkMatch(), &match);
+        if (node != o)
+            return Fail(error, "op nodes: the IK/FK match of node " +
+                                   std::to_string(o) + " was added as node " +
+                                   std::to_string(node));
+        const auto input = [&](const RigExecPortHandle &port, M read) {
+            look(node, port, L::IkFkMatchInput, -1, R(uint8_t(read)));
+        };
+        input(IkFkMatchEnabled(), M::Readable);
+        input(IkFkMatchWeight(), M::Weight);
+        input(IkFkMatchSwitch(), M::Switch);
+        input(IkFkMatchStretch(), M::Stretch);
+        input(IkFkMatchSoftDistance(), M::SoftDistance);
+        input(IkFkMatchUpperScale(), M::UpperScale);
+        input(IkFkMatchLowerScale(), M::LowerScale);
+        input(IkFkMatchPin(), M::Pin);
+        input(IkFkMatchTwist(), M::Twist);
+        input(IkFkMatchSources(), M::Sources);
+        input(IkFkMatchRests(), M::Rests);
+        input(IkFkMatchChannels(), M::Channels);
+        input(IkFkMatchHasSpace(), M::HasSpace);
+        input(IkFkMatchSpaceRest(), M::SpaceRest);
+        input(IkFkMatchSpacePosed(), M::SpacePosed);
+        input(IkFkMatchPoleMode(), M::PoleMode);
+        input(IkFkMatchPosedDefault(), M::PolePosedDefault);
+        input(IkFkMatchParentDefaultInverse(), M::PoleParentDefaultInverse);
+        input(IkFkMatchParentPosed(), M::PoleParentPosed);
+        input(IkFkMatchParentDefault(), M::PoleParentDefault);
+        if (match.poleSwitch.hasCarry) {
+            input(IkFkMatchSwitchSpaceDefault(), M::PoleSpaceDefault);
+            input(IkFkMatchSwitchSpacePosed(), M::PoleSpacePosed);
+        }
+        input(IkFkMatchSourceDefaults(), M::PoleSourceDefaults);
+        input(IkFkMatchSourcePosed(), M::PoleSourcePosed);
+        input(IkFkMatchActive(), M::PoleActive);
+        const auto store = [&](const RigExecPortHandle &port,
+                               eval::OpOutputTarget target) {
+            builder->BindOutput(node, port);
+            layout->hostOutputs.push_back(
+                {node, port.Index(), uint8_t(target), uint32_t(w)});
+        };
+        store(IkFkMatchShownMask(), eval::OpOutputTarget::ConstraintStatus);
+        store(IkFkMatchIkValues(), eval::OpOutputTarget::IkFkMatchIkValues);
+        store(IkFkMatchFkValues(), eval::OpOutputTarget::IkFkMatchFkValues);
+        store(IkFkMatchShown(), eval::OpOutputTarget::IkFkMatchShown);
+        return true;
+    }
     if (c.singleChainIk) {
         using S = eval::OpSingleChainIkRead;
         const bool rotatePlane =

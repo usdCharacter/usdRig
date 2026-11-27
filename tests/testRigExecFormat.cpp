@@ -1620,10 +1620,10 @@ TestOpenRefusals()
 
     static_assert(RigExecFormatVersion == 51 &&
                       RigExecFormatOldestReadable == 51,
-                  "format 51 solves constraints by op nodes and is "
+                  "format 51 solves every constraint by op nodes and is "
                   "the only format Open reads");
-    // Every older format requires re-export: its harmonics and single-chain
-    // IK constraints were solved by Constraint steps.
+    // Every older format requires re-export: its harmonics, single-chain IK
+    // and IK/FK match constraints were solved by Constraint steps.
     // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;

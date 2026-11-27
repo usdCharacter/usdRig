@@ -50,6 +50,19 @@ struct ConstraintStepCache {
     bool sampled = false;
     bool sampleOk = false;
     ConstraintNote note = ConstraintNote::None;
+    /// An IK/FK match's limb, read once per step: its frames and rests as
+    /// matrices, whether every one maps to a transform, its scalars and the
+    /// space its IK solve measures in; then what its status reported.
+    bool limbRead = false;
+    bool limbReadable = false;
+    PoseIkFkFacts match;
+    std::array<rigExecStd::Mat4d, 10> limb;
+    std::array<rigExecStd::Mat4d, 8> limbRests;
+    bool hasSpace = false;
+    rigExecStd::Mat4d spaceRest;
+    rigExecStd::Mat4d spacePosed;
+    bool matched = false;
+    uint32_t shownMask = 0;
 };
 
 namespace constraint_lookups {
@@ -88,6 +101,15 @@ ToStd(const std::array<typename Math::Vec3, 4> &points, unsigned flags)
     for (size_t i = 0; i < 4; ++i)
         out.points[i] = ToStd<Math>(points[i]);
     out.flags = flags;
+    return out;
+}
+
+template <class Math>
+typename Math::Mat4
+FromStd(const rigExecStd::Mat4d &m)
+{
+    typename Math::Mat4 out = Math::Identity4();
+    std::memcpy(static_cast<void *>(&out), &m, sizeof(m));
     return out;
 }
 
@@ -171,7 +193,8 @@ Read(Host &host, ConstraintStepCache &cache, size_t w, std::string *error)
         cache = ConstraintStepCache();
         cache.object = uint32_t(w);
         cache.commit = host.inputs().constraintGate(w, &cache.facts);
-        cache.gateOk = cache.commit && GateOf(cache.facts, &cache.gate);
+        cache.gateOk = cache.commit && (cache.facts.ikFkMatch ||
+                                        GateOf(cache.facts, &cache.gate));
     }
     if (!cache.commit) {
         Fail(error,
@@ -254,6 +277,75 @@ WithoutPath(std::string line, const std::string &path)
         line.erase(0, path.size() + 1);
     return line;
 }
+
+/// IK/FK match commit \p w's limb as its node reads it this step: the ten
+/// frames and eight rests as matrices, readable where every one maps to a
+/// transform, its scalars, and its IK solve's space.
+template <class Host>
+bool
+ReadLimb(Host &host, ConstraintStepCache &cache, size_t w, std::string *error)
+{
+    using Math = typename Host::Math;
+    if (cache.limbRead)
+        return true;
+    cache.limbRead = true;
+    const PoseCommitFacts commit = host.inputs().commitFacts(w);
+    if (!host.inputs().ikFkFacts(w, &cache.match) ||
+        host.inputs().constraintSourceCount(w) != 10 ||
+        commit.sourceReads.count < 10)
+        return Fail(error, "names an incomplete IK/FK match");
+    const auto matrixOf = [](const std::array<typename Math::Vec3, 4> &points,
+                             unsigned flags, rigExecStd::Mat4d *out) {
+        typename Math::Mat4 m = Math::Identity4();
+        if (!(flags & pose_ops::kPoseFrameValid) ||
+            !pose_ops::PointsToMatrix<Math>(pose_ops::IdentityLandmarks<Math>(),
+                                            points, &m))
+            return false;
+        *out = ToStd<Math>(m);
+        return true;
+    };
+    const auto slotOf = [&](size_t k) {
+        int slot = -1;
+        uint32_t finRead = 0;
+        return host.inputs().constraintSourceRead(w, k, &slot, &finRead) ? slot
+                                                                         : -1;
+    };
+    std::array<typename Math::Vec3, 4> points =
+        pose_ops::IdentityLandmarks<Math>();
+    unsigned flags = 0;
+    const auto restOf = [&](int slot, rigExecStd::Mat4d *out) {
+        return slot >= 0 &&
+               host.inputs().restFrame(size_t(slot), &points, &flags) &&
+               matrixOf(points, flags, out);
+    };
+    cache.limb.fill(rigExecStd::Mat4d(1.0));
+    cache.limbRests.fill(rigExecStd::Mat4d(1.0));
+    bool usable = true;
+    for (size_t i = 0; usable && i < 10; ++i)
+        usable = slotOf(i) >= 0 &&
+                 host.inputs().finFrame(commit.sourceReads.data[i], &points,
+                                        &flags) &&
+                 matrixOf(points, flags, &cache.limb[i]);
+    for (size_t i = 0; usable && i < 8; ++i)
+        usable = restOf(slotOf(i < 3 ? i : i + 2), &cache.limbRests[i]);
+    cache.limbReadable = usable;
+    cache.hasSpace = false;
+    cache.spaceRest = rigExecStd::Mat4d(1.0);
+    cache.spacePosed = rigExecStd::Mat4d(1.0);
+    const int space = cache.facts.spaceSlot;
+    typename Math::Mat4 posed = Math::Identity4();
+    if (space >= 0 && restOf(space, &cache.spaceRest) &&
+        host.inputs().posedMatrix(size_t(space), &posed) &&
+        std::isfinite(posed[3][0])) {
+        cache.hasSpace = true;
+        cache.spacePosed = ToStd<Math>(posed);
+    }
+    return true;
+}
+
+/// Doubles per control of an IK/FK match's channels
+/// (rigExecOps::kMatchChannelStride).
+constexpr size_t kMatchChannelStride = 18;
 
 /// Single-chain IK commit \p w's pole point: the weighted mean of its
 /// pole-vector objects. An object that does not resolve, or a negative or
@@ -630,6 +722,108 @@ LookUpConstraint(Host &host, ConstraintStepCache &cache, const OpLookup &lookup,
         }
         return bad();
     }
+    case L::IkFkMatchInput: {
+        using M = OpIkFkMatchRead;
+        if (!facts.ikFkMatch)
+            return Fail(error, "names an IK/FK match its commit does not hold");
+        if (!ReadLimb(host, cache, w, error))
+            return false;
+        const uint8_t r = lookup.read;
+        const auto matrices = [&](const rigExecStd::Mat4d *m, size_t count) {
+            rigExecStd::Mat4d *out = nullptr;
+            if (!Elements(type, value, count, &out))
+                return bad();
+            std::copy(m, m + count, out);
+            return true;
+        };
+        if (r == uint8_t(M::Readable))
+            return Put(type, value, uint8_t(cache.limbReadable ? 1 : 0)) ||
+                   bad();
+        if (r == uint8_t(M::Weight))
+            return Put(type, value, cache.match.envelope) || bad();
+        if (r >= uint8_t(M::Switch) && r <= uint8_t(M::Twist))
+            return Put(type, value,
+                       cache.match.scalars[r - uint8_t(M::Switch)]) ||
+                   bad();
+        if (r == uint8_t(M::Sources))
+            return matrices(cache.limb.data(), cache.limb.size());
+        if (r == uint8_t(M::Rests))
+            return matrices(cache.limbRests.data(), cache.limbRests.size());
+        if (r == uint8_t(M::Channels)) {
+            double *out = nullptr;
+            if (!Elements(type, value, 5 * kMatchChannelStride, &out))
+                return bad();
+            std::fill(out, out + 5 * kMatchChannelStride, 0.0);
+            for (size_t i = 0; cache.limbReadable && i < 5; ++i) {
+                int slot = -1;
+                uint32_t finRead = 0;
+                RigExecIkFkMatchChannels ch;
+                if (!host.inputs().constraintSourceRead(w, 5 + i, &slot,
+                                                        &finRead) ||
+                    slot < 0 || !host.inputs().matchChannels(size_t(slot), &ch))
+                    return Fail(error, "names an incomplete IK/FK match");
+                double *v = out + i * kMatchChannelStride;
+                for (int k = 0; k < 3; ++k) {
+                    v[k] = ch.t[k];
+                    v[3 + k] = ch.s[k];
+                    v[6 + k] = ch.r[k];
+                    v[10 + k] = ch.sign[k];
+                    v[15 + k] = double(ch.order[k]);
+                }
+                v[9] = ch.spin;
+                v[13] = ch.units;
+            }
+            return true;
+        }
+        if (r == uint8_t(M::HasSpace))
+            return Put(type, value, uint8_t(cache.hasSpace ? 1 : 0)) || bad();
+        if (r == uint8_t(M::SpaceRest))
+            return Put(type, value, cache.spaceRest) || bad();
+        if (r == uint8_t(M::SpacePosed))
+            return Put(type, value, cache.spacePosed) || bad();
+        uint32_t mode = 0;
+        const RigExecSpaceSwitchInputsT<typename Math::Mat4> *pole =
+            host.inputs().matchPoleSwitch(w, &mode);
+        if (r == uint8_t(M::PoleMode))
+            return Put(type, value, mode) || bad();
+        const auto matrix = [&](const typename Math::Mat4 *m) {
+            return Put(type, value,
+                       m ? ToStd<Math>(*m) : rigExecStd::Mat4d(1.0)) ||
+                   bad();
+        };
+        const auto sources = [&](bool posed) {
+            const size_t count = pole ? pole->sources.size() : 0;
+            rigExecStd::Mat4d *out = nullptr;
+            if (!Elements(type, value, count, &out))
+                return bad();
+            for (size_t k = 0; k < count; ++k)
+                out[k] = ToStd<Math>(posed ? pole->sources[k].posedSpace
+                                           : pole->sources[k].defaultSpace);
+            return true;
+        };
+        switch (M(r)) {
+        case M::PolePosedDefault:
+            return matrix(pole ? &pole->posedDefault : nullptr);
+        case M::PoleParentDefaultInverse:
+            return matrix(pole ? &pole->parentDefaultInverse : nullptr);
+        case M::PoleParentPosed:
+            return matrix(pole ? &pole->parentPosed : nullptr);
+        case M::PoleParentDefault:
+            return matrix(pole ? &pole->parentDefault : nullptr);
+        case M::PoleSpaceDefault:
+            return matrix(pole ? &pole->spaceDefault : nullptr);
+        case M::PoleSpacePosed:
+            return matrix(pole ? &pole->spacePosed : nullptr);
+        case M::PoleSourceDefaults:
+            return sources(false);
+        case M::PoleSourcePosed:
+            return sources(true);
+        case M::PoleActive:
+            return Put(type, value, pole ? pole->active : 0.0) || bad();
+        default:
+            return bad();
+        }
+    }
     case L::ConstraintDeltaBase: {
         const int d = facts.deltaBase;
         if (!host.inputs().deltaBaseValid(d))
@@ -655,8 +849,8 @@ namespace constraint_lookups {
 /// the target as it entered, with one diagnostic line.
 template <class Host>
 bool
-StoreStatus(Host &host, const ConstraintStepCache &cache, size_t w,
-            uint32_t status, std::string *error)
+StoreStatus(Host &host, ConstraintStepCache &cache, size_t w, uint32_t status,
+            std::string *error)
 {
     const PoseConstraintGateFacts &facts = cache.facts;
     host.state().setRecordAfter(w, true);
@@ -673,6 +867,19 @@ StoreStatus(Host &host, const ConstraintStepCache &cache, size_t w,
                               how);
         return true;
     };
+    if (facts.ikFkMatch) {
+        // rigExecOps::IkFkMatch's ShownMask: bit 5 matched, bits 0-4 the
+        // controls it presents, stored next.
+        cache.matched = (status & (1u << 5)) != 0;
+        cache.shownMask = status & 31u;
+        host.state().setMatchValuesValid(w, false);
+        host.state().setMatchShownMask(w, 0);
+        if (cache.matched)
+            return true;
+        return cache.limbReadable
+                   ? line(" could not match its limb's other half", "")
+                   : line(" could not read its limb");
+    }
     if (status == 0)
         return true;
     if (facts.harmonics) {
@@ -742,6 +949,54 @@ StoreChain(Host &host, size_t w, const rigExecRig::PointFrameArray &solved,
     return true;
 }
 
+/// The values IK/FK match commit \p w's node matched, written where it
+/// publishes them once its status said both halves matched.
+template <class Host>
+bool
+StoreMatchValues(Host &host, const ConstraintStepCache &cache, size_t w,
+                 uint8_t target, const rigExecStd::RigExecArray<double> &values,
+                 std::string *error)
+{
+    if (!cache.matched)
+        return true;
+    double *ik = nullptr;
+    double *fk = nullptr;
+    const bool isIk = target == uint8_t(OpOutputTarget::IkFkMatchIkValues);
+    const size_t count = isIk ? 11 : 20;
+    if (!host.state().matchValueOut(w, &ik, &fk))
+        return Fail(error, "names an incomplete IK/FK match");
+    if (values.Size() != count)
+        return Fail(error, "matched " + std::to_string(values.Size()) +
+                               " values of " + std::to_string(count));
+    std::copy(values.Data(), values.Data() + count, isIk ? ik : fk);
+    host.state().setMatchValuesValid(w, true);
+    return true;
+}
+
+/// The controls IK/FK match commit \p w's node presents, as its status
+/// named them.
+template <class Host>
+bool
+StoreMatchShown(Host &host, const ConstraintStepCache &cache, size_t w,
+                const rigExecStd::RigExecArray<rigExecStd::Mat4d> &shown,
+                std::string *error)
+{
+    using Math = typename Host::Math;
+    if (shown.Size() != 5)
+        return Fail(error, "presents " + std::to_string(shown.Size()) +
+                               " controls of 5");
+    for (size_t k = 0; k < 5; ++k) {
+        if (!(cache.shownMask & (1u << k)))
+            continue;
+        std::array<typename Math::Vec3, 4> points;
+        unsigned flags = 0;
+        pose_ops::FrameFromMatrix<Math>(FromStd<Math>(shown[k]), &points,
+                                        &flags);
+        host.state().writeMatchShown(w, k, points, flags);
+    }
+    return true;
+}
+
 } // namespace constraint_lookups
 
 /// Stores a constraint node's output \p value: the frame its mover solved
@@ -788,8 +1043,20 @@ StoreConstraint(Host &host, ConstraintStepCache &cache,
         return true;
     }
     if (output.target == uint8_t(OpOutputTarget::ConstraintStatus))
-        return StoreStatus(host, *read, w,
+        return StoreStatus(host, cache, w,
                            *static_cast<const uint32_t *>(value), error);
+    if (output.target == uint8_t(OpOutputTarget::IkFkMatchIkValues) ||
+        output.target == uint8_t(OpOutputTarget::IkFkMatchFkValues))
+        return StoreMatchValues(
+            host, cache, w, output.target,
+            *static_cast<const rigExecStd::RigExecArray<double> *>(value),
+            error);
+    if (output.target == uint8_t(OpOutputTarget::IkFkMatchShown))
+        return StoreMatchShown(
+            host, cache, w,
+            *static_cast<const rigExecStd::RigExecArray<rigExecStd::Mat4d> *>(
+                value),
+            error);
     if (output.target == uint8_t(OpOutputTarget::SingleChainIkFrames))
         return StoreChain(
             host, w, *static_cast<const rigExecRig::PointFrameArray *>(value),

@@ -22487,9 +22487,10 @@ struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// 37 the world-up direction its aim reads, `part` the world-up mode
   /// (OpConstraintWorldUp); 39 its geometry target's authored transform
   /// (`read` 0) or whether it was read (1).
-  /// 38 and 70 (format 51) read an input of harmonics and single-chain IK
-  /// constraint commit `object`, `read` an OpHarmonicsRead or
-  /// OpSingleChainIkRead (rigExecEvalCore/opSteps.h).
+  /// 38, 70 and 71 (format 51) read an input of harmonics, single-chain IK
+  /// and IK/FK match constraint commit `object`, `read` an
+  /// OpHarmonicsRead, OpSingleChainIkRead or OpIkFkMatchRead
+  /// (rigExecEvalCore/opSteps.h).
   uint8_t source() const {
     return GetField<uint8_t>(VT_SOURCE, 0);
   }
@@ -22612,9 +22613,10 @@ struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// present; 35 (format 47): the frame constraint commit `object`'s mover
   /// solved; 36 and 37 (format 47): the delta it measured against its
   /// geometry target's authored transform and whether it measured one;
-  /// 70 (format 51): what constraint commit `object`'s Harmonics or
-  /// SingleChainIk node made of its frames; 71 (format 51): the chain its
-  /// single-chain IK solved.
+  /// 70 (format 51): what constraint commit `object`'s Harmonics,
+  /// SingleChainIk or IkFkMatch node made of its frames; 71 (format 51):
+  /// the chain its single-chain IK solved; 72 to 74 (format 51): the IK and
+  /// FK values its IK/FK match matched and the controls it presents.
   /// 4 (format 42): a range chain member's output, group by group, into
   /// the vertex groups of revision `object` (geometry.revision_index), the
   /// groups its OpChain.writes names. 6 (format 44): the looked-up

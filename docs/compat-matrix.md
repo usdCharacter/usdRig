@@ -94,7 +94,7 @@ in usdRig history.
 | 48 | 2026-11-27 | every Range delta mush as a DeltaMush op node reading its inputs through revision lookups |
 | 49 | 2026-11-27 | provider values other than operation results answered by ProviderSelect op nodes reading their candidates through lookups; the SpaceExpression step retired |
 | 50 | 2026-11-27 | every Range lattice as a Lattice op node reading its cages through revision lookups |
-| 51 | 2026-11-27 | harmonics and single-chain IK constraints as op nodes reading their inputs through constraint lookups; **oldest readable from here on** |
+| 51 | 2026-11-27 | harmonics, single-chain IK and IK/FK match constraints as op nodes reading their inputs through constraint lookups; **oldest readable from here on** |
 
 Versions 6 and 11–16 never appeared on `main`. Files written before version 51
 are outside every current reader: re-export them.

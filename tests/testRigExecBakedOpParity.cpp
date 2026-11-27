@@ -870,14 +870,15 @@ ProbeIkFkMatch(const B &b, int walk)
     RigExecIkFkMatchOpOutputs out;
     std::string error;
     if (!RigExecRunIkFkMatchOp(constants, in, runner, &out, &error)) {
-        OpFailed("Constraint", kind, c.pathText, !c.matchValuesValid, error);
+        OpFailed("Constraint", kind, c.pathText, false, error);
         return;
     }
-    if (!c.matchValuesValid) {
-        Report("Constraint/" + kind, c.pathText,
-               "the step matched no values where the op did");
+    CompareFlag("Constraint", kind, c.pathText, "matched", c.matchValuesValid,
+                out.matched);
+    CompareFlag("Constraint", kind, c.pathText, "shown mask",
+                c.matchShownMask == out.shownMask, true);
+    if (!out.matched)
         return;
-    }
     Compare(
         "Constraint", kind, c.pathText,
         VtValue(VtDoubleArray(c.matchIkValues.begin(), c.matchIkValues.end())),
@@ -888,8 +889,6 @@ ProbeIkFkMatch(const B &b, int walk)
         VtValue(VtDoubleArray(c.matchFkValues.begin(), c.matchFkValues.end())),
         VtValue(VtDoubleArray(out.fkValues.begin(), out.fkValues.end())), false,
         "FK values");
-    CompareFlag("Constraint", kind, c.pathText, "shown mask",
-                c.matchShownMask == out.shownMask, true);
     for (size_t k = 0; k < 5; ++k) {
         if (!(out.shownMask & (1u << k)))
             continue;

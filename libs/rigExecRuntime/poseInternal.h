@@ -95,10 +95,6 @@ RrPointFrame _RrTransformFrame(const RrPointFrame &frame, const RrMat4d &space);
 
 bool _RrRunConstraintStep(RrProgram *program, size_t step, std::string *error);
 
-bool _RrMatchPoleParent(RrProgram *program, int switchIndex,
-                        const std::vector<uint8_t> &rides, const RrMat4d &moved,
-                        RrMat4d *out);
-
 // A control's channels as the compose reads them, for the match kernels.
 RigExecIkFkMatchChannels _RrMatchChannelsOf(const RrProgram &program,
                                             const RrPoseScratch &scratch,
@@ -186,6 +182,8 @@ struct RrPoseScratch {
     std::vector<RrMat4d> posedD, parentSpaceM;
     std::vector<std::vector<RigExecSpaceCheckpointInputT<RrMat4d>>>
         checkpointInputs;
+    /// Per space switch, the inputs its compose ran on this frame.
+    std::vector<RigExecSpaceSwitchInputsT<RrMat4d>> switchInputs;
     std::vector<char> parentSpaceAuthored;
     std::vector<RrMat4d> restRoundTrip, defaultRoundTrip;
     std::vector<std::array<RrVec3d, 4>> restPts;

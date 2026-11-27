@@ -522,6 +522,25 @@ public:
         return true;
     }
 
+    const RigExecSpaceSwitchInputs *matchPoleSwitch(size_t object,
+                                                    uint32_t *mode) const
+    {
+        const RigExecBakedProgramImpl &B = *_program;
+        const RigExecBakedProgramImpl::Constraint &c =
+            B.constraints[size_t(B.walkSteps[object].index)];
+        const int pole = c.sources.size() > 6 ? c.sources[6] : -1;
+        const bool switched =
+            c.matchPoleSwitch >= 0 &&
+            size_t(c.matchPoleSwitch) < B.spaceSwitches.size();
+        *mode = c.matchPoleParentRides ? 2u : 0u;
+        if (switched && pole >= 0 && size_t(pole) < B.posedAuthored.size() &&
+            !B.posedAuthored[size_t(pole)])
+            *mode = 1u;
+        return switched
+                   ? &B.spaceSwitches[size_t(c.matchPoleSwitch)].kernelInputs
+                   : nullptr;
+    }
+
     eval::PoseIkChainView ikChainView(size_t object) const
     {
         const RigExecBakedProgramImpl::Constraint &c =
@@ -1395,46 +1414,6 @@ public:
         *ik = c.matchIkValues.data();
         *fk = c.matchFkValues.data();
         return true;
-    }
-
-    void matchPoleParent(size_t object, const GfMatrix4d &moved,
-                         GfMatrix4d *parent)
-    {
-        RigExecBakedProgramImpl::Constraint &c =
-            _program->constraints[size_t(_program->walkSteps[object].index)];
-        RigExecBakedProgramImpl &B = *_program;
-        const int poleSlot = c.sources.size() > 6 ? c.sources[6] : -1;
-        if (c.matchPoleSwitch >= 0 && poleSlot >= 0 &&
-            size_t(poleSlot) < B.posedAuthored.size() &&
-            !B.posedAuthored[size_t(poleSlot)] &&
-            size_t(c.matchPoleSwitch) < B.spaceSwitches.size()) {
-            const auto &sw = B.spaceSwitches[size_t(c.matchPoleSwitch)];
-            auto &inputs = c.matchPoleInputs;
-            inputs = sw.kernelInputs;
-            inputs.avars = GfMatrix4d(1.0);
-            for (size_t k = 0;
-                 k < inputs.sources.size() && k < c.matchPoleSourceRides.size();
-                 ++k) {
-                if (c.matchPoleSourceRides[k] && !inputs.sources[k].world) {
-                    inputs.sources[k].posedSpace =
-                        eval::pose_ops::Multiply4<BakedPoseMath>(
-                            inputs.sources[k].posedSpace, moved);
-                }
-            }
-            RigExecPointFrame frame;
-            GfMatrix4d switched(1.0);
-            if (RigExecRunSpaceSwitch(sw.kernelRecord, inputs, &frame) &&
-                RigExecBakedUsable(frame) &&
-                eval::pose_ops::PointsToMatrix<BakedPoseMath>(
-                    eval::pose_ops::IdentityLandmarks<BakedPoseMath>(),
-                    frame.points, &switched)) {
-                *parent = switched;
-            }
-            return;
-        }
-        if (c.matchPoleParentRides) {
-            *parent = eval::pose_ops::Multiply4<BakedPoseMath>(*parent, moved);
-        }
     }
 
     bool writeBaseVersion(uint32_t version,

@@ -157,98 +157,6 @@ _RrStepHead(const RrProgram *program, size_t step)
            std::to_string(wire.object) + " part " + std::to_string(wire.part);
 }
 
-// An IK/FK match's pole: the frame its space switch composes avars onto,
-// with each source flagged in \p rides carried by \p moved (the IK
-// control's move). The switch's inputs are gathered as the compose step
-// gathers them, with the avars at identity. False when they cannot be read.
-bool
-_RrMatchPoleParent(RrProgram *program, int switchIndex,
-                   const std::vector<uint8_t> &rides, const RrMat4d &moved,
-                   RrMat4d *out)
-{
-    const RrPoseScratch *scratch = _RrScratch(program);
-    const RigExecWireSlotMeta &meta = *program->slotMeta;
-    if (switchIndex < 0 ||
-        size_t(switchIndex) >= program->poses->spaceSwitches.size()) {
-        return false;
-    }
-    const RigExecWireSpaceSwitch &sw =
-        program->poses->spaceSwitches[size_t(switchIndex)];
-    const size_t i = size_t(sw.slot);
-    if (sw.slot < 0 || i >= meta.parent.size() || i >= scratch->posedD.size() ||
-        i >= scratch->parentDinv.size() ||
-        sw.sourceReads.size() != sw.sourceSlots.size() ||
-        !_RrVersionReadable(*program, *scratch, *sw.parentRead) ||
-        !_RrVersionReadable(*program, *scratch, *sw.spaceRead)) {
-        return false;
-    }
-    for (const RigExecWireFrameVersion &read : sw.sourceReads) {
-        if (!_RrVersionReadable(*program, *scratch, read))
-            return false;
-    }
-    const int parent = meta.parent[i];
-    if (parent >= 0 && size_t(parent) >= scratch->defaultRoundTrip.size()) {
-        return false;
-    }
-    RigExecSpaceSwitchRecordT<RrVec3d> record;
-    record.filters.assign(sw.filters.begin(), sw.filters.end());
-    record.twistAxis =
-        RrVec3d(sw.twistAxis[0], sw.twistAxis[1], sw.twistAxis[2]);
-    std::copy(sw.affectTranslation.begin(), sw.affectTranslation.end(),
-              record.affectTranslation.begin());
-    std::copy(sw.affectRotation.begin(), sw.affectRotation.end(),
-              record.affectRotation.begin());
-    std::copy(sw.affectScale.begin(), sw.affectScale.end(),
-              record.affectScale.begin());
-    RigExecSpaceSwitchInputsT<RrMat4d> input;
-    input.avars = _RrIdentity();
-    input.posedDefault = scratch->posedD[i];
-    input.parentDefaultInverse = scratch->parentDinv[i];
-    input.parentPosed = _RrReadFrameVersion(*program, *scratch, *sw.parentRead);
-    input.parentDefault =
-        parent >= 0 ? scratch->defaultRoundTrip[size_t(parent)] : _RrIdentity();
-    const auto selector = program->ReadSpaceSwitch(size_t(switchIndex));
-    input.active = selector.f64;
-    if (sw.tokenIndex) {
-        input.active = 0.0;
-        const auto text = program->TextOrEmpty(selector.token);
-        const auto found = std::find(sw.labels.begin(), sw.labels.end(), text);
-        if (found != sw.labels.end()) {
-            input.active = double(found - sw.labels.begin());
-        }
-    }
-    input.hasCarry = sw.spaceSlot >= 0;
-    if (input.hasCarry) {
-        input.spaceDefault = scratch->defaultRoundTrip[size_t(sw.spaceSlot)];
-        input.spacePosed =
-            _RrReadFrameVersion(*program, *scratch, *sw.spaceRead);
-    }
-    for (size_t source = 0; source < sw.sourceSlots.size(); ++source) {
-        RigExecSpaceSwitchSourceT<RrMat4d> value;
-        const int slot = sw.sourceSlots[source];
-        value.world = slot < 0;
-        if (slot >= 0) {
-            value.defaultSpace = scratch->defaultRoundTrip[size_t(slot)];
-            value.posedSpace =
-                _RrReadFrameVersion(*program, *scratch, sw.sourceReads[source]);
-            if (source < rides.size() && rides[source]) {
-                value.posedSpace = value.posedSpace * moved;
-            }
-        }
-        input.sources.push_back(value);
-    }
-    RrMat4d output;
-    if (!RigExecRunSpaceSwitchArithmetic<RrSpaceSwitchMath>(record, input,
-                                                            &output)) {
-        return false;
-    }
-    // The compose publishes the frame of this matrix; read it back the same
-    // way, so the parent is the one a frame read of the pole would give.
-    const RrPointFrame frame = RrFrameFromMatrix(output);
-    return RrFrameUsable(frame) &&
-           RrPointsToMatrix(RrIdentityLandmarks(), frame.points, out);
-}
-
 RigExecIkFkMatchChannels
 _RrMatchChannelsOf(const RrProgram &program, const RrPoseScratch &scratch,
                    size_t slot)
@@ -451,7 +359,13 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
                           record.affectRotation.begin());
                 std::copy(sw.affectScale.begin(), sw.affectScale.end(),
                           record.affectScale.begin());
-                RigExecSpaceSwitchInputsT<RrMat4d> input;
+                if (size_t(switchIndex) >= scratch->switchInputs.size() ||
+                    scratch->switchInputs[size_t(switchIndex)].sources.size() !=
+                        sw.sourceSlots.size()) {
+                    return noSlot();
+                }
+                RigExecSpaceSwitchInputsT<RrMat4d> &input =
+                    scratch->switchInputs[size_t(switchIndex)];
                 input.avars = avars;
                 input.posedDefault = scratch->posedD[size_t(i)];
                 input.parentDefaultInverse = scratch->parentDinv[size_t(i)];
@@ -477,7 +391,8 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
                 }
                 for (size_t source = 0; source < sw.sourceSlots.size();
                      ++source) {
-                    RigExecSpaceSwitchSourceT<RrMat4d> value;
+                    RigExecSpaceSwitchSourceT<RrMat4d> &value =
+                        input.sources[source];
                     const int slot = sw.sourceSlots[source];
                     value.world = slot < 0;
                     if (slot >= 0) {
@@ -486,7 +401,6 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
                         value.posedSpace = _RrReadFrameVersion(
                             *program, *scratch, sw.sourceReads[source]);
                     }
-                    input.sources.push_back(value);
                 }
                 RrMat4d output;
                 if (!RigExecRunSpaceSwitchArithmetic<RrSpaceSwitchMath>(

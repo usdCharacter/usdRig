@@ -700,12 +700,13 @@ inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
 /// read at Build, its rest points the chain's base and its cages read through
 /// RevisionLeaf lookups (OpRevisionRead 13-15).
 ///
-/// Format 51 solves harmonics and single-chain IK constraints as Harmonics
-/// and SingleChainIk op nodes with the identity of their Constraint step.
-/// They read their inputs through OpGraph.lookups sources 38 and 70 and
-/// store what they made of their frames through OpGraph.host_outputs target
-/// 70 and a single-chain IK's solved chain through 71. A Constraint step
-/// remains for IK/FK match and a constraint with no target.
+/// Format 51 solves harmonics, single-chain IK and IK/FK match constraints
+/// as Harmonics, SingleChainIk and IkFkMatch op nodes with the identity of
+/// their Constraint step. They read their inputs through OpGraph.lookups
+/// sources 38, 70 and 71 and store what they made of their frames through
+/// OpGraph.host_outputs target 70, a single-chain IK's solved chain through
+/// 71 and an IK/FK match's values and presented controls through 72 to 74.
+/// A Constraint step remains only for a constraint with no target.
 inline constexpr uint32_t RigExecFormatVersion = 51;
 
 /// Fields every Solver row carries before its kind-specific inputs, in

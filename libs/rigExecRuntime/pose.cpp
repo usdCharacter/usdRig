@@ -158,6 +158,10 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
     for (size_t i = 0; i < poses.spaceCheckpoints.size(); ++i)
         scratch->checkpointInputs[i].resize(
             poses.spaceCheckpoints[i].recompose.size());
+    scratch->switchInputs.resize(poses.spaceSwitches.size());
+    for (size_t i = 0; i < poses.spaceSwitches.size(); ++i)
+        scratch->switchInputs[i].sources.resize(
+            poses.spaceSwitches[i].sourceSlots.size());
     scratch->restM.assign(slots, identity);
     scratch->selfD.assign(slots, identity);
     scratch->posedD.assign(slots, identity);

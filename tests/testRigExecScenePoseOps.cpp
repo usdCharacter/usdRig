@@ -1577,7 +1577,7 @@ TestSpaceMatch()
 
 /// RigExecIkFkMatchConstraint's arithmetic over Gf with the ikFkMatchKernel
 /// functions, as the evaluator runs it, from the op's inputs. \p matched:
-/// both halves matched; the op's evaluation fails otherwise.
+/// both halves matched.
 RigExecIkFkMatchOpOutputs
 NativeIkFkMatch(const RigExecIkFkMatchOpConstants &m,
                 const RigExecIkFkMatchOpInputs &in, bool *matched)
@@ -1709,8 +1709,8 @@ NativeIkFkMatch(const RigExecIkFkMatchOpConstants &m,
 /// the published values and the presented frames bit for bit, on either
 /// side and between, with the pole kept, riding the IK control and switched,
 /// with and without a stretching limb and a space. Where a half cannot be
-/// matched, a non-finite IK control channel among them, the op's evaluation
-/// stops with the native diagnostic and publishes nothing.
+/// matched, a non-finite IK control channel among them, both report no match
+/// and present the same frames.
 void
 TestIkFkMatch()
 {
@@ -1775,24 +1775,17 @@ TestIkFkMatch()
         std::string error;
         const bool ran =
             RigExecRunIkFkMatchOp(constants, in, runner, &got, &error);
-        bool same = ran == matched;
-        if (same && !matched) {
-            RigExecIkFkMatchOpOutputs published;
-            same = error.find("IkFkMatch: could not match its limb's other "
-                              "half") != std::string::npos &&
-                   !RigExecReadIkFkMatchOpOutput(runner.match,
-                                                 *runner.evaluator, &published);
-        } else if (same) {
-            same = got.shownMask == want.shownMask &&
-                   Bits(got.ikValues.data(), want.ikValues.data(),
+        bool same =
+            ran && got.matched == matched && got.shownMask == want.shownMask;
+        if (same && matched)
+            same = Bits(got.ikValues.data(), want.ikValues.data(),
                         sizeof(want.ikValues)) &&
                    Bits(got.fkValues.data(), want.fkValues.data(),
                         sizeof(want.fkValues));
-            for (size_t k = 0; same && k < 5; ++k)
-                if (want.shownMask & (1u << k))
-                    same = Bits(got.shown[k].data(), want.shown[k].data(),
-                                16 * sizeof(double));
-        }
+        for (size_t k = 0; same && k < 5; ++k)
+            if (want.shownMask & (1u << k))
+                same = Bits(got.shown[k].data(), want.shown[k].data(),
+                            16 * sizeof(double));
         if (!same)
             std::printf("IK/FK match %s differs: ran %d (%s), matched %d, "
                         "shown %u/%u\n",

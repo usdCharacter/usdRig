@@ -99,6 +99,13 @@ FromRows(const double *rows)
     return m;
 }
 
+/// What IkFkMatch's pole switch works in, kept so a steady frame allocates
+/// nothing.
+struct IkFkMatchState {
+    SwitchInputs inputs;
+    SwitchRecord record;
+};
+
 /// RigExecRunSpaceSwitch, then its frame's matrix; false for a frame the
 /// pose walk would refuse (RigExecReadLandmarkMatrixT).
 bool
@@ -305,7 +312,9 @@ IkFkMatchOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         Mat4d parent = FromRows(composed.data()).GetInverse() * control[1];
         const auto mode = IkFkPoleMode(*In<uint32_t>(io, IkFkMatchPoleMode()));
         if (mode == IkFkPoleMode::Switch) {
-            SwitchInputs inputs;
+            IkFkMatchState &state = *static_cast<IkFkMatchState *>(
+                rigExec::RigExecBatchState(batch, k));
+            SwitchInputs &inputs = state.inputs;
             if (!SwitchInputsOf(io, p.poleSwitch, IkFkSwitchPorts(), &inputs))
                 return Fail(error, "IkFkMatch",
                             "the pole switch's sources do not match it");
@@ -315,8 +324,15 @@ IkFkMatchOne(const RigExecOpBatch &batch, size_t k, std::string *error)
                 if (p.poleSourceRides[k] && !inputs.sources[k].world)
                     inputs.sources[k].posedSpace =
                         inputs.sources[k].posedSpace * moved;
+            SwitchRecord &record = state.record;
+            record.filters.assign(p.poleSwitch.filters.begin(),
+                                  p.poleSwitch.filters.end());
+            record.twistAxis = p.poleSwitch.twistAxis;
+            record.affectTranslation = p.poleSwitch.affectTranslation;
+            record.affectRotation = p.poleSwitch.affectRotation;
+            record.affectScale = p.poleSwitch.affectScale;
             Mat4d switched(1.0);
-            if (RunSwitch(RecordOf(p.poleSwitch), inputs, &switched))
+            if (RunSwitch(record, inputs, &switched))
                 parent = switched;
         } else if (mode == IkFkPoleMode::Ride) {
             parent = parent * moved;
@@ -340,11 +356,11 @@ IkFkMatchOne(const RigExecOpBatch &batch, size_t k, std::string *error)
     fkIn.restLower = restLower;
     rigExec::RigExecIkFkMatchFkResult fk;
     rigExec::RigExecIkFkMatchFk(fkIn, &fk);
-    if (!ik.ok || !poleOk || !fk.ok)
-        return Fail(error, "IkFkMatch",
-                    "could not match its limb's other half");
-    rigExec::RigExecIkFkMatchPack(ik, pole, fk, ikValues.Data(),
-                                  fkValues.Data());
+    if (ik.ok && poleOk && fk.ok) {
+        rigExec::RigExecIkFkMatchPack(ik, pole, fk, ikValues.Data(),
+                                      fkValues.Data());
+        shownMask = kIkFkMatchMatched;
+    }
     const auto show = [&](size_t k, const double *frame) {
         shown[k] = FromRows(frame);
         shownMask |= 1u << k;
@@ -531,6 +547,7 @@ const rigExec::RigExecOpDesc kIkFk = [] {
     op.portCount = std::size(kIkFkPorts);
     op.runBatch = &RunIkFkMatch;
     op.validate = &CheckIkFkMatch;
+    op.state = opIo::StateOf<IkFkMatchState>();
     op.capabilities =
         rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable;
     op.payloadFields = kIkFkFields;
