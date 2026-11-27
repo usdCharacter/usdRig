@@ -4654,7 +4654,9 @@ class RigExecLayeredSkinMover "RigExecLayeredSkinMover" (
     int[] rigExec:jointIndices = []
     float[] rigExec:jointWeights = []
     uniform int rigExec:elementSize = 1
-    uniform token rigExec:skinningMethod = "classicLinear"
+    uniform token rigExec:skinningMethod = "classicLinear" (
+        allowedTokens = ["classicLinear", "dualQuaternion"]
+    )
     float[] inputs:mask = []
     uniform bool inputs:useBaseInput = false
     uniform bool inputs:transformInput = false

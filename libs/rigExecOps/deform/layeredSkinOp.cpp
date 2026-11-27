@@ -1,9 +1,11 @@
 #include "rigExecOps/deform/layeredSkinOp.h"
 
 #include "rigExecMath/layeredSkinKernel.h"
+#include "rigExecOps/authoring.h"
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecMath/dualQuatMath.h"
+#include "rigExecSchema/schemaNames.h"
 
 #include <cstdint>
 #include <iterator>
@@ -112,9 +114,38 @@ Values(const void *payload, rigExec::RigExecFieldValues &out)
     SetFlag(out, kDualQuaternion, p.dualQuaternion);
 }
 
+namespace names = rigExec::SchemaAttrText;
+namespace values = rigExec::SchemaValueText;
+using authoring::Authored;
+
+const bool kLinear = false;
+const int32_t kOneInfluence = 1;
+const rigExecStd::RigExecArray<int32_t> kNoInts;
+const rigExecStd::RigExecArray<float> kNoFloats;
+const char *const kMethods[] = {values::classicLinear, values::dualQuaternion};
+
+const rigExec::RigExecPropertyInfo kInfluences =
+    authoring::Relationship(names::rigExecInfluences);
+const rigExec::RigExecPropertyInfo kJointIndices =
+    authoring::Property(names::rigExecJointIndices, &kNoInts);
+const rigExec::RigExecPropertyInfo kJointWeights =
+    authoring::Property(names::rigExecJointWeights, &kNoFloats);
+const rigExec::RigExecPropertyInfo kMask =
+    authoring::Property(names::inputsMask, &kNoFloats);
+const rigExec::RigExecPropertyInfo kTransform =
+    authoring::Relationship(names::rigExecTransform);
+const rigExec::RigExecPropertyInfo kElementSizeProperty =
+    authoring::Uniform(names::rigExecElementSize, &kOneInfluence);
+const rigExec::RigExecPropertyInfo kSkinningMethod =
+    authoring::Tokens(names::rigExecSkinningMethod, &kLinear, kMethods);
+
+const rigExec::RigExecSchemaInfo kLayeredSkinSchema{
+    rigExec::SchemaTypeName::RigExecLayeredSkinMover, nullptr,
+    authoring::kTyped, rigExec::RigExecSchemaMode::HandAuthored};
+
 const rigExec::RigExecFieldDesc kFields[] = {
-    Value("elementSize", rigExecStd::IntType()),
-    Flag("dualQuaternion"),
+    Authored(Value("elementSize", rigExecStd::IntType()), kElementSizeProperty),
+    Authored(Flag("dualQuaternion"), kSkinningMethod),
 };
 
 } // namespace
@@ -128,17 +159,23 @@ using rigExec::kRigExecPortOutput;
 const rigExec::RigExecPortDesc kPorts[] = {
     {&LayeredSkinPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
      "points"},
-    {&LayeredSkinTransforms(), &rigExecStd::Mat4dArray(), kRigExecPortInput,
-     "transforms"},
-    {&LayeredSkinIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
-     "jointIndices"},
-    {&LayeredSkinWeights(), &rigExecStd::FloatArray(), kRigExecPortInput,
-     "jointWeights"},
-    {&LayeredSkinMask(), &rigExecStd::FloatArray(), kRigExecPortInput, "mask"},
+    Authored({&LayeredSkinTransforms(), &rigExecStd::Mat4dArray(),
+              kRigExecPortInput, "transforms"},
+             kInfluences),
+    Authored({&LayeredSkinIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
+              "jointIndices"},
+             kJointIndices),
+    Authored({&LayeredSkinWeights(), &rigExecStd::FloatArray(),
+              kRigExecPortInput, "jointWeights"},
+             kJointWeights),
+    Authored({&LayeredSkinMask(), &rigExecStd::FloatArray(), kRigExecPortInput,
+              "mask"},
+             kMask),
     {&LayeredSkinBase(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
      "basePoints"},
-    {&LayeredSkinInputTransform(), &rigExecStd::Mat4dType(), kRigExecPortInput,
-     "inputTransform"},
+    Authored({&LayeredSkinInputTransform(), &rigExecStd::Mat4dType(),
+              kRigExecPortInput, "inputTransform"},
+             kTransform),
     {&LayeredSkinEnvelope(), &rigExecStd::FloatArray(),
      kRigExecPortInput | kRigExecPortOptional, "envelope"},
     {&LayeredSkinOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
@@ -160,6 +197,7 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.payloadFieldCount = std::size(kFields);
     d.payloadVersion = 1;
     d.payloadValues = &Values;
+    d.schema = &kLayeredSkinSchema;
     return d;
 }();
 

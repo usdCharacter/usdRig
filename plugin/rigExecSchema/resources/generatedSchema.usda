@@ -5356,7 +5356,9 @@ class RigExecLayeredSkinMover "RigExecLayeredSkinMover" (
     rel rigExec:influences
     int[] rigExec:jointIndices = []
     float[] rigExec:jointWeights = []
-    uniform token rigExec:skinningMethod = "classicLinear"
+    uniform token rigExec:skinningMethod = "classicLinear" (
+        allowedTokens = ["classicLinear", "dualQuaternion"]
+    )
     rel rigExec:transform
 }
 
