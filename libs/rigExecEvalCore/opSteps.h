@@ -677,6 +677,32 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
             }
         }
     }
+    // Per value: the nodes reading it, built for the first member that
+    // leaves groups unwritten.
+    std::vector<uint32_t> readerStart, readers;
+    const auto indexReaders = [&] {
+        readerStart.assign(size_t(layout->valueCount) + 1, 0);
+        const auto visit = [&](auto &&add) {
+            for (uint32_t n = 0; n < nodes; ++n) {
+                const RigExecNodeDesc &d = layout->nodes[n];
+                for (size_t p = 0; p < d.values.size(); ++p) {
+                    if (!(d.op->ports[p].flags & kRigExecPortInput))
+                        continue;
+                    if (d.values[p] < layout->valueCount)
+                        add(d.values[p], n);
+                    for (const uint32_t v : d.lists[p])
+                        if (v < layout->valueCount)
+                            add(v, n);
+                }
+            }
+        };
+        visit([&](uint32_t v, uint32_t) { ++readerStart[v + 1]; });
+        for (size_t v = 0; v < layout->valueCount; ++v)
+            readerStart[v + 1] += readerStart[v];
+        readers.resize(readerStart.back());
+        std::vector<uint32_t> next(readerStart.begin(), readerStart.end() - 1);
+        visit([&](uint32_t v, uint32_t n) { readers[next[v]++] = n; });
+    };
     for (size_t c = 0; c < chains; ++c) {
         const OpChainLayout &chain = layout->chains[c];
         const RigExecChainDesc &desc = layout->chainDescs[c];
@@ -694,32 +720,28 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
                 all = all && chain.Writes(m, g);
             if (all)
                 continue;
+            if (readerStart.empty())
+                indexReaders();
             const RigExecNodeDesc &member = layout->nodes[desc.members[m]];
-            for (size_t n = 0; n < nodes; ++n) {
-                const RigExecNodeDesc &d = layout->nodes[n];
-                const bool inSegment =
-                    layout->chainOf[n] == c &&
-                    desc.segments[layout->memberOf[n]] == desc.segments[m];
-                for (size_t p = 0; !inSegment && p < d.values.size(); ++p) {
-                    if (!(d.op->ports[p].flags & kRigExecPortInput))
-                        continue;
-                    for (size_t q = 0; q < member.values.size(); ++q) {
-                        const uint32_t v = member.values[q];
-                        if (!(member.op->ports[q].flags & kRigExecPortOutput) ||
-                            v == kRigExecInvalidIndex)
-                            continue;
-                        if (d.values[p] == v ||
-                            std::find(d.lists[p].begin(), d.lists[p].end(),
-                                      v) != d.lists[p].end())
-                            return OpLayoutFail(
-                                error, "node " + std::to_string(n) +
-                                           " reads node " +
-                                           std::to_string(desc.members[m]) +
-                                           " outside its segment, which "
-                                           "leaves groups unwritten");
-                    }
+            uint32_t outside = kRigExecInvalidIndex;
+            for (size_t q = 0; q < member.values.size(); ++q) {
+                const uint32_t v = member.values[q];
+                if (!(member.op->ports[q].flags & kRigExecPortOutput) ||
+                    v >= layout->valueCount)
+                    continue;
+                for (uint32_t r = readerStart[v]; r < readerStart[v + 1]; ++r) {
+                    const uint32_t n = readers[r];
+                    if (layout->chainOf[n] != c ||
+                        desc.segments[layout->memberOf[n]] != desc.segments[m])
+                        outside = std::min(outside, n);
                 }
             }
+            if (outside != kRigExecInvalidIndex)
+                return OpLayoutFail(
+                    error, "node " + std::to_string(outside) + " reads node " +
+                               std::to_string(desc.members[m]) +
+                               " outside its segment, which leaves "
+                               "groups unwritten");
         }
     }
     layout->hostInputIds.clear();
@@ -844,11 +866,18 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
         if (stored &&
             !(layout->nodes[output.node].op->ports[output.port].flags &
               kRigExecPortOutput)) {
+            const auto looksUp = [&](uint32_t i) {
+                const OpHostInput &input = layout->hostInputs[i];
+                return input.node == output.node && input.port == output.port &&
+                       input.source == OpHostSource::Lookup;
+            };
             stored = false;
-            for (const OpHostInput &input : layout->hostInputs)
-                stored = stored || (input.node == output.node &&
-                                    input.port == output.port &&
-                                    input.source == OpHostSource::Lookup);
+            for (const uint32_t i : layout->lookupsOf[output.node])
+                stored = stored || looksUp(i);
+            const uint32_t chain = layout->chainOf[output.node];
+            if (chain != kRigExecInvalidIndex)
+                for (const uint32_t i : layout->groupedOf[chain])
+                    stored = stored || looksUp(i);
         }
         if (!stored)
             return OpLayoutFail(error, "node " + std::to_string(output.node) +
