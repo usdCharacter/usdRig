@@ -1414,8 +1414,8 @@ TestMatrixMoverUniversalEnvelope()
     const VtVec3fArray base = {GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
                                GfVec3f(2, 0, 0)};
 
-    auto evaluate = [&](float defaultWeight,
-                        const VtFloatArray *spatial) -> RigExecRigPose {
+    auto build = [&](float defaultWeight,
+                     const VtFloatArray *spatial) -> UsdStageRefPtr {
         const UsdStageRefPtr stage = UsdStage::CreateInMemory();
         const UsdPrim points =
             stage->DefinePrim(SdfPath("/Asset/Geom/P"), TfToken("Points"));
@@ -1450,7 +1450,11 @@ TestMatrixMoverUniversalEnvelope()
             mover.CreateRelationship(TfToken("rigExec:weightObject"), false)
                 .SetTargets({weight.GetPath()});
         }
-        return EvaluateEnvelopeFixture(stage);
+        return stage;
+    };
+    auto evaluate = [&](float defaultWeight,
+                        const VtFloatArray *spatial) -> RigExecRigPose {
+        return EvaluateEnvelopeFixture(build(defaultWeight, spatial));
     };
 
     for (const float weight : {0.0f, 0.5f, 1.0f}) {
@@ -1473,20 +1477,41 @@ TestMatrixMoverUniversalEnvelope()
                    GfVec3d(base[i]) + GfVec3d(0, 10.0 * spatial[i], 0)));
     }
 
-    // The common envelope is normalized.  Bad scalar values fail this one
-    // application atomically and preserve the preceding value.
+    // The common envelope is normalized. A weight outside [0, 1] stops the
+    // frame with the mover's error and publishes nothing; the next valid
+    // weight recovers.
+    const std::string mover = "/Asset/Rig/Movers/M: ";
+    const std::string why =
+        "MatrixDeform: a default weight is not finite or outside [0, 1]";
     for (const float invalid :
          {-0.01f, 1.01f, std::numeric_limits<float>::quiet_NaN()}) {
-        const RigExecRigPose pose = evaluate(invalid, nullptr);
-        const VtVec3fArray moved = EnvelopePoints(pose, target);
-        CHECK(moved == base);
-        CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
-                          [](const std::string &diagnostic) {
-                              return diagnostic.find("defaultWeight") !=
-                                         std::string::npos ||
-                                     diagnostic.find("weight") !=
-                                         std::string::npos;
+        const UsdStageRefPtr stage = build(0.5f, nullptr);
+        const UsdAttribute weight = stage->GetAttributeAtPath(
+            SdfPath("/Asset/Rig/Movers/M.inputs:defaultWeight"));
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        std::vector<std::string> errors;
+        CHECK(evaluator.Compile(&errors));
+        CHECK(evaluator.Evaluate(UsdTimeCode::Default()).valid);
+        CHECK(weight.Set(invalid));
+        const RigExecRigPose failed =
+            evaluator.Evaluate(UsdTimeCode::Default());
+        CHECK(!failed.valid);
+        CHECK(failed.movedProperties.find(target) ==
+              failed.movedProperties.end());
+        CHECK(std::any_of(failed.diagnostics.begin(), failed.diagnostics.end(),
+                          [&](const std::string &line) {
+                              return line.rfind(mover, 0) == 0 &&
+                                     line.find(why) != std::string::npos;
                           }));
+        CHECK(weight.Set(0.5f));
+        const RigExecRigPose recovered =
+            evaluator.Evaluate(UsdTimeCode::Default());
+        CHECK(recovered.valid);
+        const VtVec3fArray moved = EnvelopePoints(recovered, target);
+        CHECK(moved.size() == base.size());
+        for (size_t i = 0; i < moved.size() && i < base.size(); ++i) {
+            CHECK(Near(GfVec3d(moved[i]), GfVec3d(base[i]) + GfVec3d(0, 5, 0)));
+        }
     }
 }
 

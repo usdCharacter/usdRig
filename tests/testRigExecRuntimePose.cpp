@@ -5109,7 +5109,7 @@ TestPhasedRigsRunCones(const std::string &examplesDir)
          {{"/ReadPhaseAsset/Rig/Controls/LiftCtl.avars:ty", 0.25}}},
         {_FixturePath("frame_record_fallbacks.usda"),
          1.0,
-         {{"/RecordAsset/Rig/Controls/Dial.avars:amount", 1.25},
+         {{"/RecordAsset/Rig/Controls/Dial.avars:amount", 0.5},
           {"/RecordAsset/Rig/Controls/Late.avars:tz", 0.25}}},
         {_FixturePath("solver_checkpoint.usda"),
          1.0,
@@ -5996,7 +5996,7 @@ TestRepeatedSetRunsNothing()
 // keyed avar its verify_binary entry drags, and LimbBIK's softness, a
 // Solve's declared input that reaches MeshB's skin; and the Dial drag of
 // frame_record_fallbacks, which reaches R2's revision through its
-// defaultWeight.
+// defaultWeight (a value past 1 stops the frame: TestHeldDragPastAWeightStops).
 static void
 TestHeldDragCountsValueEditWork()
 {
@@ -6014,7 +6014,7 @@ TestHeldDragCountsValueEditWork()
         {"oneloop_two_limbs.usda", "/LimbsAsset/Rig", 1.0,
          "/LimbsAsset/Rig/Solvers/LimbBIK.inputs:softness", 0.5},
         {"frame_record_fallbacks.usda", "/RecordAsset/Rig", 1.0,
-         "/RecordAsset/Rig/Controls/Dial.avars:amount", 1.25},
+         "/RecordAsset/Rig/Controls/Dial.avars:amount", 0.5},
     };
     for (const Row &row : rows) {
         const std::string what =
@@ -6086,6 +6086,85 @@ TestHeldDragCountsValueEditWork()
         // The first run executes the revisions; the second executes none.
         CHECK(liveOps[0] > 0);
         CHECK(liveOps[1] == 0);
+    }
+    std::printf("%s: checked\n", name);
+}
+
+// The Dial drag of frame_record_fallbacks held at 1.25 takes R2's
+// defaultWeight past 1: the native evaluator, the frozen job and the
+// .rigexec stop the frame with R2's error and publish nothing, and the next
+// valid value recovers in all three.
+static void
+TestHeldDragPastAWeightStops()
+{
+    const char *const name = "held drag past a weight stops";
+    const std::string input = "/RecordAsset/Rig/Controls/Dial.avars:amount";
+    const std::string mover = "/RecordAsset/Rig/Movers/Geometry/R2: ";
+    const std::string why =
+        "MatrixDeform: a default weight is not finite or outside [0, 1]";
+    const SdfPath moved("/RecordAsset/Geom/P2.points");
+    const UsdStageRefPtr stage =
+        UsdStage::Open(_FixturePath("frame_record_fallbacks.usda"));
+    CHECK(stage);
+    if (!stage) {
+        return;
+    }
+    const SdfPath rigPath("/RecordAsset/Rig");
+    std::vector<uint8_t> bytes;
+    std::unique_ptr<fb::RigExecWireFile> file;
+    if (!_BakeAndOpen(name, stage, rigPath, 1.0, &bytes, &file)) {
+        return;
+    }
+    const auto stops = [&](const std::vector<std::string> &lines) {
+        return std::any_of(lines.begin(), lines.end(),
+                           [&](const std::string &line) {
+                               return line.rfind(mover, 0) == 0 &&
+                                      line.find(why) != std::string::npos;
+                           });
+    };
+    RigExecRigEvaluator evaluator(stage, rigPath);
+    std::vector<std::string> notices;
+    CHECK(evaluator.Compile(&notices));
+    CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
+    RigExecTestPlayer player;
+    std::string error;
+    CHECK(player.Open(bytes, stage, &error));
+    CHECK(player.Play(1.0, &error));
+    for (const double value : {1.25, 0.5}) {
+        const bool fails = value > 1.0;
+        RigExecTestSessionEdit edit(stage->GetAttributeAtPath(SdfPath(input)),
+                                    value);
+        CHECK(edit.IsSet());
+        const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(1.0));
+        CHECK(live.valid == !fails);
+        CHECK(stops(live.diagnostics) == fails);
+        CHECK((live.movedProperties.count(moved) == 0) == fails);
+        std::string why;
+        CHECK(fails
+                  ? RigExecFrozenFailsAsLive(&evaluator, UsdTimeCode(1.0), &why)
+                  : RigExecFrozenMatchesLive(&evaluator, rigPath,
+                                             UsdTimeCode(1.0), &why));
+        if (!why.empty()) {
+            std::printf("FAILED: %s, %g: frozen: %s\n", name, value,
+                        why.c_str());
+        }
+        CHECK(player.Hold(input, value, &error));
+        error.clear();
+        CHECK(player.Play(1.0, &error) == !fails);
+        CHECK(player->IsValid() == !fails);
+        CHECK(stops(player->GetDiagnostics()) == fails);
+        if (fails) {
+            CHECK(error.find(why) != std::string::npos);
+            CHECK(player->GetPoints().empty());
+        } else {
+            std::vector<std::string> diffs;
+            CHECK(RigExecCompareRuntimeOutputs(live, player.Reader(), &diffs));
+            for (const std::string &diff : diffs) {
+                std::printf("  %s: %s\n", name, diff.c_str());
+            }
+        }
+        std::printf("%s, %g: live %zu line(s), runtime: %s\n", name, value,
+                    live.diagnostics.size(), error.c_str());
     }
     std::printf("%s: checked\n", name);
 }
@@ -6730,6 +6809,7 @@ main(int argc, char **argv)
     TestSpaceRestMovesWithItsRests();
     TestRepeatedSetRunsNothing();
     TestHeldDragCountsValueEditWork();
+    TestHeldDragPastAWeightStops();
     TestRunTraceOrder();
     TestAvarReadsInAnyFileOrder();
     TestHeldNaNRestDoesNotMove();
