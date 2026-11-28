@@ -636,7 +636,8 @@ struct PointJoin {
 /// points the chain's base and its cages looked up per frame; per Range
 /// blend shape (blendChunked) a BlendShape member over the layouts and
 /// activations read at Build, its channel weights looked up per frame and
-/// keyed to the vertex groups they reach. Each member
+/// keyed to the vertex groups they reach; per volume correct a
+/// VolumeCorrect member measuring the chain's base. Each member
 /// stores its groups and reads the points entering its revision: the
 /// output of the op revision before it in its point chain, so the two share
 /// one range chain, when that one writes every group or this one reads
@@ -1242,6 +1243,24 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                             rigExecOps::SmoothDefaultWeight()))
                     return false;
                 stores(smooth, rigExecOps::SmoothOut());
+                continue;
+            }
+            if (revision.opWhole &&
+                revision.op == RigExecRevisionOp::VolumeCorrect) {
+                const RigExecNodeId volume =
+                    builder->AddOp(rigExecOps::VolumeCorrect());
+                points(volume, rigExecOps::VolumeCorrectPoints(), false);
+                enabled(volume, rigExecOps::VolumeCorrectEnabled());
+                leafRead(volume, rigExecOps::VolumeCorrectBase(),
+                         eval::OpRevisionRead::ChainBase);
+                if (!weighs(volume, rigExecOps::VolumeCorrectEnvelope(),
+                            rigExecOps::VolumeCorrectPacket(),
+                            rigExecOps::VolumeCorrectDefaultWeight()))
+                    return false;
+                if (!writesAll && !revision.weightCurrentPhase &&
+                    revision.weightObject >= 0)
+                    written(volume, rigExecOps::VolumeCorrectWritten());
+                stores(volume, rigExecOps::VolumeCorrectOut());
                 continue;
             }
             std::vector<eval::OpLookup> transform;

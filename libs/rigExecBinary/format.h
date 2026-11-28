@@ -787,7 +787,7 @@ RigExecFormatIsRangeRevision(const fb::RigExecWireRevision &r)
 
 /// Whether \p r runs as op chain members: a Range Matrix, Smooth, DeltaMush,
 /// Lattice or plugin (External) revision, which folds no transform of its
-/// own.
+/// own, or a whole member (Revision.whole_role).
 inline bool
 RigExecFormatRunsAsOps(const fb::RigExecWireRevision &r)
 {
@@ -796,7 +796,8 @@ RigExecFormatRunsAsOps(const fb::RigExecWireRevision &r)
             r.op == uint8_t(fb::RevisionOp::Smooth) ||
             r.op == uint8_t(fb::RevisionOp::DeltaMush) ||
             r.op == uint8_t(fb::RevisionOp::Lattice) ||
-            r.op == uint8_t(fb::RevisionOp::External));
+            r.op == uint8_t(fb::RevisionOp::External) ||
+            (r.wholeRole && r.op == uint8_t(fb::RevisionOp::VolumeCorrect)));
 }
 
 /// A Range blend shape: a BlendShape op node whose chunks carry, in key,

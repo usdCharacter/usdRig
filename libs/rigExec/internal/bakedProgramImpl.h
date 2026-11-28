@@ -909,8 +909,9 @@ struct RigExecBakedGeomRevision {
     /// over the pinned divisions read at Build.
     bool opLattice = false;
     std::array<int, 3> opLatticeDivisions = {2, 2, 2};
-    /// A smooth, delta mush or lattice the classification made Whole: its
-    /// member runs once over every group, every setting looked up per frame.
+    /// An op revision (RevisionRunsAsOps) the classification made Whole:
+    /// its member runs once over every group, every setting looked up per
+    /// frame.
     bool opWhole = false;
     /// An External revision its mover's op plugin binds: the plugin's op
     /// computes its full-strength candidate as a whole member, a MoverBlend
@@ -922,7 +923,7 @@ struct RigExecBakedGeomRevision {
     bool OpNodes() const
     {
         return opMatrix || opSmooth || opMush || opLattice || blendChunked ||
-               opExternal;
+               opExternal || opWhole;
     }
     bool opMatrixRadial = false;
     bool opMatrixRadialLeaf = false;

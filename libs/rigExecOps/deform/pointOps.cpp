@@ -45,6 +45,11 @@ RIGEXEC_DEFINE_PORT_HANDLE(VolumeCorrectReference)
 RIGEXEC_DEFINE_PORT_HANDLE(VolumeCorrectStrength)
 RIGEXEC_DEFINE_PORT_HANDLE(VolumeCorrectEnvelope)
 RIGEXEC_DEFINE_PORT_HANDLE(VolumeCorrectOut)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeCorrectBase)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeCorrectEnabled)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeCorrectDefaultWeight)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeCorrectPacket)
+RIGEXEC_DEFINE_PORT_HANDLE(VolumeCorrectWritten)
 
 namespace {
 
@@ -300,37 +305,93 @@ MoverBlendRange(const rigExec::RigExecOpBatch &batch, size_t k,
     return true;
 }
 
-bool
-VolumeCorrectOne(const RigExecOpIo &io, std::string *error)
+/// This frame's pass through, reference volume and weights, and the
+/// points the kernel scales.
+struct VolumeState {
+    bool pass = false;
+    double reference = 0.0;
+    std::vector<float> dense;
+    std::vector<Vec3f> points;
+};
+
+rigExec::RigExecRangePlan
+VolumePlan(const rigExec::RigExecOpBatch &, size_t)
 {
-    const Points &in = *In<Points>(io, VolumeCorrectPoints());
-    std::vector<Vec3f> points = ToVector(in);
-    rigExec::RigExecApplyVolumeCorrectKernel(
-        &points, *In<double>(io, VolumeCorrectReference()),
-        StrengthOr1(In<float>(io, VolumeCorrectStrength())));
-    return WritePoints(io, VolumeCorrectOut(), in, points,
-                       In<RigExecArray<float>>(io, VolumeCorrectEnvelope()),
-                       "VolumeCorrect", error);
+    // The scale is about the centroid of every point.
+    return rigExec::RigExecRangePlan::Whole;
 }
 
 bool
-CheckVolumeCorrect(const rigExec::RigExecOpCheck &check, std::string *error)
+VolumeValidate(const rigExec::RigExecOpCheck &check, std::string *error)
 {
+    if (Fed(check, VolumeCorrectReference()) == Fed(check, VolumeCorrectBase()))
+        return Fail(error, "VolumeCorrect",
+                    "one of a reference volume and base points");
+    const int envelopes = int(Fed(check, VolumeCorrectEnvelope())) +
+                          int(Fed(check, VolumeCorrectDefaultWeight())) +
+                          int(Fed(check, VolumeCorrectPacket()));
+    if (envelopes > 1)
+        return Fail(error, "VolumeCorrect",
+                    "one of an envelope, a default weight and a weight "
+                    "packet");
     return EnvelopeFits(check, VolumeCorrectPoints(), VolumeCorrectEnvelope(),
                         "VolumeCorrect", error);
 }
 
 bool
-RunVolumeCorrect(const rigExec::RigExecOpBatch &batch, size_t *failed,
-                 std::string *error)
+VolumePrepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
+              std::string *error)
 {
-    for (size_t k = 0; k < batch.count; ++k) {
-        if (rigExec::RigExecBatchActive(batch, k) &&
-            !VolumeCorrectOne(rigExec::RigExecBatchInstance(batch, k), error)) {
-            *failed = k;
-            return false;
-        }
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    VolumeState &state =
+        *static_cast<VolumeState *>(rigExec::RigExecBatchState(batch, k));
+    const uint8_t *enabled = In<uint8_t>(io, VolumeCorrectEnabled());
+    state.pass = enabled && !*enabled;
+    state.dense.clear();
+    if (state.pass)
+        return true;
+    if (!EnvelopeFits(*In<Points>(io, VolumeCorrectPoints()),
+                      In<RigExecArray<float>>(io, VolumeCorrectEnvelope()),
+                      "VolumeCorrect", error))
+        return false;
+    const Points *base = In<Points>(io, VolumeCorrectBase());
+    state.reference =
+        base ? rigExec::RigExecBoundVolumeKernel(base->Data(), base->Size())
+             : *In<double>(io, VolumeCorrectReference());
+    const char *why = "";
+    if (!weightPacket::ResolveMemberWeights(
+            In<float>(io, VolumeCorrectDefaultWeight()),
+            In<weightPacket::PointWeights>(io, VolumeCorrectPacket()),
+            In<RigExecArray<int32_t>>(io, VolumeCorrectWritten()), count,
+            &state.dense, &why))
+        return Fail(error, "VolumeCorrect", why);
+    return true;
+}
+
+bool
+VolumeRange(const rigExec::RigExecOpBatch &batch, size_t k,
+            const rigExec::RigExecOpRange &range, std::string *)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    VolumeState &state =
+        *static_cast<VolumeState *>(rigExec::RigExecBatchState(batch, k));
+    const Vec3f *from = RangeIn<Vec3f>(io, range, VolumeCorrectPoints());
+    Vec3f *out = RangeOut<Vec3f>(io, range, VolumeCorrectOut());
+    const size_t n = range.end - range.begin;
+    if (state.pass || !n) {
+        std::copy(from, from + n, out);
+        return true;
     }
+    state.points.assign(from, from + n);
+    rigExec::RigExecApplyVolumeCorrectKernel(
+        &state.points, state.reference,
+        StrengthOr1(In<float>(io, VolumeCorrectStrength())));
+    std::copy(state.points.begin(), state.points.end(), out);
+    BlendEnvelopeAt(from,
+                    state.dense.empty()
+                        ? RangeIn<float>(io, range, VolumeCorrectEnvelope())
+                        : state.dense.data() + range.begin,
+                    out, n);
     return true;
 }
 
@@ -414,15 +475,23 @@ const rigExec::RigExecPortDesc kMoverBlendPorts[] = {
 };
 
 const rigExec::RigExecPortDesc kVolumePorts[] = {
-    {&VolumeCorrectPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
-     "points"},
-    {&VolumeCorrectReference(), &rigExecStd::DoubleType(), kRigExecPortInput,
+    {&VolumeCorrectPoints(), &rigExecStd::Vec3fArray(),
+     kRigExecPortInput | rigExec::kRigExecPortPointwise, "points"},
+    {&VolumeCorrectReference(), &rigExecStd::DoubleType(), kOptional,
      "referenceVolume"},
     {&VolumeCorrectStrength(), &rigExecStd::FloatType(), kOptional, "strength"},
-    {&VolumeCorrectEnvelope(), &rigExecStd::FloatArray(), kOptional,
-     "envelope"},
-    {&VolumeCorrectOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+    {&VolumeCorrectEnvelope(), &rigExecStd::FloatArray(),
+     kOptional | rigExec::kRigExecPortPointwise, "envelope"},
+    {&VolumeCorrectOut(), &rigExecStd::Vec3fArray(),
+     kRigExecPortOutput | rigExec::kRigExecPortPointwise, "out",
      rigExec::RigExecOutputBound::Input, &VolumeCorrectPoints()},
+    {&VolumeCorrectBase(), &rigExecStd::Vec3fArray(), kOptional, "base"},
+    {&VolumeCorrectEnabled(), &rigExecStd::BoolType(), kOptional, "enabled"},
+    {&VolumeCorrectDefaultWeight(), &rigExecStd::FloatType(), kOptional,
+     "defaultWeight"},
+    {&VolumeCorrectPacket(), &rigExecRig::PointWeightsType(), kOptional,
+     "packet"},
+    {&VolumeCorrectWritten(), &rigExecStd::IntArray(), kOptional, "written"},
 };
 
 const rigExec::RigExecOpDesc kSmoothDesc = [] {
@@ -457,11 +526,15 @@ const rigExec::RigExecOpDesc kMoverBlendDesc = [] {
 }();
 
 const rigExec::RigExecOpDesc kVolumeDesc = [] {
-    rigExec::RigExecOpDesc d =
-        PointDesc("VolumeCorrect", kVolumePorts, std::size(kVolumePorts),
-                  &RunVolumeCorrect, rigExec::kRigExecOpSeparateBlend);
-    d.validate = &CheckVolumeCorrect;
+    rigExec::RigExecOpDesc d = PointDesc(
+        "VolumeCorrect", kVolumePorts, std::size(kVolumePorts), nullptr,
+        rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged);
+    d.validate = &VolumeValidate;
     d.schema = &kVolumeSchema;
+    d.range.prepare = &VolumePrepare;
+    d.range.run = &VolumeRange;
+    d.range.plan = &VolumePlan;
+    d.state = StateOf<VolumeState>();
     return d;
 }();
 

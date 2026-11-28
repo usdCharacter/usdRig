@@ -84,6 +84,50 @@ ResolvePacket(const PointWeights &packet, size_t count, std::vector<float> *out)
     return true;
 }
 
+/// The weights a whole point member blends with this frame: \p dense
+/// cleared, then one per point of \p count when a default \p weight other
+/// than 1 or a \p packet gives them. False, with \p why, for a default
+/// weight that is not finite or outside [0, 1], a packet reaching a point
+/// outside the ascending [begin, end) pairs of \p written, or one that does
+/// not resolve over the points.
+inline bool
+ResolveMemberWeights(const float *weight, const PointWeights *packet,
+                     const rigExecStd::RigExecArray<int32_t> *written,
+                     size_t count, std::vector<float> *dense, const char **why)
+{
+    dense->clear();
+    if (weight && *weight != 1.0f) {
+        if (!std::isfinite(*weight) || *weight < 0.0f || *weight > 1.0f) {
+            *why = "a default weight is not finite or outside [0, 1]";
+            return false;
+        }
+        dense->assign(count, *weight);
+    }
+    if (written) {
+        const rigExec::eval::EnvelopePacketView view =
+            packet ? PacketView(*packet) : rigExec::eval::EnvelopePacketView();
+        bool holds = rigExec::eval::EnvelopeIsSparseWalk(view);
+        size_t at = 0;
+        for (size_t e = 0; holds && e < view.indexCount; ++e) {
+            const int32_t index = view.indices[e];
+            while (at + 1 < written->Size() && (*written)[at + 1] <= index)
+                at += 2;
+            holds = at + 1 < written->Size() && (*written)[at] <= index;
+        }
+        if (!holds) {
+            *why = "the weights reach a vertex group the revision does not "
+                   "write";
+            return false;
+        }
+    }
+    if (packet && !rigExec::eval::EnvelopeIsFullStrength(PacketView(*packet)) &&
+        !ResolvePacket(*packet, count, dense)) {
+        *why = "the weight packet does not resolve over the points";
+        return false;
+    }
+    return true;
+}
+
 } // namespace rigExecOps::weightPacket
 
 #endif

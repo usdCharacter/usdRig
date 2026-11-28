@@ -1420,7 +1420,9 @@ TestCapabilityFlags()
                              RigExecIsDerivedMatrixOp(op);
         CHECK(RigExecRevisionTakesSeparateBlend(op, RigExecWeightPacket()) ==
               has(kRigExecOpSeparateBlend));
-        CHECK(RigExecRevisionIsRangeOp(op) == has(kRigExecOpRanged));
+        // A whole member runs through range handling over one range.
+        const bool whole = op == Op::VolumeCorrect;
+        CHECK((RigExecRevisionIsRangeOp(op) || whole) == has(kRigExecOpRanged));
         CHECK(RigExecRevisionGateHolds(op, gated) == has(kRigExecOpGate));
         CHECK(RigExecRevisionOpAssemblesFromLeaves(op) ==
               has(kRigExecOpFromLeaves));

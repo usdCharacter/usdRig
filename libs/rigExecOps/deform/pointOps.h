@@ -26,7 +26,8 @@ struct SmoothPayload {
 /// edges. Invalid topology passes the points through.
 const rigExec::RigExecOpHandle &Smooth();
 /// Uniform scale about the centroid moving the bound volume toward
-/// Reference. A degenerate bound passes the points through.
+/// Reference, or the bound volume of Base. A degenerate bound passes the
+/// points through. Runs once over every point.
 const rigExec::RigExecOpHandle &VolumeCorrect();
 
 // Smooth: Points, Counts and Indices (IntArray), optional Strength (float,
@@ -63,13 +64,20 @@ const rigExec::RigExecPortHandle &MoverBlendDefaultWeight();
 const rigExec::RigExecPortHandle &MoverBlendPacket();
 const rigExec::RigExecPortHandle &MoverBlendOut();
 
-// VolumeCorrect: Points, Reference (double), optional Strength (float,
-// unfed 1) and Envelope, Out.
+// VolumeCorrect: Points, one of Reference (double) and Base (Vec3fArray),
+// optional Strength (float, unfed 1) and Envelope, Out. Enabled,
+// DefaultWeight and Packet as Smooth's; Written (IntArray, optional) the
+// ascending [begin, end) pairs a packet may reach.
 const rigExec::RigExecPortHandle &VolumeCorrectPoints();
 const rigExec::RigExecPortHandle &VolumeCorrectReference();
 const rigExec::RigExecPortHandle &VolumeCorrectStrength();
 const rigExec::RigExecPortHandle &VolumeCorrectEnvelope();
 const rigExec::RigExecPortHandle &VolumeCorrectOut();
+const rigExec::RigExecPortHandle &VolumeCorrectBase();
+const rigExec::RigExecPortHandle &VolumeCorrectEnabled();
+const rigExec::RigExecPortHandle &VolumeCorrectDefaultWeight();
+const rigExec::RigExecPortHandle &VolumeCorrectPacket();
+const rigExec::RigExecPortHandle &VolumeCorrectWritten();
 
 } // namespace rigExecOps
 

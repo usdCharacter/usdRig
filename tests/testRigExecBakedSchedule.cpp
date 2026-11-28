@@ -147,26 +147,38 @@ Build(const std::string &stagePath)
 }
 
 /// Defines mover \p path moving \p target: a matrix mover on \p driver,
-/// which runs as op chain members, or, \p legacy, a volume-correct mover,
-/// whose legacy body passes an invalid input through with a MoverFailed line.
+/// which runs as op chain members, or, \p legacy, a surface mover projecting
+/// onto a fixed triangle, whose legacy body passes an invalid input through
+/// with a MoverFailed line.
 UsdPrim
 DefineChainMover(const UsdStageRefPtr &stage, const SdfPath &path,
                  const SdfPath &target, const SdfPath &driver, bool legacy)
 {
-    const UsdPrim mover =
-        stage->DefinePrim(path, TfToken(legacy ? "RigExecVolumeCorrectMover"
-                                               : "RigExecMatrixMover"));
+    const UsdPrim mover = stage->DefinePrim(
+        path, TfToken(legacy ? "RigExecSurfaceMover" : "RigExecMatrixMover"));
     mover.ApplyAPI(TfToken("RigExecMoverAPI"));
     mover.GetRelationship(TfToken("rigExec:moves")).SetTargets({target});
     if (!legacy) {
         mover.GetRelationship(TfToken("rigExec:transform"))
             .SetTargets({driver});
+        return mover;
     }
+    const SdfPath surface("/Asset/LegacySurface");
+    if (!stage->GetPrimAtPath(surface)) {
+        const UsdPrim mesh = stage->DefinePrim(surface, TfToken("Mesh"));
+        mesh.GetAttribute(TfToken("points"))
+            .Set(VtVec3fArray{GfVec3f(-10, -10, -1), GfVec3f(10, -10, -1),
+                              GfVec3f(0, 10, 1)});
+        mesh.GetAttribute(TfToken("faceVertexCounts")).Set(VtIntArray{3});
+        mesh.GetAttribute(TfToken("faceVertexIndices"))
+            .Set(VtIntArray{0, 1, 2});
+    }
+    mover.GetRelationship(TfToken("rigExec:surface")).SetTargets({surface});
     return mover;
 }
 
 /// A tetrahedron's points at Default, grown at frames 1 to 3, so a
-/// volume-correct mover moves them differently each frame.
+/// surface mover moves them differently each frame.
 void
 SetLegacyChainPoints(const UsdAttribute &points)
 {
@@ -190,8 +202,8 @@ SetLegacyChainPoints(const UsdAttribute &points)
 /// tests/testRigExecInteractive drives, and it is the shape that found the
 /// missing RevisionDone declaration under the parallel executor. Built here
 /// so the declaration is checked by a test rather than by remembering to run
-/// one environment. \p legacy: volume-correct movers on a tetrahedron, a
-/// chain of legacy chunk and fuse steps.
+/// one environment. \p legacy: surface movers on a tetrahedron, a chain of
+/// legacy chunk and fuse steps.
 UsdStageRefPtr
 MakeStackedChainStage(bool legacy = false)
 {
@@ -228,7 +240,7 @@ MakeStackedChainStage(bool legacy = false)
 /// still. \p firstWeight is M0's inputs:defaultWeight; zero makes its points
 /// the ones it entered with however its driver moves. \p failMiddle gives M1
 /// an out-of-range weight at frame 2 only, so M1 passes through there and
-/// applies again at frame 3 (\p legacy: volume-correct movers over a growing
+/// applies again at frame 3 (\p legacy: surface movers over a growing
 /// tetrahedron, whose legacy bodies pass through; matrix movers stop the
 /// frame).
 UsdStageRefPtr

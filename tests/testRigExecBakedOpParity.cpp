@@ -1641,6 +1641,7 @@ ProbeRevisions(const B &b)
             if (revision.opMatrix || revision.opSmooth || revision.opMush ||
                 revision.opLattice || revision.blendChunked ||
                 revision.opExternal) {
+                revision.opWhole) {
                 Unprobed("RevisionChunk", kind, "runs as op nodes");
                 continue;
             }
@@ -1787,6 +1788,7 @@ ProbeRangeChains(const B &b)
                 usable && !revision.gpuOwned && !revision.rangeSetAside &&
                 !revision.opMatrix && !revision.opSmooth && !revision.opMush &&
                 !revision.opLattice && !revision.blendChunked &&
+                !revision.opWhole &&
                 (external ? RigExecExternalOpHandle(revision.binding) != nullptr
                           : revision.op == RigExecRevisionOp::BlendShape ||
                                 RigExecGeometryOpSupported(revision.op)) &&
@@ -3387,10 +3389,14 @@ Frames(const UsdStageRefPtr &stage)
 }
 
 // The point movers each rig of the painted set must have compared under a
-// dense and a sparse partial envelope. Matrix, Smooth, DeltaMush and Lattice
-// revisions run only as op chain members (testRigExecOpsPoints).
+// dense and a sparse partial envelope. Matrix, Smooth, DeltaMush, Lattice
+// and VolumeCorrect revisions run only as op chain members
+// (testRigExecOpsPoints).
 const char *const kPaintedKinds[] = {
-    "Skin", "Wire", "Wrinkle", "SurfaceProject", "VolumeCorrect",
+    "Skin",
+    "Wire",
+    "Wrinkle",
+    "SurfaceProject",
 };
 
 // The radial forms also take a matrix mover's partial weight as a fraction
@@ -4689,7 +4695,6 @@ main(int argc, char **argv)
           "RevisionChunk/Skin",
           "RevisionChunk/BlendShape",
           "RevisionChunk/Wire",
-          "RevisionChunk/VolumeCorrect",
           "RevisionChunk/SurfaceProject",
           "RevisionChunk/Ribbon",
           "RevisionChunk/EmitGuidePoints",

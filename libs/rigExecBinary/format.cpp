@@ -1450,7 +1450,8 @@ private:
                                     size_t(lookup->part) < samples;
                 if ((lookup->read > 2 && lookup->read < 13 && !mush) ||
                     (lookup->read == 13 && !mush && !lattice && !external &&
-                     !chunkBlend) ||
+                     !chunkBlend &&
+                     op != uint8_t(fb::RevisionOp::VolumeCorrect)) ||
                     (lookup->read > 13 && lookup->read < 16 && !lattice) ||
                     (lookup->read == 16 && !blend) ||
                     ((lookup->read == 17 || lookup->read == 18) && !mush &&
@@ -5925,7 +5926,8 @@ private:
                     (revision.op != uint8_t(fb::RevisionOp::Smooth) &&
                      revision.op != uint8_t(fb::RevisionOp::DeltaMush) &&
                      revision.op != uint8_t(fb::RevisionOp::Lattice) &&
-                     !RigExecFormatIsChunkBlend(revision)))
+                     !RigExecFormatIsChunkBlend(revision) &&
+                     !revision.wholeRole))
                     read(D::RevisionTransforms, id);
                 point(c, uint32_t(r));
                 if (revision.weightObject >= 0)
@@ -8228,7 +8230,8 @@ private:
                    revision.op != uint8_t(fb::RevisionOp::DeltaMush) &&
                    revision.op != uint8_t(fb::RevisionOp::Lattice) &&
                    revision.op != uint8_t(fb::RevisionOp::External) &&
-                   !RigExecFormatIsChunkBlend(revision))) &&
+                   !RigExecFormatIsChunkBlend(revision) &&
+                   !revision.wholeRole)) &&
                  !need(D::RevisionTransforms, id)) ||
                 (revision.weightObject >= 0 &&
                  !need(D::WeightPacket, uint64_t(revision.weightObject))) ||
@@ -8881,8 +8884,7 @@ private:
         if (r.wholeRole &&
             (!ranges || r.op == uint8_t(fb::RevisionOp::Matrix) ||
              !RigExecFormatRunsAsOps(r))) {
-            return _Bad(row + ": whole_role on no smooth, delta mush, "
-                              "lattice or plugin op member");
+            return _Bad(row + ": whole_role on no whole op member");
         }
         if (!keyed) {
             if (ranges && !RigExecFormatIsRangeOp(r.op) &&

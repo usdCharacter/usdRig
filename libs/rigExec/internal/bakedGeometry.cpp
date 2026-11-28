@@ -2026,6 +2026,7 @@ RevisionRunsAsOps(const RigExecBakedProgramImpl::GeomRevision &revision)
     return op == RigExecRevisionOp::Matrix || op == RigExecRevisionOp::Smooth ||
            op == RigExecRevisionOp::DeltaMush ||
            op == RigExecRevisionOp::Lattice ||
+           op == RigExecRevisionOp::VolumeCorrect ||
            (op == RigExecRevisionOp::External &&
             RigExecDispatchBindsExternalOp(revision.binding));
 }

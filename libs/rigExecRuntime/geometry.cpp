@@ -944,23 +944,10 @@ using RrGeoEnvelopeMath = eval::MatrixKernelMath<RrVec3f, RrVec3d, RrMat4d>;
 
 using RrGeoScaledDualQuat = RigExecScaledDualQuatKernelT<RrVec3f, RrVec3d>;
 
-// Geometry kernels (geometryKernels.cpp): volume, smooth, normals, extent,
+// Geometry kernels (geometryKernels.cpp): smooth, normals, extent,
 // lattice, surface projection, wire/NURBS. RMF sampling, ribbon transport,
 // wire binding and the sparse wire apply are unreachable from the revision
 // path and stay out.
-
-double
-RrGeoBoundVolume(const RrVec3f *points, size_t count)
-{
-    return RigExecBoundVolumeKernel(points, count);
-}
-
-void
-RrGeoApplyVolumeCorrect(std::vector<RrVec3f> *points, double referenceVolume,
-                        double strength)
-{
-    RigExecApplyVolumeCorrectKernel(points, referenceVolume, strength);
-}
 
 bool
 RrGeoTransportSurfaceOffsets(const std::vector<RrVec3f> &rest,
@@ -1951,9 +1938,6 @@ RrGeoApplyRevisionKernel(
     }
     case RrGeoOpBlendShape:
         return RrGeoApplyBlendShapeKernel(p, pts, surfaceCache);
-    case RrGeoOpVolumeCorrect:
-        RrGeoApplyVolumeCorrect(pts, p.referenceVolume, p.strength);
-        return true;
     case RrGeoOpWrinkle:
         if (surfaceCache) {
             const auto *topology = surfaceCache->WrinkleTopology(
@@ -5024,13 +5008,6 @@ RrGeoAssembleRevision(const RrGeoAssembleInputs &in)
     switch (op) {
     case RrGeoOpBlendShape:
         RrGeoAssembleBlendShape(in, base, &params);
-        break;
-    case RrGeoOpVolumeCorrect:
-        params.strength = 1.0f;
-        if (!base.empty()) {
-            params.referenceVolume = RrGeoBoundVolume(base.data(), base.size());
-            params.valid = true;
-        }
         break;
     case RrGeoOpWrinkle: {
         const auto attr = [&](RrGeoAttr name, bool rest = false) {
