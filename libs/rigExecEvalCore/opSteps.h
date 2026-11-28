@@ -552,6 +552,16 @@ enum class OpRevisionRead : uint8_t {
     BlendSamplePoints = 32,
     BlendSampleOffsets = 33,
     BlendSampleIndices = 34,
+    /// A wrinkle's twelve scalar settings (DoubleArray, in
+    /// RigExecWrinkleSettings order: iterations, neighborDistance,
+    /// restLengthScale, stretchStiffness, compressionStiffness,
+    /// bendStiffness, maxDisplacement, pinBorders, tangentPlaneCollisions,
+    /// tangentPlaneInset, wrinkleScale, smoothingIterations; flags 0 or 1),
+    /// its inputs:topology (Int: 0 cloth, 1 surfaceStruts, -1 neither) and
+    /// inputs:pinPoints (IntArray).
+    WrinkleSettings = 60,
+    WrinkleTopology = 61,
+    WrinklePinPoints = 62,
 };
 
 /// What an ExternalInput lookup answers, by the standard type of the input

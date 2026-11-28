@@ -2027,6 +2027,7 @@ RevisionRunsAsOps(const RigExecBakedProgramImpl::GeomRevision &revision)
            op == RigExecRevisionOp::DeltaMush ||
            op == RigExecRevisionOp::Lattice ||
            op == RigExecRevisionOp::VolumeCorrect ||
+           op == RigExecRevisionOp::Wrinkle ||
            (op == RigExecRevisionOp::External &&
             RigExecDispatchBindsExternalOp(revision.binding));
 }
@@ -7016,6 +7017,36 @@ RigExecBakedLookUpRevision(RigExecBakedProgramImpl &B, uint32_t index,
                 ? std::string_view(v.UncheckedGet<TfToken>().GetText())
                 : std::string_view("local");
         return put(int32_t(text == "local" ? 0 : text == "common" ? 1 : -1));
+    }
+    case Read::WrinkleSettings: {
+        VtValue &held = B.revisionLeafHold[index];
+        held = VtValue(
+            VtDoubleArray{double(scalar(0, 80)), double(scalar(1, 2)),
+                          double(scalar(2, 1.0f)), double(scalar(3, 1.0f)),
+                          double(scalar(4, 1.0f)), double(scalar(5, 0.1f)),
+                          double(scalar(6, 0.2f)), scalar(7, true) ? 1.0 : 0.0,
+                          scalar(8, true) ? 1.0 : 0.0, double(scalar(9, 0.0f)),
+                          double(scalar(10, 1.0f)), double(scalar(11, 0))});
+        const VtDoubleArray &a = held.UncheckedGet<VtDoubleArray>();
+        return lend(a.cdata(), a.size());
+    }
+    case Read::WrinkleTopology: {
+        const VtValue v = leaf(leaves.decl.Role(Role::WrinkleTopology));
+        const std::string_view text =
+            v.IsHolding<TfToken>()
+                ? std::string_view(v.UncheckedGet<TfToken>().GetText())
+                : std::string_view(SchemaValueText::cloth);
+        return put(int32_t(text == SchemaValueText::cloth           ? 0
+                           : text == SchemaValueText::surfaceStruts ? 1
+                                                                    : -1));
+    }
+    case Read::WrinklePinPoints: {
+        VtValue &held = B.revisionLeafHold[index];
+        held = leaf(leaves.decl.Role(Role::PinPoints));
+        if (!held.IsHolding<VtIntArray>())
+            held = VtValue(VtIntArray());
+        const VtIntArray &a = held.UncheckedGet<VtIntArray>();
+        return lend(a.cdata(), a.size());
     }
     case Read::MushStep:
         return put(scalar(1, 0.5f));

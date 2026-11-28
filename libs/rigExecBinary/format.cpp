@@ -1412,7 +1412,7 @@ private:
             if (lookup && lookup->source == 10) {
                 if (!_f.geometry ||
                     lookup->object >= _f.geometry->revisionIndex.size() ||
-                    lookup->read > 34)
+                    lookup->read > 62)
                     return _Bad("op_graph.lookups: a revision lookup reads no "
                                 "input of a revision");
                 const auto &at = _f.geometry->revisionIndex[lookup->object];
@@ -1429,6 +1429,9 @@ private:
                 const bool lattice = op == uint8_t(fb::RevisionOp::Lattice);
                 const bool external = op == uint8_t(fb::RevisionOp::External);
                 const bool smooth = op == uint8_t(fb::RevisionOp::Smooth);
+                const bool volume =
+                    op == uint8_t(fb::RevisionOp::VolumeCorrect);
+                const bool wrinkle = op == uint8_t(fb::RevisionOp::Wrinkle);
                 const bool chunkBlend =
                     op == uint8_t(fb::RevisionOp::BlendShape) &&
                     RigExecFormatIsChunkBlend(
@@ -1448,20 +1451,21 @@ private:
                                        lookup->part);
                 const bool sample = chunkBlend && lookup->part >= 0 &&
                                     size_t(lookup->part) < samples;
-                if ((lookup->read > 2 && lookup->read < 13 && !mush) ||
+                if ((lookup->read > 2 && lookup->read < 13 && !mush &&
+                     !(lookup->read == 3 && wrinkle)) ||
                     (lookup->read == 13 && !mush && !lattice && !external &&
-                     !chunkBlend &&
-                     op != uint8_t(fb::RevisionOp::VolumeCorrect)) ||
+                     !chunkBlend && !volume && !wrinkle) ||
                     (lookup->read > 13 && lookup->read < 16 && !lattice) ||
                     (lookup->read == 16 && !blend) ||
                     ((lookup->read == 17 || lookup->read == 18) && !mush &&
-                     !smooth) ||
+                     !smooth && !wrinkle) ||
                     ((lookup->read == 19 || lookup->read == 20) && !mush) ||
                     (lookup->read > 20 && lookup->read <= 30 && !lattice) ||
-                    (lookup->read > 30 && !sample))
-                    return _Bad("op_graph.lookups: a smooth, delta mush, "
-                                "lattice or blend shape input lookup reads a "
-                                "revision of another operation");
+                    (lookup->read > 30 && lookup->read < 60 && !sample) ||
+                    (lookup->read >= 60 && lookup->read <= 62 && !wrinkle) ||
+                    lookup->read > 62)
+                    return _Bad("op_graph.lookups: a revision input lookup "
+                                "reads a revision of another operation");
                 continue;
             }
             if (lookup && lookup->source == 80) {

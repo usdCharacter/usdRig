@@ -2,10 +2,13 @@
 
 #include "rigExecMath/wrinkleKernel.h"
 #include "rigExecOps/authoring.h"
+#include "rigExecOps/deform/weightPacket.h"
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecSchema/schemaNames.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <iterator>
 #include <memory>
@@ -22,6 +25,14 @@ RIGEXEC_DEFINE_PORT_HANDLE(WrinkleCounts)
 RIGEXEC_DEFINE_PORT_HANDLE(WrinkleIndices)
 RIGEXEC_DEFINE_PORT_HANDLE(WrinkleEnvelope)
 RIGEXEC_DEFINE_PORT_HANDLE(WrinkleOut)
+RIGEXEC_DEFINE_PORT_HANDLE(WrinkleBase)
+RIGEXEC_DEFINE_PORT_HANDLE(WrinkleSettings)
+RIGEXEC_DEFINE_PORT_HANDLE(WrinkleTopology)
+RIGEXEC_DEFINE_PORT_HANDLE(WrinklePinPoints)
+RIGEXEC_DEFINE_PORT_HANDLE(WrinkleEnabled)
+RIGEXEC_DEFINE_PORT_HANDLE(WrinkleDefaultWeight)
+RIGEXEC_DEFINE_PORT_HANDLE(WrinklePacket)
+RIGEXEC_DEFINE_PORT_HANDLE(WrinkleWritten)
 
 namespace {
 
@@ -71,14 +82,20 @@ SettingsAt(const rigExec::RigExecOpBatch &batch, size_t k)
     return s;
 }
 
-/// A node's wrinkle topology, built on its first run.
+/// A node's wrinkle topology, rebuilt only when the faces, point count or
+/// payload rule move; this frame's pass through, settings, rest and weights,
+/// and the points the kernel moves.
 struct WrinkleState {
     std::shared_ptr<const rigExec::RigExecWrinkleMesh> mesh;
+    std::vector<int> counts, indices;
+    bool pass = false;
+    rigExec::RigExecWrinkleSettingsView settings;
+    std::vector<int> pins;
+    std::vector<float> dense;
+    std::vector<Vec3f> points, restPoints;
 };
 
-/// Topology is fixed per compiled rig and the state lives as long as the
-/// bound program, so the mesh is keyed by its sizes and payload rule only;
-/// the apply half walks the mesh's own faces, never the caller's.
+/// The apply half walks the mesh's own faces, never the caller's.
 const rigExec::RigExecWrinkleMesh *
 MeshOf(WrinkleState &state, size_t pointCount, const RigExecArray<int> &counts,
        const RigExecArray<int> &indices,
@@ -86,61 +103,154 @@ MeshOf(WrinkleState &state, size_t pointCount, const RigExecArray<int> &counts,
 {
     const rigExec::RigExecWrinkleMesh *mesh = state.mesh.get();
     if (mesh && mesh->pointCount == pointCount &&
-        mesh->counts.size() == counts.Size() &&
-        mesh->indices.size() == indices.Size() &&
+        std::equal(counts.begin(), counts.end(), state.counts.begin(),
+                   state.counts.end()) &&
+        std::equal(indices.begin(), indices.end(), state.indices.begin(),
+                   state.indices.end()) &&
         mesh->mode == settings.topology &&
         mesh->neighborDistance == settings.neighborDistance)
         return mesh;
     state.mesh.reset();
+    state.counts.assign(counts.begin(), counts.end());
+    state.indices.assign(indices.begin(), indices.end());
     auto built = std::make_shared<rigExec::RigExecWrinkleMesh>();
     if (!rigExec::RigExecBuildWrinkleMesh(
-            pointCount, ToVector(counts), ToVector(indices), settings.topology,
+            pointCount, state.counts, state.indices, settings.topology,
             settings.neighborDistance, built.get()))
         return nullptr;
     state.mesh = std::move(built);
     return state.mesh.get();
 }
 
-bool
-WrinkleOne(const rigExec::RigExecOpIo &io,
-           const rigExec::RigExecWrinkleSettingsView &settings,
-           WrinkleState &state, std::string *error)
+/// An integer setting the host wrote as a double; one outside int's range
+/// reads -1, which every integer setting refuses.
+int
+IntOf(double v)
 {
-    const Points &in = *In<Points>(io, WrinklePoints());
-    const Points &rest = *In<Points>(io, WrinkleRest());
-    std::vector<Vec3f> points = ToVector(in);
-    const rigExec::RigExecWrinkleMesh *mesh =
-        MeshOf(state, rest.Size(), *In<RigExecArray<int>>(io, WrinkleCounts()),
-               *In<RigExecArray<int>>(io, WrinkleIndices()), settings);
-    if (!mesh ||
-        !rigExec::RigExecApplyWrinkleWithTopology<Vec3f, rigExecStd::Vec3d>(
-            &points, ToVector(rest), mesh->counts, mesh->indices, settings,
-            *mesh))
-        return Fail(error, "Wrinkle",
-                    "unusable settings, topology, rest or points");
-    return WritePoints(io, WrinkleOut(), in, points,
-                       In<Envelope>(io, WrinkleEnvelope()), "Wrinkle", error);
+    return std::isfinite(v) && v >= -2147483648.0 && v <= 2147483647.0 ? int(v)
+                                                                       : -1;
+}
+
+rigExec::RigExecRangePlan
+Plan(const rigExec::RigExecOpBatch &, size_t)
+{
+    // The constraint solve couples every point.
+    return rigExec::RigExecRangePlan::Whole;
 }
 
 bool
 Check(const rigExec::RigExecOpCheck &check, std::string *error)
 {
-    if (!SameCount(CheckElements(check, WrinkleRest()),
+    if (!Fed(check, WrinkleBase()) &&
+        !SameCount(CheckElements(check, WrinkleRest()),
                    CheckElements(check, WrinklePoints())))
         return Fail(error, "Wrinkle", "needs one rest point per point");
+    const int envelopes = int(Fed(check, WrinkleEnvelope())) +
+                          int(Fed(check, WrinkleDefaultWeight())) +
+                          int(Fed(check, WrinklePacket()));
+    if (envelopes > 1)
+        return Fail(error, "Wrinkle",
+                    "one of an envelope, a default weight and a weight "
+                    "packet");
     return EnvelopeFits(check, WrinklePoints(), WrinkleEnvelope(), "Wrinkle",
                         error);
 }
 
 bool
-Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
+Prepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
+        std::string *error)
 {
-    return EachInstance(batch, failed, [&](size_t k) {
-        return WrinkleOne(
-            rigExec::RigExecBatchInstance(batch, k), SettingsAt(batch, k),
-            *static_cast<WrinkleState *>(rigExec::RigExecBatchState(batch, k)),
-            error);
-    });
+    const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    WrinkleState &state =
+        *static_cast<WrinkleState *>(rigExec::RigExecBatchState(batch, k));
+    const uint8_t *enabled = In<uint8_t>(io, WrinkleEnabled());
+    state.pass = enabled && !*enabled;
+    state.dense.clear();
+    if (state.pass)
+        return true;
+    if (!EnvelopeFits(*In<Points>(io, WrinklePoints()),
+                      In<Envelope>(io, WrinkleEnvelope()), "Wrinkle", error))
+        return false;
+    rigExec::RigExecWrinkleSettingsView &s = state.settings;
+    s = SettingsAt(batch, k);
+    if (const auto *v = In<RigExecArray<double>>(io, WrinkleSettings())) {
+        if (v->Size() != 12)
+            return Fail(error, "Wrinkle", "the settings hold twelve values");
+        const RigExecArray<double> &a = *v;
+        s.iterations = IntOf(a[0]);
+        s.neighborDistance = IntOf(a[1]);
+        s.restLengthScale = float(a[2]);
+        s.stretchStiffness = float(a[3]);
+        s.compressionStiffness = float(a[4]);
+        s.bendStiffness = float(a[5]);
+        s.maxDisplacement = float(a[6]);
+        s.pinBorders = a[7] != 0.0;
+        s.tangentPlaneCollisions = a[8] != 0.0;
+        s.tangentPlaneInset = float(a[9]);
+        s.wrinkleScale = float(a[10]);
+        s.smoothingIterations = IntOf(a[11]);
+    }
+    if (const int32_t *topology = In<int32_t>(io, WrinkleTopology())) {
+        if (*topology != 0 && *topology != 1)
+            return Fail(error, "Wrinkle",
+                        "the topology names neither cloth nor surfaceStruts");
+        s.topology = *topology == 0
+                         ? rigExec::RigExecWrinkleTopology::Cloth
+                         : rigExec::RigExecWrinkleTopology::SurfaceStruts;
+    }
+    if (const auto *pins = In<RigExecArray<int32_t>>(io, WrinklePinPoints())) {
+        state.pins.assign(pins->begin(), pins->end());
+        s.pinPoints = {state.pins.data(), state.pins.size()};
+    }
+    const Points *authored = In<Points>(io, WrinkleRest());
+    const Points *rest =
+        authored && authored->Size() ? authored : In<Points>(io, WrinkleBase());
+    const auto &counts = *In<RigExecArray<int>>(io, WrinkleCounts());
+    if (!rest || !rest->Size() || !counts.Size())
+        return Fail(error, "Wrinkle", "no rest points or no faces");
+    state.restPoints.assign(rest->begin(), rest->end());
+    if (!MeshOf(state, rest->Size(), counts,
+                *In<RigExecArray<int>>(io, WrinkleIndices()), s))
+        return Fail(error, "Wrinkle",
+                    "unusable settings, topology, rest or points");
+    const char *why = "";
+    if (!weightPacket::ResolveMemberWeights(
+            In<float>(io, WrinkleDefaultWeight()),
+            In<weightPacket::PointWeights>(io, WrinklePacket()),
+            In<RigExecArray<int32_t>>(io, WrinkleWritten()), count,
+            &state.dense, &why))
+        return Fail(error, "Wrinkle", why);
+    return true;
+}
+
+bool
+WrinkleRange(const rigExec::RigExecOpBatch &batch, size_t k,
+             const rigExec::RigExecOpRange &range, std::string *error)
+{
+    const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    WrinkleState &state =
+        *static_cast<WrinkleState *>(rigExec::RigExecBatchState(batch, k));
+    const Vec3f *from = RangeIn<Vec3f>(io, range, WrinklePoints());
+    Vec3f *out = RangeOut<Vec3f>(io, range, WrinkleOut());
+    const size_t n = range.end - range.begin;
+    if (state.pass) {
+        std::copy(from, from + n, out);
+        return true;
+    }
+    state.points.assign(from, from + n);
+    const rigExec::RigExecWrinkleMesh &mesh = *state.mesh;
+    if (!rigExec::RigExecApplyWrinkleWithTopology<Vec3f, rigExecStd::Vec3d>(
+            &state.points, state.restPoints, mesh.counts, mesh.indices,
+            state.settings, mesh))
+        return Fail(error, "Wrinkle",
+                    "unusable settings, topology, rest or points");
+    std::copy(state.points.begin(), state.points.end(), out);
+    BlendEnvelopeAt(from,
+                    state.dense.empty()
+                        ? RangeIn<float>(io, range, WrinkleEnvelope())
+                        : state.dense.data() + range.begin,
+                    out, n);
+    return true;
 }
 
 void
@@ -300,8 +410,11 @@ using rigExec::kRigExecPortInput;
 using rigExec::kRigExecPortOptional;
 using rigExec::kRigExecPortOutput;
 
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
 const rigExec::RigExecPortDesc kPorts[] = {
-    {&WrinklePoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "points"},
+    {&WrinklePoints(), &rigExecStd::Vec3fArray(),
+     kRigExecPortInput | rigExec::kRigExecPortPointwise, "points"},
     Authored({&WrinkleRest(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
               "restPoints"},
              kRestPoints),
@@ -310,9 +423,19 @@ const rigExec::RigExecPortDesc kPorts[] = {
     {&WrinkleIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
      "faceVertexIndices"},
     {&WrinkleEnvelope(), &rigExecStd::FloatArray(),
-     kRigExecPortInput | kRigExecPortOptional, "envelope"},
-    {&WrinkleOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     kOptional | rigExec::kRigExecPortPointwise, "envelope"},
+    {&WrinkleOut(), &rigExecStd::Vec3fArray(),
+     kRigExecPortOutput | rigExec::kRigExecPortPointwise, "out",
      rigExec::RigExecOutputBound::Input, &WrinklePoints()},
+    {&WrinkleBase(), &rigExecStd::Vec3fArray(), kOptional, "base"},
+    {&WrinkleSettings(), &rigExecStd::DoubleArray(), kOptional, "settings"},
+    {&WrinkleTopology(), &rigExecStd::IntType(), kOptional, "topology"},
+    {&WrinklePinPoints(), &rigExecStd::IntArray(), kOptional, "pinPoints"},
+    {&WrinkleEnabled(), &rigExecStd::BoolType(), kOptional, "enabled"},
+    {&WrinkleDefaultWeight(), &rigExecStd::FloatType(), kOptional,
+     "defaultWeight"},
+    {&WrinklePacket(), &rigExecRig::PointWeightsType(), kOptional, "packet"},
+    {&WrinkleWritten(), &rigExecStd::IntArray(), kOptional, "written"},
 };
 
 const rigExec::RigExecOpDesc kDesc = [] {
@@ -322,11 +445,14 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.schema = &kWrinkleSchema;
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.runBatch = &Run;
     d.validate = &Check;
-    d.capabilities =
-        rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
-        rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;
+    d.range.plan = &Plan;
+    d.range.prepare = &Prepare;
+    d.range.run = &WrinkleRange;
+    d.capabilities = rigExec::kRigExecOpBakeable |
+                     rigExec::kRigExecOpFreezable |
+                     rigExec::kRigExecOpSeparateBlend |
+                     rigExec::kRigExecOpRanged | rigExec::kRigExecOpFromLeaves;
     d.payloadFields = kFields;
     d.payloadFieldCount = std::size(kFields);
     d.payloadVersion = 1;

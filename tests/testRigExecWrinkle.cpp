@@ -367,24 +367,24 @@ TestEvaluationAndInvalidation(const Grid &grid)
     Compile(reloaded);
     CHECK(Near(Published(reloaded.Evaluate(UsdTimeCode::Default())), revised));
 
-    // Malformed data leaves the entire preceding revision intact with a diagnostic.
+    // Malformed data stops the frame with the wrinkle's error.
     CHECK(wrinkle.GetPrim().GetAttribute(TfToken("inputs:iterations")).Set(-1));
     auto invalid = evaluator.Evaluate(UsdTimeCode::Default());
-    CHECK(Near(Published(invalid), lessCompressed));
-    CHECK(Contains(invalid.diagnostics, "MoverFailed"));
+    CHECK(!invalid.valid);
+    CHECK(Contains(invalid.diagnostics, "Wrinkle"));
     wrinkle.SetIterations(settings.iterations);
     wrinkle.SetRestPoints({grid.rest.front()});
     invalid = evaluator.Evaluate(UsdTimeCode::Default());
-    CHECK(Near(Published(invalid), lessCompressed));
-    CHECK(Contains(invalid.diagnostics, "MoverFailed"));
+    CHECK(!invalid.valid);
+    CHECK(Contains(invalid.diagnostics, "Wrinkle"));
     wrinkle.SetRestPoints(grid.rest);
     auto badIndices = grid.indices;
     badIndices.back() = int(posed.size());
     CHECK(mesh.GetFaceVertexIndicesAttr().Set(
         VtIntArray(badIndices.begin(), badIndices.end())));
     invalid = evaluator.Evaluate(UsdTimeCode::Default());
-    CHECK(Near(Published(invalid), lessCompressed));
-    CHECK(Contains(invalid.diagnostics, "MoverFailed"));
+    CHECK(!invalid.valid);
+    CHECK(Contains(invalid.diagnostics, "Wrinkle"));
     CHECK(mesh.GetFaceVertexIndicesAttr().Set(
         VtIntArray(grid.indices.begin(), grid.indices.end())));
     CHECK(Near(evaluate(), revised));
@@ -543,8 +543,23 @@ TestAnimatedBinary(const Grid &grid)
     CheckBinaryParity(evaluator, stage, {1, 3});
     wrinkle.SetPinPoints({32, 45, 58});
     CheckBinaryParity(evaluator, stage, {1, 3});
+    // An invalid setting stops its frame in both hosts, which recover at the
+    // next valid frame.
     sample("inputs:iterations", -1, 6);
-    CheckBinaryParity(evaluator, stage, {6});
+    RigExecBakeOpts options;
+    options.time = 5;
+    RigExecBakeResult result;
+    std::string error;
+    CHECK(RigExecBakeToBinary(evaluator, options, &result, &error));
+    RigExecTestPlayer player;
+    if (!player.Open(result.bytes, stage, &error))
+        throw std::runtime_error(error);
+    const auto stopped = evaluator.Evaluate(UsdTimeCode(6));
+    CHECK(!stopped.valid);
+    CHECK(Contains(stopped.diagnostics, "Wrinkle"));
+    CHECK(!player.Play(6, &error) && !error.empty());
+    CHECK(evaluator.Evaluate(UsdTimeCode(5)).valid);
+    CHECK(player.Play(5, &error));
 }
 
 void

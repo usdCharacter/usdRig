@@ -1421,7 +1421,7 @@ TestCapabilityFlags()
         CHECK(RigExecRevisionTakesSeparateBlend(op, RigExecWeightPacket()) ==
               has(kRigExecOpSeparateBlend));
         // A whole member runs through range handling over one range.
-        const bool whole = op == Op::VolumeCorrect;
+        const bool whole = op == Op::VolumeCorrect || op == Op::Wrinkle;
         CHECK((RigExecRevisionIsRangeOp(op) || whole) == has(kRigExecOpRanged));
         CHECK(RigExecRevisionGateHolds(op, gated) == has(kRigExecOpGate));
         CHECK(RigExecRevisionOpAssemblesFromLeaves(op) ==

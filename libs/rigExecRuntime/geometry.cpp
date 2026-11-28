@@ -34,7 +34,6 @@
 #include "rigExecMath/surfaceKernelCache.h"
 #include "rigExecMath/wireBasisKernel.h"
 #include "rigExecMath/wireKernelCache.h"
-#include "rigExecMath/wrinkleKernel.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
 #include "rigExecMath/surfaceProjectKernel.h"
 #include "rigExecMath/surfaceSnapKernel.h"
@@ -612,7 +611,6 @@ struct RrGeoMoverParameters {
     // legacy deformers.
     RigExecDeltaMushSettings mushSettings;
     RrMat4d mushComputationToTarget{1.0};
-    RigExecWrinkleSettings wrinkleSettings;
     RigExecSurfaceSnapSettings surfaceSettings;
     RrMat4d targetToSurface{1.0}, surfaceToTarget{1.0}, surfaceToMetric{1.0};
     RigExecLatticeSettings latticeSettings;
@@ -681,7 +679,6 @@ struct RrGeoMoverParameters {
                mushDisplacement == o.mushDisplacement &&
                mushSettings == o.mushSettings &&
                mushComputationToTarget == o.mushComputationToTarget &&
-               wrinkleSettings == o.wrinkleSettings &&
                surfaceSettings == o.surfaceSettings &&
                targetToSurface == o.targetToSurface &&
                surfaceToTarget == o.surfaceToTarget &&
@@ -1938,19 +1935,6 @@ RrGeoApplyRevisionKernel(
     }
     case RrGeoOpBlendShape:
         return RrGeoApplyBlendShapeKernel(p, pts, surfaceCache);
-    case RrGeoOpWrinkle:
-        if (surfaceCache) {
-            const auto *topology = surfaceCache->WrinkleTopology(
-                p.restPoints.size(), p.topologyCounts, p.topologyIndices,
-                p.wrinkleSettings.topology, p.wrinkleSettings.neighborDistance);
-            return topology &&
-                   RigExecApplyWrinkleWithTopology<RrVec3f, RrVec3d>(
-                       pts, p.restPoints, p.topologyCounts, p.topologyIndices,
-                       p.wrinkleSettings, *topology);
-        }
-        return RigExecApplyWrinkleKernel<RrVec3f, RrVec3d>(
-            pts, p.restPoints, p.topologyCounts, p.topologyIndices,
-            p.wrinkleSettings);
     case RrGeoOpSurfaceProject: {
         // Default settings and identity maps are the legacy projection.
         if (RigExecSurfaceSnapIsLegacy(p.surfaceSettings, p.targetToSurface,
@@ -2365,6 +2349,9 @@ struct RrGeometryScratch {
         // spacing and mask.
         std::array<std::vector<int>, 5> lookedUpInts;
         std::array<std::vector<float>, 3> lookedUpFloats;
+        // A wrinkle's settings and pin points its op's lookups last lent.
+        std::vector<double> lookedUpSettings;
+        std::vector<int> lookedUpPins;
         // Per chain group (pointBlocks.h): its publication and, for a Whole
         // keyed skin, chunk g's speculative result. Only written groups are
         // ever published; each owns two buffers sized at Open.
@@ -5009,61 +4996,6 @@ RrGeoAssembleRevision(const RrGeoAssembleInputs &in)
     case RrGeoOpBlendShape:
         RrGeoAssembleBlendShape(in, base, &params);
         break;
-    case RrGeoOpWrinkle: {
-        const auto attr = [&](RrGeoAttr name, bool rest = false) {
-            return RrGeoAttrRead(in, name, rest);
-        };
-        RrGeoReadBindingVec3fArray(in, attr(RrGeoAttrRestPoints, true),
-                                   &params.restPoints);
-        if (params.restPoints.empty())
-            params.restPoints = std::move(base);
-        RrGeoReadIntArray(in.program, in.scratch,
-                          RrGeoBindingRead(in, RrGeoBindTopologyCounts),
-                          &params.topologyCounts);
-        RrGeoReadIntArray(in.program, in.scratch,
-                          RrGeoBindingRead(in, RrGeoBindTopologyIndices),
-                          &params.topologyIndices);
-        auto &settings = params.wrinkleSettings;
-        settings.iterations =
-            RrGeoReadInt(in.scratch, attr(RrGeoAttrIterations), 80);
-        const std::string topology = RrGeoReadToken(
-            in.program, in.scratch, attr(RrGeoAttrTopology, true), "cloth");
-        if (topology == "cloth") {
-            settings.topology = RigExecWrinkleTopology::Cloth;
-        } else if (topology == "surfaceStruts") {
-            settings.topology = RigExecWrinkleTopology::SurfaceStruts;
-        } else {
-            params.valid = false;
-            break;
-        }
-        settings.neighborDistance =
-            RrGeoReadInt(in.scratch, attr(RrGeoAttrNeighborDistance), 2);
-        settings.restLengthScale = RrGeoReadFloat(
-            in.program, in.scratch, attr(RrGeoAttrRestLengthScale), 1.0f);
-        settings.stretchStiffness = RrGeoReadFloat(
-            in.program, in.scratch, attr(RrGeoAttrStretchStiffness), 1.0f);
-        settings.compressionStiffness = RrGeoReadFloat(
-            in.program, in.scratch, attr(RrGeoAttrCompressionStiffness), 1.0f);
-        settings.bendStiffness = RrGeoReadFloat(
-            in.program, in.scratch, attr(RrGeoAttrBendStiffness), 0.1f);
-        settings.maxDisplacement = RrGeoReadFloat(
-            in.program, in.scratch, attr(RrGeoAttrMaxDisplacement), 0.2f);
-        settings.pinBorders =
-            RrGeoReadBool(in.scratch, attr(RrGeoAttrPinBorders), true);
-        RrGeoReadIntArray(in.program, in.scratch,
-                          attr(RrGeoAttrPinPoints, true), &settings.pinPoints);
-        settings.tangentPlaneCollisions = RrGeoReadBool(
-            in.scratch, attr(RrGeoAttrTangentPlaneCollisions), true);
-        settings.tangentPlaneInset = RrGeoReadFloat(
-            in.program, in.scratch, attr(RrGeoAttrTangentPlaneInset), 0.0f);
-        settings.wrinkleScale = RrGeoReadFloat(
-            in.program, in.scratch, attr(RrGeoAttrWrinkleScale), 1.0f);
-        settings.smoothingIterations =
-            RrGeoReadInt(in.scratch, attr(RrGeoAttrSmoothingIterations), 0);
-        params.valid =
-            !params.restPoints.empty() && !params.topologyCounts.empty();
-        break;
-    }
     case RrGeoOpSurfaceProject: {
         params.strength = 1.0f;
         RrGeoReadBindingVec3fArray(in,
@@ -7523,20 +7455,6 @@ RrOpParametersKey(std::string *key, const RrGeoMoverParameters &p, bool content)
     RrOpBytes(key, p.weights.valid);
     RrOpBytes(key, p.frames.frames);
     RrOpBytes(key, p.frames.rests);
-    RrOpBytes(key, p.wrinkleSettings.iterations);
-    RrOpBytes(key, p.wrinkleSettings.topology);
-    RrOpBytes(key, p.wrinkleSettings.neighborDistance);
-    RrOpBytes(key, p.wrinkleSettings.restLengthScale);
-    RrOpBytes(key, p.wrinkleSettings.stretchStiffness);
-    RrOpBytes(key, p.wrinkleSettings.compressionStiffness);
-    RrOpBytes(key, p.wrinkleSettings.bendStiffness);
-    RrOpBytes(key, p.wrinkleSettings.maxDisplacement);
-    RrOpBytes(key, p.wrinkleSettings.pinBorders);
-    RrOpBytes(key, p.wrinkleSettings.tangentPlaneCollisions);
-    RrOpBytes(key, p.wrinkleSettings.tangentPlaneInset);
-    RrOpBytes(key, p.wrinkleSettings.wrinkleScale);
-    RrOpBytes(key, p.wrinkleSettings.smoothingIterations);
-    RrOpBytes(key, p.wrinkleSettings.pinPoints);
     // The extended deformer settings (format 21).
     RrOpBytes(key, p.mushSettings.smoothing);
     RrOpBytes(key, p.mushSettings.frameTransport);
@@ -8601,6 +8519,42 @@ RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
             program, scratch, attr(RrGeoAttrPointSpace), "local");
         return put(int32_t(space == "local" ? 0 : space == "common" ? 1 : -1));
     }
+    case Read::WrinkleSettings: {
+        const auto real = [&](RrGeoAttr name, float fallback) {
+            return double(
+                RrGeoReadFloat(program, scratch, attr(name), fallback));
+        };
+        const auto flag = [&](RrGeoAttr name) {
+            return RrGeoReadBool(scratch, attr(name), true) ? 1.0 : 0.0;
+        };
+        rev.lookedUpSettings = {
+            double(RrGeoReadInt(scratch, attr(RrGeoAttrIterations), 80)),
+            double(RrGeoReadInt(scratch, attr(RrGeoAttrNeighborDistance), 2)),
+            real(RrGeoAttrRestLengthScale, 1.0f),
+            real(RrGeoAttrStretchStiffness, 1.0f),
+            real(RrGeoAttrCompressionStiffness, 1.0f),
+            real(RrGeoAttrBendStiffness, 0.1f),
+            real(RrGeoAttrMaxDisplacement, 0.2f),
+            flag(RrGeoAttrPinBorders),
+            flag(RrGeoAttrTangentPlaneCollisions),
+            real(RrGeoAttrTangentPlaneInset, 0.0f),
+            real(RrGeoAttrWrinkleScale, 1.0f),
+            double(
+                RrGeoReadInt(scratch, attr(RrGeoAttrSmoothingIterations), 0))};
+        return lend(rev.lookedUpSettings.data(), rev.lookedUpSettings.size());
+    }
+    case Read::WrinkleTopology: {
+        const std::string topology =
+            RrGeoReadToken(program, scratch, attr(RrGeoAttrTopology, true),
+                           SchemaValueText::cloth);
+        return put(int32_t(topology == SchemaValueText::cloth           ? 0
+                           : topology == SchemaValueText::surfaceStruts ? 1
+                                                                        : -1));
+    }
+    case Read::WrinklePinPoints:
+        RrGeoReadIntArray(program, scratch, attr(RrGeoAttrPinPoints, true),
+                          &rev.lookedUpPins);
+        return lend(rev.lookedUpPins.data(), rev.lookedUpPins.size());
     case Read::MushStep:
         return put(RrGeoReadFloat(program, scratch, attr(RrGeoAttrStep), 0.5f));
     case Read::MushPinBorders:

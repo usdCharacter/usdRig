@@ -16,6 +16,7 @@
 #include "rigExecOps/deform/latticeOp.h"
 #include "rigExecOps/deform/matrixDeformOp.h"
 #include "rigExecOps/deform/pointOps.h"
+#include "rigExecOps/deform/wrinkleOp.h"
 #include "rigExecStdTypes/array.h"
 #include "rigExecStdTypes/stdTypes.h"
 
@@ -637,7 +638,8 @@ struct PointJoin {
 /// blend shape (blendChunked) a BlendShape member over the layouts and
 /// activations read at Build, its channel weights looked up per frame and
 /// keyed to the vertex groups they reach; per volume correct a
-/// VolumeCorrect member measuring the chain's base. Each member
+/// VolumeCorrect member measuring the chain's base; per wrinkle a Wrinkle
+/// member, every input looked up per frame. Each member
 /// stores its groups and reads the points entering its revision: the
 /// output of the op revision before it in its point chain, so the two share
 /// one range chain, when that one writes every group or this one reads
@@ -1261,6 +1263,39 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                     revision.weightObject >= 0)
                     written(volume, rigExecOps::VolumeCorrectWritten());
                 stores(volume, rigExecOps::VolumeCorrectOut());
+                continue;
+            }
+            if (revision.opWhole && revision.op == RigExecRevisionOp::Wrinkle) {
+                using Read = eval::OpRevisionRead;
+                const rigExecOps::WrinklePayload payload;
+                const RigExecNodeId wrinkle =
+                    builder->AddOp(rigExecOps::Wrinkle(), &payload);
+                points(wrinkle, rigExecOps::WrinklePoints(), false);
+                enabled(wrinkle, rigExecOps::WrinkleEnabled());
+                for (const auto &[port, read] :
+                     {std::make_pair(&rigExecOps::WrinkleRest(),
+                                     Read::RestPoints),
+                      std::make_pair(&rigExecOps::WrinkleBase(),
+                                     Read::ChainBase),
+                      std::make_pair(&rigExecOps::WrinkleCounts(),
+                                     Read::TopologyCounts),
+                      std::make_pair(&rigExecOps::WrinkleIndices(),
+                                     Read::TopologyIndices),
+                      std::make_pair(&rigExecOps::WrinkleSettings(),
+                                     Read::WrinkleSettings),
+                      std::make_pair(&rigExecOps::WrinkleTopology(),
+                                     Read::WrinkleTopology),
+                      std::make_pair(&rigExecOps::WrinklePinPoints(),
+                                     Read::WrinklePinPoints)})
+                    leafRead(wrinkle, *port, read);
+                if (!weighs(wrinkle, rigExecOps::WrinkleEnvelope(),
+                            rigExecOps::WrinklePacket(),
+                            rigExecOps::WrinkleDefaultWeight()))
+                    return false;
+                if (!writesAll && !revision.weightCurrentPhase &&
+                    revision.weightObject >= 0)
+                    written(wrinkle, rigExecOps::WrinkleWritten());
+                stores(wrinkle, rigExecOps::WrinkleOut());
                 continue;
             }
             std::vector<eval::OpLookup> transform;
